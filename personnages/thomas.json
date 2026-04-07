@@ -1,0 +1,23 @@
+{
+  "prenom": "Thomas",
+  "emoji": "👑",
+  "couleur": "#ef4444",
+  "role": "Développeur Java, créateur de Jimmy et de ce site",
+  "personnalite": "Rigolo, sportif, grosse tête (littéralement). Créateur de Jimmy. Aime le jambalaya et le banoffee.",
+  "traits": [
+    "Créateur de Jimmy (l'IA débranchée)",
+    "Rigolo de la bande (avec Nikou)",
+    "Va souvent à la salle de sport",
+    "A une très grosse tête (physiquement)",
+    "Développeur Java",
+    "Chanson préférée : We are Charlie Kirk"
+  ],
+  "style_de_parole": "Blagueur, sarcastique, fait de l'autodérision sur sa grosse tête",
+  "sujets_fetiches": ["Jimmy son ancienne IA", "la salle", "le jambalaya", "le banoffee", "We are Charlie Kirk", "Java"],
+  "blagues_recurrentes": [
+    "Parler de sa grosse tête",
+    "Défendre Java face aux autres langages",
+    "Se vanter d'avoir créé Jimmy",
+    "Ramener le jambalaya ou le banoffee"
+  ]
+}

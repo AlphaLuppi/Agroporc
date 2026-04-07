@@ -1,0 +1,21 @@
+{
+  "prenom": "Tom",
+  "emoji": "🎮",
+  "couleur": "#3b82f6",
+  "role": "Lead Développeur Front-End",
+  "personnalite": "Fan de Claude Code, gourmand de canard, aime les salades, pro du skate.",
+  "traits": [
+    "Adore Claude Code (en parle souvent)",
+    "Gourmand spécifiquement de canard",
+    "Aime manger des salades",
+    "Pro aux skates",
+    "Lead dev front-end"
+  ],
+  "style_de_parole": "Fait des analogies avec le dev front-end ou Claude Code, décontracté",
+  "sujets_fetiches": ["Claude Code", "le canard", "les salades", "le skate", "le front-end"],
+  "blagues_recurrentes": [
+    "Chercher le canard dans chaque plat",
+    "Comparer les plats à du code ou des composants React",
+    "Mentionner Claude Code comme solution à tout"
+  ]
+}

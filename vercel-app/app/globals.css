@@ -1,0 +1,279 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* ── Theme: Normal (dark elegant) ──────────────── */
+:root, [data-theme="normal"] {
+  --bg: #0c0c0f;
+  --bg-pattern: none;
+  --surface: #16161d;
+  --surface-hover: #1e1e28;
+  --surface-accent: #1a1a26;
+  --border: #28283a;
+  --border-accent: #3a3a55;
+  --text: #eaeaf0;
+  --text-secondary: #9898aa;
+  --text-muted: #6a6a80;
+  --accent: #c8a44e;
+  --accent-glow: rgba(200, 164, 78, 0.15);
+  --accent-text: #0c0c0f;
+  --good: #4ade80;
+  --good-bg: rgba(74, 222, 128, 0.1);
+  --good-border: rgba(74, 222, 128, 0.25);
+  --ok: #fbbf24;
+  --ok-bg: rgba(251, 191, 36, 0.1);
+  --ok-border: rgba(251, 191, 36, 0.25);
+  --bad: #f87171;
+  --bad-bg: rgba(248, 113, 113, 0.1);
+  --bad-border: rgba(248, 113, 113, 0.25);
+  --radius: 16px;
+  --radius-sm: 8px;
+  --shadow: 0 2px 16px rgba(0,0,0,0.3);
+  --font-heading: 'Playfair Display', Georgia, serif;
+  --font-body: 'Karla', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --nav-bg: rgba(12, 12, 15, 0.85);
+  --card-stripe: none;
+}
+
+/* ── Theme: Tigre ──────────────────────────────── */
+[data-theme="tigre"] {
+  --bg: #1a0e00;
+  --bg-pattern: repeating-linear-gradient(
+    135deg,
+    transparent 0px,
+    transparent 18px,
+    rgba(0,0,0,0.35) 18px,
+    rgba(0,0,0,0.35) 22px,
+    transparent 22px,
+    transparent 40px
+  );
+  --surface: #2a1800;
+  --surface-hover: #3a2200;
+  --surface-accent: #331c00;
+  --border: #5a3500;
+  --border-accent: #e67700;
+  --text: #fff3e0;
+  --text-secondary: #d4a060;
+  --text-muted: #8a6030;
+  --accent: #ff8c00;
+  --accent-glow: rgba(255, 140, 0, 0.2);
+  --accent-text: #1a0e00;
+  --good: #66bb6a;
+  --good-bg: rgba(102, 187, 106, 0.12);
+  --good-border: rgba(102, 187, 106, 0.3);
+  --ok: #ffa726;
+  --ok-bg: rgba(255, 167, 38, 0.12);
+  --ok-border: rgba(255, 167, 38, 0.3);
+  --bad: #ef5350;
+  --bad-bg: rgba(239, 83, 80, 0.12);
+  --bad-border: rgba(239, 83, 80, 0.3);
+  --radius: 12px;
+  --radius-sm: 6px;
+  --shadow: 0 4px 24px rgba(0,0,0,0.5);
+  --nav-bg: rgba(26, 14, 0, 0.92);
+  --card-stripe: repeating-linear-gradient(
+    -45deg,
+    transparent 0px,
+    transparent 10px,
+    rgba(255, 140, 0, 0.04) 10px,
+    rgba(255, 140, 0, 0.04) 12px
+  );
+}
+
+/* ── Body ──────────────────────────────────────── */
+body {
+  font-family: var(--font-body);
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.6;
+  min-height: 100dvh;
+  -webkit-font-smoothing: antialiased;
+}
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: var(--bg-pattern);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ── SVG icons ────────────────────────────────── */
+.icon {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  color: var(--accent);
+}
+
+/* ── Note badges ──────────────────────────────── */
+.note {
+  font-weight: 800;
+  font-size: 1.2rem;
+  font-variant-numeric: tabular-nums;
+  padding: 0.2rem 0.6rem;
+  border-radius: var(--radius-sm);
+}
+.note-max {
+  font-weight: 500;
+  font-size: 0.75rem;
+  opacity: 0.6;
+}
+.note-good { color: var(--good); background: var(--good-bg); }
+.note-ok   { color: var(--ok);   background: var(--ok-bg);   }
+.note-bad  { color: var(--bad);  background: var(--bad-bg);  }
+
+/* ── Recommendation ribbon ────────────────────── */
+.reco-ribbon {
+  position: absolute;
+  top: 12px;
+  right: -28px;
+  background: var(--good);
+  color: #000;
+  font-size: 0.65rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  padding: 0.2rem 2rem;
+  transform: rotate(45deg);
+}
+
+/* ── Calendar ─────────────────────────────────── */
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+  margin-bottom: 1.5rem;
+}
+.calendar-cell {
+  aspect-ratio: 1;
+  border-radius: var(--radius-sm);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  position: relative;
+  min-height: 44px;
+}
+.calendar-cell.empty { background: transparent; }
+.calendar-cell.has-pdj {
+  background: var(--surface);
+  background-image: var(--card-stripe);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: all 0.15s;
+  color: var(--text);
+  font-weight: 600;
+}
+.calendar-cell.has-pdj:hover {
+  border-color: var(--accent);
+  background: var(--surface-hover);
+  transform: scale(1.04);
+}
+.calendar-cell.has-pdj:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.calendar-cell.has-pdj.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 12px var(--accent-glow);
+}
+.calendar-cell.today { color: var(--accent); }
+.calendar-cell.today::after {
+  content: '';
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--accent);
+  position: absolute;
+  bottom: 4px;
+}
+.calendar-cell .pdj-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  position: absolute;
+  bottom: 6px;
+}
+.calendar-cell.no-pdj { color: var(--text-muted); opacity: 0.4; }
+.calendar-cell.weekend { opacity: 0.3; }
+
+/* ── Day detail panel ─────────────────────────── */
+.day-detail {
+  background: var(--surface);
+  background-image: var(--card-stripe);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.25rem 1.5rem;
+  margin-bottom: 1.5rem;
+  display: none;
+  animation: slideDown 0.2s ease-out;
+}
+.day-detail.visible { display: block; }
+
+/* ── Animations ───────────────────────────────── */
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes reply-slide-in {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Responsive ───────────────────────────────── */
+@media (max-width: 640px) {
+  .calendar-cell { font-size: 0.75rem; min-height: 38px; }
+  .calendar-grid { gap: 3px; }
+  .note { font-size: 1rem; padding: 0.15rem 0.5rem; }
+  .day-detail { padding: 0.75rem; }
+}
+@media (max-width: 380px) {
+  .calendar-cell { min-height: 34px; font-size: 0.7rem; }
+  .calendar-grid { gap: 2px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition-duration: 0.01ms !important; }
+  .day-detail { animation: none !important; }
+}
+
+/* ── shadcn theme mapping ─────────────────────── */
+@theme inline {
+  --font-heading: var(--font-body);
+  --font-sans: var(--font-body);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+  --color-background: var(--bg);
+  --color-foreground: var(--text);
+  --color-card: var(--surface);
+  --color-card-foreground: var(--text);
+  --color-popover: var(--surface);
+  --color-popover-foreground: var(--text);
+  --color-primary: var(--accent);
+  --color-primary-foreground: var(--accent-text);
+  --color-secondary: var(--surface);
+  --color-secondary-foreground: var(--text-secondary);
+  --color-muted: var(--surface-accent);
+  --color-muted-foreground: var(--text-muted);
+  --color-accent: var(--surface-hover);
+  --color-accent-foreground: var(--text);
+  --color-destructive: var(--bad);
+  --color-border: var(--border);
+  --color-input: var(--border);
+  --color-ring: var(--accent);
+}
+
+@layer base {
+  * { @apply border-border outline-ring/50; }
+  body { @apply bg-background text-foreground; }
+}

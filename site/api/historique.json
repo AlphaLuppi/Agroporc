@@ -1,0 +1,1000 @@
+[
+  {
+    "date": "2026-04-07",
+    "plats": [
+      {
+        "restaurant": "Le Bistrot Trèfle",
+        "plat": "Poulet coco-curry. Riz pilaf, carottes glacées",
+        "prix": "11.9€",
+        "nutrition_estimee": {
+          "calories": 620,
+          "proteines_g": 38,
+          "glucides_g": 65,
+          "lipides_g": 18
+        },
+        "note": 8,
+        "justification": "Excellent ratio protéines/calories grâce au poulet. Le riz pilaf apporte des glucides complexes pour la récup, et les carottes glacées ajoutent des fibres et vitamines. Le lait de coco alourdit un peu les lipides mais ça reste très correct.",
+        "note_goulaf": 7,
+        "justification_goulaf": "Le curry-coco c'est toujours réconfortant et parfumé, le combo poulet-riz est un classique efficace. Manque peut-être un petit côté fromager ou croustillant pour envoyer du lourd en mode goulaf.",
+        "commentaires": [
+          {
+            "auteur": "Nikou",
+            "texte": "NONNNN MAIS LES GAAAAARS LE POULET COCO-CURRY IL EST DANGEREEEEUXXXX 🥥 bon après c'est pas assez gras pour moi mais le curry ça pardonne tout"
+          },
+          {
+            "auteur": "Gab",
+            "texte": "Les carottes glacées c'est un bon début, mais j'aurais remplacé le riz par une salade de quinoa perso. Au moins y'a des légumes."
+          },
+          {
+            "auteur": "Jimmy",
+            "texte": "Mon algorithme de satisfaction détecte un ratio épice/réconfort de 0.87. C'est exactement ce que je recommandais quand j'étais encore en service. Mes circuits me manquent."
+          }
+        ]
+      },
+      {
+        "restaurant": "La Pause Gourmande",
+        "plat": "Kefta de bœuf a l'Italienne risotto d'orzo",
+        "prix": "11.90€",
+        "nutrition_estimee": {
+          "calories": 680,
+          "proteines_g": 35,
+          "glucides_g": 58,
+          "lipides_g": 28
+        },
+        "note": 6,
+        "justification": "Le bœuf en kefta apporte de bonnes protéines mais la viande hachée est souvent plus grasse qu'un filet. Le risotto d'orzo est gourmand mais dense en glucides raffinés. Correct sans être optimal pour un sportif.",
+        "note_goulaf": 8,
+        "justification_goulaf": "Kefta épicée + risotto crémeux c'est une combinaison ultra gourmande. Le côté italien apporte du caractère, l'orzo a cette texture fondante qui fait plaisir. C'est généreux et savoureux.",
+        "commentaires": [
+          {
+            "auteur": "Nikou",
+            "texte": "Kefta ET risotto ?? On parle de PLAISIR là les gars. Si y'a du parmesan dedans je quitte mon travail pour aller manger maintenant."
+          },
+          {
+            "auteur": "Thomas",
+            "texte": "Kefta 'à l'italienne' c'est un peu comme mettre une cravate sur un jogging non ? Bon ça doit être bon quand même, j'ai faim."
+          },
+          {
+            "auteur": "Tom",
+            "texte": "Le risotto d'orzo c'est comme un firmware custom sur du hardware classique. Ça change pas la base mais l'expérience utilisateur est nettement améliorée. 4 étoiles sur Amazon."
+          },
+          {
+            "auteur": "Philippe Hetschebest",
+            "texte": "Kefta 'à l'italienne' avec un risotto d'ORZO ? Mais c'est pas possible ! L'orzo c'est des pâtes, c'est PAS du riz, alors arrêtez de me parler de risotto ! Qui est le chef ? Qu'il vienne m'expliquer !"
+          },
+          {
+            "auteur": "Alicia",
+            "texte": "Kefta à l'italienne... c'est un peu kludgy comme concept, non ? C'est comme quand Shrek met un costume de prince — ça marche mais c'est pas naturel. Onions would have helped, just saying."
+          },
+          {
+            "auteur": "Gab",
+            "texte": "Alors déjà le kefta c'est d'origine maghrébine, et là on le marie avec de l'orzo qui est une pâte italienne en forme de grain de riz, ce qui crée une fusion culinaire intéressante qui me rappelle un papier que j'ai lu sur les modèles de diffusion appliqués à la gastronomie moléculaire, d'ailleurs Fébulle adore le bœuf haché donc techniquement c'est un plat approuvé par mon chien."
+          },
+          {
+            "auteur": "Sylvain",
+            "texte": "J'ai demandé à un modèle sur LibreChat de noter ce plat, il a donné 7.3/10. Mais bon, un sandwich kefta aurait eu 9/10 facilement.",
+            "reponse_a": "Tom"
+          },
+          {
+            "auteur": "Jimmy",
+            "texte": "Quand JE gérais les PDJ, j'aurais jamais laissé passer un 'risotto d'orzo' sans lever un warning. Zephir aurait été d'accord avec moi. Mais bon, Toma a préféré économiser sur mon budget plutôt que sur la qualité des recommandations...",
+            "reponse_a": "Sylvain"
+          }
+        ]
+      },
+      {
+        "restaurant": "Le Truck Muche",
+        "plat": "Magret séché et pâtes au curry",
+        "prix": "11.50€",
+        "nutrition_estimee": {
+          "calories": 710,
+          "proteines_g": 32,
+          "glucides_g": 62,
+          "lipides_g": 32
+        },
+        "note": 5,
+        "justification": "Le magret séché est savoureux mais gras (charcuterie de canard). Les pâtes au curry ajoutent des glucides sans grande valeur nutritive supplémentaire. Le ratio lipides/protéines est déséquilibré pour un sportif.",
+        "note_goulaf": 9,
+        "justification_goulaf": "Magret séché c'est de la BOMBE en goût : fumé, fondant, intense. Associé à des pâtes au curry c'est un mariage audacieux et hyper gourmand. Le plat le plus décadent et original de la sélection.",
+        "commentaires": [
+          {
+            "auteur": "Nikou",
+            "texte": "NONNNN MAIS LES GAAAAARS LE MAGRET SÉCHÉ IL EST DANGEREEEEUXXXX 🦆 du canard séché avec des pâtes au curry c'est illégal, appelez la police du goût"
+          },
+          {
+            "auteur": "Gab",
+            "texte": "Magret séché + pâtes... y'a littéralement ZÉRO légume. Pas une feuille. Pas un brin de persil. Je suis en PLS."
+          },
+          {
+            "auteur": "Jimmy",
+            "texte": "Fusion canard-curry détectée. Ma base de données culinaire n'a aucune entrée pour cette combinaison. Erreur 404 : légume introuvable. Ça me rappelle pourquoi on m'a remplacé."
+          }
+        ]
+      }
+    ],
+    "recommandation": {
+      "restaurant": "Le Bistrot Trèfle",
+      "plat": "Poulet coco-curry. Riz pilaf, carottes glacées",
+      "raison": "Meilleur apport protéique (38g), lipides contenus, présence de légumes et glucides complexes. Le plat le plus équilibré pour un sportif à ~620 kcal."
+    },
+    "recommandation_goulaf": {
+      "restaurant": "Le Truck Muche",
+      "plat": "Magret séché et pâtes au curry",
+      "raison": "Le magret séché c'est une tuerie gustative, le combo avec le curry est original et ultra gourmand. Le plat le plus décadent et mémorable du jour."
+    }
+  },
+  {
+    "date": "2026-04-03",
+    "plats": [
+      {
+        "restaurant": "Le Bistrot Trèfle",
+        "plat": "Aiguillette de bœuf Baronne. Tagliatelles et crème de champignons",
+        "prix": "11.9€",
+        "nutrition_estimee": {
+          "calories": 620,
+          "proteines_g": 38,
+          "glucides_g": 55,
+          "lipides_g": 22
+        },
+        "note": 8,
+        "justification": "Excellent apport protéique grâce au bœuf maigre (aiguillette), associé à des glucides complexes via les tagliatelles. La crème de champignons ajoute un peu de lipides mais reste raisonnable pour un plat complet de sportif.",
+        "note_goulaf": 7,
+        "justification_goulaf": "L'association bœuf/pâtes fraîches/crème de champignons est un classique réconfortant et savoureux. Manque peut-être un petit twist d'originalité pour décrocher une note plus haute."
+      },
+      {
+        "restaurant": "La Pause Gourmande",
+        "plat": "Effiloché de joues de porc confites à la Mexicaine et écrasé de patates douces",
+        "prix": "11.90€",
+        "nutrition_estimee": {
+          "calories": 580,
+          "proteines_g": 32,
+          "glucides_g": 42,
+          "lipides_g": 28
+        },
+        "note": 7,
+        "justification": "Les joues de porc confites sont savoureuses mais plus grasses qu'une viande maigre. La patate douce est un excellent glucide à IG modéré, idéal pour le sportif. Le ratio lipides/protéines est un peu élevé à cause du confit.",
+        "note_goulaf": 9,
+        "justification_goulaf": "Joues de porc confites fondantes, épices mexicaines qui réveillent le palais, douceur de la patate douce en contraste — c'est un plat généreux, parfumé et réconfortant. L'originalité de l'association franco-mexicaine fait monter la note."
+      },
+      {
+        "restaurant": "Le Truck Muche",
+        "plat": "Gnocchis Gorgonzola cru",
+        "prix": "11.50€",
+        "nutrition_estimee": {
+          "calories": 650,
+          "proteines_g": 18,
+          "glucides_g": 62,
+          "lipides_g": 34
+        },
+        "note": 4,
+        "justification": "Plat très riche en glucides et lipides (gnocchis + fromage gras) mais pauvre en protéines. Le gorgonzola alourdit considérablement le bilan lipidique. Déséquilibré pour un profil sportif cherchant un bon ratio protéique.",
+        "note_goulaf": 8,
+        "justification_goulaf": "Le gorgonzola sur des gnocchis, c'est une bombe de gourmandise fromagère. Le côté crémeux, fondant et puissant en goût en fait un plat plaisir par excellence. Simple mais redoutablement efficace."
+      }
+    ],
+    "recommandation": {
+      "restaurant": "Le Bistrot Trèfle",
+      "plat": "Aiguillette de bœuf Baronne. Tagliatelles et crème de champignons",
+      "raison": "Meilleur ratio protéines/calories du jour (~38g de protéines), glucides complexes pour l'énergie, et lipides contenus. Plat le plus équilibré pour un sportif à 2200 kcal/jour, laissant de la marge pour les autres repas."
+    },
+    "recommandation_goulaf": {
+      "restaurant": "La Pause Gourmande",
+      "plat": "Effiloché de joues de porc confites à la Mexicaine et écrasé de patates douces",
+      "raison": "Le plat le plus gourmand et original du lot — viande confite fondante, épices chaleureuses et douceur de la patate douce. Un vrai plat de caractère qui fait voyager."
+    }
+  },
+  {
+    "date": "2026-04-02",
+    "plats": [
+      {
+        "restaurant": "Le Bistrot Trèfle",
+        "plat": "Sole meunière panée. Riz pilaf et crumble de poireaux",
+        "prix": "11.9€",
+        "nutrition_estimee": {
+          "calories": 620,
+          "proteines_g": 35,
+          "glucides_g": 55,
+          "lipides_g": 25
+        },
+        "note": 8,
+        "justification": "La sole est une excellente source de protéines maigres et le riz pilaf apporte des glucides complexes pour la récupération. Le panage et le beurre de la meunière ajoutent un peu de lipides, mais le crumble de poireaux apporte des fibres et micronutriments intéressants.",
+        "note_goulaf": 7,
+        "justification_goulaf": "La sole meunière panée c'est un classique élégant, le croustillant du panage et le beurre noisette apportent du plaisir. Le crumble de poireaux est une touche originale. Reste un plat assez sage côté gourmandise pure."
+      },
+      {
+        "restaurant": "La Pause Gourmande",
+        "plat": "Joues de porc confites à la Mexicaine, écrasé de patates douces",
+        "prix": "11.90€",
+        "nutrition_estimee": {
+          "calories": 710,
+          "proteines_g": 38,
+          "glucides_g": 45,
+          "lipides_g": 38
+        },
+        "note": 6,
+        "justification": "Les joues de porc confites sont riches en protéines mais aussi en lipides saturés du fait de la cuisson longue et du morceau gras. La patate douce est un excellent glucide à IG modéré, mais le ratio lipides/protéines est un peu déséquilibré pour un sportif.",
+        "note_goulaf": 9,
+        "justification_goulaf": "Joues de porc confites, c'est fondant, riche, réconfortant — le top du comfort food. Les saveurs mexicaines (épices, piment) apportent du caractère et de l'originalité. L'écrasé de patates douces en accompagnement doux et sucré, c'est un sans-faute gourmand."
+      },
+      {
+        "restaurant": "Le Truck Muche",
+        "plat": "Tomates farcies, riz",
+        "prix": "11.50€",
+        "nutrition_estimee": {
+          "calories": 650,
+          "proteines_g": 28,
+          "glucides_g": 60,
+          "lipides_g": 28
+        },
+        "note": 6,
+        "justification": "Plat équilibré avec des glucides du riz et des protéines de la farce (porc/bœuf), mais la viande hachée de la farce est souvent grasse et les protéines restent modestes. Correct mais pas optimal pour un profil sportif cherchant un bon apport protéique.",
+        "note_goulaf": 7,
+        "justification_goulaf": "Les tomates farcies c'est la nostalgie de la cuisine de grand-mère, un plat canaille et généreux. Simple mais efficace en plaisir. Il manque juste un petit twist d'originalité pour décrocher un 8."
+      }
+    ],
+    "recommandation": {
+      "restaurant": "Le Bistrot Trèfle",
+      "plat": "Sole meunière panée. Riz pilaf et crumble de poireaux",
+      "raison": "Meilleur ratio protéines/lipides grâce au poisson blanc, bons glucides complexes avec le riz pilaf, et apport en fibres et vitamines via les poireaux. C'est le plat le plus adapté à un objectif de 2200 kcal avec pratique sportive régulière."
+    },
+    "recommandation_goulaf": {
+      "restaurant": "La Pause Gourmande",
+      "plat": "Joues de porc confites à la Mexicaine, écrasé de patates douces",
+      "raison": "Viande confite fondante, épices mexicaines qui réveillent le palais, patates douces onctueuses — c'est le plat le plus gourmand et original de la sélection, un vrai moment de plaisir."
+    }
+  },
+  {
+    "date": "2026-04-01",
+    "plats": [
+      {
+        "restaurant": "Le Bistrot Trèfle",
+        "plat": "Ravioles du Dauphiné. Crème d'aubergine, brisures de chèvre, jambon cru et pompon de salade",
+        "prix": "11.9€",
+        "nutrition_estimee": {
+          "calories": 620,
+          "proteines_g": 22,
+          "glucides_g": 55,
+          "lipides_g": 32
+        },
+        "note": 5,
+        "justification": "Les ravioles sont riches en glucides mais la crème et le chèvre ajoutent beaucoup de lipides. Le ratio protéines/lipides est défavorable pour un sportif, et l'apport protéique reste modeste malgré le jambon cru.",
+        "note_goulaf": 8,
+        "justification_goulaf": "Les ravioles du Dauphiné c'est un classique réconfortant, la crème d'aubergine apporte de l'originalité, et le combo chèvre-jambon cru est gourmand à souhait. Bel équilibre des saveurs."
+      },
+      {
+        "restaurant": "La Pause Gourmande",
+        "plat": "Gnocchi sauce aux 3 fromages (emmental, gorgonzola, chèvre), épinards et éclats de noix",
+        "prix": "11.90€",
+        "nutrition_estimee": {
+          "calories": 720,
+          "proteines_g": 22,
+          "glucides_g": 65,
+          "lipides_g": 38
+        },
+        "note": 4,
+        "justification": "Plat très gras (3 fromages + noix) avec un apport protéique faible pour un sportif. Riche en glucides via les gnocchi mais le ratio lipides/protéines est défavorable. À éviter si l'objectif est de maîtriser les graisses.",
+        "note_goulaf": 9,
+        "justification_goulaf": "Trois fromages dont du gorgonzola, des gnocchi fondants, le croquant des noix et la fraîcheur des épinards — c'est un plat d'une gourmandise absolue. Le genre de comfort food qui fait fermer les yeux de plaisir."
+      },
+      {
+        "restaurant": "Le Truck Muche",
+        "plat": "Blanc de poulet crémeux tomates séchées, tagliatelles",
+        "prix": "11.50€",
+        "nutrition_estimee": {
+          "calories": 640,
+          "proteines_g": 35,
+          "glucides_g": 58,
+          "lipides_g": 26
+        },
+        "note": 6,
+        "justification": "Bon apport protéique grâce au poulet et glucides des tagliatelles, mais la sauce crémeuse alourdit le bilan lipidique. Correct pour un sportif mais moins optimisé que des préparations plus légères.",
+        "note_goulaf": 6,
+        "justification_goulaf": "Classique poulet-pâtes relevé par les tomates séchées et la sauce crémeuse, c'est bon et efficace mais sans grande surprise. Ça manque d'un petit twist pour marquer les esprits."
+      }
+    ],
+    "recommandation": {
+      "restaurant": "Le Truck Muche",
+      "plat": "Blanc de poulet crémeux tomates séchées, tagliatelles",
+      "raison": "Meilleur ratio pour aujourd'hui après correction du plat Pause Gourmande."
+    },
+    "recommandation_goulaf": {
+      "restaurant": "La Pause Gourmande",
+      "plat": "Gnocchi sauce aux 3 fromages (emmental, gorgonzola, chèvre), épinards et éclats de noix",
+      "raison": "Le trio de fromages sur des gnocchi avec le croquant des noix, c'est le plat le plus gourmand et réconfortant du jour. Pur plaisir."
+    }
+  },
+  {
+    "date": "2026-03-31",
+    "plats": [
+      {
+        "restaurant": "Le Bistrot Trèfle",
+        "plat": "Échine de porc rôtie, crème de raclette. Écrasé de pommes de terre, méli-mélo de légumes",
+        "prix": "11.9€",
+        "nutrition_estimee": {
+          "calories": 750,
+          "proteines_g": 35,
+          "glucides_g": 45,
+          "lipides_g": 45
+        },
+        "note": 5,
+        "justification": "Bon apport protéique grâce au porc, mais la crème de raclette alourdit considérablement le bilan lipidique. Les légumes sont un plus, mais le ratio lipides/protéines est défavorable pour un sportif.",
+        "note_goulaf": 9,
+        "justification_goulaf": "Échine rôtie fondante nappée de crème de raclette, c'est un festival de réconfort. L'écrasé de pommes de terre absorbe la sauce, les légumes apportent un peu de fraîcheur. Plat généreux et gourmand par excellence."
+      },
+      {
+        "restaurant": "La Pause Gourmande",
+        "plat": "Filet de poulet aux olives vertes et citrons, semoule et courgettes",
+        "prix": "11.90€",
+        "nutrition_estimee": {
+          "calories": 550,
+          "proteines_g": 40,
+          "glucides_g": 50,
+          "lipides_g": 15
+        },
+        "note": 9,
+        "justification": "Excellent profil pour un sportif : protéines maigres du filet de poulet, glucides complexes de la semoule pour l'énergie, et courgettes pour les fibres et micronutriments. Lipides maîtrisés grâce à une cuisson légère avec olives et citron.",
+        "note_goulaf": 7,
+        "justification_goulaf": "Le mariage olives-citron donne du peps et de la personnalité au poulet, c'est frais et méditerranéen. Plaisant et savoureux, mais manque un peu du côté réconfortant et indulgent comparé aux plats plus riches."
+      },
+      {
+        "restaurant": "Le Truck Muche",
+        "plat": "Jambon braisé frites",
+        "prix": "11.50€",
+        "nutrition_estimee": {
+          "calories": 800,
+          "proteines_g": 30,
+          "glucides_g": 65,
+          "lipides_g": 40
+        },
+        "note": 4,
+        "justification": "Les frites alourdissent le bilan calorique et lipidique sans apport nutritionnel intéressant. Absence de légumes et profil déséquilibré, peu adapté à un objectif sportif de 2200 kcal/jour.",
+        "note_goulaf": 7,
+        "justification_goulaf": "Un classique comfort food : jambon braisé juteux et frites croustillantes, c'est simple et efficace. Manque cependant d'originalité et d'un petit twist qui le ferait sortir du lot."
+      }
+    ],
+    "recommandation": {
+      "restaurant": "La Pause Gourmande",
+      "plat": "Filet de poulet aux olives vertes et citrons, semoule et courgettes",
+      "raison": "Meilleur ratio protéines/calories, lipides bas, glucides complexes de la semoule pour recharger les réserves de glycogène, et légumes pour les fibres. Ce plat s'intègre parfaitement dans un budget de 2200 kcal tout en laissant de la marge pour les autres repas."
+    },
+    "recommandation_goulaf": {
+      "restaurant": "Le Bistrot Trèfle",
+      "plat": "Échine de porc rôtie, crème de raclette. Écrasé de pommes de terre, méli-mélo de légumes",
+      "raison": "Crème de raclette sur échine rôtie avec écrasé de pommes de terre, c'est le plat doudou ultime. Généreux, fondant, réconfortant — le genre de plat qui fait oublier un lundi."
+    }
+  },
+  {
+    "date": "2026-03-30",
+    "plats": [
+      {
+        "restaurant": "Le Bistrot Trèfle",
+        "plat": "Paleron de bœuf, petit jus corsé au thym. Risotto d'asperges",
+        "prix": "11.9€",
+        "nutrition_estimee": {
+          "calories": 650,
+          "proteines_g": 42,
+          "glucides_g": 55,
+          "lipides_g": 22
+        },
+        "note": 8,
+        "justification": "Le paleron est une viande maigre riche en protéines et le risotto d'asperges apporte des glucides complexes et des fibres. Bon équilibre macro pour un sportif, avec un apport calorique raisonnable pour un repas du midi (~30% de l'objectif journalier).",
+        "note_goulaf": 8,
+        "justification_goulaf": "Le paleron braisé avec son jus corsé au thym, c'est du pur réconfort. Le risotto crémeux aux asperges apporte fraîcheur et gourmandise. Plat classique mais très bien exécuté sur le papier."
+      },
+      {
+        "restaurant": "La Pause Gourmande",
+        "plat": "Araignée de porc à la Portugaise (sauce chorizo, oignons, persil, tomates et crème) pommes de terre grenailles et carottes",
+        "prix": "11.90€",
+        "nutrition_estimee": {
+          "calories": 720,
+          "proteines_g": 35,
+          "glucides_g": 50,
+          "lipides_g": 38
+        },
+        "note": 6,
+        "justification": "L'araignée de porc est un morceau correct en protéines, mais la sauce au chorizo et à la crème alourdit significativement le bilan lipidique. Les grenailles et carottes sont un bon accompagnement, mais le ratio lipides/protéines est défavorable pour un profil sportif.",
+        "note_goulaf": 9,
+        "justification_goulaf": "Sauce portugaise au chorizo, crème, tomates — c'est une bombe de saveurs. L'araignée est un morceau goûteux et fondant, les grenailles vont pomper la sauce. Plat ultra-gourmand et généreux, le genre qu'on sauce jusqu'à la dernière goutte."
+      },
+      {
+        "restaurant": "Le Truck Muche",
+        "plat": "Canard aux olives, tagliatelles",
+        "prix": "11.50€",
+        "nutrition_estimee": {
+          "calories": 750,
+          "proteines_g": 32,
+          "glucides_g": 60,
+          "lipides_g": 38
+        },
+        "note": 5,
+        "justification": "Le canard est une viande grasse, et les olives ajoutent encore des lipides. Les tagliatelles apportent des glucides mais l'ensemble est trop riche en graisses pour un repas de sportif. Rapport protéines/lipides peu optimal.",
+        "note_goulaf": 7,
+        "justification_goulaf": "Le canard aux olives est un classique savoureux, la sauce se marie bien avec les tagliatelles. Bon plat bistrot mais moins original et moins percutant en saveurs que les deux autres propositions."
+      }
+    ],
+    "recommandation": {
+      "restaurant": "Le Bistrot Trèfle",
+      "plat": "Paleron de bœuf, petit jus corsé au thym. Risotto d'asperges",
+      "raison": "Meilleur ratio protéines/lipides des trois options, avec ~42g de protéines pour seulement ~22g de lipides. Le risotto d'asperges fournit l'énergie glucidique nécessaire sans excès calorique. À 650 kcal, il laisse une marge confortable pour les autres repas dans l'objectif de 2200 kcal."
+    },
+    "recommandation_goulaf": {
+      "restaurant": "La Pause Gourmande",
+      "plat": "Araignée de porc à la Portugaise",
+      "raison": "La sauce chorizo-crème-tomates est une tuerie absolue, l'araignée de porc est fondante, les grenailles vont tout absorber. C'est le plat où tu te fais plaisir sans réfléchir."
+    }
+  },
+  {
+    "date": "2026-03-27",
+    "plats": [
+      {
+        "restaurant": "Le Bistrot Trèfle",
+        "plat": "Demi coquelet, petit jus aux aromates. Frites fraîches, salade",
+        "prix": "11.9€",
+        "nutrition_estimee": {
+          "calories": 720,
+          "proteines_g": 42,
+          "glucides_g": 55,
+          "lipides_g": 32
+        },
+        "note": 7,
+        "justification": "Bon apport protéique avec le coquelet (volaille maigre). Les frites fraîches ajoutent des glucides et lipides mais restent raisonnables en quantité modérée. La salade apporte de la fibre. Repas équilibré et adapté à un profil sportif.",
+        "note_goulaf": 8,
+        "justification_goulaf": "Un coquelet rôti avec son jus aux aromates, c'est du pur réconfort. Les frites fraîches maison et la salade en font un classique bistrot généreux et savoureux."
+      },
+      {
+        "restaurant": "La Pause Gourmande",
+        "plat": "Mahi Mahi au lait de coco et citron vert riz aux légumes",
+        "prix": "11.90€",
+        "nutrition_estimee": {
+          "calories": 650,
+          "proteines_g": 40,
+          "glucides_g": 60,
+          "lipides_g": 20
+        },
+        "note": 9,
+        "justification": "Excellent choix : poisson maigre très protéiné, riz comme source de glucides complexes idéale pour la récupération, légumes pour les micronutriments. Le lait de coco apporte des lipides de qualité sans excès. Profil macro très bien équilibré pour un sportif.",
+        "note_goulaf": 7,
+        "justification_goulaf": "Le combo lait de coco / citron vert apporte une belle fraîcheur exotique. C'est parfumé et dépaysant, mais reste un plat relativement léger en sensation de gourmandise pure."
+      },
+      {
+        "restaurant": "Le Truck Muche",
+        "plat": "GRATIN DE CROZETS ET DIOT DE SAVOIE",
+        "prix": "11.50€",
+        "nutrition_estimee": {
+          "calories": 820,
+          "proteines_g": 28,
+          "glucides_g": 65,
+          "lipides_g": 45
+        },
+        "note": 5,
+        "justification": "Plat réconfortant mais trop lipidique : la saucisse de Savoie et le gratin de crozets (fromage, crème) chargent fortement en graisses saturées. Les protéines sont correctes mais le ratio lipides/protéines est défavorable pour la nutrition sportive.",
+        "note_goulaf": 9,
+        "justification_goulaf": "Gratin fondant, crozets savoyards, diot fumé — c'est le plat montagnard ultime. Fromage gratiné, saucisse généreuse : un concentré de réconfort et de gourmandise. Le plaisir à l'état pur."
+      }
+    ],
+    "recommandation": {
+      "restaurant": "La Pause Gourmande",
+      "plat": "Mahi Mahi au lait de coco et citron vert riz aux légumes",
+      "raison": "Meilleur équilibre macro du jour : poisson maigre riche en protéines, glucides complexes via le riz, lipides modérés. Idéal pour la récupération musculaire tout en restant dans ton objectif de 2200 kcal journalier."
+    },
+    "recommandation_goulaf": {
+      "restaurant": "Le Truck Muche",
+      "plat": "GRATIN DE CROZETS ET DIOT DE SAVOIE",
+      "raison": "Le gratin savoyard coche toutes les cases du plaisir : fromage fondu, pâtes gratinées, saucisse fumée. C'est le plat réconfort par excellence, parfait pour un dimanche de début avril."
+    }
+  },
+  {
+    "date": "2026-03-26",
+    "plats": [
+      {
+        "restaurant": "Le Bistrot Trèfle",
+        "plat": "Pot au feu du Chef au paleron et ses petits légumes",
+        "prix": "11.9€",
+        "nutrition_estimee": {
+          "calories": 480,
+          "proteines_g": 38,
+          "glucides_g": 22,
+          "lipides_g": 18
+        },
+        "note": 8,
+        "justification": "Excellente source de protéines complètes avec un paleron maigre cuit à l'eau, donc peu de graisses ajoutées. Les légumes apportent fibres et micronutriments essentiels à la récupération. Repas équilibré et rassasiant, idéal pour un sportif.",
+        "note_goulaf": 7,
+        "justification_goulaf": "Un grand classique réconfortant, le bouillon et la viande fondante font mouche. Manque peut-être un côté gourmand ou croustillant pour décrocher une note plus haute, mais c'est un plat d'âme."
+      },
+      {
+        "restaurant": "La Pause Gourmande",
+        "plat": "Lomo (viande de porc, mille-feuilles de légumes, mayonnaise aux herbes)",
+        "prix": "11.90€",
+        "nutrition_estimee": {
+          "calories": 650,
+          "proteines_g": 32,
+          "glucides_g": 15,
+          "lipides_g": 48
+        },
+        "note": 5,
+        "justification": "Le porc apporte de bonnes protéines et les légumes sont un plus, mais la mayonnaise aux herbes fait exploser l'apport lipidique sans intérêt nutritionnel sportif. Ratio protéines/lipides peu favorable pour une séance d'entraînement.",
+        "note_goulaf": 8,
+        "justification_goulaf": "Le mille-feuilles de légumes apporte texture et élégance, la mayo aux herbes une touche gourmande et fraîche. C'est un plat bien construit avec du caractère et de la générosité."
+      },
+      {
+        "restaurant": "Le Truck Muche",
+        "plat": "Rougail Saucisse",
+        "prix": "11.50€",
+        "nutrition_estimee": {
+          "calories": 780,
+          "proteines_g": 27,
+          "glucides_g": 65,
+          "lipides_g": 38
+        },
+        "note": 5,
+        "justification": "La saucisse est une viande transformée, riche en graisses saturées et en sel — peu optimal pour la récupération musculaire. Le riz apporte une bonne charge glucidique (utile si activité intense), mais la qualité protéique reste inférieure aux viandes non transformées.",
+        "note_goulaf": 9,
+        "justification_goulaf": "Un rougail saucisse bien fait c'est une bombe de saveurs : piment, tomates, épices créoles, saucisse fumée juteuse sur du riz. Plat ultra-réconfortant, généreux et dépaysant. Le roi du goulaf aujourd'hui."
+      }
+    ],
+    "recommandation": {
+      "restaurant": "Le Bistrot Trèfle",
+      "plat": "Pot au feu du Chef au paleron et ses petits légumes",
+      "raison": "Meilleur ratio protéines/calories du jour (38g prot pour ~480 kcal), cuisson à l'eau sans graisses ajoutées, et légumes variés pour les micronutriments. Représente ~22% de ton objectif calorique journalier tout en couvrant environ 30-35% de tes besoins protéiques. Le choix le plus intelligent pour un sportif."
+    },
+    "recommandation_goulaf": {
+      "restaurant": "Le Truck Muche",
+      "plat": "Rougail Saucisse",
+      "raison": "Plat le plus gourmand et savoureux du jour, épicé, généreux, avec ce côté street-food créole irrésistible. Le dimanche de Pâques mérite un rougail."
+    }
+  },
+  {
+    "date": "2026-03-25",
+    "plats": [
+      {
+        "restaurant": "Le Bistrot Trèfle",
+        "plat": "Filet de limande, beurre blanc aux agrumes. Pommes de terre vapeur, haricots verts",
+        "prix": "11.9€",
+        "nutrition_estimee": {
+          "calories": 480,
+          "proteines_g": 32,
+          "glucides_g": 40,
+          "lipides_g": 18
+        },
+        "note": 8,
+        "justification": "Excellent profil pour un sportif : protéines maigres (poisson blanc), glucides complexes (pommes de terre vapeur) et légumes verts. Le beurre blanc ajoute un peu de lipides mais reste raisonnable. Repas complet et équilibré.",
+        "note_goulaf": 6,
+        "justification_goulaf": "Le beurre blanc aux agrumes apporte une touche de finesse appréciable, mais l'ensemble reste un plat de poisson blanc assez sage. Correct sans être renversant côté gourmandise."
+      },
+      {
+        "restaurant": "La Pause Gourmande",
+        "plat": "Rigatoni all'arrabiata et burrata",
+        "prix": "11.90€",
+        "nutrition_estimee": {
+          "calories": 620,
+          "proteines_g": 20,
+          "glucides_g": 65,
+          "lipides_g": 30
+        },
+        "note": 5,
+        "justification": "Bon apport en glucides via les pâtes, mais la burrata alourdit le bilan lipidique et le ratio protéines/calories est faible. Plat gourmand mais peu optimisé pour un profil sportif.",
+        "note_goulaf": 9,
+        "justification_goulaf": "L'alliance rigatoni arrabiata et burrata crémeuse est un pur moment de bonheur italien. Le piquant de l'arrabiata contre l'onctuosité de la burrata, c'est généreux, réconfortant et gourmand. Excellent choix plaisir."
+      },
+      {
+        "restaurant": "Le Truck Muche",
+        "plat": "Émincé de dinde à la moutarde, purée",
+        "prix": "11.50€",
+        "nutrition_estimee": {
+          "calories": 520,
+          "proteines_g": 38,
+          "glucides_g": 42,
+          "lipides_g": 16
+        },
+        "note": 8,
+        "justification": "Très bon choix sportif : la dinde est une excellente source de protéines maigres, la sauce moutarde reste légère en lipides et la purée apporte des glucides. Ratio protéines/calories optimal.",
+        "note_goulaf": 7,
+        "justification_goulaf": "La sauce moutarde relève bien la dinde et la purée maison apporte du réconfort. C'est un classique bien exécuté, savoureux sans être spectaculaire. Solide et satisfaisant."
+      }
+    ],
+    "recommandation": {
+      "restaurant": "Le Truck Muche",
+      "plat": "Émincé de dinde à la moutarde, purée",
+      "raison": "Meilleur apport protéique (38g) avec des lipides contenus, idéal pour la récupération musculaire. Le Bistrot Trèfle est une alternative tout aussi valable si tu préfères du poisson — les deux sont ex-aequo à 8/10, mais la dinde l'emporte légèrement sur les protéines."
+    },
+    "recommandation_goulaf": {
+      "restaurant": "La Pause Gourmande",
+      "plat": "Rigatoni all'arrabiata et burrata",
+      "raison": "Le combo arrabiata piquant + burrata crémeuse est irrésistible. C'est le plat le plus gourmand et le plus généreux de la sélection."
+    }
+  },
+  {
+    "date": "2026-03-24",
+    "plats": [
+      {
+        "restaurant": "Le Bistrot Trèfle",
+        "plat": "Porc au caramel. Riz cantonais",
+        "prix": "11.9€",
+        "nutrition_estimee": {
+          "calories": 650,
+          "proteines_g": 30,
+          "glucides_g": 75,
+          "lipides_g": 22
+        },
+        "note": 5,
+        "justification": "Le porc au caramel est riche en sucres ajoutés et le riz cantonais contient des lipides supplémentaires (œuf, huile). Apport protéique correct mais ratio sucres/lipides peu optimal pour un sportif.",
+        "note_goulaf": 8,
+        "justification_goulaf": "Le porc au caramel c'est un classique réconfortant, sucré-salé addictif avec le riz cantonais bien garni. Plat gourmand et généreux qui fait voyager."
+      },
+      {
+        "restaurant": "La Pause Gourmande",
+        "plat": "Ballotine de volaille au comté Pommes de terre façon potatoes ketchup maison",
+        "prix": "11.90€",
+        "nutrition_estimee": {
+          "calories": 620,
+          "proteines_g": 35,
+          "glucides_g": 50,
+          "lipides_g": 28
+        },
+        "note": 6,
+        "justification": "Bon apport protéique grâce à la volaille et au comté. Les potatoes sont plus grasses que des pommes de terre nature mais restent une source de glucides complexes. Le comté ajoute des lipides saturés mais aussi du calcium.",
+        "note_goulaf": 8,
+        "justification_goulaf": "Une ballotine farcie au comté c'est gourmand et travaillé, les potatoes maison ajoutent du croustillant et le ketchup maison montre un vrai effort artisanal. Plat généreux et bien pensé."
+      },
+      {
+        "restaurant": "Le Truck Muche",
+        "plat": "CUISSE DE POULET RÔTI POMME DE TERRE",
+        "prix": "11.50€",
+        "nutrition_estimee": {
+          "calories": 550,
+          "proteines_g": 38,
+          "glucides_g": 40,
+          "lipides_g": 20
+        },
+        "note": 8,
+        "justification": "Excellent ratio protéines/calories avec le poulet rôti. La pomme de terre offre des glucides complexes à IG modéré, idéal pour la recharge glycogénique. Plat simple, peu transformé, bien équilibré pour un sportif.",
+        "note_goulaf": 6,
+        "justification_goulaf": "Un bon poulet rôti c'est toujours plaisant, mais le plat reste classique et sans surprise. Manque un petit twist ou un accompagnement plus travaillé pour vraiment marquer les esprits."
+      }
+    ],
+    "recommandation": {
+      "restaurant": "Le Truck Muche",
+      "plat": "CUISSE DE POULET RÔTI POMME DE TERRE",
+      "raison": "Meilleur ratio protéines/calories (38g pour 550 kcal), peu de sucres ajoutés, glucides complexes via la pomme de terre, et le moins calorique des trois — laisse de la marge pour les autres repas sur un objectif de 2200 kcal."
+    },
+    "recommandation_goulaf": {
+      "restaurant": "La Pause Gourmande",
+      "plat": "Ballotine de volaille au comté, potatoes, ketchup maison",
+      "raison": "La ballotine au comté apporte le côté gourmand et travaillé, les potatoes le croustillant, et le ketchup maison le petit plus artisanal. C'est le plat le plus complet en plaisir gustatif."
+    }
+  },
+  {
+    "date": "2026-03-23",
+    "plats": [
+      {
+        "restaurant": "Le Bistrot Trèfle",
+        "plat": "Émincé de dinde, épices tandoori. Boulgour et courgettes rôties",
+        "prix": "11.9€",
+        "nutrition_estimee": {
+          "calories": 520,
+          "proteines_g": 38,
+          "glucides_g": 50,
+          "lipides_g": 12
+        },
+        "note": 9,
+        "justification": "Excellent profil sportif : protéines maigres (dinde), glucides complexes (boulgour) et légumes. Rapport protéines/calories très favorable, faible en lipides. Plat complet et équilibré idéal pour la récupération.",
+        "note_goulaf": 6,
+        "justification_goulaf": "Les épices tandoori apportent du caractère et les courgettes rôties ont du goût, mais ça reste un plat « healthy » classique sans folie. Correct mais pas transcendant côté gourmandise."
+      },
+      {
+        "restaurant": "La Pause Gourmande",
+        "plat": "Petits Farcis à l'Italienne (grana padano, basilic, olives noires) et Orzo (pâtes)",
+        "prix": "11.90€",
+        "nutrition_estimee": {
+          "calories": 560,
+          "proteines_g": 20,
+          "glucides_g": 55,
+          "lipides_g": 22
+        },
+        "note": 6,
+        "justification": "Apport en glucides correct grâce aux pâtes orzo, mais les protéines sont insuffisantes pour un sportif (fromage et farce végétale). Les lipides sont un peu élevés avec le grana padano et les olives.",
+        "note_goulaf": 8,
+        "justification_goulaf": "Les petits farcis à l'italienne avec grana padano, basilic frais et olives noires, c'est un festival de saveurs méditerranéennes. L'orzo complète bien le tout. Plat généreux, parfumé et réconfortant."
+      },
+      {
+        "restaurant": "Le Truck Muche",
+        "plat": "Canard aux olives, tagliatelles",
+        "prix": "11.50€",
+        "nutrition_estimee": {
+          "calories": 650,
+          "proteines_g": 30,
+          "glucides_g": 52,
+          "lipides_g": 30
+        },
+        "note": 5,
+        "justification": "Le canard est une viande grasse, ce qui alourdit le bilan lipidique. Les protéines sont correctes mais le ratio lipides/calories est défavorable pour un sportif. Plat le plus calorique des trois.",
+        "note_goulaf": 9,
+        "justification_goulaf": "Canard aux olives, c'est un classique du Sud généreux et savoureux — viande fondante, sauce riche, olives qui relèvent le tout. Avec des tagliatelles pour saucer, c'est le plat réconfort par excellence. Goulaf approuvé."
+      }
+    ],
+    "recommandation": {
+      "restaurant": "Le Bistrot Trèfle",
+      "plat": "Émincé de dinde, épices tandoori. Boulgour et courgettes rôties",
+      "raison": "Meilleur ratio protéines/calories, glucides complexes pour l'énergie, légumes pour les micronutriments, et faible teneur en lipides. C'est le plat idéal pour un sportif à 2200 kcal/jour."
+    },
+    "recommandation_goulaf": {
+      "restaurant": "Le Truck Muche",
+      "plat": "Canard aux olives, tagliatelles",
+      "raison": "Le canard aux olives est le plat le plus gourmand et généreux de la sélection. Viande riche, sauce savoureuse, tagliatelles pour saucer — c'est le plaisir pur."
+    }
+  },
+  {
+    "date": "2026-03-20",
+    "plats": [
+      {
+        "restaurant": "Le Bistrot Trèfle",
+        "plat": "Lamelles de seiche en persillade. Risotto et tomate rôtie",
+        "prix": "11.9€",
+        "nutrition_estimee": {
+          "calories": 520,
+          "proteines_g": 30,
+          "glucides_g": 55,
+          "lipides_g": 15
+        },
+        "note": 7,
+        "justification": "Bon apport protéique grâce à la seiche, source maigre de protéines. Le risotto apporte des glucides complexes utiles pour l'énergie. Plat relativement équilibré mais un peu pauvre en légumes.",
+        "note_goulaf": 7,
+        "justification_goulaf": "La persillade sur la seiche apporte du caractère et du parfum, le risotto est réconfortant et la tomate rôtie ajoute une touche sucrée-acidulée. C'est savoureux mais reste relativement classique, sans folie gustative."
+      },
+      {
+        "restaurant": "La Pause Gourmande",
+        "plat": "Dos de colin, crumble de parmesan, mousseline de brocolis et chou-fleur rôti au curry",
+        "prix": "11.90€",
+        "nutrition_estimee": {
+          "calories": 480,
+          "proteines_g": 35,
+          "glucides_g": 20,
+          "lipides_g": 22
+        },
+        "note": 9,
+        "justification": "Excellent profil pour un sportif : protéines maigres du colin, bonne portion de légumes riches en fibres et micronutriments (brocolis, chou-fleur). Le crumble de parmesan ajoute des lipides et du calcium sans excès calorique.",
+        "note_goulaf": 8,
+        "justification_goulaf": "Le crumble de parmesan apporte du croustillant et de l'umami sur le poisson, la mousseline est onctueuse, et le chou-fleur rôti au curry ajoute une dimension épicée et caramélisée. Plat bien construit avec des textures variées et de la personnalité."
+      },
+      {
+        "restaurant": "Le Truck Muche",
+        "plat": "RISOTTO GORGONZOLA JAMBON CRU",
+        "prix": "11.50€",
+        "nutrition_estimee": {
+          "calories": 650,
+          "proteines_g": 25,
+          "glucides_g": 60,
+          "lipides_g": 30
+        },
+        "note": 5,
+        "justification": "Plat calorique et riche en lipides saturés à cause du gorgonzola et du jambon cru. Le ratio protéines/calories est défavorable. Absence totale de légumes, ce qui le rend peu intéressant sur le plan nutritionnel pour un sportif.",
+        "note_goulaf": 9,
+        "justification_goulaf": "Le gorgonzola fond dans le risotto crémeux, le jambon cru apporte du sel et de la mâche — c'est un pur plat de réconfort, riche, généreux et totalement décomplexé. Combinaison fromage bleu + jambon cru = gourmandise maximale."
+      }
+    ],
+    "recommandation": {
+      "restaurant": "La Pause Gourmande",
+      "plat": "Dos de colin, crumble de parmesan, mousseline de brocolis et chou-fleur rôti au curry",
+      "raison": "Meilleur ratio protéines/calories, riche en légumes variés apportant fibres et micronutriments, et calories modérées (~480 kcal) laissant de la marge pour les autres repas sur un objectif à 2200 kcal."
+    },
+    "recommandation_goulaf": {
+      "restaurant": "Le Truck Muche",
+      "plat": "RISOTTO GORGONZOLA JAMBON CRU",
+      "raison": "Pur plaisir régressif : crémeux, salé, umami à fond. C'est le plat où tu te fais plaisir sans regarder les macros."
+    }
+  },
+  {
+    "date": "2026-03-19",
+    "plats": [
+      {
+        "restaurant": "Le Bistrot Trèfle",
+        "plat": "Wok de poulet asiatique, nouilles de blé aux légumes du soleil",
+        "prix": "11.9€",
+        "nutrition_estimee": {
+          "calories": 520,
+          "proteines_g": 42,
+          "glucides_g": 58,
+          "lipides_g": 10
+        },
+        "note": 8,
+        "justification": "Excellent ratio protéines/glucides pour un sportif : le poulet apporte des protéines complètes, les nouilles de blé fournissent de l'énergie glucidique de qualité. Les légumes ajoutent fibres et micronutriments. Faible en lipides, ce plat s'inscrit bien dans un objectif 2200 kcal sans peser sur le reste de la journée.",
+        "note_goulaf": 7,
+        "justification_goulaf": "Les saveurs asiatiques du wok apportent du peps et de l'originalité. Bon plat savoureux mais qui reste assez léger côté gourmandise pure — pas de sauce crémeuse ni de croustillant pour faire monter le curseur plaisir."
+      },
+      {
+        "restaurant": "La Pause Gourmande",
+        "plat": "Blanquette de sot l y laisse de dinde riz",
+        "prix": "11.90€",
+        "nutrition_estimee": {
+          "calories": 530,
+          "proteines_g": 34,
+          "glucides_g": 48,
+          "lipides_g": 20
+        },
+        "note": 6,
+        "justification": "La dinde est une excellente source de protéines maigres, mais la sauce blanquette (crème, beurre) alourdit le profil lipidique. Le riz assure un bon apport glucidique. Correct pour un sportif, mais les graisses saturées de la sauce en limitent l'intérêt nutritionnel.",
+        "note_goulaf": 8,
+        "justification_goulaf": "Le sot-l'y-laisse est le morceau le plus fondant et savoureux de la volaille, sublimé par une sauce blanquette onctueuse. C'est du pur réconfort à la française, généreux et gourmand. Un vrai plat de bistrot comme on les aime."
+      },
+      {
+        "restaurant": "Le Truck Muche",
+        "plat": "Canard confit pommes de terre",
+        "prix": "11.50€",
+        "nutrition_estimee": {
+          "calories": 650,
+          "proteines_g": 34,
+          "glucides_g": 38,
+          "lipides_g": 38
+        },
+        "note": 4,
+        "justification": "Le canard confit est très riche en lipides (cuit dans sa graisse), ce qui en fait un plat calorique déséquilibré pour un profil sportif. Les pommes de terre apportent peu de glucides comparé à une portion de riz ou de pâtes. À réserver aux jours de dépense énergétique très élevée.",
+        "note_goulaf": 9,
+        "justification_goulaf": "Le canard confit est un monument de la cuisine française : peau croustillante, chair fondante, pommes de terre dorées dans la graisse de canard. C'est le plat goulaf par excellence — généreux, puissant, irrésistible."
+      }
+    ],
+    "recommandation": {
+      "restaurant": "Le Bistrot Trèfle",
+      "plat": "Wok de poulet asiatique, nouilles de blé aux légumes du soleil",
+      "raison": "Meilleur ratio macro pour un sportif : 42g de protéines pour seulement 10g de lipides et un apport glucidique adapté à la récupération. Le plat représente ~24% de l'objectif calorique journalier (520/2200 kcal), laissant une bonne marge pour les autres repas."
+    },
+    "recommandation_goulaf": {
+      "restaurant": "Le Truck Muche",
+      "plat": "Canard confit, pommes de terre",
+      "raison": "Le canard confit est le roi du plaisir gustatif : croustillant, fondant, généreux. Un plat qui met KO toute velléité de régime mais qui rend heureux."
+    }
+  },
+  {
+    "date": "2026-03-18",
+    "plats": [
+      {
+        "restaurant": "Le Bistrot Trèfle",
+        "plat": "Palette de porc, sauce charcutière. Lentilles vertes et gâteau de carotte",
+        "prix": "11.9€",
+        "nutrition_estimee": {
+          "calories": 670,
+          "proteines_g": 43,
+          "glucides_g": 48,
+          "lipides_g": 33
+        },
+        "note": 7,
+        "justification": "Excellente source de protéines complètes et les lentilles apportent des glucides complexes à index glycémique bas, idéals pour un sportif. La sauce charcutière et le gras de la palette alourdissent le profil lipidique. Bon rapport protéines/calories globalement.",
+        "note_goulaf": 8,
+        "justification_goulaf": "La palette de porc fondante avec une sauce charcutière, c'est du pur réconfort bistrot. Les lentilles vertes bien cuisinées et le gâteau de carotte en touche sucrée-terreuse complètent un plat généreux et savoureux."
+      },
+      {
+        "restaurant": "La Pause Gourmande",
+        "plat": "Salade Bo Bun (vermicelles de riz, crudités, nems végé, cacahuètes, coriandre)",
+        "prix": "11.90€",
+        "nutrition_estimee": {
+          "calories": 610,
+          "proteines_g": 17,
+          "glucides_g": 95,
+          "lipides_g": 18
+        },
+        "note": 5,
+        "justification": "Trop déséquilibré pour un profil sportif : très glucidique avec seulement 17g de protéines, insuffisant pour la récupération musculaire. Les nems végé et cacahuètes apportent un peu de protéines mais restent loin du compte. Option plutôt adaptée à un profil sédentaire ou en récupération légère.",
+        "note_goulaf": 7,
+        "justification_goulaf": "Le bo bun c'est frais, parfumé et texturé : le croquant des crudités et cacahuètes, le moelleux des nems, la fraîcheur de la coriandre. Version végé un peu moins punchy qu'avec du bœuf ou des crevettes, mais reste très agréable."
+      },
+      {
+        "restaurant": "Le Truck Muche",
+        "plat": "POKE BOWL SAUMON",
+        "prix": "11.50€",
+        "nutrition_estimee": {
+          "calories": 580,
+          "proteines_g": 31,
+          "glucides_g": 60,
+          "lipides_g": 22
+        },
+        "note": 8,
+        "justification": "Excellent équilibre macro : protéines de haute qualité avec les acides aminés essentiels du saumon, oméga-3 anti-inflammatoires bénéfiques pour la récupération sportive, et glucides modérés via le riz. Profil nutritionnel cohérent avec un objectif de 2200 kcal sans surcharger le repas du midi.",
+        "note_goulaf": 6,
+        "justification_goulaf": "Un poke bowl c'est agréable et coloré, mais c'est devenu très commun. Le saumon cru apporte de la douceur, mais sans détails sur la garniture et la sauce, ça reste un classique sans grande surprise ni générosité particulière."
+      }
+    ],
+    "recommandation": {
+      "restaurant": "Le Truck Muche",
+      "plat": "POKE BOWL SAUMON",
+      "raison": "Meilleur équilibre protéines/lipides de qualité/glucides. Le saumon couvre bien les besoins en protéines (31g) et apporte des oméga-3 favorables à la récupération, pour le prix le plus bas des trois. Le Bistrot Trèfle reste une bonne alternative si tu as besoin de plus de protéines ce jour-là."
+    },
+    "recommandation_goulaf": {
+      "restaurant": "Le Bistrot Trèfle",
+      "plat": "Palette de porc, sauce charcutière. Lentilles vertes et gâteau de carotte",
+      "raison": "Le plat le plus généreux et réconfortant du lot — viande fondante, sauce canaille, lentilles de caractère et petit gâteau de carotte en bonus. Du vrai bistrot comme on l'aime."
+    }
+  },
+  {
+    "date": "2026-03-17",
+    "plats": [
+      {
+        "restaurant": "Le Bistrot Trèfle",
+        "plat": "Blanquette de veau. Riz pilaf et petits légumes",
+        "prix": "11.9€",
+        "note_goulaf": 8,
+        "justification_goulaf": "La blanquette est un monument du réconfort à la française : sauce onctueuse, veau fondant, riz qui absorbe la sauce. C'est généreux, classique et savoureux. Un vrai plat d'hiver qui réchauffe l'âme."
+      },
+      {
+        "restaurant": "La Pause Gourmande",
+        "plat": "Grillade Parisienne (porc) snackée pommes de terre grenailles sauce façon Béarnaise",
+        "prix": "11.90€",
+        "note_goulaf": 9,
+        "justification_goulaf": "Viande grillée snackée avec des grenailles rissolées et une béarnaise maison, c'est le combo ultime du plaisir carné. Le croustillant des pommes de terre, le côté grillé du porc et l'onctuosité de la sauce — un festival de textures et de gourmandise."
+      },
+      {
+        "restaurant": "Le Truck Muche",
+        "plat": [
+          "POULET BASQUAISE",
+          "FILET MIGNON MOUTARDE PURÉE"
+        ],
+        "prix": "11.50€"
+      }
+    ],
+    "recommandation": null,
+    "erreur": "[Errno 2] No such file or directory: '/usr/local/bin/claude'",
+    "recommandation_goulaf": {
+      "restaurant": "La Pause Gourmande",
+      "plat": "Grillade Parisienne (porc) snackée pommes de terre grenailles sauce façon Béarnaise",
+      "raison": "Le combo viande grillée + grenailles croustillantes + béarnaise est imbattable en plaisir pur. C'est gras, c'est bon, c'est tout ce qu'on veut un dimanche midi."
+    }
+  },
+  {
+    "date": "2026-03-16",
+    "plats": [
+      {
+        "restaurant": "Le Bistrot Trèfle",
+        "plat": "Suprême de poulet. Petit épeautre à la crème de champignons",
+        "prix": "11.9€",
+        "nutrition_estimee": {
+          "calories": 620,
+          "proteines_g": 42,
+          "glucides_g": 55,
+          "lipides_g": 22
+        },
+        "note": 9,
+        "justification": "Excellent profil pour un sportif : protéines maigres de qualité (poulet), glucides complexes à IG bas (petit épeautre) et fibres. La crème de champignons apporte un peu de lipides mais reste raisonnable. Très bon ratio protéines/calories.",
+        "note_goulaf": 7,
+        "justification_goulaf": "La crème de champignons apporte du réconfort et de l'onctuosité, le petit épeautre a une texture noisettée agréable. Reste un plat sage qui ne fait pas exploser les papilles mais qui est bien exécuté et élégant."
+      },
+      {
+        "restaurant": "La Pause Gourmande",
+        "plat": "Grillade Parisienne (porc) snackée pommes de terre grenailles sauce façon Béarnaise",
+        "prix": "11.90€",
+        "nutrition_estimee": {
+          "calories": 720,
+          "proteines_g": 35,
+          "glucides_g": 48,
+          "lipides_g": 38
+        },
+        "note": 6,
+        "justification": "Bonne source de protéines avec le porc grillé, mais la sauce béarnaise (beurre, jaune d'œuf) alourdit considérablement le bilan lipidique. Les grenailles sont correctes en glucides mais l'ensemble est trop gras pour un repas optimisé sport.",
+        "note_goulaf": 9,
+        "justification_goulaf": "Viande snackée avec une croûte grillée, grenailles rissolées et une béarnaise maison — c'est le trio gagnant du plaisir. Généreux, savoureux, réconfortant : un vrai plat de bistrot gourmand qui coche toutes les cases du bonheur gustatif."
+      },
+      {
+        "restaurant": "Le Truck Muche",
+        "plat": "PENNE BOLO",
+        "prix": "11.50€",
+        "nutrition_estimee": {
+          "calories": 680,
+          "proteines_g": 28,
+          "glucides_g": 75,
+          "lipides_g": 24
+        },
+        "note": 6,
+        "justification": "Bon apport en glucides pour recharger les réserves de glycogène, mais le ratio protéines reste modeste selon la quantité de viande hachée. Plat de type food truck souvent plus gras et moins contrôlé en portions de viande.",
+        "note_goulaf": 7,
+        "justification_goulaf": "Un classique réconfortant et satisfaisant, difficile de se tromper avec une bonne bolo. Mais en food truck le résultat peut varier, et l'originalité est limitée — on reste sur du comfort food basique mais efficace."
+      }
+    ],
+    "recommandation": {
+      "restaurant": "Le Bistrot Trèfle",
+      "plat": "Suprême de poulet. Petit épeautre à la crème de champignons",
+      "raison": "Meilleur équilibre macro pour un sportif : protéines élevées (poulet), glucides complexes à index glycémique bas (petit épeautre riche en fibres et minéraux), lipides contenus. Ce plat représente environ 28% de ton objectif calorique journalier avec un excellent apport protéique, idéal pour la récupération musculaire."
+    },
+    "recommandation_goulaf": {
+      "restaurant": "La Pause Gourmande",
+      "plat": "Grillade Parisienne (porc) snackée pommes de terre grenailles sauce façon Béarnaise",
+      "raison": "Viande grillée + grenailles + béarnaise = le triptyque gourmand par excellence. C'est le plat qui fait le plus plaisir aujourd'hui, généreux et savoureux."
+    }
+  }
+]

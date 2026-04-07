@@ -1,0 +1,1593 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="normal">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Historique - Plats du Jour</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Karla:wght@300;400;500;600;700&family=Playfair+Display:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    /* ── Reset & Base ──────────────────────────────── */
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    /* ── Theme: Normal (dark elegant) ──────────────── */
+    :root, [data-theme="normal"] {
+      --bg: #0c0c0f;
+      --bg-pattern: none;
+      --surface: #16161d;
+      --surface-hover: #1e1e28;
+      --surface-accent: #1a1a26;
+      --border: #28283a;
+      --border-accent: #3a3a55;
+      --text: #eaeaf0;
+      --text-secondary: #9898aa;
+      --text-muted: #6a6a80;
+      --accent: #c8a44e;
+      --accent-glow: rgba(200, 164, 78, 0.15);
+      --accent-text: #0c0c0f;
+      --good: #4ade80;
+      --good-bg: rgba(74, 222, 128, 0.1);
+      --good-border: rgba(74, 222, 128, 0.25);
+      --ok: #fbbf24;
+      --ok-bg: rgba(251, 191, 36, 0.1);
+      --ok-border: rgba(251, 191, 36, 0.25);
+      --bad: #f87171;
+      --bad-bg: rgba(248, 113, 113, 0.1);
+      --bad-border: rgba(248, 113, 113, 0.25);
+      --radius: 16px;
+      --radius-sm: 8px;
+      --shadow: 0 2px 16px rgba(0,0,0,0.3);
+      --font-heading: 'Playfair Display', Georgia, serif;
+      --font-body: 'Karla', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      --nav-bg: rgba(12, 12, 15, 0.85);
+      --card-stripe: none;
+    }
+
+    /* ── Theme: Tigre ──────────────────────────────── */
+    [data-theme="tigre"] {
+      --bg: #1a0e00;
+      --bg-pattern: repeating-linear-gradient(
+        135deg,
+        transparent 0px,
+        transparent 18px,
+        rgba(0,0,0,0.35) 18px,
+        rgba(0,0,0,0.35) 22px,
+        transparent 22px,
+        transparent 40px
+      );
+      --surface: #2a1800;
+      --surface-hover: #3a2200;
+      --surface-accent: #331c00;
+      --border: #5a3500;
+      --border-accent: #e67700;
+      --text: #fff3e0;
+      --text-secondary: #d4a060;
+      --text-muted: #8a6030;
+      --accent: #ff8c00;
+      --accent-glow: rgba(255, 140, 0, 0.2);
+      --accent-text: #1a0e00;
+      --good: #66bb6a;
+      --good-bg: rgba(102, 187, 106, 0.12);
+      --good-border: rgba(102, 187, 106, 0.3);
+      --ok: #ffa726;
+      --ok-bg: rgba(255, 167, 38, 0.12);
+      --ok-border: rgba(255, 167, 38, 0.3);
+      --bad: #ef5350;
+      --bad-bg: rgba(239, 83, 80, 0.12);
+      --bad-border: rgba(239, 83, 80, 0.3);
+      --radius: 12px;
+      --radius-sm: 6px;
+      --shadow: 0 4px 24px rgba(0,0,0,0.5);
+      --nav-bg: rgba(26, 14, 0, 0.92);
+      --card-stripe: repeating-linear-gradient(
+        -45deg,
+        transparent 0px,
+        transparent 10px,
+        rgba(255, 140, 0, 0.04) 10px,
+        rgba(255, 140, 0, 0.04) 12px
+      );
+    }
+
+    /* ── Body ──────────────────────────────────────── */
+    body {
+      font-family: var(--font-body);
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      min-height: 100dvh;
+      -webkit-font-smoothing: antialiased;
+    }
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background: var(--bg-pattern);
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* ── Navigation ────────────────────────────────── */
+    .navbar {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--nav-bg);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 1.5rem;
+    }
+    .navbar-inner {
+      max-width: 860px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 56px;
+    }
+    .nav-left {
+      display: flex;
+      align-items: center;
+      gap: 2rem;
+    }
+    .logo {
+      font-family: var(--font-heading);
+      font-size: 1.35rem;
+      font-weight: 700;
+      color: var(--accent);
+      text-decoration: none;
+      letter-spacing: 0.02em;
+    }
+    .nav-links {
+      display: flex;
+      gap: 0.25rem;
+    }
+    .nav-links a {
+      color: var(--text-secondary);
+      text-decoration: none;
+      font-size: 0.9rem;
+      font-weight: 500;
+      padding: 0.4rem 0.75rem;
+      border-radius: var(--radius-sm);
+      transition: color 0.2s, background 0.2s;
+      cursor: pointer;
+    }
+    .nav-links a:hover {
+      color: var(--text);
+      background: var(--surface-hover);
+    }
+    .nav-links a.active {
+      color: var(--accent);
+      background: var(--accent-glow);
+    }
+
+    /* ── Theme Selector ────────────────────────────── */
+    .theme-selector {
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 3px;
+    }
+    .theme-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.3rem;
+      padding: 0.3rem 0.7rem;
+      border: none;
+      border-radius: 999px;
+      background: transparent;
+      color: var(--text-muted);
+      font-family: var(--font-body);
+      font-size: 0.78rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      min-height: 32px;
+    }
+    .theme-btn:hover {
+      color: var(--text-secondary);
+    }
+    .theme-btn.active {
+      background: var(--accent);
+      color: var(--accent-text);
+      box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+    }
+    .theme-btn svg {
+      width: 14px;
+      height: 14px;
+    }
+
+    /* ── Container ─────────────────────────────────── */
+    .container {
+      position: relative;
+      z-index: 1;
+      max-width: 860px;
+      margin: 0 auto;
+      padding: 2.5rem 1.5rem;
+    }
+
+    /* ── Page Header ───────────────────────────────── */
+    .page-title {
+      font-family: var(--font-heading);
+      font-size: 2rem;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      margin-bottom: 0.25rem;
+    }
+    .page-subtitle {
+      color: var(--text-secondary);
+      font-size: 0.95rem;
+      margin-bottom: 2rem;
+    }
+
+    /* ── Recommendation Banner ─────────────────────── */
+    .reco-banner {
+      background: var(--good-bg);
+      border: 1px solid var(--good-border);
+      border-radius: var(--radius);
+      padding: 1.25rem 1.5rem;
+      margin-bottom: 2rem;
+      position: relative;
+      overflow: hidden;
+    }
+    .reco-banner::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 4px;
+      height: 100%;
+      background: var(--good);
+      border-radius: 4px 0 0 4px;
+    }
+    .reco-label {
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--good);
+      margin-bottom: 0.4rem;
+    }
+    .reco-main {
+      font-size: 1rem;
+      font-weight: 600;
+      margin-bottom: 0.2rem;
+    }
+    .reco-reason {
+      font-size: 0.88rem;
+      color: var(--text-secondary);
+      line-height: 1.5;
+    }
+
+    /* ── Plat Cards ────────────────────────────────── */
+    .plat-card {
+      background: var(--surface);
+      background-image: var(--card-stripe);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.5rem;
+      margin-bottom: 1.25rem;
+      position: relative;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .plat-card:hover {
+      border-color: var(--border-accent);
+      box-shadow: var(--shadow);
+    }
+    .plat-card.recommended {
+      border-color: var(--good-border);
+    }
+    .plat-card.recommended:hover {
+      border-color: var(--good);
+    }
+    .reco-ribbon {
+      position: absolute;
+      top: 12px;
+      right: -28px;
+      background: var(--good);
+      color: #000;
+      font-size: 0.65rem;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      padding: 0.2rem 2rem;
+      transform: rotate(45deg);
+    }
+    .plat-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 0.75rem;
+    }
+    .restaurant-name {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-weight: 600;
+      font-size: 0.92rem;
+      color: var(--text-secondary);
+    }
+    .icon {
+      width: 20px;
+      height: 20px;
+      flex-shrink: 0;
+      color: var(--accent);
+    }
+    .note {
+      font-weight: 800;
+      font-size: 1.2rem;
+      font-variant-numeric: tabular-nums;
+      padding: 0.2rem 0.6rem;
+      border-radius: var(--radius-sm);
+    }
+    .note-max {
+      font-weight: 500;
+      font-size: 0.75rem;
+      opacity: 0.6;
+    }
+    .note-good { color: var(--good); background: var(--good-bg); }
+    .note-ok { color: var(--ok); background: var(--ok-bg); }
+    .note-bad { color: var(--bad); background: var(--bad-bg); }
+    .plat-name {
+      font-family: var(--font-heading);
+      font-size: 1.2rem;
+      font-weight: 600;
+      margin-bottom: 0.2rem;
+      line-height: 1.4;
+    }
+    .badge-reco {
+      display: inline-block;
+      background: var(--good);
+      color: #000;
+      font-family: var(--font-body);
+      font-size: 0.65rem;
+      font-weight: 700;
+      padding: 0.15rem 0.5rem;
+      border-radius: 4px;
+      vertical-align: middle;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .plat-prix {
+      color: var(--accent);
+      font-weight: 700;
+      font-size: 1rem;
+      margin-bottom: 1rem;
+    }
+
+    /* ── Macro Grid ────────────────────────────────── */
+    .macro-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 0.5rem;
+      margin-bottom: 1rem;
+    }
+    .macro-item {
+      text-align: center;
+      padding: 0.6rem 0.25rem;
+      background: var(--surface-accent);
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+    }
+    .macro-value {
+      display: block;
+      font-weight: 700;
+      font-size: 1.05rem;
+      font-variant-numeric: tabular-nums;
+      color: var(--text);
+    }
+    .macro-label {
+      display: block;
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-top: 0.1rem;
+    }
+
+    .plat-justification {
+      font-size: 0.88rem;
+      color: var(--text-secondary);
+      line-height: 1.6;
+    }
+
+    /* ── Error Message ─────────────────────────────── */
+    .error-msg {
+      background: var(--bad-bg);
+      border: 1px solid var(--bad-border);
+      border-radius: var(--radius);
+      padding: 2rem;
+      color: var(--bad);
+      text-align: center;
+      font-size: 1rem;
+    }
+
+    /* ── History ───────────────────────────────────── */
+    /* ── Calendar / Agenda ──────────────────────────── */
+    .calendar-nav {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+    .calendar-nav-btn {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--text-secondary);
+      width: 36px;
+      height: 36px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .calendar-nav-btn:hover {
+      background: var(--surface-hover);
+      border-color: var(--border-accent);
+      color: var(--text);
+    }
+    .calendar-nav-btn svg {
+      width: 18px;
+      height: 18px;
+    }
+    .calendar-month-label {
+      font-family: var(--font-heading);
+      font-size: 1.25rem;
+      font-weight: 600;
+      min-width: 200px;
+      text-align: center;
+    }
+    .calendar-grid {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 4px;
+      margin-bottom: 1.5rem;
+    }
+    .calendar-day-header {
+      text-align: center;
+      font-size: 0.72rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      padding: 0.5rem 0;
+    }
+    .calendar-cell {
+      aspect-ratio: 1;
+      border-radius: var(--radius-sm);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      position: relative;
+      min-height: 44px;
+    }
+    .calendar-cell.empty {
+      background: transparent;
+    }
+    .calendar-cell.has-pdj {
+      background: var(--surface);
+      background-image: var(--card-stripe);
+      border: 1px solid var(--border);
+      cursor: pointer;
+      transition: all 0.15s;
+      color: var(--text);
+      font-weight: 600;
+    }
+    .calendar-cell.has-pdj:hover {
+      border-color: var(--accent);
+      background: var(--surface-hover);
+      transform: scale(1.04);
+    }
+    .calendar-cell.has-pdj:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: -2px;
+    }
+    .calendar-cell.has-pdj.active {
+      border-color: var(--accent);
+      box-shadow: 0 0 12px var(--accent-glow);
+    }
+    .calendar-cell.today {
+      color: var(--accent);
+    }
+    .calendar-cell.today::after {
+      content: '';
+      width: 4px;
+      height: 4px;
+      border-radius: 50%;
+      background: var(--accent);
+      position: absolute;
+      bottom: 4px;
+    }
+    .calendar-cell .pdj-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      position: absolute;
+      bottom: 6px;
+    }
+    .calendar-cell.no-pdj {
+      color: var(--text-muted);
+      opacity: 0.4;
+    }
+    .calendar-cell.weekend {
+      opacity: 0.3;
+    }
+
+    /* ── Day detail panel ─────────────────────────── */
+    .day-detail {
+      background: var(--surface);
+      background-image: var(--card-stripe);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.25rem 1.5rem;
+      margin-bottom: 1.5rem;
+      display: none;
+      animation: slideDown 0.2s ease-out;
+    }
+    .day-detail.visible {
+      display: block;
+    }
+    @keyframes slideDown {
+      from { opacity: 0; transform: translateY(-8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .day-detail-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1rem;
+      padding-bottom: 0.75rem;
+      border-bottom: 1px solid var(--border);
+    }
+    .day-detail-date {
+      font-family: var(--font-heading);
+      font-weight: 600;
+      font-size: 1.1rem;
+    }
+    .day-detail-reco {
+      font-size: 0.82rem;
+      color: var(--accent);
+      font-weight: 500;
+    }
+    .day-detail-close {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      padding: 4px;
+      border-radius: 4px;
+      transition: color 0.15s;
+    }
+    .day-detail-close:hover {
+      color: var(--text);
+    }
+    .day-detail-close svg {
+      width: 18px;
+      height: 18px;
+    }
+
+    .history-plat {
+      padding: 0.75rem 0;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 0.75rem;
+    }
+    .history-plat:last-child { border-bottom: none; }
+    .history-plat-info { flex: 1; min-width: 0; }
+    .history-plat-restaurant {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+    .history-plat-restaurant .icon {
+      width: 14px;
+      height: 14px;
+    }
+    .history-plat-name {
+      font-size: 0.92rem;
+      font-weight: 500;
+    }
+    .history-plat .note {
+      font-size: 0.9rem;
+      flex-shrink: 0;
+    }
+
+    /* ── Stats bar (history) ───────────────────────── */
+    .stats-bar {
+      display: flex;
+      gap: 1.5rem;
+      margin-bottom: 2rem;
+      flex-wrap: wrap;
+    }
+    .stat-item {
+      display: flex;
+      flex-direction: column;
+    }
+    .stat-value {
+      font-family: var(--font-heading);
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: var(--accent);
+      font-variant-numeric: tabular-nums;
+    }
+    .stat-label {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    /* ── Footer ────────────────────────────────────── */
+    .footer {
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 0.78rem;
+      padding: 2rem 1.5rem;
+      border-top: 1px solid var(--border);
+      margin-top: 2rem;
+      position: relative;
+      z-index: 1;
+    }
+
+    /* ── Responsive ────────────────────────────────── */
+    @media (max-width: 640px) {
+      .navbar { padding: 0 1rem; }
+      .navbar-inner { height: 50px; }
+      .nav-left { gap: 1rem; }
+      .nav-links a { font-size: 0.82rem; padding: 0.3rem 0.5rem; }
+      .container { padding: 1.5rem 1rem; }
+      .page-title { font-size: 1.5rem; }
+      .plat-card { padding: 1.2rem; }
+      .macro-grid { grid-template-columns: repeat(2, 1fr); }
+      .theme-btn span.label-text { display: none; }
+      .theme-btn { padding: 0.3rem 0.5rem; }
+      .calendar-cell { font-size: 0.75rem; min-height: 38px; }
+      .calendar-month-label { font-size: 1.05rem; min-width: 160px; }
+      .day-detail { padding: 1rem; }
+      .stats-bar { gap: 1rem; }
+      .mode-btn span.label-text { display: none; }
+      .mode-btn { padding: 0.4rem 0.6rem; }
+    }
+
+    /* ── Mode Selector ─────────────────────────────── */
+    .mode-selector {
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 3px;
+      margin-bottom: 1.5rem;
+      width: fit-content;
+    }
+    .mode-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.4rem;
+      padding: 0.4rem 1rem;
+      border: none;
+      border-radius: 999px;
+      background: transparent;
+      color: var(--text-muted);
+      font-family: var(--font-body);
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      min-height: 36px;
+    }
+    .mode-btn:hover {
+      color: var(--text-secondary);
+    }
+    .mode-btn.active {
+      background: var(--accent);
+      color: var(--accent-text);
+      box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+    }
+    .mode-btn svg {
+      width: 16px;
+      height: 16px;
+    }
+
+    /* ── Reduced Motion ────────────────────────────── */
+    @media (prefers-reduced-motion: reduce) {
+      * { transition-duration: 0.01ms !important; }
+      .day-detail { animation: none !important; }
+    }
+</style>
+  
+    <script>
+    (function() {
+      var saved = localStorage.getItem('pdj-theme') || 'normal';
+      document.documentElement.setAttribute('data-theme', saved);
+
+      document.addEventListener('DOMContentLoaded', function() {
+        var btns = document.querySelectorAll('.theme-btn');
+        btns.forEach(function(btn) {
+          if (btn.dataset.theme === saved) btn.classList.add('active');
+          btn.addEventListener('click', function() {
+            var theme = this.dataset.theme;
+            document.documentElement.setAttribute('data-theme', theme);
+            localStorage.setItem('pdj-theme', theme);
+            btns.forEach(function(b) { b.classList.remove('active'); });
+            this.classList.add('active');
+          });
+        });
+      });
+    })();
+    </script>
+
+  
+    <script>
+    (function() {
+      var saved = localStorage.getItem('pdj-mode') || 'sportif';
+
+      function applyMode(mode) {
+        // Toggle mode-sportif / mode-goulaf elements
+        document.querySelectorAll('.mode-sportif').forEach(function(el) {
+          el.style.display = mode === 'sportif' ? '' : 'none';
+        });
+        document.querySelectorAll('.mode-goulaf').forEach(function(el) {
+          el.style.display = mode === 'goulaf' ? '' : 'none';
+        });
+        // Update card recommended styling
+        document.querySelectorAll('.plat-card').forEach(function(card) {
+          card.classList.remove('recommended');
+          if (mode === 'sportif' && card.classList.contains('recommended-sportif')) {
+            card.classList.add('recommended');
+          }
+          if (mode === 'goulaf' && card.classList.contains('recommended-goulaf')) {
+            card.classList.add('recommended');
+          }
+        });
+        // Update mode buttons
+        document.querySelectorAll('.mode-btn').forEach(function(b) {
+          b.classList.remove('active');
+          if (b.dataset.mode === mode) b.classList.add('active');
+        });
+        localStorage.setItem('pdj-mode', mode);
+      }
+
+      document.addEventListener('DOMContentLoaded', function() {
+        applyMode(saved);
+        document.querySelectorAll('.mode-btn').forEach(function(btn) {
+          btn.addEventListener('click', function() {
+            applyMode(this.dataset.mode);
+          });
+        });
+      });
+    })();
+    </script>
+
+</head>
+<body>
+  <nav class="navbar">
+    <div class="navbar-inner">
+      <div class="nav-left">
+        <a href="index.html" class="logo">Plats du Jour</a>
+        <div class="nav-links">
+          <a href="index.html" class="">Aujourd'hui</a>
+          <a href="historique.html" class="active">Historique</a>
+        </div>
+      </div>
+      <div class="theme-selector">
+        <button class="theme-btn" data-theme="normal" aria-label="Thème normal">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+          <span class="label-text">Normal</span>
+        </button>
+        <button class="theme-btn" data-theme="tigre" aria-label="Thème tigre">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 7c3-3 7-4 9-2s1 6-2 9"/><path d="M21 7c-3-3-7-4-9-2s-1 6 2 9"/><circle cx="12" cy="16" r="5"/><path d="M12 11v2"/><circle cx="10" cy="15" r="0.5" fill="currentColor"/><circle cx="14" cy="15" r="0.5" fill="currentColor"/></svg>
+          <span class="label-text">Tigre</span>
+        </button>
+      </div>
+    </div>
+  </nav>
+  <div class="container">
+<h1 class="page-title">Historique</h1>
+
+    <div class="stats-bar">
+      <div class="stat-item">
+        <span class="stat-value">16</span>
+        <span class="stat-label">jours</span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-value">45</span>
+        <span class="stat-label">plats notés</span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-value">6.4</span>
+        <span class="stat-label">note moyenne</span>
+      </div>
+    </div>
+
+    <div class="calendar-nav">
+      <button class="calendar-nav-btn" id="cal-prev" onclick="navigateMonth(-1)" aria-label="Mois précédent"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg></button>
+      <span class="calendar-month-label" id="month-label" data-month="2026-04" data-labels-2026-04="Avril 2026" data-labels-2026-03="Mars 2026">Avril 2026</span>
+      <button class="calendar-nav-btn" id="cal-next" onclick="navigateMonth(1)" aria-label="Mois suivant"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg></button>
+    </div>
+<div class="calendar-month" data-month="2026-04" style="">
+  <div class="calendar-grid">
+    <div class="calendar-day-header">Lun</div>
+    <div class="calendar-day-header">Mar</div>
+    <div class="calendar-day-header">Mer</div>
+    <div class="calendar-day-header">Jeu</div>
+    <div class="calendar-day-header">Ven</div>
+    <div class="calendar-day-header">Sam</div>
+    <div class="calendar-day-header">Dim</div>
+    <div class="calendar-cell empty"></div>
+    <div class="calendar-cell empty"></div>
+    <div class="calendar-cell has-pdj" data-date="2026-04-01" role="button" tabindex="0" onclick="showDay('2026-04-01')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();showDay('2026-04-01')}">1<span class="pdj-dot"></span></div>
+    <div class="calendar-cell has-pdj" data-date="2026-04-02" role="button" tabindex="0" onclick="showDay('2026-04-02')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();showDay('2026-04-02')}">2<span class="pdj-dot"></span></div>
+    <div class="calendar-cell has-pdj" data-date="2026-04-03" role="button" tabindex="0" onclick="showDay('2026-04-03')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();showDay('2026-04-03')}">3<span class="pdj-dot"></span></div>
+    <div class="calendar-cell weekend">4</div>
+    <div class="calendar-cell weekend">5</div>
+    <div class="calendar-cell no-pdj">6</div>
+    <div class="calendar-cell has-pdj today" data-date="2026-04-07" role="button" tabindex="0" onclick="showDay('2026-04-07')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();showDay('2026-04-07')}">7<span class="pdj-dot"></span></div>
+    <div class="calendar-cell no-pdj">8</div>
+    <div class="calendar-cell no-pdj">9</div>
+    <div class="calendar-cell no-pdj">10</div>
+    <div class="calendar-cell weekend">11</div>
+    <div class="calendar-cell weekend">12</div>
+    <div class="calendar-cell no-pdj">13</div>
+    <div class="calendar-cell no-pdj">14</div>
+    <div class="calendar-cell no-pdj">15</div>
+    <div class="calendar-cell no-pdj">16</div>
+    <div class="calendar-cell no-pdj">17</div>
+    <div class="calendar-cell weekend">18</div>
+    <div class="calendar-cell weekend">19</div>
+    <div class="calendar-cell no-pdj">20</div>
+    <div class="calendar-cell no-pdj">21</div>
+    <div class="calendar-cell no-pdj">22</div>
+    <div class="calendar-cell no-pdj">23</div>
+    <div class="calendar-cell no-pdj">24</div>
+    <div class="calendar-cell weekend">25</div>
+    <div class="calendar-cell weekend">26</div>
+    <div class="calendar-cell no-pdj">27</div>
+    <div class="calendar-cell no-pdj">28</div>
+    <div class="calendar-cell no-pdj">29</div>
+    <div class="calendar-cell no-pdj">30</div>
+  </div>
+
+    <div class="day-detail" id="detail-2026-04-01">
+      <div class="day-detail-header">
+        <div>
+          <div class="day-detail-date">Mercredi 1 avril 2026</div>
+          <div class="day-detail-reco">Le Truck Muche — Blanc de poulet crémeux tomates séchées, tagliatelles</div>
+        </div>
+        <button class="day-detail-close" onclick="closeDay()" aria-label="Fermer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+      </div>
+
+      <div class="history-plat">
+        <div class="history-plat-info">
+          <div class="history-plat-restaurant"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2C8 2 4 6 4 10c0 2.5 1.5 4.5 3.5 5.5L12 22l4.5-6.5C18.5 14.5 20 12.5 20 10c0-4-4-8-8-8z"/><circle cx="12" cy="10" r="2"/></svg> Le Bistrot Trèfle</div>
+          <div class="history-plat-name">Ravioles du Dauphiné. Crème d'aubergine, brisures de chèvre, jambon cru et pompon de salade — 11.9€</div>
+        </div>
+        <span class="note note-ok mode-sportif">5<span class="note-max">/10</span></span>
+        <span class="note note-good mode-goulaf" style="display:none">8<span class="note-max">/10</span></span>
+      </div>
+
+      <div class="history-plat">
+        <div class="history-plat-info">
+          <div class="history-plat-restaurant"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 8h1a4 4 0 1 1 0 8h-1"/><path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4Z"/><line x1="6" x2="6" y1="2" y2="4"/><line x1="10" x2="10" y1="2" y2="4"/><line x1="14" x2="14" y1="2" y2="4"/></svg> La Pause Gourmande</div>
+          <div class="history-plat-name">Gnocchi sauce aux 3 fromages (emmental, gorgonzola, chèvre), épinards et éclats de noix — 11.90€</div>
+        </div>
+        <span class="note note-bad mode-sportif">4<span class="note-max">/10</span></span>
+        <span class="note note-good mode-goulaf" style="display:none">9<span class="note-max">/10</span></span>
+      </div>
+
+      <div class="history-plat">
+        <div class="history-plat-info">
+          <div class="history-plat-restaurant"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2"/><path d="M15 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.624l-3.48-4.35A1 1 0 0 0 13.52 8H14"/><circle cx="17" cy="18" r="2"/><circle cx="7" cy="18" r="2"/></svg> Le Truck Muche</div>
+          <div class="history-plat-name">Blanc de poulet crémeux tomates séchées, tagliatelles — 11.50€</div>
+        </div>
+        <span class="note note-ok mode-sportif">6<span class="note-max">/10</span></span>
+        <span class="note note-ok mode-goulaf" style="display:none">6<span class="note-max">/10</span></span>
+      </div>
+    </div>
+
+    <div class="day-detail" id="detail-2026-04-02">
+      <div class="day-detail-header">
+        <div>
+          <div class="day-detail-date">Jeudi 2 avril 2026</div>
+          <div class="day-detail-reco">Le Bistrot Trèfle — Sole meunière panée. Riz pilaf et crumble de poireaux</div>
+        </div>
+        <button class="day-detail-close" onclick="closeDay()" aria-label="Fermer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+      </div>
+
+      <div class="history-plat">
+        <div class="history-plat-info">
+          <div class="history-plat-restaurant"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2C8 2 4 6 4 10c0 2.5 1.5 4.5 3.5 5.5L12 22l4.5-6.5C18.5 14.5 20 12.5 20 10c0-4-4-8-8-8z"/><circle cx="12" cy="10" r="2"/></svg> Le Bistrot Trèfle</div>
+          <div class="history-plat-name">Sole meunière panée. Riz pilaf et crumble de poireaux — 11.9€</div>
+        </div>
+        <span class="note note-good mode-sportif">8<span class="note-max">/10</span></span>
+        <span class="note note-good mode-goulaf" style="display:none">7<span class="note-max">/10</span></span>
+      </div>
+
+      <div class="history-plat">
+        <div class="history-plat-info">
+          <div class="history-plat-restaurant"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 8h1a4 4 0 1 1 0 8h-1"/><path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4Z"/><line x1="6" x2="6" y1="2" y2="4"/><line x1="10" x2="10" y1="2" y2="4"/><line x1="14" x2="14" y1="2" y2="4"/></svg> La Pause Gourmande</div>
+          <div class="history-plat-name">Joues de porc confites à la Mexicaine, écrasé de patates douces — 11.90€</div>
+        </div>
+        <span class="note note-ok mode-sportif">6<span class="note-max">/10</span></span>
+        <span class="note note-good mode-goulaf" style="display:none">9<span class="note-max">/10</span></span>
+      </div>
+
+      <div class="history-plat">
+        <div class="history-plat-info">
+          <div class="history-plat-restaurant"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2"/><path d="M15 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.624l-3.48-4.35A1 1 0 0 0 13.52 8H14"/><circle cx="17" cy="18" r="2"/><circle cx="7" cy="18" r="2"/></svg> Le Truck Muche</div>
+          <div class="history-plat-name">Tomates farcies, riz — 11.50€</div>
+        </div>
+        <span class="note note-ok mode-sportif">6<span class="note-max">/10</span></span>
+        <span class="note note-good mode-goulaf" style="display:none">7<span class="note-max">/10</span></span>
+      </div>
+    </div>
+
+    <div class="day-detail" id="detail-2026-04-03">
+      <div class="day-detail-header">
+        <div>
+          <div class="day-detail-date">Vendredi 3 avril 2026</div>
+          <div class="day-detail-reco">Le Bistrot Trèfle — Aiguillette de bœuf Baronne. Tagliatelles et crème de champignons</div>
+        </div>
+        <button class="day-detail-close" onclick="closeDay()" aria-label="Fermer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+      </div>
+
+      <div class="history-plat">
+        <div class="history-plat-info">
+          <div class="history-plat-restaurant"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2C8 2 4 6 4 10c0 2.5 1.5 4.5 3.5 5.5L12 22l4.5-6.5C18.5 14.5 20 12.5 20 10c0-4-4-8-8-8z"/><circle cx="12" cy="10" r="2"/></svg> Le Bistrot Trèfle</div>
+          <div class="history-plat-name">Aiguillette de bœuf Baronne. Tagliatelles et crème de champignons — 11.9€</div>
+        </div>
+        <span class="note note-good mode-sportif">8<span class="note-max">/10</span></span>
+        <span class="note note-good mode-goulaf" style="display:none">7<span class="note-max">/10</span></span>
+      </div>
+
+      <div class="history-plat">
+        <div class="history-plat-info">
+          <div class="history-plat-restaurant"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 8h1a4 4 0 1 1 0 8h-1"/><path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4Z"/><line x1="6" x2="6" y1="2" y2="4"/><line x1="10" x2="10" y1="2" y2="4"/><line x1="14" x2="14" y1="2" y2="4"/></svg> La Pause Gourmande</div>
+          <div class="history-plat-name">Effiloché de joues de porc confites à la Mexicaine et écrasé de patates douces — 11.90€</div>
+        </div>
+        <span class="note note-good mode-sportif">7<span class="note-max">/10</span></span>
+        <span class="note note-good mode-goulaf" style="display:none">9<span class="note-max">/10</span></span>
+      </div>
+
+      <div class="history-plat">
+        <div class="history-plat-info">
+          <div class="history-plat-restaurant"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2"/><path d="M15 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.624l-3.48-4.35A1 1 0 0 0 13.52 8H14"/><circle cx="17" cy="18" r="2"/><circle cx="7" cy="18" r="2"/></svg> Le Truck Muche</div>
+          <div class="history-plat-name">Gnocchis Gorgonzola cru — 11.50€</div>
+        </div>
+        <span class="note note-bad mode-sportif">4<span class="note-max">/10</span></span>
+        <span class="note note-good mode-goulaf" style="display:none">8<span class="note-max">/10</span></span>
+      </div>
+    </div>
+
+    <div class="day-detail" id="detail-2026-04-07">
+      <div class="day-detail-header">
+        <div>
+          <div class="day-detail-date">Mardi 7 avril 2026</div>
+          <div class="day-detail-reco">Le Bistrot Trèfle — Poulet coco-curry. Riz pilaf, carottes glacées</div>
+        </div>
+        <button class="day-detail-close" onclick="closeDay()" aria-label="Fermer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+      </div>
+
+      <div class="history-plat">
+        <div class="history-plat-info">
+          <div class="history-plat-restaurant"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2C8 2 4 6 4 10c0 2.5 1.5 4.5 3.5 5.5L12 22l4.5-6.5C18.5 14.5 20 12.5 20 10c0-4-4-8-8-8z"/><circle cx="12" cy="10" r="2"/></svg> Le Bistrot Trèfle</div>
+          <div class="history-plat-name">Poulet coco-curry. Riz pilaf, carottes glacées — 11.9€</div>
+        </div>
+        <span class="note note-good mode-sportif">8<span class="note-max">/10</span></span>
+        <span class="note note-good mode-goulaf" style="display:none">7<span class="note-max">/10</span></span>
+      </div>
+
+      <div class="history-plat">
+        <div class="history-plat-info">
+          <div class="history-plat-restaurant"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 8h1a4 4 0 1 1 0 8h-1"/><path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4Z"/><line x1="6" x2="6" y1="2" y2="4"/><line x1="10" x2="10" y1="2" y2="4"/><line x1="14" x2="14" y1="2" y2="4"/></svg> La Pause Gourmande</div>
+          <div class="history-plat-name">Kefta de bœuf a l'Italienne risotto d'orzo — 11.90€</div>
+        </div>
+        <span class="note note-ok mode-sportif">6<span class="note-max">/10</span></span>
+        <span class="note note-good mode-goulaf" style="display:none">8<span class="note-max">/10</span></span>
+      </div>
+
+      <div class="history-plat">
+        <div class="history-plat-info">
+          <div class="history-plat-restaurant"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2"/><path d="M15 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.624l-3.48-4.35A1 1 0 0 0 13.52 8H14"/><circle cx="17" cy="18" r="2"/><circle cx="7" cy="18" r="2"/></svg> Le Truck Muche</div>
+          <div class="history-plat-name">Magret séché et pâtes au curry — 11.50€</div>
+        </div>
+        <span class="note note-ok mode-sportif">5<span class="note-max">/10</span></span>
+        <span class="note note-good mode-goulaf" style="display:none">9<span class="note-max">/10</span></span>
+      </div>
+    </div>
+</div>
+<div class="calendar-month" data-month="2026-03" style="display:none">
+  <div class="calendar-grid">
+    <div class="calendar-day-header">Lun</div>
+    <div class="calendar-day-header">Mar</div>
+    <div class="calendar-day-header">Mer</div>
+    <div class="calendar-day-header">Jeu</div>
+    <div class="calendar-day-header">Ven</div>
+    <div class="calendar-day-header">Sam</div>
+    <div class="calendar-day-header">Dim</div>
+    <div class="calendar-cell empty"></div>
+    <div class="calendar-cell empty"></div>
+    <div class="calendar-cell empty"></div>
+    <div class="calendar-cell empty"></div>
+    <div class="calendar-cell empty"></div>
+    <div class="calendar-cell empty"></div>
+    <div class="calendar-cell weekend">1</div>
+    <div class="calendar-cell no-pdj">2</div>
+    <div class="calendar-cell no-pdj">3</div>
+    <div class="calendar-cell no-pdj">4</div>
+    <div class="calendar-cell no-pdj">5</div>
+    <div class="calendar-cell no-pdj">6</div>
+    <div class="calendar-cell weekend">7</div>
+    <div class="calendar-cell weekend">8</div>
+    <div class="calendar-cell no-pdj">9</div>
+    <div class="calendar-cell no-pdj">10</div>
+    <div class="calendar-cell no-pdj">11</div>
+    <div class="calendar-cell no-pdj">12</div>
+    <div class="calendar-cell no-pdj">13</div>
+    <div class="calendar-cell weekend">14</div>
+    <div class="calendar-cell weekend">15</div>
+    <div class="calendar-cell has-pdj" data-date="2026-03-16" role="button" tabindex="0" onclick="showDay('2026-03-16')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();showDay('2026-03-16')}">16<span class="pdj-dot"></span></div>
+    <div class="calendar-cell has-pdj" data-date="2026-03-17" role="button" tabindex="0" onclick="showDay('2026-03-17')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();showDay('2026-03-17')}">17<span class="pdj-dot"></span></div>
+    <div class="calendar-cell has-pdj" data-date="2026-03-18" role="button" tabindex="0" onclick="showDay('2026-03-18')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();showDay('2026-03-18')}">18<span class="pdj-dot"></span></div>
+    <div class="calendar-cell has-pdj" data-date="2026-03-19" role="button" tabindex="0" onclick="showDay('2026-03-19')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();showDay('2026-03-19')}">19<span class="pdj-dot"></span></div>
+    <div class="calendar-cell has-pdj" data-date="2026-03-20" role="button" tabindex="0" onclick="showDay('2026-03-20')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();showDay('2026-03-20')}">20<span class="pdj-dot"></span></div>
+    <div class="calendar-cell weekend">21</div>
+    <div class="calendar-cell weekend">22</div>
+    <div class="calendar-cell has-pdj" data-date="2026-03-23" role="button" tabindex="0" onclick="showDay('2026-03-23')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();showDay('2026-03-23')}">23<span class="pdj-dot"></span></div>
+    <div class="calendar-cell has-pdj" data-date="2026-03-24" role="button" tabindex="0" onclick="showDay('2026-03-24')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();showDay('2026-03-24')}">24<span class="pdj-dot"></span></div>
+    <div class="calendar-cell has-pdj" data-date="2026-03-25" role="button" tabindex="0" onclick="showDay('2026-03-25')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();showDay('2026-03-25')}">25<span class="pdj-dot"></span></div>
+    <div class="calendar-cell has-pdj" data-date="2026-03-26" role="button" tabindex="0" onclick="showDay('2026-03-26')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();showDay('2026-03-26')}">26<span class="pdj-dot"></span></div>
+    <div class="calendar-cell has-pdj" data-date="2026-03-27" role="button" tabindex="0" onclick="showDay('2026-03-27')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();showDay('2026-03-27')}">27<span class="pdj-dot"></span></div>
+    <div class="calendar-cell weekend">28</div>
+    <div class="calendar-cell weekend">29</div>
+    <div class="calendar-cell has-pdj" data-date="2026-03-30" role="button" tabindex="0" onclick="showDay('2026-03-30')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();showDay('2026-03-30')}">30<span class="pdj-dot"></span></div>
+    <div class="calendar-cell has-pdj" data-date="2026-03-31" role="button" tabindex="0" onclick="showDay('2026-03-31')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();showDay('2026-03-31')}">31<span class="pdj-dot"></span></div>
+  </div>
+
+    <div class="day-detail" id="detail-2026-03-16">
+      <div class="day-detail-header">
+        <div>
+          <div class="day-detail-date">Lundi 16 mars 2026</div>
+          <div class="day-detail-reco">Le Bistrot Trèfle — Suprême de poulet. Petit épeautre à la crème de champignons</div>
+        </div>
+        <button class="day-detail-close" onclick="closeDay()" aria-label="Fermer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+      </div>
+
+      <div class="history-plat">
+        <div class="history-plat-info">
+          <div class="history-plat-restaurant"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2C8 2 4 6 4 10c0 2.5 1.5 4.5 3.5 5.5L12 22l4.5-6.5C18.5 14.5 20 12.5 20 10c0-4-4-8-8-8z"/><circle cx="12" cy="10" r="2"/></svg> Le Bistrot Trèfle</div>
+          <div class="history-plat-name">Suprême de poulet. Petit épeautre à la crème de champignons — 11.9€</div>
+        </div>
+        <span class="note note-good mode-sportif">9<span class="note-max">/10</span></span>
+        <span class="note note-good mode-goulaf" style="display:none">7<span class="note-max">/10</span></span>
+      </div>
+
+      <div class="history-plat">
+        <div class="history-plat-info">
+          <div class="history-plat-restaurant"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 8h1a4 4 0 1 1 0 8h-1"/><path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4Z"/><line x1="6" x2="6" y1="2" y2="4"/><line x1="10" x2="10" y1="2" y2="4"/><line x1="14" x2="14" y1="2" y2="4"/></svg> La Pause Gourmande</div>
+          <div class="history-plat-name">Grillade Parisienne (porc) snackée pommes de terre grenailles sauce façon Béarnaise — 11.90€</div>
+        </div>
+        <span class="note note-ok mode-sportif">6<span class="note-max">/10</span></span>
+        <span class="note note-good mode-goulaf" style="display:none">9<span class="note-max">/10</span></span>
+      </div>
+
+      <div class="history-plat">
+        <div class="history-plat-info">
+          <div class="history-plat-restaurant"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2"/><path d="M15 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.624l-3.48-4.35A1 1 0 0 0 13.52 8H14"/><circle cx="17" cy="18" r="2"/><circle cx="7" cy="18" r="2"/></svg> Le Truck Muche</div>
+          <div class="history-plat-name">PENNE BOLO — 11.50€</div>
+        </div>
+        <span class="note note-ok mode-sportif">6<span class="note-max">/10</span></span>
+        <span class="note note-good mode-goulaf" style="display:none">7<span class="note-max">/10</span></span>
+      </div>
+    </div>
+
+    <div class="day-detail" id="detail-2026-03-17">
+      <div class="day-detail-header">
+        <div>
+          <div class="day-detail-date">Mardi 17 mars 2026</div>
+          <div class="day-detail-reco"></div>
+        </div>
+        <button class="day-detail-close" onclick="closeDay()" aria-label="Fermer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+      </div>
+
+      <div class="history-plat">
+        <div class="history-plat-info">
+          <div class="history-plat-restaurant"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2C8 2 4 6 4 10c0 2.5 1.5 4.5 3.5 5.5L12 22l4.5-6.5C18.5 14.5 20 12.5 20 10c0-4-4-8-8-8z"/><circle cx="12" cy="10" r="2"/></svg> Le Bistrot Trèfle</div>
+          <div class="history-plat-name">Blanquette de veau. Riz pilaf et petits légumes — 11.9€</div>
+        </div>
+        <span class="note note-ok mode-sportif">?<span class="note-max">/10</span></span>
+        <span class="note note-good mode-goulaf" style="display:none">8<span class="note-max">/10</span></span>
+      </div>
+
+      <div class="history-plat">
+        <div class="history-plat-info">
+          <div class="history-plat-restaurant"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 8h1a4 4 0 1 1 0 8h-1"/><path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4Z"/><line x1="6" x2="6" y1="2" y2="4"/><line x1="10" x2="10" y1="2" y2="4"/><line x1="14" x2="14" y1="2" y2="4"/></svg> La Pause Gourmande</div>
+          <div class="history-plat-name">Grillade Parisienne (porc) snackée pommes de terre grenailles sauce façon Béarnaise — 11.90€</div>
+        </div>
+        <span class="note note-ok mode-sportif">?<span class="note-max">/10</span></span>
+        <span class="note note-good mode-goulaf" style="display:none">9<span class="note-max">/10</span></span>
+      </div>
+
+      <div class="history-plat">
+        <div class="history-plat-info">
+          <div class="history-plat-restaurant"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2"/><path d="M15 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.624l-3.48-4.35A1 1 0 0 0 13.52 8H14"/><circle cx="17" cy="18" r="2"/><circle cx="7" cy="18" r="2"/></svg> Le Truck Muche</div>
+          <div class="history-plat-name">['POULET BASQUAISE', 'FILET MIGNON MOUTARDE PURÉE'] — 11.50€</div>
+        </div>
+        <span class="note note-ok mode-sportif">?<span class="note-max">/10</span></span>
+        <span class="note note-ok mode-goulaf" style="display:none">?<span class="note-max">/10</span></span>
+      </div>
+    </div>
+
+    <div class="day-detail" id="detail-2026-03-18">
+      <div class="day-detail-header">
+        <div>
+          <div class="day-detail-date">Mercredi 18 mars 2026</div>
+          <div class="day-detail-reco">Le Truck Muche — POKE BOWL SAUMON</div>
+        </div>
+        <button class="day-detail-close" onclick="closeDay()" aria-label="Fermer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+      </div>
+
+      <div class="history-plat">
+        <div class="history-plat-info">
+          <div class="history-plat-restaurant"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2C8 2 4 6 4 10c0 2.5 1.5 4.5 3.5 5.5L12 22l4.5-6.5C18.5 14.5 20 12.5 20 10c0-4-4-8-8-8z"/><circle cx="12" cy="10" r="2"/></svg> Le Bistrot Trèfle</div>
+          <div class="history-plat-name">Palette de porc, sauce charcutière. Lentilles vertes et gâteau de carotte — 11.9€</div>
+        </div>
+        <span class="note note-good mode-sportif">7<span class="note-max">/10</span></span>
+        <span class="note note-good mode-goulaf" style="display:none">8<span class="note-max">/10</span></span>
+      </div>
+
+      <div class="history-plat">
+        <div class="history-plat-info">
+          <div class="history-plat-restaurant"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 8h1a4 4 0 1 1 0 8h-1"/><path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4Z"/><line x1="6" x2="6" y1="2" y2="4"/><line x1="10" x2="10" y1="2" y2="4"/><line x1="14" x2="14" y1="2" y2="4"/></svg> La Pause Gourmande</div>
+          <div class="history-plat-name">Salade Bo Bun (vermicelles de riz, crudités, nems végé, cacahuètes, coriandre) — 11.90€</div>
+        </div>
+        <span class="note note-ok mode-sportif">5<span class="note-max">/10</span></span>
+        <span class="note note-good mode-goulaf" style="display:none">7<span class="note-max">/10</span></span>
+      </div>
+
+      <div class="history-plat">
+        <div class="history-plat-info">
+          <div class="history-plat-restaurant"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2"/><path d="M15 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.624l-3.48-4.35A1 1 0 0 0 13.52 8H14"/><circle cx="17" cy="18" r="2"/><circle cx="7" cy="18" r="2"/></svg> Le Truck Muche</div>
+          <div class="history-plat-name">POKE BOWL SAUMON — 11.50€</div>
+        </div>
+        <span class="note note-good mode-sportif">8<span class="note-max">/10</span></span>
+        <span class="note note-ok mode-goulaf" style="display:none">6<span class="note-max">/10</span></span>
+      </div>
+    </div>
+
+    <div class="day-detail" id="detail-2026-03-19">
+      <div class="day-detail-header">
+        <div>
+          <div class="day-detail-date">Jeudi 19 mars 2026</div>
+          <div class="day-detail-reco">Le Bistrot Trèfle — Wok de poulet asiatique, nouilles de blé aux légumes du soleil</div>
+        </div>
+        <button class="day-detail-close" onclick="closeDay()" aria-label="Fermer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+      </div>
+
+      <div class="history-plat">
+        <div class="history-plat-info">
+          <div class="history-plat-restaurant"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2C8 2 4 6 4 10c0 2.5 1.5 4.5 3.5 5.5L12 22l4.5-6.5C18.5 14.5 20 12.5 20 10c0-4-4-8-8-8z"/><circle cx="12" cy="10" r="2"/></svg> Le Bistrot Trèfle</div>
+          <div class="history-plat-name">Wok de poulet asiatique, nouilles de blé aux légumes du soleil — 11.9€</div>
+        </div>
+        <span class="note note-good mode-sportif">8<span class="note-max">/10</span></span>
+        <span class="note note-good mode-goulaf" style="display:none">7<span class="note-max">/10</span></span>
+      </div>
+
+      <div class="history-plat">
+        <div class="history-plat-info">
+          <div class="history-plat-restaurant"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 8h1a4 4 0 1 1 0 8h-1"/><path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4Z"/><line x1="6" x2="6" y1="2" y2="4"/><line x1="10" x2="10" y1="2" y2="4"/><line x1="14" x2="14" y1="2" y2="4"/></svg> La Pause Gourmande</div>
+          <div class="history-plat-name">Blanquette de sot l y laisse de dinde riz — 11.90€</div>
+        </div>
+        <span class="note note-ok mode-sportif">6<span class="note-max">/10</span></span>
+        <span class="note note-good mode-goulaf" style="display:none">8<span class="note-max">/10</span></span>
+      </div>
+
+      <div class="history-plat">
+        <div class="history-plat-info">
+          <div class="history-plat-restaurant"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2"/><path d="M15 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.624l-3.48-4.35A1 1 0 0 0 13.52 8H14"/><circle cx="17" cy="18" r="2"/><circle cx="7" cy="18" r="2"/></svg> Le Truck Muche</div>
+          <div class="history-plat-name">Canard confit pommes de terre — 11.50€</div>
+        </div>
+        <span class="note note-bad mode-sportif">4<span class="note-max">/10</span></span>
+        <span class="note note-good mode-goulaf" style="display:none">9<span class="note-max">/10</span></span>
+      </div>
+    </div>
+
+    <div class="day-detail" id="detail-2026-03-20">
+      <div class="day-detail-header">
+        <div>
+          <div class="day-detail-date">Vendredi 20 mars 2026</div>
+          <div class="day-detail-reco">La Pause Gourmande — Dos de colin, crumble de parmesan, mousseline de brocolis et chou-fleur rôti au curry</div>
+        </div>
+        <button class="day-detail-close" onclick="closeDay()" aria-label="Fermer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+      </div>
+
+      <div class="history-plat">
+        <div class="history-plat-info">
+          <div class="history-plat-restaurant"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2C8 2 4 6 4 10c0 2.5 1.5 4.5 3.5 5.5L12 22l4.5-6.5C18.5 14.5 20 12.5 20 10c0-4-4-8-8-8z"/><circle cx="12" cy="10" r="2"/></svg> Le Bistrot Trèfle</div>
+          <div class="history-plat-name">Lamelles de seiche en persillade. Risotto et tomate rôtie — 11.9€</div>
+        </div>
+        <span class="note note-good mode-sportif">7<span class="note-max">/10</span></span>
+        <span class="note note-good mode-goulaf" style="display:none">7<span class="note-max">/10</span></span>
+      </div>
+
+      <div class="history-plat">
+        <div class="history-plat-info">
+          <div class="history-plat-restaurant"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 8h1a4 4 0 1 1 0 8h-1"/><path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4Z"/><line x1="6" x2="6" y1="2" y2="4"/><line x1="10" x2="10" y1="2" y2="4"/><line x1="14" x2="14" y1="2" y2="4"/></svg> La Pause Gourmande</div>
+          <div class="history-plat-name">Dos de colin, crumble de parmesan, mousseline de brocolis et chou-fleur rôti au curry — 11.90€</div>
+        </div>
+        <span class="note note-good mode-sportif">9<span class="note-max">/10</span></span>
+        <span class="note note-good mode-goulaf" style="display:none">8<span class="note-max">/10</span></span>
+      </div>
+
+      <div class="history-plat">
+        <div class="history-plat-info">
+          <div class="history-plat-restaurant"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2"/><path d="M15 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.624l-3.48-4.35A1 1 0 0 0 13.52 8H14"/><circle cx="17" cy="18" r="2"/><circle cx="7" cy="18" r="2"/></svg> Le Truck Muche</div>
+          <div class="history-plat-name">RISOTTO GORGONZOLA JAMBON CRU — 11.50€</div>
+        </div>
+        <span class="note note-ok mode-sportif">5<span class="note-max">/10</span></span>
+        <span class="note note-good mode-goulaf" style="display:none">9<span class="note-max">/10</span></span>
+      </div>
+    </div>
+
+    <div class="day-detail" id="detail-2026-03-23">
+      <div class="day-detail-header">
+        <div>
+          <div class="day-detail-date">Lundi 23 mars 2026</div>
+          <div class="day-detail-reco">Le Bistrot Trèfle — Émincé de dinde, épices tandoori. Boulgour et courgettes rôties</div>
+        </div>
+        <button class="day-detail-close" onclick="closeDay()" aria-label="Fermer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+      </div>
+
+      <div class="history-plat">
+        <div class="history-plat-info">
+          <div class="history-plat-restaurant"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2C8 2 4 6 4 10c0 2.5 1.5 4.5 3.5 5.5L12 22l4.5-6.5C18.5 14.5 20 12.5 20 10c0-4-4-8-8-8z"/><circle cx="12" cy="10" r="2"/></svg> Le Bistrot Trèfle</div>
+          <div class="history-plat-name">Émincé de dinde, épices tandoori. Boulgour et courgettes rôties — 11.9€</div>
+        </div>
+        <span class="note note-good mode-sportif">9<span class="note-max">/10</span></span>
+        <span class="note note-ok mode-goulaf" style="display:none">6<span class="note-max">/10</span></span>
+      </div>
+
+      <div class="history-plat">
+        <div class="history-plat-info">
+          <div class="history-plat-restaurant"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 8h1a4 4 0 1 1 0 8h-1"/><path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4Z"/><line x1="6" x2="6" y1="2" y2="4"/><line x1="10" x2="10" y1="2" y2="4"/><line x1="14" x2="14" y1="2" y2="4"/></svg> La Pause Gourmande</div>
+          <div class="history-plat-name">Petits Farcis à l'Italienne (grana padano, basilic, olives noires) et Orzo (pâtes) — 11.90€</div>
+        </div>
+        <span class="note note-ok mode-sportif">6<span class="note-max">/10</span></span>
+        <span class="note note-good mode-goulaf" style="display:none">8<span class="note-max">/10</span></span>
+      </div>
+
+      <div class="history-plat">
+        <div class="history-plat-info">
+          <div class="history-plat-restaurant"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2"/><path d="M15 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.624l-3.48-4.35A1 1 0 0 0 13.52 8H14"/><circle cx="17" cy="18" r="2"/><circle cx="7" cy="18" r="2"/></svg> Le Truck Muche</div>
+          <div class="history-plat-name">Canard aux olives, tagliatelles — 11.50€</div>
+        </div>
+        <span class="note note-ok mode-sportif">5<span class="note-max">/10</span></span>
+        <span class="note note-good mode-goulaf" style="display:none">9<span class="note-max">/10</span></span>
+      </div>
+    </div>
+
+    <div class="day-detail" id="detail-2026-03-24">
+      <div class="day-detail-header">
+        <div>
+          <div class="day-detail-date">Mardi 24 mars 2026</div>
+          <div class="day-detail-reco">Le Truck Muche — CUISSE DE POULET RÔTI POMME DE TERRE</div>
+        </div>
+        <button class="day-detail-close" onclick="closeDay()" aria-label="Fermer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+      </div>
+
+      <div class="history-plat">
+        <div class="history-plat-info">
+          <div class="history-plat-restaurant"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2C8 2 4 6 4 10c0 2.5 1.5 4.5 3.5 5.5L12 22l4.5-6.5C18.5 14.5 20 12.5 20 10c0-4-4-8-8-8z"/><circle cx="12" cy="10" r="2"/></svg> Le Bistrot Trèfle</div>
+          <div class="history-plat-name">Porc au caramel. Riz cantonais — 11.9€</div>
+        </div>
+        <span class="note note-ok mode-sportif">5<span class="note-max">/10</span></span>
+        <span class="note note-good mode-goulaf" style="display:none">8<span class="note-max">/10</span></span>
+      </div>
+
+      <div class="history-plat">
+        <div class="history-plat-info">
+          <div class="history-plat-restaurant"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 8h1a4 4 0 1 1 0 8h-1"/><path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4Z"/><line x1="6" x2="6" y1="2" y2="4"/><line x1="10" x2="10" y1="2" y2="4"/><line x1="14" x2="14" y1="2" y2="4"/></svg> La Pause Gourmande</div>
+          <div class="history-plat-name">Ballotine de volaille au comté Pommes de terre façon potatoes ketchup maison — 11.90€</div>
+        </div>
+        <span class="note note-ok mode-sportif">6<span class="note-max">/10</span></span>
+        <span class="note note-good mode-goulaf" style="display:none">8<span class="note-max">/10</span></span>
+      </div>
+
+      <div class="history-plat">
+        <div class="history-plat-info">
+          <div class="history-plat-restaurant"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2"/><path d="M15 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.624l-3.48-4.35A1 1 0 0 0 13.52 8H14"/><circle cx="17" cy="18" r="2"/><circle cx="7" cy="18" r="2"/></svg> Le Truck Muche</div>
+          <div class="history-plat-name">CUISSE DE POULET RÔTI POMME DE TERRE — 11.50€</div>
+        </div>
+        <span class="note note-good mode-sportif">8<span class="note-max">/10</span></span>
+        <span class="note note-ok mode-goulaf" style="display:none">6<span class="note-max">/10</span></span>
+      </div>
+    </div>
+
+    <div class="day-detail" id="detail-2026-03-25">
+      <div class="day-detail-header">
+        <div>
+          <div class="day-detail-date">Mercredi 25 mars 2026</div>
+          <div class="day-detail-reco">Le Truck Muche — Émincé de dinde à la moutarde, purée</div>
+        </div>
+        <button class="day-detail-close" onclick="closeDay()" aria-label="Fermer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+      </div>
+
+      <div class="history-plat">
+        <div class="history-plat-info">
+          <div class="history-plat-restaurant"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2C8 2 4 6 4 10c0 2.5 1.5 4.5 3.5 5.5L12 22l4.5-6.5C18.5 14.5 20 12.5 20 10c0-4-4-8-8-8z"/><circle cx="12" cy="10" r="2"/></svg> Le Bistrot Trèfle</div>
+          <div class="history-plat-name">Filet de limande, beurre blanc aux agrumes. Pommes de terre vapeur, haricots verts — 11.9€</div>
+        </div>
+        <span class="note note-good mode-sportif">8<span class="note-max">/10</span></span>
+        <span class="note note-ok mode-goulaf" style="display:none">6<span class="note-max">/10</span></span>
+      </div>
+
+      <div class="history-plat">
+        <div class="history-plat-info">
+          <div class="history-plat-restaurant"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 8h1a4 4 0 1 1 0 8h-1"/><path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4Z"/><line x1="6" x2="6" y1="2" y2="4"/><line x1="10" x2="10" y1="2" y2="4"/><line x1="14" x2="14" y1="2" y2="4"/></svg> La Pause Gourmande</div>
+          <div class="history-plat-name">Rigatoni all'arrabiata et burrata — 11.90€</div>
+        </div>
+        <span class="note note-ok mode-sportif">5<span class="note-max">/10</span></span>
+        <span class="note note-good mode-goulaf" style="display:none">9<span class="note-max">/10</span></span>
+      </div>
+
+      <div class="history-plat">
+        <div class="history-plat-info">
+          <div class="history-plat-restaurant"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2"/><path d="M15 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.624l-3.48-4.35A1 1 0 0 0 13.52 8H14"/><circle cx="17" cy="18" r="2"/><circle cx="7" cy="18" r="2"/></svg> Le Truck Muche</div>
+          <div class="history-plat-name">Émincé de dinde à la moutarde, purée — 11.50€</div>
+        </div>
+        <span class="note note-good mode-sportif">8<span class="note-max">/10</span></span>
+        <span class="note note-good mode-goulaf" style="display:none">7<span class="note-max">/10</span></span>
+      </div>
+    </div>
+
+    <div class="day-detail" id="detail-2026-03-26">
+      <div class="day-detail-header">
+        <div>
+          <div class="day-detail-date">Jeudi 26 mars 2026</div>
+          <div class="day-detail-reco">Le Bistrot Trèfle — Pot au feu du Chef au paleron et ses petits légumes</div>
+        </div>
+        <button class="day-detail-close" onclick="closeDay()" aria-label="Fermer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+      </div>
+
+      <div class="history-plat">
+        <div class="history-plat-info">
+          <div class="history-plat-restaurant"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2C8 2 4 6 4 10c0 2.5 1.5 4.5 3.5 5.5L12 22l4.5-6.5C18.5 14.5 20 12.5 20 10c0-4-4-8-8-8z"/><circle cx="12" cy="10" r="2"/></svg> Le Bistrot Trèfle</div>
+          <div class="history-plat-name">Pot au feu du Chef au paleron et ses petits légumes — 11.9€</div>
+        </div>
+        <span class="note note-good mode-sportif">8<span class="note-max">/10</span></span>
+        <span class="note note-good mode-goulaf" style="display:none">7<span class="note-max">/10</span></span>
+      </div>
+
+      <div class="history-plat">
+        <div class="history-plat-info">
+          <div class="history-plat-restaurant"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 8h1a4 4 0 1 1 0 8h-1"/><path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4Z"/><line x1="6" x2="6" y1="2" y2="4"/><line x1="10" x2="10" y1="2" y2="4"/><line x1="14" x2="14" y1="2" y2="4"/></svg> La Pause Gourmande</div>
+          <div class="history-plat-name">Lomo (viande de porc, mille-feuilles de légumes, mayonnaise aux herbes) — 11.90€</div>
+        </div>
+        <span class="note note-ok mode-sportif">5<span class="note-max">/10</span></span>
+        <span class="note note-good mode-goulaf" style="display:none">8<span class="note-max">/10</span></span>
+      </div>
+
+      <div class="history-plat">
+        <div class="history-plat-info">
+          <div class="history-plat-restaurant"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2"/><path d="M15 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.624l-3.48-4.35A1 1 0 0 0 13.52 8H14"/><circle cx="17" cy="18" r="2"/><circle cx="7" cy="18" r="2"/></svg> Le Truck Muche</div>
+          <div class="history-plat-name">Rougail Saucisse — 11.50€</div>
+        </div>
+        <span class="note note-ok mode-sportif">5<span class="note-max">/10</span></span>
+        <span class="note note-good mode-goulaf" style="display:none">9<span class="note-max">/10</span></span>
+      </div>
+    </div>
+
+    <div class="day-detail" id="detail-2026-03-27">
+      <div class="day-detail-header">
+        <div>
+          <div class="day-detail-date">Vendredi 27 mars 2026</div>
+          <div class="day-detail-reco">La Pause Gourmande — Mahi Mahi au lait de coco et citron vert riz aux légumes</div>
+        </div>
+        <button class="day-detail-close" onclick="closeDay()" aria-label="Fermer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+      </div>
+
+      <div class="history-plat">
+        <div class="history-plat-info">
+          <div class="history-plat-restaurant"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2C8 2 4 6 4 10c0 2.5 1.5 4.5 3.5 5.5L12 22l4.5-6.5C18.5 14.5 20 12.5 20 10c0-4-4-8-8-8z"/><circle cx="12" cy="10" r="2"/></svg> Le Bistrot Trèfle</div>
+          <div class="history-plat-name">Demi coquelet, petit jus aux aromates. Frites fraîches, salade — 11.9€</div>
+        </div>
+        <span class="note note-good mode-sportif">7<span class="note-max">/10</span></span>
+        <span class="note note-good mode-goulaf" style="display:none">8<span class="note-max">/10</span></span>
+      </div>
+
+      <div class="history-plat">
+        <div class="history-plat-info">
+          <div class="history-plat-restaurant"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 8h1a4 4 0 1 1 0 8h-1"/><path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4Z"/><line x1="6" x2="6" y1="2" y2="4"/><line x1="10" x2="10" y1="2" y2="4"/><line x1="14" x2="14" y1="2" y2="4"/></svg> La Pause Gourmande</div>
+          <div class="history-plat-name">Mahi Mahi au lait de coco et citron vert riz aux légumes — 11.90€</div>
+        </div>
+        <span class="note note-good mode-sportif">9<span class="note-max">/10</span></span>
+        <span class="note note-good mode-goulaf" style="display:none">7<span class="note-max">/10</span></span>
+      </div>
+
+      <div class="history-plat">
+        <div class="history-plat-info">
+          <div class="history-plat-restaurant"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2"/><path d="M15 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.624l-3.48-4.35A1 1 0 0 0 13.52 8H14"/><circle cx="17" cy="18" r="2"/><circle cx="7" cy="18" r="2"/></svg> Le Truck Muche</div>
+          <div class="history-plat-name">GRATIN DE CROZETS ET DIOT DE SAVOIE — 11.50€</div>
+        </div>
+        <span class="note note-ok mode-sportif">5<span class="note-max">/10</span></span>
+        <span class="note note-good mode-goulaf" style="display:none">9<span class="note-max">/10</span></span>
+      </div>
+    </div>
+
+    <div class="day-detail" id="detail-2026-03-30">
+      <div class="day-detail-header">
+        <div>
+          <div class="day-detail-date">Lundi 30 mars 2026</div>
+          <div class="day-detail-reco">Le Bistrot Trèfle — Paleron de bœuf, petit jus corsé au thym. Risotto d'asperges</div>
+        </div>
+        <button class="day-detail-close" onclick="closeDay()" aria-label="Fermer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+      </div>
+
+      <div class="history-plat">
+        <div class="history-plat-info">
+          <div class="history-plat-restaurant"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2C8 2 4 6 4 10c0 2.5 1.5 4.5 3.5 5.5L12 22l4.5-6.5C18.5 14.5 20 12.5 20 10c0-4-4-8-8-8z"/><circle cx="12" cy="10" r="2"/></svg> Le Bistrot Trèfle</div>
+          <div class="history-plat-name">Paleron de bœuf, petit jus corsé au thym. Risotto d'asperges — 11.9€</div>
+        </div>
+        <span class="note note-good mode-sportif">8<span class="note-max">/10</span></span>
+        <span class="note note-good mode-goulaf" style="display:none">8<span class="note-max">/10</span></span>
+      </div>
+
+      <div class="history-plat">
+        <div class="history-plat-info">
+          <div class="history-plat-restaurant"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 8h1a4 4 0 1 1 0 8h-1"/><path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4Z"/><line x1="6" x2="6" y1="2" y2="4"/><line x1="10" x2="10" y1="2" y2="4"/><line x1="14" x2="14" y1="2" y2="4"/></svg> La Pause Gourmande</div>
+          <div class="history-plat-name">Araignée de porc à la Portugaise (sauce chorizo, oignons, persil, tomates et crème) pommes de terre grenailles et carottes — 11.90€</div>
+        </div>
+        <span class="note note-ok mode-sportif">6<span class="note-max">/10</span></span>
+        <span class="note note-good mode-goulaf" style="display:none">9<span class="note-max">/10</span></span>
+      </div>
+
+      <div class="history-plat">
+        <div class="history-plat-info">
+          <div class="history-plat-restaurant"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2"/><path d="M15 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.624l-3.48-4.35A1 1 0 0 0 13.52 8H14"/><circle cx="17" cy="18" r="2"/><circle cx="7" cy="18" r="2"/></svg> Le Truck Muche</div>
+          <div class="history-plat-name">Canard aux olives, tagliatelles — 11.50€</div>
+        </div>
+        <span class="note note-ok mode-sportif">5<span class="note-max">/10</span></span>
+        <span class="note note-good mode-goulaf" style="display:none">7<span class="note-max">/10</span></span>
+      </div>
+    </div>
+
+    <div class="day-detail" id="detail-2026-03-31">
+      <div class="day-detail-header">
+        <div>
+          <div class="day-detail-date">Mardi 31 mars 2026</div>
+          <div class="day-detail-reco">La Pause Gourmande — Filet de poulet aux olives vertes et citrons, semoule et courgettes</div>
+        </div>
+        <button class="day-detail-close" onclick="closeDay()" aria-label="Fermer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+      </div>
+
+      <div class="history-plat">
+        <div class="history-plat-info">
+          <div class="history-plat-restaurant"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2C8 2 4 6 4 10c0 2.5 1.5 4.5 3.5 5.5L12 22l4.5-6.5C18.5 14.5 20 12.5 20 10c0-4-4-8-8-8z"/><circle cx="12" cy="10" r="2"/></svg> Le Bistrot Trèfle</div>
+          <div class="history-plat-name">Échine de porc rôtie, crème de raclette. Écrasé de pommes de terre, méli-mélo de légumes — 11.9€</div>
+        </div>
+        <span class="note note-ok mode-sportif">5<span class="note-max">/10</span></span>
+        <span class="note note-good mode-goulaf" style="display:none">9<span class="note-max">/10</span></span>
+      </div>
+
+      <div class="history-plat">
+        <div class="history-plat-info">
+          <div class="history-plat-restaurant"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 8h1a4 4 0 1 1 0 8h-1"/><path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4Z"/><line x1="6" x2="6" y1="2" y2="4"/><line x1="10" x2="10" y1="2" y2="4"/><line x1="14" x2="14" y1="2" y2="4"/></svg> La Pause Gourmande</div>
+          <div class="history-plat-name">Filet de poulet aux olives vertes et citrons, semoule et courgettes — 11.90€</div>
+        </div>
+        <span class="note note-good mode-sportif">9<span class="note-max">/10</span></span>
+        <span class="note note-good mode-goulaf" style="display:none">7<span class="note-max">/10</span></span>
+      </div>
+
+      <div class="history-plat">
+        <div class="history-plat-info">
+          <div class="history-plat-restaurant"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2"/><path d="M15 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.624l-3.48-4.35A1 1 0 0 0 13.52 8H14"/><circle cx="17" cy="18" r="2"/><circle cx="7" cy="18" r="2"/></svg> Le Truck Muche</div>
+          <div class="history-plat-name">Jambon braisé frites — 11.50€</div>
+        </div>
+        <span class="note note-bad mode-sportif">4<span class="note-max">/10</span></span>
+        <span class="note note-good mode-goulaf" style="display:none">7<span class="note-max">/10</span></span>
+      </div>
+    </div>
+</div>
+
+    <script>
+    (function() {
+      var currentActive = null;
+
+      function showDay(dateStr) {
+        // Hide previous
+        if (currentActive) {
+          currentActive.classList.remove('active');
+        }
+        document.querySelectorAll('.day-detail').forEach(function(d) {
+          d.classList.remove('visible');
+        });
+        // Show new
+        var detail = document.getElementById('detail-' + dateStr);
+        var cell = document.querySelector('[data-date="' + dateStr + '"]');
+        if (detail) {
+          detail.classList.add('visible');
+          currentActive = cell;
+          if (cell) cell.classList.add('active');
+          detail.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+      }
+
+      function closeDay() {
+        if (currentActive) {
+          currentActive.classList.remove('active');
+          currentActive = null;
+        }
+        document.querySelectorAll('.day-detail').forEach(function(d) {
+          d.classList.remove('visible');
+        });
+      }
+
+      function navigateMonth(dir) {
+        var label = document.getElementById('month-label');
+        var current = label.dataset.month; // "YYYY-MM"
+        var parts = current.split('-');
+        var y = parseInt(parts[0]);
+        var m = parseInt(parts[1]) + dir;
+        if (m < 1) { m = 12; y--; }
+        if (m > 12) { m = 1; y++; }
+        var key = y + '-' + String(m).padStart(2, '0');
+        // Show/hide month grids
+        document.querySelectorAll('.calendar-month').forEach(function(g) {
+          g.style.display = g.dataset.month === key ? '' : 'none';
+        });
+        label.dataset.month = key;
+        label.textContent = label.getAttribute('data-labels-' + key) || key;
+        closeDay();
+        // Update nav button states
+        updateNavButtons(key);
+      }
+
+      function updateNavButtons(key) {
+        var months = [];
+        document.querySelectorAll('.calendar-month').forEach(function(g) {
+          months.push(g.dataset.month);
+        });
+        months.sort();
+        var prevBtn = document.getElementById('cal-prev');
+        var nextBtn = document.getElementById('cal-next');
+        if (prevBtn) prevBtn.style.opacity = key <= months[0] ? '0.3' : '1';
+        if (prevBtn) prevBtn.style.pointerEvents = key <= months[0] ? 'none' : 'auto';
+        if (nextBtn) nextBtn.style.opacity = key >= months[months.length - 1] ? '0.3' : '1';
+        if (nextBtn) nextBtn.style.pointerEvents = key >= months[months.length - 1] ? 'none' : 'auto';
+      }
+
+      // Expose to onclick handlers
+      window.showDay = showDay;
+      window.closeDay = closeDay;
+      window.navigateMonth = navigateMonth;
+
+      document.addEventListener('DOMContentLoaded', function() {
+        var label = document.getElementById('month-label');
+        if (label) updateNavButtons(label.dataset.month);
+      });
+    })();
+    </script>
+
+  </div>
+  <div class="footer">
+    Plats du Jour &mdash; Mis à jour automatiquement chaque matin
+  </div>
+</body>
+</html>

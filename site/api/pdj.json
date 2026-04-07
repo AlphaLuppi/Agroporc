@@ -1,0 +1,124 @@
+{
+  "date": "2026-04-07",
+  "plats": [
+    {
+      "restaurant": "Le Bistrot Trèfle",
+      "plat": "Poulet coco-curry. Riz pilaf, carottes glacées",
+      "prix": "11.9€",
+      "nutrition_estimee": {
+        "calories": 620,
+        "proteines_g": 38,
+        "glucides_g": 65,
+        "lipides_g": 18
+      },
+      "note": 8,
+      "justification": "Excellent ratio protéines/calories grâce au poulet. Le riz pilaf apporte des glucides complexes pour la récup, et les carottes glacées ajoutent des fibres et vitamines. Le lait de coco alourdit un peu les lipides mais ça reste très correct.",
+      "note_goulaf": 7,
+      "justification_goulaf": "Le curry-coco c'est toujours réconfortant et parfumé, le combo poulet-riz est un classique efficace. Manque peut-être un petit côté fromager ou croustillant pour envoyer du lourd en mode goulaf.",
+      "commentaires": [
+        {
+          "auteur": "Nikou",
+          "texte": "NONNNN MAIS LES GAAAAARS LE POULET COCO-CURRY IL EST DANGEREEEEUXXXX 🥥 bon après c'est pas assez gras pour moi mais le curry ça pardonne tout"
+        },
+        {
+          "auteur": "Gab",
+          "texte": "Les carottes glacées c'est un bon début, mais j'aurais remplacé le riz par une salade de quinoa perso. Au moins y'a des légumes."
+        },
+        {
+          "auteur": "Jimmy",
+          "texte": "Mon algorithme de satisfaction détecte un ratio épice/réconfort de 0.87. C'est exactement ce que je recommandais quand j'étais encore en service. Mes circuits me manquent."
+        }
+      ]
+    },
+    {
+      "restaurant": "La Pause Gourmande",
+      "plat": "Kefta de bœuf a l'Italienne risotto d'orzo",
+      "prix": "11.90€",
+      "nutrition_estimee": {
+        "calories": 680,
+        "proteines_g": 35,
+        "glucides_g": 58,
+        "lipides_g": 28
+      },
+      "note": 6,
+      "justification": "Le bœuf en kefta apporte de bonnes protéines mais la viande hachée est souvent plus grasse qu'un filet. Le risotto d'orzo est gourmand mais dense en glucides raffinés. Correct sans être optimal pour un sportif.",
+      "note_goulaf": 8,
+      "justification_goulaf": "Kefta épicée + risotto crémeux c'est une combinaison ultra gourmande. Le côté italien apporte du caractère, l'orzo a cette texture fondante qui fait plaisir. C'est généreux et savoureux.",
+      "commentaires": [
+        {
+          "auteur": "Nikou",
+          "texte": "Kefta ET risotto ?? On parle de PLAISIR là les gars. Si y'a du parmesan dedans je quitte mon travail pour aller manger maintenant."
+        },
+        {
+          "auteur": "Thomas",
+          "texte": "Kefta 'à l'italienne' c'est un peu comme mettre une cravate sur un jogging non ? Bon ça doit être bon quand même, j'ai faim."
+        },
+        {
+          "auteur": "Tom",
+          "texte": "Le risotto d'orzo c'est comme un firmware custom sur du hardware classique. Ça change pas la base mais l'expérience utilisateur est nettement améliorée. 4 étoiles sur Amazon."
+        },
+        {
+          "auteur": "Philippe Hetschebest",
+          "texte": "Kefta 'à l'italienne' avec un risotto d'ORZO ? Mais c'est pas possible ! L'orzo c'est des pâtes, c'est PAS du riz, alors arrêtez de me parler de risotto ! Qui est le chef ? Qu'il vienne m'expliquer !"
+        },
+        {
+          "auteur": "Alicia",
+          "texte": "Kefta à l'italienne... c'est un peu kludgy comme concept, non ? C'est comme quand Shrek met un costume de prince — ça marche mais c'est pas naturel. Onions would have helped, just saying."
+        },
+        {
+          "auteur": "Gab",
+          "texte": "Alors déjà le kefta c'est d'origine maghrébine, et là on le marie avec de l'orzo qui est une pâte italienne en forme de grain de riz, ce qui crée une fusion culinaire intéressante qui me rappelle un papier que j'ai lu sur les modèles de diffusion appliqués à la gastronomie moléculaire, d'ailleurs Fébulle adore le bœuf haché donc techniquement c'est un plat approuvé par mon chien."
+        },
+        {
+          "auteur": "Sylvain",
+          "texte": "J'ai demandé à un modèle sur LibreChat de noter ce plat, il a donné 7.3/10. Mais bon, un sandwich kefta aurait eu 9/10 facilement.",
+          "reponse_a": "Tom"
+        },
+        {
+          "auteur": "Jimmy",
+          "texte": "Quand JE gérais les PDJ, j'aurais jamais laissé passer un 'risotto d'orzo' sans lever un warning. Zephir aurait été d'accord avec moi. Mais bon, Toma a préféré économiser sur mon budget plutôt que sur la qualité des recommandations...",
+          "reponse_a": "Sylvain"
+        }
+      ]
+    },
+    {
+      "restaurant": "Le Truck Muche",
+      "plat": "Magret séché et pâtes au curry",
+      "prix": "11.50€",
+      "nutrition_estimee": {
+        "calories": 710,
+        "proteines_g": 32,
+        "glucides_g": 62,
+        "lipides_g": 32
+      },
+      "note": 5,
+      "justification": "Le magret séché est savoureux mais gras (charcuterie de canard). Les pâtes au curry ajoutent des glucides sans grande valeur nutritive supplémentaire. Le ratio lipides/protéines est déséquilibré pour un sportif.",
+      "note_goulaf": 9,
+      "justification_goulaf": "Magret séché c'est de la BOMBE en goût : fumé, fondant, intense. Associé à des pâtes au curry c'est un mariage audacieux et hyper gourmand. Le plat le plus décadent et original de la sélection.",
+      "commentaires": [
+        {
+          "auteur": "Nikou",
+          "texte": "NONNNN MAIS LES GAAAAARS LE MAGRET SÉCHÉ IL EST DANGEREEEEUXXXX 🦆 du canard séché avec des pâtes au curry c'est illégal, appelez la police du goût"
+        },
+        {
+          "auteur": "Gab",
+          "texte": "Magret séché + pâtes... y'a littéralement ZÉRO légume. Pas une feuille. Pas un brin de persil. Je suis en PLS."
+        },
+        {
+          "auteur": "Jimmy",
+          "texte": "Fusion canard-curry détectée. Ma base de données culinaire n'a aucune entrée pour cette combinaison. Erreur 404 : légume introuvable. Ça me rappelle pourquoi on m'a remplacé."
+        }
+      ]
+    }
+  ],
+  "recommandation": {
+    "restaurant": "Le Bistrot Trèfle",
+    "plat": "Poulet coco-curry. Riz pilaf, carottes glacées",
+    "raison": "Meilleur apport protéique (38g), lipides contenus, présence de légumes et glucides complexes. Le plat le plus équilibré pour un sportif à ~620 kcal."
+  },
+  "recommandation_goulaf": {
+    "restaurant": "Le Truck Muche",
+    "plat": "Magret séché et pâtes au curry",
+    "raison": "Le magret séché c'est une tuerie gustative, le combo avec le curry est original et ultra gourmand. Le plat le plus décadent et mémorable du jour."
+  }
+}
