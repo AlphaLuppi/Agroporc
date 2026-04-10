@@ -7,7 +7,12 @@ produire des commentaires immersifs où les personnages se répondent entre eux.
 import json
 import subprocess
 import shutil
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from gif_search import resolve_gif_queries
+from . import feedback_agent
 
 PERSONNAGES_DIR = Path(__file__).parent.parent / "personnages"
 COMMENTAIRES_SEMAINE_FILE = Path(__file__).parent.parent / "output" / "commentaires_semaine.json"
@@ -86,6 +91,22 @@ def _build_personnages_prompt(personnages: list[dict]) -> str:
         lines.append(f"  Style : {p['style_de_parole']}")
         lines.append(f"  Sujets fétiches : {', '.join(p['sujets_fetiches'])}")
         lines.append(f"  Blagues récurrentes : {', '.join(p['blagues_recurrentes'])}")
+
+        retours = p.get("retours_humains") or []
+        if retours:
+            lines.append(f"  Retours humains reçus (à intégrer dans la personnalité de {p['prenom']}) :")
+            for r in retours[:10]:  # limiter l'injection au prompt
+                ai_txt = (r.get("ai_texte") or "").strip().replace("\n", " ")
+                h_auteur = r.get("human_auteur", "?")
+                h_txt = (r.get("human_texte") or "").strip().replace("\n", " ")
+                lines.append(
+                    f"    - Quand {p['prenom']} a dit \"{ai_txt}\", {h_auteur} (humain) a répondu \"{h_txt}\"."
+                )
+            lines.append(
+                f"  → {p['prenom']} DOIT tenir compte de ces retours : éviter ce qui a été mal reçu, "
+                f"intégrer les corrections factuelles, s'adapter au ton que les humains attendent de lui, "
+                f"et faire parfois allusion à ces échanges passés de façon naturelle."
+            )
         lines.append("")
     return "\n".join(lines)
 
@@ -110,6 +131,7 @@ Tu dois générer des commentaires de personnages fictifs qui réagissent aux pl
 5. **PAS DE RÉPONSES** : Chaque commentaire est indépendant. Pas de champ "reponse_a".
 6. Le ton est décontracté, entre collègues/potes. C'est drôle, jamais méchant.
 7. Chaque commentaire doit refléter le caractère UNIQUE du personnage (ses tics, ses obsessions, son style).
+8. **GIFs/IMAGES** : Environ 20-30% des commentaires peuvent inclure un champ "gif_query" avec des mots-clés de recherche Giphy (en anglais, 2-4 mots). Ex: "excited food", "disgusted face", "gym protein". Le GIF doit être pertinent et renforcer la réaction du personnage. Ne force PAS les GIFs — seulement quand ça ajoute vraiment quelque chose de drôle.
 
 **FORMAT DE SORTIE :** Réponds UNIQUEMENT en JSON valide."""
 
@@ -143,6 +165,7 @@ qui réagissent à ces commentaires existants.
    - Hervé insulte quelqu'un → les autres le remettent en place ou l'ignorent
 7. N'OBLIGE PAS les réponses. Si aucun commentaire ne se prête à une réponse naturelle, génère moins de réponses (voire 0).
 8. Le ton est décontracté, entre collègues/potes. C'est drôle, jamais méchant.
+9. **GIFs/IMAGES** : Certaines réponses peuvent inclure un champ "gif_query" (mots-clés Giphy en anglais, 2-4 mots). Ex: "facepalm", "mind blown", "eye roll". Seulement quand le GIF renforce vraiment la réponse (environ 15-25% des réponses). Ne force PAS.
 
 **FORMAT DE SORTIE :** Réponds UNIQUEMENT en JSON valide."""
 
@@ -182,6 +205,13 @@ def generate_commentaires_jour(plats: list[dict]) -> list[dict]:
     if not plats:
         return []
 
+    # Synchroniser d'abord les retours humains pour que les personnages
+    # adaptent leurs prochains commentaires aux réponses reçues sur le site.
+    try:
+        feedback_agent.sync_feedback_to_personnages()
+    except Exception as e:
+        print(f"[comment_agent] Sync feedback échouée : {e}")
+
     personnages = _load_personnages()
 
     # === PASSE 1 : commentaires racines ===
@@ -194,7 +224,7 @@ def generate_commentaires_jour(plats: list[dict]) -> list[dict]:
         f"Réponds en JSON avec cette structure :\n"
         f'{{"plats": [\n'
         f'  {{"restaurant": "nom", "plat": "nom du plat", "commentaires": [\n'
-        f'    {{"auteur": "Prénom", "texte": "commentaire drôle"}}\n'
+        f'    {{"auteur": "Prénom", "texte": "commentaire drôle", "gif_query": "excited food (optionnel)"}}\n'
         f"  ]}}\n"
         f"]}}"
     )
@@ -213,7 +243,7 @@ def generate_commentaires_jour(plats: list[dict]) -> list[dict]:
         f"Réponds en JSON avec cette structure :\n"
         f'{{"plats": [\n'
         f'  {{"restaurant": "nom", "plat": "nom du plat", "reponses": [\n'
-        f'    {{"auteur": "Prénom", "texte": "réponse au commentaire", "reponse_a": "Prénom", "reponse_a_index": 0}}\n'
+        f'    {{"auteur": "Prénom", "texte": "réponse au commentaire", "reponse_a": "Prénom", "reponse_a_index": 0, "gif_query": "facepalm (optionnel)"}}\n'
         f"  ]}}\n"
         f"]}}"
     )
@@ -233,6 +263,10 @@ def generate_commentaires_jour(plats: list[dict]) -> list[dict]:
                 p["commentaires"], reponses_by_resto[resto]
             )
 
+    # Résoudre les gif_query en image_url
+    for p in result_passe1:
+        resolve_gif_queries(p.get("commentaires", []))
+
     return result_passe1
 
 
@@ -251,6 +285,11 @@ def generate_commentaires_semaine(
     Returns:
         dict {{ "LUNDI": [commentaires], "MARDI": [...], ... }}
     """
+    try:
+        feedback_agent.sync_feedback_to_personnages()
+    except Exception as e:
+        print(f"[comment_agent] Sync feedback échouée : {e}")
+
     personnages = _load_personnages()
 
     # Construire la liste des plats par jour
@@ -289,7 +328,7 @@ def generate_commentaires_semaine(
         f"Les personnages peuvent faire référence aux plats des autres jours (ex: 'enfin du gras après la salade d'hier').\n\n"
         f"Réponds en JSON avec cette structure :\n"
         f'{{\n'
-        f'  "LUNDI": [{{"restaurant": "nom", "plat": "nom", "commentaires": [{{"auteur": "X", "texte": "..."}}]}}],\n'
+        f'  "LUNDI": [{{"restaurant": "nom", "plat": "nom", "commentaires": [{{"auteur": "X", "texte": "...", "gif_query": "excited food (optionnel)"}}]}}],\n'
         f'  "MARDI": [...],\n'
         f'  ...\n'
         f'}}'
@@ -310,7 +349,7 @@ def generate_commentaires_semaine(
         f"Varie les personnages qui répondent d'un jour à l'autre.\n\n"
         f"Réponds en JSON avec cette structure :\n"
         f'{{\n'
-        f'  "LUNDI": [{{"restaurant": "nom", "plat": "nom", "reponses": [{{"auteur": "X", "texte": "...", "reponse_a": "Y", "reponse_a_index": 0}}]}}],\n'
+        f'  "LUNDI": [{{"restaurant": "nom", "plat": "nom", "reponses": [{{"auteur": "X", "texte": "...", "reponse_a": "Y", "reponse_a_index": 0, "gif_query": "facepalm (optionnel)"}}]}}],\n'
         f'  "MARDI": [...],\n'
         f'  ...\n'
         f'}}'
@@ -335,6 +374,11 @@ def generate_commentaires_semaine(
                     p["commentaires"], reponses_by_resto[resto]
                 )
 
+    # Résoudre les gif_query en image_url
+    for jour in commentaires:
+        for p in commentaires[jour]:
+            resolve_gif_queries(p.get("commentaires", []))
+
     # Sauvegarder pour usage quotidien
     COMMENTAIRES_SEMAINE_FILE.parent.mkdir(parents=True, exist_ok=True)
     COMMENTAIRES_SEMAINE_FILE.write_text(
@@ -356,6 +400,13 @@ def generate_commentaires_personnage(prenom: str) -> dict[str, list[dict]]:
     Returns:
         dict mis à jour { "LUNDI": [...], ... }
     """
+    # Synchroniser les retours humains avant de charger le personnage,
+    # pour que ses nouveaux commentaires intègrent les derniers échanges.
+    try:
+        feedback_agent.sync_feedback_to_personnages()
+    except Exception as e:
+        print(f"[comment_agent] Sync feedback échouée : {e}")
+
     # Charger le personnage cible
     personnage_file = PERSONNAGES_DIR / f"{prenom.lower()}.json"
     if not personnage_file.exists():
@@ -386,6 +437,7 @@ Tu dois générer des commentaires pour UN SEUL personnage : {personnage['prenom
 4. **PAS DE RÉPONSES** : Chaque commentaire est indépendant. Pas de champ "reponse_a".
 5. Le ton est décontracté, entre collègues/potes. C'est drôle, jamais méchant.
 6. Le commentaire doit refléter le caractère UNIQUE du personnage (ses tics, ses obsessions, son style).
+7. **GIFs/IMAGES** : Le commentaire peut optionnellement inclure un champ "gif_query" avec des mots-clés de recherche Giphy (en anglais, 2-4 mots). Seulement si ça renforce vraiment la réaction. Environ 20% des commentaires max.
 
 **FORMAT DE SORTIE :** Réponds UNIQUEMENT en JSON valide."""
 
@@ -397,7 +449,7 @@ Tu dois générer des commentaires pour UN SEUL personnage : {personnage['prenom
         f"Il peut faire référence aux plats des autres jours.\n\n"
         f"Réponds en JSON avec cette structure :\n"
         f'{{\n'
-        f'  "LUNDI": [{{"restaurant": "nom", "plat": "nom", "commentaire": {{"auteur": "{personnage["prenom"]}", "texte": "..."}}}}}},\n'
+        f'  "LUNDI": [{{"restaurant": "nom", "plat": "nom", "commentaire": {{"auteur": "{personnage["prenom"]}", "texte": "...", "gif_query": "excited food (optionnel)"}}}}}},\n'
         f'  "MARDI": [...],\n'
         f'  ...\n'
         f'}}\n'
@@ -444,6 +496,7 @@ Il réagit aux commentaires existants des autres personnages.
 5. Ne répond PAS à ses propres commentaires.
 6. N'OBLIGE PAS les réponses. Si aucun commentaire ne se prête à une réponse naturelle, génère moins de réponses.
 7. Le ton est décontracté, entre collègues/potes. C'est drôle, jamais méchant.
+8. **GIFs/IMAGES** : La réponse peut optionnellement inclure un champ "gif_query" (mots-clés Giphy en anglais, 2-4 mots). Seulement quand ça renforce la réponse.
 
 **FORMAT DE SORTIE :** Réponds UNIQUEMENT en JSON valide."""
 
@@ -455,7 +508,7 @@ Il réagit aux commentaires existants des autres personnages.
         f"Le champ reponse_a_index est l'index (0-based) du commentaire auquel la réponse réagit.\n\n"
         f"Réponds en JSON avec cette structure :\n"
         f'{{\n'
-        f'  "LUNDI": [{{"restaurant": "nom", "plat": "nom", "reponses": [{{"auteur": "{personnage["prenom"]}", "texte": "...", "reponse_a": "Y", "reponse_a_index": 0}}]}}],\n'
+        f'  "LUNDI": [{{"restaurant": "nom", "plat": "nom", "reponses": [{{"auteur": "{personnage["prenom"]}", "texte": "...", "reponse_a": "Y", "reponse_a_index": 0, "gif_query": "facepalm (optionnel)"}}]}}],\n'
         f'  ...\n'
         f'}}\n'
         f'Si aucun commentaire ne mérite de réponse pour un jour, omets ce jour.'
@@ -478,6 +531,11 @@ Il réagit aux commentaires existants des autres personnages.
                         existing["commentaires"], new_reponses
                     )
                     break
+
+    # Résoudre les gif_query en image_url
+    for jour in commentaires:
+        for p in commentaires[jour]:
+            resolve_gif_queries(p.get("commentaires", []))
 
     # Sauvegarder
     COMMENTAIRES_SEMAINE_FILE.write_text(

@@ -22,7 +22,7 @@ HISTORY_DIR = Path(__file__).parent / "output" / "historique"
 load_dotenv()
 
 from scrapers import bistrot_trefle, pause_gourmande, truck_muche
-from agent import diet_agent, repair_team, comment_agent
+from agent import diet_agent, repair_team, comment_agent, feedback_agent
 from messages import generer_messages_semaine, maj_message_jour
 from publish import publish_pdj
 from jours_feries import est_ferie
@@ -451,7 +451,7 @@ async def _evaluer_et_sauver(plats: list[dict]) -> dict:
 # ── Point d'entrée ──────────────────────────────────────────────────────────
 
 def main():
-    usage = "Usage: python main.py [semaine|jour|commentaires <personnage>]"
+    usage = "Usage: python main.py [semaine|jour|commentaires <personnage>|sync-feedback]"
 
     if len(sys.argv) < 2:
         print(usage)
@@ -471,6 +471,12 @@ def main():
             sys.exit(1)
         prenom = sys.argv[2]
         comment_agent.generate_commentaires_personnage(prenom)
+    elif mode == "sync-feedback":
+        updated = feedback_agent.sync_feedback_to_personnages()
+        if updated:
+            print(f"[main] {len(updated)} personnage(s) mis à jour : {', '.join(updated.keys())}")
+        else:
+            print("[main] Aucun personnage mis à jour")
     else:
         print(f"Mode inconnu : {mode}")
         print(usage)
