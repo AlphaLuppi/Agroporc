@@ -1,6 +1,25 @@
+# Node / Next.js
+node_modules/
+.next/
 .env
+.env.local
+.env*.local
+.vercel
+
+# Python
 __pycache__/
 *.pyc
+.venv/
+
+# Project
 output/
-node_modules/
-.vercel/
+
+# Local tooling
+.DS_Store
+.agents/
+.claude/
+.mcp.json
+_bmad/
+_bmad-output/
+tsconfig.tsbuildinfo
+skills-lock.json
