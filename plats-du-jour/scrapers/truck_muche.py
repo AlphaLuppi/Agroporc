@@ -1,19 +1,27 @@
 """
-Scraper pour Le Truck Muche via Facebook (sans login).
-La page est accessible publiquement.
-Facebook transcrit automatiquement le texte des images dans l'attribut alt.
+Scraper pour Le Truck Muche.
+Sources tentées dans l'ordre :
+1. Facebook (OCR automatique dans alt, via Playwright sans login)
+2. Instagram (@le_truckmuche_) — fallback via l'endpoint public web_profile_info
+   qui renvoie les captions des derniers posts sans auth.
 
 Stratégie cache :
-- Le lundi : scrape Facebook et sauvegarde le menu de la semaine dans le cache
-- Mardi-vendredi : lit directement depuis le cache, pas de Playwright
+- Le lundi : scrape et sauvegarde le menu de la semaine dans le cache
+- Mardi-vendredi : lit directement depuis le cache
 """
+import asyncio
 import json
 import re
 from datetime import date, timedelta
 from pathlib import Path
 from playwright.async_api import async_playwright
+import requests
 
 PAGE_URL = "https://www.facebook.com/letruckmuche/"
+INSTAGRAM_USERNAME = "le_truckmuche_"
+INSTAGRAM_API_URL = (
+    f"https://i.instagram.com/api/v1/users/web_profile_info/?username={INSTAGRAM_USERNAME}"
+)
 DAY_NAMES = ["LUNDI", "MARDI", "MERCREDI", "JEUDI", "VENDREDI", "SAMEDI", "DIMANCHE"]
 MOIS_FR = {
     "JANVIER": 1, "FEVRIER": 2, "FÉVRIER": 2, "MARS": 3, "AVRIL": 4,
@@ -120,6 +128,99 @@ async def _scrape_facebook() -> str | None:
         return menu_text
 
 
+# ── Scraping Instagram (fallback, sans auth) ─────────────────────────────────
+
+def _scrape_instagram_sync() -> str | None:
+    """
+    Interroge l'endpoint public web_profile_info et retourne le premier post
+    récent dont la caption/alt contient des indices de menu hebdo. La validation
+    de la date de semaine est faite plus loin par _menu_est_semaine_courante.
+    """
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) "
+            "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 "
+            "Mobile/15E148 Safari/604.1"
+        ),
+        "x-ig-app-id": "936619743392459",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.8",
+    }
+    try:
+        resp = requests.get(INSTAGRAM_API_URL, headers=headers, timeout=15)
+    except requests.RequestException as e:
+        print(f"[truck_muche] Erreur Instagram : {e}")
+        return None
+
+    if resp.status_code != 200:
+        print(f"[truck_muche] Instagram HTTP {resp.status_code}")
+        return None
+
+    try:
+        data = resp.json()
+    except ValueError:
+        print("[truck_muche] Instagram JSON invalide")
+        return None
+
+    user = (data.get("data") or {}).get("user")
+    if not user:
+        print("[truck_muche] Instagram : pas de user dans la réponse (profil introuvable ou rate-limited)")
+        return None
+
+    edges = (user.get("edge_owner_to_timeline_media") or {}).get("edges") or []
+    if not edges:
+        print("[truck_muche] Instagram : aucun post trouvé")
+        return None
+
+    blobs = []
+    for e in edges[:6]:
+        node = e.get("node") or {}
+        caption_edges = (node.get("edge_media_to_caption") or {}).get("edges") or []
+        caption = caption_edges[0].get("node", {}).get("text", "") if caption_edges else ""
+        acc = node.get("accessibility_caption") or ""
+        blob = (caption + "\n" + acc).strip()
+        if blob:
+            blobs.append(blob)
+
+    for blob in blobs:
+        upper = blob.upper()
+        if "PLATS DU JOUR" in upper or ("LUNDI" in upper and "MARDI" in upper):
+            return blob
+
+    return blobs[0] if blobs else None
+
+
+async def _scrape_instagram() -> str | None:
+    """Wrapper async pour rester cohérent avec _scrape_facebook."""
+    return await asyncio.to_thread(_scrape_instagram_sync)
+
+
+# ── Orchestration : FB puis IG en fallback ───────────────────────────────────
+
+async def _scrape_menu_semaine_raw() -> dict[str, str] | None:
+    """
+    Tente Facebook d'abord, puis Instagram en fallback. Retourne le dict
+    parsé {"LUNDI": "plat", ...} ou None si aucune source n'a fourni un
+    menu valide pour la semaine en cours.
+    """
+    for label, source in (("Facebook", _scrape_facebook), ("Instagram", _scrape_instagram)):
+        print(f"[truck_muche] Tentative via {label}...")
+        text = await source()
+        if not text:
+            print(f"[truck_muche] {label} : rien trouvé")
+            continue
+        if not _menu_est_semaine_courante(text):
+            print(f"[truck_muche] {label} : menu hors semaine courante")
+            continue
+        menu = _parse_menu_semaine(text)
+        if not menu:
+            print(f"[truck_muche] {label} : parsing impossible")
+            continue
+        print(f"[truck_muche] {label} : menu récupéré ({len(menu)} jours)")
+        return menu
+    return None
+
+
 # ── Validation de la date ────────────────────────────────────────────────────
 
 def _menu_est_semaine_courante(text: str) -> bool:
@@ -129,7 +230,8 @@ def _menu_est_semaine_courante(text: str) -> bool:
     """
     text_upper = text.upper()
     # Pattern : "DU <jour_debut> AU <jour_fin> <mois>"
-    match = re.search(r"DU\s+(\d{1,2})\s+AU\s+(\d{1,2})\s+([A-ZÀ-Ü]+)", text_upper)
+    # Espaces optionnels pour tolérer l'OCR qui colle les mots ("DU20AU26AVRIL").
+    match = re.search(r"DU\s*(\d{1,2})\s*AU\s*(\d{1,2})\s*([A-ZÀ-Ü]+)", text_upper)
     if not match:
         print("[truck_muche] Aucune date trouvée dans le menu, impossible de valider la semaine")
         return False
@@ -237,26 +339,15 @@ def _deduplicate_ocr(text: str) -> str:
 async def scrape_semaine() -> dict[str, dict] | None:
     """
     Retourne un dict { "LUNDI": {"plat": str, "prix": str}, ... } pour toute la semaine.
-    Scrape Facebook si pas de cache, sinon lit le cache.
+    Scrape (FB puis IG en fallback) si pas de cache, sinon lit le cache.
     """
     cache = _load_cache()
 
     if cache is None:
-        print("[truck_muche] Scraping Facebook pour le menu de la semaine...")
-        menu_text = await _scrape_facebook()
-        if not menu_text:
-            print("[truck_muche] Aucun menu trouvé → Le Truck Muche est fermé cette semaine")
-            return None  # fermé
-
-        if not _menu_est_semaine_courante(menu_text):
-            print("[truck_muche] Le menu sur Facebook n'est pas celui de cette semaine → Le Truck Muche est fermé cette semaine")
-            return None
-
-        menu_semaine = _parse_menu_semaine(menu_text)
+        menu_semaine = await _scrape_menu_semaine_raw()
         if not menu_semaine:
-            print("[truck_muche] Impossible de parser le menu → Le Truck Muche est fermé cette semaine")
-            return None  # fermé
-
+            print("[truck_muche] Aucune source n'a fourni le menu → fermé cette semaine")
+            return None
         _save_cache(menu_semaine)
     else:
         print("[truck_muche] Menu chargé depuis le cache")
@@ -277,40 +368,26 @@ async def scrape_semaine() -> dict[str, dict] | None:
 async def scrape() -> dict | None:
     """
     Retourne un dict { "restaurant": str, "plat": str, "prix": str } ou None si échec.
-    Le lundi : scrape Facebook + met en cache le menu de la semaine.
-    Mardi-vendredi : lit depuis le cache, pas de Playwright.
+    Le lundi (ou si le cache est absent) : scrape FB → IG en fallback et met en cache.
+    Mardi-vendredi avec cache valide : lit depuis le cache, pas de scraping.
     """
     today = date.today()
     today_name = DAY_NAMES[today.weekday()]
 
-    # Charger le cache
     cache = _load_cache()
 
     if cache is None and today.weekday() != 0:
-        # Pas de cache et on n'est pas lundi → scraper quand même en fallback
-        print("[truck_muche] Cache absent en dehors du lundi → scraping Facebook en fallback")
+        print("[truck_muche] Cache absent en dehors du lundi → scraping en fallback")
 
     if cache is None:
-        # Scraper Facebook (lundi ou fallback)
-        print("[truck_muche] Scraping Facebook pour le menu de la semaine...")
-        menu_text = await _scrape_facebook()
-        if not menu_text:
-            print("[truck_muche] Aucun menu trouvé → Le Truck Muche est fermé cette semaine")
-            return None  # fermé
-
-        if not _menu_est_semaine_courante(menu_text):
-            print("[truck_muche] Le menu sur Facebook n'est pas celui de cette semaine → Le Truck Muche est fermé cette semaine")
-            return None
-
-        menu_semaine = _parse_menu_semaine(menu_text)
+        menu_semaine = await _scrape_menu_semaine_raw()
         if not menu_semaine:
-            print("[truck_muche] Impossible de parser le menu → Le Truck Muche est fermé cette semaine")
-            return None  # fermé
-
+            print("[truck_muche] Aucune source n'a fourni le menu → fermé cette semaine")
+            return None
         _save_cache(menu_semaine)
         cache = {"menu": menu_semaine}
     else:
-        print("[truck_muche] Menu chargé depuis le cache (pas de scraping Facebook)")
+        print("[truck_muche] Menu chargé depuis le cache (pas de scraping)")
 
     plat = cache["menu"].get(today_name)
     if not plat:
