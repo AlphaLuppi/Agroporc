@@ -5,4 +5,7 @@ services:
       - .env
     volumes:
       - ./logs:/app/logs
+      - ./output:/app/output
+      - ${HOME}/.claude:/root/.claude
+      - ${HOME}/.claude.json:/root/.claude.json
     restart: unless-stopped

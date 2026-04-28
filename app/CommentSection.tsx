@@ -268,17 +268,29 @@ export default function CommentSection({
                           })()
                         )
                       )}
-                      {c.image_url && (
-                        <div className="mt-1.5">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src={c.image_url}
-                            alt="image"
-                            className="w-full max-w-[300px] max-h-[250px] rounded-[var(--radius-sm)] border border-[var(--border)] object-contain cursor-pointer transition-transform hover:scale-[1.02]"
-                            loading="lazy"
-                          />
-                        </div>
-                      )}
+                      {c.image_url && (() => {
+                        const tenorId = tenorEmbedId(c.image_url);
+                        return (
+                          <div className="mt-1.5">
+                            {tenorId ? (
+                              <iframe
+                                src={`https://tenor.com/embed/${tenorId}`}
+                                className="w-full max-w-[300px] h-[250px] rounded-[var(--radius-sm)] border border-[var(--border)]"
+                                loading="lazy"
+                                allow="encrypted-media"
+                              />
+                            ) : (
+                              /* eslint-disable-next-line @next/next/no-img-element */
+                              <img
+                                src={c.image_url}
+                                alt="image"
+                                className="w-full max-w-[300px] max-h-[250px] rounded-[var(--radius-sm)] border border-[var(--border)] object-contain cursor-pointer transition-transform hover:scale-[1.02]"
+                                loading="lazy"
+                              />
+                            )}
+                          </div>
+                        );
+                      })()}
                       {!readOnly && (
                         <Button
                           variant="ghost"

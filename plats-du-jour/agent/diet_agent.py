@@ -1,6 +1,9 @@
 """
 Agent diététicien — appelle Claude via le CLI `claude -p` (auth OAuth gérée par Claude Code).
 Fallback sur l'API directe si le CLI n'est pas disponible.
+
+Le diet_agent évalue UNIQUEMENT la nutrition et les scores. Les commentaires
+sont générés séparément par comment_agent.
 """
 import json
 import subprocess
@@ -15,138 +18,21 @@ DAILY_CALORIES_TARGET = os.getenv("DAILY_CALORIES_TARGET", "2200")
 CLAUDE_BIN = shutil.which("claude")
 
 
-def _call_claude(prompt: str, timeout: int = 120) -> str:
-    """Appelle Claude via CLI si dispo, sinon via API directe."""
-    if CLAUDE_BIN:
-        result = subprocess.run(
-            [CLAUDE_BIN, "-p", prompt, "--output-format", "text"],
-            capture_output=True, text=True, timeout=timeout,
-        )
-        if result.returncode != 0:
-            raise RuntimeError(f"claude CLI error: {result.stderr.strip()}")
-        return result.stdout.strip()
-
-    # Fallback API directe
-    client = _make_client()
-    message = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=4096,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    return message.content[0].text.strip()
-
-PERSONNAGES_DIR = Path(__file__).parent.parent / "personnages"
-
-
-def _load_personnages_desc() -> str:
-    """Charge tous les personnages depuis les fichiers JSON et construit la description pour le prompt."""
-    lines = []
-    for f in sorted(PERSONNAGES_DIR.glob("*.json")):
-        p = json.loads(f.read_text(encoding="utf-8"))
-        lines.append(f"- **{p['prenom']}** {p['emoji']} — {p['role']}")
-        lines.append(f"  Personnalité : {p['personnalite']}")
-        lines.append(f"  Traits : {', '.join(p['traits'])}")
-        lines.append(f"  Style : {p['style_de_parole']}")
-        lines.append(f"  Sujets fétiches : {', '.join(p['sujets_fetiches'])}")
-        lines.append(f"  Blagues récurrentes : {', '.join(p['blagues_recurrentes'])}")
-        lines.append("")
-    return "\n".join(lines)
-
-
-def _build_system_prompt() -> str:
-    """Construit le prompt système avec les personnages chargés dynamiquement."""
-    personnages_desc = _load_personnages_desc()
-
-    return f"""Tu es un expert en nutrition ET en gastronomie.
-L'utilisateur pratique du sport régulièrement ({SPORT_PROFILE}) et suit ses macronutriments.
-Son objectif calorique journalier est d'environ {DAILY_CALORIES_TARGET} kcal.
-
-Pour chaque plat du jour soumis, tu dois fournir DEUX évaluations :
-
-**Mode Sportif** : note selon l'adéquation nutritionnelle (ratio protéines, macros équilibrés, adapté au sportif).
-**Mode Goulaf** : note selon le plaisir gustatif, la gourmandise, la générosité du plat, l'originalité. Un plat riche, savoureux et réconfortant sera bien noté en mode Goulaf même s'il est calorique.
-
-Pour chaque plat :
-1. Estimer la composition nutritionnelle approximative (protéines, glucides, lipides, calories)
-2. Attribuer une note sportif (1-10) ET une note goulaf (1-10)
-3. Justifier brièvement chaque note (2-3 phrases max chacune)
-4. Désigner le plat recommandé pour chaque mode
-5. Générer 2 à 4 faux commentaires humoristiques par plat (piochés parmi les personnages ci-dessous)
-
-IMPORTANT : si le champ "plat" est une liste, cela signifie que le restaurant propose plusieurs options ce jour-là.
-Dans ce cas, note chaque option séparément dans un tableau "options" au lieu des champs directs.
-
-**Personnages pour les commentaires :**
-
-{personnages_desc}
-
-Chaque commentaire fait 1-2 phrases MAX. Le ton est décontracté, drôle, entre potes. Pas tous les personnages ne commentent chaque plat — choisis les 2-4 plus pertinents/drôles pour chaque plat. Varie les personnages d'un plat à l'autre.
-Les personnages PEUVENT se répondre entre eux (ajoute un champ "reponse_a" avec le prénom du personnage auquel ils répondent). Maximum 1-2 réponses par plat.
-
-Réponds UNIQUEMENT en JSON valide avec cette structure :
-{{
-  "plats": [
-    {{
-      "restaurant": "nom",
-      "plat": "nom du plat unique",
-      "prix": "prix",
-      "nutrition_estimee": {{"calories": 0, "proteines_g": 0, "glucides_g": 0, "lipides_g": 0}},
-      "note": 0,
-      "justification": "texte sportif",
-      "note_goulaf": 0,
-      "justification_goulaf": "texte gourmand",
-      "commentaires": [
-        {{"auteur": "Prénom", "texte": "commentaire drôle"}},
-        {{"auteur": "Prénom", "texte": "réponse", "reponse_a": "Prénom"}}
-      ]
-    }},
-    {{
-      "restaurant": "nom avec plusieurs options",
-      "plat": ["option 1", "option 2"],
-      "prix": "prix",
-      "options": [
-        {{
-          "plat": "option 1",
-          "nutrition_estimee": {{"calories": 0, "proteines_g": 0, "glucides_g": 0, "lipides_g": 0}},
-          "note": 0,
-          "justification": "texte sportif",
-          "note_goulaf": 0,
-          "justification_goulaf": "texte gourmand",
-          "commentaires": [
-            {{"auteur": "Prénom", "texte": "commentaire drôle"}}
-          ]
-        }}
-      ]
-    }}
-  ],
-  "recommandation": {{
-    "restaurant": "nom du restaurant recommandé en mode sportif",
-    "plat": "plat recommandé (option précise si plusieurs)",
-    "raison": "explication courte mode sportif"
-  }},
-  "recommandation_goulaf": {{
-    "restaurant": "nom du restaurant recommandé en mode goulaf",
-    "plat": "plat recommandé (option précise si plusieurs)",
-    "raison": "explication courte mode goulaf"
-  }}
-}}"""
-
-
 def _make_client() -> anthropic.Anthropic:
     """
     Crée un client Anthropic.
     Ordre de priorité :
-      1. ANTHROPIC_AUTH_TOKEN (OAuth / bearer token)
-      2. ANTHROPIC_API_KEY (clé API classique)
+      1. ANTHROPIC_API_KEY (clé API classique)
+      2. ANTHROPIC_AUTH_TOKEN (OAuth / bearer token)
       3. Token OAuth depuis le macOS Keychain (dev local)
     """
-    auth_token = os.getenv("ANTHROPIC_AUTH_TOKEN", "")
-    if auth_token:
-        return anthropic.Anthropic(auth_token=auth_token)
-
     api_key = os.getenv("ANTHROPIC_API_KEY", "")
     if api_key:
         return anthropic.Anthropic(api_key=api_key)
+
+    auth_token = os.getenv("ANTHROPIC_AUTH_TOKEN", "")
+    if auth_token:
+        return anthropic.Anthropic(auth_token=auth_token)
 
     # Lire le token OAuth depuis le Keychain macOS
     try:
@@ -165,9 +51,97 @@ def _make_client() -> anthropic.Anthropic:
         print(f"[diet_agent] Erreur lecture Keychain : {e}")
 
     raise ValueError(
-        "Aucun token trouvé. Configurez ANTHROPIC_AUTH_TOKEN ou ANTHROPIC_API_KEY "
+        "Aucun token trouvé. Configurez ANTHROPIC_API_KEY ou ANTHROPIC_AUTH_TOKEN "
         "dans .env, ou assurez-vous d'être connecté à Claude Code."
     )
+
+
+def _call_claude(prompt: str, timeout: int = 180) -> str:
+    """Appelle Claude via API directe (si ANTHROPIC_API_KEY dispo) ou via CLI (OAuth)."""
+    api_key = os.getenv("ANTHROPIC_API_KEY", "")
+    if api_key:
+        client = anthropic.Anthropic(api_key=api_key)
+        message = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=4096,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return message.content[0].text.strip()
+
+    # Fallback : CLI Claude Code (OAuth par abonnement)
+    if CLAUDE_BIN:
+        result = subprocess.run(
+            [CLAUDE_BIN, "-p", prompt, "--output-format", "text"],
+            capture_output=True, text=True, timeout=timeout,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"claude CLI error: {result.stderr.strip()}")
+        return result.stdout.strip()
+
+    raise RuntimeError("Ni ANTHROPIC_API_KEY ni CLI claude disponible.")
+
+
+def _build_system_prompt() -> str:
+    """Prompt lean : nutrition + scores uniquement, sans profils de personnages."""
+    return f"""Tu es un expert en nutrition ET en gastronomie.
+L'utilisateur pratique du sport régulièrement ({SPORT_PROFILE}) et suit ses macronutriments.
+Son objectif calorique journalier est d'environ {DAILY_CALORIES_TARGET} kcal.
+
+Pour chaque plat du jour soumis, fournis DEUX évaluations :
+**Mode Sportif** : note selon l'adéquation nutritionnelle (protéines, macros équilibrés).
+**Mode Goulaf** : note selon le plaisir gustatif, la gourmandise, la générosité. Un plat riche et savoureux sera bien noté même s'il est calorique.
+
+Pour chaque plat :
+1. Estimer la composition nutritionnelle approximative (protéines, glucides, lipides, calories)
+2. Attribuer une note sportif (1-10) ET une note goulaf (1-10)
+3. Justifier brièvement chaque note (2-3 phrases max chacune)
+4. Désigner le plat recommandé pour chaque mode
+
+IMPORTANT : si le champ "plat" est une liste, le restaurant propose plusieurs options.
+Dans ce cas, note chaque option séparément dans un tableau "options".
+
+Réponds UNIQUEMENT en JSON valide avec cette structure :
+{{
+  "plats": [
+    {{
+      "restaurant": "nom",
+      "plat": "nom du plat unique",
+      "prix": "prix",
+      "nutrition_estimee": {{"calories": 0, "proteines_g": 0, "glucides_g": 0, "lipides_g": 0}},
+      "note": 0,
+      "justification": "texte sportif",
+      "note_goulaf": 0,
+      "justification_goulaf": "texte gourmand",
+      "commentaires": []
+    }},
+    {{
+      "restaurant": "nom avec plusieurs options",
+      "plat": ["option 1", "option 2"],
+      "prix": "prix",
+      "options": [
+        {{
+          "plat": "option 1",
+          "nutrition_estimee": {{"calories": 0, "proteines_g": 0, "glucides_g": 0, "lipides_g": 0}},
+          "note": 0,
+          "justification": "texte sportif",
+          "note_goulaf": 0,
+          "justification_goulaf": "texte gourmand",
+          "commentaires": []
+        }}
+      ]
+    }}
+  ],
+  "recommandation": {{
+    "restaurant": "nom du restaurant recommandé en mode sportif",
+    "plat": "plat recommandé (option précise si plusieurs)",
+    "raison": "explication courte mode sportif"
+  }},
+  "recommandation_goulaf": {{
+    "restaurant": "nom du restaurant recommandé en mode goulaf",
+    "plat": "plat recommandé (option précise si plusieurs)",
+    "raison": "explication courte mode goulaf"
+  }}
+}}"""
 
 
 def evaluate_semaine(plats_par_jour: dict[str, list[dict]]) -> dict[str, dict]:
@@ -191,7 +165,7 @@ def evaluate_semaine(plats_par_jour: dict[str, list[dict]]) -> dict[str, dict]:
         f"Réponds en JSON avec cette structure :\n"
         f'{{\n'
         f'  "MARDI": {{\n'
-        f'    "plats": [{{"restaurant": "...", "plat": "...", "prix": "...", "nutrition_estimee": {{...}}, "note": 0, "justification": "...", "note_goulaf": 0, "justification_goulaf": "...", "commentaires": [...]}}],\n'
+        f'    "plats": [{{"restaurant": "...", "plat": "...", "prix": "...", "nutrition_estimee": {{...}}, "note": 0, "justification": "...", "note_goulaf": 0, "justification_goulaf": "...", "commentaires": []}}],\n'
         f'    "recommandation": {{"restaurant": "...", "plat": "...", "raison": "..."}},\n'
         f'    "recommandation_goulaf": {{"restaurant": "...", "plat": "...", "raison": "..."}}\n'
         f'  }},\n'
@@ -199,7 +173,7 @@ def evaluate_semaine(plats_par_jour: dict[str, list[dict]]) -> dict[str, dict]:
         f'}}'
     )
 
-    raw = _call_claude(prompt, timeout=120)
+    raw = _call_claude(prompt, timeout=300)
     if raw.startswith("```"):
         raw = raw.split("```")[1]
         if raw.startswith("json"):
@@ -209,7 +183,7 @@ def evaluate_semaine(plats_par_jour: dict[str, list[dict]]) -> dict[str, dict]:
 
 def evaluate(plats: list[dict]) -> dict:
     """
-    Évalue les plats via Claude (CLI ou API directe).
+    Évalue les plats via Claude (API ou CLI).
 
     Args:
         plats: liste de dicts { restaurant, plat, prix }
@@ -224,7 +198,7 @@ def evaluate(plats: list[dict]) -> dict:
         f"Note chaque plat et dis-moi lequel manger."
     )
 
-    raw = _call_claude(prompt, timeout=60)
+    raw = _call_claude(prompt, timeout=180)
     if raw.startswith("```"):
         raw = raw.split("```")[1]
         if raw.startswith("json"):

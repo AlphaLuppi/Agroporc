@@ -52,7 +52,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
-    const { date, platIndex, auteur, texte, image_url, reponse_a, reponse_a_index } = body;
+    const { date, platIndex, auteur, texte, image_url, reponse_a, reponse_a_index, is_human } = body;
 
     if (!date || platIndex === undefined || !auteur || (!texte && !image_url)) {
       return NextResponse.json(
@@ -95,7 +95,7 @@ export async function POST(request: NextRequest) {
     const commentaire: { auteur: string; texte: string; image_url?: string; reponse_a?: string; reponse_a_index?: number; is_human: boolean } = {
       auteur: auteur.trim(),
       texte: texte ? texte.trim() : "",
-      is_human: true,
+      is_human: typeof is_human === "boolean" ? is_human : true,
     };
     if (image_url) {
       commentaire.image_url = image_url;

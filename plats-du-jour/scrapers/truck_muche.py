@@ -229,15 +229,24 @@ def _menu_est_semaine_courante(text: str) -> bool:
     Cherche un pattern type "DU 20 AU 24 AVRIL" dans le texte OCR.
     """
     text_upper = text.upper()
-    # Pattern : "DU <jour_debut> AU <jour_fin> <mois>"
-    # Espaces optionnels pour tolérer l'OCR qui colle les mots ("DU20AU26AVRIL").
-    match = re.search(r"DU\s*(\d{1,2})\s*AU\s*(\d{1,2})\s*([A-ZÀ-Ü]+)", text_upper)
+    # Nettoyer les tokens OCR collés (ex: "DU20AU26AVRIL" dupliqué par Facebook)
+    text_upper = re.sub(r'\b[A-Z]+\d+[A-Z]+\d+[A-ZÀ-Ü]*\b', '', text_upper)
+    # Pattern : "DU <jour_debut> [<mois_debut>] AU <jour_fin> <mois_fin>"
+    # - Le mois du jour de début est optionnel (cas semaine sur un seul mois) ;
+    #   quand il est présent (semaine à cheval, ex. "DU 27 AVRIL AU 01 MAI"),
+    #   c'est lui qui s'applique au jour de début.
+    # - Espaces tolérés en option autour de "AU" car l'OCR Facebook colle
+    #   parfois les tokens (ex. "AU3MAI" pour "AU 3 MAI").
+    match = re.search(
+        r"DU\s+(\d{1,2})(?:\s+([A-ZÀ-Ü]+))?\s*AU\s*(\d{1,2})\s*([A-ZÀ-Ü]+)",
+        text_upper,
+    )
     if not match:
         print("[truck_muche] Aucune date trouvée dans le menu, impossible de valider la semaine")
         return False
 
     jour_debut = int(match.group(1))
-    mois_str = match.group(3)
+    mois_str = match.group(2) or match.group(4)
     mois = MOIS_FR.get(mois_str)
     if not mois:
         print(f"[truck_muche] Mois non reconnu : {mois_str}")
