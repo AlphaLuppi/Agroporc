@@ -229,8 +229,9 @@ def _menu_est_semaine_courante(text: str) -> bool:
     Cherche un pattern type "DU 20 AU 24 AVRIL" dans le texte OCR.
     """
     text_upper = text.upper()
-    # Nettoyer les tokens OCR collés (ex: "DU20AU26AVRIL" dupliqué par Facebook)
-    text_upper = re.sub(r'\b[A-Z]+\d+[A-Z]+\d+[A-ZÀ-Ü]*\b', '', text_upper)
+    # Décoller les tokens OCR fusionnés par Facebook (ex: "DU4AU10MAI" → "DU 4 AU 10 MAI")
+    text_upper = re.sub(r'([A-ZÀ-Ü])(\d)', r'\1 \2', text_upper)
+    text_upper = re.sub(r'(\d)([A-ZÀ-Ü])', r'\1 \2', text_upper)
     # Pattern : "DU <jour_debut> [<mois_debut>] AU <jour_fin> <mois_fin>"
     # - Le mois du jour de début est optionnel (cas semaine sur un seul mois) ;
     #   quand il est présent (semaine à cheval, ex. "DU 27 AVRIL AU 01 MAI"),
