@@ -60,15 +60,47 @@ export default function MacrosPanel({
 
       {hasDetail && open && (
         <div className="mt-2 rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--surface-accent)] p-3 text-xs animate-[reply-slide-in_0.2s_ease-out]">
-          <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center justify-between mb-2 gap-2">
             <span className="font-semibold text-[var(--text-secondary)] uppercase tracking-wider text-[0.65rem]">
               Composition estimée
             </span>
-            <span className="text-[var(--text-muted)] text-[0.65rem]">
+            <span className="text-[var(--text-muted)] text-[0.65rem] text-right">
               {source === "ciqual" ? "via table Ciqual" : "estimation IA"}
             </span>
           </div>
-          <table className="w-full">
+
+          {/* Mobile : liste empilée, plus lisible que 6 colonnes serrées */}
+          <ul className="sm:hidden divide-y divide-[var(--border)]/50">
+            {ingredients!.map((ing, i) => (
+              <li key={i} className="py-2">
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="text-[var(--text)] font-medium break-words min-w-0">
+                    {ing.nom_query}
+                  </span>
+                  <span className="tabular-nums text-[var(--text-secondary)] whitespace-nowrap text-[0.7rem]">
+                    {Math.round(ing.grammes)}g · {Math.round(ing.kcal)} kcal
+                  </span>
+                </div>
+                {ing.matched_nom ? (
+                  <span className="block text-[0.65rem] text-[var(--text-muted)] break-words">
+                    ↳ {ing.matched_nom}
+                  </span>
+                ) : (
+                  <span className="block text-[0.65rem] text-[var(--bad,_#c44)] italic">
+                    ↳ non trouvé
+                  </span>
+                )}
+                <div className="mt-1 flex gap-3 text-[0.65rem] tabular-nums text-[var(--text-muted)]">
+                  <span>P {ing.prot.toFixed(1)}</span>
+                  <span>G {ing.gluc.toFixed(1)}</span>
+                  <span>L {ing.lip.toFixed(1)}</span>
+                </div>
+              </li>
+            ))}
+          </ul>
+
+          {/* ≥ sm : tableau compact */}
+          <table className="hidden sm:table w-full table-fixed">
             <thead>
               <tr className="text-[var(--text-muted)] text-[0.65rem] uppercase tracking-wider">
                 <th className="text-left font-medium pb-1">Ingrédient</th>
@@ -81,14 +113,11 @@ export default function MacrosPanel({
             </thead>
             <tbody>
               {ingredients!.map((ing, i) => (
-                <tr key={i} className="border-t border-[var(--border)]/50">
-                  <td className="py-1 pr-2">
-                    <span className="text-[var(--text)]">{ing.nom_query}</span>
+                <tr key={i} className="border-t border-[var(--border)]/50 align-top">
+                  <td className="py-1 pr-2 min-w-0">
+                    <span className="text-[var(--text)] break-words">{ing.nom_query}</span>
                     {ing.matched_nom ? (
-                      <span
-                        className="block text-[0.65rem] text-[var(--text-muted)] truncate max-w-[14rem]"
-                        title={ing.matched_nom}
-                      >
+                      <span className="block text-[0.65rem] text-[var(--text-muted)] break-words">
                         ↳ {ing.matched_nom}
                       </span>
                     ) : (
@@ -97,11 +126,11 @@ export default function MacrosPanel({
                       </span>
                     )}
                   </td>
-                  <td className="text-right tabular-nums text-[var(--text-secondary)]">{Math.round(ing.grammes)}</td>
-                  <td className="text-right tabular-nums text-[var(--text-secondary)]">{Math.round(ing.kcal)}</td>
-                  <td className="text-right tabular-nums text-[var(--text-secondary)]">{ing.prot.toFixed(1)}</td>
-                  <td className="text-right tabular-nums text-[var(--text-secondary)]">{ing.gluc.toFixed(1)}</td>
-                  <td className="text-right tabular-nums text-[var(--text-secondary)]">{ing.lip.toFixed(1)}</td>
+                  <td className="text-right tabular-nums text-[var(--text-secondary)] py-1">{Math.round(ing.grammes)}</td>
+                  <td className="text-right tabular-nums text-[var(--text-secondary)] py-1">{Math.round(ing.kcal)}</td>
+                  <td className="text-right tabular-nums text-[var(--text-secondary)] py-1">{ing.prot.toFixed(1)}</td>
+                  <td className="text-right tabular-nums text-[var(--text-secondary)] py-1">{ing.gluc.toFixed(1)}</td>
+                  <td className="text-right tabular-nums text-[var(--text-secondary)] py-1">{ing.lip.toFixed(1)}</td>
                 </tr>
               ))}
             </tbody>
