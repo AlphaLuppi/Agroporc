@@ -13,3 +13,54 @@ export const DEFAULT_ICON =
 export function getIcon(restaurant: string): string {
   return RESTAURANT_ICON[restaurant] || DEFAULT_ICON;
 }
+
+export type RestaurantLinkKind = "order" | "phone" | "facebook";
+
+export interface RestaurantLink {
+  kind: RestaurantLinkKind;
+  url: string;
+  label: string;
+}
+
+export const RESTAURANT_LINKS: Record<string, RestaurantLink[]> = {
+  "Le Bistrot Trèfle": [
+    {
+      kind: "order",
+      url: "https://bistrot-trefle.com/commander-emporter-livraison-gratuite-restaurant-bistrot-trefle-avignon-agroparc/",
+      label: "Commander",
+    },
+    {
+      kind: "phone",
+      url: "tel:+33490882899",
+      label: "04 90 88 28 99",
+    },
+  ],
+  "La Pause Gourmande": [
+    {
+      kind: "order",
+      url: "https://lapausegourmandeagroparc.foxorders.com",
+      label: "Commander",
+    },
+    {
+      kind: "phone",
+      url: "tel:+33490149009",
+      label: "04 90 14 90 09",
+    },
+  ],
+  "Le Truck Muche": [
+    {
+      kind: "phone",
+      url: "tel:+33620808555",
+      label: "06 20 80 85 55",
+    },
+    {
+      kind: "facebook",
+      url: "https://www.facebook.com/letruckmuche/",
+      label: "Facebook",
+    },
+  ],
+};
+
+export function getRestaurantLinks(restaurant: string): RestaurantLink[] {
+  return RESTAURANT_LINKS[restaurant] || [];
+}
