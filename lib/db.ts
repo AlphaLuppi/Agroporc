@@ -342,6 +342,83 @@ export async function upsertIaProfile(profile: IaProfile, updatedBy?: string): P
   `;
 }
 
+// --- Photos de référence des portions ---
+
+export interface Photo {
+  id: number;
+  restaurant_slug: string;
+  filename: string;
+  content_type: string;
+  created_at: string;
+}
+
+export async function ensurePhotosTable() {
+  await sql`
+    CREATE TABLE IF NOT EXISTS pdj_photos (
+      id SERIAL PRIMARY KEY,
+      restaurant_slug VARCHAR(50) NOT NULL,
+      filename VARCHAR(255) NOT NULL,
+      content_type VARCHAR(50) NOT NULL DEFAULT 'image/jpeg',
+      image_data TEXT NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_pdj_photos_slug ON pdj_photos(restaurant_slug)`;
+}
+
+export async function getAllPhotos(): Promise<Photo[]> {
+  await ensurePhotosTable();
+  const result = await sql`
+    SELECT id, restaurant_slug, filename, content_type, created_at
+    FROM pdj_photos
+    ORDER BY restaurant_slug ASC, created_at ASC
+  `;
+  return result.rows as Photo[];
+}
+
+export async function getPhotosBySlug(slug: string): Promise<Photo[]> {
+  await ensurePhotosTable();
+  const result = await sql`
+    SELECT id, restaurant_slug, filename, content_type, created_at
+    FROM pdj_photos
+    WHERE restaurant_slug = ${slug}
+    ORDER BY created_at ASC
+  `;
+  return result.rows as Photo[];
+}
+
+export async function addPhoto(
+  slug: string,
+  filename: string,
+  contentType: string,
+  imageDataBase64: string
+): Promise<Photo> {
+  await ensurePhotosTable();
+  const result = await sql`
+    INSERT INTO pdj_photos (restaurant_slug, filename, content_type, image_data)
+    VALUES (${slug}, ${filename}, ${contentType}, ${imageDataBase64})
+    RETURNING id, restaurant_slug, filename, content_type, created_at
+  `;
+  return result.rows[0] as Photo;
+}
+
+export async function getPhotoData(
+  id: number
+): Promise<{ content_type: string; image_data: string } | null> {
+  await ensurePhotosTable();
+  const result = await sql`
+    SELECT content_type, image_data FROM pdj_photos WHERE id = ${id}
+  `;
+  if (result.rows.length === 0) return null;
+  return result.rows[0] as { content_type: string; image_data: string };
+}
+
+export async function deletePhoto(id: number): Promise<boolean> {
+  await ensurePhotosTable();
+  const result = await sql`DELETE FROM pdj_photos WHERE id = ${id}`;
+  return (result.rowCount ?? 0) > 0;
+}
+
 /** Ajoute un commentaire à un plat pour une date donnée */
 export async function addCommentaire(
   date: string,

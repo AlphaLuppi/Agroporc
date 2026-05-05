@@ -28,6 +28,7 @@ import pathlib
 import subprocess
 import os
 import shutil
+import urllib.request
 import anthropic
 
 from ciqual.lookup import (
@@ -124,14 +125,53 @@ def _call_claude(prompt: str, timeout: int = 180) -> str:
     raise RuntimeError("Ni ANTHROPIC_API_KEY ni CLI claude disponible.")
 
 
+def _load_restaurant_photo_blocks_from_api(restaurants: set[str]) -> list[dict]:
+    """Charge les photos depuis l'API Vercel (si VERCEL_API_URL est défini dans .env)."""
+    api_url = os.getenv("VERCEL_API_URL", "").rstrip("/")
+    if not api_url:
+        return []
+    blocks: list[dict] = []
+    for name in sorted(restaurants):
+        slug = RESTAURANT_PHOTO_SLUGS.get(name)
+        if not slug:
+            continue
+        try:
+            req = urllib.request.Request(f"{api_url}/api/photos?slug={slug}")
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode())
+            photos = data.get("photos", [])[:MAX_PHOTOS_PER_RESTAURANT]
+            if not photos:
+                continue
+            blocks.append({
+                "type": "text",
+                "text": f"Photos de référence — portions typiques de {name} :",
+            })
+            for photo in photos:
+                img_req = urllib.request.Request(f"{api_url}/api/photos/{photo['id']}/image")
+                with urllib.request.urlopen(img_req, timeout=15) as img_resp:
+                    img_b64 = base64.standard_b64encode(img_resp.read()).decode("ascii")
+                mime = photo.get("content_type", "image/jpeg")
+                blocks.append({
+                    "type": "image",
+                    "source": {"type": "base64", "media_type": mime, "data": img_b64},
+                })
+        except Exception as e:
+            print(f"[diet_agent] Erreur chargement photos API pour {name}: {e}")
+    return blocks
+
+
 def _load_restaurant_photo_blocks(restaurants: set[str]) -> list[dict]:
     """Charge les photos de référence des restaurants en blocs `content` Anthropic.
 
-    Pour chaque restaurant connu (cf. RESTAURANT_PHOTO_SLUGS) ayant un dossier
-    non vide dans `plats-du-jour/photos/<slug>/`, on émet un bloc texte d'intro
-    suivi des images (max MAX_PHOTOS_PER_RESTAURANT par restau, ordre alpha).
+    Essaie d'abord l'API Vercel (si VERCEL_API_URL est configuré dans .env),
+    sinon retombe sur le dossier local `plats-du-jour/photos/<slug>/`.
     Renvoie [] si aucune photo n'est trouvée.
     """
+    api_blocks = _load_restaurant_photo_blocks_from_api(restaurants)
+    if api_blocks:
+        return api_blocks
+
+    # Fallback : filesystem local
     blocks: list[dict] = []
     for name in sorted(restaurants):
         slug = RESTAURANT_PHOTO_SLUGS.get(name)
