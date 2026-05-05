@@ -24,9 +24,25 @@ function timeAgo(iso?: string): string | null {
   return new Date(iso).toLocaleDateString("fr-FR");
 }
 
+const EMPTY_PROFILE: IaProfile = {
+  nom: "",
+  prenom: "",
+  emoji: "",
+  couleur: "#888888",
+  role: "",
+  personnalite: "",
+  style_de_parole: "",
+  traits: [],
+  sujets_fetiches: [],
+  blagues_recurrentes: [],
+  gifs_fetiches: [],
+  actif: true,
+};
+
 export default function IaProfilesList({ initialProfiles }: { initialProfiles: IaProfile[] }) {
   const [profiles, setProfiles] = useState<IaProfile[]>(initialProfiles);
   const [editorNom, setEditorNom] = useState<string | null>(null);
+  const [creatingNew, setCreatingNew] = useState(false);
   const [editor, setEditor] = useState<string>("");
   const dirtyRef = useRef(false);
 
@@ -65,7 +81,15 @@ export default function IaProfilesList({ initialProfiles }: { initialProfiles: I
   function openEditor(nom: string) {
     if (!requireEditor()) return;
     dirtyRef.current = false;
+    setCreatingNew(false);
     setEditorNom(nom);
+  }
+
+  function openCreator() {
+    if (!requireEditor()) return;
+    dirtyRef.current = false;
+    setEditorNom(null);
+    setCreatingNew(true);
   }
 
   function requestCloseEditor() {
@@ -75,6 +99,7 @@ export default function IaProfilesList({ initialProfiles }: { initialProfiles: I
     }
     dirtyRef.current = false;
     setEditorNom(null);
+    setCreatingNew(false);
   }
 
   function handleSaved(updated: IaProfile) {
@@ -83,7 +108,16 @@ export default function IaProfilesList({ initialProfiles }: { initialProfiles: I
     setEditorNom(null);
   }
 
+  function handleCreated(newProfile: IaProfile) {
+    setProfiles((list) => [...list, newProfile].sort((a, b) => a.nom.localeCompare(b.nom)));
+    dirtyRef.current = false;
+    setCreatingNew(false);
+  }
+
   const currentEditorChar = editor ? CHARACTERS_BY_NAME[editor] : null;
+  const drawerTitle = creatingNew
+    ? "Nouveau personnage"
+    : `Modifier ${profiles.find((p) => p.nom === editorNom)?.prenom ?? ""}`;
 
   return (
     <div className="space-y-3">
@@ -120,6 +154,15 @@ export default function IaProfilesList({ initialProfiles }: { initialProfiles: I
         )}
       </div>
 
+      <Button
+        type="button"
+        variant="outline"
+        onClick={openCreator}
+        className="w-full"
+      >
+        + Nouveau personnage
+      </Button>
+
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         {profiles.map((p) => (
           <ProfileCard
@@ -132,9 +175,9 @@ export default function IaProfilesList({ initialProfiles }: { initialProfiles: I
       </div>
 
       <Drawer
-        open={editorNom !== null}
+        open={editorNom !== null || creatingNew}
         onClose={requestCloseEditor}
-        title={editorNom ? `Modifier ${profiles.find((p) => p.nom === editorNom)?.prenom ?? ""}` : ""}
+        title={drawerTitle}
       >
         {editorNom &&
           (() => {
@@ -153,6 +196,19 @@ export default function IaProfilesList({ initialProfiles }: { initialProfiles: I
               />
             );
           })()}
+        {creatingNew && (
+          <ProfileEditor
+            key="__new__"
+            profile={EMPTY_PROFILE}
+            editor={editor}
+            isNew
+            onDirtyChange={(d) => {
+              dirtyRef.current = d;
+            }}
+            onCancel={requestCloseEditor}
+            onSaved={handleCreated}
+          />
+        )}
       </Drawer>
     </div>
   );
@@ -254,12 +310,14 @@ function ProfileCard({
 function ProfileEditor({
   profile,
   editor,
+  isNew = false,
   onSaved,
   onCancel,
   onDirtyChange,
 }: {
   profile: IaProfile;
   editor: string;
+  isNew?: boolean;
   onSaved: (p: IaProfile) => void;
   onCancel: () => void;
   onDirtyChange: (dirty: boolean) => void;
@@ -289,39 +347,75 @@ function ProfileEditor({
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (isNew && !form.prenom.trim()) {
+      setErr("Le prénom est obligatoire");
+      setStep(0);
+      return;
+    }
     setLoading(true);
     setErr("");
     try {
-      const body = {
-        nom: profile.nom,
-        updated_by: editor,
-        profile: {
-          prenom: form.prenom,
-          emoji: form.emoji,
-          couleur: form.couleur,
-          role: form.role,
-          personnalite: form.personnalite,
-          style_de_parole: form.style_de_parole,
-          traits: form.traits,
-          sujets_fetiches: form.sujets_fetiches,
-          blagues_recurrentes: form.blagues_recurrentes,
-          gifs_fetiches: form.gifs,
-          avatar_url: form.avatar_url.trim(),
-          actif: profile.actif,
-        },
-      };
-      const res = await fetch("/api/ia", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setErr(data.error || "Erreur");
-        setLoading(false);
-        return;
+      if (isNew) {
+        const body = {
+          created_by: editor,
+          profile: {
+            prenom: form.prenom,
+            emoji: form.emoji,
+            couleur: form.couleur,
+            role: form.role,
+            personnalite: form.personnalite,
+            style_de_parole: form.style_de_parole,
+            traits: form.traits,
+            sujets_fetiches: form.sujets_fetiches,
+            blagues_recurrentes: form.blagues_recurrentes,
+            gifs_fetiches: form.gifs,
+            avatar_url: form.avatar_url.trim(),
+          },
+        };
+        const res = await fetch("/api/ia", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          setErr(data.error || "Erreur");
+          setLoading(false);
+          return;
+        }
+        onSaved(data.profile);
+      } else {
+        const body = {
+          nom: profile.nom,
+          updated_by: editor,
+          profile: {
+            prenom: form.prenom,
+            emoji: form.emoji,
+            couleur: form.couleur,
+            role: form.role,
+            personnalite: form.personnalite,
+            style_de_parole: form.style_de_parole,
+            traits: form.traits,
+            sujets_fetiches: form.sujets_fetiches,
+            blagues_recurrentes: form.blagues_recurrentes,
+            gifs_fetiches: form.gifs,
+            avatar_url: form.avatar_url.trim(),
+            actif: profile.actif,
+          },
+        };
+        const res = await fetch("/api/ia", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          setErr(data.error || "Erreur");
+          setLoading(false);
+          return;
+        }
+        onSaved(data.profile);
       }
-      onSaved(data.profile);
     } catch {
       setErr("Erreur de connexion");
       setLoading(false);
@@ -383,6 +477,7 @@ function ProfileEditor({
                   value={form.prenom}
                   onChange={(e) => update("prenom", e.target.value)}
                   maxLength={80}
+                  autoFocus={isNew}
                 />
               </Field>
               <Field label="Emoji">
@@ -516,7 +611,7 @@ function ProfileEditor({
         )}
         {isLast ? (
           <Button type="submit" disabled={loading} className="flex-1">
-            {loading ? "Enregistrement…" : "Enregistrer"}
+            {loading ? "Enregistrement…" : isNew ? "Créer le personnage" : "Enregistrer"}
           </Button>
         ) : (
           <Button

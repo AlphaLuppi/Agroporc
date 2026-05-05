@@ -1,6 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAllIaProfiles, getIaProfile, upsertIaProfile, type IaProfile } from "@/lib/db";
 
+function generateNom(prenom: string): string {
+  return prenom
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{Mn}/gu, "")
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9-]/g, "")
+    .slice(0, 50);
+}
+
 export const runtime = "nodejs";
 
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;
@@ -31,6 +41,70 @@ export async function GET() {
     return NextResponse.json({ profiles });
   } catch (e) {
     console.error("[api/ia GET]", e);
+    return NextResponse.json({ error: "Erreur serveur" }, { status: 500 });
+  }
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    const ip =
+      request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+      request.headers.get("x-real-ip") ||
+      "unknown";
+    if (isRateLimited(ip)) {
+      return NextResponse.json({ error: "Trop de modifications, réessayez dans une minute" }, { status: 429 });
+    }
+
+    const body = await request.json();
+    if (body.website) return NextResponse.json({ ok: true });
+
+    const { created_by, profile } = body as {
+      created_by?: string;
+      profile?: Partial<IaProfile>;
+    };
+
+    if (!profile || typeof profile !== "object") {
+      return NextResponse.json({ error: "profil manquant" }, { status: 400 });
+    }
+
+    const prenom = String(profile.prenom ?? "").trim();
+    if (!prenom) {
+      return NextResponse.json({ error: "Le prénom est obligatoire" }, { status: 400 });
+    }
+
+    const nom = generateNom(prenom);
+    if (!nom) {
+      return NextResponse.json({ error: "Prénom invalide" }, { status: 400 });
+    }
+
+    const existing = await getIaProfile(nom);
+    if (existing) {
+      return NextResponse.json({ error: "Un personnage avec ce prénom existe déjà" }, { status: 409 });
+    }
+
+    const toStrArr = (v: unknown): string[] =>
+      Array.isArray(v) ? v.map((x) => String(x).trim()).filter(Boolean).slice(0, 50) : [];
+
+    const newProfile: IaProfile = {
+      nom,
+      prenom: prenom.slice(0, 80),
+      emoji: String(profile.emoji ?? "").slice(0, 8),
+      couleur: String(profile.couleur ?? "#888888").slice(0, 20),
+      role: String(profile.role ?? "").slice(0, 200),
+      personnalite: String(profile.personnalite ?? "").slice(0, 1000),
+      style_de_parole: String(profile.style_de_parole ?? "").slice(0, 500),
+      traits: toStrArr(profile.traits),
+      sujets_fetiches: toStrArr(profile.sujets_fetiches),
+      blagues_recurrentes: toStrArr(profile.blagues_recurrentes),
+      gifs_fetiches: toStrArr(profile.gifs_fetiches),
+      avatar_url: String(profile.avatar_url ?? "").trim().slice(0, 500) || undefined,
+      actif: true,
+    };
+
+    await upsertIaProfile(newProfile, created_by?.slice(0, 50));
+    return NextResponse.json({ ok: true, profile: newProfile }, { status: 201 });
+  } catch (e) {
+    console.error("[api/ia POST]", e);
     return NextResponse.json({ error: "Erreur serveur" }, { status: 500 });
   }
 }
