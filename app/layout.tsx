@@ -56,6 +56,50 @@ export default function RootLayout({
                 </a>
               </div>
             </div>
+            <div className="flex items-center gap-2">
+              {/* Icône panier */}
+              <button
+                id="cart-btn"
+                aria-label="Panier"
+                style={{
+                  position: "relative",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  width: "2.25rem",
+                  height: "2.25rem",
+                  borderRadius: "var(--radius)",
+                  border: "1px solid var(--border)",
+                  background: "var(--surface)",
+                  color: "var(--text-secondary)",
+                  cursor: "pointer",
+                  transition: "border-color 0.15s, color 0.15s",
+                }}
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ width: "1rem", height: "1rem" }}>
+                  <circle cx="9" cy="21" r="1" /><circle cx="20" cy="21" r="1" />
+                  <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6" />
+                </svg>
+                <span
+                  id="cart-badge"
+                  style={{
+                    display: "none",
+                    position: "absolute",
+                    top: "-6px",
+                    right: "-6px",
+                    minWidth: "1.1rem",
+                    height: "1.1rem",
+                    borderRadius: "999px",
+                    background: "var(--accent)",
+                    color: "var(--accent-text)",
+                    fontSize: "0.65rem",
+                    fontWeight: 700,
+                    lineHeight: "1.1rem",
+                    textAlign: "center",
+                    padding: "0 3px",
+                  }}
+                >0</span>
+              </button>
             <div className="theme-selector flex items-center gap-1 bg-[var(--surface)] border border-[var(--border)] rounded-full p-[3px]">
               <button
                 className="theme-btn flex items-center justify-center gap-1.5 px-3 py-1.5 border-none rounded-full bg-transparent text-[var(--text-muted)] text-xs font-semibold cursor-pointer transition-all min-h-8"
@@ -98,8 +142,187 @@ export default function RootLayout({
                 <span className="label-text hidden sm:inline">Terrasse</span>
               </button>
             </div>
+            </div>
           </div>
         </nav>
+
+        {/* Overlay panier */}
+        <div
+          id="cart-overlay"
+          style={{
+            display: "none",
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.45)",
+            zIndex: 100,
+          }}
+        />
+
+        {/* Drawer panier */}
+        <aside
+          id="cart-drawer"
+          style={{
+            position: "fixed",
+            top: 0,
+            right: 0,
+            bottom: 0,
+            width: "100%",
+            maxWidth: "420px",
+            background: "var(--surface)",
+            borderLeft: "1px solid var(--border)",
+            zIndex: 101,
+            display: "flex",
+            flexDirection: "column",
+            transform: "translateX(100%)",
+            transition: "transform 0.25s cubic-bezier(.4,0,.2,1)",
+          }}
+        >
+          {/* Header drawer */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "1rem 1.25rem", borderBottom: "1px solid var(--border)" }}>
+            <span style={{ fontFamily: "var(--font-heading)", fontWeight: 700, fontSize: "1rem" }}>
+              Mon panier
+            </span>
+            <button
+              id="cart-close"
+              style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: "4px" }}
+              aria-label="Fermer"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ width: "1.1rem", height: "1.1rem" }}>
+                <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          </div>
+
+          {/* Corps du panier */}
+          <div id="cart-body" style={{ flex: 1, overflowY: "auto", padding: "1rem 1.25rem" }} />
+
+          {/* Footer : total + actions */}
+          <div id="cart-footer" style={{ padding: "1rem 1.25rem", borderTop: "1px solid var(--border)" }} />
+        </aside>
+
+        {/* Modal login admin */}
+        <div
+          id="login-modal"
+          style={{
+            display: "none",
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.55)",
+            zIndex: 200,
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <div style={{
+            background: "var(--surface)",
+            border: "1px solid var(--border)",
+            borderRadius: "var(--radius)",
+            padding: "1.75rem",
+            width: "100%",
+            maxWidth: "340px",
+            margin: "0 1rem",
+          }}>
+            <h3 style={{ fontFamily: "var(--font-heading)", fontWeight: 700, marginBottom: "1rem", fontSize: "1rem" }}>
+              Connexion admin requise
+            </h3>
+            <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "1rem" }}>
+              Seuls les admins peuvent passer commande.
+            </p>
+            <input
+              id="login-password"
+              type="password"
+              placeholder="Mot de passe"
+              style={{
+                width: "100%",
+                padding: "0.5rem 0.75rem",
+                background: "var(--surface-hover)",
+                border: "1px solid var(--border)",
+                borderRadius: "var(--radius)",
+                color: "var(--text)",
+                fontSize: "0.875rem",
+                marginBottom: "0.75rem",
+                boxSizing: "border-box",
+                outline: "none",
+              }}
+            />
+            <p id="login-error" style={{ color: "var(--bad)", fontSize: "0.75rem", marginBottom: "0.75rem", display: "none" }}>Mot de passe incorrect</p>
+            <div style={{ display: "flex", gap: "0.5rem" }}>
+              <button
+                id="login-cancel"
+                style={{
+                  flex: 1,
+                  padding: "0.5rem",
+                  background: "var(--surface-hover)",
+                  border: "1px solid var(--border)",
+                  borderRadius: "var(--radius)",
+                  cursor: "pointer",
+                  color: "var(--text-secondary)",
+                  fontSize: "0.875rem",
+                }}
+              >
+                Annuler
+              </button>
+              <button
+                id="login-submit"
+                style={{
+                  flex: 1,
+                  padding: "0.5rem",
+                  background: "var(--accent)",
+                  border: "none",
+                  borderRadius: "var(--radius)",
+                  cursor: "pointer",
+                  color: "var(--accent-text)",
+                  fontWeight: 600,
+                  fontSize: "0.875rem",
+                }}
+              >
+                Se connecter
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Modal résultat commande */}
+        <div
+          id="order-result-modal"
+          style={{
+            display: "none",
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.55)",
+            zIndex: 200,
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <div style={{
+            background: "var(--surface)",
+            border: "1px solid var(--border)",
+            borderRadius: "var(--radius)",
+            padding: "1.75rem",
+            width: "100%",
+            maxWidth: "380px",
+            margin: "0 1rem",
+          }}>
+            <div id="order-result-content" />
+            <button
+              id="order-result-close"
+              style={{
+                marginTop: "1rem",
+                width: "100%",
+                padding: "0.5rem",
+                background: "var(--surface-hover)",
+                border: "1px solid var(--border)",
+                borderRadius: "var(--radius)",
+                cursor: "pointer",
+                color: "var(--text-secondary)",
+                fontSize: "0.875rem",
+              }}
+            >
+              Fermer
+            </button>
+          </div>
+        </div>
         <div className="relative z-[2] mx-auto max-w-[860px] px-3 py-5 sm:px-6 sm:py-10">{children}</div>
         <div className="relative z-[1] text-center text-[var(--text-muted)] text-xs py-8 px-4 border-t border-[var(--border)] mt-8 flex flex-col items-center gap-3">
           <div>Plats du Jour &mdash; Mis à jour automatiquement chaque matin</div>
