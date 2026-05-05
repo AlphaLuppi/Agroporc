@@ -13,8 +13,18 @@ Pipeline macros (2 passes) :
    compte tenu du plat (mode de cuisson, présence de peau, etc.).
 3. On agrège les macros depuis les codes Ciqual choisis. Si plus de 30% de la
    masse n'est pas matchée, on retombe sur la nutrition_estimee_llm.
+
+Photos de référence (passe 1) :
+Si le dossier `plats-du-jour/photos/<slug>/` contient des images JPG/PNG/WEBP,
+elles sont envoyées au LLM en début de prompt pour calibrer les grammages selon
+les portions typiques de chaque restau (ex. Truck Muche = portions copieuses).
+Slugs supportés : `bistrot_trefle`, `pause_gourmande`, `truck_muche`. Cette voie
+n'est utilisée qu'en mode API (ANTHROPIC_API_KEY/AUTH_TOKEN ou OAuth Keychain) ;
+le CLI `claude -p` retombe sur le mode texte.
 """
+import base64
 import json
+import pathlib
 import subprocess
 import os
 import shutil
@@ -34,6 +44,21 @@ SPORT_PROFILE = os.getenv("SPORT_PROFILE", "sport régulier")
 DAILY_CALORIES_TARGET = os.getenv("DAILY_CALORIES_TARGET", "2200")
 
 CLAUDE_BIN = shutil.which("claude")
+
+PHOTOS_DIR = pathlib.Path(__file__).resolve().parent.parent / "photos"
+RESTAURANT_PHOTO_SLUGS = {
+    "Le Bistrot Trèfle": "bistrot_trefle",
+    "La Pause Gourmande": "pause_gourmande",
+    "Le Truck Muche": "truck_muche",
+}
+PHOTO_EXTENSIONS = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+}
+MAX_PHOTOS_PER_RESTAURANT = 4
 
 
 def _make_client() -> anthropic.Anthropic:
@@ -97,6 +122,58 @@ def _call_claude(prompt: str, timeout: int = 180) -> str:
         return result.stdout.strip()
 
     raise RuntimeError("Ni ANTHROPIC_API_KEY ni CLI claude disponible.")
+
+
+def _load_restaurant_photo_blocks(restaurants: set[str]) -> list[dict]:
+    """Charge les photos de référence des restaurants en blocs `content` Anthropic.
+
+    Pour chaque restaurant connu (cf. RESTAURANT_PHOTO_SLUGS) ayant un dossier
+    non vide dans `plats-du-jour/photos/<slug>/`, on émet un bloc texte d'intro
+    suivi des images (max MAX_PHOTOS_PER_RESTAURANT par restau, ordre alpha).
+    Renvoie [] si aucune photo n'est trouvée.
+    """
+    blocks: list[dict] = []
+    for name in sorted(restaurants):
+        slug = RESTAURANT_PHOTO_SLUGS.get(name)
+        if not slug:
+            continue
+        rest_dir = PHOTOS_DIR / slug
+        if not rest_dir.is_dir():
+            continue
+        photos = sorted(
+            p for p in rest_dir.iterdir()
+            if p.is_file() and p.suffix.lower() in PHOTO_EXTENSIONS
+        )[:MAX_PHOTOS_PER_RESTAURANT]
+        if not photos:
+            continue
+        blocks.append({
+            "type": "text",
+            "text": f"Photos de référence — portions typiques de {name} :",
+        })
+        for p in photos:
+            mime = PHOTO_EXTENSIONS[p.suffix.lower()]
+            data = base64.standard_b64encode(p.read_bytes()).decode("ascii")
+            blocks.append({
+                "type": "image",
+                "source": {"type": "base64", "media_type": mime, "data": data},
+            })
+    return blocks
+
+
+def _call_claude_with_images(text_prompt: str, image_blocks: list[dict], timeout: int = 300) -> str:
+    """Variante de _call_claude avec images. Voie API uniquement (CLI non supporté).
+
+    Utilise _make_client() qui gère API key et OAuth (token env ou Keychain).
+    """
+    client = _make_client()
+    content = list(image_blocks) + [{"type": "text", "text": text_prompt}]
+    message = client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=8192,
+        messages=[{"role": "user", "content": content}],
+        timeout=timeout,
+    )
+    return message.content[0].text.strip()
 
 
 def _strip_code_fence(raw: str) -> str:
@@ -373,8 +450,22 @@ def evaluate_semaine(plats_par_jour: dict[str, list[dict]]) -> dict[str, dict]:
     if not plats_par_jour:
         return {}
 
+    restaurants = {
+        p.get("restaurant")
+        for plats in plats_par_jour.values()
+        for p in (plats or [])
+        if p.get("restaurant")
+    }
+    image_blocks = _load_restaurant_photo_blocks(restaurants)
+    photos_hint = (
+        "\n\nDes photos de référence des portions typiques de chaque restaurant te "
+        "sont fournies en début de message. Utilise-les pour calibrer tes grammages "
+        "(petites portions, portions copieuses, etc.) selon le restaurant concerné."
+        if image_blocks else ""
+    )
+
     prompt = (
-        f"{_build_system_prompt()}\n\n"
+        f"{_build_system_prompt()}{photos_hint}\n\n"
         f"Voici les plats du jour de PLUSIEURS jours de la semaine :\n\n"
         f"{json.dumps(plats_par_jour, ensure_ascii=False, indent=2)}\n\n"
         f"Pour CHAQUE jour, note chaque plat et donne ta recommandation.\n\n"
@@ -389,7 +480,10 @@ def evaluate_semaine(plats_par_jour: dict[str, list[dict]]) -> dict[str, dict]:
         f'}}'
     )
 
-    raw = _call_claude(prompt, timeout=300)
+    if image_blocks:
+        raw = _call_claude_with_images(prompt, image_blocks, timeout=300)
+    else:
+        raw = _call_claude(prompt, timeout=300)
     return _apply_ciqual(json.loads(_strip_code_fence(raw)))
 
 
@@ -403,14 +497,26 @@ def evaluate(plats: list[dict]) -> dict:
     Returns:
         dict avec notes et recommandation
     """
+    restaurants = {p.get("restaurant") for p in plats if p.get("restaurant")}
+    image_blocks = _load_restaurant_photo_blocks(restaurants)
+    photos_hint = (
+        "\n\nDes photos de référence des portions typiques de chaque restaurant te "
+        "sont fournies en début de message. Utilise-les pour calibrer tes grammages "
+        "(petites portions, portions copieuses, etc.) selon le restaurant concerné."
+        if image_blocks else ""
+    )
+
     prompt = (
-        f"{_build_system_prompt()}\n\n"
+        f"{_build_system_prompt()}{photos_hint}\n\n"
         f"Voici les plats du jour disponibles aujourd'hui :\n\n"
         f"{json.dumps(plats, ensure_ascii=False, indent=2)}\n\n"
         f"Note chaque plat et dis-moi lequel manger."
     )
 
-    raw = _call_claude(prompt, timeout=180)
+    if image_blocks:
+        raw = _call_claude_with_images(prompt, image_blocks, timeout=240)
+    else:
+        raw = _call_claude(prompt, timeout=180)
     return _apply_ciqual(json.loads(_strip_code_fence(raw)))
 
 
