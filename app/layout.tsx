@@ -56,6 +56,7 @@ export default function RootLayout({
                 </a>
               </div>
             </div>
+            <div className="flex items-center gap-2">
             <div className="theme-selector flex items-center gap-1 bg-[var(--surface)] border border-[var(--border)] rounded-full p-[3px]">
               <button
                 className="theme-btn flex items-center justify-center gap-1.5 px-3 py-1.5 border-none rounded-full bg-transparent text-[var(--text-muted)] text-xs font-semibold cursor-pointer transition-all min-h-8"
@@ -98,8 +99,53 @@ export default function RootLayout({
                 <span className="label-text hidden sm:inline">Terrasse</span>
               </button>
             </div>
+              <button
+                id="cart-toggle"
+                aria-label="Voir le panier"
+                className="relative flex items-center justify-center w-9 h-9 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] text-[var(--text-secondary)] hover:text-[var(--text)] hover:border-[var(--border-accent)] transition-colors"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
+                  <circle cx="9" cy="21" r="1"/>
+                  <circle cx="20" cy="21" r="1"/>
+                  <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/>
+                </svg>
+                <span id="cart-badge" className="absolute -top-1.5 -right-1.5 min-w-4 h-4 rounded-full text-[0.6rem] font-bold items-center justify-center px-0.5" style={{ background: "var(--accent)", color: "var(--accent-text)", display: "none" }}>0</span>
+              </button>
+            </div>
           </div>
         </nav>
+
+        {/* Cart overlay */}
+        <div
+          id="cart-overlay"
+          className="fixed inset-0 z-[100]"
+          style={{ display: "none", background: "rgba(0,0,0,0.4)", backdropFilter: "blur(4px)" }}
+        >
+          <div
+            id="cart-drawer"
+            className="absolute right-0 top-0 h-full w-full max-w-[360px] flex flex-col"
+            style={{ background: "var(--bg)", borderLeft: "1px solid var(--border)" }}
+          >
+            <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: "1px solid var(--border)" }}>
+              <div className="flex items-center gap-2">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5" style={{ color: "var(--accent)" }}>
+                  <circle cx="9" cy="21" r="1"/>
+                  <circle cx="20" cy="21" r="1"/>
+                  <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/>
+                </svg>
+                <span className="font-bold text-base" style={{ fontFamily: "var(--font-heading)" }}>Mon panier</span>
+              </div>
+              <button id="cart-close" className="p-1 rounded transition-colors" style={{ color: "var(--text-muted)" }} aria-label="Fermer">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5">
+                  <line x1="18" y1="6" x2="6" y2="18"/>
+                  <line x1="6" y1="6" x2="18" y2="18"/>
+                </svg>
+              </button>
+            </div>
+            <div id="cart-items" className="flex-1 overflow-y-auto px-5 py-4" />
+            <div id="cart-footer" className="px-5 py-4" style={{ borderTop: "1px solid var(--border)" }} />
+          </div>
+        </div>
         <div className="relative z-[2] mx-auto max-w-[860px] px-3 py-5 sm:px-6 sm:py-10">{children}</div>
         <div className="relative z-[1] text-center text-[var(--text-muted)] text-xs py-8 px-4 border-t border-[var(--border)] mt-8 flex flex-col items-center gap-3">
           <div>Plats du Jour &mdash; Mis à jour automatiquement chaque matin</div>
