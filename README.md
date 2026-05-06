@@ -1,4 +1,4 @@
-# Plats du Jour (PDJ)
+# Agroporc
 
 Agrégateur de menus du midi pour les restaurants d'entreprise. Scrape les menus, les évalue avec des agents IA, génère des commentaires de personnages fictifs, et affiche le tout sur un site web.
 
