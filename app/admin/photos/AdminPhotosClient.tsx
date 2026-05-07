@@ -88,7 +88,9 @@ export default function AdminPhotosClient({ initialPhotos }: Props) {
           Photos de référence
         </h1>
         <p className="text-sm text-[var(--text-secondary)] mt-1">
-          L&apos;IA utilise ces photos pour calibrer ses estimations de grammages par restaurant.
+          L&apos;IA analyse ces photos pour estimer les portions typiques de chaque restaurant
+          (méthode par objets de référence : assiette, couverts…) et ajuste ses calculs de macros en conséquence.
+          Plus tu ajoutes de photos, plus l&apos;estimation est précise.
         </p>
       </div>
 

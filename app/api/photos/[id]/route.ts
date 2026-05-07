@@ -4,15 +4,9 @@ import { deletePhoto } from "@/lib/db";
 export const runtime = "nodejs";
 
 export async function DELETE(
-  request: NextRequest,
+  _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const auth = request.headers.get("authorization");
-  const token = process.env.API_SECRET_TOKEN;
-  if (!token || auth !== `Bearer ${token}`) {
-    return NextResponse.json({ error: "Non autorisé" }, { status: 401 });
-  }
-
   const { id } = await params;
   const numId = parseInt(id, 10);
   if (isNaN(numId)) {

@@ -25,12 +25,6 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const auth = request.headers.get("authorization");
-  const token = process.env.API_SECRET_TOKEN;
-  if (!token || auth !== `Bearer ${token}`) {
-    return NextResponse.json({ error: "Non autorisé" }, { status: 401 });
-  }
-
   try {
     const formData = await request.formData();
     const file = formData.get("file");
