@@ -1,15 +1,7 @@
 "use server";
 
-import { cookies } from "next/headers";
 import { getAllPhotos, addPhoto, deletePhoto } from "@/lib/db";
 import type { Photo } from "@/lib/db";
-
-async function checkAuth() {
-  const cookieStore = await cookies();
-  if (cookieStore.get("pdj-admin")?.value !== "1") {
-    throw new Error("Non autorisé");
-  }
-}
 
 const VALID_SLUGS = new Set(["bistrot_trefle", "pause_gourmande", "truck_muche"]);
 const VALID_TYPES: Record<string, string> = {
@@ -22,15 +14,12 @@ const VALID_TYPES: Record<string, string> = {
 const MAX_SIZE = 3 * 1024 * 1024;
 
 export async function listPhotos(): Promise<Photo[]> {
-  await checkAuth();
   return getAllPhotos();
 }
 
 export async function uploadPhotoAction(
   formData: FormData
 ): Promise<{ ok: boolean; error?: string }> {
-  await checkAuth();
-
   const file = formData.get("file");
   const slug = formData.get("slug");
 
@@ -59,7 +48,6 @@ export async function uploadPhotoAction(
 export async function deletePhotoAction(
   id: number
 ): Promise<{ ok: boolean; error?: string }> {
-  await checkAuth();
   const deleted = await deletePhoto(id);
   if (!deleted) return { ok: false, error: "Photo introuvable" };
   return { ok: true };
