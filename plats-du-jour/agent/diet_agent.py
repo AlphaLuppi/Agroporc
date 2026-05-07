@@ -14,21 +14,16 @@ Pipeline macros (2 passes) :
 3. On agrège les macros depuis les codes Ciqual choisis. Si plus de 30% de la
    masse n'est pas matchée, on retombe sur la nutrition_estimee_llm.
 
-Photos de référence (passe 1) :
-Si le dossier `plats-du-jour/photos/<slug>/` contient des images JPG/PNG/WEBP,
-elles sont envoyées au LLM en début de prompt pour calibrer les grammages selon
-les portions typiques de chaque restau (ex. Truck Muche = portions copieuses).
-Slugs supportés : `bistrot_trefle`, `pause_gourmande`, `truck_muche`. Cette voie
-n'est utilisée qu'en mode API (ANTHROPIC_API_KEY/AUTH_TOKEN ou OAuth Keychain) ;
-le CLI `claude -p` retombe sur le mode texte.
+Calibrage des portions (passe 1) :
+Les estimations de poids par restaurant sont lues depuis le cache
+`output/portion_estimates.json` (généré par portion_agent.check_and_update(),
+appelé quotidiennement via `python main.py check-portions`). Le calibrage est
+injecté comme texte dans le prompt — pas d'envoi d'images à chaque évaluation.
 """
-import base64
 import json
-import pathlib
 import subprocess
 import os
 import shutil
-import urllib.request
 import anthropic
 
 from ciqual.lookup import (
@@ -46,58 +41,11 @@ DAILY_CALORIES_TARGET = os.getenv("DAILY_CALORIES_TARGET", "2200")
 
 CLAUDE_BIN = shutil.which("claude")
 
-PHOTOS_DIR = pathlib.Path(__file__).resolve().parent.parent / "photos"
 RESTAURANT_PHOTO_SLUGS = {
     "Le Bistrot Trèfle": "bistrot_trefle",
     "La Pause Gourmande": "pause_gourmande",
     "Le Truck Muche": "truck_muche",
 }
-PHOTO_EXTENSIONS = {
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".png": "image/png",
-    ".webp": "image/webp",
-    ".gif": "image/gif",
-}
-MAX_PHOTOS_PER_RESTAURANT = 4
-
-
-def _make_client() -> anthropic.Anthropic:
-    """
-    Crée un client Anthropic.
-    Ordre de priorité :
-      1. ANTHROPIC_API_KEY (clé API classique)
-      2. ANTHROPIC_AUTH_TOKEN (OAuth / bearer token)
-      3. Token OAuth depuis le macOS Keychain (dev local)
-    """
-    api_key = os.getenv("ANTHROPIC_API_KEY", "")
-    if api_key:
-        return anthropic.Anthropic(api_key=api_key)
-
-    auth_token = os.getenv("ANTHROPIC_AUTH_TOKEN", "")
-    if auth_token:
-        return anthropic.Anthropic(auth_token=auth_token)
-
-    # Lire le token OAuth depuis le Keychain macOS
-    try:
-        result = subprocess.run(
-            ["security", "find-generic-password", "-l", "Claude Code-credentials", "-w"],
-            capture_output=True, text=True, timeout=5
-        )
-        if result.returncode == 0:
-            raw = result.stdout.strip()
-            data = json.loads(raw)
-            oauth = data.get("claudeAiOauth", {})
-            token = oauth.get("accessToken", "")
-            if token:
-                return anthropic.Anthropic(auth_token=token)
-    except Exception as e:
-        print(f"[diet_agent] Erreur lecture Keychain : {e}")
-
-    raise ValueError(
-        "Aucun token trouvé. Configurez ANTHROPIC_API_KEY ou ANTHROPIC_AUTH_TOKEN "
-        "dans .env, ou assurez-vous d'être connecté à Claude Code."
-    )
 
 
 def _call_claude(prompt: str, timeout: int = 180) -> str:
@@ -125,95 +73,39 @@ def _call_claude(prompt: str, timeout: int = 180) -> str:
     raise RuntimeError("Ni ANTHROPIC_API_KEY ni CLI claude disponible.")
 
 
-def _load_restaurant_photo_blocks_from_api(restaurants: set[str]) -> list[dict]:
-    """Charge les photos depuis l'API Vercel (si VERCEL_API_URL est défini dans .env)."""
-    api_url = os.getenv("VERCEL_API_URL", "").rstrip("/")
-    if not api_url:
-        return []
-    blocks: list[dict] = []
+def _build_portion_calibration(restaurants: set[str]) -> str:
+    """Construit un texte de calibrage des portions depuis le cache portion_agent.
+
+    Retourne une chaîne vide si aucune estimation n'est disponible dans le cache.
+    Le cache est mis à jour séparément via `python main.py check-portions`.
+    """
+    try:
+        from agent.portion_agent import load_estimates
+        estimates = load_estimates()
+    except Exception as e:
+        print(f"[diet_agent] Impossible de charger les estimations portions : {e}")
+        return ""
+
+    lines = []
     for name in sorted(restaurants):
         slug = RESTAURANT_PHOTO_SLUGS.get(name)
         if not slug:
             continue
-        try:
-            req = urllib.request.Request(f"{api_url}/api/photos?slug={slug}")
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                data = json.loads(resp.read().decode())
-            photos = data.get("photos", [])[:MAX_PHOTOS_PER_RESTAURANT]
-            if not photos:
-                continue
-            blocks.append({
-                "type": "text",
-                "text": f"Photos de référence — portions typiques de {name} :",
-            })
-            for photo in photos:
-                img_req = urllib.request.Request(f"{api_url}/api/photos/{photo['id']}/image")
-                with urllib.request.urlopen(img_req, timeout=15) as img_resp:
-                    img_b64 = base64.standard_b64encode(img_resp.read()).decode("ascii")
-                mime = photo.get("content_type", "image/jpeg")
-                blocks.append({
-                    "type": "image",
-                    "source": {"type": "base64", "media_type": mime, "data": img_b64},
-                })
-        except Exception as e:
-            print(f"[diet_agent] Erreur chargement photos API pour {name}: {e}")
-    return blocks
-
-
-def _load_restaurant_photo_blocks(restaurants: set[str]) -> list[dict]:
-    """Charge les photos de référence des restaurants en blocs `content` Anthropic.
-
-    Essaie d'abord l'API Vercel (si VERCEL_API_URL est configuré dans .env),
-    sinon retombe sur le dossier local `plats-du-jour/photos/<slug>/`.
-    Renvoie [] si aucune photo n'est trouvée.
-    """
-    api_blocks = _load_restaurant_photo_blocks_from_api(restaurants)
-    if api_blocks:
-        return api_blocks
-
-    # Fallback : filesystem local
-    blocks: list[dict] = []
-    for name in sorted(restaurants):
-        slug = RESTAURANT_PHOTO_SLUGS.get(name)
-        if not slug:
+        est = estimates.get(slug)
+        if not est or not est.get("estimated_weight_g"):
             continue
-        rest_dir = PHOTOS_DIR / slug
-        if not rest_dir.is_dir():
-            continue
-        photos = sorted(
-            p for p in rest_dir.iterdir()
-            if p.is_file() and p.suffix.lower() in PHOTO_EXTENSIONS
-        )[:MAX_PHOTOS_PER_RESTAURANT]
-        if not photos:
-            continue
-        blocks.append({
-            "type": "text",
-            "text": f"Photos de référence — portions typiques de {name} :",
-        })
-        for p in photos:
-            mime = PHOTO_EXTENSIONS[p.suffix.lower()]
-            data = base64.standard_b64encode(p.read_bytes()).decode("ascii")
-            blocks.append({
-                "type": "image",
-                "source": {"type": "base64", "media_type": mime, "data": data},
-            })
-    return blocks
+        weight = est["estimated_weight_g"]
+        count = est.get("photo_count", 0)
+        lines.append(f"- {name} : portion estimée ~{weight}g (basé sur {count} photo(s))")
 
+    if not lines:
+        return ""
 
-def _call_claude_with_images(text_prompt: str, image_blocks: list[dict], timeout: int = 300) -> str:
-    """Variante de _call_claude avec images. Voie API uniquement (CLI non supporté).
-
-    Utilise _make_client() qui gère API key et OAuth (token env ou Keychain).
-    """
-    client = _make_client()
-    content = list(image_blocks) + [{"type": "text", "text": text_prompt}]
-    message = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=8192,
-        messages=[{"role": "user", "content": content}],
-        timeout=timeout,
+    return (
+        "\n\nCalibrage des portions par restaurant (estimations issues de photos de référence) :\n"
+        + "\n".join(lines)
+        + "\nUtilise ces poids estimés pour calibrer tes grammages selon chaque restaurant."
     )
-    return message.content[0].text.strip()
 
 
 def _strip_code_fence(raw: str) -> str:
@@ -496,16 +388,10 @@ def evaluate_semaine(plats_par_jour: dict[str, list[dict]]) -> dict[str, dict]:
         for p in (plats or [])
         if p.get("restaurant")
     }
-    image_blocks = _load_restaurant_photo_blocks(restaurants)
-    photos_hint = (
-        "\n\nDes photos de référence des portions typiques de chaque restaurant te "
-        "sont fournies en début de message. Utilise-les pour calibrer tes grammages "
-        "(petites portions, portions copieuses, etc.) selon le restaurant concerné."
-        if image_blocks else ""
-    )
+    calibration = _build_portion_calibration(restaurants)
 
     prompt = (
-        f"{_build_system_prompt()}{photos_hint}\n\n"
+        f"{_build_system_prompt()}{calibration}\n\n"
         f"Voici les plats du jour de PLUSIEURS jours de la semaine :\n\n"
         f"{json.dumps(plats_par_jour, ensure_ascii=False, indent=2)}\n\n"
         f"Pour CHAQUE jour, note chaque plat et donne ta recommandation.\n\n"
@@ -520,10 +406,7 @@ def evaluate_semaine(plats_par_jour: dict[str, list[dict]]) -> dict[str, dict]:
         f'}}'
     )
 
-    if image_blocks:
-        raw = _call_claude_with_images(prompt, image_blocks, timeout=300)
-    else:
-        raw = _call_claude(prompt, timeout=300)
+    raw = _call_claude(prompt, timeout=300)
     return _apply_ciqual(json.loads(_strip_code_fence(raw)))
 
 
@@ -538,25 +421,16 @@ def evaluate(plats: list[dict]) -> dict:
         dict avec notes et recommandation
     """
     restaurants = {p.get("restaurant") for p in plats if p.get("restaurant")}
-    image_blocks = _load_restaurant_photo_blocks(restaurants)
-    photos_hint = (
-        "\n\nDes photos de référence des portions typiques de chaque restaurant te "
-        "sont fournies en début de message. Utilise-les pour calibrer tes grammages "
-        "(petites portions, portions copieuses, etc.) selon le restaurant concerné."
-        if image_blocks else ""
-    )
+    calibration = _build_portion_calibration(restaurants)
 
     prompt = (
-        f"{_build_system_prompt()}{photos_hint}\n\n"
+        f"{_build_system_prompt()}{calibration}\n\n"
         f"Voici les plats du jour disponibles aujourd'hui :\n\n"
         f"{json.dumps(plats, ensure_ascii=False, indent=2)}\n\n"
         f"Note chaque plat et dis-moi lequel manger."
     )
 
-    if image_blocks:
-        raw = _call_claude_with_images(prompt, image_blocks, timeout=240)
-    else:
-        raw = _call_claude(prompt, timeout=180)
+    raw = _call_claude(prompt, timeout=180)
     return _apply_ciqual(json.loads(_strip_code_fence(raw)))
 
 

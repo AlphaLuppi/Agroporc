@@ -22,7 +22,7 @@ HISTORY_DIR = Path(__file__).parent / "output" / "historique"
 load_dotenv()
 
 from scrapers import bistrot_trefle, pause_gourmande, truck_muche
-from agent import diet_agent, repair_team, comment_agent, feedback_agent, idee_agent
+from agent import diet_agent, repair_team, comment_agent, feedback_agent, idee_agent, portion_agent
 from creer_personnage import creer_personnage
 from messages import generer_messages_semaine, maj_message_jour
 from publish import publish_pdj
@@ -446,7 +446,7 @@ async def _evaluer_et_sauver(plats: list[dict]) -> dict:
 # ── Point d'entrée ──────────────────────────────────────────────────────────
 
 def main():
-    usage = "Usage: python main.py [semaine|jour|commentaires <personnage>|sync-feedback|nouveau-personnage]"
+    usage = "Usage: python main.py [semaine|jour|commentaires <personnage>|sync-feedback|nouveau-personnage|check-portions]"
 
     if len(sys.argv) < 2:
         print(usage)
@@ -458,6 +458,17 @@ def main():
         asyncio.run(run_semaine())
     elif mode == "jour":
         asyncio.run(run_jour())
+    elif mode == "check-portions":
+        print("[main] Vérification des photos de référence...")
+        estimates = portion_agent.check_and_update()
+        available = [slug for slug, d in estimates.items() if d.get("estimated_weight_g")]
+        if available:
+            print(f"[main] Estimations disponibles : {', '.join(available)}")
+            for slug in available:
+                e = estimates[slug]
+                print(f"  {slug} : {e['estimated_weight_g']}g ({e['photo_count']} photos, calculé le {e['computed_at']})")
+        else:
+            print("[main] Aucune estimation de portion disponible (pas de photos ?)")
     elif mode == "commentaires":
         if len(sys.argv) < 3:
             print("Usage: python main.py commentaires <personnage>")
