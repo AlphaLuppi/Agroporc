@@ -36,19 +36,19 @@ export default function RootLayout({
         />
       </head>
       <body>
-        <nav className="sticky top-0 z-50 border-b border-[var(--border)] px-3 sm:px-6 backdrop-blur-xl" style={{ background: "var(--nav-bg)" }}>
-          <div className="mx-auto flex h-14 max-w-[860px] items-center justify-between">
-            <div className="nav-left flex items-center gap-3 sm:gap-8">
+        <nav className="sticky top-0 z-50 border-b border-[var(--border)] backdrop-blur-xl" style={{ background: "var(--nav-bg)" }}>
+          <div className="mx-auto flex h-14 max-w-[860px] items-center justify-between px-3 sm:px-6">
+            <div className="nav-left flex items-center gap-3 sm:gap-8 min-w-0">
               <a href="/" className="flex items-center gap-2 text-lg sm:text-xl font-bold text-[var(--accent)] no-underline tracking-wide shrink-0" style={{ fontFamily: "var(--font-heading)" }}>
                 <img src="/logo.jpg" alt="Logo Plats du Jour" className="w-8 h-8 sm:w-9 sm:h-9 rounded-full object-cover" />
                 <span className="hidden sm:inline">Plats du Jour</span>
                 <span className="sm:hidden">PDJ</span>
               </a>
-              <div className="nav-links flex gap-1" id="nav-links">
+              <div className="nav-links hidden sm:flex gap-1" data-nav-links>
                 <a href="/" className="text-[var(--text-secondary)] no-underline text-xs sm:text-sm font-medium px-2 sm:px-3 py-1.5 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
                   Aujourd&apos;hui
                 </a>
-<a href="/idees" className="text-[var(--text-secondary)] no-underline text-xs sm:text-sm font-medium px-2 sm:px-3 py-1.5 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
+                <a href="/idees" className="text-[var(--text-secondary)] no-underline text-xs sm:text-sm font-medium px-2 sm:px-3 py-1.5 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
                   Idées
                 </a>
                 <a href="/ia" className="text-[var(--text-secondary)] no-underline text-xs sm:text-sm font-medium px-2 sm:px-3 py-1.5 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
@@ -103,7 +103,7 @@ export default function RootLayout({
                   }}
                 >0</span>
               </button>
-            <div className="theme-selector flex items-center gap-1 bg-[var(--surface)] border border-[var(--border)] rounded-full p-[3px]">
+            <div className="theme-selector hidden sm:flex items-center gap-1 bg-[var(--surface)] border border-[var(--border)] rounded-full p-[3px]">
               <button
                 className="theme-btn flex items-center justify-center gap-1.5 px-3 py-1.5 border-none rounded-full bg-transparent text-[var(--text-muted)] text-xs font-semibold cursor-pointer transition-all min-h-8"
                 data-theme="normal"
@@ -145,6 +145,89 @@ export default function RootLayout({
                 <span className="label-text hidden sm:inline">Terrasse</span>
               </button>
             </div>
+            {/* Bouton burger — mobile uniquement */}
+            <button
+              id="mobile-menu-btn"
+              type="button"
+              aria-label="Menu"
+              aria-expanded="false"
+              aria-controls="mobile-menu"
+              className="sm:hidden flex items-center justify-center w-9 h-9 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] text-[var(--text-secondary)] cursor-pointer transition-colors"
+            >
+              <svg id="burger-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
+                <line x1="3" y1="6" x2="21" y2="6" />
+                <line x1="3" y1="12" x2="21" y2="12" />
+                <line x1="3" y1="18" x2="21" y2="18" />
+              </svg>
+              <svg id="burger-close-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 hidden">
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+            </div>
+          </div>
+
+          {/* Panneau menu mobile */}
+          <div
+            id="mobile-menu"
+            className="sm:hidden hidden border-t border-[var(--border)] px-3 py-3"
+            style={{ background: "var(--nav-bg)" }}
+          >
+            <div className="flex flex-col gap-1 mb-3" data-nav-links>
+              <a href="/" className="text-[var(--text-secondary)] no-underline text-sm font-medium px-3 py-2 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
+                Aujourd&apos;hui
+              </a>
+              <a href="/idees" className="text-[var(--text-secondary)] no-underline text-sm font-medium px-3 py-2 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
+                Idées
+              </a>
+              <a href="/ia" className="text-[var(--text-secondary)] no-underline text-sm font-medium px-3 py-2 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
+                IA
+              </a>
+              <a href="/admin/photos" className="text-[var(--text-secondary)] no-underline text-sm font-medium px-3 py-2 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
+                Photos
+              </a>
+            </div>
+            <div className="theme-selector flex items-center justify-between gap-1 bg-[var(--surface)] border border-[var(--border)] rounded-full p-[3px]">
+              <button
+                className="theme-btn flex flex-1 items-center justify-center gap-1.5 px-3 py-1.5 border-none rounded-full bg-transparent text-[var(--text-muted)] text-xs font-semibold cursor-pointer transition-all min-h-8"
+                data-theme="normal"
+                aria-label="Thème normal"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3.5 h-3.5">
+                  <circle cx="12" cy="12" r="5" />
+                  <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />
+                </svg>
+                <span>Normal</span>
+              </button>
+              <button
+                className="theme-btn flex flex-1 items-center justify-center gap-1.5 px-3 py-1.5 border-none rounded-full bg-transparent text-[var(--text-muted)] text-xs font-semibold cursor-pointer transition-all min-h-8"
+                data-theme="tigre"
+                aria-label="Thème tigre"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="w-3.5 h-3.5">
+                  <path d="M3 7c3-3 7-4 9-2s1 6-2 9" />
+                  <path d="M21 7c-3-3-7-4-9-2s-1 6 2 9" />
+                  <circle cx="12" cy="16" r="5" />
+                  <path d="M12 11v2" />
+                  <circle cx="10" cy="15" r="0.5" fill="currentColor" />
+                  <circle cx="14" cy="15" r="0.5" fill="currentColor" />
+                </svg>
+                <span>Tigre</span>
+              </button>
+              <button
+                className="theme-btn flex flex-1 items-center justify-center gap-1.5 px-3 py-1.5 border-none rounded-full bg-transparent text-[var(--text-muted)] text-xs font-semibold cursor-pointer transition-all min-h-8"
+                data-theme="terrasse"
+                aria-label="Thème terrasse"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5">
+                  <path d="M17 8h1a4 4 0 1 1 0 8h-1" />
+                  <path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4Z" />
+                  <line x1="6" y1="2" x2="6" y2="4" />
+                  <line x1="10" y1="2" x2="10" y2="4" />
+                  <line x1="14" y1="2" x2="14" y2="4" />
+                </svg>
+                <span>Terrasse</span>
+              </button>
             </div>
           </div>
         </nav>
