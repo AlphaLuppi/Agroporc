@@ -12,32 +12,27 @@ export function ClientScripts() {
     document.documentElement.setAttribute("data-theme", saved);
 
     const themeBtns = document.querySelectorAll<HTMLButtonElement>(".theme-btn");
+    const applyThemeActive = (theme: string) => {
+      themeBtns.forEach((b) => {
+        const isActive = b.dataset.theme === theme;
+        b.classList.toggle("active", isActive);
+        b.style.background = isActive ? "var(--accent)" : "transparent";
+        b.style.color = isActive ? "var(--accent-text)" : "var(--text-muted)";
+        b.style.boxShadow = isActive ? "0 1px 4px rgba(0,0,0,0.2)" : "none";
+      });
+    };
+    applyThemeActive(saved);
     themeBtns.forEach((btn) => {
-      if (btn.dataset.theme === saved) {
-        btn.classList.add("active");
-        btn.style.background = "var(--accent)";
-        btn.style.color = "var(--accent-text)";
-        btn.style.boxShadow = "0 1px 4px rgba(0,0,0,0.2)";
-      }
       btn.onclick = () => {
         const theme = btn.dataset.theme!;
         document.documentElement.setAttribute("data-theme", theme);
         localStorage.setItem("pdj-theme", theme);
-        themeBtns.forEach((b) => {
-          b.classList.remove("active");
-          b.style.background = "transparent";
-          b.style.color = "var(--text-muted)";
-          b.style.boxShadow = "none";
-        });
-        btn.classList.add("active");
-        btn.style.background = "var(--accent)";
-        btn.style.color = "var(--accent-text)";
-        btn.style.boxShadow = "0 1px 4px rgba(0,0,0,0.2)";
+        applyThemeActive(theme);
       };
     });
 
-    // Active nav link
-    const links = document.querySelectorAll<HTMLAnchorElement>("#nav-links a");
+    // Active nav link (desktop + mobile)
+    const links = document.querySelectorAll<HTMLAnchorElement>("[data-nav-links] a");
     links.forEach((a) => {
       a.classList.remove("active");
       a.style.color = "";
@@ -52,6 +47,9 @@ export function ClientScripts() {
         a.style.background = "var(--accent-glow)";
       }
     });
+
+    // Mobile burger menu
+    const cleanupMobileMenu = initMobileMenu();
 
     // Mode switching
     const savedMode = localStorage.getItem("pdj-mode") || "sportif";
@@ -91,9 +89,53 @@ export function ClientScripts() {
 
     // ── Cart / Panier ────────────────────────────────────────────────────────
     initCart();
+
+    return () => {
+      cleanupMobileMenu?.();
+    };
   }, [pathname]);
 
   return null;
+}
+
+// ── Mobile burger menu ───────────────────────────────────────────────────────
+
+function initMobileMenu(): (() => void) | undefined {
+  const btn = document.getElementById("mobile-menu-btn");
+  const menu = document.getElementById("mobile-menu");
+  const burgerIcon = document.getElementById("burger-icon");
+  const closeIcon = document.getElementById("burger-close-icon");
+  if (!btn || !menu) return;
+
+  const setOpen = (open: boolean) => {
+    menu.classList.toggle("hidden", !open);
+    btn.setAttribute("aria-expanded", open ? "true" : "false");
+    burgerIcon?.classList.toggle("hidden", open);
+    closeIcon?.classList.toggle("hidden", !open);
+  };
+
+  setOpen(false);
+
+  btn.onclick = (e) => {
+    e.stopPropagation();
+    setOpen(menu.classList.contains("hidden"));
+  };
+
+  menu.querySelectorAll<HTMLAnchorElement>("a").forEach((a) => {
+    a.onclick = () => setOpen(false);
+  });
+
+  const onDocClick = (e: MouseEvent) => {
+    const target = e.target as Node;
+    if (!menu.contains(target) && !btn.contains(target)) {
+      setOpen(false);
+    }
+  };
+  document.addEventListener("click", onDocClick);
+
+  return () => {
+    document.removeEventListener("click", onDocClick);
+  };
 }
 
 // ── Types cart ───────────────────────────────────────────────────────────────
