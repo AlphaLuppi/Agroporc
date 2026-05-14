@@ -24,6 +24,7 @@ export default function AdminPhotosClient({ initialPhotos }: Props) {
   const [uploading, setUploading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
   const [isPending, startTransition] = useTransition();
   const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
@@ -63,7 +64,13 @@ export default function AdminPhotosClient({ initialPhotos }: Props) {
   }
 
   async function handleDelete(id: number) {
-    if (!confirm("Supprimer cette photo ?")) return;
+    setConfirmDeleteId(id);
+  }
+
+  async function confirmDelete() {
+    if (confirmDeleteId === null) return;
+    const id = confirmDeleteId;
+    setConfirmDeleteId(null);
     setError(null);
     setSuccess(null);
 
@@ -80,6 +87,28 @@ export default function AdminPhotosClient({ initialPhotos }: Props) {
 
   return (
     <div className="space-y-8">
+      {confirmDeleteId !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="bg-[var(--surface)] border border-[var(--border)] rounded-xl p-6 shadow-xl max-w-sm w-full mx-4">
+            <p className="text-[var(--text)] font-medium mb-1">Supprimer cette photo ?</p>
+            <p className="text-sm text-[var(--text-secondary)] mb-5">Cette action est irréversible.</p>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => setConfirmDeleteId(null)}
+                className="px-4 py-2 text-sm rounded-lg border border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] transition-colors"
+              >
+                Annuler
+              </button>
+              <button
+                onClick={confirmDelete}
+                className="px-4 py-2 text-sm rounded-lg bg-red-500 text-white hover:bg-red-600 transition-colors font-medium"
+              >
+                Supprimer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <div>
         <h1
           className="text-2xl sm:text-3xl font-bold text-[var(--text)]"
