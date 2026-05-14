@@ -14,6 +14,11 @@ const RESTAURANTS = [
 const MAX_FILE_SIZE = 3 * 1024 * 1024;
 const ACCEPTED_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
 
+interface RecentDish {
+  plat_nom: string;
+  plat_date: string;
+}
+
 interface Props {
   initialPhotos: Photo[];
 }
@@ -28,11 +33,16 @@ export default function AdminPhotosClient({ initialPhotos }: Props) {
   const [isPending, startTransition] = useTransition();
   const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
+  // Dish picker state
+  const [pendingUpload, setPendingUpload] = useState<{ slug: string; file: File } | null>(null);
+  const [recentDishes, setRecentDishes] = useState<RecentDish[]>([]);
+  const [loadingDishes, setLoadingDishes] = useState(false);
+
   useEffect(() => {
     setPhotos(initialPhotos);
   }, [initialPhotos]);
 
-  async function handleUpload(slug: string, file: File) {
+  async function handleFileSelect(slug: string, file: File) {
     if (file.size > MAX_FILE_SIZE) {
       setError("Fichier trop lourd (max 3 Mo)");
       return;
@@ -41,13 +51,33 @@ export default function AdminPhotosClient({ initialPhotos }: Props) {
       setError("Format non supporté (JPG, PNG, WEBP, GIF)");
       return;
     }
-    setUploading(slug);
     setError(null);
     setSuccess(null);
+    setPendingUpload({ slug, file });
+    setLoadingDishes(true);
+    try {
+      const res = await fetch(`/api/photos/recent-dishes?slug=${slug}`);
+      const data = await res.json();
+      setRecentDishes(data.dishes ?? []);
+    } catch {
+      setRecentDishes([]);
+    } finally {
+      setLoadingDishes(false);
+    }
+  }
+
+  async function handleUpload(platNom?: string, platDate?: string) {
+    if (!pendingUpload) return;
+    const { slug, file } = pendingUpload;
+    setPendingUpload(null);
+    setRecentDishes([]);
+    setUploading(slug);
 
     const formData = new FormData();
     formData.append("file", file);
     formData.append("slug", slug);
+    if (platNom) formData.append("plat_nom", platNom);
+    if (platDate) formData.append("plat_date", platDate);
 
     startTransition(async () => {
       const result = await uploadPhotoAction(formData);
@@ -85,12 +115,18 @@ export default function AdminPhotosClient({ initialPhotos }: Props) {
     });
   }
 
+  const confirmDeletePhoto = photos.find((p) => p.id === confirmDeleteId);
+
   return (
     <div className="space-y-8">
+      {/* Modal suppression */}
       {confirmDeleteId !== null && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
           <div className="bg-[var(--surface)] border border-[var(--border)] rounded-xl p-6 shadow-xl max-w-sm w-full mx-4">
             <p className="text-[var(--text)] font-medium mb-1">Supprimer cette photo ?</p>
+            {confirmDeletePhoto?.plat_nom && (
+              <p className="text-xs text-[var(--text-muted)] mb-1">Liée à : {confirmDeletePhoto.plat_nom}</p>
+            )}
             <p className="text-sm text-[var(--text-secondary)] mb-5">Cette action est irréversible.</p>
             <div className="flex gap-3 justify-end">
               <button
@@ -109,6 +145,59 @@ export default function AdminPhotosClient({ initialPhotos }: Props) {
           </div>
         </div>
       )}
+
+      {/* Modal liaison plat */}
+      {pendingUpload !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="bg-[var(--surface)] border border-[var(--border)] rounded-xl p-6 shadow-xl max-w-sm w-full mx-4">
+            <p className="text-[var(--text)] font-medium mb-1">Lier cette photo à un plat</p>
+            <p className="text-sm text-[var(--text-secondary)] mb-4">
+              Optionnel — aide l&apos;IA à calibrer les grammages par plat.
+            </p>
+            {loadingDishes ? (
+              <p className="text-sm text-[var(--text-muted)] mb-4">Chargement des plats récents…</p>
+            ) : recentDishes.length === 0 ? (
+              <p className="text-sm text-[var(--text-muted)] mb-4">Aucun plat trouvé pour ce restaurant.</p>
+            ) : (
+              <ul className="max-h-56 overflow-y-auto space-y-1 mb-4 pr-1">
+                {recentDishes.map((d) => (
+                  <li key={`${d.plat_date}-${d.plat_nom}`}>
+                    <button
+                      onClick={() => handleUpload(d.plat_nom, d.plat_date)}
+                      className="w-full text-left px-3 py-2 rounded-lg text-sm hover:bg-[var(--surface-hover)] transition-colors group"
+                    >
+                      <span className="text-[var(--text)] group-hover:text-[var(--accent)]">{d.plat_nom}</span>
+                      <span className="ml-2 text-xs text-[var(--text-muted)]">
+                        {new Date(d.plat_date).toLocaleDateString("fr-FR", { day: "numeric", month: "short" })}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="flex gap-3 justify-between">
+              <button
+                onClick={() => {
+                  setPendingUpload(null);
+                  setRecentDishes([]);
+                  const input = fileInputRefs.current[pendingUpload.slug];
+                  if (input) input.value = "";
+                }}
+                className="px-4 py-2 text-sm rounded-lg border border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] transition-colors"
+              >
+                Annuler
+              </button>
+              <button
+                onClick={() => handleUpload()}
+                className="px-4 py-2 text-sm rounded-lg border border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] transition-colors"
+              >
+                Sans liaison
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div>
         <h1
           className="text-2xl sm:text-3xl font-bold text-[var(--text)]"
@@ -165,9 +254,15 @@ export default function AdminPhotosClient({ initialPhotos }: Props) {
                       >
                         ×
                       </button>
-                      <p className="text-[10px] text-[var(--text-muted)] mt-1 truncate leading-tight">
-                        {photo.filename}
-                      </p>
+                      {photo.plat_nom ? (
+                        <p className="text-[10px] text-[var(--accent)] mt-1 truncate leading-tight font-medium" title={photo.plat_nom}>
+                          {photo.plat_nom}
+                        </p>
+                      ) : (
+                        <p className="text-[10px] text-[var(--text-muted)] mt-1 truncate leading-tight">
+                          {photo.filename}
+                        </p>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -200,7 +295,7 @@ export default function AdminPhotosClient({ initialPhotos }: Props) {
                   disabled={isUploading}
                   onChange={(e) => {
                     const file = e.target.files?.[0];
-                    if (file) handleUpload(slug, file);
+                    if (file) handleFileSelect(slug, file);
                   }}
                 />
               </label>

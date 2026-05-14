@@ -111,10 +111,12 @@ def _fingerprint_fs(slug: str) -> tuple[list[pathlib.Path], str]:
     return photos, fingerprint
 
 
-def _estimate_single_photo(client: anthropic.Anthropic, img_b64: str, mime: str) -> float | None:
+def _estimate_single_photo(client: anthropic.Anthropic, img_b64: str, mime: str, plat_nom: str | None = None) -> float | None:
     """Appelle Claude Vision sur une photo pour estimer le poids de la portion."""
+    plat_context = f"Ce plat s'appelle : \"{plat_nom}\".\n" if plat_nom else ""
     prompt = (
         "Tu es un expert en estimation de portions alimentaires par analyse d'images.\n\n"
+        f"{plat_context}"
         "Méthode à appliquer (objets de référence visuels) :\n"
         "1. Identifie les objets de référence connus dans l'image : assiette standard (~25-27 cm Ø), "
         "fourchette (~19 cm), couteau (~22 cm), verre (~8 cm Ø), barquette (~20×14 cm).\n"
@@ -168,7 +170,8 @@ def _estimate_from_api(slug: str, photos: list[dict], api_url: str) -> float | N
             with urllib.request.urlopen(req, timeout=15) as resp:
                 img_b64 = base64.standard_b64encode(resp.read()).decode("ascii")
             mime = photo.get("content_type", "image/jpeg")
-            w = _estimate_single_photo(client, img_b64, mime)
+            plat_nom = photo.get("plat_nom") or None
+            w = _estimate_single_photo(client, img_b64, mime, plat_nom)
             if w is not None:
                 estimates.append(w)
         except Exception as e:

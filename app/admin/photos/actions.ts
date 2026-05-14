@@ -22,6 +22,8 @@ export async function uploadPhotoAction(
 ): Promise<{ ok: boolean; error?: string }> {
   const file = formData.get("file");
   const slug = formData.get("slug");
+  const platNom = formData.get("plat_nom");
+  const platDate = formData.get("plat_date");
 
   if (!file || !(file instanceof File)) {
     return { ok: false, error: "Fichier manquant" };
@@ -41,7 +43,14 @@ export async function uploadPhotoAction(
   const base64 = Buffer.from(buffer).toString("base64");
   const filename = file.name.slice(0, 255) || `photo_${Date.now()}`;
 
-  await addPhoto(slug, filename, contentType, base64);
+  await addPhoto(
+    slug,
+    filename,
+    contentType,
+    base64,
+    typeof platNom === "string" && platNom ? platNom : undefined,
+    typeof platDate === "string" && platDate ? platDate : undefined
+  );
   return { ok: true };
 }
 

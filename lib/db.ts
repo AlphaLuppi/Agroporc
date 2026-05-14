@@ -349,8 +349,21 @@ export interface Photo {
   restaurant_slug: string;
   filename: string;
   content_type: string;
+  plat_nom?: string;
+  plat_date?: string;
   created_at: string;
 }
+
+export interface RecentDish {
+  plat_nom: string;
+  plat_date: string;
+}
+
+const SLUG_TO_RESTAURANT: Record<string, string> = {
+  bistrot_trefle: "Le Bistrot Trèfle",
+  pause_gourmande: "La Pause Gourmande",
+  truck_muche: "Le Truck Muche",
+};
 
 export async function ensurePhotosTable() {
   await sql`
@@ -364,12 +377,14 @@ export async function ensurePhotosTable() {
     )
   `;
   await sql`CREATE INDEX IF NOT EXISTS idx_pdj_photos_slug ON pdj_photos(restaurant_slug)`;
+  await sql`ALTER TABLE pdj_photos ADD COLUMN IF NOT EXISTS plat_nom TEXT`;
+  await sql`ALTER TABLE pdj_photos ADD COLUMN IF NOT EXISTS plat_date DATE`;
 }
 
 export async function getAllPhotos(): Promise<Photo[]> {
   await ensurePhotosTable();
   const result = await sql`
-    SELECT id, restaurant_slug, filename, content_type, created_at
+    SELECT id, restaurant_slug, filename, content_type, plat_nom, plat_date, created_at
     FROM pdj_photos
     ORDER BY restaurant_slug ASC, created_at ASC
   `;
@@ -379,7 +394,7 @@ export async function getAllPhotos(): Promise<Photo[]> {
 export async function getPhotosBySlug(slug: string): Promise<Photo[]> {
   await ensurePhotosTable();
   const result = await sql`
-    SELECT id, restaurant_slug, filename, content_type, created_at
+    SELECT id, restaurant_slug, filename, content_type, plat_nom, plat_date, created_at
     FROM pdj_photos
     WHERE restaurant_slug = ${slug}
     ORDER BY created_at ASC
@@ -391,15 +406,34 @@ export async function addPhoto(
   slug: string,
   filename: string,
   contentType: string,
-  imageDataBase64: string
+  imageDataBase64: string,
+  platNom?: string,
+  platDate?: string
 ): Promise<Photo> {
   await ensurePhotosTable();
   const result = await sql`
-    INSERT INTO pdj_photos (restaurant_slug, filename, content_type, image_data)
-    VALUES (${slug}, ${filename}, ${contentType}, ${imageDataBase64})
-    RETURNING id, restaurant_slug, filename, content_type, created_at
+    INSERT INTO pdj_photos (restaurant_slug, filename, content_type, image_data, plat_nom, plat_date)
+    VALUES (${slug}, ${filename}, ${contentType}, ${imageDataBase64}, ${platNom ?? null}, ${platDate ?? null})
+    RETURNING id, restaurant_slug, filename, content_type, plat_nom, plat_date, created_at
   `;
   return result.rows[0] as Photo;
+}
+
+export async function getRecentDishesBySlug(slug: string, limit = 30): Promise<RecentDish[]> {
+  const restaurantName = SLUG_TO_RESTAURANT[slug];
+  if (!restaurantName) return [];
+  const result = await sql`
+    SELECT DISTINCT
+      plat->>'plat' AS plat_nom,
+      e.date AS plat_date
+    FROM pdj_entries e,
+      jsonb_array_elements(e.data->'plats') AS plat
+    WHERE plat->>'restaurant' = ${restaurantName}
+      AND plat->>'coming_soon' IS DISTINCT FROM 'true'
+    ORDER BY e.date DESC
+    LIMIT ${limit}
+  `;
+  return result.rows as RecentDish[];
 }
 
 export async function getPhotoData(
