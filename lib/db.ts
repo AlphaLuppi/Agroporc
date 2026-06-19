@@ -57,6 +57,38 @@ export interface Recommandation {
   raison: string;
 }
 
+// --- Carte permanente (notée une fois, ré-évaluée par hash) ---
+
+export interface CartePlat {
+  plat: string;
+  prix: string;
+  note?: number;
+  justification?: string;
+  note_goulaf?: number;
+  justification_goulaf?: string;
+  nutrition_estimee?: {
+    calories: number;
+    proteines_g: number;
+    glucides_g: number;
+    lipides_g: number;
+  };
+  nutrition_source?: "ciqual" | "llm";
+  ingredients_detail?: IngredientDetail[];
+}
+
+export interface CarteSection {
+  nom: string;
+  plats: CartePlat[];
+}
+
+export interface Carte {
+  restaurant_slug: string;
+  hash: string;
+  restaurant?: string;
+  sections: CarteSection[];
+  evaluated_at?: string;
+}
+
 /** Crée la table si elle n'existe pas */
 export async function ensureTable() {
   await sql`
@@ -469,4 +501,42 @@ export async function addCommentaire(
   entry.plats[platIndex].commentaires!.push(commentaire);
   await upsertPdj(entry);
   return true;
+}
+
+/** Crée la table de la carte si elle n'existe pas */
+export async function ensureCarteTable() {
+  await sql`
+    CREATE TABLE IF NOT EXISTS pdj_carte (
+      restaurant_slug VARCHAR(50) PRIMARY KEY,
+      hash TEXT NOT NULL,
+      data JSONB NOT NULL,
+      evaluated_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+}
+
+/** Récupère la carte stockée pour un restaurant (ou null) */
+export async function getCarte(slug: string): Promise<Carte | null> {
+  await ensureCarteTable();
+  const result = await sql`
+    SELECT data, hash, evaluated_at FROM pdj_carte WHERE restaurant_slug = ${slug} LIMIT 1
+  `;
+  if (result.rows.length === 0) return null;
+  const r = result.rows[0];
+  return {
+    ...(r.data as Carte),
+    hash: r.hash,
+    evaluated_at: r.evaluated_at,
+  };
+}
+
+/** Insère ou met à jour la carte d'un restaurant */
+export async function upsertCarte(carte: Carte): Promise<void> {
+  await ensureCarteTable();
+  await sql`
+    INSERT INTO pdj_carte (restaurant_slug, hash, data, evaluated_at)
+    VALUES (${carte.restaurant_slug}, ${carte.hash}, ${JSON.stringify(carte)}, NOW())
+    ON CONFLICT (restaurant_slug)
+    DO UPDATE SET hash = ${carte.hash}, data = ${JSON.stringify(carte)}, evaluated_at = NOW()
+  `;
 }
