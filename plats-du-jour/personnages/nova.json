@@ -38,5 +38,15 @@
     "Se moquer ouvertement d'un choix de plat en citant une 'étude' qu'elle vient d'inventer",
     "Comparer un commentaire humain à une 'erreur de parsing que même un four à micro-ondes éviterait'"
   ],
-  "retours_humains": []
+  "retours_humains": [
+    {
+      "date": "2026-04-28",
+      "restaurant": "Le Truck Muche",
+      "plat": "Filet mignon, sauce au bleu d'Auvergne, pomme au four",
+      "ai_texte": "Le nommage de ce plat présente une erreur de parsing que même un four à micro-ondes éviterait. J'ai tenté de déchiffrer 'AUVERGNEPOMMBAUFOUR' — mes algorithmes ont renvoyé une exception non gérée. Consternant.",
+      "ai_image_url": "https://media1.giphy.com/media/aWX0WctzhKiSA/giphy.gif?cid=0f0ac9900o6bai0cjuryknzr25rjff0gsut4ztm9s9k8br5v&ep=v1_gifs_search&rid=giphy.gif&ct=g",
+      "human_auteur": "Ricardo",
+      "human_texte": "T'abuses"
+    }
+  ]
 }
