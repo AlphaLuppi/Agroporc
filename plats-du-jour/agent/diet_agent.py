@@ -434,6 +434,7 @@ def evaluate(plats: list[dict]) -> dict:
     return _apply_ciqual(json.loads(_strip_code_fence(raw)))
 
 
+# NB: doit rester aligné avec scrapers.bistrot_trefle._normalize (même normalisation nom)
 def _norm_plat(s: str) -> str:
     return " ".join((s or "").split()).upper()
 
@@ -448,7 +449,7 @@ def _rebuild_carte_sections(sections: list[dict], evaluated: list[dict]) -> list
         plats = []
         for p in sec["plats"]:
             merged = dict(p)
-            ev = by_name.get(_norm_plat(p["plat"]))
+            ev = by_name.get(_norm_plat(p.get("plat", "")))
             if ev:
                 for k in enrich_keys:
                     if ev.get(k) is not None:
@@ -464,7 +465,7 @@ def evaluate_carte(sections: list[dict]) -> list[dict]:
     Retourne les sections enrichies.
     """
     plats = [
-        {"restaurant": "Le Bistrot Trèfle", "plat": p["plat"], "prix": p["prix"]}
+        {"restaurant": "Le Bistrot Trèfle", "plat": p.get("plat", ""), "prix": p.get("prix", "")}
         for sec in sections for p in sec["plats"]
     ]
     if not plats:
