@@ -434,6 +434,59 @@ def evaluate(plats: list[dict]) -> dict:
     return _apply_ciqual(json.loads(_strip_code_fence(raw)))
 
 
+def _norm_plat(s: str) -> str:
+    return " ".join((s or "").split()).upper()
+
+
+def _rebuild_carte_sections(sections: list[dict], evaluated: list[dict]) -> list[dict]:
+    """Réinjecte les plats notés dans leurs sections d'origine (matching par nom)."""
+    by_name = {_norm_plat(p.get("plat", "")): p for p in evaluated}
+    enrich_keys = ("note", "justification", "note_goulaf", "justification_goulaf",
+                   "nutrition_estimee", "nutrition_source", "ingredients_detail")
+    out = []
+    for sec in sections:
+        plats = []
+        for p in sec["plats"]:
+            merged = dict(p)
+            ev = by_name.get(_norm_plat(p["plat"]))
+            if ev:
+                for k in enrich_keys:
+                    if ev.get(k) is not None:
+                        merged[k] = ev[k]
+            plats.append(merged)
+        out.append({"nom": sec["nom"], "plats": plats})
+    return out
+
+
+def evaluate_carte(sections: list[dict]) -> list[dict]:
+    """
+    Note tous les plats de la carte (Sportif + Goulaf + macros), SANS recommandation.
+    Retourne les sections enrichies.
+    """
+    plats = [
+        {"restaurant": "Le Bistrot Trèfle", "plat": p["plat"], "prix": p["prix"]}
+        for sec in sections for p in sec["plats"]
+    ]
+    if not plats:
+        return sections
+
+    calibration = _build_portion_calibration({"Le Bistrot Trèfle"})
+    prompt = (
+        f"{_build_system_prompt()}{calibration}\n\n"
+        f"Voici la carte permanente d'un restaurant :\n\n"
+        f"{json.dumps(plats, ensure_ascii=False, indent=2)}\n\n"
+        f"Note CHAQUE plat (Sportif ET Goulaf). NE DONNE PAS de recommandation.\n\n"
+        f"Réponds en JSON avec cette structure :\n"
+        f'{{ "plats": [{{"restaurant": "...", "plat": "...", "prix": "...", "ingredients": [...], '
+        f'"nutrition_estimee_llm": {{...}}, "note": 0, "justification": "...", '
+        f'"note_goulaf": 0, "justification_goulaf": "..."}}] }}'
+    )
+
+    raw = _call_claude(prompt, timeout=300)
+    result = _apply_ciqual(json.loads(_strip_code_fence(raw)))
+    return _rebuild_carte_sections(sections, result.get("plats", []))
+
+
 def evaluate_image(image_url: str, context: str = "") -> str:
     """
     Utilise Claude Vision pour extraire le texte d'une photo de menu.

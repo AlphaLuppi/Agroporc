@@ -43,6 +43,48 @@ def test_scrape_carte_filtre_et_dedup(monkeypatch):
     assert plat["prix"] == "16€"
 
 
+from agent import diet_agent
+
+
+def test_rebuild_carte_sections_merge_par_nom():
+    sections = [
+        {"nom": "PLATS", "plats": [
+            {"plat": "FISH AND CHIPS", "prix": "16€"},
+            {"plat": "SALADE CAESAR", "prix": "13€"},
+        ]},
+    ]
+    evaluated = [
+        {"plat": "fish and chips", "note": 5, "note_goulaf": 8,
+         "justification": "frit", "justification_goulaf": "régal",
+         "nutrition_estimee": {"calories": 800, "proteines_g": 30, "glucides_g": 70, "lipides_g": 40},
+         "nutrition_source": "ciqual"},
+        # SALADE CAESAR absente de l'éval → conservée sans note
+    ]
+    out = diet_agent._rebuild_carte_sections(sections, evaluated)
+
+    fish = out[0]["plats"][0]
+    assert fish["note"] == 5 and fish["note_goulaf"] == 8
+    assert fish["prix"] == "16€"  # prix d'origine préservé
+    assert fish["nutrition_source"] == "ciqual"
+
+    salade = out[0]["plats"][1]
+    assert salade["plat"] == "SALADE CAESAR"
+    assert "note" not in salade  # pas d'éval → pas de note inventée
+
+
+def test_evaluate_carte_sans_recommandation(monkeypatch):
+    sections = [{"nom": "PLATS", "plats": [{"plat": "FISH AND CHIPS", "prix": "16€"}]}]
+
+    fake_raw = '{"plats": [{"restaurant": "Le Bistrot Trèfle", "plat": "FISH AND CHIPS", "prix": "16€", "note": 4, "note_goulaf": 9, "justification": "x", "justification_goulaf": "y"}]}'
+    monkeypatch.setattr(diet_agent, "_call_claude", lambda prompt, timeout=180: fake_raw)
+    monkeypatch.setattr(diet_agent, "_apply_ciqual", lambda result: result)  # bypass appel Ciqual/Claude
+
+    out = diet_agent.evaluate_carte(sections)
+    assert isinstance(out, list)
+    plat = out[0]["plats"][0]
+    assert plat["note"] == 4 and plat["note_goulaf"] == 9
+
+
 def test_scrape_carte_hash_stable_selon_ordre(monkeypatch):
     sample = _sample_outlet()
     monkeypatch.setattr(bistrot_trefle, "_fetch_outlet_data", lambda: sample)
