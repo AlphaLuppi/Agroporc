@@ -416,7 +416,7 @@ async def _traiter_carte(loop) -> None:
         print("[pipeline:carte] Carte non récupérée, skip")
         return
 
-    stored_hash = fetch_carte_hash()
+    stored_hash = await loop.run_in_executor(None, fetch_carte_hash)
     if stored_hash and stored_hash == carte["hash"]:
         print("[pipeline:carte] Carte inchangée, évaluation réutilisée")
         return
@@ -435,6 +435,7 @@ async def _traiter_carte(loop) -> None:
         "sections": sections,
     }
     publish_carte(payload)
+    print(f"[pipeline:carte] Carte publiée (hash {carte['hash'][:8]})")
 
 
 async def _evaluer_et_sauver(plats: list[dict]) -> dict:
