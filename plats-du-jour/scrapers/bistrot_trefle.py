@@ -193,6 +193,7 @@ def _extract_carte_products(data: dict) -> dict[str, list[dict]]:
                     and isinstance(section, dict)
                     and _normalize(section.get("name")) in _CARTE_SECTION_SET):
                 results.setdefault(_normalize(section.get("name")), []).append(obj)
+                # Les produits Obypay sont des feuilles : pas de produit imbriqué dans un produit
                 return
             for v in obj.values():
                 rec(v)

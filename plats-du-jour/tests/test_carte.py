@@ -17,7 +17,7 @@ def _sample_outlet():
             prod("fish and chips", 16, "X1", "PLATS"),          # doublon (casse/section)
             prod("LINGUINE AU PESTO VERT", 14, "rv", "PÂTES"),
             prod("TIRAMISU À LA FRAMBOISE", 7, "z1", "DESSERTS"),
-            prod("TIRAMISU À LA FRAMBOISE", 7, "z2", "DESSERTS"),  # doublon (2 sections desserts)
+            prod("TIRAMISU À LA FRAMBOISE", 7, "z2", "DESSERTS"),  # doublon (même nom de plat, dédup)
             prod("COCA-COLA 33cl", 3, "jj", "BOISSONS"),         # exclu
             prod("MENU À 24,90", 24, "mm", "Menus"),             # exclu
         ]
