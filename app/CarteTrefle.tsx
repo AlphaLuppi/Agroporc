@@ -60,6 +60,7 @@ export default function CarteTrefle({ carte }: { carte: Carte }) {
       <button
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
+        aria-controls="carte-trefle-content"
         className="w-full flex items-center justify-between gap-3 px-4 py-3 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] text-left hover:border-[var(--border-accent)] transition-colors"
       >
         <span className="flex items-center gap-2 font-semibold" style={{ fontFamily: "var(--font-heading)" }}>
@@ -74,12 +75,12 @@ export default function CarteTrefle({ carte }: { carte: Carte }) {
         </span>
       </button>
 
-      <div hidden={!open} className="mt-4">
+      <div hidden={!open} id="carte-trefle-content" className="mt-4">
         {carte.sections.map((sec) => (
           <section key={sec.nom} className="mb-6">
             <h3 className="text-xs font-bold uppercase tracking-widest text-[var(--text-muted)] mb-3">{sec.nom}</h3>
             {sec.plats.map((p, i) => (
-              <CartePlatCard key={`${sec.nom}-${i}`} plat={p} />
+              <CartePlatCard key={`${sec.nom}::${p.plat ?? i}`} plat={p} />
             ))}
           </section>
         ))}
