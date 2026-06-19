@@ -667,7 +667,8 @@ def merge_commentaires(evaluation: dict, commentaires_jour: list[dict], commenta
     for plat in evaluation["plats"]:
         resto = plat.get("restaurant", "")
         if resto in comments_by_resto:
-            existing = plat.get("commentaires", [])
+            existing = [c for c in plat.get("commentaires", []) if isinstance(c, dict)]
+            plat["commentaires"] = existing
             existing_authors = {c.get("auteur") for c in existing}
             new_comments = [
                 c for c in comments_by_resto[resto]
