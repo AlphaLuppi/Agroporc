@@ -61,7 +61,7 @@ def publish_carte(data: dict) -> bool:
     try:
         resp = requests.post(url, json=data, headers=headers, timeout=60)
         if resp.ok:
-            print(f"[publish] OK — carte publiée ({data.get('hash', '?')[:8]})")
+            print(f"[publish] OK — carte publiée ({str(data.get('hash', '?'))[:8]})")
             return True
         print(f"[publish] Erreur carte {resp.status_code}: {resp.text}")
         return False
