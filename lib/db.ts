@@ -86,7 +86,7 @@ export interface Carte {
   hash: string;
   restaurant?: string;
   sections: CarteSection[];
-  evaluated_at?: string;
+  evaluated_at?: string | null;
 }
 
 /** Crée la table si elle n'existe pas */

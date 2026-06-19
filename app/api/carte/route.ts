@@ -6,7 +6,7 @@ export const runtime = "nodejs";
 
 /** Lecture publique de la carte (sert le rendu home + la comparaison de hash côté pipeline) */
 export async function GET() {
-  await ensureCarteTable();
+  // getCarte appelle déjà ensureCarteTable()
   const carte = await getCarte("bistrot_trefle");
   return NextResponse.json(carte);
 }
