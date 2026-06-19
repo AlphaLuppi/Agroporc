@@ -3,6 +3,7 @@ Scraper pour Le Bistrot Trèfle via l'API REST Obypay (pas besoin de Playwright)
 API publique : order-api.obypay.com
 Section ciblée : "PLAT DU JOUR & FORMULE" (id: 8yMbeExQfQ)
 """
+import hashlib
 import json
 import urllib.request
 from datetime import date
@@ -15,16 +16,23 @@ HEADERS = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
 DAY_NAMES = ["LUNDI", "MARDI", "MERCREDI", "JEUDI", "VENDREDI", "SAMEDI", "DIMANCHE"]
 
 
+def _fetch_outlet_data() -> dict | None:
+    """Télécharge la réponse brute de l'API Obypay (ou None si échec)."""
+    try:
+        req = urllib.request.Request(API_URL, headers=HEADERS)
+        with urllib.request.urlopen(req, timeout=15) as r:
+            return json.loads(r.read())
+    except Exception as e:
+        print(f"[bistrot_trefle] Erreur API : {e}")
+        return None
+
+
 def scrape() -> dict | None:
     """
     Retourne un dict { "restaurant": str, "plat": str, "prix": str } ou None si échec.
     """
-    try:
-        req = urllib.request.Request(API_URL, headers=HEADERS)
-        with urllib.request.urlopen(req, timeout=15) as r:
-            data = json.loads(r.read())
-    except Exception as e:
-        print(f"[bistrot_trefle] Erreur API : {e}")
+    data = _fetch_outlet_data()
+    if data is None:
         return None
 
     today = DAY_NAMES[date.today().weekday()]
@@ -63,12 +71,8 @@ def scrape_semaine() -> dict[str, dict] | None:
     """
     Retourne un dict { "LUNDI": {"plat": str, "prix": str}, ... } pour toute la semaine.
     """
-    try:
-        req = urllib.request.Request(API_URL, headers=HEADERS)
-        with urllib.request.urlopen(req, timeout=15) as r:
-            data = json.loads(r.read())
-    except Exception as e:
-        print(f"[bistrot_trefle] Erreur API : {e}")
+    data = _fetch_outlet_data()
+    if data is None:
         return None
 
     products = _extract_products(data)
@@ -114,3 +118,87 @@ def _recurse(obj, results: list):
     elif isinstance(obj, list):
         for item in obj:
             _recurse(item, results)
+
+
+# ── Carte permanente ────────────────────────────────────────────────────────
+
+CARTE_SECTIONS = ["PLATS", "SALADES ET POKE BOWLS", "PÂTES", "POISSONS", "CLUBS SANDWICH", "DESSERTS"]
+
+
+def _normalize(s: str) -> str:
+    return " ".join((s or "").split()).upper()
+
+
+_CARTE_SECTION_SET = {_normalize(s) for s in CARTE_SECTIONS}
+
+
+def scrape_carte() -> dict | None:
+    """
+    Récupère la carte permanente (plats salés + desserts).
+    Retourne { "restaurant": str, "hash": str, "sections": [ {nom, plats:[{plat,prix}]} ] }
+    ou None si échec / carte vide.
+    """
+    data = _fetch_outlet_data()
+    if data is None:
+        return None
+
+    by_section = _extract_carte_products(data)
+    sections = []
+    for nom in CARTE_SECTIONS:
+        prods = by_section.get(nom)
+        if not prods:
+            continue
+        seen = set()
+        plats = []
+        for p in prods:
+            name = (p.get("name") or "").strip()
+            key = _normalize(name)
+            if not name or key in seen:
+                continue
+            seen.add(key)
+            prix = p.get("price")
+            plats.append({"plat": name, "prix": f"{prix}€" if prix is not None else "N/A"})
+        if plats:
+            sections.append({"nom": nom, "plats": plats})
+
+    if not sections:
+        print("[bistrot_trefle] Carte vide")
+        return None
+
+    return {
+        "restaurant": "Le Bistrot Trèfle",
+        "hash": _carte_hash(sections),
+        "sections": sections,
+    }
+
+
+def _carte_hash(sections: list[dict]) -> str:
+    """SHA-1 déterministe du contenu (insensible à l'ordre renvoyé par l'API)."""
+    parts = [
+        f"{sec['nom']}|{_normalize(p['plat'])}|{p['prix']}"
+        for sec in sections for p in sec["plats"]
+    ]
+    parts.sort()
+    return hashlib.sha1("\n".join(parts).encode("utf-8")).hexdigest()
+
+
+def _extract_carte_products(data: dict) -> dict[str, list[dict]]:
+    """Regroupe les produits par nom de section canonique (allowlist uniquement)."""
+    results: dict[str, list[dict]] = {}
+
+    def rec(obj):
+        if isinstance(obj, dict):
+            section = obj.get("section")
+            if (obj.get("name") and obj.get("price") is not None
+                    and isinstance(section, dict)
+                    and _normalize(section.get("name")) in _CARTE_SECTION_SET):
+                results.setdefault(_normalize(section.get("name")), []).append(obj)
+                return
+            for v in obj.values():
+                rec(v)
+        elif isinstance(obj, list):
+            for item in obj:
+                rec(item)
+
+    rec(data)
+    return {nom: results[_normalize(nom)] for nom in CARTE_SECTIONS if _normalize(nom) in results}
