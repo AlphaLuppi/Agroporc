@@ -1,11 +1,12 @@
-import { ensureTable, getWeekPdj } from "@/lib/db";
+import { ensureTable, getWeekPdj, getCarte } from "@/lib/db";
 import { formatDate, formatDayShort, noteClass } from "@/lib/format";
 import { getIcon, getRestaurantLinks, type RestaurantLink } from "@/lib/icons";
-import type { Plat, PdjEntry, Recommandation } from "@/lib/db";
+import type { Plat, PdjEntry, Recommandation, Carte } from "@/lib/db";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import CommentSection from "./CommentSection";
 import MacrosPanel from "./MacrosPanel";
+import CarteTrefle from "./CarteTrefle";
 
 export const dynamic = "force-dynamic";
 
@@ -15,12 +16,14 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ s
   const monday = resolveMonday(params.semaine);
   const mondayStr = monday.toLocaleDateString("en-CA");
   const weekPdj = await getWeekPdj(mondayStr);
+  const carte = await getCarte("bistrot_trefle");
   const fullWeek = buildFullWeek(weekPdj, monday);
   const prev = new Date(monday); prev.setDate(monday.getDate() - 7);
   const next = new Date(monday); next.setDate(monday.getDate() + 7);
   return (
     <WeekView
       weekPdj={fullWeek}
+      carte={carte}
       prevHref={`/?semaine=${prev.toLocaleDateString("en-CA")}`}
       nextHref={`/?semaine=${next.toLocaleDateString("en-CA")}`}
       currentMonday={mondayStr}
@@ -74,7 +77,7 @@ function formatWeekRange(startIso: string, endIso: string): string {
   return `${s.getDate()} ${MOIS_FR[s.getMonth()]} — ${e.getDate()} ${MOIS_FR[e.getMonth()]} ${e.getFullYear()}`;
 }
 
-function WeekView({ weekPdj, prevHref, nextHref, currentMonday }: { weekPdj: PdjEntry[]; prevHref: string; nextHref: string; currentMonday: string }) {
+function WeekView({ weekPdj, carte, prevHref, nextHref, currentMonday }: { weekPdj: PdjEntry[]; carte: Carte | null; prevHref: string; nextHref: string; currentMonday: string }) {
   const today = new Date().toLocaleDateString('en-CA');
   const todayIdx = weekPdj.findIndex((p) => p.date === today);
   const defaultIdx = todayIdx >= 0 ? todayIdx : 0;
@@ -147,6 +150,8 @@ function WeekView({ weekPdj, prevHref, nextHref, currentMonday }: { weekPdj: Pdj
       {weekPdj.map((pdj, i) => (
         <DayPanel key={pdj.date} pdj={pdj} index={i} isDefault={i === defaultIdx} today={today} />
       ))}
+
+      {carte && <CarteTrefle carte={carte} />}
     </>
   );
 }
