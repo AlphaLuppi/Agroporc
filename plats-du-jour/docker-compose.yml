@@ -9,3 +9,15 @@ services:
       - ${HOME}/.claude:/root/.claude
       - ${HOME}/.claude.json:/root/.claude.json
     restart: unless-stopped
+    mem_limit: 1500m
+    memswap_limit: 1500m
+    cpus: 1.0
+    pids_limit: 512
+    blkio_config:
+      weight: 100
+    oom_score_adj: 500
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

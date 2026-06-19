@@ -10,5 +10,5 @@ export PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 MODE="${1:-jour}"
 echo "$(date '+%Y-%m-%d %H:%M') [cron] Lancement pipeline mode=$MODE"
-cd /app && python main.py "$MODE"
+cd /app && ionice -c 3 nice -n 19 python main.py "$MODE"
 echo "$(date '+%Y-%m-%d %H:%M') [cron] Terminé"
