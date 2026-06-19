@@ -25,7 +25,7 @@ from scrapers import bistrot_trefle, pause_gourmande, truck_muche
 from agent import diet_agent, repair_team, comment_agent, feedback_agent, idee_agent, portion_agent
 from creer_personnage import creer_personnage
 from messages import generer_messages_semaine, maj_message_jour
-from publish import publish_pdj
+from publish import publish_pdj, publish_carte, fetch_carte_hash
 from jours_feries import est_ferie
 from gif_search import reset_used_gifs
 
@@ -388,6 +388,12 @@ async def run_semaine() -> dict:
     # Publier vers Vercel
     publish_pdj(output)
 
+    # ── Carte permanente du Trèfle (ré-évaluée seulement si elle a changé) ──
+    try:
+        await _traiter_carte(loop)
+    except Exception as e:
+        print(f"[pipeline:semaine] Erreur traitement carte : {e}")
+
     # ── Évaluation des idées d'amélioration ──────────────────────────────
     try:
         await loop.run_in_executor(None, idee_agent.evaluer_idees)
@@ -398,6 +404,38 @@ async def run_semaine() -> dict:
 
 
 # ── Utilitaires communs ─────────────────────────────────────────────────────
+
+async def _traiter_carte(loop) -> None:
+    """Scrape la carte du Trèfle ; ré-évalue et publie uniquement si elle a changé (hash)."""
+    try:
+        carte = await loop.run_in_executor(None, bistrot_trefle.scrape_carte)
+    except Exception as e:
+        print(f"[pipeline:carte] Erreur scrape carte : {e}")
+        return
+    if not carte:
+        print("[pipeline:carte] Carte non récupérée, skip")
+        return
+
+    stored_hash = fetch_carte_hash()
+    if stored_hash and stored_hash == carte["hash"]:
+        print("[pipeline:carte] Carte inchangée, évaluation réutilisée")
+        return
+
+    print("[pipeline:carte] Carte modifiée → ré-évaluation...")
+    try:
+        sections = await loop.run_in_executor(None, diet_agent.evaluate_carte, carte["sections"])
+    except Exception as e:
+        print(f"[pipeline:carte] Erreur évaluation carte (non publiée) : {e}")
+        return
+
+    payload = {
+        "restaurant_slug": "bistrot_trefle",
+        "restaurant": carte["restaurant"],
+        "hash": carte["hash"],
+        "sections": sections,
+    }
+    publish_carte(payload)
+
 
 async def _evaluer_et_sauver(plats: list[dict]) -> dict:
     """Évalue les plats avec l'agent diététicien et sauvegarde le JSON."""
@@ -416,8 +454,12 @@ async def _evaluer_et_sauver(plats: list[dict]) -> dict:
     try:
         evaluation = await loop.run_in_executor(None, diet_agent.evaluate, plats)
     except Exception as e:
-        print(f"[pipeline] Erreur agent : {e}")
-        evaluation = {"plats": plats, "recommandation": None, "erreur": str(e)}
+        # L'échec de l'agent diététicien ne doit PAS être publié : on garde les
+        # plats scrapés mais on laisse les champs nutritionnels vides plutôt que
+        # d'exposer le message d'erreur sur le site (le champ `erreur` est réservé
+        # au cas « aucun plat récupéré » et est affiché tel quel aux utilisateurs).
+        print(f"[pipeline] Erreur agent (non publiée) : {e}")
+        evaluation = {"plats": plats, "recommandation": None}
 
     output = {
         "date": str(date.today()),
