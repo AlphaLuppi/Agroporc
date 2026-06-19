@@ -47,6 +47,45 @@ def publish_pdj(data: dict) -> bool:
         return False
 
 
+def publish_carte(data: dict) -> bool:
+    """Envoie la carte évaluée vers l'API Vercel (POST /api/carte)."""
+    if not API_URL or not API_TOKEN:
+        print("[publish] VERCEL_API_URL ou API_SECRET_TOKEN non configuré")
+        return False
+
+    url = f"{API_URL}/api/carte"
+    headers = {
+        "Authorization": f"Bearer {API_TOKEN}",
+        "Content-Type": "application/json",
+    }
+    try:
+        resp = requests.post(url, json=data, headers=headers, timeout=60)
+        if resp.ok:
+            print(f"[publish] OK — carte publiée ({data.get('hash', '?')[:8]})")
+            return True
+        print(f"[publish] Erreur carte {resp.status_code}: {resp.text}")
+        return False
+    except Exception as e:
+        print(f"[publish] Erreur réseau carte: {e}")
+        return False
+
+
+def fetch_carte_hash() -> str | None:
+    """Récupère le hash de la carte actuellement stockée (GET /api/carte), ou None."""
+    if not API_URL:
+        return None
+    url = f"{API_URL}/api/carte"
+    try:
+        resp = requests.get(url, timeout=30)
+        if not resp.ok:
+            return None
+        data = resp.json()
+        return data.get("hash") if isinstance(data, dict) else None
+    except Exception as e:
+        print(f"[publish] Erreur lecture hash carte: {e}")
+        return None
+
+
 def publish_current():
     """Publie le pdj.json courant."""
     if not PDJ_FILE.exists():
