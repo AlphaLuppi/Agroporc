@@ -120,9 +120,15 @@ def _recurse(obj, results: list):
             _recurse(item, results)
 
 
-# ── Carte permanente ────────────────────────────────────────────────────────
+# ── Carte permanente (à emporter) ────────────────────────────────────────────
+#
+# Obypay expose dans le même catalogue la carte « sur place » du resto ET l'offre
+# à emporter. Seuls les produits rattachés à une collection (Salé/Sucré) sont
+# réellement commandables à emporter ; ceux sans collection sont la carte sur place
+# (ex. la section "PLATS", des desserts en double à prix sur-place). On filtre donc
+# sur la présence d'une collection, en plus de l'allowlist de sections.
 
-CARTE_SECTIONS = ["PLATS", "SALADES ET POKE BOWLS", "PÂTES", "POISSONS", "CLUBS SANDWICH", "DESSERTS"]
+CARTE_SECTIONS = ["SALADES ET POKE BOWLS", "PÂTES", "POISSONS", "CLUBS SANDWICH", "DESSERTS"]
 
 
 def _normalize(s: str) -> str:
@@ -130,6 +136,17 @@ def _normalize(s: str) -> str:
 
 
 _CARTE_SECTION_SET = {_normalize(s) for s in CARTE_SECTIONS}
+
+
+def _has_collection(prod: dict) -> bool:
+    """True si le produit est rattaché à une collection emporter (Salé/Sucré).
+
+    Les produits sans collection ne sont pas commandables à emporter (carte sur place).
+    """
+    col = prod.get("collection")
+    if isinstance(col, dict):
+        return bool(col.get("id"))
+    return bool(col)
 
 
 def scrape_carte() -> dict | None:
@@ -191,7 +208,8 @@ def _extract_carte_products(data: dict) -> dict[str, list[dict]]:
             section = obj.get("section")
             if (obj.get("name") and obj.get("price") is not None
                     and isinstance(section, dict)
-                    and _normalize(section.get("name")) in _CARTE_SECTION_SET):
+                    and _normalize(section.get("name")) in _CARTE_SECTION_SET
+                    and _has_collection(obj)):
                 results.setdefault(_normalize(section.get("name")), []).append(obj)
                 # Les produits Obypay sont des feuilles : pas de produit imbriqué dans un produit
                 return

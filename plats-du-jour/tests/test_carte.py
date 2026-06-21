@@ -7,19 +7,24 @@ from scrapers import bistrot_trefle
 
 
 def _sample_outlet():
-    """Réponse API Obypay minimale : sections allowlist + sections exclues + doublons."""
-    def prod(name, price, sec_id, sec_name):
-        return {"name": name, "price": price, "section": {"id": sec_id, "name": sec_name}}
+    """Réponse API Obypay minimale : sections allowlist + exclusions + doublons + sur-place."""
+    def prod(name, price, sec_id, sec_name, coll="salty"):
+        p = {"name": name, "price": price, "section": {"id": sec_id, "name": sec_name}}
+        if coll is not None:  # coll=None → produit sur-place (pas de collection emporter)
+            p["collection"] = {"id": coll}
+        return p
 
     return {
         "products": [
-            prod("FISH AND CHIPS", 16, "E9", "PLATS"),
-            prod("fish and chips", 16, "X1", "PLATS"),          # doublon (casse/section)
+            prod("SALADE CAESAR", 13, "s1", "SALADES ET POKE BOWLS"),
+            prod("SALADE CAESAR", 13, "s2", "SALADES ET POKE BOWLS"),  # doublon (même nom, dédup)
+            prod("SALADE SUR PLACE", 18, "s3", "SALADES ET POKE BOWLS", coll=None),  # sur-place exclu
             prod("LINGUINE AU PESTO VERT", 14, "rv", "PÂTES"),
-            prod("TIRAMISU À LA FRAMBOISE", 7, "z1", "DESSERTS"),
-            prod("TIRAMISU À LA FRAMBOISE", 7, "z2", "DESSERTS"),  # doublon (même nom de plat, dédup)
-            prod("COCA-COLA 33cl", 3, "jj", "BOISSONS"),         # exclu
-            prod("MENU À 24,90", 24, "mm", "Menus"),             # exclu
+            prod("TIRAMISU À LA FRAMBOISE", 5, "z1", "DESSERTS", coll="sweet"),
+            prod("TIRAMISU À LA FRAMBOISE", 7, "z2", "DESSERTS", coll=None),  # version sur-place exclue
+            prod("FISH AND CHIPS", 16, "E9", "PLATS", coll=None),  # section sur-place exclue
+            prod("COCA-COLA 33cl", 3, "jj", "BOISSONS"),          # exclu (hors allowlist)
+            prod("MENU À 24,90", 24, "mm", "Menus"),              # exclu (hors allowlist)
         ]
     }
 
@@ -31,16 +36,16 @@ def test_scrape_carte_filtre_et_dedup(monkeypatch):
     assert carte is not None
     assert carte["restaurant"] == "Le Bistrot Trèfle"
     noms = [s["nom"] for s in carte["sections"]]
-    # Seules les sections allowlist, dans l'ordre canonique (PLATS, PÂTES, DESSERTS)
-    assert noms == ["PLATS", "PÂTES", "DESSERTS"]
+    # Seules les sections allowlist contenant des produits emporter, dans l'ordre canonique
+    assert noms == ["SALADES ET POKE BOWLS", "PÂTES", "DESSERTS"]
 
     plats_par_section = {s["nom"]: [p["plat"] for p in s["plats"]] for s in carte["sections"]}
-    assert plats_par_section["PLATS"] == ["FISH AND CHIPS"]            # doublon retiré
-    assert plats_par_section["DESSERTS"] == ["TIRAMISU À LA FRAMBOISE"]  # doublon inter-sections retiré
-    assert "BOISSONS" not in noms and "Menus" not in noms
+    assert plats_par_section["SALADES ET POKE BOWLS"] == ["SALADE CAESAR"]  # doublon + sur-place retirés
+    assert plats_par_section["DESSERTS"] == ["TIRAMISU À LA FRAMBOISE"]      # version sur-place retirée
+    assert "PLATS" not in noms and "BOISSONS" not in noms and "Menus" not in noms
 
     plat = carte["sections"][0]["plats"][0]
-    assert plat["prix"] == "16€"
+    assert plat["prix"] == "13€"
 
 
 from agent import diet_agent
