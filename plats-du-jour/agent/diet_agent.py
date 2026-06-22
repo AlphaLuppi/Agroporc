@@ -371,7 +371,11 @@ def _apply_ciqual(result: dict) -> dict:
 
 def evaluate_semaine(plats_par_jour: dict[str, list[dict]]) -> dict[str, dict]:
     """
-    Évalue les plats de plusieurs jours en un seul appel Claude.
+    Évalue les plats de plusieurs jours, avec UN appel Claude PAR JOUR.
+
+    Un appel par jour (au lieu d'un seul appel géant pour toute la semaine)
+    garde chaque prompt court : il tient dans le timeout, et un jour lent ou
+    en échec ne fait plus perdre l'évaluation de tous les autres jours.
 
     Args:
         plats_par_jour: {"MARDI": [{"restaurant": ..., "plat": ..., "prix": ...}], ...}
@@ -379,35 +383,22 @@ def evaluate_semaine(plats_par_jour: dict[str, list[dict]]) -> dict[str, dict]:
     Returns:
         {"MARDI": {"plats": [...], "recommandation": {...}, "recommandation_goulaf": {...}}, ...}
     """
-    if not plats_par_jour:
-        return {}
-
-    restaurants = {
-        p.get("restaurant")
-        for plats in plats_par_jour.values()
-        for p in (plats or [])
-        if p.get("restaurant")
-    }
-    calibration = _build_portion_calibration(restaurants)
-
-    prompt = (
-        f"{_build_system_prompt()}{calibration}\n\n"
-        f"Voici les plats du jour de PLUSIEURS jours de la semaine :\n\n"
-        f"{json.dumps(plats_par_jour, ensure_ascii=False, indent=2)}\n\n"
-        f"Pour CHAQUE jour, note chaque plat et donne ta recommandation.\n\n"
-        f"Réponds en JSON avec cette structure :\n"
-        f'{{\n'
-        f'  "MARDI": {{\n'
-        f'    "plats": [{{"restaurant": "...", "plat": "...", "prix": "...", "ingredients": [...], "nutrition_estimee_llm": {{...}}, "note": 0, "justification": "...", "note_goulaf": 0, "justification_goulaf": "...", "commentaires": []}}],\n'
-        f'    "recommandation": {{"restaurant": "...", "plat": "...", "raison": "..."}},\n'
-        f'    "recommandation_goulaf": {{"restaurant": "...", "plat": "...", "raison": "..."}}\n'
-        f'  }},\n'
-        f'  ...\n'
-        f'}}'
-    )
-
-    raw = _call_claude(prompt, timeout=300)
-    return _apply_ciqual(json.loads(_strip_code_fence(raw)))
+    resultats: dict[str, dict] = {}
+    for jour, plats in plats_par_jour.items():
+        if not plats:
+            continue
+        try:
+            jour_eval = evaluate(plats)
+            # Jours futurs : pas de commentaires (générés le jour même). On purge
+            # tout commentaire que le modèle aurait pu glisser dans l'éval.
+            for plat in jour_eval.get("plats", []):
+                plat["commentaires"] = []
+                for opt in plat.get("options", []) or []:
+                    opt["commentaires"] = []
+            resultats[jour] = jour_eval
+        except Exception as e:
+            print(f"[diet_agent] Erreur évaluation {jour} : {e}")
+    return resultats
 
 
 def evaluate(plats: list[dict]) -> dict:
