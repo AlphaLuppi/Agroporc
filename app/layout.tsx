@@ -37,26 +37,26 @@ export default function RootLayout({
       </head>
       <body>
         <nav className="sticky top-0 z-50 border-b border-[var(--border)] backdrop-blur-xl" style={{ background: "var(--nav-bg)" }}>
-          <div className="mx-auto flex h-14 max-w-[860px] items-center justify-between px-3 sm:px-6">
-            <div className="nav-left flex items-center gap-3 sm:gap-8 min-w-0">
+          <div className="mx-auto flex h-16 max-w-[1180px] items-center justify-between gap-4 px-4 sm:px-8">
+            <div className="nav-left flex items-center gap-4 sm:gap-10 min-w-0">
               <a href="/" className="flex items-center gap-2 text-lg sm:text-xl font-bold text-[var(--accent)] no-underline tracking-wide shrink-0" style={{ fontFamily: "var(--font-heading)" }}>
                 <img src="/logo.jpg" alt="Logo Plats du Jour" className="w-8 h-8 sm:w-9 sm:h-9 rounded-full object-cover" />
                 <span>Agroporc</span>
               </a>
-              <div className="nav-links hidden sm:flex gap-1" data-nav-links>
-                <a href="/" className="text-[var(--text-secondary)] no-underline text-xs sm:text-sm font-medium px-2 sm:px-3 py-1.5 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
+              <div className="nav-links hidden sm:flex items-center gap-1.5" data-nav-links>
+                <a href="/" className="whitespace-nowrap text-[var(--text-secondary)] no-underline text-sm font-medium px-3 py-2 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
                   Aujourd&apos;hui
                 </a>
-                <a href="/aide-moi-a-choisir" className="text-[var(--text-secondary)] no-underline text-xs sm:text-sm font-medium px-2 sm:px-3 py-1.5 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
+                <a href="/aide-moi-a-choisir" className="whitespace-nowrap text-[var(--text-secondary)] no-underline text-sm font-medium px-3 py-2 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
                   Aide-moi à choisir
                 </a>
-                <a href="/idees" className="text-[var(--text-secondary)] no-underline text-xs sm:text-sm font-medium px-2 sm:px-3 py-1.5 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
+                <a href="/idees" className="whitespace-nowrap text-[var(--text-secondary)] no-underline text-sm font-medium px-3 py-2 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
                   Idées
                 </a>
-                <a href="/ia" className="text-[var(--text-secondary)] no-underline text-xs sm:text-sm font-medium px-2 sm:px-3 py-1.5 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
+                <a href="/ia" className="whitespace-nowrap text-[var(--text-secondary)] no-underline text-sm font-medium px-3 py-2 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
                   IA
                 </a>
-                <a href="/admin/photos" className="text-[var(--text-secondary)] no-underline text-xs sm:text-sm font-medium px-2 sm:px-3 py-1.5 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
+                <a href="/admin/photos" className="whitespace-nowrap text-[var(--text-secondary)] no-underline text-sm font-medium px-3 py-2 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
                   Photos
                 </a>
               </div>
