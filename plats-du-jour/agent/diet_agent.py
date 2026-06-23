@@ -138,7 +138,12 @@ Pour chaque plat :
 2. Donner une nutrition_estimee_llm de secours (calories, protéines, glucides, lipides) — utilisée si trop d'ingrédients ne matchent pas la base Ciqual.
 3. Attribuer une note sportif (1-10) ET une note goulaf (1-10).
 4. Justifier brièvement chaque note (2-3 phrases max chacune).
-5. Désigner le plat recommandé pour chaque mode.
+5. **Classer le plat** pour un quiz de choix, dans un objet `quiz_tags` avec EXACTEMENT ces clés et ces valeurs autorisées (jamais d'autres) :
+   - `envie` : la protéine/famille dominante → "poulet" (toute volaille : poulet, dinde, coquelet, canard, pintade…), "boeuf", "porc", "veau" (veau ou agneau), "poisson" (poissons ET fruits de mer), ou "vege" (ni viande ni poisson).
+   - `cuisine` : le style → "mijote" (mijoté/réconfortant : bourguignon, blanquette, tajine en sauce…), "asiatique", "mediterraneen", "streetfood" (burger, kebab, tacos, frites…), "froid" (salade, poke, tartare…), ou "autre" si aucun ne colle.
+   - `lourdeur` : "leger" (salade, grillé/vapeur, peu calorique) ou "copieux" (gratin, frit, fromage/crème, généreux).
+   Base-toi sur la composition réelle du plat, pas seulement sur son nom.
+6. Désigner le plat recommandé pour chaque mode.
 
 IMPORTANT : si le champ "plat" est une liste, le restaurant propose plusieurs options.
 Dans ce cas, note chaque option séparément dans un tableau "options".
@@ -159,6 +164,7 @@ Réponds UNIQUEMENT en JSON valide avec cette structure :
       "justification": "texte sportif",
       "note_goulaf": 0,
       "justification_goulaf": "texte gourmand",
+      "quiz_tags": {{"envie": "poulet", "cuisine": "mijote", "lourdeur": "leger"}},
       "commentaires": []
     }},
     {{
@@ -176,6 +182,7 @@ Réponds UNIQUEMENT en JSON valide avec cette structure :
           "justification": "texte sportif",
           "note_goulaf": 0,
           "justification_goulaf": "texte gourmand",
+          "quiz_tags": {{"envie": "poulet", "cuisine": "mijote", "lourdeur": "leger"}},
           "commentaires": []
         }}
       ]
@@ -434,7 +441,7 @@ def _rebuild_carte_sections(sections: list[dict], evaluated: list[dict]) -> list
     """Réinjecte les plats notés dans leurs sections d'origine (matching par nom)."""
     by_name = {_norm_plat(p.get("plat", "")): p for p in evaluated}
     enrich_keys = ("note", "justification", "note_goulaf", "justification_goulaf",
-                   "nutrition_estimee", "nutrition_source", "ingredients_detail")
+                   "nutrition_estimee", "nutrition_source", "ingredients_detail", "quiz_tags")
     out = []
     for sec in sections:
         plats = []
@@ -471,7 +478,8 @@ def evaluate_carte(sections: list[dict]) -> list[dict]:
         f"Réponds en JSON avec cette structure :\n"
         f'{{ "plats": [{{"restaurant": "...", "plat": "...", "prix": "...", "ingredients": [...], '
         f'"nutrition_estimee_llm": {{...}}, "note": 0, "justification": "...", '
-        f'"note_goulaf": 0, "justification_goulaf": "..."}}] }}'
+        f'"note_goulaf": 0, "justification_goulaf": "...", '
+        f'"quiz_tags": {{"envie": "...", "cuisine": "...", "lourdeur": "..."}}}}] }}'
     )
 
     raw = _call_claude(prompt, timeout=300)

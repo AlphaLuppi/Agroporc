@@ -80,6 +80,7 @@ export default async function AideMoiAChoisir() {
       note_goulaf: p.note_goulaf,
       justification_goulaf: p.justification_goulaf,
       ingredients_detail: p.ingredients_detail,
+      quiz_tags: p.quiz_tags,
     }));
 
   // Le quiz porte sur les plats du jour ; repli sur les cartes s'il n'y en a pas encore.

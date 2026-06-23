@@ -32,17 +32,17 @@ function normalize(s: string): string {
 const PROTEINE_KEYWORDS: { proteine: Exclude<Proteine, "autre">; mots: string[] }[] = [
   {
     proteine: "poisson",
-    mots: ["saumon", "cabillaud", "thon", "colin", "lieu", "dorade", "truite", "merlu", "poisson", "crevette", "accra de poisson", "fruits de mer", "calamar", "moule"],
+    mots: ["saumon", "cabillaud", "thon", "colin", "lieu", "dorade", "truite", "merlu", "poisson", "crevette", "accra de poisson", "fruits de mer", "calamar", "moule", "sole", "sardine", "maquereau", "lotte", "seiche", "poulpe", "gambas", "langoustine", "saint-jacques", "encornet", "hareng", "rouget", "espadon", "julienne de poisson"],
   },
-  { proteine: "poulet", mots: ["poulet", "volaille", "dinde"] },
-  { proteine: "boeuf", mots: ["boeuf", "steak", "bavette", "bourguignon", "haché"] },
-  { proteine: "porc", mots: ["porc", "jambon", "lardon", "saucisse", "chipolata", "andouillette"] },
-  { proteine: "veau", mots: ["veau"] },
-  { proteine: "agneau", mots: ["agneau", "gigot"] },
+  { proteine: "poulet", mots: ["poulet", "volaille", "dinde", "coquelet", "canard", "magret", "pintade", "caille", "chapon", "poularde", "suprême de volaille"] },
+  { proteine: "boeuf", mots: ["boeuf", "steak", "bavette", "bourguignon", "haché", "entrecote", "onglet", "tournedos", "paleron", "macreuse", "rumsteck", "joue de boeuf"] },
+  { proteine: "porc", mots: ["porc", "jambon", "lardon", "saucisse", "chipolata", "andouillette", "echine", "travers", "palette", "rouelle", "boudin", "saucisson", "poitrine fumée"] },
+  { proteine: "veau", mots: ["veau", "blanquette", "osso", "escalope milanaise"] },
+  { proteine: "agneau", mots: ["agneau", "gigot", "souris d'agneau", "merguez"] },
 ];
 
 // Termes de viande génériques (pas de protéine précise mais clairement carné).
-const VIANDE_GENERIQUE = ["viande", "boulette", "kebab", "merguez", "magret", "confit"];
+const VIANDE_GENERIQUE = ["viande", "boulette", "kebab", "confit"];
 
 export function tagsForPlat(input: PlatTagInput): PlatTags {
   const fromIngredients = (input.ingredients_detail ?? [])

@@ -259,10 +259,10 @@ export default function QuizClient({
       lourdeur: lourdeur.v,
       budget: budget.v,
     };
-    const { candidats, nbCriteres } = meilleursCandidats(pool, criteres, mode);
+    const { candidats, nbCriteres, scoreMax } = meilleursCandidats(pool, criteres, mode);
 
-    // Départage par nom si plusieurs candidats à égalité (et au moins un critère exprimé).
-    if (platChoisi === undefined && nbCriteres > 0 && candidats.length > 1) {
+    // Départage par nom seulement si plusieurs plats matchent réellement (scoreMax > 0).
+    if (platChoisi === undefined && scoreMax > 0 && candidats.length > 1) {
       return q(
         <Question
           titre="Plusieurs plats collent à tes envies — lequel te tente ?"
@@ -278,10 +278,14 @@ export default function QuizClient({
     }
 
     const plat = platChoisi !== undefined ? platChoisi : candidats[0] ?? null;
+    // Aucun plat ne correspond aux critères exprimés → on propose le plus proche.
+    const auPlusProche = platChoisi === undefined && nbCriteres > 0 && scoreMax === 0;
     const dessert =
       menu === "menu" ? choisirDessert(desserts, { saveur: saveur?.v, lourdeur: lourdeurDessert?.v }) : null;
 
-    return r(<Resultat mode={mode} plat={plat} menu={menu} dessert={dessert} onReset={reset} />);
+    return r(
+      <Resultat mode={mode} plat={plat} menu={menu} dessert={dessert} auPlusProche={auPlusProche} onReset={reset} />
+    );
   }
 
   const { node, isResult } = render();
@@ -312,12 +316,14 @@ function Resultat({
   plat,
   menu,
   dessert,
+  auPlusProche,
   onReset,
 }: {
   mode: Mode;
   plat: PoolPlat | null;
   menu: "plat" | "menu";
   dessert: DessertConnu | null;
+  auPlusProche: boolean;
   onReset: () => void;
 }) {
   const note = plat ? (mode === "sportif" ? plat.note : plat.note_goulaf) : undefined;
@@ -330,8 +336,13 @@ function Resultat({
   return (
     <div className="flex flex-col gap-4">
       <h2 className="text-xl font-bold text-[var(--text)]" style={{ fontFamily: "var(--font-heading)" }}>
-        Ton plat idéal aujourd'hui
+        {auPlusProche ? "Rien ne colle pile, mais au plus proche…" : "Ton plat idéal aujourd'hui"}
       </h2>
+      {auPlusProche && (
+        <p className="-mt-2 text-sm text-[var(--text-muted)]">
+          Aucun plat du jour ne correspond exactement à tes critères. Voici le mieux noté.
+        </p>
+      )}
 
       {plat ? (
         <div className="rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] p-5">

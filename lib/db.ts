@@ -28,6 +28,15 @@ export interface Plat {
   justification_goulaf?: string;
   commentaires?: Commentaire[];
   coming_soon?: boolean;
+  /** Tags de classification générés par le LLM à l'évaluation (pour le quiz). */
+  quiz_tags?: QuizTags;
+}
+
+/** Classification d'un plat sur les axes du quiz « Aide-moi à choisir ». */
+export interface QuizTags {
+  envie?: string; // poulet | boeuf | porc | veau | agneau | poisson | vege
+  cuisine?: string; // mijote | asiatique | mediterraneen | streetfood | froid | autre
+  lourdeur?: string; // leger | copieux
 }
 
 export interface IngredientDetail {

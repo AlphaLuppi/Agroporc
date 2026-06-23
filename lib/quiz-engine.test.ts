@@ -47,6 +47,20 @@ describe("tags", () => {
     expect(lourdeurForPlat(P({ plat: "Plat neutre", note: 8 }))).toBe("leger");
     expect(lourdeurForPlat(P({ plat: "Plat neutre", note: 4 }))).toBe("copieux");
   });
+
+  it("quiz_tags LLM prioritaires sur les mots-clés (agneau→veau)", () => {
+    // Libellé qui tromperait les mots-clés ("coquelet" → poulet), mais le LLM dit poisson.
+    const p = P({ plat: "Coquelet rôti", quiz_tags: { envie: "poisson", cuisine: "froid", lourdeur: "leger" } });
+    expect(envieForPlat(p)).toBe("poisson");
+    expect(cuisineForPlat(p)).toBe("froid");
+    expect(lourdeurForPlat(p)).toBe("leger");
+    expect(envieForPlat(P({ plat: "x", quiz_tags: { envie: "agneau" } }))).toBe("veau");
+  });
+
+  it("tag LLM invalide → repli sur les mots-clés", () => {
+    const p = P({ plat: "Poulet rôti", quiz_tags: { envie: "n'importe quoi" } });
+    expect(envieForPlat(p)).toBe("poulet");
+  });
 });
 
 describe("meilleursCandidats", () => {

@@ -48,8 +48,23 @@ function proteineGroupe(pr: Proteine): Proteine {
   return pr === "agneau" ? "veau" : pr;
 }
 
+const ENVIES: Envie[] = ["poulet", "boeuf", "porc", "veau", "poisson", "vege"];
+const CUISINES: Cuisine[] = ["mijote", "asiatique", "mediterraneen", "streetfood", "froid"];
+
+/** Normalise une valeur de tag LLM vers l'enum attendu (agneau→veau), sinon null. */
+function envieFromTag(v?: string): Envie | "autre" | null {
+  if (!v) return null;
+  const t = v.toLowerCase().trim();
+  if (t === "agneau") return "veau";
+  if ((ENVIES as string[]).includes(t)) return t as Envie;
+  if (t === "autre") return "autre";
+  return null;
+}
+
 /** Famille/protéine → valeur d'« envie » (axe combiné de la 1re question). */
 export function envieForPlat(p: PoolPlat): Envie | "autre" {
+  const fromLlm = envieFromTag(p.quiz_tags?.envie);
+  if (fromLlm) return fromLlm;
   const { famille, proteine } = tagsForPlat(p);
   if (famille === "vege") return "vege";
   if (proteine === "poisson") return "poisson";
@@ -67,6 +82,9 @@ const CUISINE_KEYWORDS: { cuisine: Cuisine; mots: string[] }[] = [
 ];
 
 export function cuisineForPlat(p: PoolPlat): Cuisine | "autre" {
+  const tag = p.quiz_tags?.cuisine?.toLowerCase().trim();
+  if (tag && (CUISINES as string[]).includes(tag)) return tag as Cuisine;
+  if (tag === "autre") return "autre";
   const t = texteDuPlat(p);
   for (const { cuisine, mots } of CUISINE_KEYWORDS) {
     if (mots.some((m) => t.includes(normalize(m)))) return cuisine;
@@ -78,6 +96,8 @@ const LEGER_MOTS = ["salade", "grille", "vapeur", "poke", "bowl", "papillote", "
 const COPIEUX_MOTS = ["frites", "gratin", "burger", "raclette", "cassoulet", "parmentier", "lasagne", "pane", "friture", "fromage", "creme", "tartiflette", "nuggets", "pizza", "risotto", "pates", "nouilles", "tenders", "panini"];
 
 export function lourdeurForPlat(p: PoolPlat): LourdeurPlat {
+  const tag = p.quiz_tags?.lourdeur?.toLowerCase().trim();
+  if (tag === "leger" || tag === "copieux") return tag;
   const t = texteDuPlat(p);
   const copieux = COPIEUX_MOTS.some((m) => t.includes(normalize(m)));
   const leger = LEGER_MOTS.some((m) => t.includes(normalize(m)));
@@ -142,12 +162,14 @@ export interface CandidatsResultat {
   exact: boolean;
   /** Nombre de critères précisés (hors « peu importe »). */
   nbCriteres: number;
+  /** Nombre de critères satisfaits par les candidats (0 = aucun plat ne colle). */
+  scoreMax: number;
 }
 
 /** Classe le pool par nombre de critères satisfaits ; renvoie les mieux classés. */
 export function meilleursCandidats(pool: PoolPlat[], criteres: Criteres, mode: Mode): CandidatsResultat {
   const n = nbCriteres(criteres);
-  if (pool.length === 0) return { candidats: [], exact: false, nbCriteres: n };
+  if (pool.length === 0) return { candidats: [], exact: false, nbCriteres: n, scoreMax: 0 };
 
   const scored = pool.map((p) => ({ p, score: scorePlat(classerPlat(p), criteres) }));
   const max = Math.max(...scored.map((s) => s.score));
@@ -155,5 +177,5 @@ export function meilleursCandidats(pool: PoolPlat[], criteres: Criteres, mode: M
     scored.filter((s) => s.score === max).map((s) => s.p),
     mode
   );
-  return { candidats: top, exact: n > 0 && max === n, nbCriteres: n };
+  return { candidats: top, exact: n > 0 && max === n, nbCriteres: n, scoreMax: max };
 }

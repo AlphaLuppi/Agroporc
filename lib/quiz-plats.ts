@@ -13,6 +13,8 @@ export interface PoolPlat {
   note_goulaf?: number;
   justification_goulaf?: string;
   ingredients_detail?: IngredientDetail[];
+  /** Tags de classification générés par le LLM (prioritaires sur la déduction par mots-clés). */
+  quiz_tags?: { envie?: string; cuisine?: string; lourdeur?: string };
 }
 
 export interface PlatCriteres {
