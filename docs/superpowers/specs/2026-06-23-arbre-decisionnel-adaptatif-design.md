@@ -1,107 +1,69 @@
-# Arbre décisionnel adaptatif — « Aide-moi à choisir »
+# Quiz « Aide-moi à choisir » — moteur multi-critères
 
-Date : 2026-06-23
+Date : 2026-06-23 (révisé 2026-06-24 : passage arbre élagué → moteur multi-critères)
 
-## Problème
+## Historique
 
-Le quiz `app/aide-moi-a-choisir/` pose des questions **codées en dur** (mode → plat/menu →
-famille → protéine → dessert), puis `choisirPlat` filtre le pool et renvoie le **mieux noté**
-des plats qui matchent. Deux défauts :
+V1 (mergée puis remplacée) : un arbre de décision adaptatif qui **élaguait** les options
+absentes du jour pour garantir « zéro cul-de-sac ». Problème remonté à l'usage : le quiz
+proposait trop peu d'options (ex. pas d'option « végé », « bœuf » ou « poisson » si le plat
+n'existait pas ce jour-là), ce qui le rendait pauvre.
 
-1. **Non-atteignabilité** : si ≥2 plats du jour tombent dans le même seau (même famille +
-   protéine), seul le mieux noté est jamais renvoyé. Les autres sont inaccessibles.
-2. **Non-déterminisme perçu** : aucune garantie qu'un chemin de réponses isole un plat unique.
+## Objectif (V2)
 
-## Objectif
+Un quiz **riche** : chaque question affiche **toujours toutes ses options**, jamais élaguées.
+On garde les garanties clés :
 
-Chaque matin, quand 3 nouveaux plats du jour sont publiés, l'arbre doit **s'adapter** pour que :
+- **Atteignabilité** : chaque plat du jour est joignable en répondant son profil exact.
+- **Déterminisme** : un même jeu de réponses mène toujours au même résultat.
+- **Repli au plus proche** : un choix sans plat correspondant retombe sur le mieux noté du jour
+  (on aboutit toujours à un plat du jour).
 
-- **Chacun des plats du jour soit atteignable** par au moins un chemin de réponses.
-- **Un chemin de réponses donné mène toujours au même résultat** (déterminisme).
-
-Tout se calcule **au rendu de la page (côté serveur Next.js)**. Le pipeline Python et le VPS ne
-sont **pas** concernés : la page connaît déjà les plats du jour à chaque chargement.
-
-## Périmètre
-
-- **Ciblé** : `app/aide-moi-a-choisir/page.tsx`, `QuizClient.tsx`, nouveau `lib/quiz-tree.ts`.
-- **Réutilisé tel quel** : `lib/quiz-tags.ts` (tagging famille/protéine), `lib/desserts.ts`
-  (branche dessert), `lib/quiz-plats.ts` (résolution déterministe d'un groupe → un plat).
-- **Hors périmètre** : pipeline Python, scraping, base de données, autres pages.
+Tout se calcule **au rendu serveur Next.js** ; pas de pipeline Python / VPS.
 
 ## Design
 
-### 1. Construction de l'arbre (serveur)
+### Moteur (`lib/quiz-engine.ts`)
 
-Nouveau module `lib/quiz-tree.ts`. Entrée : la liste des **plats du jour** (déjà disponible dans
-`page.tsx` via `platsJour`). Sortie : un `QuizTree` sérialisable passé en props à `QuizClient`.
+Tagging de chaque plat sur 4 axes, dérivés du nom + ingrédients :
 
-Algorithme — partitionnement récursif des plats du jour :
+- **envie** (axe combiné famille/protéine) : poulet, bœuf, porc, veau/agneau, poisson, végé.
+- **cuisine** : mijoté, asiatique, méditerranéen, streetfood, froid (mots-clés ; sinon « autre »).
+- **lourdeur** : léger / copieux (mots-clés ; repli sur la note sportif si ambigu).
+- **budget** : éco (≤ 10€) / standard (parse du prix).
 
-1. **Axe famille** : on regroupe les plats par `tagsForPlat().famille`. On n'expose comme options
-   que les familles **réellement présentes** parmi les plats du jour (+ « Peu importe »). Zéro
-   option morte → zéro cul-de-sac.
-2. **Axe protéine** : à l'intérieur d'un groupe famille comptant ≥2 plats, on subdivise par
-   `tagsForPlat().proteine`, là encore en n'exposant que les protéines présentes.
-3. **Départage final par nom** : si après famille + protéine un groupe contient encore ≥2 plats,
-   on insère une question explicite « Lequel te tente ? » listant ces plats **par nom**. Pas
-   d'axe « déguisé » (restaurant/prix/léger-gourmand) : choix direct et lisible.
-4. **Feuille = exactement un plat.** Les 3 plats du jour sont donc tous atteignables.
+`meilleursCandidats(pool, criteres, mode)` : score chaque plat = nombre de critères **précisés**
+(hors « peu importe ») qu'il satisfait, garde les plats au **score max**, triés par note du mode
+puis départage stable (restaurant, plat). Renvoie aussi `exact` (un plat satisfait tous les
+critères) et `nbCriteres`.
 
-### 2. Déterminisme
+### Parcours (`QuizClient.tsx`)
 
-- Chaque chemin complet de réponses → une seule feuille → un seul plat. Toujours le même.
-- « Peu importe » à un nœud est résolu de façon **déterministe** via `choisirPlat` sur le
-  sous-groupe courant : meilleur score du mode choisi, départage stable (note, puis nom de
-  restaurant, puis nom de plat) en cas d'égalité. Donc même « Peu importe » donne toujours le
-  même résultat.
+Questions à options complètes, dans l'ordre : mode → plat/menu → envie → cuisine → léger/copieux
+→ budget → (si menu) saveur dessert → lourdeur dessert. Puis :
 
-### 3. QuizClient = marcheur d'arbre
+- 0 critère précisé → **recommandation** : le mieux noté.
+- ≥1 critère, 1 seul candidat → résultat direct.
+- ≥1 critère, plusieurs candidats à égalité → **départage par nom** (« Lequel te tente ? »),
+  listant les meilleurs candidats du jour (cap à 6). Choix explicite, pas d'axe déguisé.
 
-`QuizClient` ne contient plus d'étapes codées en dur. Il :
+Barre de progression (6 étapes, +2 si dessert), masquée sur l'écran de résultat.
 
-- pose d'abord la question **mode** (sportif/goulaf) — elle ne branche pas, elle pilote
-  l'affichage note/justification ;
-- pose la question **plat / plat+dessert** ;
-- descend ensuite le `QuizTree` reçu en props, nœud par nœud, jusqu'à une feuille ;
-- conserve la **branche dessert existante** (`choisirDessert` sur `lib/desserts.ts`) en fin de
-  parcours, inchangée ;
-- affiche le `Resultat` (plat retenu + dessert éventuel).
+### UI (gros boutons tactiles)
 
-### 4. Repli carte
+Boutons ≥ 60px, pastille emoji, flèche, feedback au press (scale + surface), focus clavier
+visible. CSS vars existantes (`--accent`, `--surface`, `--border`, `--radius`) → tous les thèmes.
 
-Quand aucun plat du jour n'est publié (`hasJour === false`), on retombe sur le pool de cartes
-avec le comportement actuel (l'arbre est construit sur ce pool de repli). Quand des plats du jour
-existent, l'arbre porte sur eux.
+### Données (`page.tsx`)
 
-### 5. UI — gros boutons tactiles (registre product)
-
-Refonte de la classe `card` et du `QuestionStep`, en s'appuyant sur les CSS vars existantes
-(`--accent`, `--surface`, `--border`, `--radius`) qui gèrent déjà les thèmes :
-
-- **Cibles tactiles** ≥ 56px de haut (au-delà du minimum 44px), padding généreux, gap ≥ 12px
-  entre boutons (anti-mistap).
-- **Texte plus grand** (≈18px), emoji en pastille à gauche pour l'ancrage visuel.
-- **Feedback au press** : `:active` scale 0.97 + changement de surface, transition 150–200ms
-  ease-out (pas d'animation de layout).
-- **Focus visible** au clavier (anneau 2px sur `--border-accent`).
-- **Indicateur de progression** : « Étape n / total » discret en tête de parcours.
-- **Bouton « Recommencer »** et CTA principal conservés, agrandis et alignés sur le même style.
-- Mobile-first : conteneur `max-w-[520px]`, pas de scroll horizontal, `min-h-dvh` non requis
-  (contenu court).
+Le pool = plats du jour ; repli sur les cartes s'il n'y en a pas encore publié.
 
 ## Tests
 
-- `lib/quiz-tree.test.ts` (nouveau) :
-  - chaque plat du jour est atteignable (un chemin de réponses le renvoie) ;
-  - déterminisme : même chemin → même plat, sur plusieurs jeux de plats ;
-  - pas d'option morte (les options proposées correspondent toujours à ≥1 plat) ;
-  - cas 2 et 3 plats dans le même seau → étape de départage par nom générée ;
-  - « Peu importe » résolu de façon stable.
-- Tests existants `quiz-plats`, `quiz-tags`, `desserts` conservés (réutilisés).
+- `lib/quiz-engine.test.ts` : dérivation des 4 axes, atteignabilité par profil exact,
+  recommandation sans critère, repli au plus proche, déterminisme, pool vide.
 
 ## Ce qu'on ne fait pas (YAGNI)
 
+- Pas d'arbre élagué (remplacé).
 - Pas de génération de questions côté pipeline Python / VPS.
-- Pas d'axe discriminant « déguisé » (restaurant/prix/léger-gourmand) pour les plats.
-- Pas de restriction du pool de carte hors du cas « pas de plats du jour ».
