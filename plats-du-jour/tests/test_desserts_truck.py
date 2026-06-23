@@ -6,38 +6,45 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scrapers import truck_muche_desserts as tmd
 
 
-def test_is_dessert_post_detecte_le_mot_dessert():
-    assert tmd.is_dessert_post("🍰 Nos desserts du jour 🍰") is True
-    assert tmd.is_dessert_post("LES DESSERTS DE LA SEMAINE") is True
-
-
-def test_is_dessert_post_rejette_un_menu_de_plats():
-    assert tmd.is_dessert_post("LUNDI poulet basquaise MARDI poisson") is False
-
-
-def test_parse_desserts_nettoie_puces_emojis_et_prix():
+def test_parse_menu_post_extrait_les_desserts_apres_le_plat():
     texte = (
-        "🍰 Desserts du jour :\n"
-        "- Mi-cuit chocolat 3€\n"
-        "• Salade de fruits — 2,50€\n"
-        "Tiramisu spéculoos\n"
+        "Pasta carbonara \n"
+        "\n"
+        "Tiramisu oreo \n"
+        "Flan aux œufs \n"
+        "Salade de fruits\n"
     )
-    assert tmd.parse_desserts_from_caption(texte) == [
-        "Mi-cuit chocolat",
+    assert tmd.parse_desserts_from_menu_post(texte) == [
+        "Tiramisu oreo",
+        "Flan aux œufs",
         "Salade de fruits",
-        "Tiramisu spéculoos",
     ]
 
 
-def test_parse_desserts_ignore_les_lignes_parasites():
+def test_parse_menu_post_retire_prix_et_puces():
     texte = (
-        "Bonjour à tous ! Voici nos desserts 😋\n"
+        "Filet de lieu riz thaï\n"
+        "- Crème brûlée chocolat 3€\n"
+        "• Salade de fruits — 2,50€\n"
+    )
+    assert tmd.parse_desserts_from_menu_post(texte) == [
+        "Crème brûlée chocolat",
+        "Salade de fruits",
+    ]
+
+
+def test_parse_menu_post_ignore_lignes_parasites():
+    texte = (
+        "Cordon bleu coquillettes\n"
         "Mousse au chocolat\n"
-        "\n"
         "À très vite au Truck Muche !\n"
     )
-    assert tmd.parse_desserts_from_caption(texte) == ["Mousse au chocolat"]
+    assert tmd.parse_desserts_from_menu_post(texte) == ["Mousse au chocolat"]
 
 
-def test_parse_desserts_vide_si_rien():
-    assert tmd.parse_desserts_from_caption("") == []
+def test_parse_menu_post_vide_si_une_seule_ligne():
+    assert tmd.parse_desserts_from_menu_post("Pour la semaine!!😊") == []
+
+
+def test_parse_menu_post_vide_si_texte_vide():
+    assert tmd.parse_desserts_from_menu_post("") == []

@@ -1,17 +1,22 @@
 """
-Scrape la liste des desserts du jour (texte) sur le Facebook/Instagram du Truck Muche,
-pour accumuler une base de probabilités côté front.
+Scrape la liste des desserts du jour sur l'Instagram du Truck Muche, pour accumuler
+une base de probabilités côté front.
 
-Les desserts sont publiés EN TEXTE dans un post (pas une image) → parsing heuristique.
+Format réel d'un post quotidien (vers 11h-midi) :
+    <plat du jour>
+    <ligne vide>
+    <dessert 1>
+    <dessert 2>
+    ...
+Les desserts ne sont PAS précédés du mot « dessert » → on prend toutes les lignes
+sauf la première (le plat). On ne retient que le post DU JOUR (via le timestamp).
 """
-import asyncio
 import re
 import unicodedata
+from datetime import date, datetime
 
 import requests
-from playwright.async_api import async_playwright
 
-PAGE_URL = "https://www.facebook.com/letruckmuche/"
 INSTAGRAM_USERNAME = "le_truckmuche_"
 INSTAGRAM_API_URL = (
     f"https://i.instagram.com/api/v1/users/web_profile_info/?username={INSTAGRAM_USERNAME}"
@@ -21,7 +26,7 @@ INSTAGRAM_API_URL = (
 _LIGNES_PARASITES = (
     "bonjour", "bonsoir", "coucou", "salut", "merci", "a tres vite", "a bientot",
     "truck muche", "bon appetit", "regalez", "plats du jour", "menu",
-    "lundi", "mardi", "mercredi", "jeudi", "vendredi",
+    "pour la semaine",
 )
 
 
@@ -32,49 +37,43 @@ def _strip_accents(s: str) -> str:
     )
 
 
-def is_dessert_post(text: str) -> bool:
-    """True si le texte ressemble à un post de desserts (mot « dessert » présent)."""
-    if not text:
-        return False
-    return "dessert" in _strip_accents(text).lower()
-
-
 def _nettoyer_ligne(ligne: str) -> str:
     """Retire puces, emojis de début, prix de fin et espaces superflus."""
     s = ligne.strip()
-    # Puces de début : -, •, *, –, —, chiffres de liste
     s = re.sub(r"^[\-•\*–—\d\.\)\s]+", "", s)
-    # Prix de fin : "3€", "2,50€", "— 3 €", "3.50 EUR"
     s = re.sub(r"[\s\-–—]*\d+([.,]\d{1,2})?\s*(€|eur|euros?)\.?\s*$", "", s, flags=re.IGNORECASE)
-    # Emojis / symboles non-texte en bordure
     s = s.strip(" \t:·•-–—🍰😋🍫🍓🥧🥛🎂🍮🍪🧁✨🔥")
     return s.strip()
 
 
-def parse_desserts_from_caption(text: str) -> list[str]:
-    """Extrait la liste des noms de desserts d'un texte de post."""
+def parse_desserts_from_menu_post(text: str) -> list[str]:
+    """
+    Extrait les desserts d'un post quotidien. La 1re ligne (plat du jour) est ignorée ;
+    les lignes suivantes sont les desserts. Renvoie [] si le texte n'a pas la forme
+    d'un post menu (moins de 2 lignes utiles).
+    """
     if not text:
         return []
-    out: list[str] = []
-    for ligne_brute in text.splitlines():
-        ligne = _nettoyer_ligne(ligne_brute)
-        if not ligne or len(ligne) < 3:
+    lignes = []
+    for brute in text.splitlines():
+        l = _nettoyer_ligne(brute)
+        if l and re.search(r"[a-zA-ZÀ-ÿ]", l):
+            lignes.append(l)
+    if len(lignes) < 2:
+        return []
+    desserts = []
+    for l in lignes[1:]:  # on saute le plat du jour
+        bas = _strip_accents(l).lower()
+        if any(p in bas for p in _LIGNES_PARASITES):
             continue
-        bas = _strip_accents(ligne).lower()
-        # Ignore l'en-tête « desserts … » et les lignes parasites.
-        if bas.startswith("dessert") or any(p in bas for p in _LIGNES_PARASITES):
-            continue
-        # Une ligne qui ne contient aucune lettre est ignorée (emojis seuls).
-        if not re.search(r"[a-zA-ZÀ-ÿ]", ligne):
-            continue
-        out.append(ligne)
-    return out
+        desserts.append(l)
+    return desserts
 
 
 # ── Scraping (IO) ────────────────────────────────────────────────────────────
 
-def _recent_instagram_captions(limit: int = 8) -> list[str]:
-    """Renvoie les légendes des derniers posts Instagram (sans auth), plus récent d'abord."""
+def _instagram_posts_with_dates(limit: int = 12) -> list[tuple[date, str]]:
+    """Renvoie [(date_du_post, légende), …] des derniers posts IG, plus récent d'abord."""
     headers = {
         "User-Agent": "Instagram 76.0.0.15.395 Android",
         "x-ig-app-id": "936619743392459",
@@ -95,87 +94,33 @@ def _recent_instagram_captions(limit: int = 8) -> list[str]:
     if not user:
         return []
     edges = (user.get("edge_owner_to_timeline_media") or {}).get("edges") or []
-    captions = []
+    out: list[tuple[date, str]] = []
     for e in edges[:limit]:
         node = e.get("node") or {}
+        ts = node.get("taken_at_timestamp")
+        if not ts:
+            continue
+        post_date = datetime.fromtimestamp(ts).date()
         caption_edges = (node.get("edge_media_to_caption") or {}).get("edges") or []
         caption = caption_edges[0].get("node", {}).get("text", "") if caption_edges else ""
         if caption.strip():
-            captions.append(caption.strip())
-    return captions
+            out.append((post_date, caption.strip()))
+    return out
 
 
-async def _recent_facebook_posts(limit: int = 8) -> list[str]:
-    """Renvoie le texte des posts récents de la page FB (best-effort, plus récent d'abord)."""
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True, args=["--window-size=1280,900"])
-        context = await browser.new_context(
-            user_agent=(
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            ),
-            locale="fr-FR",
-            viewport={"width": 1280, "height": 900},
-        )
-        page = await context.new_page()
-        try:
-            await page.goto(PAGE_URL, wait_until="networkidle", timeout=30000)
-            await page.wait_for_timeout(2000)
-        except Exception as e:
-            print(f"[truck_desserts] Erreur navigation FB : {e}")
-            await browser.close()
-            return []
-        await page.evaluate("""async () => {
-            const delay = ms => new Promise(r => setTimeout(r, ms));
-            for (const el of document.querySelectorAll('[aria-label="Fermer"], [aria-label="Close"]')) {
-                el.click(); await delay(300);
-            }
-        }""")
-        await page.wait_for_timeout(1000)
-        texts = await page.evaluate(f"""async () => {{
-            const delay = ms => new Promise(r => setTimeout(r, ms));
-            const found = [];
-            for (let pos = 0; pos <= 6000; pos += 500) {{
-                window.scrollTo(0, pos);
-                await delay(700);
-                const sels = ['[data-ad-comet-preview="message"]', '[data-ad-preview="message"]', 'div[dir="auto"]'];
-                for (const sel of sels) {{
-                    for (const el of document.querySelectorAll(sel)) {{
-                        const t = (el.innerText || '').trim();
-                        if (t.length > 15 && !found.includes(t)) found.push(t);
-                    }}
-                }}
-                if (found.length >= {limit}) break;
-            }}
-            return found.slice(0, {limit});
-        }}""")
-        await browser.close()
-        return texts or []
-
-
-def scrape_desserts_du_jour() -> list[str] | None:
+def scrape_desserts_du_jour(today: date | None = None) -> list[str] | None:
     """
-    Cherche le post de desserts le plus récent (Instagram d'abord, FB ensuite) et
-    en extrait la liste des noms. Renvoie None si aucun post de desserts trouvé.
+    Récupère les desserts du post Instagram DU JOUR. Renvoie None si le Truck n'a pas
+    posté aujourd'hui (ou si aucun dessert n'a pu être extrait).
     """
-    # 1) Instagram (légendes fiables via l'API publique)
-    for caption in _recent_instagram_captions():
-        if is_dessert_post(caption):
-            noms = parse_desserts_from_caption(caption)
+    jour = today or date.today()
+    for post_date, caption in _instagram_posts_with_dates():
+        if post_date == jour:
+            noms = parse_desserts_from_menu_post(caption)
             if noms:
-                print(f"[truck_desserts] Instagram : {len(noms)} dessert(s)")
+                print(f"[truck_desserts] Post du {jour} : {len(noms)} dessert(s)")
                 return noms
-    # 2) Facebook (best-effort sur le texte des posts)
-    try:
-        fb_posts = asyncio.run(_recent_facebook_posts())
-    except Exception as e:
-        print(f"[truck_desserts] Erreur FB : {e}")
-        fb_posts = []
-    for texte in fb_posts:
-        if is_dessert_post(texte):
-            noms = parse_desserts_from_caption(texte)
-            if noms:
-                print(f"[truck_desserts] Facebook : {len(noms)} dessert(s)")
-                return noms
-    print("[truck_desserts] Aucun post de desserts trouvé")
+            print(f"[truck_desserts] Post du {jour} trouvé mais aucun dessert extrait")
+            return None
+    print(f"[truck_desserts] Pas de post Instagram pour le {jour}")
     return None
