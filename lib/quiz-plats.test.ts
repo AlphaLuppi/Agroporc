@@ -41,4 +41,14 @@ describe("choisirPlat", () => {
     expect(r.resultat).toBeNull();
     expect(r.exact).toBe(false);
   });
+
+  it("le critère proteine 'veau' matche aussi un plat d'agneau", () => {
+    const pool = [
+      P({ plat: "Gigot d'agneau", note: 8 }),
+      P({ plat: "Poulet rôti", note: 9 }),
+    ];
+    const r = choisirPlat(pool, { proteine: "veau" }, "sportif");
+    expect(r.exact).toBe(true);
+    expect(r.resultat?.plat).toBe("Gigot d'agneau");
+  });
 });

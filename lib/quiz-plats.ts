@@ -26,6 +26,13 @@ export interface PlatResultat {
   exact: boolean;
 }
 
+// veau et agneau sont regroupés dans l'UI ("Veau / agneau") → critère interchangeable.
+function memeProteine(a: Proteine, b: Proteine): boolean {
+  if (a === b) return true;
+  const groupe = new Set<Proteine>(["veau", "agneau"]);
+  return groupe.has(a) && groupe.has(b);
+}
+
 function noteFor(p: PoolPlat, mode: Mode): number {
   const n = mode === "sportif" ? p.note : p.note_goulaf;
   return typeof n === "number" ? n : -1;
@@ -52,7 +59,7 @@ export function choisirPlat(
   const matchFamille = (t: typeof tagged[number]) =>
     !criteres.famille || t.tags.famille === criteres.famille;
   const matchProteine = (t: typeof tagged[number]) =>
-    !criteres.proteine || t.tags.proteine === criteres.proteine;
+    !criteres.proteine || memeProteine(t.tags.proteine, criteres.proteine);
 
   const exact = tagged.filter((t) => matchFamille(t) && matchProteine(t));
   if (exact.length > 0) {
