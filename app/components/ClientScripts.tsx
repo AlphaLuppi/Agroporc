@@ -668,8 +668,11 @@ function applyMode(mode: string) {
     const sections = Array.from(container.querySelectorAll<HTMLElement>("[data-carte-section]"));
     sections.forEach((sec) => {
       const cards = Array.from(sec.querySelectorAll<HTMLElement>(".plat-card"));
+      if (cards.length < 2) return;
+      const parent = cards[0].parentElement;
+      if (!parent) return;
       cards.sort((a, b) => cardNote(b) - cardNote(a));
-      cards.forEach((card) => sec.appendChild(card));
+      cards.forEach((card) => parent.appendChild(card));
     });
     const sectionAvg = (sec: HTMLElement) => {
       const notes = Array.from(sec.querySelectorAll<HTMLElement>(".plat-card")).map(cardNote);

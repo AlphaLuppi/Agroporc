@@ -361,3 +361,9 @@ body::before {
   * { @apply border-border outline-ring/50; }
   body { @apply bg-background text-foreground; }
 }
+
+/* Carte dépliable (native <details>) */
+.carte-summary { list-style: none; }
+.carte-summary::-webkit-details-marker { display: none; }
+.carte-summary .carte-chevron { transition: transform 0.2s; }
+details[open] > .carte-summary .carte-chevron { transform: rotate(180deg); }

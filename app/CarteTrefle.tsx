@@ -72,26 +72,43 @@ export default function CarteTrefle({ carte }: { carte: Carte }) {
     .map(sortSectionPlats)
     .sort((a, b) => sectionAvg(b, "sportif") - sectionAvg(a, "sportif"));
 
-  return (
-    <div>
-      <h2 className="text-2xl sm:text-3xl font-bold tracking-tight mb-1 flex items-center gap-2" style={{ fontFamily: "var(--font-heading)" }}>
-        <span dangerouslySetInnerHTML={{ __html: getIcon("Le Bistrot Trèfle") }} />
-        La carte du Trèfle
-      </h2>
-      {evalDate && (
-        <p className="text-[var(--text-secondary)] text-sm mb-5 sm:mb-6">Notée le {evalDate}</p>
-      )}
+  const chevron = (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="carte-chevron w-4 h-4 shrink-0">
+      <polyline points="6 9 12 15 18 9" />
+    </svg>
+  );
 
-      <div data-carte-sections>
+  return (
+    <details className="mb-3 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)]">
+      <summary className="carte-summary flex items-center justify-between gap-3 px-4 py-3 cursor-pointer hover:border-[var(--border-accent)] rounded-[var(--radius)]">
+        <span className="flex items-center gap-2 text-lg font-bold tracking-tight" style={{ fontFamily: "var(--font-heading)" }}>
+          <span dangerouslySetInnerHTML={{ __html: getIcon("Le Bistrot Trèfle") }} />
+          La carte du Trèfle
+        </span>
+        <span className="flex items-center gap-2 text-[var(--text-muted)] text-xs">
+          {evalDate && <span className="hidden sm:inline">notée le {evalDate}</span>}
+          {chevron}
+        </span>
+      </summary>
+
+      <div data-carte-sections className="px-4 pb-4 pt-1">
         {sections.map((sec) => (
-          <section key={sec.nom} data-carte-section className="mb-6">
-            <h3 className="text-xs font-bold uppercase tracking-widest text-[var(--text-muted)] mb-3">{sec.nom}</h3>
-            {sec.plats.map((p, i) => (
-              <CartePlatCard key={`${sec.nom}::${p.plat ?? i}`} plat={p} />
-            ))}
-          </section>
+          <details key={sec.nom} data-carte-section className="mb-2 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-accent)]">
+            <summary className="carte-summary flex items-center justify-between gap-3 px-3 py-2.5 cursor-pointer rounded-[var(--radius)]">
+              <span className="text-xs font-bold uppercase tracking-widest text-[var(--text-secondary)]">
+                {sec.nom}
+                <span className="ml-2 text-[var(--text-muted)] font-medium normal-case tracking-normal">({sec.plats.length})</span>
+              </span>
+              {chevron}
+            </summary>
+            <div className="px-3 pb-3 pt-1">
+              {sec.plats.map((p, i) => (
+                <CartePlatCard key={`${sec.nom}::${p.plat ?? i}`} plat={p} />
+              ))}
+            </div>
+          </details>
         ))}
       </div>
-    </div>
+    </details>
   );
 }
