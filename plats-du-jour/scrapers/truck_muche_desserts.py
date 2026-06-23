@@ -14,8 +14,13 @@ sauf la première (le plat). On ne retient que le post DU JOUR (via le timestamp
 import re
 import unicodedata
 from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 import requests
+
+# Fuseau de référence : les posts (et le cron) sont calés sur l'heure de Paris.
+# On le force explicitement pour rester indépendant du fuseau du conteneur (souvent UTC).
+PARIS = ZoneInfo("Europe/Paris")
 
 INSTAGRAM_USERNAME = "le_truckmuche_"
 INSTAGRAM_API_URL = (
@@ -100,7 +105,7 @@ def _instagram_posts_with_dates(limit: int = 12) -> list[tuple[date, str]]:
         ts = node.get("taken_at_timestamp")
         if not ts:
             continue
-        post_date = datetime.fromtimestamp(ts).date()
+        post_date = datetime.fromtimestamp(ts, PARIS).date()
         caption_edges = (node.get("edge_media_to_caption") or {}).get("edges") or []
         caption = caption_edges[0].get("node", {}).get("text", "") if caption_edges else ""
         if caption.strip():
@@ -113,7 +118,7 @@ def scrape_desserts_du_jour(today: date | None = None) -> list[str] | None:
     Récupère les desserts du post Instagram DU JOUR. Renvoie None si le Truck n'a pas
     posté aujourd'hui (ou si aucun dessert n'a pu être extrait).
     """
-    jour = today or date.today()
+    jour = today or datetime.now(PARIS).date()
     for post_date, caption in _instagram_posts_with_dates():
         if post_date == jour:
             noms = parse_desserts_from_menu_post(caption)
