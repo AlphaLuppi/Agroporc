@@ -135,6 +135,19 @@ async def run_jour() -> dict:
     return output
 
 
+def run_desserts():
+    """Scrape les desserts du jour du Truck Muche et les publie comme observation."""
+    import publish
+    from scrapers import truck_muche_desserts
+    today = date.today().isoformat()
+    noms = truck_muche_desserts.scrape_desserts_du_jour()
+    if not noms:
+        print("[pipeline:desserts] Aucun dessert trouvé (post absent aujourd'hui ?)")
+        return
+    print(f"[pipeline:desserts] {len(noms)} dessert(s) : {noms}")
+    publish.publish_desserts_observation(today, noms)
+
+
 # ── Publication des jours futurs ───────────────────────────────────────────
 
 async def _publier_jours_futurs(loop):
@@ -528,6 +541,8 @@ def main():
             print(f"[main] {len(updated)} personnage(s) mis à jour : {', '.join(updated.keys())}")
         else:
             print("[main] Aucun personnage mis à jour")
+    elif mode == "desserts":
+        run_desserts()
     else:
         print(f"Mode inconnu : {mode}")
         print(usage)
