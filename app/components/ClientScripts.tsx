@@ -87,6 +87,29 @@ export function ClientScripts() {
       };
     });
 
+    // View tab switching (Plats du jour / La carte)
+    const viewTabs = document.querySelectorAll<HTMLButtonElement>(".view-tab");
+    viewTabs.forEach((tab) => {
+      tab.onclick = () => {
+        const view = tab.dataset.view;
+        viewTabs.forEach((t) => {
+          t.classList.remove("active");
+          t.style.background = "transparent";
+          t.style.color = "var(--text-muted)";
+          t.style.boxShadow = "none";
+        });
+        tab.classList.add("active");
+        tab.style.background = "var(--accent)";
+        tab.style.color = "var(--accent-text)";
+        tab.style.boxShadow = "0 1px 4px rgba(0,0,0,0.2)";
+        document.querySelectorAll<HTMLElement>("[data-view-panel]").forEach((panel) => {
+          panel.style.display = panel.dataset.viewPanel === view ? "" : "none";
+        });
+        const currentMode = localStorage.getItem("pdj-mode") || "sportif";
+        applyMode(currentMode);
+      };
+    });
+
     // ── Cart / Panier ────────────────────────────────────────────────────────
     initCart();
 
@@ -636,6 +659,27 @@ function applyMode(mode: string) {
     });
     cards.forEach((card) => panel.appendChild(card));
   });
+
+  // Sort carte: sections (best avg note first) + plats within each section, by note for the active mode
+  const noteSel = mode === "goulaf" ? ".note.mode-goulaf" : ".note.mode-sportif";
+  const cardNote = (card: HTMLElement) =>
+    parseFloat(card.querySelector<HTMLElement>(noteSel)?.dataset.note || "0");
+  document.querySelectorAll<HTMLElement>("[data-carte-sections]").forEach((container) => {
+    const sections = Array.from(container.querySelectorAll<HTMLElement>("[data-carte-section]"));
+    sections.forEach((sec) => {
+      const cards = Array.from(sec.querySelectorAll<HTMLElement>(".plat-card"));
+      cards.sort((a, b) => cardNote(b) - cardNote(a));
+      cards.forEach((card) => sec.appendChild(card));
+    });
+    const sectionAvg = (sec: HTMLElement) => {
+      const notes = Array.from(sec.querySelectorAll<HTMLElement>(".plat-card")).map(cardNote);
+      if (notes.length === 0) return -1;
+      return notes.reduce((a, b) => a + b, 0) / notes.length;
+    };
+    sections.sort((a, b) => sectionAvg(b) - sectionAvg(a));
+    sections.forEach((sec) => container.appendChild(sec));
+  });
+
   document.querySelectorAll<HTMLButtonElement>(".mode-btn").forEach((b) => {
     b.classList.remove("active");
     b.style.background = "transparent";

@@ -1,7 +1,4 @@
-"use client";
-
-import { useState } from "react";
-import type { Carte, CartePlat } from "@/lib/db";
+import type { Carte, CartePlat, CarteSection } from "@/lib/db";
 import { noteClass } from "@/lib/format";
 import { getIcon } from "@/lib/icons";
 import { Card, CardContent } from "@/components/ui/card";
@@ -49,35 +46,45 @@ function CartePlatCard({ plat }: { plat: CartePlat }) {
   );
 }
 
+/** Note moyenne d'une section pour un mode donné (plats sans note ignorés) */
+function sectionAvg(sec: CarteSection, mode: "sportif" | "goulaf"): number {
+  const notes = sec.plats
+    .map((p) => (mode === "goulaf" ? p.note_goulaf ?? p.note : p.note))
+    .filter((n): n is number => typeof n === "number");
+  if (notes.length === 0) return -1;
+  return notes.reduce((a, b) => a + b, 0) / notes.length;
+}
+
+/** Trie une section : plats par note (mode sportif) décroissante */
+function sortSectionPlats(sec: CarteSection): CarteSection {
+  const plats = [...sec.plats].sort((a, b) => (b.note ?? -1) - (a.note ?? -1));
+  return { ...sec, plats };
+}
+
 export default function CarteTrefle({ carte }: { carte: Carte }) {
-  const [open, setOpen] = useState(false);
   const evalDate = carte.evaluated_at
     ? new Date(carte.evaluated_at).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" })
     : null;
 
-  return (
-    <div className="mt-8 sm:mt-10">
-      <button
-        onClick={() => setOpen((o) => !o)}
-        aria-expanded={open}
-        aria-controls="carte-trefle-content"
-        className="w-full flex items-center justify-between gap-3 px-4 py-3 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] text-left hover:border-[var(--border-accent)] transition-colors"
-      >
-        <span className="flex items-center gap-2 font-semibold" style={{ fontFamily: "var(--font-heading)" }}>
-          <span dangerouslySetInnerHTML={{ __html: getIcon("Le Bistrot Trèfle") }} />
-          La carte du Trèfle
-        </span>
-        <span className="flex items-center gap-2 text-[var(--text-muted)] text-xs">
-          {evalDate && <span className="hidden sm:inline">notée le {evalDate}</span>}
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 transition-transform" style={{ transform: open ? "rotate(180deg)" : "none" }}>
-            <polyline points="6 9 12 15 18 9" />
-          </svg>
-        </span>
-      </button>
+  // Tri par défaut (SSR) : sections de la meilleure note moyenne à la plus basse, en mode sportif.
+  // Le tri dynamique selon le mode est géré côté client (applyMode).
+  const sections = [...carte.sections]
+    .map(sortSectionPlats)
+    .sort((a, b) => sectionAvg(b, "sportif") - sectionAvg(a, "sportif"));
 
-      <div hidden={!open} id="carte-trefle-content" className="mt-4">
-        {carte.sections.map((sec) => (
-          <section key={sec.nom} className="mb-6">
+  return (
+    <div>
+      <h2 className="text-2xl sm:text-3xl font-bold tracking-tight mb-1 flex items-center gap-2" style={{ fontFamily: "var(--font-heading)" }}>
+        <span dangerouslySetInnerHTML={{ __html: getIcon("Le Bistrot Trèfle") }} />
+        La carte du Trèfle
+      </h2>
+      {evalDate && (
+        <p className="text-[var(--text-secondary)] text-sm mb-5 sm:mb-6">Notée le {evalDate}</p>
+      )}
+
+      <div data-carte-sections>
+        {sections.map((sec) => (
+          <section key={sec.nom} data-carte-section className="mb-6">
             <h3 className="text-xs font-bold uppercase tracking-widest text-[var(--text-muted)] mb-3">{sec.nom}</h3>
             {sec.plats.map((p, i) => (
               <CartePlatCard key={`${sec.nom}::${p.plat ?? i}`} plat={p} />

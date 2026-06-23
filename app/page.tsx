@@ -96,6 +96,9 @@ function WeekView({ weekPdj, carte, prevHref, nextHref, currentMonday }: { weekP
 
   return (
     <>
+      {carte && <ViewTabs />}
+
+      <div data-view-panel="pdj">
       <div className="flex items-center justify-between gap-2 mb-3">
         <a href={prevHref} aria-label="Semaine précédente" className="w-9 h-9 flex items-center justify-center rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] text-[var(--text-secondary)] hover:text-[var(--text)] hover:border-[var(--border-accent)] transition-colors">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><polyline points="15 18 9 12 15 6" /></svg>
@@ -150,9 +153,35 @@ function WeekView({ weekPdj, carte, prevHref, nextHref, currentMonday }: { weekP
       {weekPdj.map((pdj, i) => (
         <DayPanel key={pdj.date} pdj={pdj} index={i} isDefault={i === defaultIdx} today={today} />
       ))}
+      </div>
 
-      {carte && <CarteTrefle carte={carte} />}
+      {carte && (
+        <div data-view-panel="carte" style={{ display: "none" }}>
+          <ModeSelector />
+          <CarteTrefle carte={carte} />
+        </div>
+      )}
     </>
+  );
+}
+
+function ViewTabs() {
+  return (
+    <div className="view-tabs flex gap-1 mb-4 sm:mb-5 bg-[var(--surface)] border border-[var(--border)] rounded-[var(--radius)] p-1">
+      <button
+        className="view-tab active flex-1 flex items-center justify-center gap-1.5 py-2 px-3 border-none rounded-[calc(var(--radius)-4px)] bg-transparent text-[var(--text-muted)] font-semibold text-sm cursor-pointer transition-all"
+        data-view="pdj"
+        style={{ background: "var(--accent)", color: "var(--accent-text)", boxShadow: "0 1px 4px rgba(0,0,0,0.2)" }}
+      >
+        Plats du jour
+      </button>
+      <button
+        className="view-tab flex-1 flex items-center justify-center gap-1.5 py-2 px-3 border-none rounded-[calc(var(--radius)-4px)] bg-transparent text-[var(--text-muted)] font-semibold text-sm cursor-pointer transition-all"
+        data-view="carte"
+      >
+        La carte
+      </button>
+    </div>
   );
 }
 
