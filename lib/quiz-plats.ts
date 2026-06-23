@@ -40,7 +40,13 @@ function noteFor(p: PoolPlat, mode: Mode): number {
 
 function meilleur(pool: PoolPlat[], mode: Mode): PoolPlat | null {
   if (pool.length === 0) return null;
-  return [...pool].sort((a, b) => noteFor(b, mode) - noteFor(a, mode))[0];
+  // Tri déterministe : note du mode, puis départage stable (restaurant, plat).
+  return [...pool].sort(
+    (a, b) =>
+      noteFor(b, mode) - noteFor(a, mode) ||
+      a.restaurant.localeCompare(b.restaurant) ||
+      a.plat.localeCompare(b.plat)
+  )[0];
 }
 
 /**
