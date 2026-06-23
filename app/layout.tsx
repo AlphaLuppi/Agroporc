@@ -47,6 +47,9 @@ export default function RootLayout({
                 <a href="/" className="text-[var(--text-secondary)] no-underline text-xs sm:text-sm font-medium px-2 sm:px-3 py-1.5 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
                   Aujourd&apos;hui
                 </a>
+                <a href="/aide-moi-a-choisir" className="text-[var(--text-secondary)] no-underline text-xs sm:text-sm font-medium px-2 sm:px-3 py-1.5 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
+                  Aide-moi à choisir
+                </a>
                 <a href="/idees" className="text-[var(--text-secondary)] no-underline text-xs sm:text-sm font-medium px-2 sm:px-3 py-1.5 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
                   Idées
                 </a>
@@ -175,6 +178,9 @@ export default function RootLayout({
             <div className="flex flex-col gap-1 mb-3" data-nav-links>
               <a href="/" className="text-[var(--text-secondary)] no-underline text-sm font-medium px-3 py-2 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
                 Aujourd&apos;hui
+              </a>
+              <a href="/aide-moi-a-choisir" className="text-[var(--text-secondary)] no-underline text-sm font-medium px-3 py-2 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
+                Aide-moi à choisir
               </a>
               <a href="/idees" className="text-[var(--text-secondary)] no-underline text-sm font-medium px-3 py-2 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
                 Idées
