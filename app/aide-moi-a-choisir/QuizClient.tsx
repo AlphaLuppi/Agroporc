@@ -1,49 +1,49 @@
 "use client";
 
 import { useState } from "react";
-import { choisirPlat, type PoolPlat, type Mode } from "@/lib/quiz-plats";
+import { resoudreFeuille, type QuizNode, type QuizLeaf } from "@/lib/quiz-tree";
+import { type PoolPlat, type Mode } from "@/lib/quiz-plats";
 import { choisirDessert, type DessertConnu, type SaveurDessert, type Lourdeur } from "@/lib/desserts";
-import type { Famille, Proteine } from "@/lib/quiz-tags";
 
-type Answers = {
-  mode?: Mode;
-  menu?: "plat" | "menu";
-  famille?: Famille;
-  proteine?: Proteine;
-  saveur?: SaveurDessert;
-  lourdeur?: Lourdeur;
-  _familleAsked?: boolean;
-  _proteineAsked?: boolean;
-  _saveurAsked?: boolean;
-  _lourdeurAsked?: boolean;
-};
-
-interface Choice<T> {
+interface Choix {
+  key: string;
   label: string;
-  value: T;
+  emoji: string;
 }
 
-const card =
-  "w-full text-left px-4 py-3 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] hover:border-[var(--border-accent)] hover:bg-[var(--surface-hover)] transition-colors text-[var(--text)] font-medium cursor-pointer";
+const bouton =
+  "group flex w-full items-center gap-4 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] px-5 py-4 text-left text-[1.0625rem] font-medium text-[var(--text)] min-h-[60px] cursor-pointer " +
+  "transition-[transform,background-color,border-color] duration-150 ease-out " +
+  "hover:border-[var(--border-accent)] hover:bg-[var(--surface-hover)] active:scale-[0.98] " +
+  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--border-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg,transparent)]";
 
-function QuestionStep<T extends string>({
+const pastille =
+  "flex h-11 w-11 shrink-0 items-center justify-center rounded-[var(--radius-sm)] bg-[var(--surface-accent)] text-2xl transition-transform duration-150 ease-out group-hover:scale-110";
+
+function Question({
   titre,
-  choices,
+  choix,
   onPick,
 }: {
   titre: string;
-  choices: Choice<T>[];
-  onPick: (v: T) => void;
+  choix: Choix[];
+  onPick: (key: string) => void;
 }) {
   return (
-    <div className="flex flex-col gap-3">
-      <h2 className="text-lg font-bold text-[var(--text)]" style={{ fontFamily: "var(--font-heading)" }}>
+    <div className="flex flex-col gap-4">
+      <h2 className="text-xl font-bold text-[var(--text)]" style={{ fontFamily: "var(--font-heading)" }}>
         {titre}
       </h2>
-      <div className="flex flex-col gap-2">
-        {choices.map((c) => (
-          <button key={c.value} className={card} onClick={() => onPick(c.value)}>
-            {c.label}
+      <div className="flex flex-col gap-3">
+        {choix.map((c) => (
+          <button key={c.key} className={bouton} onClick={() => onPick(c.key)}>
+            <span className={pastille} aria-hidden>
+              {c.emoji}
+            </span>
+            <span className="flex-1">{c.label}</span>
+            <span className="text-[var(--text-muted)] transition-transform duration-150 ease-out group-hover:translate-x-0.5">
+              →
+            </span>
           </button>
         ))}
       </div>
@@ -51,211 +51,202 @@ function QuestionStep<T extends string>({
   );
 }
 
+function Progression({ etape }: { etape: number }) {
+  return (
+    <div className="mb-5 flex items-center gap-2" aria-hidden>
+      {Array.from({ length: 4 }).map((_, i) => (
+        <span
+          key={i}
+          className="h-1.5 flex-1 rounded-full transition-colors duration-200"
+          style={{ backgroundColor: i < etape ? "var(--accent)" : "var(--border)" }}
+        />
+      ))}
+    </div>
+  );
+}
+
 export default function QuizClient({
-  pool,
+  tree,
   desserts,
   hasJour,
 }: {
-  pool: PoolPlat[];
+  tree: QuizNode;
   desserts: DessertConnu[];
   hasJour: boolean;
 }) {
-  const [answers, setAnswers] = useState<Answers>({});
-  const [done, setDone] = useState(false);
+  const [mode, setMode] = useState<Mode>();
+  const [menu, setMenu] = useState<"plat" | "menu">();
+  const [node, setNode] = useState<QuizNode>(tree);
+  const [leaf, setLeaf] = useState<QuizLeaf>();
+  const [saveur, setSaveur] = useState<SaveurDessert>();
+  const [saveurAsked, setSaveurAsked] = useState(false);
+  const [lourdeur, setLourdeur] = useState<Lourdeur>();
+  const [lourdeurAsked, setLourdeurAsked] = useState(false);
 
   const reset = () => {
-    setAnswers({});
-    setDone(false);
+    setMode(undefined);
+    setMenu(undefined);
+    setNode(tree);
+    setLeaf(undefined);
+    setSaveur(undefined);
+    setSaveurAsked(false);
+    setLourdeur(undefined);
+    setLourdeurAsked(false);
   };
 
-  // Détermine l'étape courante à partir des réponses.
+  const descendre = (next: QuizNode) => {
+    if (next.kind === "leaf") setLeaf(next);
+    else setNode(next);
+  };
+
+  // Étape courante (pour la barre de progression).
+  const etape = !mode ? 0 : !menu ? 1 : !leaf ? 2 : 3;
+
   function render() {
-    if (done) return <Resultat answers={answers} pool={pool} desserts={desserts} onReset={reset} />;
-
-    if (!answers.mode) {
+    if (!mode) {
       return (
-        <QuestionStep<Mode>
+        <Question
           titre="Tu manges plutôt malin ou plaisir aujourd'hui ?"
-          choices={[
-            { label: "🥗 Sportif (équilibré)", value: "sportif" },
-            { label: "😋 Goulaf (plaisir)", value: "goulaf" },
+          choix={[
+            { key: "sportif", label: "Sportif (équilibré)", emoji: "🥗" },
+            { key: "goulaf", label: "Goulaf (plaisir)", emoji: "😋" },
           ]}
-          onPick={(mode) => setAnswers((a) => ({ ...a, mode }))}
+          onPick={(k) => setMode(k as Mode)}
         />
       );
     }
 
-    if (!answers.menu) {
+    if (!menu) {
       return (
-        <QuestionStep<"plat" | "menu">
+        <Question
           titre="Tu veux juste un plat, ou un plat + un dessert ?"
-          choices={[
-            { label: "🍽️ Un plat seul", value: "plat" },
-            { label: "🍰 Un plat + un dessert", value: "menu" },
+          choix={[
+            { key: "plat", label: "Un plat seul", emoji: "🍽️" },
+            { key: "menu", label: "Un plat + un dessert", emoji: "🍰" },
           ]}
-          onPick={(menu) => setAnswers((a) => ({ ...a, menu }))}
+          onPick={(k) => setMenu(k as "plat" | "menu")}
         />
       );
     }
 
-    if (!answers.famille && !answers._familleAsked) {
+    // Parcours de l'arbre des plats.
+    if (!leaf) {
+      if (node.kind === "leaf") {
+        setLeaf(node);
+        return null;
+      }
       return (
-        <QuestionStep<Famille | "peu_importe">
-          titre="Plutôt viande, poisson, ou sans viande ?"
-          choices={[
-            { label: "🥩 De la viande", value: "viande" },
-            { label: "🐟 Du poisson", value: "poisson" },
-            { label: "🥦 Sans viande ni poisson", value: "vege" },
-            { label: "🤷 Peu importe", value: "peu_importe" },
-          ]}
-          onPick={(v) =>
-            setAnswers((a) => ({
-              ...a,
-              famille: v === "peu_importe" ? undefined : v,
-              _familleAsked: true,
-            }))
-          }
+        <Question
+          titre={node.titre}
+          choix={node.options.map((o, i) => ({ key: String(i), label: o.label, emoji: o.emoji }))}
+          onPick={(k) => descendre(node.options[Number(k)].node)}
         />
       );
     }
 
-    // Question protéine uniquement si "viande"
-    if (answers.famille === "viande" && !answers.proteine && !answers._proteineAsked) {
+    // Branche dessert.
+    if (menu === "menu" && !saveurAsked) {
       return (
-        <QuestionStep<Proteine | "peu_importe">
-          titre="Quelle viande te fait envie ?"
-          choices={[
-            { label: "🍗 Poulet", value: "poulet" },
-            { label: "🐄 Bœuf", value: "boeuf" },
-            { label: "🐖 Porc", value: "porc" },
-            { label: "🐑 Veau / agneau", value: "veau" },
-            { label: "🤷 Peu importe", value: "peu_importe" },
-          ]}
-          onPick={(v) =>
-            setAnswers((a) => ({
-              ...a,
-              proteine: v === "peu_importe" ? undefined : v,
-              _proteineAsked: true,
-            }))
-          }
-        />
-      );
-    }
-
-    // Branche dessert
-    if (answers.menu === "menu" && !answers.saveur && !answers._saveurAsked) {
-      return (
-        <QuestionStep<SaveurDessert | "peu_importe">
+        <Question
           titre="Côté dessert, tu pars sur quoi ?"
-          choices={[
-            { label: "🍓 Fruité", value: "fruite" },
-            { label: "🍫 Chocolaté", value: "chocolate" },
-            { label: "🥛 Crémeux / lacté", value: "creme_lacte" },
-            { label: "🥧 Pâtissier", value: "patissier" },
-            { label: "🤷 Peu importe", value: "peu_importe" },
+          choix={[
+            { key: "fruite", label: "Fruité", emoji: "🍓" },
+            { key: "chocolate", label: "Chocolaté", emoji: "🍫" },
+            { key: "creme_lacte", label: "Crémeux / lacté", emoji: "🥛" },
+            { key: "patissier", label: "Pâtissier", emoji: "🥧" },
+            { key: "peu_importe", label: "Peu importe", emoji: "🤷" },
           ]}
-          onPick={(v) =>
-            setAnswers((a) => ({
-              ...a,
-              saveur: v === "peu_importe" ? undefined : v,
-              _saveurAsked: true,
-            }))
-          }
+          onPick={(k) => {
+            setSaveur(k === "peu_importe" ? undefined : (k as SaveurDessert));
+            setSaveurAsked(true);
+          }}
         />
       );
     }
 
-    if (answers.menu === "menu" && !answers.lourdeur && !answers._lourdeurAsked) {
+    if (menu === "menu" && !lourdeurAsked) {
       return (
-        <QuestionStep<Lourdeur | "peu_importe">
+        <Question
           titre="Léger ou bien gourmand ?"
-          choices={[
-            { label: "🍃 Léger", value: "leger" },
-            { label: "🤤 Gourmand", value: "gourmand" },
-            { label: "🤷 Peu importe", value: "peu_importe" },
+          choix={[
+            { key: "leger", label: "Léger", emoji: "🍃" },
+            { key: "gourmand", label: "Gourmand", emoji: "🤤" },
+            { key: "peu_importe", label: "Peu importe", emoji: "🤷" },
           ]}
-          onPick={(v) =>
-            setAnswers((a) => ({
-              ...a,
-              lourdeur: v === "peu_importe" ? undefined : v,
-              _lourdeurAsked: true,
-            }))
-          }
+          onPick={(k) => {
+            setLourdeur(k === "peu_importe" ? undefined : (k as Lourdeur));
+            setLourdeurAsked(true);
+          }}
         />
       );
     }
 
-    // Plus de questions → résultat
-    setDone(true);
-    return null;
+    const plat = resoudreFeuille(leaf, mode);
+    const dessert =
+      menu === "menu" ? choisirDessert(desserts, { saveur, lourdeur }) : null;
+
+    return <Resultat mode={mode} plat={plat} menu={menu} dessert={dessert} onReset={reset} />;
   }
 
   return (
-    <div className="max-w-[520px] mx-auto">
+    <div className="mx-auto max-w-[520px]">
       <header className="mb-6">
         <h1 className="text-2xl font-bold text-[var(--accent)]" style={{ fontFamily: "var(--font-heading)" }}>
           Aide-moi à choisir
         </h1>
-        <p className="text-sm text-[var(--text-secondary)] mt-1">
+        <p className="mt-1 text-sm text-[var(--text-secondary)]">
           Quelques questions, et on te trouve le plat idéal du jour.
         </p>
         {!hasJour && (
-          <p className="text-xs text-[var(--text-muted)] mt-2">
+          <p className="mt-2 text-xs text-[var(--text-muted)]">
             (Pas encore de plats du jour publiés — on cherche dans les cartes.)
           </p>
         )}
       </header>
+      {etape < 3 && <Progression etape={etape} />}
       {render()}
     </div>
   );
 }
 
 function Resultat({
-  answers,
-  pool,
-  desserts,
+  mode,
+  plat,
+  menu,
+  dessert,
   onReset,
 }: {
-  answers: Answers;
-  pool: PoolPlat[];
-  desserts: DessertConnu[];
+  mode: Mode;
+  plat: PoolPlat | null;
+  menu: "plat" | "menu";
+  dessert: DessertConnu | null;
   onReset: () => void;
 }) {
-  const mode: Mode = answers.mode ?? "sportif";
-  const { resultat: plat, exact } = choisirPlat(
-    pool,
-    { famille: answers.famille, proteine: answers.proteine },
-    mode
-  );
-  const dessert =
-    answers.menu === "menu"
-      ? choisirDessert(desserts, { saveur: answers.saveur, lourdeur: answers.lourdeur })
-      : null;
-
-  const noteAffichee = (p: PoolPlat) => (mode === "sportif" ? p.note : p.note_goulaf);
-  const justifAffichee = (p: PoolPlat) =>
-    mode === "sportif" ? p.justification : p.justification_goulaf;
+  const note = plat ? (mode === "sportif" ? plat.note : plat.note_goulaf) : undefined;
+  const justif = plat
+    ? mode === "sportif"
+      ? plat.justification
+      : plat.justification_goulaf
+    : undefined;
 
   return (
     <div className="flex flex-col gap-4">
-      <h2 className="text-lg font-bold text-[var(--text)]" style={{ fontFamily: "var(--font-heading)" }}>
-        {exact ? "Ton plat idéal aujourd'hui" : "Pas de match exact — au plus proche"}
+      <h2 className="text-xl font-bold text-[var(--text)]" style={{ fontFamily: "var(--font-heading)" }}>
+        Ton plat idéal aujourd'hui
       </h2>
 
       {plat ? (
-        <div className="rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] p-4">
-          <div className="flex items-center justify-between gap-3">
-            <span className="font-bold text-[var(--text)]">{plat.plat}</span>
-            {typeof noteAffichee(plat) === "number" && (
-              <span className="text-sm font-bold text-[var(--accent)]">{noteAffichee(plat)}/10</span>
+        <div className="rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] p-5">
+          <div className="flex items-start justify-between gap-3">
+            <span className="text-lg font-bold text-[var(--text)]">{plat.plat}</span>
+            {typeof note === "number" && (
+              <span className="shrink-0 text-sm font-bold tabular-nums text-[var(--accent)]">{note}/10</span>
             )}
           </div>
-          <div className="text-xs text-[var(--text-muted)] mt-1">
+          <div className="mt-1 text-xs text-[var(--text-muted)]">
             {plat.restaurant} · {plat.prix}
           </div>
-          {justifAffichee(plat) && (
-            <p className="text-sm text-[var(--text-secondary)] mt-2">{justifAffichee(plat)}</p>
-          )}
+          {justif && <p className="mt-3 text-sm text-[var(--text-secondary)]">{justif}</p>}
         </div>
       ) : (
         <p className="text-sm text-[var(--text-secondary)]">
@@ -263,16 +254,16 @@ function Resultat({
         </p>
       )}
 
-      {answers.menu === "menu" && (
+      {menu === "menu" && (
         <>
-          <h2 className="text-lg font-bold text-[var(--text)] mt-2" style={{ fontFamily: "var(--font-heading)" }}>
+          <h2 className="mt-2 text-xl font-bold text-[var(--text)]" style={{ fontFamily: "var(--font-heading)" }}>
             …et le dessert
           </h2>
           {dessert ? (
-            <div className="rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] p-4">
-              <div className="font-bold text-[var(--text)]">{dessert.nom}</div>
-              <div className="text-xs text-[var(--text-muted)] mt-1">{dessert.restaurant}</div>
-              <div className="text-xs mt-2 text-[var(--text-secondary)]">
+            <div className="rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] p-5">
+              <div className="text-lg font-bold text-[var(--text)]">{dessert.nom}</div>
+              <div className="mt-1 text-xs text-[var(--text-muted)]">{dessert.restaurant}</div>
+              <div className="mt-3 text-xs text-[var(--text-secondary)]">
                 ≈ {dessert.proba}% de chances de l'avoir aujourd'hui
                 {dessert.proba < 100 && " — à vérifier sur place"}
               </div>
@@ -286,7 +277,7 @@ function Resultat({
       )}
 
       <button
-        className="mt-2 self-start px-4 py-2 rounded-[var(--radius)] bg-[var(--accent)] text-[var(--accent-text)] font-semibold cursor-pointer"
+        className="mt-2 inline-flex min-h-[52px] items-center justify-center gap-2 self-start rounded-[var(--radius)] bg-[var(--accent)] px-6 text-base font-semibold text-[var(--accent-text)] transition-[transform,filter] duration-150 ease-out hover:brightness-105 active:scale-[0.98] cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--border-accent)]"
         onClick={onReset}
       >
         ↻ Recommencer

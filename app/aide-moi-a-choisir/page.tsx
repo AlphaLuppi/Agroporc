@@ -1,6 +1,7 @@
 import { ensureTable, getPdjByDate, getCarte, getDessertsObservations } from "@/lib/db";
 import type { Carte } from "@/lib/db";
 import type { PoolPlat } from "@/lib/quiz-plats";
+import { buildQuizTree } from "@/lib/quiz-tree";
 import {
   DESSERTS_CONNUS,
   classerDessertNom,
@@ -82,8 +83,10 @@ export default async function AideMoiAChoisir() {
       ingredients_detail: p.ingredients_detail,
     }));
 
+  // L'arbre porte sur les plats du jour ; repli sur les cartes s'il n'y en a pas encore.
   const platsCartes = cartes.flatMap((c, i) => platsFromCarte(c, SLUGS[i].nom));
-  const pool: PoolPlat[] = [...platsJour, ...platsCartes];
+  const platsArbre: PoolPlat[] = platsJour.length > 0 ? platsJour : platsCartes;
+  const tree = buildQuizTree(platsArbre);
 
   // Desserts Truck Muche : observations réelles (proba = fréquence), seed en fallback cold-start.
   const observations = await getDessertsObservations(isoMinusDays(today, 60));
@@ -95,5 +98,5 @@ export default async function AideMoiAChoisir() {
     ...cartes.flatMap((c, i) => dessertsFromCarte(c, SLUGS[i].nom)),
   ];
 
-  return <QuizClient pool={pool} desserts={desserts} hasJour={platsJour.length > 0} />;
+  return <QuizClient tree={tree} desserts={desserts} hasJour={platsJour.length > 0} />;
 }
