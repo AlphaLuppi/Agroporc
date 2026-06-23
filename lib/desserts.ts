@@ -69,6 +69,91 @@ export const DESSERTS_CONNUS: DessertConnu[] = [
   { nom: "Brioche perdue Nutella", restaurant: "Le Truck Muche", type_saveur: "chocolate", leger_gourmand: "gourmand", proba: 30 },
 ];
 
+/** Une observation quotidienne d'un dessert (issue du scrape). */
+export interface DessertObservation {
+  date: string; // YYYY-MM-DD
+  nom: string;
+}
+
+/** Clé de regroupement : minuscule, sans accents/ligatures, sans ponctuation, espaces normalisés. */
+export function normalizeDessertKey(nom: string): string {
+  return nom
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/œ/g, "oe")
+    .replace(/æ/g, "ae")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z0-9 ]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** Soustrait `n` jours à une date ISO (YYYY-MM-DD) et renvoie une date ISO. */
+export function isoMinusDays(iso: string, n: number): string {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - n);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Agrège des observations en base de desserts data-driven.
+ * proba = (jours distincts où le dessert a été vu) / (jours distincts où DES desserts
+ * ont été postés), sur la fenêtre [today - windowDays, today]. Les jours sans post
+ * n'entrent pas dans le dénominateur.
+ */
+export function aggregateObservations(
+  observations: DessertObservation[],
+  opts: { today: string; windowDays?: number }
+): DessertConnu[] {
+  const windowDays = opts.windowDays ?? 60;
+  const cutoff = isoMinusDays(opts.today, windowDays);
+  const inWindow = observations.filter(
+    (o) => o.date >= cutoff && o.date <= opts.today
+  );
+  const postDays = new Set(inWindow.map((o) => o.date));
+  const totalDays = postDays.size;
+  if (totalDays === 0) return [];
+
+  const groups = new Map<
+    string,
+    { dates: Set<string>; noms: Map<string, number> }
+  >();
+  for (const o of inWindow) {
+    const key = normalizeDessertKey(o.nom);
+    if (!key) continue;
+    let g = groups.get(key);
+    if (!g) {
+      g = { dates: new Set(), noms: new Map() };
+      groups.set(key, g);
+    }
+    g.dates.add(o.date);
+    g.noms.set(o.nom, (g.noms.get(o.nom) ?? 0) + 1);
+  }
+
+  const out: DessertConnu[] = [];
+  for (const g of groups.values()) {
+    const nom = [...g.noms.entries()].sort((a, b) => b[1] - a[1])[0][0];
+    const proba = Math.round((g.dates.size / totalDays) * 100);
+    const { type_saveur, leger_gourmand } = classerDessertNom(nom);
+    out.push({ nom, restaurant: "Le Truck Muche", type_saveur, leger_gourmand, proba });
+  }
+  return out;
+}
+
+/**
+ * Fusionne les desserts observés (prioritaires) et le seed curé (fallback cold-start),
+ * dédupliqués par clé normalisée. Un dessert observé écrase l'entrée seed de même clé.
+ */
+export function mergeDesserts(
+  observed: DessertConnu[],
+  seed: DessertConnu[]
+): DessertConnu[] {
+  const byKey = new Map<string, DessertConnu>();
+  for (const d of seed) byKey.set(normalizeDessertKey(d.nom), d);
+  for (const d of observed) byKey.set(normalizeDessertKey(d.nom), d);
+  return [...byKey.values()];
+}
+
 /** Filtre par critères (axes non précisés = pas de filtre), trie par proba puis note, retourne le meilleur. */
 export function choisirDessert(
   desserts: DessertConnu[],
