@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { resoudreFeuille, type QuizNode, type QuizLeaf } from "@/lib/quiz-tree";
+import { useState, type ReactNode } from "react";
+import { meilleursCandidats, type Criteres, type Envie, type Cuisine, type LourdeurPlat, type Budget } from "@/lib/quiz-engine";
 import { type PoolPlat, type Mode } from "@/lib/quiz-plats";
 import { choisirDessert, type DessertConnu, type SaveurDessert, type Lourdeur } from "@/lib/desserts";
 
@@ -22,18 +22,23 @@ const pastille =
 
 function Question({
   titre,
+  sousTitre,
   choix,
   onPick,
 }: {
   titre: string;
+  sousTitre?: string;
   choix: Choix[];
   onPick: (key: string) => void;
 }) {
   return (
     <div className="flex flex-col gap-4">
-      <h2 className="text-xl font-bold text-[var(--text)]" style={{ fontFamily: "var(--font-heading)" }}>
-        {titre}
-      </h2>
+      <div>
+        <h2 className="text-xl font-bold text-[var(--text)]" style={{ fontFamily: "var(--font-heading)" }}>
+          {titre}
+        </h2>
+        {sousTitre && <p className="mt-1 text-sm text-[var(--text-muted)]">{sousTitre}</p>}
+      </div>
       <div className="flex flex-col gap-3">
         {choix.map((c) => (
           <button key={c.key} className={bouton} onClick={() => onPick(c.key)}>
@@ -51,10 +56,10 @@ function Question({
   );
 }
 
-function Progression({ etape }: { etape: number }) {
+function Progression({ etape, total }: { etape: number; total: number }) {
   return (
     <div className="mb-5 flex items-center gap-2" aria-hidden>
-      {Array.from({ length: 4 }).map((_, i) => (
+      {Array.from({ length: total }).map((_, i) => (
         <span
           key={i}
           className="h-1.5 flex-1 rounded-full transition-colors duration-200"
@@ -65,46 +70,103 @@ function Progression({ etape }: { etape: number }) {
   );
 }
 
+const ENVIE_CHOIX: Choix[] = [
+  { key: "poulet", label: "Poulet / volaille", emoji: "🍗" },
+  { key: "boeuf", label: "Bœuf", emoji: "🐄" },
+  { key: "porc", label: "Porc", emoji: "🐖" },
+  { key: "veau", label: "Veau / agneau", emoji: "🐑" },
+  { key: "poisson", label: "Poisson / fruits de mer", emoji: "🐟" },
+  { key: "vege", label: "Végé (sans viande ni poisson)", emoji: "🥦" },
+  { key: "peu_importe", label: "Peu importe", emoji: "🤷" },
+];
+
+const CUISINE_CHOIX: Choix[] = [
+  { key: "mijote", label: "Mijoté / réconfortant", emoji: "🍲" },
+  { key: "asiatique", label: "Asiatique", emoji: "🥢" },
+  { key: "mediterraneen", label: "Méditerranéen", emoji: "🫒" },
+  { key: "streetfood", label: "Burger / streetfood", emoji: "🍔" },
+  { key: "froid", label: "Salade / froid", emoji: "🥗" },
+  { key: "peu_importe", label: "Peu importe", emoji: "🤷" },
+];
+
+const LOURDEUR_CHOIX: Choix[] = [
+  { key: "leger", label: "Léger", emoji: "🍃" },
+  { key: "copieux", label: "Copieux", emoji: "🍛" },
+  { key: "peu_importe", label: "Peu importe", emoji: "🤷" },
+];
+
+const BUDGET_CHOIX: Choix[] = [
+  { key: "eco", label: "Éco (≤ 10€)", emoji: "💰" },
+  { key: "standard", label: "Standard", emoji: "💳" },
+  { key: "peu_importe", label: "Peu importe", emoji: "🤷" },
+];
+
+const DESSERT_SAVEUR_CHOIX: Choix[] = [
+  { key: "fruite", label: "Fruité", emoji: "🍓" },
+  { key: "chocolate", label: "Chocolaté", emoji: "🍫" },
+  { key: "creme_lacte", label: "Crémeux / lacté", emoji: "🥛" },
+  { key: "patissier", label: "Pâtissier", emoji: "🥧" },
+  { key: "peu_importe", label: "Peu importe", emoji: "🤷" },
+];
+
+const DESSERT_LOURDEUR_CHOIX: Choix[] = [
+  { key: "leger", label: "Léger", emoji: "🍃" },
+  { key: "gourmand", label: "Gourmand", emoji: "🤤" },
+  { key: "peu_importe", label: "Peu importe", emoji: "🤷" },
+];
+
+const opt = <T extends string>(k: string): T | undefined => (k === "peu_importe" ? undefined : (k as T));
+
 export default function QuizClient({
-  tree,
+  pool,
   desserts,
   hasJour,
 }: {
-  tree: QuizNode;
+  pool: PoolPlat[];
   desserts: DessertConnu[];
   hasJour: boolean;
 }) {
   const [mode, setMode] = useState<Mode>();
   const [menu, setMenu] = useState<"plat" | "menu">();
-  const [node, setNode] = useState<QuizNode>(tree);
-  const [leaf, setLeaf] = useState<QuizLeaf>();
-  const [saveur, setSaveur] = useState<SaveurDessert>();
-  const [saveurAsked, setSaveurAsked] = useState(false);
-  const [lourdeur, setLourdeur] = useState<Lourdeur>();
-  const [lourdeurAsked, setLourdeurAsked] = useState(false);
+  const [envie, setEnvie] = useState<{ v?: Envie } | undefined>();
+  const [cuisine, setCuisine] = useState<{ v?: Cuisine } | undefined>();
+  const [lourdeur, setLourdeur] = useState<{ v?: LourdeurPlat } | undefined>();
+  const [budget, setBudget] = useState<{ v?: Budget } | undefined>();
+  const [saveur, setSaveur] = useState<{ v?: SaveurDessert } | undefined>();
+  const [lourdeurDessert, setLourdeurDessert] = useState<{ v?: Lourdeur } | undefined>();
+  const [platChoisi, setPlatChoisi] = useState<PoolPlat | null | undefined>();
 
   const reset = () => {
     setMode(undefined);
     setMenu(undefined);
-    setNode(tree);
-    setLeaf(undefined);
-    setSaveur(undefined);
-    setSaveurAsked(false);
+    setEnvie(undefined);
+    setCuisine(undefined);
     setLourdeur(undefined);
-    setLourdeurAsked(false);
+    setBudget(undefined);
+    setSaveur(undefined);
+    setLourdeurDessert(undefined);
+    setPlatChoisi(undefined);
   };
 
-  const descendre = (next: QuizNode) => {
-    if (next.kind === "leaf") setLeaf(next);
-    else setNode(next);
-  };
+  // Nombre total d'étapes (pour la progression) : mode, menu, 4 critères plat, +2 si dessert.
+  const total = 6 + (menu === "menu" ? 2 : 0);
+  const repondues =
+    (mode ? 1 : 0) +
+    (menu ? 1 : 0) +
+    (envie ? 1 : 0) +
+    (cuisine ? 1 : 0) +
+    (lourdeur ? 1 : 0) +
+    (budget ? 1 : 0) +
+    (saveur ? 1 : 0) +
+    (lourdeurDessert ? 1 : 0);
 
-  // Étape courante (pour la barre de progression).
-  const etape = !mode ? 0 : !menu ? 1 : !leaf ? 2 : 3;
+  // Renvoie le contenu courant ; isResult sert à masquer la barre de progression.
+  function render(): { node: ReactNode; isResult: boolean } {
+    const q = (node: ReactNode) => ({ node, isResult: false });
+    const r = (node: ReactNode) => ({ node, isResult: true });
 
-  function render() {
     if (!mode) {
-      return (
+      return q(
         <Question
           titre="Tu manges plutôt malin ou plaisir aujourd'hui ?"
           choix={[
@@ -117,7 +179,7 @@ export default function QuizClient({
     }
 
     if (!menu) {
-      return (
+      return q(
         <Question
           titre="Tu veux juste un plat, ou un plat + un dessert ?"
           choix={[
@@ -129,64 +191,100 @@ export default function QuizClient({
       );
     }
 
-    // Parcours de l'arbre des plats.
-    if (!leaf) {
-      if (node.kind === "leaf") {
-        setLeaf(node);
-        return null;
-      }
-      return (
+    if (!envie) {
+      return q(
         <Question
-          titre={node.titre}
-          choix={node.options.map((o, i) => ({ key: String(i), label: o.label, emoji: o.emoji }))}
-          onPick={(k) => descendre(node.options[Number(k)].node)}
+          titre="Qu'est-ce qui te tente ?"
+          choix={ENVIE_CHOIX}
+          onPick={(k) => setEnvie({ v: opt<Envie>(k) })}
+        />
+      );
+    }
+
+    if (!cuisine) {
+      return q(
+        <Question
+          titre="Plutôt quel style de cuisine ?"
+          choix={CUISINE_CHOIX}
+          onPick={(k) => setCuisine({ v: opt<Cuisine>(k) })}
+        />
+      );
+    }
+
+    if (!lourdeur) {
+      return q(
+        <Question
+          titre="Léger ou copieux ?"
+          choix={LOURDEUR_CHOIX}
+          onPick={(k) => setLourdeur({ v: opt<LourdeurPlat>(k) })}
+        />
+      );
+    }
+
+    if (!budget) {
+      return q(
+        <Question
+          titre="Quel budget pour le plat ?"
+          choix={BUDGET_CHOIX}
+          onPick={(k) => setBudget({ v: opt<Budget>(k) })}
         />
       );
     }
 
     // Branche dessert.
-    if (menu === "menu" && !saveurAsked) {
-      return (
+    if (menu === "menu" && !saveur) {
+      return q(
         <Question
           titre="Côté dessert, tu pars sur quoi ?"
-          choix={[
-            { key: "fruite", label: "Fruité", emoji: "🍓" },
-            { key: "chocolate", label: "Chocolaté", emoji: "🍫" },
-            { key: "creme_lacte", label: "Crémeux / lacté", emoji: "🥛" },
-            { key: "patissier", label: "Pâtissier", emoji: "🥧" },
-            { key: "peu_importe", label: "Peu importe", emoji: "🤷" },
-          ]}
-          onPick={(k) => {
-            setSaveur(k === "peu_importe" ? undefined : (k as SaveurDessert));
-            setSaveurAsked(true);
-          }}
+          choix={DESSERT_SAVEUR_CHOIX}
+          onPick={(k) => setSaveur({ v: opt<SaveurDessert>(k) })}
         />
       );
     }
 
-    if (menu === "menu" && !lourdeurAsked) {
-      return (
+    if (menu === "menu" && !lourdeurDessert) {
+      return q(
         <Question
-          titre="Léger ou bien gourmand ?"
-          choix={[
-            { key: "leger", label: "Léger", emoji: "🍃" },
-            { key: "gourmand", label: "Gourmand", emoji: "🤤" },
-            { key: "peu_importe", label: "Peu importe", emoji: "🤷" },
-          ]}
-          onPick={(k) => {
-            setLourdeur(k === "peu_importe" ? undefined : (k as Lourdeur));
-            setLourdeurAsked(true);
-          }}
+          titre="Le dessert, léger ou bien gourmand ?"
+          choix={DESSERT_LOURDEUR_CHOIX}
+          onPick={(k) => setLourdeurDessert({ v: opt<Lourdeur>(k) })}
         />
       );
     }
 
-    const plat = resoudreFeuille(leaf, mode);
-    const dessert =
-      menu === "menu" ? choisirDessert(desserts, { saveur, lourdeur }) : null;
+    // Calcul des candidats.
+    const criteres: Criteres = {
+      envie: envie.v,
+      cuisine: cuisine.v,
+      lourdeur: lourdeur.v,
+      budget: budget.v,
+    };
+    const { candidats, nbCriteres } = meilleursCandidats(pool, criteres, mode);
 
-    return <Resultat mode={mode} plat={plat} menu={menu} dessert={dessert} onReset={reset} />;
+    // Départage par nom si plusieurs candidats à égalité (et au moins un critère exprimé).
+    if (platChoisi === undefined && nbCriteres > 0 && candidats.length > 1) {
+      return q(
+        <Question
+          titre="Plusieurs plats collent à tes envies — lequel te tente ?"
+          sousTitre="On a réduit aux meilleurs candidats du jour."
+          choix={candidats.slice(0, 6).map((p, i) => ({
+            key: String(i),
+            label: p.plat,
+            emoji: "🍽️",
+          }))}
+          onPick={(k) => setPlatChoisi(candidats[Number(k)])}
+        />
+      );
+    }
+
+    const plat = platChoisi !== undefined ? platChoisi : candidats[0] ?? null;
+    const dessert =
+      menu === "menu" ? choisirDessert(desserts, { saveur: saveur?.v, lourdeur: lourdeurDessert?.v }) : null;
+
+    return r(<Resultat mode={mode} plat={plat} menu={menu} dessert={dessert} onReset={reset} />);
   }
+
+  const { node, isResult } = render();
 
   return (
     <div className="mx-auto max-w-[520px]">
@@ -203,8 +301,8 @@ export default function QuizClient({
           </p>
         )}
       </header>
-      {etape < 3 && <Progression etape={etape} />}
-      {render()}
+      {!isResult && <Progression etape={repondues} total={total} />}
+      {node}
     </div>
   );
 }
