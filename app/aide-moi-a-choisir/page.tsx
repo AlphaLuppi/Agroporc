@@ -1,7 +1,14 @@
-import { ensureTable, getPdjByDate, getCarte } from "@/lib/db";
+import { ensureTable, getPdjByDate, getCarte, getDessertsObservations } from "@/lib/db";
 import type { Carte } from "@/lib/db";
 import type { PoolPlat } from "@/lib/quiz-plats";
-import { DESSERTS_CONNUS, classerDessertNom, type DessertConnu } from "@/lib/desserts";
+import {
+  DESSERTS_CONNUS,
+  classerDessertNom,
+  aggregateObservations,
+  mergeDesserts,
+  isoMinusDays,
+  type DessertConnu,
+} from "@/lib/desserts";
 import QuizClient from "./QuizClient";
 
 export const dynamic = "force-dynamic";
@@ -78,8 +85,13 @@ export default async function AideMoiAChoisir() {
   const platsCartes = cartes.flatMap((c, i) => platsFromCarte(c, SLUGS[i].nom));
   const pool: PoolPlat[] = [...platsJour, ...platsCartes];
 
+  // Desserts Truck Muche : observations réelles (proba = fréquence), seed en fallback cold-start.
+  const observations = await getDessertsObservations(isoMinusDays(today, 60));
+  const observed = aggregateObservations(observations, { today, windowDays: 60 });
+  const truckDesserts = mergeDesserts(observed, DESSERTS_CONNUS);
+
   const desserts: DessertConnu[] = [
-    ...DESSERTS_CONNUS,
+    ...truckDesserts,
     ...cartes.flatMap((c, i) => dessertsFromCarte(c, SLUGS[i].nom)),
   ];
 

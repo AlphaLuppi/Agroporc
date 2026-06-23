@@ -540,3 +540,51 @@ export async function upsertCarte(carte: Carte): Promise<void> {
     DO UPDATE SET hash = ${carte.hash}, data = ${JSON.stringify(carte)}, evaluated_at = NOW()
   `;
 }
+
+// --- Observations quotidiennes des desserts (Truck Muche) ---
+
+/** Crée la table d'observations de desserts si elle n'existe pas. */
+export async function ensureDessertsTable() {
+  await sql`
+    CREATE TABLE IF NOT EXISTS pdj_desserts_observations (
+      date DATE NOT NULL,
+      nom TEXT NOT NULL,
+      observed_at TIMESTAMPTZ DEFAULT NOW(),
+      PRIMARY KEY (date, nom)
+    )
+  `;
+}
+
+/** Insère les desserts observés pour une date (idempotent). Retourne le nb d'inserts tentés. */
+export async function insertDessertsObservations(
+  date: string,
+  noms: string[]
+): Promise<number> {
+  await ensureDessertsTable();
+  let n = 0;
+  for (const raw of noms) {
+    const nom = raw.trim();
+    if (!nom) continue;
+    await sql`
+      INSERT INTO pdj_desserts_observations (date, nom)
+      VALUES (${date}, ${nom})
+      ON CONFLICT (date, nom) DO NOTHING
+    `;
+    n++;
+  }
+  return n;
+}
+
+/** Récupère les observations depuis `sinceDate` (incluse), date renvoyée en YYYY-MM-DD. */
+export async function getDessertsObservations(
+  sinceDate: string
+): Promise<{ date: string; nom: string }[]> {
+  await ensureDessertsTable();
+  const result = await sql`
+    SELECT to_char(date, 'YYYY-MM-DD') AS date, nom
+    FROM pdj_desserts_observations
+    WHERE date >= ${sinceDate}
+    ORDER BY date DESC
+  `;
+  return result.rows.map((r) => ({ date: r.date as string, nom: r.nom as string }));
+}

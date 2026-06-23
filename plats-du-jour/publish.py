@@ -70,6 +70,28 @@ def publish_carte(data: dict) -> bool:
         return False
 
 
+def publish_desserts_observation(date: str, noms: list[str]) -> bool:
+    """Envoie les desserts observés du jour vers l'API (POST /api/desserts-observation)."""
+    if not API_URL or not API_TOKEN:
+        print("[publish] VERCEL_API_URL ou API_SECRET_TOKEN non configuré")
+        return False
+    url = f"{API_URL}/api/desserts-observation"
+    headers = {
+        "Authorization": f"Bearer {API_TOKEN}",
+        "Content-Type": "application/json",
+    }
+    try:
+        resp = requests.post(url, json={"date": date, "desserts": noms}, headers=headers, timeout=30)
+        if resp.ok:
+            print(f"[publish] OK — {len(noms)} dessert(s) pour {date}")
+            return True
+        print(f"[publish] Erreur desserts {resp.status_code}: {resp.text}")
+        return False
+    except Exception as e:
+        print(f"[publish] Erreur réseau desserts: {e}")
+        return False
+
+
 def fetch_carte_hash() -> str | None:
     """Récupère le hash de la carte actuellement stockée (GET /api/carte), ou None."""
     if not API_URL:

@@ -12,7 +12,7 @@ import asyncio
 import json
 import sys
 import traceback
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -133,6 +133,22 @@ async def run_jour() -> dict:
         print(f"[pipeline:jour] Erreur évaluation idées : {e}")
 
     return output
+
+
+def run_desserts():
+    """Scrape les desserts du jour du Truck Muche et les publie comme observation."""
+    import publish
+    from scrapers import truck_muche_desserts
+    from scrapers.truck_muche_desserts import PARIS
+    # Date matchée = date publiée (heure de Paris), pour rester cohérent quel que soit
+    # le fuseau du conteneur.
+    jour = datetime.now(PARIS).date()
+    noms = truck_muche_desserts.scrape_desserts_du_jour(jour)
+    if not noms:
+        print("[pipeline:desserts] Aucun dessert trouvé (post absent aujourd'hui ?)")
+        return
+    print(f"[pipeline:desserts] {len(noms)} dessert(s) : {noms}")
+    publish.publish_desserts_observation(jour.isoformat(), noms)
 
 
 # ── Publication des jours futurs ───────────────────────────────────────────
@@ -528,6 +544,8 @@ def main():
             print(f"[main] {len(updated)} personnage(s) mis à jour : {', '.join(updated.keys())}")
         else:
             print("[main] Aucun personnage mis à jour")
+    elif mode == "desserts":
+        run_desserts()
     else:
         print(f"Mode inconnu : {mode}")
         print(usage)
