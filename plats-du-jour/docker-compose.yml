@@ -11,7 +11,10 @@ services:
     restart: unless-stopped
     mem_limit: 1500m
     memswap_limit: 1500m
-    cpus: 1.0
+    # VPS 2 cœurs : 0.5 = plafond dur à 25 % de la machine max (Chromium + ~50 process claude).
+    # Plus bas = run plus lent mais le VPS ne peut plus être flag pour CPU soutenu (batch de fond, personne n'attend).
+    cpus: 0.5
+    cpu_shares: 256
     pids_limit: 512
     blkio_config:
       weight: 100
