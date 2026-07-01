@@ -11,7 +11,10 @@ Stratégie cache :
 """
 import asyncio
 import json
+import random
 import re
+import time
+import unicodedata
 from datetime import date, timedelta
 from pathlib import Path
 from playwright.async_api import async_playwright
@@ -19,8 +22,28 @@ import requests
 
 PAGE_URL = "https://www.facebook.com/letruckmuche/"
 INSTAGRAM_USERNAME = "le_truckmuche_"
+INSTAGRAM_HOME = "https://www.instagram.com/"
 INSTAGRAM_API_URL = (
     f"https://i.instagram.com/api/v1/users/web_profile_info/?username={INSTAGRAM_USERNAME}"
+)
+# UA desktop cohérent avec le x-ig-app-id "web" (936619743392459).
+INSTAGRAM_UA = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+)
+INSTAGRAM_APP_ID = "936619743392459"
+# Nb de tentatives sur l'endpoint IG (429 = rate-limit par IP, surtout depuis
+# une IP datacenter comme le VPS) : backoff exponentiel + jitter entre chaque.
+INSTAGRAM_MAX_ATTEMPTS = 5
+
+# Les posts IG du Truck sont QUOTIDIENS : 1ère ligne(s) = plat du jour, puis la
+# liste des desserts. Marqueurs (sans accents, minuscule) pour repérer où
+# commence le bloc desserts et couper le plat proprement.
+DESSERT_MARKERS = (
+    "tiramisu", "creme brulee", "tarte", "fromage blanc", "salade de fruits",
+    "panna cotta", "mousse", "cheesecake", "banoffee", "crunchy", "cunchy",
+    "flan", "liegeois", "clafoutis", "crumble", "brioche perdue", "nutella",
+    "chantilly", "glace", "sorbet", "profiterole", "eclair", "cookie", "gaufre",
 )
 DAY_NAMES = ["LUNDI", "MARDI", "MERCREDI", "JEUDI", "VENDREDI", "SAMEDI", "DIMANCHE"]
 MOIS_FR = {
@@ -130,36 +153,70 @@ async def _scrape_facebook() -> str | None:
 
 # ── Scraping Instagram (fallback, sans auth) ─────────────────────────────────
 
+def _instagram_session() -> requests.Session:
+    """Session « warm-up » : un GET sur instagram.com pose les cookies
+    (csrftoken, mid, ig_did) qui rendent l'endpoint web_profile_info bien moins
+    sujet au 429 qu'un appel à froid."""
+    s = requests.Session()
+    s.headers.update({
+        "User-Agent": INSTAGRAM_UA,
+        "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.8",
+    })
+    try:
+        s.get(INSTAGRAM_HOME, timeout=15)
+    except requests.RequestException as e:
+        print(f"[truck_muche] Instagram warm-up échoué (on continue) : {e}")
+    return s
+
+
+def _fetch_instagram_json() -> dict | None:
+    """Appelle web_profile_info via une session avec cookies, en réessayant
+    sur 429 / erreurs transitoires (backoff exponentiel + jitter)."""
+    session = _instagram_session()
+    headers = {
+        "User-Agent": INSTAGRAM_UA,
+        "x-ig-app-id": INSTAGRAM_APP_ID,
+        "x-requested-with": "XMLHttpRequest",
+        "x-csrftoken": session.cookies.get("csrftoken", ""),
+        "Referer": f"https://www.instagram.com/{INSTAGRAM_USERNAME}/",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.8",
+    }
+
+    delay = 3.0
+    for attempt in range(1, INSTAGRAM_MAX_ATTEMPTS + 1):
+        try:
+            resp = session.get(INSTAGRAM_API_URL, headers=headers, timeout=15)
+        except requests.RequestException as e:
+            print(f"[truck_muche] Instagram erreur réseau (essai {attempt}/{INSTAGRAM_MAX_ATTEMPTS}) : {e}")
+        else:
+            if resp.status_code == 200:
+                try:
+                    return resp.json()
+                except ValueError:
+                    print("[truck_muche] Instagram JSON invalide")
+                    return None
+            elif resp.status_code == 429:
+                print(f"[truck_muche] Instagram HTTP 429 rate-limité (essai {attempt}/{INSTAGRAM_MAX_ATTEMPTS})")
+            else:
+                print(f"[truck_muche] Instagram HTTP {resp.status_code} (essai {attempt}/{INSTAGRAM_MAX_ATTEMPTS})")
+
+        if attempt < INSTAGRAM_MAX_ATTEMPTS:
+            time.sleep(delay + random.uniform(0, 2))
+            delay *= 2  # 3s → 6s → 12s → 24s (+ jitter)
+
+    print("[truck_muche] Instagram : abandon après retries")
+    return None
+
+
 def _scrape_instagram_sync() -> str | None:
     """
     Interroge l'endpoint public web_profile_info et retourne le premier post
     récent dont la caption/alt contient des indices de menu hebdo. La validation
     de la date de semaine est faite plus loin par _menu_est_semaine_courante.
     """
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) "
-            "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 "
-            "Mobile/15E148 Safari/604.1"
-        ),
-        "x-ig-app-id": "936619743392459",
-        "Accept": "application/json, text/plain, */*",
-        "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.8",
-    }
-    try:
-        resp = requests.get(INSTAGRAM_API_URL, headers=headers, timeout=15)
-    except requests.RequestException as e:
-        print(f"[truck_muche] Erreur Instagram : {e}")
-        return None
-
-    if resp.status_code != 200:
-        print(f"[truck_muche] Instagram HTTP {resp.status_code}")
-        return None
-
-    try:
-        data = resp.json()
-    except ValueError:
-        print("[truck_muche] Instagram JSON invalide")
+    data = _fetch_instagram_json()
+    if data is None:
         return None
 
     user = (data.get("data") or {}).get("user")
@@ -195,14 +252,76 @@ async def _scrape_instagram() -> str | None:
     return await asyncio.to_thread(_scrape_instagram_sync)
 
 
+# ── Instagram : extraction du plat d'un jour précis (posts quotidiens) ────────
+
+def _strip_accents(s: str) -> str:
+    return "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
+
+
+def _extract_dish_from_caption(caption: str) -> str | None:
+    """Extrait le(s) plat(s) d'une caption de post quotidien.
+
+    Format observé : la/les première(s) ligne(s) donnent le plat (alternatives
+    séparées par une ligne « Ou »), puis vient le bloc desserts. On coupe à la
+    première ligne qui ressemble à un dessert et on joint les alternatives par
+    « OU » (séparateur attendu par scrape()/scrape_semaine()).
+    """
+    lines = [l.strip() for l in caption.splitlines() if l.strip()]
+    if not lines:
+        return None
+
+    dish_lines = []
+    for l in lines:
+        low = _strip_accents(l.lower())
+        if any(marker in low for marker in DESSERT_MARKERS):
+            break
+        if l.lower() == "ou":
+            continue
+        dish_lines.append(l)
+
+    if not dish_lines:
+        dish_lines = [lines[0]]
+
+    return " OU ".join(dish_lines).upper()
+
+
+def _scrape_instagram_jour_sync(target: date) -> str | None:
+    """Cherche le post IG daté de `target` et en extrait le plat du jour."""
+    data = _fetch_instagram_json()
+    if data is None:
+        return None
+    user = (data.get("data") or {}).get("user")
+    if not user:
+        print("[truck_muche] Instagram : pas de user (profil introuvable ou rate-limited)")
+        return None
+    edges = (user.get("edge_owner_to_timeline_media") or {}).get("edges") or []
+
+    for e in edges:
+        node = e.get("node") or {}
+        ts = node.get("taken_at_timestamp")
+        if not ts or date.fromtimestamp(ts) != target:
+            continue
+        caption_edges = (node.get("edge_media_to_caption") or {}).get("edges") or []
+        caption = caption_edges[0].get("node", {}).get("text", "") if caption_edges else ""
+        if not caption:
+            continue
+        dish = _extract_dish_from_caption(caption)
+        if dish:
+            return dish
+    return None
+
+
+async def _scrape_instagram_jour(target: date) -> str | None:
+    return await asyncio.to_thread(_scrape_instagram_jour_sync, target)
+
+
 # ── Orchestration : FB puis IG en fallback ───────────────────────────────────
 
-async def _scrape_menu_semaine_raw() -> dict[str, str] | None:
-    """
-    Tente Facebook d'abord, puis Instagram en fallback. Retourne le dict
-    parsé {"LUNDI": "plat", ...} ou None si aucune source n'a fourni un
-    menu valide pour la semaine en cours.
-    """
+SWEEP_MAX_ROUNDS = 2  # si toutes les sources échouent, on retente le balayage
+
+
+async def _sweep_sources_once() -> dict[str, str] | None:
+    """Un balayage : Facebook d'abord, puis Instagram en fallback."""
     for label, source in (("Facebook", _scrape_facebook), ("Instagram", _scrape_instagram)):
         print(f"[truck_muche] Tentative via {label}...")
         text = await source()
@@ -218,6 +337,22 @@ async def _scrape_menu_semaine_raw() -> dict[str, str] | None:
             continue
         print(f"[truck_muche] {label} : menu récupéré ({len(menu)} jours)")
         return menu
+    return None
+
+
+async def _scrape_menu_semaine_raw() -> dict[str, str] | None:
+    """
+    Tente Facebook puis Instagram, et retente le balayage complet si tout
+    échoue (utile pour un 429 IG transitoire qui se libère). Retourne le dict
+    parsé {"LUNDI": "plat", ...} ou None si aucune source n'a rien donné.
+    """
+    for round_no in range(1, SWEEP_MAX_ROUNDS + 1):
+        menu = await _sweep_sources_once()
+        if menu:
+            return menu
+        if round_no < SWEEP_MAX_ROUNDS:
+            print(f"[truck_muche] Balayage {round_no}/{SWEEP_MAX_ROUNDS} infructueux, nouvelle tentative...")
+            await asyncio.sleep(10 + random.uniform(0, 5))
     return None
 
 
@@ -375,6 +510,16 @@ async def scrape_semaine() -> dict[str, dict] | None:
     return semaine
 
 
+def _plat_result(plat: str) -> dict:
+    """Construit le dict de sortie, en séparant les options ("A OU B")."""
+    options = [p.strip() for p in plat.split(" OU ") if p.strip()]
+    return {
+        "restaurant": "Le Truck Muche",
+        "plat": options if len(options) > 1 else options[0],
+        "prix": "11.50€",
+    }
+
+
 async def scrape() -> dict | None:
     """
     Retourne un dict { "restaurant": str, "plat": str, "prix": str } ou None si échec.
@@ -388,6 +533,13 @@ async def scrape() -> dict | None:
 
     if cache is None and today.weekday() != 0:
         print("[truck_muche] Cache absent en dehors du lundi → scraping en fallback")
+        # Les posts IG sont QUOTIDIENS : on cible directement le plat du jour
+        # (bien plus fiable que le menu hebdo quand FB est bloqué). Pas de mise
+        # en cache ici : on n'a qu'un seul jour, pas la semaine.
+        dish = await _scrape_instagram_jour(today)
+        if dish:
+            print(f"[truck_muche] Instagram : plat du jour trouvé pour {today_name} → {dish}")
+            return _plat_result(dish)
 
     if cache is None:
         menu_semaine = await _scrape_menu_semaine_raw()
@@ -404,11 +556,4 @@ async def scrape() -> dict | None:
         print(f"[truck_muche] Pas de plat trouvé pour {today_name} dans le cache")
         return None
 
-    # Séparer les options si plusieurs plats du jour ("POULET BASQUAISE OU FILET MIGNON")
-    options = [p.strip() for p in plat.split(" OU ") if p.strip()]
-
-    return {
-        "restaurant": "Le Truck Muche",
-        "plat": options if len(options) > 1 else options[0],
-        "prix": "11.50€",
-    }
+    return _plat_result(plat)
