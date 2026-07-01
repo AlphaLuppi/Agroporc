@@ -24,6 +24,7 @@ import json
 import subprocess
 import os
 import shutil
+import time
 import anthropic
 
 from ciqual.lookup import (
@@ -35,6 +36,10 @@ from ciqual.lookup import (
 
 UNMATCHED_FALLBACK_THRESHOLD = 0.30
 TOP_K_CANDIDATES = 8
+
+# `claude -p` renvoie parfois une réponse vide (transitoire) → on réessaie.
+CLI_MAX_ATTEMPTS = 4
+CLI_RETRY_DELAY = 3
 
 SPORT_PROFILE = os.getenv("SPORT_PROFILE", "sport régulier")
 DAILY_CALORIES_TARGET = os.getenv("DAILY_CALORIES_TARGET", "2200")
@@ -60,15 +65,30 @@ def _call_claude(prompt: str, timeout: int = 180) -> str:
         )
         return message.content[0].text.strip()
 
-    # Fallback : CLI Claude Code (OAuth par abonnement)
+    # Fallback : CLI Claude Code (OAuth par abonnement).
+    # `claude -p` renvoie parfois une réponse vide de façon intermittente (rc 0,
+    # stdout vide) → le JSON.loads en aval échoue et les scores sont perdus. On
+    # réessaie quelques fois sur réponse vide.
     if CLAUDE_BIN:
-        result = subprocess.run(
-            [CLAUDE_BIN, "-p", prompt, "--output-format", "text"],
-            capture_output=True, text=True, timeout=timeout,
+        last_stderr = ""
+        for attempt in range(1, CLI_MAX_ATTEMPTS + 1):
+            result = subprocess.run(
+                [CLAUDE_BIN, "-p", prompt, "--output-format", "text"],
+                capture_output=True, text=True, timeout=timeout,
+            )
+            if result.returncode != 0:
+                raise RuntimeError(f"claude CLI error: {result.stderr.strip()}")
+            out = result.stdout.strip()
+            if out:
+                return out
+            last_stderr = result.stderr.strip()
+            print(f"[diet_agent] claude -p réponse vide (essai {attempt}/{CLI_MAX_ATTEMPTS})")
+            if attempt < CLI_MAX_ATTEMPTS:
+                time.sleep(CLI_RETRY_DELAY)
+        raise RuntimeError(
+            f"claude CLI a renvoyé une réponse vide après {CLI_MAX_ATTEMPTS} essais"
+            + (f" (stderr: {last_stderr})" if last_stderr else "")
         )
-        if result.returncode != 0:
-            raise RuntimeError(f"claude CLI error: {result.stderr.strip()}")
-        return result.stdout.strip()
 
     raise RuntimeError("Ni ANTHROPIC_API_KEY ni CLI claude disponible.")
 
