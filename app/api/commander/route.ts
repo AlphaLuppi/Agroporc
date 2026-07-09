@@ -1,6 +1,6 @@
 /**
  * Route de commande unifiée — dispatche vers Obypay, Foxorders ou Truck Muche.
- * Requiert le cookie pdj-admin=1 (authentification admin).
+ * Requiert le cookie admin signé pdj-admin (authentification admin).
  *
  * POST /api/commander
  * Body: { restaurant: string, items: { plat: string, prix: string, quantity: number }[] }
