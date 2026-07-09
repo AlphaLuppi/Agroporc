@@ -597,3 +597,134 @@ export async function getDessertsObservations(
   `;
   return result.rows.map((r) => ({ date: r.date as string, nom: r.nom as string }));
 }
+
+// --- Runs du pipeline (logs & relance) ---
+
+export type PipelineMode = "jour" | "semaine";
+export type PipelineStatus = "requested" | "running" | "success" | "error";
+
+export interface PipelineRun {
+  id: number;
+  mode: PipelineMode;
+  status: PipelineStatus;
+  triggered_by: string; // "admin" | "cron"
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  log: string | null;
+}
+
+const RUNS_KEEP = 50;
+const LOG_MAX_CHARS = 200_000;
+
+export async function ensurePipelineRunsTable() {
+  await sql`
+    CREATE TABLE IF NOT EXISTS pipeline_runs (
+      id SERIAL PRIMARY KEY,
+      mode VARCHAR(20) NOT NULL,
+      status VARCHAR(20) NOT NULL DEFAULT 'requested',
+      triggered_by VARCHAR(20) NOT NULL DEFAULT 'admin',
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      started_at TIMESTAMPTZ,
+      finished_at TIMESTAMPTZ,
+      log TEXT
+    )
+  `;
+}
+
+/** Y a-t-il déjà un run en attente ou en cours ? */
+export async function hasActiveRun(): Promise<boolean> {
+  await ensurePipelineRunsTable();
+  const r = await sql`
+    SELECT 1 FROM pipeline_runs
+    WHERE status IN ('requested', 'running') LIMIT 1
+  `;
+  return r.rows.length > 0;
+}
+
+/** Crée une demande de run. Renvoie l'id, ou null si un run est déjà actif. */
+export async function requestRun(
+  mode: PipelineMode,
+  triggeredBy = "admin"
+): Promise<number | null> {
+  await ensurePipelineRunsTable();
+  if (await hasActiveRun()) return null;
+  const r = await sql`
+    INSERT INTO pipeline_runs (mode, status, triggered_by)
+    VALUES (${mode}, 'requested', ${triggeredBy})
+    RETURNING id
+  `;
+  return r.rows[0].id as number;
+}
+
+/** Renvoie les N runs les plus récents. */
+export async function getRecentRuns(): Promise<PipelineRun[]> {
+  await ensurePipelineRunsTable();
+  const r = await sql`
+    SELECT id, mode, status, triggered_by, created_at, started_at, finished_at, log
+    FROM pipeline_runs
+    ORDER BY id DESC
+    LIMIT ${RUNS_KEEP}
+  `;
+  return r.rows as PipelineRun[];
+}
+
+/** Claim atomique du plus vieux run 'requested' → 'running'. Renvoie {id, mode} ou null. */
+export async function claimNextRun(): Promise<{ id: number; mode: PipelineMode } | null> {
+  await ensurePipelineRunsTable();
+  const r = await sql`
+    UPDATE pipeline_runs SET status = 'running', started_at = NOW()
+    WHERE id = (
+      SELECT id FROM pipeline_runs
+      WHERE status = 'requested'
+      ORDER BY id ASC
+      FOR UPDATE SKIP LOCKED
+      LIMIT 1
+    )
+    RETURNING id, mode
+  `;
+  if (r.rows.length === 0) return null;
+  return { id: r.rows[0].id as number, mode: r.rows[0].mode as PipelineMode };
+}
+
+function truncateLog(log: string): string {
+  if (log.length <= LOG_MAX_CHARS) return log;
+  return log.slice(-LOG_MAX_CHARS);
+}
+
+async function purgeOldRuns() {
+  await sql`
+    DELETE FROM pipeline_runs
+    WHERE id NOT IN (SELECT id FROM pipeline_runs ORDER BY id DESC LIMIT ${RUNS_KEEP})
+  `;
+}
+
+/** Clôt un run existant (par id). */
+export async function finishRun(
+  id: number,
+  status: PipelineStatus,
+  log: string
+): Promise<void> {
+  await ensurePipelineRunsTable();
+  await sql`
+    UPDATE pipeline_runs
+    SET status = ${status}, log = ${truncateLog(log)}, finished_at = NOW()
+    WHERE id = ${id}
+  `;
+  await purgeOldRuns();
+}
+
+/** Insère directement un run déjà terminé (cron 7h30, ne passe pas par claim). */
+export async function recordFinishedRun(
+  mode: PipelineMode,
+  status: PipelineStatus,
+  log: string,
+  triggeredBy = "cron"
+): Promise<void> {
+  await ensurePipelineRunsTable();
+  await sql`
+    INSERT INTO pipeline_runs (mode, status, triggered_by, started_at, finished_at, log)
+    VALUES (${mode}, ${status}, ${triggeredBy}, NOW(), NOW(), ${truncateLog(log)})
+  `;
+  await purgeOldRuns();
+}
