@@ -8,29 +8,14 @@ cd "$DIR"
 # Charger l'environnement
 source .venv/bin/activate
 export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH"
-set -a; source .env; set +a   # API_SECRET_TOKEN, VERCEL_API_URL
 
 MODE="${1:-jour}"
 echo "$(date '+%Y-%m-%d %H:%M') [cron] Lancement pipeline mode=$MODE"
 
-# Capture combinée pour report vers l'API
-LOGFILE="$(mktemp)"
-status=success
-python3 main.py check-portions >> "$LOGFILE" 2>&1 || status=error
-python3 main.py "$MODE" >> "$LOGFILE" 2>&1 || status=error
+# Vérification quotidienne des photos de référence (recalcule les estimations si changées)
+python3 main.py check-portions >> output/cron.log 2>&1
 
-# Conserver aussi le log local existant
-cat "$LOGFILE" >> output/cron.log
-
-# Report vers l'API (best-effort ; n'échoue pas le cron)
-if [ -n "${VERCEL_API_URL:-}" ] && [ -n "${API_SECRET_TOKEN:-}" ]; then
-  jq -n --arg mode "$MODE" --arg s "$status" --rawfile l "$LOGFILE" \
-    '{mode:$mode, triggered_by:"cron", status:$s, log:$l}' \
-  | curl -sf -X POST \
-      -H "Authorization: Bearer $API_SECRET_TOKEN" \
-      -H 'Content-Type: application/json' -d @- \
-      "$VERCEL_API_URL/api/pipeline/report" > /dev/null || true
-fi
-rm -f "$LOGFILE"
+# Pipeline
+python3 main.py "$MODE" >> output/cron.log 2>&1
 
 echo "$(date '+%Y-%m-%d %H:%M') [cron] Terminé"
