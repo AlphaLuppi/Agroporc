@@ -16,10 +16,8 @@ echo "$(date '+%Y-%m-%d %H:%M') [cron] Lancement pipeline mode=$MODE"
 # Capture combinée pour report vers l'API
 LOGFILE="$(mktemp)"
 status=success
-{
-  python3 main.py check-portions
-  python3 main.py "$MODE"
-} >> "$LOGFILE" 2>&1 || status=error
+python3 main.py check-portions >> "$LOGFILE" 2>&1 || status=error
+python3 main.py "$MODE" >> "$LOGFILE" 2>&1 || status=error
 
 # Conserver aussi le log local existant
 cat "$LOGFILE" >> output/cron.log

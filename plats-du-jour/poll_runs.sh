@@ -13,8 +13,8 @@ flock -n 9 || exit 0
 
 resp=$(curl -sf -H "Authorization: Bearer $API_SECRET_TOKEN" \
   "$VERCEL_API_URL/api/pipeline/next" || echo '{}')
-id=$(echo "$resp" | jq -r '.id // empty')
-mode=$(echo "$resp" | jq -r '.mode // empty')
+id=$(echo "$resp" | jq -r '.id // empty' 2>/dev/null || true)
+mode=$(echo "$resp" | jq -r '.mode // empty' 2>/dev/null || true)
 [ -z "$id" ] && exit 0
 
 echo "$(date '+%Y-%m-%d %H:%M') [poll] run #$id mode=$mode"
@@ -24,9 +24,15 @@ else
   status=error
 fi
 
-jq -n --argjson id "$id" --arg s "$status" --arg l "$log" \
-  '{id:$id, status:$s, log:$l}' \
-| curl -sf -X POST \
-    -H "Authorization: Bearer $API_SECRET_TOKEN" \
-    -H 'Content-Type: application/json' -d @- \
-    "$VERCEL_API_URL/api/pipeline/report" > /dev/null
+payload=$(jq -n --argjson id "$id" --arg s "$status" --arg l "$log" \
+  '{id:$id, status:$s, log:$l}')
+for attempt in 1 2 3; do
+  if echo "$payload" | curl -sf -X POST \
+      -H "Authorization: Bearer $API_SECRET_TOKEN" \
+      -H 'Content-Type: application/json' -d @- \
+      "$VERCEL_API_URL/api/pipeline/report" > /dev/null; then
+    break
+  fi
+  echo "$(date '+%Y-%m-%d %H:%M') [poll] report échec (tentative $attempt)"
+  sleep 5
+done

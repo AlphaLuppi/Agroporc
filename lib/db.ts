@@ -616,6 +616,7 @@ export interface PipelineRun {
 
 const RUNS_KEEP = 50;
 const LOG_MAX_CHARS = 200_000;
+const STALE_RUNNING_MINUTES = 120; // un run 'running' sans report au-delà = échec
 
 export async function ensurePipelineRunsTable() {
   await sql`
@@ -630,6 +631,10 @@ export async function ensurePipelineRunsTable() {
       log TEXT
     )
   `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS pipeline_runs_single_active
+    ON pipeline_runs ((1)) WHERE status IN ('requested', 'running')
+  `;
 }
 
 /** Y a-t-il déjà un run en attente ou en cours ? */
@@ -642,24 +647,42 @@ export async function hasActiveRun(): Promise<boolean> {
   return r.rows.length > 0;
 }
 
+/** Marque en échec les runs 'running' trop vieux (poller mort / report perdu). */
+export async function reapStaleRuns(): Promise<void> {
+  await sql`
+    UPDATE pipeline_runs
+    SET status = 'error',
+        finished_at = NOW(),
+        log = COALESCE(log, '') || '\n[reaper] run marqué en échec (aucun report après ' || ${STALE_RUNNING_MINUTES} || ' min)'
+    WHERE status = 'running'
+      AND started_at < NOW() - (${STALE_RUNNING_MINUTES} || ' minutes')::interval
+  `;
+}
+
 /** Crée une demande de run. Renvoie l'id, ou null si un run est déjà actif. */
 export async function requestRun(
   mode: PipelineMode,
   triggeredBy = "admin"
 ): Promise<number | null> {
   await ensurePipelineRunsTable();
-  if (await hasActiveRun()) return null;
-  const r = await sql`
-    INSERT INTO pipeline_runs (mode, status, triggered_by)
-    VALUES (${mode}, 'requested', ${triggeredBy})
-    RETURNING id
-  `;
-  return r.rows[0].id as number;
+  await reapStaleRuns();
+  try {
+    const r = await sql`
+      INSERT INTO pipeline_runs (mode, status, triggered_by)
+      VALUES (${mode}, 'requested', ${triggeredBy})
+      RETURNING id
+    `;
+    return r.rows[0].id as number;
+  } catch (e) {
+    if ((e as { code?: string }).code === "23505") return null; // index unique = run déjà actif
+    throw e;
+  }
 }
 
 /** Renvoie les N runs les plus récents. */
 export async function getRecentRuns(): Promise<PipelineRun[]> {
   await ensurePipelineRunsTable();
+  await reapStaleRuns();
   const r = await sql`
     SELECT id, mode, status, triggered_by, created_at, started_at, finished_at, log
     FROM pipeline_runs
