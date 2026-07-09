@@ -1,9 +1,13 @@
 # Déploiement — page admin logs/relance
 
 ## Vercel
-- Ajouter la variable d'env `ADMIN_PASSWORD` (mot de passe de la page /admin).
+- `ADMIN_PASSWORD` : **déjà présent** (utilisé par `/api/auth` pour tout l'espace
+  admin existant). La page `/admin` réutilise le même login (`/admin/login` → cookie
+  `pdj-admin`). Rien à ajouter.
 - `API_SECRET_TOKEN` déjà présent (réutilisé pour /next et /report).
 - Déployer normalement (la table `pipeline_runs` se crée toute seule au 1er accès).
+- Note UX : après login sur `/admin/login`, on est redirigé vers `/` (comportement
+  existant partagé) ; il faut revenir sur `/admin` manuellement.
 
 ## VPS (/opt/pdj)
 1. `rsync` le repo (poll_runs.sh + cron_pdj.sh mis à jour).
