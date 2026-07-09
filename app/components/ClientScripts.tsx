@@ -185,7 +185,7 @@ function saveCart(items: CartItem[]) {
 }
 
 function isAdmin(): boolean {
-  return document.cookie.split(";").some((c) => c.trim() === "pdj-admin=1");
+  return document.cookie.split(";").some((c) => c.trim().startsWith("pdj-admin="));
 }
 
 // ── Rendu du drawer ──────────────────────────────────────────────────────────

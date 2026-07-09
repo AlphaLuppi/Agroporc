@@ -6,6 +6,7 @@
  * Body: { restaurant: string, items: { plat: string, prix: string, quantity: number }[] }
  */
 import { NextRequest, NextResponse } from "next/server";
+import { verifyAdminCookieValue } from "@/lib/adminAuth";
 
 export const runtime = "nodejs";
 
@@ -13,7 +14,7 @@ type OrderItem = { plat: string; prix: string; quantity: number };
 
 export async function POST(request: NextRequest) {
   const adminCookie = request.cookies.get("pdj-admin");
-  if (adminCookie?.value !== "1") {
+  if (!verifyAdminCookieValue(adminCookie?.value)) {
     return NextResponse.json({ error: "Non autorisé" }, { status: 401 });
   }
 
