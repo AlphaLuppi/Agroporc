@@ -1,11 +1,12 @@
 /**
  * Route de commande unifiée — dispatche vers Obypay, Foxorders ou Truck Muche.
- * Requiert le cookie pdj-admin=1 (authentification admin).
+ * Requiert le cookie admin signé pdj-admin (authentification admin).
  *
  * POST /api/commander
  * Body: { restaurant: string, items: { plat: string, prix: string, quantity: number }[] }
  */
 import { NextRequest, NextResponse } from "next/server";
+import { verifyAdminCookieValue } from "@/lib/adminAuth";
 
 export const runtime = "nodejs";
 
@@ -13,7 +14,7 @@ type OrderItem = { plat: string; prix: string; quantity: number };
 
 export async function POST(request: NextRequest) {
   const adminCookie = request.cookies.get("pdj-admin");
-  if (adminCookie?.value !== "1") {
+  if (!verifyAdminCookieValue(adminCookie?.value)) {
     return NextResponse.json({ error: "Non autorisé" }, { status: 401 });
   }
 

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { signAdminCookie, verifyAdminCookieValue, ADMIN_COOKIE_MAX_AGE } from "@/lib/adminAuth";
 
 export const runtime = "nodejs";
 
@@ -11,11 +12,11 @@ export async function POST(request: NextRequest) {
   }
 
   const response = NextResponse.json({ ok: true });
-  response.cookies.set("pdj-admin", "1", {
+  response.cookies.set("pdj-admin", signAdminCookie(), {
     httpOnly: false,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
-    maxAge: 7 * 24 * 60 * 60,
+    maxAge: ADMIN_COOKIE_MAX_AGE,
     path: "/",
   });
   return response;
@@ -28,6 +29,6 @@ export async function DELETE() {
 }
 
 export async function GET(request: NextRequest) {
-  const adminCookie = request.cookies.get("pdj-admin");
-  return NextResponse.json({ admin: adminCookie?.value === "1" });
+  const value = request.cookies.get("pdj-admin")?.value;
+  return NextResponse.json({ admin: verifyAdminCookieValue(value) });
 }
