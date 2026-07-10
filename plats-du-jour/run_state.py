@@ -97,6 +97,8 @@ def est_complet(state: dict) -> bool:
 def resume(state: dict) -> str:
     """Ligne de synthèse pour le log, ex. :
     scrapes 2/3 (truck_muche: IG 429) · éval 1/2 · commentaires 2/2 · futurs non"""
+    if state.get("ferie"):
+        return f"férié : {state['ferie']}"
     ok = scrapes_ok(state)
     rates = [
         f"{l}: {state['scrapes'][l].get('erreur') or 'échec'}"
