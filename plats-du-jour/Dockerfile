@@ -28,9 +28,13 @@ COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 # Cron : lundi 7h30 Paris = semaine, mardi-vendredi 7h30 Paris = jour,
+#        retries toutes les 15 min de 7h45 à 10h00 (no-op ~2 s si complet),
 #        lundi-vendredi 13h Paris = desserts (postés vers midi par le Truck Muche)
 RUN echo '30 7 * * 1 root /entrypoint.sh semaine >> /app/logs/cron.log 2>&1' > /etc/cron.d/pdj && \
     echo '30 7 * * 2-5 root /entrypoint.sh jour >> /app/logs/cron.log 2>&1' >> /etc/cron.d/pdj && \
+    echo '45 7 * * 1-5 root /entrypoint.sh retry >> /app/logs/cron.log 2>&1' >> /etc/cron.d/pdj && \
+    echo '0,15,30,45 8-9 * * 1-5 root /entrypoint.sh retry >> /app/logs/cron.log 2>&1' >> /etc/cron.d/pdj && \
+    echo '0 10 * * 1-5 root /entrypoint.sh retry final >> /app/logs/cron.log 2>&1' >> /etc/cron.d/pdj && \
     echo '0 13 * * 1-5 root /entrypoint.sh desserts >> /app/logs/cron.log 2>&1' >> /etc/cron.d/pdj && \
     echo '' >> /etc/cron.d/pdj && \
     chmod 0644 /etc/cron.d/pdj && \

@@ -20,11 +20,15 @@ mode=$(echo "$resp" | jq -r '.mode // empty' 2>/dev/null || true)
 echo "$(date '+%Y-%m-%d %H:%M') [poll] run #$id mode=$mode"
 # Le service tourne en 'cron -f' ; pour un run one-shot il faut appeler explicitement
 # /entrypoint.sh <mode>. PDJ_REPORT=off : c'est le poller (ici) qui reporte, avec l'id.
-if log=$(docker compose run --rm -e PDJ_REPORT=off plats-du-jour /entrypoint.sh "$mode" 2>&1); then
-  status=success
-else
-  status=error
-fi
+set +e
+log=$(docker compose run --rm -e PDJ_REPORT=off plats-du-jour /entrypoint.sh "$mode" 2>&1)
+rc=$?
+set -e
+case "$rc" in
+  0) status=success ;;
+  3) status=partial ;;
+  *) status=error ;;
+esac
 
 payload=$(jq -n --argjson id "$id" --arg s "$status" --arg l "$log" \
   '{id:$id, status:$s, log:$l}')

@@ -17,7 +17,7 @@ export async function POST(request: NextRequest) {
       log?: string;
     };
     const status = body.status;
-    if (status !== "success" && status !== "error") {
+    if (status !== "success" && status !== "error" && status !== "partial") {
       return NextResponse.json({ error: "status invalide" }, { status: 400 });
     }
     const log = body.log ?? "";
