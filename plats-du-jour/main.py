@@ -230,169 +230,80 @@ async def _step_futurs(state: dict, loop) -> None:
 
 # ── Pipeline semaine (lundi) ────────────────────────────────────────────────
 
-async def run_semaine() -> dict:
-    """Scrape les menus de la semaine + plat du jour, génère tous les messages."""
-    print("[pipeline:semaine] Démarrage scraping semaine complète...")
+async def run_semaine(retry: bool = False) -> int:
+    """Pipeline du lundi, reprenable : semaine + jour + carte."""
+    today = date.today()
+    run_state.purge(today)
+    state = run_state.load(today, "semaine")
 
+    if run_state.est_complet(state):
+        print(f"[pipeline:semaine] Déjà complet ({run_state.resume(state)}) — rien à faire")
+        return EXIT_NOOP
+
+    ferie = est_ferie(today)
+    if ferie:
+        print(f"[pipeline:semaine] Jour férié ({ferie}) — pas de scraping")
+        state["ferie"] = ferie
+        run_state.save(state)
+        return EXIT_OK
+
+    state["attempts"] += 1
+    run_state.save(state)
+    print(f"[pipeline:semaine] Démarrage (tentative {state['attempts']})...")
     loop = asyncio.get_event_loop()
 
-    # Scrape en parallèle : semaine Trèfle + semaine Truck + jour Pause Gourmande
-    # + jour Trèfle et Truck (pour l'évaluation diététique du jour)
-    trefle_sem_result, truck_sem_result, bistrot_result, pg_result, tm_result = await asyncio.gather(
-        loop.run_in_executor(None, bistrot_trefle.scrape_semaine),
-        truck_muche.scrape_semaine(),
-        loop.run_in_executor(None, bistrot_trefle.scrape),
-        pause_gourmande.scrape(),
-        truck_muche.scrape(),
-        return_exceptions=True,
-    )
+    # ── Nouvelle semaine : reset mémoire GIFs + cache commentaires (une fois) ──
+    if not state["reset_semaine_fait"]:
+        reset_used_gifs()
+        if comment_agent.COMMENTAIRES_SEMAINE_FILE.exists():
+            try:
+                comment_agent.COMMENTAIRES_SEMAINE_FILE.unlink()
+            except Exception as e:
+                print(f"[pipeline:semaine] Erreur suppression cache commentaires : {e}")
+        state["reset_semaine_fait"] = True
+        run_state.save(state)
 
-    # ── Traitement semaine (messages) ────────────────────────────────────
-    trefle_semaine = trefle_sem_result if not isinstance(trefle_sem_result, Exception) else None
-    truck_semaine = truck_sem_result if not isinstance(truck_sem_result, Exception) else None
+    # ── Scrapes semaine (retentés seulement si absents) ──────────────────
+    if state["semaine"]["trefle"] is None:
+        try:
+            state["semaine"]["trefle"] = await loop.run_in_executor(None, bistrot_trefle.scrape_semaine)
+            run_state.save(state)
+        except Exception as e:
+            print(f"[pipeline:semaine] Erreur scrape_semaine Trèfle : {e}")
+    if state["semaine"]["truck"] is None:
+        try:
+            state["semaine"]["truck"] = await truck_muche.scrape_semaine()
+            run_state.save(state)
+        except Exception as e:
+            print(f"[pipeline:semaine] Erreur scrape_semaine Truck : {e}")
 
-    if isinstance(trefle_sem_result, Exception):
-        print(f"[pipeline:semaine] Erreur scrape_semaine Trèfle : {trefle_sem_result}")
-    if isinstance(truck_sem_result, Exception):
-        print(f"[pipeline:semaine] Erreur scrape_semaine Truck : {truck_sem_result}")
+    # ── Scrape du jour + éval + commentaires (helpers communs) ───────────
+    await _step_scrape_jour(state, loop)
+    print(f"[pipeline:semaine] {len(run_state.scrapes_ok(state))}/3 plats du jour récupérés")
 
-    pause_data = None
-    if not isinstance(pg_result, Exception) and pg_result is not None:
-        pause_data = {"plat": pg_result["plat"], "prix": pg_result["prix"]}
-
-    fichiers = generer_messages_semaine(trefle_semaine, truck_semaine, pause_data)
+    # Messages de la semaine (peu coûteux : régénérés tant que la journée n'est pas close)
+    pg = state["scrapes"]["pause_gourmande"]["data"]
+    pause_data = {"plat": pg["plat"], "prix": pg["prix"]} if pg else None
+    fichiers = generer_messages_semaine(state["semaine"]["trefle"], state["semaine"]["truck"], pause_data)
     print(f"[pipeline:semaine] {len(fichiers)} fichiers messages générés")
 
-    # ── Nouvelle semaine : reset mémoire GIFs + cache commentaires ──────
-    reset_used_gifs()
-    if comment_agent.COMMENTAIRES_SEMAINE_FILE.exists():
-        try:
-            comment_agent.COMMENTAIRES_SEMAINE_FILE.unlink()
-        except Exception as e:
-            print(f"[pipeline:semaine] Erreur suppression cache commentaires : {e}")
-
-    # ── Traitement jour (évaluation diététique) ──────────────────────────
-    plats = []
-    failures = {}
-    for label, r in [("bistrot_trefle", bistrot_result), ("pause_gourmande", pg_result), ("truck_muche", tm_result)]:
-        if isinstance(r, Exception):
-            print(f"[pipeline:semaine] Erreur {label} : {r}")
-            failures[label] = traceback.format_exception_only(type(r), r)[-1].strip()
-        elif r is None:
-            print(f"[pipeline:semaine] {label} n'a rien retourné")
-            failures[label] = "scrape() a retourné None"
-        else:
-            plats.append(r)
-
-    if failures:
-        print(f"[pipeline:semaine] {len(failures)} scraper(s) en échec → lancement de la repair team...")
-        await loop.run_in_executor(None, repair_team.repair, failures)
-
-    print(f"[pipeline:semaine] {len(plats)}/3 plats du jour récupérés")
-
-    output = await _evaluer_et_sauver(plats)
-
-    # Générer les commentaires pour les plats du jour (lundi) uniquement
-    today_name = DAY_NAMES[date.today().weekday()] if date.today().weekday() < 5 else None
-    commentaires_jour = []
-    if plats:
-        print(f"[pipeline:semaine] Génération des commentaires du jour ({len(plats)} plat(s))...")
-        try:
-            input_plats = [
-                {"restaurant": p["restaurant"], "plat": p["plat"], "prix": p["prix"]}
-                for p in plats
-            ]
-            commentaires_jour = await loop.run_in_executor(
-                None,
-                comment_agent.generate_commentaires_jour,
-                input_plats,
-            )
-        except Exception as e:
-            print(f"[pipeline:semaine] Erreur commentaires jour : {e}")
-
-    if commentaires_jour:
-        if today_name:
-            _persist_day_comments(today_name, commentaires_jour)
-        output = comment_agent.merge_commentaires(output, commentaires_jour, None)
-        OUTPUT_FILE.write_text(json.dumps(output, ensure_ascii=False, indent=2))
-        print("[pipeline:semaine] Commentaires fusionnés dans pdj.json")
+    output = await _step_eval(state, loop)
+    output = await _step_commentaires(state, loop, output)
 
     # ── Évaluer et publier les jours futurs (Trèfle + Truck, PG = coming soon) ──
-    today_idx = date.today().weekday()
-    future_days = {d: [] for d in DAY_NAMES[today_idx + 1:]}
-
-    for day_name in future_days:
-        plats_jour = []
-        if trefle_semaine and day_name in trefle_semaine:
-            t = trefle_semaine[day_name]
-            plats_jour.append({
-                "restaurant": "Le Bistrot Trèfle",
-                "plat": t["plat"],
-                "prix": t["prix"],
-            })
-        if truck_semaine and day_name in truck_semaine:
-            t = truck_semaine[day_name]
-            plats_jour.append({
-                "restaurant": "Le Truck Muche",
-                "plat": t["plat"],
-                "prix": t["prix"],
-            })
-        if plats_jour:
-            future_days[day_name] = plats_jour
-
-    # Évaluer les plats des jours futurs en un seul appel
-    future_evaluations = {}
-    plats_a_evaluer = {d: p for d, p in future_days.items() if p}
-    if plats_a_evaluer:
-        print(f"[pipeline:semaine] Évaluation des plats de {len(plats_a_evaluer)} jours futurs...")
-        try:
-            future_evaluations = await loop.run_in_executor(
-                None,
-                diet_agent.evaluate_semaine,
-                plats_a_evaluer,
-            )
-        except Exception as e:
-            print(f"[pipeline:semaine] Erreur évaluation semaine : {e}")
-
-    # Publier les jours futurs avec Pause Gourmande "coming soon"
-    for i, day_name in enumerate(DAY_NAMES[today_idx + 1:], start=1):
-        future_date = date.today() + timedelta(days=i)
-
-        # Si le jour futur est férié, publier un marqueur ferie sans plats
-        ferie_nom = est_ferie(future_date)
-        if ferie_nom:
-            publish_pdj({"date": str(future_date), "ferie": ferie_nom, "plats": []})
-            print(f"[pipeline:semaine] Jour férié publié : {day_name} ({future_date}) — {ferie_nom}")
-            continue
-
-        day_eval = future_evaluations.get(day_name, {})
-        day_plats = day_eval.get("plats", future_days.get(day_name, []))
-
-        # Ajouter la Pause Gourmande en "coming soon"
-        day_plats.append({
-            "restaurant": "La Pause Gourmande",
-            "plat": "Coming soon",
-            "prix": "",
-            "coming_soon": True,
-        })
-
-        future_output = {
-            "date": str(future_date),
-            "plats": day_plats,
-            "recommandation": day_eval.get("recommandation"),
-            "recommandation_goulaf": day_eval.get("recommandation_goulaf"),
-        }
-        publish_pdj(future_output)
-        print(f"[pipeline:semaine] Jour futur publié : {day_name} ({future_date})")
+    await _step_futurs(state, loop)
 
     # Publier vers Vercel
     publish_pdj(output)
 
-    # ── Carte permanente du Trèfle (ré-évaluée seulement si elle a changé) ──
-    try:
-        await _traiter_carte(loop)
-    except Exception as e:
-        print(f"[pipeline:semaine] Erreur traitement carte : {e}")
+    # ── Carte permanente du Trèfle (une fois par lundi, hash-guardée) ────
+    if not state["carte_traitee"]:
+        try:
+            await _traiter_carte(loop)
+            state["carte_traitee"] = True
+            run_state.save(state)
+        except Exception as e:
+            print(f"[pipeline:semaine] Erreur traitement carte : {e}")
 
     # ── Évaluation des idées d'amélioration ──────────────────────────────
     try:
@@ -400,7 +311,9 @@ async def run_semaine() -> dict:
     except Exception as e:
         print(f"[pipeline:semaine] Erreur évaluation idées : {e}")
 
-    return output
+    complet = run_state.est_complet(state)
+    print(f"[état] {run_state.resume(state)}")
+    return EXIT_OK if complet else EXIT_PARTIAL
 
 
 # ── Utilitaires communs ─────────────────────────────────────────────────────
