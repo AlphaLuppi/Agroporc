@@ -601,7 +601,7 @@ export async function getDessertsObservations(
 // --- Runs du pipeline (logs & relance) ---
 
 export type PipelineMode = "jour" | "semaine";
-export type PipelineStatus = "requested" | "running" | "success" | "error";
+export type PipelineStatus = "requested" | "running" | "success" | "error" | "partial";
 
 export interface PipelineRun {
   id: number;

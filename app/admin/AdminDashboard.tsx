@@ -7,6 +7,7 @@ const STATUS_STYLE: Record<string, string> = {
   running: "bg-blue-200 text-blue-900",
   success: "bg-green-200 text-green-900",
   error: "bg-red-200 text-red-900",
+  partial: "bg-orange-200 text-orange-900",
 };
 
 function duration(run: PipelineRun): string {
