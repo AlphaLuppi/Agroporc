@@ -1,4 +1,31 @@
-import { sql } from "@vercel/postgres";
+import { Pool, type QueryResult, type QueryResultRow } from "pg";
+
+// Postgres auto-hébergé (VPS) au lieu de Vercel Postgres/Neon.
+// Le driver `pg` parle le protocole wire standard sur TCP+TLS.
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL || process.env.POSTGRES_URL,
+  // Cert self-signed du VPS : on chiffre sans vérifier la chaîne.
+  ssl: process.env.PGSSL === "disable" ? false : { rejectUnauthorized: false },
+  max: 3,
+  idleTimeoutMillis: 30_000,
+  connectionTimeoutMillis: 10_000,
+});
+
+/**
+ * Tagged-template `sql` compatible avec l'API @vercel/postgres :
+ * `sql\`select ... ${valeur}\`` → requête paramétrée, renvoie { rows, rowCount }.
+ */
+function sql<T extends QueryResultRow = QueryResultRow>(
+  strings: TemplateStringsArray,
+  ...values: unknown[]
+): Promise<QueryResult<T>> {
+  let text = "";
+  strings.forEach((chunk, i) => {
+    text += chunk;
+    if (i < values.length) text += `$${i + 1}`;
+  });
+  return pool.query<T>(text, values as unknown[]);
+}
 
 export interface PdjEntry {
   date: string;
