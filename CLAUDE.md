@@ -45,6 +45,8 @@ Python scrapers → AI diet agent evaluation (LLM décompose en ingrédients + g
 - `lib/format.ts` — French date formatting
 - `lib/icons.ts` — Restaurant icon SVGs
 - `components/ui/` — shadcn/ui components (Tailwind CSS v4)
+- `app/components/MyrtilleEasterEgg.tsx` — Code secret : taper `myrtille` au clavier (hors champ de saisie) ouvre la vue 3D d'Agroparc en overlay ; le retaper referme. Écouteur pur dans `lib/agroparc3d/myrtille.ts` (testé).
+- `app/components/Agroparc3D.tsx` — Vue 3D « rayons X » (three.js chargé à la demande) : bâtiments fil de fer, restaurants cliquables (menu du jour via `/api/pdj?date=`), avion, Truck Muche, circulation. Scène pure three.js dans `lib/agroparc3d/scene.ts`, données dans `public/agroparc/scene.json` (IGN BD TOPO + OSM, coordonnées locales en mètres ; voir `lib/agroparc3d/types.ts`).
 
 ### Python pipeline structure (`plats-du-jour/`)
 - `scrapers/` — One module per restaurant (`bistrot_trefle.py` uses Playwright, `pause_gourmande.py` and `truck_muche.py` are async)
