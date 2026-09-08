@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { ClientScripts } from "./components/ClientScripts";
+import { MyrtilleEasterEgg } from "./components/MyrtilleEasterEgg";
 
 export const metadata: Metadata = {
   title: "Plats du Jour",
@@ -430,6 +431,7 @@ export default function RootLayout({
           </a>
         </div>
         <ClientScripts />
+        <MyrtilleEasterEgg />
       </body>
     </html>
   );
