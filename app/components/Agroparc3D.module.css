@@ -53,6 +53,15 @@
 
 .hud { position: absolute; z-index: 3; pointer-events: none; }
 .hudTl { left: 24px; top: 20px; max-width: 460px; }
+.modes { display: inline-flex; margin-top: 12px; border: 1px solid var(--ag-line); background: rgba(4, 6, 10, 0.7); pointer-events: auto; }
+.modes button {
+  background: none; border: 0; color: var(--ag-ink-dim); font: inherit; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase;
+  padding: 6px 14px; cursor: pointer; transition: background 0.2s ease, color 0.2s ease;
+}
+.modes button + button { border-left: 1px solid var(--ag-line); }
+.modes button:hover, .modes button:focus-visible { color: var(--ag-ink); outline: none; }
+.modes button[aria-pressed="true"][data-mode="sportif"] { background: var(--ag-cyan); color: var(--ag-ground); box-shadow: 0 0 12px rgba(155, 233, 255, 0.35); }
+.modes button[aria-pressed="true"][data-mode="goulaf"] { background: var(--ag-amber); color: var(--ag-ground); box-shadow: 0 0 12px rgba(255, 179, 92, 0.35); }
 .eyebrow { font-size: 10px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--ag-ink-dim); margin: 0 0 6px; }
 .title {
   font-family: var(--ag-display), var(--ag-mono), monospace; font-weight: 700; font-size: 30px; line-height: 1;
@@ -99,13 +108,28 @@
 }
 .addr { font-size: 11px; color: var(--ag-ink-dim); margin: 4px 0 14px; }
 .plat { font-size: 14px; line-height: 1.45; color: var(--ag-ink); margin: 0; }
-.prix { font-family: var(--ag-display), monospace; font-size: 22px; font-weight: 600; color: var(--ag-white); margin: 10px 0 0; font-variant-numeric: tabular-nums; }
-.scores { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 16px 0 0; }
-.scoreK { font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ag-ink-dim); display: flex; justify-content: space-between; }
-.scoreK b { color: var(--ag-ink); font-weight: 500; font-variant-numeric: tabular-nums; }
-.bar { margin-top: 6px; height: 3px; background: var(--ag-line); position: relative; }
-.bar i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--ag-cyan); box-shadow: 0 0 8px var(--ag-cyan); }
-.goulaf .bar i { background: var(--ag-amber); box-shadow: 0 0 8px var(--ag-amber); }
+.platMeta { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; margin: 12px 0 0; }
+.prix { font-family: var(--ag-display), monospace; font-size: 22px; font-weight: 600; color: var(--ag-white); margin: 0 0 6px; font-variant-numeric: tabular-nums; }
+
+/* Jauge en arc : --jauge (couleur rouge → vert) est posée inline par le composant. */
+.jauge { position: relative; width: 112px; flex-shrink: 0; margin-left: auto; text-align: center; }
+.jauge svg { display: block; width: 112px; height: 62px; overflow: visible; }
+.jaugeFond, .jaugeArc { fill: none; stroke-width: 7; stroke-linecap: butt; }
+.jaugeFond { stroke: var(--ag-line); }
+.jaugeArc { stroke: var(--jauge); filter: drop-shadow(0 0 6px var(--jauge)); transition: stroke-dasharray 0.6s ease, stroke 0.6s ease; }
+.jaugeVal {
+  position: absolute; left: 0; right: 0; bottom: 14px; color: var(--jauge); line-height: 1;
+  font-family: var(--ag-display), var(--ag-mono), monospace; font-variant-numeric: tabular-nums; transition: color 0.6s ease;
+}
+.jaugeVal b { font-size: 26px; font-weight: 700; }
+.jaugeVal span { font-size: 11px; opacity: 0.7; margin-left: 1px; }
+.jaugeK { font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ag-ink-dim); margin-top: 2px; }
+
+/* Mini-jauge des lignes de carte */
+.mini { display: inline-flex; align-items: center; gap: 6px; }
+.mini > i { display: block; position: relative; width: 34px; height: 3px; background: var(--ag-line); }
+.mini > i > i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--jauge); box-shadow: 0 0 6px var(--jauge); transition: width 0.4s ease, background 0.4s ease; }
+.mini b { color: var(--jauge); font-weight: 500; min-width: 4ch; text-align: right; }
 .nutri { display: flex; gap: 14px; margin: 14px 0 0; font-size: 11px; color: var(--ag-ink-dim); font-variant-numeric: tabular-nums; }
 .nutri b { color: var(--ag-ink); font-weight: 500; }
 .just { margin: 14px 0 0; font-size: 12px; line-height: 1.5; color: var(--ag-ink-dim); border-left: 2px solid var(--ag-line); padding-left: 10px; }
@@ -127,7 +151,15 @@
 }
 .carteNom { color: var(--ag-ink); flex: 1; min-width: 0; }
 .carteMeta { display: flex; gap: 8px; flex-shrink: 0; font-size: 11px; color: var(--ag-ink-dim); white-space: nowrap; font-variant-numeric: tabular-nums; }
-.carteMeta b { color: var(--ag-cyan); font-weight: 500; }
+/* Dépliant « Voir aussi la carte » sous un plat du jour */
+.depliant { margin-top: 16px; border-top: 1px solid var(--ag-line); padding-top: 12px; }
+.depliantBtn {
+  display: flex; justify-content: space-between; align-items: center; gap: 10px; width: 100%;
+  background: none; border: 1px solid var(--ag-line); color: var(--ag-amber); font: inherit; font-size: 10px;
+  letter-spacing: 0.16em; text-transform: uppercase; padding: 7px 10px; cursor: pointer; text-align: left;
+}
+.depliantBtn:hover, .depliantBtn:focus-visible { border-color: var(--ag-amber); background: rgba(255, 179, 92, 0.08); outline: none; }
+.depliant .carte { margin-top: 12px; border-top: 0; padding-top: 0; }
 .close {
   background: none; border: 1px solid var(--ag-line); color: var(--ag-ink-dim); font: inherit; font-size: 10px;
   letter-spacing: 0.14em; text-transform: uppercase; padding: 3px 8px; cursor: pointer; flex-shrink: 0;
@@ -149,5 +181,5 @@
   .panel { top: auto; bottom: 20px; right: 24px; left: 24px; width: auto; max-height: 60vh; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .root, .panel, .log > div, .labels > div { animation: none; transition: none; }
+  .root, .panel, .log > div, .labels > div, .jaugeArc, .jaugeVal, .mini > i > i, .modes button { animation: none; transition: none; }
 }

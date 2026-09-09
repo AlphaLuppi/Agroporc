@@ -79,6 +79,11 @@ export const RESTAURANT_LINKS: Record<string, RestaurantLink[]> = {
       url: "https://magasins.vival.fr/fr/vival-montfavet",
       label: "Site",
     },
+    {
+      kind: "site",
+      url: "https://www.picadeli.com/fr/barasalades/",
+      label: "Picadeli",
+    },
   ],
 };
 

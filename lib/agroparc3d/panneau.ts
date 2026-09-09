@@ -4,7 +4,12 @@ import type { Poi } from "./types";
 
 /** Contenu du panneau d'un POI cliqué dans la vue 3D. */
 export type EtatResto =
-  | { kind: "plat"; plat: Plat }
+  | {
+      kind: "plat";
+      plat: Plat;
+      /** Slug de la carte permanente à proposer sous le plat, ou null. */
+      carteSlug: string | null;
+    }
   | {
       kind: "sans_plat";
       resto: RestaurantDef | null;
@@ -15,15 +20,15 @@ export type EtatResto =
     };
 
 /**
- * Détermine ce que montre le panneau pour un POI : le plat du jour s'il existe, sinon le
- * statut du resto et, quand il en a une, sa carte permanente.
+ * Détermine ce que montre le panneau pour un POI : le plat du jour s'il existe (avec la carte
+ * permanente en dépliant), sinon le statut du resto et, quand il en a une, sa carte permanente.
  */
 export function etatRestaurant(poi: Poi, pdj: PdjEntry | null, today: string): EtatResto {
   const resto = RESTAURANTS.find((r) => r.nom === poi.name) ?? null;
-  const plat = pdj?.plats.find((p) => p.restaurant === poi.name);
-  if (plat && !plat.coming_soon) return { kind: "plat", plat };
-
   const carteSlug = resto?.carte ? resto.slug : null;
+  const plat = pdj?.plats.find((p) => p.restaurant === poi.name);
+  if (plat && !plat.coming_soon) return { kind: "plat", plat, carteSlug };
+
   let statut: string;
   if (!resto) statut = "Pas de restaurant suivi ici";
   else if (!pdj) statut = "Menu du jour indisponible";

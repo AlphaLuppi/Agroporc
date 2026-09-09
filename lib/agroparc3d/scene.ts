@@ -12,6 +12,8 @@ import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPa
 import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { cumulativeLengths, pickBusRoutes, stopAbscissas } from "./bus";
+import { decalages } from "./marqueurs";
+import { trajetTruck } from "./truck";
 import type { Building, Poi, SceneData, Vec2 } from "./types";
 
 export interface SceneCallbacks {
@@ -92,18 +94,6 @@ function edgesOf(geo: THREE.BufferGeometry, color: number, opacity = 0.95): THRE
   const e = new THREE.LineSegments(new THREE.EdgesGeometry(geo, 10), new THREE.LineBasicMaterial({ color, transparent: true, opacity }));
   geo.dispose();
   return e;
-}
-
-function closestOnPolyline(pts: THREE.Vector3[], target: THREE.Vector3) {
-  let best = { d: Infinity, pt: pts[0].clone(), seg: 0 };
-  for (let i = 0; i < pts.length - 1; i++) {
-    const a = pts[i], b = pts[i + 1], ab = b.clone().sub(a);
-    const u = THREE.MathUtils.clamp(target.clone().sub(a).dot(ab) / Math.max(ab.lengthSq(), 1e-6), 0, 1);
-    const pt = a.clone().addScaledVector(ab, u);
-    const d = pt.distanceTo(target);
-    if (d < best.d) best = { d, pt, seg: i };
-  }
-  return best;
 }
 
 interface Marker { poi: Poi; el: HTMLDivElement; ring: THREE.LineLoop; beam: THREE.Line; anchor: THREE.Vector3; phase: number }
@@ -203,15 +193,14 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
   const ringGeo = new THREE.BufferGeometry().setFromPoints(
     Array.from({ length: 33 }, (_, i) => { const a = (i / 32) * Math.PI * 2; return new THREE.Vector3(Math.cos(a) * 6, 0, Math.sin(a) * 6); }),
   );
-  // Deux POI sur le même bâtiment (ex. Basilic n'Go et La Mijote) : ancres décalées de ±12 m en x.
-  const sharing = new Map<number, Poi[]>();
-  for (const p of data.pois) if (p.type === "resto" || p.type === "home") sharing.set(p.b, [...(sharing.get(p.b) ?? []), p]);
-  const xOffset = (p: Poi) => { const grp = sharing.get(p.b); if (!grp || grp.length < 2) return 0; const i = grp.indexOf(p); return i === 0 ? -12 : i === 1 ? 12 : 0; };
+  // Deux POI sur le même bâtiment : second surélevé, et écartés en x s'ils sont trop proches (cf. marqueurs.ts).
+  const decal = decalages(data.pois);
   for (const p of data.pois) {
     const color = p.type === "home" ? C.white : p.type === "shop" ? C.shop : C.amber;
     const isTruck = p.type === "truck";
-    const top = isTruck ? 16 : p.bh + 42;
-    const x = p.x + xOffset(p);
+    const { dx, dy } = decal.get(p.id) ?? { dx: 0, dy: 0 };
+    const top = isTruck ? 16 : p.bh + 42 + dy;
+    const x = p.x + dx;
     const beam = new THREE.Line(
       new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(x, isTruck ? 3.5 : p.bh + 0.5, p.z), new THREE.Vector3(x, top, p.z)]),
       new THREE.LineBasicMaterial({ color, transparent: true, opacity: p.type === "shop" ? 0.35 : 0.8 }),
@@ -264,17 +253,23 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
 
   const truckPoi = data.pois.find((p) => p.id === "truck");
   const truckMarker = markers.find((m) => m.poi.id === "truck");
-  const parkSpot = truckPoi ? new THREE.Vector3(truckPoi.x, 0, truckPoi.z) : new THREE.Vector3();
-  let startSpot = parkSpot.clone();
-  if (truckPoi && data.truckRoad.length >= 2) {
-    const streetPts = data.truckRoad.map(([x, z]) => new THREE.Vector3(x, 0, z));
-    const park = closestOnPolyline(streetPts, parkSpot);
-    const dir = streetPts[park.seg + 1].clone().sub(streetPts[park.seg]).normalize();
-    startSpot = park.pt.clone().addScaledVector(dir, -95).add(parkSpot.clone().sub(park.pt).multiplyScalar(0.15));
-    truck.rotation.y = Math.atan2(dir.x, dir.z) - Math.PI / 2;
+  // Trajet : le long de la voie d'arrivée puis tout droit vers la place (cf. truck.ts).
+  const truckPath = trajetTruck(data.truckRoad, truckPoi ? [truckPoi.x, truckPoi.z] : [0, 0]).map(([x, z]) => new THREE.Vector3(x, 0, z));
+  const truckCum = cumulativeLengths(truckPath.map((p): Vec2 => [p.x, p.z]));
+  const truckLen = truckCum[truckCum.length - 1];
+  const _td = new THREE.Vector3();
+  /** Pose le truck à l'abscisse s du trajet, tourné dans le sens de la marche. */
+  function placeTruck(s: number) {
+    let i = 1;
+    while (i < truckCum.length - 1 && truckCum[i] < s) i++;
+    const a = truckPath[i - 1], b = truckPath[i];
+    const u = (s - truckCum[i - 1]) / Math.max(truckCum[i] - truckCum[i - 1], 1e-6);
+    truck.position.lerpVectors(a, b, THREE.MathUtils.clamp(u, 0, 1));
+    _td.copy(b).sub(a);
+    if (_td.lengthSq() > 1e-6) truck.rotation.y = Math.atan2(_td.x, _td.z) - Math.PI / 2;
   }
-  truck.position.copy(startSpot);
-  const TRUCK = { start: 2.5, dur: 7, arrived: false };
+  placeTruck(0);
+  const TRUCK = { start: 2.5, dur: 8, arrived: false };
   const homePoi = data.pois.find((p) => p.type === "home");
 
   // ---------- traffic ----------
@@ -459,11 +454,11 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
 
     if (!TRUCK.arrived && truckPoi && t > TRUCK.start) {
       const k = Math.min((t - TRUCK.start) / TRUCK.dur, 1);
-      truck.position.lerpVectors(startSpot, parkSpot, ease(k));
+      placeTruck(ease(k) * truckLen);
       if (k >= 1 && truckMarker) {
         TRUCK.arrived = true;
         truckMarker.el.hidden = false; truckMarker.beam.visible = true; truckMarker.ring.visible = true;
-        cb.onEvent("TRUCK", `Le Truck Muche est garé devant ${homePoi ? homePoi.name.split(" ")[0] : "la base"}`);
+        cb.onEvent("TRUCK", `Le Truck Muche est garé à l'est du bâtiment voisin de ${homePoi ? homePoi.name.split(" ")[0] : "la base"}`);
       }
     }
 

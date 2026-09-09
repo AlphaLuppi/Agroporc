@@ -102,12 +102,17 @@ POIS = [
     {"id": "dubble", "name": "Dubble", "type": "resto",
      "lon": 4.8903116, "lat": 43.916144, "addr": "1077 route de l'Aérodrome"},
     {"id": "truck", "name": "Le Truck Muche", "type": "truck",
-     "addr": "allée Camille Claudel, entre CBA et le bâtiment voisin"},
-    {"id": "vival", "name": "Vival", "type": "shop",
-     "lon": 4.8909944, "lat": 43.9160254, "addr": "route de l'Aérodrome"},
+     "addr": "parvis à l'est du bâtiment voisin de CBA"},
+    # Épicerie avec bar à salades Picadeli : traitée comme un restaurant (cliquable, bâtiment ambre).
+    {"id": "vival", "name": "Vival", "type": "resto",
+     "lon": 4.8909944, "lat": 43.9160254, "addr": "1159 route de l'Aérodrome"},
 ]
-# Truck garé au milieu des deux bâtiments (façade SO de CBA ↔ façade NE du parallèle).
-TRUCK_XZ = (-165.0, 7.0)
+# Truck garé sur le parvis à l'est du bâtiment parallèle à CBA (dont l'extrémité est ≈ (−139, 37)),
+# juste derrière l'allée piétonne qui longe ce pignon.
+TRUCK_XZ = (-125.0, 39.0)
+# Points locaux forcés pour certains POI : le nœud OSM de La Mijote tombe à l'extrémité est du
+# bâtiment qu'elle partage avec Basilic n'Go ; on recentre le marqueur sur la moitié est.
+POI_XZ = {"mijote": (4.0, -57.0)}
 # Point local à l'intérieur du bâtiment de CBA (le nœud OSM est ~34 m à côté, dans la rue) :
 # le POI est posé au centroïde de ce bâtiment (rectangle ≈ 64 × 10 m, 16,1 m).
 CBA_XZ = (-162.8, -12.7)
@@ -361,6 +366,9 @@ def build(marge: float, refresh: bool, offline: bool) -> dict:
             p["lon"], p["lat"] = lonlat(*TRUCK_XZ)
             continue
         p["x"], p["z"] = xz(p["lon"], p["lat"])
+        if p["id"] in POI_XZ:
+            p["x"], p["z"] = POI_XZ[p["id"]]
+            p["lon"], p["lat"] = lonlat(*POI_XZ[p["id"]])
         if p["id"] == "cba":
             bi, d = building_at(B, CBA_XZ)
             p["x"], p["z"] = B[bi]["c"]

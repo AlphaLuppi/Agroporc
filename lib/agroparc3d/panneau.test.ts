@@ -11,9 +11,14 @@ const TODAY = "2026-09-09";
 const pdj = (plats: Plat[], date = TODAY): PdjEntry => ({ date, plats });
 
 describe("etatRestaurant", () => {
-  it("renvoie le plat du jour quand le resto en a un", () => {
+  it("renvoie le plat du jour quand le resto en a un, avec sa carte permanente s'il en a une", () => {
     const p = plat("Le Bistrot Trèfle", { note: 7 });
-    expect(etatRestaurant(poi("Le Bistrot Trèfle"), pdj([p]), TODAY)).toEqual({ kind: "plat", plat: p });
+    expect(etatRestaurant(poi("Le Bistrot Trèfle"), pdj([p]), TODAY)).toEqual({ kind: "plat", plat: p, carteSlug: "bistrot_trefle" });
+  });
+
+  it("plat du jour d'un resto sans carte permanente : carteSlug null", () => {
+    const p = plat("La Pause Gourmande", { note: 6 });
+    expect(etatRestaurant(poi("La Pause Gourmande"), pdj([p]), TODAY)).toEqual({ kind: "plat", plat: p, carteSlug: null });
   });
 
   it("traite un plat « coming soon » comme un resto sans plat, avec sa carte", () => {
@@ -35,8 +40,8 @@ describe("etatRestaurant", () => {
     expect(etatRestaurant(poi("Dubble"), pdj([], "2026-09-10"), TODAY)).toMatchObject({ kind: "sans_plat", statut: "Plat du jour dévoilé le matin même", carteSlug: "dubble" });
   });
 
-  it("Vival : bar à salades, sans carte", () => {
-    expect(etatRestaurant(poi("Vival"), pdj([]), TODAY)).toMatchObject({ kind: "sans_plat", statut: "Bar à salades sur place", carteSlug: null });
+  it("Vival : bar à salades Picadeli, sans carte", () => {
+    expect(etatRestaurant(poi("Vival"), pdj([]), TODAY)).toMatchObject({ kind: "sans_plat", statut: "Bar à salades Picadeli en libre-service, prix au poids", carteSlug: null });
   });
 
   it("sans menu du jour du tout : statut dédié, la carte reste proposée", () => {

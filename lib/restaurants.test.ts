@@ -34,7 +34,7 @@ describe("statutSansPlat", () => {
     expect(statutSansPlat(bySlug("dubble"), true)).toBe("Plat du jour dévoilé le matin même");
   });
   it("Vival", () => {
-    expect(statutSansPlat(bySlug("vival"), false)).toBe("Bar à salades sur place");
+    expect(statutSansPlat(bySlug("vival"), false)).toBe("Bar à salades Picadeli en libre-service, prix au poids");
   });
 });
 

@@ -3,7 +3,8 @@
  * - `nom` : valeur exacte du champ `restaurant` des plats, clé des icônes et des liens.
  * - `slug` : `restaurant_slug` des cartes (`pdj_carte`) et des photos.
  * - `type` : core = historique (card « Fermé aujourd'hui » sans plat), optionnel = présent
- *   seulement les jours où il publie un plat, lien = aucun scraping (card lien seul).
+ *   seulement les jours où il publie un plat, lien = aucun scraping (Vival : bar à salades
+ *   Picadeli en libre-service dans l'épicerie, card et POI 3D avec statut + liens).
  * - `carte` : une carte permanente est scrapée et notée par le pipeline.
  * L'ordre du tableau est l'ordre d'affichage des cards sans plat et des cartes.
  */
@@ -38,7 +39,7 @@ export function statutSansPlat(resto: RestaurantDef, isFuture: boolean): string 
     case "optionnel":
       return isFuture ? "Plat du jour dévoilé le matin même" : "Pas de plat du jour aujourd'hui";
     case "lien":
-      return "Bar à salades sur place";
+      return "Bar à salades Picadeli en libre-service, prix au poids";
   }
 }
 
