@@ -18,6 +18,19 @@ RESTAURANTS = {
     "truck": {"emoji": "🚚", "nom": "Le Truck Muche"},
     "pause": {"emoji": "☕", "nom": "La Pause Gourmande"},
 }
+# Restos optionnels : une ligne dans le message du jour seulement s'ils ont un plat.
+EMOJI_OPTIONNELS = {
+    "Basilic n'Go": "🌿",
+    "Dubble": "🥣",
+    "La Mijote": "🍲",
+}
+
+
+def _plat_texte(plat) -> str:
+    """Un plat peut être une liste d'options (Truck, Basilic) → « A ou B »."""
+    if isinstance(plat, list):
+        return " ou ".join(str(p) for p in plat)
+    return str(plat)
 
 
 def _load_notes() -> dict[str, dict]:
@@ -143,12 +156,15 @@ def generer_messages_semaine(
     return fichiers
 
 
-def maj_message_jour(pause_jour: dict | None) -> str | None:
+def maj_message_jour(pause_jour: dict | None, optionnels: list[dict] | None = None,
+                     today: date | None = None) -> str | None:
     """
-    Met à jour le fichier message du jour actuel avec le plat de la Pause Gourmande.
+    Met à jour le fichier message du jour actuel avec le plat de la Pause Gourmande
+    et une ligne par resto optionnel ayant un plat (`optionnels` = dicts
+    {restaurant, plat, prix}, jamais ajoutés deux fois).
     Retourne le chemin du fichier modifié ou None.
     """
-    today = date.today()
+    today = today or date.today()
     weekday = today.weekday()
     if weekday > 4:
         print("[messages] Week-end, pas de mise à jour")
@@ -188,8 +204,21 @@ def maj_message_jour(pause_jour: dict | None) -> str | None:
                     break
             contenu = "\n".join(lines)
 
+    # Restos optionnels : une ligne chacun, uniquement s'ils ont un plat
+    for opt in optionnels or []:
+        nom = opt.get("restaurant", "")
+        emoji = EMOJI_OPTIONNELS.get(nom)
+        if not emoji or not opt.get("plat"):
+            continue
+        marqueur = f"{emoji} **{nom}**"
+        if marqueur in contenu:
+            continue
+        n = _format_notes(notes.get(nom))
+        ligne = f"{marqueur} — {_plat_texte(opt['plat'])} ({opt.get('prix') or 'N/A'}){n}"
+        contenu = contenu.rstrip("\n") + "\n" + ligne + "\n"
+
     path.write_text(contenu, encoding="utf-8")
-    print(f"[messages] {path.name} mis à jour avec notes et Pause Gourmande")
+    print(f"[messages] {path.name} mis à jour avec notes, Pause Gourmande et optionnels")
 
     return str(path)
 

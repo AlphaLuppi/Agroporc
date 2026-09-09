@@ -46,6 +46,9 @@ def load(d: date_cls, mode: str) -> dict:
         try:
             state = json.loads(f.read_text(encoding="utf-8"))
             if state.get("date") == str(d):
+                # État écrit par une version antérieure (moins de scrapers) : compléter.
+                for label in SCRAPER_LABELS:
+                    state["scrapes"].setdefault(label, {"ok": False, "data": None, "erreur": None})
                 return state
         except Exception as e:
             print(f"[run_state] État illisible ({e}) — repart de zéro")

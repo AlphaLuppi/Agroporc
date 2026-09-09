@@ -160,3 +160,15 @@ def test_resume_compte_les_core_sur_3_et_detaille_les_optionnels():
     assert "basilic_ngo ✓" in txt
     assert "dubble —" in txt
     assert "la_mijote ✗ (page figée)" in txt
+
+
+def test_load_complete_les_labels_manquants_d_un_ancien_etat(_tmp_output):
+    """Un run_state écrit avant l'ajout des optionnels ne doit pas faire planter le run."""
+    d = date(2026, 7, 8)
+    ancien = run_state._vierge(d, "jour")
+    for label in run_state.OPTIONAL_LABELS:
+        del ancien["scrapes"][label]
+    (_tmp_output / f"run_state_{d}.json").write_text(json.dumps(ancien), encoding="utf-8")
+    state = run_state.load(d, "jour")
+    assert set(state["scrapes"]) == set(run_state.SCRAPER_LABELS)
+    assert state["scrapes"]["dubble"] == {"ok": False, "data": None, "erreur": None}
