@@ -12,6 +12,7 @@ ouvrés, on considère la carte figée et on ne publie rien (None + warning).
 
 Resto optionnel : None = pas de plat du jour (pas un échec de scrape).
 """
+import hashlib
 import html as html_lib
 import json
 import re
@@ -162,3 +163,70 @@ def scrape(today: date | None = None) -> dict | None:
         "plat": plats if len(plats) > 1 else plats[0],
         "prix": _extract_prix(data),
     }
+
+
+# ── Carte permanente ─────────────────────────────────────────────────────────
+# Même API : sections « Salade », « Sandwich », « Poke Bowl », « Dessert » (noms avec
+# espace final côté API). Exclues : Plat (= plat du jour, déjà scrapé), Boisson,
+# Livraison, Traiteur, Menus, Envie supplémentaire, Petit plaisir, Petite faim.
+
+CARTE_SECTIONS = ["Salade", "Sandwich", "Poke Bowl", "Dessert"]
+_CARTE_SECTION_SET = {_normalize(s) for s in CARTE_SECTIONS}
+
+
+def _extract_carte(data: dict) -> list[dict]:
+    """Sections de la carte (allowlist par nom de section), plats dédoublonnés par nom
+    normalisé, prix > 0 uniquement ; ordre canonique CARTE_SECTIONS puis ordre de l'API."""
+    by_section: dict[str, list[dict]] = {}
+
+    def rec(obj):
+        if isinstance(obj, dict):
+            section = obj.get("section")
+            if (obj.get("name") and obj.get("price") is not None
+                    and isinstance(section, dict)
+                    and _normalize(section.get("name")) in _CARTE_SECTION_SET):
+                by_section.setdefault(_normalize(section.get("name")), []).append(obj)
+                return
+            for v in obj.values():
+                rec(v)
+        elif isinstance(obj, list):
+            for item in obj:
+                rec(item)
+
+    rec(data)
+    sections = []
+    for nom in CARTE_SECTIONS:
+        seen, plats = set(), []
+        for p in by_section.get(_normalize(nom), []):
+            name = " ".join(str(p["name"]).split())
+            try:
+                prix = float(p["price"])
+            except (TypeError, ValueError):
+                continue
+            key = _normalize(name)
+            if prix <= 0 or key in seen:
+                continue
+            seen.add(key)
+            plats.append({"plat": name, "prix": f"{prix:.2f}€"})
+        if plats:
+            sections.append({"nom": nom.upper(), "plats": plats})
+    return sections
+
+
+def _carte_hash(sections: list[dict]) -> str:
+    """SHA-1 déterministe (insensible à l'ordre renvoyé par l'API)."""
+    parts = sorted(f"{sec['nom']}|{_normalize(p['plat'])}|{p['prix']}"
+                   for sec in sections for p in sec["plats"])
+    return hashlib.sha1("\n".join(parts).encode("utf-8")).hexdigest()
+
+
+def scrape_carte() -> dict | None:
+    """Carte permanente → {"restaurant", "hash", "sections"} ou None (API KO / carte vide)."""
+    data = _fetch_outlet_data()
+    if data is None:
+        return None
+    sections = _extract_carte(data)
+    if not sections:
+        print("[basilic_ngo] Carte vide")
+        return None
+    return {"restaurant": RESTAURANT, "hash": _carte_hash(sections), "sections": sections}
