@@ -1,12 +1,13 @@
-import { ensureTable, getWeekPdj, getCarte } from "@/lib/db";
+import { ensureTable, getWeekPdj, getCartesDisponibles } from "@/lib/db";
 import { formatDate, formatDayShort, noteClass } from "@/lib/format";
 import { getIcon, getRestaurantLinks, type RestaurantLink } from "@/lib/icons";
-import type { Plat, PdjEntry, Recommandation, Carte } from "@/lib/db";
+import type { Plat, PdjEntry, Recommandation, CarteDisponible } from "@/lib/db";
+import { RESTAURANTS, statutSansPlat, titreCarte, type RestaurantDef } from "@/lib/restaurants";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import CommentSection from "./CommentSection";
 import MacrosPanel from "./MacrosPanel";
-import CarteTrefle from "./CarteTrefle";
+import CarteLazy from "./CarteLazy";
 
 export const dynamic = "force-dynamic";
 
@@ -16,14 +17,14 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ s
   const monday = resolveMonday(params.semaine);
   const mondayStr = monday.toLocaleDateString("en-CA");
   const weekPdj = await getWeekPdj(mondayStr);
-  const carte = await getCarte("bistrot_trefle");
+  const cartes = await getCartesDisponibles();
   const fullWeek = buildFullWeek(weekPdj, monday);
   const prev = new Date(monday); prev.setDate(monday.getDate() - 7);
   const next = new Date(monday); next.setDate(monday.getDate() + 7);
   return (
     <WeekView
       weekPdj={fullWeek}
-      carte={carte}
+      cartes={cartes}
       prevHref={`/?semaine=${prev.toLocaleDateString("en-CA")}`}
       nextHref={`/?semaine=${next.toLocaleDateString("en-CA")}`}
       currentMonday={mondayStr}
@@ -77,7 +78,8 @@ function formatWeekRange(startIso: string, endIso: string): string {
   return `${s.getDate()} ${MOIS_FR[s.getMonth()]} — ${e.getDate()} ${MOIS_FR[e.getMonth()]} ${e.getFullYear()}`;
 }
 
-function WeekView({ weekPdj, carte, prevHref, nextHref, currentMonday }: { weekPdj: PdjEntry[]; carte: Carte | null; prevHref: string; nextHref: string; currentMonday: string }) {
+function WeekView({ weekPdj, cartes, prevHref, nextHref, currentMonday }: { weekPdj: PdjEntry[]; cartes: CarteDisponible[]; prevHref: string; nextHref: string; currentMonday: string }) {
+  const cartesParSlug = new Map(cartes.map((c) => [c.slug, c]));
   const today = new Date().toLocaleDateString('en-CA');
   const todayIdx = weekPdj.findIndex((p) => p.date === today);
   const defaultIdx = todayIdx >= 0 ? todayIdx : 0;
@@ -96,7 +98,7 @@ function WeekView({ weekPdj, carte, prevHref, nextHref, currentMonday }: { weekP
 
   return (
     <>
-      {carte && <ViewTabs />}
+      {cartes.length > 0 && <ViewTabs />}
 
       <div data-view-panel="pdj">
       <div className="flex items-center justify-between gap-2 mb-3">
@@ -151,14 +153,22 @@ function WeekView({ weekPdj, carte, prevHref, nextHref, currentMonday }: { weekP
       <ModeSelector />
 
       {weekPdj.map((pdj, i) => (
-        <DayPanel key={pdj.date} pdj={pdj} index={i} isDefault={i === defaultIdx} today={today} />
+        <DayPanel key={pdj.date} pdj={pdj} index={i} isDefault={i === defaultIdx} today={today} cartesParSlug={cartesParSlug} />
       ))}
       </div>
 
-      {carte && (
+      {cartes.length > 0 && (
         <div data-view-panel="carte" style={{ display: "none" }}>
           <ModeSelector />
-          <CarteTrefle carte={carte} />
+          {RESTAURANTS.filter((r) => cartesParSlug.has(r.slug)).map((r) => (
+            <CarteLazy
+              key={r.slug}
+              slug={r.slug}
+              titre={titreCarte(r)}
+              icon={getIcon(r.nom)}
+              evaluatedAt={cartesParSlug.get(r.slug)?.evaluated_at ?? null}
+            />
+          ))}
         </div>
       )}
     </>
@@ -185,7 +195,7 @@ function ViewTabs() {
   );
 }
 
-function DayPanel({ pdj, index, isDefault, today }: { pdj: PdjEntry; index: number; isDefault: boolean; today: string }) {
+function DayPanel({ pdj, index, isDefault, today, cartesParSlug }: { pdj: PdjEntry; index: number; isDefault: boolean; today: string; cartesParSlug: Map<string, CarteDisponible> }) {
   const hidden = !isDefault ? { display: "none" as const } : undefined;
   const isFuture = pdj.date > today;
 
@@ -238,14 +248,12 @@ function DayPanel({ pdj, index, isDefault, today }: { pdj: PdjEntry; index: numb
         )
       )}
 
-      {RESTAURANTS_ATTENDUS.filter((r) => !pdj.plats.some((p) => p.restaurant === r)).map((r) => (
-        <ClosedCard key={r} restaurant={r} />
+      {RESTAURANTS.filter((r) => !pdj.plats.some((p) => p.restaurant === r.nom)).map((r) => (
+        <RestaurantSansPlatCard key={r.slug} resto={r} isFuture={isFuture} carte={cartesParSlug.get(r.slug)} />
       ))}
     </div>
   );
 }
-
-const RESTAURANTS_ATTENDUS = ["Le Bistrot Trèfle", "La Pause Gourmande", "Le Truck Muche"];
 
 function LinkIcon({ kind }: { kind: RestaurantLink["kind"] }) {
   if (kind === "facebook") {
@@ -287,18 +295,22 @@ function OrderLinks({ restaurant }: { restaurant: string }) {
   );
 }
 
-function ClosedCard({ restaurant }: { restaurant: string }) {
+/** Card compacte d'un resto sans plat du jour : statut + liens + dépliant carte si disponible. */
+function RestaurantSansPlatCard({ resto, isFuture, carte }: { resto: RestaurantDef; isFuture: boolean; carte?: CarteDisponible }) {
   return (
-    <Card className="bg-[var(--surface)] border-[var(--border)] border-dashed opacity-75 mb-4 sm:mb-5">
+    <Card className="bg-[var(--surface)] border-[var(--border)] border-dashed opacity-90 mb-4 sm:mb-5">
       <CardContent className="p-6">
         <div className="flex items-center justify-between gap-2 mb-3">
           <span className="flex items-center gap-2 text-[var(--text-secondary)] font-semibold text-sm">
-            <span dangerouslySetInnerHTML={{ __html: getIcon(restaurant) }} />
-            {restaurant}
+            <span dangerouslySetInnerHTML={{ __html: getIcon(resto.nom) }} />
+            {resto.nom}
           </span>
-          <OrderLinks restaurant={restaurant} />
+          <OrderLinks restaurant={resto.nom} />
         </div>
-        <div className="text-sm text-[var(--text-muted)] italic">Fermé aujourd&apos;hui</div>
+        <div className="text-sm text-[var(--text-muted)] italic">{statutSansPlat(resto, isFuture)}</div>
+        {carte && (
+          <CarteLazy slug={resto.slug} titre={titreCarte(resto)} icon={getIcon(resto.nom)} evaluatedAt={carte.evaluated_at} compact />
+        )}
       </CardContent>
     </Card>
   );

@@ -11,6 +11,8 @@ export const RESTAURANT_ICON: Record<string, string> = {
     '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11h18a9 9 0 0 1-18 0Z"/><path d="M7 20h10"/><path d="M12 15v5"/><path d="M8 11c0-2 1-3 2-4"/><path d="M13 11c0-2 1-3 2-4"/></svg>',
   "La Mijote":
     '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11h16v5a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5v-5Z"/><path d="M2 11h20"/><path d="M8 11V9a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M4 14H2"/><path d="M22 14h-2"/><path d="M10 5c0-1 1-1 1-2"/><path d="M14 5c0-1 1-1 1-2"/></svg>',
+  "Vival":
+    '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 11 4-7"/><path d="m19 11-4-7"/><path d="M2 11h20"/><path d="m3.5 11 1.6 7.4a2 2 0 0 0 2 1.6h9.8a2 2 0 0 0 2-1.6l1.7-7.4"/><path d="m9 11 1 9"/><path d="M4.5 15.5h15"/><path d="m15 11-1 9"/></svg>',
 };
 
 export const DEFAULT_ICON =
@@ -69,6 +71,13 @@ export const RESTAURANT_LINKS: Record<string, RestaurantLink[]> = {
       kind: "site",
       url: "https://la-mijote-avignon.fr/menu.html",
       label: "Menu",
+    },
+  ],
+  "Vival": [
+    {
+      kind: "site",
+      url: "https://magasins.vival.fr/fr/vival-montfavet",
+      label: "Site",
     },
   ],
 };

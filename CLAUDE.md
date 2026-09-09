@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 "Plats du Jour" (PDJ) — a daily lunch menu aggregator for office restaurants. Two main components:
 
-1. **Python backend** (`plats-du-jour/`): Scrapes menus from 6 restaurants — 3 core (Le Bistrot Trèfle, La Pause Gourmande, Le Truck Muche) + 3 optional (Basilic n'Go, Dubble, La Mijote, present only on days they publish a dish) — evaluates them with AI agents, generates comments from fictional characters, and publishes to the Vercel API.
+1. **Python backend** (`plats-du-jour/`): Scrapes menus from 6 restaurants — 3 core (Le Bistrot Trèfle, La Pause Gourmande, Le Truck Muche) + 3 optional (Basilic n'Go, Dubble, La Mijote : card « pas de plat du jour » + carte permanente notée les jours sans plat) + Vival (bar à salades, card lien seul, aucun scraping) — evaluates them with AI agents, generates comments from fictional characters, and publishes to the Vercel API.
 2. **Next.js frontend** (root): Displays the weekly menus with nutritional ratings, recommendations (two modes: "Sportif" and "Goulaf"), and a comment system. Deployed on Vercel.
 
 ## Commands
@@ -39,7 +39,7 @@ Python scrapers → AI diet agent evaluation (LLM décompose en ingrédients + g
 Cartes permanentes : `main.py CARTE_SOURCES` → hash → `/api/carte` (`pdj_carte`, une ligne par slug), traitées le lundi ou via `main.py cartes`
 
 ### Frontend structure
-- `app/page.tsx` — Main page (SSR), builds the full week view with day tabs, mode selector, plat cards
+- `app/page.tsx` — Main page (SSR), builds the full week view with day tabs, mode selector, plat cards ; une `RestaurantSansPlatCard` par resto de `lib/restaurants.ts` sans plat (statut + liens + dépliant carte) ; onglet « La carte » = un `CarteLazy` par carte disponible
 - `app/CommentSection.tsx` / `app/CommentForm.tsx` — Client components for the comment system
 - `app/historique/` — History page
 - `app/api/` — API routes: `update` (auth-protected ingestion), `commentaire` (rate-limited user comments), `pdj` (read), `historique`, `feedback-ia`
@@ -47,6 +47,8 @@ Cartes permanentes : `main.py CARTE_SOURCES` → hash → `/api/carte` (`pdj_car
 - `lib/characters.ts` — Character definitions (avatars, colors, emojis) used in both comments and UI
 - `lib/format.ts` — French date formatting
 - `lib/icons.ts` — Restaurant icon SVGs
+- `lib/restaurants.ts` — Liste de référence des restos (nom exact, slug, type core/optionnel/lien, carte scrapée ou non), ordre d'affichage, `statutSansPlat`, `titreCarte`
+- `app/CarteRestaurant.tsx` / `app/CarteLazy.tsx` — Sections notées d'une carte (`pdj_carte`) ; `CarteLazy` (client) va chercher `/api/carte?slug=` au premier dépliage et émet `pdj:mode-refresh`
 - `components/ui/` — shadcn/ui components (Tailwind CSS v4)
 - `app/components/MyrtilleEasterEgg.tsx` — Code secret : taper `myrtille` au clavier (hors champ de saisie) ouvre la vue 3D d'Agroparc en overlay ; le retaper referme. Écouteur pur dans `lib/agroparc3d/myrtille.ts` (testé).
 - `app/components/Agroparc3D.tsx` — Vue 3D « rayons X » (three.js chargé à la demande) : bâtiments fil de fer, restaurants cliquables (menu du jour via `/api/pdj?date=`), avion, Truck Muche, circulation. Scène pure three.js dans `lib/agroparc3d/scene.ts`, données dans `public/agroparc/scene.json` (IGN BD TOPO + OSM, coordonnées locales en mètres ; voir `lib/agroparc3d/types.ts`).
