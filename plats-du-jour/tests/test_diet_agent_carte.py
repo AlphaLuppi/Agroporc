@@ -36,3 +36,31 @@ def test_evaluate_carte_defaut_trefle(monkeypatch):
     monkeypatch.setattr(diet_agent, "_build_portion_calibration", lambda restos: "")
     diet_agent.evaluate_carte([{"nom": "PÂTES", "plats": [{"plat": "Linguine", "prix": "14€"}]}])
     assert '"restaurant": "Le Bistrot Trèfle"' in prompts[0]
+
+
+def test_evaluate_carte_par_lots(monkeypatch):
+    """44 plats d'un coup dépassent le délai de claude -p sur le VPS : on note par lots."""
+    prompts = []
+
+    def fake_call(prompt, timeout=180):
+        prompts.append(prompt)
+        debut = prompt.index("[", prompt.index("carte permanente du restaurant"))
+        fin = prompt.index("Note CHAQUE plat")
+        envoyes = json.loads(prompt[debut:fin].strip())
+        return json.dumps({"plats": [{**p, "note": 5, "note_goulaf": 6} for p in envoyes]})
+
+    monkeypatch.setattr(diet_agent, "_call_claude", fake_call)
+    monkeypatch.setattr(diet_agent, "_apply_ciqual", lambda result: result)
+    monkeypatch.setattr(diet_agent, "_build_portion_calibration", lambda restos: "")
+    monkeypatch.setattr(diet_agent, "CARTE_LOT", 12)
+
+    sections = [
+        {"nom": "SALADE", "plats": [{"plat": f"Salade {i}", "prix": "9.90€"} for i in range(20)]},
+        {"nom": "DESSERT", "plats": [{"plat": f"Dessert {i}", "prix": "3.10€"} for i in range(10)]},
+    ]
+    out = diet_agent.evaluate_carte(sections, "Basilic n'Go")
+
+    assert len(prompts) == 3  # 12 + 12 + 6
+    assert all("lot " in p for p in prompts)
+    notes = [p.get("note") for sec in out for p in sec["plats"]]
+    assert notes == [5] * 30
