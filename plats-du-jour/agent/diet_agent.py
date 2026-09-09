@@ -480,10 +480,33 @@ def _rebuild_carte_sections(sections: list[dict], evaluated: list[dict]) -> list
     return out
 
 
+# Plats par appel LLM pour une carte : 44 plats d'un coup dépassent les 300 s de
+# `claude -p` sur le VPS (CPU plafonné) → on note par lots, chacun avec son délai.
+CARTE_LOT = 12
+
+
+def _evaluer_lot_carte(lot: list[dict], restaurant: str, calibration: str, k: int, n: int) -> list[dict]:
+    """Note un lot de plats d'une carte (Sportif + Goulaf + macros), sans recommandation."""
+    prompt = (
+        f"{_build_system_prompt()}{calibration}\n\n"
+        f"Voici la carte permanente du restaurant « {restaurant} » (lot {k}/{n}) :\n\n"
+        f"{json.dumps(lot, ensure_ascii=False, indent=2)}\n\n"
+        f"Note CHAQUE plat (Sportif ET Goulaf). NE DONNE PAS de recommandation.\n\n"
+        f"Réponds en JSON avec cette structure :\n"
+        f'{{ "plats": [{{"restaurant": "...", "plat": "...", "prix": "...", "ingredients": [...], '
+        f'"nutrition_estimee_llm": {{...}}, "note": 0, "justification": "...", '
+        f'"note_goulaf": 0, "justification_goulaf": "...", '
+        f'"quiz_tags": {{"envie": "...", "cuisine": "...", "lourdeur": "..."}}}}] }}'
+    )
+    raw = _call_claude(prompt, timeout=300)
+    return _apply_ciqual(json.loads(_strip_code_fence(raw))).get("plats", [])
+
+
 def evaluate_carte(sections: list[dict], restaurant: str = "Le Bistrot Trèfle") -> list[dict]:
     """
     Note tous les plats de la carte d'un restaurant (Sportif + Goulaf + macros), SANS
-    recommandation. Retourne les sections enrichies.
+    recommandation, par lots de CARTE_LOT plats. Retourne les sections enrichies.
+    Lève si un lot échoue (l'appelant ne publie alors rien).
     """
     plats = [
         {"restaurant": restaurant, "plat": p.get("plat", ""), "prix": p.get("prix", "")}
@@ -493,21 +516,14 @@ def evaluate_carte(sections: list[dict], restaurant: str = "Le Bistrot Trèfle")
         return sections
 
     calibration = _build_portion_calibration({restaurant})
-    prompt = (
-        f"{_build_system_prompt()}{calibration}\n\n"
-        f"Voici la carte permanente du restaurant « {restaurant} » :\n\n"
-        f"{json.dumps(plats, ensure_ascii=False, indent=2)}\n\n"
-        f"Note CHAQUE plat (Sportif ET Goulaf). NE DONNE PAS de recommandation.\n\n"
-        f"Réponds en JSON avec cette structure :\n"
-        f'{{ "plats": [{{"restaurant": "...", "plat": "...", "prix": "...", "ingredients": [...], '
-        f'"nutrition_estimee_llm": {{...}}, "note": 0, "justification": "...", '
-        f'"note_goulaf": 0, "justification_goulaf": "...", '
-        f'"quiz_tags": {{"envie": "...", "cuisine": "...", "lourdeur": "..."}}}}] }}'
-    )
-
-    raw = _call_claude(prompt, timeout=300)
-    result = _apply_ciqual(json.loads(_strip_code_fence(raw)))
-    return _rebuild_carte_sections(sections, result.get("plats", []))
+    n_lots = -(-len(plats) // CARTE_LOT)
+    evaluated: list[dict] = []
+    for i in range(0, len(plats), CARTE_LOT):
+        k = i // CARTE_LOT + 1
+        lot = plats[i:i + CARTE_LOT]
+        print(f"[diet_agent] Carte {restaurant} : lot {k}/{n_lots} ({len(lot)} plats)")
+        evaluated.extend(_evaluer_lot_carte(lot, restaurant, calibration, k, n_lots))
+    return _rebuild_carte_sections(sections, evaluated)
 
 
 def evaluate_image(image_url: str, context: str = "") -> str:
