@@ -34,7 +34,7 @@ def _vierge(d: date_cls, mode: str) -> dict:
         "eval": {"restos": [], "output": None},
         "commentaires_par_resto": {},
         "futurs_publies": False,
-        "carte_traitee": False,
+        "cartes_traitees": [],
         "repair_lancee": False,
         "reset_semaine_fait": False,
     }
@@ -49,6 +49,9 @@ def load(d: date_cls, mode: str) -> dict:
                 # État écrit par une version antérieure (moins de scrapers) : compléter.
                 for label in SCRAPER_LABELS:
                     state["scrapes"].setdefault(label, {"ok": False, "data": None, "erreur": None})
+                # Migration : l'ancien booléen carte_traitee (Trèfle seul) devient une liste de slugs.
+                if "cartes_traitees" not in state:
+                    state["cartes_traitees"] = ["bistrot_trefle"] if state.pop("carte_traitee", False) else []
                 return state
         except Exception as e:
             print(f"[run_state] État illisible ({e}) — repart de zéro")
