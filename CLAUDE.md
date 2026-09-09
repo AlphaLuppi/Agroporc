@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 "Plats du Jour" (PDJ) — a daily lunch menu aggregator for office restaurants. Two main components:
 
-1. **Python backend** (`plats-du-jour/`): Scrapes menus from 6 restaurants — 3 core (Le Bistrot Trèfle, La Pause Gourmande, Le Truck Muche) + 3 optional (Basilic n'Go, Dubble, La Mijote : card « pas de plat du jour » + carte permanente notée les jours sans plat) + Vival (bar à salades, card lien seul, aucun scraping) — evaluates them with AI agents, generates comments from fictional characters, and publishes to the Vercel API.
+1. **Python backend** (`plats-du-jour/`): Scrapes menus from 6 restaurants — 3 core (Le Bistrot Trèfle, La Pause Gourmande, Le Truck Muche) + 3 optional (Basilic n'Go, Dubble, La Mijote : card « pas de plat du jour » + carte permanente notée les jours sans plat) — evaluates them with AI agents, generates comments from fictional characters, and publishes to the Vercel API. A 7th restaurant, Vival (bar à salades), is never scraped and only gets a link-only card on the frontend.
 2. **Next.js frontend** (root): Displays the weekly menus with nutritional ratings, recommendations (two modes: "Sportif" and "Goulaf"), and a comment system. Deployed on Vercel.
 
 ## Commands

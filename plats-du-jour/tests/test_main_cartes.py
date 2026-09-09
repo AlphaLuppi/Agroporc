@@ -107,3 +107,30 @@ def test_step_cartes_saute_les_slugs_deja_traites(monkeypatch, tmp_path):
 def test_run_cartes_slug_inconnu(monkeypatch):
     Espion(monkeypatch)
     assert asyncio.run(main.run_cartes("tholean", force=False)) == 1
+
+
+def test_step_cartes_dict_incomplet_ne_leve_pas(monkeypatch, tmp_path):
+    """Un scraper renvoyant un dict sans "restaurant" (ni "sections"/"texte") ne doit
+    jamais faire remonter d'exception jusqu'à _step_cartes (cf. run_semaine)."""
+    monkeypatch.setattr(run_state, "OUTPUT_DIR", tmp_path)
+    e = Espion(monkeypatch, stored_hash=None)
+    monkeypatch.setattr(main, "CARTE_SOURCES", {
+        "dubble": lambda: {"hash": "abc"},
+    })
+    state = run_state.load(date(2026, 9, 14), "semaine")
+    state["cartes_traitees"] = []
+
+    async def go():
+        await main._step_cartes(state, asyncio.get_event_loop())
+    asyncio.run(go())
+
+    assert state["cartes_traitees"] == ["dubble"]
+    assert e.publies == []
+
+
+def test_run_cartes_scraper_ko_renvoie_1(monkeypatch):
+    Espion(monkeypatch, stored_hash="abc")
+    monkeypatch.setattr(main, "CARTE_SOURCES", {
+        "dubble": lambda: None,
+    })
+    assert asyncio.run(main.run_cartes("dubble", force=False)) == 1

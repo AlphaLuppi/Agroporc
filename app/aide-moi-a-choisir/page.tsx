@@ -14,7 +14,7 @@ import QuizClient from "./QuizClient";
 
 export const dynamic = "force-dynamic";
 
-const SLUGS: { slug: string; nom: string }[] = RESTAURANTS.map((r) => ({ slug: r.slug, nom: r.nom }));
+const SLUGS: { slug: string; nom: string }[] = RESTAURANTS.filter((r) => r.carte).map((r) => ({ slug: r.slug, nom: r.nom }));
 
 function platsFromCarte(carte: Carte | null, fallbackNom: string): PoolPlat[] {
   if (!carte) return [];

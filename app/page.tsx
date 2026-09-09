@@ -66,6 +66,13 @@ function buildFullWeek(existingPdj: PdjEntry[], monday: Date): PdjEntry[] {
   return week;
 }
 
+/** Formate `evaluated_at` une seule fois côté serveur (fr-FR) : évite un hydration mismatch,
+ *  le SSR étant en UTC et le client en heure de Paris (voir CarteLazy). */
+function formatEvalDate(iso: string | null): string | null {
+  if (!iso) return null;
+  return new Date(iso).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" });
+}
+
 const MOIS_FR = ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."];
 
 function formatWeekRange(startIso: string, endIso: string): string {
@@ -166,7 +173,7 @@ function WeekView({ weekPdj, cartes, prevHref, nextHref, currentMonday }: { week
               slug={r.slug}
               titre={titreCarte(r)}
               icon={getIcon(r.nom)}
-              evaluatedAt={cartesParSlug.get(r.slug)?.evaluated_at ?? null}
+              evaluatedAtLabel={formatEvalDate(cartesParSlug.get(r.slug)?.evaluated_at ?? null)}
             />
           ))}
         </div>
@@ -309,7 +316,7 @@ function RestaurantSansPlatCard({ resto, isFuture, carte }: { resto: RestaurantD
         </div>
         <div className="text-sm text-[var(--text-muted)] italic">{statutSansPlat(resto, isFuture)}</div>
         {carte && (
-          <CarteLazy slug={resto.slug} titre={titreCarte(resto)} icon={getIcon(resto.nom)} evaluatedAt={carte.evaluated_at} compact />
+          <CarteLazy slug={resto.slug} titre={titreCarte(resto)} icon={getIcon(resto.nom)} evaluatedAtLabel={formatEvalDate(carte.evaluated_at)} compact />
         )}
       </CardContent>
     </Card>

@@ -16,13 +16,15 @@ interface Props {
   titre: string;
   /** SVG inline de l'icône du resto (getIcon), affiché en mode non compact. */
   icon: string;
-  evaluatedAt: string | null;
+  /** Déjà formaté (fr-FR) côté serveur par `formatEvalDate` : évite un hydration mismatch
+   *  (le serveur rend en UTC, le client en heure de Paris, ce qui peut décaler le jour affiché). */
+  evaluatedAtLabel: string | null;
   /** compact : résumé « Voir la carte » dans une card ; sinon en-tête pleine largeur (onglet). */
   compact?: boolean;
 }
 
 /** Dépliant qui va chercher la carte (`/api/carte?slug=`) au premier dépliage. */
-export default function CarteLazy({ slug, titre, icon, evaluatedAt, compact = false }: Props) {
+export default function CarteLazy({ slug, titre, icon, evaluatedAtLabel, compact = false }: Props) {
   const [etat, setEtat] = useState<Etat>({ statut: "idle" });
 
   // Les nœuds insérés après coup doivent recevoir le mode courant (Sportif/Goulaf) et le tri.
@@ -44,10 +46,6 @@ export default function CarteLazy({ slug, titre, icon, evaluatedAt, compact = fa
   const onToggle = (e: SyntheticEvent<HTMLDetailsElement>) => {
     if (e.currentTarget.open && (etat.statut === "idle" || etat.statut === "erreur")) void charger();
   };
-
-  const evalDate = evaluatedAt
-    ? new Date(evaluatedAt).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" })
-    : null;
 
   const chevron = (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="carte-chevron w-4 h-4 shrink-0">
@@ -74,7 +72,7 @@ export default function CarteLazy({ slug, titre, icon, evaluatedAt, compact = fa
           </span>
         )}
         <span className="flex items-center gap-2 text-[var(--text-muted)] text-xs">
-          {evalDate && <span className="hidden sm:inline">notée le {evalDate}</span>}
+          {evaluatedAtLabel && <span className="hidden sm:inline">notée le {evaluatedAtLabel}</span>}
           {chevron}
         </span>
       </summary>

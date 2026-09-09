@@ -324,26 +324,29 @@ async def run_semaine(retry: bool = False) -> int:
 
 # ── Utilitaires communs ─────────────────────────────────────────────────────
 
-async def _traiter_carte(loop, slug: str, scrape_fn, force: bool = False) -> None:
+async def _traiter_carte(loop, slug: str, scrape_fn, force: bool = False) -> bool:
     """Scrape la carte d'un resto ; structure (si texte brut), ré-évalue et publie
-    uniquement si le hash a changé (ou force). Ne lève jamais."""
+    uniquement si le hash a changé (ou force). Ne lève jamais.
+    Renvoie True si la carte est publiée, ou si son absence de traitement est légitime
+    (inchangée / skip) ; False en cas d'échec (scrape KO, structuration/évaluation KO,
+    ou toute autre erreur inattendue — ex. dict de carte incomplet)."""
     try:
         carte = await loop.run_in_executor(None, scrape_fn)
     except Exception as e:
         print(f"[pipeline:carte] {slug} : erreur scrape : {e}")
-        return
+        return False
     if not carte:
         print(f"[pipeline:carte] {slug} : carte non récupérée, skip")
-        return
+        return False
 
-    stored_hash = await loop.run_in_executor(None, fetch_carte_hash, slug)
-    if not force and stored_hash and stored_hash == carte["hash"]:
-        print(f"[pipeline:carte] {slug} : carte inchangée, évaluation réutilisée")
-        return
-
-    print(f"[pipeline:carte] {slug} : carte modifiée → ré-évaluation...")
-    restaurant = carte["restaurant"]
     try:
+        stored_hash = await loop.run_in_executor(None, fetch_carte_hash, slug)
+        if not force and stored_hash and stored_hash == carte["hash"]:
+            print(f"[pipeline:carte] {slug} : carte inchangée, évaluation réutilisée")
+            return True
+
+        print(f"[pipeline:carte] {slug} : carte modifiée → ré-évaluation...")
+        restaurant = carte["restaurant"]
         sections = carte.get("sections")
         if not sections:
             sections = await loop.run_in_executor(
@@ -351,7 +354,7 @@ async def _traiter_carte(loop, slug: str, scrape_fn, force: bool = False) -> Non
         sections = await loop.run_in_executor(None, diet_agent.evaluate_carte, sections, restaurant)
     except Exception as e:
         print(f"[pipeline:carte] {slug} : erreur structuration/évaluation (non publiée) : {e}")
-        return
+        return False
 
     publish_carte({
         "restaurant_slug": slug,
@@ -360,6 +363,7 @@ async def _traiter_carte(loop, slug: str, scrape_fn, force: bool = False) -> Non
         "sections": sections,
     })
     print(f"[pipeline:carte] {slug} : carte publiée (hash {carte['hash'][:8]})")
+    return True
 
 
 async def _step_cartes(state: dict, loop) -> None:
@@ -367,22 +371,35 @@ async def _step_cartes(state: dict, loop) -> None:
     for slug, fn in CARTE_SOURCES.items():
         if slug in state["cartes_traitees"]:
             continue
-        await _traiter_carte(loop, slug, fn)
+        try:
+            await _traiter_carte(loop, slug, fn)
+        except Exception as e:
+            # Garde-fou supplémentaire : même une erreur imprévue dans _traiter_carte
+            # (ex. dict de carte incomplet) ne doit jamais faire échouer le run entier.
+            print(f"[pipeline:carte] {slug} : erreur inattendue : {e}")
         state["cartes_traitees"].append(slug)
         run_state.save(state)
 
 
 async def run_cartes(slug: str | None = None, force: bool = False) -> int:
-    """Commande manuelle : traite toutes les cartes (ou une seule), hors état de run."""
+    """Commande manuelle : traite toutes les cartes (ou une seule), hors état de run.
+    Renvoie 1 si un slug demandé est inconnu, ou si au moins une carte traitée a échoué."""
     if slug and slug not in CARTE_SOURCES:
         print(f"[pipeline:carte] Slug inconnu : {slug} (attendus : {', '.join(CARTE_SOURCES)})")
         return 1
     loop = asyncio.get_event_loop()
+    echec = False
     for s, fn in CARTE_SOURCES.items():
         if slug and s != slug:
             continue
-        await _traiter_carte(loop, s, fn, force=force)
-    return 0
+        try:
+            ok = await _traiter_carte(loop, s, fn, force=force)
+        except Exception as e:
+            print(f"[pipeline:carte] {s} : erreur inattendue : {e}")
+            ok = False
+        if not ok:
+            echec = True
+    return 1 if echec else 0
 
 
 # Cartes permanentes : slug → scrape_carte(). Chaque fonction renvoie soit des
