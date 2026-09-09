@@ -76,3 +76,53 @@ def test_scrape_utilise_le_html_telecharge(monkeypatch):
     assert dubble.scrape(today=date(2026, 9, 9))["restaurant"] == "Dubble"
     monkeypatch.setattr(dubble, "_fetch_html", lambda: None)
     assert dubble.scrape(today=date(2026, 9, 9)) is None
+
+
+def _mini_pdf(lines: list[str]) -> bytes:
+    """PDF minimal valide (xref calculé) : une ligne de texte Helvetica par élément."""
+    ops = " ".join(f"({l}) Tj 0 -16 Td" for l in lines)
+    content = f"BT /F1 12 Tf 72 720 Td {ops} ET".encode("latin-1")
+    objs = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R "
+        b"/Resources << /Font << /F1 5 0 R >> >> >>",
+        b"<< /Length " + str(len(content)).encode() + b" >> stream\n" + content + b"\nendstream",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    ]
+    out = bytearray(b"%PDF-1.4\n")
+    offsets = []
+    for i, body in enumerate(objs, start=1):
+        offsets.append(len(out))
+        out += f"{i} 0 obj\n".encode() + body + b"\nendobj\n"
+    xref = len(out)
+    out += f"xref\n0 {len(objs) + 1}\n0000000000 65535 f \n".encode()
+    for off in offsets:
+        out += f"{off:010d} 00000 n \n".encode()
+    out += f"trailer\n<< /Size {len(objs) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode()
+    return bytes(out)
+
+
+def test_pdf_texte_extrait_les_lignes():
+    texte = dubble._pdf_texte(_mini_pdf(["LES HOT BOWLS", "le hot bowl au poulet 9,90"]))
+    assert texte == "LES HOT BOWLS\nle hot bowl au poulet 9,90"
+
+
+def test_scrape_carte_retourne_texte_et_hash(monkeypatch):
+    lignes = [f"salade numero {i} 9,00" for i in range(40)]  # > 500 caractères
+    monkeypatch.setattr(dubble, "_fetch_pdf", lambda: _mini_pdf(lignes))
+    carte = dubble.scrape_carte()
+    assert carte["restaurant"] == "Dubble"
+    assert "salade numero 7 9,00" in carte["texte"]
+    assert "sections" not in carte
+    from agent.carte_agent import _texte_hash
+    assert carte["hash"] == _texte_hash(carte["texte"])
+
+
+def test_scrape_carte_texte_trop_court_ou_pdf_ko(monkeypatch):
+    monkeypatch.setattr(dubble, "_fetch_pdf", lambda: _mini_pdf(["trop court"]))
+    assert dubble.scrape_carte() is None
+    monkeypatch.setattr(dubble, "_fetch_pdf", lambda: b"pas un pdf")
+    assert dubble.scrape_carte() is None
+    monkeypatch.setattr(dubble, "_fetch_pdf", lambda: None)
+    assert dubble.scrape_carte() is None

@@ -113,8 +113,13 @@ export function ClientScripts() {
     // ── Cart / Panier ────────────────────────────────────────────────────────
     initCart();
 
+    // Cartes chargées à la demande (CarteLazy) : réappliquer le mode et le tri aux nœuds insérés.
+    const onModeRefresh = () => applyMode(localStorage.getItem("pdj-mode") || "sportif");
+    window.addEventListener("pdj:mode-refresh", onModeRefresh);
+
     return () => {
       cleanupMobileMenu?.();
+      window.removeEventListener("pdj:mode-refresh", onModeRefresh);
     };
   }, [pathname]);
 
@@ -648,8 +653,12 @@ function applyMode(mode: string) {
   });
 
   // Sort plat cards by note (best first) within each day panel
+  // `:scope >` : uniquement les enfants directs. Un panel peut contenir une carte
+  // dépliée (CarteLazy → CarteRestaurant) dont les CartePlatCard ont aussi la classe
+  // .plat-card mais sont imbriqués plus profond ; un sélecteur descendant les
+  // remonterait à la racine du panel et viderait les sections de la carte.
   document.querySelectorAll<HTMLElement>("[data-day-panel]").forEach((panel) => {
-    const cards = Array.from(panel.querySelectorAll<HTMLElement>(".plat-card"));
+    const cards = Array.from(panel.querySelectorAll<HTMLElement>(":scope > .plat-card"));
     if (cards.length < 2) return;
     const noteSelector = mode === "sportif" ? ".note.mode-sportif" : ".note.mode-goulaf";
     cards.sort((a, b) => {

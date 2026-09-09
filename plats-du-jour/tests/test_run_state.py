@@ -172,3 +172,20 @@ def test_load_complete_les_labels_manquants_d_un_ancien_etat(_tmp_output):
     state = run_state.load(d, "jour")
     assert set(state["scrapes"]) == set(run_state.SCRAPER_LABELS)
     assert state["scrapes"]["dubble"] == {"ok": False, "data": None, "erreur": None}
+
+
+def test_etat_vierge_a_cartes_traitees_vide():
+    state = run_state.load(date(2026, 9, 14), "semaine")
+    assert state["cartes_traitees"] == []
+    assert "carte_traitee" not in state
+
+
+def test_migration_ancien_flag_carte_traitee(_tmp_output):
+    for ancien, attendu in ((True, ["bistrot_trefle"]), (False, [])):
+        state = run_state._vierge(date(2026, 9, 14), "semaine")
+        del state["cartes_traitees"]
+        state["carte_traitee"] = ancien
+        (_tmp_output / "run_state_2026-09-14.json").write_text(json.dumps(state), encoding="utf-8")
+        charge = run_state.load(date(2026, 9, 14), "semaine")
+        assert charge["cartes_traitees"] == attendu
+        assert "carte_traitee" not in charge

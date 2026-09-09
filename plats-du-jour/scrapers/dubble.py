@@ -12,6 +12,7 @@ le Hot Bowl (classique et/ou végé → liste d'options) ; prix fixe 10,90 € (
 widget prix n'est pas rendu côté serveur). Resto optionnel : None = pas de plat.
 """
 import html as html_lib
+import io
 import re
 import unicodedata
 from datetime import date
@@ -107,3 +108,58 @@ def scrape(today: date | None = None) -> dict | None:
     if html is None:
         return None
     return _parse(_html_to_lines(html), today or date.today())
+
+
+# ── Carte saisonnière (PDF) ──────────────────────────────────────────────────
+# Le lien court redirige (301) vers un PDF Wix dont l'URL change à chaque saison :
+# toujours passer par le lien court. Mise en page sur deux colonnes → le texte extrait
+# est désordonné, c'est agent.carte_agent.structurer_carte (appelé par main quand le
+# hash change) qui le remet en sections. Ici : texte brut + hash uniquement.
+
+CARTE_URL = "https://link.dubble-food.com/Carte-Avignon-Agroparc"
+CARTE_MIN_CHARS = 500
+
+
+def _fetch_pdf() -> bytes | None:
+    try:
+        r = requests.get(CARTE_URL, headers={**HEADERS, "Accept": "application/pdf,*/*"},
+                         timeout=30, allow_redirects=True)
+        r.raise_for_status()
+        ctype = r.headers.get("Content-Type", "")
+        if "pdf" not in ctype.lower() and not r.content.startswith(b"%PDF"):
+            print(f"[dubble] Carte : contenu inattendu ({ctype or 'sans Content-Type'})")
+            return None
+        return r.content
+    except Exception as e:
+        print(f"[dubble] Erreur téléchargement carte : {e}")
+        return None
+
+
+def _pdf_texte(data: bytes) -> str:
+    """Texte de toutes les pages, une ligne par ligne du PDF (espaces réduits, vides retirées)."""
+    from pypdf import PdfReader
+    reader = PdfReader(io.BytesIO(data))
+    lignes = []
+    for page in reader.pages:
+        for l in (page.extract_text() or "").splitlines():
+            l = " ".join(l.split())
+            if l:
+                lignes.append(l)
+    return "\n".join(lignes)
+
+
+def scrape_carte() -> dict | None:
+    """Carte saisonnière → {"restaurant", "hash", "texte"} ou None (PDF KO, texte trop court)."""
+    from agent.carte_agent import _texte_hash
+    data = _fetch_pdf()
+    if data is None:
+        return None
+    try:
+        texte = _pdf_texte(data)
+    except Exception as e:
+        print(f"[dubble] PDF illisible : {e}")
+        return None
+    if len(texte) < CARTE_MIN_CHARS:
+        print(f"[dubble] Texte de la carte trop court ({len(texte)} car.) → ignoré")
+        return None
+    return {"restaurant": RESTAURANT, "hash": _texte_hash(texte), "texte": texte}

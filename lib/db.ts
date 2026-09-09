@@ -1,4 +1,5 @@
 import { Pool, type QueryResult, type QueryResultRow } from "pg";
+import { SLUG_TO_RESTAURANT } from "@/lib/restaurants";
 
 // Postgres auto-hébergé (VPS) au lieu de Vercel Postgres/Neon.
 // Le driver `pg` parle le protocole wire standard sur TCP+TLS.
@@ -427,15 +428,6 @@ export interface RecentDish {
   plat_date: string;
 }
 
-const SLUG_TO_RESTAURANT: Record<string, string> = {
-  bistrot_trefle: "Le Bistrot Trèfle",
-  pause_gourmande: "La Pause Gourmande",
-  truck_muche: "Le Truck Muche",
-  basilic_ngo: "Basilic n'Go",
-  dubble: "Dubble",
-  la_mijote: "La Mijote",
-};
-
 export async function ensurePhotosTable() {
   await sql`
     CREATE TABLE IF NOT EXISTS pdj_photos (
@@ -578,6 +570,22 @@ export async function upsertCarte(carte: Carte): Promise<void> {
     ON CONFLICT (restaurant_slug)
     DO UPDATE SET hash = ${carte.hash}, data = ${JSON.stringify(carte)}, evaluated_at = NOW()
   `;
+}
+
+export interface CarteDisponible {
+  slug: string;
+  evaluated_at: string | null;
+}
+
+/** Cartes présentes en base (slug + date d'évaluation), sans le contenu : sert au SSR
+ *  pour savoir quelles cards ont un dépliant « Voir la carte ». */
+export async function getCartesDisponibles(): Promise<CarteDisponible[]> {
+  await ensureCarteTable();
+  const result = await sql`SELECT restaurant_slug, evaluated_at FROM pdj_carte`;
+  return result.rows.map((r) => ({
+    slug: r.restaurant_slug as string,
+    evaluated_at: r.evaluated_at ? new Date(r.evaluated_at as string | Date).toISOString() : null,
+  }));
 }
 
 // --- Observations quotidiennes des desserts (Truck Muche) ---

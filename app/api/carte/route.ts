@@ -1,13 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ensureCarteTable, getCarte, upsertCarte } from "@/lib/db";
 import type { Carte } from "@/lib/db";
+import { RESTAURANTS } from "@/lib/restaurants";
 
 export const runtime = "nodejs";
 
-/** Lecture publique de la carte (sert le rendu home + la comparaison de hash côté pipeline) */
-export async function GET() {
-  // getCarte appelle déjà ensureCarteTable()
-  const carte = await getCarte("bistrot_trefle");
+const SLUGS_CONNUS = new Set(RESTAURANTS.map((r) => r.slug));
+
+/** Lecture publique d'une carte (`?slug=`, défaut Trèfle) : rendu à la demande côté
+ *  home + comparaison de hash côté pipeline. Slug inconnu → 400. */
+export async function GET(request: NextRequest) {
+  const slug = request.nextUrl.searchParams.get("slug") ?? "bistrot_trefle";
+  if (!SLUGS_CONNUS.has(slug)) {
+    return NextResponse.json({ error: "Slug de restaurant inconnu" }, { status: 400 });
+  }
+  const carte = await getCarte(slug);
   return NextResponse.json(carte);
 }
 

@@ -92,19 +92,19 @@ def publish_desserts_observation(date: str, noms: list[str]) -> bool:
         return False
 
 
-def fetch_carte_hash() -> str | None:
-    """Récupère le hash de la carte actuellement stockée (GET /api/carte), ou None."""
+def fetch_carte_hash(slug: str = "bistrot_trefle") -> str | None:
+    """Hash de la carte stockée pour un resto (GET /api/carte?slug=…), ou None."""
     if not API_URL:
         return None
     url = f"{API_URL}/api/carte"
     try:
-        resp = requests.get(url, timeout=30)
+        resp = requests.get(url, params={"slug": slug}, timeout=30)
         if not resp.ok:
             return None
         data = resp.json()
         return data.get("hash") if isinstance(data, dict) else None
     except Exception as e:
-        print(f"[publish] Erreur lecture hash carte: {e}")
+        print(f"[publish] Erreur lecture hash carte ({slug}) : {e}")
         return None
 
 

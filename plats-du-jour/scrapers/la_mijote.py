@@ -24,6 +24,13 @@ JOURS = ["lundi", "mardi", "mercredi", "jeudi", "vendredi"]
 
 _TAG_RE = re.compile(r"<[^>]+>")
 
+# Carte : les divs plat_<jour> ont un contenu simple (<b>…</b>, pas de div imbriqué —
+# vérifié le 9 septembre 2026), on peut les retirer par regex non gourmande.
+_PLAT_JOUR_RE = re.compile(r'<div[^>]*data-pgc-edit="plat_[a-z]+"[^>]*>.*?</div>', re.S)
+_SCRIPT_RE = re.compile(r"<(script|style)\b[^>]*>.*?</\1>", re.S | re.I)
+_BLOCK_TAG_RE = re.compile(r"</?(?:p|div|h[1-6]|li|ul|ol|br|tr|td|th|table|section|article)\b[^>]*>", re.I)
+CARTE_MIN_CHARS = 200
+
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
@@ -89,3 +96,31 @@ def scrape(today: date | None = None) -> dict | None:
         print(f"[la_mijote] Pas de plat pour {JOURS[today.weekday()]}")
         return None
     return {"restaurant": RESTAURANT, "plat": plat, "prix": PRIX}
+
+
+# ── Carte (entrées, carte des Mijoteurs, desserts) ───────────────────────────
+
+
+def _texte_carte(html: str) -> str:
+    """Texte visible de la page sans les plats du jour (pour que le hash ne bouge pas
+    chaque semaine) ni scripts/styles ; une ligne par élément bloc, espaces réduits."""
+    txt = _PLAT_JOUR_RE.sub(" ", html)
+    txt = _SCRIPT_RE.sub(" ", txt)
+    txt = _BLOCK_TAG_RE.sub("\n", txt)
+    txt = html_lib.unescape(_TAG_RE.sub(" ", txt)).replace("\xa0", " ")
+    lignes = [" ".join(l.split()) for l in txt.split("\n")]
+    return "\n".join(l for l in lignes if l)
+
+
+def scrape_carte() -> dict | None:
+    """Carte → {"restaurant", "hash", "texte"} ou None. Pas de garde-fou Last-Modified :
+    une carte est permanente, la date « notée le » suffit côté site."""
+    from agent.carte_agent import _texte_hash
+    html = _fetch_html()
+    if html is None:
+        return None
+    texte = _texte_carte(html)
+    if len(texte) < CARTE_MIN_CHARS:
+        print(f"[la_mijote] Texte de la carte trop court ({len(texte)} car.) → ignoré")
+        return None
+    return {"restaurant": RESTAURANT, "hash": _texte_hash(texte), "texte": texte}

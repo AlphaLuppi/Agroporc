@@ -480,22 +480,22 @@ def _rebuild_carte_sections(sections: list[dict], evaluated: list[dict]) -> list
     return out
 
 
-def evaluate_carte(sections: list[dict]) -> list[dict]:
+def evaluate_carte(sections: list[dict], restaurant: str = "Le Bistrot Trèfle") -> list[dict]:
     """
-    Note tous les plats de la carte (Sportif + Goulaf + macros), SANS recommandation.
-    Retourne les sections enrichies.
+    Note tous les plats de la carte d'un restaurant (Sportif + Goulaf + macros), SANS
+    recommandation. Retourne les sections enrichies.
     """
     plats = [
-        {"restaurant": "Le Bistrot Trèfle", "plat": p.get("plat", ""), "prix": p.get("prix", "")}
+        {"restaurant": restaurant, "plat": p.get("plat", ""), "prix": p.get("prix", "")}
         for sec in sections for p in sec["plats"]
     ]
     if not plats:
         return sections
 
-    calibration = _build_portion_calibration({"Le Bistrot Trèfle"})
+    calibration = _build_portion_calibration({restaurant})
     prompt = (
         f"{_build_system_prompt()}{calibration}\n\n"
-        f"Voici la carte permanente d'un restaurant :\n\n"
+        f"Voici la carte permanente du restaurant « {restaurant} » :\n\n"
         f"{json.dumps(plats, ensure_ascii=False, indent=2)}\n\n"
         f"Note CHAQUE plat (Sportif ET Goulaf). NE DONNE PAS de recommandation.\n\n"
         f"Réponds en JSON avec cette structure :\n"

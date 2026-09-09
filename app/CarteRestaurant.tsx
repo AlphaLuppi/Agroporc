@@ -1,6 +1,5 @@
 import type { Carte, CartePlat, CarteSection } from "@/lib/db";
 import { noteClass } from "@/lib/format";
-import { getIcon } from "@/lib/icons";
 import { Card, CardContent } from "@/components/ui/card";
 import MacrosPanel from "./MacrosPanel";
 
@@ -61,13 +60,9 @@ function sortSectionPlats(sec: CarteSection): CarteSection {
   return { ...sec, plats };
 }
 
-export default function CarteTrefle({ carte }: { carte: Carte }) {
-  const evalDate = carte.evaluated_at
-    ? new Date(carte.evaluated_at).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" })
-    : null;
-
-  // Tri par défaut (SSR) : sections de la meilleure note moyenne à la plus basse, en mode sportif.
-  // Le tri dynamique selon le mode est géré côté client (applyMode).
+/** Sections d'une carte (tri par note moyenne, mode Sportif par défaut en SSR ; le tri
+ *  dynamique selon le mode est fait côté client par applyMode sur [data-carte-sections]). */
+export default function CarteRestaurant({ carte }: { carte: Carte }) {
   const sections = [...carte.sections]
     .map(sortSectionPlats)
     .sort((a, b) => sectionAvg(b, "sportif") - sectionAvg(a, "sportif"));
@@ -79,36 +74,23 @@ export default function CarteTrefle({ carte }: { carte: Carte }) {
   );
 
   return (
-    <details className="mb-3 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)]">
-      <summary className="carte-summary flex items-center justify-between gap-3 px-4 py-3 cursor-pointer hover:border-[var(--border-accent)] rounded-[var(--radius)]">
-        <span className="flex items-center gap-2 text-lg font-bold tracking-tight" style={{ fontFamily: "var(--font-heading)" }}>
-          <span dangerouslySetInnerHTML={{ __html: getIcon("Le Bistrot Trèfle") }} />
-          La carte du Trèfle
-        </span>
-        <span className="flex items-center gap-2 text-[var(--text-muted)] text-xs">
-          {evalDate && <span className="hidden sm:inline">notée le {evalDate}</span>}
-          {chevron}
-        </span>
-      </summary>
-
-      <div data-carte-sections className="px-4 pb-4 pt-1">
-        {sections.map((sec) => (
-          <details key={sec.nom} data-carte-section className="mb-2 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-accent)]">
-            <summary className="carte-summary flex items-center justify-between gap-3 px-3 py-2.5 cursor-pointer rounded-[var(--radius)]">
-              <span className="text-xs font-bold uppercase tracking-widest text-[var(--text-secondary)]">
-                {sec.nom}
-                <span className="ml-2 text-[var(--text-muted)] font-medium normal-case tracking-normal">({sec.plats.length})</span>
-              </span>
-              {chevron}
-            </summary>
-            <div className="px-3 pb-3 pt-1">
-              {sec.plats.map((p, i) => (
-                <CartePlatCard key={`${sec.nom}::${p.plat ?? i}`} plat={p} />
-              ))}
-            </div>
-          </details>
-        ))}
-      </div>
-    </details>
+    <div data-carte-sections>
+      {sections.map((sec) => (
+        <details key={sec.nom} data-carte-section className="mb-2 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-accent)]">
+          <summary className="carte-summary flex items-center justify-between gap-3 px-3 py-2.5 cursor-pointer rounded-[var(--radius)]">
+            <span className="text-xs font-bold uppercase tracking-widest text-[var(--text-secondary)]">
+              {sec.nom}
+              <span className="ml-2 text-[var(--text-muted)] font-medium normal-case tracking-normal">({sec.plats.length})</span>
+            </span>
+            {chevron}
+          </summary>
+          <div className="px-3 pb-3 pt-1">
+            {sec.plats.map((p, i) => (
+              <CartePlatCard key={`${sec.nom}::${p.plat ?? i}`} plat={p} />
+            ))}
+          </div>
+        </details>
+      ))}
+    </div>
   );
 }

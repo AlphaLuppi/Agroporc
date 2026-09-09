@@ -9,18 +9,12 @@ import {
   isoMinusDays,
   type DessertConnu,
 } from "@/lib/desserts";
+import { RESTAURANTS } from "@/lib/restaurants";
 import QuizClient from "./QuizClient";
 
 export const dynamic = "force-dynamic";
 
-const SLUGS: { slug: string; nom: string }[] = [
-  { slug: "bistrot_trefle", nom: "Le Bistrot Trèfle" },
-  { slug: "pause_gourmande", nom: "La Pause Gourmande" },
-  { slug: "truck_muche", nom: "Le Truck Muche" },
-  { slug: "basilic_ngo", nom: "Basilic n'Go" },
-  { slug: "dubble", nom: "Dubble" },
-  { slug: "la_mijote", nom: "La Mijote" },
-];
+const SLUGS: { slug: string; nom: string }[] = RESTAURANTS.filter((r) => r.carte).map((r) => ({ slug: r.slug, nom: r.nom }));
 
 function platsFromCarte(carte: Carte | null, fallbackNom: string): PoolPlat[] {
   if (!carte) return [];
