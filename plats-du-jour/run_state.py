@@ -10,7 +10,13 @@ from pathlib import Path
 
 OUTPUT_DIR = Path(__file__).parent / "output"
 RETENTION_JOURS = 7
-SCRAPER_LABELS = ["bistrot_trefle", "pause_gourmande", "truck_muche"]
+# Restos historiques : requis pour qu'une journée soit « complète ».
+CORE_LABELS = ["bistrot_trefle", "pause_gourmande", "truck_muche"]
+# Restos optionnels (sources quotidiennes sans menu à l'avance) : présents
+# seulement les jours où ils ont un plat ; `ok` + `data: None` = pas de plat
+# du jour (pas un échec), leur absence ne rend pas le run partial.
+OPTIONAL_LABELS = ["basilic_ngo", "dubble", "la_mijote"]
+SCRAPER_LABELS = CORE_LABELS + OPTIONAL_LABELS
 
 
 def _state_file(date_str: str) -> Path:
@@ -70,7 +76,15 @@ def purge(today: date_cls) -> None:
 
 
 def scrapes_ok(state: dict) -> list[str]:
-    return [l for l in SCRAPER_LABELS if state["scrapes"][l]["ok"]]
+    """Labels scrapés avec succès ET ayant un plat (sert à l'éval et aux commentaires)."""
+    return [
+        l for l in SCRAPER_LABELS
+        if l in state["scrapes"] and state["scrapes"][l]["ok"] and state["scrapes"][l]["data"]
+    ]
+
+
+def core_ok(state: dict) -> list[str]:
+    return [l for l in CORE_LABELS if state["scrapes"][l]["ok"]]
 
 
 def _weekday(state: dict) -> int:
@@ -78,13 +92,14 @@ def _weekday(state: dict) -> int:
 
 
 def est_complet(state: dict) -> bool:
-    """Complet = férié, OU 3 scrapes ok + éval à jour + commentaires partout
-    + jours futurs publiés (sauf vendredi/week-end)."""
+    """Complet = férié, OU les 3 scrapes core ok + éval alignée sur les restos
+    ayant un plat + commentaires pour chacun d'eux + jours futurs publiés
+    (sauf vendredi/week-end). Les optionnels ne bloquent que s'ils ont un plat."""
     if state.get("ferie"):
         return True
-    ok = scrapes_ok(state)
-    if len(ok) < len(SCRAPER_LABELS):
+    if len(core_ok(state)) < len(CORE_LABELS):
         return False
+    ok = scrapes_ok(state)
     if sorted(state["eval"]["restos"]) != sorted(ok):
         return False
     if any(l not in state["commentaires_par_resto"] for l in ok):
@@ -96,17 +111,28 @@ def est_complet(state: dict) -> bool:
 
 def resume(state: dict) -> str:
     """Ligne de synthèse pour le log, ex. :
-    scrapes 2/3 (truck_muche: IG 429) · éval 1/2 · commentaires 2/2 · futurs non"""
+    scrapes 2/3 (truck_muche: IG 429) · optionnels basilic_ngo ✓, dubble —, la_mijote ✗ (stale)
+    · éval 1/2 · commentaires 2/2 · futurs non"""
     if state.get("ferie"):
         return f"férié : {state['ferie']}"
     ok = scrapes_ok(state)
     rates = [
         f"{l}: {state['scrapes'][l].get('erreur') or 'échec'}"
-        for l in SCRAPER_LABELS if not state["scrapes"][l]["ok"]
+        for l in CORE_LABELS if not state["scrapes"][l]["ok"]
     ]
-    partie_scrapes = f"scrapes {len(ok)}/{len(SCRAPER_LABELS)}"
+    partie_scrapes = f"scrapes {len(core_ok(state))}/{len(CORE_LABELS)}"
     if rates:
         partie_scrapes += f" ({', '.join(rates)})"
+    optionnels = []
+    for l in OPTIONAL_LABELS:
+        sc = state["scrapes"].get(l) or {}
+        if sc.get("ok") and sc.get("data"):
+            optionnels.append(f"{l} ✓")
+        elif sc.get("ok"):
+            optionnels.append(f"{l} —")
+        else:
+            optionnels.append(f"{l} ✗ ({sc.get('erreur') or 'échec'})")
+    partie_scrapes += " · optionnels " + ", ".join(optionnels)
     n_eval = len([l for l in ok if l in state["eval"]["restos"]])
     n_comm = len([l for l in ok if l in state["commentaires_par_resto"]])
     futurs = "oui" if state["futurs_publies"] else "non"

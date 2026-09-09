@@ -90,3 +90,73 @@ def test_resume_synthese():
     state["scrapes"]["truck_muche"] = {"ok": False, "data": None, "erreur": "IG 429"}
     txt = run_state.resume(state)
     assert "2/3" in txt and "truck_muche" in txt and "IG 429" in txt
+
+
+# ── Restos optionnels (Basilic n'Go, Dubble, La Mijote) ─────────────────────
+
+def test_labels_core_et_optionnels():
+    assert run_state.CORE_LABELS == ["bistrot_trefle", "pause_gourmande", "truck_muche"]
+    assert run_state.OPTIONAL_LABELS == ["basilic_ngo", "dubble", "la_mijote"]
+    assert run_state.SCRAPER_LABELS == run_state.CORE_LABELS + run_state.OPTIONAL_LABELS
+
+
+def test_etat_vierge_contient_les_optionnels():
+    state = run_state.load(date(2026, 7, 8), "jour")
+    assert set(state["scrapes"]) == set(run_state.SCRAPER_LABELS)
+
+
+def _complet_core_seulement(state):
+    """Les 3 restos historiques ok, les optionnels ok mais sans plat (data None)."""
+    for label in run_state.CORE_LABELS:
+        state["scrapes"][label] = {"ok": True, "data": {"restaurant": label, "plat": "x", "prix": "10"}, "erreur": None}
+    for label in run_state.OPTIONAL_LABELS:
+        state["scrapes"][label] = {"ok": True, "data": None, "erreur": None}
+    state["eval"] = {"restos": sorted(run_state.CORE_LABELS), "output": {"plats": []}}
+    state["commentaires_par_resto"] = {label: [] for label in run_state.CORE_LABELS}
+    state["futurs_publies"] = True
+    return state
+
+
+def test_scrapes_ok_ignore_les_optionnels_sans_plat():
+    state = _complet_core_seulement(run_state.load(date(2026, 7, 8), "jour"))
+    assert run_state.scrapes_ok(state) == run_state.CORE_LABELS
+
+
+def test_complet_sans_aucun_optionnel():
+    state = _complet_core_seulement(run_state.load(date(2026, 7, 8), "jour"))
+    assert run_state.est_complet(state)
+
+
+def test_optionnel_en_echec_ne_bloque_pas_la_completude():
+    state = _complet_core_seulement(run_state.load(date(2026, 7, 8), "jour"))
+    state["scrapes"]["la_mijote"] = {"ok": False, "data": None, "erreur": "page figée"}
+    assert run_state.est_complet(state)
+
+
+def test_optionnel_avec_plat_exige_eval_et_commentaire():
+    state = _complet_core_seulement(run_state.load(date(2026, 7, 8), "jour"))
+    state["scrapes"]["dubble"] = {"ok": True, "data": {"restaurant": "Dubble", "plat": "Hot Bowl", "prix": "10.90€"}, "erreur": None}
+    assert run_state.scrapes_ok(state) == run_state.CORE_LABELS + ["dubble"]
+    assert not run_state.est_complet(state)  # éval pas alignée
+    state["eval"]["restos"] = sorted(run_state.CORE_LABELS + ["dubble"])
+    assert not run_state.est_complet(state)  # commentaire manquant
+    state["commentaires_par_resto"]["dubble"] = []
+    assert run_state.est_complet(state)
+
+
+def test_core_manquant_reste_bloquant():
+    state = _complet_core_seulement(run_state.load(date(2026, 7, 8), "jour"))
+    state["scrapes"]["truck_muche"] = {"ok": False, "data": None, "erreur": "IG 429"}
+    assert not run_state.est_complet(state)
+
+
+def test_resume_compte_les_core_sur_3_et_detaille_les_optionnels():
+    state = _complet_core_seulement(run_state.load(date(2026, 7, 8), "jour"))
+    state["scrapes"]["basilic_ngo"] = {"ok": True, "data": {"restaurant": "Basilic n'Go", "plat": "x", "prix": "9.40€"}, "erreur": None}
+    state["scrapes"]["la_mijote"] = {"ok": False, "data": None, "erreur": "page figée"}
+    txt = run_state.resume(state)
+    assert "scrapes 3/3" in txt
+    assert "optionnels" in txt
+    assert "basilic_ngo ✓" in txt
+    assert "dubble —" in txt
+    assert "la_mijote ✗ (page figée)" in txt
