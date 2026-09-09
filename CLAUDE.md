@@ -24,6 +24,7 @@ cd plats-du-jour
 source .venv/bin/activate
 python main.py semaine              # Full weekly pipeline (Monday): scrape all menus + generate comments
 python main.py jour                 # Daily pipeline: scrape today's dishes only
+python main.py cartes [slug] [--force]  # Cartes permanentes (Trèfle, Basilic n'Go, Dubble, La Mijote) : scrape, hash, notation LLM si changement ; --force ré-évalue
 python main.py commentaires <name>  # Generate comments for one character
 python main.py sync-feedback        # Sync human feedback into character profiles
 ```
@@ -34,6 +35,8 @@ Cron automation: `cron_pdj.sh [jour|semaine]`
 
 ### Data flow
 Python scrapers → AI diet agent evaluation (LLM décompose en ingrédients + grammages, macros agrégées via table Ciqual) → AI comment generation → `publish.py` POSTs to `/api/update` → Vercel Postgres (`pdj_entries` table, JSONB column) → Next.js SSR reads from DB
+
+Cartes permanentes : `main.py CARTE_SOURCES` → hash → `/api/carte` (`pdj_carte`, une ligne par slug), traitées le lundi ou via `main.py cartes`
 
 ### Frontend structure
 - `app/page.tsx` — Main page (SSR), builds the full week view with day tabs, mode selector, plat cards
@@ -49,10 +52,11 @@ Python scrapers → AI diet agent evaluation (LLM décompose en ingrédients + g
 - `app/components/Agroparc3D.tsx` — Vue 3D « rayons X » (three.js chargé à la demande) : bâtiments fil de fer, restaurants cliquables (menu du jour via `/api/pdj?date=`), avion, Truck Muche, circulation. Scène pure three.js dans `lib/agroparc3d/scene.ts`, données dans `public/agroparc/scene.json` (IGN BD TOPO + OSM, coordonnées locales en mètres ; voir `lib/agroparc3d/types.ts`).
 
 ### Python pipeline structure (`plats-du-jour/`)
-- `scrapers/` — One module per restaurant (`bistrot_trefle.py` uses the ObyPay REST API, `pause_gourmande.py` uses Playwright, `truck_muche.py` is async FB/IG). Optionnels, synchrones (`requests`/urllib, sans Playwright) : `basilic_ngo.py` (API ObyPay comme le Trèfle), `dubble.py` (HTML Wix SSR), `la_mijote.py` (HTML statique + garde-fou fraîcheur `Last-Modified`)
+- `scrapers/` — One module per restaurant (`bistrot_trefle.py` uses the ObyPay REST API, `pause_gourmande.py` uses Playwright, `truck_muche.py` is async FB/IG). Optionnels, synchrones (`requests`/urllib, sans Playwright) : `basilic_ngo.py` (API ObyPay comme le Trèfle, + `scrape_carte()` ObyPay), `dubble.py` (HTML Wix SSR, + `scrape_carte()` PDF saisonnier via pypdf), `la_mijote.py` (HTML statique + garde-fou fraîcheur `Last-Modified`, + `scrape_carte()` texte HTML sans plats du jour)
 - `run_state.py` — État reprenable du run ; distingue `CORE_LABELS` (les 3 historiques, requis pour un run complet) et `OPTIONAL_LABELS` (`None` = « pas de plat du jour », pas un échec)
 - `ciqual/` — Intégration de la table Ciqual ANSES pour le calcul déterministe des macros (cf. `ciqual/README.md`)
 - `agent/diet_agent.py` — Claude-based nutritional evaluation (scores dishes 1-10 in both modes). Demande au LLM des ingrédients + grammages, agrège les macros via Ciqual, fallback LLM si >30% non matché.
+- `agent/carte_agent.py` — Structuration LLM d'une carte à partir de texte brut (PDF Dubble, HTML La Mijote) + `_texte_hash` ; appelé seulement quand le hash change
 - `agent/comment_agent.py` — Generates in-character comments from persona JSON files
 - `agent/repair_team.py` — Auto-fixes scraper failures
 - `agent/feedback_agent.py` — Syncs human comment feedback into character profiles

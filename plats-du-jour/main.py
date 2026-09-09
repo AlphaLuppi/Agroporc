@@ -1,15 +1,19 @@
 """
 Pipeline principal — plats du jour.
 
-Deux modes d'exécution :
+Modes d'exécution :
   python main.py semaine   → Pipeline complète du lundi : scrape les menus de la
                               semaine (Trèfle + Truck Muche) + plat du jour Pause
-                              Gourmande. Génère un fichier message par jour.
+                              Gourmande + cartes permanentes. Génère un fichier
+                              message par jour.
   python main.py jour      → Pipeline légère quotidienne : scrape uniquement le plat
                               du jour des 3 restaurants historiques + des restos
                               optionnels (Basilic n'Go, Dubble, La Mijote : présents
                               seulement les jours où ils ont un plat), met à jour le
                               message du jour.
+  python main.py cartes [slug] [--force]  → Traite les cartes permanentes (Trèfle,
+                              Basilic n'Go, Dubble, La Mijote) hors état de run :
+                              scrape, hash, re-notation LLM si changement.
 """
 import asyncio
 import json
@@ -25,7 +29,7 @@ HISTORY_DIR = Path(__file__).parent / "output" / "historique"
 load_dotenv()
 
 from scrapers import bistrot_trefle, pause_gourmande, truck_muche, basilic_ngo, dubble, la_mijote
-from agent import diet_agent, repair_team, comment_agent, feedback_agent, idee_agent, portion_agent
+from agent import diet_agent, repair_team, comment_agent, feedback_agent, idee_agent, portion_agent, carte_agent
 from creer_personnage import creer_personnage
 from messages import generer_messages_semaine, maj_message_jour
 from publish import publish_pdj, publish_carte, fetch_carte_hash
@@ -304,14 +308,8 @@ async def run_semaine(retry: bool = False) -> int:
     # Publier vers Vercel
     publish_pdj(output)
 
-    # ── Carte permanente du Trèfle (une fois par lundi, hash-guardée) ────
-    if not state["carte_traitee"]:
-        try:
-            await _traiter_carte(loop)
-            state["carte_traitee"] = True
-            run_state.save(state)
-        except Exception as e:
-            print(f"[pipeline:semaine] Erreur traitement carte : {e}")
+    # ── Cartes permanentes (une fois par lundi, hash-gardées, reprenables) ──
+    await _step_cartes(state, loop)
 
     # ── Évaluation des idées d'amélioration ──────────────────────────────
     try:
@@ -326,37 +324,76 @@ async def run_semaine(retry: bool = False) -> int:
 
 # ── Utilitaires communs ─────────────────────────────────────────────────────
 
-async def _traiter_carte(loop) -> None:
-    """Scrape la carte du Trèfle ; ré-évalue et publie uniquement si elle a changé (hash)."""
+async def _traiter_carte(loop, slug: str, scrape_fn, force: bool = False) -> None:
+    """Scrape la carte d'un resto ; structure (si texte brut), ré-évalue et publie
+    uniquement si le hash a changé (ou force). Ne lève jamais."""
     try:
-        carte = await loop.run_in_executor(None, bistrot_trefle.scrape_carte)
+        carte = await loop.run_in_executor(None, scrape_fn)
     except Exception as e:
-        print(f"[pipeline:carte] Erreur scrape carte : {e}")
+        print(f"[pipeline:carte] {slug} : erreur scrape : {e}")
         return
     if not carte:
-        print("[pipeline:carte] Carte non récupérée, skip")
+        print(f"[pipeline:carte] {slug} : carte non récupérée, skip")
         return
 
-    stored_hash = await loop.run_in_executor(None, fetch_carte_hash)
-    if stored_hash and stored_hash == carte["hash"]:
-        print("[pipeline:carte] Carte inchangée, évaluation réutilisée")
+    stored_hash = await loop.run_in_executor(None, fetch_carte_hash, slug)
+    if not force and stored_hash and stored_hash == carte["hash"]:
+        print(f"[pipeline:carte] {slug} : carte inchangée, évaluation réutilisée")
         return
 
-    print("[pipeline:carte] Carte modifiée → ré-évaluation...")
+    print(f"[pipeline:carte] {slug} : carte modifiée → ré-évaluation...")
+    restaurant = carte["restaurant"]
     try:
-        sections = await loop.run_in_executor(None, diet_agent.evaluate_carte, carte["sections"])
+        sections = carte.get("sections")
+        if not sections:
+            sections = await loop.run_in_executor(
+                None, carte_agent.structurer_carte, carte["texte"], restaurant)
+        sections = await loop.run_in_executor(None, diet_agent.evaluate_carte, sections, restaurant)
     except Exception as e:
-        print(f"[pipeline:carte] Erreur évaluation carte (non publiée) : {e}")
+        print(f"[pipeline:carte] {slug} : erreur structuration/évaluation (non publiée) : {e}")
         return
 
-    payload = {
-        "restaurant_slug": "bistrot_trefle",
-        "restaurant": carte["restaurant"],
+    publish_carte({
+        "restaurant_slug": slug,
+        "restaurant": restaurant,
         "hash": carte["hash"],
         "sections": sections,
-    }
-    publish_carte(payload)
-    print(f"[pipeline:carte] Carte publiée (hash {carte['hash'][:8]})")
+    })
+    print(f"[pipeline:carte] {slug} : carte publiée (hash {carte['hash'][:8]})")
+
+
+async def _step_cartes(state: dict, loop) -> None:
+    """Une fois par semaine, traite chaque carte pas encore traitée (état reprenable)."""
+    for slug, fn in CARTE_SOURCES.items():
+        if slug in state["cartes_traitees"]:
+            continue
+        await _traiter_carte(loop, slug, fn)
+        state["cartes_traitees"].append(slug)
+        run_state.save(state)
+
+
+async def run_cartes(slug: str | None = None, force: bool = False) -> int:
+    """Commande manuelle : traite toutes les cartes (ou une seule), hors état de run."""
+    if slug and slug not in CARTE_SOURCES:
+        print(f"[pipeline:carte] Slug inconnu : {slug} (attendus : {', '.join(CARTE_SOURCES)})")
+        return 1
+    loop = asyncio.get_event_loop()
+    for s, fn in CARTE_SOURCES.items():
+        if slug and s != slug:
+            continue
+        await _traiter_carte(loop, s, fn, force=force)
+    return 0
+
+
+# Cartes permanentes : slug → scrape_carte(). Chaque fonction renvoie soit des
+# "sections" (source structurée), soit un "texte" brut (structuré par le LLM seulement
+# quand le hash change), ou None.
+CARTE_SOURCES = {
+    "bistrot_trefle": bistrot_trefle.scrape_carte,
+    "basilic_ngo": basilic_ngo.scrape_carte,
+    "dubble": dubble.scrape_carte,
+    "la_mijote": la_mijote.scrape_carte,
+}
 
 
 _SCRAPE_FNS = {
@@ -515,7 +552,8 @@ async def _step_commentaires(state: dict, loop, output: dict) -> dict:
 # ── Point d'entrée ──────────────────────────────────────────────────────────
 
 def main():
-    usage = "Usage: python main.py [semaine|jour|commentaires <personnage>|sync-feedback|nouveau-personnage|check-portions]"
+    usage = ("Usage: python main.py [semaine|jour|cartes [slug] [--force]|commentaires <personnage>"
+             "|sync-feedback|nouveau-personnage|check-portions|desserts]")
 
     if len(sys.argv) < 2:
         print(usage)
@@ -528,6 +566,9 @@ def main():
         sys.exit(asyncio.run(run_semaine(retry=retry)))
     elif mode == "jour":
         sys.exit(asyncio.run(run_jour(retry=retry)))
+    elif mode == "cartes":
+        args = [a for a in sys.argv[2:] if not a.startswith("--")]
+        sys.exit(asyncio.run(run_cartes(args[0] if args else None, force="--force" in sys.argv)))
     elif mode == "check-portions":
         print("[main] Vérification des photos de référence...")
         estimates = portion_agent.check_and_update()
