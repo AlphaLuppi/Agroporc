@@ -113,8 +113,13 @@ export function ClientScripts() {
     // ── Cart / Panier ────────────────────────────────────────────────────────
     initCart();
 
+    // Cartes chargées à la demande (CarteLazy) : réappliquer le mode et le tri aux nœuds insérés.
+    const onModeRefresh = () => applyMode(localStorage.getItem("pdj-mode") || "sportif");
+    window.addEventListener("pdj:mode-refresh", onModeRefresh);
+
     return () => {
       cleanupMobileMenu?.();
+      window.removeEventListener("pdj:mode-refresh", onModeRefresh);
     };
   }, [pathname]);
 
