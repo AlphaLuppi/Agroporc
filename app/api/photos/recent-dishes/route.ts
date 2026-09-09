@@ -3,7 +3,7 @@ import { getRecentDishesBySlug } from "@/lib/db";
 
 export const runtime = "nodejs";
 
-const VALID_SLUGS = new Set(["bistrot_trefle", "pause_gourmande", "truck_muche"]);
+const VALID_SLUGS = new Set(["bistrot_trefle", "pause_gourmande", "truck_muche", "basilic_ngo", "dubble", "la_mijote"]);
 
 export async function GET(request: NextRequest) {
   const slug = request.nextUrl.searchParams.get("slug");

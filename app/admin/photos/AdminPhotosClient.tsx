@@ -9,6 +9,9 @@ const RESTAURANTS = [
   { name: "Le Bistrot Trèfle", slug: "bistrot_trefle" },
   { name: "La Pause Gourmande", slug: "pause_gourmande" },
   { name: "Le Truck Muche", slug: "truck_muche" },
+  { name: "Basilic n'Go", slug: "basilic_ngo" },
+  { name: "Dubble", slug: "dubble" },
+  { name: "La Mijote", slug: "la_mijote" },
 ];
 
 const MAX_FILE_SIZE = 3 * 1024 * 1024;
