@@ -60,6 +60,10 @@ export interface SceneData {
   pois: Poi[];
   /** voie d'arrivée du food truck */
   truckRoad: Vec2[];
+  /** voies principales (classe M) parcourues par les bus */
+  busRoutes: Route[];
+  /** arrêts de bus OSM (highway=bus_stop) */
+  busStops: Vec2[];
   /** point visé par la caméra au repos */
   focus: Vec2;
 }

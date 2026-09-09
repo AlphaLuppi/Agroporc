@@ -1,6 +1,6 @@
 /**
  * Scène three.js « rayons X » d'Agroparc : bâtiments en fil de fer sur fond noir,
- * voirie, arbres, marqueurs cliquables, avion, food truck et circulation.
+ * voirie, arbres, marqueurs cliquables, avion, food truck, circulation et bus.
  * Indépendant de React : `createAgroparcScene` dessine dans un canvas et pose les
  * libellés HTML dans `labelsEl` ; les interactions remontent via les callbacks.
  */
@@ -11,6 +11,7 @@ import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
+import { cumulativeLengths, pickBusRoutes, stopAbscissas } from "./bus";
 import type { Building, Poi, SceneData, Vec2 } from "./types";
 
 export interface SceneCallbacks {
@@ -40,6 +41,7 @@ const C = {
   tree: 0x1d5a4a,
   grid: 0x0a161e,
   car: 0x6fc3de,
+  bus: 0xbfe7d6,
 };
 
 const POI_LABEL: Record<Poi["type"], string> = { home: "Base", resto: "Restaurant", truck: "Food truck", shop: "Repère" };
@@ -106,6 +108,8 @@ function closestOnPolyline(pts: THREE.Vector3[], target: THREE.Vector3) {
 
 interface Marker { poi: Poi; el: HTMLDivElement; ring: THREE.LineLoop; beam: THREE.Line; anchor: THREE.Vector3; phase: number }
 interface Car { g: THREE.Group; pts: THREE.Vector3[]; cum: number[]; len: number; oneway: boolean; s: number; dir: 1 | -1; v: number; lane: number }
+/** Bus = voiture + arrêts (abscisses s le long de la voie), pause `wait` s à chaque arrêt franchi. */
+interface Bus extends Car { stops: number[]; lastStop: number | null; wait: number }
 
 export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLElement, data: SceneData, cb: SceneCallbacks): SceneHandle {
   const reduced = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -199,16 +203,21 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
   const ringGeo = new THREE.BufferGeometry().setFromPoints(
     Array.from({ length: 33 }, (_, i) => { const a = (i / 32) * Math.PI * 2; return new THREE.Vector3(Math.cos(a) * 6, 0, Math.sin(a) * 6); }),
   );
+  // Deux POI sur le même bâtiment (ex. Basilic n'Go et La Mijote) : ancres décalées de ±12 m en x.
+  const sharing = new Map<number, Poi[]>();
+  for (const p of data.pois) if (p.type === "resto" || p.type === "home") sharing.set(p.b, [...(sharing.get(p.b) ?? []), p]);
+  const xOffset = (p: Poi) => { const grp = sharing.get(p.b); if (!grp || grp.length < 2) return 0; const i = grp.indexOf(p); return i === 0 ? -12 : i === 1 ? 12 : 0; };
   for (const p of data.pois) {
     const color = p.type === "home" ? C.white : p.type === "shop" ? C.shop : C.amber;
     const isTruck = p.type === "truck";
     const top = isTruck ? 16 : p.bh + 42;
+    const x = p.x + xOffset(p);
     const beam = new THREE.Line(
-      new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(p.x, isTruck ? 3.5 : p.bh + 0.5, p.z), new THREE.Vector3(p.x, top, p.z)]),
+      new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(x, isTruck ? 3.5 : p.bh + 0.5, p.z), new THREE.Vector3(x, top, p.z)]),
       new THREE.LineBasicMaterial({ color, transparent: true, opacity: p.type === "shop" ? 0.35 : 0.8 }),
     );
     const ring = new THREE.LineLoop(ringGeo, new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.9 }));
-    ring.position.set(p.x, top, p.z);
+    ring.position.set(x, top, p.z);
     const el = document.createElement("div");
     el.dataset.kind = p.type;
     const tag = document.createElement("span"); tag.dataset.part = "tag"; tag.textContent = POI_LABEL[p.type];
@@ -223,7 +232,7 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
     if (isTruck) { el.hidden = true; beam.visible = false; ring.visible = false; }
     labelsEl.appendChild(el);
     scene.add(beam, ring);
-    markers.push({ poi: p, el, ring, beam, anchor: new THREE.Vector3(p.x, top + 4, p.z), phase: Math.random() * Math.PI * 2 });
+    markers.push({ poi: p, el, ring, beam, anchor: new THREE.Vector3(x, top + 4, p.z), phase: Math.random() * Math.PI * 2 });
   }
 
   // ---------- plane ----------
@@ -270,46 +279,96 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
 
   // ---------- traffic ----------
   const cars: Car[] = [];
+  const buses: Bus[] = [];
   if (!reduced) {
-    const body = new THREE.EdgesGeometry(new THREE.BoxGeometry(4.3, 1.45, 1.9), 10);
-    const mat = new THREE.LineBasicMaterial({ color: C.car, transparent: true, opacity: 0.85 });
     const head = new THREE.MeshBasicMaterial({ color: 0xf4fbff }), tailM = new THREE.MeshBasicMaterial({ color: 0xff4a3a });
     const bulb = new THREE.SphereGeometry(0.28, 6, 6);
+    /** Carrosserie fil de fer + 2 phares blancs à l'avant (+x), 2 feux rouges à l'arrière. */
+    const vehicle = (body: THREE.BufferGeometry, mat: THREE.Material, halfLen: number, halfW: number, y: number) => {
+      const g = new THREE.Group();
+      g.add(new THREE.LineSegments(body, mat));
+      const lights: [number, number, THREE.Material][] = [[halfLen, halfW, head], [halfLen, -halfW, head], [-halfLen, halfW, tailM], [-halfLen, -halfW, tailM]];
+      for (const [x, z, m] of lights) { const l = new THREE.Mesh(bulb, m); l.position.set(x, y, z); g.add(l); }
+      scene.add(g);
+      return g;
+    };
+    const polyline = (p: Vec2[]) => {
+      const pts = p.map(([x, z]) => new THREE.Vector3(x, 0, z));
+      const cum = cumulativeLengths(p);
+      return { pts, cum, len: cum[cum.length - 1] };
+    };
+
+    const carBody = new THREE.EdgesGeometry(new THREE.BoxGeometry(4.3, 1.45, 1.9), 10);
+    const carMat = new THREE.LineBasicMaterial({ color: C.car, transparent: true, opacity: 0.85 });
     let spawned = 0;
     for (const r of data.routes) {
-      const pts = r.p.map(([x, z]) => new THREE.Vector3(x, 0, z));
-      const cum = [0];
-      for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + pts[i].distanceTo(pts[i - 1]));
-      const len = cum[cum.length - 1];
+      const { pts, cum, len } = polyline(r.p);
       const n = Math.max(1, Math.round(len / 110));
       for (let i = 0; i < n && spawned < 22; i++, spawned++) {
-        const g = new THREE.Group();
-        g.add(new THREE.LineSegments(body, mat));
-        const lights: [number, number, THREE.Material][] = [[2.15, 0.6, head], [2.15, -0.6, head], [-2.15, 0.6, tailM], [-2.15, -0.6, tailM]];
-        for (const [x, z, m] of lights) { const l = new THREE.Mesh(bulb, m); l.position.set(x, 0.55, z); g.add(l); }
-        scene.add(g);
+        const g = vehicle(carBody, carMat, 2.15, 0.6, 0.55);
         cars.push({ g, pts, cum, len, oneway: r.oneway, s: Math.random() * len, dir: r.oneway || Math.random() < 0.5 ? 1 : -1, v: 7 + Math.random() * 6, lane: 2.1 });
       }
     }
+
+    // Bus : un par voie principale retenue (celles qui desservent le plus d'arrêts OSM).
+    const busRoutes = data.busRoutes ?? [], busStops = data.busStops ?? [];
+    const busBody = new THREE.EdgesGeometry(new THREE.BoxGeometry(11, 3, 2.5), 10);
+    busBody.translate(0, 1.6, 0);
+    const busMat = new THREE.LineBasicMaterial({ color: C.bus, transparent: true, opacity: 0.9 });
+    for (const idx of pickBusRoutes(busRoutes, busStops, 4)) {
+      const r = busRoutes[idx];
+      const { pts, cum, len } = polyline(r.p);
+      const g = vehicle(busBody, busMat, 5.5, 0.8, 0.9);
+      buses.push({
+        g, pts, cum, len, oneway: r.oneway, s: Math.random() * len, dir: r.oneway || Math.random() < 0.5 ? 1 : -1, v: 7 + Math.random() * 2, lane: 2.6,
+        stops: stopAbscissas(r.p, busStops, 12), lastStop: null, wait: 0,
+      });
+    }
   }
   const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _d = new THREE.Vector3();
+  /** Pose le véhicule à l'abscisse c.s, décalé sur la voie de droite. */
+  function placeOnRoute(c: Car, y: number) {
+    let i = 1;
+    while (i < c.cum.length - 1 && c.cum[i] < c.s) i++;
+    const u = (c.s - c.cum[i - 1]) / Math.max(c.cum[i] - c.cum[i - 1], 1e-6);
+    _a.copy(c.pts[i - 1]); _b.copy(c.pts[i]);
+    _d.copy(_b).sub(_a).normalize().multiplyScalar(c.dir);
+    c.g.position.lerpVectors(_a, _b, u);
+    c.g.position.y = y;
+    c.g.position.x += -_d.z * c.lane; // tenue de la voie de droite
+    c.g.position.z += _d.x * c.lane;
+    c.g.rotation.y = Math.atan2(_d.x, _d.z) - Math.PI / 2;
+  }
+  function wrapOrReverse(c: Car) {
+    if (c.s > c.len || c.s < 0) {
+      if (c.oneway) c.s = 0;
+      else { c.dir = c.dir === 1 ? -1 : 1; c.s = THREE.MathUtils.clamp(c.s, 0, c.len); }
+    }
+  }
   function moveCars(dt: number) {
     for (const c of cars) {
       c.s += c.v * c.dir * dt;
-      if (c.s > c.len || c.s < 0) {
-        if (c.oneway) c.s = 0;
-        else { c.dir = c.dir === 1 ? -1 : 1; c.s = THREE.MathUtils.clamp(c.s, 0, c.len); }
+      wrapOrReverse(c);
+      placeOnRoute(c, 0.75);
+    }
+  }
+  function moveBuses(dt: number) {
+    for (const b of buses) {
+      if (b.wait > 0) { b.wait -= dt; if (b.wait > 0) continue; b.wait = 0; }
+      const prev = b.s;
+      b.s += b.v * b.dir * dt;
+      // Arrêt franchi pendant ce pas (dans le sens de marche) → on s'y cale 4 s.
+      // `lastStop` évite de re-marquer l'arrêt qu'on vient de quitter.
+      const lo = Math.min(prev, b.s), hi = Math.max(prev, b.s);
+      for (let k = 0; k < b.stops.length; k++) {
+        const st = b.stops[k];
+        if (k !== b.lastStop && st >= lo && st <= hi) { b.s = st; b.lastStop = k; b.wait = 4; break; }
       }
-      let i = 1;
-      while (i < c.cum.length - 1 && c.cum[i] < c.s) i++;
-      const u = (c.s - c.cum[i - 1]) / Math.max(c.cum[i] - c.cum[i - 1], 1e-6);
-      _a.copy(c.pts[i - 1]); _b.copy(c.pts[i]);
-      _d.copy(_b).sub(_a).normalize().multiplyScalar(c.dir);
-      c.g.position.lerpVectors(_a, _b, u);
-      c.g.position.y = 0.75;
-      c.g.position.x += -_d.z * c.lane; // tenue de la voie de droite
-      c.g.position.z += _d.x * c.lane;
-      c.g.rotation.y = Math.atan2(_d.x, _d.z) - Math.PI / 2;
+      // L'arrêt redevient « actif » une fois qu'on s'en est éloigné de plus d'1 m
+      // (couvre aussi le demi-tour en bout de ligne sans double arrêt).
+      if (b.wait === 0 && b.lastStop !== null && Math.abs(b.s - b.stops[b.lastStop]) > 1) b.lastStop = null;
+      wrapOrReverse(b);
+      placeOnRoute(b, 0);
     }
   }
 
@@ -381,11 +440,12 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
     applyRecenter(dt);
     controls.update();
     moveCars(dt);
+    moveBuses(dt);
 
     for (const m of markers) { const s = reduced ? 1 : 1 + 0.18 * Math.sin(t * 2.2 + m.phase); m.ring.scale.set(s, 1, s); }
 
     if (!reduced) {
-      if (FLIGHT.t < 0 && t > FLIGHT.next) { FLIGHT.t = 0; plane.visible = true; cb.onEvent("AVION", "Approche Avignon-Caumont, cap sud-est"); }
+      if (FLIGHT.t < 0 && t > FLIGHT.next) { FLIGHT.t = 0; plane.visible = true; }
       if (FLIGHT.t >= 0) {
         FLIGHT.t += dt;
         const k = FLIGHT.t / FLIGHT.dur;

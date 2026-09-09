@@ -91,12 +91,7 @@ export default function Agroparc3D() {
       <div className={styles.vignette} />
 
       <header className={`${styles.hud} ${styles.hudTl}`}>
-        <p className={styles.eyebrow}>Plats du jour · Vue secrète</p>
-        <h1 className={styles.title}>AGROPARC</h1>
-        <p className={styles.sub}>Allée Camille Claudel → Route de l&apos;Aérodrome · vue rayons X</p>
-        <p className={styles.meta}>
-          {scene ? `${scene.buildings.length} bâtiments autour des restaurants · hauteurs IGN BD TOPO · voirie et arbres OpenStreetMap · 1 unité = 1 m` : "Chargement des données…"}
-        </p>
+        <h1 className={styles.title}>Agroporc x Palantir</h1>
       </header>
 
       <div className={`${styles.hud} ${styles.hudBl}`}>
