@@ -58,8 +58,6 @@
   font-family: var(--ag-display), var(--ag-mono), monospace; font-weight: 700; font-size: 30px; line-height: 1;
   letter-spacing: 0.04em; margin: 0; color: var(--ag-white); text-shadow: 0 0 18px rgba(155, 233, 255, 0.25);
 }
-.sub { margin: 8px 0 0; font-size: 12px; color: var(--ag-cyan); }
-.meta { margin: 6px 0 0; font-size: 11px; color: var(--ag-ink-dim); font-variant-numeric: tabular-nums; }
 
 .hudBl { left: 24px; bottom: 20px; display: flex; flex-direction: column; gap: 10px; max-width: min(760px, calc(100vw - 420px)); }
 .legend { display: flex; gap: 16px; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ag-ink-dim); }

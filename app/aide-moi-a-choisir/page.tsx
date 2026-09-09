@@ -17,6 +17,9 @@ const SLUGS: { slug: string; nom: string }[] = [
   { slug: "bistrot_trefle", nom: "Le Bistrot Trèfle" },
   { slug: "pause_gourmande", nom: "La Pause Gourmande" },
   { slug: "truck_muche", nom: "Le Truck Muche" },
+  { slug: "basilic_ngo", nom: "Basilic n'Go" },
+  { slug: "dubble", nom: "Dubble" },
+  { slug: "la_mijote", nom: "La Mijote" },
 ];
 
 function platsFromCarte(carte: Carte | null, fallbackNom: string): PoolPlat[] {

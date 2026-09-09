@@ -3,7 +3,7 @@ import { getAllPhotos, getPhotosBySlug, addPhoto } from "@/lib/db";
 
 export const runtime = "nodejs";
 
-const VALID_SLUGS = new Set(["bistrot_trefle", "pause_gourmande", "truck_muche"]);
+const VALID_SLUGS = new Set(["bistrot_trefle", "pause_gourmande", "truck_muche", "basilic_ngo", "dubble", "la_mijote"]);
 const VALID_TYPES: Record<string, string> = {
   "image/jpeg": "image/jpeg",
   "image/jpg": "image/jpeg",

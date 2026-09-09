@@ -19,9 +19,10 @@ API_TOKEN = os.getenv("API_SECRET_TOKEN", "")
 CONTEXTE_PROJET = """
 Le projet "Plats du Jour" (PDJ) est un agrégateur de menus de cantine pour le bureau.
 - Frontend : Next.js 15 + React 19 + Tailwind, déployé sur Vercel, BDD Vercel Postgres.
-- Backend : pipeline Python (scrapers Playwright/async pour 3 restaurants : Le Bistrot Trèfle,
-  La Pause Gourmande, Le Truck Muche), agents Claude pour évaluation diététique et commentaires
-  générés par des personnages fictifs.
+- Backend : pipeline Python (scrapers Playwright/async pour 3 restaurants historiques : Le Bistrot
+  Trèfle, La Pause Gourmande, Le Truck Muche, plus 3 restaurants optionnels présents seulement les
+  jours où ils publient un plat : Basilic n'Go, Dubble, La Mijote), agents Claude pour évaluation
+  diététique et commentaires générés par des personnages fictifs.
 - Deux modes d'évaluation des plats : "Sportif" (santé) et "Goulaf" (gourmandise).
 - Système de commentaires utilisateur, votes, idées d'amélioration.
 - Pipeline cron lancée chaque matin (semaine le lundi, jour du mardi au vendredi).

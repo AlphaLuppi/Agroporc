@@ -30,6 +30,9 @@ RESTAURANT_SLUGS = {
     "Le Bistrot Trèfle": "bistrot_trefle",
     "La Pause Gourmande": "pause_gourmande",
     "Le Truck Muche": "truck_muche",
+    "Basilic n'Go": "basilic_ngo",
+    "Dubble": "dubble",
+    "La Mijote": "la_mijote",
 }
 
 PHOTO_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}

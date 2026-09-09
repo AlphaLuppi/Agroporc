@@ -6,7 +6,10 @@ Deux modes d'exécution :
                               semaine (Trèfle + Truck Muche) + plat du jour Pause
                               Gourmande. Génère un fichier message par jour.
   python main.py jour      → Pipeline légère quotidienne : scrape uniquement le plat
-                              du jour des 3 restaurants, met à jour le message du jour.
+                              du jour des 3 restaurants historiques + des restos
+                              optionnels (Basilic n'Go, Dubble, La Mijote : présents
+                              seulement les jours où ils ont un plat), met à jour le
+                              message du jour.
 """
 import asyncio
 import json
@@ -21,7 +24,7 @@ HISTORY_DIR = Path(__file__).parent / "output" / "historique"
 
 load_dotenv()
 
-from scrapers import bistrot_trefle, pause_gourmande, truck_muche
+from scrapers import bistrot_trefle, pause_gourmande, truck_muche, basilic_ngo, dubble, la_mijote
 from agent import diet_agent, repair_team, comment_agent, feedback_agent, idee_agent, portion_agent
 from creer_personnage import creer_personnage
 from messages import generer_messages_semaine, maj_message_jour
@@ -79,15 +82,17 @@ async def run_jour(retry: bool = False) -> int:
 
     loop = asyncio.get_event_loop()
     await _step_scrape_jour(state, loop)
-    print(f"[pipeline:jour] {len(run_state.scrapes_ok(state))}/3 plats récupérés")
+    print(f"[pipeline:jour] {_bilan_scrapes(state)}")
 
     output = await _step_eval(state, loop)
     output = await _step_commentaires(state, loop, output)
 
-    # Mettre à jour le message du jour (remplace "on ne sait pas encore" pour la Pause Gourmande)
+    # Mettre à jour le message du jour (remplace "on ne sait pas encore" pour la
+    # Pause Gourmande, ajoute les optionnels qui ont un plat)
     pause = state["scrapes"]["pause_gourmande"]["data"]
-    if pause:
-        maj_message_jour({"plat": pause["plat"], "prix": pause["prix"]})
+    optionnels = _plats_optionnels(state)
+    if pause or optionnels:
+        maj_message_jour({"plat": pause["plat"], "prix": pause["prix"]} if pause else None, optionnels)
 
     # ── Publier les jours futurs (Trèfle + Truck, PG = coming soon) ──────
     await _step_futurs(state, loop)
@@ -279,13 +284,16 @@ async def run_semaine(retry: bool = False) -> int:
 
     # ── Scrape du jour + éval + commentaires (helpers communs) ───────────
     await _step_scrape_jour(state, loop)
-    print(f"[pipeline:semaine] {len(run_state.scrapes_ok(state))}/3 plats du jour récupérés")
+    print(f"[pipeline:semaine] {_bilan_scrapes(state)}")
 
     # Messages de la semaine (peu coûteux : régénérés tant que la journée n'est pas close)
     pg = state["scrapes"]["pause_gourmande"]["data"]
     pause_data = {"plat": pg["plat"], "prix": pg["prix"]} if pg else None
     fichiers = generer_messages_semaine(state["semaine"]["trefle"], state["semaine"]["truck"], pause_data)
     print(f"[pipeline:semaine] {len(fichiers)} fichiers messages générés")
+    optionnels = _plats_optionnels(state)
+    if optionnels:
+        maj_message_jour(pause_data, optionnels)
 
     output = await _step_eval(state, loop)
     output = await _step_commentaires(state, loop, output)
@@ -355,6 +363,10 @@ _SCRAPE_FNS = {
     "bistrot_trefle": lambda loop: loop.run_in_executor(None, bistrot_trefle.scrape),
     "pause_gourmande": lambda loop: pause_gourmande.scrape(),
     "truck_muche": lambda loop: truck_muche.scrape(),
+    # Optionnels (synchrones, sans Playwright) : None = pas de plat du jour, pas un échec
+    "basilic_ngo": lambda loop: loop.run_in_executor(None, basilic_ngo.scrape),
+    "dubble": lambda loop: loop.run_in_executor(None, dubble.scrape),
+    "la_mijote": lambda loop: loop.run_in_executor(None, la_mijote.scrape),
 }
 
 
@@ -362,8 +374,22 @@ def _weekday_of(state: dict) -> int:
     return date.fromisoformat(state["date"]).weekday()
 
 
+def _bilan_scrapes(state: dict) -> str:
+    """Ex. « 3/3 plats récupérés (+2 optionnels) »."""
+    n_core = len([l for l in run_state.CORE_LABELS if l in run_state.scrapes_ok(state)])
+    n_opt = len([l for l in run_state.OPTIONAL_LABELS if l in run_state.scrapes_ok(state)])
+    return f"{n_core}/{len(run_state.CORE_LABELS)} plats récupérés (+{n_opt} optionnel{'s' if n_opt > 1 else ''})"
+
+
+def _plats_optionnels(state: dict) -> list[dict]:
+    """Plats des restos optionnels scrapés avec succès (pour le message du jour)."""
+    return [state["scrapes"][l]["data"] for l in run_state.OPTIONAL_LABELS
+            if l in run_state.scrapes_ok(state)]
+
+
 async def _step_scrape_jour(state: dict, loop) -> None:
-    """Scrape uniquement les restos pas encore ok ; repair_team une fois par jour."""
+    """Scrape uniquement les restos pas encore ok ; repair_team une fois par jour.
+    Pour un resto optionnel, None = « pas de plat du jour » : ok sans data, pas de repair."""
     a_faire = [l for l in run_state.SCRAPER_LABELS if not state["scrapes"][l]["ok"]]
     if not a_faire:
         return
@@ -375,6 +401,9 @@ async def _step_scrape_jour(state: dict, loop) -> None:
             err = traceback.format_exception_only(type(r), r)[-1].strip()
             state["scrapes"][label] = {"ok": False, "data": None, "erreur": err}
             failures[label] = err
+        elif r is None and label in run_state.OPTIONAL_LABELS:
+            print(f"[pipeline] {label} : pas de plat du jour")
+            state["scrapes"][label] = {"ok": True, "data": None, "erreur": None}
         elif r is None:
             print(f"[pipeline] {label} n'a rien retourné")
             state["scrapes"][label] = {"ok": False, "data": None, "erreur": "scrape() a retourné None"}

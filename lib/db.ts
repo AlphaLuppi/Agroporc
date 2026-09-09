@@ -431,6 +431,9 @@ const SLUG_TO_RESTAURANT: Record<string, string> = {
   bistrot_trefle: "Le Bistrot Trèfle",
   pause_gourmande: "La Pause Gourmande",
   truck_muche: "Le Truck Muche",
+  basilic_ngo: "Basilic n'Go",
+  dubble: "Dubble",
+  la_mijote: "La Mijote",
 };
 
 export async function ensurePhotosTable() {

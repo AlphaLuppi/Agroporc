@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 "Plats du Jour" (PDJ) — a daily lunch menu aggregator for office restaurants. Two main components:
 
-1. **Python backend** (`plats-du-jour/`): Scrapes menus from 3 restaurants (Le Bistrot Trèfle, La Pause Gourmande, Le Truck Muche), evaluates them with AI agents, generates comments from fictional characters, and publishes to the Vercel API.
+1. **Python backend** (`plats-du-jour/`): Scrapes menus from 6 restaurants — 3 core (Le Bistrot Trèfle, La Pause Gourmande, Le Truck Muche) + 3 optional (Basilic n'Go, Dubble, La Mijote, present only on days they publish a dish) — evaluates them with AI agents, generates comments from fictional characters, and publishes to the Vercel API.
 2. **Next.js frontend** (root): Displays the weekly menus with nutritional ratings, recommendations (two modes: "Sportif" and "Goulaf"), and a comment system. Deployed on Vercel.
 
 ## Commands
@@ -49,7 +49,8 @@ Python scrapers → AI diet agent evaluation (LLM décompose en ingrédients + g
 - `app/components/Agroparc3D.tsx` — Vue 3D « rayons X » (three.js chargé à la demande) : bâtiments fil de fer, restaurants cliquables (menu du jour via `/api/pdj?date=`), avion, Truck Muche, circulation. Scène pure three.js dans `lib/agroparc3d/scene.ts`, données dans `public/agroparc/scene.json` (IGN BD TOPO + OSM, coordonnées locales en mètres ; voir `lib/agroparc3d/types.ts`).
 
 ### Python pipeline structure (`plats-du-jour/`)
-- `scrapers/` — One module per restaurant (`bistrot_trefle.py` uses Playwright, `pause_gourmande.py` and `truck_muche.py` are async)
+- `scrapers/` — One module per restaurant (`bistrot_trefle.py` uses the ObyPay REST API, `pause_gourmande.py` uses Playwright, `truck_muche.py` is async FB/IG). Optionnels, synchrones (`requests`/urllib, sans Playwright) : `basilic_ngo.py` (API ObyPay comme le Trèfle), `dubble.py` (HTML Wix SSR), `la_mijote.py` (HTML statique + garde-fou fraîcheur `Last-Modified`)
+- `run_state.py` — État reprenable du run ; distingue `CORE_LABELS` (les 3 historiques, requis pour un run complet) et `OPTIONAL_LABELS` (`None` = « pas de plat du jour », pas un échec)
 - `ciqual/` — Intégration de la table Ciqual ANSES pour le calcul déterministe des macros (cf. `ciqual/README.md`)
 - `agent/diet_agent.py` — Claude-based nutritional evaluation (scores dishes 1-10 in both modes). Demande au LLM des ingrédients + grammages, agrège les macros via Ciqual, fallback LLM si >30% non matché.
 - `agent/comment_agent.py` — Generates in-character comments from persona JSON files
