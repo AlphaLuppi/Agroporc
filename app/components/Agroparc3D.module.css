@@ -88,6 +88,8 @@
   position: absolute; z-index: 4; right: 24px; top: 20px; width: min(360px, calc(100vw - 48px));
   background: var(--ag-panel); border: 1px solid var(--ag-line); backdrop-filter: blur(6px);
   padding: 18px 20px 20px; box-sizing: border-box; animation: agPanelIn 0.35s ease;
+  /* Une carte permanente peut être longue (Trèfle : ~45 plats) : le panneau défile. */
+  max-height: calc(100vh - 40px); overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--ag-line) transparent;
 }
 @keyframes agPanelIn { from { opacity: 0; transform: translateX(24px); } }
 .panelHead { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
@@ -108,6 +110,24 @@
 .nutri b { color: var(--ag-ink); font-weight: 500; }
 .just { margin: 14px 0 0; font-size: 12px; line-height: 1.5; color: var(--ag-ink-dim); border-left: 2px solid var(--ag-line); padding-left: 10px; }
 .empty { font-size: 12px; color: var(--ag-ink-dim); line-height: 1.5; margin: 0; }
+
+/* Carte permanente (resto sans plat du jour) */
+.carteEtat { margin-top: 14px; }
+.carte { margin-top: 18px; border-top: 1px solid var(--ag-line); padding-top: 14px; }
+.carteSection { margin-top: 14px; }
+.carteSection h3 {
+  display: flex; justify-content: space-between; gap: 10px; margin: 0 0 4px;
+  font: inherit; font-size: 10px; font-weight: 500; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ag-amber);
+}
+.carteSection h3 span { color: var(--ag-ink-dim); font-variant-numeric: tabular-nums; }
+.carteSection ul { list-style: none; margin: 0; padding: 0; }
+.carteSection li {
+  display: flex; justify-content: space-between; align-items: baseline; gap: 10px;
+  padding: 6px 0; border-top: 1px solid var(--ag-line); font-size: 12px; line-height: 1.4;
+}
+.carteNom { color: var(--ag-ink); flex: 1; min-width: 0; }
+.carteMeta { display: flex; gap: 8px; flex-shrink: 0; font-size: 11px; color: var(--ag-ink-dim); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.carteMeta b { color: var(--ag-cyan); font-weight: 500; }
 .close {
   background: none; border: 1px solid var(--ag-line); color: var(--ag-ink-dim); font: inherit; font-size: 10px;
   letter-spacing: 0.14em; text-transform: uppercase; padding: 3px 8px; cursor: pointer; flex-shrink: 0;
@@ -126,7 +146,7 @@
   .title { font-size: 24px; }
   .legend { flex-wrap: wrap; gap: 8px 14px; }
   .hudBr { display: none; }
-  .panel { top: auto; bottom: 20px; right: 24px; left: 24px; width: auto; }
+  .panel { top: auto; bottom: 20px; right: 24px; left: 24px; width: auto; max-height: 60vh; }
 }
 @media (prefers-reduced-motion: reduce) {
   .root, .panel, .log > div, .labels > div { animation: none; transition: none; }

@@ -1,4 +1,5 @@
-import type { Carte, CartePlat, CarteSection } from "@/lib/db";
+import type { Carte, CartePlat } from "@/lib/db";
+import { trierCarte } from "@/lib/carte-tri";
 import { noteClass } from "@/lib/format";
 import { Card, CardContent } from "@/components/ui/card";
 import MacrosPanel from "./MacrosPanel";
@@ -45,27 +46,10 @@ function CartePlatCard({ plat }: { plat: CartePlat }) {
   );
 }
 
-/** Note moyenne d'une section pour un mode donné (plats sans note ignorés) */
-function sectionAvg(sec: CarteSection, mode: "sportif" | "goulaf"): number {
-  const notes = sec.plats
-    .map((p) => (mode === "goulaf" ? p.note_goulaf ?? p.note : p.note))
-    .filter((n): n is number => typeof n === "number");
-  if (notes.length === 0) return -1;
-  return notes.reduce((a, b) => a + b, 0) / notes.length;
-}
-
-/** Trie une section : plats par note (mode sportif) décroissante */
-function sortSectionPlats(sec: CarteSection): CarteSection {
-  const plats = [...sec.plats].sort((a, b) => (b.note ?? -1) - (a.note ?? -1));
-  return { ...sec, plats };
-}
-
 /** Sections d'une carte (tri par note moyenne, mode Sportif par défaut en SSR ; le tri
  *  dynamique selon le mode est fait côté client par applyMode sur [data-carte-sections]). */
 export default function CarteRestaurant({ carte }: { carte: Carte }) {
-  const sections = [...carte.sections]
-    .map(sortSectionPlats)
-    .sort((a, b) => sectionAvg(b, "sportif") - sectionAvg(a, "sportif"));
+  const sections = trierCarte(carte, "sportif");
 
   const chevron = (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="carte-chevron w-4 h-4 shrink-0">

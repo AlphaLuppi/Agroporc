@@ -660,13 +660,18 @@ function applyMode(mode: string) {
   document.querySelectorAll<HTMLElement>("[data-day-panel]").forEach((panel) => {
     const cards = Array.from(panel.querySelectorAll<HTMLElement>(":scope > .plat-card"));
     if (cards.length < 2) return;
+    // Les cards triées sont réinsérées à la place de la première (ordre DOM) : un appendChild
+    // les repousserait en fin de panel, derrière les cards « coming soon » et « sans plat ».
+    const repere = document.createComment("plats");
+    panel.insertBefore(repere, cards[0]);
     const noteSelector = mode === "sportif" ? ".note.mode-sportif" : ".note.mode-goulaf";
     cards.sort((a, b) => {
       const noteA = parseFloat(a.querySelector<HTMLElement>(noteSelector)?.dataset.note || "0");
       const noteB = parseFloat(b.querySelector<HTMLElement>(noteSelector)?.dataset.note || "0");
       return noteB - noteA;
     });
-    cards.forEach((card) => panel.appendChild(card));
+    cards.forEach((card) => panel.insertBefore(card, repere));
+    panel.removeChild(repere);
   });
 
   // Sort carte: sections (best avg note first) + plats within each section, by note for the active mode

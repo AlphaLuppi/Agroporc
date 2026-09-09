@@ -3,6 +3,7 @@ import { formatDate, formatDayShort, noteClass } from "@/lib/format";
 import { getIcon, getRestaurantLinks, type RestaurantLink } from "@/lib/icons";
 import type { Plat, PdjEntry, Recommandation, CarteDisponible } from "@/lib/db";
 import { RESTAURANTS, statutSansPlat, titreCarte, type RestaurantDef } from "@/lib/restaurants";
+import { separerPlats } from "@/lib/ordre-plats";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import CommentSection from "./CommentSection";
@@ -232,6 +233,8 @@ function DayPanel({ pdj, index, isDefault, today, cartesParSlug }: { pdj: PdjEnt
 
   const reco = pdj.recommandation;
   const recoG = pdj.recommandation_goulaf || reco;
+  // Ordre d'affichage : restos avec plat du jour, puis « coming soon », puis restos sans plat.
+  const { notes, comingSoon } = separerPlats(pdj.plats);
 
   return (
     <div className="day-panel" data-day-panel={index} style={hidden}>
@@ -247,13 +250,12 @@ function DayPanel({ pdj, index, isDefault, today, cartesParSlug }: { pdj: PdjEnt
       {reco && <RecoBanner reco={reco} mode="sportif" />}
       {recoG && <RecoBanner reco={recoG} mode="goulaf" />}
 
-      {pdj.plats.map((plat, i) =>
-        plat.coming_soon ? (
-          <ComingSoonCard key={i} plat={plat} />
-        ) : (
-          <PlatCard key={i} plat={plat} date={pdj.date} platIndex={i} isRecoSportif={plat.plat === reco?.plat} isRecoGoulaf={plat.plat === recoG?.plat} />
-        )
-      )}
+      {notes.map(({ plat, index }) => (
+        <PlatCard key={index} plat={plat} date={pdj.date} platIndex={index} isRecoSportif={plat.plat === reco?.plat} isRecoGoulaf={plat.plat === recoG?.plat} />
+      ))}
+      {comingSoon.map(({ plat, index }) => (
+        <ComingSoonCard key={index} plat={plat} />
+      ))}
 
       {RESTAURANTS.filter((r) => !pdj.plats.some((p) => p.restaurant === r.nom)).map((r) => (
         <RestaurantSansPlatCard key={r.slug} resto={r} isFuture={isFuture} carte={cartesParSlug.get(r.slug)} />
