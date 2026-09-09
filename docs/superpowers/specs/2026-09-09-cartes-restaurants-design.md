@@ -126,13 +126,18 @@ CARTE_SOURCES = {
 }
 ```
 
-Contrat commun : `scrape_carte() -> dict | None` renvoie
-`{"restaurant": str, "hash": str, "sections": [{"nom": str, "plats": [{"plat": str, "prix": str}]}]}`
-ou `None` (source KO ou carte vide), sans lever.
+Contrat commun : `scrape_carte() -> dict | None` renvoie `{"restaurant": str, "hash": str, …}`
+avec **soit** `"sections": [{"nom": str, "plats": [{"plat": str, "prix": str}]}]` (source
+structurée : Trèfle, Basilic), **soit** `"texte": str` (source brute : Dubble, La Mijote),
+ou `None` (source KO ou carte vide), sans lever. La structuration LLM n'est **pas** faite
+dans le scraper : le hash porte sur le texte brut, et c'est `_traiter_carte` qui appelle
+`structurer_carte` seulement quand le hash a changé (sinon on paierait un appel LLM chaque
+lundi pour rien).
 
-`_traiter_carte(loop, slug, fn)` reprend la logique actuelle : scrape → `fetch_carte_hash(slug)`
-→ si identique, skip → sinon `diet_agent.evaluate_carte(sections, restaurant)` →
-`publish_carte({"restaurant_slug": slug, "restaurant", "hash", "sections"})`. Chaque échec
+`_traiter_carte(loop, slug, fn, force=False)` : scrape → `fetch_carte_hash(slug)` → si
+identique et pas `force`, skip → sinon `sections = carte.get("sections") or
+carte_agent.structurer_carte(carte["texte"], restaurant)` → `diet_agent.evaluate_carte(sections, restaurant)`
+→ `publish_carte({"restaurant_slug": slug, "restaurant", "hash", "sections"})`. Chaque échec
 est loggé et n'empêche pas les autres slugs.
 
 `run_semaine` : boucle sur `CARTE_SOURCES` pour les slugs absents de
@@ -172,9 +177,10 @@ testée sur un JSON réduit.
 
 ### `scrapers/dubble.scrape_carte()`
 `GET` du lien court (suivi des redirections, `Accept: application/pdf`), vérification
-`Content-Type` PDF, texte via **`pypdf`** (nouvelle dépendance, `requirements.txt` +
-rebuild Docker) : `_pdf_texte(bytes) -> str`. Garde-fou : moins de 500 caractères → `None`.
-`hash = _texte_hash(texte)` ; `sections = structurer_carte(texte, "Dubble")`.
+`Content-Type` PDF (ou en-tête `%PDF`), texte via **`pypdf`** (nouvelle dépendance,
+`requirements.txt` + rebuild Docker ; vérifié : 4 762 caractères propres sur le PDF été 2026) :
+`_pdf_texte(bytes) -> str`. Garde-fou : moins de 500 caractères → `None`.
+Retour `{"restaurant": "Dubble", "hash": _texte_hash(texte), "texte": texte}`.
 
 ### `scrapers/la_mijote.scrape_carte()`
 `GET menu.html` (même en-têtes no-cache), **sans** garde-fou `Last-Modified`.
@@ -182,8 +188,8 @@ rebuild Docker) : `_pdf_texte(bytes) -> str`. Garde-fou : moins de 500 caractèr
 (contenu simple `<b>…</b>`, sans div imbriqué, vérifié le 9 septembre) pour que le hash ne
 bouge pas chaque semaine avec les plats du jour, puis retire scripts/styles/balises et
 réduit les espaces. Le texte contient donc en-tête, formules, entrées, carte des Mijoteurs,
-suggestions et desserts ; c'est le LLM qui écarte formules et bruit.
-`hash = _texte_hash(texte)` ; `sections = structurer_carte(texte, "La Mijote")`.
+suggestions et desserts ; c'est le LLM qui écarte formules et bruit. Garde-fou : moins de
+200 caractères → `None`. Retour `{"restaurant": "La Mijote", "hash": _texte_hash(texte), "texte": texte}`.
 
 ### `publish.py`
 `fetch_carte_hash(slug: str) -> str | None` → `GET /api/carte?slug=<slug>`.
