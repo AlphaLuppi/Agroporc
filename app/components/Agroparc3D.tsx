@@ -2,9 +2,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Chakra_Petch, IBM_Plex_Mono } from "next/font/google";
-import type { PdjEntry, Plat } from "@/lib/db";
+import type { Carte, PdjEntry, Plat } from "@/lib/db";
 import type { Poi, SceneData } from "@/lib/agroparc3d/types";
 import type { SceneHandle } from "@/lib/agroparc3d/scene";
+import { etatRestaurant } from "@/lib/agroparc3d/panneau";
+import { noteMode, trierCarte } from "@/lib/carte-tri";
 import styles from "./Agroparc3D.module.css";
 
 const display = Chakra_Petch({ subsets: ["latin"], weight: ["400", "600", "700"], variable: "--ag-display", display: "swap" });
@@ -82,7 +84,8 @@ export default function Agroparc3D() {
     return () => { cancelled = true; handle?.dispose(); handleRef.current = null; };
   }, [scene]);
 
-  const plat: Plat | undefined = selected && pdj ? pdj.plats.find((p) => p.restaurant === selected.name) : undefined;
+  // Plat du jour du POI cliqué, ou statut + carte permanente quand il n'en a pas.
+  const etat = selected ? etatRestaurant(selected, pdj, new Date().toLocaleDateString("en-CA")) : null;
 
   return (
     <div className={`${styles.root} ${display.variable} ${mono.variable}`} role="dialog" aria-modal="true" aria-label="Agroparc en 3D">
@@ -101,7 +104,7 @@ export default function Agroparc3D() {
           <span className={styles.kBat}>Bâtiments IGN</span>
         </div>
         <div className={styles.hint}>
-          Glisser : pivoter · Clic droit ou deux doigts : déplacer · Molette : zoom · Flèches : déplacer · Clic sur un restaurant : menu du jour · Retape <b>myrtille</b> pour revenir au site
+          Glisser : pivoter · Clic droit ou deux doigts : déplacer · Molette : zoom · Flèches : déplacer · Clic sur un restaurant : plat du jour ou carte · Retape <b>myrtille</b> pour revenir au site
         </div>
         <div className={styles.ctl}>
           <button type="button" onClick={() => handleRef.current?.spin(1)} aria-label="Pivoter vers la gauche">↺ Pivoter</button>
@@ -119,39 +122,20 @@ export default function Agroparc3D() {
         </div>
       </div>
 
-      {selected && (
+      {selected && etat && (
         <aside className={styles.panel} aria-live="polite">
           <p className={`${styles.eyebrow} ${styles.panelHead}`}>
-            <span>{pdj?.date ? `Plat du jour · ${fmtDate(pdj.date, false)}` : "Plat du jour"}</span>
+            <span>{[etat.kind === "plat" ? "Plat du jour" : "Restaurant", pdj?.date && fmtDate(pdj.date, false)].filter(Boolean).join(" · ")}</span>
             <button type="button" className={styles.close} onClick={() => setSelected(null)}>Fermer</button>
           </p>
           <h2>{selected.name}</h2>
           <p className={styles.addr}>{selected.addr}</p>
-          {!plat || plat.coming_soon ? (
-            <p className={styles.empty}>Menu pas encore publié pour cette date. Le pipeline le récupérera au prochain passage.</p>
+          {etat.kind === "plat" ? (
+            <PlatDuJour plat={etat.plat} />
           ) : (
             <>
-              <p className={styles.plat}>{plat.plat}</p>
-              {plat.prix && <p className={styles.prix}>{plat.prix}</p>}
-              <div className={styles.scores}>
-                <div>
-                  <div className={styles.scoreK}>Sportif <b>{fmtNote(plat.note)}</b></div>
-                  <div className={styles.bar}><i style={{ width: `${(plat.note ?? 0) * 10}%` }} /></div>
-                </div>
-                <div className={styles.goulaf}>
-                  <div className={styles.scoreK}>Goulaf <b>{fmtNote(plat.note_goulaf)}</b></div>
-                  <div className={styles.bar}><i style={{ width: `${(plat.note_goulaf ?? 0) * 10}%` }} /></div>
-                </div>
-              </div>
-              {plat.nutrition_estimee && (
-                <div className={styles.nutri}>
-                  <span><b>{Math.round(plat.nutrition_estimee.calories)}</b> kcal</span>
-                  <span>P <b>{Math.round(plat.nutrition_estimee.proteines_g)}</b> g</span>
-                  <span>G <b>{Math.round(plat.nutrition_estimee.glucides_g)}</b> g</span>
-                  <span>L <b>{Math.round(plat.nutrition_estimee.lipides_g)}</b> g</span>
-                </div>
-              )}
-              {plat.justification && <p className={styles.just}>{plat.justification}</p>}
+              <p className={styles.empty}>{etat.statut}</p>
+              {etat.carteSlug && <CarteMini key={etat.carteSlug} slug={etat.carteSlug} />}
             </>
           )}
         </aside>
@@ -162,6 +146,91 @@ export default function Agroparc3D() {
           {error ? <span className={styles.err}>{error}</span> : <span>Radiographie en cours</span>}
         </div>
       )}
+    </div>
+  );
+}
+
+function PlatDuJour({ plat }: { plat: Plat }) {
+  return (
+    <>
+      <p className={styles.plat}>{plat.plat}</p>
+      {plat.prix && <p className={styles.prix}>{plat.prix}</p>}
+      <div className={styles.scores}>
+        <div>
+          <div className={styles.scoreK}>Sportif <b>{fmtNote(plat.note)}</b></div>
+          <div className={styles.bar}><i style={{ width: `${(plat.note ?? 0) * 10}%` }} /></div>
+        </div>
+        <div className={styles.goulaf}>
+          <div className={styles.scoreK}>Goulaf <b>{fmtNote(plat.note_goulaf)}</b></div>
+          <div className={styles.bar}><i style={{ width: `${(plat.note_goulaf ?? 0) * 10}%` }} /></div>
+        </div>
+      </div>
+      {plat.nutrition_estimee && (
+        <div className={styles.nutri}>
+          <span><b>{Math.round(plat.nutrition_estimee.calories)}</b> kcal</span>
+          <span>P <b>{Math.round(plat.nutrition_estimee.proteines_g)}</b> g</span>
+          <span>G <b>{Math.round(plat.nutrition_estimee.glucides_g)}</b> g</span>
+          <span>L <b>{Math.round(plat.nutrition_estimee.lipides_g)}</b> g</span>
+        </div>
+      )}
+      {plat.justification && <p className={styles.just}>{plat.justification}</p>}
+    </>
+  );
+}
+
+/** Cartes déjà demandées pendant la session 3D : un seul fetch par resto, retentable en cas d'échec. */
+const cartesCache = new Map<string, Promise<Carte | null>>();
+
+function chargerCarte(slug: string): Promise<Carte | null> {
+  let p = cartesCache.get(slug);
+  if (!p) {
+    p = fetch(`/api/carte?slug=${encodeURIComponent(slug)}`)
+      .then((r) => (r.ok ? (r.json() as Promise<Carte | null>) : null))
+      .catch(() => null);
+    cartesCache.set(slug, p);
+    void p.then((c) => { if (c === null) cartesCache.delete(slug); });
+  }
+  return p;
+}
+
+/** Carte permanente d'un resto sans plat du jour, en liste compacte : sections puis plats par note. */
+function CarteMini({ slug }: { slug: string }) {
+  // undefined = chargement en cours, null = indisponible
+  const [carte, setCarte] = useState<Carte | null | undefined>(undefined);
+
+  useEffect(() => {
+    let cancelled = false;
+    chargerCarte(slug).then((c) => { if (!cancelled) setCarte(c); });
+    return () => { cancelled = true; };
+  }, [slug]);
+
+  if (carte === undefined) return <p className={`${styles.empty} ${styles.carteEtat}`}>Chargement de la carte…</p>;
+  if (carte === null) return <p className={`${styles.empty} ${styles.carteEtat}`}>Carte indisponible pour le moment.</p>;
+
+  const noteeLe = carte.evaluated_at
+    ? new Date(carte.evaluated_at).toLocaleDateString("fr-FR", { day: "numeric", month: "short" })
+    : null;
+
+  return (
+    <div className={styles.carte}>
+      <p className={styles.eyebrow}>Carte permanente{noteeLe && ` · notée le ${noteeLe}`}</p>
+      {trierCarte(carte, "sportif").map((sec) => (
+        <section key={sec.nom} className={styles.carteSection}>
+          <h3>{sec.nom} <span>{sec.plats.length}</span></h3>
+          <ul>
+            {sec.plats.map((p, i) => (
+              <li key={`${sec.nom}::${p.plat ?? i}`}>
+                <span className={styles.carteNom}>{p.plat}</span>
+                <span className={styles.carteMeta}>
+                  {p.prix && <span>{p.prix}</span>}
+                  <span>S <b>{fmtNote(noteMode(p, "sportif"))}</b></span>
+                  <span>G <b>{fmtNote(noteMode(p, "goulaf"))}</b></span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ))}
     </div>
   );
 }
