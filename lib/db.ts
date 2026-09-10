@@ -39,8 +39,14 @@ export interface PdjEntry {
 
 export interface Plat {
   restaurant: string;
-  plat: string;
+  /** Nom du plat ; tableau quand le resto propose plusieurs plats au choix (voir `options`). */
+  plat: string | string[];
   prix: string;
+  /**
+   * Plats multi-options (Basilic n'Go, Dubble) : l'agent diététicien note chaque option ici
+   * et laisse la racine sans note. Toujours passer par `lib/plat-options.ts` pour les lire.
+   */
+  options?: PlatOption[];
   nutrition_estimee?: {
     calories: number;
     proteines_g: number;
@@ -57,6 +63,19 @@ export interface Plat {
   commentaires?: Commentaire[];
   coming_soon?: boolean;
   /** Tags de classification générés par le LLM à l'évaluation (pour le quiz). */
+  quiz_tags?: QuizTags;
+}
+
+/** Une option d'un plat multi-options : mêmes champs de notation que `Plat`, sans resto ni prix. */
+export interface PlatOption {
+  plat?: string;
+  nutrition_estimee?: Plat["nutrition_estimee"];
+  nutrition_source?: "ciqual" | "llm";
+  ingredients_detail?: IngredientDetail[];
+  note?: number;
+  justification?: string;
+  note_goulaf?: number;
+  justification_goulaf?: string;
   quiz_tags?: QuizTags;
 }
 

@@ -47,6 +47,7 @@ Cartes permanentes : `main.py CARTE_SOURCES` → hash → `/api/carte` (`pdj_car
 - `lib/characters.ts` — Character definitions (avatars, colors, emojis) used in both comments and UI
 - `lib/format.ts` — French date formatting
 - `lib/icons.ts` — Restaurant icon SVGs
+- `lib/plat-options.ts` — Plats multi-options (Basilic n'Go, Dubble : `plat` est un tableau et les notes sont dans `options[]`, la racine reste sans note) : `variantesPlat` éclate un `Plat` en variantes notées, `meilleureNote` (tri/reco), `libellePlat`. Toujours passer par là plutôt que lire `plat.note` directement (home, quiz, vue 3D, feedback-ia)
 - `lib/restaurants.ts` — Liste de référence des restos (nom exact, slug, type core/optionnel/lien, carte scrapée ou non), ordre d'affichage, `statutSansPlat`, `titreCarte`
 - `app/CarteRestaurant.tsx` / `app/CarteLazy.tsx` — Sections notées d'une carte (`pdj_carte`) ; `CarteLazy` (client) va chercher `/api/carte?slug=` au premier dépliage et émet `pdj:mode-refresh`
 - `components/ui/` — shadcn/ui components (Tailwind CSS v4)

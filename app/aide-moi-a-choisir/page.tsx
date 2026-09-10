@@ -1,6 +1,7 @@
 import { ensureTable, getPdjByDate, getCarte, getDessertsObservations } from "@/lib/db";
 import type { Carte } from "@/lib/db";
 import type { PoolPlat } from "@/lib/quiz-plats";
+import { variantesPlat } from "@/lib/plat-options";
 import {
   DESSERTS_CONNUS,
   classerDessertNom,
@@ -66,19 +67,22 @@ export default async function AideMoiAChoisir() {
   const cartes = await Promise.all(SLUGS.map((s) => getCarte(s.slug)));
 
   // Pool = plats du jour + plats de toutes les cartes
+  // Un plat multi-options (Basilic n'Go, Dubble) donne une entrée par option, chacune avec ses notes.
   const platsJour: PoolPlat[] = (todayPdj?.plats ?? [])
     .filter((p) => !p.coming_soon)
-    .map((p) => ({
-      plat: p.plat,
-      restaurant: p.restaurant,
-      prix: p.prix,
-      note: p.note,
-      justification: p.justification,
-      note_goulaf: p.note_goulaf,
-      justification_goulaf: p.justification_goulaf,
-      ingredients_detail: p.ingredients_detail,
-      quiz_tags: p.quiz_tags,
-    }));
+    .flatMap((p) =>
+      variantesPlat(p).map((v) => ({
+        plat: v.plat,
+        restaurant: p.restaurant,
+        prix: p.prix,
+        note: v.note,
+        justification: v.justification,
+        note_goulaf: v.note_goulaf,
+        justification_goulaf: v.justification_goulaf,
+        ingredients_detail: v.ingredients_detail,
+        quiz_tags: v.quiz_tags,
+      }))
+    );
 
   // Le quiz porte sur les plats du jour ; repli sur les cartes s'il n'y en a pas encore.
   const platsCartes = cartes.flatMap((c, i) => platsFromCarte(c, SLUGS[i].nom));

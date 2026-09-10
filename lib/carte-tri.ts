@@ -1,9 +1,9 @@
-import type { Carte, CartePlat, CarteSection } from "./db";
+import type { Carte, CarteSection } from "./db";
 
 export type Mode = "sportif" | "goulaf";
 
-/** Note d'un plat de carte pour un mode ; en Goulaf, retombe sur la note sportive si absente. */
-export function noteMode(plat: CartePlat, mode: Mode): number | undefined {
+/** Note d'un plat (carte, plat du jour ou option) pour un mode ; en Goulaf, retombe sur la note sportive si absente. */
+export function noteMode(plat: { note?: number; note_goulaf?: number }, mode: Mode): number | undefined {
   return mode === "goulaf" ? plat.note_goulaf ?? plat.note : plat.note;
 }
 
