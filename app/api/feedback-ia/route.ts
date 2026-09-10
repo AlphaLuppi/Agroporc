@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { libellePlat } from "@/lib/plat-options";
 import { getAllPdj } from "@/lib/db";
 import type { Commentaire } from "@/lib/db";
 
@@ -69,7 +70,7 @@ export async function GET(request: NextRequest) {
           feedback[aiName].push({
             date,
             restaurant: plat.restaurant,
-            plat: plat.plat,
+            plat: libellePlat(plat),
             ai_texte: parent.texte,
             ...(parent.image_url ? { ai_image_url: parent.image_url } : {}),
             human_auteur: c.auteur,

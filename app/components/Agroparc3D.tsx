@@ -8,6 +8,7 @@ import type { SceneHandle } from "@/lib/agroparc3d/scene";
 import { etatRestaurant } from "@/lib/agroparc3d/panneau";
 import { couleurNote, remplissage } from "@/lib/agroparc3d/jauge";
 import { noteMode, trierCarte, type Mode } from "@/lib/carte-tri";
+import { variantesPlat, type VariantePlat } from "@/lib/plat-options";
 import styles from "./Agroparc3D.module.css";
 
 const display = Chakra_Petch({ subsets: ["latin"], weight: ["400", "600", "700"], variable: "--ag-display", display: "swap" });
@@ -179,22 +180,38 @@ export default function Agroparc3D() {
   );
 }
 
+/** Plat du jour du panneau ; un plat multi-options (Basilic n'Go, Dubble) montre une jauge par option. */
 function PlatDuJour({ plat, mode }: { plat: Plat; mode: Mode }) {
-  const note = noteMode(plat, mode);
-  const justification = mode === "goulaf" ? plat.justification_goulaf ?? plat.justification : plat.justification;
+  const variantes = variantesPlat(plat);
+  if (variantes.length === 1) return <Variante v={variantes[0]} mode={mode} prix={plat.prix} />;
   return (
     <>
-      <p className={styles.plat}>{plat.plat}</p>
+      <p className={styles.eyebrow}>{variantes.length} plats au choix{plat.prix && ` · ${plat.prix}`}</p>
+      {variantes.map((v) => (
+        <div key={v.plat} className={styles.option}>
+          <Variante v={v} mode={mode} />
+        </div>
+      ))}
+    </>
+  );
+}
+
+function Variante({ v, mode, prix }: { v: VariantePlat; mode: Mode; prix?: string }) {
+  const note = noteMode(v, mode);
+  const justification = mode === "goulaf" ? v.justification_goulaf ?? v.justification : v.justification;
+  return (
+    <>
+      <p className={styles.plat}>{v.plat}</p>
       <div className={styles.platMeta}>
-        {plat.prix && <p className={styles.prix}>{plat.prix}</p>}
+        {prix && <p className={styles.prix}>{prix}</p>}
         <Jauge note={note} label={MODE_LABEL[mode]} />
       </div>
-      {plat.nutrition_estimee && (
+      {v.nutrition_estimee && (
         <div className={styles.nutri}>
-          <span><b>{Math.round(plat.nutrition_estimee.calories)}</b> kcal</span>
-          <span>P <b>{Math.round(plat.nutrition_estimee.proteines_g)}</b> g</span>
-          <span>G <b>{Math.round(plat.nutrition_estimee.glucides_g)}</b> g</span>
-          <span>L <b>{Math.round(plat.nutrition_estimee.lipides_g)}</b> g</span>
+          <span><b>{Math.round(v.nutrition_estimee.calories)}</b> kcal</span>
+          <span>P <b>{Math.round(v.nutrition_estimee.proteines_g)}</b> g</span>
+          <span>G <b>{Math.round(v.nutrition_estimee.glucides_g)}</b> g</span>
+          <span>L <b>{Math.round(v.nutrition_estimee.lipides_g)}</b> g</span>
         </div>
       )}
       {justification && <p className={styles.just}>{justification}</p>}

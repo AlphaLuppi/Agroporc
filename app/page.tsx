@@ -4,6 +4,8 @@ import { getIcon, getRestaurantLinks, type RestaurantLink } from "@/lib/icons";
 import type { Plat, PdjEntry, Recommandation, CarteDisponible } from "@/lib/db";
 import { RESTAURANTS, statutSansPlat, titreCarte, type RestaurantDef } from "@/lib/restaurants";
 import { separerPlats } from "@/lib/ordre-plats";
+import { variantesPlat, meilleureNote, type VariantePlat } from "@/lib/plat-options";
+import { noteMode } from "@/lib/carte-tri";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import CommentSection from "./CommentSection";
@@ -251,7 +253,7 @@ function DayPanel({ pdj, index, isDefault, today, cartesParSlug }: { pdj: PdjEnt
       {recoG && <RecoBanner reco={recoG} mode="goulaf" />}
 
       {notes.map(({ plat, index }) => (
-        <PlatCard key={index} plat={plat} date={pdj.date} platIndex={index} isRecoSportif={plat.plat === reco?.plat} isRecoGoulaf={plat.plat === recoG?.plat} />
+        <PlatCard key={index} plat={plat} date={pdj.date} platIndex={index} recoSportif={reco?.plat} recoGoulaf={recoG?.plat} />
       ))}
       {comingSoon.map(({ plat, index }) => (
         <ComingSoonCard key={index} plat={plat} />
@@ -403,12 +405,95 @@ function RecoBanner({ reco, mode }: { reco: Recommandation; mode: "sportif" | "g
   );
 }
 
-function PlatCard({ plat, date, platIndex, isRecoSportif, isRecoGoulaf }: { plat: Plat; date: string; platIndex: number; isRecoSportif: boolean; isRecoGoulaf: boolean }) {
-  const note = plat.note ?? "?";
-  const noteG = plat.note_goulaf ?? note;
-  const noteCls = noteClass(note);
-  const noteGCls = noteClass(noteG);
-  const nutri = plat.nutrition_estimee;
+/** Badges de note Sportif/Goulaf (le second est masqué au SSR, ClientScripts bascule l'affichage). */
+function NoteBadges({ note, noteG, small, title }: { note: number | "?"; noteG: number | "?"; small?: boolean; title?: string }) {
+  const size = small ? { fontSize: "0.95rem" } : undefined;
+  return (
+    <>
+      <span className={`note note-${noteClass(note)} mode-sportif`} data-note={note} style={size} title={title}>
+        {note}<span className="note-max">/10</span>
+      </span>
+      <span className={`note note-${noteClass(noteG)} mode-goulaf`} data-note={noteG} style={{ ...size, display: "none" }} title={title}>
+        {noteG}<span className="note-max">/10</span>
+      </span>
+    </>
+  );
+}
+
+function RecoBadges({ isRecoSportif, isRecoGoulaf }: { isRecoSportif: boolean; isRecoGoulaf: boolean }) {
+  return (
+    <>
+      {isRecoSportif && (
+        <Badge className="mode-sportif bg-[var(--good)] text-black text-[0.65rem] font-bold uppercase tracking-wide align-middle">
+          Recommandé
+        </Badge>
+      )}
+      {isRecoGoulaf && (
+        <Badge className="mode-goulaf bg-[var(--good)] text-black text-[0.65rem] font-bold uppercase tracking-wide align-middle" style={{ display: "none" }}>
+          Recommandé
+        </Badge>
+      )}
+    </>
+  );
+}
+
+function AjouterButton({ restaurant, plat, prix, date }: { restaurant: string; plat: string; prix: string; date: string }) {
+  return (
+    <button
+      className="add-to-cart-btn"
+      data-restaurant={restaurant}
+      data-plat={plat}
+      data-prix={prix}
+      data-date={date}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "0.375rem",
+        fontSize: "0.8125rem",
+        fontWeight: 600,
+        padding: "0.375rem 0.875rem",
+        borderRadius: "var(--radius)",
+        border: "1px solid var(--accent)",
+        background: "var(--accent-glow)",
+        color: "var(--accent)",
+        cursor: "pointer",
+        transition: "background 0.15s, color 0.15s",
+        whiteSpace: "nowrap",
+      }}
+    >
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ width: "0.875rem", height: "0.875rem" }}>
+        <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
+      </svg>
+      Ajouter
+    </button>
+  );
+}
+
+/** Macros + justifications d'une variante (le plat lui-même, ou une de ses options). */
+function VarianteDetails({ v }: { v: VariantePlat }) {
+  return (
+    <>
+      <MacrosPanel nutri={v.nutrition_estimee} ingredients={v.ingredients_detail} source={v.nutrition_source} />
+      <p className="mode-sportif text-sm text-[var(--text-secondary)] leading-relaxed">{v.justification}</p>
+      <p className="mode-goulaf text-sm text-[var(--text-secondary)] leading-relaxed" style={{ display: "none" }}>
+        {v.justification_goulaf || v.justification}
+      </p>
+    </>
+  );
+}
+
+/**
+ * Card d'un plat du jour. Un plat multi-options (Basilic n'Go, Dubble) porte ses notes dans
+ * `options` : la card affiche alors la meilleure note en tête (tri et reco) puis un bloc par
+ * option avec sa propre note ; le prix, les liens et les commentaires restent au niveau du resto.
+ */
+function PlatCard({ plat, date, platIndex, recoSportif, recoGoulaf }: { plat: Plat; date: string; platIndex: number; recoSportif?: string; recoGoulaf?: string }) {
+  const variantes = variantesPlat(plat);
+  const multi = variantes.length > 1;
+  const isRecoSportif = variantes.some((v) => v.plat === recoSportif);
+  const isRecoGoulaf = variantes.some((v) => v.plat === recoGoulaf);
+  const note = meilleureNote(plat, "sportif") ?? "?";
+  const noteG = meilleureNote(plat, "goulaf") ?? "?";
 
   const cardClasses = [
     "plat-card bg-[var(--surface)] border-[var(--border)] mb-4 sm:mb-5 relative overflow-hidden transition-all hover:border-[var(--border-accent)] hover:shadow-[var(--shadow)]",
@@ -427,71 +512,52 @@ function PlatCard({ plat, date, platIndex, isRecoSportif, isRecoGoulaf }: { plat
             <span dangerouslySetInnerHTML={{ __html: getIcon(plat.restaurant) }} />
             {plat.restaurant}
           </span>
-          <span className={`note note-${noteCls} mode-sportif`} data-note={note}>
-            {note}<span className="note-max">/10</span>
-          </span>
-          <span className={`note note-${noteGCls} mode-goulaf`} data-note={noteG} style={{ display: "none" }}>
-            {noteG}<span className="note-max">/10</span>
-          </span>
+          <NoteBadges note={note} noteG={noteG} title={multi ? `Meilleure des ${variantes.length} options` : undefined} />
         </div>
 
-        <div className="text-xl font-semibold mb-0.5 leading-snug" style={{ fontFamily: "var(--font-heading)" }}>
-          {plat.plat}{" "}
-          {isRecoSportif && (
-            <Badge className="mode-sportif bg-[var(--good)] text-black text-[0.65rem] font-bold uppercase tracking-wide align-middle">
-              Recommandé
-            </Badge>
-          )}
-          {isRecoGoulaf && (
-            <Badge className="mode-goulaf bg-[var(--good)] text-black text-[0.65rem] font-bold uppercase tracking-wide align-middle" style={{ display: "none" }}>
-              Recommandé
-            </Badge>
-          )}
-        </div>
-
-        <div className="text-[var(--accent)] font-bold mb-4">{plat.prix}</div>
-
-        <MacrosPanel
-          nutri={nutri}
-          ingredients={plat.ingredients_detail}
-          source={plat.nutrition_source}
-        />
-
-        <p className="mode-sportif text-sm text-[var(--text-secondary)] leading-relaxed">{plat.justification}</p>
-        <p className="mode-goulaf text-sm text-[var(--text-secondary)] leading-relaxed" style={{ display: "none" }}>
-          {plat.justification_goulaf || plat.justification}
-        </p>
-
-        <div className="mt-4 flex justify-between items-center gap-2 flex-wrap">
-          <OrderLinks restaurant={plat.restaurant} />
-          <button
-            className="add-to-cart-btn"
-            data-restaurant={plat.restaurant}
-            data-plat={typeof plat.plat === "string" ? plat.plat : JSON.stringify(plat.plat)}
-            data-prix={plat.prix}
-            data-date={date}
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: "0.375rem",
-              fontSize: "0.8125rem",
-              fontWeight: 600,
-              padding: "0.375rem 0.875rem",
-              borderRadius: "var(--radius)",
-              border: "1px solid var(--accent)",
-              background: "var(--accent-glow)",
-              color: "var(--accent)",
-              cursor: "pointer",
-              transition: "background 0.15s, color 0.15s",
-              whiteSpace: "nowrap",
-            }}
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ width: "0.875rem", height: "0.875rem" }}>
-              <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
-            </svg>
-            Ajouter
-          </button>
-        </div>
+        {multi ? (
+          <>
+            <div className="flex items-baseline justify-between gap-3 mb-1">
+              <span className="text-[0.72rem] font-bold uppercase tracking-widest text-[var(--text-muted)]">
+                {variantes.length} plats au choix
+              </span>
+              <span className="text-[var(--accent)] font-bold">{plat.prix}</span>
+            </div>
+            {variantes.map((v) => {
+              const recoS = v.plat === recoSportif;
+              const recoG = v.plat === recoGoulaf;
+              return (
+                <div key={v.plat} className="plat-option border-t border-[var(--border)] pt-4 mt-3">
+                  <div className="flex justify-between items-start gap-3 mb-3">
+                    <div className="text-lg font-semibold leading-snug" style={{ fontFamily: "var(--font-heading)" }}>
+                      {v.plat} <RecoBadges isRecoSportif={recoS} isRecoGoulaf={recoG} />
+                    </div>
+                    <NoteBadges note={noteMode(v, "sportif") ?? "?"} noteG={noteMode(v, "goulaf") ?? "?"} small />
+                  </div>
+                  <VarianteDetails v={v} />
+                  <div className="mt-3 flex justify-end">
+                    <AjouterButton restaurant={plat.restaurant} plat={v.plat} prix={plat.prix} date={date} />
+                  </div>
+                </div>
+              );
+            })}
+            <div className="mt-4 flex justify-between items-center gap-2 flex-wrap">
+              <OrderLinks restaurant={plat.restaurant} />
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="text-xl font-semibold mb-0.5 leading-snug" style={{ fontFamily: "var(--font-heading)" }}>
+              {variantes[0].plat} <RecoBadges isRecoSportif={isRecoSportif} isRecoGoulaf={isRecoGoulaf} />
+            </div>
+            <div className="text-[var(--accent)] font-bold mb-4">{plat.prix}</div>
+            <VarianteDetails v={variantes[0]} />
+            <div className="mt-4 flex justify-between items-center gap-2 flex-wrap">
+              <OrderLinks restaurant={plat.restaurant} />
+              <AjouterButton restaurant={plat.restaurant} plat={variantes[0].plat} prix={plat.prix} date={date} />
+            </div>
+          </>
+        )}
 
         <CommentSection commentaires={plat.commentaires || []} date={date} platIndex={platIndex} />
       </CardContent>

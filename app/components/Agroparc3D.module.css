@@ -134,6 +134,8 @@
 .nutri b { color: var(--ag-ink); font-weight: 500; }
 .just { margin: 14px 0 0; font-size: 12px; line-height: 1.5; color: var(--ag-ink-dim); border-left: 2px solid var(--ag-line); padding-left: 10px; }
 .empty { font-size: 12px; color: var(--ag-ink-dim); line-height: 1.5; margin: 0; }
+/* Plat multi-options : un bloc par option sous la ligne « N plats au choix » */
+.option { margin-top: 14px; padding-top: 14px; border-top: 1px dashed var(--ag-line); }
 
 /* Carte permanente (resto sans plat du jour) */
 .carteEtat { margin-top: 14px; }
