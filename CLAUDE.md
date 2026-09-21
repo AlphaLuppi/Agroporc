@@ -34,7 +34,7 @@ Cron automation: `cron_pdj.sh [jour|semaine]`
 ## Architecture
 
 ### Data flow
-Python scrapers → AI diet agent evaluation (LLM décompose en ingrédients + grammages, macros agrégées via table Ciqual) → AI comment generation → `publish.py` POSTs to `/api/update` → Vercel Postgres (`pdj_entries` table, JSONB column) → Next.js SSR reads from DB
+Python scrapers → AI diet agent evaluation (LLM décompose en ingrédients + grammages, macros agrégées via table Ciqual) → AI comment generation → `publish.py` POSTs to `/api/update` → Postgres auto-hébergé sur le VPS (`pdj_entries` table, JSONB column), driver `pg` → Next.js SSR reads from DB
 
 Cartes permanentes : `main.py CARTE_SOURCES` → hash → `/api/carte` (`pdj_carte`, une ligne par slug), traitées le lundi ou via `main.py cartes`
 
@@ -43,7 +43,7 @@ Cartes permanentes : `main.py CARTE_SOURCES` → hash → `/api/carte` (`pdj_car
 - `app/CommentSection.tsx` / `app/CommentForm.tsx` — Client components for the comment system
 - `app/historique/` — History page
 - `app/api/` — API routes: `update` (auth-protected ingestion), `commentaire` (rate-limited user comments), `pdj` (read), `historique`, `feedback-ia`
-- `lib/db.ts` — Vercel Postgres queries, types (`PdjEntry`, `Plat`, `Commentaire`, `Recommandation`)
+- `lib/db.ts` — Postgres queries via `pg` (pool `max: 3`, tagged-template `sql` compatible `@vercel/postgres`), types (`PdjEntry`, `Plat`, `Commentaire`, `Recommandation`). Les `ensure*Table()` passent par `once()` : le DDL n'est joué qu'une fois par instance de fonction Vercel, pas avant chaque requête
 - `lib/characters.ts` — Character definitions (avatars, colors, emojis) used in both comments and UI
 - `lib/format.ts` — French date formatting
 - `lib/icons.ts` — Restaurant icon SVGs
@@ -79,4 +79,4 @@ Every dish gets two scores: "Sportif" (health-focused) and "Goulaf" (taste/indul
 - Database: single `pdj_entries` table with `date` (unique) and `data` (JSONB containing full `PdjEntry`)
 - The `/api/update` endpoint is protected by `API_SECRET_TOKEN` (Bearer auth)
 - Python deps: `playwright`, `anthropic`, `python-dotenv`, `requests`
-- Environment: `.env.local` for Next.js (Vercel Postgres vars + API_SECRET_TOKEN), `plats-du-jour/.env` for Python (same token + VERCEL_API_URL + ANTHROPIC_API_KEY)
+- Environment: `.env.local` for Next.js (`DATABASE_URL`, `PGSSL`, `API_SECRET_TOKEN`), `plats-du-jour/.env` for Python (same token + VERCEL_API_URL + ANTHROPIC_API_KEY)

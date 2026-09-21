@@ -19,8 +19,12 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ s
   const params = await searchParams;
   const monday = resolveMonday(params.semaine);
   const mondayStr = monday.toLocaleDateString("en-CA");
-  const weekPdj = await getWeekPdj(mondayStr);
-  const cartes = await getCartesDisponibles();
+  // Deux lectures indépendantes : en parallèle, un seul aller-retour de latence
+  // entre la fonction Vercel et Postgres au lieu de deux.
+  const [weekPdj, cartes] = await Promise.all([
+    getWeekPdj(mondayStr),
+    getCartesDisponibles(),
+  ]);
   const fullWeek = buildFullWeek(weekPdj, monday);
   const prev = new Date(monday); prev.setDate(monday.getDate() - 7);
   const next = new Date(monday); next.setDate(monday.getDate() + 7);

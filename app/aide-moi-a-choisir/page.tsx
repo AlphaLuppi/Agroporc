@@ -63,8 +63,13 @@ function dessertsFromCarte(carte: Carte | null, fallbackNom: string): DessertCon
 export default async function AideMoiAChoisir() {
   await ensureTable();
   const today = new Date().toLocaleDateString("en-CA");
-  const todayPdj = await getPdjByDate(today);
-  const cartes = await Promise.all(SLUGS.map((s) => getCarte(s.slug)));
+  // Lectures indépendantes lancées ensemble : la latence vers Postgres n'est
+  // payée qu'une fois au lieu d'une fois par requête.
+  const [todayPdj, cartes, observations] = await Promise.all([
+    getPdjByDate(today),
+    Promise.all(SLUGS.map((s) => getCarte(s.slug))),
+    getDessertsObservations(isoMinusDays(today, 60)),
+  ]);
 
   // Pool = plats du jour + plats de toutes les cartes
   // Un plat multi-options (Basilic n'Go, Dubble) donne une entrée par option, chacune avec ses notes.
@@ -89,7 +94,6 @@ export default async function AideMoiAChoisir() {
   const pool: PoolPlat[] = platsJour.length > 0 ? platsJour : platsCartes;
 
   // Desserts Truck Muche : observations réelles (proba = fréquence), seed en fallback cold-start.
-  const observations = await getDessertsObservations(isoMinusDays(today, 60));
   const observed = aggregateObservations(observations, { today, windowDays: 60 });
   const truckDesserts = mergeDesserts(observed, DESSERTS_CONNUS);
 

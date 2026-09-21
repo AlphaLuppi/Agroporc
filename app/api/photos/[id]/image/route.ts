@@ -23,7 +23,9 @@ export async function GET(
     return new NextResponse(buffer, {
       headers: {
         "Content-Type": data.content_type,
-        "Cache-Control": "public, max-age=86400",
+        // Les octets d'une photo ne changent jamais pour un id donné : le CDN
+        // Vercel peut la garder indéfiniment, la fonction n'est appelée qu'une fois.
+        "Cache-Control": "public, max-age=31536000, immutable",
       },
     });
   } catch (e) {

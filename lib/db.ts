@@ -28,6 +28,25 @@ function sql<T extends QueryResultRow = QueryResultRow>(
   return pool.query<T>(text, values as unknown[]);
 }
 
+/**
+ * Mémoïse un `ensure*Table()` : le DDL n'est joué qu'une fois par instance de
+ * fonction Vercel (les instances sont réutilisées d'une invocation à l'autre),
+ * au lieu d'un aller-retour réseau vers Postgres avant chaque requête.
+ * En cas d'échec la promesse est oubliée pour retenter au prochain appel.
+ */
+function once(fn: () => Promise<void>): () => Promise<void> {
+  let enCours: Promise<void> | null = null;
+  return () => {
+    if (!enCours) {
+      enCours = fn().catch((e) => {
+        enCours = null;
+        throw e;
+      });
+    }
+    return enCours;
+  };
+}
+
 export interface PdjEntry {
   date: string;
   plats: Plat[];
@@ -146,7 +165,7 @@ export interface Carte {
 }
 
 /** Crée la table si elle n'existe pas */
-export async function ensureTable() {
+export const ensureTable = once(async () => {
   await sql`
     CREATE TABLE IF NOT EXISTS pdj_entries (
       id SERIAL PRIMARY KEY,
@@ -156,7 +175,7 @@ export async function ensureTable() {
       updated_at TIMESTAMPTZ DEFAULT NOW()
     )
   `;
-}
+});
 
 /** Insère ou met à jour un PDJ pour une date donnée */
 export async function upsertPdj(entry: PdjEntry) {
@@ -240,7 +259,7 @@ export interface Idee {
 }
 
 /** Crée la table des idées si elle n'existe pas */
-export async function ensureIdeesTable() {
+export const ensureIdeesTable = once(async () => {
   await sql`
     CREATE TABLE IF NOT EXISTS pdj_idees (
       id SERIAL PRIMARY KEY,
@@ -258,7 +277,7 @@ export async function ensureIdeesTable() {
   await sql`ALTER TABLE pdj_idees ADD COLUMN IF NOT EXISTS faisabilite VARCHAR(20)`;
   await sql`ALTER TABLE pdj_idees ADD COLUMN IF NOT EXISTS evaluation TEXT`;
   await sql`ALTER TABLE pdj_idees ADD COLUMN IF NOT EXISTS evaluated_at TIMESTAMPTZ`;
-}
+});
 
 /** Récupère toutes les idées (hors trolls), triées par nombre de votes desc */
 export async function getAllIdees(): Promise<Idee[]> {
@@ -380,7 +399,7 @@ export interface IaProfile {
   updated_by?: string;
 }
 
-export async function ensureIaProfilesTable() {
+export const ensureIaProfilesTable = once(async () => {
   await sql`
     CREATE TABLE IF NOT EXISTS ia_profiles (
       nom VARCHAR(50) PRIMARY KEY,
@@ -389,7 +408,7 @@ export async function ensureIaProfilesTable() {
       updated_by VARCHAR(50)
     )
   `;
-}
+});
 
 export async function getAllIaProfiles(): Promise<IaProfile[]> {
   await ensureIaProfilesTable();
@@ -447,7 +466,7 @@ export interface RecentDish {
   plat_date: string;
 }
 
-export async function ensurePhotosTable() {
+export const ensurePhotosTable = once(async () => {
   await sql`
     CREATE TABLE IF NOT EXISTS pdj_photos (
       id SERIAL PRIMARY KEY,
@@ -461,7 +480,7 @@ export async function ensurePhotosTable() {
   await sql`CREATE INDEX IF NOT EXISTS idx_pdj_photos_slug ON pdj_photos(restaurant_slug)`;
   await sql`ALTER TABLE pdj_photos ADD COLUMN IF NOT EXISTS plat_nom TEXT`;
   await sql`ALTER TABLE pdj_photos ADD COLUMN IF NOT EXISTS plat_date DATE`;
-}
+});
 
 export async function getAllPhotos(): Promise<Photo[]> {
   await ensurePhotosTable();
@@ -554,7 +573,7 @@ export async function addCommentaire(
 }
 
 /** Crée la table de la carte si elle n'existe pas */
-export async function ensureCarteTable() {
+export const ensureCarteTable = once(async () => {
   await sql`
     CREATE TABLE IF NOT EXISTS pdj_carte (
       restaurant_slug VARCHAR(50) PRIMARY KEY,
@@ -563,7 +582,7 @@ export async function ensureCarteTable() {
       evaluated_at TIMESTAMPTZ DEFAULT NOW()
     )
   `;
-}
+});
 
 /** Récupère la carte stockée pour un restaurant (ou null) */
 export async function getCarte(slug: string): Promise<Carte | null> {
@@ -610,7 +629,7 @@ export async function getCartesDisponibles(): Promise<CarteDisponible[]> {
 // --- Observations quotidiennes des desserts (Truck Muche) ---
 
 /** Crée la table d'observations de desserts si elle n'existe pas. */
-export async function ensureDessertsTable() {
+export const ensureDessertsTable = once(async () => {
   await sql`
     CREATE TABLE IF NOT EXISTS pdj_desserts_observations (
       date DATE NOT NULL,
@@ -619,7 +638,7 @@ export async function ensureDessertsTable() {
       PRIMARY KEY (date, nom)
     )
   `;
-}
+});
 
 /** Insère les desserts observés pour une date (idempotent). Retourne le nb d'inserts tentés. */
 export async function insertDessertsObservations(
@@ -675,7 +694,7 @@ const RUNS_KEEP = 50;
 const LOG_MAX_CHARS = 200_000;
 const STALE_RUNNING_MINUTES = 120; // un run 'running' sans report au-delà = échec
 
-export async function ensurePipelineRunsTable() {
+export const ensurePipelineRunsTable = once(async () => {
   await sql`
     CREATE TABLE IF NOT EXISTS pipeline_runs (
       id SERIAL PRIMARY KEY,
@@ -692,7 +711,7 @@ export async function ensurePipelineRunsTable() {
     CREATE UNIQUE INDEX IF NOT EXISTS pipeline_runs_single_active
     ON pipeline_runs ((1)) WHERE status IN ('requested', 'running')
   `;
-}
+});
 
 /** Y a-t-il déjà un run en attente ou en cours ? */
 export async function hasActiveRun(): Promise<boolean> {

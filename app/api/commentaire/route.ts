@@ -7,12 +7,23 @@ export const runtime = "nodejs";
 const RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1 minute
 const RATE_LIMIT_MAX = 5; // max 5 commentaires par minute par IP
 
+// Compteur en mémoire : il vit dans l'instance de fonction Vercel qui sert la
+// requête, et chaque instance a le sien. C'est un garde-fou anti-flood, pas une
+// limite stricte — une vraie limite partagée demanderait un store externe.
 const ipRequests = new Map<string, { count: number; resetAt: number }>();
 
 function isRateLimited(ip: string): boolean {
   const now = Date.now();
-  const entry = ipRequests.get(ip);
 
+  // Purge à la volée : un timer de fond ne tourne pas de façon fiable entre deux
+  // invocations (l'instance est gelée dès la réponse envoyée).
+  if (ipRequests.size > 1000) {
+    for (const [oldIp, entry] of ipRequests) {
+      if (now > entry.resetAt) ipRequests.delete(oldIp);
+    }
+  }
+
+  const entry = ipRequests.get(ip);
   if (!entry || now > entry.resetAt) {
     ipRequests.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
     return false;
@@ -21,14 +32,6 @@ function isRateLimited(ip: string): boolean {
   entry.count++;
   return entry.count > RATE_LIMIT_MAX;
 }
-
-// Nettoyage périodique pour éviter les fuites mémoire
-setInterval(() => {
-  const now = Date.now();
-  for (const [ip, entry] of ipRequests) {
-    if (now > entry.resetAt) ipRequests.delete(ip);
-  }
-}, 60 * 1000);
 
 export async function POST(request: NextRequest) {
   try {

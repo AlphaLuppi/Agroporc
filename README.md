@@ -7,7 +7,7 @@ Agrégateur de menus du midi pour les restaurants d'entreprise. Scrape les menus
 ## Comment ça marche
 
 ```
-Scrapers Python → Agent diététicien (Claude) → Agent commentateur → POST /api/update → Vercel Postgres → Next.js SSR
+Scrapers Python → Agent diététicien (Claude) → Agent commentateur → POST /api/update → Postgres (VPS) → Next.js SSR
 ```
 
 1. **Scraping** : Trois scrapers récupèrent les menus quotidiens (Playwright pour Le Bistrot Trèfle, HTTP pour La Pause Gourmande et Le Truck Muche)
@@ -22,7 +22,7 @@ Scrapers Python → Agent diététicien (Claude) → Agent commentateur → POST
 |-----------|---------|
 | Frontend | Next.js 15, React 19, Tailwind CSS v4, shadcn/ui |
 | Backend API | Next.js API Routes (Vercel) |
-| Base de données | Vercel Postgres (table unique `pdj_entries`, colonne JSONB) |
+| Base de données | Postgres auto-hébergé sur le VPS, driver `pg` (table `pdj_entries`, colonne JSONB) |
 | Pipeline Python | Playwright, Anthropic SDK (Claude), requests |
 | Déploiement | Vercel (frontend), Docker (pipeline cron) |
 
@@ -53,7 +53,7 @@ Scrapers Python → Agent diététicien (Claude) → Agent commentateur → POST
 ```bash
 npm install
 cp .env.example .env.local
-# Remplir les variables Vercel Postgres + API_SECRET_TOKEN
+# Remplir DATABASE_URL + API_SECRET_TOKEN
 npm run db:migrate
 npm run dev
 ```
@@ -99,7 +99,8 @@ docker compose up -d
 
 | Variable | Description |
 |----------|-------------|
-| `POSTGRES_URL` | URL de connexion Vercel Postgres |
+| `DATABASE_URL` | URL de connexion au Postgres du VPS (`POSTGRES_URL` accepte en repli) |
+| `PGSSL` | `disable` pour couper TLS (base locale) ; sinon TLS sans verification de chaine |
 | `API_SECRET_TOKEN` | Token Bearer pour protéger `/api/update` |
 
 ### Pipeline Python (`plats-du-jour/.env`)
