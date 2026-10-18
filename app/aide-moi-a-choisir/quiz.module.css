@@ -1,0 +1,108 @@
+/* « Aide-moi à choisir » : une question à la fois sur mobile, l'arbre entier en colonnes sur desktop. */
+
+.root { display: flex; flex-direction: column; gap: 18px; }
+.entete h1 { font-family: var(--font-heading); font-size: 1.6rem; font-weight: 700; color: var(--accent); margin: 0; }
+.entete p { margin: 4px 0 0; font-size: 0.88rem; color: var(--text-secondary); }
+.entete .note { font-size: 0.75rem; color: var(--text-muted); }
+
+.meta { font-size: 0.75rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.meta b { color: var(--accent); font-weight: 700; }
+.good { color: var(--good); } .ok { color: var(--ok); } .bad { color: var(--bad); } .none { color: var(--text-muted); }
+
+/* Ligne de plat (plats restants, résultat) */
+.ligne { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.ligne:last-child { border-bottom: 0; }
+.ligneTexte { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.ligneNom { font-size: 0.88rem; font-weight: 600; line-height: 1.3; }
+.pastille {
+  display: inline-flex; align-items: center; justify-content: center; flex: none; min-width: 38px; height: 34px; padding: 0 5px;
+  border-radius: var(--radius-sm); border: 1px solid currentColor; font-weight: 800; font-size: 0.92rem; font-variant-numeric: tabular-nums;
+}
+.pastille small { font-size: 0.58em; opacity: 0.65; font-weight: 600; align-self: flex-end; margin-bottom: 0.6em; }
+.pastille.good { background: var(--good-bg); } .pastille.ok { background: var(--ok-bg); } .pastille.bad { background: var(--bad-bg); }
+
+/* ── Mobile : une question à la fois ── */
+.mobile { display: flex; flex-direction: column; gap: 14px; }
+.progression { display: flex; gap: 4px; }
+.progression i { flex: 1; height: 5px; border-radius: 3px; background: var(--border); transition: background-color 0.2s ease-out; }
+.progression i.fait { background: var(--accent); }
+.fil { display: flex; flex-wrap: wrap; gap: 6px; }
+.fil button {
+  border: 1px solid var(--border-accent); background: var(--surface); color: var(--text); border-radius: 999px;
+  padding: 4px 11px; font: inherit; font-size: 0.78rem; cursor: pointer;
+}
+.fil button::after { content: " ✎"; color: var(--text-muted); }
+.question { font-family: var(--font-heading); font-size: 1.3rem; font-weight: 700; margin: 0; text-wrap: balance; }
+.choix { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.choix button {
+  display: flex; align-items: center; gap: 10px; min-height: 56px; padding: 10px 12px; text-align: left; cursor: pointer;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: var(--radius);
+  font: inherit; font-size: 0.92rem; font-weight: 600; transition: border-color 0.15s ease-out, transform 0.15s ease-out;
+}
+.choix button:hover { border-color: var(--border-accent); }
+.choix button:active { transform: scale(0.98); }
+.choix button.seul { grid-column: 1 / -1; }
+.choix button.zero { opacity: 0.5; }
+.emoji { font-size: 1.3rem; flex: none; }
+.compte { margin-left: auto; font-size: 0.72rem; font-weight: 700; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.apercu {
+  position: sticky; bottom: 0; z-index: 5; margin-inline: -12px; padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px));
+  background: var(--surface); border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 2px;
+}
+
+/* ── Desktop : l'arbre ── */
+.arbre { display: none; }
+.colonne { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.colonne h2 {
+  display: flex; justify-content: space-between; margin: 0 0 2px; font-family: var(--font-body); font-size: 0.66rem;
+  font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-muted);
+}
+.colonne.courante { background: var(--surface-accent); border-radius: var(--radius); padding: 8px; margin: -8px; }
+.colonne.courante h2 { color: var(--accent); }
+.colonne.apres { opacity: 0.55; }
+.noeud {
+  position: relative; display: flex; align-items: center; gap: 7px; padding: 7px 9px; text-align: left; cursor: pointer;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: var(--radius-sm);
+  font: inherit; font-size: 0.8rem; line-height: 1.25; transition: border-color 0.15s ease-out;
+}
+.noeud:hover { border-color: var(--border-accent); }
+.noeud.zero { opacity: 0.45; }
+.noeud[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-glow); color: var(--accent); font-weight: 700; }
+/* Trait doré vers la colonne suivante : le chemin choisi se lit de gauche à droite. */
+.noeud[aria-pressed="true"]::after { content: ""; position: absolute; right: -13px; top: 50%; width: 12px; height: 2px; background: var(--accent); }
+.colonne:last-of-type .noeud[aria-pressed="true"]::after { display: none; }
+.noeud .compte { font-size: 0.68rem; }
+.panneau {
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); padding: 14px 16px;
+  display: flex; flex-direction: column; gap: 6px; align-self: start; max-height: 70vh; overflow-y: auto;
+}
+.panneau h2 { margin: 0 0 4px; font-family: var(--font-body); font-size: 0.66rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); }
+.barre { display: none; justify-content: space-between; align-items: center; gap: 12px; }
+
+/* ── Résultat ── */
+.resultat { display: flex; flex-direction: column; gap: 12px; }
+.resultat h3 { font-family: var(--font-heading); font-size: 1.2rem; margin: 0; text-wrap: balance; }
+.gagnant { border: 1px solid var(--good-border); background: var(--good-bg); border-radius: var(--radius); padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; }
+.gagnantTete { display: flex; gap: 12px; align-items: flex-start; }
+.gagnant .pastille { min-width: 50px; height: 48px; font-size: 1.25rem; background: var(--bg); }
+.gagnantNom { font-family: var(--font-heading); font-size: 1.1rem; font-weight: 700; line-height: 1.25; }
+.texte { font-size: 0.85rem; color: var(--text-secondary); line-height: 1.55; margin: 0; }
+.dessert { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); padding: 12px 14px; display: flex; flex-direction: column; gap: 4px; }
+.recommencer {
+  align-self: flex-start; border: 1px solid var(--border); background: var(--surface-hover); color: var(--text-secondary);
+  border-radius: var(--radius-sm); padding: 7px 14px; font: inherit; font-weight: 600; font-size: 0.82rem; cursor: pointer;
+}
+.recommencer:hover { color: var(--text); border-color: var(--border-accent); }
+
+@media (min-width: 1000px) {
+  .mobile { display: none; }
+  .arbre {
+    display: grid; grid-template-columns: repeat(var(--colonnes), minmax(0, 1fr)) 300px; gap: 14px; align-items: start;
+  }
+  .barre { display: flex; }
+  /* L'arbre a besoin de plus de 860 px : toute la page déborde du conteneur du site. */
+  .root { width: min(1180px, calc(100vw - 64px)); margin-inline: calc(50% - min(590px, 50vw - 32px)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .choix button, .progression i, .noeud { transition: none; }
+}

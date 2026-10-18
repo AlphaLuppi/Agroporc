@@ -1,0 +1,234 @@
+/* Accueil : vues Jour / Semaine / La carte. Couleurs = variables du thème actif (normal / tigre / terrasse). */
+
+.root { display: flex; flex-direction: column; gap: 14px; }
+
+/* ── En-tête ── */
+.vues { display: flex; gap: 3px; padding: 3px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+.vues button {
+  flex: 1; border: 0; background: none; border-radius: calc(var(--radius) - 4px); padding: 8px 10px;
+  color: var(--text-muted); font: inherit; font-weight: 600; font-size: 0.9rem; cursor: pointer;
+  transition: background-color 0.15s ease-out, color 0.15s ease-out;
+}
+.vues button:hover { color: var(--text); }
+.vues button[aria-pressed="true"] { background: var(--accent); color: var(--accent-text); }
+.titre { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.titre h1 { font-family: var(--font-heading); font-weight: 700; font-size: 1.3rem; line-height: 1.15; margin: 0; text-wrap: balance; }
+.apercu { font-family: var(--font-body); font-size: 0.62rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); border: 1px solid var(--border-accent); border-radius: 6px; padding: 2px 6px; margin-left: 8px; vertical-align: 4px; }
+.semaineNav { display: flex; align-items: center; gap: 6px; font-size: 0.8rem; color: var(--text-secondary); }
+.semaineNav a {
+  width: 32px; height: 32px; display: grid; place-items: center; border-radius: var(--radius-sm);
+  border: 1px solid var(--border); background: var(--surface); color: var(--text-secondary); text-decoration: none;
+}
+.semaineNav a:hover { color: var(--text); border-color: var(--border-accent); }
+.semaineNav a.auj { width: auto; padding: 0 10px; color: var(--accent); font-weight: 600; }
+.semaineNav svg { width: 15px; height: 15px; }
+
+.mode { display: flex; gap: 2px; padding: 3px; background: var(--surface); border: 1px solid var(--border); border-radius: 999px; flex: none; }
+.mode button {
+  border: 0; background: none; border-radius: 999px; padding: 6px 12px; display: flex; align-items: center; gap: 6px;
+  color: var(--text-muted); font: inherit; font-weight: 600; font-size: 0.82rem; cursor: pointer; min-height: 34px;
+  transition: background-color 0.15s ease-out, color 0.15s ease-out;
+}
+.mode button[aria-pressed="true"] { background: var(--accent); color: var(--accent-text); }
+.mode svg { width: 16px; height: 16px; }
+
+.jours { display: flex; gap: 3px; padding: 3px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); flex: 1; min-width: 0; }
+.jours button {
+  flex: 1; min-width: 0; border: 0; background: none; border-radius: calc(var(--radius) - 5px); padding: 4px 0 5px;
+  display: flex; flex-direction: column; align-items: center; gap: 1px; color: var(--text-muted); font: inherit; cursor: pointer;
+}
+.jours small { font-size: 0.62rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; }
+.jours b { font-size: 0.95rem; line-height: 1; }
+.jours button[aria-pressed="true"] { background: var(--accent); color: var(--accent-text); }
+.jours button.auj:not([aria-pressed="true"]) { color: var(--accent); }
+.point { width: 6px; height: 6px; border-radius: 50%; margin-top: 3px; background: var(--border); }
+
+/* Barre jours + mode : collée en bas de l'écran sur mobile (à portée du pouce), sous le titre sur desktop. */
+.dock {
+  position: sticky; bottom: 0; z-index: 5; order: 10; display: flex; gap: 6px; align-items: center;
+  margin-inline: -12px; padding: 8px 12px calc(8px + env(safe-area-inset-bottom, 0px));
+  background: var(--bg); border-top: 1px solid var(--border);
+}
+.dock .mode span { display: none; }
+
+/* ── Notes ── */
+.good { color: var(--good); } .ok { color: var(--ok); } .bad { color: var(--bad); } .none { color: var(--text-muted); }
+.pastille {
+  display: inline-flex; align-items: center; justify-content: center; gap: 1px; flex: none;
+  min-width: 40px; height: 38px; padding: 0 6px; border-radius: var(--radius-sm); border: 1px solid currentColor;
+  font-weight: 800; font-size: 1rem; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; background: var(--surface);
+}
+.pastille small { font-size: 0.58em; opacity: 0.65; font-weight: 600; align-self: flex-end; margin-bottom: 0.55em; }
+.pastille.good { background: var(--good-bg); } .pastille.ok { background: var(--ok-bg); } .pastille.bad { background: var(--bad-bg); }
+.tagReco { display: inline-block; font-size: 0.6rem; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; padding: 2px 6px; border-radius: 5px; background: var(--good); color: var(--bg); white-space: nowrap; vertical-align: 2px; }
+.meta { font-size: 0.75rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.meta b { color: var(--accent); font-weight: 700; }
+
+/* ── Vue Jour ── */
+.grille { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; grid-auto-flow: dense; align-content: start; }
+.hero {
+  grid-column: 1 / -1; display: flex; gap: 12px; align-items: flex-start; text-align: left; cursor: pointer;
+  padding: 12px 14px; border-radius: var(--radius); border: 1px solid var(--good-border); background: var(--good-bg); color: var(--text); font: inherit;
+}
+.hero .pastille { min-width: 52px; height: 52px; font-size: 1.3rem; background: var(--bg); }
+.heroTexte { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.heroNom { font-family: var(--font-heading); font-weight: 700; font-size: 1.05rem; line-height: 1.25; }
+.raison { font-size: 0.78rem; color: var(--text-secondary); line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.macrosLigne { display: none; }
+.tuile {
+  display: flex; flex-direction: column; gap: 5px; text-align: left; cursor: pointer; min-width: 0;
+  padding: 10px 12px; border-radius: var(--radius); border: 1px solid var(--border); background: var(--surface); color: var(--text); font: inherit;
+  background-image: var(--card-stripe);
+  transition: border-color 0.15s ease-out;
+}
+.tuile:hover, .hero:hover { border-color: var(--border-accent); }
+.tuileHaut { display: flex; justify-content: space-between; align-items: baseline; gap: 6px; }
+.grosseNote { font-size: 1.45rem; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; flex: none; }
+.grosseNote small { font-size: 0.55em; opacity: 0.6; }
+.resto { font-size: 0.64rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted); text-align: right; line-height: 1.2; }
+.nom { font-size: 0.88rem; font-weight: 600; line-height: 1.3; overflow-wrap: break-word; }
+.tuile .meta { margin-top: auto; }
+/* Nom long : la tuile prend toute la largeur pour afficher le nom en entier sans l'écraser. */
+.large { grid-column: 1 / -1; }
+.semaineLabel { display: none; }
+.puces { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 0.75rem; color: var(--text-muted); padding-top: 2px; }
+.puces button {
+  border: 1px dashed var(--border); background: none; border-radius: 999px; padding: 3px 10px; color: var(--text-secondary);
+  font: inherit; font-size: 0.75rem; cursor: pointer;
+}
+.puces button:hover { border-color: var(--border-accent); color: var(--text); }
+.message { padding: 28px 20px; text-align: center; border-radius: var(--radius); border: 1px solid var(--bad-border); background: var(--bad-bg); color: var(--bad); }
+
+/* ── Vue Semaine ── */
+.table { display: none; }
+.chaleur { display: flex; flex-direction: column; gap: 8px; }
+.chaleurGrille { display: grid; grid-template-columns: 84px repeat(5, minmax(0, 1fr)); gap: 3px; align-items: center; font-size: 0.66rem; color: var(--text-muted); }
+.chaleurGrille .tete { text-align: center; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 700; padding: 4px 0; border-radius: 6px; border: 0; background: none; color: inherit; font-family: inherit; font-size: inherit; cursor: pointer; }
+.chaleurGrille .tete[aria-pressed="true"] { background: var(--accent); color: var(--accent-text); }
+.chaleurGrille .ligneNom { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.case { height: 14px; border-radius: 3px; border: 0; padding: 0; cursor: pointer; background: var(--border); opacity: 0.85; }
+.case.good { background: var(--good); } .case.ok { background: var(--ok); } .case.bad { background: var(--bad); }
+.case.colonne { outline: 1.5px solid var(--accent); outline-offset: 1px; opacity: 1; }
+.pages { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; margin-inline: -12px; }
+.pages::-webkit-scrollbar { display: none; }
+.page { flex: 0 0 100%; scroll-snap-align: start; padding-inline: 12px; min-width: 0; }
+.page h2 { font-family: var(--font-heading); font-weight: 700; font-size: 1.1rem; margin: 6px 0 4px; display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.page h2 span { font-family: var(--font-body); font-size: 0.72rem; color: var(--text-muted); font-weight: 500; }
+.ligne {
+  display: flex; gap: 11px; width: 100%; padding: 10px 2px; align-items: flex-start; text-align: left; cursor: pointer;
+  border: 0; border-bottom: 1px solid var(--border); background: none; color: var(--text); font: inherit;
+}
+.ligne:hover { background: var(--surface); }
+.ligneTexte { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.vide { color: var(--text-muted); font-style: italic; font-size: 0.85rem; padding: 14px 2px; }
+
+/* ── Vue La carte ── */
+.restos { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; flex: 1; min-width: 0; }
+.restos::-webkit-scrollbar { display: none; }
+.restos button {
+  border: 1px solid var(--border); background: var(--surface); color: var(--text-secondary); border-radius: 999px;
+  padding: 6px 13px; font: inherit; font-size: 0.82rem; font-weight: 600; white-space: nowrap; cursor: pointer;
+}
+.restos button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: var(--accent-glow); }
+.carte { columns: 1; column-gap: 32px; }
+.section { break-inside: avoid; margin-bottom: 14px; }
+.section h2 {
+  display: flex; justify-content: space-between; margin: 0 0 2px; font-family: var(--font-body); font-size: 0.68rem;
+  font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent);
+}
+.section h2 span { color: var(--text-muted); }
+.plat { border-top: 1px solid var(--border); }
+.plat > button {
+  display: flex; gap: 10px; align-items: baseline; width: 100%; padding: 8px 0; border: 0; background: none;
+  color: var(--text); font: inherit; font-size: 0.88rem; text-align: left; cursor: pointer;
+}
+.plat > button:hover .platNom { color: var(--accent); }
+.platNom { flex: 1; min-width: 0; line-height: 1.35; }
+.platPrix { font-size: 0.78rem; color: var(--text-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.platNote { font-weight: 800; min-width: 3ch; text-align: right; font-variant-numeric: tabular-nums; }
+.platDetail { padding: 0 0 12px; display: flex; flex-direction: column; gap: 8px; }
+.texte { font-size: 0.85rem; color: var(--text-secondary); line-height: 1.55; margin: 0; }
+
+/* ── Panneau de détail : feuille du bas sur mobile, panneau latéral sur desktop ── */
+.voile { position: fixed; inset: 0; z-index: 90; background: rgba(0, 0, 0, 0.5); animation: fondu 0.2s ease-out; }
+.panneau {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 91; max-height: 88dvh; overflow-y: auto; overscroll-behavior: contain;
+  background: var(--surface); color: var(--text); border-top: 1px solid var(--border-accent); border-radius: var(--radius) var(--radius) 0 0;
+  padding: 10px 18px calc(20px + env(safe-area-inset-bottom, 0px)); display: flex; flex-direction: column; gap: 14px;
+  box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.45); animation: monte 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.panneau:focus { outline: none; }
+.poignee { width: 40px; height: 4px; border-radius: 2px; background: var(--border-accent); margin: 0 auto; flex: none; }
+.panneauTete { display: flex; gap: 12px; align-items: flex-start; }
+.panneauTete .pastille { min-width: 54px; height: 54px; font-size: 1.35rem; }
+.panneauTete h2 { font-family: var(--font-heading); font-size: 1.25rem; line-height: 1.25; margin: 0 0 4px; }
+.fermer {
+  margin-left: auto; flex: none; width: 34px; height: 34px; border-radius: var(--radius-sm); border: 1px solid var(--border);
+  background: var(--surface-hover); color: var(--text-secondary); cursor: pointer; display: grid; place-items: center;
+}
+.fermer svg { width: 16px; height: 16px; }
+.autreMode { font-size: 0.75rem; color: var(--text-muted); }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; }
+.bouton {
+  border: 1px solid var(--accent); background: var(--accent-glow); color: var(--accent); border-radius: var(--radius-sm);
+  padding: 7px 14px; font: inherit; font-weight: 600; font-size: 0.82rem; cursor: pointer;
+}
+@keyframes fondu { from { opacity: 0; } }
+@keyframes monte { from { transform: translateY(100%); } }
+@keyframes glisse { from { transform: translateX(100%); } }
+
+@media (min-width: 768px) {
+  .titre h1 { font-size: 1.75rem; }
+  .titre { flex-wrap: nowrap; }
+  .vues { align-self: flex-start; min-width: 360px; }
+  .dock { position: static; order: 0; margin: 0; padding: 0; border: 0; background: none; gap: 10px; }
+  .dock .mode span { display: inline; }
+  .grille { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+  .hero { grid-column: span 2; grid-row: span 2; flex-direction: column; padding: 20px 22px; gap: 12px; }
+  .hero .pastille { min-width: 66px; height: 66px; font-size: 1.7rem; }
+  .heroNom { font-size: 1.45rem; }
+  .raison { -webkit-line-clamp: unset; font-size: 0.88rem; }
+  .macrosLigne { display: flex; gap: 14px; font-size: 0.78rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+  .macrosLigne b { color: var(--text); font-weight: 600; }
+  .tuile { padding: 14px; min-height: 130px; }
+  .large { grid-column: auto; }
+  .semaineLabel { display: inline; }
+  .nom { font-size: 0.95rem; }
+  .carte { columns: 2; }
+  .panneau {
+    left: auto; top: 0; width: min(460px, 100vw); max-height: none; border-top: 0; border-left: 1px solid var(--border-accent);
+    border-radius: 0; padding: 22px 24px; animation-name: glisse;
+  }
+  .poignee { display: none; }
+}
+
+/* La grille Semaine a besoin de plus de 860 px : elle déborde du conteneur du site. */
+@media (min-width: 1000px) {
+  .chaleur { display: none; }
+  .large1180 { width: min(1180px, calc(100vw - 64px)); margin-inline: calc(50% - min(590px, 50vw - 32px)); }
+  .table { display: grid; grid-template-columns: 140px repeat(5, minmax(0, 1fr)); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; background: var(--bg); }
+  .table > * { border-bottom: 1px solid var(--border); border-right: 1px solid var(--border); padding: 9px 10px; min-width: 0; }
+  .th {
+    display: flex; justify-content: space-between; align-items: center; gap: 6px; background: var(--surface);
+    font-size: 0.72rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-muted);
+    border-top: 0; border-left: 0; font-family: inherit; cursor: pointer; text-align: left;
+  }
+  .th:hover { color: var(--text); }
+  .th.auj { color: var(--accent); }
+  .rh { background: var(--surface); font-weight: 600; font-size: 0.82rem; color: var(--text-secondary); display: flex; flex-direction: column; justify-content: center; }
+  .rh small { color: var(--text-muted); font-weight: 500; font-size: 0.72rem; }
+  .cellule { display: flex; flex-direction: column; gap: 8px; }
+  .cellule.aujC { background: var(--accent-glow); }
+  .cellule button {
+    display: flex; gap: 8px; align-items: flex-start; border: 0; background: none; padding: 0; text-align: left; cursor: pointer;
+    color: var(--text); font: inherit; font-size: 0.8rem; line-height: 1.3;
+  }
+  .cellule button:hover span:last-child { color: var(--accent); }
+  .cellule .pastille { min-width: 32px; height: 26px; font-size: 0.8rem; padding: 0 4px; }
+  .cellule .meilleure .pastille { box-shadow: 0 0 0 2px var(--bg), 0 0 0 3.5px currentColor; }
+  .celluleVide { color: var(--text-muted); font-style: italic; font-size: 0.78rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .voile, .panneau { animation: none; }
+}
