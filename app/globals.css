@@ -156,6 +156,20 @@ body::before {
 .note-ok   { color: var(--ok);   background: var(--ok-bg);   }
 .note-bad  { color: var(--bad);  background: var(--bad-bg);  }
 
+/* ── Recommendation ribbon ────────────────────── */
+.reco-ribbon {
+  position: absolute;
+  top: 12px;
+  right: -28px;
+  background: var(--good);
+  color: #000;
+  font-size: 0.65rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  padding: 0.2rem 2rem;
+  transform: rotate(45deg);
+}
+
 /* ── Calendar ─────────────────────────────────── */
 .calendar-grid {
   display: grid;
@@ -231,6 +245,24 @@ body::before {
   animation: slideDown 0.2s ease-out;
 }
 .day-detail.visible { display: block; }
+
+/* ── Today dot pulse ─────────────────────────── */
+.today-dot {
+  animation: todayPulse 2s ease-in-out infinite;
+}
+.day-tab.active .today-dot {
+  animation: none;
+  background: var(--accent-text) !important;
+}
+.day-tab:not(.active) .today-dot {
+  background: var(--text-muted) !important;
+  animation: none;
+  opacity: 0.5;
+}
+@keyframes todayPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(1.6); }
+}
 
 /* ── Animations ───────────────────────────────── */
 @keyframes slideDown {
@@ -329,3 +361,9 @@ body::before {
   * { @apply border-border outline-ring/50; }
   body { @apply bg-background text-foreground; }
 }
+
+/* Carte dépliable (native <details>) */
+.carte-summary { list-style: none; }
+.carte-summary::-webkit-details-marker { display: none; }
+.carte-summary .carte-chevron { transition: transform 0.2s; }
+details[open] > .carte-summary .carte-chevron { transform: rotate(180deg); }

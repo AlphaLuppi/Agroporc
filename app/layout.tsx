@@ -2,6 +2,9 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { ClientScripts } from "./components/ClientScripts";
 import { MyrtilleEasterEgg } from "./components/MyrtilleEasterEgg";
+import VersionSwitch from "./components/VersionSwitch";
+import { cookies } from "next/headers";
+import { VERSION_COOKIE, lireVersion } from "@/lib/version-ui";
 
 export const metadata: Metadata = {
   title: "Plats du Jour",
@@ -12,11 +15,12 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const version = lireVersion((await cookies()).get(VERSION_COOKIE)?.value);
   return (
     <html lang="fr" data-theme="normal" suppressHydrationWarning>
       <head>
@@ -63,6 +67,7 @@ export default function RootLayout({
               </div>
             </div>
             <div className="flex items-center gap-2">
+              <VersionSwitch version={version} />
               {/* Icône panier */}
               <button
                 id="cart-btn"

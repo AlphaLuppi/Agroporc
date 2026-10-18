@@ -1,6 +1,9 @@
 import { ensureTable, getWeekPdj, getCartesDisponibles } from "@/lib/db";
 import type { PdjEntry } from "@/lib/db";
+import { cookies } from "next/headers";
+import { VERSION_COOKIE, lireVersion } from "@/lib/version-ui";
 import MenusClient from "./menus/MenusClient";
+import AccueilV1 from "./v1/AccueilV1";
 
 export const dynamic = "force-dynamic";
 
@@ -15,6 +18,13 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ s
   const prev = new Date(monday); prev.setDate(monday.getDate() - 7);
   const next = new Date(monday); next.setDate(monday.getDate() + 7);
 
+  const prevHref = `/?semaine=${prev.toLocaleDateString("en-CA")}`;
+  const nextHref = `/?semaine=${next.toLocaleDateString("en-CA")}`;
+
+  if (lireVersion((await cookies()).get(VERSION_COOKIE)?.value) === "v1") {
+    return <AccueilV1 weekPdj={semaine} cartes={cartes} prevHref={prevHref} nextHref={nextHref} currentMonday={mondayStr} />;
+  }
+
   const today = new Date().toLocaleDateString("en-CA");
   const todayIdx = semaine.findIndex((p) => p.date === today);
 
@@ -25,8 +35,8 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ s
       today={today}
       defaultIdx={todayIdx >= 0 ? todayIdx : 0}
       weekLabel={formatWeekRange(semaine[0].date, semaine[semaine.length - 1].date)}
-      prevHref={`/?semaine=${prev.toLocaleDateString("en-CA")}`}
-      nextHref={`/?semaine=${next.toLocaleDateString("en-CA")}`}
+      prevHref={prevHref}
+      nextHref={nextHref}
       isCurrentWeek={mondayStr === resolveMonday().toLocaleDateString("en-CA")}
     />
   );
