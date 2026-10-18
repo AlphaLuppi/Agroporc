@@ -60,65 +60,16 @@ export function ClientScripts() {
       btn.onclick = () => applyMode(btn.dataset.mode!);
     });
 
-    // Day tab switching
-    const dayTabs = document.querySelectorAll<HTMLButtonElement>(".day-tab");
-    dayTabs.forEach((tab) => {
-      tab.onclick = () => {
-        const idx = tab.dataset.dayIndex;
-        dayTabs.forEach((t) => {
-          t.classList.remove("active");
-          t.style.background = "transparent";
-          t.style.color = "var(--text-muted)";
-          t.style.boxShadow = "none";
-          const dot = t.querySelector<HTMLElement>(".today-dot");
-          if (dot) dot.style.background = "var(--accent)";
-        });
-        tab.classList.add("active");
-        tab.style.background = "var(--accent)";
-        tab.style.color = "var(--accent-text)";
-        tab.style.boxShadow = "0 1px 4px rgba(0,0,0,0.2)";
-        const activeDot = tab.querySelector<HTMLElement>(".today-dot");
-        if (activeDot) activeDot.style.background = "var(--accent-text)";
-        document.querySelectorAll<HTMLElement>("[data-day-panel]").forEach((panel) => {
-          panel.style.display = panel.dataset.dayPanel === idx ? "" : "none";
-        });
-        const currentMode = localStorage.getItem("pdj-mode") || "sportif";
-        applyMode(currentMode);
-      };
-    });
-
-    // View tab switching (Plats du jour / La carte)
-    const viewTabs = document.querySelectorAll<HTMLButtonElement>(".view-tab");
-    viewTabs.forEach((tab) => {
-      tab.onclick = () => {
-        const view = tab.dataset.view;
-        viewTabs.forEach((t) => {
-          t.classList.remove("active");
-          t.style.background = "transparent";
-          t.style.color = "var(--text-muted)";
-          t.style.boxShadow = "none";
-        });
-        tab.classList.add("active");
-        tab.style.background = "var(--accent)";
-        tab.style.color = "var(--accent-text)";
-        tab.style.boxShadow = "0 1px 4px rgba(0,0,0,0.2)";
-        document.querySelectorAll<HTMLElement>("[data-view-panel]").forEach((panel) => {
-          panel.style.display = panel.dataset.viewPanel === view ? "" : "none";
-        });
-        const currentMode = localStorage.getItem("pdj-mode") || "sportif";
-        applyMode(currentMode);
-      };
-    });
-
     // ── Cart / Panier ────────────────────────────────────────────────────────
-    initCart();
+    const cleanupCart = initCart();
 
-    // Cartes chargées à la demande (CarteLazy) : réappliquer le mode et le tri aux nœuds insérés.
+    // Mode changé ailleurs (accueil, vue 3D) : réappliquer le mode aux éléments .mode-*.
     const onModeRefresh = () => applyMode(localStorage.getItem("pdj-mode") || "sportif");
     window.addEventListener("pdj:mode-refresh", onModeRefresh);
 
     return () => {
       cleanupMobileMenu?.();
+      cleanupCart();
       window.removeEventListener("pdj:mode-refresh", onModeRefresh);
     };
   }, [pathname]);
@@ -543,41 +494,42 @@ async function submitLogin() {
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 
-function initCart() {
-  // Boutons "Ajouter"
-  document.querySelectorAll<HTMLButtonElement>(".add-to-cart-btn").forEach((btn) => {
-    btn.onclick = () => {
-      const restaurant = btn.dataset.restaurant || "";
-      const plat = btn.dataset.plat || "";
-      const prix = btn.dataset.prix || "";
-      if (!restaurant || !plat) return;
+function initCart(): () => void {
+  // Boutons "Ajouter" : délégation, car l'accueil les rend côté client (panneau de détail).
+  const onAjouter = (e: MouseEvent) => {
+    const btn = (e.target as Element | null)?.closest<HTMLButtonElement>(".add-to-cart-btn");
+    if (!btn) return;
+    const restaurant = btn.dataset.restaurant || "";
+    const plat = btn.dataset.plat || "";
+    const prix = btn.dataset.prix || "";
+    if (!restaurant || !plat) return;
 
-      const items = loadCart();
-      const existing = items.find(
-        (i) => i.restaurant === restaurant && i.plat === plat
-      );
-      if (existing) {
-        existing.quantity += 1;
-      } else {
-        items.push({ restaurant, plat, prix, quantity: 1 });
-      }
-      saveCart(items);
-      renderCart();
+    const items = loadCart();
+    const existing = items.find(
+      (i) => i.restaurant === restaurant && i.plat === plat
+    );
+    if (existing) {
+      existing.quantity += 1;
+    } else {
+      items.push({ restaurant, plat, prix, quantity: 1 });
+    }
+    saveCart(items);
+    renderCart();
 
-      // Feedback visuel
-      const orig = btn.textContent;
-      btn.textContent = "Ajouté ✓";
-      btn.style.background = "var(--good-bg)";
-      btn.style.color = "var(--good)";
-      btn.style.borderColor = "var(--good-border)";
-      setTimeout(() => {
-        btn.textContent = orig;
-        btn.style.background = "var(--accent-glow)";
-        btn.style.color = "var(--accent)";
-        btn.style.borderColor = "var(--accent)";
-      }, 1200);
-    };
-  });
+    // Feedback visuel
+    const orig = btn.textContent;
+    btn.textContent = "Ajouté ✓";
+    btn.style.background = "var(--good-bg)";
+    btn.style.color = "var(--good)";
+    btn.style.borderColor = "var(--good-border)";
+    setTimeout(() => {
+      btn.textContent = orig;
+      btn.style.background = "";
+      btn.style.color = "";
+      btn.style.borderColor = "";
+    }, 1200);
+  };
+  document.addEventListener("click", onAjouter);
 
   // Bouton cart dans navbar
   const cartBtn = document.getElementById("cart-btn");
@@ -628,6 +580,8 @@ function initCart() {
 
   // Mettre à jour le badge au chargement
   renderCart();
+
+  return () => document.removeEventListener("click", onAjouter);
 }
 
 // ── Mode / theme ─────────────────────────────────────────────────────────────
@@ -639,64 +593,6 @@ function applyMode(mode: string) {
   document.querySelectorAll<HTMLElement>(".mode-goulaf").forEach((el) => {
     el.style.display = mode === "goulaf" ? "" : "none";
   });
-  document.querySelectorAll<HTMLElement>(".plat-card").forEach((card) => {
-    card.classList.remove("recommended");
-    if (mode === "sportif" && card.classList.contains("recommended-sportif")) {
-      card.classList.add("recommended");
-      card.style.borderColor = "var(--good-border)";
-    } else if (mode === "goulaf" && card.classList.contains("recommended-goulaf")) {
-      card.classList.add("recommended");
-      card.style.borderColor = "var(--good-border)";
-    } else {
-      card.style.borderColor = "";
-    }
-  });
-
-  // Sort plat cards by note (best first) within each day panel
-  // `:scope >` : uniquement les enfants directs. Un panel peut contenir une carte
-  // dépliée (CarteLazy → CarteRestaurant) dont les CartePlatCard ont aussi la classe
-  // .plat-card mais sont imbriqués plus profond ; un sélecteur descendant les
-  // remonterait à la racine du panel et viderait les sections de la carte.
-  document.querySelectorAll<HTMLElement>("[data-day-panel]").forEach((panel) => {
-    const cards = Array.from(panel.querySelectorAll<HTMLElement>(":scope > .plat-card"));
-    if (cards.length < 2) return;
-    // Les cards triées sont réinsérées à la place de la première (ordre DOM) : un appendChild
-    // les repousserait en fin de panel, derrière les cards « coming soon » et « sans plat ».
-    const repere = document.createComment("plats");
-    panel.insertBefore(repere, cards[0]);
-    const noteSelector = mode === "sportif" ? ".note.mode-sportif" : ".note.mode-goulaf";
-    cards.sort((a, b) => {
-      const noteA = parseFloat(a.querySelector<HTMLElement>(noteSelector)?.dataset.note || "0");
-      const noteB = parseFloat(b.querySelector<HTMLElement>(noteSelector)?.dataset.note || "0");
-      return noteB - noteA;
-    });
-    cards.forEach((card) => panel.insertBefore(card, repere));
-    panel.removeChild(repere);
-  });
-
-  // Sort carte: sections (best avg note first) + plats within each section, by note for the active mode
-  const noteSel = mode === "goulaf" ? ".note.mode-goulaf" : ".note.mode-sportif";
-  const cardNote = (card: HTMLElement) =>
-    parseFloat(card.querySelector<HTMLElement>(noteSel)?.dataset.note || "0");
-  document.querySelectorAll<HTMLElement>("[data-carte-sections]").forEach((container) => {
-    const sections = Array.from(container.querySelectorAll<HTMLElement>("[data-carte-section]"));
-    sections.forEach((sec) => {
-      const cards = Array.from(sec.querySelectorAll<HTMLElement>(".plat-card"));
-      if (cards.length < 2) return;
-      const parent = cards[0].parentElement;
-      if (!parent) return;
-      cards.sort((a, b) => cardNote(b) - cardNote(a));
-      cards.forEach((card) => parent.appendChild(card));
-    });
-    const sectionAvg = (sec: HTMLElement) => {
-      const notes = Array.from(sec.querySelectorAll<HTMLElement>(".plat-card")).map(cardNote);
-      if (notes.length === 0) return -1;
-      return notes.reduce((a, b) => a + b, 0) / notes.length;
-    };
-    sections.sort((a, b) => sectionAvg(b) - sectionAvg(a));
-    sections.forEach((sec) => container.appendChild(sec));
-  });
-
   document.querySelectorAll<HTMLButtonElement>(".mode-btn").forEach((b) => {
     b.classList.remove("active");
     b.style.background = "transparent";

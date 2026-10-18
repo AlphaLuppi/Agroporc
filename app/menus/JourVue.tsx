@@ -1,0 +1,109 @@
+import type { PdjEntry } from "@/lib/db";
+import type { Mode } from "@/lib/carte-tri";
+import { casseLisible, platsAffiches, platsAVenir, recoDuMode, restosSansPlat, type PlatAffiche } from "@/lib/menus-vue";
+import type { Selection } from "./DetailPanneau";
+import { couleur, fmtNote, fmtPrix, Pastille } from "./ui";
+import styles from "./menus.module.css";
+
+/** Au-delà, un nom est trop long pour une demi-tuile sur mobile : la tuile passe en pleine largeur. */
+const NOM_LONG = 46;
+
+function Meta({ p }: { p: PlatAffiche }) {
+  const kcal = p.variante.nutrition_estimee?.calories;
+  return (
+    <span className={styles.meta}>
+      <b>{fmtPrix(p.plat.prix)}</b>
+      {kcal ? ` · ${Math.round(kcal)} kcal` : ""}
+    </span>
+  );
+}
+
+function Tuile({ p, onOpen }: { p: PlatAffiche; onOpen: () => void }) {
+  const nom = casseLisible(p.variante.plat);
+  const note = (
+    <span className={`${styles.grosseNote} ${couleur(p.note)}`}>
+      {fmtNote(p.note)}
+      <small>/10</small>
+    </span>
+  );
+  return (
+    <button type="button" className={`${styles.tuile} ${nom.length > NOM_LONG ? styles.large : ""}`} onClick={onOpen}>
+      <span className={styles.tuileHaut}>
+        {note}
+        <span className={styles.resto}>{p.plat.restaurant}</span>
+      </span>
+      <span className={styles.nom}>{nom}</span>
+      <Meta p={p} />
+    </button>
+  );
+}
+
+function Hero({ p, raison, onOpen }: { p: PlatAffiche; raison?: string; onOpen: () => void }) {
+  const n = p.variante.nutrition_estimee;
+  return (
+    <button type="button" className={styles.hero} onClick={onOpen}>
+      <Pastille note={p.note} />
+      <span className={styles.heroTexte}>
+        <span><span className={styles.tagReco}>Reco du jour</span></span>
+        <span className={styles.heroNom}>{casseLisible(p.variante.plat)}</span>
+        <span className={styles.meta}>
+          {p.plat.restaurant} · <b>{fmtPrix(p.plat.prix)}</b>
+        </span>
+        {raison && <span className={styles.raison}>{raison}</span>}
+        {n && (
+          <span className={styles.macrosLigne}>
+            <span><b>{Math.round(n.calories)}</b> kcal</span>
+            <span>Protéines <b>{Math.round(n.proteines_g)}</b> g</span>
+            <span>Glucides <b>{Math.round(n.glucides_g)}</b> g</span>
+            <span>Lipides <b>{Math.round(n.lipides_g)}</b> g</span>
+          </span>
+        )}
+      </span>
+    </button>
+  );
+}
+
+/** Vue Jour : la reco du mode en grand, puis les autres plats en tuiles, triés par note. */
+export default function JourVue({ pdj, mode, onOpen }: { pdj: PdjEntry; mode: Mode; onOpen: (s: Selection) => void }) {
+  if (pdj.ferie) {
+    return <div className={styles.message}>Jour férié, {pdj.ferie}. Les restaurants sont fermés.</div>;
+  }
+  if (pdj.erreur) {
+    return <div className={styles.message}>{pdj.erreur}</div>;
+  }
+
+  const plats = platsAffiches(pdj, mode);
+  const reco = recoDuMode(pdj, mode);
+  const [premier, ...autres] = plats;
+  const hero = premier?.reco ? premier : null;
+  const tuiles = hero ? autres : plats;
+  const ouvrir = (p: PlatAffiche) => () => onOpen({ kind: "plat", date: pdj.date, platIndex: p.platIndex, variante: p.variante.plat });
+  const aVenir = platsAVenir(pdj);
+  const sans = restosSansPlat(pdj);
+
+  return (
+    <div className={styles.grille}>
+      {hero && <Hero p={hero} raison={reco?.raison} onOpen={ouvrir(hero)} />}
+      {tuiles.map((p) => (
+        <Tuile key={`${p.platIndex}::${p.variante.plat}`} p={p} onOpen={ouvrir(p)} />
+      ))}
+      {(aVenir.length > 0 || sans.length > 0) && (
+        <div className={styles.puces}>
+          {aVenir.length > 0 && <span>Dévoilé le matin même</span>}
+          {aVenir.map((p) => (
+            <button key={p.restaurant} type="button" onClick={() => onOpen({ kind: "resto", date: pdj.date, nom: p.restaurant })}>
+              {p.restaurant}
+            </button>
+          ))}
+          {sans.length > 0 && <span>Sans plat</span>}
+          {sans.map((r) => (
+            <button key={r.slug} type="button" onClick={() => onOpen({ kind: "resto", date: pdj.date, nom: r.nom })}>
+              {r.nom}
+              {r.type === "lien" ? " · salades" : ""}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
