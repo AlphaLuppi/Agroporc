@@ -98,9 +98,12 @@ def libelle_lisible(nom: str) -> str:
 
 # Contexte visuel par resto (clé = norm(nom du resto)) : oriente le dressage.
 CONTEXTE_RESTO = {
-    "le bistrot trefle": "a refined French bistro lunch plate",
-    "la pause gourmande": "a generous homemade French lunch plate",
-    "le truck muche": "a hearty French food-truck lunch, served in a plain unbranded kraft takeaway box",
+    # Contenants réels des plats à emporter (constatés sur place).
+    "le bistrot trefle": ("a French bistro takeaway lunch, served in a round brown kraft paper "
+                          "takeaway bowl with a clear plastic lid, the only container in the picture"),
+    "la pause gourmande": ("a generous homemade French takeaway lunch, served in a round brown kraft "
+                           "paper takeaway bowl with a clear plastic lid, the only container in the picture"),
+    "le truck muche": "a hearty French food-truck lunch, served in a plain rectangular aluminium foil takeaway tray",
     "basilic n go": "a fresh homemade lunch dish",
     "dubble": "a colorful hot bowl lunch, served in a wide bowl",
     "la mijote": "a slow-cooked French home-style lunch plate",
