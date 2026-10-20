@@ -12,6 +12,7 @@ import { RESTAURANTS, statutSansPlat } from "@/lib/restaurants";
 import CommentSection from "../CommentSection";
 import MacrosPanel from "../MacrosPanel";
 import PlatImage from "./PlatImage";
+import PhotoPlat from "./PhotoPlat";
 import { AjouterButton, fmtNote, fmtPrix, MODE_LABEL, OrderLinks, Pastille } from "./ui";
 import styles from "./menus.module.css";
 
@@ -77,6 +78,8 @@ export default function DetailPanneau({ selection, semaine, mode, today, cartesS
       const justification = mode === "goulaf" ? v.justification_goulaf || v.justification : v.justification;
       titre = casseLisible(v.plat);
       const image = imageDuPlat(images, plat.restaurant, v.plat);
+      const resto = RESTAURANTS.find((r) => r.nom === plat.restaurant);
+      const slugPhotos = resto && resto.type !== "lien" ? resto.slug : undefined;
       contenu = (
         <>
           <div className={styles.panneauTete}>
@@ -107,6 +110,7 @@ export default function DetailPanneau({ selection, semaine, mode, today, cartesS
             <OrderLinks restaurant={plat.restaurant} />
             <AjouterButton restaurant={plat.restaurant} plat={v.plat} prix={plat.prix} date={pdj.date} />
           </div>
+          {slugPhotos && <PhotoPlat key={`${pdj.date}-${v.plat}`} slug={slugPhotos} plat={v.plat} date={pdj.date} />}
           <CommentSection commentaires={plat.commentaires || []} date={pdj.date} platIndex={selection.platIndex} />
         </>
       );

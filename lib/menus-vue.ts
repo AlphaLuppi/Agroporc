@@ -103,3 +103,24 @@ export function casseLisible(nom: string): string {
   }
   return t;
 }
+
+export interface MacroTuile {
+  cle: "proteines" | "glucides" | "lipides";
+  grammes: number;
+  /** Libellé court affiché sous la valeur (« prot. »). */
+  court: string;
+  /** Libellé complet (infobulle). */
+  long: string;
+}
+
+/** Protéines / glucides / lipides arrondis au gramme pour une tuile ; `null` si une valeur manque. */
+export function macrosTuile(n: Plat["nutrition_estimee"] | undefined): MacroTuile[] | null {
+  if (!n) return null;
+  const valeurs = [n.proteines_g, n.glucides_g, n.lipides_g];
+  if (valeurs.some((v) => typeof v !== "number" || !Number.isFinite(v))) return null;
+  return [
+    { cle: "proteines", grammes: Math.round(n.proteines_g), court: "prot.", long: "Protéines" },
+    { cle: "glucides", grammes: Math.round(n.glucides_g), court: "gluc.", long: "Glucides" },
+    { cle: "lipides", grammes: Math.round(n.lipides_g), court: "lip.", long: "Lipides" },
+  ];
+}

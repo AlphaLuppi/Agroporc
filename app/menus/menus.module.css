@@ -74,7 +74,8 @@
 .heroTexte { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1 1 0; }
 .heroNom { font-family: var(--font-heading); font-weight: 700; font-size: 1.05rem; line-height: 1.25; }
 .raison { font-size: 0.78rem; color: var(--text-secondary); line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.macrosLigne { display: none; }
+.macrosLigne { display: flex; flex-wrap: wrap; gap: 2px 12px; font-size: 0.75rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.macrosLigne b { color: var(--text); font-weight: 600; }
 .tuile {
   display: flex; flex-direction: column; gap: 5px; text-align: left; cursor: pointer; min-width: 0; overflow: hidden;
   --pad-y: 10px; --pad-x: 12px; padding: var(--pad-y) var(--pad-x); border-radius: var(--radius); border: 1px solid var(--border); background: var(--surface); color: var(--text); font: inherit;
@@ -88,6 +89,14 @@
 .resto { font-size: 0.64rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted); text-align: right; line-height: 1.2; }
 .nom { font-size: 0.88rem; font-weight: 600; line-height: 1.3; overflow-wrap: break-word; }
 .tuile .meta { margin-top: auto; }
+/* Macros de la tuile : trois colonnes valeur + libellé, monochromes pour ne pas concurrencer la note. */
+.macros {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; padding-top: 6px; border-top: 1px solid var(--border);
+  font-size: 0.66rem; color: var(--text-muted); font-variant-numeric: tabular-nums; line-height: 1.2;
+}
+.macros > span { display: flex; flex-direction: column; min-width: 0; }
+.macros b { font-size: 0.8rem; font-weight: 700; color: var(--text-secondary); white-space: nowrap; }
+.macros .fort b { color: var(--text); }
 /* Nom long : la tuile prend toute la largeur pour afficher le nom en entier sans l'écraser. */
 .large { grid-column: 1 / -1; }
 .semaineLabel { display: none; }
@@ -215,8 +224,7 @@
   .hero .pastille { min-width: 66px; height: 66px; font-size: 1.7rem; }
   .heroNom { font-size: 1.45rem; }
   .raison { -webkit-line-clamp: unset; font-size: 0.88rem; }
-  .macrosLigne { display: flex; gap: 14px; font-size: 0.78rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
-  .macrosLigne b { color: var(--text); font-weight: 600; }
+  .macrosLigne { gap: 14px; font-size: 0.78rem; }
   .tuile { --pad-y: 14px; --pad-x: 14px; min-height: 130px; }
   .large .photo_tuile { aspect-ratio: 16 / 9; }
   .large { grid-column: auto; }

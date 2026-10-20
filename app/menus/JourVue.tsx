@@ -1,6 +1,6 @@
 import type { PdjEntry } from "@/lib/db";
 import type { Mode } from "@/lib/carte-tri";
-import { casseLisible, platsAffiches, platsAVenir, recoDuMode, restosSansPlat, type PlatAffiche } from "@/lib/menus-vue";
+import { casseLisible, macrosTuile, platsAffiches, platsAVenir, recoDuMode, restosSansPlat, type PlatAffiche } from "@/lib/menus-vue";
 import { imageDuPlat, type ImagePlat, type ImagesPlats } from "@/lib/plat-image";
 import type { Selection } from "./DetailPanneau";
 import PlatImage from "./PlatImage";
@@ -20,7 +20,22 @@ function Meta({ p }: { p: PlatAffiche }) {
   );
 }
 
-function Tuile({ p, image, onOpen }: { p: PlatAffiche; image?: ImagePlat; onOpen: () => void }) {
+/** Macros en chiffres, sans couleur (le vert/ambre/rouge est réservé aux notes) ; protéines en avant en Sportif. */
+function Macros({ p, mode }: { p: PlatAffiche; mode: Mode }) {
+  const macros = macrosTuile(p.variante.nutrition_estimee);
+  if (!macros) return null;
+  return (
+    <span className={styles.macros} title={macros.map((m) => `${m.long} ${m.grammes} g`).join(" · ")}>
+      {macros.map((m) => (
+        <span key={m.cle} className={mode === "sportif" && m.cle === "proteines" ? styles.fort : undefined}>
+          <b>{m.grammes} g</b> {m.court}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+function Tuile({ p, mode, image, onOpen }: { p: PlatAffiche; mode: Mode; image?: ImagePlat; onOpen: () => void }) {
   const nom = casseLisible(p.variante.plat);
   const note = (
     <span className={`${styles.grosseNote} ${couleur(p.note)}`}>
@@ -37,6 +52,7 @@ function Tuile({ p, image, onOpen }: { p: PlatAffiche; image?: ImagePlat; onOpen
       </span>
       <span className={styles.nom}>{nom}</span>
       <Meta p={p} />
+      <Macros p={p} mode={mode} />
     </button>
   );
 }
@@ -90,7 +106,7 @@ export default function JourVue({ pdj, mode, images, onOpen }: { pdj: PdjEntry; 
     <div className={styles.grille}>
       {hero && <Hero p={hero} raison={reco?.raison} image={image(hero)} onOpen={ouvrir(hero)} />}
       {tuiles.map((p) => (
-        <Tuile key={`${p.platIndex}::${p.variante.plat}`} p={p} image={image(p)} onOpen={ouvrir(p)} />
+        <Tuile key={`${p.platIndex}::${p.variante.plat}`} p={p} mode={mode} image={image(p)} onOpen={ouvrir(p)} />
       ))}
       {(aVenir.length > 0 || sans.length > 0) && (
         <div className={styles.puces}>

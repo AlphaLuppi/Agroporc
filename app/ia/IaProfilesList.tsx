@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Drawer } from "@/components/ui/drawer";
 import { CHARACTERS_BY_NAME } from "@/lib/characters";
+import { BoutonImportImage, useImportImage } from "@/app/components/ImportImage";
 import type { IaProfile } from "@/lib/db";
 
 const CHARACTER_STORAGE_KEY = "pdj-selected-character";
@@ -497,30 +498,14 @@ function ProfileEditor({
               </Field>
             </div>
 
-            <Field label="Photo de profil" hint="URL vers une image — laisser vide pour la photo par défaut">
-              <div className="flex items-center gap-3">
-                <Avatar className="h-14 w-14 shrink-0">
-                  {(form.avatar_url || CHARACTERS_BY_NAME[form.prenom]?.image) && (
-                    <AvatarImage
-                      src={form.avatar_url || CHARACTERS_BY_NAME[form.prenom]?.image}
-                      alt={form.prenom}
-                    />
-                  )}
-                  <AvatarFallback
-                    style={{ background: form.couleur, color: "white", fontSize: 20 }}
-                  >
-                    {form.emoji || form.prenom.charAt(0)}
-                  </AvatarFallback>
-                </Avatar>
-                <Input
-                  placeholder="https://…"
-                  value={form.avatar_url}
-                  onChange={(e) => update("avatar_url", e.target.value)}
-                  maxLength={500}
-                  className="flex-1"
-                />
-              </div>
-            </Field>
+            <AvatarField
+              url={form.avatar_url}
+              onChange={(v) => update("avatar_url", v)}
+              defaut={CHARACTERS_BY_NAME[form.prenom]?.image}
+              couleur={form.couleur}
+              initiale={form.emoji || form.prenom.charAt(0)}
+              alt={form.prenom}
+            />
 
             <Field label="Rôle" hint={`${form.role.length} / ${MAX_ROLE}`}>
               <Input
@@ -583,7 +568,11 @@ function ProfileEditor({
         )}
 
         {step === 5 && (
-          <Field label="Gifs / photos fétiches" hint="URL directe d'une image ou d'un gif (Tenor, Giphy, .gif/.jpg/.png)">
+          <Field
+            asDiv
+            label="Gifs / photos fétiches"
+            hint="Importer depuis l'appareil, coller (Ctrl+V), glisser-déposer, ou un lien direct (Tenor, Giphy, .gif/.jpg/.png)"
+          >
             <GifListField
               items={form.gifs}
               onChange={(v) => update("gifs", v)}
@@ -711,6 +700,10 @@ function GifListField({
   onChange: (v: string[]) => void;
 }) {
   const [draft, setDraft] = useState("");
+  // Ref : plusieurs imports peuvent se terminer avant le re-rendu du parent.
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
+  const { importer, enCours, erreur, zone } = useImportImage((url) => onChange([...itemsRef.current, url]));
 
   function add() {
     const url = draft.trim();
@@ -728,10 +721,12 @@ function GifListField({
   }
 
   return (
-    <div>
-      <div className="flex gap-2">
+    <div {...zone}>
+      <BoutonImportImage importer={importer} enCours={enCours} libelle="Importer une image / un gif" />
+      {erreur && <div className="mt-1 text-xs text-[var(--bad)]">{erreur}</div>}
+      <div className="mt-2 flex gap-2">
         <Input
-          placeholder="https://media.tenor.com/..."
+          placeholder="ou coller un lien https://media.tenor.com/..."
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
@@ -789,20 +784,75 @@ function GifListField({
   );
 }
 
+function AvatarField({
+  url,
+  onChange,
+  defaut,
+  couleur,
+  initiale,
+  alt,
+}: {
+  url: string;
+  onChange: (v: string) => void;
+  defaut?: string;
+  couleur: string;
+  initiale: string;
+  alt: string;
+}) {
+  const { importer, enCours, erreur, zone } = useImportImage(onChange, 512);
+  const src = url || defaut;
+  return (
+    <Field
+      asDiv
+      label="Photo de profil"
+      hint="Importer depuis l'appareil, coller une image (Ctrl+V), la glisser ici, ou coller un lien. Vide = photo par défaut."
+    >
+      <div className="flex items-center gap-3" {...zone}>
+        <Avatar className="h-14 w-14 shrink-0">
+          {src && <AvatarImage src={src} alt={alt} />}
+          <AvatarFallback style={{ background: couleur, color: "white", fontSize: 20 }}>{initiale}</AvatarFallback>
+        </Avatar>
+        <div className="flex flex-1 min-w-0 flex-col gap-2">
+          <div className="flex flex-wrap gap-2">
+            <BoutonImportImage importer={importer} enCours={enCours} />
+            {url && (
+              <Button type="button" variant="ghost" onClick={() => onChange("")}>
+                Retirer
+              </Button>
+            )}
+          </div>
+          <Input
+            placeholder="ou un lien https://…"
+            aria-label="Lien de la photo de profil"
+            value={url}
+            onChange={(e) => onChange(e.target.value)}
+            maxLength={500}
+          />
+        </div>
+      </div>
+      {erreur && <div className="text-xs text-[var(--bad)]">{erreur}</div>}
+    </Field>
+  );
+}
+
 function Field({
   label,
   hint,
+  asDiv = false,
   children,
 }: {
   label: string;
   hint?: string;
+  /** div plutôt que label : évite qu'un clic sur le libellé déclenche un bouton du champ. */
+  asDiv?: boolean;
   children: React.ReactNode;
 }) {
+  const Tag = asDiv ? "div" : "label";
   return (
-    <label className="block space-y-1">
+    <Tag className="block space-y-1">
       <span className="text-xs font-semibold text-[var(--text-secondary)]">{label}</span>
       {children}
       {hint && <span className="block text-[0.65rem] text-[var(--text-muted)]">{hint}</span>}
-    </label>
+    </Tag>
   );
 }

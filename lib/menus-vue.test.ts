@@ -8,6 +8,7 @@ import {
   restosAbsentsSemaine,
   casseLisible,
   platsAVenir,
+  macrosTuile,
 } from "./menus-vue";
 
 const plat = (restaurant: string, extra: Partial<Plat> = {}): Plat => ({
@@ -93,5 +94,21 @@ describe("casseLisible", () => {
     expect(casseLisible("Wok de canard.  Nouilles de blé.")).toBe("Wok de canard. Nouilles de blé");
     expect(casseLisible("Poulet Pesto verde ,Cacahuètes")).toBe("Poulet Pesto verde,Cacahuètes");
     expect(casseLisible("BBQ")).toBe("BBQ");
+  });
+});
+
+describe("macrosTuile", () => {
+  it("arrondit protéines, glucides et lipides dans cet ordre", () => {
+    const m = macrosTuile({ calories: 640, proteines_g: 31.6, glucides_g: 60.2, lipides_g: 18.5 });
+    expect(m?.map((x) => [x.cle, x.grammes])).toEqual([
+      ["proteines", 32],
+      ["glucides", 60],
+      ["lipides", 19],
+    ]);
+  });
+
+  it("renvoie null sans nutrition ou si une valeur manque", () => {
+    expect(macrosTuile(undefined)).toBeNull();
+    expect(macrosTuile({ calories: 500, proteines_g: 20, glucides_g: null as unknown as number, lipides_g: 10 })).toBeNull();
   });
 });

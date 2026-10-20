@@ -53,7 +53,16 @@ export async function POST(request: NextRequest) {
     const base64 = Buffer.from(buffer).toString("base64");
     const filename = file.name.slice(0, 255) || `photo_${Date.now()}`;
 
-    const photo = await addPhoto(slug, filename, contentType, base64);
+    const platNom = formData.get("plat_nom");
+    const platDate = formData.get("plat_date");
+    const photo = await addPhoto(
+      slug,
+      filename,
+      contentType,
+      base64,
+      typeof platNom === "string" && platNom ? platNom.slice(0, 300) : undefined,
+      typeof platDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(platDate) ? platDate : undefined
+    );
     return NextResponse.json({ ok: true, photo });
   } catch (e) {
     console.error("[api/photos POST]", e);

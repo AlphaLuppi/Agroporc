@@ -535,6 +535,38 @@ export async function deletePhoto(id: number): Promise<boolean> {
   return (result.rowCount ?? 0) > 0;
 }
 
+// --- Images importées (photo de profil IA, gifs fétiches) servies par /api/images/<id>.<ext> ---
+
+export async function ensureImagesTable() {
+  await sql`
+    CREATE TABLE IF NOT EXISTS pdj_images (
+      id SERIAL PRIMARY KEY,
+      content_type VARCHAR(50) NOT NULL,
+      image_data TEXT NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+}
+
+export async function addImage(contentType: string, imageDataBase64: string): Promise<number> {
+  await ensureImagesTable();
+  const result = await sql`
+    INSERT INTO pdj_images (content_type, image_data)
+    VALUES (${contentType}, ${imageDataBase64})
+    RETURNING id
+  `;
+  return result.rows[0].id as number;
+}
+
+export async function getImage(
+  id: number
+): Promise<{ content_type: string; image_data: string } | null> {
+  await ensureImagesTable();
+  const result = await sql`SELECT content_type, image_data FROM pdj_images WHERE id = ${id}`;
+  if (result.rows.length === 0) return null;
+  return result.rows[0] as { content_type: string; image_data: string };
+}
+
 /** Ajoute un commentaire à un plat pour une date donnée */
 export async function addCommentaire(
   date: string,
