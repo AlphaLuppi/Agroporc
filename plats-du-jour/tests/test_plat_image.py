@@ -55,6 +55,24 @@ def test_a_illustrer_ignore_coming_soon_et_dedoublonne():
     assert pi.a_illustrer({}) == [] and pi.a_illustrer(None) == []
 
 
+def test_a_illustrer_joint_les_ingredients_de_la_variante():
+    pdj = {"plats": [
+        {"restaurant": "Le Truck Muche", "plat": "Pasta Carbo", "ingredients_detail": [
+            {"nom_query": "Oeuf, entier", "grammes": 30},
+            {"nom_query": "Pâtes, cuites", "grammes": 220},
+            {"nom_query": "Lardons fumés, cuits", "grammes": 70.4},
+            "pas un dict", {"grammes": 5}]},
+        {"restaurant": "Dubble", "plat": ["A", "B"],
+         "options": [{"plat": "A", "ingredients_detail": [{"nom_query": "Riz", "grammes": 150}]}, {"plat": "B"}]},
+    ]}
+    items = pi.a_illustrer(pdj)
+    assert items[0]["ingredients"] == ["Pâtes, cuites (220 g)", "Lardons fumés, cuits (70 g)", "Oeuf, entier (30 g)"]
+    assert items[1]["ingredients"] == ["Riz (150 g)"] and items[2]["ingredients"] == []
+    p = pi.prompt_descriptions(items)
+    assert "Pasta Carbo (restaurant : Le Truck Muche) — ingrédients : Pâtes, cuites (220 g)" in p
+    assert "Hot" not in p and "- " + items[2]["cle"] + " : B (restaurant : Dubble)\n" in p
+
+
 def test_libelle_lisible():
     assert pi.libelle_lisible("JAMBON BRAISE FRITES") == "Jambon braise frites"
     assert pi.libelle_lisible("  Tataki de bœuf ,  pesto.  ") == "Tataki de bœuf, pesto"

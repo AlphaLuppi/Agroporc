@@ -50,8 +50,8 @@ def seed_image(restaurant: str, plat: str) -> int:
     return zlib.crc32(base_cle(restaurant, plat).encode("utf-8")) % (2 ** 31)
 
 
-def variantes(plat: dict) -> list[str]:
-    """Noms des variantes d'un plat (miroir de `variantesPlat` dans lib/plat-options.ts)."""
+def _variantes_detail(plat: dict) -> list[tuple[str, list]]:
+    """(nom, ingredients_detail) de chaque variante ; les ingrédients d'une option sont les siens."""
     noms = plat.get("plat")
     noms = [n for n in noms if isinstance(n, str)] if isinstance(noms, list) else [noms or ""]
     options = plat.get("options")
@@ -61,9 +61,36 @@ def variantes(plat: dict) -> list[str]:
             o = o if isinstance(o, dict) else {}
             nom = o.get("plat") if isinstance(o.get("plat"), str) else ""
             nom = nom or (noms[i] if i < len(noms) else "") or (noms[0] if noms else "")
-            out.append(nom)
-        return [n for n in out if n]
-    return [n for n in noms if n]
+            out.append((nom, o.get("ingredients_detail")))
+        return [(n, d) for n, d in out if n]
+    return [(n, plat.get("ingredients_detail")) for n in noms if n]
+
+
+def variantes(plat: dict) -> list[str]:
+    """Noms des variantes d'un plat (miroir de `variantesPlat` dans lib/plat-options.ts)."""
+    return [n for n, _ in _variantes_detail(plat)]
+
+
+INGREDIENTS_MAX = 10
+
+
+def ingredients_lisibles(detail) -> list[str]:
+    """`ingredients_detail` du diet agent → ["Lardons fumés, cuits (70 g)", ...], du plus lourd
+    au plus léger, plafonné. Tolère les entrées mal formées (renvoie [] au pire)."""
+    if not isinstance(detail, list):
+        return []
+    lignes = []
+    for d in detail:
+        if not isinstance(d, dict):
+            continue
+        nom = d.get("nom_query") or d.get("nom") or d.get("matched_nom")
+        if not isinstance(nom, str) or not nom.strip():
+            continue
+        g = d.get("grammes")
+        g = g if isinstance(g, (int, float)) and not isinstance(g, bool) and g > 0 else 0
+        lignes.append((g, re.sub(r"\s+", " ", nom).strip()[:60]))
+    lignes.sort(key=lambda x: -x[0])
+    return [f"{nom} ({round(g)} g)" if g else nom for g, nom in lignes[:INGREDIENTS_MAX]]
 
 
 def a_illustrer(pdj: dict) -> list[dict]:
@@ -73,14 +100,15 @@ def a_illustrer(pdj: dict) -> list[dict]:
         if not isinstance(p, dict) or p.get("coming_soon"):
             continue
         resto = p.get("restaurant") or ""
-        for nom in variantes(p):
+        for nom, detail in _variantes_detail(p):
             if not norm(nom) or not norm(resto):
                 continue
             cle = cle_image(resto, nom)
             if cle in vus:
                 continue
             vus.add(cle)
-            out.append({"cle": cle, "restaurant": resto, "plat": nom})
+            out.append({"cle": cle, "restaurant": resto, "plat": nom,
+                        "ingredients": ingredients_lisibles(detail)})
     return out
 
 
@@ -135,10 +163,12 @@ def construire_prompt(restaurant: str, plat: str, description: str | None = None
 
 def prompt_descriptions(items: list[dict]) -> str:
     """Prompt LLM : une description visuelle anglaise par variante, en JSON {cle: description}."""
-    lignes = "\n".join(
-        f'- {it["cle"]} : {libelle_lisible(it["plat"])} (restaurant : {it["restaurant"]})'
-        for it in items
-    )
+    def ligne(it: dict) -> str:
+        l = f'- {it["cle"]} : {libelle_lisible(it["plat"])} (restaurant : {it["restaurant"]})'
+        if it.get("ingredients"):
+            l += " — ingrédients : " + ", ".join(it["ingredients"])
+        return l
+    lignes = "\n".join(ligne(it) for it in items)
     return (
         "Tu prépares des prompts pour un générateur d'images (FLUX) qui illustre des plats du "
         "jour de restaurants français. Pour chaque plat ci-dessous, écris en ANGLAIS une "
@@ -147,8 +177,14 @@ def prompt_descriptions(items: list[dict]) -> str:
         "couleur, la sauce et sa texture, chaque accompagnement nommé, la garniture. Traduis "
         "les termes culinaires français par ce qu'ils désignent visuellement (ex. blanquette de "
         "veau → chunks of tender veal in a pale creamy white sauce with carrots and button "
-        "mushrooms). N'invente pas d'ingrédient absent du libellé au-delà de la recette "
-        "classique. Pas de nom de marque, pas de texte à afficher, pas de guillemets.\n\n"
+        "mushrooms). Quand la liste d'ingrédients est donnée, c'est la composition réelle du "
+        "plat servi : décris CES ingrédients (même s'ils s'écartent de la recette classique, "
+        "ex. une carbonara à la crème et aux lardons), sans en ajouter d'autres de couleur vive. "
+        "Sans liste, n'invente pas d'ingrédient absent du libellé au-delà de la recette "
+        "classique. Donne à chaque ingrédient une forme et une couleur sans ambiguïté pour le "
+        "générateur, il rend tout morceau « rose » ou « en dés » comme du poivron rouge (ex. "
+        "lardons → little matchstick lardons of smoked bacon fried until brown and crisp). Pas de nom de marque, pas de texte à afficher, "
+        "pas de guillemets.\n\n"
         f"Plats (clé : libellé) :\n{lignes}\n\n"
         'Réponds UNIQUEMENT avec un objet JSON {"<clé>": "<description>", ...}, sans markdown.'
     )
