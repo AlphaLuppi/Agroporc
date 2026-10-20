@@ -124,3 +124,16 @@ export function macrosTuile(n: Plat["nutrition_estimee"] | undefined): MacroTuil
     { cle: "lipides", grammes: Math.round(n.lipides_g), court: "lip.", long: "Lipides" },
   ];
 }
+
+/** Au-delà, un nom est trop long pour une demi-tuile sur mobile : la tuile passe en pleine largeur. */
+export const NOM_LONG = 46;
+
+/**
+ * Index de la tuile qui resterait seule sur sa ligne dans la grille mobile à 2 colonnes (nombre impair de
+ * demi-tuiles) : elle passe en pleine largeur au lieu de laisser une demi-ligne vide. La grille est en `dense`,
+ * donc l'orpheline est la dernière demi-tuile dans l'ordre. -1 s'il n'y en a pas. Sans effet à 3 colonnes.
+ */
+export function indexOrpheline(tuiles: { variante: { plat: string } }[]): number {
+  const demi = tuiles.flatMap((p, i) => (casseLisible(p.variante.plat).length > NOM_LONG ? [] : [i]));
+  return demi.length % 2 === 1 ? demi[demi.length - 1] : -1;
+}

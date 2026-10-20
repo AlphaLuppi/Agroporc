@@ -11,6 +11,7 @@ import { baseClePlatImage, imageDuPlat, type ImagesPlats } from "@/lib/plat-imag
 import { RESTAURANTS, statutSansPlat } from "@/lib/restaurants";
 import CommentSection from "../CommentSection";
 import MacrosPanel from "../MacrosPanel";
+import RestoBadge from "../components/RestoBadge";
 import PlatImage from "./PlatImage";
 import PhotoPlat from "./PhotoPlat";
 import RecettePanneau from "./RecettePanneau";
@@ -92,16 +93,16 @@ export default function DetailPanneau({ selection, semaine, mode, today, cartesS
         <>
           <div className={styles.panneauTete}>
             <Pastille note={noteMode(v, mode)} />
-            <div>
+            <div className={styles.panneauTexte}>
+              <RestoBadge nom={plat.restaurant} variante="chip" complet className={styles.panneauResto} />
               <h2>{titre}</h2>
               <div className={styles.meta}>
-                {plat.restaurant} · <b>{fmtPrix(plat.prix)}</b> · {formatDateShort(pdj.date)}
+                <b>{fmtPrix(plat.prix)}</b> · {formatDateShort(pdj.date)}
               </div>
               <div className={styles.autreMode}>
                 {MODE_LABEL[autre]} : {fmtNote(noteMode(v, autre))}/10 {estReco && <span className={styles.tagReco}>Reco du jour</span>}
               </div>
             </div>
-            <Fermer onClose={onClose} />
           </div>
           {image && (
             <figure style={{ margin: 0 }}>
@@ -134,11 +135,11 @@ export default function DetailPanneau({ selection, semaine, mode, today, cartesS
     contenu = (
       <>
         <div className={styles.panneauTete}>
-          <div>
+          <RestoBadge nom={selection.nom} variante="icone" taille={34} />
+          <div className={styles.panneauTexte}>
             <h2>{selection.nom}</h2>
             <div className={styles.meta}>{statut}</div>
           </div>
-          <Fermer onClose={onClose} />
         </div>
         <OrderLinks restaurant={selection.nom} />
         {resto && cartesSlugs.has(resto.slug) && (
@@ -157,6 +158,7 @@ export default function DetailPanneau({ selection, semaine, mode, today, cartesS
       <div className={styles.voile} onClick={onClose} aria-hidden="true" />
       <div ref={ref} className={styles.panneau} role="dialog" aria-modal="true" aria-label={titre} tabIndex={-1}>
         <div className={styles.poignee} aria-hidden="true" />
+        <Fermer onClose={onClose} />
         {contenu}
       </div>
     </>,

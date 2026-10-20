@@ -1,11 +1,8 @@
 import { ensureTable, getWeekPdj, getCartesDisponibles, platImagesExistantes } from "@/lib/db";
 import type { PdjEntry } from "@/lib/db";
-import { cookies } from "next/headers";
-import { VERSION_COOKIE, lireVersion } from "@/lib/version-ui";
 import { clesSemaine, imagesDeSemaine } from "@/lib/plat-image-cle";
 import type { ImagesPlats } from "@/lib/plat-image";
 import MenusClient from "./menus/MenusClient";
-import AccueilV1 from "./v1/AccueilV1";
 
 export const dynamic = "force-dynamic";
 
@@ -16,20 +13,15 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ s
   const mondayStr = monday.toLocaleDateString("en-CA");
   const weekPdj = await getWeekPdj(mondayStr);
   const semaine = buildFullWeek(weekPdj, monday);
-  const v1 = lireVersion((await cookies()).get(VERSION_COOKIE)?.value) === "v1";
-  // Clés des plats (V2 seulement), calculées une fois : images et recettes s'y rattachent.
-  const cles = v1 ? new Map<string, string>() : clesSemaine(semaine);
-  // Cartes et images (V2 seulement) en parallèle : requêtes indépendantes.
-  const [cartes, images] = await Promise.all([getCartesDisponibles(), v1 ? Promise.resolve<ImagesPlats>({}) : chargerImages(cles)]);
+  // Clés des plats, calculées une fois : images et recettes s'y rattachent.
+  const cles = clesSemaine(semaine);
+  // Cartes et images en parallèle : requêtes indépendantes.
+  const [cartes, images] = await Promise.all([getCartesDisponibles(), chargerImages(cles)]);
   const prev = new Date(monday); prev.setDate(monday.getDate() - 7);
   const next = new Date(monday); next.setDate(monday.getDate() + 7);
 
   const prevHref = `/?semaine=${prev.toLocaleDateString("en-CA")}`;
   const nextHref = `/?semaine=${next.toLocaleDateString("en-CA")}`;
-
-  if (v1) {
-    return <AccueilV1 weekPdj={semaine} cartes={cartes} prevHref={prevHref} nextHref={nextHref} currentMonday={mondayStr} />;
-  }
 
   const today = new Date().toLocaleDateString("en-CA");
   const todayIdx = semaine.findIndex((p) => p.date === today);

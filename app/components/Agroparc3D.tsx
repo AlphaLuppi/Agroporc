@@ -9,6 +9,8 @@ import { etatRestaurant } from "@/lib/agroparc3d/panneau";
 import { couleurNote, remplissage } from "@/lib/agroparc3d/jauge";
 import { noteMode, trierCarte, type Mode } from "@/lib/carte-tri";
 import { variantesPlat, type VariantePlat } from "@/lib/plat-options";
+import { restoParNom } from "@/lib/restaurants";
+import RestoBadge from "./RestoBadge";
 import styles from "./Agroparc3D.module.css";
 
 const display = Chakra_Petch({ subsets: ["latin"], weight: ["400", "600", "700"], variable: "--ag-display", display: "swap" });
@@ -18,7 +20,7 @@ interface Ev { id: number; time: string; tag: string; text: string }
 
 const MODES: Mode[] = ["sportif", "goulaf"];
 const MODE_LABEL: Record<Mode, string> = { sportif: "Sportif", goulaf: "Goulaf" };
-/** Même clé que le site (ClientScripts) : le mode choisi ici suit sur la page derrière et inversement. */
+/** Même clé que le site (`useModeSite`) : le mode choisi ici suit sur la page derrière et inversement. */
 const MODE_KEY = "pdj-mode";
 
 const fmtDate = (iso: string, long = true) => {
@@ -61,7 +63,7 @@ export default function Agroparc3D() {
   const changerMode = (m: Mode) => {
     setMode(m);
     try { localStorage.setItem(MODE_KEY, m); } catch { /* stockage indisponible : le mode reste local à la vue */ }
-    // Le site derrière réapplique le mode courant sur cet événement (ClientScripts).
+    // Le site derrière se resynchronise sur cet événement (`useModeSite`).
     window.dispatchEvent(new Event("pdj:mode-refresh"));
   };
 
@@ -155,7 +157,10 @@ export default function Agroparc3D() {
             <span>{[etat.kind === "plat" ? "Plat du jour" : "Restaurant", pdj?.date && fmtDate(pdj.date, false)].filter(Boolean).join(" · ")}</span>
             <button type="button" className={styles.close} onClick={() => setSelected(null)}>Fermer</button>
           </p>
-          <h2>{selected.name}</h2>
+          <h2>
+            {restoParNom(selected.name) && <RestoBadge nom={selected.name} variante="picto" className={styles.panelPicto} />}
+            {selected.name}
+          </h2>
           <p className={styles.addr}>{selected.addr}</p>
           {etat.kind === "plat" ? (
             <>

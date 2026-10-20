@@ -44,11 +44,12 @@
 .choix button.seul { grid-column: 1 / -1; }
 .choix button.zero { opacity: 0.5; }
 .emoji { font-size: 1.3rem; flex: none; }
-.compte { margin-left: auto; font-size: 0.72rem; font-weight: 700; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.compte { margin-left: auto; font-size: 0.8rem; font-weight: 700; color: var(--text-muted); font-variant-numeric: tabular-nums; }
 .apercu {
-  position: sticky; bottom: 0; z-index: 5; margin-inline: -12px; padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px));
-  background: var(--surface); border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 2px;
+  position: sticky; bottom: 0; z-index: 5; margin-inline: -12px; padding: 6px 12px calc(6px + env(safe-area-inset-bottom, 0px));
+  background: var(--surface); border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 0;
 }
+.apercu .ligne { padding: 4px 0; }
 
 /* ── Desktop : l'arbre ── */
 .arbre { display: none; }

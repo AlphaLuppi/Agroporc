@@ -11,10 +11,7 @@ import {
   type DessertConnu,
 } from "@/lib/desserts";
 import { RESTAURANTS } from "@/lib/restaurants";
-import { cookies } from "next/headers";
-import { VERSION_COOKIE, lireVersion } from "@/lib/version-ui";
 import QuizClient from "./QuizClient";
-import QuizClientV1 from "./QuizClientV1";
 
 export const dynamic = "force-dynamic";
 
@@ -101,6 +98,5 @@ export default async function AideMoiAChoisir() {
     ...cartes.flatMap((c, i) => dessertsFromCarte(c, SLUGS[i].nom)),
   ];
 
-  const Quiz = lireVersion((await cookies()).get(VERSION_COOKIE)?.value) === "v1" ? QuizClientV1 : QuizClient;
-  return <Quiz pool={pool} desserts={desserts} hasJour={platsJour.length > 0} />;
+  return <QuizClient pool={pool} desserts={desserts} hasJour={platsJour.length > 0} />;
 }

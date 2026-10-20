@@ -106,6 +106,9 @@
   font-family: var(--ag-display), var(--ag-mono), monospace; font-weight: 600; font-size: 20px; margin: 0;
   color: var(--ag-amber); letter-spacing: 0.02em; text-wrap: balance;
 }
+/* Picto du resto (RestoBadge) : monochrome ambre, dans le ton « rayons X » quel que soit le thème du site. */
+.panel h2 .panelPicto { margin-right: 8px; vertical-align: -0.1em; }
+.panel h2 .panelPicto svg { color: inherit; width: 0.95em; height: 0.95em; }
 .addr { font-size: 11px; color: var(--ag-ink-dim); margin: 4px 0 14px; }
 .plat { font-size: 14px; line-height: 1.45; color: var(--ag-ink); margin: 0; }
 .platMeta { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; margin: 12px 0 0; }

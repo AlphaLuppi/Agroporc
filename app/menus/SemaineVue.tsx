@@ -5,6 +5,7 @@ import type { PdjEntry } from "@/lib/db";
 import type { Mode } from "@/lib/carte-tri";
 import { formatDateShort, formatDayShort } from "@/lib/format";
 import { casseLisible, grilleSemaine, meilleureNoteDuJour, platsAffiches, restosAbsentsSemaine, type PlatAffiche } from "@/lib/menus-vue";
+import RestoBadge from "@/app/components/RestoBadge";
 import type { Selection } from "./DetailPanneau";
 import { couleur, fmtPrix, MODE_LABEL, Pastille } from "./ui";
 import styles from "./menus.module.css";
@@ -89,7 +90,8 @@ export default function SemaineVue({ semaine, mode, today, jourIdx, setJourIdx, 
           const prix = ligne.cases.flat()[0]?.plat.prix;
           return [
             <div key={ligne.resto.slug} className={styles.rh}>
-              {ligne.resto.nom}
+              <RestoBadge nom={ligne.resto.nom} variante="picto" taille={18} className={styles.rhPicto} />
+              <span>{ligne.resto.nom}</span>
               {prix && <small>{fmtPrix(prix)}</small>}
             </div>,
             ...ligne.cases.map((plats, i) => {
@@ -125,11 +127,11 @@ export default function SemaineVue({ semaine, mode, today, jourIdx, setJourIdx, 
           <span />
           {semaine.map((pdj, i) => (
             <button key={pdj.date} type="button" className={styles.tete} aria-pressed={i === jourIdx} onClick={() => setJourIdx(i)}>
-              {formatDayShort(pdj.date).replace(".", "")} {numeroJour(pdj.date)}
+              {formatDayShort(pdj.date).replace(".", "")} <b>{numeroJour(pdj.date)}</b>
             </button>
           ))}
           {grille.map((ligne) => [
-            <span key={ligne.resto.slug} className={styles.ligneNom}>{ligne.resto.nom}</span>,
+            <RestoBadge key={ligne.resto.slug} nom={ligne.resto.nom} className={styles.ligneNom} />,
             ...ligne.cases.map((plats, i) => (
               <button
                 key={`${ligne.resto.slug}-${i}`}
@@ -163,7 +165,7 @@ export default function SemaineVue({ semaine, mode, today, jourIdx, setJourIdx, 
                         {casseLisible(p.variante.plat)} {p.reco && <span className={styles.tagReco}>Reco</span>}
                       </span>
                       <span className={styles.meta}>
-                        {p.plat.restaurant} · <b>{fmtPrix(p.plat.prix)}</b>
+                        <RestoBadge nom={p.plat.restaurant} complet /> · <b>{fmtPrix(p.plat.prix)}</b>
                       </span>
                     </span>
                   </button>
@@ -175,7 +177,16 @@ export default function SemaineVue({ semaine, mode, today, jourIdx, setJourIdx, 
       </div>
 
       {absents.length > 0 && (
-        <p className={styles.meta}>Aucun plat du jour cette semaine : {absents.map((r) => r.nom).join(", ")}.</p>
+        <p className={styles.meta}>
+          Aucun plat du jour cette semaine :{" "}
+          {absents.map((r, i) => (
+            <span key={r.slug}>
+              {i > 0 && ", "}
+              <RestoBadge nom={r.nom} complet />
+            </span>
+          ))}
+          .
+        </p>
       )}
     </>
   );

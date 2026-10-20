@@ -122,7 +122,7 @@ export default function IaProfilesList({ initialProfiles }: { initialProfiles: I
 
   return (
     <div className="space-y-3">
-      <div className="sticky top-2 z-10 flex items-center gap-2 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)]/90 backdrop-blur px-3 py-2 text-xs text-[var(--text-muted)]"
+      <div className="sticky top-[4.5rem] z-10 flex flex-wrap items-center gap-2 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)]/90 backdrop-blur px-3 py-2 text-xs text-[var(--text-muted)]"
            style={{ boxShadow: "var(--shadow)" }}>
         <span>Vous éditez en tant que</span>
         {currentEditorChar && (
@@ -141,7 +141,7 @@ export default function IaProfilesList({ initialProfiles }: { initialProfiles: I
               localStorage.setItem(CHARACTER_STORAGE_KEY, e.target.value);
             } catch {}
           }}
-          className="bg-[var(--bg)] border border-[var(--border)] rounded-[var(--radius-sm)] px-2 py-1 text-xs text-[var(--text)] focus:outline-none focus:border-[var(--accent)]"
+          className="bg-[var(--bg)] border border-[var(--border)] rounded-[var(--radius-sm)] px-2 py-1 min-h-10 text-sm text-[var(--text)] focus:outline-none focus:border-[var(--accent)]"
         >
           <option value="">— Choisir —</option>
           {Object.keys(CHARACTERS_BY_NAME).map((n) => (
@@ -151,7 +151,7 @@ export default function IaProfilesList({ initialProfiles }: { initialProfiles: I
           ))}
         </select>
         {!editor && (
-          <span className="text-[var(--bad)] ml-auto">Obligatoire pour modifier</span>
+          <span className="text-[var(--bad)] basis-full sm:basis-auto sm:ml-auto">Obligatoire pour modifier</span>
         )}
       </div>
 
@@ -159,7 +159,7 @@ export default function IaProfilesList({ initialProfiles }: { initialProfiles: I
         type="button"
         variant="outline"
         onClick={openCreator}
-        className="w-full"
+        className="w-full min-h-10"
       >
         + Nouveau personnage
       </Button>

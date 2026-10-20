@@ -9,7 +9,7 @@ node_modules/
 # Python
 __pycache__/
 *.pyc
-.venv/
+.venv
 
 # Project
 output/

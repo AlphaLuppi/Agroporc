@@ -6,6 +6,7 @@ import { formatDateShort, formatDayShort } from "@/lib/format";
 import { meilleureNoteDuJour } from "@/lib/menus-vue";
 import type { ImagesPlats } from "@/lib/plat-image";
 import { RESTAURANTS, titreCarte } from "@/lib/restaurants";
+import RestoBadge from "@/app/components/RestoBadge";
 import { useModeSite } from "./useModeSite";
 import JourVue from "./JourVue";
 import SemaineVue from "./SemaineVue";
@@ -52,6 +53,7 @@ export default function MenusClient({ semaine, cartes, today, defaultIdx, weekLa
   const [jourIdx, setJourIdx] = useState(defaultIdx);
   const restosCarte = RESTAURANTS.filter((r) => cartes.includes(r.slug));
   const [slug, setSlug] = useState(restosCarte[0]?.slug ?? "");
+  const restoCarte = restosCarte.find((r) => r.slug === slug) ?? restosCarte[0];
   const [selection, setSelection] = useState<Selection>(null);
 
   // La vue choisie est mémorisée comme le mode (lue au montage : le serveur rend la vue Jour).
@@ -159,16 +161,19 @@ export default function MenusClient({ semaine, cartes, today, defaultIdx, weekLa
         </>
       )}
 
-      {vue === "carte" && (
+      {vue === "carte" && restoCarte && (
         <>
           <div className={styles.titre}>
-            <h1>{titreCarte(restosCarte.find((r) => r.slug === slug) ?? restosCarte[0])}</h1>
+            <h1 className={styles.titreResto}>
+              <RestoBadge nom={restoCarte.nom} variante="icone" taille={30} />
+              {titreCarte(restoCarte)}
+            </h1>
           </div>
-          <div className="flex items-center gap-2">
+          <div className={styles.carteBarre}>
             <div className={styles.restos} role="group" aria-label="Restaurant">
               {restosCarte.map((r) => (
                 <button key={r.slug} type="button" aria-pressed={r.slug === slug} onClick={() => setSlug(r.slug)}>
-                  {r.nom}
+                  <RestoBadge nom={r.nom} complet />
                 </button>
               ))}
             </div>

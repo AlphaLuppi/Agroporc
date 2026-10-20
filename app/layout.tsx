@@ -2,9 +2,6 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { ClientScripts } from "./components/ClientScripts";
 import { MyrtilleEasterEgg } from "./components/MyrtilleEasterEgg";
-import VersionSwitch from "./components/VersionSwitch";
-import { cookies } from "next/headers";
-import { VERSION_COOKIE, lireVersion } from "@/lib/version-ui";
 
 export const metadata: Metadata = {
   title: "Plats du Jour",
@@ -15,12 +12,11 @@ export const metadata: Metadata = {
   },
 };
 
-export default async function RootLayout({
+export default function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const version = lireVersion((await cookies()).get(VERSION_COOKIE)?.value);
   return (
     <html lang="fr" data-theme="normal" suppressHydrationWarning>
       <head>
@@ -48,7 +44,7 @@ export default async function RootLayout({
                 <img src="/logo.jpg" alt="Logo Plats du Jour" className="w-8 h-8 sm:w-9 sm:h-9 rounded-full object-cover" />
                 <span>Agroporc</span>
               </a>
-              <div className="nav-links hidden sm:flex items-center gap-1.5" data-nav-links>
+              <div className="nav-links hidden xl:flex items-center gap-1.5" data-nav-links>
                 <a href="/" className="whitespace-nowrap text-[var(--text-secondary)] no-underline text-sm font-medium px-1.5 lg:px-3 py-2 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
                   Aujourd&apos;hui
                 </a>
@@ -70,7 +66,6 @@ export default async function RootLayout({
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <VersionSwitch version={version} />
               {/* Icône panier */}
               <button
                 id="cart-btn"
@@ -80,8 +75,8 @@ export default async function RootLayout({
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  width: "2.25rem",
-                  height: "2.25rem",
+                  width: "2.5rem",
+                  height: "2.5rem",
                   borderRadius: "var(--radius)",
                   border: "1px solid var(--border)",
                   background: "var(--surface)",
@@ -114,7 +109,7 @@ export default async function RootLayout({
                   }}
                 >0</span>
               </button>
-            <div className="theme-selector hidden sm:flex items-center gap-1 bg-[var(--surface)] border border-[var(--border)] rounded-full p-[3px]">
+            <div className="theme-selector hidden xl:flex items-center gap-1 bg-[var(--surface)] border border-[var(--border)] rounded-full p-[3px]">
               <button
                 className="theme-btn flex items-center justify-center gap-1.5 px-3 py-1.5 border-none rounded-full bg-transparent text-[var(--text-muted)] text-xs font-semibold cursor-pointer transition-all min-h-8"
                 data-theme="normal"
@@ -163,7 +158,7 @@ export default async function RootLayout({
               aria-label="Menu"
               aria-expanded="false"
               aria-controls="mobile-menu"
-              className="sm:hidden flex items-center justify-center w-9 h-9 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] text-[var(--text-secondary)] cursor-pointer transition-colors"
+              className="xl:hidden flex items-center justify-center w-10 h-10 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] text-[var(--text-secondary)] cursor-pointer transition-colors"
             >
               <svg id="burger-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
                 <line x1="3" y1="6" x2="21" y2="6" />
@@ -181,7 +176,7 @@ export default async function RootLayout({
           {/* Panneau menu mobile */}
           <div
             id="mobile-menu"
-            className="sm:hidden hidden border-t border-[var(--border)] px-3 py-3"
+            className="xl:hidden hidden border-t border-[var(--border)] px-3 py-3"
             style={{ background: "var(--nav-bg)" }}
           >
             <div className="flex flex-col gap-1 mb-3" data-nav-links>
@@ -287,7 +282,7 @@ export default async function RootLayout({
             </span>
             <button
               id="cart-close"
-              style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: "4px" }}
+              style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", width: "2.5rem", height: "2.5rem", marginRight: "-0.6rem", display: "flex", alignItems: "center", justifyContent: "center" }}
               aria-label="Fermer"
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ width: "1.1rem", height: "1.1rem" }}>
