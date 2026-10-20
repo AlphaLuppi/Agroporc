@@ -109,7 +109,7 @@ def test_parser_descriptions():
 
 
 def test_contenant_par_resto():
-    assert "kraft cardboard" in pi.construire_prompt("Le Bistrot Trèfle", "Poulet")
+    assert "kraft paper" in pi.construire_prompt("Le Bistrot Trèfle", "Poulet")
     assert "plastic lid" in pi.construire_prompt("La Pause Gourmande", "Poulet")
     assert "aluminium" in pi.construire_prompt("Le Truck Muche", "Poulet")
     assert "plate" in pi.construire_prompt("La Mijote", "Poulet")
