@@ -90,7 +90,7 @@ def test_prompt_avec_description_sans_libelle_cite():
     p = pi.construire_prompt("Le Truck Muche", "Jambon braisé frites", "thick slices of braised ham with fries")
     assert "thick slices of braised ham with fries" in p
     assert '"' not in p and "Jambon" not in p
-    assert "unbranded" in p and "no logos" in p
+    assert "aluminium" in p and "no logos" in p
 
 
 def test_prompt_descriptions_liste_les_cles():
@@ -106,3 +106,10 @@ def test_parser_descriptions():
     assert pi.parser_descriptions("pas du json", cles) == {}
     assert pi.parser_descriptions('["liste"]', cles) == {}
     assert pi.nettoyer_description("y" * 1000) == "y" * pi.DESCRIPTION_MAX
+
+
+def test_contenant_par_resto():
+    assert "kraft cardboard" in pi.construire_prompt("Le Bistrot Trèfle", "Poulet")
+    assert "plastic lid" in pi.construire_prompt("La Pause Gourmande", "Poulet")
+    assert "aluminium" in pi.construire_prompt("Le Truck Muche", "Poulet")
+    assert "plate" in pi.construire_prompt("La Mijote", "Poulet")
