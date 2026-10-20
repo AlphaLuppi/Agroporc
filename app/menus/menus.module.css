@@ -121,10 +121,6 @@
 }
 .photo[data-etat="ok"] img { opacity: 1; }
 .photo[data-etat="charge"] .photoFond { animation: respire 1.6s ease-in-out infinite; }
-.photoIa {
-  position: absolute; top: 6px; left: 6px; padding: 1px 5px; border-radius: 4px; font-size: 0.56rem; font-weight: 800;
-  letter-spacing: 0.08em; color: #fff; background: rgba(0, 0, 0, 0.45); backdrop-filter: blur(4px);
-}
 .photo_panneau { border-radius: var(--radius-sm); }
 /* Tuile et reco : bandeau à fond perdu en haut de la carte (marges négatives = padding de la carte). */
 .photo_tuile, .photo_hero { margin: calc(-1 * var(--pad-y)) calc(-1 * var(--pad-x)) 2px; width: calc(100% + 2 * var(--pad-x)); }

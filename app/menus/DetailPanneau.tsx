@@ -98,9 +98,7 @@ export default function DetailPanneau({ selection, semaine, mode, today, cartesS
           {image && (
             <figure style={{ margin: 0 }}>
               <PlatImage key={image.src} src={image.src} nom={titre} format="panneau" />
-              <figcaption className={styles.legendeIa}>
-                Image générée par IA, non contractuelle{image.credit ? ` · Image : ${image.credit}` : ""}
-              </figcaption>
+              {image.credit && <figcaption className={styles.legendeIa}>Image : {image.credit}</figcaption>}
             </figure>
           )}
           {estReco && reco?.raison && <p className={styles.texte} style={{ color: "var(--good)" }}>{reco.raison}</p>}
