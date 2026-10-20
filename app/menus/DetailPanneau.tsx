@@ -7,12 +7,14 @@ import { noteMode, type Mode } from "@/lib/carte-tri";
 import { formatDateShort } from "@/lib/format";
 import { casseLisible, recoDuMode } from "@/lib/menus-vue";
 import { variantesPlat } from "@/lib/plat-options";
-import { imageDuPlat, type ImagesPlats } from "@/lib/plat-image";
+import { baseClePlatImage, imageDuPlat, type ImagesPlats } from "@/lib/plat-image";
 import { RESTAURANTS, statutSansPlat } from "@/lib/restaurants";
 import CommentSection from "../CommentSection";
 import MacrosPanel from "../MacrosPanel";
 import PlatImage from "./PlatImage";
 import PhotoPlat from "./PhotoPlat";
+import RecettePanneau from "./RecettePanneau";
+import { recetteAttendue } from "@/lib/recettes";
 import { AjouterButton, fmtNote, fmtPrix, MODE_LABEL, OrderLinks, Pastille } from "./ui";
 import styles from "./menus.module.css";
 
@@ -31,6 +33,8 @@ interface Props {
   onClose: () => void;
   voirCarte: (slug: string) => void;
   images?: ImagesPlats;
+  /** Base de clé → clé du plat, pour charger sa recette (POC). */
+  clesPlats?: Record<string, string>;
 }
 
 function Fermer({ onClose }: { onClose: () => void }) {
@@ -45,7 +49,7 @@ function Fermer({ onClose }: { onClose: () => void }) {
 }
 
 /** Détail d'un plat : feuille du bas sur mobile, panneau à droite sur desktop. Échap ou le voile ferment. */
-export default function DetailPanneau({ selection, semaine, mode, today, cartesSlugs, onClose, voirCarte, images }: Props) {
+export default function DetailPanneau({ selection, semaine, mode, today, cartesSlugs, onClose, voirCarte, images, clesPlats }: Props) {
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -80,6 +84,10 @@ export default function DetailPanneau({ selection, semaine, mode, today, cartesS
       const image = imageDuPlat(images, plat.restaurant, v.plat);
       const resto = RESTAURANTS.find((r) => r.nom === plat.restaurant);
       const slugPhotos = resto && resto.type !== "lien" ? resto.slug : undefined;
+      // Même filtre que le pipeline (`a_cuisiner`) : ni « coming soon », ni nom vide une fois normalisé.
+      const cleRecette = plat.coming_soon || !recetteAttendue(plat.restaurant, v.plat)
+        ? undefined
+        : clesPlats?.[baseClePlatImage(plat.restaurant, v.plat)];
       contenu = (
         <>
           <div className={styles.panneauTete}>
@@ -108,6 +116,7 @@ export default function DetailPanneau({ selection, semaine, mode, today, cartesS
             <OrderLinks restaurant={plat.restaurant} />
             <AjouterButton restaurant={plat.restaurant} plat={v.plat} prix={plat.prix} date={pdj.date} />
           </div>
+          {cleRecette && <RecettePanneau key={cleRecette} cle={cleRecette} date={pdj.date} today={today} />}
           {slugPhotos && <PhotoPlat key={`${pdj.date}-${v.plat}`} slug={slugPhotos} plat={v.plat} date={pdj.date} />}
           <CommentSection commentaires={plat.commentaires || []} date={pdj.date} platIndex={selection.platIndex} />
         </>

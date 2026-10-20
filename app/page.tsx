@@ -17,8 +17,10 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ s
   const weekPdj = await getWeekPdj(mondayStr);
   const semaine = buildFullWeek(weekPdj, monday);
   const v1 = lireVersion((await cookies()).get(VERSION_COOKIE)?.value) === "v1";
+  // Clés des plats (V2 seulement), calculées une fois : images et recettes s'y rattachent.
+  const cles = v1 ? new Map<string, string>() : clesSemaine(semaine);
   // Cartes et images (V2 seulement) en parallèle : requêtes indépendantes.
-  const [cartes, images] = await Promise.all([getCartesDisponibles(), v1 ? Promise.resolve<ImagesPlats>({}) : chargerImages(semaine)]);
+  const [cartes, images] = await Promise.all([getCartesDisponibles(), v1 ? Promise.resolve<ImagesPlats>({}) : chargerImages(cles)]);
   const prev = new Date(monday); prev.setDate(monday.getDate() - 7);
   const next = new Date(monday); next.setDate(monday.getDate() + 7);
 
@@ -43,14 +45,14 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ s
       nextHref={nextHref}
       isCurrentWeek={mondayStr === resolveMonday().toLocaleDateString("en-CA")}
       images={images}
+      clesPlats={Object.fromEntries(cles)}
     />
   );
 }
 
 /** Images IA (POC) des plats de la semaine ; jamais bloquant : sans table ou en erreur, aucune image. */
-async function chargerImages(semaine: PdjEntry[]): Promise<ImagesPlats> {
+async function chargerImages(cles: Map<string, string>): Promise<ImagesPlats> {
   try {
-    const cles = clesSemaine(semaine);
     return imagesDeSemaine(cles, await platImagesExistantes([...new Set(cles.values())]));
   } catch (e) {
     console.error("[accueil] images des plats indisponibles", e);

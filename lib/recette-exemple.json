@@ -1,0 +1,29 @@
+{
+  "titre": "Rôti de dinde froid, sauce gribiche et légumes à l'aïoli",
+  "description": "Un rôti de dinde moelleux servi froid, une gribiche relevée et des légumes croquants.",
+  "personnes": 4,
+  "temps_preparation_min": 30,
+  "temps_cuisson_min": 60,
+  "temps_repos_min": 120,
+  "difficulte": "facile",
+  "ingredients": [
+    { "nom": "rôti de dinde", "quantite": 800, "unite": "g", "groupe": "Pour le rôti" },
+    { "nom": "huile d'olive", "quantite": 2, "unite": "c. à soupe", "groupe": "Pour le rôti" },
+    { "nom": "œufs", "quantite": 2, "unite": "pièce", "note": "durs", "groupe": "Pour la gribiche" },
+    { "nom": "cornichons", "quantite": 40, "unite": "g", "note": "hachés", "groupe": "Pour la gribiche" },
+    { "nom": "moutarde de Dijon", "quantite": 1, "unite": "c. à café", "groupe": "Pour la gribiche" },
+    { "nom": "huile de colza", "quantite": 15, "unite": "cl", "groupe": "Pour la gribiche" },
+    { "nom": "ail", "quantite": 1, "unite": "gousse", "groupe": "Pour les légumes" },
+    { "nom": "carottes", "quantite": 4, "unite": "pièce", "groupe": "Pour les légumes" },
+    { "nom": "sel, poivre", "quantite": null, "unite": null }
+  ],
+  "etapes": [
+    "Préchauffer le four à 180 °C.",
+    "Badigeonner le rôti d'huile, saler, poivrer et enfourner 1 h.",
+    "Laisser refroidir puis réserver 2 h au frais avant de trancher.",
+    "Écraser les jaunes d'œufs avec la moutarde, monter à l'huile, ajouter blancs et cornichons hachés.",
+    "Cuire les carottes 10 min à l'eau, servir avec l'aïoli et la gribiche."
+  ],
+  "astuces": ["Le rôti se tranche plus finement bien froid."],
+  "ustensiles": ["plat à four", "fouet"]
+}

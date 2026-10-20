@@ -17,8 +17,13 @@ Modes d'exécution :
   python main.py images [YYYY-MM-DD|semaine] [--force]  → (POC) Images IA des plats
                               publiés (aujourd'hui par défaut, ou du jour au vendredi),
                               en sautant celles déjà en base ; --force les régénère.
+  python main.py recettes [YYYY-MM-DD|semaine] [--force]  → (POC) Recettes maison des plats
+                              publiés (aujourd'hui par défaut, ou du jour au vendredi),
+                              en sautant celles déjà en base ; enregistre les dates de
+                              service ; --force les réécrit.
 """
 import asyncio
+import functools
 import json
 import os
 import sys
@@ -33,7 +38,7 @@ HISTORY_DIR = Path(__file__).parent / "output" / "historique"
 load_dotenv()
 
 from scrapers import bistrot_trefle, pause_gourmande, truck_muche, basilic_ngo, dubble, la_mijote
-from agent import diet_agent, repair_team, comment_agent, feedback_agent, idee_agent, portion_agent, carte_agent, image_agent
+from agent import diet_agent, repair_team, comment_agent, feedback_agent, idee_agent, portion_agent, carte_agent, image_agent, recette_agent
 from creer_personnage import creer_personnage
 from messages import generer_messages_semaine, maj_message_jour
 from publish import publish_pdj, publish_carte, fetch_carte_hash, fetch_pdj
@@ -110,6 +115,9 @@ async def run_jour(retry: bool = False) -> int:
 
     # ── Images IA des plats (POC, best-effort, budget court) ─────────────
     await _step_images(loop, output)
+
+    # ── Recettes maison des plats (POC, best-effort, budget court) ───────
+    await _step_recettes(loop, output)
 
     # ── Évaluation des idées d'amélioration ──────────────────────────────
     try:
@@ -318,6 +326,9 @@ async def run_semaine(retry: bool = False) -> int:
     # ── Images IA des plats (POC, best-effort, budget court) ─────────────
     await _step_images(loop, output)
 
+    # ── Recettes maison des plats (POC, best-effort, budget court) ───────
+    await _step_recettes(loop, output)
+
     # ── Cartes permanentes (une fois par lundi, hash-gardées, reprenables) ──
     await _step_cartes(state, loop)
 
@@ -365,17 +376,8 @@ def _dates_images(arg: str | None, today: date) -> list[str]:
     return [date.fromisoformat(arg).isoformat()]
 
 
-def run_images(arg: str | None = None, force: bool = False) -> int:
-    """Commande manuelle / cron : relit les PDJ publiés (API, à défaut pdj.json) et
-    génère les images manquantes. Toujours 0 sauf argument invalide (rien n'est requis)."""
-    if not _images_actives():
-        print("[pipeline:images] Désactivé (PDJ_IMAGES=off)")
-        return 0
-    try:
-        dates = _dates_images(arg, date.today())
-    except ValueError:
-        print(f"[pipeline:images] Date invalide : {arg} (attendu YYYY-MM-DD ou semaine)")
-        return 1
+def _pdjs_publies(dates: list[str], etiquette: str) -> list[dict]:
+    """PDJ publiés des dates données (API, à défaut pdj.json s'il porte la bonne date)."""
     pdjs = []
     for d in dates:
         pdj = fetch_pdj(d)
@@ -388,7 +390,22 @@ def run_images(arg: str | None = None, force: bool = False) -> int:
         if pdj:
             pdjs.append(pdj)
         else:
-            print(f"[pipeline:images] Pas de PDJ publié pour {d}")
+            print(f"[pipeline:{etiquette}] Pas de PDJ publié pour {d}")
+    return pdjs
+
+
+def run_images(arg: str | None = None, force: bool = False) -> int:
+    """Commande manuelle / cron : relit les PDJ publiés (API, à défaut pdj.json) et
+    génère les images manquantes. Toujours 0 sauf argument invalide (rien n'est requis)."""
+    if not _images_actives():
+        print("[pipeline:images] Désactivé (PDJ_IMAGES=off)")
+        return 0
+    try:
+        dates = _dates_images(arg, date.today())
+    except ValueError:
+        print(f"[pipeline:images] Date invalide : {arg} (attendu YYYY-MM-DD ou semaine)")
+        return 1
+    pdjs = _pdjs_publies(dates, "images")
     if not pdjs:
         return 0
     try:
@@ -396,6 +413,55 @@ def run_images(arg: str | None = None, force: bool = False) -> int:
     except ValueError:
         budget = IMAGES_BUDGET_COMMANDE_S
     image_agent.illustrer(pdjs, budget, force=force)
+    return 0
+
+
+# ── Recettes maison des plats (POC) ─────────────────────────────────────────
+
+# Dans le run 7h30 : budget court (≈ 2-3 recettes) pour ne pas tenir le lock ; le cron
+# `recettes` de 11h15 rattrape le reste du jour.
+RECETTES_BUDGET_RUN_S = 180
+RECETTES_BUDGET_COMMANDE_S = 1500
+
+
+def _recettes_actives() -> bool:
+    return os.getenv("PDJ_RECETTES", "on").lower() not in ("off", "0", "false", "non")
+
+
+async def _step_recettes(loop, output: dict) -> None:
+    """Rédige les recettes manquantes du PDJ du jour. Ne lève jamais, n'entre pas dans
+    `est_complet` : une recette ratée ne rend pas la journée partielle."""
+    if not _recettes_actives() or not output or not output.get("plats"):
+        return
+    try:
+        budget = float(os.getenv("PDJ_RECETTES_BUDGET_RUN", RECETTES_BUDGET_RUN_S))
+        # Les plats déjà ratés aujourd'hui ne sont pas retentés à chaque retry (15 min) :
+        # le cron `recettes` de 11h15 s'en charge.
+        await loop.run_in_executor(
+            None, functools.partial(recette_agent.cuisiner, [output], budget, sauter_echecs=True))
+    except Exception as e:
+        print(f"[pipeline:recettes] Erreur (ignorée) : {e}")
+
+
+def run_recettes(arg: str | None = None, force: bool = False) -> int:
+    """Commande manuelle / cron : relit les PDJ publiés (API, à défaut pdj.json) et rédige
+    les recettes manquantes. Toujours 0 sauf argument invalide (rien n'est requis)."""
+    if not _recettes_actives():
+        print("[pipeline:recettes] Désactivé (PDJ_RECETTES=off)")
+        return 0
+    try:
+        dates = _dates_images(arg, date.today())
+    except ValueError:
+        print(f"[pipeline:recettes] Date invalide : {arg} (attendu YYYY-MM-DD ou semaine)")
+        return 1
+    pdjs = _pdjs_publies(dates, "recettes")
+    if not pdjs:
+        return 0
+    try:
+        budget = float(os.getenv("PDJ_RECETTES_BUDGET", RECETTES_BUDGET_COMMANDE_S))
+    except ValueError:
+        budget = RECETTES_BUDGET_COMMANDE_S
+    recette_agent.cuisiner(pdjs, budget, force=force)
     return 0
 
 
@@ -648,7 +714,7 @@ async def _step_commentaires(state: dict, loop, output: dict) -> dict:
 def main():
     usage = ("Usage: python main.py [semaine|jour|cartes [slug] [--force]|commentaires <personnage>"
              "|sync-feedback|nouveau-personnage|check-portions|desserts"
-             "|images [YYYY-MM-DD|semaine] [--force]]")
+             "|images [YYYY-MM-DD|semaine] [--force]|recettes [YYYY-MM-DD|semaine] [--force]]")
 
     if len(sys.argv) < 2:
         print(usage)
@@ -667,6 +733,9 @@ def main():
     elif mode == "images":
         args = [a for a in sys.argv[2:] if not a.startswith("--")]
         sys.exit(run_images(args[0] if args else None, force="--force" in sys.argv))
+    elif mode == "recettes":
+        args = [a for a in sys.argv[2:] if not a.startswith("--")]
+        sys.exit(run_recettes(args[0] if args else None, force="--force" in sys.argv))
     elif mode == "check-portions":
         print("[main] Vérification des photos de référence...")
         estimates = portion_agent.check_and_update()
