@@ -808,3 +808,104 @@ export async function recordFinishedRun(
   `;
   await purgeOldRuns();
 }
+
+// --- Images IA des plats (POC) ---
+// Une ligne par variante de plat, clé = `clePlatImage` (lib/plat-image-cle.ts, identique
+// au pipeline Python). Rien dans `pdj_entries` : la clé se recalcule depuis le nom.
+
+export async function ensurePlatImagesTable() {
+  await sql`
+    CREATE TABLE IF NOT EXISTS pdj_plat_images (
+      cle VARCHAR(64) PRIMARY KEY,
+      restaurant TEXT NOT NULL,
+      plat TEXT NOT NULL,
+      prompt TEXT,
+      fournisseur VARCHAR(50),
+      content_type VARCHAR(50) NOT NULL DEFAULT 'image/jpeg',
+      image_data BYTEA NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+}
+
+/** Insère l'image ; si la clé existe : ne fait rien, sauf `force` (régénération). Renvoie true si écrit. */
+export async function upsertPlatImage(img: {
+  cle: string;
+  restaurant: string;
+  plat: string;
+  prompt?: string | null;
+  fournisseur?: string | null;
+  content_type: string;
+  data: Buffer;
+  force?: boolean;
+}): Promise<boolean> {
+  await ensurePlatImagesTable();
+  const r = img.force
+    ? await sql`
+        INSERT INTO pdj_plat_images (cle, restaurant, plat, prompt, fournisseur, content_type, image_data)
+        VALUES (${img.cle}, ${img.restaurant}, ${img.plat}, ${img.prompt ?? null}, ${img.fournisseur ?? null}, ${img.content_type}, ${img.data})
+        ON CONFLICT (cle) DO UPDATE SET restaurant = EXCLUDED.restaurant, plat = EXCLUDED.plat, prompt = EXCLUDED.prompt,
+          fournisseur = EXCLUDED.fournisseur, content_type = EXCLUDED.content_type, image_data = EXCLUDED.image_data, created_at = NOW()
+      `
+    : await sql`
+        INSERT INTO pdj_plat_images (cle, restaurant, plat, prompt, fournisseur, content_type, image_data)
+        VALUES (${img.cle}, ${img.restaurant}, ${img.plat}, ${img.prompt ?? null}, ${img.fournisseur ?? null}, ${img.content_type}, ${img.data})
+        ON CONFLICT (cle) DO NOTHING
+      `;
+  return (r.rowCount ?? 0) > 0;
+}
+
+// Version d'une image = created_at en ms, calculée côté SQL partout (URL `?v=` et contrôle de
+// la route) pour qu'elles concordent exactement.
+
+/** Table absente (déploiement sans `db:migrate` ni ingestion) : lu comme « aucune image ». */
+function tableAbsente(e: unknown): boolean {
+  return (e as { code?: string })?.code === "42P01";
+}
+
+/**
+ * Image d'un plat. Lecture seule, sans DDL (la table est créée par `lib/migrate.mjs` et par
+ * l'ingestion). Avec `versionMs`, les octets ne sont lus que si la version demandée est la
+ * version en base (sinon `image_data` vaut null : la route redirige sans lire le bytea).
+ */
+export async function getPlatImage(
+  cle: string,
+  versionMs?: number | null,
+): Promise<{ content_type: string; image_data: Buffer | null; version_ms: number } | null> {
+  try {
+    const r = versionMs == null
+      ? await sql`SELECT content_type, image_data, floor(extract(epoch FROM created_at) * 1000)::bigint AS version_ms FROM pdj_plat_images WHERE cle = ${cle}`
+      : await sql`
+          SELECT content_type, floor(extract(epoch FROM created_at) * 1000)::bigint AS version_ms,
+            CASE WHEN floor(extract(epoch FROM created_at) * 1000)::bigint = ${versionMs}::bigint THEN image_data END AS image_data
+          FROM pdj_plat_images WHERE cle = ${cle}`;
+    if (!r.rows.length) return null;
+    const row = r.rows[0];
+    return { content_type: row.content_type as string, image_data: (row.image_data as Buffer | null) ?? null, version_ms: Number(row.version_ms) };
+  } catch (e) {
+    if (tableAbsente(e)) return null;
+    throw e;
+  }
+}
+
+export interface PlatImageMeta {
+  creeLe: string;
+  fournisseur: string | null;
+}
+
+/** Clés présentes parmi `cles`, avec date de création (version de l'URL) et fournisseur (crédit). */
+export async function platImagesExistantes(cles: string[]): Promise<Map<string, PlatImageMeta>> {
+  if (cles.length === 0) return new Map();
+  try {
+    const r = await sql`SELECT cle, floor(extract(epoch FROM created_at) * 1000)::bigint AS version_ms, fournisseur FROM pdj_plat_images WHERE cle = ANY(${cles})`;
+    return new Map(
+      r.rows.map((row) => [
+        row.cle as string,
+        { creeLe: new Date(Number(row.version_ms)).toISOString(), fournisseur: (row.fournisseur as string | null) ?? null },
+      ]),
+    );
+  } catch (e) {
+    if (tableAbsente(e)) return new Map();
+    throw e;
+  }
+}

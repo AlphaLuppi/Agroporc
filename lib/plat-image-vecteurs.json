@@ -1,0 +1,83 @@
+{
+  "_doc": "Vecteurs de concordance de la clé d'image (Python plat_image.py ↔ TS lib/plat-image*.ts). Régénérer les deux côtés si l'algorithme change.",
+  "vecteurs": [
+    {
+      "restaurant": "Le Bistrot Trèfle",
+      "plat": "Tataki de bœuf, pesto asiatique. Pommes de terre Duchesse, mousseline de carottes",
+      "base": "le bistrot trefle|tataki de boeuf pesto asiatique pommes de terre duchesse mousseline de carottes",
+      "cle": "82b7ecd0f9d69691e086b11b"
+    },
+    {
+      "restaurant": "Le Truck Muche",
+      "plat": "POKE BOWL SAUMON TERYAKI",
+      "base": "le truck muche|poke bowl saumon teryaki",
+      "cle": "59dc17efe45d92c14eb8f377"
+    },
+    {
+      "restaurant": "Le Truck Muche",
+      "plat": "Poke bowl saumon teryaki.",
+      "base": "le truck muche|poke bowl saumon teryaki",
+      "cle": "59dc17efe45d92c14eb8f377"
+    },
+    {
+      "restaurant": "La Pause Gourmande",
+      "plat": "  Rôti   de dinde servi froid,  mayonnaise gribiche ",
+      "base": "la pause gourmande|roti de dinde servi froid mayonnaise gribiche",
+      "cle": "eec9a31f479cb565bfb8c756"
+    },
+    {
+      "restaurant": "Basilic n'Go",
+      "plat": "Plat du jour poisson : Filet de cabillaud, riz pilaf",
+      "base": "basilic n go|plat du jour poisson filet de cabillaud riz pilaf",
+      "cle": "3248922162ccb2e229679a95"
+    },
+    {
+      "restaurant": "Basilic n’Go",
+      "plat": "Plat du jour poisson : Filet de cabillaud, riz pilaf",
+      "base": "basilic n go|plat du jour poisson filet de cabillaud riz pilaf",
+      "cle": "3248922162ccb2e229679a95"
+    },
+    {
+      "restaurant": "Dubble",
+      "plat": "Hot Bowl Végé — curry de pois chiches & riz basmati",
+      "base": "dubble|hot bowl vege curry de pois chiches riz basmati",
+      "cle": "ff3e053d189117e4400ce7f8"
+    },
+    {
+      "restaurant": "La Mijote",
+      "plat": "Œufs cocotte à la crème (façon grand-mère) 100%",
+      "base": "la mijote|oeufs cocotte a la creme facon grand mere 100",
+      "cle": "c021913a8de13620ed8fd0ab"
+    },
+    {
+      "restaurant": "LE BISTROT TRÈFLE",
+      "plat": "ÉCHINE ET SALADE DE PÂTES",
+      "base": "le bistrot trefle|echine et salade de pates",
+      "cle": "b769e5fe458cdc6b6af00f52"
+    },
+    {
+      "restaurant": "Le Bistrot Trèfle",
+      "plat": "Crème brûlée ﬁgue – ½ portion",
+      "base": "le bistrot trefle|creme brulee figue 1 2 portion",
+      "cle": "2a143ca31b3d5f6db12b8bdf"
+    },
+    {
+      "restaurant": "",
+      "plat": "",
+      "base": "|",
+      "cle": "cbe5cfdf7c2118a9c3d78ef1"
+    },
+    {
+      "restaurant": "Le Truck Muche",
+      "plat": "CŒUR DE SAUMON & STRAßE",
+      "base": "le truck muche|coeur de saumon strasse",
+      "cle": "7ea30bcbcd49cfcb570be070"
+    },
+    {
+      "restaurant": "La Mijote",
+      "plat": "Smørrebrød  ",
+      "base": "la mijote|smorrebrod",
+      "cle": "9d7da3dd29ebf1455e444f2d"
+    }
+  ]
+}

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { PdjEntry } from "@/lib/db";
 import { formatDateShort, formatDayShort } from "@/lib/format";
 import { meilleureNoteDuJour } from "@/lib/menus-vue";
+import type { ImagesPlats } from "@/lib/plat-image";
 import { RESTAURANTS, titreCarte } from "@/lib/restaurants";
 import { useModeSite } from "./useModeSite";
 import JourVue from "./JourVue";
@@ -31,6 +32,8 @@ interface Props {
   prevHref: string;
   nextHref: string;
   isCurrentWeek: boolean;
+  /** Images IA existantes des plats de la semaine (POC) : base de clé → URL. */
+  images?: ImagesPlats;
 }
 
 function Chevron({ sens }: { sens: "g" | "d" }) {
@@ -41,7 +44,7 @@ function Chevron({ sens }: { sens: "g" | "d" }) {
   );
 }
 
-export default function MenusClient({ semaine, cartes, today, defaultIdx, weekLabel, prevHref, nextHref, isCurrentWeek }: Props) {
+export default function MenusClient({ semaine, cartes, today, defaultIdx, weekLabel, prevHref, nextHref, isCurrentWeek, images }: Props) {
   const [mode, setMode] = useModeSite();
   const [vue, setVueState] = useState<Vue>("jour");
   const [jourIdx, setJourIdx] = useState(defaultIdx);
@@ -126,7 +129,7 @@ export default function MenusClient({ semaine, cartes, today, defaultIdx, weekLa
             </div>
             <ModeToggle mode={mode} onChange={setMode} />
           </div>
-          <JourVue pdj={pdj} mode={mode} onOpen={setSelection} />
+          <JourVue pdj={pdj} mode={mode} images={images} onOpen={setSelection} />
         </>
       )}
 
@@ -180,6 +183,7 @@ export default function MenusClient({ semaine, cartes, today, defaultIdx, weekLa
           mode={mode}
           today={today}
           cartesSlugs={new Set(cartes)}
+          images={images}
           onClose={fermer}
           voirCarte={voirCarte}
         />

@@ -22,18 +22,31 @@ fi
 # du poller /admin (même kernel → flock traverse les conteneurs).
 # Retries : sautent leur tour si un run tourne déjà (le slot suivant rattrapera).
 mkdir -p /app/output
-exec 200>/app/output/pdj_run.lock
-if [ -n "$RETRY" ]; then
-  flock -n 200 || { echo "$(date '+%Y-%m-%d %H:%M') [cron] run en cours, retry sauté"; exit 0; }
+# Mode `images` (POC, best-effort, n'écrit pas run_state) : lock DÉDIÉ, pour ne jamais faire
+# attendre/abandonner un run jour/semaine (retries, relance /admin) pendant ses ~25 min.
+LIMITE=""
+if [ "$MODE" = "images" ]; then
+  exec 200>/app/output/pdj_images.lock
+  flock -n 200 || { echo "$(date '+%Y-%m-%d %H:%M') [cron] images déjà en cours, sauté"; exit 0; }
+  # Limite dure (budget 1500 s + dépassements réseau/publish) : jamais au-delà de 30 min.
+  LIMITE="timeout -k 30 1800"
 else
-  flock -w 900 200 || { echo "$(date '+%Y-%m-%d %H:%M') [cron] lock non obtenu après 15 min, abandon"; exit 1; }
+  exec 200>/app/output/pdj_run.lock
+  if [ -n "$RETRY" ]; then
+    flock -n 200 || { echo "$(date '+%Y-%m-%d %H:%M') [cron] run en cours, retry sauté"; exit 0; }
+  else
+    flock -w 900 200 || { echo "$(date '+%Y-%m-%d %H:%M') [cron] lock non obtenu après 15 min, abandon"; exit 1; }
+  fi
 fi
 
 echo "$(date '+%Y-%m-%d %H:%M') [cron] Lancement pipeline mode=$MODE${RETRY:+ (retry)}"
 
 # Capture de la sortie pour report vers l'API (logs visibles sur /admin).
 LOGFILE="$(mktemp)"
-cd /app && ionice -c 3 nice -n 19 python main.py "$MODE" ${RETRY:+--retry} 2>&1 | tee -a "$LOGFILE"
+# Argument additionnel (ex. `images semaine`) transmis tel quel ; jamais pour retry.
+EXTRA=""
+[ -z "$RETRY" ] && EXTRA="${2:-}"
+cd /app && ionice -c 3 nice -n 19 $LIMITE python main.py "$MODE" $EXTRA ${RETRY:+--retry} 2>&1 | tee -a "$LOGFILE"
 rc="${PIPESTATUS[0]}"
 
 # 0=complet, 3=partiel, 4=no-op (déjà complet). Le dernier retry (10h00)
