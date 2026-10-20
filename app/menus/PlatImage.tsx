@@ -6,7 +6,7 @@ import styles from "./menus.module.css";
 type Format = "panneau" | "tuile" | "hero";
 
 /**
- * Image IA d'un plat (POC). Rendue seulement quand l'image existe en base (`src` fourni) :
+ * Photo d'un plat (POC). Rendue seulement quand l'image existe en base (`src` fourni) :
  * cadre à ratio fixe (pas de saut de mise en page) avec un fond d'assiette en attendant le
  * chargement ; en cas d'erreur, le fond reste, jamais d'image cassée. Cadrage centré : le
  * logo éventuel du fournisseur gratuit n'est pas masqué volontairement (crédit dans le panneau).
@@ -34,20 +34,12 @@ export default function PlatImage({ src, nom, format }: { src: string; nom: stri
         <img
           ref={ref}
           src={src}
-          alt={format === "panneau" ? `Illustration générée par IA : ${nom}` : ""}
+          alt={format === "panneau" ? nom : ""}
           loading={format === "panneau" ? "eager" : "lazy"}
           decoding="async"
           onLoad={() => setEtat("ok")}
           onError={() => setEtat("ko")}
         />
-      )}
-      {format !== "panneau" && (
-        <>
-          <span className={styles.photoIa} title="Image générée par IA, non contractuelle" aria-hidden="true">
-            IA
-          </span>
-          <span className="sr-only">(illustration générée par IA)</span>
-        </>
       )}
     </span>
   );
