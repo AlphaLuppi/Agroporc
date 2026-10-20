@@ -31,6 +31,8 @@ RUN chmod +x /entrypoint.sh
 #        retries toutes les 15 min de 7h45 à 10h00 (no-op ~2 s si complet),
 #        lundi-vendredi 13h Paris = desserts (postés vers midi par le Truck Muche),
 #        lundi-vendredi 10h35 Paris = images IA des plats (POC) manquantes, du jour au vendredi
+#        lundi-vendredi 11h15 Paris = recettes maison des plats (POC) manquantes, du jour seulement
+#        (après le dernier retry 10h00 et la fin des images ≤ 11h05 ; dates = plats vraiment servis)
 RUN echo '30 7 * * 1 root /entrypoint.sh semaine >> /app/logs/cron.log 2>&1' > /etc/cron.d/pdj && \
     echo '30 7 * * 2-5 root /entrypoint.sh jour >> /app/logs/cron.log 2>&1' >> /etc/cron.d/pdj && \
     echo '45 7 * * 1-5 root /entrypoint.sh retry >> /app/logs/cron.log 2>&1' >> /etc/cron.d/pdj && \
@@ -38,6 +40,7 @@ RUN echo '30 7 * * 1 root /entrypoint.sh semaine >> /app/logs/cron.log 2>&1' > /
     echo '0 10 * * 1-5 root /entrypoint.sh retry final >> /app/logs/cron.log 2>&1' >> /etc/cron.d/pdj && \
     echo '0 13 * * 1-5 root /entrypoint.sh desserts >> /app/logs/cron.log 2>&1' >> /etc/cron.d/pdj && \
     echo '35 10 * * 1-5 root /entrypoint.sh images semaine >> /app/logs/cron.log 2>&1' >> /etc/cron.d/pdj && \
+    echo '15 11 * * 1-5 root /entrypoint.sh recettes >> /app/logs/cron.log 2>&1' >> /etc/cron.d/pdj && \
     echo '' >> /etc/cron.d/pdj && \
     chmod 0644 /etc/cron.d/pdj && \
     crontab /etc/cron.d/pdj

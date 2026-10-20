@@ -34,6 +34,8 @@ interface Props {
   isCurrentWeek: boolean;
   /** Images IA existantes des plats de la semaine (POC) : base de clé → URL. */
   images?: ImagesPlats;
+  /** Base de clé → clé de chaque plat de la semaine (le client ne hache rien) : recettes (POC). */
+  clesPlats?: Record<string, string>;
 }
 
 function Chevron({ sens }: { sens: "g" | "d" }) {
@@ -44,7 +46,7 @@ function Chevron({ sens }: { sens: "g" | "d" }) {
   );
 }
 
-export default function MenusClient({ semaine, cartes, today, defaultIdx, weekLabel, prevHref, nextHref, isCurrentWeek, images }: Props) {
+export default function MenusClient({ semaine, cartes, today, defaultIdx, weekLabel, prevHref, nextHref, isCurrentWeek, images, clesPlats }: Props) {
   const [mode, setMode] = useModeSite();
   const [vue, setVueState] = useState<Vue>("jour");
   const [jourIdx, setJourIdx] = useState(defaultIdx);
@@ -184,6 +186,7 @@ export default function MenusClient({ semaine, cartes, today, defaultIdx, weekLa
           today={today}
           cartesSlugs={new Set(cartes)}
           images={images}
+          clesPlats={clesPlats}
           onClose={fermer}
           voirCarte={voirCarte}
         />

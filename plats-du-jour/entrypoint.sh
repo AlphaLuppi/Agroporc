@@ -30,6 +30,11 @@ if [ "$MODE" = "images" ]; then
   flock -n 200 || { echo "$(date '+%Y-%m-%d %H:%M') [cron] images déjà en cours, sauté"; exit 0; }
   # Limite dure (budget 1500 s + dépassements réseau/publish) : jamais au-delà de 30 min.
   LIMITE="timeout -k 30 1800"
+elif [ "$MODE" = "recettes" ]; then
+  # Recettes maison (POC, best-effort, n'écrit pas run_state) : même logique, lock à part.
+  exec 200>/app/output/pdj_recettes.lock
+  flock -n 200 || { echo "$(date '+%Y-%m-%d %H:%M') [cron] recettes déjà en cours, sauté"; exit 0; }
+  LIMITE="timeout -k 30 1800"
 else
   exec 200>/app/output/pdj_run.lock
   if [ -n "$RETRY" ]; then
@@ -43,7 +48,7 @@ echo "$(date '+%Y-%m-%d %H:%M') [cron] Lancement pipeline mode=$MODE${RETRY:+ (r
 
 # Capture de la sortie pour report vers l'API (logs visibles sur /admin).
 LOGFILE="$(mktemp)"
-# Argument additionnel (ex. `images semaine`) transmis tel quel ; jamais pour retry.
+# Argument additionnel (ex. `images semaine`, `recettes 2026-10-20`) transmis tel quel ; jamais pour retry.
 EXTRA=""
 [ -z "$RETRY" ] && EXTRA="${2:-}"
 cd /app && ionice -c 3 nice -n 19 $LIMITE python main.py "$MODE" $EXTRA ${RETRY:+--retry} 2>&1 | tee -a "$LOGFILE"

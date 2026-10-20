@@ -43,25 +43,28 @@ export default async function RootLayout({
       <body>
         <nav className="sticky top-0 z-50 border-b border-[var(--border)] backdrop-blur-xl" style={{ background: "var(--nav-bg)" }}>
           <div className="mx-auto flex h-16 max-w-[1180px] items-center justify-between gap-4 px-4 sm:px-8">
-            <div className="nav-left flex items-center gap-4 sm:gap-10 min-w-0">
+            <div className="nav-left flex items-center gap-4 sm:gap-6 lg:gap-10 min-w-0">
               <a href="/" className="flex items-center gap-2 text-lg sm:text-xl font-bold text-[var(--accent)] no-underline tracking-wide shrink-0" style={{ fontFamily: "var(--font-heading)" }}>
                 <img src="/logo.jpg" alt="Logo Plats du Jour" className="w-8 h-8 sm:w-9 sm:h-9 rounded-full object-cover" />
                 <span>Agroporc</span>
               </a>
               <div className="nav-links hidden sm:flex items-center gap-1.5" data-nav-links>
-                <a href="/" className="whitespace-nowrap text-[var(--text-secondary)] no-underline text-sm font-medium px-3 py-2 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
+                <a href="/" className="whitespace-nowrap text-[var(--text-secondary)] no-underline text-sm font-medium px-1.5 lg:px-3 py-2 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
                   Aujourd&apos;hui
                 </a>
-                <a href="/aide-moi-a-choisir" className="whitespace-nowrap text-[var(--text-secondary)] no-underline text-sm font-medium px-3 py-2 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
+                <a href="/aide-moi-a-choisir" className="whitespace-nowrap text-[var(--text-secondary)] no-underline text-sm font-medium px-1.5 lg:px-3 py-2 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
                   Aide-moi à choisir
                 </a>
-                <a href="/idees" className="whitespace-nowrap text-[var(--text-secondary)] no-underline text-sm font-medium px-3 py-2 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
+                <a href="/recettes" className="whitespace-nowrap text-[var(--text-secondary)] no-underline text-sm font-medium px-1.5 lg:px-3 py-2 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
+                  Recettes
+                </a>
+                <a href="/idees" className="whitespace-nowrap text-[var(--text-secondary)] no-underline text-sm font-medium px-1.5 lg:px-3 py-2 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
                   Idées
                 </a>
-                <a href="/ia" className="whitespace-nowrap text-[var(--text-secondary)] no-underline text-sm font-medium px-3 py-2 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
+                <a href="/ia" className="whitespace-nowrap text-[var(--text-secondary)] no-underline text-sm font-medium px-1.5 lg:px-3 py-2 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
                   IA
                 </a>
-                <a href="/admin/photos" className="whitespace-nowrap text-[var(--text-secondary)] no-underline text-sm font-medium px-3 py-2 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
+                <a href="/admin/photos" className="whitespace-nowrap text-[var(--text-secondary)] no-underline text-sm font-medium px-1.5 lg:px-3 py-2 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
                   Photos
                 </a>
               </div>
@@ -121,7 +124,7 @@ export default async function RootLayout({
                   <circle cx="12" cy="12" r="5" />
                   <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />
                 </svg>
-                <span className="label-text hidden sm:inline">Normal</span>
+                <span className="label-text hidden lg:inline">Normal</span>
               </button>
               <button
                 className="theme-btn flex items-center justify-center gap-1.5 px-3 py-1.5 border-none rounded-full bg-transparent text-[var(--text-muted)] text-xs font-semibold cursor-pointer transition-all min-h-8"
@@ -136,7 +139,7 @@ export default async function RootLayout({
                   <circle cx="10" cy="15" r="0.5" fill="currentColor" />
                   <circle cx="14" cy="15" r="0.5" fill="currentColor" />
                 </svg>
-                <span className="label-text hidden sm:inline">Tigre</span>
+                <span className="label-text hidden lg:inline">Tigre</span>
               </button>
               <button
                 className="theme-btn flex items-center justify-center gap-1.5 px-3 py-1.5 border-none rounded-full bg-transparent text-[var(--text-muted)] text-xs font-semibold cursor-pointer transition-all min-h-8"
@@ -150,7 +153,7 @@ export default async function RootLayout({
                   <line x1="10" y1="2" x2="10" y2="4" />
                   <line x1="14" y1="2" x2="14" y2="4" />
                 </svg>
-                <span className="label-text hidden sm:inline">Terrasse</span>
+                <span className="label-text hidden lg:inline">Terrasse</span>
               </button>
             </div>
             {/* Bouton burger — mobile uniquement */}
@@ -187,6 +190,9 @@ export default async function RootLayout({
               </a>
               <a href="/aide-moi-a-choisir" className="text-[var(--text-secondary)] no-underline text-sm font-medium px-3 py-2 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
                 Aide-moi à choisir
+              </a>
+              <a href="/recettes" className="text-[var(--text-secondary)] no-underline text-sm font-medium px-3 py-2 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
+                Recettes
               </a>
               <a href="/idees" className="text-[var(--text-secondary)] no-underline text-sm font-medium px-3 py-2 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
                 Idées

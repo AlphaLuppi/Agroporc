@@ -145,6 +145,65 @@ def publish_plat_image(data: dict) -> bool:
         return False
 
 
+def fetch_recettes_existantes(cles: list[str]) -> set[str] | None:
+    """Clés des recettes déjà en base (GET /api/recette?cles=…), par lots de 100.
+    None si l'API est injoignable : l'appelant ne génère rien plutôt que de tout refaire."""
+    if not API_URL:
+        return None
+    existantes: set[str] = set()
+    try:
+        for i in range(0, len(cles), 100):
+            resp = requests.get(f"{API_URL}/api/recette",
+                                params={"cles": ",".join(cles[i:i + 100])}, timeout=30)
+            if not resp.ok:
+                print(f"[publish] Erreur liste recettes {resp.status_code}: {resp.text[:200]}")
+                return None
+            existantes.update(resp.json().get("existantes") or [])
+        return existantes
+    except Exception as e:
+        print(f"[publish] Erreur réseau liste recettes : {e}")
+        return None
+
+
+def publish_recette(data: dict) -> bool:
+    """Envoie une recette maison d'un plat (POST /api/recette, Bearer)."""
+    if not API_URL or not API_TOKEN:
+        print("[publish] VERCEL_API_URL ou API_SECRET_TOKEN non configuré")
+        return False
+    headers = {"Authorization": f"Bearer {API_TOKEN}", "Content-Type": "application/json"}
+    try:
+        resp = requests.post(f"{API_URL}/api/recette", json=data, headers=headers, timeout=30)
+        if resp.ok:
+            return True
+        print(f"[publish] Erreur recette {resp.status_code}: {resp.text[:300]}")
+        return False
+    except Exception as e:
+        print(f"[publish] Erreur réseau recette : {e}")
+        return False
+
+
+def publish_recette_services(services: list[dict]) -> int:
+    """Enregistre les dates de service des plats (POST /api/recette/services, Bearer), par
+    lots de 200. Renvoie le nombre de couples ajoutés (0 si non configuré ; s'arrête au
+    premier lot en erreur en gardant le compte des lots déjà passés)."""
+    if not API_URL or not API_TOKEN or not services:
+        return 0
+    headers = {"Authorization": f"Bearer {API_TOKEN}", "Content-Type": "application/json"}
+    ajoutes = 0
+    try:
+        for i in range(0, len(services), 200):
+            resp = requests.post(f"{API_URL}/api/recette/services",
+                                 json={"services": services[i:i + 200]}, headers=headers, timeout=30)
+            if not resp.ok:
+                print(f"[publish] Erreur dates de service {resp.status_code}: {resp.text[:200]}")
+                break
+            n = resp.json().get("ajoutes")
+            ajoutes += n if isinstance(n, int) else 0
+    except Exception as e:
+        print(f"[publish] Erreur réseau dates de service : {e}")
+    return ajoutes
+
+
 def fetch_pdj(date: str) -> dict | None:
     """PDJ publié pour une date (GET /api/pdj?date=), ou None."""
     if not API_URL:

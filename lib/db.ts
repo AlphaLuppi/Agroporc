@@ -1,5 +1,7 @@
 import { Pool, type QueryResult, type QueryResultRow } from "pg";
 import { SLUG_TO_RESTAURANT } from "@/lib/restaurants";
+import { creditFournisseur, normPlatImage, srcPlatImage, type ImagePlat } from "@/lib/plat-image";
+import { motifsRecherche, tempsTotal, type Difficulte, type RecetteComplete, type RecetteContenu, type ResumeRecette } from "@/lib/recettes";
 
 // Postgres auto-hébergé (VPS) au lieu de Vercel Postgres/Neon.
 // Le driver `pg` parle le protocole wire standard sur TCP+TLS.
@@ -938,6 +940,217 @@ export async function platImagesExistantes(cles: string[]): Promise<Map<string, 
     );
   } catch (e) {
     if (tableAbsente(e)) return new Map();
+    throw e;
+  }
+}
+
+// --- Recettes (POC) ---
+// Une recette par variante de plat, clé = `clePlatImage` (la même que l'image du plat).
+// `pdj_recette_services` garde chaque date de service, sans FK : une date peut arriver avant
+// la recette (génération ratée puis rattrapée). Contrat : docs/poc-recettes-spec.md §2.
+
+export async function ensureRecettesTable(): Promise<void> {
+  await sql`
+    CREATE TABLE IF NOT EXISTS pdj_recettes (
+      cle VARCHAR(24) PRIMARY KEY,
+      restaurant TEXT NOT NULL,
+      plat TEXT NOT NULL,
+      titre TEXT NOT NULL,
+      recette JSONB NOT NULL,
+      recherche TEXT NOT NULL DEFAULT '',
+      modele VARCHAR(80),
+      fournisseur VARCHAR(50),
+      version_prompt SMALLINT,
+      date_premier_service DATE,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS pdj_recettes_restaurant_idx ON pdj_recettes (restaurant)`;
+  await sql`
+    CREATE TABLE IF NOT EXISTS pdj_recette_services (
+      cle VARCHAR(24) NOT NULL,
+      date DATE NOT NULL,
+      PRIMARY KEY (cle, date)
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS pdj_recette_services_date_idx ON pdj_recette_services (date)`;
+}
+
+/**
+ * Insère la recette ; si la clé existe : ne fait rien, sauf `force` (régénération, sans toucher
+ * à `created_at`). La date de service est enregistrée dans tous les cas. Renvoie true si écrit.
+ */
+export async function upsertRecette(r: {
+  cle: string;
+  restaurant: string;
+  plat: string;
+  titre: string;
+  recette: RecetteContenu;
+  recherche: string;
+  modele: string | null;
+  fournisseur: string | null;
+  version_prompt: number | null;
+  /** Date du plat ; enregistrée comme date de service seulement si `servi`. */
+  date: string;
+  servi: boolean;
+  force: boolean;
+}): Promise<boolean> {
+  await ensureRecettesTable();
+  // Jour à venir (PDJ publié d'avance) : pas de « Servi le … » tant que le plat n'est pas servi.
+  const premier = r.servi ? r.date : null;
+  const json = JSON.stringify(r.recette);
+  const res = r.force
+    ? await sql`
+        INSERT INTO pdj_recettes (cle, restaurant, plat, titre, recette, recherche, modele, fournisseur, version_prompt, date_premier_service)
+        VALUES (${r.cle}, ${r.restaurant}, ${r.plat}, ${r.titre}, ${json}::jsonb, ${r.recherche}, ${r.modele}, ${r.fournisseur}, ${r.version_prompt}, ${premier}::date)
+        ON CONFLICT (cle) DO UPDATE SET restaurant = EXCLUDED.restaurant, plat = EXCLUDED.plat, titre = EXCLUDED.titre,
+          recette = EXCLUDED.recette, recherche = EXCLUDED.recherche, modele = EXCLUDED.modele, fournisseur = EXCLUDED.fournisseur,
+          version_prompt = EXCLUDED.version_prompt,
+          date_premier_service = LEAST(pdj_recettes.date_premier_service, EXCLUDED.date_premier_service), updated_at = NOW()
+      `
+    : await sql`
+        INSERT INTO pdj_recettes (cle, restaurant, plat, titre, recette, recherche, modele, fournisseur, version_prompt, date_premier_service)
+        VALUES (${r.cle}, ${r.restaurant}, ${r.plat}, ${r.titre}, ${json}::jsonb, ${r.recherche}, ${r.modele}, ${r.fournisseur}, ${r.version_prompt}, ${premier}::date)
+        ON CONFLICT (cle) DO NOTHING
+      `;
+  if (r.servi) {
+    await sql`INSERT INTO pdj_recette_services (cle, date) VALUES (${r.cle}, ${r.date}::date) ON CONFLICT DO NOTHING`;
+    await sql`UPDATE pdj_recettes SET date_premier_service = LEAST(date_premier_service, ${r.date}::date) WHERE cle = ${r.cle}`;
+  }
+  return (res.rowCount ?? 0) > 0;
+}
+
+/** Dates de service des plats déjà pourvus d'une recette (le pipeline les saute). Renvoie le nb ajouté. */
+export async function ajouterServicesRecettes(services: { cle: string; date: string }[]): Promise<number> {
+  if (services.length === 0) return 0;
+  await ensureRecettesTable();
+  const cles = services.map((s) => s.cle);
+  const dates = services.map((s) => s.date);
+  const r = await sql`
+    INSERT INTO pdj_recette_services (cle, date)
+    SELECT * FROM unnest(${cles}::text[], ${dates}::date[])
+    ON CONFLICT DO NOTHING
+  `;
+  await sql`
+    UPDATE pdj_recettes r SET date_premier_service = LEAST(r.date_premier_service, s.d)
+    FROM (SELECT cle, MIN(date) AS d FROM unnest(${cles}::text[], ${dates}::date[]) AS t(cle, date) GROUP BY cle) s
+    WHERE r.cle = s.cle
+  `;
+  return r.rowCount ?? 0;
+}
+
+/** Clés présentes parmi `cles` (lecture seule, table absente = aucune). */
+export async function recettesExistantes(cles: string[]): Promise<Set<string>> {
+  if (cles.length === 0) return new Set();
+  try {
+    const r = await sql`SELECT cle FROM pdj_recettes WHERE cle = ANY(${cles})`;
+    return new Set(r.rows.map((row) => row.cle as string));
+  } catch (e) {
+    if (tableAbsente(e)) return new Set();
+    throw e;
+  }
+}
+
+/** Image du plat (même clé) pour chaque recette, via les images existantes. */
+async function imagesRecettes(cles: string[]): Promise<Map<string, ImagePlat>> {
+  const out = new Map<string, ImagePlat>();
+  for (const [cle, meta] of await platImagesExistantes(cles)) {
+    const credit = creditFournisseur(meta.fournisseur);
+    out.set(cle, credit ? { src: srcPlatImage(cle, meta.creeLe), credit } : { src: srcPlatImage(cle, meta.creeLe) });
+  }
+  return out;
+}
+
+const isoOuVide = (d: unknown) => (d instanceof Date ? d.toISOString() : d ? new Date(d as string).toISOString() : "");
+
+/** Recette complète avec ses dates de service (60 dernières) et l'image du plat ; null si absente. */
+export async function getRecette(cle: string): Promise<RecetteComplete | null> {
+  try {
+    // Dates formatées côté SQL : `pg` renvoie un DATE en objet Date local.
+    const r = await sql`
+      SELECT r.cle, r.restaurant, r.plat, r.recette, r.modele, r.fournisseur, r.version_prompt, r.created_at, r.updated_at,
+        to_char(LEAST(r.date_premier_service, (SELECT MIN(s.date) FROM pdj_recette_services s WHERE s.cle = r.cle)), 'YYYY-MM-DD') AS date_premier_service,
+        ARRAY(SELECT to_char(s.date, 'YYYY-MM-DD') FROM pdj_recette_services s WHERE s.cle = r.cle ORDER BY s.date DESC LIMIT 60) AS dates_service
+      FROM pdj_recettes r WHERE r.cle = ${cle}
+    `;
+    if (!r.rows.length) return null;
+    const row = r.rows[0];
+    const image = (await imagesRecettes([cle])).get(cle) ?? null;
+    return {
+      ...(row.recette as RecetteContenu),
+      cle: row.cle as string,
+      restaurant: row.restaurant as string,
+      plat: row.plat as string,
+      modele: (row.modele as string | null) ?? null,
+      fournisseur: (row.fournisseur as string | null) ?? null,
+      version_prompt: row.version_prompt == null ? null : Number(row.version_prompt),
+      date_premier_service: (row.date_premier_service as string | null) ?? null,
+      dates_service: (row.dates_service as string[] | null) ?? [],
+      cree_le: isoOuVide(row.created_at),
+      maj_le: isoOuVide(row.updated_at),
+      image,
+    };
+  } catch (e) {
+    if (tableAbsente(e)) return null;
+    throw e;
+  }
+}
+
+/**
+ * Banque de recettes paginée : filtre texte sur `recherche` (normalisé comme les clés, donc
+ * sans `unaccent`) et par restaurant ; tri par dernier service puis titre.
+ */
+export async function listerRecettes(p: {
+  q: string;
+  restaurant: string | null;
+  page: number;
+  parPage: number;
+}): Promise<{ recettes: ResumeRecette[]; total: number }> {
+  // Un motif par mot, tous requis (LIKE ALL d'un tableau vide = vrai : pas de filtre).
+  const motifs = motifsRecherche(p.q);
+  const offset = (Math.max(1, p.page) - 1) * p.parPage;
+  try {
+    const [liste, compte] = await Promise.all([
+      sql`
+        SELECT r.cle, r.restaurant, r.plat, r.titre,
+          r.recette->>'difficulte' AS difficulte, r.recette->'personnes' AS personnes,
+          r.recette->'temps_preparation_min' AS prep, r.recette->'temps_cuisson_min' AS cuisson, r.recette->'temps_repos_min' AS repos,
+          to_char(COALESCE(MAX(s.date), r.date_premier_service), 'YYYY-MM-DD') AS derniere_date,
+          COUNT(s.date)::int AS nb_services
+        FROM pdj_recettes r LEFT JOIN pdj_recette_services s USING (cle)
+        WHERE r.recherche LIKE ALL (${motifs}::text[])
+          AND (${p.restaurant}::text IS NULL OR r.restaurant = ${p.restaurant}::text)
+        GROUP BY r.cle
+        ORDER BY COALESCE(MAX(s.date), r.date_premier_service) DESC NULLS LAST, r.titre ASC
+        LIMIT ${p.parPage} OFFSET ${offset}
+      `,
+      sql`
+        SELECT COUNT(*)::int AS total FROM pdj_recettes r
+        WHERE r.recherche LIKE ALL (${motifs}::text[])
+          AND (${p.restaurant}::text IS NULL OR r.restaurant = ${p.restaurant}::text)
+      `,
+    ]);
+    const images = await imagesRecettes(liste.rows.map((row) => row.cle as string));
+    const recettes: ResumeRecette[] = liste.rows.map((row) => ({
+      cle: row.cle as string,
+      restaurant: row.restaurant as string,
+      plat: row.plat as string,
+      titre: row.titre as string,
+      difficulte: row.difficulte as Difficulte,
+      personnes: Number(row.personnes) || 0,
+      temps_total_min: tempsTotal({
+        temps_preparation_min: Number(row.prep) || 0,
+        temps_cuisson_min: Number(row.cuisson) || 0,
+        temps_repos_min: Number(row.repos) || 0,
+      }),
+      derniere_date: (row.derniere_date as string | null) ?? null,
+      nb_services: Number(row.nb_services) || 0,
+      image: images.get(row.cle as string) ?? null,
+    }));
+    return { recettes, total: Number(compte.rows[0]?.total) || 0 };
+  } catch (e) {
+    if (tableAbsente(e)) return { recettes: [], total: 0 };
     throw e;
   }
 }
