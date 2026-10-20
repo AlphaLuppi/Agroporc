@@ -14,9 +14,13 @@ Modes d'exécution :
   python main.py cartes [slug] [--force]  → Traite les cartes permanentes (Trèfle,
                               Basilic n'Go, Dubble, La Mijote) hors état de run :
                               scrape, hash, re-notation LLM si changement.
+  python main.py images [YYYY-MM-DD|semaine] [--force]  → (POC) Images IA des plats
+                              publiés (aujourd'hui par défaut, ou du jour au vendredi),
+                              en sautant celles déjà en base ; --force les régénère.
 """
 import asyncio
 import json
+import os
 import sys
 import traceback
 from datetime import date, datetime, timedelta
@@ -29,10 +33,10 @@ HISTORY_DIR = Path(__file__).parent / "output" / "historique"
 load_dotenv()
 
 from scrapers import bistrot_trefle, pause_gourmande, truck_muche, basilic_ngo, dubble, la_mijote
-from agent import diet_agent, repair_team, comment_agent, feedback_agent, idee_agent, portion_agent, carte_agent
+from agent import diet_agent, repair_team, comment_agent, feedback_agent, idee_agent, portion_agent, carte_agent, image_agent
 from creer_personnage import creer_personnage
 from messages import generer_messages_semaine, maj_message_jour
-from publish import publish_pdj, publish_carte, fetch_carte_hash
+from publish import publish_pdj, publish_carte, fetch_carte_hash, fetch_pdj
 from jours_feries import est_ferie
 from gif_search import reset_used_gifs
 import run_state
@@ -103,6 +107,9 @@ async def run_jour(retry: bool = False) -> int:
 
     # Publier vers Vercel
     publish_pdj(output)
+
+    # ── Images IA des plats (POC, best-effort, budget court) ─────────────
+    await _step_images(loop, output)
 
     # ── Évaluation des idées d'amélioration ──────────────────────────────
     try:
@@ -308,6 +315,9 @@ async def run_semaine(retry: bool = False) -> int:
     # Publier vers Vercel
     publish_pdj(output)
 
+    # ── Images IA des plats (POC, best-effort, budget court) ─────────────
+    await _step_images(loop, output)
+
     # ── Cartes permanentes (une fois par lundi, hash-gardées, reprenables) ──
     await _step_cartes(state, loop)
 
@@ -320,6 +330,73 @@ async def run_semaine(retry: bool = False) -> int:
     complet = run_state.est_complet(state)
     print(f"[état] {run_state.resume(state)}")
     return EXIT_OK if complet else EXIT_PARTIAL
+
+
+# ── Images IA des plats (POC) ───────────────────────────────────────────────
+
+# Dans le run 7h30 : budget court (≈ 3 images Pollinations à 1 / 45 s) pour ne pas tenir
+# le lock et faire sauter les retries ; le cron `images` de 10h35 rattrape le reste.
+IMAGES_BUDGET_RUN_S = 150
+IMAGES_BUDGET_COMMANDE_S = 1500
+
+
+def _images_actives() -> bool:
+    return os.getenv("PDJ_IMAGES", "on").lower() not in ("off", "0", "false", "non")
+
+
+async def _step_images(loop, output: dict) -> None:
+    """Génère les images manquantes du PDJ du jour. Ne lève jamais, n'entre pas dans
+    `est_complet` : une image ratée ne rend pas la journée partielle."""
+    if not _images_actives() or not output or not output.get("plats"):
+        return
+    try:
+        budget = float(os.getenv("PDJ_IMAGES_BUDGET_RUN", IMAGES_BUDGET_RUN_S))
+        await loop.run_in_executor(None, image_agent.illustrer, [output], budget)
+    except Exception as e:
+        print(f"[pipeline:images] Erreur (ignorée) : {e}")
+
+
+def _dates_images(arg: str | None, today: date) -> list[str]:
+    """`None` → aujourd'hui ; `semaine` → d'aujourd'hui au vendredi ; sinon la date donnée."""
+    if arg is None:
+        return [today.isoformat()]
+    if arg == "semaine":
+        return [(today + timedelta(days=i)).isoformat() for i in range(0, max(1, 5 - today.weekday()))]
+    return [date.fromisoformat(arg).isoformat()]
+
+
+def run_images(arg: str | None = None, force: bool = False) -> int:
+    """Commande manuelle / cron : relit les PDJ publiés (API, à défaut pdj.json) et
+    génère les images manquantes. Toujours 0 sauf argument invalide (rien n'est requis)."""
+    if not _images_actives():
+        print("[pipeline:images] Désactivé (PDJ_IMAGES=off)")
+        return 0
+    try:
+        dates = _dates_images(arg, date.today())
+    except ValueError:
+        print(f"[pipeline:images] Date invalide : {arg} (attendu YYYY-MM-DD ou semaine)")
+        return 1
+    pdjs = []
+    for d in dates:
+        pdj = fetch_pdj(d)
+        if pdj is None and OUTPUT_FILE.exists():
+            try:
+                local = json.loads(OUTPUT_FILE.read_text())
+                pdj = local if local.get("date") == d else None
+            except Exception:
+                pdj = None
+        if pdj:
+            pdjs.append(pdj)
+        else:
+            print(f"[pipeline:images] Pas de PDJ publié pour {d}")
+    if not pdjs:
+        return 0
+    try:
+        budget = float(os.getenv("PDJ_IMAGES_BUDGET", IMAGES_BUDGET_COMMANDE_S))
+    except ValueError:
+        budget = IMAGES_BUDGET_COMMANDE_S
+    image_agent.illustrer(pdjs, budget, force=force)
+    return 0
 
 
 # ── Utilitaires communs ─────────────────────────────────────────────────────
@@ -570,7 +647,8 @@ async def _step_commentaires(state: dict, loop, output: dict) -> dict:
 
 def main():
     usage = ("Usage: python main.py [semaine|jour|cartes [slug] [--force]|commentaires <personnage>"
-             "|sync-feedback|nouveau-personnage|check-portions|desserts]")
+             "|sync-feedback|nouveau-personnage|check-portions|desserts"
+             "|images [YYYY-MM-DD|semaine] [--force]]")
 
     if len(sys.argv) < 2:
         print(usage)
@@ -586,6 +664,9 @@ def main():
     elif mode == "cartes":
         args = [a for a in sys.argv[2:] if not a.startswith("--")]
         sys.exit(asyncio.run(run_cartes(args[0] if args else None, force="--force" in sys.argv)))
+    elif mode == "images":
+        args = [a for a in sys.argv[2:] if not a.startswith("--")]
+        sys.exit(run_images(args[0] if args else None, force="--force" in sys.argv))
     elif mode == "check-portions":
         print("[main] Vérification des photos de référence...")
         estimates = portion_agent.check_and_update()

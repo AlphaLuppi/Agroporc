@@ -67,18 +67,18 @@
 /* ── Vue Jour ── */
 .grille { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; grid-auto-flow: dense; align-content: start; }
 .hero {
-  grid-column: 1 / -1; display: flex; gap: 12px; align-items: flex-start; text-align: left; cursor: pointer;
-  padding: 12px 14px; border-radius: var(--radius); border: 1px solid var(--good-border); background: var(--good-bg); color: var(--text); font: inherit;
+  grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-start; text-align: left; cursor: pointer;
+  --pad-y: 12px; --pad-x: 14px; padding: var(--pad-y) var(--pad-x); overflow: hidden; border-radius: var(--radius); border: 1px solid var(--good-border); background: var(--good-bg); color: var(--text); font: inherit;
 }
 .hero .pastille { min-width: 52px; height: 52px; font-size: 1.3rem; background: var(--bg); }
-.heroTexte { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.heroTexte { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1 1 0; }
 .heroNom { font-family: var(--font-heading); font-weight: 700; font-size: 1.05rem; line-height: 1.25; }
 .raison { font-size: 0.78rem; color: var(--text-secondary); line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .macrosLigne { display: flex; flex-wrap: wrap; gap: 2px 12px; font-size: 0.75rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
 .macrosLigne b { color: var(--text); font-weight: 600; }
 .tuile {
-  display: flex; flex-direction: column; gap: 5px; text-align: left; cursor: pointer; min-width: 0;
-  padding: 10px 12px; border-radius: var(--radius); border: 1px solid var(--border); background: var(--surface); color: var(--text); font: inherit;
+  display: flex; flex-direction: column; gap: 5px; text-align: left; cursor: pointer; min-width: 0; overflow: hidden;
+  --pad-y: 10px; --pad-x: 12px; padding: var(--pad-y) var(--pad-x); border-radius: var(--radius); border: 1px solid var(--border); background: var(--surface); color: var(--text); font: inherit;
   background-image: var(--card-stripe);
   transition: border-color 0.15s ease-out;
 }
@@ -107,6 +107,31 @@
 }
 .puces button:hover { border-color: var(--border-accent); color: var(--text); }
 .message { padding: 28px 20px; text-align: center; border-radius: var(--radius); border: 1px solid var(--bad-border); background: var(--bad-bg); color: var(--bad); }
+
+/* ── Image IA d'un plat (POC) : cadre à ratio fixe, fond d'assiette tant que l'image n'est pas là ── */
+.photo {
+  position: relative; display: block; overflow: hidden; flex: none; aspect-ratio: 16 / 9;
+  background: radial-gradient(120% 90% at 50% 35%, var(--surface-hover), var(--surface) 70%);
+  color: var(--border-accent);
+}
+.photoFond { position: absolute; left: 50%; top: 50%; width: 22%; max-width: 54px; translate: -50% -50%; opacity: 0.55; }
+.photo img {
+  position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center;
+  opacity: 0; transition: opacity 0.35s ease-out;
+}
+.photo[data-etat="ok"] img { opacity: 1; }
+.photo[data-etat="charge"] .photoFond { animation: respire 1.6s ease-in-out infinite; }
+.photoIa {
+  position: absolute; top: 6px; left: 6px; padding: 1px 5px; border-radius: 4px; font-size: 0.56rem; font-weight: 800;
+  letter-spacing: 0.08em; color: #fff; background: rgba(0, 0, 0, 0.45); backdrop-filter: blur(4px);
+}
+.photo_panneau { border-radius: var(--radius-sm); }
+/* Tuile et reco : bandeau à fond perdu en haut de la carte (marges négatives = padding de la carte). */
+.photo_tuile, .photo_hero { margin: calc(-1 * var(--pad-y)) calc(-1 * var(--pad-x)) 2px; width: calc(100% + 2 * var(--pad-x)); }
+.large .photo_tuile { aspect-ratio: 3 / 1; }
+.hero .photo_hero { flex-basis: calc(100% + 2 * var(--pad-x)); aspect-ratio: 21 / 9; }
+.legendeIa { margin: 6px 0 0; font-size: 0.68rem; color: var(--text-muted); }
+@keyframes respire { 50% { opacity: 0.25; } }
 
 /* ── Vue Semaine ── */
 .table { display: none; }
@@ -193,12 +218,15 @@
   .dock { position: static; order: 0; margin: 0; padding: 0; border: 0; background: none; gap: 10px; }
   .dock .mode span { display: inline; }
   .grille { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
-  .hero { grid-column: span 2; grid-row: span 2; flex-direction: column; padding: 20px 22px; gap: 12px; }
+  .hero { grid-column: span 2; grid-row: span 2; flex-direction: column; flex-wrap: nowrap; --pad-y: 20px; --pad-x: 22px; gap: 12px; }
+  .hero .photo_hero { flex-basis: auto; aspect-ratio: 2 / 1; }
+  .heroTexte { flex: none; }
   .hero .pastille { min-width: 66px; height: 66px; font-size: 1.7rem; }
   .heroNom { font-size: 1.45rem; }
   .raison { -webkit-line-clamp: unset; font-size: 0.88rem; }
   .macrosLigne { gap: 14px; font-size: 0.78rem; }
-  .tuile { padding: 14px; min-height: 130px; }
+  .tuile { --pad-y: 14px; --pad-x: 14px; min-height: 130px; }
+  .large .photo_tuile { aspect-ratio: 16 / 9; }
   .large { grid-column: auto; }
   .semaineLabel { display: inline; }
   .nom { font-size: 0.95rem; }
@@ -238,5 +266,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .voile, .panneau { animation: none; }
+  .voile, .panneau, .photo[data-etat="charge"] .photoFond { animation: none; }
+  .photo img { transition: none; }
 }

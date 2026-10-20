@@ -108,6 +108,58 @@ def fetch_carte_hash(slug: str = "bistrot_trefle") -> str | None:
         return None
 
 
+def fetch_plat_images_existantes(cles: list[str]) -> set[str] | None:
+    """Clés d'images de plats déjà en base (GET /api/plat-image?cles=…), par lots de 100.
+    None si l'API est injoignable : l'appelant ne génère rien plutôt que de tout refaire."""
+    if not API_URL:
+        return None
+    existantes: set[str] = set()
+    try:
+        for i in range(0, len(cles), 100):
+            resp = requests.get(f"{API_URL}/api/plat-image",
+                                params={"cles": ",".join(cles[i:i + 100])}, timeout=30)
+            if not resp.ok:
+                print(f"[publish] Erreur liste images {resp.status_code}: {resp.text[:200]}")
+                return None
+            existantes.update(resp.json().get("existantes") or [])
+        return existantes
+    except Exception as e:
+        print(f"[publish] Erreur réseau liste images : {e}")
+        return None
+
+
+def publish_plat_image(data: dict) -> bool:
+    """Envoie une image de plat générée par IA (POST /api/plat-image, Bearer)."""
+    if not API_URL or not API_TOKEN:
+        print("[publish] VERCEL_API_URL ou API_SECRET_TOKEN non configuré")
+        return False
+    headers = {"Authorization": f"Bearer {API_TOKEN}", "Content-Type": "application/json"}
+    try:
+        resp = requests.post(f"{API_URL}/api/plat-image", json=data, headers=headers, timeout=60)
+        if resp.ok:
+            return True
+        print(f"[publish] Erreur image {resp.status_code}: {resp.text[:200]}")
+        return False
+    except Exception as e:
+        print(f"[publish] Erreur réseau image : {e}")
+        return False
+
+
+def fetch_pdj(date: str) -> dict | None:
+    """PDJ publié pour une date (GET /api/pdj?date=), ou None."""
+    if not API_URL:
+        return None
+    try:
+        resp = requests.get(f"{API_URL}/api/pdj", params={"date": date}, timeout=30)
+        if not resp.ok:
+            return None
+        data = resp.json()
+        return data if isinstance(data, dict) and data.get("date") == date else None
+    except Exception as e:
+        print(f"[publish] Erreur lecture PDJ {date} : {e}")
+        return None
+
+
 def publish_current():
     """Publie le pdj.json courant."""
     if not PDJ_FILE.exists():

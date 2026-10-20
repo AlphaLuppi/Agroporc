@@ -7,9 +7,11 @@ import { noteMode, type Mode } from "@/lib/carte-tri";
 import { formatDateShort } from "@/lib/format";
 import { casseLisible, recoDuMode } from "@/lib/menus-vue";
 import { variantesPlat } from "@/lib/plat-options";
+import { imageDuPlat, type ImagesPlats } from "@/lib/plat-image";
 import { RESTAURANTS, statutSansPlat } from "@/lib/restaurants";
 import CommentSection from "../CommentSection";
 import MacrosPanel from "../MacrosPanel";
+import PlatImage from "./PlatImage";
 import PhotoPlat from "./PhotoPlat";
 import { AjouterButton, fmtNote, fmtPrix, MODE_LABEL, OrderLinks, Pastille } from "./ui";
 import styles from "./menus.module.css";
@@ -28,6 +30,7 @@ interface Props {
   cartesSlugs: Set<string>;
   onClose: () => void;
   voirCarte: (slug: string) => void;
+  images?: ImagesPlats;
 }
 
 function Fermer({ onClose }: { onClose: () => void }) {
@@ -42,7 +45,7 @@ function Fermer({ onClose }: { onClose: () => void }) {
 }
 
 /** Détail d'un plat : feuille du bas sur mobile, panneau à droite sur desktop. Échap ou le voile ferment. */
-export default function DetailPanneau({ selection, semaine, mode, today, cartesSlugs, onClose, voirCarte }: Props) {
+export default function DetailPanneau({ selection, semaine, mode, today, cartesSlugs, onClose, voirCarte, images }: Props) {
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -74,6 +77,7 @@ export default function DetailPanneau({ selection, semaine, mode, today, cartesS
       const estReco = reco?.restaurant === plat.restaurant && reco.plat === v.plat;
       const justification = mode === "goulaf" ? v.justification_goulaf || v.justification : v.justification;
       titre = casseLisible(v.plat);
+      const image = imageDuPlat(images, plat.restaurant, v.plat);
       const resto = RESTAURANTS.find((r) => r.nom === plat.restaurant);
       const slugPhotos = resto && resto.type !== "lien" ? resto.slug : undefined;
       contenu = (
@@ -91,6 +95,14 @@ export default function DetailPanneau({ selection, semaine, mode, today, cartesS
             </div>
             <Fermer onClose={onClose} />
           </div>
+          {image && (
+            <figure style={{ margin: 0 }}>
+              <PlatImage key={image.src} src={image.src} nom={titre} format="panneau" />
+              <figcaption className={styles.legendeIa}>
+                Image générée par IA, non contractuelle{image.credit ? ` · Image : ${image.credit}` : ""}
+              </figcaption>
+            </figure>
+          )}
           {estReco && reco?.raison && <p className={styles.texte} style={{ color: "var(--good)" }}>{reco.raison}</p>}
           <MacrosPanel nutri={v.nutrition_estimee} ingredients={v.ingredients_detail} source={v.nutrition_source} />
           {justification && <p className={styles.texte}>{justification}</p>}
