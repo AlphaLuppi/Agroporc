@@ -43,6 +43,7 @@ Cartes permanentes : `main.py CARTE_SOURCES` → hash → `/api/carte` (`pdj_car
 - **Switch V1 / V2** (`app/components/VersionSwitch.tsx`, dans la barre de navigation) : cookie `pdj-ui` (`lib/version-ui.ts`, V2 par défaut) lu au rendu serveur par l'accueil et « Aide-moi à choisir ». V1 = affichage d'avant la refonte (PR #32) : `app/v1/AccueilV1.tsx` (+ `app/v1/CarteLazy.tsx`, `CarteRestaurant.tsx`, piloté par les onglets/tri de `ClientScripts`) et `app/aide-moi-a-choisir/QuizClientV1.tsx`. Changer de version recharge la page
 - `app/CommentSection.tsx` / `app/CommentForm.tsx` — Client components for the comment system
 - `app/historique/` — History page
+- Import d'images : `lib/image-upload.ts` (compression navigateur, testée) + `app/components/ImportImage.tsx` (bouton, coller, glisser-déposer) → `POST /api/images` (table `pdj_images`, servie par `/api/images/<id>.<ext>`), utilisé pour la photo de profil et les gifs fétiches des IA (`app/ia/`). Photo d'un plat ajoutée depuis `DetailPanneau` (`app/menus/PhotoPlat.tsx` → `POST /api/photos` avec `plat_nom`/`plat_date`)
 - `app/api/` — API routes: `update` (auth-protected ingestion), `commentaire` (rate-limited user comments), `pdj` (read), `historique`, `feedback-ia`
 - `lib/db.ts` — Vercel Postgres queries, types (`PdjEntry`, `Plat`, `Commentaire`, `Recommandation`)
 - `lib/characters.ts` — Character definitions (avatars, colors, emojis) used in both comments and UI

@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { uploadPhotoAction, deletePhotoAction } from "./actions";
 import type { Photo } from "@/lib/db";
+import { preparerImage } from "@/lib/image-upload";
 
 const RESTAURANTS = [
   { name: "Le Bistrot Trèfle", slug: "bistrot_trefle" },
@@ -14,8 +15,6 @@ const RESTAURANTS = [
   { name: "La Mijote", slug: "la_mijote" },
 ];
 
-const MAX_FILE_SIZE = 3 * 1024 * 1024;
-const ACCEPTED_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
 
 interface RecentDish {
   plat_nom: string;
@@ -45,17 +44,17 @@ export default function AdminPhotosClient({ initialPhotos }: Props) {
     setPhotos(initialPhotos);
   }, [initialPhotos]);
 
-  async function handleFileSelect(slug: string, file: File) {
-    if (file.size > MAX_FILE_SIZE) {
-      setError("Fichier trop lourd (max 3 Mo)");
-      return;
-    }
-    if (!ACCEPTED_TYPES.includes(file.type)) {
-      setError("Format non supporté (JPG, PNG, WEBP, GIF)");
-      return;
-    }
+  async function handleFileSelect(slug: string, original: File) {
     setError(null);
     setSuccess(null);
+    // Réduit/recompresse les photos de téléphone (souvent > 3 Mo) avant l'envoi.
+    let file: File;
+    try {
+      file = await preparerImage(original, 1600);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Image illisible");
+      return;
+    }
     setPendingUpload({ slug, file });
     setLoadingDishes(true);
     try {
@@ -293,7 +292,7 @@ export default function AdminPhotosClient({ initialPhotos }: Props) {
                     fileInputRefs.current[slug] = el;
                   }}
                   type="file"
-                  accept="image/jpeg,image/png,image/webp,image/gif"
+                  accept="image/*"
                   className="sr-only"
                   disabled={isUploading}
                   onChange={(e) => {
