@@ -40,7 +40,7 @@ HISTORY_DIR = Path(__file__).parent / "output" / "historique"
 load_dotenv()
 
 from scrapers import bistrot_trefle, pause_gourmande, truck_muche, basilic_ngo, dubble, la_mijote
-from agent import diet_agent, repair_team, comment_agent, feedback_agent, idee_agent, portion_agent, carte_agent, image_agent, recette_agent
+from agent import diet_agent, repair_team, comment_agent, feedback_agent, idee_agent, portion_agent, carte_agent, image_agent, recette_agent, meme_agent
 from creer_personnage import creer_personnage
 from messages import generer_messages_semaine, maj_message_jour
 from publish import publish_pdj, publish_carte, fetch_carte_hash, fetch_pdj
@@ -725,7 +725,8 @@ async def _step_commentaires(state: dict, loop, output: dict) -> dict:
 def main():
     usage = ("Usage: python main.py [semaine|jour|cartes [slug] [--force]|commentaires <personnage>"
              "|sync-feedback|nouveau-personnage|check-portions|desserts"
-             "|images [YYYY-MM-DD|semaine] [--force]|recettes [YYYY-MM-DD|semaine] [--force]]")
+             "|images [YYYY-MM-DD|semaine] [--force]|recettes [YYYY-MM-DD|semaine] [--force]"
+             "|memes [--dry-run]]")
 
     if len(sys.argv) < 2:
         print(usage)
@@ -747,6 +748,8 @@ def main():
     elif mode == "recettes":
         args = [a for a in sys.argv[2:] if not a.startswith("--")]
         sys.exit(run_recettes(args[0] if args else None, force="--force" in sys.argv))
+    elif mode == "memes":
+        sys.exit(meme_agent.rafraichir(dry_run="--dry-run" in sys.argv))
     elif mode == "check-portions":
         print("[main] Vérification des photos de référence...")
         estimates = portion_agent.check_and_update()

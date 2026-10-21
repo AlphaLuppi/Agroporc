@@ -32,8 +32,11 @@ RUN chmod +x /entrypoint.sh
 #        lundi-vendredi 13h Paris = desserts (postés vers midi par le Truck Muche),
 #        lundi-vendredi 10h35 Paris = images IA des plats (POC) manquantes, du lundi au vendredi
 #        lundi-vendredi 11h15 Paris = recettes maison des plats (POC) manquantes, du jour seulement
+#        lundi 6h45 Paris = gifs fétiches des IA rafraîchis depuis les memes du moment (meme.com)
+#        (avant le run semaine de 7h30 qui génère les commentaires)
 #        (après le dernier retry 10h00 et la fin des images ≤ 11h05 ; dates = plats vraiment servis)
 RUN echo '30 7 * * 1 root /entrypoint.sh semaine >> /app/logs/cron.log 2>&1' > /etc/cron.d/pdj && \
+    echo '45 6 * * 1 root /entrypoint.sh memes >> /app/logs/cron.log 2>&1' >> /etc/cron.d/pdj && \
     echo '30 7 * * 2-5 root /entrypoint.sh jour >> /app/logs/cron.log 2>&1' >> /etc/cron.d/pdj && \
     echo '45 7 * * 1-5 root /entrypoint.sh retry >> /app/logs/cron.log 2>&1' >> /etc/cron.d/pdj && \
     echo '0,15,30,45 8-9 * * 1-5 root /entrypoint.sh retry >> /app/logs/cron.log 2>&1' >> /etc/cron.d/pdj && \

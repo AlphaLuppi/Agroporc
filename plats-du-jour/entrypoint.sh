@@ -35,6 +35,11 @@ elif [ "$MODE" = "recettes" ]; then
   exec 200>/app/output/pdj_recettes.lock
   flock -n 200 || { echo "$(date '+%Y-%m-%d %H:%M') [cron] recettes déjà en cours, sauté"; exit 0; }
   LIMITE="timeout -k 30 1800"
+elif [ "$MODE" = "memes" ]; then
+  # Gifs fétiches des IA (lundi 6h45, avant le run semaine) : lock à part, ~5 min.
+  exec 200>/app/output/pdj_memes.lock
+  flock -n 200 || { echo "$(date '+%Y-%m-%d %H:%M') [cron] memes déjà en cours, sauté"; exit 0; }
+  LIMITE="timeout -k 30 1200"
 else
   exec 200>/app/output/pdj_run.lock
   if [ -n "$RETRY" ]; then
