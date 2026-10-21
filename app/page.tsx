@@ -1,4 +1,5 @@
-import { ensureTable, getWeekPdj, getCartesDisponibles, platImagesExistantes } from "@/lib/db";
+import { ensureTable, getWeekPdj, getCartesDisponibles, platImagesExistantes, getAllIaProfiles } from "@/lib/db";
+import { avatarsDesProfils, type AvatarIa } from "@/lib/characters";
 import type { PdjEntry } from "@/lib/db";
 import { clesSemaine, imagesDeSemaine } from "@/lib/plat-image-cle";
 import type { ImagesPlats } from "@/lib/plat-image";
@@ -15,8 +16,8 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ s
   const semaine = buildFullWeek(weekPdj, monday);
   // Clés des plats, calculées une fois : images et recettes s'y rattachent.
   const cles = clesSemaine(semaine);
-  // Cartes et images en parallèle : requêtes indépendantes.
-  const [cartes, images] = await Promise.all([getCartesDisponibles(), chargerImages(cles)]);
+  // Cartes, images et avatars en parallèle : requêtes indépendantes.
+  const [cartes, images, avatars] = await Promise.all([getCartesDisponibles(), chargerImages(cles), chargerAvatars()]);
   const prev = new Date(monday); prev.setDate(monday.getDate() - 7);
   const next = new Date(monday); next.setDate(monday.getDate() + 7);
 
@@ -38,6 +39,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ s
       isCurrentWeek={mondayStr === resolveMonday().toLocaleDateString("en-CA")}
       images={images}
       clesPlats={Object.fromEntries(cles)}
+      avatars={avatars}
     />
   );
 }
@@ -48,6 +50,16 @@ async function chargerImages(cles: Map<string, string>): Promise<ImagesPlats> {
     return imagesDeSemaine(cles, await platImagesExistantes([...new Set(cles.values())]));
   } catch (e) {
     console.error("[accueil] images des plats indisponibles", e);
+    return {};
+  }
+}
+
+/** Photos des personnages IA en base (ajoutées depuis /ia) ; en erreur, la liste statique suffit. */
+async function chargerAvatars(): Promise<Record<string, AvatarIa>> {
+  try {
+    return avatarsDesProfils(await getAllIaProfiles());
+  } catch (e) {
+    console.error("[accueil] profils IA indisponibles", e);
     return {};
   }
 }

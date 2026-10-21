@@ -49,3 +49,41 @@ export const AVATAR_IMAGE: Record<string, string> = {
   Philippe: "/avatars/philippe.webp",
   Toam: "/avatars/toam.webp",
 };
+
+/** Repère visuel d'un personnage IA créé ou modifié depuis /ia (table `ia_profiles`). */
+export interface AvatarIa {
+  image?: string;
+  couleur?: string;
+  emoji?: string;
+}
+
+/** Prénom → repère, tel qu'il signe ses commentaires ; seuls les champs renseignés sont gardés. */
+export function avatarsDesProfils(
+  profils: { prenom: string; avatar_url?: string; couleur?: string; emoji?: string }[]
+): Record<string, AvatarIa> {
+  const avatars: Record<string, AvatarIa> = {};
+  for (const p of profils) {
+    const avatar: AvatarIa = {};
+    if (p.avatar_url?.trim()) avatar.image = p.avatar_url.trim();
+    if (p.couleur?.trim()) avatar.couleur = p.couleur.trim();
+    if (p.emoji?.trim()) avatar.emoji = p.emoji.trim();
+    if (Object.keys(avatar).length > 0) avatars[p.prenom] = avatar;
+  }
+  return avatars;
+}
+
+/**
+ * Avatar d'un auteur de commentaire : le profil en base l'emporte (comme sur /ia),
+ * sinon la liste statique, sinon gris + initiale.
+ */
+export function avatarAuteur(
+  auteur: string,
+  avatarsIa?: Record<string, AvatarIa>
+): { image?: string; couleur: string; emoji: string } {
+  const ia = avatarsIa?.[auteur];
+  return {
+    image: ia?.image || AVATAR_IMAGE[auteur],
+    couleur: ia?.couleur || AVATAR_COLORS[auteur] || "#6b7280",
+    emoji: ia?.emoji || AVATAR_EMOJI[auteur] || auteur.charAt(0),
+  };
+}

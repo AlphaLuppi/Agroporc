@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, useTransition, type CSSProperties, type MouseEvent } from "react";
 import { useRouter } from "next/navigation";
+import type { AvatarIa } from "@/lib/characters";
 import type { PdjEntry } from "@/lib/db";
 import { formatDateShort, formatDayShort } from "@/lib/format";
 import { meilleureNoteDuJour } from "@/lib/menus-vue";
@@ -42,6 +43,8 @@ interface Props {
   images?: ImagesPlats;
   /** Base de clé → clé de chaque plat de la semaine (le client ne hache rien) : recettes (POC). */
   clesPlats?: Record<string, string>;
+  /** Repères des personnages IA en base (photo ajoutée depuis /ia), par prénom. */
+  avatars?: Record<string, AvatarIa>;
 }
 
 function Chevron({ sens }: { sens: "g" | "d" }) {
@@ -52,7 +55,7 @@ function Chevron({ sens }: { sens: "g" | "d" }) {
   );
 }
 
-export default function MenusClient({ semaine, cartes, today, defaultIdx, weekLabel, prevHref, nextHref, isCurrentWeek, images, clesPlats }: Props) {
+export default function MenusClient({ semaine, cartes, today, defaultIdx, weekLabel, prevHref, nextHref, isCurrentWeek, images, clesPlats, avatars }: Props) {
   const [mode, setMode] = useModeSite();
   const [vue, setVueState] = useState<Vue>("jour");
   // Jour choisi + sens du dernier changement (slide directionnel de la vue Jour).
@@ -266,6 +269,7 @@ export default function MenusClient({ semaine, cartes, today, defaultIdx, weekLa
           cartesSlugs={new Set(cartes)}
           images={images}
           clesPlats={clesPlats}
+          avatars={avatars}
           onClose={fermer}
           voirCarte={voirCarte}
         />
