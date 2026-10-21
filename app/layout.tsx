@@ -6,7 +6,7 @@ import { MyrtilleEasterEgg } from "./components/MyrtilleEasterEgg";
 import { TigreCourant } from "./components/TigreCourant";
 
 export const metadata: Metadata = {
-  title: "Plats du Jour",
+  title: "Agroporc",
   description: "Les plats du jour évalués chaque matin",
   icons: {
     icon: "/favicon.png",
@@ -43,7 +43,7 @@ export default function RootLayout({
           <div className="mx-auto flex h-16 max-w-[1180px] items-center justify-between gap-4 px-4 sm:px-8">
             <div className="nav-left flex items-center gap-4 sm:gap-6 lg:gap-10 min-w-0">
               <Link href="/" className="pdj-logo flex items-center gap-2 text-lg sm:text-xl font-bold text-[var(--accent)] no-underline tracking-wide shrink-0" style={{ fontFamily: "var(--font-heading)" }}>
-                <img src="/logo.jpg" alt="Logo Plats du Jour" className="w-8 h-8 sm:w-9 sm:h-9 rounded-full object-cover" />
+                <img src="/logo.jpg" alt="Logo Agroporc" className="w-8 h-8 sm:w-9 sm:h-9 rounded-full object-cover" />
                 <span>Agroporc</span>
               </Link>
               <div className="nav-links hidden xl:flex items-center gap-1.5" data-nav-links>
@@ -425,7 +425,7 @@ export default function RootLayout({
         </div>
         <div className="pdj-page relative z-[2] mx-auto max-w-[860px] px-3 py-5 sm:px-6 sm:py-10">{children}</div>
         <div className="pdj-page-pied relative z-[1] text-center text-[var(--text-muted)] text-xs py-8 px-4 border-t border-[var(--border)] mt-8 flex flex-col items-center gap-3">
-          <div>Plats du Jour &mdash; Mis à jour automatiquement chaque matin</div>
+          <div>Agroporc &mdash; Mis à jour automatiquement chaque matin</div>
           <a
             href="https://github.com/ThomasSatory/Agroporc"
             target="_blank"

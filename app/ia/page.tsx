@@ -4,7 +4,7 @@ import IaProfilesList from "./IaProfilesList";
 export const dynamic = "force-dynamic";
 
 export const metadata = {
-  title: "Profils IA — Plats du Jour",
+  title: "Profils IA — Agroporc",
 };
 
 export default async function IaPage() {

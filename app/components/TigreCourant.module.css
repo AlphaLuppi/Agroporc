@@ -1,8 +1,35 @@
-/* Tigre qui traverse le bas de l'écran (thème Tigre) : hors champ entre deux passages. */
-.tigre {
+/* Tigre qui traverse le bas de l'écran (thème Tigre) : hors champ entre deux passages.
+   La troupe = le tigre seul, ou la mère précédée dans le DOM de ses petits (le gif
+   regarde à droite : les petits sont derrière ; scaleX(-1) retourne le tout). */
+.troupe {
+  --l: clamp(120px, 13vw, 190px);
   position: fixed; left: 0; bottom: calc(4px + env(safe-area-inset-bottom, 0px)); z-index: 40;
-  width: clamp(120px, 13vw, 190px); height: auto;
+  display: flex; align-items: flex-end;
   pointer-events: none; user-select: none; visibility: hidden;
   transform: translateX(-100%);
-  filter: drop-shadow(0 6px 6px rgba(0, 0, 0, 0.35));
+}
+.troupe img { display: block; height: auto; filter: drop-shadow(0 6px 6px rgba(0, 0, 0, 0.35)); }
+.mere { position: relative; width: var(--l); }
+.mere img { width: 100%; }
+
+/* Petits : en file derrière la mère, chacun avec son propre petit bond. */
+.petit {
+  width: calc(var(--l) * 0.36); margin-right: calc(var(--l) * 0.05);
+  animation: bond 260ms ease-in-out infinite alternate;
+}
+.petit:nth-child(2) { animation-delay: -90ms; width: calc(var(--l) * 0.31); }
+.petit:nth-child(3) { animation-delay: -170ms; width: calc(var(--l) * 0.39); margin-right: calc(var(--l) * 0.09); }
+.petit:nth-child(4) { animation-delay: -40ms; width: calc(var(--l) * 0.33); }
+@keyframes bond { to { translate: 0 -4px; } }
+
+/* Éclair : tigre penché en avant, traînée de vitesse derrière lui. */
+.eclair .mere img { transform: skewX(-10deg); filter: drop-shadow(-14px 0 6px rgba(255, 140, 0, 0.45)); }
+.eclair .mere::before {
+  content: ""; position: absolute; right: 55%; top: 22%; bottom: 18%; width: calc(var(--l) * 2.2);
+  background:
+    repeating-linear-gradient(to bottom, transparent 0 7px, rgba(10, 4, 0, 0.55) 7px 9px),
+    linear-gradient(to left, rgba(255, 140, 0, 0.75), transparent);
+  -webkit-mask: linear-gradient(to left, #000 20%, transparent);
+  mask: linear-gradient(to left, #000 20%, transparent);
+  border-radius: 999px;
 }

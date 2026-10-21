@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ecartAvantPassage, passage } from "@/lib/tigre-courant";
+import { ecartAvantPassage, nombrePetits, passage, tirerEvenement, type Evenement } from "@/lib/tigre-courant";
 import styles from "./TigreCourant.module.css";
+
+const GIF = "/textures/tigre-court.webp";
 
 /** Le thème Tigre est actif et le visiteur accepte les animations. */
 function tigreVisible() {
@@ -10,13 +12,19 @@ function tigreVisible() {
     && !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
+interface Course { id: number; evenement: Evenement; petits: number }
+
 /**
  * Thème Tigre : un tigre traverse le bas de l'écran 4 à 6 fois par minute,
- * à intervalles, vitesses et sens aléatoires. Le gif n'est chargé que dans ce thème.
+ * à intervalles, vitesses et sens aléatoires. Parfois (10 % chacun) un
+ * tigre lancé à pleine vitesse, ou une mère suivie de ses petits.
+ * Le gif n'est chargé que dans ce thème.
  */
 export function TigreCourant() {
   const [actif, setActif] = useState(false);
-  const imgRef = useRef<HTMLImageElement>(null);
+  const [course, setCourse] = useState<Course | null>(null);
+  const troupeRef = useRef<HTMLDivElement>(null);
+  const mereRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const maj = () => setActif(tigreVisible());
@@ -28,33 +36,48 @@ export function TigreCourant() {
     return () => { obs.disconnect(); mq.removeEventListener("change", maj); };
   }, []);
 
+  // Calendrier : tire le prochain passage ; l'animation part une fois la troupe rendue.
   useEffect(() => {
     if (!actif) return;
     let minuteur: ReturnType<typeof setTimeout>;
-    let anim: Animation | undefined;
-    const planifier = () => { minuteur = setTimeout(courir, ecartAvantPassage(Math.random())); };
+    let id = 0;
     const courir = () => {
-      const img = imgRef.current;
       // Onglet caché : on saute ce passage plutôt que d'en accumuler.
-      if (img && !document.hidden) {
-        const { sens, deX, aX, dureeMs } = passage(window.innerWidth, img.offsetWidth, Math.random(), Math.random());
-        img.style.visibility = "visible";
-        anim = img.animate(
-          [
-            { transform: `translateX(${deX}px) scaleX(${sens})` },
-            { transform: `translateX(${aX}px) scaleX(${sens})` },
-          ],
-          { duration: dureeMs, easing: "linear" },
-        );
-        anim.onfinish = () => { img.style.visibility = ""; };
+      if (!document.hidden) {
+        setCourse({ id: ++id, evenement: tirerEvenement(Math.random()), petits: nombrePetits(Math.random()) });
       }
-      planifier();
+      minuteur = setTimeout(courir, ecartAvantPassage(Math.random()));
     };
     // Premier passage peu après l'arrivée sur le thème, pour qu'on le remarque.
     minuteur = setTimeout(courir, 2500);
-    return () => { clearTimeout(minuteur); anim?.cancel(); };
+    return () => { clearTimeout(minuteur); setCourse(null); };
   }, [actif]);
 
+  useEffect(() => {
+    const troupe = troupeRef.current;
+    const mere = mereRef.current;
+    if (!course || !troupe || !mere) return;
+    const { sens, deX, aX, dureeMs } = passage(
+      window.innerWidth, troupe.offsetWidth, mere.offsetWidth, course.evenement, Math.random(), Math.random(),
+    );
+    troupe.style.visibility = "visible";
+    const anim = troupe.animate(
+      [
+        { transform: `translateX(${deX}px) scaleX(${sens})` },
+        { transform: `translateX(${aX}px) scaleX(${sens})` },
+      ],
+      { duration: dureeMs, easing: "linear" },
+    );
+    anim.onfinish = () => { troupe.style.visibility = ""; };
+    return () => { anim.cancel(); troupe.style.visibility = ""; };
+  }, [course]);
+
   if (!actif) return null;
-  return <img ref={imgRef} src="/textures/tigre-court.webp" alt="" aria-hidden="true" className={styles.tigre} />;
+  const petits = course?.evenement === "famille" ? course.petits : 0;
+  return (
+    <div ref={troupeRef} className={`${styles.troupe} ${course?.evenement === "eclair" ? styles.eclair : ""}`} aria-hidden="true">
+      {Array.from({ length: petits }, (_, i) => <img key={i} src={GIF} alt="" className={styles.petit} />)}
+      <div ref={mereRef} className={styles.mere}><img src={GIF} alt="" /></div>
+    </div>
+  );
 }

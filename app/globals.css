@@ -65,15 +65,15 @@
 
 /* ── Theme: Tigre ──────────────────────────────── */
 [data-theme="tigre"] {
-  /* Pelage : vraies rayures (motif tuilable généré par
-     scripts/tigre/gen_rayures.py) sur un fauve assombri par un voile pour
-     garder le texte lisible hors des cartes. --bg reste le brun uni (fonds
-     opaques, pastilles) : le fauve n'existe que dans le motif. */
+  /* Pelage : rayures et fourrure dans une texture tuilable (générée par
+     scripts/tigre/gen_pelage.py), assombrie par un voile pour garder le texte
+     lisible hors des cartes. --bg reste le brun uni (fonds opaques,
+     pastilles) : le fauve n'existe que dans le motif. */
   --bg: #1a0e00;
   --bg-pattern:
-    radial-gradient(ellipse 120% 70% at 50% 0%, rgba(255, 140, 0, 0.16), transparent 70%),
-    linear-gradient(rgba(26, 10, 0, 0.42), rgba(26, 10, 0, 0.62)),
-    url("/textures/tigre.svg") 0 0 / 600px 600px repeat #6e3007;
+    radial-gradient(ellipse 120% 70% at 50% 0%, rgba(255, 140, 0, 0.14), transparent 70%),
+    linear-gradient(rgba(26, 10, 0, 0.5), rgba(26, 10, 0, 0.66)),
+    url("/textures/tigre.webp") 0 0 / 800px 800px repeat #6e3007;
   --surface: #2a1800;
   --surface-hover: #3a2200;
   --surface-accent: #331c00;
@@ -114,6 +114,16 @@
     rgba(255, 140, 0, 0.04) 10px,
     rgba(255, 140, 0, 0.04) 12px
   );
+}
+
+/* Mobile : motif plus petit, pour voir plusieurs rayures à l'écran. */
+@media (max-width: 640px) {
+  [data-theme="tigre"] {
+    --bg-pattern:
+      radial-gradient(ellipse 120% 70% at 50% 0%, rgba(255, 140, 0, 0.14), transparent 70%),
+      linear-gradient(rgba(26, 10, 0, 0.5), rgba(26, 10, 0, 0.66)),
+      url("/textures/tigre.webp") 0 0 / 480px 480px repeat #6e3007;
+  }
 }
 
 /* ── Theme: Terrasse (light bistrot) ──────────── */

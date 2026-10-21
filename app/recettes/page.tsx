@@ -12,7 +12,7 @@ import styles from "./recettes.module.css";
 export const dynamic = "force-dynamic";
 
 export const metadata = {
-  title: "Recettes — Plats du Jour",
+  title: "Recettes — Agroporc",
 };
 
 type SearchParams = Record<string, string | string[] | undefined>;
