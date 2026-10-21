@@ -276,6 +276,10 @@
 .restos button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: var(--accent-glow); animation: pop 260ms var(--m-spring); }
 .carte { columns: 1; column-gap: 32px; }
 .section { break-inside: avoid; margin-bottom: 14px; animation: monter var(--m-slow) var(--m-expo) backwards; animation-delay: calc(var(--i, 0) * 35ms); }
+/* Changement de semaine en cours : l'ancienne semaine s'estompe (après 120 ms : rien sur une navigation rapide). */
+.pile[data-charge] > :not(.titre), .jours[data-charge] {
+  opacity: 0.4; pointer-events: none; transition: opacity var(--m-base) ease-out 120ms;
+}
 /* Squelettes de chargement : balayage discret (nombre d'itérations limité). */
 .squelette { break-inside: avoid; margin-bottom: 18px; display: flex; flex-direction: column; gap: 9px; padding-top: 4px; }
 .squeletteTitre, .squeletteLigne { display: block; position: relative; overflow: hidden; border-radius: 5px; background: var(--surface); }

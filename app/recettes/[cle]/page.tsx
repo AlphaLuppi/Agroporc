@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { getRecette } from "@/lib/db";
@@ -37,7 +38,7 @@ export default async function RecettePage({ params }: { params: Params }) {
     console.error("[recettes] fiche indisponible", e);
     return (
       <article className={styles.fiche}>
-        <a href="/recettes" className={styles.fil}>← Toutes les recettes</a>
+        <Link href="/recettes" className={styles.fil}>← Toutes les recettes</Link>
         <p className={styles.vide}>Recette indisponible pour le moment.</p>
       </article>
     );
@@ -49,7 +50,7 @@ export default async function RecettePage({ params }: { params: Params }) {
 
   return (
     <article className={styles.fiche}>
-      <a href="/recettes" className={styles.fil}>← Toutes les recettes</a>
+      <Link href="/recettes" className={styles.fil}>← Toutes les recettes</Link>
 
       {r.image && (
         <figure className={styles.ficheImage}>

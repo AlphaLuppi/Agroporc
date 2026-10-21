@@ -347,6 +347,35 @@ body::before {
   animation: pdj-shimmer 900ms var(--ease-in-out) 200ms 1 backwards;
 }
 
+/* ── Squelettes de chargement (loading.tsx) ─────
+   Blocs neutres aux couleurs du thème + balayage lent tant que la page charge.
+   La zone apparaît après 120 ms : une navigation rapide ne fait pas clignoter. */
+.pdj-skel-zone { animation: pdj-fade-in 220ms ease-out 120ms backwards; }
+.pdj-skel {
+  display: block;
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--radius-sm, 6px);
+  background: color-mix(in srgb, var(--text) 7%, var(--surface));
+}
+.pdj-skel::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  translate: -100% 0;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--text) 8%, transparent), transparent);
+  animation: pdj-skel-balayage 1400ms ease-in-out infinite;
+}
+.pdj-skel-carte {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+@keyframes pdj-skel-balayage {
+  to { translate: 100% 0; }
+}
+
 /* ── Mobile Drawer ───────────────────────────── */
 .drawer-overlay {
   position: fixed;
@@ -490,6 +519,7 @@ html[data-pdj-pret] #burger-close-icon:not(.hidden) { animation: pdj-burger 260m
   .today-dot { animation: none !important; }
   .day-detail { animation: none !important; }
   .pdj-shimmer::after { display: none; }
+  .pdj-skel::after { display: none; }
   #cart-drawer { transition-duration: 1ms !important; }
 }
 

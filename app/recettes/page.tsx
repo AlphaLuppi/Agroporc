@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { listerRecettes } from "@/lib/db";
 import { formatDateShort } from "@/lib/format";
 import { casseLisible } from "@/lib/menus-vue";
@@ -38,7 +39,7 @@ function Couverts({ className }: { className?: string }) {
 
 function CarteRecette({ r }: { r: ResumeRecette }) {
   return (
-    <a href={`/recettes/${r.cle}`} className={styles.carte}>
+    <Link href={`/recettes/${r.cle}`} className={styles.carte}>
       {r.image ? (
         <PlatImage key={r.image.src} src={r.image.src} nom={r.titre} format="tuile" />
       ) : (
@@ -58,7 +59,7 @@ function CarteRecette({ r }: { r: ResumeRecette }) {
           {r.nb_services > 1 && ` · ${r.nb_services} fois`}
         </span>
       )}
-    </a>
+    </Link>
   );
 }
 
@@ -128,9 +129,9 @@ export default async function RecettesPage({ searchParams }: { searchParams: Pro
 
       {resultat && resultat.total > PAR_PAGE && (
         <nav className={styles.pagination} aria-label="Pagination">
-          {p.page > 1 ? <a href={hrefPage(p.q, p.slug, p.page - 1)}>← Précédent</a> : <span aria-hidden="true" />}
+          {p.page > 1 ? <Link href={hrefPage(p.q, p.slug, p.page - 1)}>← Précédent</Link> : <span aria-hidden="true" />}
           <span>Page {p.page} sur {pages}</span>
-          {p.page < pages ? <a href={hrefPage(p.q, p.slug, p.page + 1)}>Suivant →</a> : <span aria-hidden="true" />}
+          {p.page < pages ? <Link href={hrefPage(p.q, p.slug, p.page + 1)}>Suivant →</Link> : <span aria-hidden="true" />}
         </nav>
       )}
     </div>

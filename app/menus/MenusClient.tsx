@@ -1,6 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import Link from "next/link";
+import { useCallback, useEffect, useRef, useState, useTransition, type CSSProperties, type MouseEvent } from "react";
+import { useRouter } from "next/navigation";
 import type { PdjEntry } from "@/lib/db";
 import { formatDateShort, formatDayShort } from "@/lib/format";
 import { meilleureNoteDuJour } from "@/lib/menus-vue";
@@ -12,6 +14,7 @@ import { useModeSite } from "./useModeSite";
 import JourVue from "./JourVue";
 import SemaineVue from "./SemaineVue";
 import CarteVue from "./CarteVue";
+import GrilleSquelette from "./GrilleSquelette";
 import DetailPanneau, { type Selection } from "./DetailPanneau";
 import { couleur, ModeToggle } from "./ui";
 import { popper, reduit, usePret } from "./motion";
@@ -63,6 +66,25 @@ export default function MenusClient({ semaine, cartes, today, defaultIdx, weekLa
   const restoCarte = restosCarte.find((r) => r.slug === slug) ?? restosCarte[0];
   const [selection, setSelection] = useState<Selection>(null);
 
+  // Changement de semaine : navigation client (la page reste, seul le contenu se recharge).
+  // Pendant le chargement, la vue Jour affiche un squelette et la vue Semaine s'estompe.
+  const router = useRouter();
+  const [chargeSemaine, startSemaine] = useTransition();
+  const allerSemaine = (e: MouseEvent<HTMLAnchorElement>) => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+    e.preventDefault();
+    const href = e.currentTarget.getAttribute("href")!;
+    startSemaine(() => router.push(href));
+  };
+  // Nouvelle semaine reçue : on repart du jour par défaut, avec un slide dans le sens de la navigation.
+  const lundi = semaine[0].date;
+  const [lundiVu, setLundiVu] = useState(lundi);
+  if (lundi !== lundiVu) {
+    setLundiVu(lundi);
+    setJour({ idx: defaultIdx, dir: lundi > lundiVu ? 1 : -1 });
+    setSelection(null);
+  }
+
   // La vue choisie est mémorisée comme le mode (lue au montage : le serveur rend la vue Jour).
   useEffect(() => {
     try {
@@ -107,15 +129,15 @@ export default function MenusClient({ semaine, cartes, today, defaultIdx, weekLa
 
   const semaineNav = (
     <nav className={styles.semaineNav} aria-label="Changer de semaine">
-      <a href={prevHref} aria-label="Semaine précédente"><Chevron sens="g" /></a>
+      <Link href={prevHref} onClick={allerSemaine} aria-label="Semaine précédente"><Chevron sens="g" /></Link>
       {vue === "jour" && <span className={styles.semaineLabel}>{weekLabel}</span>}
-      {!isCurrentWeek && <a href="/" className={styles.auj}>Aujourd&apos;hui</a>}
-      <a href={nextHref} aria-label="Semaine suivante"><Chevron sens="d" /></a>
+      {!isCurrentWeek && <Link href="/" onClick={allerSemaine} className={styles.auj}>Aujourd&apos;hui</Link>}
+      <Link href={nextHref} onClick={allerSemaine} aria-label="Semaine suivante"><Chevron sens="d" /></Link>
     </nav>
   );
 
   return (
-    <div className={styles.root}>
+    <div className={styles.root} aria-busy={chargeSemaine || undefined}>
       <div
         className={styles.vues}
         role="group"
@@ -145,6 +167,7 @@ export default function MenusClient({ semaine, cartes, today, defaultIdx, weekLa
           <div className={styles.dock}>
             <div
               className={styles.jours}
+              data-charge={chargeSemaine ? "" : undefined}
               role="group"
               aria-label="Jour"
               data-pret={attrPret}
@@ -173,14 +196,14 @@ export default function MenusClient({ semaine, cartes, today, defaultIdx, weekLa
               className={styles.jourEntre}
               style={{ "--dx": `${entree.dx}px`, "--dy": `${entree.dy}px` } as CSSProperties}
             >
-              <JourVue pdj={pdj} mode={mode} images={images} onOpen={setSelection} />
+              {chargeSemaine ? <GrilleSquelette /> : <JourVue pdj={pdj} mode={mode} images={images} onOpen={setSelection} />}
             </div>
           </div>
         </>
       )}
 
       {vue === "semaine" && (
-        <div key="vue-semaine" className={`${styles.vueEntre} ${styles.pile}`}>
+        <div key="vue-semaine" className={`${styles.vueEntre} ${styles.pile}`} data-charge={chargeSemaine ? "" : undefined}>
           <div className={`${styles.titre} ${styles.large1180}`}>
             <h1>Semaine du {weekLabel}</h1>
             <div className="flex items-center gap-2 flex-wrap">
