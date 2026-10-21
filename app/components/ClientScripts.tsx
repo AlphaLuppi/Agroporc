@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { usePathname } from "next/navigation";
-import { changerThemeEncre } from "@/lib/theme-encre";
+import { changerThemeEncre, elementSousPointeur } from "@/lib/theme-encre";
 
 export function ClientScripts() {
   const pathname = usePathname();
@@ -52,6 +52,16 @@ export function ClientScripts() {
       }
     });
 
+    // Pendant la tache d'encre, les clics arrivent sur <html> : on les
+    // redirige vers le bouton de thème visé pour pouvoir rechanger sans
+    // attendre la fin de l'animation (la nouvelle transition coupe l'ancienne).
+    const onClicPendantEncre = (e: MouseEvent) => {
+      if (e.target !== document.documentElement) return;
+      if (!document.documentElement.classList.contains("pdj-encre")) return;
+      elementSousPointeur(e.clientX, e.clientY, themeBtns)?.click();
+    };
+    document.addEventListener("click", onClicPendantEncre);
+
     // Mobile burger menu
     const cleanupMobileMenu = initMobileMenu();
 
@@ -59,6 +69,7 @@ export function ClientScripts() {
     const cleanupCart = initCart();
 
     return () => {
+      document.removeEventListener("click", onClicPendantEncre);
       cleanupMobileMenu?.();
       cleanupCart();
     };
