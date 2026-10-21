@@ -122,9 +122,10 @@
 /* ── Vue Jour ── */
 /* position: relative = offsetParent des tuiles (mesures FLIP insensibles aux translate en cours). */
 .grille { position: relative; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; grid-auto-flow: dense; align-content: start; }
+/* Teinte posée sur --bg : fond opaque, même sur le pelage du thème Tigre. */
 .hero {
   grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-start; text-align: left; cursor: pointer;
-  --pad-y: 12px; --pad-x: 14px; padding: var(--pad-y) var(--pad-x); border-radius: var(--radius); border: 1px solid var(--good-border); background: var(--good-bg); color: var(--text); font: inherit;
+  --pad-y: 12px; --pad-x: 14px; padding: var(--pad-y) var(--pad-x); border-radius: var(--radius); border: 1px solid var(--good-border); background: linear-gradient(var(--good-bg), var(--good-bg)) var(--bg); color: var(--text); font: inherit;
   position: relative; overflow: hidden; isolation: isolate;
   transition: border-color var(--m-fast) ease-out, box-shadow var(--m-fast) ease-out, translate var(--m-fast) var(--m-expo),
     scale var(--m-base) var(--m-spring), transform var(--m-base) var(--m-expo);
