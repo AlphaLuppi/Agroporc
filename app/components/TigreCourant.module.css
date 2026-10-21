@@ -1,6 +1,9 @@
 /* Tigre qui traverse le bas de l'écran (thème Tigre) : hors champ entre deux passages.
    La troupe = le tigre seul, ou la mère précédée dans le DOM de ses petits (le gif
-   regarde à droite : les petits sont derrière ; scaleX(-1) retourne le tout). */
+   regarde à droite : les petits sont derrière ; scaleX(-1) retourne le tout).
+   La troupe porte la translation (WAAPI) ; le groupe, lui, porte les bonds des
+   réactions au clic. Seuls la mère et les petits captent les clics : le reste
+   de la troupe laisse passer le pointeur vers la page. */
 .troupe {
   --l: clamp(120px, 13vw, 190px);
   position: fixed; left: 0; bottom: calc(4px + env(safe-area-inset-bottom, 0px)); z-index: 40;
@@ -9,18 +12,40 @@
   transform: translateX(-100%);
 }
 .troupe img { display: block; height: auto; filter: drop-shadow(0 6px 6px rgba(0, 0, 0, 0.35)); }
+.groupe { display: flex; align-items: flex-end; transform-origin: 50% 100%; }
 .mere { position: relative; width: var(--l); }
 .mere img { width: 100%; }
 
-/* Petits : en file derrière la mère, chacun avec son propre petit bond. */
-.petit {
-  width: calc(var(--l) * 0.36); margin-right: calc(var(--l) * 0.05);
-  animation: bond 260ms ease-in-out infinite alternate;
+/* Cliquable : curseur main, pas de surbrillance tactile, et sur la mère une zone
+   de tir un peu plus large que le sprite (doigt sur mobile, tigre qui file). */
+.mere, .petitZone { pointer-events: auto; cursor: pointer; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+.mere::after, .petitZone::after { content: ""; position: absolute; inset: -12px -8px -4px; }
+/* La traînée de l'éclair est décorative : elle ne capte pas les clics. */
+.eclair .mere::before { pointer-events: none; }
+
+/* Mobile : la barre jours + mode est collée en bas (≈ 80 px, z-index 5). Le tigre court
+   au-dessus, sinon il capterait les taps destinés à ses boutons. */
+@media (max-width: 767px) {
+  .troupe { bottom: calc(86px + env(safe-area-inset-bottom, 0px)); }
 }
-.petit:nth-child(2) { animation-delay: -90ms; width: calc(var(--l) * 0.31); }
-.petit:nth-child(3) { animation-delay: -170ms; width: calc(var(--l) * 0.39); margin-right: calc(var(--l) * 0.09); }
-.petit:nth-child(4) { animation-delay: -40ms; width: calc(var(--l) * 0.33); }
+
+/* Petits : en file derrière la mère, chacun avec son propre petit bond. La zone
+   (span) porte la taille, la marge et une aire de tir élargie (≥ 40 px de haut). */
+.petitZone {
+  position: relative; display: block;
+  width: calc(var(--l) * 0.36); margin-right: calc(var(--l) * 0.05);
+}
+.petitZone::after { inset: -14px -4px -4px; }
+.petit { width: 100%; animation: bond 260ms ease-in-out infinite alternate; }
+.petitZone:nth-child(2) { width: calc(var(--l) * 0.31); }
+.petitZone:nth-child(2) .petit { animation-delay: -90ms; }
+.petitZone:nth-child(3) { width: calc(var(--l) * 0.39); margin-right: calc(var(--l) * 0.09); }
+.petitZone:nth-child(3) .petit { animation-delay: -170ms; }
+.petitZone:nth-child(4) { width: calc(var(--l) * 0.33); }
+.petitZone:nth-child(4) .petit { animation-delay: -40ms; }
 @keyframes bond { to { translate: 0 -4px; } }
+/* Arrêté (regard, tape, ronron, sursaut) : les petits aussi se figent. */
+.fige .petit { animation-play-state: paused; }
 
 /* Éclair : tigre penché en avant, traînée de vitesse derrière lui. */
 .eclair .mere img { transform: skewX(-10deg); filter: drop-shadow(-14px 0 6px rgba(255, 140, 0, 0.45)); }
@@ -32,4 +57,39 @@
   -webkit-mask: linear-gradient(to left, #000 20%, transparent);
   mask: linear-gradient(to left, #000 20%, transparent);
   border-radius: 999px;
+}
+
+/* Bulle de dialogue au-dessus du tigre, aux couleurs du thème. Elle est dans la
+   troupe retournée : --sens (posé sur la troupe) la remet à l'endroit. `scale`
+   (propriété individuelle) anime l'apparition sans toucher au transform. */
+.bulle {
+  position: absolute; left: 50%; bottom: calc(100% - 4px); z-index: 2;
+  /* --decal (px d'écran, posé en JS) recadre la bulle dans le viewport ; la troupe
+     étant retournée, il est multiplié par --sens pour redevenir un décalage d'écran. */
+  transform: translateX(calc(-50% + var(--decal, 0px) * var(--sens, 1))) scaleX(var(--sens, 1));
+  padding: 5px 12px; border: 2px solid var(--border-accent); border-radius: var(--radius);
+  background: var(--surface-accent); color: var(--text); box-shadow: var(--shadow);
+  font-size: 0.95rem; font-weight: 700; line-height: 1.2; white-space: nowrap;
+  pointer-events: none; animation: bulle-pop 200ms cubic-bezier(0.2, 1.4, 0.4, 1) both;
+}
+.bulle::after {
+  content: ""; position: absolute; left: 50%; bottom: -7px; width: 10px; height: 10px;
+  background: var(--surface-accent); border: solid var(--border-accent); border-width: 0 2px 2px 0;
+  transform: translateX(-50%) rotate(45deg);
+}
+@keyframes bulle-pop { from { scale: 0.4; opacity: 0; } to { scale: 1; opacity: 1; } }
+
+/* Particules (éclat du clap, cœurs du ronron) : parties de la patte avant, vers (--dx, --dy). */
+.ancre { position: absolute; right: 4%; top: 38%; width: 0; height: 0; pointer-events: none; }
+.particule {
+  position: absolute; left: 0; top: 0; font-size: 1.15rem; line-height: 1; color: var(--ok);
+  transform: scaleX(var(--sens, 1)); opacity: 0; pointer-events: none;
+  animation: particule-vol 900ms ease-out both;
+}
+.particule:nth-child(3n) { color: var(--bad); }
+.particule:nth-child(3n + 1) { color: var(--accent); }
+@keyframes particule-vol {
+  from { translate: 0 0; scale: 0.5; opacity: 1; }
+  70% { opacity: 1; }
+  to { translate: var(--dx) var(--dy); scale: 1.2; opacity: 0; }
 }
