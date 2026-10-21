@@ -217,11 +217,12 @@ export default function DetailPanneau({ selection, semaine, mode, today, cartesS
             <OrderLinks restaurant={plat.restaurant} />
             <AjouterButton restaurant={plat.restaurant} plat={v.plat} prix={plat.prix} date={pdj.date} />
           </div>
-          {/* Recette, photos et commentaires : un seul dernier palier de la cascade (pas d'attente en bas de feuille). */}
+          {/* Commentaires (repliés) juste sous les macros : c'est ce qu'on vient lire ; puis la recette
+              repliée et les photos. Un seul dernier palier de la cascade (pas d'attente en bas de feuille). */}
           <div className={styles.cascade} style={rang(4)}>
+            <CommentSection commentaires={plat.commentaires || []} date={pdj.date} platIndex={selection.platIndex} avatars={avatars} />
             {cleRecette && <RecettePanneau key={cleRecette} cle={cleRecette} date={pdj.date} today={today} />}
             {slugPhotos && <PhotoPlat key={`${pdj.date}-${v.plat}`} slug={slugPhotos} plat={v.plat} date={pdj.date} />}
-            <CommentSection commentaires={plat.commentaires || []} date={pdj.date} platIndex={selection.platIndex} avatars={avatars} />
           </div>
         </>
       );

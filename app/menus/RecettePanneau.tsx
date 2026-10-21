@@ -12,15 +12,18 @@ const NB_INGREDIENTS = 6;
 type Etat = { kind: "charge" } | { kind: "absente" } | { kind: "erreur" } | { kind: "ok"; recette: RecetteComplete };
 
 /**
- * Section « Le refaire chez soi » du détail d'un plat (POC) : recette maison chargée à
- * l'ouverture (`/api/recette/<cle>`), aperçu des ingrédients et lien vers la fiche complète.
- * Le parent passe `key={cle}` : un autre plat repart d'un état « charge » propre.
+ * Section « Le refaire chez soi » du détail d'un plat (POC), repliée par défaut : la recette
+ * maison n'est chargée (`/api/recette/<cle>`) qu'au premier dépliage, puis aperçu des
+ * ingrédients et lien vers la fiche complète.
+ * Le parent passe `key={cle}` : un autre plat repart replié, dans un état « charge » propre.
  */
 export default function RecettePanneau({ cle, date, today }: { cle: string; date: string; today: string }) {
   const [etat, setEtat] = useState<Etat>({ kind: "charge" });
   const [essai, setEssai] = useState(0);
+  const [ouvert, setOuvert] = useState(false);
 
   useEffect(() => {
+    if (!ouvert) return;
     const ctrl = new AbortController();
     setEtat({ kind: "charge" });
     fetch(`/api/recette/${cle}`, { signal: ctrl.signal })
@@ -34,9 +37,25 @@ export default function RecettePanneau({ cle, date, today }: { cle: string; date
         if (!ctrl.signal.aborted) setEtat({ kind: "erreur" });
       });
     return () => ctrl.abort();
-  }, [cle, essai]);
+  }, [cle, essai, ouvert]);
 
-  const titre = <h3 className={styles.recetteTete}>Le refaire chez soi</h3>;
+  if (!ouvert) {
+    return (
+      <button type="button" className={styles.recettePli} aria-expanded={false} onClick={() => setOuvert(true)}>
+        <span className={styles.recetteTete}>Le refaire chez soi</span>
+        <span className={styles.recettePliAction}>Voir la recette <span aria-hidden="true">▾</span></span>
+      </button>
+    );
+  }
+
+  const titre = (
+    <div className={styles.recetteEntete}>
+      <h3 className={styles.recetteTete}>Le refaire chez soi</h3>
+      <button type="button" className={styles.recettePliAction} aria-expanded={true} onClick={() => setOuvert(false)}>
+        Replier <span aria-hidden="true">▴</span>
+      </button>
+    </div>
+  );
 
   if (etat.kind === "charge") {
     return (

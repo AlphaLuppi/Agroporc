@@ -538,12 +538,30 @@
 
 /* ── Recette maison (POC) dans le panneau de détail ── */
 .recette {
-  display: flex; flex-direction: column; gap: 8px; padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; margin-top: 12px;
   border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-hover);
 }
 .recetteTete {
   margin: 0; font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent);
 }
+/* Repliée par défaut : une ligne cliquable au gabarit de la section dépliée. */
+.recettePli {
+  display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 8px; min-height: 44px; margin-top: 12px;
+  padding: 10px 14px; font: inherit; text-align: left; cursor: pointer;
+  border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-hover);
+  transition: border-color var(--m-fast) ease-out, scale var(--m-base) var(--m-spring);
+}
+.recettePli:active { scale: 0.98; }
+.recetteEntete { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.recettePliAction {
+  border: 0; background: none; padding: 4px 0; font: inherit; font-size: 0.78rem; color: var(--text-muted); cursor: pointer;
+}
+.recettePliAction:hover { color: var(--accent); }
+@media (hover: hover) and (pointer: fine) {
+  .recettePli:hover { border-color: var(--border-accent); }
+  .recettePli:hover .recettePliAction { color: var(--accent); }
+}
+.recettePli:focus-visible, .recettePliAction:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .recetteTitre { margin: 0; font-family: var(--font-heading); font-size: 1.05rem; line-height: 1.3; color: var(--text); }
 .recettePuces { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 0; padding: 0; list-style: none; font-size: 0.75rem; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
 .recettePuces li + li::before { content: "·"; margin-right: 12px; color: var(--text-muted); }
