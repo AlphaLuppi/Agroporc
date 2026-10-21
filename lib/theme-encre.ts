@@ -34,6 +34,10 @@ export function blobSvg(graine: number): string {
   return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
 }
 
+/** Numéro de la dernière tache lancée : un clic pendant l'animation en relance
+ * une, et seule la plus récente retire la classe `pdj-encre` à la fin. */
+let derniereTache = 0;
+
 type DocumentAvecVT = Document & {
   startViewTransition?: (maj: () => void) => { ready: Promise<void>; finished: Promise<void> };
 };
@@ -54,6 +58,7 @@ export function changerThemeEncre(origine: HTMLElement, maj: () => void): void {
   const racine = document.documentElement;
   racine.style.setProperty("--pdj-encre", blobSvg(Math.floor(Math.random() * 1000)));
   racine.classList.add("pdj-encre");
+  const tache = ++derniereTache;
 
   const transition = doc.startViewTransition(maj);
   transition.ready
@@ -72,5 +77,9 @@ export function changerThemeEncre(origine: HTMLElement, maj: () => void): void {
       );
     })
     .catch(() => {});
-  transition.finished.finally(() => racine.classList.remove("pdj-encre")).catch(() => {});
+  transition.finished
+    .finally(() => {
+      if (tache === derniereTache) racine.classList.remove("pdj-encre");
+    })
+    .catch(() => {});
 }
