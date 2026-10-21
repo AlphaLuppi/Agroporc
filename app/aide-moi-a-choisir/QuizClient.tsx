@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { meilleursCandidats, type Criteres } from "@/lib/quiz-engine";
 import { platsCompatibles, compterBranche } from "@/lib/quiz-arbre";
 import { type PoolPlat, type Mode } from "@/lib/quiz-plats";
@@ -9,6 +9,7 @@ import { noteClass } from "@/lib/format";
 import { casseLisible } from "@/lib/menus-vue";
 import { fmtPrix } from "../menus/ui";
 import RestoBadge from "../components/RestoBadge";
+import { confetti, decimalesDe, indiceStagger, sensNavigation, texteNote, valeurCompteur, type Sens } from "@/lib/motion-global";
 import styles from "./quiz.module.css";
 
 interface Choix {
@@ -118,19 +119,94 @@ function criteresDe(r: Reponses): Criteres {
 const noteDe = (p: PoolPlat, mode: Mode) => (mode === "sportif" ? p.note : p.note_goulaf ?? p.note);
 const parNote = (mode: Mode) => (a: PoolPlat, b: PoolPlat) => (noteDe(b, mode) ?? -1) - (noteDe(a, mode) ?? -1);
 
-function Pastille({ note }: { note?: number }) {
+const reduit = () => typeof window !== "undefined" && !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+
+/** Durée du count-up de la note du gagnant (alignée sur le pop de la carte). */
+const DUREE_COMPTEUR = 420;
+
+/**
+ * Note qui compte de 0 à sa valeur. React rend toujours la valeur finale ;
+ * l'animation écrit textContent après le montage (jamais rendu côté serveur :
+ * le résultat n'apparaît qu'après interaction). À poser avec key = texte final.
+ */
+function NoteQuiCompte({ note }: { note: number }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const texte = texteNote(note, decimalesDe(note));
+  useEffect(() => {
+    const el = ref.current;
+    // Instance cachée (Resultat est rendu en mobile ET en desktop) : rien à animer.
+    if (!el || reduit() || el.getBoundingClientRect().width === 0) return;
+    const dec = decimalesDe(note);
+    const debut = performance.now();
+    let raf = 0;
+    const pas = (now: number) => {
+      const t = Math.min(1, (now - debut) / DUREE_COMPTEUR);
+      el.textContent = texteNote(valeurCompteur(0, note, t), dec);
+      if (t < 1) raf = requestAnimationFrame(pas);
+    };
+    el.textContent = texteNote(0, dec);
+    raf = requestAnimationFrame(pas);
+    return () => {
+      cancelAnimationFrame(raf);
+      el.textContent = texte;
+    };
+  }, [note, texte]);
+  return <span ref={ref}>{texte}</span>;
+}
+
+function Pastille({ note, compte = false }: { note?: number; compte?: boolean }) {
   const cls = note == null ? styles.none : styles[noteClass(note)];
   return (
     <span className={`${styles.pastille} ${cls}`}>
-      {note == null ? "?" : String(note).replace(".", ",")}
+      {note == null ? "?" : compte ? <NoteQuiCompte key={note} note={note} /> : String(note).replace(".", ",")}
       <small>/10</small>
     </span>
   );
 }
 
-function LignePlat({ p, mode }: { p: PoolPlat; mode: Mode }) {
+const COULEURS_CONFETTI = ["var(--accent)", "var(--good)", "var(--ok)", "var(--bad)"];
+
+/** Confettis légers, décoratifs : valeurs dérivées de l'index, démontés après 1,2 s. */
+function Confettis() {
+  const [actif, setActif] = useState(true);
+  useEffect(() => {
+    const t = window.setTimeout(() => setActif(false), 1200);
+    return () => window.clearTimeout(t);
+  }, []);
+  if (!actif) return null;
   return (
-    <div className={styles.ligne}>
+    <div aria-hidden="true" className={styles.confettis}>
+      {Array.from({ length: 14 }, (_, i) => {
+        const c = confetti(i);
+        return (
+          <i
+            key={i}
+            style={
+              {
+                left: `${c.gauche}%`,
+                background: COULEURS_CONFETTI[c.couleur],
+                animationDelay: `${c.delai}ms`,
+                "--cx": `${c.cx}px`,
+                "--cy": `${c.cy}px`,
+                "--cr": `${c.cr}deg`,
+              } as React.CSSProperties
+            }
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+/** `--i` de stagger pour une entrée pdj-rise-in (plafonné : au-delà, sans délai). */
+const stagger = (i: number) => {
+  const n = indiceStagger(i);
+  return n === undefined ? undefined : ({ "--i": n } as React.CSSProperties);
+};
+
+function LignePlat({ p, mode, i }: { p: PoolPlat; mode: Mode; i?: number }) {
+  return (
+    <div className={i === undefined ? styles.ligne : `${styles.ligne} pdj-rise-in`} style={i === undefined ? undefined : stagger(i)}>
       <Pastille note={noteDe(p, mode)} />
       <span className={styles.ligneTexte}>
         <span className={styles.ligneNom}>{casseLisible(p.plat)}</span>
@@ -144,6 +220,8 @@ function LignePlat({ p, mode }: { p: PoolPlat; mode: Mode }) {
 
 export default function QuizClient({ pool, desserts, hasJour }: { pool: PoolPlat[]; desserts: DessertConnu[]; hasJour: boolean }) {
   const [rep, setRep] = useState<Reponses>({});
+  // Sens du glissement de la question suivante (+1 en avançant, −1 en revenant).
+  const [sens, setSens] = useState<Sens>(1);
 
   const etapes = ETAPES.filter((e) => !e.dessert || rep.menu === "menu");
   const courante = etapes.find((e) => rep[e.cle] === undefined);
@@ -151,7 +229,8 @@ export default function QuizClient({ pool, desserts, hasJour }: { pool: PoolPlat
   const criteres = criteresDe(rep);
   const restants = platsCompatibles(pool, criteres).sort(parNote(mode));
 
-  const repondre = (cle: Cle, key: string) =>
+  const repondre = (cle: Cle, key: string) => {
+    setSens(sensNavigation("repondre"));
     setRep((r) => {
       const n = { ...r, [cle]: key };
       if (cle === "menu" && key === "plat") {
@@ -160,14 +239,20 @@ export default function QuizClient({ pool, desserts, hasJour }: { pool: PoolPlat
       }
       return n;
     });
+  };
   // Fil d'Ariane mobile : revenir sur une réponse efface aussi les suivantes.
-  const revenir = (cle: Cle) =>
+  const revenir = (cle: Cle) => {
+    setSens(sensNavigation("revenir"));
     setRep((r) => {
       const n = { ...r };
       ETAPES.slice(ETAPES.findIndex((e) => e.cle === cle)).forEach((e) => delete n[e.cle]);
       return n;
     });
-  const recommencer = () => setRep({});
+  };
+  const recommencer = () => {
+    setSens(sensNavigation("revenir"));
+    setRep({});
+  };
 
   const compte = (e: Etape, key: string): number | null =>
     e.critere ? compterBranche(pool, criteres, e.critere, opt(key)) : null;
@@ -205,6 +290,9 @@ export default function QuizClient({ pool, desserts, hasJour }: { pool: PoolPlat
         )}
         {courante ? (
           <>
+            {/* Une clé par question : la nouvelle arrive en glissant (pas de sortie, le clic s'applique tout de suite). */}
+            <div className={styles.etapeCadre}>
+            <div key={courante.cle} className={styles.etape} data-sens={sens} style={{ "--sens": sens } as React.CSSProperties}>
             <h2 className={styles.question}>{courante.titre}</h2>
             <div className={styles.choix}>
               {courante.choix.map((c, i) => {
@@ -214,23 +302,26 @@ export default function QuizClient({ pool, desserts, hasJour }: { pool: PoolPlat
                   <button
                     key={c.key}
                     type="button"
-                    className={[seul ? styles.seul : "", n === 0 ? styles.zero : ""].join(" ")}
+                    className={[seul ? styles.seul : "", n === 0 ? styles.zero : "", "pdj-rise-in"].join(" ")}
+                    style={stagger(i)}
                     onClick={() => repondre(courante.cle, c.key)}
                   >
                     <span className={styles.emoji} aria-hidden="true">{c.emoji}</span>
                     {c.label}
-                    {n !== null && <span className={styles.compte} aria-label={`${n} plats`}>{n}</span>}
+                    {n !== null && <span key={`n${n}`} className={styles.compte} aria-label={`${n} plats`}>{n}</span>}
                   </button>
                 );
               })}
             </div>
+            </div>
+            </div>
             <div className={styles.apercu} aria-live="polite">
               <span className={styles.meta}>
-                {restants.length} plat{restants.length > 1 ? "s" : ""} possible{restants.length > 1 ? "s" : ""}
+                <span key={restants.length} className={styles.bump}>{restants.length}</span> plat{restants.length > 1 ? "s" : ""} possible{restants.length > 1 ? "s" : ""}
               </span>
               {/* Un seul plat : l'aperçu collé en bas ne doit pas manger les choix sur un petit écran. */}
-              {restants.slice(0, 1).map((p) => (
-                <LignePlat key={`${p.restaurant}::${p.plat}`} p={p} mode={mode} />
+              {restants.slice(0, 1).map((p, i) => (
+                <LignePlat key={`${p.restaurant}::${p.plat}`} p={p} mode={mode} i={i} />
               ))}
             </div>
           </>
@@ -243,19 +334,29 @@ export default function QuizClient({ pool, desserts, hasJour }: { pool: PoolPlat
       <div className={styles.barre}>
         <span className={styles.meta}>Clique une branche dans n&apos;importe quelle colonne. Les chiffres = plats encore possibles.</span>
         {Object.keys(rep).length > 0 && (
-          <button type="button" className={styles.recommencer} onClick={recommencer}>↻ Recommencer</button>
+          <button type="button" className={`${styles.recommencer} pdj-press`} onClick={recommencer}>
+            <span className={styles.tourne} aria-hidden="true">↻</span> Recommencer
+          </button>
         )}
       </div>
       <div className={styles.arbre} style={{ "--colonnes": etapes.length } as React.CSSProperties}>
         {etapes.map((e) => {
           const index = etapes.indexOf(e);
+          // Les colonnes dessert apparaissent quand on choisit « plat + dessert » : elles montent en cascade.
+          const premiereDessert = etapes.findIndex((x) => x.dessert);
           const iCourante = courante ? etapes.indexOf(courante) : etapes.length;
           return (
             <div
               key={e.cle}
               role="group"
               aria-label={e.titre}
-              className={[styles.colonne, e === courante ? styles.courante : "", index > iCourante ? styles.apres : ""].join(" ")}
+              className={[
+                styles.colonne,
+                e === courante ? styles.courante : "",
+                index > iCourante ? styles.apres : "",
+                e.dessert ? "pdj-rise-in" : "",
+              ].join(" ")}
+              style={e.dessert ? stagger(index - premiereDessert + 1) : undefined}
             >
               <h2>
                 {e.court}
@@ -271,9 +372,9 @@ export default function QuizClient({ pool, desserts, hasJour }: { pool: PoolPlat
                     className={`${styles.noeud} ${n === 0 ? styles.zero : ""}`}
                     onClick={() => repondre(e.cle, c.key)}
                   >
-                    <span aria-hidden="true">{c.emoji}</span>
+                    <span className={styles.noeudEmoji} aria-hidden="true">{c.emoji}</span>
                     {c.label}
-                    {n !== null && <span className={styles.compte} aria-label={`${n} plats`}>{n}</span>}
+                    {n !== null && <span key={`n${n}`} className={styles.compte} aria-label={`${n} plats`}>{n}</span>}
                   </button>
                 );
               })}
@@ -284,11 +385,11 @@ export default function QuizClient({ pool, desserts, hasJour }: { pool: PoolPlat
           {courante ? (
             <>
               <h2>
-                {restants.length} plat{restants.length > 1 ? "s" : ""} possible{restants.length > 1 ? "s" : ""}
+                <span key={restants.length} className={styles.bump}>{restants.length}</span> plat{restants.length > 1 ? "s" : ""} possible{restants.length > 1 ? "s" : ""}
               </h2>
               {restants.length === 0 && <p className={styles.texte}>Aucun plat ne coche tout : on te proposera le plus proche.</p>}
-              {restants.map((p) => (
-                <LignePlat key={`${p.restaurant}::${p.plat}`} p={p} mode={mode} />
+              {restants.map((p, i) => (
+                <LignePlat key={`${p.restaurant}::${p.plat}`} p={p} mode={mode} i={i} />
               ))}
               <p className={styles.meta}>Prochaine question : {courante.titre}</p>
             </>
@@ -328,7 +429,7 @@ function Resultat({
 
   return (
     <div className={styles.resultat}>
-      <h3>
+      <h3 className="pdj-rise-in">
         {auPlusProche
           ? "Rien ne colle pile, voici le plus proche"
           : candidats.length > 1
@@ -336,9 +437,12 @@ function Resultat({
             : "Ton plat idéal aujourd'hui"}
       </h3>
       {premier ? (
-        <div className={styles.gagnant}>
+        // Clé = le gagnant : pop, brillance, count-up et confettis se rejouent seulement quand il change.
+        <div key={`${premier.restaurant}::${premier.plat}`} className={styles.gagnantZone}>
+        <Confettis />
+        <div className={`${styles.gagnant} pdj-shimmer`}>
           <div className={styles.gagnantTete}>
-            <Pastille note={noteDe(premier, mode)} />
+            <Pastille note={noteDe(premier, mode)} compte />
             <div>
               <div className={styles.gagnantNom}>{casseLisible(premier.plat)}</div>
               <div className={styles.meta}>
@@ -348,18 +452,19 @@ function Resultat({
           </div>
           {justif && <p className={styles.texte}>{justif}</p>}
         </div>
+        </div>
       ) : (
         <p className={styles.texte}>Aucun plat trouvé aujourd&apos;hui. Reviens un peu plus tard !</p>
       )}
       {autres.length > 0 && (
         <div>
-          {autres.map((p) => (
-            <LignePlat key={`${p.restaurant}::${p.plat}`} p={p} mode={mode} />
+          {autres.map((p, i) => (
+            <LignePlat key={`${p.restaurant}::${p.plat}`} p={p} mode={mode} i={i + 2} />
           ))}
         </div>
       )}
       {rep.menu === "menu" && (
-        <div className={styles.dessert}>
+        <div className={`${styles.dessert} pdj-rise-in`} style={stagger(3)}>
           <span className={styles.meta}>Et le dessert</span>
           {dessert ? (
             <>
@@ -374,7 +479,9 @@ function Resultat({
           )}
         </div>
       )}
-      <button type="button" className={styles.recommencer} onClick={onReset}>↻ Recommencer</button>
+      <button type="button" className={`${styles.recommencer} pdj-press`} onClick={onReset}>
+        <span className={styles.tourne} aria-hidden="true">↻</span> Recommencer
+      </button>
     </div>
   );
 }

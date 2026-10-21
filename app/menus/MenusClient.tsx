@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import type { PdjEntry } from "@/lib/db";
 import { formatDateShort, formatDayShort } from "@/lib/format";
 import { meilleureNoteDuJour } from "@/lib/menus-vue";
 import type { ImagesPlats } from "@/lib/plat-image";
+import { decalageEntree, directionJour } from "@/lib/motion-menus";
 import { RESTAURANTS, titreCarte } from "@/lib/restaurants";
 import RestoBadge from "@/app/components/RestoBadge";
 import { useModeSite } from "./useModeSite";
@@ -13,6 +14,7 @@ import SemaineVue from "./SemaineVue";
 import CarteVue from "./CarteVue";
 import DetailPanneau, { type Selection } from "./DetailPanneau";
 import { couleur, ModeToggle } from "./ui";
+import { popper, reduit, usePret } from "./motion";
 import styles from "./menus.module.css";
 
 type Vue = "jour" | "semaine" | "carte";
@@ -50,7 +52,12 @@ function Chevron({ sens }: { sens: "g" | "d" }) {
 export default function MenusClient({ semaine, cartes, today, defaultIdx, weekLabel, prevHref, nextHref, isCurrentWeek, images, clesPlats }: Props) {
   const [mode, setMode] = useModeSite();
   const [vue, setVueState] = useState<Vue>("jour");
-  const [jourIdx, setJourIdx] = useState(defaultIdx);
+  // Jour choisi + sens du dernier changement (slide directionnel de la vue Jour).
+  const [jour, setJour] = useState<{ idx: number; dir: -1 | 0 | 1 }>({ idx: defaultIdx, dir: 0 });
+  const jourIdx = jour.idx;
+  const setJourIdx = useCallback((i: number) => setJour((j) => (j.idx === i ? j : { idx: i, dir: directionJour(j.idx, i) })), []);
+  const pret = usePret();
+  const restosRef = useRef<HTMLDivElement>(null);
   const restosCarte = RESTAURANTS.filter((r) => cartes.includes(r.slug));
   const [slug, setSlug] = useState(restosCarte[0]?.slug ?? "");
   const restoCarte = restosCarte.find((r) => r.slug === slug) ?? restosCarte[0];
@@ -83,8 +90,20 @@ export default function MenusClient({ semaine, cartes, today, defaultIdx, weekLa
     setVue("carte");
   };
 
+  // La carte choisie défile dans la barre des restos (largeurs variables : pas de pastille glissante).
+  const slugPrecedent = useRef(slug);
+  useEffect(() => {
+    if (slugPrecedent.current === slug) return;
+    slugPrecedent.current = slug;
+    const b = restosRef.current?.querySelector<HTMLElement>('[aria-pressed="true"]');
+    b?.scrollIntoView({ inline: "nearest", block: "nearest", behavior: reduit() ? "auto" : "smooth" });
+  }, [slug]);
+
   const pdj = semaine[jourIdx];
   const vues = VUES.filter((v) => v.id !== "carte" || restosCarte.length > 0);
+  const vueIdx = Math.max(0, vues.findIndex((v) => v.id === vue));
+  const entree = decalageEntree(jour.dir);
+  const attrPret = pret ? "" : undefined;
 
   const semaineNav = (
     <nav className={styles.semaineNav} aria-label="Changer de semaine">
@@ -97,7 +116,13 @@ export default function MenusClient({ semaine, cartes, today, defaultIdx, weekLa
 
   return (
     <div className={styles.root}>
-      <div className={styles.vues} role="group" aria-label="Vue">
+      <div
+        className={styles.vues}
+        role="group"
+        aria-label="Vue"
+        data-pret={attrPret}
+        style={{ "--idx": vueIdx, "--n": vues.length } as CSSProperties}
+      >
         {vues.map((v) => (
           <button key={v.id} type="button" aria-pressed={vue === v.id} onClick={() => setVue(v.id)}>
             {v.label}
@@ -107,15 +132,24 @@ export default function MenusClient({ semaine, cartes, today, defaultIdx, weekLa
 
       {vue === "jour" && pdj && (
         <>
-          <div className={styles.titre}>
-            <h1>
-              {formatDateShort(pdj.date)}
-              {pdj.date > today && <span className={styles.apercu}>Aperçu</span>}
-            </h1>
-            {semaineNav}
+          <div key="vue-jour" className={styles.vueEntre}>
+            <div className={styles.titre}>
+              <h1 key={pdj.date} className={styles.fondu}>
+                {formatDateShort(pdj.date)}
+                {pdj.date > today && <span className={styles.apercu}>Aperçu</span>}
+              </h1>
+              {semaineNav}
+            </div>
           </div>
+          {/* Le dock (sticky) reste hors des enveloppes animées : un translate casserait son ancrage. */}
           <div className={styles.dock}>
-            <div className={styles.jours} role="group" aria-label="Jour">
+            <div
+              className={styles.jours}
+              role="group"
+              aria-label="Jour"
+              data-pret={attrPret}
+              style={{ "--idx": jourIdx, "--n": semaine.length } as CSSProperties}
+            >
               {semaine.map((p, i) => (
                 <button
                   key={p.date}
@@ -133,12 +167,20 @@ export default function MenusClient({ semaine, cartes, today, defaultIdx, weekLa
             </div>
             <ModeToggle mode={mode} onChange={setMode} />
           </div>
-          <JourVue pdj={pdj} mode={mode} images={images} onOpen={setSelection} />
+          <div className={styles.jourCadre}>
+            <div
+              key={pdj.date}
+              className={styles.jourEntre}
+              style={{ "--dx": `${entree.dx}px`, "--dy": `${entree.dy}px` } as CSSProperties}
+            >
+              <JourVue pdj={pdj} mode={mode} images={images} onOpen={setSelection} />
+            </div>
+          </div>
         </>
       )}
 
       {vue === "semaine" && (
-        <>
+        <div key="vue-semaine" className={`${styles.vueEntre} ${styles.pile}`}>
           <div className={`${styles.titre} ${styles.large1180}`}>
             <h1>Semaine du {weekLabel}</h1>
             <div className="flex items-center gap-2 flex-wrap">
@@ -153,26 +195,34 @@ export default function MenusClient({ semaine, cartes, today, defaultIdx, weekLa
             jourIdx={jourIdx}
             setJourIdx={setJourIdx}
             voirJour={(i) => {
-              setJourIdx(i);
+              setJour({ idx: i, dir: 0 });
               setVue("jour");
             }}
             onOpen={setSelection}
           />
-        </>
+        </div>
       )}
 
       {vue === "carte" && restoCarte && (
-        <>
+        <div key="vue-carte" className={`${styles.vueEntre} ${styles.pile}`}>
           <div className={styles.titre}>
-            <h1 className={styles.titreResto}>
+            <h1 key={slug} className={`${styles.titreResto} ${styles.fondu}`}>
               <RestoBadge nom={restoCarte.nom} variante="icone" taille={30} />
               {titreCarte(restoCarte)}
             </h1>
           </div>
           <div className={styles.carteBarre}>
-            <div className={styles.restos} role="group" aria-label="Restaurant">
+            <div className={styles.restos} role="group" aria-label="Restaurant" ref={restosRef}>
               {restosCarte.map((r) => (
-                <button key={r.slug} type="button" aria-pressed={r.slug === slug} onClick={() => setSlug(r.slug)}>
+                <button
+                  key={r.slug}
+                  type="button"
+                  aria-pressed={r.slug === slug}
+                  onClick={(e) => {
+                    if (r.slug === slug) popper(e.currentTarget);
+                    setSlug(r.slug);
+                  }}
+                >
                   <RestoBadge nom={r.nom} complet />
                 </button>
               ))}
@@ -180,11 +230,12 @@ export default function MenusClient({ semaine, cartes, today, defaultIdx, weekLa
             <ModeToggle mode={mode} onChange={setMode} />
           </div>
           <CarteVue slug={slug} mode={mode} />
-        </>
+        </div>
       )}
 
       {selection && (
         <DetailPanneau
+          key={`${selection.kind}|${selection.date}|${selection.kind === "plat" ? `${selection.platIndex}|${selection.variante}` : selection.nom}`}
           selection={selection}
           semaine={semaine}
           mode={mode}

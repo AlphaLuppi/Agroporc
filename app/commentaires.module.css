@@ -1,0 +1,341 @@
+/*
+ * Animations du lot « commentaires » (CommentSection + CommentForm).
+ * Les keyframes sont redéclarées ici : un nom d'animation cité dans un *.module.css
+ * est localisé par css-loader, une keyframe globale (pdj-pop…) n'y serait pas trouvée.
+ * Tout mouvement vit dans @media (prefers-reduced-motion: no-preference).
+ * Propriétés individuelles (translate / scale / rotate) pour se combiner avec .pdj-press.
+ */
+
+/* ── Keyframes locales ─────────────────────────── */
+@keyframes pop {
+  0% { opacity: 0; scale: 0.92; }
+  60% { opacity: 1; scale: 1.04; }
+  100% { opacity: 1; scale: 1; }
+}
+@keyframes depuisGauche {
+  from { opacity: 0; translate: -8px 0; }
+  to { opacity: 1; translate: 0 0; }
+}
+@keyframes depuisHaut {
+  from { opacity: 0; translate: 0 -8px; }
+  to { opacity: 1; translate: 0 0; }
+}
+@keyframes filet {
+  from { scale: 1 0; }
+  to { scale: 1 1; }
+}
+@keyframes brillance {
+  from { translate: -120% 0; }
+  to { translate: 120% 0; }
+}
+@keyframes wiggle {
+  0%, 100% { rotate: 0deg; }
+  25% { rotate: -12deg; }
+  50% { rotate: 9deg; }
+  75% { rotate: -4deg; }
+}
+/* Sans opacité : un GIF / JPEG progressif est déjà en partie peint avant onLoad (pas de clignotement). */
+@keyframes media {
+  from { scale: 0.98; }
+  to { scale: 1; }
+}
+@keyframes fondu {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes liste {
+  from { opacity: 0; scale: 0.96; }
+  to { opacity: 1; scale: 1; }
+}
+@keyframes option {
+  from { opacity: 0; translate: 0 -4px; }
+  to { opacity: 1; translate: 0 0; }
+}
+@keyframes rebond {
+  0%, 100% { translate: 0 0; }
+  50% { translate: 0 -3px; }
+}
+@keyframes point {
+  0%, 80%, 100% { translate: 0 0; opacity: 0.5; }
+  40% { translate: 0 -3px; opacity: 1; }
+}
+@keyframes particule {
+  0% { opacity: 1; translate: 0 0; scale: 1; }
+  100% { opacity: 0; translate: var(--dx) var(--dy); scale: 0.4; }
+}
+
+/* Délai de ligne : 35 ms par élément, plafonné à 8 éléments (280 ms) */
+.ligne,
+.reponse {
+  --delai: calc(min(var(--i, 0), 8) * 35ms);
+}
+
+/* ── Bouton replié « 💬 N commentaires » ──────── */
+.bulle {
+  display: inline-block;
+  transform-origin: 50% 80%;
+}
+
+/* ── Fil des commentaires ─────────────────────── */
+.reponse {
+  position: relative;
+}
+/* Le filet des réponses (remplace border-l-2) */
+.reponse::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--accent) 40%, transparent);
+  transform-origin: top;
+  pointer-events: none;
+}
+
+.badgeHumain {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.media {
+  transition: scale var(--dur-base, 220ms) var(--ease-spring, cubic-bezier(.34,1.56,.64,1));
+}
+
+/* Souligné animé de « Répondre » */
+.souligne {
+  position: relative;
+}
+.souligne::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 1px;
+  background: currentColor;
+  scale: 0 1;
+  transform-origin: left;
+  transition: scale var(--dur-base, 220ms) var(--ease-out-expo, cubic-bezier(.16,1,.3,1));
+  pointer-events: none;
+}
+.souligne:hover::after,
+.souligne:focus-visible::after,
+.souligne[aria-expanded="true"]::after {
+  scale: 1 1;
+}
+
+/* ── Formulaire ───────────────────────────────── */
+/* Éléments qui portent aussi .pdj-press (globale, non layerée) : leurs transitions
+   passent par --pdj-transition, sinon l'une des deux déclarations `transition` écraserait l'autre. */
+.pressCouleurs {
+  --pdj-transition: color var(--dur-fast, 140ms) ease-out, background-color var(--dur-fast, 140ms) ease-out,
+    border-color var(--dur-fast, 140ms) ease-out;
+}
+.ajouter {
+  --pdj-transition: color var(--dur-fast, 140ms) ease-out, border-color var(--dur-fast, 140ms) ease-out;
+}
+.plus {
+  display: inline-block;
+  transition: rotate var(--dur-base, 220ms) var(--ease-spring, cubic-bezier(.34,1.56,.64,1));
+}
+
+.chevron {
+  transition: rotate var(--dur-base, 220ms) var(--ease-spring, cubic-bezier(.34,1.56,.64,1));
+}
+
+.liste {
+  transform-origin: top;
+}
+
+.zone {
+  transition:
+    border-color var(--dur-fast, 140ms) ease-out,
+    box-shadow var(--dur-fast, 140ms) ease-out;
+}
+.zone:focus {
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.compteur {
+  position: absolute;
+  right: 0.5rem;
+  bottom: 0.4rem;
+  font-size: 0.65rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  pointer-events: none;
+  transition: color var(--dur-fast, 140ms) ease-out;
+}
+.compteurLimite {
+  color: var(--bad);
+  font-weight: 600;
+}
+
+.depot {
+  --pdj-transition: border-color var(--dur-fast, 140ms) ease-out, background-color var(--dur-fast, 140ms) ease-out;
+}
+.fermer svg {
+  transition: rotate var(--dur-base, 220ms) var(--ease-spring, cubic-bezier(.34,1.56,.64,1));
+}
+
+.envoi {
+  position: relative;
+  display: inline-flex;
+}
+.envoiPlein {
+  display: flex;
+  width: 100%;
+}
+.envoye,
+.envoye:disabled {
+  background: var(--good) !important;
+  color: var(--bg) !important;
+  opacity: 1 !important;
+}
+.points {
+  display: inline-flex;
+  gap: 3px;
+  align-items: center;
+  height: 1em;
+}
+.points span {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.gerbe {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+.gerbe span {
+  position: absolute;
+  left: -3px;
+  top: -3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  opacity: 0;
+}
+
+/* ── Mouvement (désactivé sous prefers-reduced-motion: reduce) ── */
+@media (prefers-reduced-motion: no-preference) {
+  .replie:hover .bulle,
+  .replie:focus-visible .bulle {
+    animation: wiggle 420ms var(--ease-in-out, cubic-bezier(.65,0,.35,1));
+  }
+
+  .reponse {
+    animation: depuisGauche var(--dur-slow, 380ms) var(--ease-out-expo, cubic-bezier(.16,1,.3,1)) backwards;
+    animation-delay: var(--delai);
+  }
+  .reponse::before {
+    animation: filet var(--dur-base, 220ms) var(--ease-out-expo, cubic-bezier(.16,1,.3,1)) backwards;
+    animation-delay: calc(var(--delai) + 80ms);
+  }
+
+  .avatar {
+    animation: pop var(--dur-slow, 380ms) var(--ease-spring, cubic-bezier(.34,1.56,.64,1)) backwards;
+    animation-delay: calc(var(--delai, 0ms) + 60ms);
+  }
+  /* Avatar du sélecteur, rejoué via key={character.name} */
+  .avatarChoisi {
+    animation: pop var(--dur-base, 220ms) var(--ease-spring, cubic-bezier(.34,1.56,.64,1)) backwards;
+  }
+
+  /* Balayage de brillance une seule fois à l'entrée */
+  .badgeHumain::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    background: linear-gradient(100deg, transparent 25%, rgba(255, 255, 255, 0.55) 50%, transparent 75%);
+    translate: 120% 0;
+    pointer-events: none;
+    animation: brillance 700ms var(--ease-in-out, cubic-bezier(.65,0,.35,1)) backwards;
+    animation-delay: calc(var(--delai, 0ms) + 220ms);
+  }
+  /* Fond clair : un reflet couleur accent plutôt que blanc */
+  :global([data-theme="terrasse"]) .badgeHumain::after {
+    background: linear-gradient(100deg, transparent 25%, color-mix(in srgb, var(--accent) 35%, transparent) 50%, transparent 75%);
+  }
+
+  /* Image/GIF : léger scale au chargement (onLoad pose data-charge).
+     Une image sans data-charge (en cache avant hydratation) reste visible telle quelle. */
+  .media[data-charge] {
+    animation: media var(--dur-slow, 380ms) var(--ease-out-expo, cubic-bezier(.16,1,.3,1)) backwards;
+  }
+
+  /* Réponse inline : desktop seulement — sur mobile le formulaire est un Drawer
+     position:fixed, qu'un translate d'ancêtre décalerait pendant l'entrée. */
+  @media (min-width: 641px) {
+    .replyIn {
+      animation: depuisHaut 240ms var(--ease-out-expo, cubic-bezier(.16,1,.3,1)) backwards;
+    }
+  }
+
+  .liste {
+    animation: liste 160ms var(--ease-out-expo, cubic-bezier(.16,1,.3,1)) backwards;
+  }
+  .option {
+    animation: option 160ms var(--ease-out-expo, cubic-bezier(.16,1,.3,1)) backwards;
+    animation-delay: min(calc(var(--i, 0) * 20ms), 160ms);
+  }
+
+  .depotActif {
+    scale: 1.02;
+  }
+  .depotActif .icone {
+    animation: rebond 520ms var(--ease-in-out, cubic-bezier(.65,0,.35,1)) infinite;
+  }
+
+  .apercu {
+    animation: pop var(--dur-slow, 380ms) var(--ease-spring, cubic-bezier(.34,1.56,.64,1)) backwards;
+  }
+
+  .compteur {
+    animation: fondu var(--dur-base, 220ms) ease-out backwards;
+  }
+
+  .points span {
+    animation: point 900ms var(--ease-in-out, cubic-bezier(.65,0,.35,1)) infinite;
+  }
+  .points span:nth-child(2) { animation-delay: 120ms; }
+  .points span:nth-child(3) { animation-delay: 240ms; }
+
+  .envoye {
+    animation: pop var(--dur-slow, 380ms) var(--ease-spring, cubic-bezier(.34,1.56,.64,1));
+  }
+  .gerbe span {
+    animation: particule 420ms var(--ease-out-expo, cubic-bezier(.16,1,.3,1)) forwards;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .media:hover {
+      scale: 1.02;
+    }
+    .ajouter:hover:not(:active) {
+      scale: 1.01;
+    }
+    .ajouter:hover .plus {
+      rotate: 90deg;
+    }
+    .fermer:hover svg {
+      rotate: 90deg;
+    }
+  }
+}
+
+/* Sous reduce : fondu court toléré pour le compteur, rien d'autre */
+@media (prefers-reduced-motion: reduce) {
+  .compteur {
+    animation: fondu 100ms ease-out backwards;
+  }
+}

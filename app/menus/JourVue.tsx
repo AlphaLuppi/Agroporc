@@ -1,3 +1,6 @@
+"use client";
+
+import { useEffect, useLayoutEffect, useRef, type CSSProperties, type PointerEvent } from "react";
 import type { PdjEntry } from "@/lib/db";
 import type { Mode } from "@/lib/carte-tri";
 import { casseLisible, indexOrpheline, macrosTuile, NOM_LONG, platsAffiches, platsAVenir, recoDuMode, restosSansPlat, type PlatAffiche } from "@/lib/menus-vue";
@@ -5,7 +8,9 @@ import { imageDuPlat, type ImagePlat, type ImagesPlats } from "@/lib/plat-image"
 import type { Selection } from "./DetailPanneau";
 import RestoBadge from "@/app/components/RestoBadge";
 import PlatImage from "./PlatImage";
-import { couleur, fmtNote, fmtPrix, Pastille } from "./ui";
+import { deltaFlip, lireTranslate, rangStagger, type Pos } from "@/lib/motion-menus";
+import { couleur, fmtPrix, NoteAnimee, PastilleAnimee } from "./ui";
+import { estPret, finRipple, reduit, ripple, SORTIE_EXPO } from "./motion";
 import styles from "./menus.module.css";
 
 function Meta({ p }: { p: PlatAffiche }) {
@@ -33,16 +38,43 @@ function Macros({ p, mode }: { p: PlatAffiche; mode: Mode }) {
   );
 }
 
-function Tuile({ p, mode, image, pleine, onOpen }: { p: PlatAffiche; mode: Mode; image?: ImagePlat; pleine?: boolean; onOpen: () => void }) {
+/** Au-delà, pas de FLIP (coût et lisibilité). */
+const FLIP_MAX = 24;
+
+function Tuile({
+  p,
+  mode,
+  image,
+  pleine,
+  rang,
+  flipKey,
+  onOpen,
+}: {
+  p: PlatAffiche;
+  mode: Mode;
+  image?: ImagePlat;
+  pleine?: boolean;
+  rang: number;
+  flipKey: string;
+  onOpen: () => void;
+}) {
   const nom = casseLisible(p.variante.plat);
   const note = (
     <span className={`${styles.grosseNote} ${couleur(p.note)}`}>
-      {fmtNote(p.note)}
+      <NoteAnimee note={p.note} />
       <small>/10</small>
     </span>
   );
   return (
-    <button type="button" className={`${styles.tuile} ${pleine || nom.length > NOM_LONG ? styles.large : ""}`} onClick={onOpen}>
+    <button
+      type="button"
+      data-flip={flipKey}
+      className={`${styles.tuile} ${styles.entre} ${pleine || nom.length > NOM_LONG ? styles.large : ""}`}
+      style={{ "--i": rangStagger(rang) } as CSSProperties}
+      onPointerDown={ripple}
+      onAnimationEnd={finRipple}
+      onClick={onOpen}
+    >
       {image && <PlatImage key={image.src} src={image.src} nom={nom} format="tuile" />}
       <span className={styles.tuileHaut}>
         {note}
@@ -55,12 +87,46 @@ function Tuile({ p, mode, image, pleine, onOpen }: { p: PlatAffiche; mode: Mode;
   );
 }
 
-function Hero({ p, raison, image, onOpen }: { p: PlatAffiche; raison?: string; image?: ImagePlat; onOpen: () => void }) {
+function Hero({ p, mode, raison, image, onOpen }: { p: PlatAffiche; mode: Mode; raison?: string; image?: ImagePlat; onOpen: () => void }) {
   const n = p.variante.nutrition_estimee;
+  const raf = useRef(0);
+  useEffect(() => () => cancelAnimationFrame(raf.current), []);
+  // Tilt 3D léger (≤ 3°) et halo qui suit le pointeur : souris uniquement, throttlé en rAF.
+  const suivre = (e: PointerEvent<HTMLButtonElement>) => {
+    if (e.pointerType !== "mouse" || raf.current || reduit()) return;
+    const el = e.currentTarget;
+    const { clientX, clientY } = e;
+    raf.current = requestAnimationFrame(() => {
+      raf.current = 0;
+      const r = el.getBoundingClientRect();
+      if (r.width === 0) return;
+      const x = (clientX - r.left) / r.width;
+      const y = (clientY - r.top) / r.height;
+      el.style.setProperty("--rx", `${((0.5 - y) * 5).toFixed(2)}deg`);
+      el.style.setProperty("--ry", `${((x - 0.5) * 5).toFixed(2)}deg`);
+      el.style.setProperty("--mx", `${(x * 100).toFixed(1)}%`);
+      el.style.setProperty("--my", `${(y * 100).toFixed(1)}%`);
+    });
+  };
+  const quitter = (e: PointerEvent<HTMLButtonElement>) => {
+    cancelAnimationFrame(raf.current);
+    raf.current = 0;
+    e.currentTarget.style.setProperty("--rx", "0deg");
+    e.currentTarget.style.setProperty("--ry", "0deg");
+  };
   return (
-    <button type="button" className={`${styles.hero} ${image ? styles.heroPhoto : ""}`} onClick={onOpen}>
+    <button
+      type="button"
+      className={`${styles.hero} ${styles.entre} ${image ? styles.heroPhoto : ""}`}
+      style={{ "--i": 0 } as CSSProperties}
+      onPointerMove={suivre}
+      onPointerLeave={quitter}
+      onPointerDown={ripple}
+      onAnimationEnd={finRipple}
+      onClick={onOpen}
+    >
       {image && <PlatImage key={image.src} src={image.src} nom={casseLisible(p.variante.plat)} format="hero" />}
-      <Pastille note={p.note} />
+      <PastilleAnimee note={p.note} cle={`${p.platIndex}::${p.variante.plat}::${mode}`} />
       <span className={styles.heroTexte}>
         <span><span className={styles.tagReco}>Reco du jour</span></span>
         <span className={styles.heroNom}>{casseLisible(p.variante.plat)}</span>
@@ -83,6 +149,74 @@ function Hero({ p, raison, image, onOpen }: { p: PlatAffiche; raison?: string; i
 
 /** Vue Jour : la reco du mode en grand, puis les autres plats en tuiles, triés par note. */
 export default function JourVue({ pdj, mode, images, onOpen }: { pdj: PdjEntry; mode: Mode; images?: ImagesPlats; onOpen: (s: Selection) => void }) {
+  const grilleRef = useRef<HTMLDivElement>(null);
+  const positions = useRef(new Map<string, Pos>());
+  const modePrecedent = useRef(mode);
+
+  // FLIP au changement de mode : les tuiles (clés stables) glissent vers leur nouveau rang. On
+  // mesure offsetLeft/offsetTop (insensibles aux translate en cours) + le translate courant pour
+  // partir de la position visuelle si une animation précédente tourne encore.
+  useLayoutEffect(() => {
+    const grille = grilleRef.current;
+    if (!grille) return;
+    const els = Array.from(grille.querySelectorAll<HTMLElement>(":scope > [data-flip]"));
+    const modeChange = modePrecedent.current !== mode;
+    modePrecedent.current = mode;
+    const animer = modeChange && estPret() && !reduit() && els.length <= FLIP_MAX;
+    const avant = positions.current;
+    const apres = new Map<string, Pos>();
+    for (const el of els) {
+      const cle = el.dataset.flip!;
+      // Tuile déjà connue : son entrée est jouée. On le marque AVANT toute lecture de style, sinon
+      // le déplacement DOM du tri relance `.entre` (cas du rendu serveur : animationend jamais reçu).
+      if (avant.has(cle)) el.setAttribute("data-vu", "");
+      if (el.offsetParent === null) continue; // caché : rien à mesurer
+      let visuel = avant.get(cle);
+      if (animer && visuel) {
+        const t = lireTranslate(getComputedStyle(el).translate);
+        visuel = { x: visuel.x + t.x, y: visuel.y + t.y };
+        for (const a of el.getAnimations()) if (a.id === "flip") a.cancel();
+      }
+      const pos = { x: el.offsetLeft, y: el.offsetTop };
+      apres.set(cle, pos);
+      if (!animer) continue;
+      const d = deltaFlip(visuel, pos);
+      if (d) {
+        const a = el.animate([{ translate: `${d.x}px ${d.y}px` }, { translate: "0 0" }], { duration: 320, easing: SORTIE_EXPO });
+        a.id = "flip";
+      } else if (!avant.has(cle)) {
+        // La tuile qui quitte le hero (ou qui apparaît) fait un pop, seul : pas d'entrée CSS en plus.
+        el.setAttribute("data-vu", "");
+        el.animate([{ scale: "0.9", opacity: 0.4 }, { scale: "1.03", offset: 0.6 }, { scale: "1", opacity: 1 }], { duration: 300, easing: "ease-out" });
+      }
+    }
+    positions.current = apres;
+  }, [mode, pdj]);
+
+  // Rendu serveur : les entrées terminées avant l'hydratation n'ont pas émis d'animationend
+  // capté par React. On marque `data-vu` sur celles qui ne tournent plus.
+  useEffect(() => {
+    grilleRef.current?.querySelectorAll<HTMLElement>(`.${styles.entre}:not([data-vu])`).forEach((el) => {
+      const enCours = el.getAnimations().some((a) => "animationName" in a && a.playState !== "finished");
+      if (!enCours) el.setAttribute("data-vu", "");
+    });
+  }, []);
+
+  // Les positions mémorisées doivent suivre les changements de largeur (rotation, fenêtre).
+  useEffect(() => {
+    const grille = grilleRef.current;
+    if (!grille || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => {
+      const m = new Map<string, Pos>();
+      grille.querySelectorAll<HTMLElement>(":scope > [data-flip]").forEach((el) => {
+        if (el.offsetParent !== null) m.set(el.dataset.flip!, { x: el.offsetLeft, y: el.offsetTop });
+      });
+      positions.current = m;
+    });
+    ro.observe(grille);
+    return () => ro.disconnect();
+  }, []);
+
   if (pdj.ferie) {
     return <div className={styles.message}>Jour férié, {pdj.ferie}. Les restaurants sont fermés.</div>;
   }
@@ -102,13 +236,25 @@ export default function JourVue({ pdj, mode, images, onOpen }: { pdj: PdjEntry; 
   const orpheline = indexOrpheline(tuiles);
 
   return (
-    <div className={styles.grille}>
-      {hero && <Hero p={hero} raison={reco?.raison} image={image(hero)} onOpen={ouvrir(hero)} />}
-      {tuiles.map((p, i) => (
-        <Tuile key={`${p.platIndex}::${p.variante.plat}`} p={p} mode={mode} image={image(p)} pleine={i === orpheline} onOpen={ouvrir(p)} />
-      ))}
+    <div className={styles.grille} ref={grilleRef}>
+      {hero && <Hero p={hero} mode={mode} raison={reco?.raison} image={image(hero)} onOpen={ouvrir(hero)} />}
+      {tuiles.map((p, i) => {
+        const cle = `${p.platIndex}::${p.variante.plat}`;
+        return (
+          <Tuile
+            key={cle}
+            flipKey={cle}
+            rang={i + (hero ? 1 : 0)}
+            p={p}
+            mode={mode}
+            image={image(p)}
+            pleine={i === orpheline}
+            onOpen={ouvrir(p)}
+          />
+        );
+      })}
       {(aVenir.length > 0 || sans.length > 0) && (
-        <div className={styles.puces}>
+        <div className={`${styles.puces} ${styles.entre}`} style={{ "--i": rangStagger(tuiles.length + 1) } as CSSProperties}>
           {/* Un groupe par intitulé : « Sans plat » ne se retrouve jamais en fin de ligne après une puce d'un autre groupe. */}
           {aVenir.length > 0 && (
             <div className={styles.pucesGroupe}>

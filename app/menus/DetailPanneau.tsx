@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type PointerEvent } from "react";
 import { createPortal } from "react-dom";
 import type { PdjEntry } from "@/lib/db";
 import { noteMode, type Mode } from "@/lib/carte-tri";
 import { formatDateShort } from "@/lib/format";
 import { casseLisible, recoDuMode } from "@/lib/menus-vue";
 import { variantesPlat } from "@/lib/plat-options";
+import { decisionLacher, suiviDoigt } from "@/lib/motion-menus";
 import { baseClePlatImage, imageDuPlat, type ImagesPlats } from "@/lib/plat-image";
 import { RESTAURANTS, statutSansPlat } from "@/lib/restaurants";
 import CommentSection from "../CommentSection";
@@ -16,7 +17,8 @@ import PlatImage from "./PlatImage";
 import PhotoPlat from "./PhotoPlat";
 import RecettePanneau from "./RecettePanneau";
 import { recetteAttendue } from "@/lib/recettes";
-import { AjouterButton, fmtNote, fmtPrix, MODE_LABEL, OrderLinks, Pastille } from "./ui";
+import { AjouterButton, fmtNote, fmtPrix, MODE_LABEL, OrderLinks, PastilleAnimee } from "./ui";
+import { reduit } from "./motion";
 import styles from "./menus.module.css";
 
 /** Ce que montre le panneau : un plat (une variante d'un `Plat`) ou un resto sans plat. */
@@ -49,25 +51,110 @@ function Fermer({ onClose }: { onClose: () => void }) {
   );
 }
 
-/** Détail d'un plat : feuille du bas sur mobile, panneau à droite sur desktop. Échap ou le voile ferment. */
+/** Cascade d'entrée du contenu (rang 0 à 4). */
+const rang = (i: number) => ({ "--i": i }) as CSSProperties;
+
+/** Durée max de la sortie avant de démonter quand même (animationend manqué, onglet caché…). */
+const SORTIE_SECOURS = 260;
+
+/**
+ * Détail d'un plat : feuille du bas sur mobile, panneau à droite sur desktop. Échap, le voile, le
+ * bouton fermer ou un glissé vers le bas (mobile) ferment, avec une courte sortie animée.
+ */
 export default function DetailPanneau({ selection, semaine, mode, today, cartesSlugs, onClose, voirCarte, images, clesPlats }: Props) {
   const ref = useRef<HTMLDivElement>(null);
+  const [sortie, setSortie] = useState(false);
+  const ferme = useRef(false);
+  const secours = useRef<ReturnType<typeof setTimeout>>(undefined);
+
+  const fermerVraiment = useCallback(() => {
+    if (ferme.current) return;
+    ferme.current = true;
+    clearTimeout(secours.current);
+    onClose();
+  }, [onClose]);
+
+  // Stable tant que onClose l'est : l'effet focus / overflow / Échap ne se relance pas.
+  const demanderFermeture = useCallback(() => {
+    if (ferme.current) return;
+    if (reduit()) return fermerVraiment();
+    setSortie(true);
+    clearTimeout(secours.current);
+    secours.current = setTimeout(fermerVraiment, SORTIE_SECOURS);
+  }, [fermerVraiment]);
+
+  useEffect(() => () => clearTimeout(secours.current), []);
+
+  // ── Glisser pour fermer (mobile) : depuis la poignée ou l'en-tête, contenu en haut seulement. ──
+  const drag = useRef<{ id: number; y0: number; y: number; t: number; v: number } | null>(null);
+  const debutDrag = (e: PointerEvent<HTMLDivElement>) => {
+    const panneau = ref.current;
+    if (!panneau || sortie || panneau.scrollTop > 0) return;
+    if (!window.matchMedia("(max-width: 767px)").matches) return;
+    if ((e.target as Element).closest("button, a, input, textarea")) return;
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    drag.current = { id: e.pointerId, y0: e.clientY, y: 0, t: e.timeStamp, v: 0 };
+    e.currentTarget.setPointerCapture(e.pointerId);
+    // L'entrée CSS (`monte`, sur translate) écraserait le translate inline : on la termine.
+    for (const a of panneau.getAnimations()) {
+      if (a.id === "retour") a.cancel();
+      else if ("animationName" in a) a.finish(); // getAnimations() sans subtree : celles du panneau seul
+    }
+  };
+  const suivreDrag = (e: PointerEvent<HTMLDivElement>) => {
+    const d = drag.current;
+    const panneau = ref.current;
+    if (!d || d.id !== e.pointerId || !panneau) return;
+    const y = suiviDoigt(e.clientY - d.y0);
+    const dt = Math.max(1, e.timeStamp - d.t);
+    d.v = (y - d.y) / dt;
+    d.y = y;
+    d.t = e.timeStamp;
+    panneau.style.translate = `0 ${y}px`;
+  };
+  const finDrag = (e: PointerEvent<HTMLDivElement>) => {
+    const d = drag.current;
+    const panneau = ref.current;
+    if (!d || d.id !== e.pointerId || !panneau) return;
+    drag.current = null;
+    if (Math.abs(d.y) < 1) {
+      panneau.style.translate = "";
+      return;
+    }
+    if (e.type !== "pointercancel" && decisionLacher(d.y, d.v) === "fermer") {
+      // La sortie part de la position courante (translate inline) ; sous reduce, fermeture immédiate.
+      demanderFermeture();
+      return;
+    }
+    const depart = d.y;
+    panneau.style.translate = "";
+    if (reduit()) return;
+    const a = panneau.animate([{ translate: `0 ${depart}px` }, { translate: "0 0" }], { duration: 280, easing: "cubic-bezier(.34,1.4,.64,1)" });
+    a.id = "retour";
+  };
+  const zoneDrag = {
+    onPointerDown: debutDrag,
+    onPointerMove: suivreDrag,
+    onPointerUp: finDrag,
+    onPointerCancel: finDrag,
+  };
 
   useEffect(() => {
     const precedent = document.activeElement as HTMLElement | null;
-    ref.current?.focus();
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
     const overflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
+    // preventScroll : le panneau est encore hors écran (début de `monte`), pas de saut sur iOS.
+    ref.current?.focus({ preventScroll: true });
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") demanderFermeture();
+    };
     document.addEventListener("keydown", onKey);
     return () => {
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = overflow;
       precedent?.focus?.();
     };
-  }, [onClose]);
+  }, [demanderFermeture]);
 
   const pdj = semaine.find((p) => p.date === selection.date);
   let contenu: React.ReactNode = null;
@@ -91,8 +178,8 @@ export default function DetailPanneau({ selection, semaine, mode, today, cartesS
         : clesPlats?.[baseClePlatImage(plat.restaurant, v.plat)];
       contenu = (
         <>
-          <div className={styles.panneauTete}>
-            <Pastille note={noteMode(v, mode)} />
+          <div className={`${styles.panneauTete} ${styles.cascade}`} style={rang(0)} {...zoneDrag}>
+            <PastilleAnimee note={noteMode(v, mode)} cle={mode} depuisZero />
             <div className={styles.panneauTexte}>
               <RestoBadge nom={plat.restaurant} variante="chip" complet className={styles.panneauResto} />
               <h2>{titre}</h2>
@@ -105,21 +192,34 @@ export default function DetailPanneau({ selection, semaine, mode, today, cartesS
             </div>
           </div>
           {image && (
-            <figure style={{ margin: 0 }}>
+            <figure className={styles.cascade} style={{ ...rang(1), margin: 0 }}>
               <PlatImage key={image.src} src={image.src} nom={titre} format="panneau" />
               {image.credit && <figcaption className={styles.legendeIa}>Image : {image.credit}</figcaption>}
             </figure>
           )}
-          {estReco && reco?.raison && <p className={styles.texte} style={{ color: "var(--good)" }}>{reco.raison}</p>}
-          <MacrosPanel nutri={v.nutrition_estimee} ingredients={v.ingredients_detail} source={v.nutrition_source} />
-          {justification && <p className={styles.texte}>{justification}</p>}
-          <div className={styles.actions}>
+          {estReco && reco?.raison && (
+            <p className={`${styles.texte} ${styles.cascade}`} style={{ ...rang(1), color: "var(--good)" }}>
+              {reco.raison}
+            </p>
+          )}
+          <div className={styles.cascade} style={rang(2)}>
+            <MacrosPanel nutri={v.nutrition_estimee} ingredients={v.ingredients_detail} source={v.nutrition_source} />
+          </div>
+          {justification && (
+            <p className={`${styles.texte} ${styles.cascade}`} style={rang(2)}>
+              {justification}
+            </p>
+          )}
+          <div className={`${styles.actions} ${styles.cascade}`} style={rang(3)}>
             <OrderLinks restaurant={plat.restaurant} />
             <AjouterButton restaurant={plat.restaurant} plat={v.plat} prix={plat.prix} date={pdj.date} />
           </div>
-          {cleRecette && <RecettePanneau key={cleRecette} cle={cleRecette} date={pdj.date} today={today} />}
-          {slugPhotos && <PhotoPlat key={`${pdj.date}-${v.plat}`} slug={slugPhotos} plat={v.plat} date={pdj.date} />}
-          <CommentSection commentaires={plat.commentaires || []} date={pdj.date} platIndex={selection.platIndex} />
+          {/* Recette, photos et commentaires : un seul dernier palier de la cascade (pas d'attente en bas de feuille). */}
+          <div className={styles.cascade} style={rang(4)}>
+            {cleRecette && <RecettePanneau key={cleRecette} cle={cleRecette} date={pdj.date} today={today} />}
+            {slugPhotos && <PhotoPlat key={`${pdj.date}-${v.plat}`} slug={slugPhotos} plat={v.plat} date={pdj.date} />}
+            <CommentSection commentaires={plat.commentaires || []} date={pdj.date} platIndex={selection.platIndex} />
+          </div>
         </>
       );
     }
@@ -134,16 +234,23 @@ export default function DetailPanneau({ selection, semaine, mode, today, cartesS
         : "";
     contenu = (
       <>
-        <div className={styles.panneauTete}>
+        <div className={`${styles.panneauTete} ${styles.cascade}`} style={rang(0)} {...zoneDrag}>
           <RestoBadge nom={selection.nom} variante="icone" taille={34} />
           <div className={styles.panneauTexte}>
             <h2>{selection.nom}</h2>
             <div className={styles.meta}>{statut}</div>
           </div>
         </div>
-        <OrderLinks restaurant={selection.nom} />
+        <div className={styles.cascade} style={rang(1)}>
+          <OrderLinks restaurant={selection.nom} />
+        </div>
         {resto && cartesSlugs.has(resto.slug) && (
-          <button type="button" className={styles.bouton} style={{ alignSelf: "flex-start" }} onClick={() => voirCarte(resto.slug)}>
+          <button
+            type="button"
+            className={`${styles.bouton} ${styles.cascade}`}
+            style={{ ...rang(2), alignSelf: "flex-start" }}
+            onClick={() => voirCarte(resto.slug)}
+          >
             Voir la carte
           </button>
         )}
@@ -155,10 +262,21 @@ export default function DetailPanneau({ selection, semaine, mode, today, cartesS
 
   return createPortal(
     <>
-      <div className={styles.voile} onClick={onClose} aria-hidden="true" />
-      <div ref={ref} className={styles.panneau} role="dialog" aria-modal="true" aria-label={titre} tabIndex={-1}>
-        <div className={styles.poignee} aria-hidden="true" />
-        <Fermer onClose={onClose} />
+      <div className={styles.voile} onClick={demanderFermeture} aria-hidden="true" data-sortie={sortie ? "" : undefined} />
+      <div
+        ref={ref}
+        className={styles.panneau}
+        role="dialog"
+        aria-modal="true"
+        aria-label={titre}
+        tabIndex={-1}
+        data-sortie={sortie ? "" : undefined}
+        onAnimationEnd={(e) => {
+          if (sortie && e.target === e.currentTarget) fermerVraiment();
+        }}
+      >
+        <div className={styles.poignee} aria-hidden="true" {...zoneDrag} />
+        <Fermer onClose={demanderFermeture} />
         {contenu}
       </div>
     </>,
