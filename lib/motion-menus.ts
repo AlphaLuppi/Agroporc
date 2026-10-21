@@ -43,16 +43,38 @@ export interface Pos {
   y: number;
 }
 
+/** Lit la valeur calculée de `scale` (« none », « 0.5 », « 0.5 0.8 », « 1 1 1 »). */
+export function lireScale(valeur: string | null | undefined): { x: number; y: number } {
+  if (!valeur || valeur === "none") return { x: 1, y: 1 };
+  const [sx, sy = sx] = valeur.trim().split(/\s+/);
+  const n = (s: string) => {
+    const v = parseFloat(s);
+    return Number.isFinite(v) && v > 0 ? v : 1;
+  };
+  return { x: n(sx), y: n(sy) };
+}
+
+/** Boîte de layout d'un élément (coin haut gauche + taille), relative à la grille. */
+export interface Boite extends Pos {
+  w: number;
+  h: number;
+}
+
 /**
- * Décalage FLIP d'un élément : de sa position visuelle précédente vers sa nouvelle position de
- * layout. `null` si l'élément est nouveau ou n'a (presque) pas bougé.
+ * Décalage FLIP d'un élément qui peut changer de taille (le hero qui redevient tuile, la tuile
+ * promue hero) : translate + scale, à appliquer avec `transform-origin: 0 0`, pour repartir de
+ * sa boîte visuelle précédente. `null` si l'élément est nouveau ou n'a (presque) pas bougé.
  */
-export function deltaFlip(avant: Pos | undefined, apres: Pos, seuil = 1): Pos | null {
-  if (!avant) return null;
-  const dx = avant.x - apres.x;
-  const dy = avant.y - apres.y;
-  if (Math.abs(dx) < seuil && Math.abs(dy) < seuil) return null;
-  return { x: dx, y: dy };
+export function deltaBoite(avant: Boite | undefined, apres: Boite, seuil = 1): (Pos & { sx: number; sy: number }) | null {
+  if (!avant || apres.w <= 0 || apres.h <= 0) return null;
+  const x = avant.x - apres.x;
+  const y = avant.y - apres.y;
+  const sx = avant.w / apres.w;
+  const sy = avant.h / apres.h;
+  const bouge = Math.abs(x) >= seuil || Math.abs(y) >= seuil;
+  const grandit = Math.abs(avant.w - apres.w) >= seuil || Math.abs(avant.h - apres.h) >= seuil;
+  if (!bouge && !grandit) return null;
+  return { x, y, sx, sy };
 }
 
 /** Position suivie par la feuille pendant le drag : libre vers le bas, résistance ×0,5 (plafonnée) vers le haut. */
