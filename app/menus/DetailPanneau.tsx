@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type PointerEvent } from "react";
 import { createPortal } from "react-dom";
 import type { PdjEntry } from "@/lib/db";
+import type { AvatarIa } from "@/lib/characters";
 import { noteMode, type Mode } from "@/lib/carte-tri";
 import { formatDateShort } from "@/lib/format";
 import { casseLisible, recoDuMode } from "@/lib/menus-vue";
@@ -38,6 +39,8 @@ interface Props {
   images?: ImagesPlats;
   /** Base de clé → clé du plat, pour charger sa recette (POC). */
   clesPlats?: Record<string, string>;
+  /** Repères des personnages IA en base, pour les avatars des commentaires. */
+  avatars?: Record<string, AvatarIa>;
 }
 
 function Fermer({ onClose }: { onClose: () => void }) {
@@ -61,7 +64,7 @@ const SORTIE_SECOURS = 260;
  * Détail d'un plat : feuille du bas sur mobile, panneau à droite sur desktop. Échap, le voile, le
  * bouton fermer ou un glissé vers le bas (mobile) ferment, avec une courte sortie animée.
  */
-export default function DetailPanneau({ selection, semaine, mode, today, cartesSlugs, onClose, voirCarte, images, clesPlats }: Props) {
+export default function DetailPanneau({ selection, semaine, mode, today, cartesSlugs, onClose, voirCarte, images, clesPlats, avatars }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const [sortie, setSortie] = useState(false);
   const ferme = useRef(false);
@@ -218,7 +221,7 @@ export default function DetailPanneau({ selection, semaine, mode, today, cartesS
           <div className={styles.cascade} style={rang(4)}>
             {cleRecette && <RecettePanneau key={cleRecette} cle={cleRecette} date={pdj.date} today={today} />}
             {slugPhotos && <PhotoPlat key={`${pdj.date}-${v.plat}`} slug={slugPhotos} plat={v.plat} date={pdj.date} />}
-            <CommentSection commentaires={plat.commentaires || []} date={pdj.date} platIndex={selection.platIndex} />
+            <CommentSection commentaires={plat.commentaires || []} date={pdj.date} platIndex={selection.platIndex} avatars={avatars} />
           </div>
         </>
       );

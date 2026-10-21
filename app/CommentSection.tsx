@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import type { Commentaire } from "@/lib/db";
-import { AVATAR_COLORS, AVATAR_EMOJI, AVATAR_IMAGE } from "@/lib/characters";
+import { avatarAuteur, type AvatarIa } from "@/lib/characters";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -165,11 +165,14 @@ export default function CommentSection({
   date,
   platIndex,
   readOnly = false,
+  avatars,
 }: {
   commentaires: Commentaire[];
   date: string;
   platIndex: number;
   readOnly?: boolean;
+  /** Repères des personnages IA en base (photo ajoutée depuis /ia). */
+  avatars?: Record<string, AvatarIa>;
 }) {
   const [replyingTo, setReplyingTo] = useState<number | null>(null);
   const [expanded, setExpanded] = useState(false);
@@ -211,6 +214,7 @@ export default function CommentSection({
           <Separator className="mb-3 bg-[var(--border)]" />
           {flatList.map(({ index, depth }, pos) => {
             const c = safeCommentaires[index];
+            const avatar = avatarAuteur(c.auteur, avatars);
             const showTopSeparator = depth === 0 && pos > 0 && flatList[pos - 1].depth === 0;
             // Entrée en cascade : 35 ms par ligne, plafonnée à 8 (cf. .ligne/.reponse)
             const rang = { "--i": Math.min(pos, 8) } as React.CSSProperties;
@@ -226,11 +230,9 @@ export default function CommentSection({
                 >
                   <div className={`flex items-start gap-2.5 py-1.5 ${depth > 0 ? "py-1" : "py-2"}`}>
                     <Avatar className={`${styles.avatar} shrink-0 text-xs ${depth > 0 ? "w-6 h-6" : "w-7 h-7"}`}>
-                      {AVATAR_IMAGE[c.auteur] && (
-                        <AvatarImage src={AVATAR_IMAGE[c.auteur]} alt={c.auteur} />
-                      )}
-                      <AvatarFallback style={{ background: AVATAR_COLORS[c.auteur] || "#6b7280" }} className="text-xs">
-                        {AVATAR_EMOJI[c.auteur] || c.auteur[0]}
+                      {avatar.image && <AvatarImage src={avatar.image} alt={c.auteur} />}
+                      <AvatarFallback style={{ background: avatar.couleur }} className="text-xs">
+                        {avatar.emoji}
                       </AvatarFallback>
                     </Avatar>
                     <div className="flex-1 min-w-0 text-sm leading-relaxed">
