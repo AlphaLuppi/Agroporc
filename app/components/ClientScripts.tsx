@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import { usePathname } from "next/navigation";
+import { changerThemeEncre } from "@/lib/theme-encre";
 
 export function ClientScripts() {
   const pathname = usePathname();
@@ -25,9 +26,12 @@ export function ClientScripts() {
     themeBtns.forEach((btn) => {
       btn.onclick = () => {
         const theme = btn.dataset.theme!;
-        document.documentElement.setAttribute("data-theme", theme);
+        if (document.documentElement.getAttribute("data-theme") === theme) return;
         localStorage.setItem("pdj-theme", theme);
-        applyThemeActive(theme);
+        changerThemeEncre(btn, () => {
+          document.documentElement.setAttribute("data-theme", theme);
+          applyThemeActive(theme);
+        });
       };
     });
 

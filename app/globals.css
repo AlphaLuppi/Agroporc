@@ -473,6 +473,19 @@ body::before {
 .theme-btn svg { transition: rotate var(--dur-base) var(--ease-spring); }
 .theme-btn:active svg { rotate: -20deg; transition-duration: 90ms; }
 
+/* Changement de thème en tache d'encre (lib/theme-encre.ts) : l'ancien thème
+   reste figé dessous, le nouveau apparaît à travers un masque SVG qui grandit
+   depuis le bouton. Les transitions de couleur sont coupées le temps de la
+   capture, sinon la tache révélerait des couleurs à mi-chemin. */
+html.pdj-encre, html.pdj-encre *, html.pdj-encre *::before, html.pdj-encre *::after { transition: none !important; }
+html.pdj-encre::view-transition-old(root),
+html.pdj-encre::view-transition-new(root) { animation: none; mix-blend-mode: normal; }
+html.pdj-encre::view-transition-new(root) {
+  mask-image: var(--pdj-encre);
+  mask-repeat: no-repeat;
+  mask-size: 0 0;
+}
+
 /* Menu mobile : le panneau descend, les liens arrivent en cascade. */
 #mobile-menu:not(.hidden) { animation: pdj-rise 220ms var(--ease-out-expo) backwards; }
 #mobile-menu:not(.hidden) [data-nav-links] a {
