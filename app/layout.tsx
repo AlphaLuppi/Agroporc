@@ -4,6 +4,7 @@ import "./globals.css";
 import { ClientScripts } from "./components/ClientScripts";
 import { MyrtilleEasterEgg } from "./components/MyrtilleEasterEgg";
 import { TigreCourant } from "./components/TigreCourant";
+import { CreditTigre } from "./components/CreditTigre";
 
 export const metadata: Metadata = {
   title: "Agroporc",
@@ -440,6 +441,8 @@ export default function RootLayout({
             </svg>
             <span>Le projet est open source &mdash; viens contribuer sur GitHub&nbsp;!</span>
           </a>
+          {/* Crédit du modèle 3D du tigre (CC BY 4.0) : affiché seulement dans le thème Tigre (globals.css). */}
+          <CreditTigre />
         </div>
         <ClientScripts />
         <MyrtilleEasterEgg />

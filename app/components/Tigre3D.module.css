@@ -1,0 +1,56 @@
+/* Tigre 3D (thème Tigre) : un conteneur collé en bas de l'écran, de la hauteur du canvas.
+   Le canvas WebGL (transparent) est translaté en JS pendant un passage et caché entre deux.
+   Il ne capte rien : seules les zones invisibles, recalées à chaque image sur chaque tigre,
+   reçoivent le pointeur. Bulle et particules sont des éléments HTML du même repère. */
+.conteneur {
+  position: fixed; left: 0; right: 0; bottom: calc(0px + env(safe-area-inset-bottom, 0px)); z-index: 40;
+  height: 0; pointer-events: none; user-select: none;
+}
+.canvas {
+  position: absolute; left: 0; top: 0; visibility: hidden; pointer-events: none;
+  will-change: transform; transform: translate3d(-100vw, 0, 0);
+}
+
+/* Cliquable : curseur main, pas de surbrillance tactile. */
+.zone {
+  position: absolute; left: 0; top: 0; pointer-events: auto; cursor: pointer;
+  touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+}
+
+/* Mobile : la barre jours + mode est collée en bas (≈ 80 px, z-index 5). Le tigre court
+   au-dessus, sinon il capterait les taps destinés à ses boutons. */
+@media (max-width: 767px) {
+  .conteneur { bottom: calc(80px + env(safe-area-inset-bottom, 0px)); }
+}
+
+/* Bulle de dialogue au-dessus de la tête, aux couleurs du thème. Placée en JS (translate3d) ;
+   --queue décale la pointe quand la bulle est recadrée dans l'écran. `scale` (propriété
+   individuelle) anime l'apparition sans toucher au transform. */
+.bulle {
+  position: absolute; left: 0; top: 0; z-index: 2; margin-top: -8px;
+  padding: 5px 12px; border: 2px solid var(--border-accent); border-radius: var(--radius);
+  background: var(--surface-accent); color: var(--text); box-shadow: var(--shadow);
+  font-size: 0.95rem; font-weight: 700; line-height: 1.2; white-space: nowrap;
+  pointer-events: none; animation: bulle-pop 200ms cubic-bezier(0.2, 1.4, 0.4, 1) both;
+}
+.bulle::after {
+  content: ""; position: absolute; left: calc(50% + var(--queue, 0px)); bottom: -7px; width: 10px; height: 10px;
+  background: var(--surface-accent); border: solid var(--border-accent); border-width: 0 2px 2px 0;
+  transform: translateX(-50%) rotate(45deg);
+}
+@keyframes bulle-pop { from { scale: 0.4; opacity: 0; } to { scale: 1; opacity: 1; } }
+
+/* Particules (éclat du clap, cœurs du ronron, Z de la sieste) : parties d'un point du tigre, vers (--dx, --dy).
+   Sous la bulle (z-index 1 < 2) : un cœur ou un Z ne brouille jamais son texte. */
+.particule {
+  position: absolute; width: 0; height: 0; z-index: 1; font-size: 1.15rem; line-height: 1; color: var(--ok);
+  opacity: 0; pointer-events: none; animation: particule-vol 900ms ease-out both;
+}
+.particule:nth-child(3n) { color: var(--bad); }
+.particule:nth-child(3n + 1) { color: var(--accent); }
+.zzz { font-weight: 800; font-size: 1.3rem; color: var(--text-muted); }
+@keyframes particule-vol {
+  from { translate: 0 0; scale: 0.5; opacity: 1; }
+  70% { opacity: 1; }
+  to { translate: var(--dx) var(--dy); scale: 1.2; opacity: 0; }
+}

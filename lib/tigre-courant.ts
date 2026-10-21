@@ -28,13 +28,13 @@ export const TAUX_FAMILLE = 0.03;
 export const VITESSES: Record<Evenement, readonly [number, number]> = {
   normal: [1.6, 3.4],
   eclair: [9, 12],
-  famille: [1.9, 2.3],
+  famille: [1.7, 2.0],
 };
 
 /** Petits d'une famille : nombre, taille relative à la mère, écart entre eux. */
 export const PETITS_MIN = 2;
 export const PETITS_MAX = 4;
-export const ECHELLE_PETIT = 0.36;
+export const ECHELLE_PETIT = 0.42;
 
 export function ecartAvantPassage(alea: number): number {
   return Math.round(ECART_MIN_MS + alea * (ECART_MAX_MS - ECART_MIN_MS));
@@ -48,6 +48,11 @@ export function tirerEvenement(alea: number): Evenement {
 
 export function nombrePetits(alea: number): number {
   return PETITS_MIN + Math.floor(alea * (PETITS_MAX - PETITS_MIN + 1));
+}
+
+/** Les petits n'accompagnent que l'événement « famille » : les autres passages sont un tigre seul. */
+export function petitsPourEvenement(evenement: Evenement, petits: number): number {
+  return evenement === "famille" ? Math.max(0, Math.min(PETITS_MAX, Math.floor(petits))) : 0;
 }
 
 export interface Passage {

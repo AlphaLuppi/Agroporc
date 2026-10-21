@@ -1,0 +1,11 @@
+tigre.glb — modèle 3D du thème Tigre
+
+« Stylized Bengal Tiger with 4 animations » par Jungle Jim
+https://sketchfab.com/3d-models/stylized-bengal-tiger-with-4-animations-d87e750f18aa416dbccdd5ca7b81f751
+Auteur : https://sketchfab.com/jungle_jim
+Licence : Creative Commons Attribution 4.0 International (CC BY 4.0)
+https://creativecommons.org/licenses/by/4.0/
+
+Modifications : texture réduite à 1024 px (WebP), maillage simplifié à 25 000 triangles,
+géométrie et animations compressées (meshopt) par scripts/tigre/optimiser_glb.sh.
+Le crédit doit rester visible sur le site tant que le modèle est affiché.
