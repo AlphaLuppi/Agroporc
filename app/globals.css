@@ -482,11 +482,6 @@ body::before {
    contient des position:fixed, ex. le Drawer de CommentForm). */
 .pdj-page { animation: pdj-fade-in 200ms var(--ease-out-expo) backwards; }
 .pdj-page-pied { animation: pdj-fade-in 260ms var(--ease-out-expo) 80ms backwards; }
-/* Crédit CC BY du tigre 3D : seulement dans le thème Tigre, discret. */
-.pdj-credit-tigre { display: none; margin: 0; color: var(--text-muted); }
-html[data-theme="tigre"] .pdj-credit-tigre { display: block; }
-.pdj-credit-tigre a { color: var(--text-secondary); text-decoration: underline; text-underline-offset: 2px; }
-.pdj-credit-tigre a:hover { color: var(--text); }
 
 /* Logo : petite bascule au survol. */
 .pdj-logo img { transition: rotate var(--dur-base) var(--ease-spring), scale var(--dur-base) var(--ease-spring); }

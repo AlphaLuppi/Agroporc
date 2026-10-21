@@ -4,9 +4,6 @@
  */
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { readFileSync, statSync } from "node:fs";
-import { createElement } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
-import { CreditTigre, CREDIT_TIGRE } from "../../app/components/CreditTigre";
 
 const GLB = "public/tigre/tigre.glb";
 
@@ -33,32 +30,10 @@ describe("GLB du tigre", () => {
 
   it("est livré avec son fichier de crédits (auteur, lien, licence, modifications)", () => {
     const c = readFileSync("public/tigre/CREDITS.txt", "utf8");
-    expect(c).toContain(CREDIT_TIGRE.auteur);
-    expect(c).toContain(CREDIT_TIGRE.modele);
+    expect(c).toContain("Jungle Jim");
+    expect(c).toContain("https://sketchfab.com/3d-models/stylized-bengal-tiger-with-4-animations-d87e750f18aa416dbccdd5ca7b81f751");
     expect(c).toMatch(/CC BY 4\.0/);
     expect(c).toMatch(/Modifications/);
-  });
-});
-
-describe("crédit CC BY du tigre", () => {
-  const html = renderToStaticMarkup(createElement(CreditTigre));
-
-  it("nomme l'œuvre, l'auteur et la licence, avec leurs liens", () => {
-    expect(html).toContain('class="pdj-credit-tigre"');
-    expect(html).toContain(`href="${CREDIT_TIGRE.modele}"`);
-    expect(html).toContain(`href="${CREDIT_TIGRE.profil}"`);
-    expect(html).toContain(`href="${CREDIT_TIGRE.lienLicence}"`);
-    expect(html).toContain("Jungle Jim");
-    expect(html).toContain("CC BY 4.0");
-    // Les modifications apportées au modèle sont signalées (exigence de la licence).
-    expect(html).toMatch(/allégé et animé/);
-  });
-
-  it("est rendu dans le pied de page et affiché seulement dans le thème Tigre", () => {
-    expect(readFileSync("app/layout.tsx", "utf8")).toContain("<CreditTigre />");
-    const css = readFileSync("app/globals.css", "utf8");
-    expect(css).toMatch(/\.pdj-credit-tigre\s*\{[^}]*display:\s*none/);
-    expect(css).toMatch(/html\[data-theme="tigre"\] \.pdj-credit-tigre\s*\{[^}]*display:\s*block/);
   });
 });
 
