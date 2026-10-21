@@ -38,6 +38,26 @@ export function blobSvg(graine: number): string {
  * une, et seule la plus récente retire la classe `pdj-encre` à la fin. */
 let derniereTache = 0;
 
+type Rect = { left: number; top: number; width: number; height: number };
+
+/** Pendant une View Transition, Chrome envoie tous les clics à `<html>`
+ * (même avec `pointer-events: none` sur `::view-transition`) : on retrouve
+ * le bouton sous le pointeur d'après sa position, la mise en page restant
+ * celle du DOM réel. Ignore les boutons masqués (rect vide). */
+export function elementSousPointeur<T extends { getBoundingClientRect(): Rect }>(
+  x: number,
+  y: number,
+  elements: Iterable<T>,
+): T | undefined {
+  for (const el of elements) {
+    const r = el.getBoundingClientRect();
+    if (r.width > 0 && r.height > 0 && x >= r.left && x <= r.left + r.width && y >= r.top && y <= r.top + r.height) {
+      return el;
+    }
+  }
+  return undefined;
+}
+
 type DocumentAvecVT = Document & {
   startViewTransition?: (maj: () => void) => { ready: Promise<void>; finished: Promise<void> };
 };
