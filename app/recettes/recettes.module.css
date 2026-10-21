@@ -37,7 +37,7 @@
 }
 .sansImageIcone { width: 22%; max-width: 54px; opacity: 0.55; }
 .carteTitre { margin-top: 6px; font-family: var(--font-heading); font-size: 1.02rem; line-height: 1.3; font-weight: 700; }
-.carteResto { font-size: 0.78rem; color: var(--text-secondary); }
+.carteResto { align-self: flex-start; }
 .carteInspiree { font-size: 0.76rem; color: var(--text-muted); font-style: italic; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .carteMeta { font-size: 0.74rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
 

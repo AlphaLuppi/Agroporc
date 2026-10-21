@@ -8,6 +8,7 @@ import {
   BANDEAU_HONNETETE_DEBUT, BANDEAU_HONNETETE_SUITE, formaterDuree, jourParis, libelleDifficulte, tempsTotal,
 } from "@/lib/recettes";
 import PlatImage from "../../menus/PlatImage";
+import RestoBadge from "../../components/RestoBadge";
 import AjusteurRecette from "./AjusteurRecette";
 import styles from "../recettes.module.css";
 
@@ -60,7 +61,7 @@ export default async function RecettePage({ params }: { params: Params }) {
       <header className={styles.ficheTete}>
         <h1>{r.titre}</h1>
         <p className={styles.inspiree}>
-          Inspirée de « {casseLisible(r.plat)} » · {r.restaurant}
+          Inspirée de « {casseLisible(r.plat)} » · <RestoBadge nom={r.restaurant} complet />
         </p>
         {r.description && <p className={styles.description}>{r.description}</p>}
       </header>

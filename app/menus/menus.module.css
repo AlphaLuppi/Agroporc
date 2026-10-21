@@ -13,10 +13,11 @@
 .vues button[aria-pressed="true"] { background: var(--accent); color: var(--accent-text); }
 .titre { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
 .titre h1 { font-family: var(--font-heading); font-weight: 700; font-size: 1.3rem; line-height: 1.15; margin: 0; text-wrap: balance; }
+.titre h1.titreResto { display: flex; align-items: center; gap: 10px; }
 .apercu { font-family: var(--font-body); font-size: 0.62rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); border: 1px solid var(--border-accent); border-radius: 6px; padding: 2px 6px; margin-left: 8px; vertical-align: 4px; }
 .semaineNav { display: flex; align-items: center; gap: 6px; font-size: 0.8rem; color: var(--text-secondary); }
 .semaineNav a {
-  width: 32px; height: 32px; display: grid; place-items: center; border-radius: var(--radius-sm);
+  width: 40px; height: 40px; display: grid; place-items: center; border-radius: var(--radius-sm);
   border: 1px solid var(--border); background: var(--surface); color: var(--text-secondary); text-decoration: none;
 }
 .semaineNav a:hover { color: var(--text); border-color: var(--border-accent); }
@@ -37,7 +38,7 @@
   flex: 1; min-width: 0; border: 0; background: none; border-radius: calc(var(--radius) - 5px); padding: 4px 0 5px;
   display: flex; flex-direction: column; align-items: center; gap: 1px; color: var(--text-muted); font: inherit; cursor: pointer;
 }
-.jours small { font-size: 0.62rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; }
+.jours small { font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; }
 .jours b { font-size: 0.95rem; line-height: 1; }
 .jours button[aria-pressed="true"] { background: var(--accent); color: var(--accent-text); }
 .jours button.auj:not([aria-pressed="true"]) { color: var(--accent); }
@@ -50,6 +51,8 @@
   background: var(--bg); border-top: 1px solid var(--border);
 }
 .dock .mode span { display: none; }
+.dock .mode button { min-height: 40px; padding-inline: 11px; }
+.dock .mode svg { width: 18px; height: 18px; }
 
 /* ── Notes ── */
 .good { color: var(--good); } .ok { color: var(--ok); } .bad { color: var(--bad); } .none { color: var(--text-muted); }
@@ -60,7 +63,7 @@
 }
 .pastille small { font-size: 0.58em; opacity: 0.65; font-weight: 600; align-self: flex-end; margin-bottom: 0.55em; }
 .pastille.good { background: var(--good-bg); } .pastille.ok { background: var(--ok-bg); } .pastille.bad { background: var(--bad-bg); }
-.tagReco { display: inline-block; font-size: 0.6rem; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; padding: 2px 6px; border-radius: 5px; background: var(--good); color: var(--bg); white-space: nowrap; vertical-align: 2px; }
+.tagReco { display: inline-block; font-size: 0.68rem; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; padding: 2px 6px; border-radius: 5px; background: var(--good); color: var(--bg); white-space: nowrap; vertical-align: 2px; }
 .meta { font-size: 0.75rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
 .meta b { color: var(--accent); font-weight: 700; }
 
@@ -83,16 +86,15 @@
   transition: border-color 0.15s ease-out;
 }
 .tuile:hover, .hero:hover { border-color: var(--border-accent); }
-.tuileHaut { display: flex; justify-content: space-between; align-items: baseline; gap: 6px; }
+.tuileHaut { display: flex; justify-content: space-between; align-items: center; gap: 6px; min-width: 0; }
 .grosseNote { font-size: 1.45rem; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; flex: none; }
 .grosseNote small { font-size: 0.55em; opacity: 0.6; }
-.resto { font-size: 0.64rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted); text-align: right; line-height: 1.2; }
 .nom { font-size: 0.88rem; font-weight: 600; line-height: 1.3; overflow-wrap: break-word; }
 .tuile .meta { margin-top: auto; }
 /* Macros de la tuile : trois colonnes valeur + libellé, monochromes pour ne pas concurrencer la note. */
 .macros {
   display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; padding-top: 6px; border-top: 1px solid var(--border);
-  font-size: 0.66rem; color: var(--text-muted); font-variant-numeric: tabular-nums; line-height: 1.2;
+  font-size: 0.72rem; color: var(--text-muted); font-variant-numeric: tabular-nums; line-height: 1.2;
 }
 .macros > span { display: flex; flex-direction: column; min-width: 0; }
 .macros b { font-size: 0.8rem; font-weight: 700; color: var(--text-secondary); white-space: nowrap; }
@@ -100,10 +102,14 @@
 /* Nom long : la tuile prend toute la largeur pour afficher le nom en entier sans l'écraser. */
 .large { grid-column: 1 / -1; }
 .semaineLabel { display: none; }
-.puces { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 0.75rem; color: var(--text-muted); padding-top: 2px; }
+.puces { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 8px; font-size: 0.75rem; color: var(--text-muted); padding-top: 2px; }
+.pucesGroupe { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+/* Sur mobile, l'intitulé occupe sa propre ligne au-dessus de ses puces. */
+@media (max-width: 640px) { .pucesTitre { flex-basis: 100%; } }
 .puces button {
-  border: 1px dashed var(--border); background: none; border-radius: 999px; padding: 3px 10px; color: var(--text-secondary);
-  font: inherit; font-size: 0.75rem; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 0.3em;
+  border: 1px dashed var(--border); background: none; border-radius: 999px; padding: 6px 12px; min-height: 36px; color: var(--text-secondary);
+  font: inherit; font-size: 0.8rem; cursor: pointer;
 }
 .puces button:hover { border-color: var(--border-accent); color: var(--text); }
 .message { padding: 28px 20px; text-align: center; border-radius: var(--radius); border: 1px solid var(--bad-border); background: var(--bad-bg); color: var(--bad); }
@@ -132,11 +138,14 @@
 /* ── Vue Semaine ── */
 .table { display: none; }
 .chaleur { display: flex; flex-direction: column; gap: 8px; }
-.chaleurGrille { display: grid; grid-template-columns: 84px repeat(5, minmax(0, 1fr)); gap: 3px; align-items: center; font-size: 0.66rem; color: var(--text-muted); }
-.chaleurGrille .tete { text-align: center; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 700; padding: 4px 0; border-radius: 6px; border: 0; background: none; color: inherit; font-family: inherit; font-size: inherit; cursor: pointer; }
+.chaleurGrille { display: grid; grid-template-columns: 96px repeat(5, minmax(0, 1fr)); gap: 3px; align-items: center; font-size: 0.75rem; color: var(--text-muted); }
+.chaleurGrille .tete { text-align: center; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 700; padding: 4px 0; min-height: 36px; border-radius: 6px; border: 0; background: none; color: inherit; font-family: inherit; font-size: inherit; cursor: pointer; }
+/* Jour sur une ligne, numéro dessous : même hauteur pour toutes les colonnes, rien ne passe à la ligne au hasard. */
+.chaleurGrille .tete { line-height: 1.15; }
+.chaleurGrille .tete b { display: block; font-size: 0.95rem; letter-spacing: 0; }
 .chaleurGrille .tete[aria-pressed="true"] { background: var(--accent); color: var(--accent-text); }
-.chaleurGrille .ligneNom { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.case { height: 14px; border-radius: 3px; border: 0; padding: 0; cursor: pointer; background: var(--border); opacity: 0.85; }
+.chaleurGrille .ligneNom { font-weight: 600; color: var(--text-secondary); }
+.case { height: 24px; border-radius: 4px; border: 0; padding: 0; cursor: pointer; background: var(--border); opacity: 0.85; }
 .case.good { background: var(--good); } .case.ok { background: var(--ok); } .case.bad { background: var(--bad); }
 .case.colonne { outline: 1.5px solid var(--accent); outline-offset: 1px; opacity: 1; }
 .pages { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; margin-inline: -12px; }
@@ -153,7 +162,11 @@
 .vide { color: var(--text-muted); font-style: italic; font-size: 0.85rem; padding: 14px 2px; }
 
 /* ── Vue La carte ── */
-.restos { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; flex: 1; min-width: 0; }
+/* Mobile : les restos (picto + nom) prennent toute une ligne défilante, le mode passe dessous. */
+.carteBarre { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+/* Mobile : les puces passent à la ligne (une rangée qui défile cachait La Mijote sans indice). */
+.restos { display: flex; flex-wrap: wrap; gap: 6px; flex: 1 1 100%; min-width: 0; }
+@media (min-width: 640px) { .carteBarre { flex-wrap: nowrap; } .restos { flex: 1 1 auto; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; } }
 .restos::-webkit-scrollbar { display: none; }
 .restos button {
   border: 1px solid var(--border); background: var(--surface); color: var(--text-secondary); border-radius: 999px;
@@ -191,11 +204,17 @@
 .poignee { width: 40px; height: 4px; border-radius: 2px; background: var(--border-accent); margin: 0 auto; flex: none; }
 .panneauTete { display: flex; gap: 12px; align-items: flex-start; }
 .panneauTete .pastille { min-width: 54px; height: 54px; font-size: 1.35rem; }
+.panneauTexte { min-width: 0; flex: 1; }
+.panneauResto { margin-bottom: 6px; }
 .panneauTete h2 { font-family: var(--font-heading); font-size: 1.25rem; line-height: 1.25; margin: 0 0 4px; }
+/* Fermer reste visible en haut quand on fait défiler la feuille (macros, recette, commentaires). */
 .fermer {
-  margin-left: auto; flex: none; width: 34px; height: 34px; border-radius: var(--radius-sm); border: 1px solid var(--border);
+  position: sticky; top: 0; z-index: 2; align-self: flex-end; margin-bottom: -54px; /* 40 px + gap : ne pousse pas l'en-tête */
+  flex: none; width: 40px; height: 40px; border-radius: var(--radius-sm); border: 1px solid var(--border);
   background: var(--surface-hover); color: var(--text-secondary); cursor: pointer; display: grid; place-items: center;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
 }
+.panneauTete { padding-right: 48px; }
 .fermer svg { width: 16px; height: 16px; }
 .autreMode { font-size: 0.75rem; color: var(--text-muted); }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; }
@@ -214,7 +233,8 @@
   .dock { position: static; order: 0; margin: 0; padding: 0; border: 0; background: none; gap: 10px; }
   .dock .mode span { display: inline; }
   .grille { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
-  .hero { grid-column: span 2; grid-row: span 2; flex-direction: column; flex-wrap: nowrap; --pad-y: 20px; --pad-x: 22px; gap: 12px; }
+  .hero { grid-column: span 2; flex-direction: column; flex-wrap: nowrap; --pad-y: 20px; --pad-x: 22px; gap: 12px; }
+  .heroPhoto { grid-row: span 2; }
   .hero .photo_hero { flex-basis: auto; aspect-ratio: 2 / 1; }
   .heroTexte { flex: none; }
   .hero .pastille { min-width: 66px; height: 66px; font-size: 1.7rem; }
@@ -247,8 +267,12 @@
   }
   .th:hover { color: var(--text); }
   .th.auj { color: var(--accent); }
-  .rh { background: var(--surface); font-weight: 600; font-size: 0.82rem; color: var(--text-secondary); display: flex; flex-direction: column; justify-content: center; }
-  .rh small { color: var(--text-muted); font-weight: 500; font-size: 0.72rem; }
+  .rh {
+    background: var(--surface); font-weight: 600; font-size: 0.82rem; line-height: 1.3; color: var(--text-secondary);
+    display: grid; grid-template-columns: auto 1fr; column-gap: 8px; align-content: center; align-items: start;
+  }
+  .rhPicto { grid-row: span 2; margin-top: 1px; }
+  .rh small { grid-column: 2; color: var(--text-muted); font-weight: 500; font-size: 0.72rem; }
   .cellule { display: flex; flex-direction: column; gap: 8px; }
   .cellule.aujC { background: var(--accent-glow); }
   .cellule button {

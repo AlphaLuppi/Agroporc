@@ -5,6 +5,7 @@ import {
   formaterDuree, libelleDifficulte, PAR_PAGE, parametresBanque, RESTAURANTS_RECETTES, type ResumeRecette,
 } from "@/lib/recettes";
 import PlatImage from "../menus/PlatImage";
+import RestoBadge from "../components/RestoBadge";
 import styles from "./recettes.module.css";
 
 export const dynamic = "force-dynamic";
@@ -47,7 +48,7 @@ function CarteRecette({ r }: { r: ResumeRecette }) {
       )}
       <span className={styles.carteTitre}>{r.titre}</span>
       <span className={styles.carteInspiree}>Inspirée de « {casseLisible(r.plat)} »</span>
-      <span className={styles.carteResto}>{r.restaurant}</span>
+      <RestoBadge nom={r.restaurant} variante="chip" complet className={styles.carteResto} />
       <span className={styles.carteMeta}>
         {formaterDuree(r.temps_total_min)} · {libelleDifficulte(r.difficulte)}
       </span>

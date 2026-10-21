@@ -15,7 +15,7 @@
   --border-accent: #4a4a6a;
   --text: #ededf4;
   --text-secondary: #a0a0c0;
-  --text-muted: #787898;
+  --text-muted: #8585a5;
   --accent: #d4a520;
   --accent-glow: rgba(212, 165, 32, 0.2);
   --accent-text: #0b0b12;
@@ -35,6 +35,15 @@
   --font-body: 'Karla', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --nav-bg: rgba(11, 11, 18, 0.88);
   --card-stripe: none;
+  /* Repères des restos (RestoBadge) : hors des teintes vert/ambre/rouge des notes. */
+  --resto-trefle: #2dd4bf;
+  --resto-pause: #f472b6;
+  --resto-truck: #60a5fa;
+  --resto-basilic: #a3e635;
+  --resto-dubble: #c084fc;
+  --resto-mijote: #c8a07e;
+  --resto-vival: #94a3b8;
+  --resto-tint: 16%;
 }
 
 /* ── Theme: Tigre ──────────────────────────────── */
@@ -56,7 +65,7 @@
   --border-accent: #e67700;
   --text: #fff3e0;
   --text-secondary: #d4a060;
-  --text-muted: #8a6030;
+  --text-muted: #b8834a;
   --accent: #ff8c00;
   --accent-glow: rgba(255, 140, 0, 0.2);
   --accent-text: #1a0e00;
@@ -72,6 +81,15 @@
   --radius: 12px;
   --radius-sm: 6px;
   --shadow: 0 4px 24px rgba(0,0,0,0.5);
+  /* Repères des restos (RestoBadge) : hors des teintes vert/ambre/rouge des notes. */
+  --resto-trefle: #2dd4bf;
+  --resto-pause: #f472b6;
+  --resto-truck: #60a5fa;
+  --resto-basilic: #a3e635;
+  --resto-dubble: #c084fc;
+  --resto-mijote: #c8a07e;
+  --resto-vival: #94a3b8;
+  --resto-tint: 16%;
   --nav-bg: rgba(26, 14, 0, 0.92);
   --card-stripe: repeating-linear-gradient(
     -45deg,
@@ -93,7 +111,7 @@
   --border-accent: #C67B5C;
   --text: #3D2B1F;
   --text-secondary: #6B5E4F;
-  --text-muted: #9A8E7E;
+  --text-muted: #736757;
   --accent: #B5651D;
   --accent-glow: rgba(181, 101, 29, 0.15);
   --accent-text: #FFFDF7;
@@ -109,6 +127,14 @@
   --radius: 14px;
   --radius-sm: 7px;
   --shadow: 0 2px 12px rgba(107, 78, 50, 0.08);
+  --resto-trefle: #0f766e;
+  --resto-pause: #be185d;
+  --resto-truck: #0369a1;
+  --resto-basilic: #4d7c0f;
+  --resto-dubble: #7e22ce;
+  --resto-mijote: #7c5640;
+  --resto-vival: #475569;
+  --resto-tint: 11%;
   --nav-bg: rgba(245, 240, 225, 0.92);
   --card-stripe: none;
 }
@@ -137,37 +163,6 @@ body::before {
   height: 20px;
   flex-shrink: 0;
   color: var(--accent);
-}
-
-/* ── Note badges ──────────────────────────────── */
-.note {
-  font-weight: 800;
-  font-size: 1.2rem;
-  font-variant-numeric: tabular-nums;
-  padding: 0.2rem 0.6rem;
-  border-radius: var(--radius-sm);
-}
-.note-max {
-  font-weight: 500;
-  font-size: 0.75rem;
-  opacity: 0.6;
-}
-.note-good { color: var(--good); background: var(--good-bg); }
-.note-ok   { color: var(--ok);   background: var(--ok-bg);   }
-.note-bad  { color: var(--bad);  background: var(--bad-bg);  }
-
-/* ── Recommendation ribbon ────────────────────── */
-.reco-ribbon {
-  position: absolute;
-  top: 12px;
-  right: -28px;
-  background: var(--good);
-  color: #000;
-  font-size: 0.65rem;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  padding: 0.2rem 2rem;
-  transform: rotate(45deg);
 }
 
 /* ── Calendar ─────────────────────────────────── */
@@ -246,24 +241,6 @@ body::before {
 }
 .day-detail.visible { display: block; }
 
-/* ── Today dot pulse ─────────────────────────── */
-.today-dot {
-  animation: todayPulse 2s ease-in-out infinite;
-}
-.day-tab.active .today-dot {
-  animation: none;
-  background: var(--accent-text) !important;
-}
-.day-tab:not(.active) .today-dot {
-  background: var(--text-muted) !important;
-  animation: none;
-  opacity: 0.5;
-}
-@keyframes todayPulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.4; transform: scale(1.6); }
-}
-
 /* ── Animations ───────────────────────────────── */
 @keyframes slideDown {
   from { opacity: 0; transform: translateY(-8px); }
@@ -313,7 +290,6 @@ body::before {
 @media (max-width: 640px) {
   .calendar-cell { font-size: 0.75rem; min-height: 38px; }
   .calendar-grid { gap: 3px; }
-  .note { font-size: 1rem; padding: 0.15rem 0.5rem; }
   .day-detail { padding: 0.75rem; }
 }
 @media (max-width: 380px) {
@@ -361,9 +337,3 @@ body::before {
   * { @apply border-border outline-ring/50; }
   body { @apply bg-background text-foreground; }
 }
-
-/* Carte dépliable (native <details>) */
-.carte-summary { list-style: none; }
-.carte-summary::-webkit-details-marker { display: none; }
-.carte-summary .carte-chevron { transition: transform 0.2s; }
-details[open] > .carte-summary .carte-chevron { transform: rotate(180deg); }

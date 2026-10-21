@@ -9,6 +9,8 @@ import {
   casseLisible,
   platsAVenir,
   macrosTuile,
+  indexOrpheline,
+  NOM_LONG,
 } from "./menus-vue";
 
 const plat = (restaurant: string, extra: Partial<Plat> = {}): Plat => ({
@@ -110,5 +112,28 @@ describe("macrosTuile", () => {
   it("renvoie null sans nutrition ou si une valeur manque", () => {
     expect(macrosTuile(undefined)).toBeNull();
     expect(macrosTuile({ calories: 500, proteines_g: 20, glucides_g: null as unknown as number, lipides_g: 10 })).toBeNull();
+  });
+});
+
+describe("indexOrpheline", () => {
+  const t = (...noms: string[]) => noms.map((plat) => ({ variante: { plat } }));
+  const long = "Filet de poulet rôti, sauce forestière et gratin dauphinois maison";
+
+  it("0 tuile ou nombre pair de demi-tuiles : pas d'orpheline", () => {
+    expect(indexOrpheline([])).toBe(-1);
+    expect(indexOrpheline(t("Hachis", "Lasagnes"))).toBe(-1);
+  });
+
+  it("1 ou 3 demi-tuiles : la dernière passe en pleine largeur", () => {
+    expect(indexOrpheline(t("Hachis"))).toBe(0);
+    expect(indexOrpheline(t("Hachis", "Lasagnes", "Curry"))).toBe(2);
+  });
+
+  it("ignore les noms longs (déjà en pleine largeur)", () => {
+    expect(long.length).toBeGreaterThan(NOM_LONG);
+    expect(indexOrpheline(t("Hachis", long, "Curry"))).toBe(-1);
+    expect(indexOrpheline(t("Hachis", "Curry", long, "Lasagnes"))).toBe(3);
+    expect(indexOrpheline(t("Hachis", long))).toBe(0);
+    expect(indexOrpheline(t(long))).toBe(-1);
   });
 });

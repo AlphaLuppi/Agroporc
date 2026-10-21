@@ -1,0 +1,37 @@
+.rb { display: inline-flex; align-items: center; gap: 0.35em; min-width: 0; vertical-align: -0.15em; }
+.rb svg { width: 1.15em; height: 1.15em; flex: none; color: var(--c); }
+.nom { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.chip {
+  padding: 0.2em 0.6em 0.2em 0.45em;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--c) var(--resto-tint), transparent);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  line-height: 1.3;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  max-width: 100%;
+}
+.chip svg { width: 14px; height: 14px; }
+
+.icone {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: var(--taille, 22px);
+  height: var(--taille, 22px);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--c) var(--resto-tint), transparent);
+  vertical-align: middle;
+}
+.icone svg { width: 62%; height: 62%; }
+.picto svg { width: var(--taille, 1.15em); height: var(--taille, 1.15em); }
+.srOnly {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+/* Demi-tuile étroite : capitales moins espacées pour que les noms courts tiennent en entier. */
+@media (max-width: 420px) { .chip { letter-spacing: 0.02em; } }

@@ -36,19 +36,24 @@ export function ModeToggle({ mode, onChange }: { mode: Mode; onChange: (m: Mode)
     <div className={styles.mode} role="group" aria-label="Mode de notation">
       <button type="button" aria-pressed={mode === "sportif"} aria-label="Mode sportif" onClick={() => onChange("sportif")}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <path d="M18 8h1a4 4 0 0 1 0 8h-1" />
-          <path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z" />
-          <line x1="6" y1="1" x2="6" y2="4" />
-          <line x1="10" y1="1" x2="10" y2="4" />
-          <line x1="14" y1="1" x2="14" y2="4" />
+          {/* Haltère : sans libellé (dock mobile), l'icône doit dire « sport » à elle seule. */}
+          <path d="m6.5 6.5 11 11" />
+          <path d="m21 21-1-1" />
+          <path d="m3 3 1 1" />
+          <path d="m18 22 4-4" />
+          <path d="m2 6 4-4" />
+          <path d="m3 10 7-7" />
+          <path d="m14 21 7-7" />
         </svg>
         <span>Sportif</span>
       </button>
       <button type="button" aria-pressed={mode === "goulaf"} aria-label="Mode goulaf" onClick={() => onChange("goulaf")}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <path d="M12 2a7 7 0 0 0-7 7c0 5 7 13 7 13s7-8 7-13a7 7 0 0 0-7-7z" />
-          <path d="M12 6v4" />
-          <path d="M10 8h4" />
+          {/* Burger : la gourmandise. */}
+          <path d="M12 16H4a2 2 0 1 1 0-4h16a2 2 0 1 1 0 4h-4.25" />
+          <path d="M5 12a2 2 0 0 1-2-2 9 7 0 0 1 18 0 2 2 0 0 1-2 2" />
+          <path d="M5 16a2 2 0 0 0-2 2 3 3 0 0 0 3 3h12a3 3 0 0 0 3-3 2 2 0 0 0-2-2" />
+          <path d="m6.67 12 6.13 4.6a2 2 0 0 0 2.8-.4l3.15-4.2" />
         </svg>
         <span>Goulaf</span>
       </button>

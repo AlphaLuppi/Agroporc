@@ -8,6 +8,7 @@ import { choisirDessert, type DessertConnu, type SaveurDessert, type Lourdeur } 
 import { noteClass } from "@/lib/format";
 import { casseLisible } from "@/lib/menus-vue";
 import { fmtPrix } from "../menus/ui";
+import RestoBadge from "../components/RestoBadge";
 import styles from "./quiz.module.css";
 
 interface Choix {
@@ -134,7 +135,7 @@ function LignePlat({ p, mode }: { p: PoolPlat; mode: Mode }) {
       <span className={styles.ligneTexte}>
         <span className={styles.ligneNom}>{casseLisible(p.plat)}</span>
         <span className={styles.meta}>
-          {p.restaurant} · <b>{fmtPrix(p.prix)}</b>
+          <RestoBadge nom={p.restaurant} complet /> · <b>{fmtPrix(p.prix)}</b>
         </span>
       </span>
     </div>
@@ -227,7 +228,8 @@ export default function QuizClient({ pool, desserts, hasJour }: { pool: PoolPlat
               <span className={styles.meta}>
                 {restants.length} plat{restants.length > 1 ? "s" : ""} possible{restants.length > 1 ? "s" : ""}
               </span>
-              {restants.slice(0, 2).map((p) => (
+              {/* Un seul plat : l'aperçu collé en bas ne doit pas manger les choix sur un petit écran. */}
+              {restants.slice(0, 1).map((p) => (
                 <LignePlat key={`${p.restaurant}::${p.plat}`} p={p} mode={mode} />
               ))}
             </div>
@@ -340,7 +342,7 @@ function Resultat({
             <div>
               <div className={styles.gagnantNom}>{casseLisible(premier.plat)}</div>
               <div className={styles.meta}>
-                {premier.restaurant} · <b>{fmtPrix(premier.prix)}</b>
+                <RestoBadge nom={premier.restaurant} complet /> · <b>{fmtPrix(premier.prix)}</b>
               </div>
             </div>
           </div>
@@ -363,7 +365,7 @@ function Resultat({
             <>
               <span className={styles.ligneNom}>{dessert.nom}</span>
               <span className={styles.meta}>
-                {dessert.restaurant} · ≈ {dessert.proba}% de chances de l&apos;avoir aujourd&apos;hui
+                <RestoBadge nom={dessert.restaurant} complet /> · ≈ {dessert.proba}% de chances de l&apos;avoir aujourd&apos;hui
                 {dessert.proba < 100 && ", à vérifier sur place"}
               </span>
             </>
