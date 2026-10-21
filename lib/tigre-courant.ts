@@ -14,10 +14,11 @@ export const PART_RETOUR = 0.25;
 /**
  * Événements rares : « eclair » = tigre lancé à pleine vitesse, « famille » =
  * une mère au petit trot suivie de ses petits. Le reste du temps, « normal ».
+ * À 4-6 passages par minute, chacun revient en moyenne toutes les 5 à 8 min.
  */
 export type Evenement = "normal" | "eclair" | "famille";
-export const TAUX_ECLAIR = 0.1;
-export const TAUX_FAMILLE = 0.1;
+export const TAUX_ECLAIR = 0.03;
+export const TAUX_FAMILLE = 0.03;
 
 /**
  * Vitesse en largeurs de tigre (adulte) par seconde, tirée à chaque passage.

@@ -17,12 +17,12 @@ describe("ecartAvantPassage", () => {
 });
 
 describe("tirerEvenement", () => {
-  it("rend l'éclair et la famille rares (10 % chacun)", () => {
+  it("rend l'éclair et la famille rares (3 % chacun)", () => {
     expect(tirerEvenement(0)).toBe("eclair");
-    expect(tirerEvenement(0.099)).toBe("eclair");
-    expect(tirerEvenement(0.1)).toBe("famille");
-    expect(tirerEvenement(0.199)).toBe("famille");
-    expect(tirerEvenement(0.2)).toBe("normal");
+    expect(tirerEvenement(0.029)).toBe("eclair");
+    expect(tirerEvenement(0.03)).toBe("famille");
+    expect(tirerEvenement(0.059)).toBe("famille");
+    expect(tirerEvenement(0.06)).toBe("normal");
     expect(tirerEvenement(0.999)).toBe("normal");
   });
 });

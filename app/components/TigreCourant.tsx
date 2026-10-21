@@ -16,7 +16,7 @@ interface Course { id: number; evenement: Evenement; petits: number }
 
 /**
  * Thème Tigre : un tigre traverse le bas de l'écran 4 à 6 fois par minute,
- * à intervalles, vitesses et sens aléatoires. Parfois (10 % chacun) un
+ * à intervalles, vitesses et sens aléatoires. Rarement (3 % chacun) un
  * tigre lancé à pleine vitesse, ou une mère suivie de ses petits.
  * Le gif n'est chargé que dans ce thème.
  */
