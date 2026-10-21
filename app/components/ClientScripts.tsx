@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { usePathname } from "next/navigation";
 import { changerThemeEncre, elementSousPointeur } from "@/lib/theme-encre";
+import { BUDGET_EDENRED_MOIS, fmtPourcent, partBudget } from "@/lib/budget";
 
 export function ClientScripts() {
   const pathname = usePathname();
@@ -237,6 +238,7 @@ function renderCart() {
       <span style="font-size:0.9rem;font-weight:700;">Total estimé</span>
       <span style="font-size:1rem;font-weight:700;color:var(--accent);">${total.toFixed(2)} €</span>
     </div>
+    ${total > 0 ? `<div style="font-size:0.75rem;color:var(--text-muted);margin:-0.5rem 0 0.75rem;text-align:right;font-variant-numeric:tabular-nums;">soit ${fmtPourcent(partBudget(total))} des ${BUDGET_EDENRED_MOIS} € Edenred du mois</div>` : ""}
     <button id="clear-cart-btn"
       style="width:100%;min-height:2.5rem;padding:0.4rem;background:none;border:1px solid var(--border-control);border-radius:var(--radius);color:var(--text-muted);font-size:0.8rem;cursor:pointer;">
       Vider le panier

@@ -9,7 +9,7 @@ import type { Selection } from "./DetailPanneau";
 import RestoBadge from "@/app/components/RestoBadge";
 import PlatImage from "./PlatImage";
 import { deltaBoite, lireScale, lireTranslate, rangStagger, type Boite } from "@/lib/motion-menus";
-import { couleur, fmtPrix, NoteAnimee, PastilleAnimee } from "./ui";
+import { couleur, fmtPrix, NoteAnimee, PartBudget, PastilleAnimee } from "./ui";
 import { estPret, finRipple, reduit, ripple, SORTIE_EXPO } from "./motion";
 import styles from "./menus.module.css";
 
@@ -18,6 +18,7 @@ function Meta({ p }: { p: PlatAffiche }) {
   return (
     <span className={styles.meta}>
       <b>{fmtPrix(p.plat.prix)}</b>
+      <PartBudget prix={p.plat.prix} />
       {kcal ? ` · ${Math.round(kcal)} kcal` : ""}
     </span>
   );
@@ -139,6 +140,7 @@ function Hero({ p, mode, raison, image, flipKey, onOpen }: { p: PlatAffiche; mod
         <span className={styles.heroNom}>{casseLisible(p.variante.plat)}</span>
         <span className={styles.meta}>
           <b>{fmtPrix(p.plat.prix)}</b>
+          <PartBudget prix={p.plat.prix} />
         </span>
         {raison && <span className={styles.raison}>{raison}</span>}
         {n && (
