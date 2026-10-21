@@ -12,6 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from gif_search import resolve_gif_queries, reset_used_gifs, register_used_url
+from meme_fetiches import sans_marqueur
 from . import feedback_agent
 
 PERSONNAGES_DIR = Path(__file__).parent.parent / "personnages"
@@ -146,7 +147,7 @@ def _build_personnages_prompt(personnages: list[dict]) -> str:
                 f"  GIFs fétiches (URLs à réutiliser parfois via le champ 'image_url' directement, au lieu de 'gif_query') :"
             )
             for url in gifs_fetiches[:5]:
-                lines.append(f"    - {url}")
+                lines.append(f"    - {sans_marqueur(url)}")
 
         retours = p.get("retours_humains") or []
         if retours:

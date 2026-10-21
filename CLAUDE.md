@@ -27,6 +27,7 @@ python main.py jour                 # Daily pipeline: scrape today's dishes only
 python main.py cartes [slug] [--force]  # Cartes permanentes (Trèfle, Basilic n'Go, Dubble, La Mijote) : scrape, hash, notation LLM si changement ; --force ré-évalue
 python main.py images [YYYY-MM-DD|DEBUT..FIN|semaine] [--force]  # (POC) Images IA des plats publiés manquantes (semaine = lundi→vendredi, plage = jours ouvrés) ; --force régénère
 python main.py recettes [YYYY-MM-DD|DEBUT..FIN|semaine] [--force]  # (POC) Recettes maison des plats publiés manquantes (mêmes dates) ; --force réécrit
+python main.py memes [--dry-run]    # Gifs fétiches des IA rafraîchis depuis les memes du moment (meme.com + Giphy) ; --dry-run n'écrit rien
 python main.py commentaires <name>  # Generate comments for one character
 python main.py sync-feedback        # Sync human feedback into character profiles
 ```
@@ -78,6 +79,7 @@ Recettes maison (POC) : `agent/recette_agent.py` fait rédiger par le LLM (un ap
 - `jours_feries.py` — French public holidays detection
 - `publish.py` — POSTs evaluation JSON to the Vercel API (+ `publish_plat_image`, `fetch_plat_images_existantes`, `fetch_pdj`)
 - `plat_image.py` / `agent/image_agent.py` — Images IA des plats (POC) : clé, variantes, prompt, validation magic bytes (pur, testé) / fournisseurs + budget (cf. Data flow)
+- `meme_fetiches.py` / `agent/meme_agent.py` — Gifs fétiches des IA (cron lundi 6h45, avant le run semaine, lock `pdj_memes.lock`) : memes « Trending Now » + flux `recent.xml` de meme.com (filtre NSFW/politique `MOTS_EXCLUS`), casting LLM (4 memes par IA, uniques, ceux de la semaine passée exclus), version animée Giphy sinon image meme.com, URL vérifiée → `PUT /api/ia` (15 écritures/min, pause entre profils). Un gif automatique porte le fragment `#meme-auto=<slug>` : seuls ceux-là sont remplacés, les gifs ajoutés à la main restent en tête ; `comment_agent` retire le fragment avant de donner l'URL au LLM
 - `plat_recette.py` / `agent/recette_agent.py` — Recettes maison (POC) : variantes à cuisiner + dates de service (pur, testé, réutilise `plat_image.cle_image`) / prompt, validation du schéma, appel LLM, budget (cf. Data flow) ; cron 11h15, lock `pdj_recettes.lock`, `PDJ_RECETTES=off`
 
 ### Two evaluation modes
