@@ -46,7 +46,8 @@ async function fetchPdj(): Promise<PdjEntry | null> {
   return null;
 }
 
-export default function Agroparc3D() {
+export default function Agroparc3D({ onClose }: { onClose?: () => void }) {
+  const rootRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const labelsRef = useRef<HTMLDivElement>(null);
   const handleRef = useRef<SceneHandle | null>(null);
@@ -71,6 +72,26 @@ export default function Agroparc3D() {
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => { document.body.style.overflow = prev; };
+  }, []);
+
+  // Dialogue modal : le reste de la page devient inerte (sinon Tab part dans la navbar ou le panier
+  // masqués), le focus entre sur le dialogue et revient où il était à la fermeture.
+  useEffect(() => {
+    const racine = rootRef.current;
+    const precedent = document.activeElement as HTMLElement | null;
+    const rendus: HTMLElement[] = [];
+    if (racine) {
+      for (const el of Array.from(document.body.children) as HTMLElement[]) {
+        if (el === racine || el.contains(racine) || el.inert) continue;
+        el.inert = true;
+        rendus.push(el);
+      }
+    }
+    racine?.focus({ preventScroll: true });
+    return () => {
+      rendus.forEach((el) => { el.inert = false; });
+      if (precedent?.isConnected) precedent.focus({ preventScroll: true });
+    };
   }, []);
 
   useEffect(() => {
@@ -106,15 +127,17 @@ export default function Agroparc3D() {
   }, [scene]);
 
   // Plat du jour du POI cliqué (+ carte permanente en dépliant), ou statut + carte quand il n'en a pas.
+  const chargement = !ready || !!error;
   const etat = selected ? etatRestaurant(selected, pdj, new Date().toLocaleDateString("en-CA")) : null;
 
   return (
-    <div className={`${styles.root} ${display.variable} ${mono.variable}`} role="dialog" aria-modal="true" aria-label="Agroparc en 3D">
+    <div ref={rootRef} tabIndex={-1} className={`${styles.root} ${display.variable} ${mono.variable}`} role="dialog" aria-modal="true" aria-label="Agroparc en 3D">
       <canvas ref={canvasRef} className={styles.canvas} />
       <div ref={labelsRef} className={styles.labels} />
       <div className={styles.vignette} />
 
-      <header className={`${styles.hud} ${styles.hudTl}`}>
+      {/* Tant que l'écran de chargement / d'erreur recouvre le HUD, ses boutons ne sont pas atteignables au clavier. */}
+      <header className={`${styles.hud} ${styles.hudTl}`} inert={chargement}>
         <h1 className={styles.title}>Agroporc x Palantir</h1>
         <div className={styles.modes} role="group" aria-label="Mode de notation">
           {MODES.map((m) => (
@@ -125,7 +148,7 @@ export default function Agroparc3D() {
         </div>
       </header>
 
-      <div className={`${styles.hud} ${styles.hudBl}`}>
+      <div className={`${styles.hud} ${styles.hudBl}`} inert={chargement}>
         <div className={styles.legend}>
           <span className={styles.kHome}>CBA</span>
           <span className={styles.kResto}>Restaurants PDJ</span>
@@ -175,9 +198,15 @@ export default function Agroparc3D() {
         </aside>
       )}
 
-      {(!ready || error) && (
+      {chargement && (
         <div className={styles.loading}>
-          {error ? <span className={styles.err}>{error}</span> : <span>Radiographie en cours</span>}
+          {error ? (
+            <div className={styles.errSortie}>
+              <span className={styles.err}>{error}</span>
+              <p>Retape <b>myrtille</b> pour revenir au site.</p>
+              {onClose && <button type="button" className={styles.close} onClick={onClose}>Fermer</button>}
+            </div>
+          ) : <span>Radiographie en cours</span>}
         </div>
       )}
     </div>

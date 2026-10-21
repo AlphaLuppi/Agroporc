@@ -14,5 +14,5 @@ const Agroparc3D = dynamic(() => import("./Agroparc3D"), { ssr: false });
 export function MyrtilleEasterEgg() {
   const [open, setOpen] = useState(false);
   useEffect(() => listenForCode(() => setOpen((o) => !o)), []);
-  return open ? <Agroparc3D /> : null;
+  return open ? <Agroparc3D onClose={() => setOpen(false)} /> : null;
 }

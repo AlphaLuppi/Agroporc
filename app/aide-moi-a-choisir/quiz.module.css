@@ -18,14 +18,16 @@
   display: inline-flex; align-items: center; justify-content: center; flex: none; min-width: 38px; height: 34px; padding: 0 5px;
   border-radius: var(--radius-sm); border: 1px solid currentColor; font-weight: 800; font-size: 0.92rem; font-variant-numeric: tabular-nums;
 }
-.pastille small { font-size: 0.58em; opacity: 0.65; font-weight: 600; align-self: flex-end; margin-bottom: 0.6em; }
-.pastille.good { background: var(--good-bg); } .pastille.ok { background: var(--ok-bg); } .pastille.bad { background: var(--bad-bg); }
+/* « /10 » à pleine opacité : il hérite du ratio de la note (la taille et la graisse suffisent à le hiérarchiser). */
+.pastille small { font-size: 0.72em; opacity: 1; font-weight: 500; align-self: flex-end; margin-bottom: 0.4em; }
+/* Fonds opaques (--*-soft) : la pastille peut reposer sur la texture du tigre sans s'y fondre. */
+.pastille.good { background: var(--good-soft); } .pastille.ok { background: var(--ok-soft); } .pastille.bad { background: var(--bad-soft); }
 
 /* ── Mobile : une question à la fois ── */
 .mobile { display: flex; flex-direction: column; gap: 14px; }
 .progression { display: flex; gap: 4px; }
-/* Segment qui se remplit de gauche à droite (ressort) + petit flash quand il vient d'être rempli. */
-.progression i { position: relative; overflow: hidden; flex: 1; height: 5px; border-radius: 3px; background: var(--border); }
+/* Piste décorative (aria-hidden) : --border-control adouci, le 3:1 n'est pas exigé. Segment qui se remplit de gauche à droite (ressort) + petit flash quand il vient d'être rempli. */
+.progression i { position: relative; overflow: hidden; flex: 1; height: 5px; border-radius: 3px; background: color-mix(in srgb, var(--border-control) 55%, var(--bg)); }
 .progression i::before {
   content: ""; position: absolute; inset: 0; background: var(--accent); border-radius: inherit;
   scale: 0 1; transform-origin: left center; transition: scale 300ms var(--ease-spring);
@@ -34,7 +36,7 @@
 .progression i.fait { animation: flash 520ms var(--ease-out-expo) 1; }
 .fil { display: flex; flex-wrap: wrap; gap: 6px; }
 .fil button {
-  border: 1px solid var(--border-accent); background: var(--surface); color: var(--text); border-radius: 999px;
+  border: 1px solid var(--border-control); background: var(--surface); color: var(--text); border-radius: 999px;
   padding: 4px 11px; font: inherit; font-size: 0.78rem; cursor: pointer;
   /* Chaque pastille (clé = étape) fait un pop à son arrivée, une seule fois. */
   animation: pop 260ms var(--ease-spring) backwards;
@@ -58,7 +60,7 @@
 .choix { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .choix button {
   display: flex; align-items: center; gap: 10px; min-height: 56px; padding: 10px 12px; text-align: left; cursor: pointer;
-  border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: var(--radius);
+  border: 1px solid var(--border-control); background: var(--surface); color: var(--text); border-radius: var(--radius);
   font: inherit; font-size: 0.92rem; font-weight: 600;
   /* Press (scale) et lift (translate) : propriétés individuelles, ils se combinent. */
   transition: border-color var(--dur-fast) ease-out, scale var(--dur-base) var(--ease-spring),
@@ -66,7 +68,8 @@
 }
 .choix button:active { scale: .96; transition-duration: 90ms; }
 .choix button.seul { grid-column: 1 / -1; }
-.choix button.zero { opacity: 0.5; }
+/* Branche à 0 plat : atténuée par la couleur et un contour pointillé (jamais par l'opacité, qui fait chuter le contraste). */
+.choix button.zero { color: var(--text-muted); border-style: dashed; }
 .emoji { display: inline-block; font-size: 1.3rem; flex: none; }
 @media (hover: hover) and (pointer: fine) {
   .choix button:not(.zero):hover { border-color: var(--accent); translate: 0 -2px; box-shadow: 0 6px 18px var(--accent-glow); }
@@ -93,14 +96,16 @@
 .colonne h2 { transition: color var(--dur-base) ease-out; }
 .colonne h2 {
   display: flex; justify-content: space-between; margin: 0 0 2px; font-family: var(--font-body); font-size: 0.66rem;
-  font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-muted);
+  font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-secondary);
 }
 .colonne.courante { background: var(--surface-accent); border-radius: var(--radius); padding: 8px; margin: -8px; }
 .colonne.courante h2 { color: var(--accent); }
-.colonne.apres { opacity: 0.55; }
+/* Colonnes à venir : couleur plus discrète sur fond opaque, pas d'opacité (le noeud choisi y garde tout son contraste). */
+.colonne.apres .noeud:not(.zero):not([aria-pressed="true"]) { color: var(--text-secondary); }
+.colonne.apres .noeud.zero:not([aria-pressed="true"]) { color: var(--text-muted); }
 .noeud {
   position: relative; display: flex; align-items: center; gap: 7px; padding: 7px 9px; text-align: left; cursor: pointer;
-  border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: var(--radius-sm);
+  border: 1px solid var(--border-control); background: var(--surface); color: var(--text); border-radius: var(--radius-sm);
   font: inherit; font-size: 0.8rem; line-height: 1.25;
   transition: border-color var(--dur-fast) ease-out, background-color var(--dur-fast) ease-out, color var(--dur-fast) ease-out,
     scale var(--dur-base) var(--ease-spring), translate var(--dur-base) var(--ease-out-expo);
@@ -111,19 +116,23 @@
   .noeud:not(.zero):hover { border-color: var(--border-accent); translate: 2px 0; }
   .noeud:not(.zero):hover .noeudEmoji { animation: wiggle 420ms var(--ease-in-out) 1; }
 }
-.noeud.zero { opacity: 0.45; }
+.noeud.zero { color: var(--text-muted); border-style: dashed; }
 /* Le pop se joue quand la branche devient choisie (aria-pressed passe à true). */
 .noeud[aria-pressed="true"] {
-  border-color: var(--accent); background: var(--accent-glow); color: var(--accent); font-weight: 700;
+  border-color: var(--accent); background: var(--accent-soft); color: var(--text); font-weight: 700;
   animation: rebond 260ms var(--ease-spring);
 }
+.noeud.zero[aria-pressed="true"] { border-style: solid; }
 /* Trait doré vers la colonne suivante : le chemin choisi se lit de gauche à droite (il se dessine). */
 .noeud[aria-pressed="true"]::after {
   content: ""; position: absolute; right: -13px; top: 50%; width: 12px; height: 2px; background: var(--accent); pointer-events: none;
   transform-origin: left center; animation: trait 220ms var(--ease-out-expo) 60ms backwards;
 }
 .colonne:last-of-type .noeud[aria-pressed="true"]::after { display: none; }
-.noeud .compte { font-size: 0.68rem; }
+/* Colonne étroite (~130 px) : le libellé peut passer à la ligne (même en gras, quand le nœud est choisi) et le compteur ne se laisse jamais écraser contre la bordure. */
+.noeudLabel { min-width: 0; overflow-wrap: anywhere; hyphens: auto; }
+.noeudEmoji { flex: none; }
+.noeud .compte { font-size: 0.68rem; flex: none; }
 .panneau {
   border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); padding: 14px 16px;
   display: flex; flex-direction: column; gap: 6px; align-self: start; max-height: 70vh; overflow-y: auto;
@@ -135,14 +144,15 @@
 .resultat { display: flex; flex-direction: column; gap: 12px; }
 .resultat h3 { font-family: var(--font-heading); font-size: 1.2rem; margin: 0; text-wrap: balance; }
 .gagnantZone { position: relative; }
-.gagnant { animation: pop 420ms var(--ease-spring) backwards; border: 1px solid var(--good-border); background: var(--good-bg); border-radius: var(--radius); padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; }
+.gagnant { animation: pop 420ms var(--ease-spring) backwards; border: 1px solid var(--good-border); background: var(--good-soft); border-radius: var(--radius); padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; }
+.gagnant .meta { color: var(--text-secondary); }
 .gagnantTete { display: flex; gap: 12px; align-items: flex-start; }
 .gagnant .pastille { min-width: 50px; height: 48px; font-size: 1.25rem; background: var(--bg); }
 .gagnantNom { font-family: var(--font-heading); font-size: 1.1rem; font-weight: 700; line-height: 1.25; }
 .texte { font-size: 0.85rem; color: var(--text-secondary); line-height: 1.55; margin: 0; }
 .dessert { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); padding: 12px 14px; display: flex; flex-direction: column; gap: 4px; }
 .recommencer {
-  align-self: flex-start; border: 1px solid var(--border); background: var(--surface-hover); color: var(--text-secondary);
+  align-self: flex-start; border: 1px solid var(--border-control); background: var(--surface-hover); color: var(--text-secondary);
   border-radius: var(--radius-sm); padding: 7px 14px; font: inherit; font-weight: 600; font-size: 0.82rem; cursor: pointer;
 }
 .recommencer:hover { color: var(--text); border-color: var(--border-accent); }

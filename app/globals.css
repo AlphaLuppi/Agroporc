@@ -19,10 +19,13 @@
   --dur-slow: 380ms;
   --pdj-shimmer: rgba(255, 255, 255, 0.35);
 }
-[data-theme="terrasse"] { --pdj-shimmer: rgba(255, 255, 255, 0.6); }
+/* Les blocs de thème ciblent la racine seulement (html[data-theme]) : les
+   boutons .theme-btn portent aussi data-theme (valeur du thème qu'ils
+   activent) et redéfiniraient sinon tous les tokens localement. */
+html[data-theme="terrasse"] { --pdj-shimmer: rgba(255, 255, 255, 0.6); }
 
 /* ── Theme: Normal (dark elegant) ──────────────── */
-:root, [data-theme="normal"] {
+:root, html[data-theme="normal"] {
   --bg: #0b0b12;
   --bg-pattern: none;
   --surface: #151520;
@@ -45,6 +48,16 @@
   --bad: #f87171;
   --bad-bg: rgba(248, 113, 113, 0.14);
   --bad-border: rgba(248, 113, 113, 0.35);
+  /* Fonds OPAQUES pour les éléments posés sur une texture ou sur --surface-hover
+     (état actif, pastilles de note) : mêmes teintes que --accent-glow / --*-bg,
+     mais sans transparence, donc le contraste ne dépend pas de ce qu'il y a dessous. */
+  --accent-soft: color-mix(in srgb, var(--accent) 20%, var(--surface));
+  --good-soft: color-mix(in srgb, var(--good) 14%, var(--bg));
+  --ok-soft: color-mix(in srgb, var(--ok) 14%, var(--bg));
+  --bad-soft: color-mix(in srgb, var(--bad) 14%, var(--bg));
+  /* Contour des contrôles (champs, capsules, interrupteur) : ≥ 3:1 contre
+     --surface et --bg (WCAG 1.4.11). --border reste réservé aux séparateurs. */
+  --border-control: #6f6f98;
   --radius: 16px;
   --radius-sm: 8px;
   --shadow: 0 2px 16px rgba(0,0,0,0.35);
@@ -64,36 +77,51 @@
 }
 
 /* ── Theme: Tigre ──────────────────────────────── */
-[data-theme="tigre"] {
+html[data-theme="tigre"] {
   /* Pelage : rayures et fourrure dans une texture tuilable (générée par
      scripts/tigre/gen_pelage.py), assombrie par un voile pour garder le texte
-     lisible hors des cartes. --bg reste le brun uni (fonds opaques,
+     lisible hors des cartes (voile plat à 78 % : le texte posé nu sur la
+     fourrure tient 4,5:1 avec --text-muted). --bg reste le brun uni (fonds opaques,
      pastilles) : le fauve n'existe que dans le motif. */
   --bg: #1a0e00;
   --bg-pattern:
     radial-gradient(ellipse 120% 70% at 50% 0%, rgba(255, 140, 0, 0.14), transparent 70%),
-    linear-gradient(rgba(26, 10, 0, 0.5), rgba(26, 10, 0, 0.66)),
+    linear-gradient(rgba(26, 10, 0, 0.78), rgba(26, 10, 0, 0.78)),
     url("/textures/tigre.webp") 0 0 / 800px 800px repeat #6e3007;
   --surface: #2a1800;
   --surface-hover: #3a2200;
   --surface-accent: #331c00;
-  --border: #5a3500;
+  --border: #6a4108;
   --border-accent: #e67700;
   --text: #fff3e0;
-  --text-secondary: #d4a060;
-  --text-muted: #b8834a;
+  --text-secondary: #e8c088;
+  --text-muted: #d0a064;
   --accent: #ff8c00;
   --accent-glow: rgba(255, 140, 0, 0.2);
   --accent-text: #1a0e00;
   --good: #66bb6a;
-  --good-bg: rgba(102, 187, 106, 0.12);
+  /* Teinte du vert un peu plus faible qu'avant : le hero « Reco du jour »
+     (fond --good-bg sur brun) virait au kaki. */
+  --good-bg: rgba(102, 187, 106, 0.06);
   --good-border: rgba(102, 187, 106, 0.3);
-  --ok: #ffa726;
-  --ok-bg: rgba(255, 167, 38, 0.12);
-  --ok-border: rgba(255, 167, 38, 0.3);
-  --bad: #ef5350;
-  --bad-bg: rgba(239, 83, 80, 0.12);
-  --bad-border: rgba(239, 83, 80, 0.3);
+  /* Ambre plus jaune que --accent (#ff8c00, orange) : une note moyenne et un
+     prix ne se confondent plus (ΔE 15 → 29). */
+  --ok: #ffc02e;
+  --ok-bg: rgba(255, 192, 46, 0.12);
+  --ok-border: rgba(255, 192, 46, 0.3);
+  --bad: #f46b67;
+  --bad-bg: rgba(244, 107, 103, 0.12);
+  --bad-border: rgba(244, 107, 103, 0.3);
+  /* Fonds OPAQUES pour les éléments posés sur la fourrure ou sur --surface-hover
+     (état actif, pastilles de note) : mêmes teintes que --accent-glow / --*-bg,
+     mais sans transparence, donc le contraste ne dépend pas de ce qu'il y a dessous. */
+  --accent-soft: color-mix(in srgb, var(--accent) 20%, var(--surface));
+  --good-soft: color-mix(in srgb, var(--good) 14%, var(--bg));
+  --ok-soft: color-mix(in srgb, var(--ok) 14%, var(--bg));
+  --bad-soft: color-mix(in srgb, var(--bad) 14%, var(--bg));
+  /* Contour des contrôles : ≥ 3:1 contre --surface, --bg et la fourrure voilée
+     (WCAG 1.4.11). --border reste réservé aux séparateurs. */
+  --border-control: #b07a3a;
   --radius: 12px;
   --radius-sm: 6px;
   --shadow: 0 4px 24px rgba(0,0,0,0.5);
@@ -118,16 +146,16 @@
 
 /* Mobile : motif plus petit, pour voir plusieurs rayures à l'écran. */
 @media (max-width: 640px) {
-  [data-theme="tigre"] {
+  html[data-theme="tigre"] {
     --bg-pattern:
       radial-gradient(ellipse 120% 70% at 50% 0%, rgba(255, 140, 0, 0.14), transparent 70%),
-      linear-gradient(rgba(26, 10, 0, 0.5), rgba(26, 10, 0, 0.66)),
+      linear-gradient(rgba(26, 10, 0, 0.78), rgba(26, 10, 0, 0.78)),
       url("/textures/tigre.webp") 0 0 / 480px 480px repeat #6e3007;
   }
 }
 
 /* ── Theme: Terrasse (light bistrot) ──────────── */
-[data-theme="terrasse"] {
+html[data-theme="terrasse"] {
   --bg: #F5F0E1;
   --bg-pattern: none;
   --surface: #FFFDF7;
@@ -138,18 +166,33 @@
   --text: #3D2B1F;
   --text-secondary: #6B5E4F;
   --text-muted: #736757;
-  --accent: #B5651D;
-  --accent-glow: rgba(181, 101, 29, 0.15);
+  --accent: #8F4B0E;
+  --accent-glow: rgba(143, 75, 14, 0.15);
   --accent-text: #FFFDF7;
-  --good: #5A7B3C;
-  --good-bg: rgba(90, 123, 60, 0.12);
-  --good-border: rgba(90, 123, 60, 0.35);
-  --ok: #B8860B;
-  --ok-bg: rgba(184, 134, 11, 0.12);
-  --ok-border: rgba(184, 134, 11, 0.35);
-  --bad: #C0392B;
-  --bad-bg: rgba(192, 57, 43, 0.10);
-  --bad-border: rgba(192, 57, 43, 0.30);
+  /* Notes : vert / ambre / rouge choisis pour se distinguer entre eux ET de
+     --accent (L* 39) par la luminance autant que par la teinte (vert et bronze
+     les plus sombres, rouge au milieu) ; ≥ 4,5:1 sur --bg, --surface,
+     --surface-hover et sur les fonds --*-soft. Écart ΔE en deutéranopie /
+     protanopie ≥ 8 entre toutes les paires (vert/ambre/rouge/accent). */
+  --good: #185428;
+  --good-bg: rgba(24, 84, 40, 0.12);
+  --good-border: rgba(24, 84, 40, 0.35);
+  --ok: #5A4100;
+  --ok-bg: rgba(90, 65, 0, 0.12);
+  --ok-border: rgba(90, 65, 0, 0.35);
+  --bad: #9D2C36;
+  --bad-bg: rgba(157, 44, 54, 0.10);
+  --bad-border: rgba(157, 44, 54, 0.30);
+  /* Fonds OPAQUES pour les éléments posés sur --surface-hover ou sur un fond
+     teinté (état actif, pastilles de note) : même intensité que --accent-glow
+     / --*-bg d'origine, mais sans transparence. */
+  --accent-soft: color-mix(in srgb, var(--accent) 15%, var(--surface));
+  --good-soft: color-mix(in srgb, var(--good) 12%, var(--surface));
+  --ok-soft: color-mix(in srgb, var(--ok) 12%, var(--surface));
+  --bad-soft: color-mix(in srgb, var(--bad) 10%, var(--surface));
+  /* Contour des contrôles (champs, capsules, interrupteur) : ≥ 3:1 contre
+     --surface et --bg (WCAG 1.4.11). --border reste réservé aux séparateurs. */
+  --border-control: #8a7a62;
   --radius: 14px;
   --radius-sm: 7px;
   --shadow: 0 2px 12px rgba(107, 78, 50, 0.08);
@@ -365,8 +408,16 @@ body::before {
   position: relative;
   overflow: hidden;
   border-radius: var(--radius-sm, 6px);
-  background: color-mix(in srgb, var(--text) 7%, var(--surface));
+  background: color-mix(in srgb, var(--text) 18%, var(--surface));
 }
+/* Hors carte (sur le fond de page ou la fourrure), un liseré garde les barres
+   visibles : en terrasse le remplissage seul est à 1,3:1 du fond. */
+.pdj-skel:not(.pdj-skel-carte) {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 22%, transparent);
+}
+.pdj-skel-carte .pdj-skel { box-shadow: none; }
+/* Grands blocs (zones image) : remplissage plus léger, 18 % de --text y est trop lourd (surtout en Tigre). */
+.pdj-skel.pdj-skel-bloc { background: color-mix(in srgb, var(--text) 9%, var(--surface)); }
 .pdj-skel::after {
   content: "";
   position: absolute;
@@ -479,6 +530,13 @@ body::before {
     box-shadow var(--dur-base) ease-out, scale var(--dur-base) var(--ease-spring);
 }
 .theme-btn:active { scale: .92; transition-duration: 90ms; }
+/* Anneau en --text : tient 3:1 contre le fond du sélecteur ET contre le bouton
+   actif voisin (rempli en --accent). */
+.theme-btn:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+/* !important : ClientScripts pose la couleur en inline (inactif = --text-muted). */
+@media (hover: hover) and (pointer: fine) {
+  .theme-btn:not(.active):hover { color: var(--text) !important; }
+}
 .theme-btn svg { transition: rotate var(--dur-base) var(--ease-spring); }
 .theme-btn:active svg { rotate: -20deg; transition-duration: 90ms; }
 
@@ -572,7 +630,7 @@ html[data-pdj-pret] #burger-close-icon:not(.hidden) { animation: pdj-burger 260m
   --color-accent-foreground: var(--text);
   --color-destructive: var(--bad);
   --color-border: var(--border);
-  --color-input: var(--border);
+  --color-input: var(--border-control);
   --color-ring: var(--accent);
 }
 
@@ -581,8 +639,19 @@ html[data-pdj-pret] #burger-close-icon:not(.hidden) { animation: pdj-burger 260m
   body { @apply bg-background text-foreground; }
   /* Focus clavier visible partout (dans la couche base : les outlines
      spécifiques, ex. .calendar-cell, gardent la main). */
-  :where(a, button, [role="button"], summary):focus-visible {
+  :where(a, button, [role="button"], [role="switch"], summary, input, textarea, select, [tabindex]:not([tabindex="-1"])):focus-visible,
+  label:has(input:is([type="file"], [type="checkbox"], [type="radio"]):focus-visible) {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
   }
+}
+
+/* Placeholders lisibles (≥ 4,5:1 sur --surface et --surface-hover dans les
+   3 thèmes). Volontairement HORS de toute couche : une règle non layered
+   l'emporte sur les utilitaires Tailwind (placeholder:opacity-60 etc.), et le
+   navigateur n'applique plus son opacité par défaut (~50 %). */
+input::placeholder,
+textarea::placeholder {
+  color: var(--text-muted);
+  opacity: 1;
 }

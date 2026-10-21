@@ -26,7 +26,9 @@
   height: 6px;
   overflow: hidden;
   border-radius: 999px;
-  background: var(--border);
+  /* Les 2 px entre segments laissent voir le fond du panneau : les teintes voisines
+     (vert/ambre/rouge) restent séparées sans reposer sur la seule couleur. */
+  background: transparent;
   gap: 2px;
 }
 .segment {

@@ -133,13 +133,13 @@ export default function AdminPhotosClient({ initialPhotos }: Props) {
             <div className="flex gap-3 justify-end">
               <button
                 onClick={() => setConfirmDeleteId(null)}
-                className="px-4 py-2 text-sm rounded-lg border border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] transition-colors"
+                className="px-4 py-2 text-sm rounded-lg border border-[var(--border-control)] text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] transition-colors"
               >
                 Annuler
               </button>
               <button
                 onClick={confirmDelete}
-                className="px-4 py-2 text-sm rounded-lg bg-red-500 text-white hover:bg-red-600 transition-colors font-medium"
+                className="px-4 py-2 text-sm rounded-lg bg-red-700 text-white hover:bg-red-800 transition-colors font-medium"
               >
                 Supprimer
               </button>
@@ -185,13 +185,13 @@ export default function AdminPhotosClient({ initialPhotos }: Props) {
                   const input = fileInputRefs.current[pendingUpload.slug];
                   if (input) input.value = "";
                 }}
-                className="px-4 py-2 text-sm rounded-lg border border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] transition-colors"
+                className="px-4 py-2 text-sm rounded-lg border border-[var(--border-control)] text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] transition-colors"
               >
                 Annuler
               </button>
               <button
                 onClick={() => handleUpload()}
-                className="px-4 py-2 text-sm rounded-lg border border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] transition-colors"
+                className="px-4 py-2 text-sm rounded-lg border border-[var(--border-control)] text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] transition-colors"
               >
                 Sans liaison
               </button>
@@ -213,12 +213,12 @@ export default function AdminPhotosClient({ initialPhotos }: Props) {
       </div>
 
       {error && (
-        <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm">
+        <div role="alert" className="p-3 bg-[var(--surface)] border border-[var(--bad-border)] text-[var(--bad)] rounded-lg text-sm">
           {error}
         </div>
       )}
       {success && (
-        <div className="p-3 bg-green-50 border border-green-200 text-green-700 rounded-lg text-sm">
+        <div role="status" className="p-3 bg-[var(--surface)] border border-[var(--good-border)] text-[var(--good)] rounded-lg text-sm">
           {success}
         </div>
       )}
@@ -249,19 +249,22 @@ export default function AdminPhotosClient({ initialPhotos }: Props) {
                         alt={photo.filename}
                         className="w-full aspect-square object-cover rounded-lg border border-[var(--border)]"
                       />
+                      {/* Zone tactile de 40 px, disque visible de 24 px ; masqué au repos seulement si l'écran a un survol (sinon introuvable au doigt). */}
                       <button
                         onClick={() => handleDelete(photo.id)}
-                        className="absolute top-1 right-1 w-6 h-6 bg-red-500 text-white rounded-full text-xs font-bold opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
+                        className="absolute top-0 right-0 w-10 h-10 flex items-center justify-center opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 focus-visible:opacity-100 transition-opacity"
                         aria-label="Supprimer"
                       >
-                        ×
+                        <span aria-hidden="true" className="w-6 h-6 rounded-full bg-red-700 text-white ring-2 ring-[var(--surface)] text-base font-bold leading-none flex items-center justify-center">
+                          ×
+                        </span>
                       </button>
                       {photo.plat_nom ? (
-                        <p className="text-[10px] text-[var(--accent)] mt-1 truncate leading-tight font-medium" title={photo.plat_nom}>
+                        <p className="text-xs text-[var(--text-secondary)] mt-1 line-clamp-2 leading-tight font-medium" title={photo.plat_nom}>
                           {photo.plat_nom}
                         </p>
                       ) : (
-                        <p className="text-[10px] text-[var(--text-muted)] mt-1 truncate leading-tight">
+                        <p className="text-xs text-[var(--text-muted)] mt-1 line-clamp-2 leading-tight">
                           {photo.filename}
                         </p>
                       )}
@@ -271,7 +274,7 @@ export default function AdminPhotosClient({ initialPhotos }: Props) {
               )}
 
               <label
-                className={`inline-flex items-center gap-2 cursor-pointer px-3 py-1.5 border border-[var(--border)] rounded-lg text-sm text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] transition-colors ${
+                className={`inline-flex items-center gap-2 cursor-pointer px-3 py-1.5 border border-[var(--border-control)] rounded-lg text-sm text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] transition-colors ${
                   isUploading ? "opacity-60 pointer-events-none" : ""
                 }`}
               >

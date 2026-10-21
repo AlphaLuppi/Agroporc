@@ -3,11 +3,12 @@
 .root {
   --ag-ground: #04060a;
   --ag-ink: #e6f1f6;
-  --ag-ink-dim: #6f8a96;
+  --ag-ink-dim: #93abb7; /* 8,3:1 sur le panneau, ≥ 4,9:1 sur les fils de fer */
   --ag-cyan: #9be9ff;
   --ag-amber: #ffb35c;
   --ag-white: #f2f7fa;
-  --ag-line: #163040;
+  --ag-line: #163040; /* filets décoratifs */
+  --ag-line-strong: #43657a; /* contours de contrôles et pistes de jauge : ≥ 3,2:1 */
   --ag-panel: rgba(6, 10, 14, 0.9);
   position: fixed;
   inset: 0;
@@ -42,24 +43,26 @@
 }
 .labels > div[hidden] { display: none; }
 .labels [data-part="name"] { padding: 3px 7px; border: 1px solid currentColor; background: rgba(4, 6, 10, 0.75); }
-.labels [data-part="tag"] { font-size: 9px; letter-spacing: 0.14em; opacity: 0.75; }
+.labels [data-part="tag"] { font-size: 10px; letter-spacing: 0.14em; padding: 1px 5px; background: rgba(4, 6, 10, 0.7); }
 .labels > [data-kind="home"] { color: var(--ag-white); text-shadow: 0 0 10px rgba(255, 255, 255, 0.45); }
 .labels > [data-kind="resto"], .labels > [data-kind="truck"] { color: var(--ag-amber); text-shadow: 0 0 10px rgba(255, 179, 92, 0.5); cursor: pointer; }
 .labels > [data-kind="resto"]:hover [data-part="name"], .labels > [data-kind="truck"]:hover [data-part="name"],
 .labels > [data-kind="resto"]:focus-visible [data-part="name"], .labels > [data-kind="truck"]:focus-visible [data-part="name"] {
-  background: var(--ag-amber); color: var(--ag-ground); outline: none;
+  background: var(--ag-amber); color: var(--ag-ground);
 }
+/* Les libellés cliquables sont tabulables (scene.ts) : anneau explicite, blanc comme les boutons. */
+.labels > div:focus-visible { outline: 2px solid var(--ag-white); outline-offset: 3px; }
 .labels > [data-kind="shop"] { color: var(--ag-ink-dim); text-shadow: none; }
 
 .hud { position: absolute; z-index: 3; pointer-events: none; }
 .hudTl { left: 24px; top: 20px; max-width: 460px; }
-.modes { display: inline-flex; margin-top: 12px; border: 1px solid var(--ag-line); background: rgba(4, 6, 10, 0.7); pointer-events: auto; }
+.modes { display: inline-flex; margin-top: 12px; border: 1px solid var(--ag-line-strong); background: rgba(4, 6, 10, 0.7); pointer-events: auto; }
 .modes button {
   background: none; border: 0; color: var(--ag-ink-dim); font: inherit; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase;
   padding: 6px 14px; cursor: pointer; transition: background 0.2s ease, color 0.2s ease;
 }
-.modes button + button { border-left: 1px solid var(--ag-line); }
-.modes button:hover, .modes button:focus-visible { color: var(--ag-ink); outline: none; }
+.modes button + button { border-left: 1px solid var(--ag-line-strong); }
+.modes button:hover, .modes button:focus-visible { color: var(--ag-ink); }
 .modes button[aria-pressed="true"][data-mode="sportif"] { background: var(--ag-cyan); color: var(--ag-ground); box-shadow: 0 0 12px rgba(155, 233, 255, 0.35); }
 .modes button[aria-pressed="true"][data-mode="goulaf"] { background: var(--ag-amber); color: var(--ag-ground); box-shadow: 0 0 12px rgba(255, 179, 92, 0.35); }
 .eyebrow { font-size: 10px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--ag-ink-dim); margin: 0 0 6px; }
@@ -69,6 +72,8 @@
 }
 
 .hudBl { left: 24px; bottom: 20px; display: flex; flex-direction: column; gap: 10px; max-width: min(760px, calc(100vw - 420px)); }
+/* Textes posés sans plaque sur les fils de fer : halo sombre pour garder le contraste. */
+.legend, .hint, .date, .log { text-shadow: 0 0 6px var(--ag-ground), 0 0 2px var(--ag-ground); }
 .legend { display: flex; gap: 16px; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ag-ink-dim); }
 .legend span::before {
   content: ""; display: inline-block; width: 14px; height: 2px; margin-right: 7px; vertical-align: middle;
@@ -81,10 +86,10 @@
 .hint b { font-weight: 500; color: var(--ag-cyan); }
 .ctl { display: flex; gap: 6px; pointer-events: auto; }
 .ctl button {
-  background: rgba(4, 6, 10, 0.7); border: 1px solid var(--ag-line); color: var(--ag-cyan); font: inherit; font-size: 10px;
+  background: rgba(4, 6, 10, 0.7); border: 1px solid var(--ag-line-strong); color: var(--ag-cyan); font: inherit; font-size: 10px;
   letter-spacing: 0.14em; text-transform: uppercase; padding: 5px 10px; cursor: pointer;
 }
-.ctl button:hover, .ctl button:focus-visible { border-color: var(--ag-cyan); outline: none; background: rgba(155, 233, 255, 0.08); }
+.ctl button:hover, .ctl button:focus-visible { border-color: var(--ag-cyan); background: rgba(155, 233, 255, 0.08); }
 
 .hudBr { right: 24px; bottom: 20px; text-align: right; display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
 .date { font-size: 11px; color: var(--ag-ink-dim); letter-spacing: 0.06em; text-transform: uppercase; }
@@ -118,7 +123,7 @@
 .jauge { position: relative; width: 112px; flex-shrink: 0; margin-left: auto; text-align: center; }
 .jauge svg { display: block; width: 112px; height: 62px; overflow: visible; }
 .jaugeFond, .jaugeArc { fill: none; stroke-width: 7; stroke-linecap: butt; }
-.jaugeFond { stroke: var(--ag-line); }
+.jaugeFond { stroke: var(--ag-line-strong); }
 .jaugeArc { stroke: var(--jauge); filter: drop-shadow(0 0 6px var(--jauge)); transition: stroke-dasharray 0.6s ease, stroke 0.6s ease; }
 .jaugeVal {
   position: absolute; left: 0; right: 0; bottom: 14px; color: var(--jauge); line-height: 1;
@@ -130,7 +135,7 @@
 
 /* Mini-jauge des lignes de carte */
 .mini { display: inline-flex; align-items: center; gap: 6px; }
-.mini > i { display: block; position: relative; width: 34px; height: 3px; background: var(--ag-line); }
+.mini > i { display: block; position: relative; width: 34px; height: 3px; background: var(--ag-line-strong); }
 .mini > i > i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--jauge); box-shadow: 0 0 6px var(--jauge); transition: width 0.4s ease, background 0.4s ease; }
 .mini b { color: var(--jauge); font-weight: 500; min-width: 4ch; text-align: right; }
 .nutri { display: flex; gap: 14px; margin: 14px 0 0; font-size: 11px; color: var(--ag-ink-dim); font-variant-numeric: tabular-nums; }
@@ -160,22 +165,33 @@
 .depliant { margin-top: 16px; border-top: 1px solid var(--ag-line); padding-top: 12px; }
 .depliantBtn {
   display: flex; justify-content: space-between; align-items: center; gap: 10px; width: 100%;
-  background: none; border: 1px solid var(--ag-line); color: var(--ag-amber); font: inherit; font-size: 10px;
+  background: none; border: 1px solid var(--ag-line-strong); color: var(--ag-amber); font: inherit; font-size: 10px;
   letter-spacing: 0.16em; text-transform: uppercase; padding: 7px 10px; cursor: pointer; text-align: left;
 }
-.depliantBtn:hover, .depliantBtn:focus-visible { border-color: var(--ag-amber); background: rgba(255, 179, 92, 0.08); outline: none; }
+.depliantBtn:hover, .depliantBtn:focus-visible { border-color: var(--ag-amber); background: rgba(255, 179, 92, 0.08); }
 .depliant .carte { margin-top: 12px; border-top: 0; padding-top: 0; }
 .close {
-  background: none; border: 1px solid var(--ag-line); color: var(--ag-ink-dim); font: inherit; font-size: 10px;
+  background: none; border: 1px solid var(--ag-line-strong); color: var(--ag-ink-dim); font: inherit; font-size: 10px;
   letter-spacing: 0.14em; text-transform: uppercase; padding: 3px 8px; cursor: pointer; flex-shrink: 0;
 }
-.close:hover, .close:focus-visible { color: var(--ag-ink); border-color: var(--ag-ink-dim); outline: none; }
+.close:hover, .close:focus-visible { color: var(--ag-ink); border-color: var(--ag-ink-dim); }
+
+/* Anneau de focus clavier commun aux contrôles (blanc : 18:1 sur le fond). Décalé vers
+   l'extérieur : en intérieur il disparaîtrait sur le bouton actif cyan ou ambre. Placé
+   après les règles de survol pour garder la main, sans `outline: none` plus haut. */
+.modes button:focus-visible, .ctl button:focus-visible, .close:focus-visible, .depliantBtn:focus-visible {
+  outline: 2px solid var(--ag-white); outline-offset: 2px;
+}
+.modes button:focus-visible { position: relative; z-index: 1; } /* l'anneau passe devant le bouton voisin */
+.root:focus { outline: none; } /* focus posé en JS à l'ouverture : le dialogue n'est pas un contrôle */
 
 .loading {
   position: absolute; inset: 0; z-index: 5; display: grid; place-items: center; background: var(--ag-ground);
   color: var(--ag-cyan); font-size: 11px; letter-spacing: 0.22em; text-transform: uppercase; text-align: center; padding: 24px;
 }
-.loading .err { color: var(--ag-amber); letter-spacing: 0.04em; text-transform: none; max-width: 40ch; line-height: 1.5; }
+.loading .err { color: var(--ag-amber); letter-spacing: 0.04em; text-transform: none; max-width: 40ch; line-height: 1.5; font-size: 14px; }
+.loading .errSortie { display: flex; flex-direction: column; align-items: center; gap: 14px; }
+.loading .errSortie p { margin: 0; color: var(--ag-ink); letter-spacing: 0.04em; text-transform: none; line-height: 1.5; }
 
 @media (max-width: 640px) {
   .hudTl { max-width: calc(100vw - 48px); }
@@ -184,6 +200,8 @@
   .legend { flex-wrap: wrap; gap: 8px 14px; }
   .hudBr { display: none; }
   .panel { top: auto; bottom: 20px; right: 24px; left: 24px; width: auto; max-height: 60vh; }
+  /* Cibles tactiles ≥ 40 px (convention du projet). */
+  .modes button, .ctl button, .close, .depliantBtn { min-height: 40px; padding-inline: 14px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .root, .panel, .log > div, .labels > div, .jaugeArc, .jaugeVal, .mini > i > i, .modes button { animation: none; transition: none; }

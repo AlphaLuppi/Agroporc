@@ -22,6 +22,11 @@ export default function IdeeForm() {
       const stored = localStorage.getItem(CHARACTER_STORAGE_KEY);
       if (stored && CHARACTERS_BY_NAME[stored]) {
         setCharacter(CHARACTERS_BY_NAME[stored]);
+      } else if (!stored) {
+        // Le formulaire annonce « en tant que » le personnage par défaut : on le mémorise
+        // pour que le vote (IdeesList) parle du même personnage.
+        localStorage.setItem(CHARACTER_STORAGE_KEY, CHARACTERS[0].name);
+        window.dispatchEvent(new Event("storage"));
       }
     } catch {
       /* ignore */
@@ -102,7 +107,7 @@ export default function IdeeForm() {
         <button
           type="button"
           onClick={() => setPickerOpen((v) => !v)}
-          className="w-full flex items-center gap-2 bg-[var(--bg)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-sm text-[var(--text)] hover:border-[var(--accent)] focus:border-[var(--accent)] focus:outline-none transition-colors"
+          className="w-full flex items-center gap-2 bg-[var(--bg)] border border-[var(--border-control)] rounded-lg px-2.5 py-1.5 text-sm text-[var(--text)] hover:border-[var(--accent)] focus:border-[var(--accent)] transition-colors"
         >
           <Avatar className="shrink-0 w-6 h-6 text-xs">
             {character.image && <AvatarImage src={character.image} alt={character.name} />}
@@ -111,7 +116,7 @@ export default function IdeeForm() {
             </AvatarFallback>
           </Avatar>
           <span className="flex-1 text-left truncate">
-            <span className="text-[var(--text-secondary)] opacity-60 text-xs mr-1">en tant que</span>
+            <span className="text-[var(--text-muted)] text-xs mr-1">en tant que</span>
             <span className="font-semibold">{character.name}</span>
           </span>
           <ChevronDown
@@ -132,8 +137,8 @@ export default function IdeeForm() {
                   role="option"
                   aria-selected={selected}
                   onClick={() => selectCharacter(c)}
-                  className={`w-full flex items-center gap-2 px-2.5 py-1.5 text-sm text-left hover:bg-[var(--accent-glow)] transition-colors ${
-                    selected ? "bg-[var(--accent-glow)] text-[var(--accent)]" : "text-[var(--text)]"
+                  className={`w-full flex items-center gap-2 px-2.5 py-1.5 text-sm text-left hover:bg-[var(--accent-soft)] transition-colors ${
+                    selected ? "bg-[var(--accent-soft)] text-[var(--accent)]" : "text-[var(--text)]"
                   }`}
                 >
                   <Avatar className="shrink-0 w-6 h-6 text-xs">
@@ -163,7 +168,7 @@ export default function IdeeForm() {
         maxLength={500}
         required
         rows={3}
-        className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg)] px-2.5 py-1.5 text-sm text-[var(--text)] placeholder:text-[var(--text-secondary)] placeholder:opacity-60 focus:border-[var(--accent)] focus:outline-none resize-y"
+        className="w-full rounded-lg border border-[var(--border-control)] bg-[var(--bg)] px-2.5 py-1.5 text-sm text-[var(--text)] focus:border-[var(--accent)] resize-y"
       />
 
       <div className="flex items-center justify-between">
@@ -174,7 +179,7 @@ export default function IdeeForm() {
           type="submit"
           size="sm"
           disabled={loading || !texte.trim()}
-          className="bg-[var(--accent)] text-[var(--bg)] font-semibold hover:bg-[var(--accent)]/90 disabled:opacity-40"
+          className="bg-[var(--accent)] text-[var(--accent-text)] font-semibold hover:bg-[var(--accent)]/90 disabled:opacity-100 disabled:bg-[var(--surface-hover)] disabled:text-[var(--text-muted)] disabled:border-[var(--border-control)]"
         >
           {loading ? "..." : "Proposer"}
         </Button>

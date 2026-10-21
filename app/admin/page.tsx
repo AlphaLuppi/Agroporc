@@ -12,7 +12,7 @@ export default async function AdminPage() {
   }
   const runs = await getRecentRuns();
   return (
-    <main className="mx-auto max-w-3xl p-6">
+    <main className="mx-auto max-w-3xl rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] p-6">
       <h1 className="mb-4 text-2xl font-bold">Admin — Pipeline</h1>
       <AdminDashboard initialRuns={runs} />
     </main>

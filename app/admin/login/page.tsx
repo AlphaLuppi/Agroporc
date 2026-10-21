@@ -67,16 +67,16 @@ export default function LoginPage() {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             placeholder="Mot de passe"
+            aria-label="Mot de passe"
             autoFocus
             style={{
               width: "100%",
               padding: "0.625rem 0.875rem",
               background: "var(--surface-hover)",
-              border: "1px solid var(--border)",
+              border: "1px solid var(--border-control)",
               borderRadius: "var(--radius)",
               color: "var(--text)",
               fontSize: "0.875rem",
-              outline: "none",
               boxSizing: "border-box",
             }}
           />
@@ -88,15 +88,16 @@ export default function LoginPage() {
             disabled={loading || !password}
             style={{
               padding: "0.625rem 1rem",
-              background: "var(--accent)",
-              color: "var(--accent-text)",
-              border: "none",
+              // Désactivé : surface explicite + contour (et non de l'opacité, qui
+              // fondait le bouton dans le décor).
+              background: loading || !password ? "var(--surface-hover)" : "var(--accent)",
+              color: loading || !password ? "var(--text-muted)" : "var(--accent-text)",
+              border: loading || !password ? "1px solid var(--border-control)" : "1px solid transparent",
               borderRadius: "var(--radius)",
               fontWeight: 600,
               fontSize: "0.875rem",
               cursor: loading || !password ? "not-allowed" : "pointer",
-              opacity: loading || !password ? 0.6 : 1,
-              transition: "opacity 0.15s",
+              transition: "background 0.15s, color 0.15s",
             }}
           >
             {loading ? "Connexion…" : "Se connecter"}

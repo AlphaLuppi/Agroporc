@@ -50,6 +50,40 @@ export const AVATAR_IMAGE: Record<string, string> = {
   Toam: "/avatars/toam.webp",
 };
 
+/**
+ * Nom canonique d'un personnage, quelle que soit la casse saisie (« NOVA » → « Nova »).
+ * Renvoie le nom tel quel s'il n'est pas dans la liste.
+ */
+export function nomPersonnage(nom: string): string {
+  if (CHARACTERS_BY_NAME[nom]) return nom;
+  const minuscule = nom.trim().toLowerCase();
+  return CHARACTERS.find((c) => c.name.toLowerCase() === minuscule)?.name ?? nom;
+}
+
+/** Luminance relative WCAG d'une couleur #rgb / #rrggbb ; null si le format est inconnu. */
+function luminance(couleur: string): number | null {
+  let hex = couleur.trim().replace(/^#/, "");
+  if (/^[0-9a-f]{3}$/i.test(hex)) hex = hex.replace(/./g, "$&$&");
+  if (!/^[0-9a-f]{6}$/i.test(hex)) return null;
+  const [r, g, b] = [0, 2, 4].map((i) => {
+    const v = parseInt(hex.slice(i, i + 2), 16) / 255;
+    return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+/**
+ * Couleur d'initiale lisible sur une couleur d'avatar libre (choisie dans /ia) :
+ * blanc ou presque noir, selon le meilleur contraste (#111 sur #ff8647 : 7,9:1, blanc : 2,4:1).
+ */
+export function texteSur(couleur: string): string {
+  const l = luminance(couleur);
+  if (l === null) return "#fff";
+  const contrasteBlanc = 1.05 / (l + 0.05);
+  const contrasteNoir = (l + 0.05) / (0.0056 + 0.05); // #111 : luminance ≈ 0,0056
+  return contrasteNoir > contrasteBlanc ? "#111" : "#fff";
+}
+
 /** Repère visuel d'un personnage IA créé ou modifié depuis /ia (table `ia_profiles`). */
 export interface AvatarIa {
   image?: string;
@@ -80,10 +114,11 @@ export function avatarAuteur(
   auteur: string,
   avatarsIa?: Record<string, AvatarIa>
 ): { image?: string; couleur: string; emoji: string } {
-  const ia = avatarsIa?.[auteur];
+  const nom = nomPersonnage(auteur);
+  const ia = avatarsIa?.[auteur] ?? avatarsIa?.[nom];
   return {
-    image: ia?.image || AVATAR_IMAGE[auteur],
-    couleur: ia?.couleur || AVATAR_COLORS[auteur] || "#6b7280",
-    emoji: ia?.emoji || AVATAR_EMOJI[auteur] || auteur.charAt(0),
+    image: ia?.image || AVATAR_IMAGE[nom],
+    couleur: ia?.couleur || AVATAR_COLORS[nom] || "#6b7280",
+    emoji: ia?.emoji || AVATAR_EMOJI[nom] || auteur.charAt(0),
   };
 }

@@ -279,7 +279,7 @@ export default function JourVue({ pdj, mode, images, onOpen }: { pdj: PdjEntry; 
           {/* Un groupe par intitulé : « Sans plat » ne se retrouve jamais en fin de ligne après une puce d'un autre groupe. */}
           {aVenir.length > 0 && (
             <div className={styles.pucesGroupe}>
-              <span className={styles.pucesTitre}>Dévoilé le matin même</span>
+              <span className={styles.pucesTitreLigne}><span className={styles.pucesTitre}>Dévoilé le matin même</span></span>
               {aVenir.map((p) => (
                 <button key={p.restaurant} type="button" onClick={() => onOpen({ kind: "resto", date: pdj.date, nom: p.restaurant })}>
                   <RestoBadge nom={p.restaurant} complet />
@@ -289,7 +289,7 @@ export default function JourVue({ pdj, mode, images, onOpen }: { pdj: PdjEntry; 
           )}
           {sans.length > 0 && (
             <div className={styles.pucesGroupe}>
-              <span className={styles.pucesTitre}>Sans plat</span>
+              <span className={styles.pucesTitreLigne}><span className={styles.pucesTitre}>Sans plat</span></span>
               {sans.map((r) => (
                 <button key={r.slug} type="button" onClick={() => onOpen({ kind: "resto", date: pdj.date, nom: r.nom })}>
                   <RestoBadge nom={r.nom} complet />

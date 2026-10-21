@@ -29,7 +29,7 @@ export default function Chargement() {
       <div className={styles.grille}>
         {[80, 64, 72, 58, 76, 68].map((w, i) => (
           <div key={i} className={`${styles.carte} pdj-skel-carte`} style={{ gap: 8 }}>
-            <Skeleton style={{ aspectRatio: "16 / 9", margin: "-12px -14px 2px", width: "calc(100% + 28px)", borderRadius: 0 }} />
+            <Skeleton className="pdj-skel-bloc" style={{ aspectRatio: "16 / 9", margin: "-12px -14px 2px", width: "calc(100% + 28px)", borderRadius: 0 }} />
             <div className="flex gap-1.5">
               <Skeleton style={{ width: 72, height: 28 }} />
               <Skeleton style={{ width: 72, height: 28 }} />

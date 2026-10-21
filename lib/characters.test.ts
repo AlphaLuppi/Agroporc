@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { avatarAuteur, avatarsDesProfils } from "./characters";
+import { avatarAuteur, avatarsDesProfils, nomPersonnage, texteSur } from "./characters";
 
 describe("avatarsDesProfils", () => {
   it("indexe par prénom et ignore les champs vides", () => {
@@ -27,7 +27,27 @@ describe("avatarAuteur", () => {
     expect(avatarAuteur("Tom", avatars).image).toBe("/api/images/3.png");
   });
 
+  it("retrouve le personnage quelle que soit la casse de l'auteur", () => {
+    expect(nomPersonnage("NOVA")).toBe("Nova");
+    expect(avatarAuteur("NOVA")).toEqual(avatarAuteur("Nova", undefined));
+    expect(avatarAuteur("NOVA").couleur).toBe("#a855f7");
+  });
+
   it("retombe sur gris + initiale pour un auteur inconnu", () => {
     expect(avatarAuteur("Zoé")).toEqual({ image: undefined, couleur: "#6b7280", emoji: "Z" });
+  });
+});
+
+describe("texteSur", () => {
+  it("choisit le noir sur une couleur claire, le blanc sur une couleur sombre", () => {
+    expect(texteSur("#ff8647")).toBe("#111");
+    expect(texteSur("#facc15")).toBe("#111");
+    expect(texteSur("#0433ff")).toBe("#fff");
+    expect(texteSur("#1e3a5f")).toBe("#fff");
+  });
+
+  it("accepte #rgb et retombe sur blanc pour un format inconnu", () => {
+    expect(texteSur("#fff")).toBe("#111");
+    expect(texteSur("rouge")).toBe("#fff");
   });
 });

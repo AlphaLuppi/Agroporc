@@ -80,7 +80,7 @@ export default function RootLayout({
                   width: "2.5rem",
                   height: "2.5rem",
                   borderRadius: "var(--radius)",
-                  border: "1px solid var(--border)",
+                  border: "1px solid var(--border-control)",
                   background: "var(--surface)",
                   color: "var(--text-secondary)",
                   cursor: "pointer",
@@ -113,7 +113,7 @@ export default function RootLayout({
               </button>
             <div className="theme-selector hidden xl:flex items-center gap-1 bg-[var(--surface)] border border-[var(--border)] rounded-full p-[3px]">
               <button
-                className="theme-btn flex items-center justify-center gap-1.5 px-3 py-1.5 border-none rounded-full bg-transparent text-[var(--text-muted)] text-xs font-semibold cursor-pointer transition-all min-h-8"
+                className="theme-btn flex items-center justify-center gap-1.5 px-3 py-1.5 border-none rounded-full bg-transparent text-[var(--text-muted)] text-xs font-semibold cursor-pointer transition-all min-h-10"
                 data-theme="normal"
                 aria-label="Thème normal"
               >
@@ -124,7 +124,7 @@ export default function RootLayout({
                 <span className="label-text hidden lg:inline">Normal</span>
               </button>
               <button
-                className="theme-btn flex items-center justify-center gap-1.5 px-3 py-1.5 border-none rounded-full bg-transparent text-[var(--text-muted)] text-xs font-semibold cursor-pointer transition-all min-h-8"
+                className="theme-btn flex items-center justify-center gap-1.5 px-3 py-1.5 border-none rounded-full bg-transparent text-[var(--text-muted)] text-xs font-semibold cursor-pointer transition-all min-h-10"
                 data-theme="tigre"
                 aria-label="Thème tigre"
               >
@@ -139,7 +139,7 @@ export default function RootLayout({
                 <span className="label-text hidden lg:inline">Tigre</span>
               </button>
               <button
-                className="theme-btn flex items-center justify-center gap-1.5 px-3 py-1.5 border-none rounded-full bg-transparent text-[var(--text-muted)] text-xs font-semibold cursor-pointer transition-all min-h-8"
+                className="theme-btn flex items-center justify-center gap-1.5 px-3 py-1.5 border-none rounded-full bg-transparent text-[var(--text-muted)] text-xs font-semibold cursor-pointer transition-all min-h-10"
                 data-theme="terrasse"
                 aria-label="Thème terrasse"
               >
@@ -160,7 +160,7 @@ export default function RootLayout({
               aria-label="Menu"
               aria-expanded="false"
               aria-controls="mobile-menu"
-              className="xl:hidden flex items-center justify-center w-10 h-10 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] text-[var(--text-secondary)] cursor-pointer transition-colors"
+              className="xl:hidden flex items-center justify-center w-10 h-10 rounded-[var(--radius)] border border-[var(--border-control)] bg-[var(--surface)] text-[var(--text-secondary)] cursor-pointer transition-colors"
             >
               <svg id="burger-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
                 <line x1="3" y1="6" x2="21" y2="6" />
@@ -182,28 +182,28 @@ export default function RootLayout({
             style={{ background: "var(--nav-bg)" }}
           >
             <div className="flex flex-col gap-1 mb-3" data-nav-links>
-              <Link href="/" className="text-[var(--text-secondary)] no-underline text-sm font-medium px-3 py-2 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
+              <Link href="/" className="text-[var(--text-secondary)] no-underline text-sm font-medium px-3 py-2.5 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
                 Aujourd&apos;hui
               </Link>
-              <Link href="/aide-moi-a-choisir" className="text-[var(--text-secondary)] no-underline text-sm font-medium px-3 py-2 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
+              <Link href="/aide-moi-a-choisir" className="text-[var(--text-secondary)] no-underline text-sm font-medium px-3 py-2.5 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
                 Aide-moi à choisir
               </Link>
-              <Link href="/recettes" className="text-[var(--text-secondary)] no-underline text-sm font-medium px-3 py-2 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
+              <Link href="/recettes" className="text-[var(--text-secondary)] no-underline text-sm font-medium px-3 py-2.5 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
                 Recettes
               </Link>
-              <Link href="/idees" className="text-[var(--text-secondary)] no-underline text-sm font-medium px-3 py-2 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
+              <Link href="/idees" className="text-[var(--text-secondary)] no-underline text-sm font-medium px-3 py-2.5 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
                 Idées
               </Link>
-              <Link href="/ia" className="text-[var(--text-secondary)] no-underline text-sm font-medium px-3 py-2 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
+              <Link href="/ia" className="text-[var(--text-secondary)] no-underline text-sm font-medium px-3 py-2.5 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
                 IA
               </Link>
-              <Link href="/admin/photos" className="text-[var(--text-secondary)] no-underline text-sm font-medium px-3 py-2 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
+              <Link href="/admin/photos" className="text-[var(--text-secondary)] no-underline text-sm font-medium px-3 py-2.5 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
                 Photos
               </Link>
             </div>
             <div className="theme-selector flex items-center justify-between gap-1 bg-[var(--surface)] border border-[var(--border)] rounded-full p-[3px]">
               <button
-                className="theme-btn flex flex-1 items-center justify-center gap-1.5 px-3 py-1.5 border-none rounded-full bg-transparent text-[var(--text-muted)] text-xs font-semibold cursor-pointer transition-all min-h-8"
+                className="theme-btn flex flex-1 items-center justify-center gap-1.5 px-3 py-1.5 border-none rounded-full bg-transparent text-[var(--text-muted)] text-xs font-semibold cursor-pointer transition-all min-h-10"
                 data-theme="normal"
                 aria-label="Thème normal"
               >
@@ -214,7 +214,7 @@ export default function RootLayout({
                 <span>Normal</span>
               </button>
               <button
-                className="theme-btn flex flex-1 items-center justify-center gap-1.5 px-3 py-1.5 border-none rounded-full bg-transparent text-[var(--text-muted)] text-xs font-semibold cursor-pointer transition-all min-h-8"
+                className="theme-btn flex flex-1 items-center justify-center gap-1.5 px-3 py-1.5 border-none rounded-full bg-transparent text-[var(--text-muted)] text-xs font-semibold cursor-pointer transition-all min-h-10"
                 data-theme="tigre"
                 aria-label="Thème tigre"
               >
@@ -229,7 +229,7 @@ export default function RootLayout({
                 <span>Tigre</span>
               </button>
               <button
-                className="theme-btn flex flex-1 items-center justify-center gap-1.5 px-3 py-1.5 border-none rounded-full bg-transparent text-[var(--text-muted)] text-xs font-semibold cursor-pointer transition-all min-h-8"
+                className="theme-btn flex flex-1 items-center justify-center gap-1.5 px-3 py-1.5 border-none rounded-full bg-transparent text-[var(--text-muted)] text-xs font-semibold cursor-pointer transition-all min-h-10"
                 data-theme="terrasse"
                 aria-label="Thème terrasse"
               >
@@ -261,6 +261,7 @@ export default function RootLayout({
         {/* Drawer panier */}
         <aside
           id="cart-drawer"
+          inert
           style={{
             position: "fixed",
             top: 0,
@@ -279,7 +280,7 @@ export default function RootLayout({
         >
           {/* Header drawer */}
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "1rem 1.25rem", borderBottom: "1px solid var(--border)" }}>
-            <span style={{ fontFamily: "var(--font-heading)", fontWeight: 700, fontSize: "1rem" }}>
+            <span style={{ fontFamily: "var(--font-heading)", fontWeight: 700, fontSize: "1rem", color: "var(--text)" }}>
               Mon panier
             </span>
             <button
@@ -332,17 +333,17 @@ export default function RootLayout({
               id="login-password"
               type="password"
               placeholder="Mot de passe"
+              aria-label="Mot de passe"
               style={{
                 width: "100%",
                 padding: "0.5rem 0.75rem",
                 background: "var(--surface-hover)",
-                border: "1px solid var(--border)",
+                border: "1px solid var(--border-control)",
                 borderRadius: "var(--radius)",
                 color: "var(--text)",
                 fontSize: "0.875rem",
                 marginBottom: "0.75rem",
                 boxSizing: "border-box",
-                outline: "none",
               }}
             />
             <p id="login-error" style={{ color: "var(--bad)", fontSize: "0.75rem", marginBottom: "0.75rem", display: "none" }}>Mot de passe incorrect</p>
@@ -351,9 +352,10 @@ export default function RootLayout({
                 id="login-cancel"
                 style={{
                   flex: 1,
+                  minHeight: "2.5rem",
                   padding: "0.5rem",
                   background: "var(--surface-hover)",
-                  border: "1px solid var(--border)",
+                  border: "1px solid var(--border-control)",
                   borderRadius: "var(--radius)",
                   cursor: "pointer",
                   color: "var(--text-secondary)",
@@ -366,6 +368,7 @@ export default function RootLayout({
                 id="login-submit"
                 style={{
                   flex: 1,
+                  minHeight: "2.5rem",
                   padding: "0.5rem",
                   background: "var(--accent)",
                   border: "none",

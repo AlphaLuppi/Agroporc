@@ -85,6 +85,7 @@ Every dish gets two scores: "Sportif" (health-focused) and "Goulaf" (taste/indul
 
 ## Key conventions
 
+- Thèmes (`app/globals.css`, blocs `html[data-theme="normal|tigre|terrasse"]`, préfixés `html` pour ne pas fuir sur les boutons `.theme-btn[data-theme]`) : contraste AA visé partout. Contours de champs/boutons en `--border-control` (≥ 3:1), `--border` réservé aux tuiles et séparateurs ; fonds teintés d'état/note en tokens opaques `--accent-soft` / `--good-soft` / `--ok-soft` / `--bad-soft` (le pelage tigre passe sous les fonds translucides) ; jamais de couleur Tailwind en dur (`gray-*`, `red-*`, `white`) ni d'`opacity` pour atténuer du texte
 - The app is entirely in French (UI text, comments, API error messages, variable names in domain code)
 - Dates use `YYYY-MM-DD` format (ISO via `toLocaleDateString('en-CA')`)
 - `@/*` path alias maps to project root
