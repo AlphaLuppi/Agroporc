@@ -8,7 +8,7 @@ import { casseLisible, grilleSemaine, meilleureNoteDuJour, platsAffiches, restos
 import RestoBadge from "@/app/components/RestoBadge";
 import type { Selection } from "./DetailPanneau";
 import { rangStagger } from "@/lib/motion-menus";
-import { couleur, fmtNote, fmtPrix, MODE_LABEL, PastilleAnimee } from "./ui";
+import { couleur, fmtNote, fmtPrix, MODE_LABEL, PartBudget, PastilleAnimee } from "./ui";
 import { reduit } from "./motion";
 import styles from "./menus.module.css";
 
@@ -95,7 +95,7 @@ export default function SemaineVue({ semaine, mode, today, jourIdx, setJourIdx, 
             <div key={ligne.resto.slug} className={styles.rh}>
               <RestoBadge nom={ligne.resto.nom} variante="picto" taille={18} className={styles.rhPicto} />
               <span>{ligne.resto.nom}</span>
-              {prix && <small>{fmtPrix(prix)}</small>}
+              {prix && <small>{fmtPrix(prix)}<PartBudget prix={prix} /></small>}
             </div>,
             ...ligne.cases.map((plats, i) => {
               const pdj = semaine[i];
@@ -187,6 +187,7 @@ export default function SemaineVue({ semaine, mode, today, jourIdx, setJourIdx, 
                       </span>
                       <span className={styles.meta}>
                         <RestoBadge nom={p.plat.restaurant} complet /> · <b>{fmtPrix(p.plat.prix)}</b>
+                        <PartBudget prix={p.plat.prix} />
                       </span>
                     </span>
                   </button>

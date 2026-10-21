@@ -6,7 +6,7 @@ import { noteMode, trierCarte, type Mode } from "@/lib/carte-tri";
 import { casseLisible } from "@/lib/menus-vue";
 import MacrosPanel from "../MacrosPanel";
 import { rangStagger } from "@/lib/motion-menus";
-import { couleur, fmtPrix, NoteAnimee } from "./ui";
+import { couleur, fmtPrix, NoteAnimee, PartBudget } from "./ui";
 import styles from "./menus.module.css";
 
 /** Cartes déjà chargées pendant la visite : un seul fetch par resto, retentable en cas d'échec. */
@@ -34,7 +34,7 @@ function PlatCarte({ p, mode }: { p: CartePlat; mode: Mode }) {
     <div className={styles.plat}>
       <button type="button" aria-expanded={ouvert} onClick={() => setOuvert((o) => !o)}>
         <span className={styles.platNom}>{casseLisible(p.plat)}</span>
-        <span className={styles.platPrix}>{fmtPrix(p.prix)}</span>
+        <span className={styles.platPrix}>{fmtPrix(p.prix)}<PartBudget prix={p.prix} /></span>
         <span className={`${styles.platNote} ${couleur(note)}`}>
           <NoteAnimee note={note} />
         </span>

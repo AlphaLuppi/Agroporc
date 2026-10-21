@@ -18,6 +18,7 @@ import PlatImage from "./PlatImage";
 import PhotoPlat from "./PhotoPlat";
 import RecettePanneau from "./RecettePanneau";
 import { recetteAttendue } from "@/lib/recettes";
+import { BUDGET_EDENRED_MOIS, fmtPartBudget, repasParMois } from "@/lib/budget";
 import { AjouterButton, fmtNote, fmtPrix, MODE_LABEL, OrderLinks, PastilleAnimee } from "./ui";
 import { reduit } from "./motion";
 import styles from "./menus.module.css";
@@ -189,6 +190,11 @@ export default function DetailPanneau({ selection, semaine, mode, today, cartesS
               <div className={styles.meta}>
                 <b>{fmtPrix(plat.prix)}</b> · {formatDateShort(pdj.date)}
               </div>
+              {fmtPartBudget(plat.prix) && (
+                <div className={styles.budgetLigne}>
+                  <b>{fmtPartBudget(plat.prix)}</b> des {BUDGET_EDENRED_MOIS} € Edenred du mois · {repasParMois(plat.prix)} repas comme celui-ci
+                </div>
+              )}
               <div className={styles.autreMode}>
                 {MODE_LABEL[autre]} : {fmtNote(noteMode(v, autre))}/10 {estReco && <span className={styles.tagReco}>Reco du jour</span>}
               </div>

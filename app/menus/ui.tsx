@@ -3,6 +3,7 @@ import { MODE_LABEL, type Mode } from "@/lib/carte-tri";
 import { etincelles } from "@/lib/motion-menus";
 import { fmtNote, noteClass } from "@/lib/format";
 import { getRestaurantLinks, type RestaurantLink } from "@/lib/icons";
+import { fmtPartBudget, titreBudget } from "@/lib/budget";
 import { compter, ecrireTexte, estPret, popper, reduit, RESSORT, usePret, volerVersPanier } from "./motion";
 import styles from "./menus.module.css";
 
@@ -22,6 +23,18 @@ export function fmtPrix(prix?: string): string {
   if (!prix) return "";
   const m = prix.replace(",", ".").match(/^\s*(\d+(?:\.\d+)?)\s*€?\s*$/);
   return m ? `${parseFloat(m[1]).toFixed(2).replace(".", ",")} €` : prix;
+}
+
+/** « (6,9 %) » : part du budget Edenred mensuel, rien sans prix exploitable. */
+export function PartBudget({ prix }: { prix?: string }) {
+  const part = fmtPartBudget(prix);
+  if (!part) return null;
+  const titre = titreBudget(prix);
+  return (
+    <span className={styles.budget} title={titre} aria-label={titre}>
+      {" "}({part})
+    </span>
+  );
 }
 
 export function Pastille({ note }: { note?: number }) {
