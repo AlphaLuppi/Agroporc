@@ -2,27 +2,47 @@
  * Thème Tigre : réactions du tigre quand on clique ou tape dessus pendant
  * qu'il passe. Logique pure (tirage, durées, textes, anti-spam, demi-tour
  * recalculé depuis la position courante, particules) pour être testée ; les
- * animations et les minuteurs vivent dans `app/components/TigreCourant.tsx`.
+ * animations vivent dans `lib/tigre3d/` (tigre 3D) et `app/components/TigreSprite.tsx`
+ * (repli sprite) ; les minuteurs dans `app/components/Tigre3D.tsx`.
  * Les `alea*` sont dans [0, 1[ (Math.random en production).
  */
 import { VITESSES, type Passage } from "./tigre-courant";
 
 /**
- * - regard : il s'arrête, nous regarde, puis repart ;
- * - saut : bond en arc sans s'arrêter ;
- * - tape : il tend la patte, un second clic dans la fenêtre = « Clap ! » ;
- * - sursaut : il sursaute, se retourne et file à l'éclair dans l'autre sens ;
- * - ronron : il s'arrête et ronronne (cœurs).
+ * Chaque réaction est un geste qui illustre sa bulle (tigre 3D : lib/tigre3d/gestes/<nom>.ts) :
+ * - regard : il freine, tourne la tête puis le corps vers nous et nous dévisage, tête penchée
+ *   (clip « Curious » du modèle en additif) ; la mimique suit le texte (humeurRegard) ;
+ * - saut : bond en pleine course, sans s'arrêter, pattes du clip « Attack jump » en vol ;
+ * - tape : face à nous, il s'assoit et lève une patte avant à hauteur de joue, coussinets vers
+ *   l'écran : un second clic dans la fenêtre = la patte part vers l'écran, « Clap ! » ; sinon il
+ *   baisse la patte et détourne la tête, vexé ;
+ * - sursaut : il se fige, bondit à la verticale dos rond, fait demi-tour en l'air et file à l'éclair ;
+ * - ronron : assis, tête basse et penchée (yeux mi-clos), il pétrit des pattes avant (cœurs) ;
+ * - rugir : il se ramasse puis se projette vers nous, patte levée griffes en avant, menton grand
+ *   ouvert (le modèle n'a pas d'intérieur de gueule), l'écran tremble ;
+ * - salut : debout, il lève haut une patte et l'agite ;
+ * - lecher : assis, il se lèche la patte puis se la passe sur la joue ;
+ * - etirement : pattes avant tendues devant, poitrail au sol, arrière-train haut, il bâille ;
+ * - serre-main : debout face à nous, il refait le chat « shake my hand » (applaudit, agite les
+ *   pattes, réfléchit la patte au museau, tend la patte) : capture vidéo reciblée
+ *   (lib/tigre3d/clips/chat-serre-main.json), une bulle par phase du clip.
  */
-export type Reaction = "regard" | "saut" | "tape" | "sursaut" | "ronron";
+export type Reaction =
+  | "regard" | "saut" | "tape" | "sursaut" | "ronron" | "rugir" | "salut" | "lecher" | "etirement"
+  | "serre-main";
 
-/** Poids du tirage, dans l'ordre : le saut et le regard sont les plus fréquents. */
+/** Poids du tirage, dans l'ordre : le saut et le regard restent les plus fréquents. */
 export const POIDS_REACTIONS: ReadonlyArray<readonly [Reaction, number]> = [
-  ["regard", 0.28],
-  ["saut", 0.28],
-  ["tape", 0.22],
-  ["sursaut", 0.12],
-  ["ronron", 0.10],
+  ["regard", 0.15],
+  ["saut", 0.15],
+  ["tape", 0.14],
+  ["sursaut", 0.08],
+  ["ronron", 0.08],
+  ["rugir", 0.08],
+  ["salut", 0.08],
+  ["lecher", 0.07],
+  ["etirement", 0.07],
+  ["serre-main", 0.1],
 ];
 
 /**
@@ -42,19 +62,41 @@ export function tirerReaction(alea: number, precedente: Reaction | null = null):
 
 /** Durées en ms (le sursaut compte jusqu'au départ en sens inverse). */
 export const DUREES = {
-  regard: 2200,
-  saut: 700,
-  sursaut: 350,
-  ronron: 2400,
+  regard: 2400,
+  saut: 900,
+  sursaut: 550,
+  ronron: 2800,
+  rugir: 2300,
+  salut: 2400,
+  lecher: 2600,
+  etirement: 2800,
+  /** Indicatif (tigre 3D : la durée vient du geste, 0,95 + 6,8 + 0,9 s) ; repli sprite : arrêt plus court. */
+  "serre-main": 8650,
+  /** Assis et patte levée : le second clic n'est pris qu'ensuite. */
+  entreeTape: 700,
   /** Fenêtre où un second clic valide la tape dans la main. */
   fenetreTape: 2500,
   /** Pause après le « Clap ! » avant de repartir content. */
-  clap: 900,
+  clap: 1100,
   /** Pause vexée avant de repartir quand personne n'a tapé. */
-  vexe: 800,
+  vexe: 1100,
   /** Les particules sont retirées après ce délai. */
   particules: 1300,
 } as const;
+
+/** Instant (ms depuis le début du geste) où la bulle apparaît, pour tomber pile sur ce qu'il dit. */
+export const DELAI_BULLE: Record<Reaction, number> = {
+  regard: 100, saut: 220, tape: 450, sursaut: 0, ronron: 450,
+  rugir: 420, salut: 350, lecher: 800, etirement: 650, "serre-main": 950,
+};
+
+/** Réactions où le tigre s'immobilise (il ralentit puis s'arrête) ; saut et sursaut se font en mouvement ou sur place. */
+const IMMOBILISE: ReadonlySet<Reaction> = new Set<Reaction>([
+  "regard", "tape", "ronron", "rugir", "salut", "lecher", "etirement", "serre-main",
+]);
+export function immobilise(reaction: Reaction): boolean {
+  return IMMOBILISE.has(reaction);
+}
 
 /** Vitesse de lecture au départ : content (clap) plus vite, vexé plus lentement. */
 export const VITESSE_CONTENT = 1.8;
@@ -71,9 +113,30 @@ export const TEXTES: Record<CleTexte, readonly string[]> = {
   tape: ["Tape-m'en cinq !", "Tope là !"],
   sursaut: ["Aaah !", "Wouh !", "!?"],
   ronron: ["Prrr…", "Prrrrr…"],
+  rugir: ["ROAAR !", "GRRROAAR !"],
+  salut: ["Coucou !", "Salut, toi !"],
+  lecher: ["Slurp.", "Un brin de toilette…"],
+  etirement: ["Aaah, la sieste…", "Hmmm, ça fait du bien…"],
+  /** Tirage par défaut ; le tigre 3D affiche une bulle par phase (lib/tigre3d/gestes/serre-main.ts). */
+  "serre-main": ["Serre-moi la pince !", "Bravo, bravo !", "Tope là, l'ami !"],
   vexe: ["Hmpf.", "Pff…", "Quel manque de respect."],
   clap: ["🐾 Clap !"],
 };
+
+/** Humeur du regard : elle règle la mimique (oreilles, paupières, gueule) pour coller au texte de la bulle. */
+export type HumeurRegard = "curieux" | "fier" | "grognon" | "miaou" | "vexe";
+
+const HUMEURS_REGARD: Record<string, HumeurRegard> = {
+  "Grrr ?": "grognon",
+  "Quoi ?": "curieux",
+  "Miaou.": "miaou",
+  "Tu veux ma photo ?": "fier",
+  "J'ai l'air d'un chat ?": "vexe",
+};
+
+export function humeurRegard(texte: string): HumeurRegard {
+  return HUMEURS_REGARD[texte] ?? "curieux";
+}
 
 export function texteBulle(cle: CleTexte, alea: number): string {
   const textes = TEXTES[cle];
@@ -159,7 +222,7 @@ export function imagesSursaut(hauteur: number): Keyframe[] {
   ];
 }
 
-/** Particule jetée par une réaction (éclat du clap, cœurs du ronron). */
+/** Particule jetée par une réaction (éclat du clap, cœurs du ronron, « Z » de la sieste). */
 export interface Particule {
   id: number;
   glyphe: string;
@@ -169,9 +232,12 @@ export interface Particule {
   retardMs: number;
 }
 
-const GLYPHES: Record<"clap" | "ronron", readonly string[]> = {
+export type GenreParticule = "clap" | "ronron" | "zzz";
+
+const GLYPHES: Record<GenreParticule, readonly string[]> = {
   clap: ["🐾", "✦", "✦", "✨"],
   ronron: ["♥", "♥", "♥"],
+  zzz: ["Z", "z", "Z"],
 };
 
 /**
@@ -179,7 +245,7 @@ const GLYPHES: Record<"clap" | "ronron", readonly string[]> = {
  * cœurs du ronron montent en dérivant. `alea` fournit des valeurs dans [0, 1[.
  */
 export function creerParticules(
-  type: "clap" | "ronron",
+  type: GenreParticule,
   nombre: number,
   premierId: number,
   alea: () => number,
@@ -187,7 +253,7 @@ export function creerParticules(
   const glyphes = GLYPHES[type];
   return Array.from({ length: nombre }, (_, i) => {
     const glyphe = glyphes[i % glyphes.length];
-    if (type === "ronron") {
+    if (type === "ronron" || type === "zzz") {
       return {
         id: premierId + i, glyphe,
         dx: Math.round((alea() - 0.5) * 50), dy: -Math.round(40 + alea() * 40),

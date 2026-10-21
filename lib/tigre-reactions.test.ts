@@ -2,24 +2,31 @@ import { describe, it, expect } from "vitest";
 import {
   tirerReaction, POIDS_REACTIONS, texteBulle, TEXTES, decisionClic, passageAutorise,
   positionCourante, demiTour, hauteurSaut, imagesSaut, creerParticules, DUREES,
-  DUREE_DEMI_TOUR_MIN_MS, VITESSE_CONTENT, VITESSE_VEXE, type Reaction, type CleTexte,
+  DUREE_DEMI_TOUR_MIN_MS, DELAI_BULLE, humeurRegard, immobilise, VITESSE_CONTENT, VITESSE_VEXE, type Reaction, type CleTexte,
 } from "./tigre-reactions";
 import { ECART_MIN_MS, passage } from "./tigre-courant";
 
 describe("tirerReaction", () => {
-  it("a au moins 4 réactions, de poids total 1", () => {
-    expect(POIDS_REACTIONS.length).toBeGreaterThanOrEqual(4);
+  it("a les 5 réactions d'origine et au moins 3 nouvelles, de poids total 1", () => {
+    expect(POIDS_REACTIONS.length).toBeGreaterThanOrEqual(8);
+    const noms = POIDS_REACTIONS.map(([r]) => r);
+    for (const r of ["regard", "saut", "tape", "sursaut", "ronron"]) expect(noms).toContain(r);
     expect(POIDS_REACTIONS.reduce((s, [, p]) => s + p, 0)).toBeCloseTo(1, 10);
   });
 
   it("suit les poids du tirage", () => {
     expect(tirerReaction(0)).toBe("regard");
-    expect(tirerReaction(0.279)).toBe("regard");
-    expect(tirerReaction(0.28)).toBe("saut");
-    expect(tirerReaction(0.56)).toBe("tape");
-    expect(tirerReaction(0.78)).toBe("sursaut");
-    expect(tirerReaction(0.9)).toBe("ronron");
-    expect(tirerReaction(0.999999)).toBe("ronron");
+    expect(tirerReaction(0.149)).toBe("regard");
+    expect(tirerReaction(0.16)).toBe("saut");
+    expect(tirerReaction(0.4)).toBe("tape");
+    expect(tirerReaction(0.5)).toBe("sursaut");
+    expect(tirerReaction(0.55)).toBe("ronron");
+    expect(tirerReaction(0.65)).toBe("rugir");
+    expect(tirerReaction(0.7)).toBe("salut");
+    expect(tirerReaction(0.8)).toBe("lecher");
+    expect(tirerReaction(0.85)).toBe("etirement");
+    expect(tirerReaction(0.95)).toBe("serre-main");
+    expect(tirerReaction(0.999999)).toBe("serre-main");
   });
 
   it("atteint chaque réaction", () => {
@@ -36,7 +43,8 @@ describe("tirerReaction", () => {
 
   it("passe à la suivante de la liste, en bouclant", () => {
     expect(tirerReaction(0, "regard")).toBe("saut");
-    expect(tirerReaction(0.999, "ronron")).toBe("regard");
+    expect(tirerReaction(0.999, "serre-main")).toBe("regard");
+    expect(tirerReaction(0.85, "etirement")).toBe("serre-main");
   });
 });
 
@@ -47,6 +55,22 @@ describe("texteBulle", () => {
       expect(textes).toContain(texteBulle(cle as CleTexte, 0));
       expect(textes).toContain(texteBulle(cle as CleTexte, 0.999999));
     }
+  });
+
+  it("chaque nouvelle réaction a une bulle qui dit ce que fait le tigre", () => {
+    expect(TEXTES.rugir.join(" ")).toMatch(/ROAAR/i);
+    expect(TEXTES.salut.join(" ")).toMatch(/Coucou|Salut/);
+    expect(TEXTES.lecher.join(" ")).toMatch(/Slurp|toilette/);
+    expect(TEXTES.etirement.join(" ")).toMatch(/sieste|bien/);
+    expect(TEXTES["serre-main"].join(" ")).toMatch(/pince|Bravo/);
+  });
+
+  it("l'humeur du regard suit le texte de la bulle", () => {
+    expect(humeurRegard("Grrr ?")).toBe("grognon");
+    expect(humeurRegard("Tu veux ma photo ?")).toBe("fier");
+    expect(humeurRegard("Miaou.")).toBe("miaou");
+    for (const t of TEXTES.regard) expect(["curieux", "fier", "grognon", "miaou", "vexe"]).toContain(humeurRegard(t));
+    expect(humeurRegard("texte inconnu")).toBe("curieux");
   });
 
   it("garde les textes de la tape dans la main", () => {
@@ -61,7 +85,7 @@ describe("decisionClic (anti-spam)", () => {
   });
 
   it("ignore les clics pendant une réaction", () => {
-    for (const r of ["regard", "saut", "sursaut", "ronron"] as Reaction[]) {
+    for (const r of ["regard", "saut", "sursaut", "ronron", "rugir", "salut", "lecher", "etirement", "serre-main"] as Reaction[]) {
       expect(decisionClic(r, false)).toBe("ignorer");
       expect(decisionClic(r, true)).toBe("ignorer");
     }
@@ -70,6 +94,26 @@ describe("decisionClic (anti-spam)", () => {
   it("valide la tape pendant la fenêtre, pas avant ni après", () => {
     expect(decisionClic("tape", true)).toBe("taper");
     expect(decisionClic("tape", false)).toBe("ignorer");
+  });
+});
+
+describe("réactions : durées, bulles, immobilisation", () => {
+  const toutes = POIDS_REACTIONS.map(([r]) => r);
+
+  it("chaque réaction a une durée, un texte et un instant de bulle dans sa durée", () => {
+    for (const r of toutes) {
+      const duree = r === "tape" ? DUREES.entreeTape + DUREES.fenetreTape : DUREES[r];
+      expect(duree).toBeGreaterThan(0);
+      expect(TEXTES[r].length).toBeGreaterThan(0);
+      expect(DELAI_BULLE[r]).toBeGreaterThanOrEqual(0);
+      expect(DELAI_BULLE[r]).toBeLessThan(duree);
+    }
+  });
+
+  it("le tigre s'immobilise sauf pour le saut et le sursaut", () => {
+    expect(immobilise("saut")).toBe(false);
+    expect(immobilise("sursaut")).toBe(false);
+    for (const r of toutes.filter((x) => x !== "saut" && x !== "sursaut")) expect(immobilise(r)).toBe(true);
   });
 });
 
@@ -184,5 +228,10 @@ describe("creerParticules", () => {
     const p = creerParticules("ronron", 4, 0, fixe);
     expect(p.every((x) => x.dy < 0 && x.glyphe === "♥")).toBe(true);
     expect(p[3].retardMs).toBeGreaterThan(p[0].retardMs);
+  });
+
+  it("les Z de la sieste montent aussi", () => {
+    const p = creerParticules("zzz", 3, 0, fixe);
+    expect(p.every((x) => x.dy < 0 && /z/i.test(x.glyphe))).toBe(true);
   });
 });

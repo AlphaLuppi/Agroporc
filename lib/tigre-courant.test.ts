@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  ecartAvantPassage, passage, tirerEvenement, nombrePetits,
+  ecartAvantPassage, passage, tirerEvenement, nombrePetits, petitsPourEvenement,
   ECART_MIN_MS, ECART_MAX_MS, ECHELLE_PETIT, PETITS_MAX, type Evenement,
 } from "./tigre-courant";
 
@@ -68,5 +68,18 @@ describe("passage", () => {
     const rapide = passage(1440, 180, 180, "normal", 0.5, 0.999).dureeMs;
     const eclair = passage(1440, 180, 180, "eclair", 0.5, 0).dureeMs;
     expect(eclair).toBeLessThan(rapide / 2.5);
+  });
+});
+
+describe("petitsPourEvenement", () => {
+  it("pas de petits hors événement famille", () => {
+    for (const n of [0, 2, 3, 4]) {
+      expect(petitsPourEvenement("normal", n)).toBe(0);
+      expect(petitsPourEvenement("eclair", n)).toBe(0);
+    }
+  });
+  it("la famille garde ses petits, plafonnés", () => {
+    expect(petitsPourEvenement("famille", 3)).toBe(3);
+    expect(petitsPourEvenement("famille", 9)).toBe(PETITS_MAX);
   });
 });
