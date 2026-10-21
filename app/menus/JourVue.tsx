@@ -8,7 +8,7 @@ import { imageDuPlat, type ImagePlat, type ImagesPlats } from "@/lib/plat-image"
 import type { Selection } from "./DetailPanneau";
 import RestoBadge from "@/app/components/RestoBadge";
 import PlatImage from "./PlatImage";
-import { deltaFlip, lireTranslate, rangStagger, type Pos } from "@/lib/motion-menus";
+import { deltaBoite, lireScale, lireTranslate, rangStagger, type Boite } from "@/lib/motion-menus";
 import { couleur, fmtPrix, NoteAnimee, PastilleAnimee } from "./ui";
 import { estPret, finRipple, reduit, ripple, SORTIE_EXPO } from "./motion";
 import styles from "./menus.module.css";
@@ -40,6 +40,9 @@ function Macros({ p, mode }: { p: PlatAffiche; mode: Mode }) {
 
 /** Au-delà, pas de FLIP (coût et lisibilité). */
 const FLIP_MAX = 24;
+
+/** Boîte de layout dans la grille (offset* ignorent les translate/scale en cours). */
+const mesurer = (el: HTMLElement): Boite => ({ x: el.offsetLeft, y: el.offsetTop, w: el.offsetWidth, h: el.offsetHeight });
 
 function Tuile({
   p,
@@ -87,7 +90,7 @@ function Tuile({
   );
 }
 
-function Hero({ p, mode, raison, image, onOpen }: { p: PlatAffiche; mode: Mode; raison?: string; image?: ImagePlat; onOpen: () => void }) {
+function Hero({ p, mode, raison, image, flipKey, onOpen }: { p: PlatAffiche; mode: Mode; raison?: string; image?: ImagePlat; flipKey: string; onOpen: () => void }) {
   const n = p.variante.nutrition_estimee;
   const raf = useRef(0);
   useEffect(() => () => cancelAnimationFrame(raf.current), []);
@@ -117,6 +120,7 @@ function Hero({ p, mode, raison, image, onOpen }: { p: PlatAffiche; mode: Mode; 
   return (
     <button
       type="button"
+      data-flip={flipKey}
       className={`${styles.hero} ${styles.entre} ${image ? styles.heroPhoto : ""}`}
       style={{ "--i": 0 } as CSSProperties}
       onPointerMove={suivre}
@@ -128,10 +132,13 @@ function Hero({ p, mode, raison, image, onOpen }: { p: PlatAffiche; mode: Mode; 
       {image && <PlatImage key={image.src} src={image.src} nom={casseLisible(p.variante.plat)} format="hero" />}
       <PastilleAnimee note={p.note} cle={`${p.platIndex}::${p.variante.plat}::${mode}`} />
       <span className={styles.heroTexte}>
-        <span><span className={styles.tagReco}>Reco du jour</span></span>
+        <span className={styles.heroTags}>
+          <span className={styles.tagReco}>Reco du jour</span>
+          <RestoBadge nom={p.plat.restaurant} variante="chip" complet className={styles.restoHero} />
+        </span>
         <span className={styles.heroNom}>{casseLisible(p.variante.plat)}</span>
         <span className={styles.meta}>
-          <RestoBadge nom={p.plat.restaurant} complet /> · <b>{fmtPrix(p.plat.prix)}</b>
+          <b>{fmtPrix(p.plat.prix)}</b>
         </span>
         {raison && <span className={styles.raison}>{raison}</span>}
         {n && (
@@ -150,12 +157,14 @@ function Hero({ p, mode, raison, image, onOpen }: { p: PlatAffiche; mode: Mode; 
 /** Vue Jour : la reco du mode en grand, puis les autres plats en tuiles, triés par note. */
 export default function JourVue({ pdj, mode, images, onOpen }: { pdj: PdjEntry; mode: Mode; images?: ImagesPlats; onOpen: (s: Selection) => void }) {
   const grilleRef = useRef<HTMLDivElement>(null);
-  const positions = useRef(new Map<string, Pos>());
+  const positions = useRef(new Map<string, Boite>());
   const modePrecedent = useRef(mode);
 
-  // FLIP au changement de mode : les tuiles (clés stables) glissent vers leur nouveau rang. On
-  // mesure offsetLeft/offsetTop (insensibles aux translate en cours) + le translate courant pour
-  // partir de la position visuelle si une animation précédente tourne encore.
+  // FLIP au changement de mode : chaque plat (clé stable, hero compris) glisse vers son nouveau
+  // rang. Le hero qui redescend en tuile et la tuile promue hero changent aussi de taille : on
+  // anime translate + scale depuis leur ancienne boîte. On mesure offsetLeft/Top/Width/Height
+  // (insensibles aux translate/scale en cours) + le translate/scale courant pour partir de la
+  // boîte visuelle si une animation précédente tourne encore.
   useLayoutEffect(() => {
     const grille = grilleRef.current;
     if (!grille) return;
@@ -164,7 +173,7 @@ export default function JourVue({ pdj, mode, images, onOpen }: { pdj: PdjEntry; 
     modePrecedent.current = mode;
     const animer = modeChange && estPret() && !reduit() && els.length <= FLIP_MAX;
     const avant = positions.current;
-    const apres = new Map<string, Pos>();
+    const apres = new Map<string, Boite>();
     for (const el of els) {
       const cle = el.dataset.flip!;
       // Tuile déjà connue : son entrée est jouée. On le marque AVANT toute lecture de style, sinon
@@ -173,19 +182,30 @@ export default function JourVue({ pdj, mode, images, onOpen }: { pdj: PdjEntry; 
       if (el.offsetParent === null) continue; // caché : rien à mesurer
       let visuel = avant.get(cle);
       if (animer && visuel) {
-        const t = lireTranslate(getComputedStyle(el).translate);
-        visuel = { x: visuel.x + t.x, y: visuel.y + t.y };
+        const cs = getComputedStyle(el);
+        const t = lireTranslate(cs.translate);
+        const s = lireScale(cs.scale);
+        visuel = { x: visuel.x + t.x, y: visuel.y + t.y, w: visuel.w * s.x, h: visuel.h * s.y };
         for (const a of el.getAnimations()) if (a.id === "flip") a.cancel();
       }
-      const pos = { x: el.offsetLeft, y: el.offsetTop };
-      apres.set(cle, pos);
+      const boite = mesurer(el);
+      apres.set(cle, boite);
       if (!animer) continue;
-      const d = deltaFlip(visuel, pos);
+      const d = deltaBoite(visuel, boite);
       if (d) {
-        const a = el.animate([{ translate: `${d.x}px ${d.y}px` }, { translate: "0 0" }], { duration: 320, easing: SORTIE_EXPO });
+        const redim = d.sx !== 1 || d.sy !== 1;
+        // Ceux qui changent de taille passent au-dessus des tuiles qu'ils croisent.
+        const commun = redim ? { transformOrigin: "0 0", zIndex: 2 } : {};
+        const a = el.animate(
+          [
+            { ...commun, translate: `${d.x}px ${d.y}px`, scale: `${d.sx} ${d.sy}` },
+            { ...commun, translate: "0 0", scale: "1 1" },
+          ],
+          { duration: redim ? 380 : 320, easing: SORTIE_EXPO },
+        );
         a.id = "flip";
       } else if (!avant.has(cle)) {
-        // La tuile qui quitte le hero (ou qui apparaît) fait un pop, seul : pas d'entrée CSS en plus.
+        // Une tuile qui apparaît (pas encore mesurée) fait un pop, seul : pas d'entrée CSS en plus.
         el.setAttribute("data-vu", "");
         el.animate([{ scale: "0.9", opacity: 0.4 }, { scale: "1.03", offset: 0.6 }, { scale: "1", opacity: 1 }], { duration: 300, easing: "ease-out" });
       }
@@ -207,9 +227,9 @@ export default function JourVue({ pdj, mode, images, onOpen }: { pdj: PdjEntry; 
     const grille = grilleRef.current;
     if (!grille || typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver(() => {
-      const m = new Map<string, Pos>();
+      const m = new Map<string, Boite>();
       grille.querySelectorAll<HTMLElement>(":scope > [data-flip]").forEach((el) => {
-        if (el.offsetParent !== null) m.set(el.dataset.flip!, { x: el.offsetLeft, y: el.offsetTop });
+        if (el.offsetParent !== null) m.set(el.dataset.flip!, mesurer(el));
       });
       positions.current = m;
     });
@@ -232,14 +252,15 @@ export default function JourVue({ pdj, mode, images, onOpen }: { pdj: PdjEntry; 
   const ouvrir = (p: PlatAffiche) => () => onOpen({ kind: "plat", date: pdj.date, platIndex: p.platIndex, variante: p.variante.plat });
   const aVenir = platsAVenir(pdj);
   const sans = restosSansPlat(pdj);
+  const cleDe = (p: PlatAffiche) => `${p.platIndex}::${p.variante.plat}`;
   const image = (p: PlatAffiche) => imageDuPlat(images, p.plat.restaurant, p.variante.plat);
   const orpheline = indexOrpheline(tuiles);
 
   return (
     <div className={styles.grille} ref={grilleRef}>
-      {hero && <Hero p={hero} mode={mode} raison={reco?.raison} image={image(hero)} onOpen={ouvrir(hero)} />}
+      {hero && <Hero p={hero} mode={mode} raison={reco?.raison} image={image(hero)} flipKey={cleDe(hero)} onOpen={ouvrir(hero)} />}
       {tuiles.map((p, i) => {
-        const cle = `${p.platIndex}::${p.variante.plat}`;
+        const cle = cleDe(p);
         return (
           <Tuile
             key={cle}

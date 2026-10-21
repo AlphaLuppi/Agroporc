@@ -2,11 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   decalageEntree,
   decisionLacher,
-  deltaFlip,
+  deltaBoite,
   directionJour,
   easeOutCubic,
   etincelles,
   fmtCompteur,
+  lireScale,
   lireTranslate,
   pointArc,
   rangStagger,
@@ -58,9 +59,22 @@ describe("FLIP", () => {
     expect(lireTranslate("1px 2px 0px")).toEqual({ x: 1, y: 2 });
   });
   it("calcule le décalage inverse, ignore les nouveaux et les immobiles", () => {
-    expect(deltaFlip({ x: 0, y: 100 }, { x: 200, y: 0 })).toEqual({ x: -200, y: 100 });
-    expect(deltaFlip(undefined, { x: 0, y: 0 })).toBeNull();
-    expect(deltaFlip({ x: 10, y: 10 }, { x: 10.4, y: 10 })).toBeNull();
+    expect(deltaBoite({ x: 0, y: 100, w: 50, h: 50 }, { x: 200, y: 0, w: 50, h: 50 })).toEqual({ x: -200, y: 100, sx: 1, sy: 1 });
+    expect(deltaBoite({ x: 10, y: 10, w: 50, h: 50 }, { x: 10.4, y: 10, w: 50, h: 50 })).toBeNull();
+  });
+  it("lit la valeur calculée de scale", () => {
+    expect(lireScale("none")).toEqual({ x: 1, y: 1 });
+    expect(lireScale("0.5")).toEqual({ x: 0.5, y: 0.5 });
+    expect(lireScale("0.5 0.8")).toEqual({ x: 0.5, y: 0.8 });
+    expect(lireScale("1 1 1")).toEqual({ x: 1, y: 1 });
+  });
+  it("calcule translate + scale entre deux boîtes (hero ↔ tuile)", () => {
+    // Hero 400×200 en haut à gauche qui redevient une tuile 200×100 plus bas.
+    expect(deltaBoite({ x: 0, y: 0, w: 400, h: 200 }, { x: 200, y: 300, w: 200, h: 100 })).toEqual({ x: -200, y: -300, sx: 2, sy: 2 });
+    // Même place, taille différente : on anime quand même.
+    expect(deltaBoite({ x: 0, y: 0, w: 200, h: 100 }, { x: 0, y: 0, w: 400, h: 200 })).toEqual({ x: 0, y: 0, sx: 0.5, sy: 0.5 });
+    expect(deltaBoite(undefined, { x: 0, y: 0, w: 10, h: 10 })).toBeNull();
+    expect(deltaBoite({ x: 5, y: 5, w: 10, h: 10 }, { x: 5.2, y: 5, w: 10.3, h: 10 })).toBeNull();
   });
 });
 

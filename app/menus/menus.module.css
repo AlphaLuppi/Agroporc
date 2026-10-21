@@ -151,6 +151,15 @@
 }
 .hero .pastille { min-width: 52px; height: 52px; font-size: 1.3rem; background: var(--bg); }
 .heroTexte { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1 1 0; }
+/* Restaurant de la reco : pastille bien visible à côté du tag (le chip de RestoBadge, en plus grand). */
+.heroTags { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.heroTags .tagReco { vertical-align: 0; }
+.heroTags .restoHero {
+  font-size: 0.8rem; padding: 0.3em 0.8em 0.3em 0.55em; color: var(--text);
+  background: color-mix(in srgb, var(--c) 22%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--c) 45%, transparent);
+}
+.heroTags .restoHero svg { width: 16px; height: 16px; }
 .heroNom { font-family: var(--font-heading); font-weight: 700; font-size: 1.05rem; line-height: 1.25; }
 .raison { font-size: 0.78rem; color: var(--text-secondary); line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .macrosLigne { display: flex; flex-wrap: wrap; gap: 2px 12px; font-size: 0.75rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
@@ -431,6 +440,8 @@
   .heroTexte { flex: none; }
   .hero .pastille { min-width: 66px; height: 66px; font-size: 1.7rem; }
   .heroNom { font-size: 1.45rem; }
+  .heroTags .restoHero { font-size: 0.9rem; }
+  .heroTags .restoHero svg { width: 18px; height: 18px; }
   .raison { -webkit-line-clamp: unset; font-size: 0.88rem; }
   .macrosLigne { gap: 14px; font-size: 0.78rem; }
   .tuile { --pad-y: 14px; --pad-x: 14px; min-height: 130px; }
