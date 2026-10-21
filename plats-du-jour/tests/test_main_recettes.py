@@ -109,7 +109,7 @@ def test_run_recettes_semaine(monkeypatch):
     appels = _espion_cuisiner(monkeypatch)
     monkeypatch.setattr(main, "fetch_pdj", lambda d: lus.append(d) or {**PDJ, "date": d})
     assert main.run_recettes("semaine") == 0
-    assert lus == ["2026-10-21", "2026-10-22", "2026-10-23"]
+    assert lus == ["2026-10-19", "2026-10-20", "2026-10-21", "2026-10-22", "2026-10-23"]
     assert appels[0][0] == lus and appels[0][2] is False
 
 

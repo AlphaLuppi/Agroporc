@@ -14,11 +14,13 @@ Modes d'exécution :
   python main.py cartes [slug] [--force]  → Traite les cartes permanentes (Trèfle,
                               Basilic n'Go, Dubble, La Mijote) hors état de run :
                               scrape, hash, re-notation LLM si changement.
-  python main.py images [YYYY-MM-DD|semaine] [--force]  → (POC) Images IA des plats
-                              publiés (aujourd'hui par défaut, ou du jour au vendredi),
+  python main.py images [YYYY-MM-DD|DEBUT..FIN|semaine] [--force]  → (POC) Images IA des
+                              plats publiés (aujourd'hui par défaut, une plage de jours
+                              ouvrés, ou du lundi au vendredi de la semaine en cours),
                               en sautant celles déjà en base ; --force les régénère.
-  python main.py recettes [YYYY-MM-DD|semaine] [--force]  → (POC) Recettes maison des plats
-                              publiés (aujourd'hui par défaut, ou du jour au vendredi),
+  python main.py recettes [YYYY-MM-DD|DEBUT..FIN|semaine] [--force]  → (POC) Recettes maison
+                              des plats publiés (aujourd'hui par défaut, une plage de jours
+                              ouvrés, ou du lundi au vendredi de la semaine en cours),
                               en sautant celles déjà en base ; enregistre les dates de
                               service ; --force les réécrit.
 """
@@ -368,11 +370,20 @@ async def _step_images(loop, output: dict) -> None:
 
 
 def _dates_images(arg: str | None, today: date) -> list[str]:
-    """`None` → aujourd'hui ; `semaine` → d'aujourd'hui au vendredi ; sinon la date donnée."""
+    """`None` → aujourd'hui ; `semaine` → du lundi au vendredi de la semaine en cours
+    (jours passés compris : un plat sans image ni recette est rattrapé, les autres sont
+    sautés) ; `DEBUT..FIN` → jours ouvrés de la plage incluse ; sinon la date donnée."""
     if arg is None:
         return [today.isoformat()]
     if arg == "semaine":
-        return [(today + timedelta(days=i)).isoformat() for i in range(0, max(1, 5 - today.weekday()))]
+        lundi = today - timedelta(days=today.weekday())
+        return [(lundi + timedelta(days=i)).isoformat() for i in range(5)]
+    if ".." in arg:
+        debut, fin = (date.fromisoformat(x) for x in arg.split("..", 1))
+        if fin < debut:
+            raise ValueError(arg)
+        jours = (debut + timedelta(days=i) for i in range((fin - debut).days + 1))
+        return [j.isoformat() for j in jours if j.weekday() < 5]
     return [date.fromisoformat(arg).isoformat()]
 
 
@@ -403,7 +414,7 @@ def run_images(arg: str | None = None, force: bool = False) -> int:
     try:
         dates = _dates_images(arg, date.today())
     except ValueError:
-        print(f"[pipeline:images] Date invalide : {arg} (attendu YYYY-MM-DD ou semaine)")
+        print(f"[pipeline:images] Date invalide : {arg} (attendu YYYY-MM-DD, DEBUT..FIN ou semaine)")
         return 1
     pdjs = _pdjs_publies(dates, "images")
     if not pdjs:
@@ -452,7 +463,7 @@ def run_recettes(arg: str | None = None, force: bool = False) -> int:
     try:
         dates = _dates_images(arg, date.today())
     except ValueError:
-        print(f"[pipeline:recettes] Date invalide : {arg} (attendu YYYY-MM-DD ou semaine)")
+        print(f"[pipeline:recettes] Date invalide : {arg} (attendu YYYY-MM-DD, DEBUT..FIN ou semaine)")
         return 1
     pdjs = _pdjs_publies(dates, "recettes")
     if not pdjs:

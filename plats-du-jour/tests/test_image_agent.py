@@ -158,8 +158,14 @@ def test_dates_images():
     from datetime import date
     mercredi = date(2026, 10, 21)
     assert main._dates_images(None, mercredi) == ["2026-10-21"]
-    assert main._dates_images("semaine", mercredi) == ["2026-10-21", "2026-10-22", "2026-10-23"]
-    assert main._dates_images("semaine", date(2026, 10, 24)) == ["2026-10-24"]  # samedi
+    semaine = ["2026-10-19", "2026-10-20", "2026-10-21", "2026-10-22", "2026-10-23"]
+    assert main._dates_images("semaine", mercredi) == semaine  # jours passés compris
+    assert main._dates_images("semaine", date(2026, 10, 24)) == semaine  # samedi
+    assert main._dates_images("2026-10-16..2026-10-20", mercredi) == [
+        "2026-10-16", "2026-10-19", "2026-10-20"]  # week-end sauté
+    import pytest
+    with pytest.raises(ValueError):
+        main._dates_images("2026-10-20..2026-10-16", mercredi)
     assert main._dates_images("2026-10-19", mercredi) == ["2026-10-19"]
 
 
