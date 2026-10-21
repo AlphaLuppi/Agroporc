@@ -5,7 +5,7 @@ import IdeesList from "./IdeesList";
 export const dynamic = "force-dynamic";
 
 export const metadata = {
-  title: "Idées d'améliorations — Plats du Jour",
+  title: "Idées d'améliorations — Agroporc",
 };
 
 export default async function IdeesPage() {

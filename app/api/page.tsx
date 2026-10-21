@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import Script from "next/script";
 
 export const metadata: Metadata = {
-  title: "Plats du Jour — API",
-  description: "Documentation Swagger des endpoints publics de l'API Plats du Jour.",
+  title: "Agroporc — API",
+  description: "Documentation Swagger des endpoints publics de l'API Agroporc.",
 };
 
 const SWAGGER_VERSION = "5.17.14";

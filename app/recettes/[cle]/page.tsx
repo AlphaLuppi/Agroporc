@@ -24,7 +24,7 @@ async function charger(cle: string) {
 export async function generateMetadata({ params }: { params: Params }): Promise<Metadata> {
   const { cle } = await params;
   const recette = await charger(cle).catch(() => null);
-  return { title: recette ? `${recette.titre} — Recettes — Plats du Jour` : "Recettes — Plats du Jour" };
+  return { title: recette ? `${recette.titre} — Recettes — Agroporc` : "Recettes — Agroporc" };
 }
 
 /** Fiche d'une recette maison inspirée d'un plat du jour (jamais présentée comme celle du restaurant). */
