@@ -1,0 +1,8 @@
+/* Tigre qui traverse le bas de l'écran (thème Tigre) : hors champ entre deux passages. */
+.tigre {
+  position: fixed; left: 0; bottom: calc(4px + env(safe-area-inset-bottom, 0px)); z-index: 40;
+  width: clamp(120px, 13vw, 190px); height: auto;
+  pointer-events: none; user-select: none; visibility: hidden;
+  transform: translateX(-100%);
+  filter: drop-shadow(0 6px 6px rgba(0, 0, 0, 0.35));
+}
