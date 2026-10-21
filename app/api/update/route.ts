@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ensureTable, upsertPdj } from "@/lib/db";
+import { ensureTable, rafraichirNotesRecettes, recalculerNotesDuJour, upsertPdj } from "@/lib/db";
 import type { PdjEntry } from "@/lib/db";
 
 export const runtime = "nodejs";
@@ -24,6 +24,15 @@ export async function POST(request: NextRequest) {
 
     await ensureTable();
     await upsertPdj(body);
+    // Notes recopiées dans les recettes de ces plats (tri de la banque) : best-effort, sans DDL,
+    // la réponse au pipeline ne dépend jamais de ce rattrapage. Les recettes dont la note venait
+    // de ce jour mais dont le plat a disparu de la republication sont recalculées.
+    try {
+      await rafraichirNotesRecettes([body]);
+      await recalculerNotesDuJour(body);
+    } catch (e) {
+      console.error("[api/update] notes recettes", e);
+    }
 
     return NextResponse.json({ ok: true, date: body.date });
   } catch (e) {

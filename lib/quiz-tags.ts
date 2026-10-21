@@ -44,6 +44,15 @@ const PROTEINE_KEYWORDS: { proteine: Exclude<Proteine, "autre">; mots: string[] 
 // Termes de viande génériques (pas de protéine précise mais clairement carné).
 const VIANDE_GENERIQUE = ["viande", "boulette", "kebab", "confit"];
 
+/**
+ * Mot-clé présent comme mot entier (pluriel / féminin tolérés) : une simple sous-chaîne prenait
+ * « semoule » pour « moule », « soleil » pour « sole » ou « milieu » pour « lieu ».
+ */
+function contientMot(text: string, mot: string): boolean {
+  const m = normalize(mot).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(^|[^a-z0-9])${m}(s|x|e|es)?(?![a-z0-9])`).test(text);
+}
+
 export function tagsForPlat(input: PlatTagInput): PlatTags {
   const fromIngredients = (input.ingredients_detail ?? [])
     .map((i) => i.matched_nom ?? "")
@@ -52,7 +61,7 @@ export function tagsForPlat(input: PlatTagInput): PlatTags {
 
   let proteine: Proteine = "autre";
   for (const { proteine: p, mots } of PROTEINE_KEYWORDS) {
-    if (mots.some((m) => text.includes(normalize(m)))) {
+    if (mots.some((m) => contientMot(text, m))) {
       proteine = p;
       break;
     }
@@ -63,7 +72,7 @@ export function tagsForPlat(input: PlatTagInput): PlatTags {
     famille = "poisson";
   } else if (proteine !== "autre") {
     famille = "viande";
-  } else if (VIANDE_GENERIQUE.some((m) => text.includes(normalize(m)))) {
+  } else if (VIANDE_GENERIQUE.some((m) => contientMot(text, m))) {
     famille = "viande";
   } else {
     famille = "vege";

@@ -48,4 +48,17 @@ describe("tagsForPlat", () => {
       proteine: "boeuf",
     });
   });
+
+  it("ne prend pas une sous-chaîne pour un mot-clé (semoule ≠ moule, soleil ≠ sole)", () => {
+    expect(tagsForPlat({ plat: "Pastilla de veau aux épices douces. Semoule, légumes fondants." }).proteine).toBe("veau");
+    expect(tagsForPlat({ plat: "Paleron de porc rôti, polenta (semoule de maïs)" }).proteine).not.toBe("poisson");
+    expect(tagsForPlat({ plat: "Poulet rôti, légumes du soleil" }).proteine).toBe("poulet");
+    expect(tagsForPlat({ plat: "Ratatouille au milieu du riz" })).toEqual({ famille: "vege", proteine: "autre" });
+  });
+
+  it("accepte pluriels et accords des mots-clés", () => {
+    expect(tagsForPlat({ plat: "Moules frites" }).proteine).toBe("poisson");
+    expect(tagsForPlat({ plat: "Saucisses grillées, purée" }).proteine).toBe("porc");
+    expect(tagsForPlat({ plat: "Boulettes à la tomate" }).famille).toBe("viande");
+  });
 });

@@ -35,6 +35,12 @@ export function formatDayName(dateStr: string): string {
   return jour.charAt(0).toUpperCase() + jour.slice(1);
 }
 
+/** Note affichée : « ? » sans note, entier tel quel, sinon une décimale à la virgule (7,5). */
+export function fmtNote(note?: number | null): string {
+  if (note == null) return "?";
+  return Number.isInteger(note) ? String(note) : note.toFixed(1).replace(".", ",");
+}
+
 export function noteClass(note: number | string): string {
   if (typeof note !== "number") return "ok";
   if (note >= 7) return "good";

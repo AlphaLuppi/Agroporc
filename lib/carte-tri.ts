@@ -2,6 +2,9 @@ import type { Carte, CarteSection } from "./db";
 
 export type Mode = "sportif" | "goulaf";
 
+/** Nom affiché de chaque mode (site, banque de recettes, vue 3D). */
+export const MODE_LABEL: Record<Mode, string> = { sportif: "Sportif", goulaf: "Goulaf" };
+
 /** Note d'un plat (carte, plat du jour ou option) pour un mode ; en Goulaf, retombe sur la note sportive si absente. */
 export function noteMode(plat: { note?: number; note_goulaf?: number }, mode: Mode): number | undefined {
   return mode === "goulaf" ? plat.note_goulaf ?? plat.note : plat.note;

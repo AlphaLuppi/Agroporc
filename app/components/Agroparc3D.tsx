@@ -7,7 +7,7 @@ import type { Poi, SceneData } from "@/lib/agroparc3d/types";
 import type { SceneHandle } from "@/lib/agroparc3d/scene";
 import { etatRestaurant } from "@/lib/agroparc3d/panneau";
 import { couleurNote, remplissage } from "@/lib/agroparc3d/jauge";
-import { noteMode, trierCarte, type Mode } from "@/lib/carte-tri";
+import { MODE_LABEL, noteMode, trierCarte, type Mode } from "@/lib/carte-tri";
 import { variantesPlat, type VariantePlat } from "@/lib/plat-options";
 import { restoParNom } from "@/lib/restaurants";
 import RestoBadge from "./RestoBadge";
@@ -19,7 +19,6 @@ const mono = IBM_Plex_Mono({ subsets: ["latin"], weight: ["400", "500"], variabl
 interface Ev { id: number; time: string; tag: string; text: string }
 
 const MODES: Mode[] = ["sportif", "goulaf"];
-const MODE_LABEL: Record<Mode, string> = { sportif: "Sportif", goulaf: "Goulaf" };
 /** Même clé que le site (`useModeSite`) : le mode choisi ici suit sur la page derrière et inversement. */
 const MODE_KEY = "pdj-mode";
 

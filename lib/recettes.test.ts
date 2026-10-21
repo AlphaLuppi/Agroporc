@@ -4,9 +4,10 @@ import { CLE_IMAGE_RE, normPlatImage } from "./plat-image";
 import {
   ajusterIngredients, ajusterQuantite, BANDEAU_HONNETETE_DEBUT, BANDEAU_HONNETETE_SUITE, bornerPersonnes, dateValide,
   etatRecetteDepuisStatut, formaterDuree, formaterQuantite, grouperIngredients, jourParis, libelleDifficulte,
-  MENTION_PANNEAU, parametresBanque, RESTAURANTS_RECETTES, tempsTotal, texteRecherche, UNITES, validerRecette,
+  MENTION_PANNEAU, parametresANettoyer, parametresBanque, RESTAURANTS_RECETTES, tempsTotal, texteRecherche, UNITES, validerRecette,
   validerServices, type IngredientRecette,
   dateServie, heureParis, messageRecetteAbsente, motifsRecherche, recetteAttendue,
+  hrefBanque, libelleNote, libelleResultats,
 } from "./recettes";
 
 const copie = (): Record<string, unknown> => JSON.parse(JSON.stringify(exemple));
@@ -275,11 +276,14 @@ describe("texteRecherche", () => {
 
 describe("parametresBanque", () => {
   it("défauts", () => {
-    expect(parametresBanque(new URLSearchParams())).toEqual({ ok: true, q: "", qNorm: "", slug: null, restaurant: null, page: 1 });
+    expect(parametresBanque(new URLSearchParams())).toEqual({
+      ok: true, q: "", qNorm: "", slug: null, restaurant: null, page: 1, tri: "recentes", proteine: null,
+    });
   });
   it("q normalisé, slug converti en nom, page", () => {
     expect(parametresBanque(new URLSearchParams("q=  Bœuf &restaurant=bistrot_trefle&page=3"))).toEqual({
       ok: true, q: "Bœuf", qNorm: "boeuf", slug: "bistrot_trefle", restaurant: "Le Bistrot Trèfle", page: 3,
+      tri: "recentes", proteine: null,
     });
   });
   it.each(["0", "abc", "-1", "1.5"])("page=%s → erreur", (page) => {
@@ -294,6 +298,29 @@ describe("parametresBanque", () => {
   });
   it("tableau de valeurs → la première", () => {
     expect(parametresBanque({ q: ["tarte", "pizza"], page: ["2", "5"] })).toMatchObject({ ok: true, q: "tarte", page: 2 });
+  });
+  it("tri et protéine acceptés", () => {
+    expect(parametresBanque(new URLSearchParams("tri=goulaf&proteine=vege"))).toMatchObject({ ok: true, tri: "goulaf", proteine: "vege" });
+    expect(parametresBanque({ tri: "rapide" })).toMatchObject({ ok: true, tri: "rapide" });
+  });
+  it("tri et protéine répétés → la dernière valeur (bouton pressé, après les champs cachés)", () => {
+    expect(parametresBanque({ tri: ["sportif", "goulaf"], proteine: ["poulet", "vege"] })).toMatchObject({ tri: "goulaf", proteine: "vege" });
+    expect(parametresBanque(new URLSearchParams("q=poulet&tri=goulaf&tri=sportif"))).toMatchObject({ q: "poulet", tri: "sportif" });
+    // « Toutes » : valeur vide après la protéine courante → plus de filtre.
+    expect(parametresBanque({ proteine: ["poulet", ""] })).toMatchObject({ ok: true, proteine: null });
+  });
+  it("parametresANettoyer : valeur répétée ou vide", () => {
+    expect(parametresANettoyer({ q: "poulet", tri: "sportif" })).toBe(false);
+    expect(parametresANettoyer({})).toBe(false);
+    expect(parametresANettoyer({ q: "", restaurant: "" })).toBe(true);
+    expect(parametresANettoyer({ tri: ["goulaf", "sportif"] })).toBe(true);
+    expect(parametresANettoyer({ autre: "" })).toBe(false);
+  });
+  it("tri inconnu → erreur", () => {
+    expect(parametresBanque({ tri: "prix" })).toEqual({ ok: false, erreur: "Paramètre 'tri' invalide" });
+  });
+  it.each(["tofu", "autre"])("proteine=%s → Protéine inconnue", (proteine) => {
+    expect(parametresBanque({ proteine })).toEqual({ ok: false, erreur: "Protéine inconnue" });
   });
   it("restaurants filtrables : sans les liens seuls", () => {
     expect(RESTAURANTS_RECETTES.map((r) => r.slug)).not.toContain("vival");
@@ -317,22 +344,76 @@ describe("libellés d'honnêteté", () => {
 
 describe("motifsRecherche", () => {
   it("un motif par mot normalisé, dédoublonné, ordre libre", () => {
-    expect(motifsRecherche("Curry  POULET curry")).toEqual(["%curry%", "%poulet%"]);
+    expect(motifsRecherche("Curry  POULET curry")).toEqual(["% curry%", "% poulet%"]);
     expect(motifsRecherche("  ")).toEqual([]);
-    expect(motifsRecherche("tajine, courgette…")).toEqual(["%tajine%", "%courgette%"]);
+    expect(motifsRecherche("tajine, courgette…")).toEqual(["% tajine%", "% courgette%"]);
   });
   it("chaque mot est cherché séparément (« curry poulet » trouve « poulet au curry »)", () => {
     const indexe = texteRecherche("Le Bistrot Trèfle", "Poulet au curry", { titre: "Poulet au curry", ingredients: [] });
     const correspond = (q: string) =>
-      motifsRecherche(q).every((m) => indexe.includes(m.slice(1, -1)));
+      motifsRecherche(q).every((m) => (" " + indexe).includes(m.slice(1, -1)));
     expect(correspond("curry poulet")).toBe(true);
     expect(correspond("poulet trefle")).toBe(true);
     expect(correspond("poulet tajine")).toBe(false);
+    // Le premier mot de la colonne (le resto) reste trouvable grâce à l'espace ajouté.
+    expect(correspond("bistrot")).toBe(true);
+  });
+  it("en début de mot (« riz » ne trouve plus « chorizo », « pate » trouve « pates »)", () => {
+    const correspond = (titre: string, q: string) => {
+      const indexe = texteRecherche("Dubble", titre, { titre, ingredients: [] });
+      return motifsRecherche(q).every((m) => (" " + indexe).includes(m.slice(1, -1)));
+    };
+    expect(correspond("Chorizo grillé", "riz")).toBe(false);
+    expect(correspond("Riz cantonais", "riz")).toBe(true);
+    expect(correspond("Pâtes au pesto", "pate")).toBe(true);
+    expect(correspond("Salade laitue", "lait")).toBe(true);
   });
   it("au plus 8 mots, sans caractère à échapper", () => {
     const m = motifsRecherche("a b c d e f g h i j 100% _x_");
     expect(m).toHaveLength(8);
-    expect(m.every((x) => /^%[a-z0-9]+%$/.test(x))).toBe(true);
+    expect(m.every((x) => /^% [a-z0-9]+%$/.test(x))).toBe(true);
+  });
+});
+
+describe("hrefBanque", () => {
+  const defaut = { q: "", slug: null, tri: "recentes" as const, proteine: null, page: 1 };
+  it("/recettes par défaut, valeurs par défaut omises", () => {
+    expect(hrefBanque(defaut)).toBe("/recettes");
+    expect(hrefBanque(defaut, { tri: "recentes", page: 1 })).toBe("/recettes");
+  });
+  it("ordre q, restaurant, tri, proteine, page", () => {
+    expect(hrefBanque({ q: "curry", slug: "dubble", tri: "goulaf", proteine: "poulet", page: 3 })).toBe(
+      "/recettes?q=curry&restaurant=dubble&tri=goulaf&proteine=poulet&page=3",
+    );
+  });
+  it("changer de tri, de protéine ou de resto ramène à la page 1", () => {
+    const p = { ...defaut, q: "riz", page: 4 };
+    expect(hrefBanque(p, { tri: "sportif" })).toBe("/recettes?q=riz&tri=sportif");
+    expect(hrefBanque(p, { proteine: "vege" })).toBe("/recettes?q=riz&proteine=vege");
+    expect(hrefBanque(p, { slug: "la_mijote" })).toBe("/recettes?q=riz&restaurant=la_mijote");
+    expect(hrefBanque({ ...p, proteine: "vege" }, { proteine: null })).toBe("/recettes?q=riz");
+  });
+  it("page explicite conservée", () => {
+    expect(hrefBanque({ ...defaut, tri: "goulaf" }, { page: 2 })).toBe("/recettes?tri=goulaf&page=2");
+    expect(hrefBanque(defaut, { tri: "rapide", page: 5 })).toBe("/recettes?tri=rapide&page=5");
+  });
+  it("accents encodés", () => {
+    expect(hrefBanque({ ...defaut, q: "bœuf épicé" })).toBe("/recettes?q=b%C5%93uf+%C3%A9pic%C3%A9");
+  });
+});
+
+describe("libelleNote / libelleResultats", () => {
+  it("note lisible pour les lecteurs d'écran", () => {
+    expect(libelleNote("sportif", 7.5)).toBe("Note Sportif : 7,5 sur 10");
+    expect(libelleNote("goulaf", 8)).toBe("Note Goulaf : 8 sur 10");
+    expect(libelleNote("goulaf", null)).toBe("Note Goulaf : note indisponible");
+  });
+  it("résumé des résultats", () => {
+    expect(libelleResultats(1, "recentes", null)).toBe("1 recette");
+    expect(libelleResultats(0, "recentes", null)).toBe("0 recette");
+    expect(libelleResultats(12, "sportif", "poulet")).toBe("12 recettes · triées par note Sportif · Poulet / volaille");
+    expect(libelleResultats(3, "goulaf", null)).toBe("3 recettes · triées par note Goulaf");
+    expect(libelleResultats(5, "rapide", "vege")).toBe("5 recettes · les plus rapides d'abord · Végé");
   });
 });
 
