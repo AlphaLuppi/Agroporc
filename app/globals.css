@@ -485,7 +485,10 @@ body::before {
 /* Changement de thème en tache d'encre (lib/theme-encre.ts) : l'ancien thème
    reste figé dessous, le nouveau apparaît à travers un masque SVG qui grandit
    depuis le bouton. Les transitions de couleur sont coupées le temps de la
-   capture, sinon la tache révélerait des couleurs à mi-chemin. */
+   capture, sinon la tache révélerait des couleurs à mi-chemin. Les captures
+   laissent passer les clics : on peut rechanger de thème pendant l'animation
+   (la nouvelle transition interrompt la précédente). */
+html.pdj-encre::view-transition { pointer-events: none; }
 html.pdj-encre, html.pdj-encre *, html.pdj-encre *::before, html.pdj-encre *::after { transition: none !important; }
 html.pdj-encre::view-transition-old(root),
 html.pdj-encre::view-transition-new(root) { animation: none; mix-blend-mode: normal; }
