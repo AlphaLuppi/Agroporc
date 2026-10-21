@@ -109,9 +109,11 @@ html[data-theme="tigre"] {
   --ok: #ffc02e;
   --ok-bg: rgba(255, 192, 46, 0.12);
   --ok-border: rgba(255, 192, 46, 0.3);
-  --bad: #f46b67;
-  --bad-bg: rgba(244, 107, 103, 0.12);
-  --bad-border: rgba(244, 107, 103, 0.3);
+  /* Rouge rosé : ≥ 4,5:1 même posé nu sur le pixel le plus clair de la fourrure
+     sous la lueur du haut (4,6:1), et distinct de --good / --accent en daltonisme. */
+  --bad: #ff8a95;
+  --bad-bg: rgba(255, 138, 149, 0.12);
+  --bad-border: rgba(255, 138, 149, 0.3);
   /* Fonds OPAQUES pour les éléments posés sur la fourrure ou sur --surface-hover
      (état actif, pastilles de note) : mêmes teintes que --accent-glow / --*-bg,
      mais sans transparence, donc le contraste ne dépend pas de ce qu'il y a dessous. */
@@ -119,9 +121,9 @@ html[data-theme="tigre"] {
   --good-soft: color-mix(in srgb, var(--good) 14%, var(--bg));
   --ok-soft: color-mix(in srgb, var(--ok) 14%, var(--bg));
   --bad-soft: color-mix(in srgb, var(--bad) 14%, var(--bg));
-  /* Contour des contrôles : ≥ 3:1 contre --surface, --bg et la fourrure voilée
-     (WCAG 1.4.11). --border reste réservé aux séparateurs. */
-  --border-control: #b07a3a;
+  /* Contour des contrôles : ≥ 3:1 contre --surface, --bg et la fourrure voilée,
+     lueur du haut comprise (WCAG 1.4.11). --border reste réservé aux séparateurs. */
+  --border-control: #c08540;
   --radius: 12px;
   --radius-sm: 6px;
   --shadow: 0 4px 24px rgba(0,0,0,0.5);

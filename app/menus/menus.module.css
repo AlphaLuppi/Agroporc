@@ -186,8 +186,9 @@ html[data-theme="terrasse"] .mode[data-mode="goulaf"]::before { background: colo
     scale var(--m-base) var(--m-spring);
 }
 .tuile:hover, .hero:hover { border-color: var(--border-accent); }
-/* Tigre : la tuile (--surface) se détache à peine de la fourrure ; un anneau fin la cerne (le survol a sa propre ombre). */
-html[data-theme="tigre"] .tuile:not(:hover) { box-shadow: 0 0 0 1px color-mix(in srgb, var(--border-accent) 55%, transparent); }
+/* Tigre : la tuile (--surface) se détache à peine de la fourrure ; un anneau bronze opaque la cerne (≥ 3,3:1 sur la
+   fourrure, lueur comprise), distinct de l'orange du survol (qui a sa propre ombre). */
+html[data-theme="tigre"] .tuile:not(:hover) { box-shadow: 0 0 0 1px var(--border-control); }
 @media (hover: hover) and (pointer: fine) {
   .tuile:hover, .hero:hover { translate: 0 -2px; box-shadow: var(--shadow); }
   .hero:hover::before { opacity: 1; }
