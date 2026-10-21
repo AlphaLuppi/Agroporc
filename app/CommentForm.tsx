@@ -6,8 +6,15 @@ import { Drawer } from "@/components/ui/drawer";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ImagePlus, X, Upload, ChevronDown } from "lucide-react";
 import { CHARACTERS, CHARACTERS_BY_NAME, type Character } from "@/lib/characters";
+import { etatCompteur, gerbe, prefereMoinsDeMouvement } from "@/lib/motion-commentaires";
+import styles from "./commentaires.module.css";
 
 const CHARACTER_STORAGE_KEY = "pdj-selected-character";
+const MAX_TEXTE = 500;
+/** Délai entre « Envoyé ✓ » et le rechargement (0 sous prefers-reduced-motion). */
+const DELAI_RELOAD_MS = 450;
+const GERBE = gerbe(8, 26);
+const COULEURS_GERBE = ["var(--good)", "var(--accent)", "var(--ok)"];
 
 function useIsMobile(breakpoint = 640) {
   const [isMobile, setIsMobile] = useState(false);
@@ -41,6 +48,11 @@ export default function CommentForm({
   const [website, setWebsite] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [envoye, setEnvoye] = useState(false);
+  const [gerbeVisible, setGerbeVisible] = useState(false);
+  // Incrémenté à chaque erreur : rejoue l'entrée du message
+  const [erreurN, setErreurN] = useState(0);
+  const formRef = useRef<HTMLFormElement>(null);
   const [imageUrl, setImageUrl] = useState("");
   const [showImageInput, setShowImageInput] = useState(false);
   const [imageError, setImageError] = useState(false);
@@ -119,10 +131,10 @@ export default function CommentForm({
   if (!open) {
     return (
       <button
-        className="mt-3 w-full border border-dashed border-[var(--border)] rounded-[var(--radius)] text-[var(--text-secondary)] py-2 px-3 text-sm cursor-pointer transition-all bg-transparent hover:border-[var(--accent)] hover:text-[var(--accent)]"
+        className={`pdj-press ${styles.ajouter} mt-3 w-full border border-dashed border-[var(--border)] rounded-[var(--radius)] text-[var(--text-secondary)] py-2 px-3 text-sm cursor-pointer bg-transparent hover:border-[var(--accent)] hover:text-[var(--accent)]`}
         onClick={() => setOpen(true)}
       >
-        + Ajouter un commentaire
+        <span className={styles.plus} aria-hidden="true">+</span> Ajouter un commentaire
       </button>
     );
   }
@@ -161,9 +173,29 @@ export default function CommentForm({
     setDragOver(false);
   }
 
+  /** Erreur d'envoi : message + petit shake du formulaire (WAAPI, sauf reduce). */
+  function signalerErreur(message: string) {
+    setError(message);
+    setErreurN((n) => n + 1);
+    const form = formRef.current;
+    if (!form || prefereMoinsDeMouvement() || typeof form.animate !== "function") return;
+    form.animate(
+      [
+        { translate: "0 0" },
+        { translate: "-4px 0" },
+        { translate: "4px 0" },
+        { translate: "-4px 0" },
+        { translate: "4px 0" },
+        { translate: "-2px 0" },
+        { translate: "0 0" },
+      ],
+      { duration: 280, easing: "ease-in-out" }
+    );
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!character || (!texte.trim() && !imageUrl)) return;
+    if (envoye || !character || (!texte.trim() && !imageUrl)) return;
 
     setLoading(true);
     setError("");
@@ -186,20 +218,32 @@ export default function CommentForm({
 
       if (!res.ok) {
         const data = await res.json();
-        setError(data.error || "Erreur");
         setLoading(false);
+        signalerErreur(data.error || "Erreur");
         return;
       }
 
-      window.location.reload();
-    } catch {
-      setError("Erreur de connexion");
+      // Succès : « Envoyé ✓ » (pop + gerbe) le temps de le voir, puis rechargement.
+      // Le bouton reste désactivé pendant le délai (pas de double envoi).
+      const reduit = prefereMoinsDeMouvement();
       setLoading(false);
+      setEnvoye(true);
+      setGerbeVisible(!reduit);
+      window.setTimeout(() => window.location.reload(), reduit ? 0 : DELAI_RELOAD_MS);
+    } catch {
+      setLoading(false);
+      signalerErreur("Erreur de connexion");
     }
   }
 
+  const compteur = etatCompteur(texte.length, MAX_TEXTE);
+
   const formContent = (
-    <form className={isMobile ? "flex flex-col gap-3" : "mt-3 flex flex-col gap-2"} onSubmit={handleSubmit}>
+    <form
+      ref={formRef}
+      className={isMobile ? "flex flex-col gap-3" : `mt-3 flex flex-col gap-2${reponseA ? "" : " pdj-rise-in"}`}
+      onSubmit={handleSubmit}
+    >
       {reponseA && (
         <div className="text-xs text-[var(--accent)] px-2 py-1.5 bg-[var(--accent-glow)] rounded-[var(--radius-sm)] border-l-[3px] border-l-[var(--accent)]">
           ↩ En réponse à {reponseA}
@@ -224,7 +268,7 @@ export default function CommentForm({
           aria-haspopup="listbox"
           aria-expanded={pickerOpen}
         >
-          <Avatar className="shrink-0 w-6 h-6 text-xs">
+          <Avatar key={character.name} className={`${styles.avatarChoisi} shrink-0 w-6 h-6 text-xs`}>
             {character.image && <AvatarImage src={character.image} alt={character.name} />}
             <AvatarFallback style={{ background: character.color }} className="text-xs">
               {character.emoji}
@@ -235,15 +279,15 @@ export default function CommentForm({
             <span className="font-semibold">{character.name}</span>
           </span>
           <ChevronDown
-            className={`size-4 text-[var(--text-secondary)] transition-transform ${pickerOpen ? "rotate-180" : ""}`}
+            className={`${styles.chevron} size-4 text-[var(--text-secondary)] ${pickerOpen ? "rotate-180" : ""}`}
           />
         </button>
         {pickerOpen && (
           <div
             role="listbox"
-            className="absolute z-50 left-0 right-0 mt-1 max-h-64 overflow-y-auto bg-[var(--surface)] border border-[var(--border)] rounded-[var(--radius)] shadow-lg py-1"
+            className={`${styles.liste} absolute z-50 left-0 right-0 mt-1 max-h-64 overflow-y-auto bg-[var(--surface)] border border-[var(--border)] rounded-[var(--radius)] shadow-lg py-1`}
           >
-            {CHARACTERS.map((c) => {
+            {CHARACTERS.map((c, i) => {
               const selected = c.name === character.name;
               return (
                 <button
@@ -252,7 +296,8 @@ export default function CommentForm({
                   role="option"
                   aria-selected={selected}
                   onClick={() => selectCharacter(c)}
-                  className={`w-full flex items-center gap-2 px-2.5 py-1.5 text-sm text-left hover:bg-[var(--accent-glow)] transition-colors ${
+                  style={{ "--i": i } as React.CSSProperties}
+                  className={`${styles.option} w-full flex items-center gap-2 px-2.5 py-1.5 text-sm text-left hover:bg-[var(--accent-glow)] transition-colors ${
                     selected ? "bg-[var(--accent-glow)] text-[var(--accent)]" : "text-[var(--text)]"
                   }`}
                 >
@@ -269,6 +314,7 @@ export default function CommentForm({
           </div>
         )}
       </div>
+      <div className="relative">
       <textarea
         placeholder={reponseA ? `Répondre à ${reponseA}...` : "Votre commentaire"}
         value={texte}
@@ -280,11 +326,17 @@ export default function CommentForm({
             (e.currentTarget.form as HTMLFormElement | null)?.requestSubmit();
           }
         }}
-        maxLength={500}
+        maxLength={MAX_TEXTE}
         required={!imageUrl}
         rows={3}
-        className="w-full min-w-0 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2.5 py-1.5 text-sm text-[var(--text)] placeholder:text-[var(--text-secondary)] placeholder:opacity-60 focus:border-[var(--accent)] focus:outline-none resize-y"
+        className={`${styles.zone} block w-full min-w-0 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2.5 py-1.5 text-sm text-[var(--text)] placeholder:text-[var(--text-secondary)] placeholder:opacity-60 focus:border-[var(--accent)] focus:outline-none resize-y`}
       />
+      {compteur !== "cache" && (
+        <span className={`${styles.compteur} ${compteur === "limite" ? styles.compteurLimite : ""}`}>
+          {texte.length}/{MAX_TEXTE}
+        </span>
+      )}
+      </div>
 
       <input
         type="file"
@@ -315,13 +367,13 @@ export default function CommentForm({
           onDrop={handleDrop}
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
-          className={`flex flex-col items-center justify-center gap-1.5 py-5 px-4 rounded-[var(--radius)] border-2 border-dashed cursor-pointer transition-all bg-transparent ${
+          className={`${styles.depot} pdj-press flex flex-col items-center justify-center gap-1.5 py-5 px-4 rounded-[var(--radius)] border-2 border-dashed cursor-pointer bg-transparent ${
             dragOver
-              ? "border-[var(--accent)] bg-[var(--accent-glow)]"
+              ? `${styles.depotActif} border-[var(--accent)] bg-[var(--accent-glow)]`
               : "border-[var(--border)] hover:border-[var(--accent)] hover:bg-[var(--accent-glow)]"
           }`}
         >
-          <Upload className={`size-5 ${dragOver ? "text-[var(--accent)]" : "text-[var(--text-secondary)]"}`} />
+          <Upload className={`${styles.icone} size-5 ${dragOver ? "text-[var(--accent)]" : "text-[var(--text-secondary)]"}`} />
           <span className="text-xs text-[var(--text-secondary)]">
             Cliquer ou glisser-déposer une image
           </span>
@@ -332,7 +384,7 @@ export default function CommentForm({
       )}
 
       {imageUrl && (
-        <div className="relative inline-block max-w-[200px]">
+        <div className={`${styles.apercu} relative inline-block max-w-[200px]`}>
           {!imageError ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
@@ -349,7 +401,7 @@ export default function CommentForm({
           <button
             type="button"
             onClick={() => { setImageUrl(""); setShowImageInput(false); setImageError(false); }}
-            className="absolute -top-1.5 -right-1.5 bg-[var(--surface)] border border-[var(--border)] text-[var(--text-secondary)] rounded-full w-5 h-5 cursor-pointer flex items-center justify-center hover:text-[var(--bad)] hover:border-[var(--bad)] transition-colors"
+            className={`${styles.fermer} absolute -top-1.5 -right-1.5 bg-[var(--surface)] border border-[var(--border)] text-[var(--text-secondary)] rounded-full w-5 h-5 cursor-pointer flex items-center justify-center hover:text-[var(--bad)] hover:border-[var(--bad)] transition-colors`}
             aria-label="Supprimer l'image"
           >
             <X className="size-3" />
@@ -369,16 +421,52 @@ export default function CommentForm({
             Annuler
           </Button>
         )}
-        <Button
-          type="submit"
-          size="sm"
-          disabled={loading || (!texte.trim() && !imageUrl)}
-          className={`bg-[var(--accent)] text-[var(--bg)] font-semibold hover:bg-[var(--accent)]/90 disabled:opacity-40 ${isMobile ? "w-full h-10 text-sm" : ""}`}
-        >
-          {loading ? "..." : "Envoyer"}
-        </Button>
+        <span className={isMobile ? styles.envoiPlein : styles.envoi}>
+          <Button
+            type="submit"
+            size="sm"
+            disabled={loading || envoye || (!texte.trim() && !imageUrl)}
+            aria-live="polite"
+            className={`pdj-press ${styles.pressCouleurs} bg-[var(--accent)] text-[var(--bg)] font-semibold hover:bg-[var(--accent)]/90 disabled:opacity-40 ${envoye ? styles.envoye : ""} ${isMobile ? "w-full h-10 text-sm" : ""}`}
+          >
+            {envoye ? (
+              "Envoyé ✓"
+            ) : loading ? (
+              <>
+                <span className={styles.points} aria-hidden="true">
+                  <span />
+                  <span />
+                  <span />
+                </span>
+                <span className="sr-only">Envoi…</span>
+              </>
+            ) : (
+              "Envoyer"
+            )}
+          </Button>
+          {gerbeVisible && (
+            <span className={styles.gerbe} aria-hidden="true">
+              {GERBE.map((p, i) => (
+                <span
+                  key={i}
+                  style={
+                    {
+                      "--dx": `${p.dx}px`,
+                      "--dy": `${p.dy}px`,
+                      background: COULEURS_GERBE[i % COULEURS_GERBE.length],
+                    } as React.CSSProperties
+                  }
+                />
+              ))}
+            </span>
+          )}
+        </span>
       </div>
-      {error && <p className="text-[var(--bad)] text-sm m-0">{error}</p>}
+      {error && (
+        <p key={erreurN} role="alert" className="pdj-rise-in text-[var(--bad)] text-sm m-0">
+          {error}
+        </p>
+      )}
     </form>
   );
 

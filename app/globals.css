@@ -4,6 +4,23 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* ── Motion « Service de midi » : tokens indépendants du thème ──
+   Nerveux, appétissant, jamais lent. Partagés par tous les modules.
+   NB : Tailwind v4 déclare aussi --ease-in-out (@theme, couche « theme ») ;
+   ce :root hors couche l'écrase, ce qui change l'utilitaire `ease-in-out`
+   (aucun usage dans app/ ni components/ à ce jour). Ne pas déplacer ces
+   tokens dans `@theme inline`. */
+:root {
+  --ease-spring: cubic-bezier(.34, 1.56, .64, 1);
+  --ease-out-expo: cubic-bezier(.16, 1, .3, 1);
+  --ease-in-out: cubic-bezier(.65, 0, .35, 1);
+  --dur-fast: 140ms;
+  --dur-base: 220ms;
+  --dur-slow: 380ms;
+  --pdj-shimmer: rgba(255, 255, 255, 0.35);
+}
+[data-theme="terrasse"] { --pdj-shimmer: rgba(255, 255, 255, 0.6); }
+
 /* ── Theme: Normal (dark elegant) ──────────────── */
 :root, [data-theme="normal"] {
   --bg: #0b0b12;
@@ -147,6 +164,9 @@ body {
   line-height: 1.6;
   min-height: 100dvh;
   -webkit-font-smoothing: antialiased;
+  /* Changement de thème en douceur (le script du <head> pose le thème avant
+     le premier rendu : rien ne s'anime au chargement). */
+  transition: background-color var(--dur-slow) var(--ease-in-out), color var(--dur-slow) var(--ease-in-out);
 }
 body::before {
   content: '';
@@ -251,6 +271,82 @@ body::before {
   to { opacity: 1; transform: translateY(0); }
 }
 
+/* ── Motion : keyframes globales (propriétés individuelles translate / scale /
+   rotate, pour se combiner avec le press, le hover et le FLIP sans s'écraser) ──
+   Dans un *.module.css, ces noms sont LOCALISÉS par css-loader : passer par les
+   classes ci-dessous en className, ou par `animation-name: var(--a)` avec
+   `--a: pdj-pop`, ou redéclarer une keyframe locale. */
+@keyframes pdj-pop {
+  0% { opacity: 0; scale: .92; }
+  60% { opacity: 1; scale: 1.04; }
+  100% { opacity: 1; scale: 1; }
+}
+@keyframes pdj-rise {
+  from { opacity: 0; translate: 0 8px; }
+  to { opacity: 1; translate: 0 0; }
+}
+@keyframes pdj-shimmer {
+  from { translate: -120% 0; opacity: 1; }
+  to { translate: 120% 0; opacity: 1; }
+}
+@keyframes pdj-wiggle {
+  0%, 100% { rotate: 0deg; }
+  25% { rotate: -3deg; }
+  75% { rotate: 3deg; }
+}
+@keyframes pdj-confetti-fall {
+  from { translate: 0 -10px; rotate: 0deg; opacity: 1; }
+  to { translate: var(--cx, 0) var(--cy, 120px); rotate: var(--cr, 360deg); opacity: 0; }
+}
+@keyframes pdj-fade-in {
+  from { opacity: 0; }
+}
+@keyframes pdj-souligne {
+  0% { scale: 0 1; }
+  70% { scale: 1.08 1; }
+  100% { scale: 1 1; }
+}
+@keyframes pdj-burger {
+  from { opacity: 0; rotate: -90deg; scale: .7; }
+}
+
+/* PRESS : s'écrase (90 ms) puis rebondit en ressort. Propriété `scale`, pas
+   `transform`. ATTENTION : cette règle pose `transition` ; un élément qui a
+   déjà ses propres transitions les passe dans --pdj-transition
+   (ex. `--pdj-transition: border-color 140ms, color 140ms`). */
+.pdj-press {
+  transition: scale var(--dur-base) var(--ease-spring), var(--pdj-transition, opacity 0s);
+}
+.pdj-press:active {
+  scale: .96;
+  transition-duration: 90ms;
+}
+
+/* ENTRÉE : montée + fondu, stagger 35 ms via --i, plafonné à 280 ms.
+   Fill `backwards` : jamais de translate résiduel (containing block des fixed). */
+.pdj-rise-in {
+  animation: pdj-rise var(--dur-slow) var(--ease-out-expo) backwards;
+  animation-delay: min(calc(var(--i, 0) * 35ms), 280ms);
+}
+
+/* BRILLANCE : un seul balayage à l'apparition. :where() pour que position /
+   overflow de l'élément hôte (module CSS, sticky, absolute…) l'emportent. */
+:where(.pdj-shimmer) {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+.pdj-shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(100deg, transparent 25%, var(--pdj-shimmer) 50%, transparent 75%);
+  opacity: 0;
+  translate: -120% 0;
+  animation: pdj-shimmer 900ms var(--ease-in-out) 200ms 1 backwards;
+}
+
 /* ── Mobile Drawer ───────────────────────────── */
 .drawer-overlay {
   position: fixed;
@@ -258,7 +354,7 @@ body::before {
   z-index: 100;
   background: rgba(0, 0, 0, 0.5);
   backdrop-filter: blur(2px);
-  animation: drawer-fade-in 0.2s ease-out;
+  animation: drawer-fade-in 200ms var(--ease-out-expo);
 }
 .drawer-content {
   position: fixed;
@@ -271,7 +367,9 @@ body::before {
   border-radius: var(--radius) var(--radius) 0 0;
   box-shadow: 0 -4px 32px rgba(0, 0, 0, 0.4);
   max-height: 85dvh;
-  animation: drawer-slide-up 0.25s ease-out;
+  /* Entrée seulement : pas de `transition` ici, le swipe de drawer.tsx pose
+     un transform inline à chaque touchmove. */
+  animation: drawer-slide-up 320ms var(--ease-out-expo);
   padding-bottom: env(safe-area-inset-bottom, 0);
 }
 .drawer-drag-handle {
@@ -286,6 +384,84 @@ body::before {
   to { transform: translateY(0); }
 }
 
+
+/* ── Motion : navigation & coque (layout.tsx) ─────────────────── */
+
+/* Entrée de page : OPACITÉ SEULE (pas de translate/filter : le wrapper
+   contient des position:fixed, ex. le Drawer de CommentForm). */
+.pdj-page { animation: pdj-fade-in 200ms var(--ease-out-expo) backwards; }
+.pdj-page-pied { animation: pdj-fade-in 260ms var(--ease-out-expo) 80ms backwards; }
+
+/* Logo : petite bascule au survol. */
+.pdj-logo img { transition: rotate var(--dur-base) var(--ease-spring), scale var(--dur-base) var(--ease-spring); }
+.pdj-logo span { transition: letter-spacing var(--dur-base) var(--ease-out-expo); }
+@media (hover: hover) and (pointer: fine) {
+  .pdj-logo:hover img { rotate: -8deg; scale: 1.06; }
+  .pdj-logo:hover span { letter-spacing: 0.045em; }
+}
+.pdj-logo:active img { scale: .94; transition-duration: 90ms; }
+
+/* Liens : soulignement qui se dessine (ClientScripts pose `.active` + couleur/fond inline). */
+[data-nav-links] a { position: relative; }
+[data-nav-links] a::after {
+  content: "";
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 4px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+  pointer-events: none;
+  scale: 0 1;
+  transform-origin: left center;
+  transition: scale var(--dur-base) var(--ease-out-expo);
+}
+[data-nav-links] a:hover::after,
+[data-nav-links] a:focus-visible::after { scale: 1 1; }
+[data-nav-links] a.active::after {
+  scale: 1 1;
+  animation: pdj-souligne 320ms var(--ease-spring) backwards;
+}
+
+/* Panier : pas de transition sur scale/translate (rebond WAAPI du lot menus). */
+@media (hover: hover) and (pointer: fine) {
+  #cart-btn:hover { translate: 0 -1px; border-color: var(--accent) !important; color: var(--text) !important; }
+}
+/* Rejoué à chaque passage display:none → block posé par ClientScripts. */
+#cart-badge { animation: pdj-pop 260ms var(--ease-spring) backwards; }
+#cart-drawer { transition: transform 320ms var(--ease-out-expo) !important; }
+#cart-overlay { animation: drawer-fade-in 200ms var(--ease-out-expo); }
+#login-modal > div,
+#order-result-modal > div { animation: pdj-pop 260ms var(--ease-spring) backwards; }
+
+/* Sélecteur de thème : press en ressort, en gardant les transitions de couleur. */
+.theme-btn {
+  transition: background-color var(--dur-fast) ease-out, color var(--dur-fast) ease-out,
+    box-shadow var(--dur-base) ease-out, scale var(--dur-base) var(--ease-spring);
+}
+.theme-btn:active { scale: .92; transition-duration: 90ms; }
+.theme-btn svg { transition: rotate var(--dur-base) var(--ease-spring); }
+.theme-btn:active svg { rotate: -20deg; transition-duration: 90ms; }
+
+/* Menu mobile : le panneau descend, les liens arrivent en cascade. */
+#mobile-menu:not(.hidden) { animation: pdj-rise 220ms var(--ease-out-expo) backwards; }
+#mobile-menu:not(.hidden) [data-nav-links] a {
+  animation: pdj-rise var(--dur-base) var(--ease-out-expo) backwards;
+  animation-delay: min(calc(var(--i, 0) * 35ms), 280ms);
+}
+#mobile-menu [data-nav-links] a:nth-child(2) { --i: 1; }
+#mobile-menu [data-nav-links] a:nth-child(3) { --i: 2; }
+#mobile-menu [data-nav-links] a:nth-child(4) { --i: 3; }
+#mobile-menu [data-nav-links] a:nth-child(5) { --i: 4; }
+#mobile-menu:not(.hidden) .theme-selector { animation: pdj-rise var(--dur-base) var(--ease-out-expo) 175ms backwards; }
+/* Burger ↔ croix : seulement après le chargement (data-pdj-pret posé par le
+   script du <head>), sinon l'icône tournerait à l'arrivée sur la page. */
+html[data-pdj-pret] #burger-icon:not(.hidden),
+html[data-pdj-pret] #burger-close-icon:not(.hidden) { animation: pdj-burger 260ms var(--ease-spring) backwards; }
+#mobile-menu-btn { transition: scale var(--dur-base) var(--ease-spring), color var(--dur-fast), border-color var(--dur-fast); }
+#mobile-menu-btn:active { scale: .92; transition-duration: 90ms; }
+
 /* ── Responsive ───────────────────────────────── */
 @media (max-width: 640px) {
   .calendar-cell { font-size: 0.75rem; min-height: 38px; }
@@ -297,9 +473,24 @@ body::before {
   .calendar-grid { gap: 2px; }
 }
 
+/* Mouvement réduit : tout arrive à l'état final instantanément. Pas de
+   `animation: none` global (un départ opacity:0 + forwards resterait
+   invisible). Les effets JS (WAAPI, rAF) testent matchMedia eux-mêmes. */
 @media (prefers-reduced-motion: reduce) {
-  * { transition-duration: 0.01ms !important; }
+  *, *::before, *::after {
+    animation-duration: 1ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    transition-delay: 0ms !important;
+    scroll-behavior: auto !important;
+  }
+  /* Indicateurs de progression : un spinner figé aurait l'air bloqué. */
+  .animate-spin { animation-duration: 1s !important; animation-iteration-count: infinite !important; }
+  .today-dot { animation: none !important; }
   .day-detail { animation: none !important; }
+  .pdj-shimmer::after { display: none; }
+  #cart-drawer { transition-duration: 1ms !important; }
 }
 
 /* ── shadcn theme mapping ─────────────────────── */
@@ -336,4 +527,10 @@ body::before {
 @layer base {
   * { @apply border-border outline-ring/50; }
   body { @apply bg-background text-foreground; }
+  /* Focus clavier visible partout (dans la couche base : les outlines
+     spécifiques, ex. .calendar-cell, gardent la main). */
+  :where(a, button, [role="button"], summary):focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
 }

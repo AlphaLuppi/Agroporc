@@ -1,13 +1,15 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type CSSProperties } from "react";
 import type { PdjEntry } from "@/lib/db";
 import type { Mode } from "@/lib/carte-tri";
 import { formatDateShort, formatDayShort } from "@/lib/format";
 import { casseLisible, grilleSemaine, meilleureNoteDuJour, platsAffiches, restosAbsentsSemaine, type PlatAffiche } from "@/lib/menus-vue";
 import RestoBadge from "@/app/components/RestoBadge";
 import type { Selection } from "./DetailPanneau";
-import { couleur, fmtPrix, MODE_LABEL, Pastille } from "./ui";
+import { rangStagger } from "@/lib/motion-menus";
+import { couleur, fmtPrix, MODE_LABEL, PastilleAnimee } from "./ui";
+import { reduit } from "./motion";
 import styles from "./menus.module.css";
 
 interface Props {
@@ -47,7 +49,7 @@ export default function SemaineVue({ semaine, mode, today, jourIdx, setJourIdx, 
     if (!el || el.clientWidth === 0) return;
     const cible = jourIdx * el.clientWidth;
     // À l'ouverture de la vue, on se place directement sur le jour choisi, sans animation.
-    if (Math.abs(el.scrollLeft - cible) > 4) el.scrollTo({ left: cible, behavior: premierRendu.current ? "auto" : "smooth" });
+    if (Math.abs(el.scrollLeft - cible) > 4) el.scrollTo({ left: cible, behavior: premierRendu.current || reduit() ? "auto" : "smooth" });
     premierRendu.current = false;
   }, [jourIdx]);
   useEffect(() => {
@@ -72,12 +74,13 @@ export default function SemaineVue({ semaine, mode, today, jourIdx, setJourIdx, 
   return (
     <>
       {/* ── Desktop ── */}
-      <div className={`${styles.table} ${styles.large1180}`}>
+      <div className={`${styles.table} ${styles.large1180}`} data-mode={mode}>
         <div className={styles.th}>Restaurant</div>
         {semaine.map((pdj, i) => (
           <button
             key={pdj.date}
             type="button"
+            style={{ "--i": i } as CSSProperties}
             className={`${styles.th} ${pdj.date === today ? styles.auj : ""}`}
             onClick={() => voirJour(i)}
             title="Voir ce jour"
@@ -98,7 +101,11 @@ export default function SemaineVue({ semaine, mode, today, jourIdx, setJourIdx, 
               const pdj = semaine[i];
               const statut = statutJour(pdj);
               return (
-                <div key={`${ligne.resto.slug}-${pdj.date}`} className={`${styles.cellule} ${pdj.date === today ? styles.aujC : ""}`}>
+                <div
+                  key={`${ligne.resto.slug}-${pdj.date}`}
+                  className={`${styles.cellule} ${pdj.date === today ? styles.aujC : ""}`}
+                  style={{ "--i": i } as CSSProperties}
+                >
                   {plats.length === 0 ? (
                     <span className={styles.celluleVide}>{statut ? (pdj.ferie ? "Férié" : "–") : "Pas de plat"}</span>
                   ) : (
@@ -109,7 +116,7 @@ export default function SemaineVue({ semaine, mode, today, jourIdx, setJourIdx, 
                         className={p.note != null && p.note === meilleures[i] ? styles.meilleure : undefined}
                         onClick={ouvrir(pdj.date, p)}
                       >
-                        <Pastille note={p.note} />
+                        <PastilleAnimee note={p.note} />
                         <span>{casseLisible(p.variante.plat)}</span>
                       </button>
                     ))
@@ -130,12 +137,13 @@ export default function SemaineVue({ semaine, mode, today, jourIdx, setJourIdx, 
               {formatDayShort(pdj.date).replace(".", "")} <b>{numeroJour(pdj.date)}</b>
             </button>
           ))}
-          {grille.map((ligne) => [
+          {grille.map((ligne, l) => [
             <RestoBadge key={ligne.resto.slug} nom={ligne.resto.nom} className={styles.ligneNom} />,
             ...ligne.cases.map((plats, i) => (
               <button
                 key={`${ligne.resto.slug}-${i}`}
                 type="button"
+                style={{ "--i": l + i } as CSSProperties}
                 className={`${styles.case} ${plats[0] ? couleur(plats[0].note) : ""} ${i === jourIdx ? styles.colonne : ""}`}
                 onClick={() => setJourIdx(i)}
                 aria-label={`${ligne.resto.nom}, ${formatDateShort(semaine[i].date)} : ${plats[0] ? `${plats[0].note ?? "?"} sur 10` : "pas de plat"}`}
@@ -146,20 +154,30 @@ export default function SemaineVue({ semaine, mode, today, jourIdx, setJourIdx, 
         <span className={styles.meta}>Couleur = meilleure note {MODE_LABEL[mode]} du resto ce jour-là. Touche une colonne ou swipe.</span>
 
         <div className={styles.pages} ref={pagesRef}>
-          {semaine.map((pdj) => {
+          {semaine.map((pdj, j) => {
             const plats = platsAffiches(pdj, mode);
             const statut = statutJour(pdj);
             return (
-              <section key={pdj.date} className={styles.page} aria-label={formatDateShort(pdj.date)}>
+              <section
+                key={pdj.date}
+                className={`${styles.page} ${j === jourIdx ? styles.pageActive : ""}`}
+                aria-label={formatDateShort(pdj.date)}
+              >
                 <h2>
                   {formatDateShort(pdj.date)}
                   <span>{pdj.date === today ? "aujourd'hui" : ""}</span>
                 </h2>
                 {statut && <p className={styles.vide}>{statut}</p>}
                 {!statut && plats.length === 0 && <p className={styles.vide}>Plats dévoilés le matin même.</p>}
-                {plats.map((p) => (
-                  <button key={`${p.platIndex}::${p.variante.plat}`} type="button" className={styles.ligne} onClick={ouvrir(pdj.date, p)}>
-                    <Pastille note={p.note} />
+                {plats.map((p, k) => (
+                  <button
+                    key={`${p.platIndex}::${p.variante.plat}`}
+                    type="button"
+                    className={styles.ligne}
+                    style={{ "--i": rangStagger(k + 1) } as CSSProperties}
+                    onClick={ouvrir(pdj.date, p)}
+                  >
+                    <PastilleAnimee note={p.note} />
                     <span className={styles.ligneTexte}>
                       <span className={styles.nom}>
                         {casseLisible(p.variante.plat)} {p.reco && <span className={styles.tagReco}>Reco</span>}

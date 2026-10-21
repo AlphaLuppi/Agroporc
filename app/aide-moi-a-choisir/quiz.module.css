@@ -24,27 +24,60 @@
 /* ── Mobile : une question à la fois ── */
 .mobile { display: flex; flex-direction: column; gap: 14px; }
 .progression { display: flex; gap: 4px; }
-.progression i { flex: 1; height: 5px; border-radius: 3px; background: var(--border); transition: background-color 0.2s ease-out; }
-.progression i.fait { background: var(--accent); }
+/* Segment qui se remplit de gauche à droite (ressort) + petit flash quand il vient d'être rempli. */
+.progression i { position: relative; overflow: hidden; flex: 1; height: 5px; border-radius: 3px; background: var(--border); }
+.progression i::before {
+  content: ""; position: absolute; inset: 0; background: var(--accent); border-radius: inherit;
+  scale: 0 1; transform-origin: left center; transition: scale 300ms var(--ease-spring);
+}
+.progression i.fait::before { scale: 1 1; }
+.progression i.fait { animation: flash 520ms var(--ease-out-expo) 1; }
 .fil { display: flex; flex-wrap: wrap; gap: 6px; }
 .fil button {
   border: 1px solid var(--border-accent); background: var(--surface); color: var(--text); border-radius: 999px;
   padding: 4px 11px; font: inherit; font-size: 0.78rem; cursor: pointer;
+  /* Chaque pastille (clé = étape) fait un pop à son arrivée, une seule fois. */
+  animation: pop 260ms var(--ease-spring) backwards;
+  transition: scale var(--dur-base) var(--ease-spring), border-color var(--dur-fast) ease-out;
 }
-.fil button::after { content: " ✎"; color: var(--text-muted); }
+.fil button:active { scale: .94; transition-duration: 90ms; }
+.fil button::after {
+  content: "✎"; display: inline-block; margin-left: 0.3em; color: var(--text-muted);
+  transition: rotate var(--dur-base) var(--ease-spring), color var(--dur-fast) ease-out;
+}
+@media (hover: hover) and (pointer: fine) {
+  .fil button:hover { border-color: var(--accent); }
+  .fil button:hover::after { rotate: -12deg; color: var(--accent); }
+}
+/* La question suivante arrive en glissant dans le sens de navigation (--sens = ±1).
+   Le cadre coupe le débord horizontal (pas de scroll latéral fantôme), le padding
+   garde la place des outlines de focus. */
+.etapeCadre { overflow-x: clip; padding: 8px; margin: -8px; }
+.etape { display: flex; flex-direction: column; gap: 14px; animation: questionEntre 280ms var(--ease-out-expo) backwards; }
 .question { font-family: var(--font-heading); font-size: 1.3rem; font-weight: 700; margin: 0; text-wrap: balance; }
 .choix { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .choix button {
   display: flex; align-items: center; gap: 10px; min-height: 56px; padding: 10px 12px; text-align: left; cursor: pointer;
   border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: var(--radius);
-  font: inherit; font-size: 0.92rem; font-weight: 600; transition: border-color 0.15s ease-out, transform 0.15s ease-out;
+  font: inherit; font-size: 0.92rem; font-weight: 600;
+  /* Press (scale) et lift (translate) : propriétés individuelles, ils se combinent. */
+  transition: border-color var(--dur-fast) ease-out, scale var(--dur-base) var(--ease-spring),
+    translate var(--dur-base) var(--ease-out-expo), box-shadow var(--dur-base) ease-out;
 }
-.choix button:hover { border-color: var(--border-accent); }
-.choix button:active { transform: scale(0.98); }
+.choix button:active { scale: .96; transition-duration: 90ms; }
 .choix button.seul { grid-column: 1 / -1; }
 .choix button.zero { opacity: 0.5; }
-.emoji { font-size: 1.3rem; flex: none; }
-.compte { margin-left: auto; font-size: 0.8rem; font-weight: 700; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.emoji { display: inline-block; font-size: 1.3rem; flex: none; }
+@media (hover: hover) and (pointer: fine) {
+  .choix button:not(.zero):hover { border-color: var(--accent); translate: 0 -2px; box-shadow: 0 6px 18px var(--accent-glow); }
+  .choix button:not(.zero):hover .emoji { animation: wiggle 420ms var(--ease-in-out) 1; }
+}
+.compte {
+  display: inline-block; margin-left: auto; font-size: 0.8rem; font-weight: 700; color: var(--text-muted); font-variant-numeric: tabular-nums;
+  /* Clé = valeur : le chiffre fait un bump quand il change. */
+  animation: rebond 200ms var(--ease-spring);
+}
+.bump { display: inline-block; font-weight: 700; color: var(--text); animation: rebond 200ms var(--ease-spring); }
 .apercu {
   position: sticky; bottom: 0; z-index: 5; margin-inline: -12px; padding: 6px 12px calc(6px + env(safe-area-inset-bottom, 0px));
   background: var(--surface); border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 0;
@@ -53,7 +86,11 @@
 
 /* ── Desktop : l'arbre ── */
 .arbre { display: none; }
-.colonne { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.colonne {
+  display: flex; flex-direction: column; gap: 6px; min-width: 0; border-radius: var(--radius); background-color: transparent;
+  transition: background-color var(--dur-base) var(--ease-in-out), opacity var(--dur-base) var(--ease-in-out);
+}
+.colonne h2 { transition: color var(--dur-base) ease-out; }
 .colonne h2 {
   display: flex; justify-content: space-between; margin: 0 0 2px; font-family: var(--font-body); font-size: 0.66rem;
   font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-muted);
@@ -64,13 +101,27 @@
 .noeud {
   position: relative; display: flex; align-items: center; gap: 7px; padding: 7px 9px; text-align: left; cursor: pointer;
   border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: var(--radius-sm);
-  font: inherit; font-size: 0.8rem; line-height: 1.25; transition: border-color 0.15s ease-out;
+  font: inherit; font-size: 0.8rem; line-height: 1.25;
+  transition: border-color var(--dur-fast) ease-out, background-color var(--dur-fast) ease-out, color var(--dur-fast) ease-out,
+    scale var(--dur-base) var(--ease-spring), translate var(--dur-base) var(--ease-out-expo);
 }
-.noeud:hover { border-color: var(--border-accent); }
+.noeud:active { scale: .96; transition-duration: 90ms; }
+.noeudEmoji { display: inline-block; }
+@media (hover: hover) and (pointer: fine) {
+  .noeud:not(.zero):hover { border-color: var(--border-accent); translate: 2px 0; }
+  .noeud:not(.zero):hover .noeudEmoji { animation: wiggle 420ms var(--ease-in-out) 1; }
+}
 .noeud.zero { opacity: 0.45; }
-.noeud[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-glow); color: var(--accent); font-weight: 700; }
-/* Trait doré vers la colonne suivante : le chemin choisi se lit de gauche à droite. */
-.noeud[aria-pressed="true"]::after { content: ""; position: absolute; right: -13px; top: 50%; width: 12px; height: 2px; background: var(--accent); }
+/* Le pop se joue quand la branche devient choisie (aria-pressed passe à true). */
+.noeud[aria-pressed="true"] {
+  border-color: var(--accent); background: var(--accent-glow); color: var(--accent); font-weight: 700;
+  animation: rebond 260ms var(--ease-spring);
+}
+/* Trait doré vers la colonne suivante : le chemin choisi se lit de gauche à droite (il se dessine). */
+.noeud[aria-pressed="true"]::after {
+  content: ""; position: absolute; right: -13px; top: 50%; width: 12px; height: 2px; background: var(--accent); pointer-events: none;
+  transform-origin: left center; animation: trait 220ms var(--ease-out-expo) 60ms backwards;
+}
 .colonne:last-of-type .noeud[aria-pressed="true"]::after { display: none; }
 .noeud .compte { font-size: 0.68rem; }
 .panneau {
@@ -83,7 +134,8 @@
 /* ── Résultat ── */
 .resultat { display: flex; flex-direction: column; gap: 12px; }
 .resultat h3 { font-family: var(--font-heading); font-size: 1.2rem; margin: 0; text-wrap: balance; }
-.gagnant { border: 1px solid var(--good-border); background: var(--good-bg); border-radius: var(--radius); padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; }
+.gagnantZone { position: relative; }
+.gagnant { animation: pop 420ms var(--ease-spring) backwards; border: 1px solid var(--good-border); background: var(--good-bg); border-radius: var(--radius); padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; }
 .gagnantTete { display: flex; gap: 12px; align-items: flex-start; }
 .gagnant .pastille { min-width: 50px; height: 48px; font-size: 1.25rem; background: var(--bg); }
 .gagnantNom { font-family: var(--font-heading); font-size: 1.1rem; font-weight: 700; line-height: 1.25; }
@@ -94,6 +146,51 @@
   border-radius: var(--radius-sm); padding: 7px 14px; font: inherit; font-weight: 600; font-size: 0.82rem; cursor: pointer;
 }
 .recommencer:hover { color: var(--text); border-color: var(--border-accent); }
+.tourne { display: inline-block; transition: rotate var(--dur-slow) var(--ease-spring); }
+@media (hover: hover) and (pointer: fine) {
+  .recommencer:hover .tourne { rotate: -180deg; }
+}
+
+/* ── Confettis : décoratifs, au-dessus du gagnant, jamais cliquables ── */
+.confettis { position: absolute; inset: 0; z-index: 2; pointer-events: none; overflow: visible; }
+.confettis i {
+  position: absolute; top: 0; width: 6px; height: 10px; border-radius: 2px; opacity: 0;
+  animation: chute 900ms var(--ease-out-expo) forwards;
+}
+
+/* Keyframes LOCALES (les noms globaux pdj-* seraient renommés par CSS Modules). */
+@keyframes pop {
+  0% { opacity: 0; scale: .92; }
+  60% { opacity: 1; scale: 1.04; }
+  100% { opacity: 1; scale: 1; }
+}
+/* Rebond SANS fondu : pour ce qui est déjà visible (nœud choisi, compteurs qui changent). */
+@keyframes rebond {
+  0% { scale: .92; }
+  60% { scale: 1.06; }
+  100% { scale: 1; }
+}
+@keyframes wiggle {
+  0%, 100% { rotate: 0deg; }
+  25% { rotate: -8deg; }
+  75% { rotate: 8deg; }
+}
+@keyframes questionEntre {
+  from { opacity: 0; translate: calc(var(--sens, 1) * 28px) 0; }
+}
+@keyframes trait {
+  from { scale: 0 1; }
+  to { scale: 1 1; }
+}
+@keyframes flash {
+  0% { box-shadow: 0 0 0 0 var(--accent-glow); }
+  40% { box-shadow: 0 0 0 3px var(--accent-glow), 0 0 10px var(--accent-glow); }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+@keyframes chute {
+  from { translate: 0 -10px; rotate: 0deg; opacity: 1; }
+  to { translate: var(--cx, 0) var(--cy, 120px); rotate: var(--cr, 360deg); opacity: 0; }
+}
 
 @media (min-width: 1000px) {
   .mobile { display: none; }
@@ -105,5 +202,10 @@
   .root { width: min(1180px, calc(100vw - 64px)); margin-inline: calc(50% - min(590px, 50vw - 32px)); }
 }
 @media (prefers-reduced-motion: reduce) {
-  .choix button, .progression i, .noeud { transition: none; }
+  .choix button, .progression i, .progression i::before, .noeud, .noeud::after, .fil button, .fil button::after,
+  .colonne, .colonne h2, .tourne { transition: none; }
+  .etape, .choix button, .compte, .bump, .fil button, .noeud[aria-pressed="true"], .noeud[aria-pressed="true"]::after,
+  .progression i.fait, .gagnant { animation: none; }
+  .choix button:hover, .noeud:hover { translate: none; }
+  .confettis { display: none; }
 }

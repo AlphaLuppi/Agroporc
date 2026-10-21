@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import type { Carte, CartePlat } from "@/lib/db";
 import { noteMode, trierCarte, type Mode } from "@/lib/carte-tri";
 import { casseLisible } from "@/lib/menus-vue";
 import MacrosPanel from "../MacrosPanel";
-import { couleur, fmtNote, fmtPrix } from "./ui";
+import { rangStagger } from "@/lib/motion-menus";
+import { couleur, fmtPrix, NoteAnimee } from "./ui";
 import styles from "./menus.module.css";
 
 /** Cartes déjà chargées pendant la visite : un seul fetch par resto, retentable en cas d'échec. */
@@ -34,7 +35,9 @@ function PlatCarte({ p, mode }: { p: CartePlat; mode: Mode }) {
       <button type="button" aria-expanded={ouvert} onClick={() => setOuvert((o) => !o)}>
         <span className={styles.platNom}>{casseLisible(p.plat)}</span>
         <span className={styles.platPrix}>{fmtPrix(p.prix)}</span>
-        <span className={`${styles.platNote} ${couleur(note)}`}>{fmtNote(note)}</span>
+        <span className={`${styles.platNote} ${couleur(note)}`}>
+          <NoteAnimee note={note} />
+        </span>
       </button>
       {ouvert && (
         <div className={styles.platDetail}>
@@ -62,7 +65,21 @@ export default function CarteVue({ slug, mode }: { slug: string; mode: Mode }) {
     };
   }, [slug]);
 
-  if (carte === undefined) return <p className={styles.vide}>Chargement de la carte…</p>;
+  if (carte === undefined) {
+    return (
+      <div className={styles.carte} aria-busy="true">
+        <p className="sr-only" aria-live="polite">Chargement de la carte…</p>
+        {[5, 3, 4, 2].map((n, s) => (
+          <div key={s} className={styles.squelette} aria-hidden="true">
+            <span className={styles.squeletteTitre} />
+            {Array.from({ length: n }, (_, i) => (
+              <span key={i} className={styles.squeletteLigne} style={{ "--w": `${88 - ((i * 17 + s * 11) % 34)}%` } as CSSProperties} />
+            ))}
+          </div>
+        ))}
+      </div>
+    );
+  }
   if (carte === null) return <p className={styles.vide}>Carte indisponible pour le moment.</p>;
 
   const noteeLe = carte.evaluated_at
@@ -72,8 +89,8 @@ export default function CarteVue({ slug, mode }: { slug: string; mode: Mode }) {
   return (
     <>
       <div className={styles.carte}>
-        {trierCarte(carte, mode).map((sec) => (
-          <section key={sec.nom} className={styles.section}>
+        {trierCarte(carte, mode).map((sec, i) => (
+          <section key={sec.nom} className={styles.section} style={{ "--i": rangStagger(i) } as CSSProperties}>
             <h2>
               {casseLisible(sec.nom)}
               <span>{sec.plats.length}</span>

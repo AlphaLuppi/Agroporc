@@ -32,7 +32,7 @@ export default function RootLayout({
         />
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){var t=localStorage.getItem('pdj-theme')||'normal';document.documentElement.setAttribute('data-theme',t)})()`,
+            __html: `(function(){var d=document.documentElement,t=localStorage.getItem('pdj-theme')||'normal';d.setAttribute('data-theme',t);addEventListener('load',function(){setTimeout(function(){d.setAttribute('data-pdj-pret','')},120)})})()`,
           }}
         />
       </head>
@@ -40,7 +40,7 @@ export default function RootLayout({
         <nav className="sticky top-0 z-50 border-b border-[var(--border)] backdrop-blur-xl" style={{ background: "var(--nav-bg)" }}>
           <div className="mx-auto flex h-16 max-w-[1180px] items-center justify-between gap-4 px-4 sm:px-8">
             <div className="nav-left flex items-center gap-4 sm:gap-6 lg:gap-10 min-w-0">
-              <a href="/" className="flex items-center gap-2 text-lg sm:text-xl font-bold text-[var(--accent)] no-underline tracking-wide shrink-0" style={{ fontFamily: "var(--font-heading)" }}>
+              <a href="/" className="pdj-logo flex items-center gap-2 text-lg sm:text-xl font-bold text-[var(--accent)] no-underline tracking-wide shrink-0" style={{ fontFamily: "var(--font-heading)" }}>
                 <img src="/logo.jpg" alt="Logo Plats du Jour" className="w-8 h-8 sm:w-9 sm:h-9 rounded-full object-cover" />
                 <span>Agroporc</span>
               </a>
@@ -421,8 +421,8 @@ export default function RootLayout({
             </button>
           </div>
         </div>
-        <div className="relative z-[2] mx-auto max-w-[860px] px-3 py-5 sm:px-6 sm:py-10">{children}</div>
-        <div className="relative z-[1] text-center text-[var(--text-muted)] text-xs py-8 px-4 border-t border-[var(--border)] mt-8 flex flex-col items-center gap-3">
+        <div className="pdj-page relative z-[2] mx-auto max-w-[860px] px-3 py-5 sm:px-6 sm:py-10">{children}</div>
+        <div className="pdj-page-pied relative z-[1] text-center text-[var(--text-muted)] text-xs py-8 px-4 border-t border-[var(--border)] mt-8 flex flex-col items-center gap-3">
           <div>Plats du Jour &mdash; Mis à jour automatiquement chaque matin</div>
           <a
             href="https://github.com/ThomasSatory/Agroporc"

@@ -1,16 +1,52 @@
 /* Accueil : vues Jour / Semaine / La carte. Couleurs = variables du thème actif (normal / tigre / terrasse). */
 
+/*
+ * Motion « Service de midi » : press (scale), pastilles qui glissent (::before + translate), pop
+ * des notes. Uniquement translate / scale / rotate individuels (press = scale, tilt = transform :
+ * ils se composent ; le lift du survol et le FLIP partagent `translate`, le FLIP part donc du
+ * translate courant), opacity, et quelques couleurs. Les keyframes sont locales au module (les noms
+ * d'animation sont localisés par CSS Modules). Tokens globaux avec repli si absents.
+ */
+.root, .voile, .panneau {
+  --m-spring: var(--ease-spring, cubic-bezier(.34, 1.56, .64, 1));
+  --m-expo: var(--ease-out-expo, cubic-bezier(.16, 1, .3, 1));
+  --m-inout: var(--ease-in-out, cubic-bezier(.65, 0, .35, 1));
+  --m-fast: var(--dur-fast, 140ms);
+  --m-base: var(--dur-base, 220ms);
+  --m-slow: var(--dur-slow, 380ms);
+}
+
 .root { display: flex; flex-direction: column; gap: 14px; }
 
+/* Entrées : montée + fondu, stagger 35 ms par rang (rang plafonné côté JS). Fill backwards : aucun translate résiduel. */
+.entre, .vueEntre { animation: monter var(--m-slow) var(--m-expo) backwards; animation-delay: calc(var(--i, 0) * 35ms); }
+/* Entrée jouée : un déplacement DOM (tri) ne doit pas la rejouer. */
+.entre[data-vu] { animation: none; }
+.pile { display: flex; flex-direction: column; gap: 14px; }
+/* Changement de jour : slide directionnel (--dx / --dy posés par MenusClient), rogné horizontalement. */
+.jourCadre { overflow-x: clip; margin-inline: -12px; padding-inline: 12px; }
+.jourEntre { animation: jourGlisse 260ms var(--m-expo) backwards; }
+.fondu { animation: fondu 180ms ease-out; }
+
 /* ── En-tête ── */
-.vues { display: flex; gap: 3px; padding: 3px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+.vues { position: relative; isolation: isolate; display: flex; gap: 3px; padding: 3px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
 .vues button {
   flex: 1; border: 0; background: none; border-radius: calc(var(--radius) - 4px); padding: 8px 10px;
   color: var(--text-muted); font: inherit; font-weight: 600; font-size: 0.9rem; cursor: pointer;
-  transition: background-color 0.15s ease-out, color 0.15s ease-out;
+  transition: color var(--m-fast) ease-out 40ms, scale var(--m-base) var(--m-spring);
 }
 .vues button:hover { color: var(--text); }
-.vues button[aria-pressed="true"] { background: var(--accent); color: var(--accent-text); }
+.vues button[aria-pressed="true"] { color: var(--accent-text); }
+
+/* Pastille glissante unique (vues, jours, mode) : --idx = bouton choisi, --n = nombre de boutons. */
+.vues::before, .jours::before, .mode::before {
+  content: ""; position: absolute; top: 3px; bottom: 3px; left: 3px; z-index: -1; pointer-events: none;
+  width: calc((100% - 6px - (var(--n, 2) - 1) * 3px) / var(--n, 2));
+  translate: calc(var(--idx, 0) * (100% + 3px)) 0;
+  background: var(--accent); border-radius: calc(var(--radius) - 4px);
+  box-shadow: 0 2px 10px var(--accent-glow);
+}
+.vues[data-pret]::before, .jours[data-pret]::before { transition: translate var(--m-base) var(--m-spring); }
 .titre { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
 .titre h1 { font-family: var(--font-heading); font-weight: 700; font-size: 1.3rem; line-height: 1.15; margin: 0; text-wrap: balance; }
 .titre h1.titreResto { display: flex; align-items: center; gap: 10px; }
@@ -24,25 +60,40 @@
 .semaineNav a.auj { width: auto; padding: 0 10px; color: var(--accent); font-weight: 600; }
 .semaineNav svg { width: 15px; height: 15px; }
 
-.mode { display: flex; gap: 2px; padding: 3px; background: var(--surface); border: 1px solid var(--border); border-radius: 999px; flex: none; }
-.mode button {
-  border: 0; background: none; border-radius: 999px; padding: 6px 12px; display: flex; align-items: center; gap: 6px;
-  color: var(--text-muted); font: inherit; font-weight: 600; font-size: 0.82rem; cursor: pointer; min-height: 34px;
-  transition: background-color 0.15s ease-out, color 0.15s ease-out;
+/* Grille 1fr 1fr : deux boutons de même largeur, la pastille glisse sans mesure JS. */
+.mode {
+  position: relative; isolation: isolate; display: grid; grid-template-columns: 1fr 1fr; gap: 2px; padding: 3px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 999px; flex: none;
 }
-.mode button[aria-pressed="true"] { background: var(--accent); color: var(--accent-text); }
+.mode::before { width: calc((100% - 8px) / 2); translate: calc(var(--idx, 0) * (100% + 2px)) 0; border-radius: 999px; }
+.mode[data-mode="goulaf"]::before { background: color-mix(in srgb, var(--accent) 70%, var(--bad)); }
+.mode[data-pret]::before { transition: translate var(--m-base) var(--m-spring), background-color var(--m-base) ease-out; }
+.mode button {
+  border: 0; background: none; border-radius: 999px; padding: 6px 12px; display: flex; align-items: center; justify-content: center; gap: 6px;
+  color: var(--text-muted); font: inherit; font-weight: 600; font-size: 0.82rem; cursor: pointer; min-height: 34px;
+  transition: color var(--m-fast) ease-out 40ms, scale var(--m-base) var(--m-spring);
+}
+.mode button:hover { color: var(--text); }
+.mode button[aria-pressed="true"] { color: var(--accent-text); }
 .mode svg { width: 16px; height: 16px; }
 
-.jours { display: flex; gap: 3px; padding: 3px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); flex: 1; min-width: 0; }
+.jours { position: relative; isolation: isolate; display: flex; gap: 3px; padding: 3px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); flex: 1; min-width: 0; }
+.jours::before { border-radius: calc(var(--radius) - 5px); }
 .jours button {
   flex: 1; min-width: 0; border: 0; background: none; border-radius: calc(var(--radius) - 5px); padding: 4px 0 5px;
   display: flex; flex-direction: column; align-items: center; gap: 1px; color: var(--text-muted); font: inherit; cursor: pointer;
+  transition: color var(--m-fast) ease-out 40ms, scale var(--m-base) var(--m-spring);
 }
 .jours small { font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; }
 .jours b { font-size: 0.95rem; line-height: 1; }
-.jours button[aria-pressed="true"] { background: var(--accent); color: var(--accent-text); }
+.jours button[aria-pressed="true"] { color: var(--accent-text); }
 .jours button.auj:not([aria-pressed="true"]) { color: var(--accent); }
-.point { width: 6px; height: 6px; border-radius: 50%; margin-top: 3px; background: var(--border); }
+.point {
+  width: 6px; height: 6px; border-radius: 50%; margin-top: 3px; background: var(--border);
+  transition: background-color var(--m-base) ease-out, color var(--m-base) ease-out;
+}
+/* Aujourd'hui : le point pulse une fois à l'apparition (todayPulse, infinie, reste réservée à la V1). */
+.jours button.auj .point { animation: pointPulse 380ms var(--m-spring) 250ms backwards; }
 
 /* Barre jours + mode : collée en bas de l'écran sur mobile (à portée du pouce), sous le titre sur desktop. */
 .dock {
@@ -60,6 +111,7 @@
   display: inline-flex; align-items: center; justify-content: center; gap: 1px; flex: none;
   min-width: 40px; height: 38px; padding: 0 6px; border-radius: var(--radius-sm); border: 1px solid currentColor;
   font-weight: 800; font-size: 1rem; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; background: var(--surface);
+  transition: color var(--m-base) ease-out, background-color var(--m-base) ease-out;
 }
 .pastille small { font-size: 0.58em; opacity: 0.65; font-weight: 600; align-self: flex-end; margin-bottom: 0.55em; }
 .pastille.good { background: var(--good-bg); } .pastille.ok { background: var(--ok-bg); } .pastille.bad { background: var(--bad-bg); }
@@ -68,10 +120,34 @@
 .meta b { color: var(--accent); font-weight: 700; }
 
 /* ── Vue Jour ── */
-.grille { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; grid-auto-flow: dense; align-content: start; }
+/* position: relative = offsetParent des tuiles (mesures FLIP insensibles aux translate en cours). */
+.grille { position: relative; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; grid-auto-flow: dense; align-content: start; }
 .hero {
   grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-start; text-align: left; cursor: pointer;
-  --pad-y: 12px; --pad-x: 14px; padding: var(--pad-y) var(--pad-x); overflow: hidden; border-radius: var(--radius); border: 1px solid var(--good-border); background: var(--good-bg); color: var(--text); font: inherit;
+  --pad-y: 12px; --pad-x: 14px; padding: var(--pad-y) var(--pad-x); border-radius: var(--radius); border: 1px solid var(--good-border); background: var(--good-bg); color: var(--text); font: inherit;
+  position: relative; overflow: hidden; isolation: isolate;
+  transition: border-color var(--m-fast) ease-out, box-shadow var(--m-fast) ease-out, translate var(--m-fast) var(--m-expo),
+    scale var(--m-base) var(--m-spring), transform var(--m-base) var(--m-expo);
+}
+/* Halo qui suit la souris (--mx / --my posés en JS, souris seulement). */
+.hero::before {
+  content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none; opacity: 0;
+  background: radial-gradient(360px circle at var(--mx, 50%) var(--my, 0%), color-mix(in srgb, var(--good) 22%, transparent), transparent 65%);
+  transition: opacity var(--m-base) ease-out;
+}
+/* Ripple de sélection : part du point touché (--px / --py), purement visuel. */
+.hero::after, .tuile::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none; opacity: 0; border-radius: inherit;
+  background: radial-gradient(circle at var(--px, 50%) var(--py, 50%), color-mix(in srgb, var(--accent) 38%, transparent) 0, transparent 60%);
+  transform-origin: var(--px, 50%) var(--py, 50%);
+}
+.hero[data-ripple]::after, .tuile[data-ripple]::after { animation: ripple 380ms var(--m-expo); }
+/* La reco reçoit un balayage de brillance, une seule fois à l'apparition. */
+.hero .tagReco { position: relative; overflow: hidden; }
+.hero .tagReco::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none; translate: -120% 0;
+  background: linear-gradient(100deg, transparent 15%, rgba(255, 255, 255, 0.55) 50%, transparent 85%);
+  animation: brillance 900ms ease-in-out 200ms;
 }
 .hero .pastille { min-width: 52px; height: 52px; font-size: 1.3rem; background: var(--bg); }
 .heroTexte { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1 1 0; }
@@ -80,14 +156,21 @@
 .macrosLigne { display: flex; flex-wrap: wrap; gap: 2px 12px; font-size: 0.75rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
 .macrosLigne b { color: var(--text); font-weight: 600; }
 .tuile {
-  display: flex; flex-direction: column; gap: 5px; text-align: left; cursor: pointer; min-width: 0; overflow: hidden;
+  display: flex; flex-direction: column; gap: 5px; text-align: left; cursor: pointer; min-width: 0;
   --pad-y: 10px; --pad-x: 12px; padding: var(--pad-y) var(--pad-x); border-radius: var(--radius); border: 1px solid var(--border); background: var(--surface); color: var(--text); font: inherit;
   background-image: var(--card-stripe);
-  transition: border-color 0.15s ease-out;
+  position: relative; overflow: hidden; isolation: isolate;
+  transition: border-color var(--m-fast) ease-out, box-shadow var(--m-fast) ease-out, translate var(--m-fast) var(--m-expo),
+    scale var(--m-base) var(--m-spring);
 }
 .tuile:hover, .hero:hover { border-color: var(--border-accent); }
+@media (hover: hover) and (pointer: fine) {
+  .tuile:hover, .hero:hover { translate: 0 -2px; box-shadow: var(--shadow); }
+  .hero:hover::before { opacity: 1; }
+  .hero { transform: perspective(800px) rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg)); }
+}
 .tuileHaut { display: flex; justify-content: space-between; align-items: center; gap: 6px; min-width: 0; }
-.grosseNote { font-size: 1.45rem; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; flex: none; }
+.grosseNote { font-size: 1.45rem; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; flex: none; transition: color var(--m-base) ease-out; }
 .grosseNote small { font-size: 0.55em; opacity: 0.6; }
 .nom { font-size: 0.88rem; font-weight: 600; line-height: 1.3; overflow-wrap: break-word; }
 .tuile .meta { margin-top: auto; }
@@ -110,6 +193,7 @@
   display: inline-flex; align-items: center; gap: 0.3em;
   border: 1px dashed var(--border); background: none; border-radius: 999px; padding: 6px 12px; min-height: 36px; color: var(--text-secondary);
   font: inherit; font-size: 0.8rem; cursor: pointer;
+  transition: border-color var(--m-fast) ease-out, color var(--m-fast) ease-out, scale var(--m-base) var(--m-spring);
 }
 .puces button:hover { border-color: var(--border-accent); color: var(--text); }
 .message { padding: 28px 20px; text-align: center; border-radius: var(--radius); border: 1px solid var(--bad-border); background: var(--bad-bg); color: var(--bad); }
@@ -139,15 +223,27 @@
 .table { display: none; }
 .chaleur { display: flex; flex-direction: column; gap: 8px; }
 .chaleurGrille { display: grid; grid-template-columns: 96px repeat(5, minmax(0, 1fr)); gap: 3px; align-items: center; font-size: 0.75rem; color: var(--text-muted); }
-.chaleurGrille .tete { text-align: center; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 700; padding: 4px 0; min-height: 36px; border-radius: 6px; border: 0; background: none; color: inherit; font-family: inherit; font-size: inherit; cursor: pointer; }
+.chaleurGrille .tete {
+  text-align: center; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 700; padding: 4px 0; min-height: 36px; border-radius: 6px; border: 0;
+  background: none; color: inherit; font-family: inherit; font-size: inherit; cursor: pointer;
+  transition: background-color var(--m-base) ease-out, color var(--m-fast) ease-out, scale var(--m-base) var(--m-spring);
+}
 /* Jour sur une ligne, numéro dessous : même hauteur pour toutes les colonnes, rien ne passe à la ligne au hasard. */
 .chaleurGrille .tete { line-height: 1.15; }
 .chaleurGrille .tete b { display: block; font-size: 0.95rem; letter-spacing: 0; }
-.chaleurGrille .tete[aria-pressed="true"] { background: var(--accent); color: var(--accent-text); }
+.chaleurGrille .tete[aria-pressed="true"] { background: var(--accent); color: var(--accent-text); animation: pop 260ms var(--m-spring); }
 .chaleurGrille .ligneNom { font-weight: 600; color: var(--text-secondary); }
-.case { height: 24px; border-radius: 4px; border: 0; padding: 0; cursor: pointer; background: var(--border); opacity: 0.85; }
+/* Carte de chaleur : entrée en vague diagonale (--i = ligne + colonne) et re-coloration en vague au changement de mode. */
+.case {
+  --d: min(calc(var(--i, 0) * 30ms), 300ms);
+  height: 24px; border-radius: 4px; border: 0; padding: 0; cursor: pointer; background: var(--border); opacity: 0.85;
+  outline: 1.5px solid transparent; outline-offset: 1px;
+  transition: background-color var(--m-base) ease var(--d), outline-color var(--m-base) ease-out, opacity var(--m-base) ease-out,
+    scale var(--m-base) var(--m-spring);
+  animation: caseVague 380ms var(--m-spring) backwards; animation-delay: var(--d);
+}
 .case.good { background: var(--good); } .case.ok { background: var(--ok); } .case.bad { background: var(--bad); }
-.case.colonne { outline: 1.5px solid var(--accent); outline-offset: 1px; opacity: 1; }
+.case.colonne { outline-color: var(--accent); opacity: 1; }
 .pages { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; margin-inline: -12px; }
 .pages::-webkit-scrollbar { display: none; }
 .page { flex: 0 0 100%; scroll-snap-align: start; padding-inline: 12px; min-width: 0; }
@@ -156,7 +252,10 @@
 .ligne {
   display: flex; gap: 11px; width: 100%; padding: 10px 2px; align-items: flex-start; text-align: left; cursor: pointer;
   border: 0; border-bottom: 1px solid var(--border); background: none; color: var(--text); font: inherit;
+  transition: background-color var(--m-fast) ease-out, scale var(--m-base) var(--m-spring);
 }
+/* Page du swipe qui devient active : le contenu « se pose » (jamais de translate sur .page / .pages, scroll-snap oblige). */
+.pageActive h2, .pageActive .ligne { animation: installe 300ms var(--m-expo) backwards; animation-delay: calc(var(--i, 0) * 35ms); }
 .ligne:hover { background: var(--surface); }
 .ligneTexte { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
 .vide { color: var(--text-muted); font-style: italic; font-size: 0.85rem; padding: 14px 2px; }
@@ -171,10 +270,22 @@
 .restos button {
   border: 1px solid var(--border); background: var(--surface); color: var(--text-secondary); border-radius: 999px;
   padding: 6px 13px; font: inherit; font-size: 0.82rem; font-weight: 600; white-space: nowrap; cursor: pointer;
+  transition: border-color var(--m-fast) ease-out, color var(--m-fast) ease-out, background-color var(--m-fast) ease-out, scale var(--m-base) var(--m-spring);
 }
-.restos button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: var(--accent-glow); }
+.restos button:hover { color: var(--text); border-color: var(--border-accent); }
+.restos button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: var(--accent-glow); animation: pop 260ms var(--m-spring); }
 .carte { columns: 1; column-gap: 32px; }
-.section { break-inside: avoid; margin-bottom: 14px; }
+.section { break-inside: avoid; margin-bottom: 14px; animation: monter var(--m-slow) var(--m-expo) backwards; animation-delay: calc(var(--i, 0) * 35ms); }
+/* Squelettes de chargement : balayage discret (nombre d'itérations limité). */
+.squelette { break-inside: avoid; margin-bottom: 18px; display: flex; flex-direction: column; gap: 9px; padding-top: 4px; }
+.squeletteTitre, .squeletteLigne { display: block; position: relative; overflow: hidden; border-radius: 5px; background: var(--surface); }
+.squeletteTitre { width: 36%; height: 9px; background: var(--border); }
+.squeletteLigne { width: var(--w, 80%); height: 15px; border: 1px solid var(--border); }
+.squeletteTitre::after, .squeletteLigne::after {
+  content: ""; position: absolute; inset: 0; translate: -100% 0; pointer-events: none;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--text) 9%, transparent), transparent);
+  animation: brillance 1100ms ease-in-out 6;
+}
 .section h2 {
   display: flex; justify-content: space-between; margin: 0 0 2px; font-family: var(--font-body); font-size: 0.68rem;
   font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent);
@@ -184,24 +295,44 @@
 .plat > button {
   display: flex; gap: 10px; align-items: baseline; width: 100%; padding: 8px 0; border: 0; background: none;
   color: var(--text); font: inherit; font-size: 0.88rem; text-align: left; cursor: pointer;
+  transition: scale var(--m-base) var(--m-spring);
 }
+/* Chevron implicite : ▸ qui pivote quand le plat est déplié. */
+.plat > button::before {
+  content: "▸"; flex: none; width: 1ch; margin-right: -4px; font-size: 0.72rem; color: var(--text-muted);
+  transition: rotate var(--m-fast) var(--m-spring), color var(--m-fast) ease-out;
+}
+.plat > button[aria-expanded="true"]::before { rotate: 90deg; color: var(--accent); }
 .plat > button:hover .platNom { color: var(--accent); }
+.platNom { transition: color var(--m-fast) ease-out; }
 .platNom { flex: 1; min-width: 0; line-height: 1.35; }
 .platPrix { font-size: 0.78rem; color: var(--text-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
-.platNote { font-weight: 800; min-width: 3ch; text-align: right; font-variant-numeric: tabular-nums; }
-.platDetail { padding: 0 0 12px; display: flex; flex-direction: column; gap: 8px; }
+.platNote { font-weight: 800; min-width: 3ch; text-align: right; font-variant-numeric: tabular-nums; transition: color var(--m-base) ease-out; }
+.platDetail { padding: 0 0 12px; display: flex; flex-direction: column; gap: 8px; animation: monter 200ms var(--m-expo) backwards; }
 .texte { font-size: 0.85rem; color: var(--text-secondary); line-height: 1.55; margin: 0; }
 
 /* ── Panneau de détail : feuille du bas sur mobile, panneau latéral sur desktop ── */
-.voile { position: fixed; inset: 0; z-index: 90; background: rgba(0, 0, 0, 0.5); animation: fondu 0.2s ease-out; }
+.voile {
+  position: fixed; inset: 0; z-index: 90; background: rgba(0, 0, 0, 0.5); animation: fondu 200ms ease-out;
+  backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
+}
+/* Sortie : le voile s'efface et ne bloque plus aucun clic. */
+.voile[data-sortie] { animation: effacer 200ms var(--m-inout) forwards; pointer-events: none; }
 .panneau {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 91; max-height: 88dvh; overflow-y: auto; overscroll-behavior: contain;
   background: var(--surface); color: var(--text); border-top: 1px solid var(--border-accent); border-radius: var(--radius) var(--radius) 0 0;
   padding: 10px 18px calc(20px + env(safe-area-inset-bottom, 0px)); display: flex; flex-direction: column; gap: 14px;
-  box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.45); animation: monte 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+  /* 2e ombre : prolonge la feuille vers le bas pendant le rebond (sinon un jour apparaît sous elle). */
+  box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.45), 0 60px 0 0 var(--surface);
+  animation: monte 380ms cubic-bezier(.34, 1.3, .64, 1);
 }
+.panneau[data-sortie] { animation: descendre 200ms var(--m-inout) forwards; }
 .panneau:focus { outline: none; }
-.poignee { width: 40px; height: 4px; border-radius: 2px; background: var(--border-accent); margin: 0 auto; flex: none; }
+/* Cascade du contenu : rang 0 à 4, départ à 80 ms. */
+.cascade { animation: monter var(--m-slow) var(--m-expo) backwards; animation-delay: calc(80ms + var(--i, 0) * 35ms); }
+.poignee { position: relative; width: 40px; height: 4px; border-radius: 2px; background: var(--border-accent); margin: 0 auto; flex: none; }
+/* Zone de prise agrandie (44 px) pour le glisser-pour-fermer. */
+.poignee::before { content: ""; position: absolute; left: -48px; right: -48px; top: -20px; bottom: -20px; }
 .panneauTete { display: flex; gap: 12px; align-items: flex-start; }
 .panneauTete .pastille { min-width: 54px; height: 54px; font-size: 1.35rem; }
 .panneauTexte { min-width: 0; flex: 1; }
@@ -213,18 +344,75 @@
   flex: none; width: 40px; height: 40px; border-radius: var(--radius-sm); border: 1px solid var(--border);
   background: var(--surface-hover); color: var(--text-secondary); cursor: pointer; display: grid; place-items: center;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+  transition: color var(--m-fast) ease-out, border-color var(--m-fast) ease-out, scale var(--m-base) var(--m-spring);
 }
 .panneauTete { padding-right: 48px; }
-.fermer svg { width: 16px; height: 16px; }
+.fermer svg { width: 16px; height: 16px; transition: rotate var(--m-base) var(--m-spring); }
+.fermer:hover { color: var(--text); border-color: var(--border-accent); }
+@media (hover: hover) and (pointer: fine) {
+  .fermer:hover svg { rotate: 90deg; }
+}
 .autreMode { font-size: 0.75rem; color: var(--text-muted); }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; }
 .bouton {
   border: 1px solid var(--accent); background: var(--accent-glow); color: var(--accent); border-radius: var(--radius-sm);
   padding: 7px 14px; font: inherit; font-weight: 600; font-size: 0.82rem; cursor: pointer;
+  transition: scale var(--m-base) var(--m-spring), box-shadow var(--m-fast) ease-out;
 }
+@media (hover: hover) and (pointer: fine) {
+  .bouton:hover { box-shadow: 0 0 0 3px var(--accent-glow); }
+}
+/* « Ajouter » : la gerbe vit dans un frère du bouton (ClientScripts réécrit le texte du bouton). */
+.ajouter { position: relative; display: inline-flex; }
+.etincelles { position: absolute; left: 50%; top: 50%; width: 0; height: 0; pointer-events: none; }
+.etincelles i { position: absolute; left: -3px; top: -3px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: etincelle 450ms var(--m-expo) forwards; }
+.etincelles i:nth-child(even) { background: var(--good); width: 5px; height: 5px; }
+
+/* ── Press : tout ce qui se clique s'écrase puis rebondit (scale seul : se compose avec translate et tilt). ── */
+.vues button:active, .jours button:active, .mode button:active, .tuile:active, .hero:active, .ligne:active, .puces button:active,
+.plat > button:active, .bouton:active, .restos button:active, .fermer:active, .tete:active, .case:active {
+  scale: 0.96;
+}
+
+/* ── Focus clavier : toujours visible, indépendant des pastilles. ── */
+.vues button:focus-visible, .jours button:focus-visible, .mode button:focus-visible, .tuile:focus-visible, .hero:focus-visible,
+.puces button:focus-visible, .plat > button:focus-visible, .bouton:focus-visible, .restos button:focus-visible, .fermer:focus-visible,
+.tete:focus-visible, .case:focus-visible, .semaineNav a:focus-visible, .th:focus-visible, .cellule button:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+.ligne:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
 @keyframes fondu { from { opacity: 0; } }
-@keyframes monte { from { transform: translateY(100%); } }
-@keyframes glisse { from { transform: translateX(100%); } }
+@keyframes effacer { to { opacity: 0; } }
+@keyframes monte { from { translate: 0 100%; } }
+@keyframes glisse { from { translate: 100% 0; } }
+@keyframes descendre { to { translate: 0 100%; } }
+@keyframes sortirDroite { to { translate: 100% 0; } }
+@keyframes monter { from { opacity: 0; translate: 0 8px; } }
+@keyframes installe { from { opacity: 0.5; translate: 0 6px; } }
+@keyframes jourGlisse { from { opacity: 0; translate: var(--dx, 0px) var(--dy, 8px); } }
+@keyframes pop { 0% { scale: 0.92; } 60% { scale: 1.06; } 100% { scale: 1; } }
+@keyframes ripple { from { opacity: 1; scale: 0.2; } to { opacity: 0; scale: 1.6; } }
+@keyframes brillance { from { translate: -120% 0; } to { translate: 120% 0; } }
+@keyframes caseVague { from { opacity: 0; scale: 0.4; } }
+@keyframes pointPulse {
+  0% { scale: 1; box-shadow: 0 0 0 0 currentColor; }
+  50% { scale: 1.9; }
+  100% { scale: 1; box-shadow: 0 0 0 7px transparent; }
+}
+@keyframes etincelle {
+  from { translate: 0 0; scale: 1; opacity: 1; }
+  to { translate: var(--x) var(--y); scale: 0.2; opacity: 0; }
+}
+@keyframes anneauA {
+  0%, 100% { box-shadow: 0 0 0 2px var(--bg), 0 0 0 3.5px currentColor; }
+  50% { box-shadow: 0 0 0 2px var(--bg), 0 0 0 7px color-mix(in srgb, currentColor 35%, transparent); }
+}
+/* Copie d'anneauA : changer de nom au changement de mode rejoue le pulse. */
+@keyframes anneauB {
+  0%, 100% { box-shadow: 0 0 0 2px var(--bg), 0 0 0 3.5px currentColor; }
+  50% { box-shadow: 0 0 0 2px var(--bg), 0 0 0 7px color-mix(in srgb, currentColor 35%, transparent); }
+}
 
 @media (min-width: 768px) {
   .titre h1 { font-size: 1.75rem; }
@@ -249,8 +437,10 @@
   .carte { columns: 2; }
   .panneau {
     left: auto; top: 0; width: min(460px, 100vw); max-height: none; border-top: 0; border-left: 1px solid var(--border-accent);
-    border-radius: 0; padding: 22px 24px; animation-name: glisse;
+    border-radius: 0; padding: 22px 24px; animation: glisse 320ms var(--m-expo);
+    box-shadow: -12px 0 40px rgba(0, 0, 0, 0.45);
   }
+  .panneau[data-sortie] { animation: sortirDroite 200ms var(--m-inout) forwards; }
   .poignee { display: none; }
 }
 
@@ -266,6 +456,14 @@
     border-top: 0; border-left: 0; font-family: inherit; cursor: pointer; text-align: left;
   }
   .th:hover { color: var(--text); }
+  .table .th, .table .cellule { animation: monter var(--m-slow) var(--m-expo) backwards; animation-delay: calc(var(--i, 0) * 35ms); }
+  /* En-tête de jour : soulignement accent qui part du centre. */
+  button.th { position: relative; transition: color var(--m-fast) ease-out; }
+  button.th::after {
+    content: ""; position: absolute; left: 10px; right: 10px; bottom: -1px; height: 2px; border-radius: 2px; pointer-events: none;
+    background: var(--accent); scale: 0 1; transition: scale var(--m-base) var(--m-expo);
+  }
+  button.th:hover::after, button.th:focus-visible::after { scale: 1 1; }
   .th.auj { color: var(--accent); }
   .rh {
     background: var(--surface); font-weight: 600; font-size: 0.82rem; line-height: 1.3; color: var(--text-secondary);
@@ -279,14 +477,46 @@
     display: flex; gap: 8px; align-items: flex-start; border: 0; background: none; padding: 0; text-align: left; cursor: pointer;
     color: var(--text); font: inherit; font-size: 0.8rem; line-height: 1.3;
   }
-  .cellule button:hover span:last-child { color: var(--accent); }
+  .cellule button span:last-child { transition: color var(--m-fast) ease-out, translate var(--m-fast) var(--m-expo); }
+  .cellule button:hover span:last-child { color: var(--accent); translate: 2px 0; }
   .cellule .pastille { min-width: 32px; height: 26px; font-size: 0.8rem; padding: 0 4px; }
-  .cellule .meilleure .pastille { box-shadow: 0 0 0 2px var(--bg), 0 0 0 3.5px currentColor; }
+  .cellule .meilleure .pastille { box-shadow: 0 0 0 2px var(--bg), 0 0 0 3.5px currentColor; animation: anneauA 520ms ease-in-out 2; }
+  .table[data-mode="goulaf"] .meilleure .pastille { animation-name: anneauB; }
   .celluleVide { color: var(--text-muted); font-style: italic; font-size: 0.78rem; }
 }
 
+/* Le glisser-pour-fermer ne capte les gestes que sur la poignée et l'en-tête (le contenu garde son scroll). */
+@media (max-width: 767px) {
+  .poignee, .panneauTete { touch-action: none; }
+}
+
+/*
+ * Mouvement réduit : aucun translate / scale / rotate, pastilles sans glissade, pas de vague ni de
+ * pulse. On garde au plus des fondus d'opacité courts (≤ 120 ms) pour les entrées de vue et de panneau.
+ */
 @media (prefers-reduced-motion: reduce) {
-  .voile, .panneau, .photo[data-etat="charge"] .photoFond { animation: none; }
+  .vues::before, .jours::before, .mode::before { transition: none !important; }
+  .entre, .vueEntre, .jourEntre, .cascade, .section, .platDetail, .fondu,
+  .pageActive h2, .pageActive .ligne, .table .th, .table .cellule, .voile, .panneau {
+    animation: fondu 120ms ease-out backwards !important;
+  }
+  .voile[data-sortie], .panneau[data-sortie], .entre[data-vu] { animation: none !important; }
+  .case, .chaleurGrille .tete[aria-pressed="true"], .restos button[aria-pressed="true"], .cellule .meilleure .pastille,
+  .jours button.auj .point, .hero .tagReco::after, .squeletteTitre::after, .squeletteLigne::after,
+  .hero[data-ripple]::after, .tuile[data-ripple]::after, .etincelles i {
+    animation: none !important;
+  }
+  .case { transition: none; }
+  .vues button, .jours button, .mode button, .tuile, .hero, .ligne, .puces button, .plat > button, .bouton, .restos button,
+  .fermer, .tete, .case, .cellule button span:last-child, .fermer svg, .plat > button::before {
+    scale: none !important; translate: none !important; rotate: none !important;
+  }
+  button.th::after { transition: none; }
+  .hero { transform: none !important; }
+  .hero::before { display: none; }
+  .plat > button[aria-expanded="true"]::before { content: "▾"; }
+  .voile { backdrop-filter: none; -webkit-backdrop-filter: none; }
+  .photo[data-etat="charge"] .photoFond { animation: none; }
   .photo img { transition: none; }
 }
 

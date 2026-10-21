@@ -7,6 +7,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import CommentForm from "./CommentForm";
+import styles from "./commentaires.module.css";
 
 // Matches ![alt](url) markdown images or raw image/GIF URLs (including Giphy/Tenor)
 const IMAGE_MD_RE = /!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g;
@@ -116,6 +117,11 @@ function flattenTree(
   return result;
 }
 
+/** Image chargée après l'hydratation : déclenche le léger scale d'entrée (cf. .media[data-charge]). */
+function marquerCharge(e: React.SyntheticEvent<HTMLImageElement>) {
+  e.currentTarget.dataset.charge = "1";
+}
+
 function InlineReplyForm({
   date,
   platIndex,
@@ -142,7 +148,7 @@ function InlineReplyForm({
   }, []);
 
   return (
-    <div className="ml-4 sm:ml-8 mb-2 animate-[reply-slide-in_0.25s_ease-out]" ref={formRef}>
+    <div className={`ml-4 sm:ml-8 mb-2 ${styles.replyIn}`} ref={formRef}>
       <CommentForm
         date={date}
         platIndex={platIndex}
@@ -187,9 +193,10 @@ export default function CommentSection({
           variant="ghost"
           size="sm"
           onClick={() => setExpanded(true)}
-          className="text-[var(--text-muted)] text-xs h-auto py-1.5 px-2 hover:text-[var(--accent)] hover:bg-transparent"
+          className={`pdj-press ${styles.pressCouleurs} ${styles.replie} text-[var(--text-muted)] text-xs h-auto py-1.5 px-2 hover:text-[var(--accent)] hover:bg-transparent`}
         >
-          💬 {totalCount === 0
+          <span className={styles.bulle} aria-hidden="true">💬</span>{" "}
+          {totalCount === 0
             ? "Laisser un commentaire"
             : `${totalCount} commentaire${totalCount > 1 ? "s" : ""}`}
         </Button>
@@ -205,6 +212,8 @@ export default function CommentSection({
           {flatList.map(({ index, depth }, pos) => {
             const c = safeCommentaires[index];
             const showTopSeparator = depth === 0 && pos > 0 && flatList[pos - 1].depth === 0;
+            // Entrée en cascade : 35 ms par ligne, plafonnée à 8 (cf. .ligne/.reponse)
+            const rang = { "--i": Math.min(pos, 8) } as React.CSSProperties;
 
             return (
               <div key={index}>
@@ -212,11 +221,11 @@ export default function CommentSection({
                   <Separator className="my-1 bg-[var(--border)] opacity-40" />
                 )}
                 <div
-                  className={depth > 0 ? "border-l-2 border-l-[var(--accent)]/40 pl-2 sm:pl-3" : ""}
-                  style={depth > 0 ? { marginLeft: `${Math.min((depth - 1) * 1.5 + 1, 4)}rem` } : undefined}
+                  className={depth > 0 ? `${styles.reponse} pl-2 sm:pl-3` : `pdj-rise-in ${styles.ligne}`}
+                  style={depth > 0 ? { ...rang, marginLeft: `${Math.min((depth - 1) * 1.5 + 1, 4)}rem` } : rang}
                 >
                   <div className={`flex items-start gap-2.5 py-1.5 ${depth > 0 ? "py-1" : "py-2"}`}>
-                    <Avatar className={`shrink-0 text-xs ${depth > 0 ? "w-6 h-6" : "w-7 h-7"}`}>
+                    <Avatar className={`${styles.avatar} shrink-0 text-xs ${depth > 0 ? "w-6 h-6" : "w-7 h-7"}`}>
                       {AVATAR_IMAGE[c.auteur] && (
                         <AvatarImage src={AVATAR_IMAGE[c.auteur]} alt={c.auteur} />
                       )}
@@ -234,7 +243,7 @@ export default function CommentSection({
                       {c.is_human ? (
                         <span
                           title="Écrit par un humain"
-                          className="inline-flex items-center gap-0.5 align-middle text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 mr-1.5 rounded-full bg-[var(--accent-glow)] text-[var(--accent)] border border-[var(--accent)]/30"
+                          className={`${styles.badgeHumain} inline-flex items-center gap-0.5 align-middle text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 mr-1.5 rounded-full bg-[var(--accent-glow)] text-[var(--accent)] border border-[var(--accent)]/30`}
                         >
                           ✋ humain
                         </span>
@@ -266,8 +275,9 @@ export default function CommentSection({
                                   <img
                                     src={part.content}
                                     alt={part.alt || "image"}
-                                    className="w-full max-w-[300px] max-h-[250px] rounded-[var(--radius-sm)] border border-[var(--border)] object-contain cursor-pointer transition-transform hover:scale-[1.02]"
+                                    className={`${styles.media} w-full max-w-[300px] max-h-[250px] rounded-[var(--radius-sm)] border border-[var(--border)] object-contain cursor-pointer`}
                                     loading="lazy"
+                                    onLoad={marquerCharge}
                                   />
                                 )}
                               </div>
@@ -291,8 +301,9 @@ export default function CommentSection({
                               <img
                                 src={c.image_url}
                                 alt="image"
-                                className="w-full max-w-[300px] max-h-[250px] rounded-[var(--radius-sm)] border border-[var(--border)] object-contain cursor-pointer transition-transform hover:scale-[1.02]"
+                                className={`${styles.media} w-full max-w-[300px] max-h-[250px] rounded-[var(--radius-sm)] border border-[var(--border)] object-contain cursor-pointer`}
                                 loading="lazy"
+                                onLoad={marquerCharge}
                               />
                             )}
                           </div>
@@ -303,7 +314,8 @@ export default function CommentSection({
                           variant="ghost"
                           size="sm"
                           onClick={() => setReplyingTo(replyingTo === index ? null : index)}
-                          className="text-[var(--text-muted)] text-xs h-auto p-0 ml-2 hover:text-[var(--accent)] hover:bg-transparent"
+                          aria-expanded={replyingTo === index}
+                          className={`pdj-press ${styles.pressCouleurs} ${styles.souligne} text-[var(--text-muted)] text-xs h-auto p-0 ml-2 hover:text-[var(--accent)] hover:bg-transparent`}
                         >
                           Répondre
                         </Button>
