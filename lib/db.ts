@@ -245,6 +245,11 @@ export interface Idee {
   faisabilite?: "faisable" | "complexe" | "impossible" | "troll" | null;
   evaluation?: string | null;
   evaluated_at?: string | null;
+  /** Réponse de l'équipe (ex. « c'est sorti »), affichée sous l'idée. */
+  reponse?: string | null;
+  reponse_at?: string | null;
+  /** Idée archivée : sortie de la liste des votes, listée dans « Idées sorties ». */
+  archived_at?: string | null;
 }
 
 /** Crée la table des idées si elle n'existe pas */
@@ -266,16 +271,20 @@ export async function ensureIdeesTable() {
   await sql`ALTER TABLE pdj_idees ADD COLUMN IF NOT EXISTS faisabilite VARCHAR(20)`;
   await sql`ALTER TABLE pdj_idees ADD COLUMN IF NOT EXISTS evaluation TEXT`;
   await sql`ALTER TABLE pdj_idees ADD COLUMN IF NOT EXISTS evaluated_at TIMESTAMPTZ`;
+  await sql`ALTER TABLE pdj_idees ADD COLUMN IF NOT EXISTS reponse TEXT`;
+  await sql`ALTER TABLE pdj_idees ADD COLUMN IF NOT EXISTS reponse_at TIMESTAMPTZ`;
+  await sql`ALTER TABLE pdj_idees ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ`;
 }
 
-/** Récupère toutes les idées (hors trolls), triées par nombre de votes desc */
+/** Récupère toutes les idées (hors trolls), triées par nombre de votes desc ; archivées en dernier, plus récentes d'abord */
 export async function getAllIdees(): Promise<Idee[]> {
   await ensureIdeesTable();
   const result = await sql`
-    SELECT id, auteur, texte, votes, statut, created_at, faisabilite, evaluation, evaluated_at
+    SELECT id, auteur, texte, votes, statut, created_at, faisabilite, evaluation, evaluated_at,
+           reponse, reponse_at, archived_at
     FROM pdj_idees
     WHERE faisabilite IS DISTINCT FROM 'troll'
-    ORDER BY jsonb_array_length(votes) DESC, created_at DESC
+    ORDER BY archived_at IS NOT NULL, archived_at DESC, jsonb_array_length(votes) DESC, created_at DESC
   `;
   return result.rows.map((row) => ({
     id: row.id,
@@ -287,6 +296,9 @@ export async function getAllIdees(): Promise<Idee[]> {
     faisabilite: row.faisabilite,
     evaluation: row.evaluation,
     evaluated_at: row.evaluated_at,
+    reponse: row.reponse,
+    reponse_at: row.reponse_at,
+    archived_at: row.archived_at,
   }));
 }
 
@@ -322,6 +334,29 @@ export async function setIdeeEvaluation(
   const result = await sql`
     UPDATE pdj_idees
     SET faisabilite = ${faisabilite}, evaluation = ${evaluation}, evaluated_at = NOW()
+    WHERE id = ${id}
+  `;
+  return (result.rowCount ?? 0) > 0;
+}
+
+/**
+ * Suivi d'une idée par l'équipe : statut, réponse (chaîne vide = retirée), archivage.
+ * Les champs absents sont laissés tels quels.
+ */
+export async function setIdeeSuivi(
+  id: number,
+  suivi: { statut?: Idee["statut"]; reponse?: string; archiver?: boolean }
+): Promise<boolean> {
+  await ensureIdeesTable();
+  const majReponse = suivi.reponse !== undefined;
+  const reponse = suivi.reponse?.trim() || null;
+  const majArchive = suivi.archiver !== undefined;
+  const result = await sql`
+    UPDATE pdj_idees SET
+      statut = COALESCE(${suivi.statut ?? null}, statut),
+      reponse = CASE WHEN ${majReponse} THEN ${reponse} ELSE reponse END,
+      reponse_at = CASE WHEN ${majReponse} THEN (CASE WHEN ${reponse}::text IS NULL THEN NULL ELSE NOW() END) ELSE reponse_at END,
+      archived_at = CASE WHEN ${majArchive} THEN (CASE WHEN ${suivi.archiver === true} THEN COALESCE(archived_at, NOW()) ELSE NULL END) ELSE archived_at END
     WHERE id = ${id}
   `;
   return (result.rowCount ?? 0) > 0;
