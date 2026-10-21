@@ -192,7 +192,8 @@
 .envoye,
 .envoye:disabled {
   background: var(--good) !important;
-  color: var(--bg) !important;
+  color: var(--accent-text) !important;
+  border-color: var(--good) !important; /* le style désactivé du bouton pose sinon un contour de contrôle */
   opacity: 1 !important;
 }
 .points {

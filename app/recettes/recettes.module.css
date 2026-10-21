@@ -7,17 +7,17 @@
 .champ { display: flex; flex-direction: column; gap: 4px; font-size: 0.75rem; font-weight: 600; color: var(--text-secondary); }
 .champ input, .champ select {
   font: inherit; font-size: 0.9rem; font-weight: 400; color: var(--text); background: var(--surface);
-  border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 9px 12px; min-height: 42px; width: 100%;
+  border: 1px solid var(--border-control); border-radius: var(--radius-sm); padding: 9px 12px; min-height: 42px; width: 100%;
 }
 .champ input:focus-visible, .champ select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .bouton {
-  border: 1px solid var(--accent); background: var(--accent-glow); color: var(--accent); border-radius: var(--radius-sm);
+  border: 1px solid var(--accent); background: var(--accent-soft); color: var(--accent); border-radius: var(--radius-sm);
   padding: 9px 16px; min-height: 42px; font: inherit; font-weight: 600; font-size: 0.85rem; cursor: pointer;
 }
 .bouton:hover { background: var(--accent); color: var(--accent-text); }
 
-.erreur { margin: 0; padding: 10px 14px; border: 1px solid var(--bad-border); background: var(--bad-bg); color: var(--bad); border-radius: var(--radius-sm); font-size: 0.85rem; }
-.vide { margin: 0; padding: 28px 16px; text-align: center; color: var(--text-muted); font-size: 0.9rem; border: 1px dashed var(--border); border-radius: var(--radius); }
+.erreur { margin: 0; padding: 10px 14px; border: 1px solid var(--bad-border); background: var(--bad-soft); color: var(--bad); border-radius: var(--radius-sm); font-size: 0.85rem; }
+.vide { margin: 0; padding: 28px 16px; text-align: center; color: var(--text-muted); font-size: 0.9rem; background: var(--surface); border: 1px dashed var(--border-control); border-radius: var(--radius); }
 
 /* ── Grille de cartes ── */
 .grille { display: grid; grid-template-columns: 1fr; gap: 12px; }
@@ -48,10 +48,12 @@
   border: 1px solid currentColor; border-radius: var(--radius-sm); font-variant-numeric: tabular-nums; font-size: 0.8rem;
 }
 .score b { font-weight: 800; }
-.scoreSur { margin-left: -3px; opacity: 0.8; }
-.score.good { color: var(--good); background: var(--good-bg); }
-.score.ok { color: var(--ok); background: var(--ok-bg); }
-.score.bad { color: var(--bad); background: var(--bad-bg); }
+/* « /10 » à pleine opacité : il hérite du ratio de la note, la graisse suffit à le hiérarchiser. */
+.scoreSur { margin-left: -3px; font-weight: 500; }
+/* Fonds opaques (--*-soft) : sur la fiche, la pastille repose directement sur la texture du tigre. */
+.score.good { color: var(--good); background: var(--good-soft); }
+.score.ok { color: var(--ok); background: var(--ok-soft); }
+.score.bad { color: var(--bad); background: var(--bad-soft); }
 .score.none { color: var(--text-muted); background: var(--surface-hover); }
 .scoreLibelle { align-self: center; font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; }
 .score[data-actif] { box-shadow: 0 0 0 1px currentColor; font-weight: 700; }
@@ -63,32 +65,33 @@
 .filtre { display: flex; flex-direction: column; gap: 6px; }
 .libelleFiltre { margin: 0; font-size: 0.75rem; font-weight: 600; color: var(--text-secondary); }
 .tri {
-  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border: 1px solid var(--border);
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border: 1px solid var(--border-control);
   border-radius: var(--radius-sm); overflow: hidden; background: var(--surface);
 }
 .tri button {
   display: flex; align-items: center; justify-content: center; min-height: 40px; padding: 0 6px;
   font: inherit; font-size: 0.8rem; font-weight: 600; color: var(--text-secondary); background: none; border: 0; cursor: pointer;
 }
-.tri button + button { border-left: 1px solid var(--border); }
+.tri button + button { border-left: 1px solid var(--border-control); }
 .tri button:hover { color: var(--text); background: var(--surface-hover); }
-.tri button[aria-pressed="true"] { background: var(--accent-glow); color: var(--accent); }
+.tri button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
 .tri button:focus-visible, .puceProteine:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .proteines { display: flex; flex-wrap: wrap; gap: 6px; }
 .puceProteine {
   display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 0 12px; border-radius: 999px;
-  border: 1px solid var(--border); background: var(--surface); color: var(--text); font: inherit; font-size: 0.82rem; cursor: pointer;
+  border: 1px solid var(--border-control); background: var(--surface); color: var(--text); font: inherit; font-size: 0.82rem; cursor: pointer;
 }
 .puceProteine:hover { border-color: var(--border-accent); }
-.puceProteine[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: var(--accent-glow); font-weight: 600; }
+.puceProteine[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); font-weight: 600; }
 .compte { color: var(--text-muted); font-variant-numeric: tabular-nums; font-size: 0.75rem; }
 .puceProteine[aria-pressed="true"] .compte { color: inherit; }
 .resultats { margin: 0; font-size: 0.8rem; color: var(--text-muted); }
 .mention { margin: 4px 0 0; font-size: 0.8rem; color: var(--text-muted); }
-.info { margin: 0; padding: 10px 14px; border: 1px dashed var(--border); border-radius: var(--radius-sm); font-size: 0.85rem; color: var(--text-muted); }
+.info { margin: 0; padding: 10px 14px; background: var(--surface); border: 1px dashed var(--border-control); border-radius: var(--radius-sm); font-size: 0.85rem; color: var(--text-muted); }
 
 .pagination { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 12px; font-size: 0.85rem; color: var(--text-secondary); }
-.pagination a { color: var(--accent); text-decoration: none; font-weight: 600; padding: 8px 0; }
+/* Cible tactile ≥ 40 px, ajustée au texte (justify-self) : sans lui le lien s'étirait sur toute la colonne et son anneau de focus aussi. */
+.pagination a { display: inline-flex; align-items: center; min-height: 40px; padding: 0 4px; justify-self: start; color: var(--accent); text-decoration: none; font-weight: 600; }
 .pagination a:last-child { justify-self: end; }
 
 /* ── Fiche ── */
@@ -101,7 +104,7 @@
 .inspiree { margin: 6px 0 0; font-size: 0.85rem; color: var(--text-secondary); }
 .description { margin: 10px 0 0; font-size: 0.95rem; line-height: 1.55; color: var(--text-secondary); }
 .bandeau {
-  margin: 0; padding: 12px 14px; border-radius: var(--radius-sm); border: 1px solid var(--ok-border); background: var(--ok-bg);
+  margin: 0; padding: 12px 14px; border-radius: var(--radius-sm); border: 1px solid var(--ok-border); background: var(--ok-soft);
   font-size: 0.85rem; line-height: 1.5; color: var(--text);
 }
 .bandeau strong { color: var(--ok); }
@@ -117,7 +120,7 @@
 .section h2 { margin: 0; font-family: var(--font-heading); font-size: 1.2rem; color: var(--text); }
 
 .ajusteur { display: flex; flex-direction: column; gap: 14px; }
-.compteur { display: inline-flex; align-items: center; gap: 4px; align-self: flex-start; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); padding: 3px; }
+.compteur { display: inline-flex; align-items: center; gap: 4px; align-self: flex-start; border: 1px solid var(--border-control); border-radius: var(--radius-sm); background: var(--surface); padding: 3px; }
 .compteur button {
   width: 40px; height: 40px; border: 0; border-radius: calc(var(--radius-sm) - 2px); background: var(--surface-hover);
   color: var(--text); font: inherit; font-size: 1.2rem; font-weight: 700; cursor: pointer;
@@ -132,9 +135,10 @@
 .quantite { font-weight: 700; font-variant-numeric: tabular-nums; color: var(--text); }
 .note { color: var(--text-muted); }
 
-.etapes { margin: 0; padding-left: 1.4rem; display: flex; flex-direction: column; gap: 10px; font-size: 0.95rem; line-height: 1.6; color: var(--text); }
+/* Le preflight Tailwind retire les puces des listes : numéros et puces rétablis ici (marqueur en accent). */
+.etapes { margin: 0; padding-left: 1.8rem; list-style: decimal; display: flex; flex-direction: column; gap: 10px; font-size: 0.95rem; line-height: 1.6; color: var(--text); }
 .etapes li::marker { color: var(--accent); font-weight: 700; }
-.liste { margin: 0; padding-left: 1.2rem; display: flex; flex-direction: column; gap: 6px; font-size: 0.9rem; line-height: 1.55; color: var(--text-secondary); }
+.liste { margin: 0; padding-left: 1.2rem; list-style: disc; display: flex; flex-direction: column; gap: 6px; font-size: 0.9rem; line-height: 1.55; color: var(--text-secondary); }
 .ustensiles { margin: 0; font-size: 0.9rem; color: var(--text-secondary); }
 .pied { border-top: 1px solid var(--border); padding-top: 12px; display: flex; flex-direction: column; gap: 4px; font-size: 0.78rem; color: var(--text-muted); }
 .pied p { margin: 0; }

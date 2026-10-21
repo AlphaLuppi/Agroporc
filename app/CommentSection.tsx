@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import type { Commentaire } from "@/lib/db";
-import { avatarAuteur, type AvatarIa } from "@/lib/characters";
+import { avatarAuteur, texteSur, type AvatarIa } from "@/lib/characters";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -231,13 +231,13 @@ export default function CommentSection({
                   <div className={`flex items-start gap-2.5 py-1.5 ${depth > 0 ? "py-1" : "py-2"}`}>
                     <Avatar className={`${styles.avatar} shrink-0 text-xs ${depth > 0 ? "w-6 h-6" : "w-7 h-7"}`}>
                       {avatar.image && <AvatarImage src={avatar.image} alt={c.auteur} />}
-                      <AvatarFallback style={{ background: avatar.couleur }} className="text-xs">
+                      <AvatarFallback style={{ background: avatar.couleur, color: texteSur(avatar.couleur) }} className="text-xs">
                         {avatar.emoji}
                       </AvatarFallback>
                     </Avatar>
                     <div className="flex-1 min-w-0 text-sm leading-relaxed">
                       {c.reponse_a && depth > 0 && (
-                        <span className="text-[10px] text-[var(--text-muted)] opacity-60 mr-1.5">
+                        <span className="text-[11px] text-[var(--text-muted)] mr-1.5">
                           ↩ {c.reponse_a}
                         </span>
                       )}
@@ -245,7 +245,7 @@ export default function CommentSection({
                       {c.is_human ? (
                         <span
                           title="Écrit par un humain"
-                          className={`${styles.badgeHumain} inline-flex items-center gap-0.5 align-middle text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 mr-1.5 rounded-full bg-[var(--accent-glow)] text-[var(--accent)] border border-[var(--accent)]/30`}
+                          className={`${styles.badgeHumain} inline-flex items-center gap-0.5 align-middle text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 mr-1.5 rounded-full bg-[var(--accent-soft)] text-[var(--accent)] border border-[var(--accent)]/30`}
                         >
                           ✋ humain
                         </span>

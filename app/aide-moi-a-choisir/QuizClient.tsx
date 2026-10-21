@@ -373,7 +373,7 @@ export default function QuizClient({ pool, desserts, hasJour }: { pool: PoolPlat
                     onClick={() => repondre(e.cle, c.key)}
                   >
                     <span className={styles.noeudEmoji} aria-hidden="true">{c.emoji}</span>
-                    {c.label}
+                    <span className={styles.noeudLabel}>{c.label}</span>
                     {n !== null && <span key={`n${n}`} className={styles.compte} aria-label={`${n} plats`}>{n}</span>}
                   </button>
                 );

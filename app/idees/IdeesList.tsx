@@ -2,10 +2,12 @@
 
 import { useState, useEffect } from "react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { CHARACTERS_BY_NAME } from "@/lib/characters";
+import { CHARACTERS_BY_NAME, nomPersonnage, texteSur } from "@/lib/characters";
 import type { Idee } from "@/lib/db";
 
 const CHARACTER_STORAGE_KEY = "pdj-selected-character";
+/** Repli d'un auteur inconnu : gris, initiale lisible dessus (le texte par défaut de l'avatar y tombe à 1,4:1). */
+const COULEUR_INCONNU = "#6b7280";
 
 function formatDate(dateStr: string) {
   const d = new Date(dateStr);
@@ -15,14 +17,14 @@ function formatDate(dateStr: string) {
 function FaisabiliteBadge({ faisabilite }: { faisabilite?: string | null }) {
   if (!faisabilite || faisabilite === "troll") return null;
   const map: Record<string, { label: string; cls: string }> = {
-    faisable: { label: "Faisable", cls: "bg-green-500/15 text-green-600" },
-    complexe: { label: "Complexe", cls: "bg-amber-500/15 text-amber-600" },
-    impossible: { label: "Impossible", cls: "bg-red-500/15 text-red-500" },
+    faisable: { label: "Faisable", cls: "bg-[var(--good-soft)] text-[var(--good)]" },
+    complexe: { label: "Complexe", cls: "bg-[var(--ok-soft)] text-[var(--ok)]" },
+    impossible: { label: "Impossible", cls: "bg-[var(--bad-soft)] text-[var(--bad)]" },
   };
   const cfg = map[faisabilite];
   if (!cfg) return null;
   return (
-    <span className={`inline-flex items-center gap-1 text-[0.65rem] font-semibold px-1.5 py-0.5 rounded-full ${cfg.cls}`}>
+    <span className={`inline-flex items-center gap-1 text-[0.72rem] font-semibold px-1.5 py-0.5 rounded-full ${cfg.cls}`}>
       {cfg.label}
     </span>
   );
@@ -31,14 +33,14 @@ function FaisabiliteBadge({ faisabilite }: { faisabilite?: string | null }) {
 function StatutBadge({ statut }: { statut: string }) {
   if (statut === "fait") {
     return (
-      <span className="inline-flex items-center gap-1 text-[0.65rem] font-semibold px-1.5 py-0.5 rounded-full bg-green-500/15 text-green-600">
+      <span className="inline-flex items-center gap-1 text-[0.72rem] font-semibold px-1.5 py-0.5 rounded-full bg-[var(--good-soft)] text-[var(--good)]">
         Fait
       </span>
     );
   }
   if (statut === "refusé") {
     return (
-      <span className="inline-flex items-center gap-1 text-[0.65rem] font-semibold px-1.5 py-0.5 rounded-full bg-red-500/15 text-red-500">
+      <span className="inline-flex items-center gap-1 text-[0.72rem] font-semibold px-1.5 py-0.5 rounded-full bg-[var(--bad-soft)] text-[var(--bad)]">
         Refusé
       </span>
     );
@@ -50,6 +52,8 @@ export default function IdeesList({ initialIdees }: { initialIdees: Idee[] }) {
   const [idees, setIdees] = useState(initialIdees);
   const [votingId, setVotingId] = useState<number | null>(null);
   const [currentUser, setCurrentUser] = useState("");
+  // Idée sur laquelle on a voté sans avoir choisi de personnage : affiche l'invitation à en choisir un
+  const [inviteId, setInviteId] = useState<number | null>(null);
 
   useEffect(() => {
     try {
@@ -75,14 +79,28 @@ export default function IdeesList({ initialIdees }: { initialIdees: Idee[] }) {
   }, []);
 
   async function handleVote(ideeId: number) {
-    if (!currentUser) return;
+    let votant = currentUser;
+    if (!votant) {
+      // Le choix fait dans IdeeForm ne déclenche pas l'événement `storage` de cet onglet : on relit.
+      try {
+        votant = localStorage.getItem(CHARACTER_STORAGE_KEY) ?? "";
+      } catch {
+        /* ignore */
+      }
+      if (!votant) {
+        setInviteId(ideeId);
+        return;
+      }
+      setCurrentUser(votant);
+    }
+    setInviteId(null);
     setVotingId(ideeId);
 
     try {
       const res = await fetch("/api/idees/vote", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ideeId, votant: currentUser }),
+        body: JSON.stringify({ ideeId, votant }),
       });
 
       if (res.ok) {
@@ -91,11 +109,11 @@ export default function IdeesList({ initialIdees }: { initialIdees: Idee[] }) {
           prev.map((idee) => {
             if (idee.id !== ideeId) return idee;
             const votes = [...idee.votes];
-            const idx = votes.indexOf(currentUser);
+            const idx = votes.indexOf(votant);
             if (idx >= 0) {
               votes.splice(idx, 1);
             } else {
-              votes.push(currentUser);
+              votes.push(votant);
             }
             return { ...idee, votes };
           })
@@ -120,7 +138,7 @@ export default function IdeesList({ initialIdees }: { initialIdees: Idee[] }) {
   return (
     <div className="space-y-3">
       {idees.map((idee) => {
-        const char = CHARACTERS_BY_NAME[idee.auteur];
+        const char = CHARACTERS_BY_NAME[nomPersonnage(idee.auteur)];
         const hasVoted = currentUser && idee.votes.includes(currentUser);
 
         return (
@@ -131,13 +149,15 @@ export default function IdeesList({ initialIdees }: { initialIdees: Idee[] }) {
             {/* Vote button */}
             <button
               onClick={() => handleVote(idee.id)}
-              disabled={!currentUser || votingId === idee.id}
-              title={!currentUser ? "Sélectionnez un personnage d'abord" : hasVoted ? "Retirer le vote" : "Voter"}
+              disabled={votingId === idee.id}
+              title={!currentUser ? "Choisissez d'abord un personnage" : hasVoted ? "Retirer le vote" : "Voter"}
               className={`flex flex-col items-center gap-0.5 min-w-[40px] pt-0.5 rounded-lg px-1 py-1.5 transition-all border ${
                 hasVoted
-                  ? "bg-[var(--accent-glow)] border-[var(--accent)] text-[var(--accent)]"
-                  : "bg-transparent border-transparent text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--accent)]"
-              } ${!currentUser ? "opacity-40 cursor-not-allowed" : "cursor-pointer"}`}
+                  ? "bg-[var(--accent-soft)] border-[var(--accent)] text-[var(--accent)]"
+                  : `bg-transparent border-transparent hover:bg-[var(--surface-hover)] hover:text-[var(--accent)] ${
+                      currentUser ? "text-[var(--text-secondary)]" : "text-[var(--text-muted)]"
+                    }`
+              } cursor-pointer`}
             >
               <svg
                 viewBox="0 0 24 24"
@@ -159,7 +179,7 @@ export default function IdeesList({ initialIdees }: { initialIdees: Idee[] }) {
                 <Avatar className="shrink-0 w-5 h-5 text-[0.6rem]">
                   {char?.image && <AvatarImage src={char.image} alt={idee.auteur} />}
                   <AvatarFallback
-                    style={{ background: char?.color || "#6b7280" }}
+                    style={{ background: char?.color || COULEUR_INCONNU, color: texteSur(char?.color || COULEUR_INCONNU) }}
                     className="text-[0.6rem]"
                   >
                     {char?.emoji || idee.auteur[0]}
@@ -178,15 +198,20 @@ export default function IdeesList({ initialIdees }: { initialIdees: Idee[] }) {
                   🤖 {idee.evaluation}
                 </p>
               )}
+              {inviteId === idee.id && !currentUser && (
+                <p role="status" className="text-xs text-[var(--text-secondary)] mt-2">
+                  Choisissez d&apos;abord un personnage (« en tant que », en haut de la page) pour voter.
+                </p>
+              )}
               {idee.votes.length > 0 && (
                 <div className="flex flex-wrap items-center gap-1 mt-2">
                   {idee.votes.map((v) => {
-                    const vc = CHARACTERS_BY_NAME[v];
+                    const vc = CHARACTERS_BY_NAME[nomPersonnage(v)];
                     return (
                       <Avatar key={v} className="w-4 h-4 text-[0.5rem]" title={v}>
                         {vc?.image && <AvatarImage src={vc.image} alt={v} />}
                         <AvatarFallback
-                          style={{ background: vc?.color || "#6b7280" }}
+                          style={{ background: vc?.color || COULEUR_INCONNU, color: texteSur(vc?.color || COULEUR_INCONNU) }}
                           className="text-[0.5rem]"
                         >
                           {vc?.emoji || v[0]}

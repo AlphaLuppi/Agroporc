@@ -201,10 +201,10 @@ function renderCart() {
             </div>
             <div style="display:flex;align-items:center;gap:0.25rem;flex-shrink:0;">
               <button class="qty-btn" data-restaurant="${encodeURIComponent(restaurant)}" data-plat="${encodeURIComponent(item.plat)}" data-delta="-1"
-                style="width:1.5rem;height:1.5rem;border-radius:50%;border:1px solid var(--border);background:var(--surface-hover);color:var(--text);cursor:pointer;font-size:0.875rem;display:flex;align-items:center;justify-content:center;">−</button>
+                style="width:2.5rem;height:2.5rem;border-radius:50%;border:1px solid var(--border-control);background:var(--surface-hover);color:var(--text);cursor:pointer;font-size:0.875rem;display:flex;align-items:center;justify-content:center;">−</button>
               <span style="min-width:1.25rem;text-align:center;font-size:0.875rem;font-weight:600;">${item.quantity}</span>
               <button class="qty-btn" data-restaurant="${encodeURIComponent(restaurant)}" data-plat="${encodeURIComponent(item.plat)}" data-delta="1"
-                style="width:1.5rem;height:1.5rem;border-radius:50%;border:1px solid var(--border);background:var(--surface-hover);color:var(--text);cursor:pointer;font-size:0.875rem;display:flex;align-items:center;justify-content:center;">+</button>
+                style="width:2.5rem;height:2.5rem;border-radius:50%;border:1px solid var(--border-control);background:var(--surface-hover);color:var(--text);cursor:pointer;font-size:0.875rem;display:flex;align-items:center;justify-content:center;">+</button>
             </div>
           </div>`
         )
@@ -212,11 +212,11 @@ function renderCart() {
 
       const commanderBtn = admin
         ? `<button class="commander-btn" data-restaurant="${encodeURIComponent(restaurant)}"
-            style="width:100%;margin-top:0.75rem;padding:0.5rem 1rem;background:var(--accent);border:none;border-radius:var(--radius);color:var(--accent-text);font-weight:600;font-size:0.85rem;cursor:pointer;transition:opacity 0.15s;">
+            style="width:100%;min-height:2.5rem;margin-top:0.75rem;padding:0.5rem 1rem;background:var(--accent);border:none;border-radius:var(--radius);color:var(--accent-text);font-weight:600;font-size:0.85rem;cursor:pointer;transition:opacity 0.15s;">
             Commander via ${getPlatform(restaurant)} →
           </button>`
         : `<button class="commander-login-btn"
-            style="width:100%;margin-top:0.75rem;padding:0.5rem 1rem;background:var(--surface-hover);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-secondary);font-weight:600;font-size:0.85rem;cursor:pointer;">
+            style="width:100%;min-height:2.5rem;margin-top:0.75rem;padding:0.5rem 1rem;background:var(--surface-hover);border:1px solid var(--border-control);border-radius:var(--radius);color:var(--text-secondary);font-weight:600;font-size:0.85rem;cursor:pointer;">
             🔒 Connexion requise pour commander
           </button>`;
 
@@ -238,7 +238,7 @@ function renderCart() {
       <span style="font-size:1rem;font-weight:700;color:var(--accent);">${total.toFixed(2)} €</span>
     </div>
     <button id="clear-cart-btn"
-      style="width:100%;padding:0.4rem;background:none;border:1px solid var(--border);border-radius:var(--radius);color:var(--text-muted);font-size:0.8rem;cursor:pointer;">
+      style="width:100%;min-height:2.5rem;padding:0.4rem;background:none;border:1px solid var(--border-control);border-radius:var(--radius);color:var(--text-muted);font-size:0.8rem;cursor:pointer;">
       Vider le panier
     </button>`;
 
@@ -440,18 +440,31 @@ function showOrderResult(data: Record<string, unknown>, restaurant: string) {
 
 // ── Drawer open/close ─────────────────────────────────────────────────────────
 
+// Le tiroir fermé n'est que translaté hors écran : `inert` (posé dans layout.tsx, retiré ici à l'ouverture)
+// le sort de la tabulation et de l'arbre d'accessibilité tant qu'il est fermé.
 function openCart() {
   const drawer = document.getElementById("cart-drawer");
   const overlay = document.getElementById("cart-overlay");
-  if (drawer) drawer.style.transform = "translateX(0)";
+  if (drawer) {
+    drawer.removeAttribute("inert");
+    drawer.style.transform = "translateX(0)";
+  }
   if (overlay) overlay.style.display = "block";
   renderCart();
+  // Le clavier arrive dans le tiroir (sinon Tab repart dans la page derrière l'overlay).
+  document.getElementById("cart-close")?.focus({ preventScroll: true });
 }
 
 function closeCart() {
   const drawer = document.getElementById("cart-drawer");
   const overlay = document.getElementById("cart-overlay");
-  if (drawer) drawer.style.transform = "translateX(100%)";
+  if (drawer) {
+    // Focus rendu au bouton panier : un élément devenu inert perdrait le focus vers <body>.
+    const focusDansTiroir = drawer.contains(document.activeElement);
+    drawer.style.transform = "translateX(100%)";
+    drawer.setAttribute("inert", "");
+    if (focusDansTiroir) document.getElementById("cart-btn")?.focus({ preventScroll: true });
+  }
   if (overlay) overlay.style.display = "none";
 }
 
@@ -544,6 +557,14 @@ function initCart(): () => void {
   const overlay = document.getElementById("cart-overlay");
   if (overlay) overlay.onclick = closeCart;
 
+  // Échap ferme le tiroir ouvert (inert absent = ouvert)
+  const onEchap = (e: KeyboardEvent) => {
+    if (e.key !== "Escape") return;
+    const drawer = document.getElementById("cart-drawer");
+    if (drawer && !drawer.hasAttribute("inert")) closeCart();
+  };
+  document.addEventListener("keydown", onEchap);
+
   // Login modal
   const loginCancel = document.getElementById("login-cancel");
   if (loginCancel) loginCancel.onclick = closeLoginModal;
@@ -583,5 +604,8 @@ function initCart(): () => void {
   // Mettre à jour le badge au chargement
   renderCart();
 
-  return () => document.removeEventListener("click", onAjouter);
+  return () => {
+    document.removeEventListener("click", onAjouter);
+    document.removeEventListener("keydown", onEchap);
+  };
 }

@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Drawer } from "@/components/ui/drawer";
-import { CHARACTERS_BY_NAME } from "@/lib/characters";
+import { CHARACTERS_BY_NAME, texteSur } from "@/lib/characters";
 import { BoutonImportImage, useImportImage } from "@/app/components/ImportImage";
 import type { IaProfile } from "@/lib/db";
 
@@ -128,7 +128,7 @@ export default function IaProfilesList({ initialProfiles }: { initialProfiles: I
         {currentEditorChar && (
           <Avatar className="h-6 w-6">
             {currentEditorChar.image && <AvatarImage src={currentEditorChar.image} alt={editor} />}
-            <AvatarFallback style={{ background: currentEditorChar.color, color: "white", fontSize: 11 }}>
+            <AvatarFallback style={{ background: currentEditorChar.color, color: texteSur(currentEditorChar.color), fontSize: 11 }}>
               {currentEditorChar.emoji || editor.charAt(0)}
             </AvatarFallback>
           </Avatar>
@@ -141,7 +141,7 @@ export default function IaProfilesList({ initialProfiles }: { initialProfiles: I
               localStorage.setItem(CHARACTER_STORAGE_KEY, e.target.value);
             } catch {}
           }}
-          className="bg-[var(--bg)] border border-[var(--border)] rounded-[var(--radius-sm)] px-2 py-1 min-h-10 text-sm text-[var(--text)] focus:outline-none focus:border-[var(--accent)]"
+          className="bg-[var(--bg)] border border-[var(--border-control)] rounded-[var(--radius-sm)] px-2 py-1 min-h-10 text-sm text-[var(--text)] focus:border-[var(--accent)]"
         >
           <option value="">— Choisir —</option>
           {Object.keys(CHARACTERS_BY_NAME).map((n) => (
@@ -159,7 +159,7 @@ export default function IaProfilesList({ initialProfiles }: { initialProfiles: I
         type="button"
         variant="outline"
         onClick={openCreator}
-        className="w-full min-h-10"
+        className="w-full min-h-10 border-[var(--border-control)]"
       >
         + Nouveau personnage
       </Button>
@@ -238,18 +238,19 @@ function ProfileCard({
           onEdit();
         }
       }}
-      className="cursor-pointer rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] overflow-hidden transition-all hover:border-[var(--accent)] hover:bg-[var(--surface-hover)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+      className="cursor-pointer rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] overflow-hidden transition-all hover:border-[var(--accent)] hover:bg-[var(--surface-hover)]"
       style={{
         boxShadow: "var(--shadow)",
-        borderLeft: `4px solid ${profile.couleur || "var(--border)"}`,
-        opacity: profile.actif ? 1 : 0.75,
+        // Liseré décoratif (le nom et l'avatar identifient la carte) : teinté vers --text pour rester visible sur fond sombre
+        borderLeft: `4px solid ${profile.couleur ? `color-mix(in srgb, ${profile.couleur} 60%, var(--text))` : "var(--border)"}`,
       }}
     >
       <div className="flex items-center gap-3 p-4">
-        <Avatar className="h-11 w-11 shrink-0">
+        {/* Inactif : seul l'avatar est atténué, le texte garde son contraste */}
+        <Avatar className={`h-11 w-11 shrink-0 ${profile.actif ? "" : "grayscale opacity-60"}`}>
           {imageSrc && <AvatarImage src={imageSrc} alt={profile.prenom} />}
           <AvatarFallback
-            style={{ background: profile.couleur, color: "white", fontSize: 18 }}
+            style={{ background: profile.couleur, color: texteSur(profile.couleur), fontSize: 18 }}
           >
             {profile.emoji || profile.prenom.charAt(0)}
           </AvatarFallback>
@@ -261,7 +262,7 @@ function ProfileCard({
             </span>
             <span className="text-base">{profile.emoji}</span>
             {!profile.actif && (
-              <span className="text-[0.65rem] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-[var(--border)] text-[var(--text-muted)]">
+              <span className="text-[0.65rem] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-[var(--border)] text-[var(--text)]">
                 Inactif
               </span>
             )}
@@ -276,12 +277,12 @@ function ProfileCard({
         </div>
         <label
           className="flex items-center gap-2 cursor-pointer select-none text-xs"
-          aria-label="Activer l'agent"
           onClick={(e) => e.stopPropagation()}
         >
           <span
             role="switch"
             aria-checked={profile.actif}
+            aria-label="Activer l'agent"
             tabIndex={0}
             onClick={(e) => {
               e.stopPropagation();
@@ -295,10 +296,10 @@ function ProfileCard({
               }
             }}
             className="relative inline-flex h-6 w-11 items-center rounded-full transition-colors"
-            style={{ background: profile.actif ? "var(--accent)" : "var(--border)" }}
+            style={{ background: profile.actif ? "var(--accent)" : "var(--text-muted)" }}
           >
             <span
-              className="inline-block h-5 w-5 rounded-full bg-white transition-transform"
+              className="inline-block h-5 w-5 rounded-full bg-[var(--surface)] transition-transform"
               style={{ transform: profile.actif ? "translateX(22px)" : "translateX(2px)" }}
             />
           </span>
@@ -424,7 +425,7 @@ function ProfileEditor({
   }
 
   const textareaClass =
-    "w-full bg-[var(--bg)] border border-[var(--border)] rounded-[var(--radius-sm)] px-3 py-2 text-sm text-[var(--text)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--accent)] transition-colors resize-y";
+    "w-full bg-[var(--bg)] border border-[var(--border-control)] rounded-[var(--radius-sm)] px-3 py-2 text-sm text-[var(--text)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent)] transition-colors resize-y";
 
   const MAX_PERSONNALITE = 1000;
   const MAX_STYLE = 500;
@@ -810,7 +811,7 @@ function AvatarField({
       <div className="flex items-center gap-3" {...zone}>
         <Avatar className="h-14 w-14 shrink-0">
           {src && <AvatarImage src={src} alt={alt} />}
-          <AvatarFallback style={{ background: couleur, color: "white", fontSize: 20 }}>{initiale}</AvatarFallback>
+          <AvatarFallback style={{ background: couleur, color: texteSur(couleur), fontSize: 20 }}>{initiale}</AvatarFallback>
         </Avatar>
         <div className="flex flex-1 min-w-0 flex-col gap-2">
           <div className="flex flex-wrap gap-2">

@@ -8,7 +8,7 @@ import { casseLisible, grilleSemaine, meilleureNoteDuJour, platsAffiches, restos
 import RestoBadge from "@/app/components/RestoBadge";
 import type { Selection } from "./DetailPanneau";
 import { rangStagger } from "@/lib/motion-menus";
-import { couleur, fmtPrix, MODE_LABEL, PastilleAnimee } from "./ui";
+import { couleur, fmtNote, fmtPrix, MODE_LABEL, PastilleAnimee } from "./ui";
 import { reduit } from "./motion";
 import styles from "./menus.module.css";
 
@@ -147,11 +147,14 @@ export default function SemaineVue({ semaine, mode, today, jourIdx, setJourIdx, 
                 className={`${styles.case} ${plats[0] ? couleur(plats[0].note) : ""} ${i === jourIdx ? styles.colonne : ""}`}
                 onClick={() => setJourIdx(i)}
                 aria-label={`${ligne.resto.nom}, ${formatDateShort(semaine[i].date)} : ${plats[0] ? `${plats[0].note ?? "?"} sur 10` : "pas de plat"}`}
-              />
+              >
+                {/* La note est écrite dans la case : la couleur seule ne se lit pas sans distinguer vert, ambre et rouge. */}
+                {plats[0] ? fmtNote(plats[0].note) : null}
+              </button>
             )),
           ])}
         </div>
-        <span className={styles.meta}>Couleur = meilleure note {MODE_LABEL[mode]} du resto ce jour-là. Touche une colonne ou swipe.</span>
+        <span className={styles.meta}>Couleur et chiffre = meilleure note {MODE_LABEL[mode]} du resto ce jour-là. Touche une colonne ou swipe.</span>
 
         <div className={styles.pages} ref={pagesRef}>
           {semaine.map((pdj, j) => {
@@ -195,7 +198,7 @@ export default function SemaineVue({ semaine, mode, today, jourIdx, setJourIdx, 
       </div>
 
       {absents.length > 0 && (
-        <p className={styles.meta}>
+        <p className={`${styles.meta} ${styles.absents}`}>
           Aucun plat du jour cette semaine :{" "}
           {absents.map((r, i) => (
             <span key={r.slug}>

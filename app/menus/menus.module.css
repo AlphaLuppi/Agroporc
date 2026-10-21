@@ -29,7 +29,7 @@
 .fondu { animation: fondu 180ms ease-out; }
 
 /* ── En-tête ── */
-.vues { position: relative; isolation: isolate; display: flex; gap: 3px; padding: 3px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+.vues { position: relative; isolation: isolate; display: flex; gap: 3px; padding: 3px; background: var(--surface); border: 1px solid var(--border-control); border-radius: var(--radius); }
 .vues button {
   flex: 1; border: 0; background: none; border-radius: calc(var(--radius) - 4px); padding: 8px 10px;
   color: var(--text-muted); font: inherit; font-weight: 600; font-size: 0.9rem; cursor: pointer;
@@ -54,7 +54,7 @@
 .semaineNav { display: flex; align-items: center; gap: 6px; font-size: 0.8rem; color: var(--text-secondary); }
 .semaineNav a {
   width: 40px; height: 40px; display: grid; place-items: center; border-radius: var(--radius-sm);
-  border: 1px solid var(--border); background: var(--surface); color: var(--text-secondary); text-decoration: none;
+  border: 1px solid var(--border-control); background: var(--surface); color: var(--text-secondary); text-decoration: none;
 }
 .semaineNav a:hover { color: var(--text); border-color: var(--border-accent); }
 .semaineNav a.auj { width: auto; padding: 0 10px; color: var(--accent); font-weight: 600; }
@@ -63,10 +63,14 @@
 /* Grille 1fr 1fr : deux boutons de même largeur, la pastille glisse sans mesure JS. */
 .mode {
   position: relative; isolation: isolate; display: grid; grid-template-columns: 1fr 1fr; gap: 2px; padding: 3px;
-  background: var(--surface); border: 1px solid var(--border); border-radius: 999px; flex: none;
+  background: var(--surface); border: 1px solid var(--border-control); border-radius: 999px; flex: none;
 }
 .mode::before { width: calc((100% - 8px) / 2); translate: calc(var(--idx, 0) * (100% + 2px)) 0; border-radius: 999px; }
 .mode[data-mode="goulaf"]::before { background: color-mix(in srgb, var(--accent) 70%, var(--bad)); }
+/* Tigre : accent (#ff8c00) et --bad sont trop proches en luminance (1,26:1) pour que Goulaf se lise à côté de Sportif ; rouge-corail plus sombre (1,6:1 contre l'accent, ΔE ≥ 30 en daltonisme, texte --accent-text à 5,1:1). */
+html[data-theme="tigre"] .mode[data-mode="goulaf"]::before { background: #e5533d; }
+/* Terrasse : accent et --bad sont proches (ΔE 9 avec 70 % d'accent) ; on pousse vers le rouge (ΔE 15 en deutéranopie, texte à 7,2:1). */
+html[data-theme="terrasse"] .mode[data-mode="goulaf"]::before { background: color-mix(in srgb, var(--accent) 20%, var(--bad)); }
 .mode[data-pret]::before { transition: translate var(--m-base) var(--m-spring), background-color var(--m-base) ease-out; }
 .mode button {
   border: 0; background: none; border-radius: 999px; padding: 6px 12px; display: flex; align-items: center; justify-content: center; gap: 6px;
@@ -77,7 +81,7 @@
 .mode button[aria-pressed="true"] { color: var(--accent-text); }
 .mode svg { width: 16px; height: 16px; }
 
-.jours { position: relative; isolation: isolate; display: flex; gap: 3px; padding: 3px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); flex: 1; min-width: 0; }
+.jours { position: relative; isolation: isolate; display: flex; gap: 3px; padding: 3px; background: var(--surface); border: 1px solid var(--border-control); border-radius: var(--radius); flex: 1; min-width: 0; }
 .jours::before { border-radius: calc(var(--radius) - 5px); }
 .jours button {
   flex: 1; min-width: 0; border: 0; background: none; border-radius: calc(var(--radius) - 5px); padding: 4px 0 5px;
@@ -92,6 +96,12 @@
   width: 6px; height: 6px; border-radius: 50%; margin-top: 3px; background: var(--border);
   transition: background-color var(--m-base) ease-out, color var(--m-base) ease-out;
 }
+/* Forme selon la note, en plus de la couleur : rond = bien, barre = moyen, carré = faible (indispensable en Terrasse où vert, ambre et rouge sont proches). */
+.point.good { width: 7px; height: 7px; margin-top: 2px; }
+.point.ok { width: 10px; height: 4px; border-radius: 2px; margin-top: 3.5px; }
+.point.bad { width: 6px; height: 6px; border-radius: 1px; margin-top: 2.5px; }
+/* Jour choisi : le point (couleur de la note) est posé sur la pastille accent. L'anneau sombre le garde lisible. */
+.jours button[aria-pressed="true"] .point[data-note] { box-shadow: 0 0 0 2px var(--accent-text); }
 /* Aujourd'hui : le point pulse une fois à l'apparition (todayPulse, infinie, reste réservée à la V1). */
 .jours button.auj .point { animation: pointPulse 380ms var(--m-spring) 250ms backwards; }
 
@@ -113,8 +123,10 @@
   font-weight: 800; font-size: 1rem; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; background: var(--surface);
   transition: color var(--m-base) ease-out, background-color var(--m-base) ease-out;
 }
-.pastille small { font-size: 0.58em; opacity: 0.65; font-weight: 600; align-self: flex-end; margin-bottom: 0.55em; }
-.pastille.good { background: var(--good-bg); } .pastille.ok { background: var(--ok-bg); } .pastille.bad { background: var(--bad-bg); }
+/* /10 : même couleur que la note (pas d'opacity : texte porteur de sens), plus petit et moins gras pour garder la hiérarchie. */
+.pastille small { font-size: 0.72em; font-weight: 500; align-self: flex-end; margin-bottom: 0.45em; }
+/* Fonds opaques (--*-soft) : la pastille est souvent posée sur la fourrure du thème Tigre, un fond translucide y virait au brun. */
+.pastille.good { background: var(--good-soft); } .pastille.ok { background: var(--ok-soft); } .pastille.bad { background: var(--bad-soft); }
 .tagReco { display: inline-block; font-size: 0.68rem; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; padding: 2px 6px; border-radius: 5px; background: var(--good); color: var(--bg); white-space: nowrap; vertical-align: 2px; }
 .meta { font-size: 0.75rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
 .meta b { color: var(--accent); font-weight: 700; }
@@ -163,7 +175,7 @@
 .heroTags .restoHero svg { width: 16px; height: 16px; }
 .heroNom { font-family: var(--font-heading); font-weight: 700; font-size: 1.05rem; line-height: 1.25; }
 .raison { font-size: 0.78rem; color: var(--text-secondary); line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.macrosLigne { display: flex; flex-wrap: wrap; gap: 2px 12px; font-size: 0.75rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.macrosLigne { display: flex; flex-wrap: wrap; gap: 2px 12px; font-size: 0.75rem; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
 .macrosLigne b { color: var(--text); font-weight: 600; }
 .tuile {
   display: flex; flex-direction: column; gap: 5px; text-align: left; cursor: pointer; min-width: 0;
@@ -174,6 +186,8 @@
     scale var(--m-base) var(--m-spring);
 }
 .tuile:hover, .hero:hover { border-color: var(--border-accent); }
+/* Tigre : la tuile (--surface) se détache à peine de la fourrure ; un anneau fin la cerne (le survol a sa propre ombre). */
+html[data-theme="tigre"] .tuile:not(:hover) { box-shadow: 0 0 0 1px color-mix(in srgb, var(--border-accent) 55%, transparent); }
 @media (hover: hover) and (pointer: fine) {
   .tuile:hover, .hero:hover { translate: 0 -2px; box-shadow: var(--shadow); }
   .hero:hover::before { opacity: 1; }
@@ -181,7 +195,7 @@
 }
 .tuileHaut { display: flex; justify-content: space-between; align-items: center; gap: 6px; min-width: 0; }
 .grosseNote { font-size: 1.45rem; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; flex: none; transition: color var(--m-base) ease-out; }
-.grosseNote small { font-size: 0.55em; opacity: 0.6; }
+.grosseNote small { font-size: 0.72em; font-weight: 500; }
 .nom { font-size: 0.88rem; font-weight: 600; line-height: 1.3; overflow-wrap: break-word; }
 .tuile .meta { margin-top: auto; }
 /* Macros de la tuile : trois colonnes valeur + libellé, monochromes pour ne pas concurrencer la note. */
@@ -197,16 +211,21 @@
 .semaineLabel { display: none; }
 .puces { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 8px; font-size: 0.75rem; color: var(--text-muted); padding-top: 2px; }
 .pucesGroupe { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-/* Sur mobile, l'intitulé occupe sa propre ligne au-dessus de ses puces. */
-@media (max-width: 640px) { .pucesTitre { flex-basis: 100%; } }
+/* Intitulé sur fond --bg opaque : posé nu sur la fourrure du thème Tigre, il tombait sous 4,5:1. */
+.pucesTitre { display: inline-block; padding: 2px 8px; border-radius: 6px; background: var(--bg); color: var(--text-secondary); }
+/* Hors Tigre le fond est celui de la page, donc la pastille ne se voit pas : pas de marge gauche, le texte reste aligné sur les puces. */
+html:not([data-theme="tigre"]) .pucesTitre { padding-left: 0; }
+/* Sur mobile, l'intitulé occupe sa propre ligne au-dessus de ses puces (le fond reste ajusté au texte). */
+.pucesTitreLigne { display: flex; }
+@media (max-width: 640px) { .pucesTitreLigne { flex-basis: 100%; } }
 .puces button {
   display: inline-flex; align-items: center; gap: 0.3em;
-  border: 1px dashed var(--border); background: none; border-radius: 999px; padding: 6px 12px; min-height: 36px; color: var(--text-secondary);
+  border: 1px solid var(--border-control); background: var(--surface); border-radius: 999px; padding: 6px 12px; min-height: 36px; color: var(--text-secondary);
   font: inherit; font-size: 0.8rem; cursor: pointer;
   transition: border-color var(--m-fast) ease-out, color var(--m-fast) ease-out, scale var(--m-base) var(--m-spring);
 }
-.puces button:hover { border-color: var(--border-accent); color: var(--text); }
-.message { padding: 28px 20px; text-align: center; border-radius: var(--radius); border: 1px solid var(--bad-border); background: var(--bad-bg); color: var(--bad); }
+.puces button:hover { border-color: var(--border-accent); background: var(--surface-hover); color: var(--text); }
+.message { padding: 28px 20px; text-align: center; border-radius: var(--radius); border: 1px solid var(--bad-border); background: var(--bad-soft); color: var(--bad); }
 
 /* ── Image IA d'un plat (POC) : cadre à ratio fixe, fond d'assiette tant que l'image n'est pas là ── */
 .photo {
@@ -246,14 +265,17 @@
 /* Carte de chaleur : entrée en vague diagonale (--i = ligne + colonne) et re-coloration en vague au changement de mode. */
 .case {
   --d: min(calc(var(--i, 0) * 30ms), 300ms);
-  height: 24px; border-radius: 4px; border: 0; padding: 0; cursor: pointer; background: var(--border); opacity: 0.85;
+  height: 40px; border-radius: 4px; padding: 0; cursor: pointer; background: transparent; border: 1px dashed var(--border-accent);
+  /* Note écrite dans la case : la couleur seule ne suffit pas (daltoniens). --accent-text est sombre en Normal/Tigre, clair en Terrasse. */
+  color: var(--accent-text); font: inherit; font-size: 0.7rem; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums;
   outline: 1.5px solid transparent; outline-offset: 1px;
-  transition: background-color var(--m-base) ease var(--d), outline-color var(--m-base) ease-out, opacity var(--m-base) ease-out,
-    scale var(--m-base) var(--m-spring);
+  transition: background-color var(--m-base) ease var(--d), outline-color var(--m-base) ease-out, scale var(--m-base) var(--m-spring);
   animation: caseVague 380ms var(--m-spring) backwards; animation-delay: var(--d);
 }
+/* Opaques (pas d'opacity) : posées sur la fourrure du thème Tigre, des cases à 85 % perdaient du contraste. Case vide = pointillés. */
+.case.good, .case.ok, .case.bad { border: 0; }
 .case.good { background: var(--good); } .case.ok { background: var(--ok); } .case.bad { background: var(--bad); }
-.case.colonne { outline-color: var(--accent); opacity: 1; }
+.case.colonne { outline-color: var(--accent); }
 .pages { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; margin-inline: -12px; }
 .pages::-webkit-scrollbar { display: none; }
 .page { flex: 0 0 100%; scroll-snap-align: start; padding-inline: 12px; min-width: 0; }
@@ -268,7 +290,10 @@
 .pageActive h2, .pageActive .ligne { animation: installe 300ms var(--m-expo) backwards; animation-delay: calc(var(--i, 0) * 35ms); }
 .ligne:hover { background: var(--surface); }
 .ligneTexte { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
-.vide { color: var(--text-muted); font-style: italic; font-size: 0.85rem; padding: 14px 2px; }
+/* Fond --surface : sans lui le message se perdait sur la fourrure du thème Tigre. */
+.vide { color: var(--text-muted); font-style: italic; font-size: 0.85rem; padding: 14px 12px; background: var(--surface); border-radius: var(--radius-sm); }
+/* « Aucun plat du jour cette semaine » : même traitement, ajusté au texte. */
+.absents { align-self: flex-start; padding: 6px 10px; background: var(--surface); border-radius: var(--radius-sm); }
 
 /* ── Vue La carte ── */
 /* Mobile : les restos (picto + nom) prennent toute une ligne défilante, le mode passe dessous. */
@@ -278,12 +303,12 @@
 @media (min-width: 640px) { .carteBarre { flex-wrap: nowrap; } .restos { flex: 1 1 auto; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; } }
 .restos::-webkit-scrollbar { display: none; }
 .restos button {
-  border: 1px solid var(--border); background: var(--surface); color: var(--text-secondary); border-radius: 999px;
+  border: 1px solid var(--border-control); background: var(--surface); color: var(--text-secondary); border-radius: 999px;
   padding: 6px 13px; font: inherit; font-size: 0.82rem; font-weight: 600; white-space: nowrap; cursor: pointer;
   transition: border-color var(--m-fast) ease-out, color var(--m-fast) ease-out, background-color var(--m-fast) ease-out, scale var(--m-base) var(--m-spring);
 }
 .restos button:hover { color: var(--text); border-color: var(--border-accent); }
-.restos button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: var(--accent-glow); animation: pop 260ms var(--m-spring); }
+.restos button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); animation: pop 260ms var(--m-spring); }
 .carte { columns: 1; column-gap: 32px; }
 .section { break-inside: avoid; margin-bottom: 14px; animation: monter var(--m-slow) var(--m-expo) backwards; animation-delay: calc(var(--i, 0) * 35ms); }
 /* Changement de semaine en cours : l'ancienne semaine s'estompe (après 120 ms : rien sur une navigation rapide). */
@@ -355,7 +380,7 @@
 /* Fermer reste visible en haut quand on fait défiler la feuille (macros, recette, commentaires). */
 .fermer {
   position: sticky; top: 0; z-index: 2; align-self: flex-end; margin-bottom: -54px; /* 40 px + gap : ne pousse pas l'en-tête */
-  flex: none; width: 40px; height: 40px; border-radius: var(--radius-sm); border: 1px solid var(--border);
+  flex: none; width: 40px; height: 40px; border-radius: var(--radius-sm); border: 1px solid var(--border-control);
   background: var(--surface-hover); color: var(--text-secondary); cursor: pointer; display: grid; place-items: center;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
   transition: color var(--m-fast) ease-out, border-color var(--m-fast) ease-out, scale var(--m-base) var(--m-spring);
@@ -369,8 +394,8 @@
 .autreMode { font-size: 0.75rem; color: var(--text-muted); }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; }
 .bouton {
-  border: 1px solid var(--accent); background: var(--accent-glow); color: var(--accent); border-radius: var(--radius-sm);
-  padding: 7px 14px; font: inherit; font-weight: 600; font-size: 0.82rem; cursor: pointer;
+  border: 1px solid var(--accent); background: var(--accent-soft); color: var(--accent); border-radius: var(--radius-sm);
+  padding: 7px 14px; min-height: 40px; font: inherit; font-weight: 600; font-size: 0.82rem; cursor: pointer;
   transition: scale var(--m-base) var(--m-spring), box-shadow var(--m-fast) ease-out;
 }
 @media (hover: hover) and (pointer: fine) {
@@ -395,6 +420,8 @@
   outline: 2px solid var(--accent); outline-offset: 2px;
 }
 .ligne:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* Case de la carte de chaleur : la colonne choisie a déjà un contour accent, le focus clavier prend le texte pour ne pas lui ressembler. */
+.case:focus-visible { outline: 2px solid var(--text); outline-offset: 3px; }
 
 @keyframes fondu { from { opacity: 0; } }
 @keyframes effacer { to { opacity: 0; } }
@@ -479,7 +506,7 @@
     content: ""; position: absolute; left: 10px; right: 10px; bottom: -1px; height: 2px; border-radius: 2px; pointer-events: none;
     background: var(--accent); scale: 0 1; transition: scale var(--m-base) var(--m-expo);
   }
-  button.th:hover::after, button.th:focus-visible::after { scale: 1 1; }
+  button.th:hover::after, button.th:focus-visible::after, button.th.auj::after { scale: 1 1; }
   .th.auj { color: var(--accent); }
   .rh {
     background: var(--surface); font-weight: 600; font-size: 0.82rem; line-height: 1.3; color: var(--text-secondary);
@@ -488,7 +515,11 @@
   .rhPicto { grid-row: span 2; margin-top: 1px; }
   .rh small { grid-column: 2; color: var(--text-muted); font-weight: 500; font-size: 0.72rem; }
   .cellule { display: flex; flex-direction: column; gap: 8px; }
-  .cellule.aujC { background: var(--accent-glow); }
+  /* Teinte posée sur --bg (8 % : le texte muted et les notes tiennent 4,5:1 en Normal et Tigre). Le liseré permanent de .th.auj marque aussi la colonne. */
+  .cellule.aujC { background: color-mix(in srgb, var(--accent) 8%, var(--bg)); }
+  /* Terrasse : 9 % pour que la colonne se voie sur le crème, et le texte muted passe en secondaire (muted tomberait à 4,3:1 sur cette teinte). */
+  html[data-theme="terrasse"] .cellule.aujC { background: color-mix(in srgb, var(--accent) 9%, var(--bg)); }
+  html[data-theme="terrasse"] .cellule.aujC .celluleVide { color: var(--text-secondary); }
   .cellule button {
     display: flex; gap: 8px; align-items: flex-start; border: 0; background: none; padding: 0; text-align: left; cursor: pointer;
     color: var(--text); font: inherit; font-size: 0.8rem; line-height: 1.3;

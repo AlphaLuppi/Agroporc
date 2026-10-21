@@ -131,7 +131,7 @@ export default function CommentForm({
   if (!open) {
     return (
       <button
-        className={`pdj-press ${styles.ajouter} mt-3 w-full border border-dashed border-[var(--border)] rounded-[var(--radius)] text-[var(--text-secondary)] py-2 px-3 text-sm cursor-pointer bg-transparent hover:border-[var(--accent)] hover:text-[var(--accent)]`}
+        className={`pdj-press ${styles.ajouter} mt-3 w-full border border-dashed border-[var(--border-control)] rounded-[var(--radius)] text-[var(--text-secondary)] py-2 px-3 text-sm cursor-pointer bg-transparent hover:border-[var(--accent)] hover:text-[var(--accent)]`}
         onClick={() => setOpen(true)}
       >
         <span className={styles.plus} aria-hidden="true">+</span> Ajouter un commentaire
@@ -245,7 +245,7 @@ export default function CommentForm({
       onSubmit={handleSubmit}
     >
       {reponseA && (
-        <div className="text-xs text-[var(--accent)] px-2 py-1.5 bg-[var(--accent-glow)] rounded-[var(--radius-sm)] border-l-[3px] border-l-[var(--accent)]">
+        <div className="text-xs text-[var(--accent)] px-2 py-1.5 bg-[var(--accent-soft)] rounded-[var(--radius-sm)] border-l-[3px] border-l-[var(--accent)]">
           ↩ En réponse à {reponseA}
         </div>
       )}
@@ -264,7 +264,7 @@ export default function CommentForm({
         <button
           type="button"
           onClick={() => setPickerOpen((v) => !v)}
-          className="w-full flex items-center gap-2 bg-[var(--surface)] border border-[var(--border)] rounded-[var(--radius)] px-2.5 py-1.5 text-sm text-[var(--text)] hover:border-[var(--accent)] focus:border-[var(--accent)] focus:outline-none transition-colors"
+          className="w-full flex items-center gap-2 bg-[var(--surface)] border border-[var(--border-control)] rounded-[var(--radius)] px-2.5 py-1.5 text-sm text-[var(--text)] hover:border-[var(--accent)] focus:border-[var(--accent)] transition-colors"
           aria-haspopup="listbox"
           aria-expanded={pickerOpen}
         >
@@ -275,7 +275,7 @@ export default function CommentForm({
             </AvatarFallback>
           </Avatar>
           <span className="flex-1 text-left truncate">
-            <span className="text-[var(--text-secondary)] opacity-60 text-xs mr-1">en tant que</span>
+            <span className="text-[var(--text-muted)] text-xs mr-1">en tant que</span>
             <span className="font-semibold">{character.name}</span>
           </span>
           <ChevronDown
@@ -297,8 +297,8 @@ export default function CommentForm({
                   aria-selected={selected}
                   onClick={() => selectCharacter(c)}
                   style={{ "--i": i } as React.CSSProperties}
-                  className={`${styles.option} w-full flex items-center gap-2 px-2.5 py-1.5 text-sm text-left hover:bg-[var(--accent-glow)] transition-colors ${
-                    selected ? "bg-[var(--accent-glow)] text-[var(--accent)]" : "text-[var(--text)]"
+                  className={`${styles.option} w-full flex items-center gap-2 px-2.5 py-1.5 text-sm text-left hover:bg-[var(--accent-soft)] transition-colors ${
+                    selected ? "bg-[var(--accent-soft)] text-[var(--accent)]" : "text-[var(--text)]"
                   }`}
                 >
                   <Avatar className="shrink-0 w-6 h-6 text-xs">
@@ -329,7 +329,7 @@ export default function CommentForm({
         maxLength={MAX_TEXTE}
         required={!imageUrl}
         rows={3}
-        className={`${styles.zone} block w-full min-w-0 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2.5 py-1.5 text-sm text-[var(--text)] placeholder:text-[var(--text-secondary)] placeholder:opacity-60 focus:border-[var(--accent)] focus:outline-none resize-y`}
+        className={`${styles.zone} block w-full min-w-0 rounded-lg border border-[var(--border-control)] bg-[var(--surface)] px-2.5 py-1.5 text-sm text-[var(--text)] focus:border-[var(--accent)] resize-y`}
       />
       {compteur !== "cache" && (
         <span className={`${styles.compteur} ${compteur === "limite" ? styles.compteurLimite : ""}`}>
@@ -353,7 +353,7 @@ export default function CommentForm({
           variant="outline"
           size="sm"
           onClick={() => setShowImageInput(true)}
-          className="bg-[var(--surface)] border-[var(--border)] text-[var(--text-secondary)] text-xs hover:border-[var(--accent)] hover:text-[var(--accent)] w-fit"
+          className="bg-[var(--surface)] border-[var(--border-control)] text-[var(--text-secondary)] text-xs hover:border-[var(--accent)] hover:text-[var(--accent)] w-fit"
         >
           <ImagePlus className="size-3.5" />
           Image / GIF
@@ -369,15 +369,15 @@ export default function CommentForm({
           onDragLeave={handleDragLeave}
           className={`${styles.depot} pdj-press flex flex-col items-center justify-center gap-1.5 py-5 px-4 rounded-[var(--radius)] border-2 border-dashed cursor-pointer bg-transparent ${
             dragOver
-              ? `${styles.depotActif} border-[var(--accent)] bg-[var(--accent-glow)]`
-              : "border-[var(--border)] hover:border-[var(--accent)] hover:bg-[var(--accent-glow)]"
+              ? `${styles.depotActif} border-[var(--accent)] bg-[var(--accent-soft)]`
+              : "border-[var(--border-control)] hover:border-[var(--accent)] hover:bg-[var(--accent-soft)]"
           }`}
         >
           <Upload className={`${styles.icone} size-5 ${dragOver ? "text-[var(--accent)]" : "text-[var(--text-secondary)]"}`} />
           <span className="text-xs text-[var(--text-secondary)]">
             Cliquer ou glisser-déposer une image
           </span>
-          <span className="text-[0.65rem] text-[var(--text-secondary)] opacity-60">
+          <span className="text-[0.65rem] text-[var(--text-muted)]">
             PNG, JPG, GIF, WebP · 5 Mo max
           </span>
         </button>
@@ -401,7 +401,7 @@ export default function CommentForm({
           <button
             type="button"
             onClick={() => { setImageUrl(""); setShowImageInput(false); setImageError(false); }}
-            className={`${styles.fermer} absolute -top-1.5 -right-1.5 bg-[var(--surface)] border border-[var(--border)] text-[var(--text-secondary)] rounded-full w-5 h-5 cursor-pointer flex items-center justify-center hover:text-[var(--bad)] hover:border-[var(--bad)] transition-colors`}
+            className={`${styles.fermer} absolute -top-1.5 -right-1.5 bg-[var(--surface)] border border-[var(--border-control)] text-[var(--text-secondary)] rounded-full w-5 h-5 cursor-pointer flex items-center justify-center hover:text-[var(--bad)] hover:border-[var(--bad)] transition-colors`}
             aria-label="Supprimer l'image"
           >
             <X className="size-3" />
@@ -427,7 +427,7 @@ export default function CommentForm({
             size="sm"
             disabled={loading || envoye || (!texte.trim() && !imageUrl)}
             aria-live="polite"
-            className={`pdj-press ${styles.pressCouleurs} bg-[var(--accent)] text-[var(--bg)] font-semibold hover:bg-[var(--accent)]/90 disabled:opacity-40 ${envoye ? styles.envoye : ""} ${isMobile ? "w-full h-10 text-sm" : ""}`}
+            className={`pdj-press ${styles.pressCouleurs} bg-[var(--accent)] text-[var(--accent-text)] font-semibold hover:bg-[var(--accent)]/90 disabled:opacity-100 disabled:bg-[var(--surface-hover)] disabled:text-[var(--text-muted)] disabled:border-[var(--border-control)] ${envoye ? styles.envoye : ""} ${isMobile ? "w-full h-10 text-sm" : ""}`}
           >
             {envoye ? (
               "Envoyé ✓"

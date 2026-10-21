@@ -17,7 +17,7 @@ import SemaineVue from "./SemaineVue";
 import CarteVue from "./CarteVue";
 import GrilleSquelette from "./GrilleSquelette";
 import DetailPanneau, { type Selection } from "./DetailPanneau";
-import { couleur, ModeToggle } from "./ui";
+import { couleur, fmtNote, ModeToggle } from "./ui";
 import { popper, reduit, usePret } from "./motion";
 import styles from "./menus.module.css";
 
@@ -176,20 +176,28 @@ export default function MenusClient({ semaine, cartes, today, defaultIdx, weekLa
               data-pret={attrPret}
               style={{ "--idx": jourIdx, "--n": semaine.length } as CSSProperties}
             >
-              {semaine.map((p, i) => (
-                <button
-                  key={p.date}
-                  type="button"
-                  aria-pressed={i === jourIdx}
-                  className={p.date === today ? styles.auj : undefined}
-                  onClick={() => setJourIdx(i)}
-                  aria-label={formatDateShort(p.date)}
-                >
-                  <small>{formatDayShort(p.date)}</small>
-                  <b>{new Date(p.date + "T12:00:00").getDate()}</b>
-                  <span className={`${styles.point} ${couleur(meilleureNoteDuJour(p, mode))}`} style={meilleureNoteDuJour(p, mode) != null ? { background: "currentColor" } : undefined} />
-                </button>
-              ))}
+              {semaine.map((p, i) => {
+                const meilleure = meilleureNoteDuJour(p, mode);
+                return (
+                  <button
+                    key={p.date}
+                    type="button"
+                    aria-pressed={i === jourIdx}
+                    className={p.date === today ? styles.auj : undefined}
+                    onClick={() => setJourIdx(i)}
+                    // La couleur du point ne doit pas être la seule trace de la note du jour.
+                    aria-label={meilleure != null ? `${formatDateShort(p.date)}, meilleure note ${fmtNote(meilleure)} sur 10` : formatDateShort(p.date)}
+                  >
+                    <small>{formatDayShort(p.date)}</small>
+                    <b>{new Date(p.date + "T12:00:00").getDate()}</b>
+                    <span
+                      className={`${styles.point} ${couleur(meilleure)}`}
+                      data-note={meilleure != null ? "" : undefined}
+                      style={meilleure != null ? { background: "currentColor" } : undefined}
+                    />
+                  </button>
+                );
+              })}
             </div>
             <ModeToggle mode={mode} onChange={setMode} />
           </div>
