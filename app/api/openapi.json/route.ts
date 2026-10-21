@@ -79,11 +79,14 @@ const spec = {
           auteur: { type: "string" },
           texte: { type: "string" },
           votes: { type: "array", items: { type: "string" } },
-          statut: { type: "string", enum: ["en_attente", "validee", "rejetee"] },
+          statut: { type: "string", enum: ["nouveau", "fait", "refusé"] },
           created_at: { type: "string", format: "date-time" },
           faisabilite: { type: "string", enum: ["faisable", "complexe", "impossible", "troll"] },
           evaluation: { type: "string" },
           evaluated_at: { type: "string", format: "date-time" },
+          reponse: { type: "string", nullable: true },
+          reponse_at: { type: "string", format: "date-time", nullable: true },
+          archived_at: { type: "string", format: "date-time", nullable: true },
         },
       },
       IaProfile: {
@@ -358,6 +361,36 @@ const spec = {
                   id: { type: "integer" },
                   faisabilite: { type: "string", enum: ["faisable", "complexe", "impossible", "troll"] },
                   evaluation: { type: "string", maxLength: 1000 },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          "200": { description: "OK" },
+          "400": { description: "Payload invalide" },
+          "401": { description: "Non autorisé" },
+          "404": { description: "Idée introuvable" },
+        },
+      },
+    },
+    "/api/idees/suivi": {
+      post: {
+        tags: ["Idées"],
+        summary: "🔒 Répondre à une idée, changer son statut ou l'archiver",
+        security: [{ bearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["id"],
+                properties: {
+                  id: { type: "integer" },
+                  statut: { type: "string", enum: ["nouveau", "fait", "refusé"] },
+                  reponse: { type: "string", maxLength: 1000, description: "Chaîne vide = réponse retirée" },
+                  archiver: { type: "boolean" },
                 },
               },
             },
