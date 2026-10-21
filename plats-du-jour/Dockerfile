@@ -30,7 +30,7 @@ RUN chmod +x /entrypoint.sh
 # Cron : lundi 7h30 Paris = semaine, mardi-vendredi 7h30 Paris = jour,
 #        retries toutes les 15 min de 7h45 à 10h00 (no-op ~2 s si complet),
 #        lundi-vendredi 13h Paris = desserts (postés vers midi par le Truck Muche),
-#        lundi-vendredi 10h35 Paris = images IA des plats (POC) manquantes, du jour au vendredi
+#        lundi-vendredi 10h35 Paris = images IA des plats (POC) manquantes, du lundi au vendredi
 #        lundi-vendredi 11h15 Paris = recettes maison des plats (POC) manquantes, du jour seulement
 #        (après le dernier retry 10h00 et la fin des images ≤ 11h05 ; dates = plats vraiment servis)
 RUN echo '30 7 * * 1 root /entrypoint.sh semaine >> /app/logs/cron.log 2>&1' > /etc/cron.d/pdj && \

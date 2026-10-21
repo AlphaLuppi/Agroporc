@@ -25,8 +25,8 @@ source .venv/bin/activate
 python main.py semaine              # Full weekly pipeline (Monday): scrape all menus + generate comments
 python main.py jour                 # Daily pipeline: scrape today's dishes only
 python main.py cartes [slug] [--force]  # Cartes permanentes (Trèfle, Basilic n'Go, Dubble, La Mijote) : scrape, hash, notation LLM si changement ; --force ré-évalue
-python main.py images [YYYY-MM-DD|semaine] [--force]  # (POC) Images IA des plats publiés manquantes ; --force régénère
-python main.py recettes [YYYY-MM-DD|semaine] [--force]  # (POC) Recettes maison des plats publiés manquantes ; --force réécrit
+python main.py images [YYYY-MM-DD|DEBUT..FIN|semaine] [--force]  # (POC) Images IA des plats publiés manquantes (semaine = lundi→vendredi, plage = jours ouvrés) ; --force régénère
+python main.py recettes [YYYY-MM-DD|DEBUT..FIN|semaine] [--force]  # (POC) Recettes maison des plats publiés manquantes (mêmes dates) ; --force réécrit
 python main.py commentaires <name>  # Generate comments for one character
 python main.py sync-feedback        # Sync human feedback into character profiles
 ```
