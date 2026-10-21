@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ajouterServicesRecettes } from "@/lib/db";
+import { ajouterServicesRecettes, getPdjDepuis, rafraichirNotesRecettes, rattraperNotesRecettes } from "@/lib/db";
 import { CLE_IMAGE_RE } from "@/lib/plat-image";
 import { dateServie, MAX_SERVICES, validerServices } from "@/lib/recettes";
 
@@ -28,7 +28,20 @@ export async function POST(request: NextRequest) {
   }
   try {
     // Les jours à venir (PDJ publiés d'avance) ne sont pas encore servis : ignorés.
-    const ajoutes = await ajouterServicesRecettes(services.filter((s) => dateServie(s.date)));
+    const servis = services.filter((s) => dateServie(s.date));
+    const ajoutes = await ajouterServicesRecettes(servis);
+    // Notes de ces services (un jour publié d'avance n'est noté qu'une fois servi : /api/update
+    // ne repasse pas forcément ce jour-là), puis rattrapage des recettes jamais traitées
+    // (premier run après la migration). Best-effort.
+    try {
+      if (servis.length) {
+        const depuis = servis.reduce((min, s) => (s.date < min ? s.date : min), servis[0].date);
+        await rafraichirNotesRecettes(await getPdjDepuis(depuis), servis.map((s) => s.cle));
+      }
+      await rattraperNotesRecettes();
+    } catch (e) {
+      console.error("[api/recette/services POST] notes", e);
+    }
     return NextResponse.json({ ok: true, ajoutes });
   } catch (e) {
     console.error("[api/recette/services POST]", e);

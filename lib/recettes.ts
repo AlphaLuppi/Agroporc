@@ -13,6 +13,10 @@
  */
 import { normPlatImage, type ImagePlat } from "./plat-image";
 import { RESTAURANTS } from "./restaurants";
+import { fmtNote } from "./format";
+// Types seulement : `recette-notes.ts` importe ce module ET quiz-engine / carte-tri (pas de cycle).
+import type { Envie } from "./quiz-engine";
+import { MODE_LABEL, type Mode } from "./carte-tri";
 
 /** Liste fermée et ordonnée, identique à `UNITES` de `agent/recette_agent.py`. */
 export const UNITES: readonly string[] = [
@@ -31,6 +35,40 @@ export const BANDEAU_HONNETETE_DEBUT = "Recette maison inspirée du plat";
 export const BANDEAU_HONNETETE_SUITE =
   ", ce n'est pas la recette du restaurant. Elle a été rédigée automatiquement à partir du nom du plat et de sa composition estimée : goûtez et ajustez les cuissons et l'assaisonnement.";
 export const MENTION_PANNEAU = "Recette maison inspirée du plat, pas celle du restaurant.";
+
+// --- Notes du plat d'origine et protéine (banque) ---
+
+/** Tris de la banque ; `recentes` = dernier service d'abord (ordre historique). */
+export const TRIS = ["recentes", "sportif", "goulaf", "rapide"] as const;
+export type TriBanque = (typeof TRIS)[number];
+export const LIBELLES_TRI: Record<TriBanque, string> = { recentes: "Récentes", sportif: "Sportif", goulaf: "Goulaf", rapide: "Rapides" };
+
+/** Protéines filtrables (axe « envie » du quiz) ; « autre » est stocké mais pas proposé en filtre. */
+export const PROTEINES: readonly Envie[] = ["poulet", "boeuf", "porc", "veau", "poisson", "vege"];
+export type ProteineRecette = Envie | "autre";
+export const LIBELLES_PROTEINE: Record<Envie, string> = {
+  poulet: "Poulet / volaille", boeuf: "Bœuf", porc: "Porc", veau: "Veau / agneau", poisson: "Poisson", vege: "Végé",
+};
+
+/** Honnêteté : les notes viennent du plat du jour évalué, pas de la recette maison. */
+/**
+ * Recette sans note : plat d'origine pas encore rattrapé, ou introuvable parmi les plats notés
+ * (il ne le sera peut-être jamais) — d'où « indisponible » et non « pas encore notée ».
+ */
+export const NOTE_INDISPONIBLE = "note indisponible";
+export const LEGENDE_SANS_NOTE = "Notes indisponibles pour le plat du jour dont la recette s'inspire.";
+
+export const MENTION_NOTES = "Les notes Sportif et Goulaf sont celles du plat du jour dont la recette s'inspire, pas de la recette maison.";
+
+/** Notes recopiées depuis `pdj_entries` (null tant que la recette n'a pas été rattrapée). */
+export interface NotesRecetteChamps {
+  note_sportif: number | null;
+  note_goulaf: number | null;
+  /** Date du plat du jour dont viennent les notes (la plus récente). */
+  note_date: string | null;
+  /** null = recette jamais traitée par le rattrapage. */
+  proteine: ProteineRecette | null;
+}
 
 export interface IngredientRecette {
   nom: string;
@@ -55,7 +93,7 @@ export interface RecetteContenu {
   ustensiles: string[];
 }
 
-export interface RecetteComplete extends RecetteContenu {
+export interface RecetteComplete extends RecetteContenu, NotesRecetteChamps {
   cle: string;
   restaurant: string;
   plat: string;
@@ -69,7 +107,7 @@ export interface RecetteComplete extends RecetteContenu {
   image: ImagePlat | null;
 }
 
-export interface ResumeRecette {
+export interface ResumeRecette extends NotesRecetteChamps {
   cle: string;
   restaurant: string;
   plat: string;
@@ -361,11 +399,13 @@ export function texteRecherche(restaurant: string, plat: string, r: Pick<Recette
 /**
  * Motifs LIKE de la recherche : un par mot (normalisé comme `recherche`, dédoublonné, 8 au plus),
  * tous requis, dans n'importe quel ordre (« curry poulet » trouve « Poulet au curry »).
+ * Recherche en DÉBUT de mot : le motif `% mot%` est confronté à `' ' || recherche` en SQL, donc
+ * « riz » ne trouve plus « chorizo », mais « pate » trouve encore « pates » et « lait » « laitue ».
  * Après normalisation il ne reste que [a-z0-9] : rien à échapper.
  */
 export function motifsRecherche(q: string): string[] {
   const mots = [...new Set(normPlatImage(q).split(" ").filter(Boolean))].slice(0, 8);
-  return mots.map((m) => `%${m}%`);
+  return mots.map((m) => `% ${m}%`);
 }
 
 /** Date du jour à Paris (`YYYY-MM-DD`). */
@@ -387,17 +427,28 @@ export function jourParis(iso: string): string {
 // --- Banque : paramètres communs à la page /recettes et à GET /api/recettes ---
 
 export type ParametresBanque =
-  | { ok: true; q: string; qNorm: string; slug: string | null; restaurant: string | null; page: number }
+  | {
+      ok: true; q: string; qNorm: string; slug: string | null; restaurant: string | null; page: number;
+      tri: TriBanque; proteine: Envie | null;
+    }
   | { ok: false; erreur: string };
 
 /** Restaurants filtrables (hors liens seuls comme Vival), dans l'ordre d'affichage. */
 export const RESTAURANTS_RECETTES = RESTAURANTS.filter((r) => r.type !== "lien");
 
 export function parametresBanque(sp: URLSearchParams | Record<string, string | string[] | undefined>): ParametresBanque {
+  // Valeur répétée : la première, sauf pour `tri` et `proteine`, où c'est la dernière. Les
+  // boutons de tri et de protéine soumettent le formulaire de recherche (q et restaurant saisis
+  // compris), dont les champs cachés reprennent le tri et la protéine courants : le bouton
+  // pressé arrive après eux dans l'ordre du formulaire et doit l'emporter.
   const lire = (k: string): string => {
-    if (sp instanceof URLSearchParams) return sp.get(k) ?? "";
+    const derniere = k === "tri" || k === "proteine";
+    if (sp instanceof URLSearchParams) {
+      const toutes = sp.getAll(k);
+      return (derniere ? toutes[toutes.length - 1] : toutes[0]) ?? "";
+    }
     const v = sp[k];
-    return (Array.isArray(v) ? v[0] : v) ?? "";
+    return (Array.isArray(v) ? (derniere ? v[v.length - 1] : v[0]) : v) ?? "";
   };
   const q = lire("q").trim().slice(0, 100);
   const slugBrut = lire("restaurant").trim();
@@ -415,7 +466,65 @@ export function parametresBanque(sp: URLSearchParams | Record<string, string | s
     page = /^\d{1,6}$/.test(pageBrute) ? parseInt(pageBrute, 10) : 0;
     if (page < 1) return { ok: false, erreur: "Paramètre 'page' invalide" };
   }
-  return { ok: true, q, qNorm: normPlatImage(q), slug, restaurant, page };
+  const triBrut = lire("tri").trim();
+  let tri: TriBanque = "recentes";
+  if (triBrut) {
+    if (!(TRIS as readonly string[]).includes(triBrut)) return { ok: false, erreur: "Paramètre 'tri' invalide" };
+    tri = triBrut as TriBanque;
+  }
+  const proteineBrute = lire("proteine").trim();
+  let proteine: Envie | null = null;
+  if (proteineBrute) {
+    if (!(PROTEINES as readonly string[]).includes(proteineBrute)) return { ok: false, erreur: "Protéine inconnue" };
+    proteine = proteineBrute as Envie;
+  }
+  return { ok: true, q, qNorm: normPlatImage(q), slug, restaurant, page, tri, proteine };
+}
+
+/**
+ * Vrai si l'URL de la banque est à nettoyer : paramètre répété (bouton de tri ou de protéine
+ * soumis avec les champs cachés) ou vide (`q=`, `restaurant=`, « Toutes » les protéines).
+ */
+export function parametresANettoyer(sp: Record<string, string | string[] | undefined>): boolean {
+  return ["q", "restaurant", "tri", "proteine", "page"].some((k) => Array.isArray(sp[k]) || sp[k] === "");
+}
+
+type EtatBanque = { q: string; slug: string | null; tri: TriBanque; proteine: Envie | null; page: number };
+
+/**
+ * Lien de la banque qui conserve recherche, restaurant, tri et protéine. Changer de restaurant,
+ * de tri ou de protéine ramène à la page 1 (sauf page explicite). Paramètres dans l'ordre
+ * q, restaurant, tri, proteine, page ; les valeurs par défaut sont omises.
+ */
+export function hrefBanque(
+  p: EtatBanque,
+  changements: Partial<Pick<EtatBanque, "slug" | "tri" | "proteine" | "page">> = {},
+): string {
+  const filtreChange = "slug" in changements || "tri" in changements || "proteine" in changements;
+  const e: EtatBanque = { ...p, ...changements };
+  if (filtreChange && changements.page === undefined) e.page = 1;
+  const sp = new URLSearchParams();
+  if (e.q) sp.set("q", e.q);
+  if (e.slug) sp.set("restaurant", e.slug);
+  if (e.tri !== "recentes") sp.set("tri", e.tri);
+  if (e.proteine) sp.set("proteine", e.proteine);
+  if (e.page > 1) sp.set("page", String(e.page));
+  const s = sp.toString();
+  return s ? `/recettes?${s}` : "/recettes";
+}
+
+/** « Note Sportif : 7,5 sur 10 » / « Note Goulaf : note indisponible » (lecteurs d'écran, title). */
+export function libelleNote(mode: Mode, note: number | null): string {
+  return `Note ${MODE_LABEL[mode]} : ${note == null ? NOTE_INDISPONIBLE : `${fmtNote(note)} sur 10`}`;
+}
+
+/** « 12 recettes · triées par note Sportif · Poulet / volaille ». */
+export function libelleResultats(total: number, tri: TriBanque, proteine: Envie | null): string {
+  const parts = [`${total} recette${total > 1 ? "s" : ""}`];
+  if (tri === "sportif" || tri === "goulaf") parts.push(`triées par note ${MODE_LABEL[tri]}`);
+  else if (tri === "rapide") parts.push("les plus rapides d'abord");
+  if (proteine) parts.push(LIBELLES_PROTEINE[proteine]);
+  return parts.join(" · ");
 }
 
 /** Réponse de `GET /api/recette/<cle>` → état du panneau. */

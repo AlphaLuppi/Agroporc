@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { recettesExistantes, upsertRecette } from "@/lib/db";
+import { getPdjDepuis, rafraichirNotesRecettes, rattraperNotesRecettes, recettesExistantes, upsertRecette } from "@/lib/db";
 import { CLE_IMAGE_RE } from "@/lib/plat-image";
 import { clePlatImage } from "@/lib/plat-image-cle";
 import { dateServie, dateValide, TAILLE_MAX_RECETTE, texteRecherche, validerRecette } from "@/lib/recettes";
@@ -92,6 +92,14 @@ export async function POST(request: NextRequest) {
       servi: dateServie(date),
       force: body.force === true,
     });
+    // Notes du plat d'origine (dates ≥ date du plat : les plus anciennes ne peuvent pas gagner),
+    // puis rattrapage des recettes jamais traitées. Best-effort : la réponse ne change pas.
+    try {
+      await rafraichirNotesRecettes(await getPdjDepuis(date), [cle]);
+      await rattraperNotesRecettes();
+    } catch (e) {
+      console.error("[api/recette POST] notes", e);
+    }
     return NextResponse.json({ ok: true, cle, ecrit });
   } catch (e) {
     console.error("[api/recette POST]", e);

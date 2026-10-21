@@ -234,20 +234,86 @@ export async function ajouterServicesRecettes(services: { cle: string; date: str
 // puis UPDATE pdj_recettes SET date_premier_service = LEAST(...) pour les clés concernées.
 export async function recettesExistantes(cles: string[]): Promise<Set<string>>;  // 42P01 → Set vide
 export async function getRecette(cle: string): Promise<RecetteComplete | null>;  // 42P01 → null ; image incluse
-export async function listerRecettes(p: { q: string; restaurant: string | null; page: number; parPage: number })
-  : Promise<{ recettes: ResumeRecette[]; total: number }>;                         // 42P01 → { [], 0 }
+export async function listerRecettes(p: {
+  q: string; restaurant: string | null; proteine: Envie | null; tri: TriBanque; page: number; parPage: number;
+}): Promise<BanqueRecettes>;  // { recettes, total, proteines, notesDisponibles } ; 42P01 → { [], 0, {}, false } (cf. §2.1)
 ```
 
 - Lecture seule sans DDL (`getRecette`, `listerRecettes`, `recettesExistantes`) : réutiliser `tableAbsente(e)`
   (déjà dans `lib/db.ts`) pour traiter « table absente » comme « vide ». Écritures : `await ensureRecettesTable()` d'abord.
 - `listerRecettes` : `derniere_date` = `MAX(s.date)`, `nb_services` = `COUNT(s.date)` via `LEFT JOIN
   pdj_recette_services s USING (cle)` + `GROUP BY r.cle` ; `temps_total_min` calculé en TS depuis `recette`
-  (`tempsTotal`). Tri : `derniere_date DESC NULLS LAST, r.titre ASC`. `total` = `COUNT(*)` avec les mêmes
+  (`tempsTotal`). Tri (`recentes`, et repli avant migration) : `derniere_date DESC NULLS LAST, r.titre ASC` ;
+  tris par note et durée : §2.1. `total` = `COUNT(*)` avec les mêmes
   filtres (requête séparée). Images : un appel `platImagesExistantes(cles de la page)` puis
   `srcPlatImage(cle, creeLe)` + `creditFournisseur`.
 - `getRecette` : `dates_service` = 60 dernières dates DESC ; `date_premier_service` = `LEAST(colonne, MIN(dates))`
   formaté `YYYY-MM-DD` (attention : `pg` renvoie `DATE` en objet `Date` local → formater via
   `to_char(date, 'YYYY-MM-DD')` côté SQL, pas en JS).
+
+### 2.1 Notes du plat d'origine et protéine (tri et filtres de la banque)
+
+Colonnes ajoutées à `pdj_recettes` (même DDL dans `ensureRecettesTable()` et `lib/migrate.mjs`) :
+
+```sql
+ALTER TABLE pdj_recettes ADD COLUMN IF NOT EXISTS note_sportif REAL, ADD COLUMN IF NOT EXISTS note_goulaf REAL,
+  ADD COLUMN IF NOT EXISTS note_date DATE, ADD COLUMN IF NOT EXISTS proteine VARCHAR(10);
+```
+
+`ensureRecettesTable()` ne lance cet `ALTER` que si `information_schema.columns` ne connaît pas encore
+`pdj_recettes.proteine` : même avec `IF NOT EXISTS`, l'ALTER prendrait un verrou ACCESS EXCLUSIVE à chaque
+ingestion. Pas d'index (quelques centaines de lignes, tri par `CASE`).
+
+Règles (`lib/recette-notes.ts`, pur, testé) :
+- **Variante d'une recette** = la variante `v` (`variantesPlat`) d'un plat de `pdj_entries` telle que
+  `clePlatImage(plat.restaurant, v.plat) = cle`. On ignore `pdj.ferie`, `plat.coming_soon`,
+  `!recetteAttendue(resto, v.plat)` et les variantes dont les deux notes sont nulles.
+- `note_sportif = noteValide(noteMode(v, "sportif"))`, `note_goulaf = noteValide(noteMode(v, "goulaf"))`
+  (en Goulaf, repli sur la note Sportif, convention du site) ; `noteValide` = nombre fini dans [0, 10],
+  arrondi au dixième, sinon null (corrige aussi l'imprécision des REAL à la lecture).
+- **Jours servis seulement** (`dateServie`, date de Paris) : un jour publié d'avance (pipeline semaine) n'est
+  pas pris en compte tant qu'il n'est pas arrivé — son menu peut encore changer, et sa note « la plus
+  récente » bloquerait celles des vrais services.
+- **Date** : on garde la note du dernier service (`note_date`) ; à date égale la dernière écriture gagne
+  (réévaluation du même jour) ; une date plus ancienne n'écrase jamais en mise à jour incrémentale ;
+  une variante sans note n'écrit rien ; dans un même jour, à base égale, la première variante notée l'emporte.
+- **Republication** d'un jour (`/api/update`) qui ne contient plus le plat (menu corrigé, erreur de scrape,
+  férié) : les recettes dont `note_date` est ce jour (ou à venir, données antérieures à la règle ci-dessus)
+  sont recalculées depuis tout l'historique servi (`recalculerNotesDuJour`).
+- **Protéine** = `envieForPlat` (axe « envie » du quiz : tag LLM `quiz_tags.envie` d'abord, agneau → veau,
+  puis mots-clés) de la même variante, le même jour : `poulet | boeuf | porc | veau | poisson | vege | autre`.
+  Repli sans variante notée retrouvée : `proteineDepuisRecette` (mots-clés du plat, du titre et des
+  ingrédients de la recette). Estimation, d'où le libellé « Protéine principale (estimée) ».
+- `proteine IS NULL` = recette jamais traitée (marqueur du rattrapage) ; une recette traitée a toujours une
+  protéine, ne serait-ce que « autre ».
+- Recette sans aucune note : une seule pastille visible « Non notée » (title / légende de la fiche :
+  « Notes indisponibles pour le plat du jour dont la recette s'inspire. ») — pas « pas encore notée » :
+  un plat introuvable parmi les plats notés ne le sera peut-être jamais. Une seule note absente : « ? »
+  (`aria-hidden`), « note indisponible » pour les lecteurs d'écran. En dernier au tri par note (`NULLS LAST`).
+
+Recherche texte : **en début de mot**, `(' ' || recherche) LIKE ALL ('% mot%', …)` (un motif par mot,
+`motifsRecherche`) : « riz » ne trouve plus « chorizo », « pate » trouve encore « pates ».
+
+Fonctions `lib/db.ts` : `getPdjDepuis(date)`, `enregistrerNotesRecettes(notes, cles?)` (après
+`fusionnerNotes` — un doublon dans `UPDATE … FROM unnest` serait appliqué arbitrairement ; condition
+`note_date IS NULL OR t.d >= note_date` ; 42P01 / 42703 → 0, sans DDL), `rafraichirNotesRecettes(pdjs, cles?)`,
+`rattraperNotesRecettes(toutes = false)` (recettes `proteine IS NULL`, ou toutes ; relit `pdj_entries` (jours
+servis) seulement s'il y a des recettes à traiter ; renvoie `{ notees, sans_note }`) et
+`recalculerNotesDuJour(pdj)` (cf. Republication). Les deux derniers passent par un recalcul complet **en une
+seule écriture** (`UPDATE … FROM unnest`, atomique, sans règle de date) : notes du dernier service retrouvé,
+sinon notes NULL et protéine de repli — jamais de remise à NULL préalable qui laisserait la banque vide
+si l'écriture suivante échouait.
+
+`listerRecettes({ q, restaurant, proteine, tri, page, parPage })` →
+`{ recettes, total, proteines, notesDisponibles }` : 2 requêtes en parallèle (liste + **facettes**
+`SELECT proteine, COUNT(*) … GROUP BY proteine` avec recherche et restaurant, sans le filtre protéine, qui
+remplacent le `COUNT`), puis les images. `total` = compte de la protéine filtrée, sinon somme de toutes les
+lignes (protéine NULL comprise). Tri : `CASE tri` sur la note du mode puis l'autre note (`DESC NULLS LAST`),
+durée totale pour `rapide`, puis dernier service et titre (ordre historique, seul actif en `recentes`).
+**Repli 42703** (code déployé avant la migration) : requête historique (liste + `COUNT`), sans tri par note
+ni filtre protéine, notes nulles, `notesDisponibles: false`, `console.warn` une fois par instance.
+`getRecette` lit les notes par une petite requête séparée (`notesRecette`, 42703 → nulls) : le panneau de
+l'accueil (`/api/recette/[cle]`) ne casse pas avant la migration.
 
 ## 3. API (Next, `runtime = "nodejs"`)
 
@@ -296,6 +362,19 @@ Corps : `{ "services": [ { "cle": "…", "date": "YYYY-MM-DD" }, … ] }`, 1..20
 - 200 `{ "ok": true, "ajoutes": n }` ; 500 `Erreur serveur`.
 (Le segment statique `services` a priorité sur `[cle]` dans le routeur Next ; pas de collision avec une clé hex.)
 
+### 3.2 bis Notes des recettes (hooks best-effort et rattrapage)
+
+- `POST /api/update` : après `upsertPdj`, `rafraichirNotesRecettes([body])` puis `recalculerNotesDuJour(body)`
+  dans un try/catch séparé, sans DDL ; la réponse `{ ok, date }` ne change jamais (chemin critique du pipeline).
+- `POST /api/recette` : après l'upsert (même si `ecrit: false`), `rafraichirNotesRecettes(getPdjDepuis(date),
+  [cle])` puis `rattraperNotesRecettes()`, best-effort ; réponse inchangée.
+- `POST /api/recette/services` : après l'ajout des dates servies, `rafraichirNotesRecettes(getPdjDepuis(min des
+  dates), cles servies)` (un jour publié d'avance n'est noté qu'une fois servi, et `/api/update` ne repasse pas
+  forcément ce jour-là) puis `rattraperNotesRecettes()`, best-effort.
+- **`POST /api/recette/notes`** (Bearer) : corps facultatif `{ "toutes"?: boolean }` (vide ou illisible →
+  `toutes = false`) ; `ensureRecettesTable()` puis `rattraperNotesRecettes(toutes)` → 200
+  `{ "ok": true, "notees": n, "sans_note": m }` ; 401 `Non autorisé` ; 500 `Erreur serveur`.
+
 ### 3.3 `app/api/recette/[cle]/route.ts`
 
 **`GET /api/recette/<cle>`** (public).
@@ -306,7 +385,7 @@ Corps : `{ "services": [ { "cle": "…", "date": "YYYY-MM-DD" }, … ] }`, 1..20
 
 ### 3.4 `app/api/recettes/route.ts`
 
-**`GET /api/recettes?q=&restaurant=&page=`** (public) — liste paginée de la banque (utilisée par des
+**`GET /api/recettes?q=&restaurant=&tri=&proteine=&page=`** (public) — liste paginée de la banque (utilisée par des
 clients externes ; la page `/recettes` appelle directement `listerRecettes`, pas l'API).
 - Parsing via `parametresBanque(searchParams)` de `lib/recettes.ts` (même fonction que la page) :
   - `q` : trim, tronqué à 100 car. ; normalisé par `normPlatImage` ; vide → pas de filtre ;
@@ -314,7 +393,16 @@ clients externes ; la page `/recettes` appelle directement `listerRecettes`, pas
     tous ; slug inconnu → 400 `{ "error": "Restaurant inconnu" }` ; converti en nom via `SLUG_TO_RESTAURANT` ;
   - `page` : entier ≥ 1, défaut 1 ; sinon 400 `{ "error": "Paramètre 'page' invalide" }` ;
   - `PAR_PAGE = 24` (constante exportée de `lib/recettes.ts`).
-- 200 `{ "recettes": ResumeRecette[], "total": n, "page": p, "parPage": 24, "pages": max(1, ceil(n/24)) }` ;
+  - `tri` : `recentes` (défaut) | `sportif` | `goulaf` | `rapide` ; sinon 400 `{ "error": "Paramètre 'tri' invalide" }` ;
+  - `proteine` : `poulet | boeuf | porc | veau | poisson | vege` (pas `autre`) ; sinon 400
+    `{ "error": "Protéine inconnue" }` ;
+  - valeur répétée : la première, sauf `tri` et `proteine` (la dernière : bouton pressé du formulaire de la
+    page, après les champs cachés ; la page redirige ensuite vers l'URL nettoyée, `parametresANettoyer`) ;
+- 200 `{ "recettes": ResumeRecette[], "total": n, "page": p, "parPage": 24, "pages": max(1, ceil(n/24)),
+  "tri": t, "proteine": p|null, "proteines": { poulet: n, … }, "notesDisponibles": bool }` ; `tri` et
+  `proteine` reprennent ce qui a été **appliqué** : avant la migration (`notesDisponibles: false`), `"recentes"`
+  et `null` quels que soient les paramètres ; chaque recette
+  porte `note_sportif`, `note_goulaf`, `note_date`, `proteine` (null avant rattrapage / migration) ;
   une page au-delà de la dernière renvoie `recettes: []` (pas d'erreur).
 - `Cache-Control: public, max-age=60, s-maxage=60`. 500 `Erreur serveur`.
 
@@ -567,6 +655,21 @@ Le client ne hache rien (comme les images). Plomberie :
 - étapes en `<ol>`, astuces (si non vides), ustensiles (si non vides) ;
 - pied : « Servi le … » (jusqu'à 10 dates, `formatDateShort`), « Recette rédigée le `formatDateShort(cree_le)` ».
 - styles dans `app/recettes/recettes.module.css`, mobile d'abord, mêmes tokens que `menus.module.css`.
+
+**Notes et filtres de la banque** (cf. §2.1) :
+- sous le sous-titre, `MENTION_NOTES` : « Les notes Sportif et Goulaf sont celles du plat du jour dont la
+  recette s'inspire, pas de la recette maison. » (honnêteté : notes du plat, pas de la recette) ;
+- chaque carte affiche les **deux** notes (`app/recettes/NotesRecette.tsx`, serveur, sans état) : pastilles
+  « SPORTIF 7,5 /10 » et « GOULAF 8 /10 » colorées vert / ambre / rouge (`noteClass`), « ? » neutre sans note ;
+  la note du mode trié passe en premier et est soulignée (`data-actif`) ; la carte elle-même n'est pas colorée ;
+- barre « Trier par » (Récentes, Sportif, Goulaf, Rapides) et puces « Protéine principale (estimée) »
+  (Toutes + protéines présentes avec leur compte ; une puce active se désactive au clic) : liens GET
+  (`hrefBanque`, page remise à 1), affichés seulement si `notesDisponibles` ; sinon, si `tri`/`proteine`
+  sont demandés : « Tri et filtres par note bientôt disponibles : recettes affichées par date. » ;
+- champs cachés `tri` / `proteine` dans le formulaire : une nouvelle recherche les conserve ;
+- ligne de résultats `libelleResultats` (« 12 recettes · triées par note Sportif · Poulet / volaille ») ;
+- fiche : pastilles au format `fiche` avant les puces de durée, légende « Notes du plat du jour évalué le … —
+  pas de la recette maison. », lien « Autres recettes {protéine} → ».
 
 Navigation (`app/layout.tsx`) : lien « Recettes » → `/recettes`, **après** « Aide-moi à choisir », dans la liste
 desktop (`nav-links`) ET la liste mobile, mêmes classes que les liens voisins.

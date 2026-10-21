@@ -1,7 +1,13 @@
 import { Pool, type QueryResult, type QueryResultRow } from "pg";
 import { SLUG_TO_RESTAURANT } from "@/lib/restaurants";
 import { creditFournisseur, normPlatImage, srcPlatImage, type ImagePlat } from "@/lib/plat-image";
-import { motifsRecherche, tempsTotal, type Difficulte, type RecetteComplete, type RecetteContenu, type ResumeRecette } from "@/lib/recettes";
+import { clePlatImage } from "@/lib/plat-image-cle";
+import type { Envie } from "@/lib/quiz-engine";
+import { fusionnerNotes, noteValide, notesDuJour, proteineDepuisRecette, type NotesVariante } from "@/lib/recette-notes";
+import {
+  aujourdhuiParis, motifsRecherche, tempsTotal, type Difficulte, type NotesRecetteChamps, type ProteineRecette, type RecetteComplete,
+  type RecetteContenu, type ResumeRecette, type TriBanque,
+} from "@/lib/recettes";
 
 // Postgres auto-hébergé (VPS) au lieu de Vercel Postgres/Neon.
 // Le driver `pg` parle le protocole wire standard sur TCP+TLS.
@@ -897,6 +903,11 @@ function tableAbsente(e: unknown): boolean {
   return (e as { code?: string })?.code === "42P01";
 }
 
+/** Colonne absente (code déployé avant la migration des colonnes de notes des recettes). */
+function colonneAbsente(e: unknown): boolean {
+  return (e as { code?: string })?.code === "42703";
+}
+
 /**
  * Image d'un plat. Lecture seule, sans DDL (la table est créée par `lib/migrate.mjs` et par
  * l'ingestion). Avec `versionMs`, les octets ne sont lus que si la version demandée est la
@@ -975,6 +986,17 @@ export async function ensureRecettesTable(): Promise<void> {
     )
   `;
   await sql`CREATE INDEX IF NOT EXISTS pdj_recette_services_date_idx ON pdj_recette_services (date)`;
+  // Notes du plat d'origine + protéine (tri et filtres de la banque). ALTER seulement si la colonne
+  // manque : même avec IF NOT EXISTS, il prendrait un verrou ACCESS EXCLUSIVE à chaque ingestion.
+  const colonnes = await sql`
+    SELECT 1 FROM information_schema.columns WHERE table_name = 'pdj_recettes' AND column_name = 'proteine'
+  `;
+  if (!colonnes.rows.length) {
+    await sql`
+      ALTER TABLE pdj_recettes ADD COLUMN IF NOT EXISTS note_sportif REAL, ADD COLUMN IF NOT EXISTS note_goulaf REAL,
+        ADD COLUMN IF NOT EXISTS note_date DATE, ADD COLUMN IF NOT EXISTS proteine VARCHAR(10)
+    `;
+  }
 }
 
 /**
@@ -1076,9 +1098,11 @@ export async function getRecette(cle: string): Promise<RecetteComplete | null> {
     `;
     if (!r.rows.length) return null;
     const row = r.rows[0];
-    const image = (await imagesRecettes([cle])).get(cle) ?? null;
+    const [images, notes] = await Promise.all([imagesRecettes([cle]), notesRecette(cle)]);
+    const image = images.get(cle) ?? null;
     return {
       ...(row.recette as RecetteContenu),
+      ...notes,
       cle: row.cle as string,
       restaurant: row.restaurant as string,
       plat: row.plat as string,
@@ -1097,19 +1121,257 @@ export async function getRecette(cle: string): Promise<RecetteComplete | null> {
   }
 }
 
+// --- Notes des recettes (recopiées depuis pdj_entries, cf. lib/recette-notes.ts) ---
+
+const NOTES_VIDES: NotesRecetteChamps = { note_sportif: null, note_goulaf: null, note_date: null, proteine: null };
+
+/** REAL (float4) → nombre arrondi au dixième, ou null. */
+const noteLue = (v: unknown) => noteValide(v == null ? null : Number(v));
+
+function notesDepuisLigne(row: Record<string, unknown>): NotesRecetteChamps {
+  return {
+    note_sportif: noteLue(row.note_sportif),
+    note_goulaf: noteLue(row.note_goulaf),
+    note_date: (row.note_date as string | null) ?? null,
+    proteine: (row.proteine as ProteineRecette | null) ?? null,
+  };
+}
+
+/** Notes d'une recette ; colonnes absentes (avant migration) = pas de notes, sans erreur. */
+async function notesRecette(cle: string): Promise<NotesRecetteChamps> {
+  try {
+    const r = await sql`
+      SELECT note_sportif, note_goulaf, to_char(note_date, 'YYYY-MM-DD') AS note_date, proteine
+      FROM pdj_recettes WHERE cle = ${cle}
+    `;
+    return r.rows.length ? notesDepuisLigne(r.rows[0]) : NOTES_VIDES;
+  } catch (e) {
+    if (colonneAbsente(e)) return NOTES_VIDES;
+    throw e;
+  }
+}
+
+/** Plats du jour à partir d'une date (incluse), dans l'ordre chronologique. */
+export async function getPdjDepuis(date: string): Promise<PdjEntry[]> {
+  const r = await sql`SELECT data FROM pdj_entries WHERE date >= ${date} ORDER BY date`;
+  return r.rows.map((row) => row.data as PdjEntry);
+}
+
+/**
+ * Écrit les notes (une par clé après `fusionnerNotes` : un doublon dans `unnest` serait appliqué
+ * de façon arbitraire). Une date plus ancienne que `note_date` n'écrase jamais ; à date égale,
+ * la dernière écriture gagne (réévaluation du même jour). Restreint à `cles` si fourni.
+ * Sans DDL : table ou colonnes absentes → 0. Renvoie le nombre de recettes mises à jour.
+ */
+export async function enregistrerNotesRecettes(notes: NotesVariante[], cles?: string[]): Promise<number> {
+  const filtre = cles ? new Set(cles) : null;
+  const lignes = fusionnerNotes(notes)
+    .map((n) => ({ ...n, cle: clePlatImage(n.restaurant, n.plat) }))
+    .filter((n) => !filtre || filtre.has(n.cle));
+  if (lignes.length === 0) return 0;
+  try {
+    const r = await sql`
+      UPDATE pdj_recettes r SET note_sportif = t.s, note_goulaf = t.g, note_date = t.d, proteine = t.p
+      FROM unnest(${lignes.map((n) => n.cle)}::text[], ${lignes.map((n) => n.date)}::date[],
+        ${lignes.map((n) => n.sportif)}::real[], ${lignes.map((n) => n.goulaf)}::real[],
+        ${lignes.map((n) => n.proteine)}::text[]) AS t(cle, d, s, g, p)
+      WHERE r.cle = t.cle AND (r.note_date IS NULL OR t.d >= r.note_date)
+    `;
+    return r.rowCount ?? 0;
+  } catch (e) {
+    if (tableAbsente(e) || colonneAbsente(e)) return 0;
+    throw e;
+  }
+}
+
+/** Recopie les notes des plats du jour `pdjs` (jours déjà servis seulement) dans les recettes correspondantes. */
+export async function rafraichirNotesRecettes(pdjs: PdjEntry[], cles?: string[]): Promise<number> {
+  // Pas `flatMap(notesDuJour)` : l'index passé en 2e argument remplacerait la date du jour.
+  return enregistrerNotesRecettes(pdjs.flatMap((pdj) => notesDuJour(pdj)), cles);
+}
+
+/** Recette telle que relue pour un recalcul de ses notes. */
+type RecetteARecalculer = { cle: string; restaurant: string; plat: string; recette: RecetteContenu };
+
+/**
+ * Recalcul complet des notes de `recettes` depuis tout l'historique des jours déjà servis, en une
+ * seule écriture (atomique : jamais de banque remise à zéro à moitié). Sans règle de date : la note
+ * retenue est celle du dernier service réel, quelle que soit la note en base ; une recette dont le
+ * plat n'est retrouvé dans aucun jour servi perd ses notes et reçoit une protéine déduite de la
+ * recette (elle n'est plus rescannée). Table ou colonnes absentes : l'appelant les absorbe.
+ */
+async function recalculerNotes(recettes: RecetteARecalculer[]): Promise<{ notees: number; sans_note: number }> {
+  if (!recettes.length) return { notees: 0, sans_note: 0 };
+  const aujourdhui = aujourdhuiParis();
+  const historique = await sql`SELECT data FROM pdj_entries WHERE date <= ${aujourdhui} ORDER BY date`;
+  const parCle = new Map(
+    fusionnerNotes(historique.rows.flatMap((row) => notesDuJour(row.data as PdjEntry, aujourdhui)))
+      .map((n) => [clePlatImage(n.restaurant, n.plat), n] as const),
+  );
+  const lignes = recettes.map((r) => {
+    const n = parCle.get(r.cle);
+    return n
+      ? { cle: r.cle, d: n.date, s: n.sportif, g: n.goulaf, p: n.proteine }
+      : { cle: r.cle, d: null, s: null, g: null, p: proteineDepuisRecette(r.restaurant, r.plat, r.recette) };
+  });
+  await sql`
+    UPDATE pdj_recettes r SET note_sportif = t.s, note_goulaf = t.g, note_date = t.d, proteine = t.p
+    FROM unnest(${lignes.map((l) => l.cle)}::text[], ${lignes.map((l) => l.d)}::date[],
+      ${lignes.map((l) => l.s)}::real[], ${lignes.map((l) => l.g)}::real[],
+      ${lignes.map((l) => l.p)}::text[]) AS t(cle, d, s, g, p)
+    WHERE r.cle = t.cle
+  `;
+  const notees = lignes.filter((l) => l.d != null).length;
+  return { notees, sans_note: lignes.length - notees };
+}
+
+const versRecalcul = (row: Record<string, unknown>): RecetteARecalculer => ({
+  cle: row.cle as string,
+  restaurant: row.restaurant as string,
+  plat: row.plat as string,
+  recette: row.recette as RecetteContenu,
+});
+
+/**
+ * Rattrapage des recettes jamais traitées (`proteine IS NULL`), ou de toutes avec `toutes`
+ * (après un changement de règle) : recalcul complet (`recalculerNotes`), qui ne relit
+ * l'historique que s'il y a des recettes à traiter. Table ou colonnes absentes → { 0, 0 }.
+ */
+export async function rattraperNotesRecettes(toutes = false): Promise<{ notees: number; sans_note: number }> {
+  try {
+    const a = await sql`SELECT cle, restaurant, plat, recette FROM pdj_recettes WHERE ${toutes}::boolean OR proteine IS NULL`;
+    return await recalculerNotes(a.rows.map(versRecalcul));
+  } catch (e) {
+    if (tableAbsente(e) || colonneAbsente(e)) return { notees: 0, sans_note: 0 };
+    throw e;
+  }
+}
+
+/**
+ * Republication du jour `date` (/api/update) : les recettes dont la note venait de ce jour mais
+ * dont le plat n'y figure plus (menu corrigé, erreur de scrape, férié) sont recalculées, sinon
+ * elles garderaient une note fantôme que la règle de date protégerait. Une `note_date` à venir
+ * (écrite avant que les jours non servis soient ignorés) est recalculée aussi.
+ * Table ou colonnes absentes → 0. Renvoie le nombre de recettes recalculées.
+ */
+export async function recalculerNotesDuJour(pdj: PdjEntry): Promise<number> {
+  const date = String(pdj.date).slice(0, 10);
+  const encore = notesDuJour(pdj).map((n) => clePlatImage(n.restaurant, n.plat));
+  try {
+    const a = await sql`
+      SELECT cle, restaurant, plat, recette FROM pdj_recettes
+      WHERE (note_date = ${date}::date AND NOT (cle = ANY(${encore}::text[]))) OR note_date > ${aujourdhuiParis()}::date
+    `;
+    await recalculerNotes(a.rows.map(versRecalcul));
+    return a.rows.length;
+  } catch (e) {
+    if (tableAbsente(e) || colonneAbsente(e)) return 0;
+    throw e;
+  }
+}
+
+function ligneVersResume(row: Record<string, unknown>, images: Map<string, ImagePlat>, notes: boolean): ResumeRecette {
+  return {
+    cle: row.cle as string,
+    restaurant: row.restaurant as string,
+    plat: row.plat as string,
+    titre: row.titre as string,
+    difficulte: row.difficulte as Difficulte,
+    personnes: Number(row.personnes) || 0,
+    temps_total_min: tempsTotal({
+      temps_preparation_min: Number(row.prep) || 0,
+      temps_cuisson_min: Number(row.cuisson) || 0,
+      temps_repos_min: Number(row.repos) || 0,
+    }),
+    derniere_date: (row.derniere_date as string | null) ?? null,
+    nb_services: Number(row.nb_services) || 0,
+    image: images.get(row.cle as string) ?? null,
+    ...(notes ? notesDepuisLigne(row) : NOTES_VIDES),
+  };
+}
+
+export interface BanqueRecettes {
+  recettes: ResumeRecette[];
+  total: number;
+  /** Nombre de recettes par protéine (recherche + restaurant appliqués, hors filtre protéine). */
+  proteines: Partial<Record<ProteineRecette, number>>;
+  /** false avant la migration des colonnes de notes : ni tri par note, ni filtre protéine. */
+  notesDisponibles: boolean;
+}
+
+let repliSignale = false;
+
 /**
  * Banque de recettes paginée : filtre texte sur `recherche` (normalisé comme les clés, donc
- * sans `unaccent`) et par restaurant ; tri par dernier service puis titre.
+ * sans `unaccent`, en début de mot), par restaurant et par protéine ; tri par note Sportif /
+ * Goulaf (non notées en dernier), par durée, ou par dernier service puis titre (`recentes`).
  */
 export async function listerRecettes(p: {
   q: string;
   restaurant: string | null;
+  proteine: Envie | null;
+  tri: TriBanque;
   page: number;
   parPage: number;
-}): Promise<{ recettes: ResumeRecette[]; total: number }> {
+}): Promise<BanqueRecettes> {
   // Un motif par mot, tous requis (LIKE ALL d'un tableau vide = vrai : pas de filtre).
   const motifs = motifsRecherche(p.q);
   const offset = (Math.max(1, p.page) - 1) * p.parPage;
+  try {
+    // 2 requêtes en parallèle puis les images : le pool est à 3 connexions.
+    const [liste, facettes] = await Promise.all([
+      sql`
+        SELECT r.cle, r.restaurant, r.plat, r.titre,
+          r.recette->>'difficulte' AS difficulte, r.recette->'personnes' AS personnes,
+          r.recette->'temps_preparation_min' AS prep, r.recette->'temps_cuisson_min' AS cuisson, r.recette->'temps_repos_min' AS repos,
+          r.note_sportif, r.note_goulaf, to_char(r.note_date, 'YYYY-MM-DD') AS note_date, r.proteine,
+          to_char(COALESCE(MAX(s.date), r.date_premier_service), 'YYYY-MM-DD') AS derniere_date,
+          COUNT(s.date)::int AS nb_services
+        FROM pdj_recettes r LEFT JOIN pdj_recette_services s USING (cle)
+        WHERE (' ' || r.recherche) LIKE ALL (${motifs}::text[])
+          AND (${p.restaurant}::text IS NULL OR r.restaurant = ${p.restaurant}::text)
+          AND (${p.proteine}::text IS NULL OR r.proteine = ${p.proteine}::text)
+        GROUP BY r.cle
+        ORDER BY
+          CASE ${p.tri}::text WHEN 'sportif' THEN r.note_sportif WHEN 'goulaf' THEN r.note_goulaf END DESC NULLS LAST,
+          CASE ${p.tri}::text WHEN 'sportif' THEN r.note_goulaf WHEN 'goulaf' THEN r.note_sportif END DESC NULLS LAST,
+          CASE WHEN ${p.tri}::text = 'rapide' THEN COALESCE((r.recette->>'temps_preparation_min')::int, 0)
+            + COALESCE((r.recette->>'temps_cuisson_min')::int, 0) + COALESCE((r.recette->>'temps_repos_min')::int, 0) END ASC NULLS LAST,
+          COALESCE(MAX(s.date), r.date_premier_service) DESC NULLS LAST, r.titre ASC
+        LIMIT ${p.parPage} OFFSET ${offset}
+      `,
+      sql`
+        SELECT r.proteine, COUNT(*)::int AS n FROM pdj_recettes r
+        WHERE (' ' || r.recherche) LIKE ALL (${motifs}::text[])
+          AND (${p.restaurant}::text IS NULL OR r.restaurant = ${p.restaurant}::text)
+        GROUP BY r.proteine
+      `,
+    ]);
+    const proteines: Partial<Record<ProteineRecette, number>> = {};
+    let tous = 0;
+    for (const row of facettes.rows) {
+      const n = Number(row.n) || 0;
+      tous += n;
+      if (row.proteine) proteines[row.proteine as ProteineRecette] = n;
+    }
+    // Total déduit des facettes : les recettes pas encore rattrapées (proteine NULL) comptent.
+    const total = p.proteine ? (proteines[p.proteine] ?? 0) : tous;
+    const images = await imagesRecettes(liste.rows.map((row) => row.cle as string));
+    return {
+      recettes: liste.rows.map((row) => ligneVersResume(row, images, true)),
+      total,
+      proteines,
+      notesDisponibles: true,
+    };
+  } catch (e) {
+    if (tableAbsente(e)) return { recettes: [], total: 0, proteines: {}, notesDisponibles: false };
+    if (!colonneAbsente(e)) throw e;
+  }
+  // Repli avant migration : ordre historique, sans notes ni filtre protéine.
+  if (!repliSignale) {
+    repliSignale = true;
+    console.warn("[recettes] colonnes de notes absentes : banque sans tri par note ni filtre protéine (migration à lancer)");
+  }
   try {
     const [liste, compte] = await Promise.all([
       sql`
@@ -1119,7 +1381,7 @@ export async function listerRecettes(p: {
           to_char(COALESCE(MAX(s.date), r.date_premier_service), 'YYYY-MM-DD') AS derniere_date,
           COUNT(s.date)::int AS nb_services
         FROM pdj_recettes r LEFT JOIN pdj_recette_services s USING (cle)
-        WHERE r.recherche LIKE ALL (${motifs}::text[])
+        WHERE (' ' || r.recherche) LIKE ALL (${motifs}::text[])
           AND (${p.restaurant}::text IS NULL OR r.restaurant = ${p.restaurant}::text)
         GROUP BY r.cle
         ORDER BY COALESCE(MAX(s.date), r.date_premier_service) DESC NULLS LAST, r.titre ASC
@@ -1127,30 +1389,19 @@ export async function listerRecettes(p: {
       `,
       sql`
         SELECT COUNT(*)::int AS total FROM pdj_recettes r
-        WHERE r.recherche LIKE ALL (${motifs}::text[])
+        WHERE (' ' || r.recherche) LIKE ALL (${motifs}::text[])
           AND (${p.restaurant}::text IS NULL OR r.restaurant = ${p.restaurant}::text)
       `,
     ]);
     const images = await imagesRecettes(liste.rows.map((row) => row.cle as string));
-    const recettes: ResumeRecette[] = liste.rows.map((row) => ({
-      cle: row.cle as string,
-      restaurant: row.restaurant as string,
-      plat: row.plat as string,
-      titre: row.titre as string,
-      difficulte: row.difficulte as Difficulte,
-      personnes: Number(row.personnes) || 0,
-      temps_total_min: tempsTotal({
-        temps_preparation_min: Number(row.prep) || 0,
-        temps_cuisson_min: Number(row.cuisson) || 0,
-        temps_repos_min: Number(row.repos) || 0,
-      }),
-      derniere_date: (row.derniere_date as string | null) ?? null,
-      nb_services: Number(row.nb_services) || 0,
-      image: images.get(row.cle as string) ?? null,
-    }));
-    return { recettes, total: Number(compte.rows[0]?.total) || 0 };
+    return {
+      recettes: liste.rows.map((row) => ligneVersResume(row, images, false)),
+      total: Number(compte.rows[0]?.total) || 0,
+      proteines: {},
+      notesDisponibles: false,
+    };
   } catch (e) {
-    if (tableAbsente(e)) return { recettes: [], total: 0 };
+    if (tableAbsente(e)) return { recettes: [], total: 0, proteines: {}, notesDisponibles: false };
     throw e;
   }
 }

@@ -1,22 +1,21 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import type { Mode } from "@/lib/carte-tri";
+import { MODE_LABEL, type Mode } from "@/lib/carte-tri";
 import { etincelles } from "@/lib/motion-menus";
-import { noteClass } from "@/lib/format";
+import { fmtNote, noteClass } from "@/lib/format";
 import { getRestaurantLinks, type RestaurantLink } from "@/lib/icons";
 import { compter, ecrireTexte, estPret, popper, reduit, RESSORT, usePret, volerVersPanier } from "./motion";
 import styles from "./menus.module.css";
 
-export const MODE_LABEL: Record<Mode, string> = { sportif: "Sportif", goulaf: "Goulaf" };
+// Déplacé dans lib/carte-tri.ts (partagé avec la banque de recettes) ; réexporté pour les imports existants.
+export { MODE_LABEL };
 
 /** Classe de couleur d'une note (mêmes seuils que `noteClass`), neutre sans note. */
 export function couleur(note?: number): string {
   return note == null ? styles.none : styles[noteClass(note)];
 }
 
-export function fmtNote(note?: number): string {
-  if (note == null) return "?";
-  return Number.isInteger(note) ? String(note) : note.toFixed(1).replace(".", ",");
-}
+// Déplacé dans lib/format.ts (utilisable par les pages serveur) ; réexporté pour les imports existants.
+export { fmtNote };
 
 /** « 11.9€ » → « 11,90 € » ; renvoie la chaîne telle quelle si elle n'est pas un prix simple. */
 export function fmtPrix(prix?: string): string {

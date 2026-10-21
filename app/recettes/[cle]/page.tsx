@@ -6,11 +6,14 @@ import { formatDateShort } from "@/lib/format";
 import { casseLisible } from "@/lib/menus-vue";
 import { CLE_IMAGE_RE } from "@/lib/plat-image";
 import {
-  BANDEAU_HONNETETE_DEBUT, BANDEAU_HONNETETE_SUITE, formaterDuree, jourParis, libelleDifficulte, tempsTotal,
+  BANDEAU_HONNETETE_DEBUT, BANDEAU_HONNETETE_SUITE, formaterDuree, hrefBanque, jourParis, LEGENDE_SANS_NOTE, libelleDifficulte, LIBELLES_PROTEINE,
+  PROTEINES, tempsTotal,
 } from "@/lib/recettes";
+import type { Envie } from "@/lib/quiz-engine";
 import PlatImage from "../../menus/PlatImage";
 import RestoBadge from "../../components/RestoBadge";
 import AjusteurRecette from "./AjusteurRecette";
+import NotesRecette from "../NotesRecette";
 import styles from "../recettes.module.css";
 
 export const dynamic = "force-dynamic";
@@ -47,6 +50,8 @@ export default async function RecettePage({ params }: { params: Params }) {
 
   const creeLe = jourParis(r.cree_le);
   const dates = r.dates_service.slice(0, 10);
+  const notee = r.note_sportif != null || r.note_goulaf != null;
+  const proteine = r.proteine && (PROTEINES as readonly string[]).includes(r.proteine) ? (r.proteine as Envie) : null;
 
   return (
     <article className={styles.fiche}>
@@ -70,6 +75,15 @@ export default async function RecettePage({ params }: { params: Params }) {
       <p className={styles.bandeau} role="note">
         <strong>{BANDEAU_HONNETETE_DEBUT}</strong>
         {BANDEAU_HONNETETE_SUITE}
+      </p>
+
+      <NotesRecette sportif={r.note_sportif} goulaf={r.note_goulaf} date={r.note_date} taille="fiche" />
+      <p className={styles.legendeNotes}>
+        {!notee
+          ? LEGENDE_SANS_NOTE
+          : r.note_date
+            ? `Notes du plat du jour évalué le ${formatDateShort(r.note_date).toLowerCase()} — pas de la recette maison.`
+            : "Notes du plat du jour dont la recette s'inspire."}
       </p>
 
       <ul className={styles.puces}>
@@ -121,6 +135,15 @@ export default async function RecettePage({ params }: { params: Params }) {
         )}
         {creeLe && <p>Recette rédigée le {formatDateShort(creeLe).toLowerCase()}</p>}
       </footer>
+
+      {proteine && (
+        <Link
+          href={hrefBanque({ q: "", slug: null, tri: "recentes", proteine: null, page: 1 }, { proteine })}
+          className={styles.fil}
+        >
+          Autres recettes {LIBELLES_PROTEINE[proteine].toLowerCase()} →
+        </Link>
+      )}
     </article>
   );
 }

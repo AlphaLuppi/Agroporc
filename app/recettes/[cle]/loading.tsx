@@ -13,6 +13,10 @@ export default function Chargement() {
         <Skeleton style={{ width: "95%", height: 13 }} />
         <Skeleton style={{ width: "80%", height: 13 }} />
       </div>
+      <div className="flex gap-1.5">
+        <Skeleton style={{ width: 104, height: 40 }} />
+        <Skeleton style={{ width: 104, height: 40 }} />
+      </div>
       <div className="flex flex-wrap gap-2">
         {[92, 80, 76, 96].map((w, i) => (
           <Skeleton key={i} className="pdj-skel-carte" style={{ width: w, height: 44 }} />
