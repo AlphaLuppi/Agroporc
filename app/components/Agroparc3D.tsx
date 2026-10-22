@@ -12,7 +12,9 @@ import { MODE_LABEL, noteMode, trierCarte, type Mode } from "@/lib/carte-tri";
 import { useModeSite } from "@/app/menus/useModeSite";
 import { variantesPlat, type VariantePlat } from "@/lib/plat-options";
 import { restoParNom } from "@/lib/restaurants";
+import { CLE_CLASSEMENT, messageEnregistre } from "@/lib/tigre-scores";
 import RestoBadge from "./RestoBadge";
+import { CLASSEMENT_INDISPONIBLE, EnregistrerScore, PanneauClassement } from "./ClassementTigre";
 import styles from "./Agroparc3D.module.css";
 
 const display = Chakra_Petch({ subsets: ["latin"], weight: ["400", "600", "700"], variable: "--ag-display", display: "swap" });
@@ -41,6 +43,10 @@ const fmtDate = (iso: string, long = true) => {
 };
 const fmtNote = (n?: number) => (n == null ? "—" : `${n}/10`);
 
+function lireClassementOuvert(): boolean {
+  try { return localStorage.getItem(CLE_CLASSEMENT) === "1"; } catch { return false; }
+}
+
 /** Échap ne ferme pas la vue quand on tape dans un champ (pseudo du classement). */
 function dansUnChamp(cible: EventTarget | null): boolean {
   const el = cible as HTMLElement | null;
@@ -64,9 +70,11 @@ interface Props {
   partie?: PartieTigre;
   /** Le joueur vient de débusquer le tigre dans la cachette `c`. */
   surTigre?: (c: Cachette) => void;
+  /** Le score vient d'être enregistré dans le classement : la partie repart de 0. */
+  remettreAZero?: () => void;
 }
 
-export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, surTigre }: Props) {
+export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, surTigre, remettreAZero }: Props) {
   const rootRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const labelsRef = useRef<HTMLDivElement>(null);
@@ -81,6 +89,16 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
   const [gain, setGain] = useState<{ id: number; points: number } | null>(null);
   const surTigreRef = useRef(surTigre);
   surTigreRef.current = surTigre;
+  // Classement : ouvert ou fermé (gardé en localStorage), rechargé après chaque enregistrement.
+  // Le composant n'est monté qu'au clavier (jamais rendu côté serveur) : lecture directe.
+  const [classementOuvert, setClassementOuvert] = useState(lireClassementOuvert);
+  const [versionClassement, setVersionClassement] = useState(0);
+  const [message, setMessage] = useState<{ id: number; texte: string } | null>(null);
+  const ouvrirClassement = (v: boolean) => {
+    setClassementOuvert(v);
+    if (v) setSelected(null);
+    try { localStorage.setItem(CLE_CLASSEMENT, v ? "1" : "0"); } catch { /* stockage indisponible : état non retenu */ }
+  };
   // Mode choisi sur le site : les jauges le suivent, la vue ne le modifie pas.
   const [mode] = useModeSite();
 
@@ -163,6 +181,13 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
     return () => { cancelled = true; handle?.dispose(); handleRef.current = null; };
   }, [scene]);
 
+  // Le message du classement s'efface après 6 s.
+  useEffect(() => {
+    if (!message) return;
+    const t = setTimeout(() => setMessage(null), 6000);
+    return () => clearTimeout(t);
+  }, [message]);
+
   // Le gain affiché à côté du score s'efface après 2,5 s.
   useEffect(() => {
     if (!gain) return;
@@ -206,6 +231,25 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
           <span>{partie.tigres} {partie.tigres > 1 ? "tigres trouvés" : "tigre trouvé"}</span>
           {gain && <span key={gain.id} className={styles.gain}>+{gain.points}</span>}
         </p>
+        <div className={styles.actions}>
+          {partie.score > 0 && (
+            <EnregistrerScore
+              score={partie.score}
+              tigres={partie.tigres}
+              surEnregistre={(rang) => {
+                setMessage({ id: Date.now(), texte: messageEnregistre(rang) });
+                remettreAZero?.();
+                setVersionClassement((v) => v + 1);
+                ouvrirClassement(true);
+              }}
+              surEchec={() => setMessage({ id: Date.now(), texte: CLASSEMENT_INDISPONIBLE })}
+            />
+          )}
+          <button type="button" className={styles.action} aria-expanded={classementOuvert && !selected} onClick={() => ouvrirClassement(!(classementOuvert && !selected))}>
+            Classement
+          </button>
+        </div>
+        {message && <p key={message.id} className={styles.message} role="status">{message.texte}</p>}
       </header>
 
       {/* Sortie toujours atteignable : hors des blocs inertes, au-dessus de l'écran de chargement ou d'erreur. */}
@@ -239,6 +283,11 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
           ))}
         </div>
       </div>
+
+      {/* Un seul panneau à droite : le restaurant choisi passe devant le classement, qui reste ouvert derrière. */}
+      {classementOuvert && !selected && (
+        <PanneauClassement version={versionClassement} surFermer={() => ouvrirClassement(false)} />
+      )}
 
       {selected && etat && (
         <aside className={styles.panel} aria-live="polite">

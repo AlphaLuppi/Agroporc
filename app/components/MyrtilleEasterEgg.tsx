@@ -22,6 +22,7 @@ export function MyrtilleEasterEgg() {
       onClose={() => setOpen(false)}
       partie={partie}
       surTigre={(c) => setPartie((p) => ({ score: p.score + c.points, tigres: p.tigres + 1 }))}
+      remettreAZero={() => setPartie({ score: 0, tigres: 0 })}
     />
   ) : null;
 }

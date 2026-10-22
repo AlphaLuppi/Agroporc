@@ -71,6 +71,38 @@
 .score b { font-family: var(--ag-display), var(--ag-mono), monospace; font-size: 22px; font-weight: 700; letter-spacing: 0.02em; color: var(--ag-amber); margin-right: 4px; }
 .gain { color: var(--ag-amber); font-weight: 500; animation: agGain 2.5s ease forwards; }
 @keyframes agGain { 0% { opacity: 0; transform: translateY(4px); } 12% { opacity: 1; transform: none; } 75% { opacity: 1; } 100% { opacity: 0; } }
+/* Classement : boutons sous le score, formulaire pseudo, message. */
+.actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; pointer-events: auto; }
+.action {
+  min-height: 40px; background: rgba(4, 6, 10, 0.7); border: 1px solid var(--ag-line-strong); color: var(--ag-amber); font: inherit; font-size: 10px;
+  letter-spacing: 0.14em; text-transform: uppercase; padding: 0 12px; cursor: pointer;
+}
+.action:hover, .action:focus-visible { border-color: var(--ag-amber); background: rgba(255, 179, 92, 0.08); }
+.action[aria-expanded="true"] { background: var(--ag-amber); color: var(--ag-ground); border-color: var(--ag-amber); }
+.action:disabled { cursor: default; color: var(--ag-ink-dim); border-color: var(--ag-line-strong); background: rgba(4, 6, 10, 0.7); }
+.pseudoForm {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px; background: var(--ag-panel); border: 1px solid var(--ag-line); backdrop-filter: blur(6px);
+}
+.pseudoForm label { font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ag-ink-dim); }
+.pseudoForm input {
+  min-height: 40px; width: 16ch; max-width: 100%; box-sizing: border-box; background: var(--ag-ground); border: 1px solid var(--ag-line-strong);
+  color: var(--ag-ink); font: inherit; font-size: 14px; padding: 0 10px;
+}
+.pseudoForm input:focus-visible { outline: 2px solid var(--ag-white); outline-offset: 1px; border-color: var(--ag-cyan); }
+.pseudoForm .close { min-height: 40px; }
+.piege { position: absolute; left: -9999px; width: 0; height: 0; opacity: 0; }
+.message { display: inline-block; margin: 8px 0 0; padding: 6px 10px; font-size: 12px; color: var(--ag-ink); background: var(--ag-panel); border: 1px solid var(--ag-line); backdrop-filter: blur(6px); }
+/* Panneau du classement : même cadre que celui d'un restaurant. */
+.classement h2 { color: var(--ag-amber); margin-bottom: 10px; }
+.tableScores { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+.tableScores th {
+  text-align: left; font-size: 10px; font-weight: 500; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ag-ink-dim);
+  padding: 0 6px 6px 0; border-bottom: 1px solid var(--ag-line);
+}
+.tableScores td { padding: 7px 6px 7px 0; border-top: 1px solid var(--ag-line); color: var(--ag-ink-dim); white-space: nowrap; }
+.tableScores td b { color: var(--ag-amber); font-weight: 500; }
+.tableScores td.pseudo { color: var(--ag-ink); white-space: normal; overflow-wrap: anywhere; }
+.tableScores tr:first-child td { border-top: 0; }
 .eyebrow { font-size: 10px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--ag-ink-dim); margin: 0 0 6px; }
 .title {
   font-family: var(--ag-display), var(--ag-mono), monospace; font-weight: 700; font-size: 30px; line-height: 1;
@@ -185,7 +217,7 @@
 /* Anneau de focus clavier commun aux contrôles (blanc : 18:1 sur le fond). Décalé vers
    l'extérieur : en intérieur il disparaîtrait sur le bouton actif cyan ou ambre. Placé
    après les règles de survol pour garder la main, sans `outline: none` plus haut. */
-.sortie:focus-visible, .ctl button:focus-visible, .close:focus-visible, .depliantBtn:focus-visible {
+.sortie:focus-visible, .ctl button:focus-visible, .close:focus-visible, .depliantBtn:focus-visible, .action:focus-visible {
   outline: 2px solid var(--ag-white); outline-offset: 2px;
 }
 .root:focus { outline: none; } /* focus posé en JS à l'ouverture : le dialogue n'est pas un contrôle */
@@ -199,8 +231,9 @@
 .loading .errSortie p { margin: 0; color: var(--ag-ink); letter-spacing: 0.04em; text-transform: none; line-height: 1.5; }
 
 @media (max-width: 640px) {
+  .hudTl { max-width: calc(100vw - 48px); }
   /* Le titre passe sur deux lignes plutôt que sous le bouton de sortie. */
-  .hudTl { max-width: calc(100vw - 210px); }
+  .title { max-width: calc(100vw - 210px); }
   .hudBl { max-width: calc(100vw - 48px); }
   .title { font-size: 24px; }
   .legend { flex-wrap: wrap; gap: 8px 14px; }
