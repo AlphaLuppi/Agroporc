@@ -23,6 +23,8 @@ interface Props {
   erreur: string | null;
   /** écran tactile sans clavier ni souris */
   tactile: boolean;
+  /** aucun nom choisi jusqu'ici (« Agent ») : le champ prend le focus */
+  pseudoParDefaut?: boolean;
 }
 
 function statut(etat: EtatConnexion, monId: string | null): { texte: string; classe: string } {
@@ -32,13 +34,16 @@ function statut(etat: EtatConnexion, monId: string | null): { texte: string; cla
 }
 
 /** Panneau « Arène » de la vue Palantir : présence, pseudo, arme, bouton d'entrée. */
-export default function Arene({ etat, monId, joueurs, match, pseudo, surPseudo, arme, surArme, surEntrer, surFermer, erreur, tactile }: Props) {
+export default function Arene({ etat, monId, joueurs, match, pseudo, surPseudo, arme, surArme, surEntrer, surFermer, erreur, tactile, pseudoParDefaut = false }: Props) {
   const idPseudo = useId();
   const s = statut(etat, monId);
   const connecte = etat === "ouvert" && !!monId;
   const enJeu = joueurs.filter((j) => j.enJeu).length;
   const trie = [...joueurs].sort((a, b) => Number(b.enJeu) - Number(a.enJeu) || b.kills - a.kills || a.pseudo.localeCompare(b.pseudo, "fr"));
-  const peutEntrer = connecte && !tactile && !(erreur && joueurs.length >= JEU.joueursMax && !joueurs.some((j) => j.id === monId));
+  // même règle que le serveur (nettoyerPseudo de lib/fps/match.ts) : 2 lettres ou chiffres au moins
+  const nomTropCourt = Array.from(pseudo.replace(/[^\p{L}\p{N}]/gu, "")).length < 2;
+  const monPseudo = joueurs.find((j) => j.id === monId)?.pseudo ?? null;
+  const peutEntrer = connecte && !tactile && !nomTropCourt && !(erreur && joueurs.length >= JEU.joueursMax && !joueurs.some((j) => j.id === monId));
 
   return (
     <aside className={styles.arene} aria-label="Arène">
@@ -62,6 +67,30 @@ export default function Arene({ etat, monId, joueurs, match, pseudo, surPseudo, 
       )}
       {erreur && <p className={styles.erreur} role="alert">{erreur}</p>}
 
+      <div className={styles.champ}>
+        <label htmlFor={idPseudo}>Nom de joueur</label>
+        <input
+          id={idPseudo}
+          type="text"
+          value={pseudo}
+          maxLength={PSEUDO_MAX}
+          placeholder="Ton nom dans la partie"
+          autoComplete="off"
+          spellCheck={false}
+          autoFocus={pseudoParDefaut}
+          aria-describedby={`${idPseudo}-aide`}
+          onChange={(e) => surPseudo(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" && peutEntrer) surEntrer(); }}
+        />
+        <p id={`${idPseudo}-aide`} className={styles.aidePseudo}>
+          {nomTropCourt
+            ? "Au moins 2 lettres ou chiffres."
+            : monPseudo && monPseudo !== pseudo.trim()
+              ? <>Déjà pris : vous apparaîtrez comme <b>{monPseudo}</b>.</>
+              : "Affiché au-dessus de votre avatar et dans le fil des kills."}
+        </p>
+      </div>
+
       <ul className={styles.liste} aria-label="Agents en ligne">
         {trie.length === 0 && <li className={styles.vide}>Personne pour l&apos;instant.</li>}
         {trie.map((j) => (
@@ -73,19 +102,6 @@ export default function Arene({ etat, monId, joueurs, match, pseudo, surPseudo, 
           </li>
         ))}
       </ul>
-
-      <div className={styles.champ}>
-        <label htmlFor={idPseudo}>Votre pseudo</label>
-        <input
-          id={idPseudo}
-          type="text"
-          value={pseudo}
-          maxLength={PSEUDO_MAX}
-          autoComplete="off"
-          spellCheck={false}
-          onChange={(e) => surPseudo(e.target.value)}
-        />
-      </div>
 
       <fieldset className={styles.armes}>
         <legend>Arme</legend>

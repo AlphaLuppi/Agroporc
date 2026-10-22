@@ -55,7 +55,7 @@ export interface UseArene {
 
 /**
  * Connexion au serveur de l'arène tant que la vue Palantir est ouverte : présence (spectateurs),
- * pseudo, match en cours, fil des kills. Reconnecte si le pseudo change. Chaque message est aussi
+ * pseudo, match en cours, fil des kills. Un changement de pseudo est envoyé sans reconnexion. Chaque message est aussi
  * relayé à la partie en cours (`jeuRef`).
  */
 export function useArene(pseudo: string, jeuRef: MutableRefObject<JeuHandle | null>): UseArene {
@@ -76,6 +76,8 @@ export function useArene(pseudo: string, jeuRef: MutableRefObject<JeuHandle | nu
   const monIdRef = useRef<string | null>(null);
   const compteur = useRef(0);
   const minuteurs = useRef(new Set<ReturnType<typeof setTimeout>>());
+  const pseudoRef = useRef(pseudo);
+  pseudoRef.current = pseudo;
 
   const apres = useCallback((ms: number, f: () => void) => {
     const m = setTimeout(() => { minuteurs.current.delete(m); f(); }, ms);
@@ -151,7 +153,7 @@ export function useArene(pseudo: string, jeuRef: MutableRefObject<JeuHandle | nu
       }
     };
     setEtat("connexion");
-    const client = connecterArene(urlArene(), pseudo, surMessage, surEtat);
+    const client = connecterArene(urlArene(), pseudoRef.current, surMessage, surEtat);
     clientRef.current = client;
     return () => {
       client.fermer();
@@ -159,7 +161,12 @@ export function useArene(pseudo: string, jeuRef: MutableRefObject<JeuHandle | nu
       monIdRef.current = null;
       setMonId(null);
     };
-  }, [pseudo, jeuRef, apres]);
+  }, [jeuRef, apres]);
+
+  // Renommage à chaud (lobby comme en pleine partie) : la session et la partie restent ouvertes.
+  useEffect(() => {
+    clientRef.current?.renommer(pseudo);
+  }, [pseudo]);
 
   useEffect(() => {
     const liste = minuteurs.current;

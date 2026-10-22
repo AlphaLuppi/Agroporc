@@ -162,17 +162,41 @@
 .sens span { font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ag-ink-dim); }
 .sens b { color: var(--ag-amber); font-weight: 500; margin-left: 6px; }
 .sens input { width: 100%; accent-color: #ffb35c; min-height: 24px; }
-.commandes { margin: 18px 0 0; padding-top: 14px; border-top: 1px solid var(--ag-line); display: grid; gap: 6px; text-align: left; font-size: 12px; }
-.commandes div { display: flex; gap: 12px; align-items: baseline; }
-.commandes dt { flex: 0 0 11.5em; }
-.commandes dd { margin: 0; color: var(--ag-ink-dim); }
+.sens .nom {
+  min-height: 40px; box-sizing: border-box; background: var(--ag-ground); border: 1px solid var(--ag-line-strong);
+  color: var(--ag-ink); font: inherit; font-size: 14px; padding: 0 10px; accent-color: auto;
+}
+.sens .nom:focus-visible { outline: 2px solid var(--ag-white); outline-offset: 1px; border-color: var(--ag-cyan); }
+
+/* touches modifiables (ReglageTouches.tsx) */
+.touches { margin: 18px 0 0; padding-top: 14px; border-top: 1px solid var(--ag-line); text-align: left; }
+.touchesTete { display: flex; justify-content: space-between; align-items: center; }
+.touchesTete > span { font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ag-ink-dim); }
+.touchesDefaut {
+  min-height: 32px; padding: 0 10px; background: none; border: 1px solid var(--ag-line-strong); color: var(--ag-ink);
+  font: inherit; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; cursor: pointer;
+}
+.touchesDefaut:disabled { color: var(--ag-ink-dim); cursor: default; }
+.touchesAide { margin: 6px 0 10px; min-height: 2.8em; font-size: 11px; line-height: 1.4; color: var(--ag-ink-dim); }
+.touchesListe { margin: 0; display: grid; gap: 4px; font-size: 12px; }
+.touchesListe div { display: flex; gap: 10px; align-items: center; justify-content: space-between; }
+.touchesListe dt { color: var(--ag-ink); }
+.touchesListe dd { margin: 0; display: flex; gap: 6px; flex: 0 0 auto; }
+.toucheBtn, .toucheFixe {
+  min-width: 92px; min-height: 32px; padding: 0 8px; box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center;
+  background: var(--ag-ground); border: 1px solid var(--ag-line-strong); color: var(--ag-ink); font: inherit; font-size: 11px; cursor: pointer;
+}
+.toucheBtn:hover { border-color: var(--ag-ink-dim); }
+.toucheBtn[aria-pressed="true"] { border-color: var(--ag-amber); color: var(--ag-amber); background: rgba(255, 179, 92, 0.14); }
+.toucheVide { color: var(--ag-ink-dim); }
+.toucheFixe { cursor: default; color: var(--ag-ink-dim); }
 .pause button:focus-visible, .mort button:focus-visible { outline: 2px solid var(--ag-white); outline-offset: 2px; }
 
 @media (max-width: 640px) {
   .fil { top: 70px; font-size: 11px; }
   .arme { min-width: 0; }
   .munitions b, .pv b { font-size: 34px; }
-  .commandes dt { flex-basis: 8em; }
+  .toucheBtn, .toucheFixe { min-width: 64px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .fil li, .aide, .sang, .touche, .degat { animation: none; }

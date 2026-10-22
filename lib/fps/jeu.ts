@@ -28,6 +28,7 @@ import {
   type ArmeId, type EtatJoueurSnap, type JoueurPublic, type MessageServeur, type Vec3, type Zone,
 } from "./protocole";
 import { Interpolateur, type ClientArene } from "./reseau";
+import { codeSouris, indexTouches, lireTouches, stockageNavigateur, type Action, type ConfigTouches } from "./touches";
 import { creerArmeEnMain, creerAvatar, creerEffets, creerPostTraitement, type ArmeEnMain, type AvatarJoueur } from "./rendu";
 import { creerSons } from "./sons";
 import { angleRelatif, anglesVers, directionRegard, fovVerticalDeg, lissage, panSon } from "./vue";
@@ -97,6 +98,8 @@ export interface JeuHandle {
   verrouiller(): void;
   /** Sensibilité de la souris (1 = défaut). */
   sensibilite(x: number): void;
+  /** Touches modifiées par le joueur (menu pause), appliquées tout de suite. */
+  touches(cfg: ConfigTouches): void;
   dispose(): void;
   /** Crochet de test (window.__arene en développement). */
   debug: {
@@ -105,7 +108,7 @@ export interface JeuHandle {
     regarder(lacet: number, tangage: number): void;
     /** Vise le centre de la cible et tire sans dispersion ; false si le tir n'est pas possible. */
     tirerVers(id: string): boolean;
-    /** Appuie ou relâche une touche (code KeyboardEvent) sans clavier. */
+    /** Appuie ou relâche une touche (code KeyboardEvent ou `Souris0`…) sans clavier. */
     touche(code: string, appuyee: boolean): void;
   };
 }
@@ -121,13 +124,7 @@ const FOV_H = 90;
 const FOV_H_VISEE = 78;
 const PORTEE_EFFETS_M = 400;
 const ECART_HUD_S = 1 / 15;
-const TOUCHES_BLOQUEES = new Set([
-  "KeyW", "KeyA", "KeyS", "KeyD", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space",
-  "ShiftLeft", "ShiftRight", "KeyR",
-]);
-const NUM_ARME: Record<string, number> = {
-  Digit1: 0, Digit2: 1, Digit3: 2, Digit4: 3, Numpad1: 0, Numpad2: 1, Numpad3: 2, Numpad4: 3,
-};
+const ARME_DE_L_ACTION: Partial<Record<Action, ArmeId>> = { arme1: ARMES[0], arme2: ARMES[1], arme3: ARMES[2], arme4: ARMES[3] };
 
 function lireSensibilite(): number {
   try {
@@ -212,7 +209,13 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
   let evince = false;
 
   // ---------- entrées ----------
-  const touches = new Set<string>();
+  // Touches du joueur (lib/fps/touches.ts) : codes clavier ET boutons de souris (`Souris0`…) passent
+  // par la même table, on peut donc tirer au clavier ou sauter avec un bouton latéral.
+  let config = lireTouches(stockageNavigateur());
+  let index = indexTouches(config);
+  /** codes physiquement enfoncés */
+  const appuyees = new Set<string>();
+  const actionActive = (a: Action) => config[a].some((c) => c !== null && appuyees.has(c));
   let tirMaintenu = false;
   let viseMaintenu = false;
   let tirPresse = -Infinity;
@@ -512,38 +515,55 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
   }
 
   // ---------- entrées : événements ----------
+  /** Front montant d'une touche : déclenche les actions ponctuelles (saut, recharge, tir). */
+  const presser = (code: string) => {
+    if (appuyees.has(code)) return;
+    appuyees.add(code);
+    for (const a of index.get(code) ?? []) {
+      if (a === "saut") sautDemande = true;
+      else if (a === "recharger") demarrerRecharge();
+      else if (a === "tir") { if (vivant) { tirMaintenu = true; tirPresse = t; tirConsomme = false; } }
+      else if (a === "visee") viseMaintenu = true;
+    }
+  };
+  const relacher = (code: string) => {
+    if (!appuyees.delete(code)) return;
+    // une autre touche de la même action peut encore être enfoncée
+    for (const a of index.get(code) ?? []) {
+      if (a === "tir") tirMaintenu = tirMaintenu && actionActive("tir");
+      else if (a === "visee") viseMaintenu = actionActive("visee");
+    }
+  };
   const surKeyDown = (e: KeyboardEvent) => {
     if (dansUnChamp(e.target)) return;
-    const num = NUM_ARME[e.code];
-    if (num !== undefined) {
-      if (!e.repeat) choisirArme(ARMES[num]);
+    const actions = index.get(e.code);
+    const arme = actions?.map((a) => ARME_DE_L_ACTION[a]).find(Boolean);
+    if (arme) {
+      if (!e.repeat) choisirArme(arme);
       e.preventDefault();
       return;
     }
     if (!verrouille()) return;
-    if (TOUCHES_BLOQUEES.has(e.code)) e.preventDefault();
+    // le tableau des scores (Tab par défaut) est géré par l'UI React, qui bloque elle-même le focus
+    if (actions && !actions.includes("scores")) e.preventDefault();
     if (e.repeat) return;
-    touches.add(e.code);
-    if (e.code === "Space") sautDemande = true;
-    if (e.code === "KeyR") demarrerRecharge();
+    presser(e.code);
   };
   const surKeyUp = (e: KeyboardEvent) => {
-    touches.delete(e.code);
+    relacher(e.code);
   };
   const toutRelacher = () => {
-    touches.clear();
+    appuyees.clear();
     tirMaintenu = false;
     viseMaintenu = false;
   };
   const surMouseDown = (e: MouseEvent) => {
     if (!verrouille()) { demanderVerrou(); return; }
     e.preventDefault();
-    if (e.button === 0) { if (vivant) { tirMaintenu = true; tirPresse = t; tirConsomme = false; } }
-    else if (e.button === 2) viseMaintenu = true;
+    presser(codeSouris(e.button));
   };
   const surMouseUp = (e: MouseEvent) => {
-    if (e.button === 0) tirMaintenu = false;
-    else if (e.button === 2) viseMaintenu = false;
+    relacher(codeSouris(e.button));
   };
   const surMouseMove = (e: MouseEvent) => {
     if (!verrouille()) return;
@@ -649,12 +669,12 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
   let murActif = false;
 
   function entrees(): Entrees {
-    const k = (c: string) => (touches.has(c) ? 1 : 0);
+    const k = (a: Action) => (actionActive(a) ? 1 : 0);
     return {
-      avant: k("KeyW") + k("ArrowUp") - k("KeyS") - k("ArrowDown"),
-      droite: k("KeyD") + k("ArrowRight") - k("KeyA") - k("ArrowLeft"),
-      saut: touches.has("Space") || sautDemande,
-      sprint: touches.has("ShiftLeft") || touches.has("ShiftRight"),
+      avant: k("avant") - k("arriere"),
+      droite: k("droite") - k("gauche"),
+      saut: actionActive("saut") || sautDemande,
+      sprint: actionActive("sprint"),
       lacet,
     };
   }
@@ -799,6 +819,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
     recevoir,
     verrouiller: demanderVerrou,
     sensibilite(x) { sensibilite = borne(x, 0.2, 3); },
+    touches(cfg) { config = cfg; index = indexTouches(cfg); toutRelacher(); },
     dispose() {
       if (disposed) return;
       disposed = true;
@@ -857,8 +878,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
       },
       touche(code, appuyee) {
         forceActif = true;
-        if (appuyee) { touches.add(code); if (code === "Space") sautDemande = true; }
-        else touches.delete(code);
+        if (appuyee) presser(code);
+        else relacher(code);
       },
     },
   };

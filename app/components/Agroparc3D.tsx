@@ -20,6 +20,7 @@ import RestoBadge from "./RestoBadge";
 import Arene from "./arene/Arene";
 import HudArene from "./arene/HudArene";
 import { useArene } from "./arene/useArene";
+import { ecrireTouches, lireTouches, stockageNavigateur, type ConfigTouches } from "@/lib/fps/touches";
 import { CLASSEMENT_INDISPONIBLE, EnregistrerScore, PanneauClassement } from "./ClassementTigre";
 import styles from "./Agroparc3D.module.css";
 
@@ -150,6 +151,7 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
   const [pseudoConnecte, setPseudoConnecte] = useState(() => pseudoInitial().trim() || "Agent");
   const [arme, setArme] = useState<ArmeId>(armeInitiale);
   const [sensibilite, setSensibilite] = useState(sensibiliteInitiale);
+  const [touches, setTouches] = useState<ConfigTouches>(() => lireTouches(stockageNavigateur()));
   const [tactile, setTactile] = useState(false);
   const jeuRef = useRef<JeuHandle | null>(null);
   const arene = useArene(pseudoConnecte, jeuRef);
@@ -163,14 +165,12 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
   useEffect(() => {
     setTactile(matchMedia("(pointer: coarse)").matches && !matchMedia("(any-pointer: fine)").matches);
   }, []);
-  // Le pseudo saisi ne reconnecte qu'après une pause de frappe (le serveur n'a pas de message « renommer »).
-  // Jamais en pleine partie : changer de pseudo refait la connexion, et la partie (qui tient l'ancien
-  // client) resterait branchée sur une socket fermée. Le changement attend la sortie de l'arène.
+  // Le pseudo saisi part au serveur après une courte pause de frappe (message « pseudo », sans
+  // reconnexion : possible aussi en pleine partie, depuis le menu pause).
   useEffect(() => {
-    if (enArene) return;
-    const t = setTimeout(() => setPseudoConnecte(pseudoSaisi.trim() || "Agent"), 700);
+    const t = setTimeout(() => setPseudoConnecte(pseudoSaisi.trim() || "Agent"), 400);
     return () => clearTimeout(t);
-  }, [pseudoSaisi, enArene]);
+  }, [pseudoSaisi]);
   const saisirPseudo = (v: string) => {
     setPseudoSaisi(v);
     try { localStorage.setItem(CLE_PSEUDO, v); } catch { /* non retenu */ }
@@ -185,8 +185,17 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
     jeuRef.current?.sensibilite(x);
     try { localStorage.setItem(CLE_SENSIBILITE, String(x)); } catch { /* non retenu */ }
   };
+  const reglerTouches = (cfg: ConfigTouches) => {
+    setTouches(cfg);
+    jeuRef.current?.touches(cfg);
+    ecrireTouches(cfg, stockageNavigateur());
+  };
   const entrerArene = () => {
     if (!scene || !arene.monId) return;
+    // le nom tapé juste avant de cliquer part tout de suite, sans attendre la pause de frappe
+    const nom = pseudoSaisi.trim() || "Agent";
+    setPseudoConnecte(nom);
+    arene.clientRef.current?.renommer(nom);
     setSelected(null);
     setAreneOuverte(false);
     setCleCanvas((k) => k + 1);
@@ -496,6 +505,7 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
           surFermer={() => setAreneOuverte(false)}
           erreur={arene.erreur}
           tactile={tactile}
+          pseudoParDefaut={!pseudoSaisi.trim() || pseudoSaisi.trim() === "Agent"}
         />
       )}
 
@@ -512,6 +522,10 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
           maintenantServeur={() => arene.clientRef.current?.maintenantServeur() ?? Date.now()}
           sensibilite={sensibilite}
           surSensibilite={regler}
+          touches={touches}
+          surTouches={reglerTouches}
+          pseudo={pseudoSaisi}
+          surPseudo={saisirPseudo}
           surReprendre={() => jeuRef.current?.verrouiller()}
           surChoisirArme={choisirArme}
           surQuitter={quitterArene}

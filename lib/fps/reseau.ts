@@ -14,6 +14,8 @@ export type EtatConnexion = "connexion" | "ouvert" | "ferme" | "erreur";
 export interface ClientArene {
   envoyer(m: MessageClient): void;
   fermer(): void;
+  /** Change de pseudo sans se reconnecter ; le nouveau pseudo sert aussi au « bonjour » des reconnexions. */
+  renommer(pseudo: string): void;
   readonly id: string | null;
   /** horloge serveur estimée (ms) : Date.now() + décalage mesuré par ping */
   maintenantServeur(): number;
@@ -204,6 +206,12 @@ export function connecterArene(
   return {
     envoyer(m) {
       ecrire(JSON.stringify(m), m.t === "etat" || m.t === "tir" || m.t === "ping");
+    },
+    renommer(nouveau) {
+      if (nouveau === pseudo) return;
+      pseudo = nouveau;
+      // périssable : pendant une coupure, le « bonjour » de la reconnexion porte déjà ce pseudo
+      ecrire(JSON.stringify({ t: "pseudo", pseudo: nouveau } satisfies MessageClient), true);
     },
     fermer() {
       arrete = true;

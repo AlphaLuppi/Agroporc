@@ -75,6 +75,8 @@ export type MessageClient =
   | { t: "bonjour"; v: number; pseudo: string }
   /** Entrer dans l'arène avec une arme. */
   | { t: "rejoindre"; arme: ArmeId }
+  /** Changer de pseudo (lobby ou en pleine partie) : le serveur le nettoie, le dédoublonne et renvoie la présence. */
+  | { t: "pseudo"; pseudo: string }
   /** Sortir de l'arène (redevient spectateur). */
   | { t: "quitter" }
   /** Arme pour la prochaine apparition (immédiate si mort). */

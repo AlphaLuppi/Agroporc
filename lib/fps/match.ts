@@ -98,7 +98,13 @@ export interface JoueurSalle {
   histo: { t: number; p: Vec3 }[];
   /** horodatage avant lequel un nouveau tir est refusé */
   prochainTir: number;
+  /** horodatages serveur des derniers changements de pseudo */
+  renommages: number[];
 }
+
+/** Changements de pseudo tolérés par fenêtre (on tape son nom par à-coups ; au-delà, c'est du flood). */
+export const RENOMMER_MAX = 8;
+export const RENOMMER_FENETRE_MS = 10_000;
 
 const estNombre = (x: unknown): x is number => typeof x === "number" && Number.isFinite(x);
 const estVec3 = (x: unknown): x is Vec3 => Array.isArray(x) && x.length === 3 && x.every(estNombre);
@@ -187,6 +193,7 @@ export class Salle {
       p: [0, 0, 0], v: [0, 0, 0], lacet: 0, tangage: 0, posture: "sol", mur: 0,
       arme: "pistolet", armeSuivante: "pistolet", pv: JEU.pvMax, vivant: false,
       protegeJusqua: 0, reapparitionT: null, seq: -1, etatT: maintenant, histo: [], prochainTir: -Infinity,
+      renommages: [],
     };
     this.joueurs.set(id, j);
     return [
@@ -206,6 +213,7 @@ export class Salle {
     const j = this.joueurs.get(id);
     if (!j || !msg || typeof msg !== "object") return [];
     switch (msg.t) {
+      case "pseudo": return this.renommer(j, msg.pseudo, maintenant);
       case "rejoindre": return this.rejoindre(j, msg.arme, maintenant);
       case "quitter": return this.quitter(j);
       case "arme": return this.changerArme(j, msg.arme);
@@ -214,6 +222,19 @@ export class Salle {
       case "ping": return estNombre(msg.t0) ? [{ a: id, m: { t: "pong", t0: msg.t0, maintenant } }] : [];
       default: return []; // "bonjour" : déjà traité par connecter
     }
+  }
+
+  /** Au plus `RENOMMER_MAX` changements par fenêtre (chaque changement diffuse la présence à tous). */
+  private renommer(j: JoueurSalle, brut: unknown, maintenant: number): Sortie[] {
+    j.renommages = j.renommages.filter((t) => maintenant - t < RENOMMER_FENETRE_MS);
+    if (j.renommages.length >= RENOMMER_MAX) return [];
+    const base = nettoyerPseudo(brut);
+    const pris = new Set([...this.joueurs.values()].filter((x) => x !== j).map((x) => x.pseudo.toLocaleLowerCase("fr")));
+    const pseudo = pseudoUnique(base, pris);
+    if (pseudo === j.pseudo) return [];
+    j.pseudo = pseudo;
+    j.renommages.push(maintenant);
+    return [this.presence()];
   }
 
   private rejoindre(j: JoueurSalle, arme: unknown, maintenant: number): Sortie[] {

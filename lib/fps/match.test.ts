@@ -462,3 +462,28 @@ describe("sur le vrai scene.json", () => {
     expect(points.size).toBeGreaterThanOrEqual(10);
   });
 });
+
+describe("changement de pseudo", () => {
+  it("renomme sans reconnexion, nettoie, dédoublonne et diffuse la présence", () => {
+    const s = nouvelleSalle();
+    s.connecter("a", "Alice", T0);
+    s.connecter("b", "Bob", T0);
+    const sorties = s.recevoir("b", { t: "pseudo", pseudo: "  alice<script> " }, T0 + 2000);
+    expect(j(s, "b").pseudo).toBe("alicescript");
+    expect(messages(sorties, "presence")).toHaveLength(1);
+    s.recevoir("b", { t: "pseudo", pseudo: "ALICE" }, T0 + 4000);
+    expect(j(s, "b").pseudo).toBe("ALICE2");
+  });
+
+  it("garde son propre nom sans suffixe et limite la cadence", () => {
+    const s = nouvelleSalle();
+    s.connecter("a", "Alice", T0);
+    expect(s.recevoir("a", { t: "pseudo", pseudo: "Alice" }, T0 + 2000)).toEqual([]);
+    expect(j(s, "a").pseudo).toBe("Alice");
+    for (let i = 0; i < 8; i++) s.recevoir("a", { t: "pseudo", pseudo: `Nom${i}` }, T0 + 2000 + i);
+    expect(j(s, "a").pseudo).toBe("Nom7");
+    expect(s.recevoir("a", { t: "pseudo", pseudo: "Yan" }, T0 + 2100)).toEqual([]);
+    s.recevoir("a", { t: "pseudo", pseudo: "Yan" }, T0 + 12_100);
+    expect(j(s, "a").pseudo).toBe("Yan");
+  });
+});

@@ -7,6 +7,8 @@ import { STATS } from "@/lib/fps/armes";
 import { chrono, ecartViseurPx } from "@/lib/fps/vue";
 import type { DerniereMort, EntreeFil, EvenementHud } from "./useArene";
 import { INFOS_ARMES } from "./armesInfo";
+import ReglageTouches, { useDisposition } from "./ReglageTouches";
+import { libelleTouche, type Action, type ConfigTouches } from "@/lib/fps/touches";
 import styles from "./HudArene.module.css";
 
 const CLE_AIDE = "pdj-fps-aide-vue";
@@ -23,35 +25,46 @@ interface Props {
   maintenantServeur(): number;
   sensibilite: number;
   surSensibilite(x: number): void;
+  /** touches du joueur (lib/fps/touches.ts), modifiables dans le menu pause */
+  touches: ConfigTouches;
+  surTouches(cfg: ConfigTouches): void;
+  /** nom saisi, modifiable en pleine partie depuis le menu pause */
+  pseudo: string;
+  surPseudo(v: string): void;
   surReprendre(): void;
   surChoisirArme(a: ArmeId): void;
   surQuitter(): void;
 }
 
-const COMMANDES: [string, string][] = [
-  ["Z Q S D / W A S D", "Se déplacer"],
-  ["Souris", "Viser"],
-  ["Clic gauche", "Tirer (maintenir : rafale)"],
-  ["Clic droit", "Viser / lunette"],
-  ["Espace", "Sauter, double saut, saut de mur"],
-  ["Maj", "Sprinter"],
-  ["R", "Recharger"],
-  ["1 à 4", "Arme de la prochaine apparition"],
-  ["Tab", "Tableau des scores"],
-  ["Échap", "Menu pause"],
-];
+/** Touche principale d'une action (sinon la seconde), pour les aides à l'écran. */
+const touche = (cfg: ConfigTouches, a: Action, d?: ReadonlyMap<string, string> | null) => libelleTouche(cfg[a][0] ?? cfg[a][1], d);
+
+/** Aide du premier lancement, d'après les touches du joueur. */
+function commandes(cfg: ConfigTouches, d: ReadonlyMap<string, string> | null): [string, string][] {
+  return [
+    [[touche(cfg, "avant", d), touche(cfg, "gauche", d), touche(cfg, "arriere", d), touche(cfg, "droite", d)].join(" "), "Se déplacer"],
+    ["Souris", "Viser"],
+    [touche(cfg, "tir", d), "Tirer (maintenir : rafale)"],
+    [touche(cfg, "visee", d), "Viser / lunette"],
+    [touche(cfg, "saut", d), "Sauter, double saut, saut de mur"],
+    [touche(cfg, "sprint", d), "Sprinter"],
+    [touche(cfg, "recharger", d), "Recharger"],
+  ];
+}
 
 function lireAideVue(): boolean {
   try { return localStorage.getItem(CLE_AIDE) === "1"; } catch { return false; }
 }
 
-/** Vrai pendant que la touche Tab est maintenue (le navigateur ne doit pas déplacer le focus). */
-function useTabMaintenue(actif: boolean): boolean {
+/** Vrai pendant que la touche des scores (Tab par défaut) est maintenue ; le navigateur ne déplace pas le focus. */
+function useTabMaintenue(actif: boolean, codes: readonly (string | null)[]): boolean {
   const [tab, setTab] = useState(false);
+  const cle = codes.join(",");
   useEffect(() => {
     if (!actif) return;
-    const bas = (e: KeyboardEvent) => { if (e.key === "Tab") { e.preventDefault(); setTab(true); } };
-    const haut = (e: KeyboardEvent) => { if (e.key === "Tab") { e.preventDefault(); setTab(false); } };
+    const liste = cle.split(",").filter(Boolean);
+    const bas = (e: KeyboardEvent) => { if (liste.includes(e.code)) { e.preventDefault(); setTab(true); } };
+    const haut = (e: KeyboardEvent) => { if (liste.includes(e.code)) { e.preventDefault(); setTab(false); } };
     const perdu = () => setTab(false);
     window.addEventListener("keydown", bas);
     window.addEventListener("keyup", haut);
@@ -62,7 +75,7 @@ function useTabMaintenue(actif: boolean): boolean {
       window.removeEventListener("blur", perdu);
       setTab(false);
     };
-  }, [actif]);
+  }, [actif, cle]);
   return tab;
 }
 
@@ -73,7 +86,8 @@ export default function HudArene(p: Props) {
   const [aideVue, setAideVue] = useState(lireAideVue);
   const dejaVerrouille = useRef(false);
   // Tab = scores seulement souris prise : menu pause ouvert, il garde sa navigation au clavier.
-  const tab = useTabMaintenue(!!hud?.verrouille);
+  const tab = useTabMaintenue(!!hud?.verrouille, p.touches.scores);
+  const disposition = useDisposition();
 
   // La minuterie avance même quand le jeu n'émet rien.
   useEffect(() => {
@@ -202,7 +216,7 @@ export default function HudArene(p: Props) {
             <i style={{ width: `${hud.recharge * 100}%` }} />
           </div>
         )}
-        {hud.munitions === 0 && hud.recharge === 0 && <p className={styles.etiquette}>R : recharger</p>}
+        {hud.munitions === 0 && hud.recharge === 0 && <p className={styles.etiquette}>{touche(p.touches, "recharger", disposition)} : recharger</p>}
         {hud.armeSuivante !== hud.arme && <p className={styles.suivante}>Prochaine : {STATS[hud.armeSuivante].nom}</p>}
       </div>
 
@@ -211,10 +225,10 @@ export default function HudArene(p: Props) {
       {/* aide au premier lancement */}
       {!aideVue && hud.verrouille && !hud.mort && (
         <div className={styles.aide} aria-hidden="true">
-          {COMMANDES.slice(0, 7).map(([k, v]) => (<p key={k}><kbd>{k}</kbd> {v}</p>))}
+          {commandes(p.touches, disposition).map(([k, v]) => (<p key={v}><kbd>{k}</kbd> {v}</p>))}
         </div>
       )}
-      {hud.verrouille && !tableau && <p className={styles.tabAstuce} aria-hidden="true">Tab : scores</p>}
+      {hud.verrouille && !tableau && <p className={styles.tabAstuce} aria-hidden="true">{touche(p.touches, "scores", disposition)} : scores</p>}
 
       {/* écran de mort */}
       {hud.mort && !pause && (
@@ -235,7 +249,7 @@ export default function HudArene(p: Props) {
           <div className={styles.choixArme} role="group" aria-label="Arme de la prochaine apparition">
             {ARMES.map((id, i) => (
               <button key={id} type="button" aria-pressed={hud.armeSuivante === id} onClick={() => p.surChoisirArme(id)}>
-                <kbd>{i + 1}</kbd> {INFOS_ARMES[id].nom}
+                <kbd>{touche(p.touches, `arme${i + 1}` as Action)}</kbd> {INFOS_ARMES[id].nom}
               </button>
             ))}
           </div>
@@ -281,18 +295,28 @@ export default function HudArene(p: Props) {
               <span>Changer d&apos;arme</span>
               {ARMES.map((id, i) => (
                 <button key={id} type="button" aria-pressed={hud.armeSuivante === id} onClick={() => p.surChoisirArme(id)}>
-                  <kbd>{i + 1}</kbd> {INFOS_ARMES[id].nom}
+                  <kbd>{touche(p.touches, `arme${i + 1}` as Action)}</kbd> {INFOS_ARMES[id].nom}
                 </button>
               ))}
             </div>
+            <label className={styles.sens}>
+              <span>Nom de joueur</span>
+              <input
+                type="text"
+                className={styles.nom}
+                value={p.pseudo}
+                maxLength={16}
+                autoComplete="off"
+                spellCheck={false}
+                onChange={(e) => p.surPseudo(e.target.value)}
+              />
+            </label>
             <label className={styles.sens}>
               <span>Sensibilité de la souris <b>{p.sensibilite.toFixed(1)}</b></span>
               <input type="range" min={0.2} max={3} step={0.1} value={p.sensibilite} onChange={(e) => p.surSensibilite(Number(e.target.value))} />
             </label>
             <button type="button" className={styles.quitter} onClick={p.surQuitter}>Quitter l&apos;arène</button>
-            <dl className={styles.commandes}>
-              {COMMANDES.map(([k, v]) => (<div key={k}><dt><kbd>{k}</kbd></dt><dd>{v}</dd></div>))}
-            </dl>
+            <ReglageTouches config={p.touches} surChange={p.surTouches} />
           </div>
         </div>
       )}

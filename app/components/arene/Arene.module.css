@@ -45,6 +45,9 @@
   min-height: 40px; box-sizing: border-box; background: var(--ag-ground); border: 1px solid var(--ag-line-strong);
   color: var(--ag-ink); font: inherit; font-size: 14px; padding: 0 10px;
 }
+.aidePseudo { margin: 2px 0 0; font-size: 11px; color: var(--ag-ink-dim); }
+.aidePseudo b { color: var(--ag-ink); }
+.champ input::placeholder { color: var(--ag-ink-dim); }
 .champ input:focus-visible { outline: 2px solid var(--ag-white); outline-offset: 1px; border-color: var(--ag-cyan); }
 
 .armes { border: 0; padding: 0; margin: 14px 0 0; min-width: 0; }
