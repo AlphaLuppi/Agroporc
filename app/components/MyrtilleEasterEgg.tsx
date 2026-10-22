@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 import { listenForCode } from "@/lib/agroparc3d/myrtille";
+import type { PartieTigre } from "./Agroparc3D";
 
 // three.js n'est chargé qu'au premier « myrtille » : aucun coût pour les visiteurs ordinaires.
 const Agroparc3D = dynamic(() => import("./Agroparc3D"), { ssr: false });
@@ -13,6 +14,15 @@ const Agroparc3D = dynamic(() => import("./Agroparc3D"), { ssr: false });
  */
 export function MyrtilleEasterEgg() {
   const [open, setOpen] = useState(false);
+  // Score de la chasse au tigre : gardé ici, il survit à la fermeture de la vue (pas au rechargement).
+  const [partie, setPartie] = useState<PartieTigre>({ score: 0, tigres: 0 });
   useEffect(() => listenForCode(() => setOpen((o) => !o)), []);
-  return open ? <Agroparc3D onClose={() => setOpen(false)} /> : null;
+  return open ? (
+    <Agroparc3D
+      onClose={() => setOpen(false)}
+      partie={partie}
+      surTigre={(c) => setPartie((p) => ({ score: p.score + c.points, tigres: p.tigres + 1 }))}
+      remettreAZero={() => setPartie({ score: 0, tigres: 0 })}
+    />
+  ) : null;
 }
