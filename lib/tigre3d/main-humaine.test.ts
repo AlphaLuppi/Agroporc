@@ -1,6 +1,7 @@
 /**
  * Main humaine (réaction « serre-main ») : correspondance patte → main (pure), puis la cible de
- * déformation calculée sur le vrai maillage du GLB (décodé ici avec le décodeur meshopt de three).
+ * déformation calculée sur le vrai maillage du GLB (décodé ici avec le décodeur meshopt de three),
+ * subdivisé comme au chargement (lib/tigre3d/subdivision-patte.ts).
  */
 import { describe, it, expect, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
@@ -10,6 +11,7 @@ import {
   COTE_POUCE, DOIGTS, type SortieMainHumaine,
 } from "./main-humaine";
 import { NOMS_OS } from "./os";
+import { subdiviserPatte } from "./subdivision-patte";
 import { nomThree } from "./extraction.mjs";
 
 /** Lecture des attributs du maillage du GLB (meshopt + quantification dénormalisée), comme three. */
@@ -48,12 +50,19 @@ async function maillageGLB() {
   return {
     positions: lire(prim.attributes.POSITION),
     normales: lire(prim.attributes.NORMAL),
+    uv: lire(prim.attributes.TEXCOORD_0),
     indicesOs: lire(prim.attributes.JOINTS_0),
     poidsOs: lire(prim.attributes.WEIGHTS_0),
     indices: lire(prim.indices),
     osMain,
     versOs: Array.from(ibm.subarray(osMain * 16, osMain * 16 + 16)),
   };
+}
+
+/** Maillage tel que modele.ts le prépare : bout de la patte subdivisé. */
+async function maillageSubdivise() {
+  const m = await maillageGLB();
+  return { ...subdiviserPatte(m, m.osMain), osMain: m.osMain, versOs: m.versOs, original: m };
 }
 
 const appliquer = (m: ArrayLike<number>, x: number, y: number, z: number) => ({
@@ -124,15 +133,22 @@ describe("main humaine : correspondance patte → main", () => {
 });
 
 describe("main humaine : cible de déformation du vrai maillage", () => {
-  let m: Awaited<ReturnType<typeof maillageGLB>>;
+  let m: Awaited<ReturnType<typeof maillageSubdivise>>;
   let s: SortieMainHumaine;
   const poidsMain = (i: number) => {
     let w = 0;
     for (let j = 0; j < 4; j++) if (m.indicesOs[i * 4 + j] === m.osMain) w += m.poidsOs[i * 4 + j];
     return w;
   };
+  /** Sommet i dans le repère de l'os, déformé avec le poids k. */
+  const local = (i: number, k: number) => appliquer(
+    m.versOs,
+    m.positions[i * 3] + k * s.deplacements[i * 3],
+    m.positions[i * 3 + 1] + k * s.deplacements[i * 3 + 1],
+    m.positions[i * 3 + 2] + k * s.deplacements[i * 3 + 2],
+  );
   beforeAll(async () => {
-    m = await maillageGLB();
+    m = await maillageSubdivise();
     s = construireMainHumaine(m);
   });
 
@@ -150,9 +166,31 @@ describe("main humaine : cible de déformation du vrai maillage", () => {
     }
     expect(hors).toBe(0);
     expect(faibles).toBe(0);
-    // Patte : environ 1 000 sommets déplacés (954 ont mainD comme influence principale).
-    expect(s.deplaces).toBeGreaterThan(800);
-    expect(s.deplaces).toBeLessThan(1182);
+    // Patte subdivisée : 12 374 sommets déplacés au 2026-10-22 (991 sans subdivision).
+    expect(s.deplaces).toBeGreaterThan(11000);
+    expect(s.deplaces).toBeLessThan(13500);
+  });
+
+  it("subdivision : au repos, chaque sommet ajouté est sur une arête du maillage d'origine, rien d'autre ne change", () => {
+    const o = m.original, n0 = o.positions.length / 3, n = m.positions.length / 3;
+    expect(n).toBeGreaterThan(n0);
+    // Les sommets d'origine gardent leur position, leurs coordonnées de texture et leurs os.
+    for (let i = 0; i < n0 * 3; i++) expect(Math.abs(m.positions[i] - o.positions[i])).toBeLessThan(1e-6);
+    for (let i = 0; i < n0 * 2; i++) expect(Math.abs(m.uv[i] - o.uv[i])).toBeLessThan(1e-6);
+    // Poids d'os de chaque sommet ajouté : somme 1, et mainD est toujours son influence principale
+    // ou le partage (seuls les triangles du bout sont coupés en quatre).
+    for (let i = n0; i < n; i++) {
+      let somme = 0;
+      for (let j = 0; j < 4; j++) somme += m.poidsOs[i * 4 + j];
+      expect(Math.abs(somme - 1)).toBeLessThan(0.02);
+    }
+    // Hors de la patte, aucun triangle ne change.
+    const tri = (idx: ArrayLike<number>, t: number) => [idx[t], idx[t + 1], idx[t + 2]].join(",");
+    const avant = new Set<string>(), apres = new Set<string>();
+    const dansPatte = (i: number) => { for (let j = 0; j < 4; j++) if (o.indicesOs[i * 4 + j] === o.osMain && o.poidsOs[i * 4 + j] > 0) return true; return false; };
+    for (let t = 0; t < o.indices.length; t += 3) if (![0, 1, 2].some((k) => dansPatte(o.indices[t + k]))) avant.add(tri(o.indices, t));
+    for (let t = 0; t < m.indices.length; t += 3) apres.add(tri(m.indices, t));
+    for (const t of avant) expect(apres.has(t)).toBe(true);
   });
 
   it("les sommets doublés (coutures de texture) reçoivent le même déplacement", () => {
@@ -168,32 +206,66 @@ describe("main humaine : cible de déformation du vrai maillage", () => {
     expect(ecart).toBe(0);
   });
 
-  it("main aux doigts longs : le bout dépasse largement celui de la patte, aucun triangle déchiré", () => {
+  it("main aux doigts longs : le bout dépasse largement celui de la patte", () => {
     let yAvant = -Infinity, yApres = -Infinity;
-    const loc = (i: number, k: number) => appliquer(
-      m.versOs,
-      m.positions[i * 3] + k * s.deplacements[i * 3],
-      m.positions[i * 3 + 1] + k * s.deplacements[i * 3 + 1],
-      m.positions[i * 3 + 2] + k * s.deplacements[i * 3 + 2],
-    );
     for (let i = 0; i < m.positions.length / 3; i++) {
       if (poidsMain(i) === 0) continue;
-      yAvant = Math.max(yAvant, loc(i, 0).y);
-      yApres = Math.max(yApres, loc(i, 1).y);
+      yAvant = Math.max(yAvant, local(i, 0).y);
+      yApres = Math.max(yApres, local(i, 1).y);
     }
     // Repère de l'os : la patte finit à y ≈ 0,65, la main plus loin (doigts longs).
     expect(yApres - yAvant).toBeGreaterThan(0.3);
-    // Arêtes de la patte : aucune ne s'étire au point de déchirer la surface.
-    let max = 0;
-    for (let t = 0; t < m.indices.length; t += 3) {
-      for (let k = 0; k < 3; k++) {
-        const a = m.indices[t + k], b = m.indices[t + ((k + 1) % 3)];
-        if (poidsMain(a) === 0 || poidsMain(b) === 0) continue;
-        const pa = loc(a, 1), pb = loc(b, 1);
-        max = Math.max(max, Math.hypot(pa.x - pb.x, pa.y - pb.y, pa.z - pb.z));
-      }
+  });
+
+  /**
+   * Étirement des arêtes (longueur après / longueur avant), par catégorie, plafonds fixés après
+   * mesure du 2026-10-22 (valeur mesurée entre parenthèses). Une déchirure relie deux points
+   * éloignés de la main par une arête courte de la patte : elle dépasserait ces plafonds.
+   * - « traversantes » : arêtes entre deux doigts (ou pouce et index) au-delà de la base des
+   *   doigts. Elles font les palmures, au fond des encoches. Longueur après bornée (0,203) : une
+   *   membrane entre deux doigts écartés dépasserait 0,3.
+   * - « bords communs » : arêtes dont un sommet est sur la bande d'un bord commun (|v| > 0,3 dans
+   *   sa bande). Cette bande étroite de la patte devient tout le flanc intérieur du doigt, de la
+   *   palmure au bout : étirement voulu (25,2), longueur après bornée (0,239).
+   * - « poignet » : déplacement atténué, triangles non subdivisés (8,2, longueur 0,285 pour une
+   *   arête de 0,133 au repos).
+   * - « autres » : le reste des doigts, de la paume et du pouce (12,7, longueur 0,110).
+   */
+  it("aucune arête déchirée : étirement plafonné par catégorie", () => {
+    const QP = DOIGTS[0].q0;
+    const bandes = [[-1, QP], ...DOIGTS.map((d) => [d.q0, d.q1])];
+    const bande = (q: number) => bandes.findIndex(([a, b]) => q >= a && q <= b);
+    // |v| dans la bande (1 sur un bord commun), 0 du côté extérieur de la main.
+    const bord = (q: number) => {
+      const k = bande(q), [a, b] = bandes[k], v = (2 * (q - a)) / (b - a) - 1;
+      return (k === 0 && v < 0) || (k === bandes.length - 1 && v > 0) ? 0 : Math.abs(v);
+    };
+    const max: Record<string, { r: number; l: number }> = {};
+    const vues = new Set<number>();
+    for (let t = 0; t < m.indices.length; t += 3) for (let k = 0; k < 3; k++) {
+      const a = m.indices[t + k], b = m.indices[t + ((k + 1) % 3)];
+      const cle = a < b ? a * 1e6 + b : b * 1e6 + a;
+      if (vues.has(cle)) continue;
+      vues.add(cle);
+      const ra = s.reperes[a * 4], rb = s.reperes[b * 4];
+      if (ra === 0 && rb === 0) continue;
+      const d = (x: { x: number; y: number; z: number }, y: { x: number; y: number; z: number }) => Math.hypot(x.x - y.x, x.y - y.y, x.z - y.z);
+      const l0 = d(local(a, 0), local(b, 0)), l1 = d(local(a, 1), local(b, 1));
+      const qa = s.reperes[a * 4 + 1], qb = s.reperes[b * 4 + 1], wa = s.reperes[a * 4 + 2], wb = s.reperes[b * 4 + 2];
+      const cat = bande(qa) !== bande(qb) && Math.min(wa, wb) > 0.12 ? "traversantes"
+        : Math.min(ra, rb) < 0.999 ? "poignet"
+          : Math.max(bord(qa), bord(qb)) > 0.3 && Math.min(wa, wb) > 0 ? "bords communs" : "autres";
+      const c = (max[cat] ??= { r: 0, l: 0 });
+      c.r = Math.max(c.r, l1 / Math.max(l0, 1e-9));
+      c.l = Math.max(c.l, l1);
     }
-    expect(max).toBeLessThan(0.45);
+    expect(max.traversantes.l).toBeLessThan(0.22);
+    expect(max["bords communs"].r).toBeLessThan(28);
+    expect(max["bords communs"].l).toBeLessThan(0.26);
+    expect(max.poignet.r).toBeLessThan(9);
+    expect(max.poignet.l).toBeLessThan(0.3);
+    expect(max.autres.r).toBeLessThan(14);
+    expect(max.autres.l).toBeLessThan(0.12);
   });
 
   it("repères du nuanceur : peau sur la face de la paume (dessous au repos), atténuation 0 hors de la main", () => {

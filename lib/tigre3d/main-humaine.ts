@@ -1,6 +1,6 @@
 /**
  * Main humaine du tigre (thème Tigre, réaction « serre-main ») : la patte avant droite se déforme
- * en main humaine aux doigts longs, au pelage rayé et à la paume de peau. PUR (aucune dépendance) :
+ * en main humaine aux doigts longs, au pelage de la patte et à la paume de peau. PUR (aucune dépendance) :
  * calcule, une fois au chargement du modèle, la cible de déformation (morph target, en déplacements
  * relatifs) des sommets de la patte et quatre repères par sommet pour le nuanceur, qui en tire la
  * paume de peau et les sillons (`nuanceurMainHumaine`). lib/tigre3d/modele.ts ajoute le tout à la
@@ -23,12 +23,16 @@
  * se touchent : une surface continue ne peut pas se couper, donc les doigts sont séparés par des
  * sillons profonds dessus et dessous (le bord commun de deux bandes est leur point de contact, à
  * mi-épaisseur) et par les calottes, libres, au bout. Le pouce part du talon de la main, longe la
- * paume puis s'écarte de l'index au-delà de la palmure, seule membrane de la main. Les positions
- * de deux bandes voisines sont mélangées sur une bande étroite (partition de l'unité) : rien ne
- * se déchire. Le matériau est sans éclairage : les sillons et les plis sont tracés par le nuanceur.
+ * paume puis son axe plie vers l'extérieur au-delà de la palmure : il sort de la silhouette. Sur
+ * la bande d'un bord commun, le tube raccourcit vers la fin de ce bord (la palmure pour le pouce et
+ * l'index) : un triangle à cheval sur deux doigts reste au fond de l'encoche. Les positions de
+ * deux bandes voisines sont mélangées sur une bande étroite (partition de l'unité) : rien ne se
+ * déchire.
  *
- * La géométrie de la patte n'a que 2 à 3 arêtes par doigt : pas de subdivision, les sillons se
- * lisent grâce aux lignes du nuanceur, calculées au fragment près sur (q, w, e) interpolés.
+ * La patte du GLB n'a que 2 à 3 arêtes par doigt : modele.ts subdivise d'abord le bout de la patte
+ * (lib/tigre3d/subdivision-patte.ts, 16 triangles pour un), ce qui détache les bouts des doigts en
+ * silhouette. Le matériau est sans éclairage : le nuanceur met la peau sur la paume (les doigts
+ * gardent le pelage de la texture) et trace une ligne sombre sur chaque bord commun.
  */
 
 /** Matrice 4 × 4 en colonnes (comme three). */
@@ -95,21 +99,32 @@ const Y_BASE = 0.45;
  */
 const Q_POUCE = -0.55;
 const W_POUCE = -0.55;
-const BOUT_POUCE = 0.86;
+const BOUT_POUCE = 0.98;
 const R_POUCE = 0.08;
 const INCLINAISON_POUCE = 0.6;
-/** Palmure entre pouce et index (y au-delà de la base de l'index), écart du pouce (z par unité). */
+/** Palmure entre pouce et index (y au-delà de la base de l'index). */
 const PALMURE = 0.06;
-const ECART_POUCE = 0.3;
+/**
+ * Au-delà de la palmure, l'axe du pouce s'incline vers l'extérieur de la main (angle en radians),
+ * le long d'un arc de longueur ARC_POUCE : le pouce sort de la silhouette de la main.
+ */
+const ANGLE_POUCE = 0.62;
+const ARC_POUCE = 0.16;
 /** Largeur de l'éminence thénar, ajoutée à la paume côté pouce. */
 const THENAR = 0.05;
 /** Effilement : rayon et écart au milieu de la main diminuent ensemble vers le bout des doigts. */
 const EFFILEMENT = 0.12;
 /** Demi-largeur des lignes des sillons (en q, la main fait 2 de large). */
 const LIGNE = 0.035;
-/** Plis côté paume : phalanges (a le long des doigts), pli de la paume (a négatif, sous les doigts). */
-const PLIS_PHALANGES = [0.36, 0.68];
+/** Pli de la paume (a négatif, sous les doigts), tracé sur la peau seulement. */
 const PLI_PAUME = 0.22;
+/**
+ * Peau sur la paume seulement (demande de l'utilisateur : pelage sur le dos de la main et les
+ * doigts, peau sur la paume). Au-delà de a = FIN_PEAU sur les doigts (a = 0 à leur base), et
+ * au-delà de la palmure sur le pouce, la face de la paume garde le pelage de la texture. Pour une
+ * peau qui couvre aussi le dessous des doigts, mettre FIN_PEAU à 1,2.
+ */
+const FIN_PEAU = -0.02;
 /** Lissage des bouts des doigts : part de la moyenne des voisins par passe, nombre de passes. */
 const LISSAGE_BOUT = 0.5;
 const PASSES_LISSAGE = 2;
@@ -222,7 +237,7 @@ const rayonBout = (r0: number) => r0 * (1 - EFFILEMENT);
  */
 function pointTube(
   y0: number, long: number, r0: number, v: number, a: number, e: number, finV: number,
-  exterieur: -1 | 0 | 1, centre: (lambda: number, f: number) => [number, number],
+  exterieur: -1 | 0 | 1, centre: (lambda: number, f: number) => [number, number], debutV = 0.75,
 ): Point3 {
   const rb = rayonBout(r0), lc = long - rb;
   const lambda = Math.min(a, 1) * finV;
@@ -230,7 +245,9 @@ function pointTube(
   const [sz, sx] = section(borne(v, -1, 1), borne(e, -1, 1), exterieur);
   const [zc, xc] = centre(lambda, f);
   const tube = { x: xc + sx * r0 * f, y: y0 + lambda, z: zc + sz * r0 * f };
-  const b = lisse(0.8, 0.97, a) * (1 - lisse(0.7, 0.97, Math.abs(e))) * (1 - lisse(0.8, 1, Math.abs(v)));
+  // Pas de calotte sur la bande des bords communs (|v| au-delà de debutV), qui raccourcit vers la
+  // fin du bord commun : un sommet de la face avant y suit le flanc, comme son voisin de l'autre bande.
+  const b = lisse(0.8, 0.97, a) * (1 - lisse(0.7, 0.97, Math.abs(e))) * (1 - lisse(debutV + 0.05, 1, Math.abs(v)));
   if (b <= 0) return tube;
   const [cz, cx, cy] = calotte(borne(v, -1, 1), borne(e, -1, 1), exterieur);
   const [zb, xb] = centre(lc, 1 - EFFILEMENT * (lc / long));
@@ -241,10 +258,18 @@ function pointTube(
   };
 }
 
-/** Longueur du tube sur la ligne v : jusqu'à la calotte au milieu, jusqu'au bord commun sur les bords. */
-function longueurBande(lc: number, v: number, gauche: number, droite: number): number {
-  return mix(lc, Math.min(lc, v < 0 ? gauche : droite), lisse(0.75, 1, Math.abs(v)));
+/**
+ * Longueur du tube sur la ligne v : jusqu'à la calotte au milieu, jusqu'au bord commun sur les
+ * bords. `debut` : |v| à partir duquel la ligne raccourcit, plus petit côté pouce (le pouce
+ * s'écarte de l'index, un triangle à cheval sur leur bord commun ferait une membrane d'autant plus
+ * grande que ses sommets sont loin de la palmure).
+ */
+function longueurBande(lc: number, v: number, gauche: number, droite: number, debutG = 0.75, debutD = 0.75): number {
+  return mix(lc, Math.min(lc, v < 0 ? gauche : droite), lisse(v < 0 ? debutG : debutD, 1, Math.abs(v)));
 }
+
+/** |v| à partir duquel le bord commun du pouce et de l'index raccourcit vers la palmure. */
+const DEBUT_PALMURE = 0.35;
 
 /**
  * Fin (y absolu) du bord commun de deux tubes voisins (ils se touchent jusque-là) : le début de
@@ -261,9 +286,10 @@ function dansDoigt(k: number, q: number, w: number, e: number): Point3 {
   // Bord commun : la même fin vue des deux doigts voisins (le pouce à gauche de l'index).
   const finG = (g ? finCommune(g.y + g.long, g.r0, d.y + d.long, d.r0) : FIN_POUCE_INDEX) - d.y;
   const finD = dr ? finCommune(d.y + d.long, d.r0, dr.y + dr.long, dr.r0) - d.y : lc;
-  const finV = longueurBande(lc, borne(v, -1, 1), finG, finD);
+  const finV = longueurBande(lc, borne(v, -1, 1), finG, finD, k === 0 ? DEBUT_PALMURE : 0.75);
   const a = (w - W_BASE) / (1 - W_BASE);
-  const doigt = pointTube(d.y, d.long, d.r0, v, a, e, finV, d.exterieur, (_l, f) => [d.z * f, d.x]);
+  const debutV = k === 0 && v < 0 ? DEBUT_PALMURE : 0.75;
+  const doigt = pointTube(d.y, d.long, d.r0, v, a, e, finV, d.exterieur, (_l, f) => [d.z * f, d.x], debutV);
   const p = paume(q, w, e, d.y);
   const t = lisse(-0.12, 0.12, a);
   return { x: mix(p.x, doigt.x, t), y: mix(p.y, doigt.y, t), z: mix(p.z, doigt.z, t) };
@@ -290,6 +316,25 @@ function bordPouce(w: number): Point3 {
 }
 
 /**
+ * Flexion de l'axe du pouce dans le plan de la paume : un point à la distance `s` le long de
+ * l'axe droit (depuis la palmure) et à `dz` de l'axe, en travers. Avant la palmure (s < 0), rien
+ * ne change. Puis l'axe suit un arc (rayon ARC_POUCE / ANGLE_POUCE, plus grand que le rayon du
+ * pouce, donc le côté intérieur ne se replie pas) et continue en ligne droite, incliné de
+ * ANGLE_POUCE vers l'extérieur (z négatif dans la main canonique). Rend (y, z) relatifs.
+ */
+function plier(s: number, dz: number): { y: number; z: number } {
+  if (s <= 0) return { y: s, z: dz };
+  const R = ARC_POUCE / ANGLE_POUCE;
+  const phi = ANGLE_POUCE * Math.min(1, s / ARC_POUCE);
+  // Centre de l'axe au bout de l'arc parcouru, puis la ligne droite au-delà.
+  let y = R * Math.sin(phi), z = -R * (1 - Math.cos(phi));
+  const reste = Math.max(0, s - ARC_POUCE);
+  y += reste * Math.cos(phi); z -= reste * Math.sin(phi);
+  // Décalage en travers, perpendiculaire à l'axe incliné.
+  return { y: y + dz * Math.sin(phi), z: z + dz * Math.cos(phi) };
+}
+
+/**
  * Point du pouce (bande q < Q_POUCE). Le long : du talon (w = W_POUCE) au bout (BOUT_POUCE), le
  * côté collé à la paume suivant son bord, puis la palmure. En travers : la section d'un doigt,
  * tournée vers la paume, dont le point de contact (v = +1) est sur ce bord.
@@ -300,7 +345,7 @@ function dansPouce(q: number, w: number, e: number): Point3 {
   const y0 = yPaume(W_POUCE, DOIGTS[0].y);
   const long = BOUT_POUCE - y0;
   const lc = long - rayonBout(R_POUCE);
-  const finV = longueurBande(lc, v, lc, FIN_POUCE_INDEX - y0);
+  const finV = longueurBande(lc, v, lc, FIN_POUCE_INDEX - y0, 0.75, DEBUT_PALMURE);
   // Bord commun au même y que la paume et l'index : la ligne v = +1 suit `bordPouce`.
   const contact = bordPouce(w);
   const c = Math.cos(INCLINAISON_POUCE), s = Math.sin(INCLINAISON_POUCE);
@@ -312,14 +357,16 @@ function dansPouce(q: number, w: number, e: number): Point3 {
     return { x: base.x + (-dz * s + dx * c) * naissance, y: p.y, z: base.z + (dz * c + dx * s) * naissance };
   };
   // Tube du pouce dans son propre repère (axe y, centre en 0), puis tourné et posé contre le bord.
-  const brut = pointTube(0, long, R_POUCE, v, a, e, finV, -1, () => [0, 0]);
+  const brut = pointTube(0, long, R_POUCE, v, a, e, finV, -1, () => [0, 0], v > 0 ? DEBUT_PALMURE : 0.75);
   const r = R_POUCE * (1 - EFFILEMENT * borne(brut.y / long, 0, 1)) * naissance;
-  // Au-delà de la palmure, le pouce s'écarte de l'index.
-  const ecart = ECART_POUCE * Math.max(0, y0 + brut.y - FIN_POUCE_INDEX);
-  const centre = { x: contact.x + s * r, y: 0, z: contact.z - c * r - ecart };
+  const centre = { x: contact.x + s * r, y: 0, z: contact.z - c * r };
   const p0 = tourne({ x: centre.x + brut.x, y: 0, z: centre.z + brut.z }, centre);
   const yP = mix(y0 + brut.y, contact.y, lisse(0.35, 1, v) * (1 - lisse(0.8, 0.97, a) * (1 - lisse(0.7, 0.97, Math.abs(e)))));
-  const pouce = { x: p0.x, y: yP, z: p0.z };
+  // Au-delà de la palmure, le pouce s'écarte de l'index : son axe (z de l'axe droit, celui du
+  // talon) plie vers l'extérieur. Le bord commun avec l'index s'arrête à la palmure, il ne plie pas.
+  const axe = contact.z - c * R_POUCE;
+  const plie = plier(yP - FIN_POUCE_INDEX, p0.z - axe);
+  const pouce = { x: p0.x, y: FIN_POUCE_INDEX + plie.y, z: axe + plie.z };
   const p = paume(q, w, e, DOIGTS[0].y);
   const t = lisse(-0.15, 0.1, a);
   return { x: mix(p.x, pouce.x, t), y: mix(p.y, pouce.y, t), z: mix(p.z, pouce.z, t) };
@@ -367,6 +414,12 @@ export function versMain(c: CoordPatte): Point3 {
   return { x: p.x, y: p.y, z: p.z * SENS };
 }
 
+/** a du pouce (le long de sa bande, a = 0 au talon) à la palmure, sur sa ligne du milieu. */
+const A_PALMURE_POUCE = (() => {
+  const y0 = yPaume(W_POUCE, DOIGTS[0].y);
+  return (FIN_POUCE_INDEX - y0) / (BOUT_POUCE - y0 - rayonBout(R_POUCE));
+})();
+
 const glsl = (x: number) => (Number.isInteger(x) ? `${x}.0` : `${x}`);
 
 /**
@@ -377,7 +430,7 @@ const glsl = (x: number) => (Number.isInteger(x) ? `${x}.0` : `${x}`);
  * - sillons : une ligne sombre sur chaque bord commun de deux doigts (et du pouce), tracée au
  *   fragment près. Le matériau est sans éclairage et un sommet ombré ne donnerait qu'un dégradé
  *   large d'un triangle : la ligne se calcule ici sur q interpolé, aussi fine que voulu,
- * - plis de la paume et des phalanges, côté paume, plus légers.
+ * - pli de la paume, sur la peau, plus léger.
  */
 export function nuanceurMainHumaine(): string {
   const bornes = DOIGTS.slice(1).map((d) => d.q0);
@@ -392,11 +445,13 @@ export function nuanceurMainHumaine(): string {
     ...sillons,
     "mhL *= smoothstep( -0.25, 0.0, mhA );",
     `mhL = max( mhL, ( 1.0 - smoothstep( 0.0, ${glsl(LIGNE)}, abs( mhQ - ${glsl(Q_POUCE)} ) ) ) * smoothstep( 0.0, 0.25, mhAP ) );`,
-    "float mhP = smoothstep( 0.2, 0.6, mhE );",
+    // Peau : face de la paume (e > 0), jusqu'à la base des doigts et jusqu'à la palmure du pouce.
+    `float mhFin = mhQ > ${glsl(Q_POUCE)} ? 1.0 - smoothstep( ${glsl(FIN_PEAU - 0.08)}, ${glsl(FIN_PEAU + 0.04)}, mhA )`,
+    `  : 1.0 - smoothstep( ${glsl(A_PALMURE_POUCE - 0.08)}, ${glsl(A_PALMURE_POUCE + 0.04)}, mhAP );`,
+    "float mhP = smoothstep( 0.2, 0.6, mhE ) * mhFin;",
     "float mhPli = 0.0;",
     `if ( mhQ > ${glsl(Q_POUCE)} ) {`,
-    ...PLIS_PHALANGES.map((a) => `mhPli = max( mhPli, 1.0 - smoothstep( 0.0, 0.03, abs( mhA - ${glsl(a)} ) ) );`),
-    `mhPli = max( mhPli, ( 1.0 - smoothstep( 0.0, 0.035, abs( mhA + ${glsl(PLI_PAUME)} + 0.06 * mhQ ) ) ) * smoothstep( -0.6, -0.2, mhQ ) );`,
+    `mhPli = ( 1.0 - smoothstep( 0.0, 0.035, abs( mhA + ${glsl(PLI_PAUME)} + 0.06 * mhQ ) ) ) * smoothstep( -0.6, -0.2, mhQ );`,
     "}",
     "float mhClarte = dot( diffuseColor.rgb, vec3( 0.2126, 0.7152, 0.0722 ) );",
     "vec3 mhPeau = couleurPeau * ( 0.82 + 0.3 * clamp( mhClarte, 0.0, 1.0 ) );",
