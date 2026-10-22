@@ -503,6 +503,8 @@ export function nuanceurMainHumaine(): string {
     "}",
   ].join("\n"));
   return [
+    // Dérivée écran de w hors du test sur le poids : en GLSL, fwidth n'est défini qu'en flux uniforme.
+    "float mhF = max( fwidth( vMainHumaine.z ), 0.001 );",
     "if ( vMainHumaine.x > 0.001 ) {",
     "float mhK = clamp( vMainHumaine.x, 0.0, 1.0 );",
     "float mhQ = vMainHumaine.y, mhW = vMainHumaine.z, mhE = vMainHumaine.w;",
@@ -529,7 +531,6 @@ export function nuanceurMainHumaine(): string {
     `float mhD = ${glsl(DECALAGE_RAYURES_DOIGTS[0])};`,
     ...DOIGTS.slice(1).map((d, k) => `if ( mhQ > ${glsl(d.q0)} ) mhD = ${glsl(DECALAGE_RAYURES_DOIGTS[k + 1])};`),
     "mhD *= smoothstep( -0.05, 0.1, mhA );",
-    "float mhF = max( fwidth( mhW ), 0.001 );",
     ...rayures,
     `diffuseColor.rgb = mix( diffuseColor.rgb, vec3( ${COULEUR_RAYURE.map(glsl).join(", ")} ), mhK * mhR * ( 1.0 - smoothstep( -0.35, 0.05, mhE ) ) );`,
     "diffuseColor.rgb *= 1.0 - mhK * clamp( 0.72 * mhL + 0.24 * mhPli * mhP, 0.0, 0.8 );",

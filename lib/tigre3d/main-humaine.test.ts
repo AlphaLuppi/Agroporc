@@ -168,7 +168,9 @@ describe("main humaine : correspondance patte → main", () => {
     }
     const code = nuanceurMainHumaine();
     expect(code).toContain("mhR");
-    expect(code).toContain("fwidth( mhW )");
+    // Bord net calculé hors du test sur le poids (dérivée écran en flux uniforme).
+    expect(code.indexOf("fwidth( vMainHumaine.z )")).toBeGreaterThanOrEqual(0);
+    expect(code.indexOf("fwidth(")).toBeLessThan(code.indexOf("if ( vMainHumaine.x"));
     // Rayures limitées à la face du dos (e < 0) et au poids de la déformation.
     expect(code).toMatch(/mhK \* mhR \* \( 1\.0 - smoothstep\( -0\.35, 0\.05, mhE \) \)/);
   });
