@@ -1,0 +1,12 @@
+macron.glb — personnage 3D de l'easter egg « macron »
+
+« Emmanuel M. » par jamray747
+https://sketchfab.com/3d-models/emmanuel-m-0ede7d2d38454ad190f643315196ff26
+Auteur : https://sketchfab.com/jamray747
+Licence : Creative Commons Attribution 4.0 International (CC BY 4.0)
+https://creativecommons.org/licenses/by/4.0/
+
+Modifications (allégé et animé) : dents retirées, textures réduites (visage et costume 1024 px,
+mains 512 px, yeux 256 px, WebP), maillage simplifié (~38 000 triangles), géométrie compressée
+(meshopt) par scripts/macron/optimiser_glb.sh ; animations ajoutées par le code du site.
+Le crédit doit rester visible sur le site tant que le modèle est affiché.

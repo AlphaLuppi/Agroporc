@@ -1,0 +1,45 @@
+/* Easter egg « macron » : un conteneur collé en bas de l'écran, de la hauteur du canvas (posée en JS).
+   Le canvas WebGL (transparent) est translaté en JS d'un bord à l'autre ; rien ne capte le
+   pointeur sauf les liens du crédit. */
+.conteneur {
+  position: fixed; left: 0; right: 0; bottom: calc(0px + env(safe-area-inset-bottom, 0px)); z-index: 41;
+  height: 0; pointer-events: none; user-select: none; overflow: visible;
+}
+.canvas {
+  position: absolute; left: 0; top: 0; visibility: hidden; pointer-events: none;
+  will-change: transform; transform: translate3d(-100vw, 0, 0);
+}
+
+/* Thèmes sombres (normal, tigre) : halo discret autour de la silhouette, sinon le costume noir
+   se perd dans le fond. Le thème Terrasse (clair) n'en a pas besoin. */
+:global(html[data-theme="normal"]) .canvas,
+:global(html[data-theme="tigre"]) .canvas {
+  filter: drop-shadow(0 0 1px rgba(255, 255, 255, 0.55)) drop-shadow(0 0 6px rgba(255, 255, 255, 0.18));
+}
+
+/* Mobile : la barre jours + mode est collée en bas (≈ 80 px) ; le coureur passe au-dessus. */
+@media (max-width: 767px) {
+  .conteneur { bottom: calc(80px + env(safe-area-inset-bottom, 0px)); }
+}
+
+/* Bulle au-dessus de la tête, aux couleurs du thème (placée en JS : translate3d). Montée pendant
+   tout le passage, elle apparaît (pop) et disparaît (fondu) par la classe .bulleVue. Au-dessus du
+   crédit (z-index 4 > 3), fond opaque : si elles se croisent, le texte de la bulle reste lisible. */
+.bulle {
+  position: absolute; left: 0; top: 0; z-index: 4; margin-top: -6px;
+  padding: 5px 12px; border: 2px solid var(--border-accent); border-radius: var(--radius);
+  background: var(--surface-accent); color: var(--text); box-shadow: var(--shadow);
+  font-size: 0.95rem; font-weight: 700; line-height: 1.2; white-space: nowrap;
+  pointer-events: none; opacity: 0; scale: 0.6;
+  transition: opacity 180ms ease-in, scale 180ms ease-in, visibility 0s linear 180ms; visibility: hidden;
+}
+.bulleVue {
+  opacity: 1; scale: 1; visibility: visible;
+  transition: opacity 160ms ease-out, scale 220ms cubic-bezier(0.2, 1.4, 0.4, 1), visibility 0s;
+}
+.bulle::after {
+  content: ""; position: absolute; left: calc(50% + var(--queue, 0px)); bottom: -7px; width: 10px; height: 10px;
+  background: var(--surface-accent); border: solid var(--border-accent); border-width: 0 2px 2px 0;
+  transform: translateX(-50%) rotate(45deg);
+}
+
