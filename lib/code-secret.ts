@@ -1,7 +1,7 @@
 /**
  * Codes secrets tapés au clavier n'importe où sur le site (hors champ de saisie) : « myrtille »
  * (vue 3D d'Agroparc, lib/agroparc3d/myrtille.ts), « macron » (un coureur traverse l'écran,
- * lib/macron3d/). Chaque écouteur garde son propre tampon : deux codes ne se gênent pas.
+ * lib/macron3d/), « cat » (le gif du chat en fond, lib/fond-chat.ts). Chaque écouteur garde son propre tampon : deux codes ne se gênent pas.
  */
 
 /**
