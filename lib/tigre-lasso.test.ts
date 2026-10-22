@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
-  angleSuspendu, AU_SOL_S, balistique, boucleLancee, boucleSerree, creerCorde, distance, DUREE_LANCER_S, longueurRepos, majCorde,
+  angleSuspendu, AU_SOL_S, majBalancier, balistique, boucleLancee, boucleSerree, creerCorde, distance, DUREE_LANCER_S, longueurRepos, majCorde,
   majVol, noeud, normaliser, plafonner, pointsAnneau, tournoyer, tourner, touche, v3, vitesseBalistique, VITESSE_MAX,
   type Bornes, type Vol,
 } from "./tigre-lasso";
 import { creerAnimateur } from "./tigre3d/animateur";
+import { REPLIQUES_TIGRE } from "./repliques-lasso";
 
 const zone = { x: 100, y: 200, w: 80, h: 40 };
 
@@ -71,6 +72,28 @@ describe("corde", () => {
     expect(v.x).toBeGreaterThan(200);
   });
 
+  it("élastique : le poids tombe, s'étire au-delà de la longueur, rebondit plusieurs fois puis se pose", () => {
+    const main = v3(300, 100, 0);
+    const c = creerCorde(28, main, v3(300, 110, 0), 2);
+    const L = 240;
+    const d: number[] = [];
+    for (let i = 0; i < 60 * 6; i++) {
+      majCorde(c, 1 / 60, { epingles: [[0, main]], sol: 5000, freinFin: 0.45, elastique: { longueur: L, k: 40, amorti: 1 } });
+      d.push(distance(c.p[27], main));
+    }
+    // Il s'étire bien au-delà de la longueur de la corde (rebond), sans dépasser 1,8 fois.
+    const max = Math.max(...d);
+    expect(max).toBeGreaterThan(L * 1.4);
+    expect(max).toBeLessThanOrEqual(L * 1.8 + 1);
+    // Au moins 3 remontées (minima locaux) : ça rebondit.
+    let rebonds = 0;
+    for (let i = 1; i < d.length - 1; i++) if (d[i] < d[i - 1] && d[i] <= d[i + 1] && d[i] > L * 0.9) rebonds++;
+    expect(rebonds).toBeGreaterThanOrEqual(3);
+    // Au repos : étiré de pesanteur / raideur (≈ 65 px), immobile.
+    expect(d.at(-1)! - L).toBeGreaterThan(45);
+    expect(Math.abs(d.at(-1)! - d.at(-30)!)).toBeLessThan(6);
+  });
+
   it("posée au sol, elle n'y passe jamais dessous", () => {
     const c = creerCorde(12, v3(0, 0, 0), v3(100, 0, 0));
     for (let i = 0; i < 120; i++) majCorde(c, 1 / 60, { epingles: [], sol: 50 });
@@ -97,6 +120,40 @@ describe("angleSuspendu", () => {
   it("normalise dans ]-π, π]", () => {
     expect(normaliser(3 * Math.PI)).toBeCloseTo(Math.PI, 9);
     expect(normaliser(-3 * Math.PI / 2)).toBeCloseTo(Math.PI / 2, 9);
+  });
+});
+
+describe("majBalancier (pendule pesant)", () => {
+  it("lâché de travers, il finit centre de gravité sous l'attache", () => {
+    // Pendu par le poignet : le centre de gravité à 120 px sous l'attache, décalé de 30 px.
+    const d = { x: 30, y: 120 };
+    let b = { angle: 0.9, omega: 0 };
+    for (let i = 0; i < 60 * 12; i++) b = majBalancier(b, d, 50, { x: 0, y: 0 }, 1 / 60);
+    const r = tourner(d, b.angle);
+    expect(Math.abs(r.x)).toBeLessThan(3);
+    expect(r.y).toBeGreaterThan(0);
+  });
+
+  it("balance à la période d'un pendule pesant : 2π √((d² + k²) / (g·d))", () => {
+    const d = { x: 0, y: 120 }, k = 50;
+    let b = { angle: 0.15, omega: 0 }, t = 0, prec = b.angle;
+    const passages: number[] = [];
+    while (t < 4) {
+      b = majBalancier(b, d, k, { x: 0, y: 0 }, 1 / 240, 0);
+      t += 1 / 240;
+      if (prec > 0 && b.angle <= 0) passages.push(t);
+      prec = b.angle;
+    }
+    const periode = passages[1] - passages[0];
+    const attendue = 2 * Math.PI * Math.sqrt((120 * 120 + k * k) / (2600 * 120));
+    expect(periode).toBeCloseTo(attendue, 2);
+  });
+
+  it("une secousse de l'attache vers la droite le fait partir en arrière (inertie)", () => {
+    let b = { angle: 0, omega: 0 };
+    b = majBalancier(b, { x: 0, y: 120 }, 50, { x: 3000, y: 0 }, 0.05);
+    // Centre de gravité laissé derrière (à gauche) : rotation dans le sens horaire de l'écran.
+    expect(tourner({ x: 0, y: 120 }, b.angle).x).toBeLessThan(0);
   });
 });
 
@@ -137,10 +194,14 @@ describe("animateur au lasso", () => {
     a.attraper();
     expect(a.tenu).toBe(true);
     expect(a.reaction).toBeNull();
-    expect(evs).toContain("bulle:J'ai le seum !");
+    expect(evs.some((e) => REPLIQUES_TIGRE.pris.some((r) => e === `bulle:${r}`))).toBe(true);
     expect(a.clic()).toBe("ignorer");
-    for (let i = 0; i < 120; i++) a.maj(1 / 60);
+    for (let i = 0; i < 360; i++) a.maj(1 / 60);
     expect(Math.abs(a.corps.v)).toBeLessThan(0.05);
+    // Pendu 6 s, il a enchaîné plusieurs répliques, jamais la même deux fois de suite.
+    const bulles = evs.filter((e) => e.startsWith("bulle:"));
+    expect(bulles.length).toBeGreaterThanOrEqual(3);
+    for (let i = 1; i < bulles.length; i++) expect(bulles[i]).not.toBe(bulles[i - 1]);
     a.relacher();
     expect(a.tenu).toBe(false);
     expect(a.mode).toBe("eclair");

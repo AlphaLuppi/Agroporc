@@ -4,7 +4,8 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ecouterCode } from "@/lib/code-secret";
 import { webglDisponible } from "@/lib/tigre3d/webgl";
 import type { InfosImage, SceneMacron } from "@/lib/macron3d/scene";
-import { BULLE } from "@/lib/macron3d/passage";
+import { BULLE, hauteurCoureurPx } from "@/lib/macron3d/passage";
+import { enregistrerCible, type LienLasso } from "@/lib/lasso-cibles";
 import { creerDeclencheur, jouerPassage } from "@/lib/macron3d/declencheur";
 import { canalRencontre } from "@/lib/rencontre";
 import styles from "./MacronEasterEgg.module.css";
@@ -31,7 +32,8 @@ function passagePossible() {
 /**
  * Code secret « macron » : tapé n'importe où sur le site (hors champ de saisie, tous thèmes), un
  * personnage 3D traverse le bas de l'écran en courant, d'un bord à l'autre (sens au hasard),
- * puis disparaît. Retaper pendant le passage ne le relance pas. Rien avec
+ * puis disparaît. Dans le thème Tigre, le lasso peut l'attraper (lib/lasso-cibles.ts) : il pend au
+ * bout de la corde en courant dans le vide, puis repart. Retaper pendant le passage ne le relance pas. Rien avec
  * prefers-reduced-motion, rien (sans bruit) sans WebGL ou si le modèle ne se charge pas.
  * three.js et le GLB (≈ 0,7 Mo) ne sont téléchargés qu'au premier déclenchement.
  */
@@ -99,6 +101,9 @@ function Coureur({ id, options, sceneRef, fin }: {
   const [bulle, setBulle] = useState(false);
   const [texteBulle, setTexteBulle] = useState<string>(BULLE.texte);
   const [etoiles, setEtoiles] = useState(false);
+  /** Le lasso qui le tient (null : libre) ; il mène la scène à chaque image. */
+  const lienRef = useRef<LienLasso | null>(null);
+  const hautConteneur = () => conteneurRef.current?.getBoundingClientRect().top ?? 0;
   const [visible, setVisible] = useState(false);
   const lissage = useRef<{ y: number; t: number } | null>(null);
 
@@ -131,6 +136,7 @@ function Coureur({ id, options, sceneRef, fin }: {
     if (!canvas || !conteneur) return;
     let scene: SceneMacron | null = null;
     let minuteur = 0, termine = false;
+    let retirerCible = () => {};
     const redimensionner = () => {
       const t = scene?.redimensionner({ largeur: window.innerWidth, hauteur: window.innerHeight });
       if (t) conteneur.style.height = `${t.hauteur}px`;
@@ -165,6 +171,10 @@ function Coureur({ id, options, sceneRef, fin }: {
                 },
               });
             },
+            tenue: (dt) => {
+              const t = lienRef.current?.image(dt);
+              return t ? { ...t, y: t.y - hautConteneur() } : null;
+            },
             // Sorti de l'écran : démontage après un court délai.
             fin: () => {
               if (termine) return;
@@ -176,6 +186,26 @@ function Coureur({ id, options, sceneRef, fin }: {
         conteneur.style.height = `${taille.hauteur}px`;
         window.addEventListener("resize", redimensionner);
         setVisible(true);
+        // Cible du lasso (thème Tigre) tant qu'il court : repères du conteneur → px de la fenêtre.
+        retirerCible = enregistrerCible({
+          taille: () => hauteurCoureurPx({ largeur: window.innerWidth, hauteur: window.innerHeight }),
+          zone: () => {
+            const img = imageRef.current;
+            if (!img) return null;
+            return { x: img.gauche + img.boite.x, y: img.boite.y + hautConteneur(), w: img.boite.w, h: img.boite.h };
+          },
+          attraper: (lien) => {
+            const p = s.attraper();
+            if (!p) return null;
+            lienRef.current = lien;
+            const f = (q: { x: number; y: number }) => ({ x: q.x, y: q.y + hautConteneur() });
+            return { ...p, centre: f(p.centre), cou: f(p.cou), noeud: f(p.noeud) };
+          },
+          serrer: () => s.serrer(),
+          relacher: (x) => { lienRef.current = null; s.relacher(x); },
+          geler: (v) => s.geler(v),
+          avancer: (dt) => s.avancer(dt),
+        });
       },
       fin: () => finRef.current(),
     });
@@ -188,6 +218,11 @@ function Coureur({ id, options, sceneRef, fin }: {
     const cache = () => { if (document.hidden) scene?.annulerKO(); };
     document.addEventListener("visibilitychange", cache);
     return () => {
+      retirerCible();
+      // Démonté au bout de la corde : le lasso lâche tout.
+      const lien = lienRef.current;
+      lienRef.current = null;
+      lien?.perdu();
       window.clearTimeout(minuteur);
       window.removeEventListener("resize", redimensionner);
       document.removeEventListener("visibilitychange", cache);

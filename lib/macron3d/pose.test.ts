@@ -160,3 +160,26 @@ describe("pose du coureur (squelette du GLB)", () => {
     expect(saut.ch).toBeLessThan(0.1);
   });
 });
+
+describe("bras levé (pris au lasso par le poignet)", () => {
+  it("poignet au-dessus du sommet du crâne, coude tendu, l'autre bras court toujours", () => {
+    const P = creerPoseur(sq);
+    const course = creerCourse({ graine: 5 });
+    for (let k = 0; k < 60; k++) course.avancer(DT);
+    const it = course.etat();
+    P.poser(it, undefined, { cote: "D", poids: 1 });
+    const m = P.monde;
+    const sommet = m.p[sq.i.sommet];
+    const main = m.p[os("main", "D")].clone(), coude = m.p[os("avantBras", "D")].clone(), epaule = m.p[os("bras", "D")].clone();
+    expect(main.y).toBeGreaterThan(sommet.y + 0.1);
+    expect(angle(epaule, coude, main)).toBeLessThan(8);
+    // Le bras gauche n'est pas levé : sa main reste sous l'épaule.
+    expect(m.p[os("main", "G")].y).toBeLessThan(m.p[os("bras", "G")].y);
+    // À mi-geste, la main est entre les deux.
+    P.poser(it, undefined, { cote: "D", poids: 0.5 });
+    const mi = P.monde.p[os("main", "D")].y;
+    P.poser(it);
+    expect(mi).toBeGreaterThan(P.monde.p[os("main", "D")].y);
+    expect(mi).toBeLessThan(main.y);
+  });
+});

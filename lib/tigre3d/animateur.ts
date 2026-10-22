@@ -19,6 +19,7 @@ import { amortir, borne, ressort, type Ressort } from "./ressorts";
 import { clipNomme } from "./clips";
 import { GESTES } from "./gestes";
 import { seum } from "./gestes/seum";
+import { INTERVALLE_REPLIQUE_S, REPLIQUES_TIGRE, tirerReplique } from "../repliques-lasso";
 import type { ContexteGeste, Geste, PoseGeste } from "./gestes/types";
 import type { PoseTigre } from "./squelette";
 import {
@@ -185,6 +186,13 @@ export function creerAnimateur({
   const emettre = (e: EvenementTigre) => { for (const f of ecouteurs) f(e); };
   const corps = creerCorps({ cap: sens * Math.PI / 2, graine: graine ?? Math.floor(alea() * 1000) });
   let couches: CoucheActive[] = [];
+  /** Pris au lasso : dernière réplique dite et quand (il en enchaîne une nouvelle régulièrement). */
+  let replique: string | null = null, tReplique = 0;
+  const dire = (liste: readonly string[], duree: number) => {
+    replique = tirerReplique(liste, alea(), replique);
+    tReplique = A.t;
+    emettre({ type: "bulle", texte: replique, duree });
+  };
 
   /** Vitesse de croisière en m/s du modèle (unités propres : un petit court plus vite dans les siennes). */
   const croisiere = () => (A.vitesse * LONGUEUR_MODELE_M) / A.echelle;
@@ -366,8 +374,12 @@ export function creerAnimateur({
         }
       }
       if (A.figee && !r) { vit = 0; cap = A.sens * 0.35; regard = 1; }
-      // Pendu au lasso : de profil (le canvas est tourné à l'écran), il nous fusille du regard.
-      if (A.tenu) { vit = 0; cap = A.sens * Math.PI / 2; regard = 0.8; }
+      // Pendu au lasso : de profil (le canvas est tourné à l'écran), il nous fusille du regard et
+      // enchaîne les répliques.
+      if (A.tenu) {
+        vit = 0; cap = A.sens * Math.PI / 2; regard = 0.8;
+        if (A.t - tReplique >= INTERVALLE_REPLIQUE_S) dire(REPLIQUES_TIGRE.pris, INTERVALLE_REPLIQUE_S);
+      }
 
       // Couches de geste : échantillonnage, poids lissés par groupe.
       const actives: Couche[] = [];
@@ -462,14 +474,14 @@ export function creerAnimateur({
         geste: seum, t0: A.t, fin: Infinity, actif: true, poids: poidsVides(), derniere: {}, avance: 0,
         ctx: { sens: A.sens, tClap: null, tVexe: null, humeur: "grognon", clip: clipNomme, temps: A.t },
       });
-      emettre({ type: "bulle", texte: texteBulle("seum", alea()), duree: 2.6 });
+      dire(REPLIQUES_TIGRE.pris, INTERVALLE_REPLIQUE_S);
     },
     relacher() {
       if (!A.tenu) return;
       A.tenu = false;
       for (const c of couches) c.actif = false;
       A.mode = "eclair";
-      emettre({ type: "bulle", texte: texteBulle("libre", alea()), duree: 1.2 });
+      dire(REPLIQUES_TIGRE.libre, 1.6);
       emettre({ type: "fuite", sens: A.sens });
     },
   };

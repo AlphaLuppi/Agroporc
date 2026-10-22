@@ -9,6 +9,7 @@ import type { Embuscade } from "@/lib/tigre3d/embuscade";
 import { canalRencontre } from "@/lib/rencontre";
 import { useCalendrierTigre } from "./useCalendrierTigre";
 import { useLassoTigre } from "./LassoTigre";
+import { enregistrerCible, type LienLasso } from "@/lib/lasso-cibles";
 import styles from "./Tigre3D.module.css";
 
 interface Bulle { id: number; texte: string }
@@ -56,9 +57,35 @@ export function Tigre3D({ surEchec }: { surEchec: () => void }) {
   const [nZones, setNZones] = useState(0);
   const [bulle, setBulle] = useState<Bulle | null>(null);
   const [particules, setParticules] = useState<ParticulePosee[]>([]);
-  const lasso = useLassoTigre({
-    sceneRef, conteneurRef, zoneMere: () => zonesRef.current[0] ?? null, largeurTigre: largeurTigrePx,
-  });
+  const lasso = useLassoTigre();
+  /** Le lasso qui tient le tigre (null : libre) ; il mène la scène à chaque image. */
+  const lienRef = useRef<LienLasso | null>(null);
+  /** Le tigre est au lasso : passage coupé = le lasso lâche tout. */
+  const lacherLasso = () => { const l = lienRef.current; lienRef.current = null; l?.perdu(); };
+
+  // Le tigre est une cible du lasso (lib/lasso-cibles.ts) : repères de la scène (px du conteneur)
+  // ramenés en px de la fenêtre.
+  useEffect(() => enregistrerCible({
+    taille: largeurTigrePx,
+    zone: () => {
+      const el = zonesRef.current[0];
+      if (!passageEnCoursRef.current || !el) return null;
+      const r = el.getBoundingClientRect();
+      return { x: r.left, y: r.top, w: r.width, h: r.height };
+    },
+    attraper: (lien) => {
+      const p = sceneRef.current?.attraper();
+      if (!p) return null;
+      lienRef.current = lien;
+      const haut = conteneurRef.current?.getBoundingClientRect().top ?? 0;
+      const f = (q: { x: number; y: number }) => ({ x: q.x, y: q.y + haut });
+      return { ...p, centre: f(p.centre), cou: f(p.cou), noeud: f(p.noeud) };
+    },
+    serrer: () => sceneRef.current?.serrer(true),
+    relacher: (x) => { lienRef.current = null; sceneRef.current?.relacher(x); },
+    geler: (v) => sceneRef.current?.geler(v),
+    avancer: (dt) => sceneRef.current?.avancer(dt),
+  }), []);
 
   const apres = (ms: number, fn: () => void) => {
     const t = setTimeout(() => { minuteursRef.current.delete(t); fn(); }, ms);
@@ -212,7 +239,12 @@ export function Tigre3D({ surEchec }: { surEchec: () => void }) {
       evenement: surEvenement,
       image: surImage,
       fin: toutNettoyer,
-      tenue: (dt) => lasso.tenue(dt),
+      tenue: (dt) => {
+        const t = lienRef.current?.image(dt);
+        if (!t) return null;
+        const haut = conteneurRef.current?.getBoundingClientRect().top ?? 0;
+        return { ...t, y: t.y - haut };
+      },
     });
     conteneur.style.height = `${taille.hauteur}px`;
     setNZones(1 + petits);
@@ -246,7 +278,7 @@ export function Tigre3D({ surEchec }: { surEchec: () => void }) {
     libre: () => !passageEnCoursRef.current && modelePret()
       && !(process.env.NODE_ENV !== "production" && window.__tigreAuto === false),
     partir: (evenement, petits) => partirRef.current(evenement, petits),
-    arret: () => { sceneRef.current?.arreter(); toutNettoyer(); lasso.oublier(); },
+    arret: () => { sceneRef.current?.arreter(); toutNettoyer(); lacherLasso(); },
   });
 
   // Rencontre annulée sans erreur : onglet caché, ou démontage (changement de thème, WebGL perdu).
@@ -274,7 +306,7 @@ export function Tigre3D({ surEchec }: { surEchec: () => void }) {
       passage: (evenement = "normal", opts = {}) => {
         sceneRef.current?.arreter();
         toutNettoyer();
-        lasso.oublier();
+        lacherLasso();
         if (!modelePret()) {
           // Premier passage : le modèle se charge, on relance une fois prêt.
           void sceneRef.current?.precharger().then(() => window.__tigre?.passage(evenement, opts));
@@ -318,7 +350,7 @@ export function Tigre3D({ surEchec }: { surEchec: () => void }) {
   // pointerdown et non click : le tigre bouge, un click (mousedown + mouseup sur le même
   // élément) est perdu dès que la cible a filé entre les deux, surtout en éclair.
   const toucher = (e: PointerEvent) => {
-    if (e.button !== 0 || lasso.occupe()) return;
+    if (e.button !== 0 || lienRef.current) return;
     sceneRef.current?.clic();
   };
 

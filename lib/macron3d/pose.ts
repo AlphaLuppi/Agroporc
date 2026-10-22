@@ -65,13 +65,20 @@ export interface Poseur {
   /**
    * Applique des intentions : remplit `pose` (locales) et `monde` (cinématique directe).
    * `yeux` : regard relatif à la tête (rad ; lacet + = vers sa gauche, tangage + = vers le bas).
+   * `leve` : un bras levé tendu au-dessus de la tête (pris au lasso par le poignet), mélangé à la
+   * course de `poids` ∈ [0, 1].
    */
-  poser(it: IntentionsCourse, yeux?: { lacet: number; tangage: number }): void;
+  poser(it: IntentionsCourse, yeux?: { lacet: number; tangage: number }, leve?: BrasLeve): void;
   /** IK : distance hanche → cheville demandée et atteinte à la dernière pose, par côté. */
   portee: Record<Cote, { demande: number; atteinte: number }>;
 }
 
 const versV = (p: Vec, out: Vector3) => out.set(p.x, p.y, p.z);
+
+/** Bras levé tendu (lasso au poignet) : côté, et part du geste (0 = bras de course, 1 = levé). */
+export interface BrasLeve { cote: Cote; poids: number }
+/** Bras levé : un peu écarté du corps et vers l'avant, dans le repère du thorax. */
+const DIRECTION_LEVE = new Vector3(0.22, 1, 0.12).normalize();
 
 export function creerPoseur(sq: Squelette): Poseur {
   const i = sq.i;
@@ -198,7 +205,7 @@ export function creerPoseur(sq: Squelette): Poseur {
     }
   }
 
-  function bras(it: IntentionsCourse, c: Cote) {
+  function bras(it: IntentionsCourse, c: Cote, leve?: BrasLeve) {
     const b = it.bras[c], s = SIGNE[c], rp = repos[c];
     const kc = i[deCote("clavicule", c)], kb = i[deCote("bras", c)], ka = i[deCote("avantBras", c)];
     pose.q[kc].copy(sq.q[kc]).multiply(rot(AXES_LOCAUX[c].clavicule, b.clavicule, qa));
@@ -215,6 +222,15 @@ export function creerPoseur(sq: Squelette): Poseur {
     va.applyQuaternion(balance).applyQuaternion(qc);
     vb.applyQuaternion(balance).applyQuaternion(qc);
     vc.copy(va).applyQuaternion(rot(vb, b.coude, qd));                 // direction de l'avant-bras
+    // Levé (lasso au poignet) : bras et avant-bras alignés vers le haut, coude tendu.
+    const w = leve && leve.cote === c ? Math.min(1, Math.max(0, leve.poids)) : 0;
+    if (w > 0) {
+      vd.set(s * DIRECTION_LEVE.x, DIRECTION_LEVE.y, DIRECTION_LEVE.z).applyQuaternion(qc);
+      va.lerp(vd, w).normalize();
+      vc.lerp(vd, w).normalize();
+      // L'axe du coude reste perpendiculaire au bras (sinon la visée tord l'os).
+      vb.addScaledVector(va, -vb.dot(va)).normalize();
+    }
     viser(kb, rp.dirBras, rp.axeCoude, va, vb);
     viser(ka, rp.dirAvantBras, rp.axeCoude, vc, vb);
     for (const role of ["torsion1", "torsion2", "main"] as const) fkOs(sq, pose, monde, i[deCote(role, c)]);
@@ -271,11 +287,11 @@ export function creerPoseur(sq: Squelette): Poseur {
 
   return {
     sq, pose, monde, portee,
-    poser(it, yeux) {
+    poser(it, yeux, leve) {
       for (let k = 0; k < sq.q.length; k++) { pose.q[k].copy(sq.q[k]); pose.t[k].copy(sq.t[k]); }
       colonne(it);
       tete(it, yeux);
-      for (const c of COTES) bras(it, c);
+      for (const c of COTES) bras(it, c, leve);
       for (const c of COTES) jambe(it, c);
       mains(it);
       fk(sq, pose, monde);

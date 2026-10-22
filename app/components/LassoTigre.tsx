@@ -1,14 +1,14 @@
 "use client";
 
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from "react";
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
-  angleSuspendu, boucleLancee, boucleSerree, balistique, creerCorde, distance, DUREE_LANCER_S, DUREE_SERRE_S, majCorde,
-  majVol, melange, noeud, plafonner, pointsAnneau, RAYON_ARRIVEE, tangenteNoeud, tournoyer, tourner, touche, v3, vitesseBalistique,
+  boucleLancee, boucleSerree, balistique, creerCorde, distance, DUREE_LANCER_S, DUREE_SERRE_S, majCorde,
+  majBalancier, majVol, melange, noeud, plafonner, pointsAnneau, RAYON_ARRIVEE, tangenteNoeud, tournoyer, tourner, touche, v3, vitesseBalistique,
   VITESSE_MAX, type Anneau, type Corde, type V3, type Vec, type Vol,
 } from "@/lib/tigre-lasso";
 import type { RenduLasso } from "@/lib/tigre-lasso-rendu";
-import type { Scene3D, Tenue } from "@/lib/tigre3d/scene";
+import { cibleSous, type CibleLasso, type TenueLasso as Tenue } from "@/lib/lasso-cibles";
 import styles from "./LassoTigre.module.css";
 
 /**
@@ -16,7 +16,7 @@ import styles from "./LassoTigre.module.css";
  * - main : la boucle tournoie au-dessus de la main du cowboy (sous le bas de l'écran) ;
  * - lance : la boucle vole vers le point visé, la corde se déroule derrière elle ;
  * - serre : la boucle tombe autour du cou et se ferme (le cowboy reprend le mou d'un coup sec) ;
- * - tenu : le tigre est hissé et pend par la nuque au bout de la corde, sous le pointeur ;
+ * - tenu : la cible (le tigre, le coureur « macron ») est hissée et pend au bout de la corde, sous le pointeur ;
  * - vol : lâché, il vole et rebondit, la corde traîne derrière lui (on peut le rattraper au vol) ;
  * - ramene : boucle ratée (elle retombe) ou tigre dégagé : le cowboy ramène la corde.
  */
@@ -24,32 +24,21 @@ type Etat = "pose" | "main" | "lance" | "serre" | "tenu" | "vol" | "ramene";
 
 /** Particules de la corde. */
 const N = 28;
-/** Corde du tigre pendu (en largeurs de tigre) et durée de la hisse (s). */
-const CORDE_TENU = 0.5;
+/** Corde de la cible pendue (en tailles de cible) et durée de la hisse (s). */
+const CORDE_TENU = 1.1;
 const HISSE_S = 0.55;
 /** Ramener la corde (s). */
 const RAMENE_S = 0.6;
-/** Raideur et amortissement de l'angle du tigre pendu : il suit la corde avec de l'inertie. */
-const RAIDEUR_ANGLE = 70, AMORTI_ANGLE = 7;
-
-interface Options {
-  sceneRef: RefObject<Scene3D | null>;
-  conteneurRef: RefObject<HTMLDivElement | null>;
-  /** Zone de clic de la mère (la première) : la cible du lasso. */
-  zoneMere: () => HTMLDivElement | null;
-  /** Largeur d'un tigre à l'écran (px) : longueur de corde, rayon de rebond. */
-  largeurTigre: () => number;
-}
-
-export interface Lasso {
-  /** À passer à la scène (`RappelsScene.tenue`) : position du tigre attrapé à chaque image. */
-  tenue(dt: number): Tenue | null;
-  /** Le tigre est au lasso (tenu ou en vol) : ses zones ne déclenchent pas de réaction. */
-  occupe(): boolean;
-  /** Le passage est coupé : on lâche tout (le lasso reste en main). */
-  oublier(): void;
-  rendu: ReactNode;
-}
+/**
+ * Cible pendue = pendule pesant (lib/tigre-lasso.ts, majBalancier) : rayon de giration (en tailles
+ * de cible) et lissage (1/s) de l'accélération de l'attache, mesurée sur le bout de la corde.
+ */
+const GIRATION = 0.3, LISSAGE_ACC = 18;
+/**
+ * Corde élastique quand elle porte la cible : ressort (1/s²) et amortissement (1/s) du rebond au bout
+ * de la corde (≈ 4 rebonds visibles, ≈ 65 px d'étirement au repos), freinage de l'air (1/s).
+ */
+const ELASTIQUE_K = 40, ELASTIQUE_AMORTI = 1.0, FREIN_AIR = 0.45;
 
 interface Prise {
   /** Nœud (nuque) → centre du corps (px) : le corps pend dans le prolongement de la corde. */
@@ -63,6 +52,10 @@ interface Prise {
   mainDe: V3;
   /** Longueur de corde au début de la hisse. */
   reposDe: number;
+  /** Attache (bout de la corde) à l'image précédente, sa vitesse et son accélération lissée (px, /s, /s²). */
+  attache: V3 | null;
+  vAttache: Vec;
+  aAttache: Vec;
 }
 
 /** Serrage : la boucle arrivée, le collier visé (fenêtre), et de quoi suspendre le tigre ensuite. */
@@ -83,7 +76,7 @@ interface Serrage {
  * capture, la simulation tourne dans la boucle de dessin de la scène du tigre (`tenue`) : corde et
  * tigre bougent à la même image.
  */
-export function useLassoTigre({ sceneRef, conteneurRef, zoneMere, largeurTigre }: Options): Lasso {
+export function useLassoTigre(): { rendu: ReactNode } {
   const [etat, setEtat] = useState<Etat>("pose");
   const etatRef = useRef<Etat>("pose");
   /** Tests en développement : la boucle d'images est gelée, on avance à la main. */
@@ -103,18 +96,20 @@ export function useLassoTigre({ sceneRef, conteneurRef, zoneMere, largeurTigre }
   const prise = useRef<Prise | null>(null);
   const serrage = useRef<Serrage | null>(null);
   const vol = useRef<Vol | null>(null);
+  /** La cible attrapée (de la boucle qui se serre jusqu'au dégagement). */
+  const cible = useRef<CibleLasso | null>(null);
+  const taille = () => cible.current?.taille() ?? 200;
   /** Ramener : la main part d'ici ; la boucle d'abord retombe (raté) avec cette vitesse. */
   const ramene = useRef<{ mainDe: V3; reposDe: number; chute: { a: Anneau; v: V3 } | null } | null>(null);
   /** Entrée dans le tournoiement : le nœud part d'ici et rejoint la boucle. */
   const entree = useRef<{ noeud: V3; anneau: Anneau | null } | null>(null);
 
-  /** Tigre attrapé : c'est la boucle de dessin de la scène du tigre qui mène la simulation. */
+  /** Cible attrapée : c'est la boucle de dessin de sa scène qui mène la simulation. */
   const pilotee = (e: Etat) => e === "serre" || e === "tenu" || e === "vol";
   const changer = (e: Etat) => { etatRef.current = e; t0.current = horloge.current; setEtat(e); };
   /** Main du cowboy, juste sous le bas de l'écran. */
   const mainBas = (): V3 => v3(window.innerWidth / 2, window.innerHeight + 30, 0);
   const sol = () => window.innerHeight - 3;
-  const hautConteneur = () => conteneurRef.current?.getBoundingClientRect().top ?? 0;
   const lisse = (u: number) => { const k = Math.min(1, Math.max(0, u)); return k * k * (3 - 2 * k); };
 
   // Le lasso est posé dans le pied de page ; Next peut remplacer ce pied (hydratation, page
@@ -172,12 +167,10 @@ export function useLassoTigre({ sceneRef, conteneurRef, zoneMere, largeurTigre }
     if (t >= DUREE_LANCER_S) arrivee(a, l);
   };
 
-  /** La boucle se pose sur la cible : tigre dessous → nœud serré au cou, sinon elle retombe. */
+  /** La boucle se pose : une cible dessous → nœud serré au cou, sinon elle retombe. */
   const arrivee = (a: Anneau, l: NonNullable<typeof lancer.current>) => {
-    const zone = zoneMere()?.getBoundingClientRect();
-    const p = sceneRef.current && zone && zone.width > 0
-      && touche(a.c, { x: zone.left, y: zone.top, w: zone.width, h: zone.height })
-      ? sceneRef.current.attraper() : null;
+    const c = cibleSous(a.c, (p, z) => touche(p, z));
+    const p = c?.attraper({ image: (dt) => tenue(dt), perdu: () => { if (cible.current === c) oublier(); } }) ?? null;
     lancer.current = null;
     if (!p) {
       setRate({ id: Date.now(), x: a.c.x, y: a.c.y });
@@ -187,14 +180,14 @@ export function useLassoTigre({ sceneRef, conteneurRef, zoneMere, largeurTigre }
       changer("ramene");
       return;
     }
-    const haut = hautConteneur();
+    cible.current = c;
     serrage.current = {
       arrivee: a,
-      cou: v3(p.cou.x, p.cou.y + haut, 0),
+      cou: v3(p.cou.x, p.cou.y, 0),
       axe: v3(p.axe.x, p.axe.y, 0.35),
       rayon: p.rayon,
-      noeud: v3(p.noeud.x, p.noeud.y + haut, 0),
-      centre: v3(p.centre.x, p.centre.y + haut, 0),
+      noeud: v3(p.noeud.x, p.noeud.y, 0),
+      centre: v3(p.centre.x, p.centre.y, 0),
     };
     pointeur.current ??= { x: a.c.x, y: a.c.y };
     changer("serre");
@@ -202,8 +195,8 @@ export function useLassoTigre({ sceneRef, conteneurRef, zoneMere, largeurTigre }
 
   /**
    * Serrage : la boucle tombe autour du cou et se ferme, la main reprend le mou (elle recule d'un
-   * coup sec) ; le tigre ne bouge pas encore. Fermée, la boucle devient le collier de la scène du
-   * tigre (dans son relief : elle passe derrière le cou) et le tigre pend à la corde.
+   * coup sec) ; la cible ne bouge pas encore. Fermée, la boucle devient le collier de sa scène
+   * (dans son relief : elle passe derrière le cou) et la cible pend à la corde.
    */
   const simulerSerre = (c: Corde, dt: number): Tenue | null => {
     const s = serrage.current;
@@ -215,9 +208,8 @@ export function useLassoTigre({ sceneRef, conteneurRef, zoneMere, largeurTigre }
     const main = v3(mainBas().x, mainBas().y + 60 * Math.min(1, coup), 0);
     c.repos = Math.max(distance(main, noeud(a)) * 1.02 / (N - 1), c.repos * (1 - 1.5 * dt));
     majCorde(c, dt, { epingles: [[0, main], [N - 1, noeud(a)]], sol: sol() });
-    const haut = hautConteneur();
     if (u >= 1) {
-      sceneRef.current?.serrer(true);
+      cible.current?.serrer();
       c.p[N - 1] = { ...s.noeud };
       c.prec[N - 1] = { ...s.noeud };
       c.inv[N - 1] = 0.03;
@@ -225,48 +217,64 @@ export function useLassoTigre({ sceneRef, conteneurRef, zoneMere, largeurTigre }
       prise.current = {
         d: { x: s.centre.x - s.noeud.x, y: s.centre.y - s.noeud.y },
         centreY: s.centre.y, angle: 0, omega: 0, t0: horloge.current, mainDe: main, reposDe: c.repos,
+        attache: null, vAttache: { x: 0, y: 0 }, aAttache: { x: 0, y: 0 },
       };
       serrage.current = null;
       changer("tenu");
     }
-    return { x: s.centre.x, y: s.centre.y - haut, angle: 0 };
+    return { x: s.centre.x, y: s.centre.y, angle: 0 };
   };
 
-  /** Le tigre pendu : la main rejoint le pointeur, la corde se raccourcit et le hisse par la nuque. */
+  /** La cible pendue : la main rejoint le pointeur, la corde se raccourcit et la hisse par le cou. */
   const simulerTenu = (c: Corde, dt: number): Tenue | null => {
     const p = prise.current;
     if (!p) return null;
     const k = lisse((horloge.current - p.t0) / HISSE_S);
     const cible = pointeur.current ?? { x: c.p[N - 1].x, y: c.p[N - 1].y };
     const main = melange(p.mainDe, v3(cible.x, cible.y, 0), k);
-    const repos = (CORDE_TENU * largeurTigre()) / (N - 1);
-    c.repos = p.reposDe + (repos - p.reposDe) * k;
-    majCorde(c, dt, { epingles: [[0, main]], sol: sol(), tendue: k >= 1 ? c.repos * (N - 1) : undefined, freinFin: 1.6 });
-    // Le corps pend dans l'axe de la traction (main → nuque), pas dans celui des derniers brins.
+    // La corde porte la cible comme un élastique : rembobinée pendant la hisse, elle s'étire sous
+    // le poids et la fait rebondir au bout.
+    const longueur = p.reposDe * (N - 1) + (CORDE_TENU * taille() - p.reposDe * (N - 1)) * k;
+    majCorde(c, dt, {
+      epingles: [[0, main]], sol: sol(), freinFin: FREIN_AIR,
+      elastique: { longueur, k: ELASTIQUE_K, amorti: ELASTIQUE_AMORTI },
+    });
+    // Pendule pesant : la pesanteur et les secousses de l'attache (le bout de la corde) font
+    // tourner le corps autour d'elle ; rien ne l'oriente « le long de la corde ».
     const nuque = c.p[N - 1];
-    let ecart = angleSuspendu(main, nuque, p.d) - p.angle;
-    ecart = Math.atan2(Math.sin(ecart), Math.cos(ecart));
-    p.omega += (RAIDEUR_ANGLE * ecart - AMORTI_ANGLE * p.omega) * dt;
-    p.angle += p.omega * dt;
+    if (dt > 0) {
+      if (p.attache) {
+        const v = { x: (nuque.x - p.attache.x) / dt, y: (nuque.y - p.attache.y) / dt };
+        const k = 1 - Math.exp(-LISSAGE_ACC * dt);
+        p.aAttache = plafonner({
+          x: p.aAttache.x + ((v.x - p.vAttache.x) / dt - p.aAttache.x) * k,
+          y: p.aAttache.y + ((v.y - p.vAttache.y) / dt - p.aAttache.y) * k,
+        }, 30000);
+        p.vAttache = v;
+      }
+      p.attache = { ...nuque };
+    }
+    ({ angle: p.angle, omega: p.omega } = majBalancier(p, p.d, GIRATION * taille(), p.aAttache, dt));
     return transformation(nuque, p.angle, p.d);
   };
 
   const transformation = (cou: Vec, angle: number, d: Vec): Tenue => {
     const o = tourner(d, angle);
-    return { x: cou.x + o.x, y: cou.y + o.y - hautConteneur(), angle };
+    return { x: cou.x + o.x, y: cou.y + o.y, angle };
   };
 
   /** Lâché : il vole et rebondit, la corde (tenue à son cou) traîne derrière lui. */
   const simulerVol = (c: Corde, dt: number): Tenue | null => {
     const p = prise.current, v = vol.current;
     if (!p || !v) return null;
-    const { vol: suite, pose } = majVol(v, { gauche: 0, droite: window.innerWidth, haut: 0, sol: p.centreY }, 0.28 * largeurTigre(), dt);
+    const { vol: suite, pose } = majVol(v, { gauche: 0, droite: window.innerWidth, haut: 0, sol: p.centreY }, 0.28 * taille(), dt);
     vol.current = suite;
     const o = tourner(p.d, suite.angle);
     majCorde(c, dt, { epingles: [[N - 1, v3(suite.c.x - o.x, suite.c.y - o.y, 0)]], sol: sol() });
     if (pose) {
       // Retombé à l'endroit : il se dégage du nœud, se relève et file ; on ramène la corde.
-      sceneRef.current?.relacher(suite.c.x);
+      cible.current?.relacher(suite.c.x);
+      cible.current = null;
       c.inv[N - 1] = 1;
       prise.current = null;
       vol.current = null;
@@ -274,7 +282,7 @@ export function useLassoTigre({ sceneRef, conteneurRef, zoneMere, largeurTigre }
       changer("ramene");
       return null;
     }
-    return { x: suite.c.x, y: suite.c.y - hautConteneur(), angle: suite.angle };
+    return { x: suite.c.x, y: suite.c.y, angle: suite.angle };
   };
 
   /** Ramener la corde : (boucle ratée qui retombe d'abord) la main rejoint le bas de l'écran en tirant. */
@@ -322,7 +330,7 @@ export function useLassoTigre({ sceneRef, conteneurRef, zoneMere, largeurTigre }
       default: return null;
     }
     const a = anneau.current;
-    // L'œillet : sur la boucle, ou au cou du tigre (le collier est dessiné dans sa scène).
+    // L'œillet : sur la boucle, ou au cou de la cible (le collier est dessiné dans sa scène).
     const bout = c.p[N - 1], amont = c.p[N - 2];
     const oeillet = a
       ? { p: noeud(a), dir: tangenteNoeud(a) }
@@ -333,7 +341,7 @@ export function useLassoTigre({ sceneRef, conteneurRef, zoneMere, largeurTigre }
     return tenue;
   };
 
-  // Hors capture, la simulation a sa propre boucle d'images ; tigre attrapé, c'est la scène qui la mène.
+  // Hors capture, la simulation a sa propre boucle d'images ; cible attrapée, c'est sa scène qui la mène.
   useEffect(() => {
     if (etat === "pose" || pilotee(etat)) return;
     let raf = 0, avant = performance.now();
@@ -379,6 +387,7 @@ export function useLassoTigre({ sceneRef, conteneurRef, zoneMere, largeurTigre }
     p.t0 = horloge.current;
     p.mainDe = { ...c.p[0] };
     p.reposDe = c.repos;
+    p.attache = null;
     p.angle = v.angle;
     p.omega = v.omega;
     vol.current = null;
@@ -387,6 +396,7 @@ export function useLassoTigre({ sceneRef, conteneurRef, zoneMere, largeurTigre }
   };
 
   const oublier = () => {
+    cible.current = null;
     prise.current = null;
     serrage.current = null;
     vol.current = null;
@@ -407,7 +417,7 @@ export function useLassoTigre({ sceneRef, conteneurRef, zoneMere, largeurTigre }
     changer("pose");
   };
 
-  // Échap range le lasso (sauf tigre au bout de la corde).
+  // Échap range le lasso (sauf cible au bout de la corde).
   useEffect(() => {
     if (etat === "pose") return;
     const clavier = (e: KeyboardEvent) => {
@@ -423,9 +433,9 @@ export function useLassoTigre({ sceneRef, conteneurRef, zoneMere, largeurTigre }
     if (process.env.NODE_ENV === "production") return;
     window.__lasso = {
       etat: () => etatRef.current,
-      geler: (v) => { gele.current = v; sceneRef.current?.geler(v); },
-      // Une image à la main : la scène du tigre si elle mène (tigre attrapé), sinon le lasso seul.
-      avancer: (dt) => { if (pilotee(etatRef.current)) sceneRef.current?.avancer(dt); else simulerRef.current(dt); },
+      geler: (v) => { gele.current = v; cible.current?.geler?.(v); },
+      // Une image à la main : la scène de la cible si elle mène (cible attrapée), sinon le lasso seul.
+      avancer: (dt) => { if (pilotee(etatRef.current)) cible.current?.avancer?.(dt); else simulerRef.current(dt); },
     };
     return () => { delete window.__lasso; };
   }, []);
@@ -443,8 +453,8 @@ export function useLassoTigre({ sceneRef, conteneurRef, zoneMere, largeurTigre }
       lancer.current = { depart: anneau.current, cible, v: vitesseBalistique(anneau.current.c, cible, DUREE_LANCER_S) };
       changer("lance");
     } else if (etatRef.current === "vol") {
-      const zone = zoneMere()?.getBoundingClientRect();
-      if (zone && touche(p, { x: zone.left, y: zone.top, w: zone.width, h: zone.height }, 12)) rattraper(p);
+      const zone = cible.current?.zone();
+      if (zone && touche(p, zone, 12)) rattraper(p);
     }
   };
   const surDeplacement = (e: ReactPointerEvent) => { pointeur.current = position(e); };
@@ -496,7 +506,7 @@ export function useLassoTigre({ sceneRef, conteneurRef, zoneMere, largeurTigre }
           )}
           {(etat === "main" || etat === "lance" || etat === "ramene") && (
             <div className={styles.main} onPointerDown={(e) => e.stopPropagation()}>
-              <span className={styles.aide}>Vise le tigre et clique pour lancer</span>
+              <span className={styles.aide}>Vise et clique pour lancer</span>
               <button type="button" className={styles.ranger} onClick={ranger}>Ranger le lasso</button>
             </div>
           )}
@@ -505,7 +515,7 @@ export function useLassoTigre({ sceneRef, conteneurRef, zoneMere, largeurTigre }
     </>
   );
 
-  return { tenue, occupe: () => pilotee(etatRef.current), oublier, rendu };
+  return { rendu };
 }
 
 declare global {
