@@ -21,7 +21,9 @@ const MESSAGES_PAR_SECONDE_MAX = 90;
 const PING_MS = 5_000;
 /** Un client qui n'absorbe plus ce qu'on lui envoie est coupé (connexion saturée). */
 const TAMPON_MAX_OCTETS = 512 * 1024;
-const ORIGINES = (process.env.ORIGINES ?? "").split(",").map((o) => o.trim()).filter(Boolean);
+/** Origines autorisées (`ORIGINES`, séparées par des virgules ; `*` = n'importe quelle suite de caractères hors « / », pour les previews Vercel). */
+const ORIGINES = (process.env.ORIGINES ?? "").split(",").map((o) => o.trim()).filter(Boolean)
+  .map((o) => new RegExp(`^${o.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[^/]*")}$`));
 
 function cheminScene(): string {
   const candidats = [
@@ -112,7 +114,7 @@ const http = createServer((req, res) => {
 const wss = new WebSocketServer({
   server: http,
   maxPayload: TAILLE_MAX_OCTETS,
-  verifyClient: ({ origin }: { origin: string }) => ORIGINES.length === 0 || ORIGINES.includes(origin),
+  verifyClient: ({ origin }: { origin: string }) => ORIGINES.length === 0 || ORIGINES.some((o) => o.test(origin)),
 });
 
 wss.on("connection", (ws) => {
