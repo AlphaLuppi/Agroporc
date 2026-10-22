@@ -1440,3 +1440,57 @@ export async function listerRecettes(p: {
     throw e;
   }
 }
+
+// --- Classement de la chasse au tigre (vue Palantir) ---
+
+/** Table des scores, sur le modèle de ensureRecettesTable (mêmes définitions dans lib/migrate.mjs). */
+export async function ensureTigreScoresTable(): Promise<void> {
+  await sql`
+    CREATE TABLE IF NOT EXISTS pdj_tigre_scores (
+      id SERIAL PRIMARY KEY,
+      pseudo VARCHAR(20) NOT NULL,
+      score INTEGER NOT NULL,
+      tigres INTEGER NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS pdj_tigre_scores_classement_idx ON pdj_tigre_scores (score DESC, created_at)`;
+}
+
+/** La table n'est vérifiée qu'une fois par processus (un échec réessaie à l'appel suivant). */
+let tigreScoresPret: Promise<void> | null = null;
+function tigreScoresTable(): Promise<void> {
+  if (!tigreScoresPret) {
+    tigreScoresPret = ensureTigreScoresTable();
+    tigreScoresPret.catch(() => { tigreScoresPret = null; });
+  }
+  return tigreScoresPret;
+}
+
+/** Les meilleurs scores, du plus haut au plus bas puis du plus ancien au plus récent. */
+export async function getTopTigreScores(limite = 10): Promise<Array<{ rang: number; pseudo: string; score: number; tigres: number; date: string }>> {
+  await tigreScoresTable();
+  const res = await sql<{ pseudo: string; score: number; tigres: number; created_at: Date }>`
+    SELECT pseudo, score, tigres, created_at FROM pdj_tigre_scores
+    ORDER BY score DESC, created_at ASC, id ASC
+    LIMIT ${limite}
+  `;
+  return res.rows.map((r, i) => ({ rang: i + 1, pseudo: r.pseudo, score: r.score, tigres: r.tigres, date: new Date(r.created_at).toISOString() }));
+}
+
+/** Enregistre un score validé (lib/tigre-scores.ts) et rend son rang dans le classement complet. */
+export async function ajouterTigreScore(s: { pseudo: string; score: number; tigres: number }): Promise<number> {
+  await tigreScoresTable();
+  const ins = await sql<{ id: number }>`
+    INSERT INTO pdj_tigre_scores (pseudo, score, tigres) VALUES (${s.pseudo}, ${s.score}, ${s.tigres})
+    RETURNING id
+  `;
+  const { id } = ins.rows[0];
+  // Même ordre que le classement : score décroissant, puis date, puis id. La date est relue en
+  // base (microsecondes) et non depuis JS (millisecondes), pour départager deux scores égaux.
+  const rang = await sql<{ devant: string }>`
+    SELECT COUNT(*) AS devant FROM pdj_tigre_scores t, (SELECT id, score, created_at FROM pdj_tigre_scores WHERE id = ${id}) moi
+    WHERE t.score > moi.score OR (t.score = moi.score AND (t.created_at, t.id) < (moi.created_at, moi.id))
+  `;
+  return Number(rang.rows[0].devant) + 1;
+}

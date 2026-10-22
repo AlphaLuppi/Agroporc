@@ -81,9 +81,10 @@ describe("gestes", () => {
       expect(g, nom).toBeDefined();
       const bulles = (g.evenements ?? []).filter((e) => e.type === "bulle");
       // Une bulle par geste ; le serre-main en a une par phase de la vidéo, chacune avec son texte.
+      // La batte n'en a aucune avant le coup : « BONK ! » part à l'impact (cf. batte.test.ts).
       if (nom === "serre-main") expect(bulles.every((b) => b.type === "bulle" && !!b.texte), nom).toBe(true);
-      else expect(bulles.length, nom).toBe(1);
-      expect(bulles.at(-1)!.t).toBeLessThan(g.duree);
+      else if (nom !== "batte") expect(bulles.length, nom).toBe(1);
+      if (bulles.length) expect(bulles.at(-1)!.t).toBeLessThan(g.duree);
       for (let t = 0; t <= g.duree + 0.5; t += 0.05) {
         const p = g.echantillonner(t, ctx({ temps: t }));
         // JSON.stringify écrit NaN et ±Infinity en null.
@@ -95,7 +96,8 @@ describe("gestes", () => {
   it("les gestes à l'arrêt tournent le tigre vers nous (jamais de profil)", () => {
     for (const [nom] of POIDS_REACTIONS) {
       const g = GESTES[nom as Reaction];
-      if (!g.immobile) continue;
+      // La batte, elle, se joue de profil face à Macron (cf. batte.test.ts).
+      if (!g.immobile || nom === "batte") continue;
       for (const sens of [1, -1] as const) expect(Math.abs(g.cap!(sens)), nom).toBeLessThan(0.7);
     }
     expect(GESTES.tape.cap!(1)).toBe(0);

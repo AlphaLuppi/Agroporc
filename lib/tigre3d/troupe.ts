@@ -62,6 +62,11 @@ export interface Troupe {
   sur(f: (e: EvenementTigre) => void): void;
   maj(dt: number): void;
   clic(): "lancer" | "taper" | "ignorer";
+  /**
+   * Change la course de la mère (sens, allure, vitesse) : les petits la suivent, demi-tour compris
+   * (embuscade du coup de batte, lib/tigre3d/embuscade.ts).
+   */
+  courir(opts: Parameters<Animateur["courir"]>[0]): void;
   /** Abscisse du milieu de la troupe (px) : le canvas est centré dessus. */
   centre(): number;
   /** Étendue totale de la troupe (px), de bord à bord. */
@@ -145,6 +150,10 @@ export function creerTroupe(o: OptionsTroupe): Troupe {
       sorti = membres.every(estSorti);
     },
     clic: () => mere.anim.clic(),
+    courir(opts = {}) {
+      mere.anim.courir(opts);
+      if (opts.sens != null) for (const p of membres.slice(1)) p.anim.courir({ sens: opts.sens });
+    },
     centre() {
       const xs = membres.map((p) => p.x);
       return (Math.min(...xs) + Math.max(...xs)) / 2;

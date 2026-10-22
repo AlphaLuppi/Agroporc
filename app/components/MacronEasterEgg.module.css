@@ -43,3 +43,24 @@
   transform: translateX(-50%) rotate(45deg);
 }
 
+
+/* Étoiles de Macron sonné par le coup de batte du tigre : elles tournent en ellipse au-dessus de
+   sa tête (placées en JS : translate3d). Deux animations déphasées d'un quart de tour, l'une en x
+   et l'autre en y, dessinent l'ellipse sans écraser les glyphes. */
+.etoiles {
+  position: absolute; left: 0; top: 0; z-index: 3; width: 0; height: 0; pointer-events: none;
+}
+.etoile {
+  position: absolute; left: 0; top: 0; width: 0; height: 0;
+  animation: etoile-x 1.2s ease-in-out infinite alternate;
+  animation-delay: calc(var(--i) * -0.48s);
+}
+.etoile > span {
+  position: absolute; left: 0; top: 0; translate: -50% -50%;
+  font-size: 1.1rem; line-height: 1; font-weight: 800; color: var(--ok);
+  text-shadow: 0 0 2px rgba(0, 0, 0, 0.75), 0 0 6px rgba(0, 0, 0, 0.35);
+  animation: etoile-y 1.2s ease-in-out infinite alternate;
+  animation-delay: calc(var(--i) * -0.48s - 0.6s);
+}
+@keyframes etoile-x { from { transform: translateX(-30px); } to { transform: translateX(30px); } }
+@keyframes etoile-y { from { transform: translateY(-9px) scale(0.8); } to { transform: translateY(9px) scale(1.15); } }

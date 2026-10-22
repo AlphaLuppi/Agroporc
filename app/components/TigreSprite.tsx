@@ -244,6 +244,8 @@ export function TigreSprite() {
         apres(400, () => jeter("clap", 6));
         apres(DUREES.salut, () => repartir());
       },
+      /** Jamais tirée (poids nul) : le sprite remplace le tigre sans WebGL, et Macron exige WebGL. */
+      batte: () => finReaction(),
     } satisfies Record<Reaction, () => void>;
 
     const claquer = () => {

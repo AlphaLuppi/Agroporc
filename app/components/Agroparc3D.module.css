@@ -56,15 +56,53 @@
 
 .hud { position: absolute; z-index: 3; pointer-events: none; }
 .hudTl { left: 24px; top: 20px; max-width: 460px; }
-.modes { display: inline-flex; margin-top: 12px; border: 1px solid var(--ag-line-strong); background: rgba(4, 6, 10, 0.7); pointer-events: auto; }
-.modes button {
-  background: none; border: 0; color: var(--ag-ink-dim); font: inherit; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase;
-  padding: 6px 14px; cursor: pointer; transition: background 0.2s ease, color 0.2s ease;
+/* Sortie : toujours visible, au-dessus de l'écran de chargement ou d'erreur (z-index 5). */
+.sortie {
+  position: absolute; z-index: 6; right: 24px; top: 20px; min-height: 40px; display: inline-flex; align-items: center; gap: 8px;
+  background: rgba(4, 6, 10, 0.8); border: 1px solid var(--ag-line-strong); color: var(--ag-white); font: inherit; font-size: 11px;
+  letter-spacing: 0.14em; text-transform: uppercase; padding: 0 14px; cursor: pointer;
 }
-.modes button + button { border-left: 1px solid var(--ag-line-strong); }
-.modes button:hover, .modes button:focus-visible { color: var(--ag-ink); }
-.modes button[aria-pressed="true"][data-mode="sportif"] { background: var(--ag-cyan); color: var(--ag-ground); box-shadow: 0 0 12px rgba(155, 233, 255, 0.35); }
-.modes button[aria-pressed="true"][data-mode="goulaf"] { background: var(--ag-amber); color: var(--ag-ground); box-shadow: 0 0 12px rgba(255, 179, 92, 0.35); }
+.sortie:hover, .sortie:focus-visible { border-color: var(--ag-cyan); background: rgba(155, 233, 255, 0.1); }
+/* Score de la chasse au tigre, sous le titre. */
+.score {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; margin: 10px 0 0; font-size: 11px; letter-spacing: 0.12em;
+  text-transform: uppercase; color: var(--ag-ink-dim); font-variant-numeric: tabular-nums; text-shadow: 0 0 6px var(--ag-ground), 0 0 2px var(--ag-ground);
+}
+.score b { font-family: var(--ag-display), var(--ag-mono), monospace; font-size: 22px; font-weight: 700; letter-spacing: 0.02em; color: var(--ag-amber); margin-right: 4px; }
+.gain { color: var(--ag-amber); font-weight: 500; animation: agGain 2.5s ease forwards; }
+@keyframes agGain { 0% { opacity: 0; transform: translateY(4px); } 12% { opacity: 1; transform: none; } 75% { opacity: 1; } 100% { opacity: 0; } }
+/* Classement : boutons sous le score, formulaire pseudo, message. */
+.actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; pointer-events: auto; }
+.action {
+  min-height: 40px; background: rgba(4, 6, 10, 0.7); border: 1px solid var(--ag-line-strong); color: var(--ag-amber); font: inherit; font-size: 10px;
+  letter-spacing: 0.14em; text-transform: uppercase; padding: 0 12px; cursor: pointer;
+}
+.action:hover, .action:focus-visible { border-color: var(--ag-amber); background: rgba(255, 179, 92, 0.08); }
+.action[aria-expanded="true"] { background: var(--ag-amber); color: var(--ag-ground); border-color: var(--ag-amber); }
+.action:disabled { cursor: default; color: var(--ag-ink-dim); border-color: var(--ag-line-strong); background: rgba(4, 6, 10, 0.7); }
+.pseudoForm {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px; background: var(--ag-panel); border: 1px solid var(--ag-line); backdrop-filter: blur(6px);
+}
+.pseudoForm label { font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ag-ink-dim); }
+.pseudoForm input {
+  min-height: 40px; width: 16ch; max-width: 100%; box-sizing: border-box; background: var(--ag-ground); border: 1px solid var(--ag-line-strong);
+  color: var(--ag-ink); font: inherit; font-size: 14px; padding: 0 10px;
+}
+.pseudoForm input:focus-visible { outline: 2px solid var(--ag-white); outline-offset: 1px; border-color: var(--ag-cyan); }
+.pseudoForm .close { min-height: 40px; }
+.piege { position: absolute; left: -9999px; width: 0; height: 0; opacity: 0; }
+.message { display: inline-block; margin: 8px 0 0; padding: 6px 10px; font-size: 12px; color: var(--ag-ink); background: var(--ag-panel); border: 1px solid var(--ag-line); backdrop-filter: blur(6px); }
+/* Panneau du classement : même cadre que celui d'un restaurant. */
+.classement h2 { color: var(--ag-amber); margin-bottom: 10px; }
+.tableScores { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+.tableScores th {
+  text-align: left; font-size: 10px; font-weight: 500; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ag-ink-dim);
+  padding: 0 6px 6px 0; border-bottom: 1px solid var(--ag-line);
+}
+.tableScores td { padding: 7px 6px 7px 0; border-top: 1px solid var(--ag-line); color: var(--ag-ink-dim); white-space: nowrap; }
+.tableScores td b { color: var(--ag-amber); font-weight: 500; }
+.tableScores td.pseudo { color: var(--ag-ink); white-space: normal; overflow-wrap: anywhere; }
+.tableScores tr:first-child td { border-top: 0; }
 .eyebrow { font-size: 10px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--ag-ink-dim); margin: 0 0 6px; }
 .title {
   font-family: var(--ag-display), var(--ag-mono), monospace; font-weight: 700; font-size: 30px; line-height: 1;
@@ -99,11 +137,11 @@
 @keyframes agEvIn { from { opacity: 0; transform: translateY(4px); } }
 
 .panel {
-  position: absolute; z-index: 4; right: 24px; top: 20px; width: min(360px, calc(100vw - 48px));
+  position: absolute; z-index: 4; right: 24px; top: 72px; width: min(360px, calc(100vw - 48px));
   background: var(--ag-panel); border: 1px solid var(--ag-line); backdrop-filter: blur(6px);
   padding: 18px 20px 20px; box-sizing: border-box; animation: agPanelIn 0.35s ease;
   /* Une carte permanente peut être longue (Trèfle : ~45 plats) : le panneau défile. */
-  max-height: calc(100vh - 40px); overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--ag-line) transparent;
+  max-height: calc(100vh - 92px); overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--ag-line) transparent;
 }
 @keyframes agPanelIn { from { opacity: 0; transform: translateX(24px); } }
 .panelHead { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
@@ -179,10 +217,9 @@
 /* Anneau de focus clavier commun aux contrôles (blanc : 18:1 sur le fond). Décalé vers
    l'extérieur : en intérieur il disparaîtrait sur le bouton actif cyan ou ambre. Placé
    après les règles de survol pour garder la main, sans `outline: none` plus haut. */
-.modes button:focus-visible, .ctl button:focus-visible, .close:focus-visible, .depliantBtn:focus-visible {
+.sortie:focus-visible, .ctl button:focus-visible, .close:focus-visible, .depliantBtn:focus-visible, .action:focus-visible {
   outline: 2px solid var(--ag-white); outline-offset: 2px;
 }
-.modes button:focus-visible { position: relative; z-index: 1; } /* l'anneau passe devant le bouton voisin */
 .root:focus { outline: none; } /* focus posé en JS à l'ouverture : le dialogue n'est pas un contrôle */
 
 .loading {
@@ -195,14 +232,16 @@
 
 @media (max-width: 640px) {
   .hudTl { max-width: calc(100vw - 48px); }
+  /* Le titre passe sur deux lignes plutôt que sous le bouton de sortie. */
+  .title { max-width: calc(100vw - 210px); }
   .hudBl { max-width: calc(100vw - 48px); }
   .title { font-size: 24px; }
   .legend { flex-wrap: wrap; gap: 8px 14px; }
   .hudBr { display: none; }
-  .panel { top: auto; bottom: 20px; right: 24px; left: 24px; width: auto; max-height: 60vh; }
+  .panel { top: auto; bottom: 20px; right: 24px; left: 24px; width: auto; max-height: min(60vh, calc(100vh - 100px)); }
   /* Cibles tactiles ≥ 40 px (convention du projet). */
-  .modes button, .ctl button, .close, .depliantBtn { min-height: 40px; padding-inline: 14px; }
+  .ctl button, .close, .depliantBtn { min-height: 40px; padding-inline: 14px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .root, .panel, .log > div, .labels > div, .jaugeArc, .jaugeVal, .mini > i > i, .modes button { animation: none; transition: none; }
+  .root, .panel, .log > div, .labels > div, .jaugeArc, .jaugeVal, .mini > i > i, .gain { animation: none; transition: none; }
 }

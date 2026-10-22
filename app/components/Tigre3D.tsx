@@ -5,6 +5,8 @@ import { PART_RETOUR, VITESSES, petitsPourEvenement, type Evenement } from "@/li
 import { creerParticules, DUREES, type GenreParticule, type Particule } from "@/lib/tigre-reactions";
 import type { EvenementTigre } from "@/lib/tigre3d/animateur";
 import type { InfosImage, ParamsPassage, Scene3D } from "@/lib/tigre3d/scene";
+import type { Embuscade } from "@/lib/tigre3d/embuscade";
+import { canalRencontre } from "@/lib/rencontre";
 import { useCalendrierTigre } from "./useCalendrierTigre";
 import { useLassoTigre } from "./LassoTigre";
 import styles from "./Tigre3D.module.css";
@@ -44,6 +46,13 @@ export function Tigre3D({ surEchec }: { surEchec: () => void }) {
   const minuteursRef = useRef(new Set<ReturnType<typeof setTimeout>>());
   const echecRef = useRef(surEchec);
   echecRef.current = surEchec;
+  // Rencontre avec Macron (lib/rencontre.ts) : une embuscade par passage, créée par le module
+  // chargé à la demande avec la scène (three n'est pas dans le paquet de la page).
+  const creerEmbuscadeRef = useRef<typeof import("@/lib/tigre3d/embuscade").creerEmbuscade | null>(null);
+  const embuscadeRef = useRef<Embuscade | null>(null);
+  const numeroPassageRef = useRef(0);
+  /** Rencontre forcée (crochet de développement) : appliquée au prochain passage. */
+  const forceRef = useRef<{ x: number; face: 1 | -1; surArme?: () => void } | null>(null);
   const [nZones, setNZones] = useState(0);
   const [bulle, setBulle] = useState<Bulle | null>(null);
   const [particules, setParticules] = useState<ParticulePosee[]>([]);
@@ -62,6 +71,9 @@ export function Tigre3D({ surEchec }: { surEchec: () => void }) {
     passageEnCoursRef.current = false;
     imageRef.current = null;
     bulleFinRef.current = null;
+    embuscadeRef.current?.annuler();
+    embuscadeRef.current = null;
+    canalRencontre.publier({ type: "etat", qui: "tigre", etat: null });
     setBulle(null);
     setParticules([]);
     setNZones(0);
@@ -74,8 +86,9 @@ export function Tigre3D({ surEchec }: { surEchec: () => void }) {
     if (!canvas) return;
     // Un petit délai : la page finit de s'afficher avant de créer le contexte WebGL.
     const t = setTimeout(() => {
-      import("@/lib/tigre3d/scene").then(({ creerScene }) => {
+      Promise.all([import("@/lib/tigre3d/scene"), import("@/lib/tigre3d/embuscade")]).then(([{ creerScene }, { creerEmbuscade }]) => {
         if (annule) return;
+        creerEmbuscadeRef.current = creerEmbuscade;
         try {
           sceneRef.current = creerScene(canvas, { surPerte: () => echecRef.current() });
         } catch {
@@ -105,13 +118,17 @@ export function Tigre3D({ surEchec }: { surEchec: () => void }) {
       bulleFinRef.current = (imageRef.current?.temps ?? 0) + e.duree;
     } else if (e.type === "particules") {
       apres(e.delai * 1000, () => jeter(e.genre, e.nombre));
+    } else if (e.type === "impact") {
+      // Coup de batte : Macron tombe (app/components/MacronEasterEgg.tsx écoute le canal).
+      canalRencontre.publier({ type: "impact" });
     }
   };
 
   const jeter = (genre: GenreParticule, nombre: number) => {
     const img = imageRef.current;
     if (!img) return;
-    const ancre = genre === "clap" ? img.patte : img.tete;
+    // Éclats du clap : sur la patte levée, ou sur la batte au coup sur Macron.
+    const ancre = genre === "clap" ? img.batte ?? img.patte : img.tete;
     // Cœurs et Z naissent à la tête, où se trouve la bulle : ils partent de côté (alternativement
     // à droite et à gauche) pour sortir de la bulle au lieu de monter dedans.
     const lateral = genre !== "clap";
@@ -144,6 +161,19 @@ export function Tigre3D({ surEchec }: { surEchec: () => void }) {
       el.style.transform = `translate3d(${img.gauche + z.x}px, ${z.y}px, 0)`;
     });
     placerBulle();
+    // Batte en main : le tigre passe devant Macron (z-index 41), sinon la batte disparaîtrait
+    // derrière lui au moment du coup. Il y reste tant que Macron frappé est à l'écran : quand il le
+    // croise ensuite (au sol ou titubant), il passe devant son corps, jamais dessous.
+    const conteneur = conteneurRef.current;
+    const macron = canalRencontre.etat("macron");
+    const devant = img.batte || (macron?.present && !macron.disponible) ? "42" : "";
+    if (conteneur && conteneur.style.zIndex !== devant) conteneur.style.zIndex = devant;
+    // Rencontre : l'embuscade lit Macron dans le canal, le tigre y publie son état.
+    const emb = embuscadeRef.current;
+    if (emb) {
+      emb.maj(canalRencontre.etat("macron"));
+      canalRencontre.publier({ type: "etat", qui: "tigre", etat: emb.etatTigre(numeroPassageRef.current) });
+    }
   };
 
   /** Bulle au-dessus de la tête, recadrée dans l'écran ; la queue de la bulle pointe toujours le tigre. */
@@ -170,24 +200,32 @@ export function Tigre3D({ surEchec }: { surEchec: () => void }) {
     if (!scene || !conteneur) return;
     const [min, max] = VITESSES[evenement];
     passageEnCoursRef.current = true;
-    const taille = scene.lancer(
-      {
-        evenement, petits,
-        sens: Math.random() < PART_RETOUR ? -1 : 1,
-        vitesse: min + Math.random() * (max - min),
-        largeurEcran: window.innerWidth,
-        largeurTigrePx: largeurTigrePx(),
-        ...forces,
-      },
-      {
-        evenement: surEvenement,
-        image: surImage,
-        fin: toutNettoyer,
-        tenue: (dt) => lasso.tenue(dt),
-      },
-    );
+    const params: ParamsPassage = {
+      evenement, petits,
+      sens: Math.random() < PART_RETOUR ? -1 : 1,
+      vitesse: min + Math.random() * (max - min),
+      largeurEcran: window.innerWidth,
+      largeurTigrePx: largeurTigrePx(),
+      ...forces,
+    };
+    const taille = scene.lancer(params, {
+      evenement: surEvenement,
+      image: surImage,
+      fin: toutNettoyer,
+      tenue: (dt) => lasso.tenue(dt),
+    });
     conteneur.style.height = `${taille.hauteur}px`;
     setNZones(1 + petits);
+    // Embuscade de ce passage (rencontre avec Macron).
+    const troupe = scene.troupe(), creer = creerEmbuscadeRef.current;
+    numeroPassageRef.current++;
+    if (troupe && creer) {
+      embuscadeRef.current = creer(troupe, {
+        largeurEcran: params.largeurEcran, largeurTigrePx: params.largeurTigrePx, pxParMetre: params.largeurTigrePx / 3.75,
+      });
+      if (forceRef.current) embuscadeRef.current.forcer(forceRef.current);
+    }
+    forceRef.current = null;
   };
   const partirRef = useRef(partir);
   partirRef.current = partir;
@@ -210,6 +248,23 @@ export function Tigre3D({ surEchec }: { surEchec: () => void }) {
     partir: (evenement, petits) => partirRef.current(evenement, petits),
     arret: () => { sceneRef.current?.arreter(); toutNettoyer(); lasso.oublier(); },
   });
+
+  // Rencontre annulée sans erreur : onglet caché, ou démontage (changement de thème, WebGL perdu).
+  // Le tigre reprend sa course, et Macron, s'il est au sol, se relève.
+  useEffect(() => {
+    const annuler = () => {
+      embuscadeRef.current?.annuler();
+      canalRencontre.publier({ type: "annulation" });
+    };
+    const cache = () => { if (document.hidden) annuler(); };
+    document.addEventListener("visibilitychange", cache);
+    return () => {
+      document.removeEventListener("visibilitychange", cache);
+      annuler();
+      embuscadeRef.current = null;
+      canalRencontre.publier({ type: "etat", qui: "tigre", etat: null });
+    };
+  }, []);
 
   // Crochet de test en développement seulement : lancer un passage, une réaction, figer le temps.
   useEffect(() => {
@@ -238,6 +293,24 @@ export function Tigre3D({ surEchec }: { surEchec: () => void }) {
       avancer: (dt) => sceneRef.current?.avancer(dt),
       pret: () => sceneRef.current?.pret() ?? false,
       troupe: () => sceneRef.current?.troupe() ?? null,
+      embuscade: () => embuscadeRef.current?.phase ?? null,
+      image: () => imageRef.current,
+      /**
+       * Rencontre forcée : un tigre (sens `sens`, depuis le bord gauche par défaut) et Macron face à
+       * face. Sans `force`, Macron part tout de suite de l'autre bord et le tigre tend son embuscade
+       * comme en vrai. Avec `force`, le tigre se poste au point `x` (px, défaut : 42 % de l'écran
+       * dans son sens), arme la batte, et Macron n'est lancé qu'ensuite (petit écran, où il traverse
+       * trop vite pour une rencontre). `geler` : les deux scènes figées, à avancer à la main.
+       */
+      rencontre: (o = {}) => {
+        const sens = o.sens ?? 1, w = window.innerWidth;
+        const lancerMacron = () => window.__macron?.lancer({ sens: sens === 1 ? -1 : 1, geler: o.geler });
+        if (o.force) forceRef.current = { x: o.x ?? (sens === 1 ? 0.42 * w : 0.58 * w), face: sens, surArme: lancerMacron };
+        else lancerMacron();
+        window.__tigre?.passage("normal", { petits: 0, sens, vitesse: 2.4 });
+        if (o.geler) sceneRef.current?.geler(true);
+        return true;
+      },
     };
     return () => { delete window.__tigre; };
   }, []);
@@ -292,6 +365,11 @@ declare global {
       avancer(dt: number): void;
       pret(): boolean;
       troupe(): unknown;
+      /** Phase de l'embuscade du passage en cours (lib/tigre3d/embuscade.ts). */
+      embuscade(): string | null;
+      /** Dernière image (zones, bulle, point de la batte), pour les vérifications. */
+      image(): InfosImage | null;
+      rencontre(o?: { sens?: 1 | -1; force?: boolean; x?: number; geler?: boolean }): boolean;
     };
     __tigreAuto?: boolean;
   }
