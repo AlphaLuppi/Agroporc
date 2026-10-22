@@ -13,6 +13,7 @@ import { squelette } from "./squelette";
 import type { Role } from "./os";
 import type { EvenementTigre } from "./animateur";
 import { PETITS_MAX, petitsPourEvenement, type Evenement } from "../tigre-courant";
+import { textureCorde } from "../tigre-lasso-rendu";
 
 /** Hauteur de la fenêtre de vue en mètres de tigre : fixe l'échelle (px par mètre = hauteur du canvas / VUE_M). */
 export const VUE_M = 3.86;
@@ -45,8 +46,33 @@ export interface InfosImage {
   temps: number;
 }
 
+/**
+ * Lasso : position imposée au tigre attrapé, en px du conteneur. `x`, `y` = centre du corps,
+ * `angle` = rotation à l'écran (rad, sens horaire) autour de ce centre.
+ */
+export interface Tenue { x: number; y: number; angle: number }
+
+/** Le tigre vient d'être attrapé : ses repères (px du conteneur), fixes pendant toute la capture. */
+export interface Prise {
+  /** Centre du corps, pivot de la rotation. */
+  centre: Point;
+  /** Centre du collier de corde, autour du cou : là où la corde le tient. */
+  cou: Point;
+  /** Nœud du collier, sur la nuque : la corde en part. */
+  noeud: Point;
+  /** Axe du cou à l'écran (unitaire, vers la tête) et rayon du collier (px). */
+  axe: Point;
+  rayon: number;
+}
+
+/** Rayon du collier de corde autour du cou (m de scène, tigre de 3,75 m) et épaisseur du fil. */
+const RAYON_COLLIER_M = 0.56;
+const FIL_COLLIER_PX = 2.8;
+
 export interface RappelsScene {
   evenement(e: EvenementTigre): void;
+  /** Lasso : appelée à chaque image avant le dessin, pendant une capture ; null = position naturelle. */
+  tenue?(dt: number): Tenue | null;
   image(i: InfosImage): void;
   /** Tous les tigres ont quitté l'écran. */
   fin(): void;
@@ -71,6 +97,12 @@ export interface Scene3D {
   /** Démarre un passage (le modèle doit être prêt) ; retourne la taille du canvas (px CSS). */
   lancer(p: ParamsPassage, rappels: RappelsScene): { largeur: number; hauteur: number };
   clic(): "lancer" | "taper" | "ignorer";
+  /** Lasso : attrape la mère (passage d'un tigre seul en cours), null sinon. */
+  attraper(): Prise | null;
+  /** Lasso : le nœud coulant est serré, le collier de corde apparaît autour du cou (ou disparaît). */
+  serrer(v: boolean): void;
+  /** Lasso : retombé au sol, centre du corps en `x` (px du conteneur) : il se relève et file. */
+  relacher(x: number): void;
   /** Réaction précise (tests, crochet de développement). */
   forcer(nom: Parameters<Troupe["mere"]["anim"]["clic"]>[0]): "lancer" | "taper" | "ignorer";
   /** Arrête la boucle et cache le canvas (fin de passage ou démontage). */
@@ -148,6 +180,17 @@ export function creerScene(canvas: HTMLCanvasElement, opts: OptionsScene = {}): 
   traine.visible = false;
   scene.add(traine);
 
+  // Collier de corde du lasso : un tore texturé posé chaque image autour du cou (le cou le cache
+  // derrière lui : la corde entoure vraiment le tigre).
+  const texCollier = textureCorde();
+  texCollier.repeat.set(16, 1);
+  const matCollier = new THREE.MeshStandardMaterial({ map: texCollier, roughness: 0.85 });
+  let geoCollier: THREE.TorusGeometry | null = null;
+  const collier = new THREE.Mesh(new THREE.BufferGeometry(), matCollier);
+  collier.visible = false;
+  scene.add(collier);
+  let serre = false;
+
   const tigres: Tigre[] = [];
   let modele: ModeleTigre | null = null;
   let chargement: Promise<void> | null = null;
@@ -175,6 +218,9 @@ export function creerScene(canvas: HTMLCanvasElement, opts: OptionsScene = {}): 
   let rappels: RappelsScene | null = null;
   let largeurCanvas = 0, hauteurCanvas = 0, pxm = 1;
   let raf = 0, dernier = 0, secousse = 0, gele = false;
+  /** Capture au lasso : pivot (centre du corps) dans le canvas, et position imposée de l'image. */
+  let prise: { centre: Point; cou: Point } | null = null;
+  let tenue: Tenue | null = null;
   const v = new THREE.Vector3();
 
   /** Point du monde → px dans le canvas. */
@@ -228,6 +274,20 @@ export function creerScene(canvas: HTMLCanvasElement, opts: OptionsScene = {}): 
     return monde(os(t, g > d ? "bout_mainG" : "bout_mainD"));
   }
 
+  const vA = new THREE.Vector3(), vB = new THREE.Vector3(), vHaut = new THREE.Vector3();
+  const zAxe = new THREE.Vector3(0, 0, 1);
+  /** Collier autour du cou de la mère : centre, axe du cou (vers la tête), haut (nuque), en monde. */
+  function poserCollier(t: Tigre) {
+    os(t, "cou").getWorldPosition(vA);
+    os(t, "tete").getWorldPosition(vB);
+    const axe = vB.clone().sub(vA).normalize();
+    const centre = vA.clone().lerp(vB, 0.75);
+    vHaut.set(0, 1, 0).addScaledVector(axe, -axe.y).normalize();
+    collier.position.copy(centre);
+    collier.quaternion.setFromUnitVectors(zAxe, axe);
+    return { centre, axe, haut: vHaut.clone() };
+  }
+
   function dessiner() {
     if (!troupe) return;
     const centre = troupe.centre();
@@ -246,13 +306,43 @@ export function creerScene(canvas: HTMLCanvasElement, opts: OptionsScene = {}): 
       traine.scale.x = m0.anim.sens;
       matTraine.opacity = Math.min(1, (m0.anim.facteurVitesse - 0.5) * 2);
     }
+    const mere = tigre(0);
+    collier.visible = serre && prise != null;
+    // Attrapé, il quitte le sol : plus d'ombre portée (elle tournerait avec lui).
+    mere.ombre.visible = prise == null;
+    if (collier.visible) poserCollier(mere);
     renderer.render(scene, camera);
+    if (prise && tenue) {
+      // Attrapé : le canvas est déplacé et tourné autour du centre du corps ; les repères envoyés à
+      // l'hôte sont déjà dans le repère du conteneur (gauche = 0).
+      const o = prise.centre, a = tenue.angle;
+      canvas.style.transformOrigin = `${o.x}px ${o.y}px`;
+      canvas.style.transform = `translate3d(${tenue.x - o.x}px, ${tenue.y - o.y}px, 0) rotate(${a}rad)`;
+      const c = Math.cos(a), sn = Math.sin(a);
+      const placer = (p: Point): Point => ({
+        x: tenue!.x + (p.x - o.x) * c - (p.y - o.y) * sn,
+        y: tenue!.y + (p.x - o.x) * sn + (p.y - o.y) * c,
+      });
+      const z = zoneTigre(mere, 1);
+      const coins = [[z.x, z.y], [z.x + z.w, z.y], [z.x, z.y + z.h], [z.x + z.w, z.y + z.h]].map(([x, y]) => placer({ x, y }));
+      const xs = coins.map((p) => p.x), ys = coins.map((p) => p.y);
+      const boite = { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
+      rappels?.image({
+        gauche: 0,
+        temps: troupe.mere.anim.t,
+        zones: [boite],
+        tete: placer(monde(os(mere, "bout_tete"))),
+        // Tourné, il n'a plus de « dessus de tête » : la bulle se pose au-dessus de sa boîte.
+        bulle: { x: boite.x + boite.w / 2, y: boite.y },
+        patte: placer(patteLevee(mere)),
+      });
+      return;
+    }
     const gauche = centre - largeurCanvas / 2;
     const dx = secousse > 0 ? (Math.random() - 0.5) * 6 * secousse : 0;
     const dy = secousse > 0 ? (Math.random() - 0.5) * 4 * secousse : 0;
     canvas.style.transform = `translate3d(${gauche + dx}px, ${dy}px, 0)`;
     if (!rappels) return;
-    const mere = tigre(0);
     rappels.image({
       gauche,
       temps: troupe.mere.anim.t,
@@ -270,8 +360,9 @@ export function creerScene(canvas: HTMLCanvasElement, opts: OptionsScene = {}): 
     dernier = now;
     if (secousse > 0) secousse = Math.max(0, secousse - dt / 0.9);
     troupe.maj(dt);
+    if (prise) tenue = rappels?.tenue?.(dt) ?? null;
     dessiner();
-    if (troupe.termine) { terminer(); return; }
+    if (troupe.termine && !prise) { terminer(); return; }
     if (!gele) raf = requestAnimationFrame(image);
   }
 
@@ -287,7 +378,12 @@ export function creerScene(canvas: HTMLCanvasElement, opts: OptionsScene = {}): 
     troupe = null;
     rappels = null;
     secousse = 0;
+    prise = null;
+    tenue = null;
+    serre = false;
+    collier.visible = false;
     canvas.style.visibility = "hidden";
+    canvas.style.transformOrigin = "";
     for (const t of tigres) t.groupe.visible = false;
   }
 
@@ -326,7 +422,47 @@ export function creerScene(canvas: HTMLCanvasElement, opts: OptionsScene = {}): 
       if (!gele) raf = requestAnimationFrame(image);
       return { largeur: largeurCanvas, hauteur: hauteurCanvas };
     },
-    clic: () => troupe?.clic() ?? "ignorer",
+    clic: () => (prise ? "ignorer" : troupe?.clic() ?? "ignorer"),
+    attraper() {
+      // Une famille ne se laisse pas attraper : la boucle passe à côté (un seul canvas pour tous).
+      if (!troupe || prise || troupe.membres.length > 1) return null;
+      const t = tigre(0);
+      const gauche = troupe.centre() - largeurCanvas / 2;
+      const a = monde(os(t, "thorax")), b = monde(os(t, "lombaires"));
+      const c = poserCollier(t);
+      const cou = projeter(c.centre.clone());
+      const noeud = projeter(c.centre.clone().addScaledVector(c.haut, RAYON_COLLIER_M));
+      const tete = projeter(c.centre.clone().add(c.axe));
+      const n = Math.hypot(tete.x - cou.x, tete.y - cou.y) || 1;
+      // Pivot du tigre pendu (son centre de gravité, à l'œil) : vers les hanches, à mi-hauteur du
+      // dos. Tenu par la nuque, il pend ainsi corps et pattes arrière vers le bas.
+      prise = { centre: { x: b.x + (b.x - a.x) * 0.3, y: (a.y + b.y) / 2 }, cou };
+      tenue = null;
+      serre = false;
+      // Fil du collier : même épaisseur à l'écran que la corde du lasso.
+      geoCollier?.dispose();
+      geoCollier = new THREE.TorusGeometry(RAYON_COLLIER_M, FIL_COLLIER_PX / pxm, 8, 48);
+      collier.geometry = geoCollier;
+      troupe.mere.anim.attraper();
+      const g = (p: Point): Point => ({ x: gauche + p.x, y: p.y });
+      return {
+        centre: g(prise.centre), cou: g(cou), noeud: g(noeud),
+        axe: { x: (tete.x - cou.x) / n, y: (tete.y - cou.y) / n },
+        rayon: Math.hypot(noeud.x - cou.x, noeud.y - cou.y),
+      };
+    },
+    serrer(v) { serre = v; },
+    relacher(x) {
+      if (!troupe || !prise) return;
+      // Le centre du corps retombe en x : la troupe y place la mère (le canvas, centré sur elle,
+      // reprend sa position naturelle sans saut).
+      troupe.mere.x += x - (troupe.centre() - largeurCanvas / 2 + prise.centre.x);
+      prise = null;
+      tenue = null;
+      serre = false;
+      canvas.style.transformOrigin = "";
+      troupe.mere.anim.relacher();
+    },
     forcer: (nom) => troupe?.mere.anim.clic(nom) ?? "ignorer",
     arreter,
     geler(v) {
@@ -337,6 +473,7 @@ export function creerScene(canvas: HTMLCanvasElement, opts: OptionsScene = {}): 
     avancer(dt) {
       if (!troupe) return;
       troupe.maj(dt);
+      if (prise) tenue = rappels?.tenue?.(dt) ?? null;
       dessiner();
     },
     troupe: () => troupe,
@@ -346,6 +483,7 @@ export function creerScene(canvas: HTMLCanvasElement, opts: OptionsScene = {}): 
       canvas.removeEventListener("webglcontextlost", surPerte);
       for (const t of tigres) { scene.remove(t.groupe); t.dispose(); }
       traine.geometry.dispose(); matTraine.dispose(); texTraine.dispose();
+      geoCollier?.dispose(); matCollier.dispose(); texCollier.dispose();
       tigres.length = 0;
       libererModele();
       renderer.dispose();
