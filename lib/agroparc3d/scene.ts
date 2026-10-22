@@ -558,6 +558,9 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
       bloom.dispose();
       composer.dispose();
       renderer.dispose();
+      // Rend le contexte WebGL tout de suite, sans attendre le ramasse-miettes (comme tigre3d et
+      // macron3d) : Chrome n'en garde que 16 actifs et perd d'office le plus ancien au-delà.
+      renderer.forceContextLoss();
     },
   };
 }

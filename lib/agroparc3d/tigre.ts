@@ -6,7 +6,13 @@
  * revient 1,5 s plus tard dans une autre cachette.
  *
  * Ce module ne libère jamais le modèle partagé (libererModele) : le tigre du thème Tigre s'en sert
- * peut-être sous la vue. Il ne libère que ce qu'il crée (copie assombrie du matériau, sphère).
+ * peut-être sous la vue. Il ne libère que ce qu'il crée (copies de la géométrie, du matériau et de
+ * la texture, squelette du clone, sphère).
+ *
+ * Pourquoi des copies de géométrie et de texture : quand un renderer dessine une géométrie ou une
+ * texture, three y attache un écouteur « dispose » qui garde ce renderer, donc son contexte WebGL.
+ * Sur les objets du modèle partagé, jamais libérés pendant la vie de la page, chaque fermeture de
+ * la vue laisserait un contexte retenu. Les copies sont libérées à la fermeture, avec leurs écouteurs.
  */
 import * as THREE from "three";
 import { chargerModele, creerTigre, type Tigre } from "../tigre3d/modele";
@@ -91,7 +97,9 @@ export function creerTigreCache(o: OptionsTigre): TigreCache {
   conteneur.add(sphere);
 
   let tigre: Tigre | null = null;
-  let matsSombres: THREE.Material[] = [];
+  /** Copies propres à ce tigre, libérées par dispose(). */
+  let copies: Array<{ dispose(): void }> = [];
+  let squelettes: THREE.Skeleton[] = [];
   let courante: Cachette | null = null;
   let retourDans = -1;
   let detruit = false;
@@ -114,22 +122,31 @@ export function creerTigreCache(o: OptionsTigre): TigreCache {
   chargerModele().then((m) => {
     if (detruit) return;
     const t = creerTigre(m);
-    // Copie assombrie du matériau, sur ce clone seulement : le tigre du thème Tigre garde l'original.
-    const vus = new Map<THREE.Material, THREE.Material>();
+    // Copie assombrie du matériau (avec sa propre texture) et copie de la géométrie, sur ce clone
+    // seulement : le tigre du thème Tigre garde les originaux (cf. en-tête).
+    const vus = new Map<object, THREE.Material | THREE.BufferGeometry>();
     t.groupe.traverse((obj) => {
       const mesh = obj as THREE.SkinnedMesh;
       if (!mesh.isSkinnedMesh) return;
       const orig = mesh.material as THREE.MeshBasicMaterial;
-      let copie = vus.get(orig);
-      if (!copie) {
-        const c = orig.clone();
-        c.color.multiplyScalar(TEINTE);
-        vus.set(orig, c);
-        copie = c;
+      let mat = vus.get(orig) as THREE.MeshBasicMaterial | undefined;
+      if (!mat) {
+        mat = orig.clone();
+        mat.color.multiplyScalar(TEINTE);
+        if (orig.map) { mat.map = orig.map.clone(); copies.push(mat.map); }
+        vus.set(orig, mat);
+        copies.push(mat);
       }
-      mesh.material = copie;
+      mesh.material = mat;
+      let geo = vus.get(mesh.geometry) as THREE.BufferGeometry | undefined;
+      if (!geo) {
+        geo = mesh.geometry.clone();
+        vus.set(mesh.geometry, geo);
+        copies.push(geo);
+      }
+      mesh.geometry = geo;
+      squelettes.push(mesh.skeleton);
     });
-    matsSombres = [...vus.values()];
     t.groupe.scale.setScalar(ECHELLE_MODELE);
     // Pas d'ombre portée : son disque gris sur le fond noir trahirait la cachette.
     t.groupe.children.filter((c) => (c as THREE.Mesh).isMesh && !(c as THREE.SkinnedMesh).isSkinnedMesh).forEach((c) => { c.visible = false; });
@@ -207,7 +224,11 @@ export function creerTigreCache(o: OptionsTigre): TigreCache {
       // la texture du clone sont celles du modèle partagé.
       o.scene.remove(conteneur);
       tigre?.dispose();
-      matsSombres.forEach((m) => m.dispose());
+      // Le squelette est propre au clone (SkeletonUtils.clone) : sa texture d'os n'est pas partagée.
+      squelettes.forEach((sq) => sq.dispose());
+      copies.forEach((c) => c.dispose());
+      copies = [];
+      squelettes = [];
       geoClic.dispose();
       matClic.dispose();
     },
