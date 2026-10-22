@@ -231,9 +231,13 @@ export function useLassoTigre(): { rendu: ReactNode } {
       epingles: [[0, main]], sol: sol(), freinFin: FREIN_AIR,
       elastique: { longueur, k: ELASTIQUE_K, amorti: ELASTIQUE_AMORTI },
     });
-    // Le corps pend dans l'axe de la traction (main → nuque), pas dans celui des derniers brins.
+    // Le corps pend dans l'axe de la traction (main → nuque), pas dans celui des derniers brins ;
+    // main plus bas que le cou (au début de la hisse), la corde ne le retourne pas : il pend vers le bas.
     const nuque = c.p[N - 1];
-    let ecart = angleSuspendu(main, nuque, p.d) - p.angle;
+    const dx = nuque.x - main.x, dy = nuque.y - main.y, n = Math.hypot(dx, dy) || 1;
+    const w = Math.min(1, Math.max(0, -dy / 60));
+    const ax = (dx / n) * (1 - w), ay = (dy / n) * (1 - w) + w;
+    let ecart = angleSuspendu({ x: nuque.x - ax, y: nuque.y - ay }, nuque, p.d) - p.angle;
     ecart = Math.atan2(Math.sin(ecart), Math.cos(ecart));
     p.omega += (RAIDEUR_ANGLE * ecart - AMORTI_ANGLE * p.omega) * dt;
     p.angle += p.omega * dt;
