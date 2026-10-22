@@ -32,7 +32,11 @@
  * La patte du GLB n'a que 2 à 3 arêtes par doigt : modele.ts subdivise d'abord le bout de la patte
  * (lib/tigre3d/subdivision-patte.ts, 16 triangles pour un), ce qui détache les bouts des doigts en
  * silhouette. Le matériau est sans éclairage : le nuanceur met la peau sur la paume (les doigts
- * gardent le pelage de la texture) et trace une ligne sombre sur chaque bord commun.
+ * gardent le pelage de la texture), trace une ligne sombre sur chaque bord commun et des rayures
+ * sur le dos de la main (`RAYURES_DOS`).
+ *
+ * Pendant la poignée de main, l'os `mainD` fait un demi-tour sur lui-même (`torsionMainHumaine`,
+ * appliquée par modele.ts) : le dos rayé fait face à la caméra, la paume de peau passe derrière.
  */
 
 /** Matrice 4 × 4 en colonnes (comme three). */
@@ -77,6 +81,25 @@ export interface CoordPatte { q: number; w: number; e: number }
  * soit z < 0 dans le repère de `mainD` (mesuré : +X du modèle donne -z).
  */
 export const COTE_POUCE: 1 | -1 = -1;
+
+/**
+ * Torsion de la main pendant la poignée de main (décision de l'utilisateur du 2026-10-22 : la main
+ * montre son dos rayé à la caméra, comme le chat de l'image de référence). Le clip tend l'avant-bras
+ * vers la caméra et laisse pendre la patte, plante (x du repère de l'os) face à la caméra, le dessous
+ * crème de la texture devant. L'os `mainD` tourne donc autour de son axe y (le long des doigts, qui
+ * pendent) d'un demi-tour, en proportion du poids de la déformation : aucun saut à l'entrée ni à la
+ * sortie. Le sens négatif fait passer le pouce (côté `COTE_POUCE`, z < 0) devant, vers la plante,
+ * comme une pronation. La paume de peau passe du côté opposé à la caméra.
+ *
+ * Seul `mainD` tourne : l'avant-bras (`brasD`) pointe vers la caméra et la main pend à angle droit,
+ * une torsion de `brasD` autour de son axe ferait tourner la main dans le plan de l'image.
+ */
+export const TORSION_MAIN = -Math.PI;
+
+/** Angle de la torsion de `mainD` autour de son axe y (radians) pour un poids de déformation donné. */
+export function torsionMainHumaine(poids: number): number {
+  return poids > 0 ? TORSION_MAIN * Math.min(1, poids) : 0;
+}
 
 // Géométrie de la patte (repère de l'os), mesurée sur le GLB.
 /** Début de la déformation (poignet) et début de l'arrondi avant. */
@@ -125,6 +148,35 @@ const PLI_PAUME = 0.22;
  * peau qui couvre aussi le dessous des doigts, mettre FIN_PEAU à 1,2.
  */
 const FIN_PEAU = -0.02;
+/**
+ * Rayures du dos de la main. La texture n'a pas de rayure sur le dessus des orteils (elles s'arrêtent
+ * au poignet) : une fois la main tournée, son dos serait orange uni. Le nuanceur trace donc des
+ * rayures sombres en travers du dos de la main et des doigts (face e < 0), dans le paramétrage de la
+ * patte : centre en w, étendue en q (pointes effilées comme les rayures du pelage), demi-épaisseur
+ * maximale, pente et ondulation en fonction de q. Le dos visible commence vers w = -0,1 (plus près
+ * du poignet, le haut de la patte reste en place et se replie) : les rayures sont au-delà. Près de
+ * la base des doigts, w varie lentement à l'écran, donc ces rayures-là sont plus fines.
+ * Les pentes sont toutes négatives : vu de dos, main pendante, la rayure descend vers le pouce
+ * comme les chevrons de l'avant-bras qu'elle prolonge (des pentes presque nulles donnaient des
+ * barres posées en travers de la main).
+ */
+export const RAYURES_DOS: ReadonlyArray<{ w: number; q0: number; q1: number; l: number; pente: number }> = [
+  { w: 0.02, q0: -0.95, q1: -0.1, l: 0.025, pente: -0.12 },
+  { w: 0.2, q0: -0.15, q1: 1.05, l: 0.035, pente: -0.2 },
+  { w: 0.42, q0: -0.65, q1: 0.7, l: 0.05, pente: -0.22 },
+  { w: 0.62, q0: 0.05, q1: 1.05, l: 0.04, pente: -0.18 },
+  { w: 0.82, q0: -0.6, q1: 0.3, l: 0.03, pente: -0.15 },
+];
+/**
+ * Décalage en w des rayures sur chaque doigt, de l'index à l'auriculaire. Sans lui, une rayure
+ * garde la même hauteur d'un doigt à l'autre et se lit comme une barre coupée par les sillons.
+ * Chaque doigt porte ici son propre tronçon, le saut se fait sous la ligne du sillon. Sur le dos
+ * de la main (avant la base des doigts), aucun décalage : la rayure reste continue.
+ */
+export const DECALAGE_RAYURES_DOIGTS: readonly number[] = [0.0, 0.045, -0.03, 0.05];
+/** Couleur des rayures (linéaire), celle des rayures sombres de la texture. */
+const COULEUR_RAYURE = [0.022, 0.011, 0.006];
+
 /** Lissage des bouts des doigts : part de la moyenne des voisins par passe, nombre de passes. */
 const LISSAGE_BOUT = 0.5;
 const PASSES_LISSAGE = 2;
@@ -143,12 +195,15 @@ interface Doigt {
 /**
  * Les quatre doigts, de l'index à l'auriculaire (z croissant dans la main canonique). Ils se
  * touchent : le centre de chacun est à la somme des rayons de son voisin, la paume a leur largeur.
+ * L'auriculaire, sur le flanc arrondi de la patte, se lisait comme une lamelle (bande en travers
+ * étroite, rayon et longueur nettement plus petits) : sa bande s'élargit et il reste à peine plus
+ * fin et plus court que l'annulaire.
  */
 export const DOIGTS: readonly Doigt[] = (() => {
-  const rayons = [0.068, 0.07, 0.066, 0.058];
-  const longueurs = [0.66, 0.74, 0.68, 0.54];
-  const bases = [Y_BASE, Y_BASE + 0.01, Y_BASE, Y_BASE - 0.04];
-  const bornes = [Q_POUCE, -0.12, 0.27, 0.64, 1];
+  const rayons = [0.068, 0.07, 0.066, 0.064];
+  const longueurs = [0.66, 0.74, 0.68, 0.61];
+  const bases = [Y_BASE, Y_BASE + 0.01, Y_BASE, Y_BASE - 0.02];
+  const bornes = [Q_POUCE, -0.15, 0.22, 0.57, 1];
   let z = -rayons.reduce((s, r) => s + r, 0);
   return rayons.map((r, k) => {
     const d: Doigt = {
@@ -435,7 +490,21 @@ const glsl = (x: number) => (Number.isInteger(x) ? `${x}.0` : `${x}`);
 export function nuanceurMainHumaine(): string {
   const bornes = DOIGTS.slice(1).map((d) => d.q0);
   const sillons = bornes.map((b) => `mhL = max(mhL, 1.0 - smoothstep(0.0, ${glsl(LIGNE)}, abs(mhQ - ${glsl(b)})));`);
+  // Rayures du dos : demi-épaisseur en sinus le long de q (pointes effilées), centre penché et ondulé.
+  const rayures = RAYURES_DOS.map((r, k) => [
+    "{",
+    `float mhS = clamp( ( mhQ - ${glsl(r.q0)} ) / ${glsl(+(r.q1 - r.q0).toFixed(4))}, 0.0, 1.0 );`,
+    `float mhH = ${glsl(r.l)} * sin( 3.14159 * mhS );`,
+    `float mhC = ${glsl(r.w)} + ${glsl(r.pente)} * mhQ + mhD + 0.025 * sin( 5.0 * mhQ + ${glsl(+(1.7 * k + 0.5).toFixed(2))} );`,
+    // Pointes : sous une épaisseur minimale, rien (sinon un trait fin prolongerait la rayure).
+    // Bord net, large d'un pixel environ (fwidth) : là où w varie lentement à l'écran, un bord
+    // proportionnel à l'épaisseur devenait une tache floue.
+    "mhR = max( mhR, ( 1.0 - smoothstep( mhH - mhF, mhH + mhF, abs( mhW - mhC ) ) ) * smoothstep( 0.004, 0.012, mhH ) );",
+    "}",
+  ].join("\n"));
   return [
+    // Dérivée écran de w hors du test sur le poids : en GLSL, fwidth n'est défini qu'en flux uniforme.
+    "float mhF = max( fwidth( vMainHumaine.z ), 0.001 );",
     "if ( vMainHumaine.x > 0.001 ) {",
     "float mhK = clamp( vMainHumaine.x, 0.0, 1.0 );",
     "float mhQ = vMainHumaine.y, mhW = vMainHumaine.z, mhE = vMainHumaine.w;",
@@ -456,6 +525,14 @@ export function nuanceurMainHumaine(): string {
     "float mhClarte = dot( diffuseColor.rgb, vec3( 0.2126, 0.7152, 0.0722 ) );",
     "vec3 mhPeau = couleurPeau * ( 0.82 + 0.3 * clamp( mhClarte, 0.0, 1.0 ) );",
     "diffuseColor.rgb = mix( diffuseColor.rgb, mhPeau, mhK * mhP );",
+    // Rayures sur le dos de la main et des doigts (e < 0), jamais sur la paume.
+    "float mhR = 0.0;",
+    // Décalage du doigt, nul sur le dos de la main, plein dès la base des doigts.
+    `float mhD = ${glsl(DECALAGE_RAYURES_DOIGTS[0])};`,
+    ...DOIGTS.slice(1).map((d, k) => `if ( mhQ > ${glsl(d.q0)} ) mhD = ${glsl(DECALAGE_RAYURES_DOIGTS[k + 1])};`),
+    "mhD *= smoothstep( -0.05, 0.1, mhA );",
+    ...rayures,
+    `diffuseColor.rgb = mix( diffuseColor.rgb, vec3( ${COULEUR_RAYURE.map(glsl).join(", ")} ), mhK * mhR * ( 1.0 - smoothstep( -0.35, 0.05, mhE ) ) );`,
     "diffuseColor.rgb *= 1.0 - mhK * clamp( 0.72 * mhL + 0.24 * mhPli * mhP, 0.0, 0.8 );",
     "}",
   ].join("\n");

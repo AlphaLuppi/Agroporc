@@ -12,7 +12,7 @@ import * as THREE from "three";
 import { clone as clonerSquelette } from "three/examples/jsm/utils/SkeletonUtils.js";
 import { squelette, type PoseTigre } from "./squelette";
 import { clipDepuisPistes, enregistrerClip } from "./clips";
-import { construireMainHumaine, nuanceurMainHumaine } from "./main-humaine";
+import { construireMainHumaine, nuanceurMainHumaine, torsionMainHumaine } from "./main-humaine";
 import { subdiviserPatte } from "./subdivision-patte";
 import { NOMS_OS } from "./os";
 
@@ -75,6 +75,9 @@ export function chargerModele(url = URL_GLB): Promise<ModeleTigre> {
 }
 
 export function modelePret(): boolean { return modeleCharge !== null; }
+
+/** Axe de la torsion de la main humaine : y de l'os `mainD`, le long des doigts. */
+const AXE_TORSION = new THREE.Vector3(0, 1, 0);
 
 /** Couleur de la paume de la main humaine (sRGB). */
 const COULEUR_PEAU = "#dc9c7c";
@@ -158,7 +161,10 @@ export interface Tigre {
   os: THREE.Bone[];
   /** Recopie la pose sur les os ; `origineX` = x du corps (repère sol) ramené à l'origine du groupe. */
   appliquer(pose: PoseTigre, origineX: number): void;
-  /** Poids de la main humaine de ce tigre (0 = patte, 1 = main), cf. `preparerMainHumaine`. */
+  /**
+   * Poids de la main humaine de ce tigre (0 = patte, 1 = main), cf. `preparerMainHumaine`, et
+   * torsion de l'os `mainD` du même poids (`torsionMainHumaine`). À appeler après `appliquer`.
+   */
   mainHumaine(poids: number): void;
   dispose(): void;
 }
@@ -205,6 +211,7 @@ export function creerTigre(m: ModeleTigre): Tigre {
   ombre.renderOrder = -1;
   groupe.add(ombre);
   const racine = sq.i.racine;
+  const osMain = sq.i.mainD, torsion = new THREE.Quaternion();
   return {
     groupe, os,
     appliquer(pose, origineX) {
@@ -223,6 +230,10 @@ export function creerTigre(m: ModeleTigre): Tigre {
     },
     mainHumaine(poids) {
       for (const m of maillages) if (m.morphTargetInfluences?.length) m.morphTargetInfluences[0] = poids;
+      // Torsion de la main (dos rayé face à la caméra) : après `appliquer`, qui recopie la pose sur
+      // les os à chaque image, donc la torsion ne s'accumule pas d'une image à l'autre.
+      const angle = torsionMainHumaine(poids);
+      if (angle !== 0) os[osMain].quaternion.multiply(torsion.setFromAxisAngle(AXE_TORSION, angle));
     },
     dispose() {
       ombre.geometry.dispose();

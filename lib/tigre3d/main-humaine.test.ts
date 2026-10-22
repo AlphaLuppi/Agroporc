@@ -8,7 +8,7 @@ import { readFileSync } from "node:fs";
 import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
 import {
   construireMainHumaine, mainCanonique, versMain, inverseAffine, nuanceurMainHumaine, disqueVersCarre,
-  COTE_POUCE, DOIGTS, type SortieMainHumaine,
+  COTE_POUCE, DECALAGE_RAYURES_DOIGTS, DOIGTS, RAYURES_DOS, TORSION_MAIN, torsionMainHumaine, type SortieMainHumaine,
 } from "./main-humaine";
 import { NOMS_OS } from "./os";
 import { subdiviserPatte } from "./subdivision-patte";
@@ -109,6 +109,70 @@ describe("main humaine : correspondance patte → main", () => {
     // Bout du pouce écarté de l'index (en travers) et plus court.
     expect(Math.abs(pouce.z - index.z)).toBeGreaterThan(0.15);
     expect(pouce.y).toBeLessThan(index.y);
+  });
+
+  it("auriculaire : à peine plus fin et plus court que l'annulaire, pas une lamelle", () => {
+    const [, majeur, annulaire, auriculaire] = DOIGTS;
+    expect(auriculaire.r0).toBeLessThan(annulaire.r0);
+    expect(auriculaire.r0).toBeGreaterThan(0.95 * annulaire.r0);
+    expect(auriculaire.long).toBeLessThan(annulaire.long);
+    expect(auriculaire.long).toBeGreaterThan(0.85 * annulaire.long);
+    // Sa bande en travers de la patte est aussi large que celle de l'annulaire.
+    expect(auriculaire.q1 - auriculaire.q0).toBeGreaterThan(0.95 * (annulaire.q1 - annulaire.q0));
+    // Bout de l'auriculaire : au moins 75 % de la hauteur du bout du majeur au-dessus de la paume
+    // (0,55 avant la correction, environ 0,8 sur une main humaine).
+    const paume = mainCanonique(0, 0.12, 0).y;
+    const bout = (d: (typeof DOIGTS)[number]) => mainCanonique((d.q0 + d.q1) / 2, 1, 0).y - paume;
+    expect(bout(auriculaire)).toBeGreaterThan(0.75 * bout(majeur));
+  });
+
+  it("torsion de mainD : nulle sans main, demi-tour à poids 1, continue, le pouce passe devant", () => {
+    expect(torsionMainHumaine(0)).toBe(0);
+    expect(torsionMainHumaine(-1)).toBe(0);
+    expect(torsionMainHumaine(Number.NaN)).toBe(0);
+    expect(torsionMainHumaine(1)).toBe(TORSION_MAIN);
+    expect(torsionMainHumaine(2)).toBe(TORSION_MAIN);
+    expect(Math.abs(TORSION_MAIN)).toBeCloseTo(Math.PI, 9);
+    // Proportionnelle au poids : continue et monotone, donc aucun saut à l'entrée ni à la sortie.
+    let avant = 0;
+    for (let k = 1; k <= 100; k++) {
+      const a = torsionMainHumaine(k / 100);
+      expect(Math.abs(a - avant)).toBeLessThan(0.04);
+      expect(Math.abs(a)).toBeGreaterThan(Math.abs(avant));
+      avant = a;
+    }
+    // Rotation autour de y (repère de l'os) : à mi-course, le côté du pouce (z = COTE_POUCE) est
+    // tourné vers la plante (x > 0, face à la caméra pendant la poignée de main), comme une
+    // pronation. À poids 1, la plante est tournée vers l'arrière (x < 0) : le dos fait face.
+    const tourner = (a: number, x: number, z: number) => ({ x: Math.cos(a) * x + Math.sin(a) * z, z: -Math.sin(a) * x + Math.cos(a) * z });
+    expect(tourner(torsionMainHumaine(0.5), 0, COTE_POUCE).x).toBeCloseTo(1, 9);
+    expect(tourner(torsionMainHumaine(1), 1, 0).x).toBeCloseTo(-1, 9);
+  });
+
+  it("rayures du dos : sur la partie visible du dos et des doigts, effilées, dans le nuanceur", () => {
+    expect(RAYURES_DOS.length).toBeGreaterThanOrEqual(4);
+    for (const r of RAYURES_DOS) {
+      expect(r.q1).toBeGreaterThan(r.q0);
+      expect(r.l).toBeGreaterThan(0);
+      expect(r.l).toBeLessThan(0.08);
+      // Dos visible de la main : de la base de la paume (w ≈ -0,1) au bout des doigts (w = 1).
+      expect(r.w).toBeGreaterThan(-0.1);
+      expect(r.w).toBeLessThan(1);
+      // Obliques dans le sens des chevrons de l'avant-bras, jamais des barres en travers.
+      expect(r.pente).toBeLessThan(-0.1);
+    }
+    // Un tronçon par doigt : deux doigts voisins n'ont jamais la même hauteur de rayure.
+    expect(DECALAGE_RAYURES_DOIGTS).toHaveLength(DOIGTS.length);
+    for (let k = 1; k < DECALAGE_RAYURES_DOIGTS.length; k++) {
+      expect(Math.abs(DECALAGE_RAYURES_DOIGTS[k] - DECALAGE_RAYURES_DOIGTS[k - 1])).toBeGreaterThan(0.03);
+    }
+    const code = nuanceurMainHumaine();
+    expect(code).toContain("mhR");
+    // Bord net calculé hors du test sur le poids (dérivée écran en flux uniforme).
+    expect(code.indexOf("fwidth( vMainHumaine.z )")).toBeGreaterThanOrEqual(0);
+    expect(code.indexOf("fwidth(")).toBeLessThan(code.indexOf("if ( vMainHumaine.x"));
+    // Rayures limitées à la face du dos (e < 0) et au poids de la déformation.
+    expect(code).toMatch(/mhK \* mhR \* \( 1\.0 - smoothstep\( -0\.35, 0\.05, mhE \) \)/);
   });
 
   it("disque → carré et inverse affine", () => {
@@ -219,17 +283,18 @@ describe("main humaine : cible de déformation du vrai maillage", () => {
 
   /**
    * Étirement des arêtes (longueur après / longueur avant), par catégorie, plafonds fixés après
-   * mesure du 2026-10-22 (valeur mesurée entre parenthèses). Une déchirure relie deux points
+   * mesure du 2026-10-22, auriculaire élargi (valeur mesurée entre parenthèses). Une déchirure relie deux points
    * éloignés de la main par une arête courte de la patte : elle dépasserait ces plafonds.
    * - « traversantes » : arêtes entre deux doigts (ou pouce et index) au-delà de la base des
-   *   doigts. Elles font les palmures, au fond des encoches. Longueur après bornée (0,203) : une
+   *   doigts. Elles font les palmures, au fond des encoches. Longueur après bornée (0,215) : une
    *   membrane entre deux doigts écartés dépasserait 0,3.
    * - « bords communs » : arêtes dont un sommet est sur la bande d'un bord commun (|v| > 0,3 dans
    *   sa bande). Cette bande étroite de la patte devient tout le flanc intérieur du doigt, de la
-   *   palmure au bout : étirement voulu (25,2), longueur après bornée (0,239).
+   *   palmure au bout : étirement voulu (25,5), longueur après bornée (0,236).
    * - « poignet » : déplacement atténué, triangles non subdivisés (8,2, longueur 0,285 pour une
    *   arête de 0,133 au repos).
-   * - « autres » : le reste des doigts, de la paume et du pouce (12,7, longueur 0,110).
+   * - « autres » : le reste des doigts, de la paume et du pouce (14,1, longueur 0,110). Le
+   *   flanc de la patte devient tout le côté extérieur de l'auriculaire, d'où l'étirement le plus fort.
    */
   it("aucune arête déchirée : étirement plafonné par catégorie", () => {
     const QP = DOIGTS[0].q0;
@@ -264,7 +329,7 @@ describe("main humaine : cible de déformation du vrai maillage", () => {
     expect(max["bords communs"].l).toBeLessThan(0.26);
     expect(max.poignet.r).toBeLessThan(9);
     expect(max.poignet.l).toBeLessThan(0.3);
-    expect(max.autres.r).toBeLessThan(14);
+    expect(max.autres.r).toBeLessThan(15.5);
     expect(max.autres.l).toBeLessThan(0.12);
   });
 
