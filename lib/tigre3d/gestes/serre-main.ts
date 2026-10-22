@@ -69,6 +69,34 @@ export const EVENEMENTS_SERRE_MAIN: readonly BulleSerreMain[] = BULLES_AFFICHEES
   return { t, type: "bulle", texte: b.texte, duree: +(fin - t + (suivante ? 0.05 : 0)).toFixed(3) };
 });
 
+/**
+ * Main humaine : pendant la poignée de main (images 156 à 204, patte d tendue vers la caméra et
+ * pendante), la patte avant droite se déforme en main humaine (lib/tigre3d/main-humaine.ts), puis
+ * redevient patte pendant qu'il retombe à quatre pattes. Image de départ, durées (s) de la montée
+ * et de la descente du poids de la déformation.
+ */
+export const IMAGE_MAIN_HUMAINE = 156;
+export const MONTEE_MAIN_HUMAINE = 0.5;
+export const DESCENTE_MAIN_HUMAINE = 0.4;
+/** Début de la montée (s depuis le début du geste) : ≈ 6,15 s. */
+export const DEBUT_MAIN_HUMAINE = ENTREE_SERRE_MAIN + IMAGE_MAIN_HUMAINE / CLIP_SERRE_MAIN.fps;
+/** Début de la descente : la fin du clip, quand il commence à retomber (≈ 7,75 s). */
+export const FIN_MAIN_HUMAINE = FIN_CLIP;
+
+const lisse = (x: number) => { const k = Math.min(1, Math.max(0, x)); return k * k * (3 - 2 * k); };
+
+/**
+ * Poids de la main humaine (0 = patte d'origine, 1 = main complète) à l'instant t (s depuis le
+ * début du geste) : 0 avant l'image 156, montée lissée (smoothstep) en `MONTEE_MAIN_HUMAINE` s,
+ * 1 jusqu'à la fin du clip, puis descente lissée en `DESCENTE_MAIN_HUMAINE` s, finie avant 8,2 s
+ * (le tigre n'a pas fini de retomber à quatre pattes).
+ */
+export function poidsMainHumaine(t: number): number {
+  if (!(t > DEBUT_MAIN_HUMAINE)) return 0;
+  if (t < FIN_MAIN_HUMAINE) return lisse((t - DEBUT_MAIN_HUMAINE) / MONTEE_MAIN_HUMAINE);
+  return 1 - lisse((t - FIN_MAIN_HUMAINE) / DESCENTE_MAIN_HUMAINE);
+}
+
 const ZERO: NonNullable<PoseGeste["poids"]> = {
   corps: 0, colonne: 0, cou: 0, tete: 0, machoire: 0, oreilles: 0, queue: 0, avG: 0, avD: 0, arG: 0, arD: 0,
 };

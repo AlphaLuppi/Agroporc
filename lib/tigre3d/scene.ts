@@ -13,6 +13,7 @@ import { squelette } from "./squelette";
 import type { Role } from "./os";
 import type { EvenementTigre } from "./animateur";
 import { PETITS_MAX, petitsPourEvenement, type Evenement } from "../tigre-courant";
+import { poidsMainHumaine } from "./gestes/serre-main";
 
 /** Hauteur de la fenêtre de vue en mètres de tigre : fixe l'échelle (px par mètre = hauteur du canvas / VUE_M). */
 export const VUE_M = 3.86;
@@ -237,6 +238,9 @@ export function creerScene(canvas: HTMLCanvasElement, opts: OptionsScene = {}): 
       t.groupe.scale.setScalar(ECHELLE_MODELE * m.echelle);
       t.groupe.position.set((m.x - centre) / pxm, 0, m.z);
       t.appliquer(m.anim.pose, m.anim.corps.x);
+      // Main humaine : la mère seulement, pendant la poignée de main de « serre-main ».
+      const r = m.anim.reaction;
+      t.mainHumaine(i === 0 && r?.nom === "serre-main" && r.tGeste != null ? poidsMainHumaine(m.anim.t - r.tGeste) : 0);
     });
     const m0 = troupe.mere;
     const eclair = m0.anim.mode === "eclair" && m0.anim.reaction === null && m0.anim.facteurVitesse > 0.5;
