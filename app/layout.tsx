@@ -4,6 +4,7 @@ import "./globals.css";
 import { ClientScripts } from "./components/ClientScripts";
 import { MyrtilleEasterEgg } from "./components/MyrtilleEasterEgg";
 import { MacronEasterEgg } from "./components/MacronEasterEgg";
+import { FondChatEasterEgg } from "./components/FondChatEasterEgg";
 import { TigreCourant } from "./components/TigreCourant";
 
 export const metadata: Metadata = {
@@ -445,6 +446,7 @@ export default function RootLayout({
         <ClientScripts />
         <MyrtilleEasterEgg />
         <MacronEasterEgg />
+        <FondChatEasterEgg />
         <TigreCourant />
       </body>
     </html>

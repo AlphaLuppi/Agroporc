@@ -18,6 +18,7 @@ import { GROUPE_DE, GROUPES, LONGUEUR_MODELE_M, type Groupe, type Role } from ".
 import { amortir, borne, ressort, type Ressort } from "./ressorts";
 import { clipNomme } from "./clips";
 import { GESTES } from "./gestes";
+import { seum } from "./gestes/seum";
 import type { ContexteGeste, Geste, PoseGeste } from "./gestes/types";
 import type { PoseTigre } from "./squelette";
 import {
@@ -124,6 +125,8 @@ export interface Animateur {
   reaction: EtatReaction | null;
   derniere: Reaction | null;
   figee: boolean;
+  /** Pris au lasso : il pend et se débat (geste « seum »), ni course ni réaction. */
+  tenu: boolean;
   /** Vitesse courante / vitesse de croisière (0 arrêté, 1 lancé). */
   facteurVitesse: number;
   /** Vitesse imposée (m/s du modèle, signée) : les petits calquent la mère. */
@@ -157,6 +160,10 @@ export interface Animateur {
   interrompre(): void;
   figer(v: boolean): void;
   courir(opts?: { mode?: ModeCourse; vitesse?: number; sens?: 1 | -1 }): void;
+  /** Lasso : coupe la réaction en cours, il a le seum et se débat jusqu'à `relacher`. */
+  attraper(): void;
+  /** Retombé au sol : il se remet sur ses pattes et file à l'éclair dans son sens. */
+  relacher(): void;
 }
 
 const poidsVides = () => Object.fromEntries(GROUPES.map((g) => [g, ressort(0)])) as Record<Groupe, Ressort>;
@@ -210,6 +217,7 @@ export function creerAnimateur({
     reaction: null,
     derniere: null,
     figee: false,
+    tenu: false,
     facteurVitesse: 1,
     vitesseImposee: null,
     zoneArret: null,
@@ -223,6 +231,7 @@ export function creerAnimateur({
     },
 
     clic(forcer = null) {
+      if (A.tenu) return "ignorer";
       const r = A.reaction;
       // Le second clic de la tape ne compte que patte levée et tant que la fenêtre est ouverte.
       const tg = r && r.tGeste != null ? A.t - r.tGeste : -1;
@@ -357,6 +366,8 @@ export function creerAnimateur({
         }
       }
       if (A.figee && !r) { vit = 0; cap = A.sens * 0.35; regard = 1; }
+      // Pendu au lasso : de profil (le canvas est tourné à l'écran), il nous fusille du regard.
+      if (A.tenu) { vit = 0; cap = A.sens * Math.PI / 2; regard = 0.8; }
 
       // Couches de geste : échantillonnage, poids lissés par groupe.
       const actives: Couche[] = [];
@@ -439,6 +450,27 @@ export function creerAnimateur({
       if (opts.mode) A.mode = opts.mode;
       if (opts.vitesse != null) A.vitesse = opts.vitesse;
       if (opts.sens != null) A.sens = opts.sens;
+    },
+
+    attraper() {
+      if (A.tenu) return;
+      A.tenu = true;
+      A.reaction = null;
+      A.figee = false;
+      for (const c of couches) c.actif = false;
+      couches.push({
+        geste: seum, t0: A.t, fin: Infinity, actif: true, poids: poidsVides(), derniere: {}, avance: 0,
+        ctx: { sens: A.sens, tClap: null, tVexe: null, humeur: "grognon", clip: clipNomme, temps: A.t },
+      });
+      emettre({ type: "bulle", texte: texteBulle("seum", alea()), duree: 2.6 });
+    },
+    relacher() {
+      if (!A.tenu) return;
+      A.tenu = false;
+      for (const c of couches) c.actif = false;
+      A.mode = "eclair";
+      emettre({ type: "bulle", texte: texteBulle("libre", alea()), duree: 1.2 });
+      emettre({ type: "fuite", sens: A.sens });
     },
   };
 

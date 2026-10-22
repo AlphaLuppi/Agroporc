@@ -230,6 +230,8 @@ body::before {
   pointer-events: none;
   z-index: 0;
 }
+/* Easter egg « cat » (app/components/FondChatEasterEgg.tsx) : le gif remplace le motif du thème. */
+html.pdj-fond-chat body::before { display: none; }
 
 /* ── SVG icons ────────────────────────────────── */
 .icon {

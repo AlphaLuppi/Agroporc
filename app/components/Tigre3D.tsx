@@ -8,6 +8,7 @@ import type { InfosImage, ParamsPassage, Scene3D } from "@/lib/tigre3d/scene";
 import type { Embuscade } from "@/lib/tigre3d/embuscade";
 import { canalRencontre } from "@/lib/rencontre";
 import { useCalendrierTigre } from "./useCalendrierTigre";
+import { useLassoTigre } from "./LassoTigre";
 import styles from "./Tigre3D.module.css";
 
 interface Bulle { id: number; texte: string }
@@ -55,6 +56,9 @@ export function Tigre3D({ surEchec }: { surEchec: () => void }) {
   const [nZones, setNZones] = useState(0);
   const [bulle, setBulle] = useState<Bulle | null>(null);
   const [particules, setParticules] = useState<ParticulePosee[]>([]);
+  const lasso = useLassoTigre({
+    sceneRef, conteneurRef, zoneMere: () => zonesRef.current[0] ?? null, largeurTigre: largeurTigrePx,
+  });
 
   const apres = (ms: number, fn: () => void) => {
     const t = setTimeout(() => { minuteursRef.current.delete(t); fn(); }, ms);
@@ -208,6 +212,7 @@ export function Tigre3D({ surEchec }: { surEchec: () => void }) {
       evenement: surEvenement,
       image: surImage,
       fin: toutNettoyer,
+      tenue: (dt) => lasso.tenue(dt),
     });
     conteneur.style.height = `${taille.hauteur}px`;
     setNZones(1 + petits);
@@ -241,7 +246,7 @@ export function Tigre3D({ surEchec }: { surEchec: () => void }) {
     libre: () => !passageEnCoursRef.current && modelePret()
       && !(process.env.NODE_ENV !== "production" && window.__tigreAuto === false),
     partir: (evenement, petits) => partirRef.current(evenement, petits),
-    arret: () => { sceneRef.current?.arreter(); toutNettoyer(); },
+    arret: () => { sceneRef.current?.arreter(); toutNettoyer(); lasso.oublier(); },
   });
 
   // Rencontre annulée sans erreur : onglet caché, ou démontage (changement de thème, WebGL perdu).
@@ -269,6 +274,7 @@ export function Tigre3D({ surEchec }: { surEchec: () => void }) {
       passage: (evenement = "normal", opts = {}) => {
         sceneRef.current?.arreter();
         toutNettoyer();
+        lasso.oublier();
         if (!modelePret()) {
           // Premier passage : le modèle se charge, on relance une fois prêt.
           void sceneRef.current?.precharger().then(() => window.__tigre?.passage(evenement, opts));
@@ -312,35 +318,38 @@ export function Tigre3D({ surEchec }: { surEchec: () => void }) {
   // pointerdown et non click : le tigre bouge, un click (mousedown + mouseup sur le même
   // élément) est perdu dès que la cible a filé entre les deux, surtout en éclair.
   const toucher = (e: PointerEvent) => {
-    if (e.button !== 0) return;
+    if (e.button !== 0 || lasso.occupe()) return;
     sceneRef.current?.clic();
   };
 
   return (
-    <div ref={conteneurRef} className={styles.conteneur} aria-hidden="true">
-      <canvas ref={canvasRef} className={styles.canvas} />
-      {Array.from({ length: nZones }, (_, i) => (
-        <div
-          key={i}
-          ref={(el) => { zonesRef.current[i] = el; }}
-          className={styles.zone}
-          onPointerDown={toucher}
-        />
-      ))}
-      {bulle && <span key={bulle.id} ref={bulleRef} className={styles.bulle}>{bulle.texte}</span>}
-      {particules.map((p) => (
-        <span
-          key={p.id}
-          className={`${styles.particule} ${p.genre === "zzz" ? styles.zzz : ""}`}
-          style={{
-            left: `${p.x}px`, top: `${p.y}px`,
-            "--dx": `${p.dx}px`, "--dy": `${p.dy}px`, animationDelay: `${p.retardMs}ms`,
-          } as CSSProperties}
-        >
-          {p.glyphe}
-        </span>
-      ))}
-    </div>
+    <>
+      <div ref={conteneurRef} className={styles.conteneur} aria-hidden="true">
+        <canvas ref={canvasRef} className={styles.canvas} />
+        {Array.from({ length: nZones }, (_, i) => (
+          <div
+            key={i}
+            ref={(el) => { zonesRef.current[i] = el; }}
+            className={styles.zone}
+            onPointerDown={toucher}
+          />
+        ))}
+        {bulle && <span key={bulle.id} ref={bulleRef} className={styles.bulle}>{bulle.texte}</span>}
+        {particules.map((p) => (
+          <span
+            key={p.id}
+            className={`${styles.particule} ${p.genre === "zzz" ? styles.zzz : ""}`}
+            style={{
+              left: `${p.x}px`, top: `${p.y}px`,
+              "--dx": `${p.dx}px`, "--dy": `${p.dy}px`, animationDelay: `${p.retardMs}ms`,
+            } as CSSProperties}
+          >
+            {p.glyphe}
+          </span>
+        ))}
+      </div>
+      {lasso.rendu}
+    </>
   );
 }
 
