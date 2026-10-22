@@ -16,7 +16,15 @@ export function MyrtilleEasterEgg() {
   const [open, setOpen] = useState(false);
   // Score de la chasse au tigre : gardé ici, il survit à la fermeture de la vue (pas au rechargement).
   const [partie, setPartie] = useState<PartieTigre>({ score: 0, tigres: 0 });
-  useEffect(() => listenForCode(() => setOpen((o) => !o)), []);
+  useEffect(
+    () => listenForCode(() => {
+      // En pleine partie dans l'arène (Agroparc3D pose `data-arene`), retaper le code ne ferme rien :
+      // on ne quitte pas un match par accident, le menu pause a son bouton « Quitter l'arène ».
+      if (document.querySelector('[data-arene="actif"]')) return;
+      setOpen((o) => !o);
+    }),
+    [],
+  );
   return open ? (
     <Agroparc3D
       onClose={() => setOpen(false)}

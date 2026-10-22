@@ -130,7 +130,7 @@ class Grille {
   }
 }
 
-function dedans(x: number, z: number, anneau: Vec2[]): boolean {
+export function dedans(x: number, z: number, anneau: Vec2[]): boolean {
   let d = false;
   for (let i = 0, j = anneau.length - 1; i < anneau.length; j = i++) {
     const [xi, zi] = anneau[i], [xj, zj] = anneau[j];
@@ -140,7 +140,7 @@ function dedans(x: number, z: number, anneau: Vec2[]): boolean {
 }
 
 /** Distance du point au segment ab, et paramètre du projeté. */
-function distSegment(x: number, z: number, ax: number, az: number, bx: number, bz: number): number {
+export function distSegment(x: number, z: number, ax: number, az: number, bx: number, bz: number): number {
   const ux = bx - ax, uz = bz - az, l2 = ux * ux + uz * uz;
   const t = l2 > 0 ? Math.max(0, Math.min(1, ((x - ax) * ux + (z - az) * uz) / l2)) : 0;
   return Math.hypot(x - ax - t * ux, z - az - t * uz);

@@ -4,7 +4,10 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { Chakra_Petch, IBM_Plex_Mono } from "next/font/google";
 import type { Carte, PdjEntry, Plat } from "@/lib/db";
 import type { Poi, SceneData } from "@/lib/agroparc3d/types";
-import type { SceneHandle } from "@/lib/agroparc3d/scene";
+import type { JoueurAerien, SceneHandle } from "@/lib/agroparc3d/scene";
+import type { JeuHandle, HudEtat } from "@/lib/fps/jeu";
+import { ARMES, type ArmeId, type Vec3 } from "@/lib/fps/protocole";
+import { nomPersonnage } from "@/lib/characters";
 import { lireCachettes, type Cachette, type FichierCachettes } from "@/lib/agroparc3d/cachettes";
 import { etatRestaurant } from "@/lib/agroparc3d/panneau";
 import { couleurNote, remplissage } from "@/lib/agroparc3d/jauge";
@@ -14,6 +17,10 @@ import { variantesPlat, type VariantePlat } from "@/lib/plat-options";
 import { restoParNom } from "@/lib/restaurants";
 import { CLE_CLASSEMENT, messageEnregistre } from "@/lib/tigre-scores";
 import RestoBadge from "./RestoBadge";
+import Arene from "./arene/Arene";
+import HudArene from "./arene/HudArene";
+import { useArene } from "./arene/useArene";
+import { ecrireTouches, lireTouches, stockageNavigateur, type ConfigTouches } from "@/lib/fps/touches";
 import { CLASSEMENT_INDISPONIBLE, EnregistrerScore, PanneauClassement } from "./ClassementTigre";
 import styles from "./Agroparc3D.module.css";
 
@@ -51,6 +58,37 @@ function lireClassementOuvert(): boolean {
 function dansUnChamp(cible: EventTarget | null): boolean {
   const el = cible as HTMLElement | null;
   return !!el && (el.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName));
+}
+
+const CLE_PSEUDO = "pdj-fps-pseudo";
+const CLE_ARME = "pdj-fps-arme";
+const CLE_SENSIBILITE = "pdj-fps-sensibilite";
+/** Personnage choisi dans les commentaires (app/CommentForm.tsx) : pseudo par défaut dans l'arène. */
+const CLE_PERSONNAGE = "pdj-selected-character";
+
+/** Pseudo enregistré, sinon le personnage des commentaires, sinon « Agent ». */
+function pseudoInitial(): string {
+  try {
+    const p = localStorage.getItem(CLE_PSEUDO);
+    if (p) return p;
+    const c = localStorage.getItem(CLE_PERSONNAGE);
+    if (c) return nomPersonnage(c);
+  } catch { /* stockage indisponible */ }
+  return "Agent";
+}
+function armeInitiale(): ArmeId {
+  try {
+    const a = localStorage.getItem(CLE_ARME) as ArmeId | null;
+    if (a && ARMES.includes(a)) return a;
+  } catch { /* stockage indisponible */ }
+  return "pistolet";
+}
+function sensibiliteInitiale(): number {
+  try {
+    const v = Number(localStorage.getItem(CLE_SENSIBILITE));
+    if (Number.isFinite(v) && v >= 0.2 && v <= 3) return v;
+  } catch { /* stockage indisponible */ }
+  return 1;
 }
 
 /** Menu du jour : celui d'aujourd'hui si publié, sinon le plus récent. */
@@ -102,12 +140,88 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
   // Mode choisi sur le site : les jauges le suivent, la vue ne le modifie pas.
   const [mode] = useModeSite();
 
+  // ---------- arène FPS ----------
+  // Le canvas est NEUF à chaque bascule (vue aérienne ↔ arène) : un contexte WebGL perdu à la
+  // destruction de la vue précédente ne peut pas être réutilisé sur le même élément.
+  const [enArene, setEnArene] = useState(false);
+  const [cleCanvas, setCleCanvas] = useState(0);
+  const [areneOuverte, setAreneOuverte] = useState(false);
+  const [hud, setHud] = useState<HudEtat | null>(null);
+  const [pseudoSaisi, setPseudoSaisi] = useState(pseudoInitial);
+  const [pseudoConnecte, setPseudoConnecte] = useState(() => pseudoInitial().trim() || "Agent");
+  const [arme, setArme] = useState<ArmeId>(armeInitiale);
+  const [sensibilite, setSensibilite] = useState(sensibiliteInitiale);
+  const [touches, setTouches] = useState<ConfigTouches>(() => lireTouches(stockageNavigateur()));
+  const [tactile, setTactile] = useState(false);
+  const jeuRef = useRef<JeuHandle | null>(null);
+  const arene = useArene(pseudoConnecte, jeuRef);
+  const enAreneRef = useRef(enArene);
+  enAreneRef.current = enArene;
+  const armeRef = useRef(arme);
+  armeRef.current = arme;
+  const sensibiliteRef = useRef(sensibilite);
+  sensibiliteRef.current = sensibilite;
+
+  useEffect(() => {
+    setTactile(matchMedia("(pointer: coarse)").matches && !matchMedia("(any-pointer: fine)").matches);
+  }, []);
+  // Le pseudo saisi part au serveur après une courte pause de frappe (message « pseudo », sans
+  // reconnexion : possible aussi en pleine partie, depuis le menu pause).
+  useEffect(() => {
+    const t = setTimeout(() => setPseudoConnecte(pseudoSaisi.trim() || "Agent"), 400);
+    return () => clearTimeout(t);
+  }, [pseudoSaisi]);
+  const saisirPseudo = (v: string) => {
+    setPseudoSaisi(v);
+    try { localStorage.setItem(CLE_PSEUDO, v); } catch { /* non retenu */ }
+  };
+  const choisirArme = (a: ArmeId) => {
+    setArme(a);
+    jeuRef.current?.choisirArme(a);
+    try { localStorage.setItem(CLE_ARME, a); } catch { /* non retenu */ }
+  };
+  const regler = (x: number) => {
+    setSensibilite(x);
+    jeuRef.current?.sensibilite(x);
+    try { localStorage.setItem(CLE_SENSIBILITE, String(x)); } catch { /* non retenu */ }
+  };
+  const reglerTouches = (cfg: ConfigTouches) => {
+    setTouches(cfg);
+    jeuRef.current?.touches(cfg);
+    ecrireTouches(cfg, stockageNavigateur());
+  };
+  const entrerArene = () => {
+    if (!scene || !arene.monId) return;
+    // le nom tapé juste avant de cliquer part tout de suite, sans attendre la pause de frappe
+    const nom = pseudoSaisi.trim() || "Agent";
+    setPseudoConnecte(nom);
+    arene.clientRef.current?.renommer(nom);
+    setSelected(null);
+    setAreneOuverte(false);
+    setCleCanvas((k) => k + 1);
+    setEnArene(true);
+  };
+  const quitterArene = () => {
+    setCleCanvas((k) => k + 1);
+    setEnArene(false);
+  };
+  const quitterRef = useRef(quitterArene);
+  quitterRef.current = quitterArene;
+  // Le bouton « Entrer » / « Quitter l'arène » disparaît avec son panneau : sans cela le focus tombe sur
+  // <body>, hors du dialogue. On le ramène sur la racine à chaque bascule (pas au montage : déjà fait plus bas).
+  const basculeVue = useRef(false);
+  useEffect(() => {
+    if (basculeVue.current) rootRef.current?.focus({ preventScroll: true });
+    basculeVue.current = true;
+  }, [enArene]);
+
   // Échap ferme la vue, sauf dans un champ de saisie (le champ gère alors Échap lui-même).
   const fermerRef = useRef(onClose);
   fermerRef.current = onClose;
   useEffect(() => {
     const surTouche = (e: KeyboardEvent) => {
-      if (e.key !== "Escape" || e.defaultPrevented || dansUnChamp(e.target)) return;
+      // En arène, Échap libère la souris (menu pause) : il ne ferme jamais la vue.
+      if (e.key !== "Escape" || e.defaultPrevented || enAreneRef.current || dansUnChamp(e.target)) return;
       e.preventDefault();
       fermerRef.current?.();
     };
@@ -154,7 +268,8 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
   }, []);
 
   useEffect(() => {
-    if (!scene || !canvasRef.current || !labelsRef.current) return;
+    // En arène, c'est lib/fps/jeu.ts qui dessine : la vue aérienne est détruite puis recréée à la sortie.
+    if (!scene || enArene || !canvasRef.current || !labelsRef.current) return;
     let handle: SceneHandle | null = null;
     let cancelled = false;
     import("@/lib/agroparc3d/scene")
@@ -166,7 +281,7 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
           setEvents((evs) => [...evs, { id: now.getTime() + Math.random(), time, tag, text }].slice(-3));
         };
         handle = createAgroparcScene(canvasRef.current, labelsRef.current, scene.data, {
-          onSelect: (poi) => setSelected(poi),
+          onSelect: (poi) => { setSelected(poi); setAreneOuverte(false); },
           onEvent: journal,
           onTigre: (c) => {
             journal("TIGRE", `Tigre débusqué, cachette ${c.palier}, +${c.points}`);
@@ -179,7 +294,66 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
       })
       .catch((e: Error) => setError(`Le rendu 3D n'a pas pu démarrer (${e.message}). WebGL est-il activé ?`));
     return () => { cancelled = true; handle?.dispose(); handleRef.current = null; };
-  }, [scene]);
+  }, [scene, enArene, cleCanvas]);
+
+  // Partie FPS sur le canvas neuf ; three et le jeu ne sont chargés qu'à la première entrée.
+  useEffect(() => {
+    if (!enArene || !scene || !canvasRef.current) return;
+    const canvas = canvasRef.current;
+    let jeu: JeuHandle | null = null;
+    let annule = false;
+    import("@/lib/fps/jeu")
+      .then(({ lancerJeu }) => {
+        const client = arene.clientRef.current;
+        if (annule) return;
+        if (!client) { quitterRef.current(); return; }
+        jeu = lancerJeu(canvas, scene.data, client, armeRef.current, {
+          hud: setHud,
+          evenement: arene.pousserEvenement,
+          sortir: () => quitterRef.current(),
+          erreur: (texte) => setMessage({ id: Date.now(), texte }),
+        });
+        jeuRef.current = jeu;
+        jeu.sensibilite(sensibiliteRef.current);
+        // le jeu n'a pas vu le « bienvenue » : pseudos, couleurs et phase du match
+        jeu.recevoir({ t: "presence", joueurs: arene.joueursRef.current });
+        if (arene.matchRef.current) jeu.recevoir({ t: "match", match: arene.matchRef.current, classement: [] });
+      })
+      .catch((e: Error) => {
+        setMessage({ id: Date.now(), texte: `L'arène n'a pas pu démarrer (${e.message}). WebGL est-il activé ?` });
+        quitterRef.current();
+      });
+    return () => {
+      annule = true;
+      jeu?.dispose();
+      if (jeuRef.current === jeu) jeuRef.current = null;
+      setHud(null);
+    };
+    // `arene` change à chaque rendu : seules ses refs et son callback stable servent ici
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enArene, scene, cleCanvas]);
+
+  // Spectateurs : les joueurs en jeu apparaissent dans la vue aérienne (marqueur à leur couleur + pseudo).
+  useEffect(() => {
+    if (enArene || !ready) return;
+    const maj = () => {
+      const h = handleRef.current;
+      if (!h) return;
+      const liste: JoueurAerien[] = [];
+      // le serveur n'envoie plus d'instantané quand personne ne joue : au-delà de 2 s, plus personne
+      if (Date.now() - arene.snapTRef.current < 2000) {
+        for (const e of arene.snapRef.current) {
+          const j = arene.joueursRef.current.find((x) => x.id === e.id);
+          if (e.vivant && j?.enJeu) liste.push({ id: j.id, pseudo: j.pseudo, couleur: j.couleur, p: e.p });
+        }
+      }
+      h.joueurs(liste);
+    };
+    maj();
+    const i = setInterval(maj, 250);
+    return () => { clearInterval(i); handleRef.current?.joueurs([]); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enArene, ready, cleCanvas]);
 
   // Le message du classement s'efface après 6 s.
   useEffect(() => {
@@ -213,17 +387,43 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
     return () => { delete window.__palantir; };
   }, [ready, scene]);
 
+  // Crochet de développement de l'arène : état, entrer, téléporter, forcer un tir (tests bout à bout).
+  const dev = useRef({ arene, hud, enArene });
+  dev.current = { arene, hud, enArene };
+  useEffect(() => {
+    if (process.env.NODE_ENV === "production") return;
+    window.__arene = {
+      etat: () => ({
+        connexion: dev.current.arene.etat, monId: dev.current.arene.monId, joueurs: dev.current.arene.joueurs,
+        match: dev.current.arene.match, enArene: dev.current.enArene, hud: dev.current.hud,
+        jeu: jeuRef.current?.debug.etat() ?? null,
+      }),
+      entrer: (a) => { if (a) choisirArmeRef.current(a); entrerRef.current(); },
+      quitter: () => quitterRef.current(),
+      teleporter: (p) => jeuRef.current?.debug.teleporter(p),
+      regarder: (lacet, tangage) => jeuRef.current?.debug.regarder(lacet, tangage),
+      tirerVers: (id) => jeuRef.current?.debug.tirerVers(id) ?? false,
+      touche: (code, appuyee) => jeuRef.current?.debug.touche(code, appuyee),
+    };
+    return () => { delete window.__arene; };
+  }, []);
+  const entrerRef = useRef(entrerArene);
+  entrerRef.current = entrerArene;
+  const choisirArmeRef = useRef(choisirArme);
+  choisirArmeRef.current = choisirArme;
+
   // Plat du jour du POI cliqué (+ carte permanente en dépliant), ou statut + carte quand il n'en a pas.
   const chargement = !ready || !!error;
   const etat = selected ? etatRestaurant(selected, pdj, new Date().toLocaleDateString("en-CA")) : null;
 
   return (
-    <div ref={rootRef} tabIndex={-1} className={`${styles.root} ${display.variable} ${mono.variable}`} role="dialog" aria-modal="true" aria-label="Agroparc en 3D">
-      <canvas ref={canvasRef} className={styles.canvas} />
+    <div ref={rootRef} tabIndex={-1} className={`${styles.root} ${display.variable} ${mono.variable}`} role="dialog" aria-modal="true" aria-label="Agroparc en 3D" data-arene={enArene ? "actif" : undefined}>
+      <canvas key={cleCanvas} ref={canvasRef} className={styles.canvas} />
       <div ref={labelsRef} className={styles.labels} />
-      <div className={styles.vignette} />
+      {!enArene && <div className={styles.vignette} />}
 
       {/* Tant que l'écran de chargement / d'erreur recouvre le HUD, ses boutons ne sont pas atteignables au clavier. */}
+      {!enArene && (<>
       <header className={`${styles.hud} ${styles.hudTl}`} inert={chargement}>
         <h1 className={styles.title}>Agroporc x Palantir</h1>
         <p className={styles.score} aria-live="polite">
@@ -245,8 +445,11 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
               surEchec={() => setMessage({ id: Date.now(), texte: CLASSEMENT_INDISPONIBLE })}
             />
           )}
-          <button type="button" className={styles.action} aria-expanded={classementOuvert && !selected} onClick={() => ouvrirClassement(!(classementOuvert && !selected))}>
+          <button type="button" className={styles.action} aria-expanded={classementOuvert && !selected && !areneOuverte} onClick={() => { setAreneOuverte(false); ouvrirClassement(!(classementOuvert && !selected && !areneOuverte)); }}>
             Classement
+          </button>
+          <button type="button" className={styles.action} aria-expanded={areneOuverte} onClick={() => { setSelected(null); setAreneOuverte((o) => !o); }}>
+            Arène{arene.etat === "ouvert" && arene.joueurs.length > 0 && ` · ${arene.joueurs.length} en ligne`}
           </button>
         </div>
         {message && <p key={message.id} className={styles.message} role="status">{message.texte}</p>}
@@ -258,7 +461,9 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
           <span aria-hidden="true">←</span> Retour au site
         </button>
       )}
+      </>)}
 
+      {!enArene && (<>
       <div className={`${styles.hud} ${styles.hudBl}`} inert={chargement}>
         <div className={styles.legend}>
           <span className={styles.kHome}>CBA</span>
@@ -283,13 +488,55 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
           ))}
         </div>
       </div>
+      </>)}
 
       {/* Un seul panneau à droite : le restaurant choisi passe devant le classement, qui reste ouvert derrière. */}
-      {classementOuvert && !selected && (
+      {!enArene && areneOuverte && !selected && (
+        <Arene
+          etat={arene.etat}
+          monId={arene.monId}
+          joueurs={arene.joueurs}
+          match={arene.match}
+          pseudo={pseudoSaisi}
+          surPseudo={saisirPseudo}
+          arme={arme}
+          surArme={choisirArme}
+          surEntrer={entrerArene}
+          surFermer={() => setAreneOuverte(false)}
+          erreur={arene.erreur}
+          tactile={tactile}
+          pseudoParDefaut={!pseudoSaisi.trim() || pseudoSaisi.trim() === "Agent"}
+        />
+      )}
+
+      {enArene && (
+        <HudArene
+          hud={hud}
+          monId={arene.monId}
+          joueurs={arene.joueurs}
+          match={arene.match}
+          classement={arene.classement}
+          fil={arene.fil}
+          evenements={arene.evenements}
+          derniereMort={arene.derniereMort}
+          maintenantServeur={() => arene.clientRef.current?.maintenantServeur() ?? Date.now()}
+          sensibilite={sensibilite}
+          surSensibilite={regler}
+          touches={touches}
+          surTouches={reglerTouches}
+          pseudo={pseudoSaisi}
+          surPseudo={saisirPseudo}
+          surReprendre={() => jeuRef.current?.verrouiller()}
+          surChoisirArme={choisirArme}
+          surQuitter={quitterArene}
+        />
+      )}
+
+      {!enArene && classementOuvert && !selected && !areneOuverte && (
         <PanneauClassement version={versionClassement} surFermer={() => ouvrirClassement(false)} />
       )}
 
-      {selected && etat && (
+      {!enArene && selected && etat && (
         <aside className={styles.panel} aria-live="polite">
           <p className={`${styles.eyebrow} ${styles.panelHead}`}>
             <span>{[etat.kind === "plat" ? "Plat du jour" : "Restaurant", pdj?.date && fmtDate(pdj.date, false)].filter(Boolean).join(" · ")}</span>
@@ -469,6 +716,18 @@ function CarteMini({ slug, mode }: { slug: string; mode: Mode }) {
 
 declare global {
   interface Window {
+    /** Crochet de test de l'arène FPS, présent en développement seulement. */
+    __arene?: {
+      etat(): Record<string, unknown>;
+      entrer(arme?: ArmeId): void;
+      quitter(): void;
+      teleporter(p: Vec3): void;
+      regarder(lacet: number, tangage: number): void;
+      /** Vise le centre du joueur `id` et tire sans dispersion. */
+      tirerVers(id: string): boolean;
+      /** Appuie (true) ou relâche (false) une touche par son `KeyboardEvent.code`, sans pointer lock. */
+      touche(code: string, appuyee: boolean): void;
+    };
     /** Crochet de test de la chasse au tigre, présent en développement seulement. */
     __palantir?: {
       cachette(): Cachette | null;
