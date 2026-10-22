@@ -66,13 +66,31 @@ Génération :
 1. Échantillonner une grille irrégulière d'un pas d'environ 6 m sur la zone jouable.
 2. Écarter les points à moins de 1,5 m d'un bâtiment, à moins de 4 m d'une route, ou dans l'eau.
 3. Calculer la difficulté de chaque point restant.
-4. Ne garder que les points tapis contre un bâtiment, dont le mur le plus proche est à moins de 8 m, et masqués par un bâtiment depuis au moins 2 des 8 caméras décrites plus bas. Une caméra compte quand au moins 3 des 5 points du corps du tigre sont masqués depuis elle.
+4. Ne garder que les points tapis contre un bâtiment, dont le mur le plus proche est à moins de 5 m, et masqués par un bâtiment depuis au moins 3 des 8 caméras décrites plus bas. Une caméra compte quand les 5 points du corps du tigre sont masqués depuis elle.
 5. Écarter le quart des points les moins difficiles.
-6. Garder au moins 500 cachettes. Un test le vérifie sur le vrai `scene.json`.
+6. Garder au moins 300 cachettes (le minimum de 500 a été abaissé, voir la décision appliquée plus bas). Un test le vérifie sur le vrai `scene.json`.
 
 *Décision prise après revue de code, le 2026-10-22* : l'étape 4 a été ajoutée parce que, sans elle, l'éloignement suffisait à classer un point en terrain nu dans les paliers facile et moyenne. Mesure sur le vrai `scene.json` : 94 % des cachettes faciles et 88 % des moyennes n'avaient aucun masquage, et 57 % des tirages montraient le tigre à découvert. Le masquage seul admettait encore des points en terrain dégagé à 15 ou 20 m d'un mur, d'où la condition des 8 m. Les arbres ne suffisent pas à admettre un point, parce qu'ils sont dessinés en fil de fer translucide et ne cachent pas le tigre. Avec cette étape, 681 cachettes sont gardées.
 
 *Décision de l'utilisateur, le 2026-10-22* : la règle doit être plus dure. Il faut moins de cachettes, mieux masquées. Le seuil du mur, le nombre de caméras masquées et le nombre de points du corps masqués se resserrent, tant que la règle des 80 m reste tenable et que le minimum de 500 cachettes est atteint. Si ce minimum empêche de durcir la règle, il passe à 300.
+
+*Décision appliquée le 2026-10-22* : mur à moins de 5 m (8 m avant), masqué depuis au moins 3 caméras (2 avant), corps entier masqué depuis chacune (5 points sur 5, 3 sur 5 avant). Cela garde 341 cachettes (681 avant). Le minimum de 500 empêche de durcir : resserrer les trois réglages ensemble donne au plus 451 cachettes (mur à 7 m, 3 caméras, 4 points), et à 500 ou plus le meilleur masquage depuis le départ est 62,1 % des points du corps contre 58,5 % avant (3 caméras, 3 points, mur à 8 m, 513 cachettes), sans toucher au seuil du mur. Le minimum passe donc à 300, comme la décision de l'utilisateur le prévoit. Mesure sur le vrai `scene.json` (7 030 points évalués avant filtre). « Départ » désigne la première des 8 caméras, celle de la vue de départ. Les parts sont pondérées par la probabilité de tirage (palier 15, 45 et 40 %, puis cachette uniforme dans le palier), pas par le nombre de cachettes. La règle des 80 m est mesurée sur 20 000 tirages enchaînés.
+
+| Réglage (mur, caméras, points) | Cachettes | Aucun point masqué depuis le départ | Points du corps masqués depuis le départ, en moyenne | Règle des 80 m |
+|---|---|---|---|---|
+| 8 m, 2, 3 (avant) | 681 | 38,5 % | 58,5 % | tenue |
+| 8 m, 3, 3 | 513 | 35,5 % | 62,1 % | tenue |
+| 7 m, 3, 4 | 451 | 36,0 % | 61,9 % | tenue |
+| 6 m, 3, 4 | 408 | 35,3 % | 62,5 % | tenue |
+| **5 m, 3, 5 (retenu)** | **341** | **33,0 %** | **64,7 %** | tenue |
+| 8 m, 4, 3 | 309 | 29,0 % | 68,5 % | tenue |
+| 7 m, 4, 3 | 294 | 30,1 % | 67,4 % | tenue |
+
+« Tenue » veut dire aucun tirage à moins de 80 m d'une des 5 cachettes précédentes et aucun repli sur un autre palier, dans tous les réglages mesurés à partir de 53 cachettes (le repli sur un autre palier n'apparaît qu'avec moins de 30 cachettes), donc cette règle ne départage pas les réglages. Le nombre de caméras est le seul réglage qui améliore nettement le masquage depuis le départ. Le seuil du mur et le nombre de points du corps le déplacent de un à deux points, mais ils rendent le tigre réellement tapi contre un mur et masqué en entier depuis les caméras comptées. À 4 caméras, il ne reste que 309 cachettes avec un mur à 8 m, donc aucune marge pour resserrer les deux autres réglages.
+
+*Limite constatée, non appliquée* : aucun réglage de ces trois seuils ne garantit que le tigre est caché depuis la vue de départ, parce que la règle compte les caméras parmi les 8 sans privilégier la première. Avec les réglages retenus, un tirage sur trois environ (33,0 %) n'a aucun point du corps masqué depuis le départ. Vérifié à l'écran avec `window.__palantir.ecran()` sur les 341 cachettes (probabilités de tirage appliquées) : 32,5 % des tirages tombent hors du cadre de la vue de départ (28,3 % avant), 16,7 % sont dans le cadre sans aucun point masqué (24,4 % avant), les autres sont dans le cadre avec au moins un point masqué. Une condition supplémentaire, « le tigre est aussi masqué depuis la caméra de départ », donnerait 100 % de tirages masqués au départ : 322 cachettes avec les réglages d'origine (8 m, 2, 3), 179 avec les réglages retenus (5 m, 3, 5), ce qui passerait sous le minimum de 300. Ce quatrième réglage n'est pas dans la décision de l'utilisateur, il lui revient de le trancher.
+
+*Variante à trancher par l'utilisateur* (relecture indépendante, mesurée sur le même `scene.json`) : avec la condition « masqué depuis la caméra de départ », aucun réglage ne garde 300 cachettes en resserrant le mur ou le nombre de caméras. Seuls tiennent le mur à 8 m et 2 caméras, avec 322 cachettes à 3 points du corps masqués (au moins 3 sur 5 depuis le départ) ou 306 cachettes à 4 points. Ces deux réglages masquent 100 % des tirages au départ et tiennent la règle des 80 m (aucune violation, aucun repli sur 20 000 tirages). Elle coûte le reste de la décision : seul le nombre de points du corps se resserre (3 vers 4), le mur reste à 8 m et 2 caméras suffisent, dont celle du départ. Depuis les 7 autres caméras, le masquage devient alors celui d'avant la décision, voire un peu moins bon : sans aucun point masqué, 48,9 % des tirages (48,0 % avant, 42,4 % avec les réglages retenus). Le tigre est aussi moins tapi (mur moyen de 3,5 m contre 2,9 m). Comme le joueur pivote librement, les réglages retenus restent plus durs pour qui tourne, la variante l'est plus pour qui reste sur la vue de départ. Le tigre mesure déjà quelques pixels depuis le départ (taille réelle), et le joueur doit zoomer et tourner pour le trouver dans les deux cas.
 
 La **difficulté** d'une cachette, entre 0 et 1, est une somme pondérée de quatre critères, chacun entre 0 et 1 :
 

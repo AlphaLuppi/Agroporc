@@ -29,8 +29,8 @@ function distSeg(x: number, z: number, a: [number, number], b: [number, number])
 }
 
 describe("cachettes du tigre (vrai scene.json)", () => {
-  it("garde au moins 500 cachettes, dans la zone jouable", () => {
-    expect(cachettes.length).toBeGreaterThanOrEqual(500);
+  it("garde au moins 300 cachettes, dans la zone jouable", () => {
+    expect(cachettes.length).toBeGreaterThanOrEqual(300);
     const z = zoneJouable(scene);
     for (const c of cachettes) {
       expect(c.x).toBeGreaterThanOrEqual(z.x0);
@@ -79,7 +79,7 @@ describe("cachettes du tigre (vrai scene.json)", () => {
     for (const n of Object.values(parPalier)) expect(Math.abs(n - cachettes.length / 3)).toBeLessThanOrEqual(2);
   });
 
-  it("chaque cachette, dans chaque palier, est contre un mur et masquée depuis au moins 2 des 8 caméras", () => {
+  it("chaque cachette, dans chaque palier, est contre un mur (moins de 5 m) et masquée, corps entier, depuis au moins 3 des 8 caméras", () => {
     // Règle de l'utilisateur : le tigre est bien caché à chaque fois, même dans le palier facile.
     const notes = new Map(evaluerPoints(scene, REST).map((p) => [`${Math.round(p.x * 10) / 10},${Math.round(p.z * 10) / 10}`, p]));
     const parPalier = { facile: [] as PointNote[], moyenne: [] as PointNote[], difficile: [] as PointNote[] };
