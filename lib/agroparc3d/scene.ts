@@ -15,16 +15,38 @@ import { cumulativeLengths, pickBusRoutes, stopAbscissas } from "./bus";
 import { decalages } from "./marqueurs";
 import { trajetTruck } from "./truck";
 import type { Building, Poi, SceneData, Vec2 } from "./types";
+import type { Cachette } from "./cachettes";
+import { creerTigreCache, type TigreCache } from "./tigre";
 
 export interface SceneCallbacks {
   onSelect(poi: Poi): void;
   onEvent(tag: string, text: string): void;
+  /** Le tigre caché vient d'être débusqué dans la cachette `c`. */
+  onTigre?(c: Cachette): void;
+}
+
+export interface OptionsScene {
+  /** Cachettes du tigre (public/agroparc/cachettes.json) : sans elles, pas de chasse. */
+  cachettes?: readonly Cachette[];
+}
+
+/** Chasse au tigre, pour l'hôte et le crochet de développement `window.__palantir`. */
+export interface ChasseHandle {
+  cachette(): Cachette | null;
+  debusquer(): Cachette | null;
+  placer(c: Cachette): void;
+  /** Cadre la caméra sur le tigre, à `distance` m (au plus près permis par les contrôles). */
+  viser(distance?: number): void;
+  /** Position du tigre à l'écran (px du canvas), null s'il est caché ou hors champ. */
+  ecran(): { x: number; y: number } | null;
 }
 
 export interface SceneHandle {
   /** pivote la caméra de 45° autour du point visé */
   spin(dir: 1 | -1): void;
   recenter(): void;
+  /** Chasse au tigre (null sans cachettes). */
+  chasse: ChasseHandle | null;
   dispose(): void;
 }
 
@@ -45,6 +67,13 @@ const C = {
   car: 0x6fc3de,
   bus: 0xbfe7d6,
 };
+
+/**
+ * Position de repos de la caméra, en décalage du point visé `data.focus` (m). Partagée avec
+ * lib/agroparc3d/cachettes.ts, qui note les cachettes du tigre depuis cette position et ses
+ * rotations de 45° (boutons « Pivoter »).
+ */
+export const REST = { dx: -30, y: 230, dz: 380 } as const;
 
 const POI_LABEL: Record<Poi["type"], string> = { home: "Base", resto: "Restaurant", truck: "Food truck", shop: "Repère" };
 const ease = (t: number) => 1 - Math.pow(1 - t, 3);
@@ -101,7 +130,7 @@ interface Car { g: THREE.Group; pts: THREE.Vector3[]; cum: number[]; len: number
 /** Bus = voiture + arrêts (abscisses s le long de la voie), pause `wait` s à chaque arrêt franchi. */
 interface Bus extends Car { stops: number[]; lastStop: number | null; wait: number }
 
-export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLElement, data: SceneData, cb: SceneCallbacks): SceneHandle {
+export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLElement, data: SceneData, cb: SceneCallbacks, opts: OptionsScene = {}): SceneHandle {
   const reduced = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   // ---------- renderer / camera / controls ----------
@@ -112,7 +141,7 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
   scene.fog = new THREE.FogExp2(C.ground, 0.0011);
   const camera = new THREE.PerspectiveCamera(45, 1, 1, 6000);
   const F = data.focus;
-  const REST = { pos: new THREE.Vector3(F[0] - 30, 230, F[1] + 380), target: new THREE.Vector3(F[0], 0, F[1]) };
+  const repos = { pos: new THREE.Vector3(F[0] + REST.dx, REST.y, F[1] + REST.dz), target: new THREE.Vector3(F[0], 0, F[1]) };
   const INTRO_FROM = new THREE.Vector3(F[0], 1400, F[1] + 1200);
   camera.position.copy(INTRO_FROM);
 
@@ -128,7 +157,7 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
   controls.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
   controls.listenToKeyEvents(window);
   controls.keyPanSpeed = 25;
-  controls.target.copy(REST.target);
+  controls.target.copy(repos.target);
 
   // ---------- buildings ----------
   const special = new Map<number, Poi["type"]>();
@@ -367,6 +396,11 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
     }
   }
 
+  // ---------- tigre caché ----------
+  const tigre: TigreCache | null = opts.cachettes?.length
+    ? creerTigreCache({ scene, camera, canvas, cachettes: opts.cachettes, surDebusque: (c) => cb.onTigre?.(c) })
+    : null;
+
   // ---------- post-processing ----------
   const composer = new EffectComposer(renderer);
   composer.addPass(new RenderPass(scene, camera));
@@ -405,8 +439,8 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
     if (!recentering) return;
     recentering.t = Math.min(1, recentering.t + dt / 1.2);
     const k = ease(recentering.t);
-    camera.position.lerpVectors(recentering.p0, REST.pos, k);
-    controls.target.lerpVectors(recentering.c0, REST.target, k);
+    camera.position.lerpVectors(recentering.p0, repos.pos, k);
+    controls.target.lerpVectors(recentering.c0, repos.target, k);
     if (recentering.t >= 1) recentering = null;
   }
 
@@ -426,7 +460,7 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
     // la dernière étape pose la caméra exactement au repos même si une image a sauté.
     if (!introDone) {
       const k = Math.min(t / INTRO, 1);
-      camera.position.lerpVectors(INTRO_FROM, REST.pos, ease(k));
+      camera.position.lerpVectors(INTRO_FROM, repos.pos, ease(k));
       if (k >= 1) introDone = true;
     } else if (!reduced && !recentering && performance.now() - idleSince > 9000) {
       controls.autoRotate = true;
@@ -436,6 +470,7 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
     controls.update();
     moveCars(dt);
     moveBuses(dt);
+    tigre?.maj(dt);
 
     for (const m of markers) { const s = reduced ? 1 : 1 + 0.18 * Math.sin(t * 2.2 + m.phase); m.ring.scale.set(s, 1, s); }
 
@@ -478,8 +513,35 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
   return {
     spin(dir) { wake(); spinLeft += dir * (Math.PI / 4); },
     recenter() { wake(); recentering = { t: 0, p0: camera.position.clone(), c0: controls.target.clone() }; },
+    chasse: tigre && {
+      cachette: () => tigre.cachette(),
+      debusquer: () => tigre.debusquer(),
+      placer: (c) => tigre.placer(c),
+      viser(distance = controls.minDistance) {
+        const centre = tigre.centre(new THREE.Vector3());
+        if (!centre) return;
+        wake();
+        introDone = true;
+        recentering = null;
+        spinLeft = 0;
+        // Même azimut que la vue courante, plongée de 40°.
+        const az = Math.atan2(camera.position.x - controls.target.x, camera.position.z - controls.target.z);
+        const d = Math.max(distance, controls.minDistance), el = (40 * Math.PI) / 180;
+        controls.target.copy(centre);
+        camera.position.set(centre.x + Math.sin(az) * Math.cos(el) * d, centre.y + Math.sin(el) * d, centre.z + Math.cos(az) * Math.cos(el) * d);
+        controls.update();
+      },
+      ecran() {
+        const centre = tigre.centre(new THREE.Vector3());
+        if (!centre) return null;
+        centre.project(camera);
+        if (centre.z > 1 || Math.abs(centre.x) > 1 || Math.abs(centre.y) > 1) return null;
+        return { x: ((centre.x + 1) / 2) * canvas.clientWidth, y: ((1 - centre.y) / 2) * canvas.clientHeight };
+      },
+    },
     dispose() {
       disposed = true;
+      tigre?.dispose();
       cancelAnimationFrame(raf);
       ro.disconnect();
       canvas.removeEventListener("pointerdown", wake);

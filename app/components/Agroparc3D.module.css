@@ -63,6 +63,14 @@
   letter-spacing: 0.14em; text-transform: uppercase; padding: 0 14px; cursor: pointer;
 }
 .sortie:hover, .sortie:focus-visible { border-color: var(--ag-cyan); background: rgba(155, 233, 255, 0.1); }
+/* Score de la chasse au tigre, sous le titre. */
+.score {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; margin: 10px 0 0; font-size: 11px; letter-spacing: 0.12em;
+  text-transform: uppercase; color: var(--ag-ink-dim); font-variant-numeric: tabular-nums; text-shadow: 0 0 6px var(--ag-ground), 0 0 2px var(--ag-ground);
+}
+.score b { font-family: var(--ag-display), var(--ag-mono), monospace; font-size: 22px; font-weight: 700; letter-spacing: 0.02em; color: var(--ag-amber); margin-right: 4px; }
+.gain { color: var(--ag-amber); font-weight: 500; animation: agGain 2.5s ease forwards; }
+@keyframes agGain { 0% { opacity: 0; transform: translateY(4px); } 12% { opacity: 1; transform: none; } 75% { opacity: 1; } 100% { opacity: 0; } }
 .eyebrow { font-size: 10px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--ag-ink-dim); margin: 0 0 6px; }
 .title {
   font-family: var(--ag-display), var(--ag-mono), monospace; font-weight: 700; font-size: 30px; line-height: 1;
@@ -202,5 +210,5 @@
   .ctl button, .close, .depliantBtn { min-height: 40px; padding-inline: 14px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .root, .panel, .log > div, .labels > div, .jaugeArc, .jaugeVal, .mini > i > i { animation: none; transition: none; }
+  .root, .panel, .log > div, .labels > div, .jaugeArc, .jaugeVal, .mini > i > i, .gain { animation: none; transition: none; }
 }
