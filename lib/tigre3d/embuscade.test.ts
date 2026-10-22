@@ -22,13 +22,15 @@ interface Simu {
   evs: EvenementTigre[];
   impacts: Array<{ xMacron: number; xTigre: number; t: number }>;
   t: number;
+  largeur: number;
 }
 
 function simu(o: Partial<OptionsTroupe>, macron: Partial<EtatPersonnage>): Simu {
   const troupe = creerTroupe(options(o));
-  const emb = creerEmbuscade(troupe, { largeurEcran: LARGEUR, largeurTigrePx: TIGRE_PX, pxParMetre: PXM });
+  const largeur = o.largeurEcran ?? LARGEUR, tigrePx = o.largeurTigrePx ?? TIGRE_PX;
+  const emb = creerEmbuscade(troupe, { largeurEcran: largeur, largeurTigrePx: tigrePx, pxParMetre: tigrePx / 3.75 });
   const s: Simu = {
-    troupe, emb, evs: [], impacts: [], t: 0,
+    troupe, emb, evs: [], impacts: [], t: 0, largeur,
     macron: { present: false, x: -200, sens: 1, vitesse: 270, disponible: true, passage: 1, rayon: 12, ...macron },
   };
   troupe.sur((e) => {
@@ -50,7 +52,7 @@ function avancer(s: Simu, secondes: number, macronActif = true, chaque?: () => v
     s.troupe.maj(dt);
     if (macronActif) {
       s.macron.x += s.macron.sens * s.macron.vitesse * dt;
-      s.macron.present = s.macron.x > 0 && s.macron.x < LARGEUR;
+      s.macron.present = s.macron.x > 0 && s.macron.x < s.largeur;
     }
     s.emb.maj(macronActif ? s.macron : null);
     chaque?.();
@@ -135,6 +137,58 @@ describe("embuscade", () => {
     expect(s.emb.plan).toBeNull();
     expect(s.emb.phase).toBe("libre");
     expect(s.impacts.length).toBe(0);
+  });
+
+  /** Grand écran : 1920 px, tigre de 220 px. */
+  const grand = (o: Partial<OptionsTroupe>) => ({ largeurEcran: 1920, largeurTigrePx: 220, ...o });
+
+  it("Macron entre devant le tigre lancé, avant ou après le milieu : il frappe ou renonce d'emblée, sans geste à reculons", () => {
+    let plans = 0;
+    for (const vitesse of [1.8, 2.4, 3.2]) for (const au of [500, 700, 900, 1100, 1300, 1500]) {
+      const s = simu(grand({ sens: 1, vitesse }), { x: 2020, sens: -1, vitesse: 298 });
+      // Macron entre quand le tigre passe en `au` (le milieu est à 960 px).
+      while (s.troupe.mere.x < au) avancer(s, 1 / 60, false);
+      let reculait = false;
+      avancer(s, 9, true, () => {
+        const a = s.troupe.mere.anim;
+        // Le geste démarre : le tigre va vers le point ou est arrêté, jamais en s'en éloignant.
+        if (s.emb.phase === "arme" && a.reaction?.nom === "batte" && a.t - a.reaction.t0 < 0.02) reculait ||= a.corps.v * a.sens < -0.05;
+      });
+      expect(reculait).toBe(false);
+      // Un plan tenu frappe, sinon pas de plan du tout (abandon d'emblée).
+      expect(s.impacts.length === 1 || s.emb.plan === null, `vitesse ${vitesse}, Macron entre au passage en ${au}`).toBe(true);
+      if (s.emb.plan) plans++;
+    }
+    // Le cas n'est pas vide : assez loin de Macron, le plan reste tenable.
+    expect(plans).toBeGreaterThan(0);
+  });
+
+  it("point derrière lui (Macron le suit dans le même sens) : demi-tour de course, puis coup", () => {
+    const s = simu(grand({ sens: 1, vitesse: 3.2 }), { x: -100, sens: 1, vitesse: 298 });
+    avancer(s, 2.5, false);
+    let demiTour = false;
+    avancer(s, 9, true, () => { demiTour ||= s.emb.phase === "course" && s.troupe.mere.anim.sens === -1; });
+    expect(demiTour).toBe(true);
+    expect(s.impacts.length).toBe(1);
+    expect(Math.abs(s.impacts[0].xMacron - (s.impacts[0].xTigre - s.emb.portee(s.macron)))).toBeLessThan(25);
+  });
+
+  it("plan devenu intenable pendant la course : il renonce aussitôt", () => {
+    const s = simu(grand({ sens: 1, vitesse: 3.2 }), { x: -100, sens: 1, vitesse: 298 });
+    avancer(s, 2.5, false);
+    // Macron accélère d'un coup juste après le plan : le tigre n'arrivera plus à temps.
+    let accelere = false, tAbandon: number | null = null, tContact: number | null = null;
+    avancer(s, 4, true, () => {
+      if (s.emb.phase === "course" && !accelere) { accelere = true; s.macron.vitesse = 900; }
+      if (accelere && tAbandon == null && s.emb.phase === "fini") tAbandon = s.t;
+      const p = s.emb.plan;
+      if (accelere && tContact == null && p && (s.macron.x - p.x) * p.face <= s.emb.portee(s.macron)) tContact = s.t;
+    });
+    expect(accelere).toBe(true);
+    expect(s.impacts.length).toBe(0);
+    expect(tAbandon).not.toBeNull();
+    // Il renonce avant que Macron n'atteigne le point de contact.
+    expect(tAbandon!).toBeLessThan(tContact ?? Infinity);
   });
 
   it("famille : seule la mère frappe, les petits s'arrêtent", () => {

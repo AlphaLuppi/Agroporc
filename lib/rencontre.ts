@@ -95,8 +95,13 @@ export interface ParamsEmbuscade {
   margeMacron: number;
   /** Arrêt, se tourner vers Macron, se dresser et armer la batte (s), accélération comprise. */
   tPreparation: number;
-  /** Un demi-tour en plus (s) : pour repartir vers le point, ou pour faire face à Macron une fois arrivé. */
+  /**
+   * Inverser la course (s) quand le point est derrière lui : freiner, piétiner pour se retourner,
+   * relancer. Bien plus long que `tVolte`, car il faut d'abord s'arrêter.
+   */
   tDemiTour: number;
+  /** Se tourner vers Macron une fois arrêté sur le point (s), quand il y arrive dos à lui. */
+  tVolte: number;
   /** Du signal du coup au contact (s). */
   tElan: number;
   /** Avance de sécurité (s) : le tigre est armé au moins ce temps avant le signal. */
@@ -113,11 +118,13 @@ export interface PlanEmbuscade {
   /** Arrivée de Macron au contact et préparation du tigre (s depuis maintenant). */
   tContact: number;
   tTigre: number;
+  /** Distance que le tigre doit courir (px), retour compris s'il fait demi-tour. */
+  chemin: number;
 }
 
 /**
  * Point d'embuscade sur le trajet de Macron, devant lui : le plus proche de Macron (la rencontre
- * la plus tôt) que le tigre atteint à temps, galop ou éclair compris, demi-tours comptés. Null si
+ * la plus tôt) que le tigre atteint à temps, galop ou éclair compris, demi-tour et volte comptés. Null si
  * aucun point de l'écran ne convient : pas de rencontre, chacun continue son passage.
  */
 export function planEmbuscade(p: ParamsEmbuscade): PlanEmbuscade | null {
@@ -144,13 +151,14 @@ export function planEmbuscade(p: ParamsEmbuscade): PlanEmbuscade | null {
     const devant = d * T.sens, arret = T.arret ?? 0;
     // Devant lui mais plus près que sa distance d'arrêt : il le dépasserait.
     if (devant >= 0 && devant < arret - 1) continue;
-    const dir: 1 | -1 = Math.abs(d) < 1 ? T.sens : d > 0 ? 1 : -1;
-    // Demi-tours : repartir dans l'autre sens (après s'être arrêté), puis se tourner vers Macron
-    // une fois arrivé.
-    const demiTours = (dir !== T.sens ? 1 : 0) + (dir !== face ? 1 : 0);
-    const chemin = devant >= 0 ? devant : -devant + 2 * arret;
-    const tTigre = chemin / T.vitesseMax + p.tPreparation + demiTours * p.tDemiTour;
-    if (tTigre + p.tElan + p.tMarge <= tContact) return { x: P, face, tContact, tTigre };
+    // Derrière lui, même d'un pixel : il doit s'arrêter et se retourner.
+    const dir: 1 | -1 = devant >= 0 ? T.sens : T.sens === 1 ? -1 : 1;
+    // Point derrière lui : il s'arrête (sur sa distance d'arrêt, comptée dans `tDemiTour`), se
+    // retourne et revient. Puis, arrivé dos à Macron, il se tourne vers lui (`tVolte`).
+    const chemin = devant >= 0 ? devant : -devant + arret;
+    const tTigre = chemin / T.vitesseMax + p.tPreparation
+      + (dir !== T.sens ? p.tDemiTour : 0) + (dir !== face ? p.tVolte : 0);
+    if (tTigre + p.tElan + p.tMarge <= tContact) return { x: P, face, tContact, tTigre, chemin };
   }
   return null;
 }

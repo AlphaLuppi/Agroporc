@@ -8,8 +8,9 @@
  *   point, de profil face à Macron, dressé, batte armée (geste « batte ») → coup quand Macron
  *   arrive à portée (`declencherFrappe`) → fin du geste : il reprend sa course d'origine.
  *
- * Macron parti, Macron trop tard (il a dépassé le point), tigre cliqué entre-temps, ou annulation
- * (onglet caché, démontage) : la rencontre s'arrête sans erreur et le tigre reprend sa course.
+ * Macron parti, Macron trop tard (il a dépassé le point, ou le plan ne tient plus pendant la
+ * course), tigre cliqué entre-temps, ou annulation (onglet caché, démontage) : la rencontre
+ * s'arrête sans erreur et le tigre reprend sa course.
  * Une seule tentative par passage de Macron, et un seul coup.
  */
 import { ECHELLE_MODELE, type Troupe } from "./troupe";
@@ -24,10 +25,17 @@ export const REGLAGES_EMBUSCADE = {
   vitesseMax: VITESSES.eclair[1],
   /** Au-delà, l'allure « éclair » (traînée orange) : il fonce. */
   seuilEclair: 6,
-  /** Accélérer, freiner, se dresser et armer (s), puis un demi-tour (s), et l'avance de sécurité (s). */
+  /** Accélérer, freiner, se dresser et armer (s), et l'avance de sécurité (s). */
   tPreparation: 1.7,
-  tDemiTour: 1.1,
   tMarge: 0.3,
+  /**
+   * Inverser la course (s) : freiner, piétiner sur place le temps de se retourner (le corps attend
+   * ses pieds, cf. corps.ts), relancer. Mesuré sur la vraie troupe : il ne repart dans l'autre sens
+   * que ≈ 2,5 s après l'ordre, quelle que soit son allure, soit ≈ 2 s de plus qu'une course directe.
+   */
+  tDemiTour: 2.4,
+  /** Se tourner vers Macron une fois arrêté sur le point (s) : mesuré ≈ 0,6 à 0,8 s, avec marge. */
+  tVolte: 1.1,
   /** Marge (m de tigre) entre le tigre posté et le bord de l'écran : entier à l'écran, comme pour une réaction. */
   margeTigreM: 1.5,
   /** Raideur du freinage visé (1/s) : le geste démarre à |v| / freinage du point, il s'y arrête en freinant. */
@@ -102,29 +110,52 @@ export function creerEmbuscade(troupe: Troupe, o: OptionsEmbuscade): Embuscade {
       portee: portee(m),
       margeTigre: Math.min(R.margeTigreM * o.pxParMetre, o.largeurEcran / 2),
       margeMacron: 2 * m.rayon,
-      tPreparation: R.tPreparation, tDemiTour: R.tDemiTour, tElan: T_IMPACT, tMarge: R.tMarge,
+      tPreparation: R.tPreparation, tDemiTour: R.tDemiTour, tVolte: R.tVolte, tElan: T_IMPACT, tMarge: R.tMarge,
     });
     if (!plan) { phase = "fini"; return; }
     origine = { sens: anim.sens, mode: anim.mode, vitesse: anim.vitesse };
-    const d = plan.x - mere.x;
-    dir = Math.abs(d) < 1 ? anim.sens : d > 0 ? 1 : -1;
-    // Allure : assez vite pour être prêt à temps (avec de la marge), jamais moins qu'un galop.
-    const dispo = Math.max(0.3, plan.tContact - plan.tTigre + Math.abs(d) / (R.vitesseMax * o.largeurTigrePx));
-    const voulue = (Math.abs(d) / dispo / o.largeurTigrePx) * 1.4;
+    // Même règle que planEmbuscade : derrière lui, il fait demi-tour.
+    dir = (plan.x - mere.x) * anim.sens >= 0 ? anim.sens : anim.sens === 1 ? -1 : 1;
+    // Allure : le temps de course est ce qui reste une fois la préparation, l'élan du coup et la
+    // marge retirés. Assez vite pour être prêt à temps (×1,4 : il lui faut accélérer), jamais
+    // moins qu'un galop.
+    const vMaxPx = R.vitesseMax * o.largeurTigrePx;
+    const tCourse = plan.tContact - T_IMPACT - R.tMarge - (plan.tTigre - plan.chemin / vMaxPx);
+    const voulue = (plan.chemin / Math.max(0.3, tCourse) / o.largeurTigrePx) * 1.4;
     const vitesse = Math.min(R.vitesseMax, Math.max(R.vitesseMin, voulue));
     troupe.courir({ sens: dir, vitesse, mode: vitesse > R.seuilEclair ? "eclair" : "galop" });
     phase = "course";
     poster();
   }
 
-  /** Assez près du point pour s'y arrêter en freinant : le geste démarre, point d'arrêt imposé. */
+  /**
+   * Assez près du point pour s'y arrêter en freinant : le geste démarre, point d'arrêt imposé.
+   * Jamais tant qu'il s'éloigne encore du point (demi-tour en cours) : l'approche du geste le
+   * ramènerait au pas, bien trop lentement.
+   */
   function poster() {
     if (!plan) return;
+    if (anim.corps.v * dir < -0.05) return;
     const reste = (plan.x - mere.x) * dir;
     const freinage = (Math.abs(anim.corps.v) / R.freinage) * k;
     if (reste > freinage + 2) return;
     anim.demarrer("batte", { sensGeste: plan.face, xArret: anim.corps.x + (plan.x - mere.x) / k });
     phase = "arme";
+  }
+
+  /**
+   * En course, le plan ne tient plus : Macron atteindra le point de contact avant que le tigre ait
+   * pu, au mieux, y courir à l'éclair, se dresser et lancer le coup. Minorant du temps qu'il lui
+   * reste, donc jamais d'abandon à tort : il renonce dès que c'est perdu au lieu de courir pour rien.
+   */
+  function intenable(m: EtatPersonnage) {
+    if (!plan) return true;
+    if (declencherFrappe({
+      xTigre: plan.x, face: plan.face, xMacron: m.x, vitesseMacron: m.vitesse, tElan: T_IMPACT, portee: portee(m),
+    }) === "trop-tard") return true;
+    const tMacron = ((m.x - plan.x) * plan.face - portee(m)) / Math.max(m.vitesse, 1);
+    const tTigre = Math.abs(plan.x - mere.x) / (R.vitesseMax * o.largeurTigrePx) + PRET_BATTE + T_IMPACT;
+    return tMacron < tTigre;
   }
 
   return {
@@ -140,10 +171,9 @@ export function creerEmbuscade(troupe: Troupe, o: OptionsEmbuscade): Embuscade {
     forcer({ x, face, surArme }) {
       if (anim.reaction) return;
       origine = { sens: anim.sens, mode: anim.mode, vitesse: anim.vitesse };
-      plan = { x, face, tContact: Infinity, tTigre: 0 };
+      plan = { x, face, tContact: Infinity, tTigre: 0, chemin: Math.abs(x - mere.x) };
       force = { surArme, arme: false, vu: false };
-      const d = x - mere.x;
-      dir = Math.abs(d) < 1 ? anim.sens : d > 0 ? 1 : -1;
+      dir = (x - mere.x) * anim.sens >= 0 ? anim.sens : anim.sens === 1 ? -1 : 1;
       troupe.courir({ sens: dir, vitesse: R.vitesseMin, mode: "galop" });
       phase = "course";
       poster();
@@ -170,6 +200,7 @@ export function creerEmbuscade(troupe: Troupe, o: OptionsEmbuscade): Embuscade {
       const attendre = !!force && !force.vu;
       if (phase === "course") {
         if (!macronLa && !attendre) { arreter(); return; }
+        if (!force && intenable(m!)) { arreter(); return; }
         poster();
         return;
       }

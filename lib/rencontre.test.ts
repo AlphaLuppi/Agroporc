@@ -40,7 +40,7 @@ const base = (o: Partial<ParamsEmbuscade> = {}): ParamsEmbuscade => ({
   tigre: { x: 1000, sens: -1, vitesseMax: 2400 },
   macron: { x: 100, sens: 1, vitesse: 270 },
   largeurEcran: 1400, portee: 50, margeTigre: 84, margeMacron: 40,
-  tPreparation: 2, tDemiTour: 1, tElan: 0.35, tMarge: 0.3,
+  tPreparation: 2, tDemiTour: 1, tVolte: 1, tElan: 0.35, tMarge: 0.3,
   ...o,
 });
 
@@ -65,6 +65,28 @@ describe("planEmbuscade", () => {
     // Arrivé en courant dans le sens de Macron, il doit se retourner : point plus loin.
     expect(meme.x).toBeGreaterThan(face.x);
     expect(meme.face).toBe(-1);
+  });
+
+  it("point derrière lui : il paie le demi-tour de course, point devant dos à Macron : la volte", () => {
+    // Tigre lancé vers la droite devant Macron qui court dans le même sens : il doit lui faire face.
+    const tigre = { x: 1000, sens: 1 as const, vitesseMax: 2400, arret: 60 };
+    const devant = planEmbuscade(base({ tigre, tPreparation: 1, tDemiTour: 100, tVolte: 0.5 }))!;
+    expect(devant.x).toBeGreaterThanOrEqual(1060 - 1);
+    expect(devant.tTigre).toBeCloseTo((devant.x - 1000) / 2400 + 1 + 0.5, 6);
+    const derriere = planEmbuscade(base({ tigre, tPreparation: 1, tDemiTour: 0.5, tVolte: 100 }))!;
+    expect(derriere.x).toBeLessThan(1000);
+    // Retour : sa distance d'arrêt, puis jusqu'au point.
+    expect(derriere.chemin).toBeCloseTo(1000 - derriere.x + 60, 6);
+    expect(derriere.tTigre).toBeCloseTo(derriere.chemin / 2400 + 1 + 0.5, 6);
+  });
+
+  it("un point à moins d'un pixel derrière lui compte un demi-tour", () => {
+    const p = planEmbuscade(base({
+      tigre: { x: 1000.5, sens: 1, vitesseMax: 2400, arret: 60 }, macron: { x: 100, sens: 1, vitesse: 270 },
+      tPreparation: 1, tDemiTour: 1000, tVolte: 0.5, pas: 1,
+    }))!;
+    // Le point x = 1000 (0,5 px derrière lui) n'est pas pris pour un point devant : il vise devant, après son arrêt.
+    expect(p.x).toBeGreaterThanOrEqual(1060);
   });
 
   it("lancé, le tigre ne vise pas un point plus proche que sa distance d'arrêt", () => {
