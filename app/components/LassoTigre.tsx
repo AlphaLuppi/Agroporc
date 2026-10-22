@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, ty
 import { createPortal } from "react-dom";
 import {
   angleSuspendu, boucleLancee, boucleSerree, balistique, creerCorde, distance, DUREE_LANCER_S, DUREE_SERRE_S, majCorde,
-  majVol, melange, noeud, plafonner, pointsAnneau, RAYON_ARRIVEE, tournoyer, tourner, touche, v3, vitesseBalistique,
+  majVol, melange, noeud, plafonner, pointsAnneau, RAYON_ARRIVEE, tangenteNoeud, tournoyer, tourner, touche, v3, vitesseBalistique,
   VITESSE_MAX, type Anneau, type Corde, type V3, type Vec, type Vol,
 } from "@/lib/tigre-lasso";
 import type { RenduLasso } from "@/lib/tigre-lasso-rendu";
@@ -322,7 +322,14 @@ export function useLassoTigre({ sceneRef, conteneurRef, zoneMere, largeurTigre }
       default: return null;
     }
     const a = anneau.current;
-    renduRef.current?.dessiner(c.p, a ? pointsAnneau(a) : null);
+    // L'œillet : sur la boucle, ou au cou du tigre (le collier est dessiné dans sa scène).
+    const bout = c.p[N - 1], amont = c.p[N - 2];
+    const oeillet = a
+      ? { p: noeud(a), dir: tangenteNoeud(a) }
+      : pilotee(etatRef.current) && etatRef.current !== "serre"
+        ? { p: bout, dir: v3(bout.x - amont.x, bout.y - amont.y, bout.z - amont.z) }
+        : null;
+    renduRef.current?.dessiner(c.p, a ? pointsAnneau(a, 40, horloge.current) : null, oeillet);
     return tenue;
   };
 

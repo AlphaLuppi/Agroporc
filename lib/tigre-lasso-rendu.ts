@@ -36,9 +36,15 @@ export function textureCorde(): THREE.CanvasTexture {
   return t;
 }
 
+/** L'œillet (honda) au bout de la corde : la corde le traverse ; `dir` = sens de la corde qui le traverse. */
+export interface Oeillet { p: V3; dir: V3 }
+
 export interface RenduLasso {
-  /** `corde` : de la main au nœud ; `boucle` : la boucle fermée (null : pas de boucle). */
-  dessiner(corde: readonly V3[] | null, boucle: readonly V3[] | null): void;
+  /**
+   * `corde` : de la main au nœud ; `boucle` : du nœud autour jusqu'au nœud (null : pas de boucle) ;
+   * les deux forment UNE corde continue. `oeillet` : le nœud à dessiner (null : aucun).
+   */
+  dessiner(corde: readonly V3[] | null, boucle: readonly V3[] | null, oeillet: Oeillet | null): void;
   dispose(): void;
 }
 
@@ -55,13 +61,19 @@ export function creerRenduLasso(canvas: HTMLCanvasElement): RenduLasso {
   soleil.position.set(-0.4, 1, 0.8);
   scene.add(soleil);
 
-  const texCorde = textureCorde(), texBoucle = texCorde.clone();
-  texBoucle.needsUpdate = true;
+  const texCorde = textureCorde(), texNoeud = texCorde.clone();
+  texNoeud.needsUpdate = true;
+  texNoeud.repeat.set(3, 1);
   const matCorde = new THREE.MeshStandardMaterial({ map: texCorde, roughness: 0.85, metalness: 0 });
-  const matBoucle = new THREE.MeshStandardMaterial({ map: texBoucle, roughness: 0.85, metalness: 0 });
+  const matNoeud = new THREE.MeshStandardMaterial({ map: texNoeud, roughness: 0.9, metalness: 0 });
   const meshCorde = new THREE.Mesh(new THREE.BufferGeometry(), matCorde);
-  const meshBoucle = new THREE.Mesh(new THREE.BufferGeometry(), matBoucle);
-  scene.add(meshCorde, meshBoucle);
+  // L'œillet (petit anneau que la corde traverse) et le nœud qui l'attache au bout de la corde.
+  const oeil = new THREE.Mesh(new THREE.TorusGeometry(RAYON_FIL * 1.9, RAYON_FIL * 0.85, 8, 20), matNoeud);
+  const noeudGeo = new THREE.SphereGeometry(RAYON_FIL * 1.6, 10, 8);
+  const noeud = new THREE.Mesh(noeudGeo, matNoeud);
+  noeud.scale.set(1, 1, 1.5);
+  scene.add(meshCorde, oeil, noeud);
+  const zAxe = new THREE.Vector3(0, 0, 1);
 
   let w = 0, h = 0;
   const caler = () => {
@@ -88,15 +100,26 @@ export function creerRenduLasso(canvas: HTMLCanvasElement): RenduLasso {
   }
 
   return {
-    dessiner(corde, boucle) {
+    dessiner(corde, boucle, oeillet) {
       caler();
-      tube(meshCorde, texCorde, corde, false);
-      tube(meshBoucle, texBoucle, boucle, true);
+      // Une seule corde : de la main au nœud, à travers l'œillet, autour de la boucle et retour au nœud.
+      const pts = [...(corde ?? []), ...(boucle ? boucle.slice(1) : [])];
+      tube(meshCorde, texCorde, pts.length >= 2 ? pts : null, false);
+      oeil.visible = noeud.visible = oeillet != null;
+      if (oeillet) {
+        const p = versMonde(oeillet.p);
+        const d = new THREE.Vector3(oeillet.dir.x, -oeillet.dir.y, oeillet.dir.z).normalize();
+        // L'œillet est traversé par la corde : son axe suit la corde ; le nœud est juste derrière lui.
+        oeil.position.copy(p);
+        oeil.quaternion.setFromUnitVectors(zAxe, d);
+        noeud.position.copy(p).addScaledVector(d, -RAYON_FIL * 2.6);
+        noeud.quaternion.copy(oeil.quaternion);
+      }
       renderer.render(scene, camera);
     },
     dispose() {
-      meshCorde.geometry.dispose(); meshBoucle.geometry.dispose();
-      matCorde.dispose(); matBoucle.dispose(); texCorde.dispose(); texBoucle.dispose();
+      meshCorde.geometry.dispose(); oeil.geometry.dispose(); noeudGeo.dispose();
+      matCorde.dispose(); matNoeud.dispose(); texCorde.dispose(); texNoeud.dispose();
       renderer.dispose();
       renderer.forceContextLoss();
     },

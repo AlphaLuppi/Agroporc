@@ -41,10 +41,13 @@ describe("boucle lancée", () => {
     expect(boucleSerree(arrivee, cou, axe, 12, 0.5).r).toBeGreaterThan(arrivee.r * 0.7);
   });
 
-  it("le nœud est sur la boucle, la boucle tient dans son rayon", () => {
+  it("la boucle part du nœud et y revient (la corde est attachée), sans s'écarter de son rayon", () => {
     const a = tournoyer(v3(500, 900, 0), 0.1);
     expect(distance(noeud(a), a.c)).toBeCloseTo(a.r, 6);
-    for (const p of pointsAnneau(a)) expect(distance(p, a.c)).toBeLessThanOrEqual(a.r + 1e-6);
+    const pts = pointsAnneau(a, 40, 1.3);
+    expect(distance(pts[0], noeud(a))).toBeLessThan(1e-9);
+    expect(distance(pts.at(-1)!, noeud(a))).toBeLessThan(1e-9);
+    for (const p of pts) expect(distance(p, a.c)).toBeLessThanOrEqual(a.r * 1.2);
   });
 });
 

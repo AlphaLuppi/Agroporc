@@ -162,17 +162,31 @@ export function noeud(a: Anneau): V3 {
   return plus(a.c, plus(fois(u, a.r * Math.cos(a.tour)), fois(w, a.r * Math.sin(a.tour))));
 }
 
-/** Points de la boucle, du nœud au nœud (fermée), un peu en goutte : pointue vers le nœud. */
-export function pointsAnneau(a: Anneau, m = 28): V3[] {
+/**
+ * Points de la boucle, du nœud jusqu'au nœud (chemin ouvert : la corde traverse l'œillet du nœud,
+ * fait le tour et revient s'y nouer). Pas un cercle parfait : un peu en goutte vers le nœud, une
+ * ondulation qui court le long de la corde (`temps`), et le côté opposé au nœud qui s'affaisse sous
+ * son poids. Le premier et le dernier point sont exactement sur le nœud.
+ */
+export function pointsAnneau(a: Anneau, m = 40, temps = 0): V3[] {
   const [u, w] = repere(a.n);
   const pts: V3[] = [];
-  for (let i = 0; i < m; i++) {
+  for (let i = 0; i <= m; i++) {
     const t = (i / m) * Math.PI * 2;
-    const goutte = 1 - 0.18 * (1 + Math.cos(t)) * 0.5;
+    const loin = (1 - Math.cos(t)) / 2;
+    const rho = a.r * (1 - 0.1 * loin + 0.04 * Math.sin(3 * t + 7 * temps) * Math.sin(t / 2));
     const ang = a.tour + t;
-    pts.push(plus(a.c, plus(fois(u, a.r * goutte * Math.cos(ang)), fois(w, a.r * goutte * Math.sin(ang)))));
+    const p = plus(a.c, plus(fois(u, rho * Math.cos(ang)), fois(w, rho * Math.sin(ang))));
+    // Affaissement : le côté loin du nœud pend un peu (y vers le bas).
+    pts.push(v3(p.x, p.y + 0.12 * a.r * loin * loin, p.z));
   }
   return pts;
+}
+
+/** Sens de la corde à la sortie du nœud, le long de la boucle (pour orienter l'œillet). */
+export function tangenteNoeud(a: Anneau): V3 {
+  const [u, w] = repere(a.n);
+  return unitaire(plus(fois(u, -Math.sin(a.tour)), fois(w, Math.cos(a.tour))));
 }
 
 /**
