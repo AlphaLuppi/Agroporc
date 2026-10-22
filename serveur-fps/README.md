@@ -45,7 +45,7 @@ adapter le nom du résolveur de certificats) :
 http:
   routers:
     pdj-fps:
-      rule: Host(`pdj-fps.187-124-217-58.sslip.io`)
+      rule: Host(`pdj-fps.toam.tech`)
       entryPoints: [websecure]
       service: pdj-fps
       tls:
@@ -57,5 +57,5 @@ http:
           - url: http://pdj-fps:8787
 ```
 
-Le client se connecte à `wss://pdj-fps.187-124-217-58.sslip.io` (ou `NEXT_PUBLIC_FPS_WS_URL`). Vérification :
-`curl https://pdj-fps.187-124-217-58.sslip.io/sante`.
+Le client se connecte à `wss://pdj-fps.toam.tech` (ou `NEXT_PUBLIC_FPS_WS_URL`). Vérification :
+`curl https://pdj-fps.toam.tech/sante`.

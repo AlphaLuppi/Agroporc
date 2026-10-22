@@ -353,6 +353,5 @@ export function urlArene(): string {
   if (typeof location !== "undefined" && (location.hostname === "localhost" || location.hostname === "127.0.0.1")) {
     return "ws://localhost:8787";
   }
-  // sslip.io : nom DNS dérivé de l'IP du VPS, certificat Let's Encrypt par Traefik (pas d'enregistrement DNS à gérer).
-  return "wss://pdj-fps.187-124-217-58.sslip.io";
+  return "wss://pdj-fps.toam.tech";
 }
