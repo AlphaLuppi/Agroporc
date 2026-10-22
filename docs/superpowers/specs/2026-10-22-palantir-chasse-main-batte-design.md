@@ -151,14 +151,22 @@ Le poids de la main humaine suit une fonction pure `poidsMainHumaine(t)` export�
 
 ### Déformation : une cible de déformation (morph target) sur la patte d'origine
 
-Le GLB contient un seul maillage animé, de 15 629 sommets et 25 000 triangles. 954 sommets ont l'os `mainD` comme influence principale, mesuré le 2026-10-22 avec `@gltf-transform/core`. Ce nombre suffit pour former une paume, quatre doigts et un pouce. La déformation porte donc sur les sommets de la patte d'origine.
+Le GLB contient un seul maillage animé, de 15 629 sommets et 25 000 triangles. Mesures du 2026-10-22 avec `@gltf-transform/core` :
+
+- L'os `Bone.024_028` du GLB (nommé `Bone024_028` par three) a pour parents `Bone.023_027` puis `Bone.022_026`, soit `mainD`, `brasD` et `epauleD` dans `lib/tigre3d/os.ts`.
+- 954 sommets ont `mainD` comme influence principale. 638 d'entre eux sont dans les 40 % de la patte les plus éloignés du poignet.
+- La répartition de ces 638 sommets en travers de la patte ne montre pas d'orteils sculptés séparément : le bout de la patte est une surface continue, en moufle.
+
+La déformation porte sur les sommets de la patte d'origine. Une cible de déformation déplace des sommets sans couper la surface, donc les doigts se séparent en creusant des sillons profonds entre eux, avec une palmure à leur base comme sur une vraie main. Des doigts séparés jusqu'à la paume demanderaient de modifier la topologie du maillage, ce qui sort de cette conception.
+
+C'est un risque. Le développeur produit d'abord une capture de la main à pleine déformation et la soumet à l'utilisateur avant de finir le reste du chantier.
 
 Mécanisme :
 
 - **Calcul de la forme cible**, une fois au chargement du modèle, dans `lib/tigre3d/modele.ts` ou un module dédié. Chaque sommet de la patte est exprimé dans le repère de l'os `mainD` au repos, à l'aide de sa matrice de liaison inverse. Une fonction de correspondance l'envoie vers une position sur une main humaine paramétrique, dont les doigts suivent l'axe de l'os : la position en travers de la patte choisit le doigt, la position le long de la patte choisit la phalange, et la face inférieure devient la paume.
 - **Stockage** : la forme cible est ajoutée à la géométrie comme `morphAttributes.position`. La géométrie est partagée entre la mère et ses petits, mais chaque clone a son propre tableau `morphTargetInfluences`. Seule la mère reçoit un poids non nul.
 - **Les sommets à poids partagés** entre `mainD` et `brasD`, au poignet, reçoivent un déplacement atténué, pour que le raccord entre l'avant-bras et la main reste continu.
-- **Pelage rayé** : une cible de déformation ne change que les positions, donc les coordonnées de texture restent celles de la patte. Les rayures s'étirent sur les doigts.
+- **Pelage rayé** : une cible de déformation ne change que les positions, donc les coordonnées de texture restent celles de la patte. Les rayures devraient s'étirer le long des doigts. Ce rendu n'est pas encore vérifié et se juge sur la première capture.
 - **Paume de peau** : un attribut par sommet, nommé par exemple `peau` et valant 1 sur la face de la paume, mélange la couleur de la texture avec une couleur de peau. Le mélange vaut `peau × poids de la déformation`, et le nuanceur (shader) lit ce poids dans le tableau `morphTargetInfluences` que three lui transmet. Les petits n'ont jamais de peau.
 - **Pilotage** : `lib/tigre3d/scene.ts`, dans `dessiner()`, lit la réaction en cours de la mère (`anim.reaction`, son nom et son `tGeste`) et règle le poids de la cible avec `poidsMainHumaine`.
 
@@ -168,7 +176,7 @@ Le squelette n'est pas modifié, donc les zones de clic et le point de la patte 
 
 Les captures se prennent à 6,0 s, 6,4 s, 7,0 s et 8,2 s du geste, en développement, avec `window.__tigre` (réaction forcée, horloge gelée puis avancée à la main). Trois conditions :
 
-- À 7,0 s, on lit une main humaine : quatre doigts séparés et un pouce. La paume est en couleur de peau, visible quand le clip la tourne vers la caméra.
+- À 7,0 s, on lit une main humaine : quatre doigts distincts et un pouce. La paume est en couleur de peau, visible quand le clip la tourne vers la caméra.
 - Entre deux captures successives, aucune partie de la patte ne saute ni ne disparaît.
 - À 8,2 s, la patte a retrouvé sa forme d'origine.
 
