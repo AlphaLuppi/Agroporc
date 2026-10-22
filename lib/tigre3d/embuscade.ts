@@ -6,7 +6,8 @@
  *   libre → (Macron et le tigre à l'écran, disponibles : plan d'embuscade, sinon rien pour ce
  *   passage de Macron) → course vers le point (galop ou éclair, demi-tour compris) → arrêt sur le
  *   point, de profil face à Macron, dressé, batte armée (geste « batte ») → coup quand Macron
- *   arrive à portée (`declencherFrappe`) → fin du geste : il reprend sa course d'origine.
+ *   arrive à portée (`declencherFrappe`) → fin du geste : il reprend sa course d'origine (s'il
+ *   doit pour cela passer sur Macron au sol, il attend d'abord qu'il se relève et reparte).
  *
  * Macron parti, Macron trop tard (il a dépassé le point, ou le plan ne tient plus pendant la
  * course), tigre cliqué entre-temps, ou annulation (onglet caché, démontage) : la rencontre
@@ -36,6 +37,11 @@ export const REGLAGES_EMBUSCADE = {
   tDemiTour: 2.4,
   /** Se tourner vers Macron une fois arrêté sur le point (s) : mesuré ≈ 0,6 à 0,8 s, avec marge. */
   tVolte: 1.1,
+  /**
+   * Attente au plus longue (s) devant Macron au sol avant de repartir à travers lui : la chute, le
+   * sol et le relevé durent ≈ 3,3 s dans lib/macron3d/ko.ts, le coup en a déjà pris ≈ 1,4.
+   */
+  attenteReleveMax: 3.5,
   /** Marge (m de tigre) entre le tigre posté et le bord de l'écran : entier à l'écran, comme pour une réaction. */
   margeTigreM: 1.5,
   /** Raideur du freinage visé (1/s) : le geste démarre à |v| / freinage du point, il s'y arrête en freinant. */
@@ -82,6 +88,8 @@ export function creerEmbuscade(troupe: Troupe, o: OptionsEmbuscade): Embuscade {
   let origine: { sens: 1 | -1; mode: ModeCourse; vitesse: number } | null = null;
   let dir: 1 | -1 = 1;
   let force: { surArme?: () => void; arme: boolean; vu: boolean } | null = null;
+  /** Début (horloge de l'animateur) de l'attente devant Macron au sol, null hors attente. */
+  let attente: number | null = null;
 
   const portee = (m: EtatPersonnage) => AVANCE_CONTACT * k + m.rayon;
   const surEcran = () => mere.x >= 0 && mere.x <= o.largeurEcran;
@@ -91,6 +99,21 @@ export function creerEmbuscade(troupe: Troupe, o: OptionsEmbuscade): Embuscade {
     if (!origine || anim.reaction) return;
     troupe.courir(origine);
     origine = null;
+    attente = null;
+  }
+  /**
+   * Fin du coup. Si sa course d'origine le mène vers Macron (il lui faisait face en arrivant), il
+   * passerait sur son corps couché, tombé en arrière de son côté : il reste planté là, face à lui,
+   * petits compris (vitesse nulle), jusqu'à ce que Macron reparte, puis reprend sa course.
+   */
+  function finCoup(m: EtatPersonnage | null) {
+    phase = "fini";
+    if (origine && plan && !anim.reaction && origine.sens === plan.face && m && m.present && !m.disponible) {
+      attente = anim.t;
+      troupe.courir({ sens: origine.sens, vitesse: 0 });
+      return;
+    }
+    rendre();
   }
   function arreter() {
     if (anim.reaction?.nom === "batte") anim.interrompre();
@@ -180,11 +203,13 @@ export function creerEmbuscade(troupe: Troupe, o: OptionsEmbuscade): Embuscade {
     },
     annuler() {
       if (phase === "course" || phase === "arme") arreter();
+      else if (attente != null) rendre();
     },
     maj(m) {
       const macronLa = !!m && m.present && m.disponible;
       if (phase === "fini") {
-        rendre();
+        // Macron reparti (vitesse revenue), parti, ou attente trop longue : il reprend sa course.
+        if (attente == null || !m || !m.present || m.vitesse > 1 || anim.t - attente > R.attenteReleveMax) rendre();
         // Nouveau passage de Macron : une nouvelle tentative est possible.
         if (m && m.passage !== essai && !origine) phase = "libre";
         else return;
@@ -221,7 +246,7 @@ export function creerEmbuscade(troupe: Troupe, o: OptionsEmbuscade): Embuscade {
         else if (decision === "frapper" && anim.signaler()) phase = "coup";
         return;
       }
-      if (phase === "coup" && !anim.reaction) { phase = "fini"; rendre(); }
+      if (phase === "coup" && !anim.reaction) finCoup(m);
     },
   };
 }

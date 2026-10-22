@@ -191,6 +191,61 @@ describe("embuscade", () => {
     expect(tAbandon!).toBeLessThan(tContact ?? Infinity);
   });
 
+  it("après le coup, s'il doit repasser sur Macron au sol, il attend qu'il reparte", () => {
+    const r = simu({ sens: 1 }, { x: 1500, sens: -1 });
+    avancer(r, 0.6, false);
+    let maxV = 0, repartiAvant = false, reparti = false;
+    avancer(r, 9, true, () => {
+      if (!r.impacts.length) return;
+      const dt = r.t - r.impacts[0].t;
+      // Macron immobile au sol, puis il repart 3,3 s après l'impact (fin du relevé, lib/macron3d/ko.ts).
+      if (dt > 3.3 && r.macron.vitesse === 0) r.macron.vitesse = 160;
+      const v = r.troupe.mere.anim.corps.v;
+      // Entre la fin du coup et la reprise de Macron, il reste planté (petits compris).
+      if (r.emb.phase === "fini" && dt < 3.3) {
+        maxV = Math.max(maxV, Math.abs(v), ...r.troupe.membres.slice(1).map((p) => Math.abs(p.anim.corps.v)));
+        repartiAvant ||= r.troupe.mere.anim.vitesse > 0;
+      }
+      if (dt > 3.4) reparti ||= v > 0.5;
+    });
+    expect(r.impacts.length).toBe(1);
+    expect(repartiAvant).toBe(false);
+    expect(maxV).toBeLessThan(0.3);
+    expect(reparti).toBe(true);
+    expect(r.troupe.mere.anim.sens).toBe(1);
+  });
+
+  it("Macron qui ne repart pas : le tigre n'attend pas plus de quelques secondes", () => {
+    const s = simu({ sens: 1 }, { x: 1500, sens: -1 });
+    avancer(s, 0.6, false);
+    avancer(s, 6);
+    expect(s.impacts.length).toBe(1);
+    expect(s.emb.phase).toBe("fini");
+    avancer(s, 5);
+    expect(s.troupe.mere.anim.vitesse).toBeGreaterThan(0);
+    expect(s.troupe.mere.anim.corps.v).toBeGreaterThan(0.5);
+  });
+
+  it("annulée pendant l'attente devant Macron au sol : il repart tout de suite", () => {
+    const s = simu({ sens: 1 }, { x: 1500, sens: -1 });
+    avancer(s, 0.6, false);
+    let annule = false;
+    avancer(s, 6, true, () => {
+      if (!annule && s.emb.phase === "fini" && s.impacts.length && s.troupe.mere.anim.vitesse === 0) { annule = true; s.emb.annuler(); }
+    });
+    expect(annule).toBe(true);
+    expect(s.troupe.mere.anim.vitesse).toBeGreaterThan(0);
+  });
+
+  it("même sens : pas d'attente, il repart à l'opposé du corps", () => {
+    const s = simu({ sens: -1 }, { x: 1500, sens: -1 });
+    avancer(s, 1.6, false);
+    let attendu = false;
+    avancer(s, 9, true, () => { attendu ||= s.emb.phase === "fini" && s.impacts.length > 0 && s.troupe.mere.anim.vitesse === 0; });
+    expect(s.impacts.length).toBe(1);
+    expect(attendu).toBe(false);
+  });
+
   it("famille : seule la mère frappe, les petits s'arrêtent", () => {
     const s = simu({ sens: 1, evenement: "famille", petits: 2, vitesse: 1.8 }, { x: 1420, sens: -1 });
     avancer(s, 1.5, false);

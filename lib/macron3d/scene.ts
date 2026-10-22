@@ -244,7 +244,9 @@ export function creerScene(canvas: HTMLCanvasElement, opts: OptionsScene = {}): 
       avancement: avancement(plan, it.avance),
       centre: gauche + largeur / 2,
       sens: plan.sens,
-      vitesse: ko ? 0 : it.vitesse * plan.pxParMetreAvance,
+      // Immobile pendant la chute, au sol et au relevé, il court de nouveau dès la reprise : le tigre
+      // qui attend devant lui (lib/tigre3d/embuscade.ts) repart à ce signal.
+      vitesse: ko && ko.phase !== "reprise" ? 0 : it.vitesse * plan.pxParMetreAvance,
       rayon: RAYON_M * plan.pxm,
       frappe,
       ko: ko?.phase ?? null,

@@ -158,9 +158,11 @@ export function Tigre3D({ surEchec }: { surEchec: () => void }) {
     });
     placerBulle();
     // Batte en main : le tigre passe devant Macron (z-index 41), sinon la batte disparaîtrait
-    // derrière lui au moment du coup.
+    // derrière lui au moment du coup. Il y reste tant que Macron frappé est à l'écran : quand il le
+    // croise ensuite (au sol ou titubant), il passe devant son corps, jamais dessous.
     const conteneur = conteneurRef.current;
-    const devant = img.batte ? "42" : "";
+    const macron = canalRencontre.etat("macron");
+    const devant = img.batte || (macron?.present && !macron.disponible) ? "42" : "";
     if (conteneur && conteneur.style.zIndex !== devant) conteneur.style.zIndex = devant;
     // Rencontre : l'embuscade lit Macron dans le canal, le tigre y publie son état.
     const emb = embuscadeRef.current;
