@@ -5,14 +5,18 @@
  * translate en CSS d'un bord de l'écran à l'autre (lib/macron3d/passage.ts).
  * Chargée par import dynamique depuis app/components/MacronEasterEgg.tsx : three et le GLB ne
  * pèsent rien tant que personne n'a tapé « macron ».
+ *
+ * Coup de batte du tigre (lib/rencontre.ts) : `frapper` remplace la course par la séquence de
+ * lib/macron3d/ko.ts (chute, sol, relevé, reprise titubante), une seule fois par passage.
  */
 import * as THREE from "three";
 import { borne } from "../tigre3d/ressorts";
 import { creerCourse, DEG, MESURES, type Course, type IntentionsCourse } from "./course";
 import { appliquerPose, chargerModele, libererGPU, type ModeleMacron } from "./modele";
 import { creerPoseur, type Poseur } from "./pose";
-import { CADRE_M, LACET_CAMERA, avancement, bulleVisible, gaucheCanvas, passageFini, planPassage, replanifier, type Ecran, type PlanPassage } from "./passage";
+import { BULLE, CADRE_M, LACET_CAMERA, avancement, bulleVisible, gaucheCanvas, passageFini, planPassage, replanifier, type Ecran, type PlanPassage } from "./passage";
 import { COTES, deCote } from "./os";
+import { BULLE_KO, creerKO, type KO, type PhaseKO } from "./ko";
 
 /** Pas de temps maximal d'une image (s) : un onglet qui reprend la main ne téléporte pas le coureur. */
 const DT_IMAGE_MAX = 0.05;
@@ -20,6 +24,9 @@ const DT_IMAGE_MAX = 0.05;
 const OMBRE_PIED_H = 0.14;
 /** Hauteur de l'os Toe_End au repos, pied à plat (m). */
 const BOUT_PIED_Y = 0.032;
+
+/** Demi-épaisseur du buste (m) : la batte touche Macron à cette distance de son centre. */
+const RAYON_M = 0.14;
 
 /** Champ vertical de la caméra (°) et plongée (°) : presque à hauteur d'homme. */
 const CHAMP = 22;
@@ -33,7 +40,21 @@ export interface InfosImage {
   /** Au-dessus de la tête (px, repère du canvas) : pied de la bulle. */
   tete: Point;
   bulle: boolean;
+  /** Texte de la bulle : « En marche ! », ou « En… marche… ? » pendant la reprise titubante. */
+  texteBulle: string;
   avancement: number;
+  /** Centre du coureur dans la page (px), sens et vitesse d'avance (px/s) : publiés pour la rencontre. */
+  centre: number;
+  sens: 1 | -1;
+  vitesse: number;
+  /** Demi-épaisseur du corps (px) : la batte le touche à cette distance de son centre. */
+  rayon: number;
+  /** Déjà frappé pendant ce passage. */
+  frappe: boolean;
+  /** Phase du coup de batte (null : il court normalement). */
+  ko: PhaseKO | null;
+  /** Étoiles au-dessus de la tête (px, repère du canvas), quand il est sonné. */
+  etoiles: Point | null;
 }
 
 export interface RappelsScene {
@@ -61,6 +82,15 @@ export interface SceneMacron {
   avancer(dt: number): void;
   /** Intentions courantes (crochet de développement, tests). */
   etat(): IntentionsCourse | null;
+  /**
+   * Coup de batte : la course s'arrête net et la séquence de chute commence. Refusé (false) hors
+   * passage, pendant une chute ou s'il a déjà été frappé pendant ce passage.
+   */
+  frapper(): boolean;
+  /** Rencontre annulée : au sol, il se relève tout de suite (cf. lib/macron3d/ko.ts). */
+  annulerKO(): void;
+  /** Phase du coup de batte (crochet de développement). */
+  phaseKO(): PhaseKO | null;
   dispose(): void;
 }
 
@@ -142,6 +172,7 @@ export function creerScene(canvas: HTMLCanvasElement, opts: OptionsScene = {}): 
   let plan: PlanPassage | null = null;
   let rappels: RappelsScene | null = null;
   let intentions: IntentionsCourse | null = null;
+  let ko: KO | null = null, frappe = false, graine = 1;
   let yeux = { lacet: 0, tangage: 0 };
   let raf = 0, dernier = 0, gele = false, libere = false;
   let largeur = 0, hauteur = 0;
@@ -166,7 +197,7 @@ export function creerScene(canvas: HTMLCanvasElement, opts: OptionsScene = {}): 
 
   function dessiner() {
     if (!course || !modele || !poseur || !plan) return;
-    const it = course.etat();
+    const it = ko ? ko.etat(course) : course.etat();
     intentions = it;
     poseur.poser(it, yeux);
     appliquerPose(modele, poseur.pose);
@@ -196,12 +227,39 @@ export function creerScene(canvas: HTMLCanvasElement, opts: OptionsScene = {}): 
     canvas.style.transform = `translate3d(${gauche}px, 0, 0)`;
     const sommet = poseur.monde.p[modele.sq.i.sommet];
     v.set(sommet.x, sommet.y + 0.12, sommet.z);
+    const tete = projeter(decale.localToWorld(v));
+    // Étoiles : au-dessus du crâne, qu'il soit couché ou assis (os de la tête, pas le sommet).
+    let etoiles: Point | null = null;
+    if (ko?.etoiles) {
+      const crane = poseur.monde.p[modele.sq.i.tete];
+      v.set(crane.x, crane.y + 0.32, crane.z);
+      etoiles = projeter(decale.localToWorld(v));
+    }
     rappels?.image({
       gauche,
-      tete: projeter(decale.localToWorld(v)),
-      bulle: bulleVisible(plan, it.avance),
+      tete,
+      // Après le coup, plus de « En marche ! » : seulement « En… marche… ? » pendant qu'il titube.
+      bulle: ko ? ko.bulle : !frappe && bulleVisible(plan, it.avance),
+      texteBulle: ko ? BULLE_KO : BULLE.texte,
       avancement: avancement(plan, it.avance),
+      centre: gauche + largeur / 2,
+      sens: plan.sens,
+      // Immobile pendant la chute, au sol et au relevé, il court de nouveau dès la reprise : le tigre
+      // qui attend devant lui (lib/tigre3d/embuscade.ts) repart à ce signal.
+      vitesse: ko && ko.phase !== "reprise" ? 0 : it.vitesse * plan.pxParMetreAvance,
+      rayon: RAYON_M * plan.pxm,
+      frappe,
+      ko: ko?.phase ?? null,
+      etoiles,
     });
+  }
+
+  /** Une image de temps : la course, ou la séquence du coup de batte (qui la fige puis la relance). */
+  function avancerTemps(dt: number) {
+    if (!course) return;
+    if (!ko) { course.avancer(dt); return; }
+    ko.avancer(dt, course);
+    if (ko.phase === null) ko = null;
   }
 
   function image(now: number) {
@@ -209,7 +267,7 @@ export function creerScene(canvas: HTMLCanvasElement, opts: OptionsScene = {}): 
     if (!course || !plan) return;
     const dt = borne((now - dernier) / 1000, 0, DT_IMAGE_MAX);
     dernier = now;
-    course.avancer(dt);
+    avancerTemps(dt);
     dessiner();
     if (fini()) { terminer(); return; }
     if (!gele) raf = requestAnimationFrame(image);
@@ -230,6 +288,8 @@ export function creerScene(canvas: HTMLCanvasElement, opts: OptionsScene = {}): 
     course = null;
     plan = null;
     rappels = null;
+    ko = null;
+    frappe = false;
     canvas.style.visibility = "hidden";
   }
 
@@ -264,7 +324,8 @@ export function creerScene(canvas: HTMLCanvasElement, opts: OptionsScene = {}): 
       groupe.rotation.y = lacet;
       // Vers la caméra (repère du modèle) : la tête s'y tourne un peu, les yeux un peu plus.
       const versCamera = -lacet;
-      course = creerCourse({ graine: p.graine ?? Math.random() * 1000, phase: Math.random() });
+      graine = p.graine ?? Math.random() * 1000;
+      course = creerCourse({ graine, phase: Math.random() });
       course.regarder(borne(versCamera, -1, 1) * 0.16);
       yeux = { lacet: Math.sign(versCamera) * 12 * DEG, tangage: -2 * DEG };
       redemarrerHorloge();
@@ -286,11 +347,19 @@ export function creerScene(canvas: HTMLCanvasElement, opts: OptionsScene = {}): 
     },
     avancer(dt) {
       if (!course || !plan) return;
-      course.avancer(dt);
+      avancerTemps(dt);
       dessiner();
       if (fini()) terminer();
     },
     etat: () => intentions,
+    frapper() {
+      if (!course || !plan || ko || frappe) return false;
+      ko = creerKO(course.etat(), graine);
+      frappe = true;
+      return true;
+    },
+    annulerKO() { ko?.annuler(); },
+    phaseKO: () => ko?.phase ?? null,
     dispose() {
       libere = true;
       arreter();

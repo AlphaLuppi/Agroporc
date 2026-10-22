@@ -29,10 +29,18 @@ describe("tirerReaction", () => {
     expect(tirerReaction(0.999999)).toBe("serre-main");
   });
 
-  it("atteint chaque réaction", () => {
+  it("atteint chaque réaction de poids non nul", () => {
     const vues = new Set<Reaction>();
     for (let a = 0; a < 1; a += 0.01) vues.add(tirerReaction(a));
-    expect(vues.size).toBe(POIDS_REACTIONS.length);
+    expect(vues.size).toBe(POIDS_REACTIONS.filter(([, p]) => p > 0).length);
+  });
+
+  it("ne tire jamais la batte, même par le report sur la suivante de la liste", () => {
+    expect(POIDS_REACTIONS.find(([r]) => r === "batte")?.[1]).toBe(0);
+    for (const precedente of [null, ...POIDS_REACTIONS.map(([r]) => r)]) {
+      for (let a = 0; a < 1; a += 0.005) expect(tirerReaction(a, precedente)).not.toBe("batte");
+    }
+    expect(tirerReaction(0.999999, "serre-main")).toBe("regard");
   });
 
   it("ne répète jamais la réaction précédente", () => {

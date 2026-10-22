@@ -14,6 +14,7 @@ import type { Role } from "./os";
 import type { EvenementTigre } from "./animateur";
 import { PETITS_MAX, petitsPourEvenement, type Evenement } from "../tigre-courant";
 import { poidsMainHumaine } from "./gestes/serre-main";
+import { creerBatte } from "./batte-maillage";
 
 /** Hauteur de la fenêtre de vue en mètres de tigre : fixe l'échelle (px par mètre = hauteur du canvas / VUE_M). */
 export const VUE_M = 3.86;
@@ -44,6 +45,8 @@ export interface InfosImage {
   gauche: number;
   /** Horloge de la mère (s) : l'hôte y cale la durée des bulles, qui suit ainsi le temps de la scène (pause comprise). */
   temps: number;
+  /** Coup de batte : point de la batte qui touche Macron (éclats de l'impact), null sans batte. */
+  batte: Point | null;
 }
 
 export interface RappelsScene {
@@ -150,6 +153,8 @@ export function creerScene(canvas: HTMLCanvasElement, opts: OptionsScene = {}): 
   scene.add(traine);
 
   const tigres: Tigre[] = [];
+  // Batte du geste « batte », rattachée à la main droite de la mère (lib/tigre3d/batte-maillage.ts).
+  const batte = creerBatte();
   let modele: ModeleTigre | null = null;
   let chargement: Promise<void> | null = null;
   const tigre = (i: number): Tigre => {
@@ -250,6 +255,7 @@ export function creerScene(canvas: HTMLCanvasElement, opts: OptionsScene = {}): 
       traine.scale.x = m0.anim.sens;
       matTraine.opacity = Math.min(1, (m0.anim.facteurVitesse - 0.5) * 2);
     }
+    const contactBatte = batte.maj(tigre(0), m0.anim);
     renderer.render(scene, camera);
     const gauche = centre - largeurCanvas / 2;
     const dx = secousse > 0 ? (Math.random() - 0.5) * 6 * secousse : 0;
@@ -264,6 +270,7 @@ export function creerScene(canvas: HTMLCanvasElement, opts: OptionsScene = {}): 
       tete: monde(os(mere, "bout_tete")),
       bulle: pointBulle(mere, 1),
       patte: patteLevee(mere),
+      batte: contactBatte ? projeter(contactBatte.clone()) : null,
     });
   }
 
@@ -350,6 +357,7 @@ export function creerScene(canvas: HTMLCanvasElement, opts: OptionsScene = {}): 
       canvas.removeEventListener("webglcontextlost", surPerte);
       for (const t of tigres) { scene.remove(t.groupe); t.dispose(); }
       traine.geometry.dispose(); matTraine.dispose(); texTraine.dispose();
+      batte.dispose();
       tigres.length = 0;
       libererModele();
       renderer.dispose();
