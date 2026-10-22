@@ -4,17 +4,17 @@
  * Génération : une grille irrégulière (pas d'environ 6 m, décalages tirés avec une graine fixe)
  * couvre la zone jouable, le rectangle des bâtiments agrandi de 40 m. On écarte les points trop
  * près d'un bâtiment (1,5 m), d'une route (4 m) ou dans l'eau, on note la difficulté de chacun,
- * on ne garde que les points tapis contre un bâtiment (mur à moins de 8 m) et masqués par un
- * bâtiment depuis au moins 2 des 8 caméras (au moins 3 des 5 points du corps cachés depuis
- * chacune), puis on écarte le quart le moins difficile. Les
- * cachettes gardées sont classées par rang de difficulté (0 = la plus facile, 1 = la plus
- * difficile) : points et paliers suivent ce rang.
+ * on ne garde que les points tapis contre un bâtiment (mur à moins de 5 m) et masqués par un
+ * bâtiment depuis au moins 3 des 8 caméras (les 5 points du corps cachés depuis chacune), puis on
+ * écarte le quart le moins difficile. Les cachettes gardées sont classées par rang de difficulté
+ * (0 = la plus facile, 1 = la plus difficile) : points et paliers suivent ce rang.
  *
- * Pourquoi ce filtre (ajouté après revue, en attente de validation) : sans lui, l'éloignement
- * suffisait à classer un point en terrain nu dans les paliers facile et moyenne, et 57 % des
- * tirages montraient le tigre à découvert. Le masquage seul admettait encore des points en terrain
- * dégagé à 15 ou 20 m d'un mur, d'où la distance au mur. Les arbres, en fil de fer translucide,
- * ne cachent rien et n'admettent pas un point à eux seuls.
+ * Pourquoi ce filtre : sans lui, l'éloignement suffisait à classer un point en terrain nu dans les
+ * paliers facile et moyenne, et 57 % des tirages montraient le tigre à découvert. Le masquage seul
+ * admettait encore des points en terrain dégagé à 15 ou 20 m d'un mur, d'où la distance au mur.
+ * Les arbres, en fil de fer translucide, ne cachent rien et n'admettent pas un point à eux seuls.
+ * La règle a été durcie à la demande de l'utilisateur (moins de cachettes, mieux masquées) : la
+ * mesure des réglages est dans la spec, section « Cachettes ».
  *
  * Difficulté = 0,45 masquage + 0,20 couvert d'arbres + 0,20 éloignement + 0,15 recoin.
  * Masquage : 5 points sur le corps du tigre (0,3 à 1 m de haut), visés depuis 8 caméras (la
@@ -59,12 +59,12 @@ export const POIDS = { masquage: 0.45, arbres: 0.2, eloignement: 0.2, recoin: 0.
 /** Points du corps : décalage le long du tigre (m, museau devant) et hauteur (m). */
 const CORPS: ReadonlyArray<readonly [number, number]> = [[1.2, 0.9], [0.6, 1.0], [0, 0.8], [-0.6, 0.6], [-1.2, 0.3]];
 const GRAINE = 20261022;
-/** Une caméra « voit le tigre masqué » quand au moins 3 des 5 points du corps le sont. */
-export const CORPS_MASQUE_MIN = 3;
-/** Un point n'est une cachette que s'il est masqué depuis au moins 2 des 8 caméras. */
-export const DIRECTIONS_MASQUEES_MIN = 2;
-/** Et s'il est tapi contre un bâtiment : mur le plus proche à moins de 8 m. */
-export const MUR_MAX_M = 8;
+/** Une caméra « ne voit pas le tigre » quand les 5 points du corps sont masqués (le corps entier). */
+export const CORPS_MASQUE_MIN = 5;
+/** Un point n'est une cachette que s'il est masqué depuis au moins 3 des 8 caméras. */
+export const DIRECTIONS_MASQUEES_MIN = 3;
+/** Et s'il est tapi contre un bâtiment : mur le plus proche à moins de 5 m. */
+export const MUR_MAX_M = 5;
 
 /** Le point est caché dans le décor : contre un mur, masqué par un bâtiment depuis assez de directions. */
 export function estCache(p: Pick<PointNote, "directions" | "mur">): boolean {
@@ -180,7 +180,7 @@ export interface PointNote {
   z: number;
   cap: number;
   masquage: number;
-  /** Nombre des 8 caméras depuis lesquelles au moins 3 des 5 points du corps sont masqués. */
+  /** Nombre des 8 caméras depuis lesquelles au moins `CORPS_MASQUE_MIN` des 5 points du corps sont masqués. */
   directions: number;
   /** Distance (m) au mur de bâtiment le plus proche, Infinity si aucun bâtiment à moins de 15 m environ. */
   mur: number;
