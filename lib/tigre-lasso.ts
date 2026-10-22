@@ -316,6 +316,33 @@ export function angleSuspendu(amont: Vec, cou: Vec, d: Vec): number {
   return normaliser(Math.atan2(uy, ux) - Math.atan2(d.y, d.x));
 }
 
+/** Corps pendu : angle à l'écran (rad, sens horaire) et vitesse de rotation (rad/s). */
+export interface Balancier { angle: number; omega: number }
+
+/**
+ * Pendule pesant : un corps rigide pendu à un point d'attache qui bouge (le bout de la corde).
+ * `d` = attache → centre de gravité au repos (px), `k` = rayon de giration autour du centre de
+ * gravité (px), `aPivot` = accélération de l'attache (px/s²). Le couple de la pesanteur, et des
+ * secousses de l'attache (force d'inertie −m·a), fait tourner le corps autour de l'attache :
+ *   θ'' = (r × (g − a)) / (|r|² + k²) − amorti·θ'
+ * Au repos, le centre de gravité finit sous l'attache ; une secousse le fait balancer.
+ */
+export function majBalancier(b: Balancier, d: Vec, k: number, aPivot: Vec, dt: number, amorti = 0.7): Balancier {
+  let { angle, omega } = b;
+  let reste = Math.max(0, Math.min(dt, 0.1));
+  const i = d.x * d.x + d.y * d.y + k * k;
+  while (reste > 1e-9) {
+    const h = Math.min(reste, 1 / 240);
+    reste -= h;
+    const r = tourner(d, angle);
+    const fx = -aPivot.x, fy = GRAVITE - aPivot.y;
+    const alpha = (r.x * fy - r.y * fx) / i - amorti * omega;
+    omega += alpha * h;
+    angle += omega * h;
+  }
+  return { angle, omega };
+}
+
 /** Le tigre lâché : centre du corps, vitesse, angle et rotation propre. */
 export interface Vol {
   c: Vec;

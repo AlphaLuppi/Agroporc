@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  angleSuspendu, AU_SOL_S, balistique, boucleLancee, boucleSerree, creerCorde, distance, DUREE_LANCER_S, longueurRepos, majCorde,
+  angleSuspendu, AU_SOL_S, majBalancier, balistique, boucleLancee, boucleSerree, creerCorde, distance, DUREE_LANCER_S, longueurRepos, majCorde,
   majVol, noeud, normaliser, plafonner, pointsAnneau, tournoyer, tourner, touche, v3, vitesseBalistique, VITESSE_MAX,
   type Bornes, type Vol,
 } from "./tigre-lasso";
@@ -120,6 +120,40 @@ describe("angleSuspendu", () => {
   it("normalise dans ]-π, π]", () => {
     expect(normaliser(3 * Math.PI)).toBeCloseTo(Math.PI, 9);
     expect(normaliser(-3 * Math.PI / 2)).toBeCloseTo(Math.PI / 2, 9);
+  });
+});
+
+describe("majBalancier (pendule pesant)", () => {
+  it("lâché de travers, il finit centre de gravité sous l'attache", () => {
+    // Pendu par le poignet : le centre de gravité à 120 px sous l'attache, décalé de 30 px.
+    const d = { x: 30, y: 120 };
+    let b = { angle: 0.9, omega: 0 };
+    for (let i = 0; i < 60 * 12; i++) b = majBalancier(b, d, 50, { x: 0, y: 0 }, 1 / 60);
+    const r = tourner(d, b.angle);
+    expect(Math.abs(r.x)).toBeLessThan(3);
+    expect(r.y).toBeGreaterThan(0);
+  });
+
+  it("balance à la période d'un pendule pesant : 2π √((d² + k²) / (g·d))", () => {
+    const d = { x: 0, y: 120 }, k = 50;
+    let b = { angle: 0.15, omega: 0 }, t = 0, prec = b.angle;
+    const passages: number[] = [];
+    while (t < 4) {
+      b = majBalancier(b, d, k, { x: 0, y: 0 }, 1 / 240, 0);
+      t += 1 / 240;
+      if (prec > 0 && b.angle <= 0) passages.push(t);
+      prec = b.angle;
+    }
+    const periode = passages[1] - passages[0];
+    const attendue = 2 * Math.PI * Math.sqrt((120 * 120 + k * k) / (2600 * 120));
+    expect(periode).toBeCloseTo(attendue, 2);
+  });
+
+  it("une secousse de l'attache vers la droite le fait partir en arrière (inertie)", () => {
+    let b = { angle: 0, omega: 0 };
+    b = majBalancier(b, { x: 0, y: 120 }, 50, { x: 3000, y: 0 }, 0.05);
+    // Centre de gravité laissé derrière (à gauche) : rotation dans le sens horaire de l'écran.
+    expect(tourner({ x: 0, y: 120 }, b.angle).x).toBeLessThan(0);
   });
 });
 

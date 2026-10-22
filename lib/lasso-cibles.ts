@@ -11,11 +11,11 @@ export interface Point { x: number; y: number }
 export interface PriseLasso {
   /** Pivot du personnage pendu (son centre de gravité, à l'œil). */
   centre: Point;
-  /** Centre du collier de corde, autour du cou. */
+  /** Centre de la boucle une fois serrée (autour du cou du tigre, du poignet levé du coureur). */
   cou: Point;
-  /** Nœud du collier : la corde en part. */
+  /** Nœud de la boucle : la corde en part, le personnage y est pendu. */
   noeud: Point;
-  /** Axe du cou à l'écran (unitaire, vers la tête) et rayon du collier (px). */
+  /** Axe de ce qu'elle serre à l'écran (unitaire) et rayon de la boucle serrée (px). */
   axe: Point;
   rayon: number;
 }
@@ -38,7 +38,7 @@ export interface CibleLasso {
   zone(): { x: number; y: number; w: number; h: number } | null;
   /** Attrape-le : sa scène appellera `lien.image` à chaque image ; null s'il ne se laisse pas prendre. */
   attraper(lien: LienLasso): PriseLasso | null;
-  /** Nœud serré : le collier de corde apparaît autour du cou. */
+  /** Nœud serré : la boucle de corde apparaît dans sa scène (autour du cou, du poignet). */
   serrer(): void;
   /** Retombé au sol, pivot en `x` : il se dégage et repart. */
   relacher(x: number): void;

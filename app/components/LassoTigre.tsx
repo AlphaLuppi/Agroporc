@@ -3,8 +3,8 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
-  angleSuspendu, boucleLancee, boucleSerree, balistique, creerCorde, distance, DUREE_LANCER_S, DUREE_SERRE_S, majCorde,
-  majVol, melange, noeud, plafonner, pointsAnneau, RAYON_ARRIVEE, tangenteNoeud, tournoyer, tourner, touche, v3, vitesseBalistique,
+  boucleLancee, boucleSerree, balistique, creerCorde, distance, DUREE_LANCER_S, DUREE_SERRE_S, majCorde,
+  majBalancier, majVol, melange, noeud, plafonner, pointsAnneau, RAYON_ARRIVEE, tangenteNoeud, tournoyer, tourner, touche, v3, vitesseBalistique,
   VITESSE_MAX, type Anneau, type Corde, type V3, type Vec, type Vol,
 } from "@/lib/tigre-lasso";
 import type { RenduLasso } from "@/lib/tigre-lasso-rendu";
@@ -29,8 +29,11 @@ const CORDE_TENU = 1.1;
 const HISSE_S = 0.55;
 /** Ramener la corde (s). */
 const RAMENE_S = 0.6;
-/** Raideur et amortissement de l'angle de la cible pendue : elle suit la corde avec de l'inertie. */
-const RAIDEUR_ANGLE = 55, AMORTI_ANGLE = 4.5;
+/**
+ * Cible pendue = pendule pesant (lib/tigre-lasso.ts, majBalancier) : rayon de giration (en tailles
+ * de cible) et lissage (1/s) de l'accélération de l'attache, mesurée sur le bout de la corde.
+ */
+const GIRATION = 0.3, LISSAGE_ACC = 18;
 /**
  * Corde élastique quand elle porte la cible : ressort (1/s²) et amortissement (1/s) du rebond au bout
  * de la corde (≈ 4 rebonds visibles, ≈ 65 px d'étirement au repos), freinage de l'air (1/s).
@@ -49,6 +52,10 @@ interface Prise {
   mainDe: V3;
   /** Longueur de corde au début de la hisse. */
   reposDe: number;
+  /** Attache (bout de la corde) à l'image précédente, sa vitesse et son accélération lissée (px, /s, /s²). */
+  attache: V3 | null;
+  vAttache: Vec;
+  aAttache: Vec;
 }
 
 /** Serrage : la boucle arrivée, le collier visé (fenêtre), et de quoi suspendre le tigre ensuite. */
@@ -210,6 +217,7 @@ export function useLassoTigre(): { rendu: ReactNode } {
       prise.current = {
         d: { x: s.centre.x - s.noeud.x, y: s.centre.y - s.noeud.y },
         centreY: s.centre.y, angle: 0, omega: 0, t0: horloge.current, mainDe: main, reposDe: c.repos,
+        attache: null, vAttache: { x: 0, y: 0 }, aAttache: { x: 0, y: 0 },
       };
       serrage.current = null;
       changer("tenu");
@@ -231,16 +239,22 @@ export function useLassoTigre(): { rendu: ReactNode } {
       epingles: [[0, main]], sol: sol(), freinFin: FREIN_AIR,
       elastique: { longueur, k: ELASTIQUE_K, amorti: ELASTIQUE_AMORTI },
     });
-    // Le corps pend dans l'axe de la traction (main → nuque), pas dans celui des derniers brins ;
-    // main plus bas que le cou (au début de la hisse), la corde ne le retourne pas : il pend vers le bas.
+    // Pendule pesant : la pesanteur et les secousses de l'attache (le bout de la corde) font
+    // tourner le corps autour d'elle ; rien ne l'oriente « le long de la corde ».
     const nuque = c.p[N - 1];
-    const dx = nuque.x - main.x, dy = nuque.y - main.y, n = Math.hypot(dx, dy) || 1;
-    const w = Math.min(1, Math.max(0, -dy / 60));
-    const ax = (dx / n) * (1 - w), ay = (dy / n) * (1 - w) + w;
-    let ecart = angleSuspendu({ x: nuque.x - ax, y: nuque.y - ay }, nuque, p.d) - p.angle;
-    ecart = Math.atan2(Math.sin(ecart), Math.cos(ecart));
-    p.omega += (RAIDEUR_ANGLE * ecart - AMORTI_ANGLE * p.omega) * dt;
-    p.angle += p.omega * dt;
+    if (dt > 0) {
+      if (p.attache) {
+        const v = { x: (nuque.x - p.attache.x) / dt, y: (nuque.y - p.attache.y) / dt };
+        const k = 1 - Math.exp(-LISSAGE_ACC * dt);
+        p.aAttache = plafonner({
+          x: p.aAttache.x + ((v.x - p.vAttache.x) / dt - p.aAttache.x) * k,
+          y: p.aAttache.y + ((v.y - p.vAttache.y) / dt - p.aAttache.y) * k,
+        }, 30000);
+        p.vAttache = v;
+      }
+      p.attache = { ...nuque };
+    }
+    ({ angle: p.angle, omega: p.omega } = majBalancier(p, p.d, GIRATION * taille(), p.aAttache, dt));
     return transformation(nuque, p.angle, p.d);
   };
 
@@ -373,6 +387,7 @@ export function useLassoTigre(): { rendu: ReactNode } {
     p.t0 = horloge.current;
     p.mainDe = { ...c.p[0] };
     p.reposDe = c.repos;
+    p.attache = null;
     p.angle = v.angle;
     p.omega = v.omega;
     vol.current = null;

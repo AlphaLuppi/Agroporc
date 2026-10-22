@@ -12,7 +12,7 @@ import { creerCourse, DEG, MESURES, type Course, type IntentionsCourse } from ".
 import { appliquerPose, chargerModele, libererGPU, type ModeleMacron } from "./modele";
 import { creerPoseur, type Poseur } from "./pose";
 import { BULLE, CADRE_M, LACET_CAMERA, avancement, bulleVisible, gaucheCanvas, passageFini, planPassage, replanifier, type Ecran, type PlanPassage } from "./passage";
-import { COTES, deCote, type Role } from "./os";
+import { COTES, deCote, type Cote, type Role } from "./os";
 import { textureCorde } from "../tigre-lasso-rendu";
 import { INTERVALLE_REPLIQUE_S, REPLIQUES_MACRON, tirerReplique } from "../repliques-lasso";
 
@@ -23,8 +23,8 @@ const OMBRE_PIED_H = 0.14;
 /** Hauteur de l'os Toe_End au repos, pied à plat (m). */
 const BOUT_PIED_Y = 0.032;
 
-/** Lasso : rayon du collier de corde autour du cou (m) et épaisseur du fil à l'écran (px). */
-const RAYON_COLLIER_M = 0.085;
+/** Lasso : rayon de la boucle serrée au poignet (m) et épaisseur du fil à l'écran (px). */
+const RAYON_POIGNET_M = 0.048;
 const FIL_COLLIER_PX = 2.8;
 /** Lasso : durée de la dernière réplique, une fois relâché (s). */
 const BULLE_APRES_S = 1.8;
@@ -174,6 +174,8 @@ export function creerScene(canvas: HTMLCanvasElement, opts: OptionsScene = {}): 
   const v = new THREE.Vector3();
   // Lasso : pivot (canvas), position imposée, collier, et bulle qui dure encore un peu après.
   let prise: { centre: Point } | null = null;
+  /** Bras levé (lasso au poignet) : côté tourné vers nous, part du geste et sa cible (0..1). */
+  let brasCote: Cote = "D", brasPoids = 0, brasCible = 0;
   let tenue: Tenue | null = null;
   let serre = false;
   let horloge = 0, bulleJusque = -1;
@@ -211,17 +213,20 @@ export function creerScene(canvas: HTMLCanvasElement, opts: OptionsScene = {}): 
     const p = poseur.monde.p[modele.sq.i[r]];
     return decale.localToWorld(new THREE.Vector3(p.x, p.y, p.z));
   };
-  /** Collier autour du cou : centre, axe (vers la tête) et nuque (à l'opposé du visage), en monde. */
+  /**
+   * Boucle serrée au poignet du bras levé : autour de l'avant-bras, juste sous la main ; le nœud
+   * (d'où part la corde) est au-dessus de la main, dans l'axe du bras. En monde.
+   */
   function poserCollier() {
-    const a = mondeOs("cou1"), b = mondeOs("tete");
-    const axe = b.clone().sub(a).normalize();
-    const centre = a.clone().lerp(b, 0.45);
-    const dos = new THREE.Vector3(-Math.sin(groupe.rotation.y), 0, -Math.cos(groupe.rotation.y));
-    dos.addScaledVector(axe, -dos.dot(axe)).normalize();
+    const coude = mondeOs(deCote("avantBras", brasCote)), poignet = mondeOs(deCote("main", brasCote));
+    const axe = poignet.clone().sub(coude).normalize();
+    const centre = poignet.clone().addScaledVector(axe, -0.03);
     collier.position.copy(centre);
     collier.quaternion.setFromUnitVectors(zAxe, axe);
-    return { centre, axe, nuque: centre.clone().addScaledVector(dos, RAYON_COLLIER_M) };
+    return { centre, axe, nuque: poignet.clone().addScaledVector(axe, 0.05) };
   }
+  /** Le bras levé suit sa cible (il se lève à la prise, retombe au relâcher). */
+  const majBras = (dt: number) => { brasPoids += (brasCible - brasPoids) * (1 - Math.exp(-14 * dt)); };
   /** Boîte englobante (px du canvas) du coureur : tête, bassin, mains, pieds. */
   function boiteCoureur() {
     const pts = (["sommet", "bassin", "mainG", "mainD", "boutPiedG", "boutPiedD", "piedG", "piedD"] as Role[]).map((r) => projeter(mondeOs(r)));
@@ -235,10 +240,10 @@ export function creerScene(canvas: HTMLCanvasElement, opts: OptionsScene = {}): 
     if (!course || !modele || !poseur || !plan) return;
     const it = course.etat();
     intentions = it;
-    poseur.poser(it, yeux);
+    poseur.poser(it, yeux, brasPoids > 0.002 ? { cote: brasCote, poids: brasPoids } : undefined);
     appliquerPose(modele, poseur.pose);
     decale.position.set(0, 0, -it.avance);
-    // Pendu au lasso : plus d'ombres au sol, le collier autour du cou.
+    // Pendu au lasso : plus d'ombres au sol, la boucle serrée au poignet.
     ombre.visible = !prise;
     for (const o of ombresPieds) o.m.visible = !prise;
     collier.visible = serre && !!prise;
@@ -280,7 +285,8 @@ export function creerScene(canvas: HTMLCanvasElement, opts: OptionsScene = {}): 
       const xs = coins.map((p) => p.x), ys = coins.map((p) => p.y);
       boite = { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
       gauche = 0;
-      teteVue = { x: boite.x + boite.w / 2, y: boite.y };
+      // La bulle reste à sa tête (le bras levé dépasse au-dessus).
+      teteVue = placer(tete);
     } else {
       canvas.style.transform = `translate3d(${gauche}px, 0, 0)`;
     }
@@ -303,6 +309,7 @@ export function creerScene(canvas: HTMLCanvasElement, opts: OptionsScene = {}): 
     const dt = borne((now - dernier) / 1000, 0, DT_IMAGE_MAX);
     dernier = now;
     horloge += dt;
+    majBras(dt);
     course.avancer(dt);
     if (prise) tenue = rappels?.tenue?.(dt) ?? null;
     dessiner();
@@ -328,6 +335,7 @@ export function creerScene(canvas: HTMLCanvasElement, opts: OptionsScene = {}): 
     prise = null;
     tenue = null;
     serre = false;
+    brasCible = brasPoids = 0;
     canvas.style.visibility = "hidden";
     canvas.style.transformOrigin = "";
   }
@@ -386,29 +394,36 @@ export function creerScene(canvas: HTMLCanvasElement, opts: OptionsScene = {}): 
     avancer(dt) {
       if (!course || !plan) return;
       horloge += dt;
+      majBras(dt);
       course.avancer(dt);
       if (prise) tenue = rappels?.tenue?.(dt) ?? null;
       dessiner();
       if (!prise && fini()) terminer();
     },
     attraper() {
-      if (!course || !plan || !intentions || prise || !modele) return null;
+      if (!course || !plan || !intentions || prise || !modele || !poseur) return null;
       const gauche = gaucheCanvas(plan, intentions.avance);
+      // Le bras tourné vers nous se lève (il est pris par le poignet) : repères pris sur la pose
+      // bras levé, que le geste rejoint pendant le serrage.
+      brasCote = plan.sens === 1 ? "D" : "G";
+      poseur.poser(intentions, yeux, { cote: brasCote, poids: 1 });
       const c = poserCollier();
-      const cou = projeter(c.centre.clone()), noeud = projeter(c.nuque.clone()), tete = projeter(c.centre.clone().add(c.axe));
-      const centre = projeter(mondeOs("bassin"));
-      const n = Math.hypot(tete.x - cou.x, tete.y - cou.y) || 1;
+      const cou = projeter(c.centre.clone()), noeud = projeter(c.nuque.clone()), main = projeter(c.centre.clone().add(c.axe));
+      // Pivot du corps pendu : son centre de gravité, à peine au-dessus du bassin.
+      const centre = projeter(mondeOs("bassin").lerp(mondeOs("dos3"), 0.25));
+      const n = Math.hypot(main.x - cou.x, main.y - cou.y) || 1;
+      brasCible = 1;
       prise = { centre };
       tenue = null;
       serre = false;
       dire(REPLIQUES_MACRON.pris);
       collier.geometry.dispose();
-      collier.geometry = new THREE.TorusGeometry(RAYON_COLLIER_M, FIL_COLLIER_PX / plan.pxm, 8, 40);
+      collier.geometry = new THREE.TorusGeometry(RAYON_POIGNET_M, FIL_COLLIER_PX / plan.pxm, 8, 32);
       const g = (p: Point): Point => ({ x: gauche + p.x, y: p.y });
       return {
         centre: g(centre), cou: g(cou), noeud: g(noeud),
-        axe: { x: (tete.x - cou.x) / n, y: (tete.y - cou.y) / n },
-        rayon: Math.hypot(noeud.x - cou.x, noeud.y - cou.y),
+        axe: { x: (main.x - cou.x) / n, y: (main.y - cou.y) / n },
+        rayon: Math.max(4, Math.hypot(projeter(c.centre.clone().add(new THREE.Vector3(RAYON_POIGNET_M, 0, 0))).x - cou.x, 0)),
       };
     },
     serrer() { serre = true; },
@@ -420,6 +435,7 @@ export function creerScene(canvas: HTMLCanvasElement, opts: OptionsScene = {}): 
       prise = null;
       tenue = null;
       serre = false;
+      brasCible = 0;
       canvas.style.transformOrigin = "";
       bulleJusque = horloge + BULLE_APRES_S;
       dire(REPLIQUES_MACRON.libre);
