@@ -74,6 +74,13 @@ export interface ConsignesCorde {
   tendue?: number;
   /** Freinage de l'air sur la dernière particule (1/s) : le tigre qui se débat ne balance pas sans fin. */
   freinFin?: number;
+  /**
+   * Corde élastique portant un poids (le bout) : au-delà de `longueur` (px), le bout est rappelé vers
+   * la première particule (la main) par un ressort de raideur `k` (1/s²) amorti par `amorti` (1/s),
+   * le long de la corde seulement : il rebondit au bout comme à un élastique, et balance librement
+   * de côté. Les brins, eux, ne font que dessiner la corde entre la main et le poids.
+   */
+  elastique?: { longueur: number; k: number; amorti: number };
 }
 
 /** Corde de `n` particules en ligne droite de `a` à `b`. */
@@ -96,8 +103,23 @@ export function majCorde(c: Corde, dt: number, k: ConsignesCorde): V3 {
   let vFin = v3();
   const epingle = new Map<number, V3>(k.epingles.map(([i, p]) => [i, p]));
   const gardeFin = Math.exp(-(k.freinFin ?? 0) * PAS_S);
+  const el = k.elastique;
   while (c.reste >= PAS_S) {
     c.reste -= PAS_S;
+    if (el) {
+      // Ressort radial main → poids, puis les brins se répartissent entre les deux (à peine mous).
+      const a = c.p[0], b = c.p[n - 1], q = c.prec[n - 1];
+      const d = distance(a, b) || 1e-6;
+      const allonge = d - el.longueur;
+      if (allonge > 0) {
+        const u = fois(moins(a, b), 1 / d);
+        const vr = ((b.x - q.x) * u.x + (b.y - q.y) * u.y + (b.z - q.z) * u.z) / PAS_S;
+        // Rappel vers la main, freiné quand le poids y revient déjà (vr > 0) ; jamais au-delà de 1,8 fois.
+        const acc = (el.k * allonge - el.amorti * vr) * PAS_S * PAS_S + Math.max(0, d - 1.8 * el.longueur);
+        c.p[n - 1] = plus(b, fois(u, acc));
+      }
+      c.repos = Math.max(2, (Math.max(d, el.longueur * 0.6) * 1.02) / (n - 1));
+    }
     for (let i = 0; i < n; i++) {
       const p = c.p[i], q = c.prec[i];
       const garde = i === n - 1 ? 0.996 * gardeFin : 0.996;
@@ -105,6 +127,8 @@ export function majCorde(c: Corde, dt: number, k: ConsignesCorde): V3 {
       c.prec[i] = { ...p };
       c.p[i] = v3(p.x + vx, p.y + vy + GRAVITE * PAS_S * PAS_S, p.z + vz);
     }
+    // Élastique : le poids n'est mené que par le ressort, les brins le suivent comme s'il était épinglé.
+    if (el) epingle.set(n - 1, { ...c.p[n - 1] });
     for (let it = 0; it < 24; it++) {
       for (const [i, pos] of epingle) c.p[i] = { ...pos };
       for (let i = 0; i < n - 1; i++) {

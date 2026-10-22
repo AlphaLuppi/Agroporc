@@ -71,6 +71,28 @@ describe("corde", () => {
     expect(v.x).toBeGreaterThan(200);
   });
 
+  it("élastique : le poids tombe, s'étire au-delà de la longueur, rebondit plusieurs fois puis se pose", () => {
+    const main = v3(300, 100, 0);
+    const c = creerCorde(28, main, v3(300, 110, 0), 2);
+    const L = 240;
+    const d: number[] = [];
+    for (let i = 0; i < 60 * 6; i++) {
+      majCorde(c, 1 / 60, { epingles: [[0, main]], sol: 5000, freinFin: 0.45, elastique: { longueur: L, k: 40, amorti: 1 } });
+      d.push(distance(c.p[27], main));
+    }
+    // Il s'étire bien au-delà de la longueur de la corde (rebond), sans dépasser 1,8 fois.
+    const max = Math.max(...d);
+    expect(max).toBeGreaterThan(L * 1.4);
+    expect(max).toBeLessThanOrEqual(L * 1.8 + 1);
+    // Au moins 3 remontées (minima locaux) : ça rebondit.
+    let rebonds = 0;
+    for (let i = 1; i < d.length - 1; i++) if (d[i] < d[i - 1] && d[i] <= d[i + 1] && d[i] > L * 0.9) rebonds++;
+    expect(rebonds).toBeGreaterThanOrEqual(3);
+    // Au repos : étiré de pesanteur / raideur (≈ 65 px), immobile.
+    expect(d.at(-1)! - L).toBeGreaterThan(45);
+    expect(Math.abs(d.at(-1)! - d.at(-30)!)).toBeLessThan(6);
+  });
+
   it("posée au sol, elle n'y passe jamais dessous", () => {
     const c = creerCorde(12, v3(0, 0, 0), v3(100, 0, 0));
     for (let i = 0; i < 120; i++) majCorde(c, 1 / 60, { epingles: [], sol: 50 });
