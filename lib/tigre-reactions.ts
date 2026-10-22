@@ -105,7 +105,8 @@ export const VITESSE_VEXE = 0.75;
 /** Une traversée de demi-tour ne dure jamais moins que ça (position près de la sortie). */
 export const DUREE_DEMI_TOUR_MIN_MS = 250;
 
-export type CleTexte = Reaction | "vexe" | "clap";
+/** `seum` / `libre` : pris au lasso, puis relâché (lib/tigre-lasso.ts), hors tirage des réactions. */
+export type CleTexte = Reaction | "vexe" | "clap" | "seum" | "libre";
 
 export const TEXTES: Record<CleTexte, readonly string[]> = {
   regard: ["Grrr ?", "Quoi ?", "Miaou.", "Tu veux ma photo ?", "J'ai l'air d'un chat ?"],
@@ -121,6 +122,8 @@ export const TEXTES: Record<CleTexte, readonly string[]> = {
   "serre-main": ["Serre-moi la pince !", "Bravo, bravo !", "Tope là, l'ami !"],
   vexe: ["Hmpf.", "Pff…", "Quel manque de respect."],
   clap: ["🐾 Clap !"],
+  seum: ["J'ai le seum !", "Lâche-moi !", "C'est abusé !", "Repose-moi, cowboy !"],
+  libre: ["Le seum…", "Je me casse !", "Même pas mal."],
 };
 
 /** Humeur du regard : elle règle la mimique (oreilles, paupières, gueule) pour coller au texte de la bulle. */

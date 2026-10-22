@@ -77,6 +77,8 @@ export interface Tigre {
   groupe: THREE.Group;
   /** Os du clone, dans l'ordre du squelette (lib/tigre3d/squelette.ts). */
   os: THREE.Bone[];
+  /** Ombre portée au sol (cachée quand le tigre est pendu au lasso). */
+  ombre: THREE.Object3D;
   /** Recopie la pose sur les os ; `origineX` = x du corps (repère sol) ramené à l'origine du groupe. */
   appliquer(pose: PoseTigre, origineX: number): void;
   dispose(): void;
@@ -124,7 +126,7 @@ export function creerTigre(m: ModeleTigre): Tigre {
   groupe.add(ombre);
   const racine = sq.i.racine;
   return {
-    groupe, os,
+    groupe, os, ombre,
     appliquer(pose, origineX) {
       decale.position.x = -origineX;
       for (let k = 0; k < os.length; k++) {
