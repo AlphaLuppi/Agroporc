@@ -330,8 +330,8 @@ describe("urlArene", () => {
   it("utilise la prod ailleurs (et hors navigateur)", () => {
     delete process.env.NEXT_PUBLIC_FPS_WS_URL;
     vi.stubGlobal("location", { hostname: "pdj.toam.tech" });
-    expect(urlArene()).toBe("wss://pdj-fps.toam.tech");
+    expect(urlArene()).toBe("wss://pdj-fps.187-124-217-58.sslip.io");
     vi.unstubAllGlobals();
-    expect(urlArene()).toBe("wss://pdj-fps.toam.tech");
+    expect(urlArene()).toBe("wss://pdj-fps.187-124-217-58.sslip.io");
   });
 });

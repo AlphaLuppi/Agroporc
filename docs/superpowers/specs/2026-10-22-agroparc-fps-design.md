@@ -27,9 +27,9 @@ navigateur (vue Palantir)                       VPS (Docker, Traefik TLS)
 ```
 
 * Vercel ne tient pas de WebSocket : le serveur temps réel tourne sur le VPS, derrière Traefik
-  (`wss://pdj-fps.toam.tech`, route fichier dans `/etc/dokploy/traefik/dynamic/pdj-fps.yml`,
+  (`wss://pdj-fps.187-124-217-58.sslip.io`, route fichier dans `/etc/dokploy/traefik/dynamic/pdj-fps.yml`,
   conteneur sur le réseau `dokploy-network`). URL côté client : `NEXT_PUBLIC_FPS_WS_URL`, sinon
-  `ws://localhost:8787` en dev et `wss://pdj-fps.toam.tech` en prod.
+  `ws://localhost:8787` en dev et `wss://pdj-fps.187-124-217-58.sslip.io` en prod.
 * **Salle unique**, 16 joueurs max. Tout visiteur de la vue Palantir se connecte en
   **spectateur** (présence : « 3 agents en ligne », liste des pseudos) ; il entre dans l'arène
   avec le bouton « Entrer dans l'arène ».
