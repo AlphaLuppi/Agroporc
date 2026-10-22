@@ -70,7 +70,9 @@ Génération :
 5. Écarter le quart des points les moins difficiles.
 6. Garder au moins 500 cachettes. Un test le vérifie sur le vrai `scene.json`.
 
-*Décision prise après revue de code, le 2026-10-22, en attente de validation par l'utilisateur* : l'étape 4 a été ajoutée parce que, sans elle, l'éloignement suffisait à classer un point en terrain nu dans les paliers facile et moyenne. Mesure sur le vrai `scene.json` : 94 % des cachettes faciles et 88 % des moyennes n'avaient aucun masquage, et 57 % des tirages montraient le tigre à découvert. Le masquage seul admettait encore des points en terrain dégagé à 15 ou 20 m d'un mur, d'où la condition des 8 m. Les arbres ne suffisent pas à admettre un point, parce qu'ils sont dessinés en fil de fer translucide et ne cachent pas le tigre. Avec cette étape, 681 cachettes sont gardées.
+*Décision prise après revue de code, le 2026-10-22* : l'étape 4 a été ajoutée parce que, sans elle, l'éloignement suffisait à classer un point en terrain nu dans les paliers facile et moyenne. Mesure sur le vrai `scene.json` : 94 % des cachettes faciles et 88 % des moyennes n'avaient aucun masquage, et 57 % des tirages montraient le tigre à découvert. Le masquage seul admettait encore des points en terrain dégagé à 15 ou 20 m d'un mur, d'où la condition des 8 m. Les arbres ne suffisent pas à admettre un point, parce qu'ils sont dessinés en fil de fer translucide et ne cachent pas le tigre. Avec cette étape, 681 cachettes sont gardées.
+
+*Décision de l'utilisateur, le 2026-10-22* : la règle doit être plus dure. Il faut moins de cachettes, mieux masquées. Le seuil du mur, le nombre de caméras masquées et le nombre de points du corps masqués se resserrent, tant que la règle des 80 m reste tenable et que le minimum de 500 cachettes est atteint. Si ce minimum empêche de durcir la règle, il passe à 300.
 
 La **difficulté** d'une cachette, entre 0 et 1, est une somme pondérée de quatre critères, chacun entre 0 et 1 :
 
@@ -193,7 +195,9 @@ Une cible de déformation déplace des sommets sans couper la surface. Les doigt
 - **Paume de peau** : un attribut par sommet, par exemple `peau`, vaut 1 sur la face de la paume et 0 ailleurs. Il est calculé sur la forme 3D au repos, sans lire la texture. Le nuanceur (shader) mélange la couleur de la texture et une couleur de peau dans la proportion `peau × poids de la déformation`, en lisant ce poids dans le tableau `morphTargetInfluences` que three lui transmet. Les petits n'ont jamais de peau.
 - **Pilotage** : `lib/tigre3d/scene.ts`, dans `dessiner()`, lit la réaction en cours de la mère (`anim.reaction`, son nom et son `tGeste`) et règle le poids avec `poidsMainHumaine`.
 
-Le squelette n'est pas modifié. Les zones de clic du tigre et le point de la patte levée, que `lib/tigre3d/scene.ts` calcule à partir des os pour placer les bulles et les particules, ne changent donc pas.
+*Décision de l'utilisateur, le 2026-10-22* : la main montre son dos rayé à la caméra, comme sur l'image de référence. Le dessous de la patte, crème dans la texture, ne fait plus face à la caméra pendant la poignée de main. Pour cela, l'os `mainD` (et si besoin `brasD`) pivote pendant la poignée de main, avec le même poids `poidsMainHumaine` que la déformation, donc sans saut à l'entrée ni à la sortie. La paume de peau reste du côté opposé à la caméra. L'auriculaire, plus étroit et plus court que les autres doigts, est corrigé.
+
+Le squelette n'est pas modifié en dehors de cette rotation. Les zones de clic du tigre et le point de la patte levée, que `lib/tigre3d/scene.ts` calcule à partir des os pour placer les bulles et les particules, ne changent donc pas.
 
 ### Critère d'acceptation
 
@@ -231,7 +235,7 @@ Un module `lib/rencontre.ts` relie les deux animations, sans React ni three. Il 
 Au moment de la frappe, le tigre est arrêté et dressé. Macron court vers lui, et son corps arrive sur la batte pendant le coup. Le tigre doit attendre Macron parce que l'animation de Macron ne sait que courir : elle n'a aucune pose debout immobile. Le tigre tend donc une embuscade :
 
 1. **Plan d'embuscade** : quand les deux sont à l'écran, `planEmbuscade` choisit un point sur la trajectoire de Macron, devant lui. Le tigre doit atteindre ce point assez tôt pour faire quatre actions avant l'arrivée de Macron : s'arrêter, se tourner vers lui, se dresser, armer la batte. Le tigre accélère au galop vers ce point, l'allure `eclair` comprise. Il fait demi-tour si le point est derrière lui.
-2. **Abandon** : si aucun point atteignable ne reste dans l'écran, il n'y a pas de rencontre et chacun continue son passage.
+2. **Abandon** : si aucun point atteignable ne reste dans l'écran, il n'y a pas de rencontre et chacun continue son passage. Sur téléphone (390 px de large), aucun point n'est jamais atteignable : il n'y a pas de frappe. *Décision de l'utilisateur, le 2026-10-22* : ce comportement est accepté.
 3. **Frappe** : tigre en position, `declencherFrappe` lance le coup quand d moins v × t atteint la portée de la batte. d est la distance entre le tigre et Macron, v la vitesse de Macron, t la durée de l'élan du coup. Le contact a lieu quand le corps de Macron arrive sur la batte.
 4. **Un seul coup par passage de Macron** : quand le tigre est une mère suivie de ses petits, seule la mère frappe. Les petits s'arrêtent et regardent.
 
