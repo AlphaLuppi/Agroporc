@@ -5,7 +5,7 @@
 // scene.json ou REST (lib/agroparc3d/scene.ts) changent. lib/agroparc3d/cachettes.test.ts vérifie
 // que le fichier se régénère à l'octet.
 //
-// Pourquoi hors ligne : le calcul (lib/agroparc3d/cachettes.ts) prend environ 120 ms au premier
+// Pourquoi hors ligne : le calcul (lib/agroparc3d/cachettes.ts) prend de 110 à 150 ms au premier
 // appel sur la machine de développement, au-delà des 100 ms admis au chargement de la vue.
 // Le module pur est importé tel quel (.ts) : Node retire les types (Node 22.18 ou plus récent).
 import { readFileSync, writeFileSync } from "node:fs";

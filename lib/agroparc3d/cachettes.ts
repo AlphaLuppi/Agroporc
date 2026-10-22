@@ -4,8 +4,17 @@
  * Génération : une grille irrégulière (pas d'environ 6 m, décalages tirés avec une graine fixe)
  * couvre la zone jouable, le rectangle des bâtiments agrandi de 40 m. On écarte les points trop
  * près d'un bâtiment (1,5 m), d'une route (4 m) ou dans l'eau, on note la difficulté de chacun,
- * puis on écarte le quart le moins difficile. Les cachettes gardées sont classées par rang de
- * difficulté (0 = la plus facile, 1 = la plus difficile) : points et paliers suivent ce rang.
+ * on ne garde que les points tapis contre un bâtiment (mur à moins de 8 m) et masqués par un
+ * bâtiment depuis au moins 2 des 8 caméras (au moins 3 des 5 points du corps cachés depuis
+ * chacune), puis on écarte le quart le moins difficile. Les
+ * cachettes gardées sont classées par rang de difficulté (0 = la plus facile, 1 = la plus
+ * difficile) : points et paliers suivent ce rang.
+ *
+ * Pourquoi ce filtre (ajouté après revue, en attente de validation) : sans lui, l'éloignement
+ * suffisait à classer un point en terrain nu dans les paliers facile et moyenne, et 57 % des
+ * tirages montraient le tigre à découvert. Le masquage seul admettait encore des points en terrain
+ * dégagé à 15 ou 20 m d'un mur, d'où la distance au mur. Les arbres, en fil de fer translucide,
+ * ne cachent rien et n'admettent pas un point à eux seuls.
  *
  * Difficulté = 0,45 masquage + 0,20 couvert d'arbres + 0,20 éloignement + 0,15 recoin.
  * Masquage : 5 points sur le corps du tigre (0,3 à 1 m de haut), visés depuis 8 caméras (la
@@ -50,6 +59,17 @@ export const POIDS = { masquage: 0.45, arbres: 0.2, eloignement: 0.2, recoin: 0.
 /** Points du corps : décalage le long du tigre (m, museau devant) et hauteur (m). */
 const CORPS: ReadonlyArray<readonly [number, number]> = [[1.2, 0.9], [0.6, 1.0], [0, 0.8], [-0.6, 0.6], [-1.2, 0.3]];
 const GRAINE = 20261022;
+/** Une caméra « voit le tigre masqué » quand au moins 3 des 5 points du corps le sont. */
+export const CORPS_MASQUE_MIN = 3;
+/** Un point n'est une cachette que s'il est masqué depuis au moins 2 des 8 caméras. */
+export const DIRECTIONS_MASQUEES_MIN = 2;
+/** Et s'il est tapi contre un bâtiment : mur le plus proche à moins de 8 m. */
+export const MUR_MAX_M = 8;
+
+/** Le point est caché dans le décor : contre un mur, masqué par un bâtiment depuis assez de directions. */
+export function estCache(p: Pick<PointNote, "directions" | "mur">): boolean {
+  return p.directions >= DIRECTIONS_MASQUEES_MIN && p.mur < MUR_MAX_M;
+}
 
 /** Générateur pseudo-aléatoire (mulberry32) : même graine, même suite. */
 export function aleaGraine(graine: number): () => number {
@@ -154,8 +174,26 @@ export function pointsDuRang(rang: number): number {
   return Math.round((100 + 400 * rang) / 10) * 10;
 }
 
-/** Cachettes gardées, triées par rang croissant. */
-export function genererCachettes(data: SceneData, repos: ReposCamera): Cachette[] {
+/** Point candidat et ses quatre critères, chacun de 0 à 1, avant tout tri. */
+export interface PointNote {
+  x: number;
+  z: number;
+  cap: number;
+  masquage: number;
+  /** Nombre des 8 caméras depuis lesquelles au moins 3 des 5 points du corps sont masqués. */
+  directions: number;
+  /** Distance (m) au mur de bâtiment le plus proche, Infinity si aucun bâtiment à moins de 15 m environ. */
+  mur: number;
+  /** Nombre d'arbres à moins de 6 m. */
+  arbres: number;
+  couvert: number;
+  eloignement: number;
+  recoin: number;
+  difficulte: number;
+}
+
+/** Étapes 1 à 3 : grille, points écartés (bâtiment, route, eau), critères et note de chaque point restant. */
+export function evaluerPoints(data: SceneData, repos: ReposCamera): PointNote[] {
   const zone = zoneJouable(data);
   const alea = aleaGraine(GRAINE);
   const cameras = camerasRepos(data.focus, repos);
@@ -200,7 +238,7 @@ export function genererCachettes(data: SceneData, repos: ReposCamera): Cachette[
   const F = data.focus;
   const eloignementMax = Math.max(...[[zone.x0, zone.z0], [zone.x1, zone.z0], [zone.x0, zone.z1], [zone.x1, zone.z1]].map(([x, z]) => Math.hypot(x - F[0], z - F[1])));
 
-  const candidats: Array<Omit<Cachette, "rang" | "points" | "palier">> = [];
+  const candidats: PointNote[] = [];
   const nx = Math.floor((zone.x1 - zone.x0) / PAS_GRILLE_M), nz = Math.floor((zone.z1 - zone.z0) / PAS_GRILLE_M);
   for (let i = 0; i < nx; i++) for (let j = 0; j < nz; j++) {
     // Les tirages sont faits pour chaque case, gardée ou non : la grille ne dépend que de la graine.
@@ -245,10 +283,11 @@ export function genererCachettes(data: SceneData, repos: ReposCamera): Cachette[
     let portee = 0;
     for (const [cx, cy, cz] of cameras) portee = Math.max(portee, ((hMax - 0.3) / (cy - 0.3)) * (Math.hypot(cx - x, cz - z) + 2));
     const voisins = grilleEmprises.chercher(x - portee, z - portee, x + portee, z + portee, marques, ++tampon, liste).slice();
-    let caches = 0;
-    for (const [off, hauteur] of CORPS) {
-      const px = x + sx * off, pz = z + sz * off;
-      for (const [cx, cy, cz] of cameras) {
+    let caches = 0, directions = 0;
+    for (const [cx, cy, cz] of cameras) {
+      let cachesCamera = 0;
+      for (const [off, hauteur] of CORPS) {
+        const px = x + sx * off, pz = z + sz * off;
         let cache = false;
         for (const bi of voisins) {
           const b = bats[bi];
@@ -261,8 +300,10 @@ export function genererCachettes(data: SceneData, repos: ReposCamera): Cachette[
           }
           if (cache) break;
         }
-        if (cache) caches++;
+        if (cache) cachesCamera++;
       }
+      caches += cachesCamera;
+      if (cachesCamera >= CORPS_MASQUE_MIN) directions++;
     }
     const masquage = caches / (CORPS.length * cameras.length);
 
@@ -275,8 +316,14 @@ export function genererCachettes(data: SceneData, repos: ReposCamera): Cachette[
     const eloignement = Math.hypot(x - F[0], z - F[1]) / eloignementMax;
     const recoin = dMur < RECOIN_PLEIN_M ? 1 : Math.max(0, 1 - (dMur - RECOIN_PLEIN_M) / (RECOIN_NUL_M - RECOIN_PLEIN_M));
     const difficulte = POIDS.masquage * masquage + POIDS.arbres * couvert + POIDS.eloignement * eloignement + POIDS.recoin * recoin;
-    candidats.push({ x, z, cap, difficulte });
+    candidats.push({ x, z, cap, masquage, directions, mur: dMur, arbres, couvert, eloignement, recoin, difficulte });
   }
+  return candidats;
+}
+
+/** Cachettes gardées, triées par rang croissant. */
+export function genererCachettes(data: SceneData, repos: ReposCamera): Cachette[] {
+  const candidats = evaluerPoints(data, repos).filter(estCache);
 
   // Tri stable par note, puis on écarte le quart le moins difficile. Valeurs arrondies comme dans
   // public/agroparc/cachettes.json, pour que le fichier se régénère à l'identique.

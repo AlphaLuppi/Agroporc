@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  aleaGraine, camerasRepos, ECART_MIN_M, genererCachettes, lireCachettes, palierDuRang, pointsDuRang, serialiserCachettes,
-  tirerCachette, zoneJouable, type Cachette, type FichierCachettes,
+  aleaGraine, camerasRepos, DIRECTIONS_MASQUEES_MIN, ECART_MIN_M, MUR_MAX_M, estCache, evaluerPoints, genererCachettes, lireCachettes, palierDuRang, pointsDuRang, serialiserCachettes,
+  tirerCachette, zoneJouable, type Cachette, type FichierCachettes, type PointNote,
 } from "./cachettes";
 import { REST } from "./scene";
 import type { SceneData } from "./types";
@@ -79,6 +79,25 @@ describe("cachettes du tigre (vrai scene.json)", () => {
     for (const n of Object.values(parPalier)) expect(Math.abs(n - cachettes.length / 3)).toBeLessThanOrEqual(2);
   });
 
+  it("chaque cachette, dans chaque palier, est contre un mur et masquée depuis au moins 2 des 8 caméras", () => {
+    // Règle de l'utilisateur : le tigre est bien caché à chaque fois, même dans le palier facile.
+    const notes = new Map(evaluerPoints(scene, REST).map((p) => [`${Math.round(p.x * 10) / 10},${Math.round(p.z * 10) / 10}`, p]));
+    const parPalier = { facile: [] as PointNote[], moyenne: [] as PointNote[], difficile: [] as PointNote[] };
+    for (const c of cachettes) {
+      const p = notes.get(`${c.x},${c.z}`);
+      expect(p).toBeDefined();
+      parPalier[c.palier].push(p!);
+    }
+    for (const liste of Object.values(parPalier)) {
+      expect(liste.every(estCache)).toBe(true);
+      expect(Math.min(...liste.map((p) => p.directions))).toBeGreaterThanOrEqual(DIRECTIONS_MASQUEES_MIN);
+      expect(Math.min(...liste.map((p) => p.masquage))).toBeGreaterThan(0);
+      expect(Math.max(...liste.map((p) => p.mur))).toBeLessThan(MUR_MAX_M);
+    }
+    // Le filtre écarte bien des points : la plupart des points de la zone sont à découvert.
+    expect([...notes.values()].filter(estCache).length).toBeLessThan(notes.size / 2);
+  });
+
   it("le fichier précalculé se régénère à l'identique (et a été calculé avec REST de scene.ts)", () => {
     expect(fichier.repos).toEqual({ dx: REST.dx, y: REST.y, dz: REST.dz });
     expect(serialiserCachettes(cachettes, REST)).toBe(texteFichier);
@@ -121,16 +140,25 @@ describe("masquage", () => {
     roads: [], routes: [], trees: [], parkings: [], water: [], wlines: [], pois: [], truckRoad: [], busRoutes: [], busStops: [],
     focus: [0, 0],
   };
-  it("une cachette le long du mur est plus difficile qu'une cachette en plein champ, pourtant plus éloignée", () => {
-    const liste = genererCachettes(mini, { dx: 0, y: 230, dz: 380 });
+  it("un point le long du mur est plus difficile qu'un point en plein champ, pourtant plus éloigné", () => {
+    const liste = evaluerPoints(mini, { dx: 0, y: 230, dz: 380 });
     const auMur = liste.filter((c) => Math.abs(c.z) > 5 && Math.abs(c.z) < 14 && Math.abs(c.x) < 15);
     const champ = liste.filter((c) => Math.abs(c.x) > 45);
     expect(auMur.length).toBeGreaterThan(3);
     expect(champ.length).toBeGreaterThan(3);
-    const moy = (l: Cachette[]) => l.reduce((s, c) => s + c.difficulte, 0) / l.length;
+    const moy = (l: PointNote[]) => l.reduce((s, c) => s + c.difficulte, 0) / l.length;
     expect(moy(auMur)).toBeGreaterThan(moy(champ) + 0.05);
     // Le tigre se couche le long du mur (est-ouest) : cap ≈ ±π/2.
     for (const c of auMur) expect(Math.abs(Math.abs(c.cap) - Math.PI / 2)).toBeLessThan(0.05);
+  });
+
+  it("aucun point en plein champ n'est gardé comme cachette, seulement des points masqués par le bâtiment", () => {
+    const liste = genererCachettes(mini, { dx: 0, y: 230, dz: 380 });
+    expect(liste.length).toBeGreaterThan(0);
+    for (const c of liste) {
+      expect(Math.abs(c.x)).toBeLessThan(45);
+      expect(Math.abs(c.z)).toBeLessThan(45);
+    }
   });
 });
 

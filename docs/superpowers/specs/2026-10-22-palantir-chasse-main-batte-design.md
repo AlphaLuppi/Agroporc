@@ -66,8 +66,11 @@ Génération :
 1. Échantillonner une grille irrégulière d'un pas d'environ 6 m sur la zone jouable.
 2. Écarter les points à moins de 1,5 m d'un bâtiment, à moins de 4 m d'une route, ou dans l'eau.
 3. Calculer la difficulté de chaque point restant.
-4. Écarter le quart des points les moins difficiles, pour que le tigre soit bien caché à chaque fois.
-5. Garder au moins 500 cachettes. Un test le vérifie sur le vrai `scene.json`.
+4. Ne garder que les points tapis contre un bâtiment, dont le mur le plus proche est à moins de 8 m, et masqués par un bâtiment depuis au moins 2 des 8 caméras décrites plus bas. Une caméra compte quand au moins 3 des 5 points du corps du tigre sont masqués depuis elle.
+5. Écarter le quart des points les moins difficiles.
+6. Garder au moins 500 cachettes. Un test le vérifie sur le vrai `scene.json`.
+
+*Décision prise après revue de code, le 2026-10-22, en attente de validation par l'utilisateur* : l'étape 4 a été ajoutée parce que, sans elle, l'éloignement suffisait à classer un point en terrain nu dans les paliers facile et moyenne. Mesure sur le vrai `scene.json` : 94 % des cachettes faciles et 88 % des moyennes n'avaient aucun masquage, et 57 % des tirages montraient le tigre à découvert. Le masquage seul admettait encore des points en terrain dégagé à 15 ou 20 m d'un mur, d'où la condition des 8 m. Les arbres ne suffisent pas à admettre un point, parce qu'ils sont dessinés en fil de fer translucide et ne cachent pas le tigre. Avec cette étape, 681 cachettes sont gardées.
 
 La **difficulté** d'une cachette, entre 0 et 1, est une somme pondérée de quatre critères, chacun entre 0 et 1 :
 
