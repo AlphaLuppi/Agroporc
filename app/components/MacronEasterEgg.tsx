@@ -6,6 +6,7 @@ import { webglDisponible } from "@/lib/tigre3d/webgl";
 import type { InfosImage, SceneMacron } from "@/lib/macron3d/scene";
 import { BULLE } from "@/lib/macron3d/passage";
 import { creerDeclencheur, jouerPassage } from "@/lib/macron3d/declencheur";
+import { canalRencontre } from "@/lib/rencontre";
 import styles from "./MacronEasterEgg.module.css";
 
 export const CODE_MACRON = "macron";
@@ -62,6 +63,9 @@ export function MacronEasterEgg() {
       pret: () => !!sceneRef.current?.pret() && !!sceneRef.current?.etat(),
       enCours: () => declencheur.enCours(),
       etat: () => sceneRef.current?.etat() ?? null,
+      ko: () => sceneRef.current?.phaseKO() ?? null,
+      // Rencontre forcée (thème Tigre) : le tigre et Macron face à face, cf. window.__tigre.rencontre.
+      rencontre: (o) => window.__tigre?.rencontre(o) ?? false,
     };
     return () => { delete window.__macron; };
   }, []);
@@ -70,6 +74,7 @@ export function MacronEasterEgg() {
   return (
     <Coureur
       key={passage.id}
+      id={passage.id}
       options={passage.options}
       sceneRef={sceneRef}
       fin={() => { declencheur.liberer(); setPassage(null); }}
@@ -78,7 +83,8 @@ export function MacronEasterEgg() {
 }
 
 /** Un passage : crée la scène (three à la demande), court, puis se démonte (tout est libéré). */
-function Coureur({ options, sceneRef, fin }: {
+function Coureur({ id, options, sceneRef, fin }: {
+  id: number;
   options: OptionsPassage;
   sceneRef: React.MutableRefObject<SceneMacron | null>;
   fin: () => void;
@@ -86,10 +92,13 @@ function Coureur({ options, sceneRef, fin }: {
   const conteneurRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const bulleRef = useRef<HTMLSpanElement>(null);
+  const etoilesRef = useRef<HTMLSpanElement>(null);
   const imageRef = useRef<InfosImage | null>(null);
   const finRef = useRef(fin);
   finRef.current = fin;
   const [bulle, setBulle] = useState(false);
+  const [texteBulle, setTexteBulle] = useState<string>(BULLE.texte);
+  const [etoiles, setEtoiles] = useState(false);
   const [visible, setVisible] = useState(false);
   const lissage = useRef<{ y: number; t: number } | null>(null);
 
@@ -108,6 +117,14 @@ function Coureur({ options, sceneRef, fin }: {
     el.style.transform = `translate3d(${centre}px, ${y}px, 0) translate(-50%, -100%)`;
   };
   useLayoutEffect(placerBulle, [visible]);
+
+  /** Étoiles qui tournent au-dessus de la tête de Macron sonné (coup de batte du tigre). */
+  const placerEtoiles = () => {
+    const el = etoilesRef.current, img = imageRef.current;
+    if (!el || !img?.etoiles) return;
+    el.style.transform = `translate3d(${img.gauche + img.etoiles.x}px, ${img.etoiles.y}px, 0)`;
+  };
+  useLayoutEffect(placerEtoiles, [etoiles]);
 
   useEffect(() => {
     const canvas = canvasRef.current, conteneur = conteneurRef.current;
@@ -135,7 +152,18 @@ function Coureur({ options, sceneRef, fin }: {
             image: (img) => {
               imageRef.current = img;
               setBulle(img.bulle);
+              setTexteBulle(img.texteBulle);
+              setEtoiles(!!img.etoiles);
               placerBulle();
+              placerEtoiles();
+              // Rencontre avec le tigre (thème Tigre) : position, sens, vitesse, déjà frappé ou non.
+              canalRencontre.publier({
+                type: "etat", qui: "macron",
+                etat: {
+                  present: img.centre > 0 && img.centre < window.innerWidth, x: img.centre, sens: img.sens,
+                  vitesse: img.vitesse, disponible: !img.frappe, passage: id, rayon: img.rayon,
+                },
+              });
             },
             // Sorti de l'écran : démontage après un court délai.
             fin: () => {
@@ -151,9 +179,20 @@ function Coureur({ options, sceneRef, fin }: {
       },
       fin: () => finRef.current(),
     });
+    // Le tigre frappe (impact) ou la rencontre est annulée (thème changé, tigre démonté).
+    const desabonner = canalRencontre.sur((m) => {
+      if (m.type === "impact") scene?.frapper();
+      else if (m.type === "annulation") scene?.annulerKO();
+    });
+    // Onglet caché pendant la rencontre : s'il est au sol, il se relève.
+    const cache = () => { if (document.hidden) scene?.annulerKO(); };
+    document.addEventListener("visibilitychange", cache);
     return () => {
       window.clearTimeout(minuteur);
       window.removeEventListener("resize", redimensionner);
+      document.removeEventListener("visibilitychange", cache);
+      desabonner();
+      canalRencontre.publier({ type: "etat", qui: "macron", etat: null });
       annuler();
       if (sceneRef.current === scene) sceneRef.current = null;
     };
@@ -165,7 +204,14 @@ function Coureur({ options, sceneRef, fin }: {
       <canvas ref={canvasRef} className={styles.canvas} aria-hidden="true" />
       {visible && (
         <span ref={bulleRef} className={`${styles.bulle} ${bulle ? styles.bulleVue : ""}`} aria-hidden="true">
-          {BULLE.texte}
+          {texteBulle}
+        </span>
+      )}
+      {etoiles && (
+        <span ref={etoilesRef} className={styles.etoiles} aria-hidden="true">
+          {["★", "✦", "★", "✦", "★"].map((g, i) => (
+            <span key={i} className={styles.etoile} style={{ "--i": i } as React.CSSProperties}><span>{g}</span></span>
+          ))}
         </span>
       )}
     </div>
@@ -182,6 +228,9 @@ declare global {
       pret(): boolean;
       enCours(): boolean;
       etat(): unknown;
+      /** Phase du coup de batte (« chute », « sol », « releve », « reprise »), null s'il court. */
+      ko(): string | null;
+      rencontre(o?: { sens?: 1 | -1; force?: boolean; x?: number; geler?: boolean }): boolean;
     };
   }
 }
