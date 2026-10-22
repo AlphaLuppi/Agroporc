@@ -123,6 +123,8 @@ export function creerEmbuscade(troupe: Troupe, o: OptionsEmbuscade): Embuscade {
 
   function planifier(m: EtatPersonnage) {
     essai = m.passage;
+    // Rencontre naturelle : plus rien de l'embuscade imposée d'un passage précédent de Macron.
+    force = null;
     plan = planEmbuscade({
       tigre: {
         x: mere.x, sens: anim.sens, vitesseMax: R.vitesseMax * o.largeurTigrePx,
