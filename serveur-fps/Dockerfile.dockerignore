@@ -1,0 +1,9 @@
+# Lu par BuildKit à côté de serveur-fps/Dockerfile (le contexte est la racine du dépôt) :
+# tout est exclu sauf ce dont le build a besoin, pour un contexte de quelques Mo.
+*
+!serveur-fps
+!lib/fps
+!lib/agroparc3d
+!public/agroparc/scene.json
+**/node_modules
+serveur-fps/dist

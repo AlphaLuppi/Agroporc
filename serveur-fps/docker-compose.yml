@@ -1,0 +1,23 @@
+# Déploiement sur le VPS (derrière Traefik de Dokploy) :
+#   cd /opt/pdj-fps/serveur-fps && docker compose up -d --build
+# Le conteneur n'expose aucun port sur l'hôte : Traefik le joint par le réseau dokploy-network
+# (route fichier /etc/dokploy/traefik/dynamic/pdj-fps.yml, cf. README.md).
+services:
+  pdj-fps:
+    container_name: pdj-fps
+    build:
+      context: ..
+      dockerfile: serveur-fps/Dockerfile
+    restart: unless-stopped
+    environment:
+      PORT: "8787"
+      # origines autorisées pour le WebSocket, séparées par des virgules (vide = toutes)
+      ORIGINES: "${ORIGINES:-}"
+    mem_limit: 256m
+    cpus: 0.3
+    networks:
+      - dokploy-network
+
+networks:
+  dokploy-network:
+    external: true

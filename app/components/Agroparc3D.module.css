@@ -53,6 +53,8 @@
 /* Les libellés cliquables sont tabulables (scene.ts) : anneau explicite, blanc comme les boutons. */
 .labels > div:focus-visible { outline: 2px solid var(--ag-white); outline-offset: 3px; }
 .labels > [data-kind="shop"] { color: var(--ag-ink-dim); text-shadow: none; }
+/* Repère d'un joueur de l'arène (spectateurs) : purement visuel, il ne doit pas bloquer le glisser ni les libellés cliquables dessous. */
+.labels > [data-kind="joueur"] { pointer-events: none; }
 
 .hud { position: absolute; z-index: 3; pointer-events: none; }
 .hudTl { left: 24px; top: 20px; max-width: 460px; }

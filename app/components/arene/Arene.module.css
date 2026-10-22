@@ -1,0 +1,89 @@
+/* Panneau « Arène » : mêmes tokens --ag-* que la vue Palantir (définis sur sa racine, hérités). */
+.arene {
+  position: absolute; z-index: 4; right: 24px; top: 72px; width: min(380px, calc(100vw - 48px));
+  background: var(--ag-panel); border: 1px solid var(--ag-line); backdrop-filter: blur(6px);
+  padding: 18px 20px 20px; box-sizing: border-box; animation: areneIn 0.35s ease;
+  max-height: calc(100vh - 92px); overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--ag-line) transparent;
+}
+@keyframes areneIn { from { opacity: 0; transform: translateX(24px); } }
+.entete { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 0 0 6px; }
+.eyebrow { font-size: 10px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--ag-ink-dim); }
+.fermer {
+  background: none; border: 1px solid var(--ag-line-strong); color: var(--ag-ink-dim); font: inherit; font-size: 10px;
+  letter-spacing: 0.14em; text-transform: uppercase; padding: 3px 8px; cursor: pointer; flex-shrink: 0;
+}
+.fermer:hover, .fermer:focus-visible { color: var(--ag-ink); border-color: var(--ag-ink-dim); }
+.titre {
+  font-family: var(--ag-display), var(--ag-mono), monospace; font-weight: 600; font-size: 22px; margin: 0 0 10px;
+  color: var(--ag-amber); letter-spacing: 0.04em; text-transform: uppercase;
+}
+.statut { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; font-size: 12px; color: var(--ag-ink); }
+.statut b { color: var(--ag-amber); font-weight: 500; }
+.pastille { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--ag-ink-dim); }
+.pastille.ok { background: #6ff0a8; box-shadow: 0 0 8px #6ff0a8; }
+.pastille.attente { background: var(--ag-amber); animation: arenePulse 1.2s ease-in-out infinite; }
+.pastille.ko { background: #ff7a6b; }
+@keyframes arenePulse { 50% { opacity: 0.35; } }
+.match { margin: 0 0 6px; font-size: 11px; color: var(--ag-ink-dim); line-height: 1.5; }
+.match b { color: var(--ag-ink); font-weight: 500; }
+.erreur { margin: 6px 0; padding: 6px 10px; font-size: 12px; color: #ffb3a8; border: 1px solid #ff7a6b; background: rgba(255, 122, 107, 0.08); }
+
+.liste { list-style: none; margin: 12px 0 0; padding: 0; max-height: 168px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--ag-line) transparent; }
+.liste li { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-top: 1px solid var(--ag-line); font-size: 12px; }
+.liste li:first-child { border-top: 0; }
+.puce { width: 10px; height: 10px; flex-shrink: 0; background: var(--couleur); box-shadow: 0 0 8px var(--couleur); }
+.nom { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ag-ink); }
+.nom em { font-style: normal; color: var(--ag-ink-dim); }
+.enJeu { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ag-amber); }
+.spectateur { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ag-ink-dim); }
+.kd { min-width: 4ch; text-align: right; color: var(--ag-ink-dim); font-variant-numeric: tabular-nums; }
+.vide { color: var(--ag-ink-dim); }
+
+.champ { display: flex; flex-direction: column; gap: 4px; margin-top: 14px; }
+.champ label, .armes legend { font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ag-ink-dim); }
+.champ input {
+  min-height: 40px; box-sizing: border-box; background: var(--ag-ground); border: 1px solid var(--ag-line-strong);
+  color: var(--ag-ink); font: inherit; font-size: 14px; padding: 0 10px;
+}
+.champ input:focus-visible { outline: 2px solid var(--ag-white); outline-offset: 1px; border-color: var(--ag-cyan); }
+
+.armes { border: 0; padding: 0; margin: 14px 0 0; min-width: 0; }
+.armes legend { padding: 0; margin-bottom: 6px; }
+.grille { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.carte {
+  position: relative; display: flex; flex-direction: column; gap: 6px; padding: 10px; cursor: pointer;
+  border: 1px solid var(--ag-line-strong); background: rgba(4, 6, 10, 0.6);
+}
+.carte:hover { border-color: var(--ag-ink-dim); }
+.carte input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+.carte:has(input:focus-visible) { outline: 2px solid var(--ag-white); outline-offset: 2px; }
+.carteChoisie { border-color: var(--ag-amber); background: rgba(255, 179, 92, 0.1); }
+.carteNom { font-family: var(--ag-display), var(--ag-mono), monospace; font-weight: 600; font-size: 13px; color: var(--ag-white); letter-spacing: 0.04em; text-transform: uppercase; }
+.carteChoisie .carteNom { color: var(--ag-amber); }
+.carteDesc { font-size: 10.5px; line-height: 1.4; color: var(--ag-ink-dim); }
+.barres { display: flex; flex-direction: column; gap: 3px; margin-top: auto; padding-top: 4px; }
+.barre { display: flex; align-items: center; gap: 6px; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ag-ink-dim); }
+.barre > span { flex: 0 0 11ch; white-space: nowrap; } /* « PRÉCISION » + espacement des lettres déborde de 10ch */
+.barre > i { flex: 1; height: 3px; background: var(--ag-line-strong); position: relative; display: block; }
+.barre > i > i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--ag-cyan); box-shadow: 0 0 6px var(--ag-cyan); }
+.carteChoisie .barre > i > i { background: var(--ag-amber); box-shadow: 0 0 6px var(--ag-amber); }
+
+.entrer {
+  width: 100%; min-height: 46px; margin-top: 16px; background: var(--ag-amber); color: var(--ag-ground); border: 1px solid var(--ag-amber);
+  font-family: var(--ag-display), var(--ag-mono), monospace; font-weight: 700; font-size: 14px; letter-spacing: 0.14em; text-transform: uppercase; cursor: pointer;
+}
+.entrer:hover:not(:disabled), .entrer:focus-visible { background: var(--ag-white); border-color: var(--ag-white); }
+.entrer:focus-visible { outline: 2px solid var(--ag-white); outline-offset: 2px; }
+.entrer:disabled { cursor: default; background: transparent; color: var(--ag-ink-dim); border-color: var(--ag-line-strong); }
+.astuce, .tactile { margin: 10px 0 0; font-size: 11px; line-height: 1.5; color: var(--ag-ink-dim); }
+.astuce b { font-weight: 500; color: var(--ag-cyan); }
+.tactile { padding: 10px; border: 1px dashed var(--ag-line-strong); color: var(--ag-ink); font-size: 12px; margin-top: 16px; }
+
+@media (max-width: 640px) {
+  .arene { top: auto; bottom: 20px; right: 24px; left: 24px; width: auto; max-height: min(70vh, calc(100vh - 100px)); }
+  .fermer { min-height: 40px; padding-inline: 14px; }
+  .grille { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .arene, .pastille.attente { animation: none; }
+}
