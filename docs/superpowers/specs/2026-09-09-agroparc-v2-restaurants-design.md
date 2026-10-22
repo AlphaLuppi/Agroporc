@@ -1,5 +1,7 @@
 # Agroparc 3D v2 + nouveaux restaurants — design validé (2026-09-09)
 
+> Note du 2026-10-22 : la vue 3D a depuis perdu ses boutons Sportif/Goulaf (elle suit le mode choisi sur le site) et gagné une sortie par le bouton « Retour au site » ou la touche Échap. Voir `2026-10-22-palantir-chasse-main-batte-design.md`.
+
 Design validé par Thomas le 9 septembre au matin (« oui, ajoute La Mijote, et plus de
 bâtiments » + « oui, redéploie le VPS »). **Rien n'est implémenté** : ce document
 sert à reprendre le travail le soir même. Chemin bounded (pas de plan séparé) : TDD sur

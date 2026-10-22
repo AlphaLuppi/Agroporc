@@ -8,6 +8,7 @@ import type { SceneHandle } from "@/lib/agroparc3d/scene";
 import { etatRestaurant } from "@/lib/agroparc3d/panneau";
 import { couleurNote, remplissage } from "@/lib/agroparc3d/jauge";
 import { MODE_LABEL, noteMode, trierCarte, type Mode } from "@/lib/carte-tri";
+import { useModeSite } from "@/app/menus/useModeSite";
 import { variantesPlat, type VariantePlat } from "@/lib/plat-options";
 import { restoParNom } from "@/lib/restaurants";
 import RestoBadge from "./RestoBadge";
@@ -18,10 +19,6 @@ const mono = IBM_Plex_Mono({ subsets: ["latin"], weight: ["400", "500"], variabl
 
 interface Ev { id: number; time: string; tag: string; text: string }
 
-const MODES: Mode[] = ["sportif", "goulaf"];
-/** Même clé que le site (`useModeSite`) : le mode choisi ici suit sur la page derrière et inversement. */
-const MODE_KEY = "pdj-mode";
-
 const fmtDate = (iso: string, long = true) => {
   const [y, m, d] = iso.split("-").map(Number);
   return new Date(y, m - 1, d).toLocaleDateString("fr-FR", long
@@ -30,8 +27,10 @@ const fmtDate = (iso: string, long = true) => {
 };
 const fmtNote = (n?: number) => (n == null ? "—" : `${n}/10`);
 
-function modeInitial(): Mode {
-  try { return localStorage.getItem(MODE_KEY) === "goulaf" ? "goulaf" : "sportif"; } catch { return "sportif"; }
+/** Échap ne ferme pas la vue quand on tape dans un champ (pseudo du classement). */
+function dansUnChamp(cible: EventTarget | null): boolean {
+  const el = cible as HTMLElement | null;
+  return !!el && (el.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName));
 }
 
 /** Menu du jour : celui d'aujourd'hui si publié, sinon le plus récent. */
@@ -57,15 +56,21 @@ export default function Agroparc3D({ onClose }: { onClose?: () => void }) {
   const [pdj, setPdj] = useState<PdjEntry | null>(null);
   const [selected, setSelected] = useState<Poi | null>(null);
   const [events, setEvents] = useState<Ev[]>([]);
-  // Le composant n'est monté qu'au clavier (jamais rendu côté serveur) : lecture directe du mode du site.
-  const [mode, setMode] = useState<Mode>(modeInitial);
+  // Mode choisi sur le site : les jauges le suivent, la vue ne le modifie pas.
+  const [mode] = useModeSite();
 
-  const changerMode = (m: Mode) => {
-    setMode(m);
-    try { localStorage.setItem(MODE_KEY, m); } catch { /* stockage indisponible : le mode reste local à la vue */ }
-    // Le site derrière se resynchronise sur cet événement (`useModeSite`).
-    window.dispatchEvent(new Event("pdj:mode-refresh"));
-  };
+  // Échap ferme la vue, sauf dans un champ de saisie (le champ gère alors Échap lui-même).
+  const fermerRef = useRef(onClose);
+  fermerRef.current = onClose;
+  useEffect(() => {
+    const surTouche = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented || dansUnChamp(e.target)) return;
+      e.preventDefault();
+      fermerRef.current?.();
+    };
+    window.addEventListener("keydown", surTouche);
+    return () => window.removeEventListener("keydown", surTouche);
+  }, []);
 
   // Le site derrière ne doit plus défiler tant que la vue 3D est ouverte.
   useEffect(() => {
@@ -139,14 +144,14 @@ export default function Agroparc3D({ onClose }: { onClose?: () => void }) {
       {/* Tant que l'écran de chargement / d'erreur recouvre le HUD, ses boutons ne sont pas atteignables au clavier. */}
       <header className={`${styles.hud} ${styles.hudTl}`} inert={chargement}>
         <h1 className={styles.title}>Agroporc x Palantir</h1>
-        <div className={styles.modes} role="group" aria-label="Mode de notation">
-          {MODES.map((m) => (
-            <button key={m} type="button" data-mode={m} aria-pressed={mode === m} onClick={() => changerMode(m)}>
-              {MODE_LABEL[m]}
-            </button>
-          ))}
-        </div>
       </header>
+
+      {/* Sortie toujours atteignable : hors des blocs inertes, au-dessus de l'écran de chargement ou d'erreur. */}
+      {onClose && (
+        <button type="button" className={styles.sortie} onClick={onClose}>
+          <span aria-hidden="true">←</span> Retour au site
+        </button>
+      )}
 
       <div className={`${styles.hud} ${styles.hudBl}`} inert={chargement}>
         <div className={styles.legend}>
@@ -155,7 +160,7 @@ export default function Agroparc3D({ onClose }: { onClose?: () => void }) {
           <span className={styles.kBat}>Bâtiments IGN</span>
         </div>
         <div className={styles.hint}>
-          Glisser : pivoter · Clic droit ou deux doigts : déplacer · Molette : zoom · Flèches : déplacer · Clic sur un restaurant : plat du jour et carte · Retape <b>myrtille</b> pour revenir au site
+          Glisser : pivoter · Clic droit ou deux doigts : déplacer · Molette : zoom · Flèches : déplacer · Clic sur un restaurant : plat du jour et carte · <b>Échap</b> ou <b>Retour au site</b> pour revenir
         </div>
         <div className={styles.ctl}>
           <button type="button" onClick={() => handleRef.current?.spin(1)} aria-label="Pivoter vers la gauche">↺ Pivoter</button>
@@ -203,8 +208,7 @@ export default function Agroparc3D({ onClose }: { onClose?: () => void }) {
           {error ? (
             <div className={styles.errSortie}>
               <span className={styles.err}>{error}</span>
-              <p>Retape <b>myrtille</b> pour revenir au site.</p>
-              {onClose && <button type="button" className={styles.close} onClick={onClose}>Fermer</button>}
+              <p><b>Échap</b> ou <b>Retour au site</b> pour revenir.</p>
             </div>
           ) : <span>Radiographie en cours</span>}
         </div>

@@ -56,15 +56,13 @@
 
 .hud { position: absolute; z-index: 3; pointer-events: none; }
 .hudTl { left: 24px; top: 20px; max-width: 460px; }
-.modes { display: inline-flex; margin-top: 12px; border: 1px solid var(--ag-line-strong); background: rgba(4, 6, 10, 0.7); pointer-events: auto; }
-.modes button {
-  background: none; border: 0; color: var(--ag-ink-dim); font: inherit; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase;
-  padding: 6px 14px; cursor: pointer; transition: background 0.2s ease, color 0.2s ease;
+/* Sortie : toujours visible, au-dessus de l'écran de chargement ou d'erreur (z-index 5). */
+.sortie {
+  position: absolute; z-index: 6; right: 24px; top: 20px; min-height: 40px; display: inline-flex; align-items: center; gap: 8px;
+  background: rgba(4, 6, 10, 0.8); border: 1px solid var(--ag-line-strong); color: var(--ag-white); font: inherit; font-size: 11px;
+  letter-spacing: 0.14em; text-transform: uppercase; padding: 0 14px; cursor: pointer;
 }
-.modes button + button { border-left: 1px solid var(--ag-line-strong); }
-.modes button:hover, .modes button:focus-visible { color: var(--ag-ink); }
-.modes button[aria-pressed="true"][data-mode="sportif"] { background: var(--ag-cyan); color: var(--ag-ground); box-shadow: 0 0 12px rgba(155, 233, 255, 0.35); }
-.modes button[aria-pressed="true"][data-mode="goulaf"] { background: var(--ag-amber); color: var(--ag-ground); box-shadow: 0 0 12px rgba(255, 179, 92, 0.35); }
+.sortie:hover, .sortie:focus-visible { border-color: var(--ag-cyan); background: rgba(155, 233, 255, 0.1); }
 .eyebrow { font-size: 10px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--ag-ink-dim); margin: 0 0 6px; }
 .title {
   font-family: var(--ag-display), var(--ag-mono), monospace; font-weight: 700; font-size: 30px; line-height: 1;
@@ -99,11 +97,11 @@
 @keyframes agEvIn { from { opacity: 0; transform: translateY(4px); } }
 
 .panel {
-  position: absolute; z-index: 4; right: 24px; top: 20px; width: min(360px, calc(100vw - 48px));
+  position: absolute; z-index: 4; right: 24px; top: 72px; width: min(360px, calc(100vw - 48px));
   background: var(--ag-panel); border: 1px solid var(--ag-line); backdrop-filter: blur(6px);
   padding: 18px 20px 20px; box-sizing: border-box; animation: agPanelIn 0.35s ease;
   /* Une carte permanente peut être longue (Trèfle : ~45 plats) : le panneau défile. */
-  max-height: calc(100vh - 40px); overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--ag-line) transparent;
+  max-height: calc(100vh - 92px); overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--ag-line) transparent;
 }
 @keyframes agPanelIn { from { opacity: 0; transform: translateX(24px); } }
 .panelHead { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
@@ -179,10 +177,9 @@
 /* Anneau de focus clavier commun aux contrôles (blanc : 18:1 sur le fond). Décalé vers
    l'extérieur : en intérieur il disparaîtrait sur le bouton actif cyan ou ambre. Placé
    après les règles de survol pour garder la main, sans `outline: none` plus haut. */
-.modes button:focus-visible, .ctl button:focus-visible, .close:focus-visible, .depliantBtn:focus-visible {
+.sortie:focus-visible, .ctl button:focus-visible, .close:focus-visible, .depliantBtn:focus-visible {
   outline: 2px solid var(--ag-white); outline-offset: 2px;
 }
-.modes button:focus-visible { position: relative; z-index: 1; } /* l'anneau passe devant le bouton voisin */
 .root:focus { outline: none; } /* focus posé en JS à l'ouverture : le dialogue n'est pas un contrôle */
 
 .loading {
@@ -194,15 +191,16 @@
 .loading .errSortie p { margin: 0; color: var(--ag-ink); letter-spacing: 0.04em; text-transform: none; line-height: 1.5; }
 
 @media (max-width: 640px) {
-  .hudTl { max-width: calc(100vw - 48px); }
+  /* Le titre passe sur deux lignes plutôt que sous le bouton de sortie. */
+  .hudTl { max-width: calc(100vw - 210px); }
   .hudBl { max-width: calc(100vw - 48px); }
   .title { font-size: 24px; }
   .legend { flex-wrap: wrap; gap: 8px 14px; }
   .hudBr { display: none; }
-  .panel { top: auto; bottom: 20px; right: 24px; left: 24px; width: auto; max-height: 60vh; }
+  .panel { top: auto; bottom: 20px; right: 24px; left: 24px; width: auto; max-height: min(60vh, calc(100vh - 100px)); }
   /* Cibles tactiles ≥ 40 px (convention du projet). */
-  .modes button, .ctl button, .close, .depliantBtn { min-height: 40px; padding-inline: 14px; }
+  .ctl button, .close, .depliantBtn { min-height: 40px; padding-inline: 14px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .root, .panel, .log > div, .labels > div, .jaugeArc, .jaugeVal, .mini > i > i, .modes button { animation: none; transition: none; }
+  .root, .panel, .log > div, .labels > div, .jaugeArc, .jaugeVal, .mini > i > i { animation: none; transition: none; }
 }
