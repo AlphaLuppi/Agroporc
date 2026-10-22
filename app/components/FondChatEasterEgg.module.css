@@ -1,0 +1,7 @@
+/* Easter egg « cat » : le gif couvre tout l'écran SOUS le contenu (z-index -1 : au-dessus du fond
+   de <body>, propagé au canevas, et sous les tuiles et la barre). Le motif du thème
+   (body::before) est masqué pendant la lecture par html.pdj-fond-chat (globals.css). */
+.fond {
+  position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background-color: #000; background-position: center; background-repeat: no-repeat; background-size: cover;
+}
