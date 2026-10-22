@@ -14,6 +14,7 @@ import { creerPoseur, type Poseur } from "./pose";
 import { BULLE, CADRE_M, LACET_CAMERA, avancement, bulleVisible, gaucheCanvas, passageFini, planPassage, replanifier, type Ecran, type PlanPassage } from "./passage";
 import { COTES, deCote, type Role } from "./os";
 import { textureCorde } from "../tigre-lasso-rendu";
+import { INTERVALLE_REPLIQUE_S, REPLIQUES_MACRON, tirerReplique } from "../repliques-lasso";
 
 /** Pas de temps maximal d'une image (s) : un onglet qui reprend la main ne téléporte pas le coureur. */
 const DT_IMAGE_MAX = 0.05;
@@ -25,9 +26,8 @@ const BOUT_PIED_Y = 0.032;
 /** Lasso : rayon du collier de corde autour du cou (m) et épaisseur du fil à l'écran (px). */
 const RAYON_COLLIER_M = 0.085;
 const FIL_COLLIER_PX = 2.8;
-/** Bulles du lasso : pendu, puis le temps qu'il reparte (s). */
-export const BULLE_PRIS = "Lâchez-moi !";
-const BULLE_APRES_S = 1.6;
+/** Lasso : durée de la dernière réplique, une fois relâché (s). */
+const BULLE_APRES_S = 1.8;
 
 /** Champ vertical de la caméra (°) et plongée (°) : presque à hauteur d'homme. */
 const CHAMP = 22;
@@ -177,6 +177,9 @@ export function creerScene(canvas: HTMLCanvasElement, opts: OptionsScene = {}): 
   let tenue: Tenue | null = null;
   let serre = false;
   let horloge = 0, bulleJusque = -1;
+  /** Réplique en cours (pris au lasso ou juste relâché) et quand il l'a dite. */
+  let replique: string | null = null, tReplique = 0;
+  const dire = (liste: readonly string[]) => { replique = tirerReplique(liste, Math.random(), replique); tReplique = horloge; };
   const texCollier = textureCorde();
   texCollier.repeat.set(10, 1);
   const matCollier = new THREE.MeshStandardMaterial({ map: texCollier, roughness: 0.85 });
@@ -281,12 +284,14 @@ export function creerScene(canvas: HTMLCanvasElement, opts: OptionsScene = {}): 
     } else {
       canvas.style.transform = `translate3d(${gauche}px, 0, 0)`;
     }
+    // Pendu, il enchaîne les répliques.
+    if (prise && horloge - tReplique >= INTERVALLE_REPLIQUE_S) dire(REPLIQUES_MACRON.pris);
     const prisOuApres = !!prise || horloge < bulleJusque;
     rappels?.image({
       gauche,
       tete: teteVue,
       bulle: prisOuApres || bulleVisible(plan, it.avance),
-      texte: prise ? BULLE_PRIS : BULLE.texte,
+      texte: prisOuApres && replique ? replique : BULLE.texte,
       avancement: avancement(plan, it.avance),
       boite,
     });
@@ -396,6 +401,7 @@ export function creerScene(canvas: HTMLCanvasElement, opts: OptionsScene = {}): 
       prise = { centre };
       tenue = null;
       serre = false;
+      dire(REPLIQUES_MACRON.pris);
       collier.geometry.dispose();
       collier.geometry = new THREE.TorusGeometry(RAYON_COLLIER_M, FIL_COLLIER_PX / plan.pxm, 8, 40);
       const g = (p: Point): Point => ({ x: gauche + p.x, y: p.y });
@@ -416,6 +422,7 @@ export function creerScene(canvas: HTMLCanvasElement, opts: OptionsScene = {}): 
       serre = false;
       canvas.style.transformOrigin = "";
       bulleJusque = horloge + BULLE_APRES_S;
+      dire(REPLIQUES_MACRON.libre);
     },
     etat: () => intentions,
     dispose() {

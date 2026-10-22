@@ -5,6 +5,7 @@ import {
   type Bornes, type Vol,
 } from "./tigre-lasso";
 import { creerAnimateur } from "./tigre3d/animateur";
+import { REPLIQUES_TIGRE } from "./repliques-lasso";
 
 const zone = { x: 100, y: 200, w: 80, h: 40 };
 
@@ -159,10 +160,14 @@ describe("animateur au lasso", () => {
     a.attraper();
     expect(a.tenu).toBe(true);
     expect(a.reaction).toBeNull();
-    expect(evs).toContain("bulle:J'ai le seum !");
+    expect(evs.some((e) => REPLIQUES_TIGRE.pris.some((r) => e === `bulle:${r}`))).toBe(true);
     expect(a.clic()).toBe("ignorer");
-    for (let i = 0; i < 120; i++) a.maj(1 / 60);
+    for (let i = 0; i < 360; i++) a.maj(1 / 60);
     expect(Math.abs(a.corps.v)).toBeLessThan(0.05);
+    // Pendu 6 s, il a enchaîné plusieurs répliques, jamais la même deux fois de suite.
+    const bulles = evs.filter((e) => e.startsWith("bulle:"));
+    expect(bulles.length).toBeGreaterThanOrEqual(3);
+    for (let i = 1; i < bulles.length; i++) expect(bulles[i]).not.toBe(bulles[i - 1]);
     a.relacher();
     expect(a.tenu).toBe(false);
     expect(a.mode).toBe("eclair");

@@ -7,6 +7,7 @@
  * Les `alea*` sont dans [0, 1[ (Math.random en production).
  */
 import { VITESSES, type Passage } from "./tigre-courant";
+import { REPLIQUES_TIGRE } from "./repliques-lasso";
 
 /**
  * Chaque réaction est un geste qui illustre sa bulle (tigre 3D : lib/tigre3d/gestes/<nom>.ts) :
@@ -122,8 +123,9 @@ export const TEXTES: Record<CleTexte, readonly string[]> = {
   "serre-main": ["Serre-moi la pince !", "Bravo, bravo !", "Tope là, l'ami !"],
   vexe: ["Hmpf.", "Pff…", "Quel manque de respect."],
   clap: ["🐾 Clap !"],
-  seum: ["J'ai le seum !", "Lâche-moi !", "C'est abusé !", "Repose-moi, cowboy !"],
-  libre: ["Le seum…", "Je me casse !", "Même pas mal."],
+  // Pris au lasso : répliques partagées avec le coureur « macron » (lib/repliques-lasso.ts).
+  seum: REPLIQUES_TIGRE.pris,
+  libre: REPLIQUES_TIGRE.libre,
 };
 
 /** Humeur du regard : elle règle la mimique (oreilles, paupières, gueule) pour coller au texte de la bulle. */
