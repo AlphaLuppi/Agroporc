@@ -8,7 +8,7 @@ import { readFileSync } from "node:fs";
 import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
 import {
   construireMainHumaine, mainCanonique, versMain, inverseAffine, nuanceurMainHumaine, disqueVersCarre,
-  COTE_POUCE, DOIGTS, RAYURES_DOS, TORSION_MAIN, torsionMainHumaine, type SortieMainHumaine,
+  COTE_POUCE, DECALAGE_RAYURES_DOIGTS, DOIGTS, RAYURES_DOS, TORSION_MAIN, torsionMainHumaine, type SortieMainHumaine,
 } from "./main-humaine";
 import { NOMS_OS } from "./os";
 import { subdiviserPatte } from "./subdivision-patte";
@@ -158,9 +158,17 @@ describe("main humaine : correspondance patte → main", () => {
       // Dos visible de la main : de la base de la paume (w ≈ -0,1) au bout des doigts (w = 1).
       expect(r.w).toBeGreaterThan(-0.1);
       expect(r.w).toBeLessThan(1);
+      // Obliques dans le sens des chevrons de l'avant-bras, jamais des barres en travers.
+      expect(r.pente).toBeLessThan(-0.1);
+    }
+    // Un tronçon par doigt : deux doigts voisins n'ont jamais la même hauteur de rayure.
+    expect(DECALAGE_RAYURES_DOIGTS).toHaveLength(DOIGTS.length);
+    for (let k = 1; k < DECALAGE_RAYURES_DOIGTS.length; k++) {
+      expect(Math.abs(DECALAGE_RAYURES_DOIGTS[k] - DECALAGE_RAYURES_DOIGTS[k - 1])).toBeGreaterThan(0.03);
     }
     const code = nuanceurMainHumaine();
     expect(code).toContain("mhR");
+    expect(code).toContain("fwidth( mhW )");
     // Rayures limitées à la face du dos (e < 0) et au poids de la déformation.
     expect(code).toMatch(/mhK \* mhR \* \( 1\.0 - smoothstep\( -0\.35, 0\.05, mhE \) \)/);
   });

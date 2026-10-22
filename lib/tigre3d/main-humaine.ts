@@ -156,14 +156,24 @@ const FIN_PEAU = -0.02;
  * maximale, pente et ondulation en fonction de q. Le dos visible commence vers w = -0,1 (plus près
  * du poignet, le haut de la patte reste en place et se replie) : les rayures sont au-delà. Près de
  * la base des doigts, w varie lentement à l'écran, donc ces rayures-là sont plus fines.
+ * Les pentes sont toutes négatives : vu de dos, main pendante, la rayure descend vers le pouce
+ * comme les chevrons de l'avant-bras qu'elle prolonge (des pentes presque nulles donnaient des
+ * barres posées en travers de la main).
  */
 export const RAYURES_DOS: ReadonlyArray<{ w: number; q0: number; q1: number; l: number; pente: number }> = [
-  { w: 0.0, q0: -0.95, q1: 0.35, l: 0.03, pente: 0.1 },
-  { w: 0.18, q0: -0.15, q1: 1.05, l: 0.035, pente: -0.08 },
-  { w: 0.4, q0: -0.65, q1: 0.7, l: 0.05, pente: 0.07 },
-  { w: 0.6, q0: 0.05, q1: 1.05, l: 0.04, pente: -0.06 },
-  { w: 0.8, q0: -0.6, q1: 0.3, l: 0.03, pente: 0.05 },
+  { w: 0.02, q0: -0.95, q1: -0.1, l: 0.025, pente: -0.12 },
+  { w: 0.2, q0: -0.15, q1: 1.05, l: 0.035, pente: -0.2 },
+  { w: 0.42, q0: -0.65, q1: 0.7, l: 0.05, pente: -0.22 },
+  { w: 0.62, q0: 0.05, q1: 1.05, l: 0.04, pente: -0.18 },
+  { w: 0.82, q0: -0.6, q1: 0.3, l: 0.03, pente: -0.15 },
 ];
+/**
+ * Décalage en w des rayures sur chaque doigt, de l'index à l'auriculaire. Sans lui, une rayure
+ * garde la même hauteur d'un doigt à l'autre et se lit comme une barre coupée par les sillons.
+ * Chaque doigt porte ici son propre tronçon, le saut se fait sous la ligne du sillon. Sur le dos
+ * de la main (avant la base des doigts), aucun décalage : la rayure reste continue.
+ */
+export const DECALAGE_RAYURES_DOIGTS: readonly number[] = [0.0, 0.045, -0.03, 0.05];
 /** Couleur des rayures (linéaire), celle des rayures sombres de la texture. */
 const COULEUR_RAYURE = [0.022, 0.011, 0.006];
 
@@ -485,9 +495,11 @@ export function nuanceurMainHumaine(): string {
     "{",
     `float mhS = clamp( ( mhQ - ${glsl(r.q0)} ) / ${glsl(+(r.q1 - r.q0).toFixed(4))}, 0.0, 1.0 );`,
     `float mhH = ${glsl(r.l)} * sin( 3.14159 * mhS );`,
-    `float mhC = ${glsl(r.w)} + ${glsl(r.pente)} * mhQ + 0.025 * sin( 5.0 * mhQ + ${glsl(+(1.7 * k + 0.5).toFixed(2))} );`,
+    `float mhC = ${glsl(r.w)} + ${glsl(r.pente)} * mhQ + mhD + 0.025 * sin( 5.0 * mhQ + ${glsl(+(1.7 * k + 0.5).toFixed(2))} );`,
     // Pointes : sous une épaisseur minimale, rien (sinon un trait fin prolongerait la rayure).
-    "mhR = max( mhR, ( 1.0 - smoothstep( 0.6 * mhH, mhH + 0.002, abs( mhW - mhC ) ) ) * smoothstep( 0.004, 0.012, mhH ) );",
+    // Bord net, large d'un pixel environ (fwidth) : là où w varie lentement à l'écran, un bord
+    // proportionnel à l'épaisseur devenait une tache floue.
+    "mhR = max( mhR, ( 1.0 - smoothstep( mhH - mhF, mhH + mhF, abs( mhW - mhC ) ) ) * smoothstep( 0.004, 0.012, mhH ) );",
     "}",
   ].join("\n"));
   return [
@@ -513,6 +525,11 @@ export function nuanceurMainHumaine(): string {
     "diffuseColor.rgb = mix( diffuseColor.rgb, mhPeau, mhK * mhP );",
     // Rayures sur le dos de la main et des doigts (e < 0), jamais sur la paume.
     "float mhR = 0.0;",
+    // Décalage du doigt, nul sur le dos de la main, plein dès la base des doigts.
+    `float mhD = ${glsl(DECALAGE_RAYURES_DOIGTS[0])};`,
+    ...DOIGTS.slice(1).map((d, k) => `if ( mhQ > ${glsl(d.q0)} ) mhD = ${glsl(DECALAGE_RAYURES_DOIGTS[k + 1])};`),
+    "mhD *= smoothstep( -0.05, 0.1, mhA );",
+    "float mhF = max( fwidth( mhW ), 0.001 );",
     ...rayures,
     `diffuseColor.rgb = mix( diffuseColor.rgb, vec3( ${COULEUR_RAYURE.map(glsl).join(", ")} ), mhK * mhR * ( 1.0 - smoothstep( -0.35, 0.05, mhE ) ) );`,
     "diffuseColor.rgb *= 1.0 - mhK * clamp( 0.72 * mhL + 0.24 * mhPli * mhP, 0.0, 0.8 );",
