@@ -197,7 +197,12 @@ export function Tigre3D({ surEchec }: { surEchec: () => void }) {
     if (conteneur && conteneur.style.zIndex !== devant) conteneur.style.zIndex = devant;
     // Rencontre : l'embuscade lit Macron dans le canal, le tigre y publie son état.
     const emb = embuscadeRef.current;
-    if (emb) {
+    if (emb && sceneRef.current?.troupe()?.mere.anim.tenu) {
+      // Attrapé au lasso : plus d'embuscade pour ce passage, et Macron ne le voit plus. Elle est
+      // lâchée sans `annuler()`, qui relancerait la course d'origine sur un tigre pendu.
+      embuscadeRef.current = null;
+      canalRencontre.publier({ type: "etat", qui: "tigre", etat: null });
+    } else if (emb) {
       emb.maj(canalRencontre.etat("macron"));
       canalRencontre.publier({ type: "etat", qui: "tigre", etat: emb.etatTigre(numeroPassageRef.current) });
     }
