@@ -12,6 +12,8 @@ import * as THREE from "three";
 import { clone as clonerSquelette } from "three/examples/jsm/utils/SkeletonUtils.js";
 import { squelette, type PoseTigre } from "./squelette";
 import { clipDepuisPistes, enregistrerClip } from "./clips";
+import { construireMainHumaine, nuanceurMainHumaine } from "./main-humaine";
+import { NOMS_OS } from "./os";
 
 export const URL_GLB = "/tigre/tigre.glb";
 
@@ -59,6 +61,7 @@ export function chargerModele(url = URL_GLB): Promise<ModeleTigre> {
         }
         m.frustumCulled = false;
       });
+      for (const m of maillages) preparerMainHumaine(m);
       modeleCharge = {
         scene: gltf.scene, maillages,
         materiaux: [...materiaux], textures: [...textures], geometries: [...geometries],
@@ -72,6 +75,67 @@ export function chargerModele(url = URL_GLB): Promise<ModeleTigre> {
 
 export function modelePret(): boolean { return modeleCharge !== null; }
 
+/** Couleur de la paume de la main humaine (sRGB). */
+const COULEUR_PEAU = "#dc9c7c";
+
+/**
+ * Main humaine (réaction « serre-main », lib/tigre3d/main-humaine.ts) : cible de déformation de la
+ * patte avant droite ajoutée à la géométrie partagée (déplacements relatifs), attribut `mainHumaine`
+ * (atténuation, q, w, e) et nuanceur du matériau qui mélange la texture à la couleur de peau sur
+ * la paume et trace les sillons, en proportion du poids de la déformation. Chaque clone a son
+ * propre tableau `morphTargetInfluences` : seule la mère reçoit un poids non nul, les petits n'ont
+ * donc jamais de main ni de peau.
+ */
+function preparerMainHumaine(m: THREE.SkinnedMesh): void {
+  const g = m.geometry;
+  if (g.morphAttributes.position?.length) return;
+  const k = m.skeleton.bones.findIndex((b) => b.name === NOMS_OS.mainD);
+  const pos = g.getAttribute("position"), nor = g.getAttribute("normal");
+  const idx = g.getAttribute("skinIndex"), poids = g.getAttribute("skinWeight");
+  if (k < 0 || !pos || !nor || !idx || !poids) return;
+  const n = pos.count;
+  // getX… dénormalisent les attributs quantifiés (positions Int16, poids Uint8).
+  const positions = new Float32Array(n * 3), normales = new Float32Array(n * 3), indicesOs = new Uint16Array(n * 4), poidsOs = new Float32Array(n * 4);
+  for (let i = 0; i < n; i++) {
+    positions[i * 3] = pos.getX(i); positions[i * 3 + 1] = pos.getY(i); positions[i * 3 + 2] = pos.getZ(i);
+    normales[i * 3] = nor.getX(i); normales[i * 3 + 1] = nor.getY(i); normales[i * 3 + 2] = nor.getZ(i);
+    indicesOs[i * 4] = idx.getX(i); indicesOs[i * 4 + 1] = idx.getY(i); indicesOs[i * 4 + 2] = idx.getZ(i); indicesOs[i * 4 + 3] = idx.getW(i);
+    poidsOs[i * 4] = poids.getX(i); poidsOs[i * 4 + 1] = poids.getY(i); poidsOs[i * 4 + 2] = poids.getZ(i); poidsOs[i * 4 + 3] = poids.getW(i);
+  }
+  const versOs = new THREE.Matrix4().multiplyMatrices(m.skeleton.boneInverses[k], m.bindMatrix);
+  const { deplacements, reperes } = construireMainHumaine({
+    positions, normales, indicesOs, poidsOs, osMain: k, versOs: versOs.elements, indices: g.index?.array,
+  });
+  g.morphAttributes.position = [new THREE.Float32BufferAttribute(deplacements, 3)];
+  g.morphTargetsRelative = true;
+  g.setAttribute("mainHumaine", new THREE.Float32BufferAttribute(reperes, 4));
+  m.updateMorphTargets();
+  const materiaux = Array.isArray(m.material) ? m.material : [m.material];
+  const peau = new THREE.Color(COULEUR_PEAU);
+  const code = nuanceurMainHumaine();
+  for (const mat of materiaux) {
+    mat.onBeforeCompile = (shader) => {
+      shader.uniforms.couleurPeau = { value: peau };
+      shader.vertexShader = shader.vertexShader
+        .replace("#include <common>", "#include <common>\nattribute vec4 mainHumaine;\nvarying vec4 vMainHumaine;")
+        .replace("#include <begin_vertex>", [
+          "#include <begin_vertex>",
+          "vMainHumaine = mainHumaine;",
+          "#ifdef USE_MORPHTARGETS",
+          "vMainHumaine.x *= morphTargetInfluences[ 0 ];",
+          "#else",
+          "vMainHumaine.x = 0.0;",
+          "#endif",
+        ].join("\n"));
+      shader.fragmentShader = shader.fragmentShader
+        .replace("#include <common>", "#include <common>\nuniform vec3 couleurPeau;\nvarying vec4 vMainHumaine;")
+        .replace("#include <map_fragment>", `#include <map_fragment>\n${code}`);
+    };
+    mat.customProgramCacheKey = () => "tigre-main-humaine";
+    mat.needsUpdate = true;
+  }
+}
+
 export interface Tigre {
   /** Placé par la scène (position du centre du corps, échelle). */
   groupe: THREE.Group;
@@ -79,6 +143,8 @@ export interface Tigre {
   os: THREE.Bone[];
   /** Recopie la pose sur les os ; `origineX` = x du corps (repère sol) ramené à l'origine du groupe. */
   appliquer(pose: PoseTigre, origineX: number): void;
+  /** Poids de la main humaine de ce tigre (0 = patte, 1 = main), cf. `preparerMainHumaine`. */
+  mainHumaine(poids: number): void;
   dispose(): void;
 }
 
@@ -107,9 +173,10 @@ export function creerTigre(m: ModeleTigre): Tigre {
   const copie = clonerSquelette(m.scene) as THREE.Object3D;
   decale.add(copie);
   const parNom = new Map<string, THREE.Bone>();
+  const maillages: THREE.SkinnedMesh[] = [];
   copie.traverse((o) => {
     if ((o as THREE.Bone).isBone) parNom.set(o.name, o as THREE.Bone);
-    if ((o as THREE.SkinnedMesh).isSkinnedMesh) o.frustumCulled = false;
+    if ((o as THREE.SkinnedMesh).isSkinnedMesh) { o.frustumCulled = false; maillages.push(o as THREE.SkinnedMesh); }
   });
   const os = sq.noms.map((n) => {
     const b = parNom.get(n);
@@ -138,6 +205,9 @@ export function creerTigre(m: ModeleTigre): Tigre {
       ombre.position.z = p.z;
       const h = Math.max(0, p.y - 0.2625);
       matOmbre.opacity = 0.5 * Math.max(0.25, 1 - h * 4);
+    },
+    mainHumaine(poids) {
+      for (const m of maillages) if (m.morphTargetInfluences?.length) m.morphTargetInfluences[0] = poids;
     },
     dispose() {
       ombre.geometry.dispose();

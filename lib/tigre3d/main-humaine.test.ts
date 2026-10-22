@@ -1,0 +1,215 @@
+/**
+ * Main humaine (réaction « serre-main ») : correspondance patte → main (pure), puis la cible de
+ * déformation calculée sur le vrai maillage du GLB (décodé ici avec le décodeur meshopt de three).
+ */
+import { describe, it, expect, beforeAll } from "vitest";
+import { readFileSync } from "node:fs";
+import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
+import {
+  construireMainHumaine, mainCanonique, versMain, inverseAffine, nuanceurMainHumaine, disqueVersCarre,
+  COTE_POUCE, DOIGTS, type SortieMainHumaine,
+} from "./main-humaine";
+import { NOMS_OS } from "./os";
+import { nomThree } from "./extraction.mjs";
+
+/** Lecture des attributs du maillage du GLB (meshopt + quantification dénormalisée), comme three. */
+async function maillageGLB() {
+  await MeshoptDecoder.ready;
+  const b = readFileSync("public/tigre/tigre.glb");
+  const L = b.readUInt32LE(12);
+  const j = JSON.parse(b.toString("utf8", 20, 20 + L));
+  const off = 20 + L;
+  const bin = b.subarray(off + 8, off + 8 + b.readUInt32LE(off));
+  const vues = j.bufferViews.map((v: { byteOffset?: number; byteLength: number; buffer: number; extensions?: Record<string, { byteOffset: number; byteLength: number; count: number; byteStride: number; mode: string; filter?: string }> }) => {
+    const e = v.extensions?.EXT_meshopt_compression;
+    if (!e) return v.buffer === 0 ? Buffer.from(bin.subarray(v.byteOffset ?? 0, (v.byteOffset ?? 0) + v.byteLength)) : null;
+    const out = new Uint8Array(e.count * e.byteStride);
+    MeshoptDecoder.decodeGltfBuffer(out, e.count, e.byteStride, bin.subarray(e.byteOffset, e.byteOffset + e.byteLength), e.mode, e.filter ?? "NONE");
+    return Buffer.from(out.buffer);
+  });
+  const lire = (i: number) => {
+    const a = j.accessors[i], v = j.bufferViews[a.bufferView], buf: Buffer = vues[a.bufferView];
+    const [taille, lecteur, max] = ({
+      5126: [4, "readFloatLE", 1], 5121: [1, "readUInt8", 255], 5123: [2, "readUInt16LE", 65535], 5122: [2, "readInt16LE", 32767],
+    } as Record<number, [number, "readFloatLE" | "readUInt8" | "readUInt16LE" | "readInt16LE", number]>)[a.componentType];
+    const n = ({ SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4, MAT4: 16 } as Record<string, number>)[a.type];
+    const pas = v.extensions?.EXT_meshopt_compression?.byteStride ?? v.byteStride ?? taille * n;
+    const out = new Float64Array(a.count * n);
+    for (let k = 0; k < a.count; k++) for (let q = 0; q < n; q++) {
+      const x = buf[lecteur]((a.byteOffset ?? 0) + k * pas + q * taille);
+      out[k * n + q] = a.normalized ? Math.max(x / max, -1) : x;
+    }
+    return out;
+  };
+  const prim = j.meshes[0].primitives[0];
+  const skin = j.skins[0];
+  const osMain = skin.joints.findIndex((n: number) => nomThree(j.nodes[n].name) === NOMS_OS.mainD);
+  const ibm = lire(skin.inverseBindMatrices);
+  return {
+    positions: lire(prim.attributes.POSITION),
+    normales: lire(prim.attributes.NORMAL),
+    indicesOs: lire(prim.attributes.JOINTS_0),
+    poidsOs: lire(prim.attributes.WEIGHTS_0),
+    indices: lire(prim.indices),
+    osMain,
+    versOs: Array.from(ibm.subarray(osMain * 16, osMain * 16 + 16)),
+  };
+}
+
+const appliquer = (m: ArrayLike<number>, x: number, y: number, z: number) => ({
+  x: m[0] * x + m[4] * y + m[8] * z + m[12],
+  y: m[1] * x + m[5] * y + m[9] * z + m[13],
+  z: m[2] * x + m[6] * y + m[10] * z + m[14],
+});
+
+describe("main humaine : correspondance patte → main", () => {
+  it("continue : le saut entre deux paramètres voisins diminue avec leur écart (rien ne se déchire)", () => {
+    /** Plus grand écart entre les points de deux paramètres distants de `pas`, en q puis en w. */
+    const saut = (pas: number) => {
+      let max = 0;
+      for (let q = -1; q <= 1 + 1e-9; q += pas) for (let w = -1; w <= 1 + 1e-9; w += 0.1) for (const e of [-1, -0.5, 0, 0.5, 1]) {
+        const a = mainCanonique(q, w, e), b = mainCanonique(Math.min(1, q + pas), w, e), c = mainCanonique(q, Math.min(1, w + pas), e);
+        max = Math.max(max, Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z), Math.hypot(a.x - c.x, a.y - c.y, a.z - c.z));
+      }
+      return max;
+    };
+    const grossier = saut(0.002), fin = saut(0.0005);
+    // Une déchirure garderait le même saut quel que soit le pas : ici il est divisé par ~4.
+    expect(fin).toBeLessThan(0.015);
+    expect(grossier / fin).toBeGreaterThan(3);
+  });
+
+  it("doigts séparés par des sillons : au bord commun de deux doigts, dessus et dessous se rejoignent", () => {
+    for (const d of DOIGTS.slice(1)) {
+      const dessus = mainCanonique(d.q0, 0.7, -1), dessous = mainCanonique(d.q0, 0.7, 1);
+      expect(Math.hypot(dessus.x - dessous.x, dessus.y - dessous.y, dessus.z - dessous.z)).toBeLessThan(0.02);
+      // Le milieu du doigt est bien plus épais que le sillon.
+      const v = (d.q0 + d.q1) / 2;
+      expect(mainCanonique(v, 0.7, 1).x - mainCanonique(v, 0.7, -1).x).toBeGreaterThan(0.1);
+    }
+  });
+
+  it("quatre doigts longs (le majeur le plus long) et un pouce écarté, du côté COTE_POUCE", () => {
+    const bouts = DOIGTS.map((d) => mainCanonique((d.q0 + d.q1) / 2, 1, 0).y);
+    const paume = mainCanonique(0, 0.12, 0).y;
+    for (const y of bouts) expect(y - paume).toBeGreaterThan(0.4);
+    expect(Math.max(...bouts)).toBe(bouts[1]);
+    const pouce = versMain({ q: -0.8 * -COTE_POUCE, w: 1, e: 0 });
+    const index = versMain({ q: -0.3 * -COTE_POUCE, w: 1, e: 0 });
+    expect(Math.sign(pouce.z)).toBe(COTE_POUCE);
+    // Bout du pouce écarté de l'index (en travers) et plus court.
+    expect(Math.abs(pouce.z - index.z)).toBeGreaterThan(0.15);
+    expect(pouce.y).toBeLessThan(index.y);
+  });
+
+  it("disque → carré et inverse affine", () => {
+    expect(disqueVersCarre(0, 0)).toEqual([0, 0]);
+    const [u, v] = disqueVersCarre(Math.SQRT1_2, Math.SQRT1_2);
+    expect(u).toBeCloseTo(1, 6);
+    expect(v).toBeCloseTo(1, 6);
+    const m = [2, 0, 0, 0, 0, 0, 3, 0, 0, -1, 0, 0, 5, 6, 7, 1];
+    const p = appliquer(inverseAffine(m), ...(Object.values(appliquer(m, 0.3, -0.2, 0.9)) as [number, number, number]));
+    expect(p.x).toBeCloseTo(0.3, 9); expect(p.y).toBeCloseTo(-0.2, 9); expect(p.z).toBeCloseTo(0.9, 9);
+  });
+
+  it("nuanceur : code GLSL qui lit vMainHumaine, flottants écrits avec un point", () => {
+    const code = nuanceurMainHumaine();
+    expect(code).toContain("vMainHumaine");
+    expect(code).toContain("couleurPeau");
+    expect(code.split("{").length).toBe(code.split("}").length);
+    expect(code).not.toMatch(/NaN|undefined/);
+    // Aucun littéral entier (GLSL ES refuse de mêler int et float) : chaque nombre a son point.
+    expect(code.match(/(?<![\w.])\d+(?![\d.\w])/g)).toBeNull();
+  });
+});
+
+describe("main humaine : cible de déformation du vrai maillage", () => {
+  let m: Awaited<ReturnType<typeof maillageGLB>>;
+  let s: SortieMainHumaine;
+  const poidsMain = (i: number) => {
+    let w = 0;
+    for (let j = 0; j < 4; j++) if (m.indicesOs[i * 4 + j] === m.osMain) w += m.poidsOs[i * 4 + j];
+    return w;
+  };
+  beforeAll(async () => {
+    m = await maillageGLB();
+    s = construireMainHumaine(m);
+  });
+
+  it("seule la patte avant droite bouge, le reste du tigre (et l'avant-bras) reste en place", () => {
+    expect(m.osMain).toBeGreaterThan(0);
+    const n = m.positions.length / 3;
+    let hors = 0, faibles = 0;
+    for (let i = 0; i < n; i++) {
+      const d = Math.hypot(s.deplacements[i * 3], s.deplacements[i * 3 + 1], s.deplacements[i * 3 + 2]);
+      if (!Number.isFinite(d)) throw new Error(`déplacement non fini au sommet ${i}`);
+      const w = poidsMain(i);
+      if (w === 0 && d > 0) hors++;
+      // Poignet : les sommets surtout liés à l'avant-bras ne bougent pas.
+      if (w < 0.15 && d > 0) faibles++;
+    }
+    expect(hors).toBe(0);
+    expect(faibles).toBe(0);
+    // Patte : environ 1 000 sommets déplacés (954 ont mainD comme influence principale).
+    expect(s.deplaces).toBeGreaterThan(800);
+    expect(s.deplaces).toBeLessThan(1182);
+  });
+
+  it("les sommets doublés (coutures de texture) reçoivent le même déplacement", () => {
+    const vus = new Map<string, number>();
+    let ecart = 0;
+    for (let i = 0; i < m.positions.length / 3; i++) {
+      if (poidsMain(i) === 0) continue;
+      const cle = [0, 1, 2].map((k) => Math.round(m.positions[i * 3 + k] * 1e5)).join(",");
+      const j = vus.get(cle);
+      if (j === undefined) { vus.set(cle, i); continue; }
+      for (let k = 0; k < 3; k++) ecart = Math.max(ecart, Math.abs(s.deplacements[i * 3 + k] - s.deplacements[j * 3 + k]));
+    }
+    expect(ecart).toBe(0);
+  });
+
+  it("main aux doigts longs : le bout dépasse largement celui de la patte, aucun triangle déchiré", () => {
+    let yAvant = -Infinity, yApres = -Infinity;
+    const loc = (i: number, k: number) => appliquer(
+      m.versOs,
+      m.positions[i * 3] + k * s.deplacements[i * 3],
+      m.positions[i * 3 + 1] + k * s.deplacements[i * 3 + 1],
+      m.positions[i * 3 + 2] + k * s.deplacements[i * 3 + 2],
+    );
+    for (let i = 0; i < m.positions.length / 3; i++) {
+      if (poidsMain(i) === 0) continue;
+      yAvant = Math.max(yAvant, loc(i, 0).y);
+      yApres = Math.max(yApres, loc(i, 1).y);
+    }
+    // Repère de l'os : la patte finit à y ≈ 0,65, la main plus loin (doigts longs).
+    expect(yApres - yAvant).toBeGreaterThan(0.3);
+    // Arêtes de la patte : aucune ne s'étire au point de déchirer la surface.
+    let max = 0;
+    for (let t = 0; t < m.indices.length; t += 3) {
+      for (let k = 0; k < 3; k++) {
+        const a = m.indices[t + k], b = m.indices[t + ((k + 1) % 3)];
+        if (poidsMain(a) === 0 || poidsMain(b) === 0) continue;
+        const pa = loc(a, 1), pb = loc(b, 1);
+        max = Math.max(max, Math.hypot(pa.x - pb.x, pa.y - pb.y, pa.z - pb.z));
+      }
+    }
+    expect(max).toBeLessThan(0.45);
+  });
+
+  it("repères du nuanceur : peau sur la face de la paume (dessous au repos), atténuation 0 hors de la main", () => {
+    let plante = 0, peau = 0;
+    for (let i = 0; i < m.positions.length / 3; i++) {
+      const att = s.reperes[i * 4];
+      expect(att).toBeGreaterThanOrEqual(0);
+      expect(att).toBeLessThanOrEqual(1);
+      if (poidsMain(i) === 0) { expect(att).toBe(0); continue; }
+      // Dessous de la patte au repos (x de l'os > 0,15) : face de la paume, e > 0.
+      if (appliquer(m.versOs, m.positions[i * 3], m.positions[i * 3 + 1], m.positions[i * 3 + 2]).x > 0.15 && att > 0.5) {
+        plante++;
+        if (s.reperes[i * 4 + 3] > 0.3) peau++;
+      }
+    }
+    expect(plante).toBeGreaterThan(50);
+    expect(peau / plante).toBeGreaterThan(0.9);
+  });
+});
