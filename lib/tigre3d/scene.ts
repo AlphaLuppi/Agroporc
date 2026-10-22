@@ -13,6 +13,8 @@ import { squelette } from "./squelette";
 import type { Role } from "./os";
 import type { EvenementTigre } from "./animateur";
 import { PETITS_MAX, petitsPourEvenement, type Evenement } from "../tigre-courant";
+import { poidsMainHumaine } from "./gestes/serre-main";
+import { creerBatte } from "./batte-maillage";
 import { textureCorde } from "../tigre-lasso-rendu";
 
 /** Hauteur de la fenêtre de vue en mètres de tigre : fixe l'échelle (px par mètre = hauteur du canvas / VUE_M). */
@@ -44,6 +46,8 @@ export interface InfosImage {
   gauche: number;
   /** Horloge de la mère (s) : l'hôte y cale la durée des bulles, qui suit ainsi le temps de la scène (pause comprise). */
   temps: number;
+  /** Coup de batte : point de la batte qui touche Macron (éclats de l'impact), null sans batte. */
+  batte: Point | null;
 }
 
 /**
@@ -192,6 +196,8 @@ export function creerScene(canvas: HTMLCanvasElement, opts: OptionsScene = {}): 
   let serre = false;
 
   const tigres: Tigre[] = [];
+  // Batte du geste « batte », rattachée à la main droite de la mère (lib/tigre3d/batte-maillage.ts).
+  const batte = creerBatte();
   let modele: ModeleTigre | null = null;
   let chargement: Promise<void> | null = null;
   const tigre = (i: number): Tigre => {
@@ -297,6 +303,9 @@ export function creerScene(canvas: HTMLCanvasElement, opts: OptionsScene = {}): 
       t.groupe.scale.setScalar(ECHELLE_MODELE * m.echelle);
       t.groupe.position.set((m.x - centre) / pxm, 0, m.z);
       t.appliquer(m.anim.pose, m.anim.corps.x);
+      // Main humaine : la mère seulement, pendant la poignée de main de « serre-main ».
+      const r = m.anim.reaction;
+      t.mainHumaine(i === 0 && r?.nom === "serre-main" && r.tGeste != null ? poidsMainHumaine(m.anim.t - r.tGeste) : 0);
     });
     const m0 = troupe.mere;
     const eclair = m0.anim.mode === "eclair" && m0.anim.reaction === null && m0.anim.facteurVitesse > 0.5;
@@ -307,6 +316,7 @@ export function creerScene(canvas: HTMLCanvasElement, opts: OptionsScene = {}): 
       matTraine.opacity = Math.min(1, (m0.anim.facteurVitesse - 0.5) * 2);
     }
     const mere = tigre(0);
+    const contactBatte = batte.maj(mere, m0.anim);
     collier.visible = serre && prise != null;
     // Attrapé, il quitte le sol : plus d'ombre portée (elle tournerait avec lui).
     mere.ombre.visible = prise == null;
@@ -335,6 +345,7 @@ export function creerScene(canvas: HTMLCanvasElement, opts: OptionsScene = {}): 
         // Tourné, il n'a plus de « dessus de tête » : la bulle se pose au-dessus de sa boîte.
         bulle: { x: boite.x + boite.w / 2, y: boite.y },
         patte: placer(patteLevee(mere)),
+        batte: null,
       });
       return;
     }
@@ -350,6 +361,7 @@ export function creerScene(canvas: HTMLCanvasElement, opts: OptionsScene = {}): 
       tete: monde(os(mere, "bout_tete")),
       bulle: pointBulle(mere, 1),
       patte: patteLevee(mere),
+      batte: contactBatte ? projeter(contactBatte.clone()) : null,
     });
   }
 
@@ -483,6 +495,7 @@ export function creerScene(canvas: HTMLCanvasElement, opts: OptionsScene = {}): 
       canvas.removeEventListener("webglcontextlost", surPerte);
       for (const t of tigres) { scene.remove(t.groupe); t.dispose(); }
       traine.geometry.dispose(); matTraine.dispose(); texTraine.dispose();
+      batte.dispose();
       geoCollier?.dispose(); matCollier.dispose(); texCollier.dispose();
       tigres.length = 0;
       libererModele();

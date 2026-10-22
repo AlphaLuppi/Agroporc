@@ -35,6 +35,8 @@ export type EvenementTigre =
   | { type: "particules"; genre: GenreParticule; nombre: number; delai: number }
   | { type: "secousse"; duree: number }
   | { type: "fuite"; sens: 1 | -1 }
+  /** Coup de batte : la batte touche Macron (l'hôte le publie dans le canal de lib/rencontre.ts). */
+  | { type: "impact" }
   | { type: "fin"; reaction: Reaction; vitesse?: number };
 
 /** Réaction en cours : instants en secondes de l'horloge de l'animateur. */
@@ -63,6 +65,13 @@ export interface EtatReaction {
   bulleDite: boolean;
   /** Tape : second clic reçu (après « Tope là ! ») avant que la patte soit levée, joué dès qu'elle l'est. */
   clicEnAttente: boolean;
+  /**
+   * Sens donné au cap du geste à la place du sens de course (batte : la direction de Macron, le
+   * tigre se tourne vers lui quel que soit le sens dans lequel il courait). Null : le sens de course.
+   */
+  sensGeste: 1 | -1 | null;
+  /** Événements datés depuis le signal (`tClap`) déjà émis. */
+  faitsSignal: number;
 }
 
 export const FENETRE_TAPE = DUREES.fenetreTape / 1000;
@@ -135,7 +144,21 @@ export interface Animateur {
   maj(dt: number): PoseTigre;
   /** Un clic : lance une réaction (tirée au hasard ou `forcer`) ou valide la tape. */
   clic(forcer?: Reaction | null): "lancer" | "taper" | "ignorer";
-  demarrer(nom: Reaction): void;
+  /**
+   * Lance une réaction. `sensGeste` : sens du cap du geste (cf. EtatReaction). `xArret` : point
+   * d'arrêt imposé (x du corps, m du modèle) au lieu de celui du freinage (embuscade).
+   */
+  demarrer(nom: Reaction, opts?: { sensGeste?: 1 | -1; xArret?: number }): void;
+  /**
+   * Signal du geste en cours (batte : le coup part). Refusé (false) si le geste n'en attend pas, pas
+   * encore prêt, déjà signalé ou interrompu.
+   */
+  signaler(): boolean;
+  /**
+   * Interrompt la réaction en cours sans erreur (rencontre annulée) : pendant l'approche elle
+   * s'arrête net, pendant le geste il en sort par sa sortie normale (`dureeInterruption`).
+   */
+  interrompre(): void;
   figer(v: boolean): void;
   courir(opts?: { mode?: ModeCourse; vitesse?: number; sens?: 1 | -1 }): void;
   /** Lasso : coupe la réaction en cours, il a le seum et se débat jusqu'à `relacher`. */
@@ -176,7 +199,8 @@ export function creerAnimateur({
 
   function ctxGeste(r: EtatReaction): ContexteGeste {
     return {
-      sens: A.sens, tClap: r.tClap, tVexe: r.tVexe, humeur: r.humeur, clip: clipNomme, temps: A.t,
+      // Le geste se joue dans le sens qu'on lui donne (batte : vers Macron), sinon le sens de course.
+      sens: r.sensGeste ?? A.sens, tClap: r.tClap, tVexe: r.tVexe, humeur: r.humeur, clip: clipNomme, temps: A.t,
     };
   }
 
@@ -237,15 +261,43 @@ export function creerAnimateur({
       return "ignorer";
     },
 
-    demarrer(nom) {
+    demarrer(nom, opts = {}) {
       const geste = GESTES[nom];
       const texte = texteBulle(nom, alea());
       A.reaction = {
-        nom, t0: A.t, tGeste: null, tClap: null, tVexe: null, tPret: ENTREE_TAPE,
+        nom, t0: A.t, tGeste: null, tClap: null, tVexe: null, tPret: geste.pret ?? ENTREE_TAPE,
         fin: nom === "tape" ? ENTREE_TAPE + FENETRE_TAPE : geste.duree,
-        texte, humeur: nom === "regard" ? humeurRegard(texte) : "curieux", faits: 0, tArret: null, xArret: null, volte: false, bulleDite: false, clicEnAttente: false,
+        texte, humeur: nom === "regard" ? humeurRegard(texte) : "curieux", faits: 0, tArret: null,
+        xArret: opts.xArret ?? null, volte: false, bulleDite: false, clicEnAttente: false,
+        sensGeste: opts.sensGeste ?? null, faitsSignal: 0,
       };
       if (!geste.immobile) { A.reaction.tGeste = A.t; lancerCouche(A.reaction); }
+    },
+
+    signaler() {
+      const r = A.reaction;
+      if (!r || r.tGeste == null || r.tClap != null || r.tVexe != null) return false;
+      const geste = GESTES[r.nom];
+      const tg = A.t - r.tGeste;
+      if (!geste.evenementsSignal || tg < r.tPret) return false;
+      r.tClap = tg;
+      r.fin = tg + (geste.dureeApresSignal ?? 0);
+      return true;
+    },
+
+    interrompre() {
+      const r = A.reaction;
+      if (!r) return;
+      if (r.tGeste == null) {
+        // Approche : rien n'est encore posé, la réaction s'arrête là (il reprend sa course).
+        A.reaction = null;
+        emettre({ type: "fin", reaction: r.nom });
+        return;
+      }
+      if (r.tClap != null || r.tVexe != null) return;
+      const tg = A.t - r.tGeste;
+      r.tVexe = tg;
+      r.fin = Math.min(r.fin, tg + (GESTES[r.nom].dureeInterruption ?? 0));
     },
 
     maj(dt) {
@@ -292,7 +344,8 @@ export function creerAnimateur({
           // Il se tourne vers nous dès qu'il a assez ralenti (tête d'abord, cf. corps.ts) ; pour
           // revenir dans l'écran il marche de profil.
           const recale = loin && (enArriere || Math.abs(v) > 1.3);
-          cap = recale ? sensDep * Math.PI / 2 : (geste.cap ? geste.cap(A.sens) : A.sens * 0.25);
+          const sensCap = r.sensGeste ?? A.sens;
+          cap = recale ? sensDep * Math.PI / 2 : (geste.cap ? geste.cap(sensCap) : sensCap * 0.25);
           // Retour immédiat au clic : la tête (puis les oreilles, par ressort) se tourne vers nous dès
           // le clic, même en pleine course ; le corps suit quand il a ralenti.
           regard = 1;
@@ -315,7 +368,8 @@ export function creerAnimateur({
           }
         } else if (geste.immobile || geste.freine) {
           vit = 0;
-          cap = geste.immobile ? (geste.cap ? geste.cap(A.sens) : A.sens * 0.25) : corps.psiE.x;
+          const sensCap = r.sensGeste ?? A.sens;
+          cap = geste.immobile ? (geste.cap ? geste.cap(sensCap) : sensCap * 0.25) : corps.psiE.x;
           regard = 1;
         }
       }
@@ -364,6 +418,15 @@ export function creerAnimateur({
             const duree = r.nom === "tape" ? FENETRE_TAPE : Math.max(0.9, r.fin - e.t - 0.1);
             emettre({ type: "bulle", texte: e.texte ?? r.texte, duree: e.duree ?? duree, prolonge: r.bulleDite && !e.texte });
           } else if (e.type === "particules") emettre({ type: "particules", genre: e.genre, nombre: e.nombre, delai: 0 });
+          else if (e.type === "secousse") emettre({ type: "secousse", duree: e.duree });
+        }
+        // Événements datés depuis le signal (coup de batte : impact, secousse, éclats, « BONK ! »).
+        const evSignal = geste.evenementsSignal ?? [];
+        while (r.tClap != null && r.faitsSignal < evSignal.length && tg - r.tClap >= evSignal[r.faitsSignal].t) {
+          const e = evSignal[r.faitsSignal++];
+          if (e.type === "impact") emettre({ type: "impact" });
+          else if (e.type === "bulle") emettre({ type: "bulle", texte: e.texte ?? r.texte, duree: e.duree ?? 1 });
+          else if (e.type === "particules") emettre({ type: "particules", genre: e.genre, nombre: e.nombre, delai: 0 });
           else if (e.type === "secousse") emettre({ type: "secousse", duree: e.duree });
         }
         if (r.nom === "tape" && r.clicEnAttente && r.tClap == null && r.tVexe == null && tg > r.tPret) claquer(r, tg);

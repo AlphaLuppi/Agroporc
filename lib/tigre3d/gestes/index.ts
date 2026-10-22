@@ -14,6 +14,7 @@ import { salut } from "./salut";
 import { lecher } from "./lecher";
 import { etirement } from "./etirement";
 import { serreMain } from "./serre-main";
+import { batte } from "./batte";
 
-export const GESTES: Record<Reaction, Geste> = { regard, saut, tape, sursaut, ronron, rugir, salut, lecher, etirement, "serre-main": serreMain };
+export const GESTES: Record<Reaction, Geste> = { regard, saut, tape, sursaut, ronron, rugir, salut, lecher, etirement, "serre-main": serreMain, batte };
 export type { Geste, PoseGeste, ContexteGeste, ClipImages, EvenementGeste } from "./types";

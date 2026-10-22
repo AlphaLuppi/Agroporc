@@ -5,12 +5,16 @@ import { Chakra_Petch, IBM_Plex_Mono } from "next/font/google";
 import type { Carte, PdjEntry, Plat } from "@/lib/db";
 import type { Poi, SceneData } from "@/lib/agroparc3d/types";
 import type { SceneHandle } from "@/lib/agroparc3d/scene";
+import { lireCachettes, type Cachette, type FichierCachettes } from "@/lib/agroparc3d/cachettes";
 import { etatRestaurant } from "@/lib/agroparc3d/panneau";
 import { couleurNote, remplissage } from "@/lib/agroparc3d/jauge";
 import { MODE_LABEL, noteMode, trierCarte, type Mode } from "@/lib/carte-tri";
+import { useModeSite } from "@/app/menus/useModeSite";
 import { variantesPlat, type VariantePlat } from "@/lib/plat-options";
 import { restoParNom } from "@/lib/restaurants";
+import { CLE_CLASSEMENT, messageEnregistre } from "@/lib/tigre-scores";
 import RestoBadge from "./RestoBadge";
+import { CLASSEMENT_INDISPONIBLE, EnregistrerScore, PanneauClassement } from "./ClassementTigre";
 import styles from "./Agroparc3D.module.css";
 
 const display = Chakra_Petch({ subsets: ["latin"], weight: ["400", "600", "700"], variable: "--ag-display", display: "swap" });
@@ -18,9 +22,18 @@ const mono = IBM_Plex_Mono({ subsets: ["latin"], weight: ["400", "500"], variabl
 
 interface Ev { id: number; time: string; tag: string; text: string }
 
-const MODES: Mode[] = ["sportif", "goulaf"];
-/** Même clé que le site (`useModeSite`) : le mode choisi ici suit sur la page derrière et inversement. */
-const MODE_KEY = "pdj-mode";
+/** Score de la chasse au tigre, gardé par `MyrtilleEasterEgg` : il survit à la fermeture de la vue. */
+export interface PartieTigre { score: number; tigres: number }
+
+/** Cachettes précalculées (scripts/agroparc/generer_cachettes.mjs). Indisponibles : pas de chasse. */
+async function fetchCachettes(): Promise<Cachette[]> {
+  try {
+    const r = await fetch("/agroparc/cachettes.json");
+    return r.ok ? lireCachettes((await r.json()) as FichierCachettes) : [];
+  } catch {
+    return [];
+  }
+}
 
 const fmtDate = (iso: string, long = true) => {
   const [y, m, d] = iso.split("-").map(Number);
@@ -30,8 +43,14 @@ const fmtDate = (iso: string, long = true) => {
 };
 const fmtNote = (n?: number) => (n == null ? "—" : `${n}/10`);
 
-function modeInitial(): Mode {
-  try { return localStorage.getItem(MODE_KEY) === "goulaf" ? "goulaf" : "sportif"; } catch { return "sportif"; }
+function lireClassementOuvert(): boolean {
+  try { return localStorage.getItem(CLE_CLASSEMENT) === "1"; } catch { return false; }
+}
+
+/** Échap ne ferme pas la vue quand on tape dans un champ (pseudo du classement). */
+function dansUnChamp(cible: EventTarget | null): boolean {
+  const el = cible as HTMLElement | null;
+  return !!el && (el.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName));
 }
 
 /** Menu du jour : celui d'aujourd'hui si publié, sinon le plus récent. */
@@ -46,26 +65,55 @@ async function fetchPdj(): Promise<PdjEntry | null> {
   return null;
 }
 
-export default function Agroparc3D({ onClose }: { onClose?: () => void }) {
+interface Props {
+  onClose?: () => void;
+  partie?: PartieTigre;
+  /** Le joueur vient de débusquer le tigre dans la cachette `c`. */
+  surTigre?: (c: Cachette) => void;
+  /** Le score vient d'être enregistré dans le classement : la partie repart de 0. */
+  remettreAZero?: () => void;
+}
+
+export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, surTigre, remettreAZero }: Props) {
   const rootRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const labelsRef = useRef<HTMLDivElement>(null);
   const handleRef = useRef<SceneHandle | null>(null);
-  const [scene, setScene] = useState<SceneData | null>(null);
+  const [scene, setScene] = useState<{ data: SceneData; cachettes: Cachette[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   const [pdj, setPdj] = useState<PdjEntry | null>(null);
   const [selected, setSelected] = useState<Poi | null>(null);
   const [events, setEvents] = useState<Ev[]>([]);
-  // Le composant n'est monté qu'au clavier (jamais rendu côté serveur) : lecture directe du mode du site.
-  const [mode, setMode] = useState<Mode>(modeInitial);
-
-  const changerMode = (m: Mode) => {
-    setMode(m);
-    try { localStorage.setItem(MODE_KEY, m); } catch { /* stockage indisponible : le mode reste local à la vue */ }
-    // Le site derrière se resynchronise sur cet événement (`useModeSite`).
-    window.dispatchEvent(new Event("pdj:mode-refresh"));
+  /** Dernier tigre trouvé, affiché un instant à côté du score (le journal est masqué sur mobile). */
+  const [gain, setGain] = useState<{ id: number; points: number } | null>(null);
+  const surTigreRef = useRef(surTigre);
+  surTigreRef.current = surTigre;
+  // Classement : ouvert ou fermé (gardé en localStorage), rechargé après chaque enregistrement.
+  // Le composant n'est monté qu'au clavier (jamais rendu côté serveur) : lecture directe.
+  const [classementOuvert, setClassementOuvert] = useState(lireClassementOuvert);
+  const [versionClassement, setVersionClassement] = useState(0);
+  const [message, setMessage] = useState<{ id: number; texte: string } | null>(null);
+  const ouvrirClassement = (v: boolean) => {
+    setClassementOuvert(v);
+    if (v) setSelected(null);
+    try { localStorage.setItem(CLE_CLASSEMENT, v ? "1" : "0"); } catch { /* stockage indisponible : état non retenu */ }
   };
+  // Mode choisi sur le site : les jauges le suivent, la vue ne le modifie pas.
+  const [mode] = useModeSite();
+
+  // Échap ferme la vue, sauf dans un champ de saisie (le champ gère alors Échap lui-même).
+  const fermerRef = useRef(onClose);
+  fermerRef.current = onClose;
+  useEffect(() => {
+    const surTouche = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented || dansUnChamp(e.target)) return;
+      e.preventDefault();
+      fermerRef.current?.();
+    };
+    window.addEventListener("keydown", surTouche);
+    return () => window.removeEventListener("keydown", surTouche);
+  }, []);
 
   // Le site derrière ne doit plus défiler tant que la vue 3D est ouverte.
   useEffect(() => {
@@ -96,9 +144,10 @@ export default function Agroparc3D({ onClose }: { onClose?: () => void }) {
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/agroparc/scene.json")
-      .then((r) => { if (!r.ok) throw new Error(`scene.json ${r.status}`); return r.json() as Promise<SceneData>; })
-      .then((d) => { if (!cancelled) setScene(d); })
+    const data = fetch("/agroparc/scene.json")
+      .then((r) => { if (!r.ok) throw new Error(`scene.json ${r.status}`); return r.json() as Promise<SceneData>; });
+    Promise.all([data, fetchCachettes()])
+      .then(([d, cachettes]) => { if (!cancelled) setScene({ data: d, cachettes }); })
       .catch((e: Error) => { if (!cancelled) setError(`Impossible de charger la carte (${e.message}).`); });
     fetchPdj().then((d) => { if (!cancelled) setPdj(d); });
     return () => { cancelled = true; };
@@ -111,20 +160,58 @@ export default function Agroparc3D({ onClose }: { onClose?: () => void }) {
     import("@/lib/agroparc3d/scene")
       .then(({ createAgroparcScene }) => {
         if (cancelled || !canvasRef.current || !labelsRef.current) return;
-        handle = createAgroparcScene(canvasRef.current, labelsRef.current, scene, {
+        const journal = (tag: string, text: string) => {
+          const now = new Date();
+          const time = [now.getHours(), now.getMinutes(), now.getSeconds()].map((n) => String(n).padStart(2, "0")).join(":");
+          setEvents((evs) => [...evs, { id: now.getTime() + Math.random(), time, tag, text }].slice(-3));
+        };
+        handle = createAgroparcScene(canvasRef.current, labelsRef.current, scene.data, {
           onSelect: (poi) => setSelected(poi),
-          onEvent: (tag, text) => {
-            const now = new Date();
-            const time = [now.getHours(), now.getMinutes(), now.getSeconds()].map((n) => String(n).padStart(2, "0")).join(":");
-            setEvents((evs) => [...evs, { id: now.getTime() + Math.random(), time, tag, text }].slice(-3));
+          onEvent: journal,
+          onTigre: (c) => {
+            journal("TIGRE", `Tigre débusqué, cachette ${c.palier}, +${c.points}`);
+            setGain({ id: Date.now(), points: c.points });
+            surTigreRef.current?.(c);
           },
-        });
+        }, { cachettes: scene.cachettes });
         handleRef.current = handle;
         setReady(true);
       })
       .catch((e: Error) => setError(`Le rendu 3D n'a pas pu démarrer (${e.message}). WebGL est-il activé ?`));
     return () => { cancelled = true; handle?.dispose(); handleRef.current = null; };
   }, [scene]);
+
+  // Le message du classement s'efface après 6 s.
+  useEffect(() => {
+    if (!message) return;
+    const t = setTimeout(() => setMessage(null), 6000);
+    return () => clearTimeout(t);
+  }, [message]);
+
+  // Le gain affiché à côté du score s'efface après 2,5 s.
+  useEffect(() => {
+    if (!gain) return;
+    const t = setTimeout(() => setGain(null), 2500);
+    return () => clearTimeout(t);
+  }, [gain]);
+
+  // Crochet de développement : cachette courante, débusquer, placer, viser (captures et vérifications).
+  useEffect(() => {
+    if (process.env.NODE_ENV === "production" || !ready || !scene) return;
+    window.__palantir = {
+      cachette: () => handleRef.current?.chasse?.cachette() ?? null,
+      debusquer: () => handleRef.current?.chasse?.debusquer() ?? null,
+      cachettes: () => scene.cachettes.length,
+      placer: (i) => {
+        const c = scene.cachettes[Math.max(0, Math.min(scene.cachettes.length - 1, Math.round(i)))];
+        if (c) handleRef.current?.chasse?.placer(c);
+        return c ?? null;
+      },
+      viser: (distance) => handleRef.current?.chasse?.viser(distance),
+      ecran: () => handleRef.current?.chasse?.ecran() ?? null,
+    };
+    return () => { delete window.__palantir; };
+  }, [ready, scene]);
 
   // Plat du jour du POI cliqué (+ carte permanente en dépliant), ou statut + carte quand il n'en a pas.
   const chargement = !ready || !!error;
@@ -139,14 +226,38 @@ export default function Agroparc3D({ onClose }: { onClose?: () => void }) {
       {/* Tant que l'écran de chargement / d'erreur recouvre le HUD, ses boutons ne sont pas atteignables au clavier. */}
       <header className={`${styles.hud} ${styles.hudTl}`} inert={chargement}>
         <h1 className={styles.title}>Agroporc x Palantir</h1>
-        <div className={styles.modes} role="group" aria-label="Mode de notation">
-          {MODES.map((m) => (
-            <button key={m} type="button" data-mode={m} aria-pressed={mode === m} onClick={() => changerMode(m)}>
-              {MODE_LABEL[m]}
-            </button>
-          ))}
+        <p className={styles.score} aria-live="polite">
+          <span><b>{partie.score}</b> pts</span>
+          <span>{partie.tigres} {partie.tigres > 1 ? "tigres trouvés" : "tigre trouvé"}</span>
+          {gain && <span key={gain.id} className={styles.gain}>+{gain.points}</span>}
+        </p>
+        <div className={styles.actions}>
+          {partie.score > 0 && (
+            <EnregistrerScore
+              score={partie.score}
+              tigres={partie.tigres}
+              surEnregistre={(rang) => {
+                setMessage({ id: Date.now(), texte: messageEnregistre(rang) });
+                remettreAZero?.();
+                setVersionClassement((v) => v + 1);
+                ouvrirClassement(true);
+              }}
+              surEchec={() => setMessage({ id: Date.now(), texte: CLASSEMENT_INDISPONIBLE })}
+            />
+          )}
+          <button type="button" className={styles.action} aria-expanded={classementOuvert && !selected} onClick={() => ouvrirClassement(!(classementOuvert && !selected))}>
+            Classement
+          </button>
         </div>
+        {message && <p key={message.id} className={styles.message} role="status">{message.texte}</p>}
       </header>
+
+      {/* Sortie toujours atteignable : hors des blocs inertes, au-dessus de l'écran de chargement ou d'erreur. */}
+      {onClose && (
+        <button type="button" className={styles.sortie} onClick={onClose}>
+          <span aria-hidden="true">←</span> Retour au site
+        </button>
+      )}
 
       <div className={`${styles.hud} ${styles.hudBl}`} inert={chargement}>
         <div className={styles.legend}>
@@ -155,7 +266,7 @@ export default function Agroparc3D({ onClose }: { onClose?: () => void }) {
           <span className={styles.kBat}>Bâtiments IGN</span>
         </div>
         <div className={styles.hint}>
-          Glisser : pivoter · Clic droit ou deux doigts : déplacer · Molette : zoom · Flèches : déplacer · Clic sur un restaurant : plat du jour et carte · Retape <b>myrtille</b> pour revenir au site
+          Glisser : pivoter · Clic droit ou deux doigts : déplacer · Molette : zoom · Flèches : déplacer · Clic sur un restaurant : plat du jour et carte · <b>Échap</b> ou <b>Retour au site</b> pour revenir
         </div>
         <div className={styles.ctl}>
           <button type="button" onClick={() => handleRef.current?.spin(1)} aria-label="Pivoter vers la gauche">↺ Pivoter</button>
@@ -172,6 +283,11 @@ export default function Agroparc3D({ onClose }: { onClose?: () => void }) {
           ))}
         </div>
       </div>
+
+      {/* Un seul panneau à droite : le restaurant choisi passe devant le classement, qui reste ouvert derrière. */}
+      {classementOuvert && !selected && (
+        <PanneauClassement version={versionClassement} surFermer={() => ouvrirClassement(false)} />
+      )}
 
       {selected && etat && (
         <aside className={styles.panel} aria-live="polite">
@@ -203,8 +319,7 @@ export default function Agroparc3D({ onClose }: { onClose?: () => void }) {
           {error ? (
             <div className={styles.errSortie}>
               <span className={styles.err}>{error}</span>
-              <p>Retape <b>myrtille</b> pour revenir au site.</p>
-              {onClose && <button type="button" className={styles.close} onClick={onClose}>Fermer</button>}
+              <p><b>Échap</b> ou <b>Retour au site</b> pour revenir.</p>
             </div>
           ) : <span>Radiographie en cours</span>}
         </div>
@@ -350,4 +465,20 @@ function CarteMini({ slug, mode }: { slug: string; mode: Mode }) {
       ))}
     </div>
   );
+}
+
+declare global {
+  interface Window {
+    /** Crochet de test de la chasse au tigre, présent en développement seulement. */
+    __palantir?: {
+      cachette(): Cachette | null;
+      debusquer(): Cachette | null;
+      cachettes(): number;
+      /** Pose le tigre dans la cachette de rang i (0 = la plus facile). */
+      placer(i: number): Cachette | null;
+      viser(distance?: number): void;
+      /** Position du tigre à l'écran (px), null s'il est caché ou hors champ. */
+      ecran(): { x: number; y: number } | null;
+    };
+  }
 }

@@ -68,7 +68,9 @@ export type EvenementGeste =
    * dès cet instant le geste doit rendre `corps.lacet` = 0 (rien ne bouge à l'écran). Le tigre
    * retombe ainsi déjà tourné, prêt à fuir, sans piétiner un demi-tour.
    */
-  | { t: number; type: "volteface" };
+  | { t: number; type: "volteface" }
+  /** Coup de batte : la batte touche Macron (l'animateur émet l'événement « impact »). */
+  | { t: number; type: "impact" };
 
 /** Clip d'images : une pose par image, interpolée (cf. lib/tigre3d/clips.ts). */
 export interface ClipImages {
@@ -81,7 +83,10 @@ export interface ClipImages {
 export interface ContexteGeste {
   /** Sens de course : 1 = vers la droite de l'écran, -1 = vers la gauche. */
   sens: 1 | -1;
-  /** Tape : instant (s depuis le début du geste) du second clic (« Clap ! ») ou de l'abandon (vexé). */
+  /**
+   * Tape : instant (s depuis le début du geste) du second clic (« Clap ! ») ou de l'abandon (vexé).
+   * Batte : instant du signal de frappe (`tClap`) ou de l'abandon de l'embuscade (`tVexe`).
+   */
   tClap: number | null;
   tVexe: number | null;
   humeur: HumeurRegard;
@@ -111,5 +116,15 @@ export interface Geste {
   bulleTot?: boolean;
   /** Instants (s depuis le début du geste) des événements ; défaut : la bulle à DELAI_BULLE. */
   evenements?: readonly EvenementGeste[];
+  /**
+   * Événements datés depuis le SIGNAL du geste (`ctx.tClap`, posé par l'animateur : coup de batte
+   * lancé par la rencontre), émis une fois le signal reçu. La bulle y porte son propre texte.
+   */
+  evenementsSignal?: readonly EvenementGeste[];
+  /** Signal accepté à partir de cet instant (s depuis le début du geste : batte armée). */
+  pret?: number;
+  /** Fin du geste après le signal (s) et après une interruption (s). */
+  dureeApresSignal?: number;
+  dureeInterruption?: number;
   echantillonner(t: number, ctx: ContexteGeste): PoseGeste;
 }

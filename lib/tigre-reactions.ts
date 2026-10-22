@@ -27,10 +27,12 @@ import { REPLIQUES_TIGRE } from "./repliques-lasso";
  * - serre-main : debout face à nous, il refait le chat « shake my hand » (applaudit, agite les
  *   pattes, réfléchit la patte au museau, tend la patte) : capture vidéo reciblée
  *   (lib/tigre3d/clips/chat-serre-main.json), une bulle par phase du clip.
+ * - batte : dressé de profil face à Macron, il l'attend batte armée puis le frappe (« BONK ! »).
+ *   Jamais tirée au clic (poids nul) : seule la rencontre avec Macron la lance (lib/rencontre.ts).
  */
 export type Reaction =
   | "regard" | "saut" | "tape" | "sursaut" | "ronron" | "rugir" | "salut" | "lecher" | "etirement"
-  | "serre-main";
+  | "serre-main" | "batte";
 
 /** Poids du tirage, dans l'ordre : le saut et le regard restent les plus fréquents. */
 export const POIDS_REACTIONS: ReadonlyArray<readonly [Reaction, number]> = [
@@ -44,21 +46,25 @@ export const POIDS_REACTIONS: ReadonlyArray<readonly [Reaction, number]> = [
   ["lecher", 0.07],
   ["etirement", 0.07],
   ["serre-main", 0.1],
+  // Jamais au clic : la rencontre avec Macron la lance.
+  ["batte", 0],
 ];
 
 /**
  * Tire une réaction selon les poids. Jamais deux fois la même d'affilée :
  * si le tirage retombe sur `precedente`, on prend la suivante de la liste.
+ * Une réaction de poids nul (batte) n'est jamais tirée, même par ce report.
  */
 export function tirerReaction(alea: number, precedente: Reaction | null = null): Reaction {
+  const tirables = POIDS_REACTIONS.filter(([, p]) => p > 0);
   let cumul = 0;
-  let index = POIDS_REACTIONS.length - 1;
-  for (let i = 0; i < POIDS_REACTIONS.length; i++) {
-    cumul += POIDS_REACTIONS[i][1];
+  let index = tirables.length - 1;
+  for (let i = 0; i < tirables.length; i++) {
+    cumul += tirables[i][1];
     if (alea < cumul) { index = i; break; }
   }
-  if (POIDS_REACTIONS[index][0] === precedente) index = (index + 1) % POIDS_REACTIONS.length;
-  return POIDS_REACTIONS[index][0];
+  if (tirables[index][0] === precedente) index = (index + 1) % tirables.length;
+  return tirables[index][0];
 }
 
 /** Durées en ms (le sursaut compte jusqu'au départ en sens inverse). */
@@ -73,6 +79,8 @@ export const DUREES = {
   etirement: 2800,
   /** Indicatif (tigre 3D : la durée vient du geste, 0,95 + 6,8 + 0,9 s) ; repli sprite : arrêt plus court. */
   "serre-main": 8650,
+  /** Indicatif (tigre 3D : entrée, attente batte armée, coup et sortie, cf. lib/tigre3d/gestes/batte.ts). */
+  batte: 6000,
   /** Assis et patte levée : le second clic n'est pris qu'ensuite. */
   entreeTape: 700,
   /** Fenêtre où un second clic valide la tape dans la main. */
@@ -89,11 +97,13 @@ export const DUREES = {
 export const DELAI_BULLE: Record<Reaction, number> = {
   regard: 100, saut: 220, tape: 450, sursaut: 0, ronron: 450,
   rugir: 420, salut: 350, lecher: 800, etirement: 650, "serre-main": 950,
+  // Batte : la bulle « BONK ! » part à l'impact, compté depuis le signal de frappe (gestes/batte.ts).
+  batte: 350,
 };
 
 /** Réactions où le tigre s'immobilise (il ralentit puis s'arrête) ; saut et sursaut se font en mouvement ou sur place. */
 const IMMOBILISE: ReadonlySet<Reaction> = new Set<Reaction>([
-  "regard", "tape", "ronron", "rugir", "salut", "lecher", "etirement", "serre-main",
+  "regard", "tape", "ronron", "rugir", "salut", "lecher", "etirement", "serre-main", "batte",
 ]);
 export function immobilise(reaction: Reaction): boolean {
   return IMMOBILISE.has(reaction);
@@ -121,6 +131,7 @@ export const TEXTES: Record<CleTexte, readonly string[]> = {
   etirement: ["Aaah, la sieste…", "Hmmm, ça fait du bien…"],
   /** Tirage par défaut ; le tigre 3D affiche une bulle par phase (lib/tigre3d/gestes/serre-main.ts). */
   "serre-main": ["Serre-moi la pince !", "Bravo, bravo !", "Tope là, l'ami !"],
+  batte: ["BONK !"],
   vexe: ["Hmpf.", "Pff…", "Quel manque de respect."],
   clap: ["🐾 Clap !"],
   // Pris au lasso : répliques partagées avec le coureur « macron » (lib/repliques-lasso.ts).

@@ -7,6 +7,7 @@ import { Vector3 } from "three";
 import {
   serreMain, CLIP_SERRE_MAIN, DUREE_CLIP_SERRE_MAIN, ENTREE_SERRE_MAIN, SORTIE_SERRE_MAIN,
   EVENEMENTS_SERRE_MAIN, BULLES_SERRE_MAIN, BULLES_AFFICHEES, BULLE_MIN,
+  poidsMainHumaine, DEBUT_MAIN_HUMAINE, FIN_MAIN_HUMAINE,
 } from "./serre-main";
 import { GESTES } from "./index";
 import { creerCorps, avancerCorps, corpsVersSol, type Corps, type Couche } from "../corps";
@@ -235,5 +236,36 @@ describe("geste serre-main (chat « shake my hand » reciblé)", () => {
     bulles.forEach((b, k) => expect(b.duree).toBeCloseTo(EVENEMENTS_SERRE_MAIN[k].duree, 6));
     // Corps, tête, queue : jamais plus de ~8° d'une image à l'autre (60 i/s), entrée et sortie comprises.
     expect(max).toBeLessThan(0.14);
+  });
+
+  it("main humaine : 0 avant l'image 156, montée lissée en 0,5 s, 1 jusqu'à la fin du clip, 0 avant 8,2 s", () => {
+    // Image 156 (début de la poignée de main) : ≈ 6,15 s. Fin du clip : ≈ 7,75 s.
+    expect(DEBUT_MAIN_HUMAINE).toBeCloseTo(ENTREE_SERRE_MAIN + 156 / 30, 6);
+    expect(DEBUT_MAIN_HUMAINE).toBeCloseTo(6.15, 2);
+    expect(FIN_MAIN_HUMAINE).toBeCloseTo(ENTREE_SERRE_MAIN + DUREE_CLIP_SERRE_MAIN, 6);
+    expect(FIN_MAIN_HUMAINE).toBeGreaterThan(7.7);
+    for (const t of [-1, 0, 3, 6, 6.1, DEBUT_MAIN_HUMAINE]) expect(poidsMainHumaine(t)).toBe(0);
+    // Montée : environ 0,5 s, lissée (pente nulle aux deux bouts), croissante.
+    expect(poidsMainHumaine(DEBUT_MAIN_HUMAINE + 0.25)).toBeCloseTo(0.5, 6);
+    expect(poidsMainHumaine(DEBUT_MAIN_HUMAINE + 0.02)).toBeLessThan(0.01);
+    expect(poidsMainHumaine(DEBUT_MAIN_HUMAINE + 0.5)).toBe(1);
+    for (const t of [6.7, 7, 7.5, FIN_MAIN_HUMAINE]) expect(poidsMainHumaine(t)).toBe(1);
+    // Descente : 0,4 s au plus, finie avant 8,2 s.
+    expect(poidsMainHumaine(FIN_MAIN_HUMAINE + 0.2)).toBeCloseTo(0.5, 6);
+    expect(poidsMainHumaine(FIN_MAIN_HUMAINE + 0.4)).toBe(0);
+    for (const t of [8.2, 8.5, serreMain.duree, 20]) expect(poidsMainHumaine(t)).toBe(0);
+    expect(poidsMainHumaine(Number.NaN)).toBe(0);
+    // Sans saut : à 60 i/s, jamais plus de 0,07 d'une image à l'autre (pente max 1,5 / 0,4 s), monotone sur chaque rampe.
+    let prec = 0, max = 0;
+    for (let k = 0; k <= 10 * 60; k++) {
+      const t = k / 60, w = poidsMainHumaine(t);
+      expect(w).toBeGreaterThanOrEqual(0);
+      expect(w).toBeLessThanOrEqual(1);
+      if (t < FIN_MAIN_HUMAINE) expect(w).toBeGreaterThanOrEqual(prec - 1e-12);
+      else expect(w).toBeLessThanOrEqual(prec + 1e-12);
+      max = Math.max(max, Math.abs(w - prec));
+      prec = w;
+    }
+    expect(max).toBeLessThan(0.07);
   });
 });
