@@ -44,8 +44,12 @@ function murCba() {
 const mur = murCba();
 
 describe("monde (vrai scene.json)", () => {
-  it("indexe les 142 bâtiments, bornes = centroïdes + 25 m", () => {
-    expect(monde.prismes.length).toBe(scene.buildings.length);
+  it("indexe les 142 bâtiments + le Truck Muche garé, bornes = centroïdes + 25 m", () => {
+    expect(monde.prismes.length).toBe(scene.buildings.length + 1);
+    // le truck (v3 §2) : dernier prisme, 3,2 m de haut, on ne traverse pas sa caisse
+    const truck = monde.prismes[monde.prismes.length - 1];
+    expect(truck.h).toBe(3.2);
+    expect(dedans(-125, 39, truck.anneau)).toBe(true);
     const xs = scene.buildings.map((b) => b.c[0]), zs = scene.buildings.map((b) => b.c[1]);
     expect(monde.bornes.x0).toBeCloseTo(Math.min(...xs) - MARGE_BORNES_M, 6);
     expect(monde.bornes.x1).toBeCloseTo(Math.max(...xs) + MARGE_BORNES_M, 6);

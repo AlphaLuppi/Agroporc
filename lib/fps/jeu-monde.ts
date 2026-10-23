@@ -1,13 +1,15 @@
 /**
  * Monde dynamique côté client (PUR, ni three ni DOM) : voitures PNJ à l'horloge serveur, voitures conduisibles interpolées, sièges,
- * Elsa (position, flèche, distance), invite d'interaction sous le viseur. Appelé par `jeu.ts` (lot J1).
- * Spec : docs/superpowers/specs/2026-10-22-arene-v2-design.md (§5.20)
+ * Elsa (position, flèche, distance), invite d'interaction sous le viseur, voitures abîmées et épaves (v3 §4), voitures touchables par une
+ * balle (`impactVoiture`). Appelé par `jeu.ts` (lot J1).
+ * Spec : docs/superpowers/specs/2026-10-22-arene-v2-design.md (§5.20), 2026-10-23-arene-v3-design.md (§4)
  *
  * Aucune horloge ni aléa ici : toutes les dates sont passées en paramètre (horloge serveur, ms).
  */
 import type { Monde } from "./collision";
 import { construireCircuits, etatVoiture, flotte, type Circuit, type EtatVoiture, type VoiturePnj } from "./circulation";
-import { JEU, type EtatElsaMsg, type InfoVehicule, type Siege, type Vec3, type VehiculeSnap } from "./protocole";
+import { rayonVoiture } from "./epaves";
+import { JEU, type EtatElsaMsg, type EtatVoitureMsg, type GenreVoiture, type InfoVehicule, type Siege, type Vec3, type VehiculeSnap } from "./protocole";
 import { InterpolateurVehicules } from "./interpolation-vehicules";
 import { repereElsa as repereVers } from "./radar";
 import { distanceVehicule, VEH } from "./vehicule";
@@ -15,6 +17,9 @@ import { positionElsa } from "./zones";
 import type { SceneData } from "../agroparc3d/types";
 
 export type InviteInteraction = { invite: "" | "elsa" | "monter" | "descendre"; detail: string; vehicule: number | null };
+
+/** Une voiture qu'une balle peut toucher : caisse (centre au sol, cap). */
+export interface VoitureTouchable { genre: GenreVoiture; id: number; p: Vec3; cap: number }
 
 /** Distance (m) sous laquelle l'invite « prendre le cadeau d'Elsa » s'affiche (le ramassage serveur, lui, exige `ELSA.rayonRamassage`). */
 export const DISTANCE_INVITE_ELSA_M = 6;
@@ -32,6 +37,8 @@ export class MondeJeu {
   private readonly posElsaDefaut: { x: number; z: number };
   private etatElsa: EtatElsaMsg | null = null;
   private posElsa: { x: number; z: number };
+  /** voitures abîmées et épaves (`voitures` du serveur), par clé « genre:id » */
+  private readonly abimees = new Map<string, EtatVoitureMsg>();
 
   constructor(data: SceneData, _monde: Monde) {
     this.circuits = construireCircuits();
@@ -126,10 +133,60 @@ export class MondeJeu {
     return { invite: "monter", detail: `${occupants}/${SIEGES_PAR_VOITURE}`, vehicule: meilleur.id };
   }
 
+  /** `voitures` : état complet des voitures abîmées et des épaves (remplace le précédent). */
+  majVoitures(etats: readonly EtatVoitureMsg[]): void {
+    this.abimees.clear();
+    for (const e of etats) this.abimees.set(`${e.genre}:${e.id}`, { ...e });
+  }
+
+  /** État d'une voiture abîmée (fumée, feu, épave), undefined si intacte. */
+  etatVoiture(genre: GenreVoiture, id: number): EtatVoitureMsg | undefined {
+    return this.abimees.get(`${genre}:${id}`);
+  }
+
+  /** Voitures abîmées et épaves connues (à ne pas modifier). */
+  voituresAbimees(): Iterable<EtatVoitureMsg> {
+    return this.abimees.values();
+  }
+
+  /** La voiture PNJ d'indice `id` est en épave (cachée, plus dangereuse). */
+  pnjDetruite(id: number): boolean {
+    return this.abimees.get(`pnj:${id}`)?.etat === "epave";
+  }
+
+  /**
+   * Première voiture que coupe le rayon (`o`, `d` normalisée) avant `max` m : PNJ en service à `tMs` (horloge serveur, ce qui est dessiné) et
+   * voitures conduisibles `vehicules` (celles qui sont dessinées). `exclure` = voiture conduisible où je suis assis (on tire de l'intérieur).
+   */
+  impactVoiture(
+    o: Vec3, d: Vec3, max: number, tMs: number, vehicules: Iterable<VehiculeSnap>, exclure: number | null,
+  ): { genre: GenreVoiture; id: number; distance: number } | null {
+    let best: { genre: GenreVoiture; id: number; distance: number } | null = null;
+    for (const v of this.voituresTouchables(tMs, vehicules)) {
+      if (v.genre === "vehicule" && v.id === exclure) continue;
+      const k = rayonVoiture(o, d, v.p, v.cap, best ? best.distance : max);
+      if (k !== null && (!best || k < best.distance)) best = { genre: v.genre, id: v.id, distance: k };
+    }
+    return best;
+  }
+
+  /** PNJ en service (pas en épave) à `tMs` puis voitures conduisibles listées. */
+  voituresTouchables(tMs: number, vehicules: Iterable<VehiculeSnap>): VoitureTouchable[] {
+    const r: VoitureTouchable[] = [];
+    for (const v of this.pnj) {
+      if (this.pnjDetruite(v.id)) continue;
+      const e = etatVoiture(this.circuits[v.circuit], v, tMs);
+      r.push({ genre: "pnj", id: v.id, p: e.p, cap: e.cap });
+    }
+    for (const v of vehicules) r.push({ genre: "vehicule", id: v.id, p: v.p, cap: v.cap });
+    return r;
+  }
+
   /** Changement de partie ou d'id de client : plus de voiture, de siège ni d'offre ; Elsa revient à sa position de la scène. */
   reinitialiser(): void {
     this.interpolateur.vider();
     this.sieges.clear();
+    this.abimees.clear();
     this.etatElsa = null;
     this.posElsa = { x: this.posElsaDefaut.x, z: this.posElsaDefaut.z };
   }

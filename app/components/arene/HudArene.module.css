@@ -65,6 +65,16 @@
 .tDroite { left: calc(6 * var(--u)); }
 .point { width: max(2px, calc(2 * var(--u))); height: max(2px, calc(2 * var(--u))); left: max(-1px, calc(-1 * var(--u))); top: max(-1px, calc(-1 * var(--u))); }
 .viseurProtege i { background: var(--ag-cyan); }
+/* sniper sans lunette (v3 §1) : cercle de dispersion de rayon `--ecart`, les traits s'appuient dessus */
+.cercleDispersion {
+  position: absolute; left: calc(-1 * var(--ecart)); top: calc(-1 * var(--ecart)); width: calc(2 * var(--ecart)); height: calc(2 * var(--ecart));
+  border-radius: 50%; border: 1px solid color-mix(in srgb, var(--ag-white) 55%, transparent); box-shadow: 0 0 3px var(--ag-ground);
+  transition: width 120ms linear, height 120ms linear, left 120ms linear, top 120ms linear;
+}
+.viseur[data-disperse] .tHaut { top: calc(-1 * var(--ecart) - 9 * var(--u)); }
+.viseur[data-disperse] .tBas { top: var(--ecart); }
+.viseur[data-disperse] .tGauche { left: calc(-1 * var(--ecart) - 9 * var(--u)); }
+.viseur[data-disperse] .tDroite { left: var(--ecart); }
 /* couteau : petit chevron de portée */
 .viseur i.chevronPortee {
   left: calc(-7 * var(--u)); top: calc(-7 * var(--u)); width: calc(14 * var(--u)); height: calc(14 * var(--u)); background: transparent;
@@ -89,6 +99,10 @@
 .lunetteH { left: 50%; top: calc(50% - 0.5px); width: min(78vmin, 100vw); height: 1px; transform: translateX(-50%); }
 .lunetteV { top: 50%; left: calc(50% - 0.5px); height: min(78vmin, 100vh); width: 1px; transform: translateY(-50%); }
 .lunetteTelemetrie { position: absolute; left: calc(50% + 7vmin); top: calc(50% + 3vmin); display: flex; flex-direction: column; gap: calc(4 * var(--u)); align-items: flex-start; }
+.lunetteNiveaux { display: flex; align-items: center; gap: calc(5 * var(--u)); padding: calc(3 * var(--u)) calc(8 * var(--u)); background: var(--ag-hud-fond); }
+.lunetteNiveaux i { width: calc(8 * var(--u)); height: calc(8 * var(--u)); border-radius: 50%; border: 1px solid var(--ag-white); }
+.lunetteNiveaux i[data-actif] { background: var(--ag-white); }
+.lunetteNiveaux small { margin-left: calc(4 * var(--u)); color: var(--ag-ink-dim); font: 500 max(10px, calc(12 * var(--u)))/1 var(--ag-mono), monospace; }
 .lunetteZoom, .lunetteDistance { padding: calc(2 * var(--u)) calc(8 * var(--u)); background: var(--ag-hud-fond); color: var(--ag-white); font: 500 max(11px, calc(22 * var(--u)))/1.1 var(--ag-mono), monospace; font-variant-numeric: tabular-nums; }
 
 /* ---------- retours de combat (§6.1) ---------- */
@@ -301,6 +315,17 @@
 
 /* ---------- bas centre : course et bloc véhicule ---------- */
 .milieu { position: absolute; z-index: 4; left: 50%; bottom: var(--marge); transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: calc(6 * var(--u)); }
+/* chat vocal (v3 §5) : micro (allumé quand il émet) et joueurs entendus */
+.voix { display: flex; gap: calc(6 * var(--u)); align-items: center; font: 500 max(11px, calc(13 * var(--u)))/1.2 var(--ag-mono), monospace; text-shadow: none; }
+.voixMicro, .voixParlants { padding: calc(3 * var(--u)) calc(10 * var(--u)); background: var(--ag-hud-fond); color: var(--ag-ink-dim); white-space: nowrap; text-transform: uppercase; letter-spacing: 0.1em; }
+.voixMicro { display: inline-flex; align-items: center; gap: calc(6 * var(--u)); }
+.voixMicro i { width: calc(8 * var(--u)); height: calc(8 * var(--u)); min-width: 6px; min-height: 6px; border-radius: 50%; border: 1px solid var(--ag-ink-dim); }
+.voix[data-emet] .voixMicro { color: var(--ag-white); }
+.voix[data-emet] .voixMicro i { background: var(--ag-cyan); border-color: var(--ag-cyan); box-shadow: 0 0 6px var(--ag-cyan); }
+.voixParlants { color: var(--ag-cyan); max-width: 60vw; overflow: hidden; text-overflow: ellipsis; text-transform: none; letter-spacing: 0.02em; }
+.voixReglage { margin: 16px 0 0; padding: 8px 12px 10px; border: 1px solid var(--ag-line-strong); text-align: left; }
+.voixReglage legend { padding: 0 6px; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ag-ink-dim); }
+.voixModes { display: flex; flex-wrap: wrap; column-gap: 18px; }
 .course { margin: 0; padding: calc(3 * var(--u)) calc(14 * var(--u)); background: var(--ag-hud-fond); font: 500 max(11px, calc(22 * var(--u)))/1.1 var(--ag-mono), monospace; font-variant-numeric: tabular-nums; color: var(--ag-ink-dim); white-space: nowrap; text-shadow: none; }
 .aideBas { margin: 0; padding: 0 calc(8 * var(--u)); background: var(--ag-hud-fond); font-size: max(11px, calc(11 * var(--u))); letter-spacing: 0.12em; text-transform: uppercase; color: var(--ag-ink-dim); text-shadow: none; white-space: nowrap; }
 .vehicule { width: calc(420 * var(--u)); padding: calc(10 * var(--u)) calc(14 * var(--u)); display: grid; grid-template-columns: auto 1fr; grid-template-areas: "vit role" "vit sieges" "touches touches"; gap: calc(6 * var(--u)) calc(16 * var(--u)); align-items: center; }

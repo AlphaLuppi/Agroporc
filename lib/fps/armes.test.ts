@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  COUTEAU, STATS, apresTir, degatsPlomb, directionsTir, dispersionCourante, gerbeRespectee, TOLERANCE_GERBE_RAD, multiplicateurChute, nomArme, refroidir, vitesseArme,
+  COUTEAU, STATS, apresTir, degatsPlomb, devier, directionsTir, dispersionCourante, dispersionTir, niveauZoomDefaut, niveauxZoom, gerbeRespectee, TOLERANCE_GERBE_RAD, multiplicateurChute, nomArme, refroidir, vitesseArme,
 } from "./armes";
 import { ARMES, ARMES_PRINCIPALES, ARMES_SECONDAIRES, ARMES_SPECIALES, JEU, type Vec3 } from "./protocole";
 
@@ -56,7 +56,7 @@ describe("STATS", () => {
     expect(STATS.mitraillette).toMatchObject({ degats: 16, multTete: 1.6, cadenceS: 0.075, auto: true, chargeur: 32, rechargeS: 2.0 });
     expect(STATS.pompe).toMatchObject({ plombs: 9, multTete: 1.5, cadenceS: 0.85, chargeur: 6, rechargeS: 2.4, portee: 45 });
     expect(STATS.pompe.chute).toEqual({ debut: 8, fin: 30, min: 0.25 });
-    expect(STATS.sniper).toMatchObject({ degats: 95, multTete: 2.5, cadenceS: 1.35, chargeur: 5, rechargeS: 2.9, vitesse: 0.9, zoom: 18 });
+    expect(STATS.sniper).toMatchObject({ degats: 95, multTete: 2.5, cadenceS: 1.35, chargeur: 5, rechargeS: 2.9, vitesse: 0.9, zoom: 18.92 });
     expect(STATS.fusil_assaut).toMatchObject({ degats: 22, multTete: 1.8, cadenceS: 0.1, auto: true, chargeur: 30, portee: 140 });
     expect(STATS.mitrailleuse).toMatchObject({ degats: 19, cadenceS: 0.085, chargeur: 60, rechargeS: 4.2, vitesse: 0.88 });
     expect(STATS.revolver).toMatchObject({ degats: 55, multTete: 2, cadenceS: 0.5, auto: false, chargeur: 6 });
@@ -68,7 +68,7 @@ describe("STATS", () => {
 
   it("seul le sniper a une lunette", () => {
     for (const id of ARMES) {
-      if (id === "sniper") expect(STATS[id].zoom).toBe(18);
+      if (id === "sniper") expect(STATS[id].zoom).toBe(18.92);
       else expect(STATS[id].zoom).toBeNull();
     }
   });
@@ -289,5 +289,50 @@ describe("gerbeRespectee (vérification serveur de la gerbe du pompe, §13.1)", 
     expect(gerbeRespectee("pompe", Array.from({ length: 10 }, () => [0, 0, -1] as Vec3))).toBe(false);
     expect(gerbeRespectee("pistolet", [[0, 0, -1]])).toBe(true);
     expect(gerbeRespectee("pistolet", [[0, 0, -1], [0, 0, -1]])).toBe(false);
+  });
+});
+
+describe("sniper sans lunette (v3 §1)", () => {
+  it("seule une arme à lunette a une dispersion, et jamais en lunette", () => {
+    for (const id of ARMES) {
+      const hors = dispersionTir(id, { lunette: false, vitesseH: 0, auSol: true });
+      if (id === "sniper") expect(hors).toBeGreaterThan(0.03);
+      else expect(hors).toBe(0);
+      expect(dispersionTir(id, { lunette: true, vitesseH: 12, auSol: false })).toBe(0);
+    }
+  });
+
+  it("le mouvement et le saut écartent davantage, plafonnés", () => {
+    const arret = dispersionTir("sniper", { lunette: false, vitesseH: 0, auSol: true });
+    const course = dispersionTir("sniper", { lunette: false, vitesseH: 9, auSol: true });
+    const air = dispersionTir("sniper", { lunette: false, vitesseH: 9, auSol: false });
+    expect(course).toBeGreaterThan(arret);
+    expect(air).toBeGreaterThan(course);
+    expect(dispersionTir("sniper", { lunette: false, vitesseH: 100, auSol: true }))
+      .toBeCloseTo(dispersionTir("sniper", { lunette: false, vitesseH: 13.5, auSol: true }), 9);
+  });
+
+  it("devier reste dans le cône, normalisé, et rend l'axe pour un angle nul", () => {
+    const d: Vec3 = [0.3, 0.2, -0.93];
+    const n = norme(d);
+    const axe: Vec3 = [d[0] / n, d[1] / n, d[2] / n];
+    expect(angle(devier(d, 0, 0.7, 0.2), axe)).toBeLessThan(1e-9);
+    for (let i = 0; i < 200; i++) {
+      const r = devier(d, 0.05, (i * 0.37) % 1, (i * 0.61) % 1);
+      expect(norme(r)).toBeCloseTo(1, 9);
+      expect(angle(r, axe)).toBeLessThanOrEqual(0.05 + 1e-9);
+    }
+    // u = 1 : sur le bord du cône
+    expect(angle(devier(d, 0.05, 1, 0.3), axe)).toBeCloseTo(0.05, 6);
+    // vertical : base de repli
+    expect(angle(devier([0, 1, 0], 0.05, 1, 0), [0, 1, 0])).toBeCloseTo(0.05, 6);
+  });
+
+  it("niveaux de zoom : ×3, ×6 (défaut) et ×12 pour le sniper, aucun sans lunette", () => {
+    const x = (fov: number) => Math.round(Math.tan(Math.PI / 4) / Math.tan((fov * Math.PI) / 360));
+    expect(niveauxZoom("sniper").map(x)).toEqual([3, 6, 12]);
+    expect(niveauxZoom("sniper")[niveauZoomDefaut("sniper")]).toBe(STATS.sniper.zoom);
+    expect(niveauxZoom("pistolet")).toEqual([]);
+    expect(niveauZoomDefaut("pistolet")).toBe(0);
   });
 });

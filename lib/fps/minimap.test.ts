@@ -180,8 +180,8 @@ describe("ZONE_CARTE(scene.json)", () => {
   });
   it("contient Elsa", () => {
     const [ex, ez] = positionElsa(scene);
-    expect(ex).toBeCloseTo(-120, 0);
-    expect(ez).toBeCloseTo(39, 0);
+    expect(ex).toBeCloseTo(-122.7, 0);
+    expect(ez).toBeCloseTo(37.4, 0);
     expect(dedans(ex, ez)).toBe(true);
   });
   it("contient tous les parkings", () => {

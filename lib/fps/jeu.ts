@@ -9,7 +9,8 @@
  * à `JEU.etatHz` (`conduite` à la place d'`etat` pour le conducteur, `etat` à `JEU.etatPassagerHz` pour un passager), le serveur borne
  * la vitesse. Les tirs sont tracés ici contre les avatars INTERPOLÉS (ce que le tireur voit) puis déclarés au serveur, qui les revalide.
  * Aucune dispersion (v2 §13.1) : le tir part exactement de l'axe de la vue, et la caméra regarde exactement la même direction
- * (`jeu-visee.ts`, §13.2.4). Le retour de touche (son, marqueur, chiffre) ne part QU'À LA RÉCEPTION du `degats` du serveur (§13.2.1).
+ * (`jeu-visee.ts`, §13.2.4) ; seule exception, le sniper sans lunette (v3 §1, `dispersionTir`). La lunette a plusieurs niveaux de zoom
+ * (action `zoomLunette`, molette en lunette), retenus par arme le temps de la partie. Le retour de touche (son, marqueur, chiffre) ne part QU'À LA RÉCEPTION du `degats` du serveur (§13.2.1).
  * Les messages du serveur arrivent par `JeuHandle.recevoir` (l'hôte les relaie tous).
  *
  * Contrat d'intégration (hôte React : app/components/Agroparc3D.tsx) :
@@ -30,11 +31,11 @@ import { C, construireDecor } from "../agroparc3d/decor";
 import { construireMonde, type Monde } from "./collision";
 import { construireCircuits, flotte } from "./circulation";
 import { coteMurDe, etape, etatInitial, hauteurOeil, postureDe, type Entrees, type EtatMouvement } from "./mouvement";
-import { COUTEAU, STATS, degatsPlomb, delaiRecul, directionsTir, retourRecul, vitesseArme } from "./armes";
+import { COUTEAU, STATS, degatsPlomb, delaiRecul, devier, directionsTir, dispersionTir, niveauZoomDefaut, niveauxZoom, retourRecul, vitesseArme } from "./armes";
 import { tracer, type Cible } from "./tir";
 import { trouverCibleCouteau } from "./melee";
 import {
-  JEU, OEIL_SIEGE, SILHOUETTE,
+  JEU, OEIL_SIEGE, SILHOUETTE, oeilDe,
   type ArmeFeuId, type ArmeId, type EtatJoueurSnap, type JoueurPublic, type MessageServeur, type Siege, type Slot, type Vec3, type VehiculeSnap, type Zone,
 } from "./protocole";
 import type { EquipementJeu, HudEtat, HudLive, JeuCallbacks, JeuHandle } from "./jeu-types";
@@ -46,6 +47,8 @@ import {
   creerArmeEnMain, creerAvatar, creerEffets, creerPostTraitement, type ArmeEnMain, type AvatarJoueur,
 } from "./rendu";
 import { creerMondeDynamique, type MondeDynamique } from "./rendu-monde";
+import { creerFeux, type SourceFeu } from "./rendu-feux";
+import { creerChatVocal } from "./voix-rtc";
 import { creerSons } from "./sons";
 import { angleRelatif, anglesVers, fovVerticalDeg, lissage, panSon } from "./vue";
 import { TANGAGE_MAX, directionVisee, rotationCamera, tangageDeVue } from "./jeu-visee";
@@ -57,7 +60,7 @@ import { ControleurVehicule, commandesDepuisEntrees, recalerOccupants } from "./
 import { CONDUCTEUR_TIRE } from "./garage";
 import type { EtatVehicule } from "./vehicule";
 import { VisibilitePseudos, type JoueurVisible } from "./visibilite";
-import { positionElsa, ROND_POINT, EMPLACEMENTS_VOITURES } from "./zones";
+import { placeTruck, ROND_POINT, EMPLACEMENTS_VOITURES } from "./zones";
 
 // ---------------------------------------------------------------------------------------------
 // Contrat avec l'hôte
@@ -92,6 +95,9 @@ const SECOUSSE_DEGAT = 0.03;
 const FOULEE_M = 3.2;
 /** Vitesse perdue au contact (m/s) à partir de laquelle un choc de voiture s'entend. */
 const CHOC_SEUIL = 2;
+/** Explosion d'une voiture : la caméra tremble en dessous de cette distance (m), d'autant plus fort qu'on est près (roulis, rad). */
+const SECOUSSE_EXPLOSION_M = 30;
+const SECOUSSE_EXPLOSION = 0.09;
 
 function lireSensibilite(): number {
   try {
@@ -148,12 +154,15 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
   const post = creerPostTraitement(renderer, scene, camera);
   const sons = creerSons();
   const interp = new Interpolateur();
+  /** chat vocal de proximité (v3 §5) : activé par l'hôte (menu pause), volumes réglés à chaque image d'après les positions */
+  const voix = creerChatVocal((m) => client.envoyer(m));
 
   // ---------- monde dynamique (voitures PNJ et conduisibles, Elsa) ----------
   const nbPnj = flotte(construireCircuits()).length;
-  const [elsaX, elsaZ] = positionElsa(data);
   const mondeJeu = new MondeJeu(data, monde);
-  const dyn: MondeDynamique = creerMondeDynamique(scene, { nbPnj, nbVehicules: EMPLACEMENTS_VOITURES.length, elsa: [elsaX, elsaZ] });
+  const dyn: MondeDynamique = creerMondeDynamique(scene, { nbPnj, nbVehicules: EMPLACEMENTS_VOITURES.length, truck: placeTruck(data) });
+  /** fumées, flammes et explosions des voitures (v3 §4) */
+  const feux = creerFeux(scene);
   const visib = new VisibilitePseudos(monde);
   const suiviRadar = new SuiviRadar(monde);
   const kc = new ControleurKillcam();
@@ -210,6 +219,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
   let dernierChocT = -Infinity;
   let derniereMoletteT = -Infinity;
   let distanceVisee = -1;
+  /** niveau de zoom de lunette choisi, par arme (index dans `niveauxZoom`) : retenu d'une visée à l'autre */
+  const niveauZoom = new Map<ArmeFeuId, number>();
   /** caméra du tueur pendant le rejeu, gardée pour la carte (« caméra figée sur son dernier état ») */
   let camTueurCache: { pos: Vec3; lacet: number; tangage: number } | null = null;
   let tempsRejeuCache: number | null = null;
@@ -296,6 +307,30 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
   };
   const prochainDe = (a: ArmeId) => Math.max(prochains.get(a) ?? 0, delaiApparitionT);
 
+  /** Lunette réellement active : visée tenue, arme à lunette sortie, pas en rechargement ni en killcam. */
+  function lunetteActive(): boolean {
+    const a = armeFeu();
+    return !!a && STATS[a].zoom !== null && viseMaintenu && peutAgir() && !armes.rechargeEnCours() && !enKillcam();
+  }
+  const indexZoom = (a: ArmeFeuId) => niveauZoom.get(a) ?? niveauZoomDefaut(a);
+  /** Champ horizontal (°) de la lunette de l'arme au niveau choisi. */
+  function fovLunette(a: ArmeFeuId): number {
+    const n = niveauxZoom(a);
+    return n.length ? n[Math.min(n.length - 1, indexZoom(a))] : FOV_H;
+  }
+  /** Change le niveau de zoom de l'arme en main : `sens` +1 = plus serré ; `boucle` revient au plus large après le plus serré (touche). */
+  function changerZoom(sens: 1 | -1, boucle: boolean) {
+    const a = armeFeu();
+    if (!a) return;
+    const n = niveauxZoom(a).length;
+    if (n < 2) return;
+    const i = indexZoom(a);
+    const j = boucle ? (i + sens + n) % n : Math.min(n - 1, Math.max(0, i + sens));
+    if (j === i) return;
+    niveauZoom.set(a, j);
+    sons.zoom();
+  }
+
   function demarrerRecharge() {
     const a = armeFeu();
     if (!a || !peutAgir() || enKillcam()) return;
@@ -344,11 +379,17 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
     const o = oeil();
     const regard = directionVisee(lacet, tangage, kick);
     const vise = viseMaintenu;
-    const dirs = directionsTir(arme, regard);
     const lunette = vise && a.zoom !== null;
+    // sniper sans lunette : cône aléatoire (v3 §1) ; toutes les autres armes, et le sniper en lunette, tirent pile dans l'axe
+    const ecart = dispersionTir(arme, { lunette, vitesseH: vitesseH(), auSol: moi.auSol });
+    const dirs = directionsTir(arme, ecart > 0 ? devier(regard, ecart, Math.random(), Math.random()) : regard);
     const touchesDecl: { cible: string; zone: Zone; plomb: number }[] = [];
+    const voituresDecl: { genre: "pnj" | "vehicule"; id: number; plomb: number }[] = [];
     const cumul = new Map<string, { degats: number; zone: Zone }>();
     const liste = cibles();
+    const tsVoitures = client.maintenantServeur();
+    const vehiculesVus = [...vehiculesAffichees().values()];
+    const maVoiture = vehicule.actif()?.vehicule ?? null;
 
     armeMain.positionBouche(_bouche);
     const depart: Vec3 = lunette
@@ -357,6 +398,16 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
     let impactsAffiches = 0;
     dirs.forEach((d, i) => {
       const imp = tracer(monde, o, d, Math.min(a.portee, PORTEE_EFFETS_M), liste, client.id ?? "");
+      // une voiture plus proche que le joueur (ou le mur) visé arrête la balle (v3 §4) ; l'occupant d'une voiture reste touchable à travers elle
+      const v = mondeJeu.impactVoiture(o, d, imp.distance, tsVoitures, vehiculesVus, maVoiture);
+      const occupantDe = (vid: number) => !!imp.cible && etats.get(imp.cible)?.vehicule?.id === vid;
+      if (v && !(v.genre === "vehicule" && occupantDe(v.id))) {
+        const fin: Vec3 = [o[0] + d[0] * v.distance, o[1] + d[1] * v.distance, o[2] + d[2] * v.distance];
+        effets.traçante(depart, fin, arme);
+        voituresDecl.push({ genre: v.genre, id: v.id, plomb: i });
+        if (impactsAffiches < 5) { impactsAffiches++; effets.impact(fin, [-d[0], -d[1], -d[2]], "#ffd9a0"); }
+        return;
+      }
       const fin = imp.point;
       effets.traçante(depart, fin, arme);
       if (imp.cible && imp.zone) {
@@ -375,7 +426,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
       }
     });
 
-    client.envoyer({ t: "tir", arme, o, d: dirs, touches: touchesDecl });
+    client.envoyer({ t: "tir", arme, o, d: dirs, touches: touchesDecl, ...(voituresDecl.length ? { voitures: voituresDecl } : {}) });
+    if (voituresDecl.length) sons.tole();
 
     // estimation locale (le HUD l'ignore : seul `confirme`, reçu du serveur, compte, HUD §3.4) ; ni son ni marqueur ici
     for (const [id, c] of cumul) cb.evenement({ type: "touche", cible: id, zone: c.zone, degats: c.degats });
@@ -509,6 +561,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
   function majInfos(liste: JoueurPublic[]) {
     infos.clear();
     for (const j of liste) infos.set(j.id, j);
+    voix.presence(liste, client.id);
     // pseudo ou couleur changés : l'avatar est recréé à la prochaine image
     for (const [id, d] of [...distants]) {
       const j = infos.get(id);
@@ -628,8 +681,17 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
         const liste = cibles();
         const avatar = distants.get(m.id)?.avatar;
         const depart: Vec3 = avatar ? avatar.positionBouche() : m.o;
+        const vus = [...vehiculesAffichees().values()];
+        const tsV = client.maintenantServeur();
         for (const d of m.d) {
           const imp = tracer(monde, m.o, d, Math.min(a.portee, PORTEE_EFFETS_M), liste, m.id);
+          const v = mondeJeu.impactVoiture(m.o, d, imp.distance, tsV, vus, etats.get(m.id)?.vehicule?.id ?? null);
+          if (v && !imp.cible) {
+            const fin: Vec3 = [m.o[0] + d[0] * v.distance, m.o[1] + d[1] * v.distance, m.o[2] + d[2] * v.distance];
+            effets.traçante(depart, fin, m.arme);
+            effets.impact(fin, [-d[0], -d[1], -d[2]], "#ffd9a0");
+            continue;
+          }
           effets.traçante(depart, imp.point, m.arme);
           if (!imp.cible && imp.distance < a.portee - 0.01) effets.impact(imp.point, [-d[0], -d[1], -d[2]], couleurDe(m.id));
         }
@@ -710,6 +772,23 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
       case "sieges":
         mondeJeu.majSieges(m.vehicules);
         break;
+      case "voitures":
+        mondeJeu.majVoitures(m.etats);
+        break;
+      case "voix":
+        voix.recevoir(m.de, m.s);
+        break;
+      case "explosion": {
+        ajouterEcho(radarFrame, m.p[0], m.p[2], false);
+        if (enReplay) break;
+        feux.explosion(m.p);
+        const cam = oeil();
+        const dx = m.p[0] - cam[0], dz = m.p[2] - cam[2];
+        const dist = Math.hypot(dx, m.p[1] - cam[1], dz);
+        sons.explosion({ distance: dist, pan: panSon(lacet, dx, dz) });
+        if (vivant && dist < SECOUSSE_EXPLOSION_M) secousse = SECOUSSE_EXPLOSION * (1 - dist / SECOUSSE_EXPLOSION_M) * (Math.random() < 0.5 ? -1 : 1);
+        break;
+      }
       case "embarque":
         if (vivant) entrerVehicule(m.vehicule, m.siege, { p: m.p, cap: m.cap, v: 0 });
         break;
@@ -750,6 +829,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
         case "interagir": interagir(); break;
         case "siege": changerSiege(); break;
         case "passer": if (kc.actif() && kc.phase() === "rejeu") kc.passer(); break;
+        case "zoomLunette": if (lunetteActive()) changerZoom(1, true); break;
+        case "parler": voix.parler(true); break;
         default: break;
       }
     }
@@ -760,6 +841,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
     for (const a of index.get(code) ?? []) {
       if (a === "tir") tirMaintenu = tirMaintenu && actionActive("tir");
       else if (a === "visee") viseMaintenu = actionActive("visee");
+      else if (a === "parler") voix.parler(actionActive("parler"));
     }
   };
   const surKeyDown = (e: KeyboardEvent) => {
@@ -781,6 +863,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
     appuyees.clear();
     tirMaintenu = false;
     viseMaintenu = false;
+    voix.parler(false);
   };
   const surMouseDown = (e: MouseEvent) => {
     if (!verrouille()) { demanderVerrou(); return; }
@@ -809,6 +892,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
     e.preventDefault();
     if (Math.abs(e.deltaY) < 1 || t - derniereMoletteT < MOLETTE_ECART_S) return;
     derniereMoletteT = t;
+    // en lunette, la molette règle le zoom (vers l'avant = plus serré) au lieu de changer d'arme
+    if (lunetteActive()) { changerZoom(e.deltaY < 0 ? 1 : -1, false); return; }
     molette(e.deltaY > 0 ? 1 : -1);
   };
   const surVerrou = () => {
@@ -865,12 +950,21 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
   const regenEnCours = () => vivant && pv < JEU.pvMax && t - dernierDegatT >= JEU.regenDelaiMs / 1000;
   /** Grossissement affiché en lunette (« ×6 ») : rapport des tangentes du demi-champ normal et du demi-champ zoomé. */
   const zoomX = (zoom: number | null) => (zoom === null ? 0 : Math.round(Math.tan((FOV_H * Math.PI) / 360) / Math.tan((zoom * Math.PI) / 360)));
+  /** Rayon du cercle de dispersion (part de la demi-hauteur de l'écran, au centième), 0 sans dispersion. */
+  function ecartViseur(): number {
+    const a = armeFeu();
+    if (!a || !peutAgir()) return 0;
+    const ecart = dispersionTir(a, { lunette: lunetteActive(), vitesseH: vitesseH(), auSol: moi.auSol });
+    if (ecart <= 0) return 0;
+    return Math.round((Math.tan(ecart) / Math.tan((fovV * Math.PI) / 360)) * 100) / 100;
+  }
 
   function etatHud(): HudEtat {
     const arme = armes.armeEnMain();
     const a = arme === "couteau" ? null : STATS[arme];
     const info = vehicule.actif();
-    const lunette = !!a && a.zoom !== null && viseMaintenu && peutAgir() && !armes.rechargeEnCours();
+    const lunette = lunetteActive();
+    const af = armeFeu();
     const inv = peutAgir() && !enKillcam()
       ? mondeJeu.invite(moi.p, info ? info.siege : null, client.maintenantServeur())
       : { invite: "" as const, detail: "", vehicule: null };
@@ -892,7 +986,10 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
       degainage: armes.degainage(ms()),
       vise: viseMaintenu && peutAgir(),
       lunette,
-      zoomX: lunette && a ? zoomX(a.zoom) : 0,
+      zoomX: lunette && af ? zoomX(fovLunette(af)) : 0,
+      zoomNiveau: lunette && af ? indexZoom(af) : -1,
+      zoomNiveaux: lunette && af ? niveauxZoom(af).length : 0,
+      ecartViseur: ecartViseur(),
       distanceVisee: lunette ? distanceVisee : -1,
       mur: !!moi.mur && vivant,
       mort: !vivant,
@@ -914,6 +1011,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
       tireInterdit: tireInterdit(),
       embarquement: embarquementFin > 0,
       killcam: progression < 0 ? -1 : Math.round(progression * 50) / 50,
+      voix: !voix.actif() ? "" : voix.emet() ? "emet" : "pret",
+      voixParlants: voix.actif() ? voix.parlants().map(pseudoDe).join(" · ") : "",
       killcamPhase: phase === "rejeu" || phase === "carte" ? phase : "",
     };
   }
@@ -958,7 +1057,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
     // voitures PNJ (calculées à l'horloge serveur) et conduisibles
     const tsServeur = client.maintenantServeur();
     const pnj = mondeJeu.etatsPnj(tsServeur);
-    for (let i = 0; i < pnj.length; i++) ajouterVoiturePnj(radarFrame, pnj[i].p[0], pnj[i].p[2], pnj[i].cap);
+    for (let i = 0; i < pnj.length; i++) if (!mondeJeu.pnjDetruite(i)) ajouterVoiturePnj(radarFrame, pnj[i].p[0], pnj[i].p[2], pnj[i].cap);
     for (const v of vehiculesAffichees().values()) {
       const sieges = mondeJeu.siegesDe(v.id);
       let occupants = 0;
@@ -1046,12 +1145,36 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
     dyn.afficherPseudoElsa(enReplay ? 0 : visib.alpha("elsa"));
   }
 
-  /** Voitures PNJ, voitures conduisibles et Elsa (rendu three), à l'horloge serveur ou, en rejeu, à l'instant rejoué. */
-  function majMondeDynamique() {
+  const sourcesFeux: SourceFeu[] = [];
+  /** positions des têtes des autres joueurs pour le chat vocal (réutilisée d'une image à l'autre) */
+  const sourcesVoix = new Map<string, { p: Vec3; vivant: boolean }>();
+  /** Chat vocal : on entend depuis sa propre tête (même pendant la killcam : le présent, pas le rejeu). */
+  function majVoix() {
+    if (!voix.actif()) return;
+    sourcesVoix.clear();
+    for (const [id, e] of etats) {
+      if (id === client.id) continue;
+      sourcesVoix.set(id, { p: [e.p[0], e.p[1] + oeilDe(e), e.p[2]], vivant: e.vivant });
+    }
+    voix.placer(oeil(), lacet, sourcesVoix);
+  }
+  /** Voitures PNJ, voitures conduisibles, épaves, feux et Elsa (rendu three), à l'horloge serveur ou, en rejeu, à l'instant rejoué. */
+  function majMondeDynamique(dt: number) {
     const tsServeur = client.maintenantServeur();
     const tsPnj = enReplay && tempsRejeuCache !== null ? tempsRejeuCache : tsServeur;
-    dyn.majVoituresPnj(mondeJeu.etatsPnj(tsPnj));
-    const liste = [...vehiculesAffichees().values()];
+    const pnj = mondeJeu.etatsPnj(tsPnj);
+    dyn.majVoituresPnj(pnj, (i) => mondeJeu.pnjDetruite(i));
+    dyn.majEpaves(mondeJeu.voituresAbimees());
+    const affichees = vehiculesAffichees();
+    // fumée et flammes : sur la voiture abîmée là où elle roule, sur l'épave là où elle a sauté
+    sourcesFeux.length = 0;
+    for (const e of mondeJeu.voituresAbimees()) {
+      if (e.etat === "epave") { if (e.p) sourcesFeux.push({ p: e.p, niveau: "epave" }); continue; }
+      const p = e.genre === "pnj" ? pnj[e.id]?.p : affichees.get(e.id)?.p;
+      if (p) sourcesFeux.push({ p, niveau: e.etat });
+    }
+    feux.maj(dt, sourcesFeux);
+    const liste = [...affichees.values()];
     const couleurs = new Map<number, string>();
     for (const v of liste) {
       const pilote = mondeJeu.siegesDe(v.id)[0];
@@ -1112,7 +1235,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
   /** Place la caméra : survol avant la première apparition, première personne, rejeu du tueur ou caméra de mort. */
   function placerCamera(dt: number, vise: boolean, lunetteAct: boolean, vh: number) {
     const a = armeFeu();
-    const cibleFov = lunetteAct && a ? (STATS[a].zoom ?? FOV_H) : vise ? FOV_H_VISEE : FOV_H;
+    const cibleFov = lunetteAct && a ? fovLunette(a) : vise ? FOV_H_VISEE : FOV_H;
     fovH += (cibleFov - fovH) * lissage(14, dt);
     appliquerFov();
     kick *= Math.exp(-11 * dt);
@@ -1295,7 +1418,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
 
     // --- joueurs distants, monde dynamique et effets ---
     majDistants(dt);
-    majMondeDynamique();
+    majMondeDynamique(dt);
+    majVoix();
     effets.maj(dt);
 
     porteArme.visible = apparu && (vivant || enReplay) && !(info && tireInterdit());
@@ -1328,6 +1452,11 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
       accroupiBascTenu = false;
     },
     passerKillcam() { if (kc.actif() && kc.phase() === "rejeu") kc.passer(); },
+    voix: {
+      activer: () => voix.activer(),
+      desactiver() { voix.desactiver(); emettreHud(true); },
+      mode(m) { voix.mode(m); },
+    },
     live,
     radar() {
       // rempli à chaque image ; position et regard rafraîchis au cas où le HUD lit avant la prochaine image
@@ -1360,11 +1489,13 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
       sons.glisse(false);
       sons.moteur(null);
       sons.dispose();
+      voix.dispose();
       terminerKillcam();
       visib.vider();
       suiviRadar.vider();
       for (const id of [...distants.keys()]) retirerAvatar(id);
       dyn.dispose();
+      feux.dispose();
       porteArme.remove(armeMain.group);
       camera.remove(porteArme);
       armeMain.dispose();
@@ -1431,6 +1562,9 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
           phase: kc.phase(), progression: kc.progression(), tueur: kc.tueurId(), info: kc.info(), tempsServeur: kc.tempsServeur(),
           camera: kc.camera(), rejeu: enReplay,
         };
+      },
+      voix() {
+        return { ...voix.diagnostic(), parlants: voix.parlants() };
       },
       monde() {
         const ts = client.maintenantServeur();

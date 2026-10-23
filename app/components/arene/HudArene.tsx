@@ -21,6 +21,7 @@ import FinDeMatch from "./hud/FinDeMatch";
 import GrandeCarte from "./hud/GrandeCarte";
 import InvitesAction from "./hud/InvitesAction";
 import Lunette from "./hud/Lunette";
+import BlocVoix from "./hud/BlocVoix";
 import MenuPause from "./hud/MenuPause";
 import MiniMap from "./hud/MiniMap";
 import RetoursTouche from "./hud/RetoursTouche";
@@ -169,8 +170,8 @@ export default function HudArene(p: PropsHudArene) {
       {combat && (
         <>
           {hud.lunette
-            ? <Lunette zoomX={hud.zoomX} distanceVisee={hud.distanceVisee} />
-            : <Viseur protege={hud.protege} conduite={conduite} couteau={couteau} recharge={hud.recharge} refAnneau={refAnneau} />}
+            ? <Lunette zoomX={hud.zoomX} distanceVisee={hud.distanceVisee} niveau={hud.zoomNiveau} niveaux={hud.zoomNiveaux} toucheZoom={t("zoomLunette")} />
+            : <Viseur protege={hud.protege} conduite={conduite} couteau={couteau} recharge={hud.recharge} refAnneau={refAnneau} ecart={hud.ecartViseur} />}
           <RetoursTouche chiffres={chiffres} marqueur={marqueur} kill={kill} />
           <BarreMatch
             rang={synthese.rang} exAequo={synthese.exAequo} mesKills={synthese.mesKills} serie={synthese.serie}
@@ -186,6 +187,7 @@ export default function HudArene(p: PropsHudArene) {
           />
           {toast && <ToastCentre texte={toast} />}
           <div className={styles.milieu}>
+            {hud.voix && <BlocVoix etat={hud.voix} parlants={hud.voixParlants} mode={p.voix.mode} toucheParler={t("parler")} />}
             {hud.vehicule ? (
               <BlocVehicule
                 siege={hud.siege} vehiculeId={hud.vehiculeId} sieges={p.sieges} joueurs={joueurs} monId={monId}
@@ -255,6 +257,7 @@ export default function HudArene(p: PropsHudArene) {
           equipement={p.equipement} surEquipement={p.surEquipement} pseudo={p.pseudo} surPseudo={p.surPseudo}
           sensibilite={p.sensibilite} surSensibilite={p.surSensibilite}
           accroupiBascule={p.accroupiBascule} surAccroupiBascule={p.surAccroupiBascule} actionsSansTouche={p.actionsSansTouche}
+          voix={p.voix} surVoix={p.surVoix} voixErreur={p.voixErreur} toucheParler={t("parler")}
           touches={p.touches} surTouches={p.surTouches} reglagesHud={p.reglagesHud} surReglagesHud={p.surReglagesHud}
         />
       )}

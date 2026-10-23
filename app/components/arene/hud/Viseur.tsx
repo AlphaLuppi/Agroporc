@@ -1,11 +1,12 @@
 "use client";
 
-import { memo, type RefObject } from "react";
+import { memo, type CSSProperties, type RefObject } from "react";
 import styles from "../HudArene.module.css";
 
 /**
  * Viseur STATIQUE (v2 §13.1 : aucune dispersion, le tir part exactement de l'axe de la vue) : quatre traits fixes et un point. Cyan quand
  * le joueur est protégé. Conducteur : `( + )` gris et libellé « CONDUITE : TIR IMPOSSIBLE ». Couteau : petit chevron de portée.
+ * Sniper sans lunette (v3 §1) : cercle de dispersion de rayon `ecart` (part de la demi-hauteur de l'écran), les traits s'écartent sur lui.
  * Rechargement : anneau de progression autour du viseur (`--recharge` écrite en rAF sur cet élément par `useHudLive`, hors React).
  * Décoratif (`aria-hidden`), sauf le libellé de conduite, qui est une information.
  * Spec : docs/superpowers/specs/2026-10-23-arene-hud-design.md (§5.1, §5.4, §6.3)
@@ -18,9 +19,11 @@ export interface PropsViseur {
   /** rechargement en cours : l'anneau est affiché */
   recharge: boolean;
   refAnneau: RefObject<HTMLDivElement | null>;
+  /** rayon du cercle de dispersion (part de la demi-hauteur de l'écran), 0 = viseur statique */
+  ecart?: number;
 }
 
-function ViseurBrut({ protege, conduite, couteau, recharge, refAnneau }: PropsViseur) {
+function ViseurBrut({ protege, conduite, couteau, recharge, refAnneau, ecart = 0 }: PropsViseur) {
   if (conduite) {
     return (
       <div className={styles.viseurConduite}>
@@ -30,7 +33,13 @@ function ViseurBrut({ protege, conduite, couteau, recharge, refAnneau }: PropsVi
     );
   }
   return (
-    <div className={`${styles.viseur} ${protege ? styles.viseurProtege : ""}`} aria-hidden="true">
+    <div
+      className={`${styles.viseur} ${protege ? styles.viseurProtege : ""}`}
+      aria-hidden="true"
+      data-disperse={ecart > 0 ? "oui" : undefined}
+      style={ecart > 0 ? ({ "--ecart": `${ecart * 50}vh` } as CSSProperties) : undefined}
+    >
+      {ecart > 0 && !couteau && <span className={styles.cercleDispersion} />}
       {couteau ? (
         <i className={styles.chevronPortee} />
       ) : (

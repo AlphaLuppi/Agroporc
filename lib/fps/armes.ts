@@ -9,8 +9,11 @@
  * l'axe de la vue, quels que soient le mouvement, le saut, le wall-run, l'accroupi ou la visée. Le fusil à pompe (et
  * toute arme à plusieurs plombs) tire une gerbe FIXE et déterministe : un plomb au centre et les autres sur un cercle
  * de demi-angle constant (`gerbe`). Le recul de la vue reste (il ne déplace que les tirs suivants).
+ * SEULE EXCEPTION (v3 §1) : une arme à lunette (`hanche`, le sniper) tirée SANS lunette part dans un cône aléatoire
+ * (`dispersionTir` + `devier`, hasard fourni par l'appelant) ; en lunette elle tire pile sous le réticule. Niveaux de zoom de
+ * la lunette : `zooms`.
  * Partagé client (tir) et serveur (validation).
- * Spec : docs/superpowers/specs/2026-10-22-arene-v2-design.md (§4 et §13.1)
+ * Spec : docs/superpowers/specs/2026-10-22-arene-v2-design.md (§4 et §13.1), 2026-10-23-arene-v3-design.md (§1)
  */
 import type { ArmeFeuId, ArmeId, Vec3, Zone } from "./protocole";
 
@@ -54,8 +57,15 @@ export interface Arme {
   chute: { debut: number; fin: number; min: number };
   /** multiplicateur de déplacement */
   vitesse: number;
-  /** champ de vision (°) en visée ; null = pas de lunette */
+  /** champ de vision horizontal (°) en visée au niveau de zoom par défaut ; null = pas de lunette */
   zoom: number | null;
+  /** niveaux de zoom de la lunette (champ horizontal en °, du plus large au plus serré) ; `zoom` en fait partie. Absent = un seul niveau */
+  zooms?: readonly number[];
+  /**
+   * Dispersion du tir SANS lunette (rad, demi-angle du cône) d'une arme à lunette (v3 §1) : `base` à l'arrêt, + `mouvement` à
+   * `VITESSE_REFERENCE_M_S`, + `air` en l'air. Absent = aucune dispersion (toutes les autres armes, §13.1).
+   */
+  hanche?: { base: number; mouvement: number; air: number };
 }
 
 /** Sans objet depuis la v2 §13.1 (plus de dispersion) ; conservée pour les lots qui l'importent encore. */
@@ -120,7 +130,9 @@ export const STATS: Record<ArmeFeuId, Arme> = {
     dispersion: { base: 0.09, mouvement: 0.05, air: 0.09, parTir: 0.02, max: 0.12, retourS: 0.8, viseur: 0 },
     recul: { tangage: 0.04, lacet: 0.004 },
     portee: 400, chute: { debut: 400, fin: 400, min: 1 },
-    vitesse: 0.9, zoom: 18,
+    // ×3, ×6 (défaut, l'ancien 18°) et ×12 : 2·atan(tan 45° / k)
+    vitesse: 0.9, zoom: 18.92, zooms: [36.87, 18.92, 9.53],
+    hanche: { base: 0.045, mouvement: 0.035, air: 0.06 },
   },
   fusil_assaut: {
     id: "fusil_assaut", nom: "Fusil d'assaut", nomCourt: "Fusil", categorie: "principale",
@@ -222,6 +234,52 @@ export function dispersionCourante(
   _ctx?: { vitesseH?: number; auSol?: boolean; vise?: boolean; chaleur?: number; accroupi?: boolean },
 ): number {
   return 0;
+}
+
+/**
+ * Demi-angle (rad) du cône de dispersion d'un tir (v3 §1) : 0 pour toute arme sans `hanche` et pour un tir EN LUNETTE ; sinon
+ * `base` + `mouvement` × min(vitesse horizontale / VITESSE_REFERENCE_M_S, 1.5) + `air` hors du sol.
+ */
+export function dispersionTir(arme: ArmeFeuId, ctx: { lunette: boolean; vitesseH: number; auSol: boolean }): number {
+  const h = STATS[arme].hanche;
+  if (!h || ctx.lunette) return 0;
+  const v = Math.min(Math.max(ctx.vitesseH, 0) / VITESSE_REFERENCE_M_S, 1.5);
+  return h.base + h.mouvement * v + (ctx.auSol ? 0 : h.air);
+}
+
+/**
+ * Direction `d` déviée d'un angle tiré uniformément dans le DISQUE de demi-angle `angle` (rad). `u` et `v` dans [0, 1[ : le hasard
+ * est fourni par l'appelant (`Math.random` côté client, rien côté serveur). `angle` ≤ 0 renvoie `d` normalisée.
+ */
+export function devier(d: Vec3, angle: number, u: number, v: number): Vec3 {
+  const n = Math.hypot(d[0], d[1], d[2]) || 1;
+  const fx = d[0] / n, fy = d[1] / n, fz = d[2] / n;
+  if (!(angle > 0)) return [fx, fy, fz];
+  let ux: number, uy: number, uz: number;
+  if (Math.abs(fy) > 0.999) { ux = 1; uy = 0; uz = 0; }
+  else { const l = Math.hypot(fz, fx); ux = fz / l; uy = 0; uz = -fx / l; }
+  const wx = fy * uz - fz * uy, wy = fz * ux - fx * uz, wz = fx * uy - fy * ux;
+  const r = angle * Math.sqrt(Math.min(Math.max(u, 0), 1)), phi = 2 * Math.PI * v;
+  const s = Math.sin(r), c = Math.cos(r);
+  const a = s * Math.cos(phi), b = s * Math.sin(phi);
+  const x = fx * c + ux * a + wx * b, y = fy * c + uy * a + wy * b, z = fz * c + uz * a + wz * b;
+  const l = Math.hypot(x, y, z);
+  return [x / l, y / l, z / l];
+}
+
+/** Niveaux de zoom de la lunette de l'arme (champ horizontal en °), [] sans lunette. */
+export function niveauxZoom(arme: ArmeFeuId): readonly number[] {
+  const a = STATS[arme];
+  if (a.zoom === null) return [];
+  return a.zooms && a.zooms.length ? a.zooms : [a.zoom];
+}
+
+/** Index du niveau de zoom par défaut (celui qui vaut `zoom`, sinon le premier). */
+export function niveauZoomDefaut(arme: ArmeFeuId): number {
+  const a = STATS[arme];
+  const n = niveauxZoom(arme);
+  const i = n.findIndex((z) => Math.abs(z - (a.zoom ?? NaN)) < 1e-6);
+  return i < 0 ? 0 : i;
 }
 
 /** Chaleur après un tir. N'influe plus sur la direction du tir (§13.1) ; conservée pour mémoire. */

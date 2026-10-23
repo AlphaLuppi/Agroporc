@@ -122,6 +122,7 @@ export function formatRang(n: number): string {
 export function libelleFil(arme: ArmeId, cause: CauseMort, par: string): string {
   if (cause === "ecrase_pnj") return "Écrasé par la circulation";
   if (cause === "ecrase_vehicule") return par ? `Renversé par ${par}` : "Renversé";
+  if (cause === "explosion") return par ? `Explosé par ${par}` : "Explosion de voiture";
   return arme === "couteau" ? COUTEAU.nomCourt : STATS[arme].nomCourt;
 }
 

@@ -14,6 +14,7 @@
 import { dedans, distSegment } from "../agroparc3d/cachettes";
 import type { SceneData, Vec2 } from "../agroparc3d/types";
 import type { Vec3 } from "./protocole";
+import { obstacleTruck } from "./zones";
 
 export interface Boite { x0: number; z0: number; x1: number; z1: number }
 
@@ -59,6 +60,9 @@ function boiteDe(pts: Vec2[]): Boite {
 
 export function construireMonde(data: SceneData): Monde {
   const prismes: Prisme[] = data.buildings.map((b) => ({ anneau: b.r, trous: b.holes ?? [], h: b.h, boite: boiteDe(b.r) }));
+  // le Truck Muche garé (v3 §2) est un obstacle comme un bâtiment : on ne le traverse pas, il arrête les balles, on peut monter dessus
+  const truck = obstacleTruck(data);
+  if (truck) prismes.push({ anneau: truck.r, trous: [], h: truck.h, boite: boiteDe(truck.r) });
   let bx0 = Infinity, bz0 = Infinity, bx1 = -Infinity, bz1 = -Infinity;
   for (const b of data.buildings) {
     bx0 = Math.min(bx0, b.c[0]); bx1 = Math.max(bx1, b.c[0]); bz0 = Math.min(bz0, b.c[1]); bz1 = Math.max(bz1, b.c[1]);

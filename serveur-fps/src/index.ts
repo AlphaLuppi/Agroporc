@@ -18,7 +18,8 @@ import { EMPLACEMENTS_VOITURES, ROND_POINT, ZONE_APPARITION, positionElsa, trouv
 
 const PORT = Number(process.env.PORT) || 8787;
 const TIC_MS = 1000 / 60;
-const TAILLE_MAX_OCTETS = 4096;
+/** 16 ko : une offre SDP du chat vocal (candidats ICE compris) dépasse parfois 4 ko ; les autres messages restent bien en dessous. */
+const TAILLE_MAX_OCTETS = 16_384;
 const MESSAGES_PAR_SECONDE_MAX = 90;
 const PING_MS = 5_000;
 /** Un client qui n'absorbe plus ce qu'on lui envoie est coupé (connexion saturée). */

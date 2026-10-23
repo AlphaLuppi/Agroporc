@@ -3,6 +3,7 @@
 import { LIBELLES_ACTIONS, type Action, type ConfigTouches } from "@/lib/fps/touches";
 import type { ReglagesHud } from "@/lib/fps/reglages-hud";
 import type { ArmePrincipaleId, ArmeSecondaireId } from "@/lib/fps/protocole";
+import type { ReglagesVoix } from "@/lib/fps/voix";
 import type { EquipementChoisi } from "../contrats";
 import ChoixEquipement from "../ChoixEquipement";
 import ReglageTouches from "../ReglageTouches";
@@ -11,7 +12,8 @@ import styles from "../HudArene.module.css";
 
 /**
  * Menu pause (Échap : la souris est libérée, la partie continue) : Reprendre, équipement de la prochaine apparition (`ChoixEquipement` compact),
- * nom de joueur, sensibilité, accroupi maintenir / basculer, avertissement des actions sans touche, Quitter, puis « Interface » (mini-map,
+ * nom de joueur, sensibilité, accroupi maintenir / basculer, chat vocal de proximité (activé, appuyer pour parler ou micro ouvert, v3 §5),
+ * avertissement des actions sans touche, Quitter, puis « Interface » (mini-map,
  * taille, effets) au-dessus des touches groupées. La mini-map reste nette sous le voile pour juger les réglages (HUD §4.5).
  */
 export interface PropsMenuPause {
@@ -26,6 +28,11 @@ export interface PropsMenuPause {
   surSensibilite(x: number): void;
   accroupiBascule: boolean;
   surAccroupiBascule(b: boolean): void;
+  voix: ReglagesVoix;
+  surVoix(r: ReglagesVoix): void;
+  voixErreur: string;
+  /** libellé de la touche « parler » */
+  toucheParler: string;
   actionsSansTouche: Action[];
   touches: ConfigTouches;
   surTouches(cfg: ConfigTouches): void;
@@ -70,6 +77,24 @@ export default function MenuPause(p: PropsMenuPause) {
           <input type="checkbox" checked={p.accroupiBascule} onChange={(e) => p.surAccroupiBascule(e.target.checked)} />
           <span>Accroupi : basculer (sinon maintenir)</span>
         </label>
+        <fieldset className={styles.voixReglage}>
+          <legend>Chat vocal de proximité</legend>
+          <label className={styles.caseLigne}>
+            <input type="checkbox" checked={p.voix.actif} onChange={(e) => p.surVoix({ ...p.voix, actif: e.target.checked })} />
+            <span>Activer le micro et entendre les joueurs proches</span>
+          </label>
+          <div className={styles.voixModes} role="radiogroup" aria-label="Mode du micro">
+            <label className={styles.caseLigne}>
+              <input type="radio" name="voix-mode" checked={p.voix.mode === "appuyer"} onChange={() => p.surVoix({ ...p.voix, mode: "appuyer" })} />
+              <span>Appuyer pour parler{p.toucheParler && p.toucheParler !== "—" ? ` (${p.toucheParler})` : ""}</span>
+            </label>
+            <label className={styles.caseLigne}>
+              <input type="radio" name="voix-mode" checked={p.voix.mode === "ouvert"} onChange={() => p.surVoix({ ...p.voix, mode: "ouvert" })} />
+              <span>Micro toujours ouvert</span>
+            </label>
+          </div>
+          {p.voixErreur && <p className={styles.avertissement} role="alert">{p.voixErreur}</p>}
+        </fieldset>
         {p.actionsSansTouche.length > 0 && (
           <p className={styles.avertissement} role="alert">
             Sans touche : {p.actionsSansTouche.map((a) => LIBELLES_ACTIONS[a]).join(", ")}. Assignez-en une ci-dessous.
