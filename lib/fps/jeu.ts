@@ -1565,7 +1565,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
           radar: { joueurs: radarFrame.nJoueurs, pnj: radarFrame.nPnj, voitures: radarFrame.nVoitures, echos: radarFrame.nEchos },
         };
       },
-      tigres() {
+      tigres(mesures = false) {
         const ts = client.maintenantServeur();
         return {
           tigres: [...tigresVus.values()].map((tg) => {
@@ -1573,7 +1573,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
             return {
               id: tg.id, genre: tg.genre, lanceur: tg.lanceur ?? null, p: tg.p, cap: tg.cap, etat: tg.etat, pose: tg.pose, pv: tg.pv,
               action: tg.action ?? null, v: tg.v, centre: [(h.a[0] + h.b[0]) / 2, (h.a[1] + h.b[1]) / 2, (h.a[2] + h.b[2]) / 2],
-              hitbox: h, rendu: renduTigres.mesures(tg.id),
+              hitbox: h, rendu: mesures ? renduTigres.mesures(tg.id) : null,
             };
           }),
           avion: mondeTigres.avionA(ts),

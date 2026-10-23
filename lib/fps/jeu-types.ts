@@ -172,8 +172,11 @@ export interface JeuHandle {
     /** état de la killcam, des voitures PNJ et d'Elsa pour les captures */
     killcam(): Record<string, unknown> | null;
     monde(): Record<string, unknown>;
-    /** tigres interpolés (id, genre, lanceur, position, état, PV, centre de la silhouette), avion en cours, charge du sort, GLB chargé */
-    tigres(): Record<string, unknown>;
+    /**
+     * tigres interpolés (id, genre, lanceur, position, état, PV, silhouette de touche), avion en cours, charge du sort, GLB chargé. `mesures` :
+     * ajoute les mesures du tigre dessiné (boîte, tête, museau, croupe), calcul coûteux réservé aux vérifications ponctuelles
+     */
+    tigres(mesures?: boolean): Record<string, unknown>;
     /** lance le sort (comme la touche « invoquer »), false si aucune charge ou si le lancer est impossible */
     invoquer(): boolean;
   };

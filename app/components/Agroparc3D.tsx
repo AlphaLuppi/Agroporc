@@ -459,7 +459,7 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
       monter: (id) => jeuRef.current?.debug.monter(id),
       killcam: () => jeuRef.current?.debug.killcam() ?? null,
       monde: () => jeuRef.current?.debug.monde() ?? null,
-      tigres: () => jeuRef.current?.debug.tigres() ?? null,
+      tigres: (mesures) => jeuRef.current?.debug.tigres(mesures) ?? null,
       invoquer: () => jeuRef.current?.debug.invoquer() ?? false,
       forcerHud: (partiel) => setHudForce(partiel ? { ...partiel } : null),
     };
@@ -815,8 +815,8 @@ declare global {
       killcam(): Record<string, unknown> | null;
       /** État du monde dynamique : voitures PNJ, voitures conduisibles, Elsa. */
       monde(): Record<string, unknown> | null;
-      /** Tigres interpolés (centre de la silhouette compris), avion en cours, charge du sort, GLB chargé. */
-      tigres(): Record<string, unknown> | null;
+      /** Tigres interpolés (silhouette de touche comprise), avion en cours, charge du sort, GLB chargé. `mesures` : tigre dessiné mesuré. */
+      tigres(mesures?: boolean): Record<string, unknown> | null;
       /** Lance le sort d'invocation comme la touche « invoquer » (false sans charge). */
       invoquer(): boolean;
       /** Superpose un état partiel au HUD (base : repos si le jeu n'émet rien) ; `null` rend la main au jeu. */
