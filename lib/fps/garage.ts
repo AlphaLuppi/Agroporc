@@ -56,6 +56,8 @@ export class Garage {
   readonly vehicules: VehiculeSalle[] = [];
   /** Dernier instant (ms) vu par un appel : sert quand l'appelant n'en passe pas (`changerSiege`). */
   private horloge: number;
+  /** voitures en épave (v3 §4) : absentes du snap, ni montée ni conduite ni renversement, ignorées par l'abandon */
+  private readonly horsService = new Set<number>();
 
   constructor(emplacements: readonly { p: Vec2; cap: number }[], private readonly monde: Monde, maintenant: number) {
     this.horloge = maintenant;
@@ -70,6 +72,7 @@ export class Garage {
   /** Nouveau match : toutes les voitures à leur place, arrêtées, sièges vidés (la salle a prévenu les occupants avant : `descente{expulse}`). */
   reinitialiser(maintenant: number): void {
     this.horloge = maintenant;
+    this.horsService.clear();
     for (const v of this.vehicules) {
       v.sieges.fill(null);
       this.remettreEnPlace(v, maintenant);
@@ -90,6 +93,33 @@ export class Garage {
     return { p: v.p, cap: v.cap, v: v.v };
   }
 
+  /**
+   * La voiture explose (v3 §4) : elle passe hors service, ses sièges sont vidés (la salle tue les occupants, renvoyés ici) et elle est
+   * arrêtée. `remettreEnService` la ramène neuve à sa place de parking.
+   */
+  mettreHorsService(vehicule: number, maintenant: number): string[] {
+    this.horloge = maintenant;
+    const v = this.vehicules[vehicule];
+    if (!v || this.horsService.has(vehicule)) return [];
+    const occupants = v.sieges.filter((s): s is string => s !== null);
+    v.sieges.fill(null);
+    v.v = 0;
+    v.libreDepuisT = maintenant;
+    this.horsService.add(vehicule);
+    return occupants;
+  }
+
+  remettreEnService(vehicule: number, maintenant: number): void {
+    this.horloge = maintenant;
+    const v = this.vehicules[vehicule];
+    if (!v || !this.horsService.delete(vehicule)) return;
+    this.remettreEnPlace(v, maintenant);
+  }
+
+  estHorsService(vehicule: number): boolean {
+    return this.horsService.has(vehicule);
+  }
+
   occupation(joueurId: string): { vehicule: number; siege: Siege } | null {
     for (const v of this.vehicules) {
       const i = v.sieges.indexOf(joueurId);
@@ -101,7 +131,7 @@ export class Garage {
   monter(joueurId: string, p: Vec3, vehicule: number, siege: Siege | undefined, maintenant: number): ResultatMonter {
     this.horloge = maintenant;
     const v = this.vehicules[vehicule];
-    if (!v || !Number.isInteger(vehicule)) return { ok: false, raison: "inconnu" };
+    if (!v || !Number.isInteger(vehicule) || this.horsService.has(vehicule)) return { ok: false, raison: "inconnu" };
     if (this.occupation(joueurId)) return { ok: false, raison: "deja" };
     if (distanceVehicule(this.etat(v), p) > VEH.distanceMontee) return { ok: false, raison: "loin" };
     let s: Siege | -1 = -1;
@@ -273,6 +303,7 @@ export class Garage {
     const remis: number[] = [];
     for (const v of this.vehicules) {
       this.purger(v, maintenant);
+      if (this.horsService.has(v.id)) continue;
       if (v.sieges[0] !== null) {
         if (v.v !== 0 && maintenant - v.conduiteT > SILENCE_CONDUCTEUR_MS) v.v = 0; // client gelé : sans cela, voiture extrapolée puis fantôme
         continue;
@@ -294,7 +325,7 @@ export class Garage {
   }
 
   snap(): VehiculeSnap[] {
-    return this.vehicules.map((v) => ({
+    return this.vehicules.filter((v) => !this.horsService.has(v.id)).map((v) => ({
       id: v.id, p: [arrondi(v.p[0], 100), arrondi(v.p[1], 100), arrondi(v.p[2], 100)], cap: arrondi(v.cap, 1000), v: arrondi(v.v, 100),
     }));
   }
@@ -309,7 +340,7 @@ export class Garage {
     const res: { cible: string; conducteur: string }[] = [];
     for (const v of this.vehicules) {
       const conducteur = v.sieges[0];
-      if (conducteur === null) continue; // sans conducteur, personne à créditer (et la voiture n'a pas de vitesse mesurée)
+      if (conducteur === null || this.horsService.has(v.id)) continue; // sans conducteur, personne à créditer (et la voiture n'a pas de vitesse mesurée)
       const vitesse = this.vitesseMesuree(v.id, maintenant);
       if (vitesse < VEH.vitesseRenverse) continue;
       for (const j of joueurs) {

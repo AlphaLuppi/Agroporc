@@ -13,7 +13,8 @@ export type Action =
   | "saut" | "sprint" | "tir" | "visee" | "recharger" | "scores"
   | "armePrincipale" | "armeSecondaire" | "couteau" | "armeSpeciale" | "armePrecedente" | "couteauRapide"
   | "accroupi" | "interagir" | "siege"
-  | "carte" | "minimapCoin" | "passer";
+  | "carte" | "minimapCoin" | "passer"
+  | "zoomLunette" | "parler";
 
 /**
  * Les 10 actions de la v1 qui restent (`arme1..arme4` ont disparu). Leurs touches enregistrées sont relues AVANT celles des
@@ -23,10 +24,13 @@ export const ACTIONS_V1: readonly Action[] = [
   "avant", "arriere", "gauche", "droite", "saut", "sprint", "tir", "visee", "recharger", "scores",
 ];
 
-/** Actions apparues avec la v2 (équipement, accroupi, véhicules) puis le HUD (grande carte, coin de la mini-map). */
+/**
+ * Actions apparues avec la v2 (équipement, accroupi, véhicules), le HUD (grande carte, coin de la mini-map) puis la v3 (niveau de zoom
+ * de la lunette, appuyer pour parler au chat vocal).
+ */
 export const ACTIONS_NOUVELLES: readonly Action[] = [
   "armePrincipale", "armeSecondaire", "couteau", "armeSpeciale", "armePrecedente", "couteauRapide",
-  "accroupi", "interagir", "siege", "carte", "minimapCoin", "passer",
+  "accroupi", "interagir", "siege", "carte", "minimapCoin", "passer", "zoomLunette", "parler",
 ];
 
 /**
@@ -40,7 +44,7 @@ const contexteDe = (a: Action): "mort" | "vie" => (ACTIONS_MORT.includes(a) ? "m
 export const ACTIONS: readonly Action[] = [...ACTIONS_V1, ...ACTIONS_NOUVELLES];
 
 /** Actions qui peuvent rester sans touche sans que ce soit un problème (pas d'avertissement dans le menu pause). */
-export const ACTIONS_FACULTATIVES: readonly Action[] = ["minimapCoin", "passer"];
+export const ACTIONS_FACULTATIVES: readonly Action[] = ["minimapCoin", "passer", "zoomLunette", "parler"];
 
 export const LIBELLES_ACTIONS: Record<Action, string> = {
   avant: "Avancer",
@@ -65,15 +69,17 @@ export const LIBELLES_ACTIONS: Record<Action, string> = {
   carte: "Grande carte (maintenir)",
   minimapCoin: "Mini-carte : coin suivant",
   passer: "Passer le rejeu (mort)",
+  zoomLunette: "Lunette : niveau de zoom suivant (molette en lunette)",
+  parler: "Chat vocal : appuyer pour parler",
 };
 
 /** Regroupement du menu pause : chaque action y figure une seule fois. */
 export const GROUPES_ACTIONS: { titre: string; actions: Action[] }[] = [
   { titre: "Déplacement", actions: ["avant", "arriere", "gauche", "droite", "saut", "sprint", "accroupi"] },
-  { titre: "Combat", actions: ["tir", "visee", "recharger"] },
+  { titre: "Combat", actions: ["tir", "visee", "recharger", "zoomLunette"] },
   { titre: "Équipement", actions: ["armePrincipale", "armeSecondaire", "couteau", "armeSpeciale", "armePrecedente", "couteauRapide"] },
   { titre: "Véhicule", actions: ["interagir", "siege"] },
-  { titre: "Divers", actions: ["scores", "carte", "minimapCoin", "passer"] },
+  { titre: "Divers", actions: ["scores", "carte", "minimapCoin", "passer", "parler"] },
 ];
 
 /** Deux emplacements par action ; `null` = vide. */
@@ -109,6 +115,9 @@ export function touchesParDefaut(): ConfigTouches {
     carte: ["KeyM", null],
     minimapCoin: [null, null],
     passer: ["Space", null],
+    // clic milieu : la molette, elle, change d'arme hors lunette et de zoom en lunette
+    zoomLunette: ["Souris1", "KeyX"],
+    parler: ["KeyT", null],
   };
 }
 

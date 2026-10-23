@@ -72,5 +72,6 @@ export const LIBELLES_BARRES: { cle: keyof InfoArme["barres"]; nom: string }[] =
 export function libelleCause(arme: ArmeId, cause: CauseMort, par: string): string {
   if (cause === "ecrase_pnj") return "Écrasé par la circulation";
   if (cause === "ecrase_vehicule") return par ? `Renversé par ${par}` : "Renversé";
+  if (cause === "explosion") return par ? `Explosé par ${par}` : "Explosion de voiture";
   return nomArme(arme);
 }

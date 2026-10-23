@@ -23,7 +23,7 @@ import { REWIND_MELEE_MS, coupVraisemblable } from "./melee";
 import {
   EQUIPEMENT_DEFAUT, JEU, PLAFONDS, SLOT_DEFAUT, copierEquipement, oeilDe, silhouetteDe,
   type ArmeFeuId, type ArmeId, type CauseMort, type EtatJoueurSnap, type Equipement, type InfoMatch, type InfoTueur,
-  type JoueurPublic, type LigneClassement, type LigneStats, type MessageClient, type Slot, type Vec3, type Zone,
+  type JoueurPublic, type LigneClassement, type LigneStats, type MessageClient, type SignalVoix, type Slot, type Vec3, type Zone,
 } from "./protocole";
 import { appliquerDegats, memoriserSante, regenerer, reinitialiserSante, restaurerSante, tuer as tuerSante } from "./sante";
 import { toucheVraisemblable } from "./tir";
@@ -104,6 +104,16 @@ export const RENOMMER_FENETRE_MS = 10_000;
 const estNombre = (x: unknown): x is number => typeof x === "number" && Number.isFinite(x);
 const estVec3 = (x: unknown): x is Vec3 => Array.isArray(x) && x.length === 3 && x.every(estNombre);
 const estZone = (x: unknown): x is Zone => x === "tete" || x === "corps";
+/** Longueur maximale d'une description SDP relayée (offre ou réponse audio seule, candidats ICE compris : 2 à 5 ko en pratique). */
+export const SDP_MAX_CARACTERES = 12_000;
+/** Signal du chat vocal : `fin`, ou offre / réponse avec une SDP non vide et bornée (rien d'autre n'est relayé). */
+function signalVoixValide(s: unknown): s is SignalVoix {
+  if (!s || typeof s !== "object") return false;
+  const x = s as { type?: unknown; sdp?: unknown };
+  if (x.type === "fin") return Object.keys(x).length === 1;
+  return (x.type === "offre" || x.type === "reponse") && typeof x.sdp === "string" && x.sdp.length > 0 && x.sdp.length <= SDP_MAX_CARACTERES
+    && Object.keys(x).length === 2;
+}
 const arrondi = (x: number, pas: number): number => Math.round(x * pas) / pas;
 /** Sérialisation d'un vecteur : centimètre (jamais dans l'état interne). */
 const cm = (v: Vec3): Vec3 => [arrondi(v[0], 100), arrondi(v[1], 100), arrondi(v[2], 100)];
@@ -304,6 +314,7 @@ export class Salle implements ContexteSalle {
     return [...this.joueurs.values()].map((j) => ({
       id: j.id, pseudo: j.pseudo, couleur: j.couleur, enJeu: j.enJeu, kills: j.kills, morts: j.morts, ping: j.ping,
       ...(j.serie > 0 ? { serie: j.serie } : {}),
+      ...(j.voix ? { voix: true } : {}),
     }));
   }
   classement(): LigneClassement[] {
@@ -390,9 +401,28 @@ export class Salle implements ContexteSalle {
       case "monter": case "descendre": case "siege": case "conduite":
         return j.enJeu && this.vehicules ? this.vehicules.recevoir(j, msg, maintenant) : [];
       case "vueScores": return this.vueScores(j, msg.ouvert, maintenant);
+      case "voixActif": return this.voixActif(j, msg.actif);
+      case "voix": return this.relayerVoix(j, msg.a, msg.s);
       case "ping": return estNombre(msg.t0) ? [{ a: id, m: { t: "pong", t0: msg.t0, maintenant } }] : [];
       default: return []; // "bonjour" : déjà traité par connecter
     }
+  }
+
+  // ---------- chat vocal (v3 §5) : le serveur ne fait que relayer la signalisation WebRTC ----------
+
+  /** Voix activée ou coupée : diffusée dans la présence (seulement si elle change). */
+  private voixActif(j: JoueurSalle, actif: unknown): Sortie[] {
+    if (typeof actif !== "boolean" || !!j.voix === actif) return [];
+    j.voix = actif;
+    return [this.presence()];
+  }
+
+  /** Signal relayé tel quel au joueur `a`, si les deux sont en arène avec la voix activée et que le signal a la bonne forme. */
+  private relayerVoix(j: JoueurSalle, a: unknown, s: unknown): Sortie[] {
+    if (typeof a !== "string" || a === j.id || !signalVoixValide(s)) return [];
+    const dest = this.joueurs.get(a);
+    if (!dest || !j.voix || !dest.voix || !j.enJeu || !dest.enJeu) return [];
+    return [{ a, m: { t: "voix", de: j.id, s } }];
   }
 
   /** Au plus `RENOMMER_MAX` changements par fenêtre (chaque changement diffuse la présence à tous). */
@@ -651,6 +681,9 @@ export class Salle implements ContexteSalle {
       if (cu) { cu.degats += degats; if (t.zone === "tete") cu.zone = "tete"; }
       else cumul.set(c.id, { degats, zone: t.zone });
     }
+
+    // plombs arrêtés par une voiture (v3 §4) : dégâts de carrosserie, explosion éventuelle
+    if (this.vehicules) sorties.push(...this.vehicules.tirVoitures(j, tir.o, dirs, tir.voitures, armeTiree, plombsVus, maintenant));
 
     if (cumul.size > 0) {
       j.touches++;

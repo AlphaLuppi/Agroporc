@@ -1,13 +1,18 @@
 /**
  * Service des véhicules de la salle (PUR) : enveloppe `Garage` (voitures conduisibles) et la circulation PNJ (`flotte`, `ecrasements`) :
  * `monter` / `descendre` / `siege` / `conduite`, libération des sièges, renversements et écrasements. Ne voit la salle que par `ContexteSalle`.
- * Spec : docs/superpowers/specs/2026-10-22-arene-v2-design.md (§2.11, §2.12, §5.19, §6.1bis)
+ * v3 §4 : les voitures (PNJ et conduisibles) encaissent les balles et explosent (`Carrosseries` de epaves.ts) : souffle, occupants tués,
+ * voitures voisines abîmées, épave, puis retour de la voiture.
+ * Spec : docs/superpowers/specs/2026-10-22-arene-v2-design.md (§2.11, §2.12, §5.19, §6.1bis), 2026-10-23-arene-v3-design.md (§4)
  */
 import type { Vec2 } from "../agroparc3d/types";
-import { ecrasements, type Circuit, type VoiturePnj } from "./circulation";
+import { degatsPlomb, STATS } from "./armes";
+import { ecrasements, etatVoiture, type Circuit, type VoiturePnj } from "./circulation";
+import { visible, lancerRayon } from "./collision";
+import { CARROSSERIE, Carrosseries, degatsSouffle, degatsVoisine, rayonVoiture, type RefVoiture } from "./epaves";
 import { Garage } from "./garage";
 import type { ContexteSalle, JoueurSalle, ServiceVehicules, Sortie } from "./match-contexte";
-import { SIEGES_PAR_VEHICULE, SILHOUETTE, type MessageClient, type Siege } from "./protocole";
+import { SIEGES_PAR_VEHICULE, SILHOUETTE, type ArmeFeuId, type MessageClient, type Siege, type Vec3 } from "./protocole";
 
 /** Durée (ms) de l'historique des occupants (même valeur que `HISTORIQUE_MS` de match.ts, qui importe ce module). */
 const HISTORIQUE_OCCUPANT_MS = 400;
@@ -21,12 +26,91 @@ export interface OptionsServiceVehicules {
   maintenant?: number;
 }
 
+/** Une touche de voiture est cherchée sur la caisse rejouée de 0 à `REWIND_VOITURE_MS` en arrière, par pas de `PAS_REWIND_VOITURE_MS`. */
+const REWIND_VOITURE_MS = 300;
+const PAS_REWIND_VOITURE_MS = 50;
+/** Hauteur (m) du centre d'une explosion au-dessus du sol (souffle et ligne de vue). */
+const Y_EXPLOSION = 0.9;
+/** Réaction en chaîne : au plus ce nombre d'explosions par tir (12 PNJ + 6 voitures, borne de sûreté). */
+const EXPLOSIONS_MAX = 18;
+
 const estSiege = (s: unknown): s is Siege => Number.isInteger(s) && (s as number) >= 0 && (s as number) < SIEGES_PAR_VEHICULE;
 const borne = (x: number, a: number, b: number) => (x < a ? a : x > b ? b : x);
 
 export function creerServiceVehicules(ctx: ContexteSalle, opts: OptionsServiceVehicules): ServiceVehicules {
   const garage = new Garage(opts.vehicules ?? [], ctx.monde, opts.maintenant ?? 0);
   const circulation = opts.circulation;
+  const carrosseries = new Carrosseries();
+  const messageVoitures = (a: string): Sortie => ({ a, m: { t: "voitures", etats: carrosseries.etats() } });
+
+  /** Caisse d'une voiture à l'instant `t` (null si elle n'existe pas ou est en épave). */
+  function caisse(ref: RefVoiture, t: number): { p: Vec3; cap: number } | null {
+    if (carrosseries.detruite(ref)) return null;
+    if (ref.genre === "pnj") {
+      const v = circulation?.voitures[ref.id];
+      if (!circulation || !v) return null;
+      const e = etatVoiture(circulation.circuits[v.circuit], v, t);
+      return { p: e.p, cap: e.cap };
+    }
+    if (garage.estHorsService(ref.id)) return null;
+    const e = garage.etatAu(ref.id, t);
+    return e ? { p: e.p, cap: e.cap } : null;
+  }
+
+  /** Toutes les voitures en service, à l'instant `t`. */
+  function toutesLesVoitures(t: number): { ref: RefVoiture; p: Vec3; cap: number }[] {
+    const r: { ref: RefVoiture; p: Vec3; cap: number }[] = [];
+    for (const v of circulation?.voitures ?? []) {
+      const ref: RefVoiture = { genre: "pnj", id: v.id };
+      const c = caisse(ref, t);
+      if (c) r.push({ ref, ...c });
+    }
+    for (const v of garage.vehicules) {
+      const ref: RefVoiture = { genre: "vehicule", id: v.id };
+      const c = caisse(ref, t);
+      if (c) r.push({ ref, ...c });
+    }
+    return r;
+  }
+
+  /**
+   * Explosions en cascade à partir de `premiere` : message `explosion`, occupants tués (et sièges diffusés), souffle sur les joueurs (ligne
+   * de vue depuis le centre de l'explosion), dégâts aux voitures voisines (qui peuvent exploser à leur tour, crédit au même tireur).
+   */
+  function exploser(premiere: { ref: RefVoiture; p: Vec3; cap: number }, par: JoueurSalle, arme: ArmeFeuId, maintenant: number): Sortie[] {
+    const sorties: Sortie[] = [];
+    const file = [premiere];
+    let n = 0;
+    while (file.length && n < EXPLOSIONS_MAX) {
+      const { ref, p } = file.shift()!;
+      n++;
+      sorties.push({ a: "tous", m: { t: "explosion", genre: ref.genre, id: ref.id, p: [p[0], p[1], p[2]], par: par.id } });
+      if (ref.genre === "vehicule") {
+        const occupants = garage.mettreHorsService(ref.id, maintenant);
+        for (const id of occupants) {
+          const c = ctx.joueur(id);
+          if (c) sorties.push(...ctx.tuer(c, par, "explosion", maintenant));
+        }
+        sorties.push(sieges("tous"));
+      }
+      const centre: Vec3 = [p[0], p[1] + Y_EXPLOSION, p[2]];
+      for (const c of ctx.joueursEnJeu()) {
+        if (!c.vivant || maintenant < c.protegeJusqua) continue;
+        const cible: Vec3 = [c.p[0], c.p[1] + SILHOUETTE.centreY, c.p[2]];
+        const d = Math.hypot(cible[0] - centre[0], cible[1] - centre[1], cible[2] - centre[2]);
+        const degats = degatsSouffle(d);
+        if (degats <= 0 || !visible(ctx.monde, centre, cible)) continue;
+        sorties.push(...ctx.infliger(c, degats, par, "explosion", "corps", arme, maintenant, centre));
+      }
+      for (const v of toutesLesVoitures(maintenant)) {
+        const degats = degatsVoisine(Math.hypot(v.p[0] - p[0], v.p[2] - p[2]));
+        if (degats <= 0) continue;
+        const r = carrosseries.toucher(v.ref, degats, maintenant, v);
+        if (r.detruite) file.push(v);
+      }
+    }
+    return sorties;
+  }
 
   const sieges = (a: string): Sortie => ({ a, m: { t: "sieges", vehicules: garage.infos() } });
 
@@ -137,6 +221,10 @@ export function creerServiceVehicules(ctx: ContexteSalle, opts: OptionsServiceVe
     tic(maintenant) {
       const sorties: Sortie[] = [];
       garage.tic(maintenant); // abandon (60 s) et conducteur muet (500 ms) : l'état de la voiture change, le snap le porte
+      // épaves arrivées à échéance : la PNJ reprend son circuit, la conduisible revient neuve à sa place
+      const revenues = carrosseries.tic(maintenant);
+      for (const r of revenues) if (r.genre === "vehicule") garage.remettreEnService(r.id, maintenant);
+      if (revenues.length) sorties.push(messageVoitures("tous"));
       for (const j of occupants()) {
         recopier(j);
         j.histo.push({ t: maintenant, p: [j.p[0], j.p[1], j.p[2]], accroupi: true });
@@ -164,7 +252,7 @@ export function creerServiceVehicules(ctx: ContexteSalle, opts: OptionsServiceVe
       // circulation PNJ : mort immédiate, aucun kill
       if (circulation) {
         const ecrases = ecrasements(
-          circulation.circuits, circulation.voitures,
+          circulation.circuits, circulation.voitures.filter((v) => !carrosseries.detruite({ genre: "pnj", id: v.id })),
           candidats.filter(({ j }) => !morts.has(j.id)).map(({ j, tMs }) => ({ id: j.id, p: j.p, tMs })),
           SILHOUETTE.rayon,
         );
@@ -192,11 +280,15 @@ export function creerServiceVehicules(ctx: ContexteSalle, opts: OptionsServiceVe
       garage.reinitialiser(maintenant);
       // les voitures ont aussi changé de place, mais le snap les porte : `sieges` n'est utile que si des sièges ont été vidés
       if (quelquun) sorties.push(sieges("tous"));
+      // toutes les voitures neuves, plus aucune épave
+      const abimees = carrosseries.etats().length > 0;
+      carrosseries.reinitialiser();
+      if (abimees) sorties.push(messageVoitures("tous"));
       return sorties;
     },
 
     synchro(idDest) {
-      return [sieges(idDest)];
+      return [sieges(idDest), messageVoitures(idDest)];
     },
 
     snap() {
@@ -209,6 +301,45 @@ export function creerServiceVehicules(ctx: ContexteSalle, opts: OptionsServiceVe
 
     estConducteur(id) {
       return garage.occupation(id)?.siege === 0;
+    },
+
+    tirVoitures(j, o, dirs, declarations, arme, plombsPris, maintenant) {
+      if (!Array.isArray(declarations) || !declarations.length || !ctx.enPhaseJeu()) return [];
+      const portee = STATS[arme].portee;
+      const cumul = new Map<string, { ref: RefVoiture; degats: number }>();
+      const plombs = new Set(plombsPris);
+      for (const t of declarations.slice(0, dirs.length)) {
+        if (!t || (t.genre !== "pnj" && t.genre !== "vehicule") || !Number.isInteger(t.id) || !Number.isInteger(t.plomb)) continue;
+        if (t.plomb < 0 || t.plomb >= dirs.length || plombs.has(t.plomb)) continue;
+        const ref: RefVoiture = { genre: t.genre, id: t.id };
+        const d = dirs[t.plomb];
+        // la caisse rejouée sur la latence du tireur ; la balle ne traverse pas un bâtiment avant d'y arriver
+        let distance: number | null = null;
+        for (let dt = 0; dt <= REWIND_VOITURE_MS && distance === null; dt += PAS_REWIND_VOITURE_MS) {
+          const c = caisse(ref, maintenant - dt);
+          if (!c) break;
+          const k = rayonVoiture(o, d, c.p, c.cap, portee, CARROSSERIE.margeValidation);
+          if (k !== null && lancerRayon(ctx.monde, o, d, k) === Infinity) distance = k;
+        }
+        if (distance === null) continue;
+        plombs.add(t.plomb);
+        const cle = `${ref.genre}:${ref.id}`;
+        const degats = degatsPlomb(arme, "corps", distance);
+        const cu = cumul.get(cle);
+        if (cu) cu.degats += degats;
+        else cumul.set(cle, { ref, degats });
+      }
+      const sorties: Sortie[] = [];
+      let change = false;
+      for (const { ref, degats } of cumul.values()) {
+        const c = caisse(ref, maintenant);
+        if (!c) continue;
+        const r = carrosseries.toucher(ref, degats, maintenant, c);
+        change ||= r.change;
+        if (r.detruite) sorties.push(...exploser({ ref, ...c }, j, arme, maintenant));
+      }
+      if (change) sorties.push(messageVoitures("tous"));
+      return sorties;
     },
   };
 }

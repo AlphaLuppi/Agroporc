@@ -8,7 +8,7 @@
 import type { Monde } from "./collision";
 import type { MemoSante } from "./sante";
 import type {
-  ArmeId, CauseMort, CoteMur, Equipement, MessageClient, MessageServeur, Posture, Siege, Slot, Vec3, VehiculeSnap, Zone,
+  ArmeFeuId, ArmeId, CauseMort, CoteMur, Equipement, GenreVoiture, MessageClient, MessageServeur, Posture, Siege, Slot, Vec3, VehiculeSnap, Zone,
 } from "./protocole";
 
 /**
@@ -35,6 +35,8 @@ export interface JoueurSalleV2 {
   /** glissade déclarée par le client (n'a de sens qu'accroupi, au sol) : recopiée dans le snap pour la pose des avatars distants */
   glisse: boolean;
   memoSante: MemoSante | null;
+  /** chat vocal activé (v3 §5) : diffusé dans la présence, condition du relais des signaux ; absent = non */
+  voix?: boolean;
 }
 
 /**
@@ -152,4 +154,13 @@ export interface ServiceVehicules {
   /** yeux acceptables pour un `tir.o` d'occupant (null si le joueur est à pied) ; le conducteur n'a pas le droit de tirer (`CONDUCTEUR_TIRE`) */
   oeilsPossibles(j: JoueurSalle, maintenant: number, fenetreMs: number): Vec3[] | null;
   estConducteur(id: string): boolean;
+  /**
+   * Plombs d'un tir arrêtés par une voiture selon le tireur (v3 §4) : chaque déclaration est revalidée (caisse rejouée sur 300 ms, marge
+   * de 0,8 m, ligne de vue, portée), un plomb ne compte qu'une fois et jamais s'il est dans `plombsPris` (déjà sur un joueur). Dégâts au
+   * corps selon la distance ; une voiture à 0 explose (`explosion`, occupants tués, souffle, voisines abîmées). `voitures` si un état change.
+   */
+  tirVoitures(
+    j: JoueurSalle, o: Vec3, dirs: readonly Vec3[], declarations: readonly { genre: GenreVoiture; id: number; plomb: number }[] | undefined,
+    arme: ArmeFeuId, plombsPris: ReadonlySet<number>, maintenant: number,
+  ): Sortie[];
 }

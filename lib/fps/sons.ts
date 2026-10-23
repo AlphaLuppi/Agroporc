@@ -5,6 +5,10 @@
  *
  * Les tirs lointains passent `position` : le gain baisse avec la distance, les aigus s'éteignent et
  * `pan` (−1 gauche … 1 droite, calculé par jeu.ts d'après l'angle du tireur) place le son.
+ *
+ * Seule exception au « tout synthétisé » : le moteur de la voiture conduite est un VRAI enregistrement (`/arene/moteur.wav`, boucle de
+ * ralenti CC0, cf. public/arene/CREDITS.txt) joué en boucle, dont la vitesse de lecture (donc le régime) suit celle de la voiture (v3 §3).
+ * Tant qu'il n'est pas chargé (ou s'il ne se charge pas), un moteur synthétisé doux le remplace.
  */
 import type { ArmeFeuId } from "./protocole";
 
@@ -49,6 +53,12 @@ export interface Sons {
   choc(force: number): void;
   /** Coup de klaxon (facultatif, réservé au conducteur). */
   klaxon(): void;
+  /** Cran de la molette de zoom de la lunette. */
+  zoom(): void;
+  /** Ma balle a frappé la tôle d'une voiture (v3 §4). */
+  tole(): void;
+  /** Explosion d'une voiture (v3 §4) ; `position` pour l'atténuer avec la distance. */
+  explosion(position?: PositionSon): void;
   dispose(): void;
 }
 
@@ -106,6 +116,16 @@ const CLICS_RECHARGE: Record<ArmeFeuId, Clic[]> = {
   fusil_assaut: CLICS_FUSIL_ASSAUT, mitrailleuse: CLICS_MITRAILLEUSE, revolver: CLICS_REVOLVER, mini_uzi: CLICS_MINI_UZI,
   railgun: [], minigun: [], magnum_dore: [],
 };
+
+/** Enregistrement du moteur (boucle de ralenti CC0) et réglages de sa lecture. */
+const URL_MOTEUR = "/arene/moteur.wav";
+/** Vitesse de lecture au ralenti et à `VITESSE_REGIME_MAX` m/s (le régime monte avec la vitesse). */
+const REGIME_RALENTI = 0.85;
+const REGIME_MAX = 2.1;
+const VITESSE_REGIME_MAX = 28;
+/** Gain du moteur (avant le master à 0,55) : discret au ralenti, à peine plus fort à fond (v3 §3 : il faisait mal aux oreilles). */
+const GAIN_MOTEUR_RALENTI = 0.16;
+const GAIN_MOTEUR_MAX = 0.3;
 
 /** Briques sonores qu'un profil de tir assemble (liées au contexte audio de `creerSons`). */
 interface BriquesSon {
@@ -202,8 +222,24 @@ export function creerSons(): Sons {
   let souffle: { src: AudioBufferSourceNode; gain: GainNode; lfo: OscillatorNode } | null = null;
   /** frottement de la glissade (bruit en boucle filtré) */
   let frottement: { src: AudioBufferSourceNode; gain: GainNode; filtre: BiquadFilterNode } | null = null;
-  /** moteur de la voiture conduite : deux oscillateurs graves + un grain de bruit */
-  let moteurVoix: { oscs: OscillatorNode[]; gain: GainNode; filtre: BiquadFilterNode; grain: AudioBufferSourceNode } | null = null;
+  /**
+   * moteur de la voiture conduite : l'enregistrement en boucle (`echantillon`, vitesse de lecture = régime) ou, à défaut, un oscillateur
+   * triangle grave + un grain de bruit (`oscs`), le tout sous un passe-bas qui s'ouvre avec la vitesse
+   */
+  let moteurVoix: { oscs: OscillatorNode[]; gain: GainNode; filtre: BiquadFilterNode; grain: AudioBufferSourceNode; echantillon: boolean } | null = null;
+  /** boucle de moteur décodée (null tant qu'elle n'est pas chargée), chargement en cours, échec définitif */
+  let moteurBuf: AudioBuffer | null = null;
+  let moteurCharge = false;
+  const chargerMoteur = () => {
+    if (moteurCharge || !ctx || typeof fetch !== "function") return;
+    moteurCharge = true;
+    const c = ctx;
+    fetch(URL_MOTEUR)
+      .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(String(r.status)))))
+      .then((b) => c.decodeAudioData(b))
+      .then((buf) => { if (!fini) moteurBuf = buf; })
+      .catch(() => { /* le moteur synthétisé reste */ });
+  };
 
   const ouvrir = () => {
     if (ctx || fini || typeof window === "undefined") return;
@@ -481,58 +517,92 @@ export function creerSons(): Sons {
       if (!moteurVoix && !prete()) return;
       const c = ctx;
       if (!c) return;
+      chargerMoteur();
       const v = Math.min(Math.abs(vitesse), 40);
-      // Ralenti ≈ 45 Hz, plein régime ≈ 150 Hz (fondamentale) ; le filtre s'ouvre avec la vitesse.
-      const f = 45 + v * 2.6;
+      const k = Math.min(v / VITESSE_REGIME_MAX, 1);
+      // l'enregistrement arrivé pendant qu'on roulait sur le moteur synthétisé le remplace sans attendre la prochaine montée
+      if (moteurVoix && !moteurVoix.echantillon && moteurBuf) {
+        const m = moteurVoix;
+        moteurVoix = null;
+        eteindre(m.gain, [...m.oscs, m.grain], 0.15);
+      }
       if (!moteurVoix) {
         const g = c.createGain();
         g.gain.value = 0.0001;
         const filtre = c.createBiquadFilter();
         filtre.type = "lowpass";
-        filtre.Q.value = 1.1;
-        const o1 = c.createOscillator();
-        o1.type = "sawtooth";
-        const o2 = c.createOscillator();
-        o2.type = "square";
-        const og = c.createGain();
-        og.gain.value = 0.35;
-        o1.connect(filtre);
-        o2.connect(og);
-        og.connect(filtre);
-        // Grain d'échappement : bruit grave en boucle.
-        const grain = c.createBufferSource();
-        grain.buffer = bruitBuf;
-        grain.loop = true;
-        const gf = c.createBiquadFilter();
-        gf.type = "lowpass";
-        gf.frequency.value = 260;
-        const gg = c.createGain();
-        gg.gain.value = 0.25;
-        grain.connect(gf);
-        gf.connect(gg);
-        gg.connect(filtre);
+        filtre.Q.value = 0.7;
         filtre.connect(g);
         g.connect(master!);
-        o1.start();
-        o2.start();
-        grain.start(c.currentTime, Math.random() * 0.9);
-        moteurVoix = { oscs: [o1, o2], gain: g, filtre, grain };
+        const grain = c.createBufferSource();
+        grain.loop = true;
+        const oscs: OscillatorNode[] = [];
+        if (moteurBuf) {
+          // vrai moteur : la boucle de ralenti, accélérée avec la vitesse
+          grain.buffer = moteurBuf;
+          grain.connect(filtre);
+          grain.start(c.currentTime, Math.random() * moteurBuf.duration);
+        } else {
+          // repli doux : un triangle grave (plus de dent de scie ni de carré, trop agressifs) et un grain de bruit
+          const o = c.createOscillator();
+          o.type = "triangle";
+          o.connect(filtre);
+          o.start();
+          oscs.push(o);
+          grain.buffer = bruitBuf;
+          const gf = c.createBiquadFilter();
+          gf.type = "lowpass";
+          gf.frequency.value = 220;
+          const gg = c.createGain();
+          gg.gain.value = 0.2;
+          grain.connect(gf);
+          gf.connect(gg);
+          gg.connect(filtre);
+          grain.start(c.currentTime, Math.random() * 0.9);
+        }
+        moteurVoix = { oscs, gain: g, filtre, grain, echantillon: !!moteurBuf };
       }
       const m = moteurVoix;
       const now = c.currentTime;
-      m.oscs[0].frequency.setTargetAtTime(f, now, 0.06);
-      m.oscs[1].frequency.setTargetAtTime(f * 0.5, now, 0.06);
-      m.filtre.frequency.setTargetAtTime(380 + v * 55, now, 0.08);
-      m.gain.gain.setTargetAtTime(0.1 + Math.min(v / 40, 1) * 0.1, now, 0.1);
+      if (m.echantillon) m.grain.playbackRate.setTargetAtTime(REGIME_RALENTI + (REGIME_MAX - REGIME_RALENTI) * k, now, 0.12);
+      else m.oscs[0]?.frequency.setTargetAtTime(40 + v * 2.2, now, 0.08);
+      m.filtre.frequency.setTargetAtTime(600 + 1800 * k, now, 0.1);
+      m.gain.gain.setTargetAtTime(GAIN_MOTEUR_RALENTI + (GAIN_MOTEUR_MAX - GAIN_MOTEUR_RALENTI) * k, now, 0.15);
     },
     choc(force) {
       if (!prete()) return;
       const t = ctx!.currentTime + 0.001;
       const k = Math.min(Math.max(force, 0), 1);
-      bruit(master!, t, { dur: 0.12 + 0.2 * k, type: "lowpass", f0: 1800, f1: 160, gain: 0.5 + 0.5 * k });
-      ton(master!, t, { dur: 0.15 + 0.2 * k, type: "sine", f0: 100, f1: 38, gain: 0.5 + 0.5 * k });
+      bruit(master!, t, { dur: 0.12 + 0.2 * k, type: "lowpass", f0: 1500, f1: 160, gain: 0.3 + 0.35 * k });
+      ton(master!, t, { dur: 0.15 + 0.2 * k, type: "sine", f0: 100, f1: 38, gain: 0.3 + 0.35 * k });
       // Tôle froissée : éclats métalliques proportionnels à la force.
-      bruit(master!, t + 0.02, { dur: 0.1 + 0.1 * k, type: "bandpass", f0: 2400, f1: 1200, q: 1.2, gain: 0.15 + 0.35 * k });
+      bruit(master!, t + 0.02, { dur: 0.1 + 0.1 * k, type: "bandpass", f0: 2200, f1: 1200, q: 1.2, gain: 0.08 + 0.2 * k });
+    },
+    zoom() {
+      if (!prete()) return;
+      clic(master!, ctx!.currentTime + 0.001, 2600, 0.18);
+    },
+    tole() {
+      if (!prete()) return;
+      const t = ctx!.currentTime + 0.001;
+      const v = 0.9 + Math.random() * 0.2;
+      // tintement de tôle : un « ping » métallique court et un petit choc
+      ton(master!, t, { dur: 0.12, type: "triangle", f0: 1900 * v, f1: 1500 * v, gain: 0.09 });
+      ton(master!, t, { dur: 0.08, type: "sine", f0: 3100 * v, gain: 0.05 });
+      bruit(master!, t, { dur: 0.04, type: "bandpass", f0: 2800, q: 1.4, gain: 0.12 });
+    },
+    explosion(position) {
+      if (!prete()) return;
+      const out = sortie(position);
+      const t = ctx!.currentTime + 0.001;
+      // Détonation sourde, souffle large bande, débris métalliques qui retombent et crépitement du feu.
+      ton(out, t, { dur: 0.9, type: "sine", f0: 70, f1: 22, gain: 1 });
+      bruit(out, t, { dur: 1.1, type: "lowpass", f0: 3200, f1: 120, gain: 1 });
+      bruit(out, t + 0.02, { dur: 0.25, type: "bandpass", f0: 1400, f1: 500, q: 0.7, gain: 0.6 });
+      for (let i = 0; i < 5; i++) {
+        bruit(out, t + 0.35 + i * 0.13 + Math.random() * 0.08, { dur: 0.06, type: "bandpass", f0: 2500 + Math.random() * 1500, q: 2, gain: 0.18 });
+      }
+      bruit(out, t + 0.5, { dur: 1.4, type: "highpass", f0: 1800, f1: 3500, gain: 0.08, att: 0.2 });
     },
     klaxon() {
       if (!prete()) return;

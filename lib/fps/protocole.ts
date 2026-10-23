@@ -6,11 +6,15 @@
  * `tangage` (pitch) dans [−π/2, π/2], positif = regard vers le haut. Le `cap` d'un véhicule suit
  * la même convention que le lacet.
  * Spec : docs/superpowers/specs/2026-10-22-agroparc-fps-design.md (v1), 2026-10-22-arene-v2-design.md (v2),
- * 2026-10-23-arene-hud-design.md (HUD : `absorbe`, `LigneStats`, `vueScores` / `scores`, `serie`)
+ * 2026-10-23-arene-hud-design.md (HUD : `absorbe`, `LigneStats`, `vueScores` / `scores`, `serie`),
+ * 2026-10-23-arene-v3-design.md (v3 : voitures qui explosent, chat vocal de proximité)
  */
 
-/** v2 : équipement, couteau, bouclier, accroupi, Elsa, véhicules, killcam. Client et serveur se déploient ensemble. */
-export const VERSION_PROTOCOLE = 2;
+/**
+ * v2 : équipement, couteau, bouclier, accroupi, Elsa, véhicules, killcam. v3 : voitures touchées et explosions (`tir.voitures`, `voitures`,
+ * `explosion`), chat vocal (`voixActif`, `voix`). Client et serveur se déploient ensemble.
+ */
+export const VERSION_PROTOCOLE = 3;
 
 export type Vec3 = [number, number, number];
 
@@ -70,7 +74,20 @@ export type Siege = 0 | 1 | 2 | 3;
 export const SIEGES_PAR_VEHICULE = 4;
 
 /** Comment un joueur est mort. `arme` d'un message `mort` n'a de sens que pour la cause "arme". */
-export type CauseMort = "arme" | "ecrase_pnj" | "ecrase_vehicule";
+export type CauseMort = "arme" | "ecrase_pnj" | "ecrase_vehicule" | "explosion";
+
+/** Voiture de la circulation (`pnj`, indice dans `flotte`) ou voiture conduisible (`vehicule`, id du garage). */
+export type GenreVoiture = "pnj" | "vehicule";
+/**
+ * État d'une voiture abîmée (v3 §4) : `fumee` (≤ 50 % de carrosserie), `feu` (≤ 20 %) ou `epave` (elle a explosé : `p`, `cap` = position
+ * de l'épave, `finT` = horodatage serveur du retour de la voiture). Une voiture absente de la liste est intacte.
+ */
+export interface EtatVoitureMsg { genre: GenreVoiture; id: number; etat: "fumee" | "feu" | "epave"; p?: Vec3; cap?: number; finT?: number }
+/**
+ * Signal WebRTC du chat vocal (v3 §5), relayé tel quel par le serveur entre deux joueurs qui ont activé la voix : offre / réponse SDP
+ * complètes (candidats ICE inclus, pas de « trickle »), ou `fin` (connexion fermée).
+ */
+export type SignalVoix = { type: "offre" | "reponse"; sdp: string } | { type: "fin" };
 
 // ---------- données publiques ----------
 
@@ -88,6 +105,8 @@ export interface JoueurPublic {
   ping: number;
   /** kills d'affilée sans mourir (HUD §3.5 : diffusé avec la présence, déjà émise à chaque kill) ; absent = 0 */
   serie?: number;
+  /** chat vocal activé (v3 §5) ; absent = non */
+  voix?: boolean;
 }
 
 /** Véhicule conduisible occupé par un joueur (dans le snap du joueur). */
@@ -209,7 +228,11 @@ export type MessageClient =
    * `o` = œil du tireur, `d` = direction normalisée de chaque plomb (1 pour les autres armes),
    * `touches` = plombs qui ont touché un joueur selon le client (index dans `d`).
    */
-  | { t: "tir"; arme: ArmeFeuId; o: Vec3; d: Vec3[]; touches: { cible: string; zone: Zone; plomb: number }[] }
+  | {
+      t: "tir"; arme: ArmeFeuId; o: Vec3; d: Vec3[]; touches: { cible: string; zone: Zone; plomb: number }[];
+      /** plombs arrêtés par une voiture selon le client (v3 §4) ; absent = aucun */
+      voitures?: { genre: GenreVoiture; id: number; plomb: number }[];
+    }
   /** Coup de couteau. `cible` = joueur touché selon le client (null = coup dans le vide). */
   | { t: "coup"; o: Vec3; d: Vec3; cible: string | null }
   /** Monter dans un véhicule ; `siege` facultatif (sinon le plus bas libre). */
@@ -221,6 +244,10 @@ export type MessageClient =
   | { t: "conduite"; seq: number; vehicule: number; p: Vec3; cap: number; v: number; lacet: number; tangage: number }
   /** Tableau des scores ouvert (Tab maintenu) ou refermé : le serveur n'envoie `scores` qu'aux clients ouverts (HUD §3.5, 1 par 250 ms). */
   | { t: "vueScores"; ouvert: boolean }
+  /** Chat vocal activé ou coupé (v3 §5) : diffusé dans `presence` (`voix`). */
+  | { t: "voixActif"; actif: boolean }
+  /** Signal WebRTC pour le joueur `a` (relayé seulement si les deux ont la voix activée). */
+  | { t: "voix"; a: string; s: SignalVoix }
   | { t: "ping"; t0: number };
 
 // ---------- serveur → client ----------
@@ -277,6 +304,12 @@ export type MessageServeur =
   | { t: "descente"; p: Vec3; lacet: number; raison: "volontaire" | "expulse" }
   /** Statistiques du tableau des scores : réponse immédiate à `vueScores{ouvert:true}` puis 1 Hz, seulement aux clients ouverts. */
   | { t: "scores"; lignes: LigneStats[] }
+  /** Voitures abîmées et épaves (v3 §4) : état complet, à chaque changement et au seul joueur concerné à `rejoindre`. */
+  | { t: "voitures"; etats: EtatVoitureMsg[] }
+  /** Une voiture explose en `p` (abattue par `par`, "" pour une réaction en chaîne sans auteur) : effet et son. */
+  | { t: "explosion"; genre: GenreVoiture; id: number; p: Vec3; par: string }
+  /** Signal WebRTC du joueur `de` (v3 §5). */
+  | { t: "voix"; de: string; s: SignalVoix }
   | { t: "pong"; t0: number; maintenant: number }
   | { t: "erreur"; code: "plein" | "version" | "pseudo" | "flood"; message: string };
 

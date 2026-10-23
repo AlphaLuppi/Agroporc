@@ -140,13 +140,13 @@ describe("sons : effets ajoutés par la v2", () => {
     expect(journal.demarres).toBe(0);
     sons.moteur(0);
     const demarres = journal.demarres;
-    expect(demarres).toBeGreaterThanOrEqual(3); // deux oscillateurs + le grain d'échappement
+    expect(demarres).toBeGreaterThanOrEqual(2); // repli synthétisé (boucle pas encore chargée) : un oscillateur + le grain d'échappement
     sons.moteur(12);
     sons.moteur(-20);
     sons.moteur(200);
     expect(journal.demarres).toBe(demarres);
     sons.moteur(null);
-    expect(journal.arretes).toBeGreaterThanOrEqual(3);
+    expect(journal.arretes).toBeGreaterThanOrEqual(2);
     sons.moteur(5); // redémarre proprement
     expect(journal.demarres).toBeGreaterThan(demarres);
     sons.dispose();

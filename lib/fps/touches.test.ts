@@ -81,9 +81,9 @@ describe("touches de l'arène", () => {
 
   it("19 actions de l'équipement + 2 du HUD + « passer » : 10 de la v1 conservées, 12 nouvelles, aucune arme1..4", () => {
     expect(ACTIONS_V1).toHaveLength(10);
-    expect(ACTIONS_NOUVELLES).toHaveLength(12);
-    expect(ACTIONS).toHaveLength(22);
-    expect(new Set(ACTIONS).size).toBe(22);
+    expect(ACTIONS_NOUVELLES).toHaveLength(14);
+    expect(ACTIONS).toHaveLength(24);
+    expect(new Set(ACTIONS).size).toBe(24);
     expect(Object.keys(touchesParDefaut()).sort()).toEqual([...ACTIONS].sort());
     expect(Object.keys(LIBELLES_ACTIONS).sort()).toEqual([...ACTIONS].sort());
     expect(ACTIONS as readonly string[]).not.toContain("arme1");

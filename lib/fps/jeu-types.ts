@@ -35,6 +35,12 @@ export interface HudEtat {
   lunette: boolean;
   /** « ×4 » en lunette (entier, 0 hors lunette) */
   zoomX: number;
+  /** niveau de zoom de la lunette (index, du plus large au plus serré), −1 hors lunette */
+  zoomNiveau: number;
+  /** nombre de niveaux de zoom de la lunette, 0 hors lunette */
+  zoomNiveaux: number;
+  /** rayon du cercle de dispersion du viseur (part de la demi-hauteur de l'écran), 0 = aucune dispersion (sniper sans lunette seulement, v3 §1) */
+  ecartViseur: number;
   /** télémétrie de lunette : distance (m, entier) de la cible visée, −1 = rien ; seulement en lunette */
   distanceVisee: number;
   mur: boolean;
@@ -68,6 +74,10 @@ export interface HudEtat {
   /** −1 hors killcam, sinon progression 0..1 (arrondie à 0,02) */
   killcam: number;
   killcamPhase: "" | "rejeu" | "carte";
+  /** chat vocal (v3 §5) : "" coupé, "pret" activé micro fermé, "emet" le micro émet */
+  voix: "" | "pret" | "emet";
+  /** pseudos des joueurs qu'on entend parler en ce moment, séparés par « · » ("" = personne) */
+  voixParlants: string;
 
   // ---- COMPATIBILITÉ v1 (shim du lot 0, tous optionnels) ----
   // Champs que le HUD v1 lit encore et que `jeu.ts` v1 émet toujours. La spec HUD (§3.2) les retire de `HudEtat` : le lot J1 cesse
@@ -147,6 +157,8 @@ export interface JeuHandle {
   accroupiBascule(b: boolean): void;
   /** saute le rejeu de la killcam et passe à la carte du tueur (sans effet hors rejeu) */
   passerKillcam(): void;
+  /** Chat vocal de proximité (v3 §5) : `activer` demande le micro (à appeler sur un geste), `mode` appuyer pour parler / micro ouvert. */
+  voix: { activer(): Promise<"ok" | "refuse" | "indisponible">; desactiver(): void; mode(m: "appuyer" | "ouvert"): void };
   /** Touches modifiées par le joueur (menu pause), appliquées tout de suite. */
   touches(cfg: ConfigTouches): void;
   /** Valeurs continues du HUD, mises à jour à chaque image (objet stable, jamais remplacé). */
@@ -170,5 +182,7 @@ export interface JeuHandle {
     /** état de la killcam, des voitures PNJ et d'Elsa pour les captures */
     killcam(): Record<string, unknown> | null;
     monde(): Record<string, unknown>;
+    /** chat vocal : connexions, audibilité, joueurs entendus */
+    voix(): Record<string, unknown>;
   };
 }
