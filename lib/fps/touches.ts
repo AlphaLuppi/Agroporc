@@ -51,7 +51,7 @@ export const LIBELLES_ACTIONS: Record<Action, string> = {
   arriere: "Reculer",
   gauche: "Aller à gauche",
   droite: "Aller à droite",
-  saut: "Sauter, double saut, saut de mur",
+  saut: "Sauter, double saut, saut de mur (en voiture : déraper)",
   sprint: "Sprinter",
   accroupi: "S'accroupir (en sprint : glissade)",
   tir: "Tirer (maintenir : rafale)",

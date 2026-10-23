@@ -49,6 +49,8 @@ export interface Sons {
    * `null` l'éteint (descente, mort, killcam). Plusieurs appels par seconde sont attendus : seule la hauteur change.
    */
   moteur(vitesse: number | null): void;
+  /** Crissement des pneus en dérapage : intensité 0 (silence) à 1 ; la boucle ne tourne que tant qu'elle est > 0. */
+  derapage(intensite: number): void;
   /** Choc de voiture ; `force` de 0 (frôlement) à 1 (plein fouet). */
   choc(force: number): void;
   /** Coup de klaxon (facultatif, réservé au conducteur). */
@@ -59,6 +61,20 @@ export interface Sons {
   tole(): void;
   /** Explosion d'une voiture (v3 §4) ; `position` pour l'atténuer avec la distance. */
   explosion(position?: PositionSon): void;
+  /** (v4) Sirène d'alerte d'un événement : klaxon furieux pour le Truck Muche, rugissement métallique pour le tigre robot. */
+  alerte(genre: "truck" | "tigre"): void;
+  /** (v4) Charge du laser des yeux du tigre (montée aiguë) ; `position` = yeux du tigre. */
+  laser(position?: PositionSon): void;
+  /** (v4) Explosion d'un monstre (impact du laser, mort du tigre, titan détruit) ; `force` 0..1. */
+  explosionMonstre(force: number, position?: PositionSon): void;
+  /** (v4) Tir du canon du titan (le mien, ou celui du pilote à `position`). */
+  canon(position?: PositionSon): void;
+  /** (v4) Klaxon de camion (trompe à air, accord de trois notes) du Truck Muche fou, entendu de loin dans toute l'arène. */
+  klaxonCamion(position?: PositionSon): void;
+  /** (v4) Bâtiment qui s'effondre (grondement long et fracas). */
+  effondrement(position?: PositionSon): void;
+  /** (v4) Pas lourd du tigre ou du titan. */
+  pasLourd(position?: PositionSon): void;
   dispose(): void;
 }
 
@@ -240,6 +256,8 @@ export function creerSons(): Sons {
       .then((buf) => { if (!fini) moteurBuf = buf; })
       .catch(() => { /* le moteur synthétisé reste */ });
   };
+  /** crissement des pneus (bruit en boucle, passe-bande aigu) */
+  let crissement: { src: AudioBufferSourceNode; gain: GainNode; filtre: BiquadFilterNode } | null = null;
 
   const ouvrir = () => {
     if (ctx || fini || typeof window === "undefined") return;
@@ -569,6 +587,37 @@ export function creerSons(): Sons {
       m.filtre.frequency.setTargetAtTime(600 + 1800 * k, now, 0.1);
       m.gain.gain.setTargetAtTime(GAIN_MOTEUR_RALENTI + (GAIN_MOTEUR_MAX - GAIN_MOTEUR_RALENTI) * k, now, 0.15);
     },
+    derapage(intensite) {
+      const k = Number.isFinite(intensite) ? Math.min(Math.max(intensite, 0), 1) : 0;
+      if (k <= 0) {
+        if (!crissement) return;
+        const cr = crissement;
+        crissement = null;
+        eteindre(cr.gain, [cr.src], 0.08);
+        return;
+      }
+      if (!crissement && !prete()) return;
+      const c = ctx;
+      if (!c) return;
+      if (!crissement) {
+        const src = c.createBufferSource();
+        src.buffer = bruitBuf;
+        src.loop = true;
+        const filtre = c.createBiquadFilter();
+        filtre.type = "bandpass";
+        filtre.Q.value = 6;
+        const g = c.createGain();
+        g.gain.value = 0.0001;
+        src.connect(filtre);
+        filtre.connect(g);
+        g.connect(master!);
+        src.start(c.currentTime, Math.random() * 0.9);
+        crissement = { src, gain: g, filtre };
+      }
+      const now = c.currentTime;
+      crissement.filtre.frequency.setTargetAtTime(1500 + k * 900, now, 0.05);
+      crissement.gain.gain.setTargetAtTime(0.05 + k * 0.17, now, 0.05);
+    },
     choc(force) {
       if (!prete()) return;
       const t = ctx!.currentTime + 0.001;
@@ -611,6 +660,84 @@ export function creerSons(): Sons {
       ton(master!, t, { dur: 0.32, type: "square", f0: 415, gain: 0.07, att: 0.01 });
       ton(master!, t, { dur: 0.32, type: "square", f0: 523, gain: 0.07, att: 0.01 });
     },
+    alerte(genre) {
+      if (!prete()) return;
+      const t = ctx!.currentTime + 0.001;
+      if (genre === "truck") {
+        // klaxon de camion qui s'emballe : quatre coups, de plus en plus aigus
+        for (let i = 0; i < 4; i++) {
+          ton(master!, t + i * 0.22, { dur: 0.18, type: "sawtooth", f0: 233 + i * 30, gain: 0.09, att: 0.01 });
+          ton(master!, t + i * 0.22, { dur: 0.18, type: "sawtooth", f0: 294 + i * 38, gain: 0.08, att: 0.01 });
+        }
+        return;
+      }
+      // rugissement : grave qui monte puis retombe, grain de bruit, harmonique métallique
+      ton(master!, t, { dur: 1.3, type: "sawtooth", f0: 70, f1: 45, gain: 0.35, att: 0.15 });
+      ton(master!, t, { dur: 1.1, type: "square", f0: 140, f1: 95, gain: 0.08, att: 0.2 });
+      bruit(master!, t, { dur: 1.2, type: "lowpass", f0: 900, f1: 200, q: 1.5, gain: 0.5, att: 0.2 });
+      bruit(master!, t + 0.1, { dur: 0.9, type: "bandpass", f0: 2400, f1: 1300, q: 6, gain: 0.12, att: 0.1 });
+    },
+    laser(position) {
+      if (!prete()) return;
+      const out = sortie(position);
+      const t = ctx!.currentTime + 0.001;
+      ton(out, t, { dur: 1.35, type: "sine", f0: 300, f1: 2200, gain: 0.18, att: 0.3 });
+      ton(out, t, { dur: 1.35, type: "triangle", f0: 305, f1: 2230, gain: 0.08, att: 0.3 });
+    },
+    explosionMonstre(force, position) {
+      if (!prete()) return;
+      const out = sortie(position);
+      const t = ctx!.currentTime + 0.001;
+      const k = Math.min(Math.max(force, 0), 1);
+      bruit(out, t, { dur: 0.5 + 0.9 * k, type: "lowpass", f0: 2500, f1: 90, gain: 0.7 + 0.3 * k });
+      ton(out, t, { dur: 0.6 + 0.8 * k, type: "sine", f0: 90, f1: 28, gain: 0.8 });
+    },
+    canon(position) {
+      if (!prete()) return;
+      const out = sortie(position);
+      const t = ctx!.currentTime + 0.001;
+      bruit(out, t, { dur: 0.16, type: "lowpass", f0: 3200, f1: 300, gain: 0.55 });
+      ton(out, t, { dur: 0.14, type: "square", f0: 160, f1: 70, gain: 0.22 });
+    },
+    klaxonCamion(position) {
+      if (!prete()) return;
+      const c = ctx!;
+      const t = c.currentTime + 0.001;
+      // atténuation douce (on l'entend à 300 m), aigus filtrés avec la distance, panoramique
+      const d = position ? Math.max(position.distance, 1) : 1;
+      const lp = c.createBiquadFilter();
+      lp.type = "lowpass";
+      lp.frequency.value = Math.max(900, 5200 / (1 + d / 120));
+      const g = c.createGain();
+      g.gain.value = Math.max(0.12, 1 / (1 + d / 70));
+      lp.connect(g);
+      if (position && typeof c.createStereoPanner === "function") {
+        const pn = c.createStereoPanner();
+        pn.pan.value = Math.max(-1, Math.min(1, position.pan));
+        g.connect(pn);
+        pn.connect(master!);
+      } else g.connect(master!);
+      // trompe : accord grave et un peu désaccordé, attaque nette, tenue, petite chute de hauteur à la fin
+      for (const [f, gain] of [[185, 0.16], [233, 0.14], [277, 0.11]] as const) {
+        ton(lp, t, { dur: 0.95, type: "sawtooth", f0: f, f1: f * 0.97, gain, att: 0.03 });
+        ton(lp, t, { dur: 0.95, type: "square", f0: f * 1.004, f1: f * 0.975, gain: gain * 0.35, att: 0.03 });
+      }
+    },
+    effondrement(position) {
+      if (!prete()) return;
+      const out = sortie(position);
+      const t = ctx!.currentTime + 0.001;
+      bruit(out, t, { dur: 1.6, type: "lowpass", f0: 1400, f1: 70, gain: 0.8, att: 0.05 });
+      ton(out, t, { dur: 1.4, type: "sine", f0: 55, f1: 25, gain: 0.7, att: 0.05 });
+      for (let i = 0; i < 4; i++) bruit(out, t + 0.1 + i * 0.18, { dur: 0.12, type: "bandpass", f0: 1800 - i * 250, q: 1.4, gain: 0.25 });
+    },
+    pasLourd(position) {
+      if (!prete()) return;
+      const out = sortie(position);
+      const t = ctx!.currentTime + 0.001;
+      ton(out, t, { dur: 0.35, type: "sine", f0: 60, f1: 32, gain: 0.55 });
+      bruit(out, t, { dur: 0.18, type: "lowpass", f0: 500, f1: 120, gain: 0.3 });
+    },
     dispose() {
       fini = true;
       if (typeof window !== "undefined") for (const g of GESTES) window.removeEventListener(g, reveiller, { capture: true });
@@ -623,6 +750,10 @@ export function creerSons(): Sons {
           try { o.stop(); } catch { /* déjà arrêté */ }
         }
         moteurVoix = null;
+      }
+      if (crissement) {
+        try { crissement.src.stop(); } catch { /* déjà arrêté */ }
+        crissement = null;
       }
       if (souffle) {
         try { souffle.src.stop(); souffle.lfo.stop(); } catch { /* déjà arrêtés */ }

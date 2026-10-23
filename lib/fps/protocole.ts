@@ -7,14 +7,16 @@
  * la même convention que le lacet.
  * Spec : docs/superpowers/specs/2026-10-22-agroparc-fps-design.md (v1), 2026-10-22-arene-v2-design.md (v2),
  * 2026-10-23-arene-hud-design.md (HUD : `absorbe`, `LigneStats`, `vueScores` / `scores`, `serie`),
- * 2026-10-23-arene-v3-design.md (v3 : voitures qui explosent, chat vocal de proximité)
+ * 2026-10-23-arene-v3-design.md (v3 : voitures qui explosent, chat vocal de proximité),
+ * 2026-10-24-arene-evenements-design.md (v4 : Truck Muche fou, tigre robot géant, titan tigre)
  */
 
 /**
  * v2 : équipement, couteau, bouclier, accroupi, Elsa, véhicules, killcam. v3 : voitures touchées et explosions (`tir.voitures`, `voitures`,
- * `explosion`), chat vocal (`voixActif`, `voix`). Client et serveur se déploient ensemble.
+ * `explosion`), chat vocal (`voixActif`, `voix`). v4 : événements (Truck Muche fou, tigre robot géant) et titan tigre piloté. Client et
+ * serveur se déploient ensemble.
  */
-export const VERSION_PROTOCOLE = 3;
+export const VERSION_PROTOCOLE = 4;
 
 export type Vec3 = [number, number, number];
 
@@ -74,7 +76,7 @@ export type Siege = 0 | 1 | 2 | 3;
 export const SIEGES_PAR_VEHICULE = 4;
 
 /** Comment un joueur est mort. `arme` d'un message `mort` n'a de sens que pour la cause "arme". */
-export type CauseMort = "arme" | "ecrase_pnj" | "ecrase_vehicule" | "explosion";
+export type CauseMort = "arme" | "ecrase_pnj" | "ecrase_vehicule" | "explosion" | "truck_fou" | "tigre_robot" | "titan";
 
 /** Voiture de la circulation (`pnj`, indice dans `flotte`) ou voiture conduisible (`vehicule`, id du garage). */
 export type GenreVoiture = "pnj" | "vehicule";
@@ -88,6 +90,11 @@ export interface EtatVoitureMsg { genre: GenreVoiture; id: number; etat: "fumee"
  * complètes (candidats ICE inclus, pas de « trickle »), ou `fin` (connexion fermée).
  */
 export type SignalVoix = { type: "offre" | "reponse"; sdp: string } | { type: "fin" };
+/** Événements de l'arène (v4) : un à la fois, annoncés à tous quelques secondes avant. */
+export type TypeEvenement = "truck" | "tigre";
+/** Cibles réservées des tirs (champ `cible` de `tir.touches` et de `canon.touches`) : le boss et le titan (jamais un id de joueur). */
+export const CIBLE_TIGRE = "tigre";
+export const CIBLE_TITAN = "titan";
 
 // ---------- données publiques ----------
 
@@ -132,6 +139,8 @@ export interface EtatJoueurSnap {
   glisse?: boolean;
   /** assis dans un véhicule : `p` est alors la position du siège */
   vehicule?: OccupationVehicule;
+  /** pilote du titan tigre (v3) : `p` = pieds du titan ; avatar ni dessiné ni touchable (c'est le titan qu'on vise) */
+  titan?: boolean;
   vivant: boolean;
   /** invulnérable (protection d'apparition) */
   protege: boolean;
@@ -141,6 +150,21 @@ export interface EtatJoueurSnap {
 export interface VehiculeSnap { id: number; p: Vec3; cap: number; v: number }
 /** Occupation des sièges (diffusée au changement, et envoyée au seul joueur concerné à `rejoindre`), `null` = siège libre. */
 export interface InfoVehicule { id: number; sieges: (string | null)[] }
+
+/** Truck Muche fou (v3) : position, cap et vitesse signée le long du cap. */
+export interface TruckSnap { p: Vec3; cap: number; v: number }
+/** Tigre robot géant (boss, v3). `a` = coup de patte armé ou en cours (animation). */
+export interface TigreSnap {
+  p: Vec3; cap: number; v: number; pv: number; pvMax: number;
+  /** attaque en cours : coup de patte, saut (`p[1]` = hauteur du bond), charge (ramassé puis ruée) */
+  a?: "patte" | "saut" | "charge";
+  /** enragé (moins de la moitié de ses PV) */
+  rage?: boolean;
+}
+/** Titan tigre piloté (v3). */
+export interface TitanSnap { pilote: string; p: Vec3; cap: number; v: number; pv: number; pvMax: number }
+/** Monstres présents (snap des joueurs en arène). */
+export interface MonstresSnap { truck?: TruckSnap; tigre?: TigreSnap; titan?: TitanSnap }
 
 /** Cadeau d'Elsa. `arme` seulement pour le genre "arme". */
 export interface OffreElsa { id: number; genre: "soin" | "arme"; arme?: ArmeSpecialeId; finT: number }
@@ -242,6 +266,10 @@ export type MessageClient =
   | { t: "siege"; siege: Siege }
   /** État du véhicule, ≈ 30 Hz, envoyé par le CONDUCTEUR seulement (remplace `etat`). */
   | { t: "conduite"; seq: number; vehicule: number; p: Vec3; cap: number; v: number; lacet: number; tangage: number }
+  /** Pilote du titan (v3), ≈ 30 Hz : remplace `etat`. Le serveur borne la vitesse et repousse hors des bâtiments. */
+  | { t: "pilotage"; seq: number; p: Vec3; cap: number; lacet: number; tangage: number }
+  /** Tir du canon du titan (v3) : un rayon, `touches` = joueurs touchés selon le client. */
+  | { t: "canon"; o: Vec3; d: Vec3; touches: { cible: string; zone: Zone }[] }
   /** Tableau des scores ouvert (Tab maintenu) ou refermé : le serveur n'envoie `scores` qu'aux clients ouverts (HUD §3.5, 1 par 250 ms). */
   | { t: "vueScores"; ouvert: boolean }
   /** Chat vocal activé ou coupé (v3 §5) : diffusé dans `presence` (`voix`). */
@@ -257,7 +285,7 @@ export type MessageServeur =
   /** Liste complète des connectés, renvoyée à chaque changement (arrivée, départ, score, entrée/sortie d'arène). */
   | { t: "presence"; joueurs: JoueurPublic[] }
   /** Instantané des joueurs en jeu ; `ts` = horodatage serveur ms. `vehicules` = véhicules conduisibles. */
-  | { t: "snap"; ts: number; j: EtatJoueurSnap[]; vehicules?: VehiculeSnap[] }
+  | { t: "snap"; ts: number; j: EtatJoueurSnap[]; vehicules?: VehiculeSnap[]; monstres?: MonstresSnap }
   /**
    * Apparition (ou réapparition) d'un joueur : le client concerné SE TÉLÉPORTE à `p`. `arme` = arme en main.
    * Après `rejoindre`, le serveur envoie dans l'ordre : `apparition`, `presence` (à tous), puis au seul joueur `elsa{evenement:"etat"}` et `sieges`
@@ -310,6 +338,30 @@ export type MessageServeur =
   | { t: "explosion"; genre: GenreVoiture; id: number; p: Vec3; par: string }
   /** Signal WebRTC du joueur `de` (v3 §5). */
   | { t: "voix"; de: string; s: SignalVoix }
+  /**
+   * Événement (v4) : `annonce` (bandeau, `debutT` = début), `debut`, `fin` (`raison` : temps écoulé ou tigre vaincu, `par` = celui qui
+   * l'a achevé). `finT` = fin prévue (horodatage serveur). `etat` = synchronisation privée d'un événement en cours, envoyée à `rejoindre`.
+   */
+  | { t: "evenement"; type: TypeEvenement; phase: "annonce" | "debut" | "fin" | "etat"; debutT: number; finT: number; raison?: "temps" | "vaincu"; par?: string }
+  /** Laser des yeux du tigre (v4) : visée affichée tout de suite, impact à `tirT` sur un disque autour de `vers`. */
+  | { t: "laser"; de: Vec3; vers: Vec3; rayon: number; tirT: number }
+  /**
+   * Bâtiments écrasés (v3) : `detruits` = ids (index de `scene.json`) effondrés en entier, `breches` = [id, x, z, r] (m, au décimètre) des
+   * brèches arrachées aux bâtiments encore debout. `complet` : état entier qui remplace le précédent (listes vides = tout est relevé, nouveau
+   * match ; envoyé aussi à `rejoindre`), sinon les seuls changements, animés (effondrement, brèche qui s'ouvre, débris).
+   */
+  | { t: "batiments"; complet: boolean; detruits: number[]; breches: [number, number, number, number][] }
+  /** Onde de choc annoncée (saut du tigre) : anneau au sol tout de suite, impact à `tirT` sur un disque (les joueurs au sol). */
+  | { t: "onde"; p: Vec3; rayon: number; tirT: number }
+  /** Explosion d'un monstre (mort du tigre, titan détruit, impact du laser) : effet seulement. */
+  | { t: "explosionMonstre"; p: Vec3; rayon: number }
+  /**
+   * Titan tigre (v4) : `debut` (le pilote passe aux commandes à `p`), `fin` (`p` = où le pilote reprend pied ; raison : détruit, durée
+   * écoulée, pilote parti ; `par` = qui l'a détruit). `etat` = synchronisation privée envoyée à `rejoindre`.
+   */
+  | { t: "titan"; phase: "debut" | "fin" | "etat"; pilote: string; p: Vec3; cap: number; finT: number; raison?: "detruit" | "temps" | "depart"; par?: string }
+  /** Tir du canon du titan (pour les traçantes et le son des autres ; pas renvoyé au pilote). */
+  | { t: "canon"; id: string; o: Vec3; d: Vec3 }
   | { t: "pong"; t0: number; maintenant: number }
   | { t: "erreur"; code: "plein" | "version" | "pseudo" | "flood"; message: string };
 
@@ -401,7 +453,11 @@ export function silhouetteDe(accroupi: boolean | undefined): Silhouette {
 /** Hauteur de l'œil assis dans un véhicule (m au-dessus de `p`, la position du siège). */
 export const OEIL_SIEGE = 1.3;
 
-/** Hauteur de l'œil d'un joueur : assis (`vehicule` défini), accroupi ou debout. SEULE source pour caméra, serveur, killcam et visibilité. */
-export function oeilDe(e: { accroupi?: boolean; vehicule?: unknown }): number {
+/** Hauteur de l'œil du pilote du titan tigre (m au-dessus des pieds du titan). */
+export const OEIL_TITAN = 9.5;
+
+/** Hauteur de l'œil d'un joueur : pilote du titan, assis (`vehicule` défini), accroupi ou debout. SEULE source pour caméra, serveur, killcam et visibilité. */
+export function oeilDe(e: { accroupi?: boolean; vehicule?: unknown; titan?: boolean }): number {
+  if (e.titan) return OEIL_TITAN;
   return e.vehicule ? OEIL_SIEGE : silhouetteDe(e.accroupi).oeil;
 }

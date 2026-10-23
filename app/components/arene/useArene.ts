@@ -212,6 +212,22 @@ export function useArene(pseudo: string, jeuRef: MutableRefObject<JeuHandle | nu
             annoncer(`${j?.pseudo ?? "Un agent"} a pris le cadeau d'Elsa`, "elsa");
           }
           break;
+        case "evenement": {
+          // le bandeau du HUD lit l'état dans le jeu ; ici, les annonces du fil et de la région vive
+          const nom = (id?: string) => joueursRef.current.find((x) => x.id === id)?.pseudo ?? "Un agent";
+          if (m.phase === "annonce") annoncer(m.type === "truck" ? "Le Truck Muche est devenu fou !" : "Un tigre robot géant attaque Agroparc !", "info");
+          else if (m.phase === "fin" && m.type === "tigre" && m.raison === "vaincu") annoncer(`${nom(m.par)} a abattu le tigre robot !`, "info");
+          else if (m.phase === "fin" && m.type === "tigre") annoncer("Le tigre robot a quitté Agroparc", "info");
+          else if (m.phase === "fin" && m.type === "truck") annoncer("Le Truck Muche s'est calmé", "info");
+          break;
+        }
+        case "titan": {
+          const nom = (id?: string) => joueursRef.current.find((x) => x.id === id)?.pseudo ?? "Un agent";
+          if (m.phase === "debut") annoncer(m.pilote === monIdRef.current ? "Tu pilotes le TITAN TIGRE !" : `${nom(m.pilote)} pilote le TITAN TIGRE !`, "info");
+          else if (m.phase === "fin" && m.raison === "detruit") annoncer(`${nom(m.par)} a détruit le titan de ${nom(m.pilote)} !`, "info");
+          else if (m.phase === "fin" && m.raison === "temps") annoncer("Le titan tigre s'éteint", "info");
+          break;
+        }
         case "sieges":
           setSieges(m.vehicules);
           break;

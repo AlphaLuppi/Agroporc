@@ -27,15 +27,18 @@
  */
 import * as THREE from "three";
 import type { SceneData } from "../agroparc3d/types";
-import { C, construireDecor } from "../agroparc3d/decor";
-import { construireMonde, type Monde } from "./collision";
+import { C, construireDecor, creerEtatDestruction } from "../agroparc3d/decor";
+import { construireMonde, detruireBatiment, normaleImpact, poserBreche, releverBatiment, type Creux, type Monde } from "./collision";
+import { creerImpactsBalles } from "./rendu-impacts";
+import { creerDebris } from "./rendu-debris";
+import { creerTracesPneus, glissementLateral, rouesArriere } from "./rendu-traces";
 import { construireCircuits, flotte } from "./circulation";
 import { coteMurDe, etape, etatInitial, hauteurOeil, postureDe, type Entrees, type EtatMouvement } from "./mouvement";
 import { COUTEAU, STATS, degatsPlomb, delaiRecul, devier, directionsTir, dispersionTir, niveauZoomDefaut, niveauxZoom, retourRecul, vitesseArme } from "./armes";
 import { tracer, type Cible } from "./tir";
 import { trouverCibleCouteau } from "./melee";
 import {
-  JEU, OEIL_SIEGE, SILHOUETTE, oeilDe,
+  CIBLE_TIGRE, CIBLE_TITAN, JEU, OEIL_SIEGE, OEIL_TITAN, SILHOUETTE, oeilDe,
   type ArmeFeuId, type ArmeId, type EtatJoueurSnap, type JoueurPublic, type MessageServeur, type Siege, type Slot, type Vec3, type VehiculeSnap, type Zone,
 } from "./protocole";
 import type { EquipementJeu, HudEtat, HudLive, JeuCallbacks, JeuHandle } from "./jeu-types";
@@ -61,12 +64,15 @@ import { CONDUCTEUR_TIRE } from "./garage";
 import type { EtatVehicule } from "./vehicule";
 import { VisibilitePseudos, type JoueurVisible } from "./visibilite";
 import { placeTruck, ROND_POINT, EMPLACEMENTS_VOITURES } from "./zones";
+import { ControleurTitan, MondeMonstres } from "./jeu-monstres";
+import { ECHELLE_TIGRE, TITAN, toucheTigre } from "./monstres";
+import { creerRenduMonstres } from "./rendu-monstres";
 
 // ---------------------------------------------------------------------------------------------
 // Contrat avec l'hôte
 // ---------------------------------------------------------------------------------------------
 
-export type { EquipementJeu, HudEtat, HudLive, JeuCallbacks, JeuEvenement, JeuHandle } from "./jeu-types";
+export type { EquipementJeu, EtatMonstresHud, HudEtat, HudLive, JeuCallbacks, JeuEvenement, JeuHandle } from "./jeu-types";
 
 // ---------------------------------------------------------------------------------------------
 // Réglages
@@ -98,6 +104,14 @@ const CHOC_SEUIL = 2;
 /** Explosion d'une voiture : la caméra tremble en dessous de cette distance (m), d'autant plus fort qu'on est près (roulis, rad). */
 const SECOUSSE_EXPLOSION_M = 30;
 const SECOUSSE_EXPLOSION = 0.09;
+/** (v4) Foulée (m) d'un pas lourd du tigre robot et du titan, et distance (m) à laquelle une explosion de monstre secoue la caméra. */
+const FOULEE_LOURDE_M = 4.5;
+const SECOUSSE_MONSTRE_M = 40;
+/** (v3) Durée (s) de l'effondrement d'un bâtiment et intervalle (s) entre deux coups de klaxon du Truck Muche fou. */
+const DUREE_EFFONDREMENT_S = 1.1;
+/** Durée (s) de l'ouverture animée d'une brèche. */
+const DUREE_BRECHE_S = 0.5;
+const KLAXON_TRUCK_S = { min: 2.2, max: 3.6 } as const;
 
 function lireSensibilite(): number {
   try {
@@ -149,7 +163,33 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
   scene.add(camera);
   const decor = new THREE.Group();
   scene.add(decor);
-  construireDecor(decor, data, { fantomes: false });
+  // bâtiments effondrables (v3) : le tigre robot et le titan les écrasent ; l'effondrement est animé par le nuanceur
+  const destruction = creerEtatDestruction(data.buildings.length);
+  construireDecor(decor, data, { fantomes: false, destruction });
+  /** effondrements en cours : id → instant (s, horloge locale) du début */
+  const effondrements = new Map<number, number>();
+  /** brèches qui s'ouvrent : id → instant du début et cercles de départ et d'arrivée (le rayon grandit en `DUREE_BRECHE_S`) */
+  const ouvertures = new Map<number, { t0: number; de: Creux; vers: Creux }>();
+  let sonBrecheT = -Infinity;
+  const debris = creerDebris(scene, C.cyan);
+  /** demi-diagonale de la boîte d'une emprise (m) */
+  const emprise = (r: readonly (readonly [number, number])[]) => {
+    let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+    for (const [x, z] of r) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z); }
+    return Math.hypot(x1 - x0, z1 - z0) / 2;
+  };
+  const impactsBalles = creerImpactsBalles(scene);
+  // traces de pneus des voitures et du Truck fou qui dérapent (v3)
+  const tracesPneus = creerTracesPneus(scene);
+  const precedentsTraces = new Map<string, { x: number; z: number }>();
+  /** Une image d'un véhicule : glisse s'il est imposé (`force`), sinon si sa vitesse latérale mesurée dépasse 3 m/s à plus de 6 m/s. */
+  function suivreTraces(cle: string, p: Vec3, cap: number, v: number, dt: number, demiVoie: number, recul: number, force?: boolean) {
+    const av = precedentsTraces.get(cle);
+    precedentsTraces.set(cle, { x: p[0], z: p[2] });
+    let glisse = force ?? false;
+    if (force === undefined && av && dt > 0) glisse = Math.abs(v) > 6 && glissementLateral(cap, p[0] - av.x, p[2] - av.z, dt) > 3;
+    tracesPneus.roues(cle, rouesArriere(p, cap, demiVoie, recul), glisse && p[1] < 0.6);
+  }
   const effets = creerEffets(scene);
   const post = creerPostTraitement(renderer, scene, camera);
   const sons = creerSons();
@@ -167,6 +207,16 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
   const suiviRadar = new SuiviRadar(monde);
   const kc = new ControleurKillcam();
   const vehicule = new ControleurVehicule(monde);
+  // ---------- événements (v3) : Truck Muche fou, tigre robot, titan tigre ----------
+  const jm = new MondeMonstres();
+  const rm = creerRenduMonstres(scene);
+  const titan = new ControleurTitan();
+  /** monstres interpolés de l'image (cibles des tirs, rendu) */
+  let monstresImage: ReturnType<MondeMonstres["a"]> = {};
+  let distTigre = 0;
+  /** s avant le prochain coup de klaxon du Truck Muche fou */
+  let klaxonDans = 0.6;
+  let distTitan = 0;
 
   // ---------- état du joueur ----------
   const [cx, cz] = ROND_POINT.centre;
@@ -244,6 +294,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
   let tirPresse = -Infinity;
   let tirConsomme = true;
   let sautDemande = false;
+  /** (v3) Maj pressée : dash du titan */
+  let dashDemande = false;
   /** crochet de test : joue sans pointer lock (navigateur sans écran) */
   let forceActif = false;
 
@@ -285,6 +337,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
   const assisSiege = (): Siege | null => vehicule.actif()?.siege ?? null;
   const conducteur = () => assisSiege() === 0;
   const tireInterdit = () => conducteur() && !CONDUCTEUR_TIRE;
+  /** (v3) je pilote le titan tigre */
+  const pilote = () => titan.actif();
   const vitesseH = () => Math.hypot(moi.v[0], moi.v[2]);
   const peutAgir = () => apparu && vivant;
   /** killcam en cours : rien de ce que je fais n'a de sens (mort), les effets en direct sont coupés pendant le rejeu */
@@ -342,10 +396,22 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
   function cibles(): Cible[] {
     const r: Cible[] = [];
     for (const [id, e] of etats) {
-      if (id === client.id) continue;
+      if (id === client.id || e.titan) continue;
       r.push({ id, p: e.p, vivant: e.vivant, accroupi: !!e.accroupi || !!e.vehicule });
     }
     return r;
+  }
+
+  /**
+   * (v3) Rayon de tir pour les EFFETS : `tracer` (joueurs, murs, toits) complété par le sol (y = 0), que `tracer` ne connaît pas : la
+   * balle qui part vers le bas s'arrête au sol, avec son étincelle et sa trace. Les touches déclarées au serveur ne changent pas.
+   */
+  function tracerEffets(o: Vec3, d: Vec3, portee: number, liste: ReturnType<typeof cibles>, ignore: string) {
+    const imp = tracer(monde, o, d, portee, liste, ignore);
+    if (imp.cible || d[1] >= -1e-4 || o[1] <= 0) return imp;
+    const tSol = -o[1] / d[1];
+    if (tSol >= imp.distance) return imp;
+    return { cible: null, zone: null, distance: tSol, point: [o[0] + d[0] * tSol, 0, o[2] + d[2] * tSol] as Vec3 };
   }
 
   const _bouche = new THREE.Vector3();
@@ -367,7 +433,44 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
    * Un tir (aucune dispersion, v2 §13.1 : gerbe fixe pour le pompe), pile dans l'axe de la vue (§13.2.4). `_force` : outil de test (ignore la
    * souris). Renvoie vrai si le tir est parti. Le retour de touche (son, marqueur, giclée) attend le `degats` du serveur (§13.2.1).
    */
+  /** (v3) Monstre touché par le rayon avant `limite` : le tigre, ou le titan d'un autre pilote. */
+  function toucheMonstre(o: Vec3, d: Vec3, limite: number): { cible: string; zone: Zone; distance: number } | null {
+    let r: { cible: string; zone: Zone; distance: number } | null = null;
+    const tg = monstresImage.tigre;
+    if (tg) {
+      const h = toucheTigre(o, d, limite, tg.p, tg.cap, ECHELLE_TIGRE, monde);
+      if (h) r = { cible: CIBLE_TIGRE, ...h };
+    }
+    const ti = monstresImage.titan;
+    if (ti && ti.pilote !== client.id) {
+      const h = toucheTigre(o, d, r ? r.distance : limite, ti.p, ti.cap, TITAN.echelle, monde);
+      if (h) r = { cible: CIBLE_TITAN, ...h };
+    }
+    return r;
+  }
+
+  /** (v3) Canon du titan : rayon unique, cadence propre, déclaré au serveur (`canon`), qui le revalide. */
+  function tirerCanon(): boolean {
+    if (t < prochainDe("couteau") || !peutAgir() || entracte) return false;
+    // vue à la 1ʳᵉ personne depuis le cockpit : le canon tire dans l'axe du réticule
+    const o = oeil();
+    const d = directionVisee(lacet, tangage, 0);
+    const imp = tracerEffets(o, d, TITAN.canon.portee, cibles(), client.id ?? "");
+    const touches: { cible: string; zone: Zone }[] = imp.cible && imp.zone ? [{ cible: imp.cible, zone: imp.zone }] : [];
+    client.envoyer({ t: "canon", o, d, touches });
+    effets.traçante([o[0] + d[0] * 2, o[1] - 0.9, o[2] + d[2] * 2], imp.point, "minigun");
+    if (!imp.cible && imp.distance < TITAN.canon.portee - 0.01) {
+      effets.impact(imp.point, [-d[0], -d[1], -d[2]], couleurMoi());
+      impactsBalles.ajouter(imp.point, normaleImpact(monde, imp.point, o));
+    }
+    prochains.set("couteau", t + TITAN.canon.cadenceS);
+    sons.canon();
+    kick += 0.012;
+    return true;
+  }
+
   function tirer(_force = false): boolean {
+    if (pilote()) return tirerCanon();
     if (!peutAgir() || entracte || enKillcam() || tireInterdit()) return false;
     if (armes.degainage(ms())) return false;
     const arme = armes.armeEnMain();
@@ -397,7 +500,16 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
       : [_bouche.x, _bouche.y, _bouche.z];
     let impactsAffiches = 0;
     dirs.forEach((d, i) => {
-      const imp = tracer(monde, o, d, Math.min(a.portee, PORTEE_EFFETS_M), liste, client.id ?? "");
+      const imp = tracerEffets(o, d, Math.min(a.portee, PORTEE_EFFETS_M), liste, client.id ?? "");
+      // (v3) le tigre robot ou un titan devant le premier joueur / mur touché
+      const monstre = toucheMonstre(o, d, imp.distance);
+      if (monstre) {
+        const fin: Vec3 = [o[0] + d[0] * monstre.distance, o[1] + d[1] * monstre.distance, o[2] + d[2] * monstre.distance];
+        effets.traçante(depart, fin, arme);
+        touchesDecl.push({ cible: monstre.cible, zone: monstre.zone, plomb: i });
+        if (impactsAffiches < 5) { impactsAffiches++; effets.impact(fin, [-d[0], -d[1], -d[2]], "#ffb347"); }
+        return;
+      }
       // une voiture plus proche que le joueur (ou le mur) visé arrête la balle (v3 §4) ; l'occupant d'une voiture reste touchable à travers elle
       const v = mondeJeu.impactVoiture(o, d, imp.distance, tsVoitures, vehiculesVus, maVoiture);
       const occupantDe = (vid: number) => !!imp.cible && etats.get(imp.cible)?.vehicule?.id === vid;
@@ -423,6 +535,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
       } else if (imp.distance < a.portee - 0.01 && impactsAffiches < 5) {
         impactsAffiches++;
         effets.impact(fin, [-d[0], -d[1], -d[2]], couleurMoi());
+        // trace durable (20 s) seulement sur un mur ou un toit (pas en l'air au bout de la portée)
+        if (imp.distance < Math.min(a.portee, PORTEE_EFFETS_M) - 0.01) impactsBalles.ajouter(fin, normaleImpact(monde, fin, o));
       }
     });
 
@@ -458,7 +572,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
     client.envoyer({ t: "main", slot: armes.slotActif() });
     viseMaintenu = viseMaintenu && armes.armeEnMain() !== "couteau";
   }
-  const peutChangerArme = () => peutAgir() && !enKillcam();
+  const peutChangerArme = () => peutAgir() && !enKillcam() && !pilote();
   function changerSlot(slot: Slot) {
     if (!peutChangerArme()) return;
     apresChangementArme(armes.equiper(slot, ms()));
@@ -486,7 +600,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
 
   /** E : monter dans la voiture à portée, ou en descendre. Le serveur attribue le siège ; on attend sa réponse (≤ 1 s). */
   function interagir() {
-    if (!peutAgir() || enKillcam() || embarquementFin > 0) return;
+    if (!peutAgir() || enKillcam() || embarquementFin > 0 || pilote()) return;
     if (vehicule.actif()) {
       client.envoyer({ t: "descendre" });
       attendreReponseVehicule();
@@ -532,11 +646,40 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
     vehicule.sortir();
     embarquementFin = 0;
     sons.moteur(null);
+    sons.derapage(0);
     if (etaitAssis || p) {
       // à la descente l'œil part de la hauteur du siège et se relève jusqu'à 1,95 m (lissage)
       moi = etatInitial(p ?? [moi.p[0], moi.p[1], moi.p[2]]);
       hauteurOeilLissee = OEIL_SIEGE;
     }
+  }
+
+  // ---------- titan (v3) ----------
+  function entrerTitan(p: Vec3, cap: number) {
+    quitterVehicule();
+    titan.entrer(p, cap);
+    moi = etatInitial([p[0], 0, p[2]]);
+    lacet = cap;
+    tangage = 0;
+    viseMaintenu = false;
+    accroupiBascTenu = false;
+    sons.mur(false);
+    sons.glisse(false);
+  }
+  function quitterTitan(p: Vec3) {
+    if (!titan.actif()) return;
+    titan.sortir();
+    // l'œil redescend de la tête du titan jusqu'à hauteur d'homme (lissage)
+    moi = etatInitial([p[0], 0, p[2]]);
+    hauteurOeilLissee = OEIL_TITAN;
+    prochains.clear();
+  }
+
+  /** Position d'un son distant par rapport à ma vue. */
+  function positionSon(p: Vec3) {
+    const cam = oeil();
+    const dx = p[0] - cam[0], dz = p[2] - cam[2];
+    return { distance: Math.hypot(dx, p[1] - cam[1], dz), pan: panSon(lacet, dx, dz) };
   }
 
   // ---------- messages du serveur ----------
@@ -588,6 +731,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
   function apparaitre(m: Extract<MessageServeur, { t: "apparition" }>) {
     terminerKillcam();
     quitterVehicule();
+    titan.sortir();
     moi = etatInitial(m.p);
     lacet = m.lacet;
     tangage = 0;
@@ -652,6 +796,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
         interp.ajouter({ ts: m.ts, j: m.j });
         kc.alimenter(m.ts, m.j, m.vehicules);
         mondeJeu.alimenterVehicules(m.ts, m.vehicules);
+        jm.alimenter(m.ts, m.monstres);
         const s = m.j.find((x) => x.id === client.id);
         if (s && vivant) {
           // des PV qui remontent sans cadeau d'Elsa : la régénération tourne (le délai de 5 s est donc écoulé)
@@ -684,7 +829,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
         const vus = [...vehiculesAffichees().values()];
         const tsV = client.maintenantServeur();
         for (const d of m.d) {
-          const imp = tracer(monde, m.o, d, Math.min(a.portee, PORTEE_EFFETS_M), liste, m.id);
+          const imp = tracerEffets(m.o, d, Math.min(a.portee, PORTEE_EFFETS_M), liste, m.id);
           const v = mondeJeu.impactVoiture(m.o, d, imp.distance, tsV, vus, etats.get(m.id)?.vehicule?.id ?? null);
           if (v && !imp.cible) {
             const fin: Vec3 = [m.o[0] + d[0] * v.distance, m.o[1] + d[1] * v.distance, m.o[2] + d[2] * v.distance];
@@ -693,7 +838,10 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
             continue;
           }
           effets.traçante(depart, imp.point, m.arme);
-          if (!imp.cible && imp.distance < a.portee - 0.01) effets.impact(imp.point, [-d[0], -d[1], -d[2]], couleurDe(m.id));
+          if (!imp.cible && imp.distance < a.portee - 0.01) {
+            effets.impact(imp.point, [-d[0], -d[1], -d[2]], couleurDe(m.id));
+            if (imp.distance < Math.min(a.portee, PORTEE_EFFETS_M) - 0.01) impactsBalles.ajouter(imp.point, normaleImpact(monde, imp.point, m.o));
+          }
         }
         avatar?.tirer();
         const cam = oeil();
@@ -751,6 +899,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
           vehicule.sortir();
           embarquementFin = 0;
           sons.moteur(null);
+          sons.derapage(0);
           sons.mur(false);
           kc.surMort(m, client.id);
           cb.evenement({ type: "mort", par: m.par, arme: m.arme, cause: m.cause, zone: m.zone, delai: m.delai, ts: m.ts, tueur: m.tueur });
@@ -802,6 +951,88 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
         // sortie volontaire ou expulsion (nouveau match) : on se téléporte, sans toucher aux munitions
         quitterVehicule(m.p);
         break;
+      case "evenement":
+        jm.majEvenement(m);
+        if (m.phase === "annonce") sons.alerte(m.type);
+        break;
+      case "laser":
+        jm.ajouterLaser(m);
+        sons.laser(positionSon(m.de));
+        break;
+      case "batiments": {
+        if (m.complet) {
+          // état entier (nouveau match, arrivée) : ce qui n'y figure pas est debout et intact, sans animation
+          const ruines = new Set(m.detruits);
+          const br = new Map(m.breches.map((x) => [x[0], x] as const));
+          for (let id = 0; id < data.buildings.length; id++) {
+            const pr = monde.prismes[id];
+            if (!pr) continue;
+            effondrements.delete(id);
+            ouvertures.delete(id);
+            if (ruines.has(id)) { detruireBatiment(monde, id); destruction.poser(id, 1); }
+            else if ((pr.h === 0 && pr.hOrigine > 0) || pr.creux) { releverBatiment(monde, id); destruction.poser(id, 0); }
+            const x = br.get(id);
+            if (x && !ruines.has(id)) { poserBreche(monde, id, { x: x[1], z: x[2], r: x[3] }); destruction.breche(id, x[1], x[2], x[3]); }
+            else destruction.breche(id, 0, 0, 0);
+          }
+          if (!m.detruits.length && !m.breches.length) { impactsBalles.vider(); tracesPneus.vider(); debris.vider(); }
+          break;
+        }
+        // changements : effondrement complet ou brèche qui s'ouvre, animés, avec débris
+        for (const id of m.detruits) {
+          const pr = monde.prismes[id];
+          if (!pr || pr.h === 0) continue;
+          detruireBatiment(monde, id);
+          ouvertures.delete(id);
+          if (enReplay) { destruction.poser(id, 1); continue; }
+          effondrements.set(id, t);
+          const b = data.buildings[id];
+          const r = emprise(b.r);
+          rm.explosion([b.c[0], b.h * 0.4, b.c[1]], Math.min(14, 4 + b.h * 0.6));
+          sons.effondrement(positionSon([b.c[0], 0, b.c[1]]));
+          debris.projeter(b.c[0], b.c[1], r * 0.8, b.h * 0.7, Math.round(Math.min(40, 12 + r * 1.5)));
+        }
+        for (const [id, x, z, r] of m.breches) {
+          const pr = monde.prismes[id];
+          if (!pr || pr.h === 0) continue;
+          const avant = pr.creux;
+          poserBreche(monde, id, { x, z, r });
+          if (enReplay) { destruction.breche(id, x, z, r); continue; }
+          ouvertures.set(id, { t0: t, de: avant ? { ...avant } : { x, z, r: 0 }, vers: { x, z, r } });
+          const neuf = r - (avant?.r ?? 0);
+          debris.projeter(x, z, Math.min(r, 8), pr.hOrigine * 0.6, Math.round(Math.min(26, 5 + neuf * 2)), avant?.x, avant?.z);
+          if (t - sonBrecheT > 0.4) { sonBrecheT = t; sons.effondrement(positionSon([x, 0, z])); }
+        }
+        break;
+      }
+      case "onde":
+        // saut du tigre : anneau d'impact au sol, rugissement
+        jm.ajouterOnde(m);
+        sons.alerte("tigre");
+        break;
+      case "explosionMonstre": {
+        rm.explosion(m.p, m.rayon);
+        const pos = positionSon(m.p);
+        sons.explosionMonstre(Math.min(1, m.rayon / 9), pos);
+        const portee = Math.max(SECOUSSE_MONSTRE_M, m.rayon * 3);
+        if (pos.distance < portee && !reduit) secousse = 0.07 * (1 - pos.distance / portee) * (Math.random() < 0.5 ? -1 : 1);
+        break;
+      }
+      case "titan":
+        jm.majTitan(m);
+        if (m.pilote === client.id) {
+          if (m.phase === "fin") quitterTitan(m.p);
+          else if (vivant) entrerTitan(m.p, m.cap);
+        }
+        break;
+      case "canon": {
+        if (m.id === client.id || enReplay) break;
+        const imp = tracerEffets(m.o, m.d, TITAN.canon.portee, cibles(), m.id);
+        effets.traçante([m.o[0], m.o[1] - 0.9, m.o[2]], imp.point, "minigun");
+        if (!imp.cible && imp.distance < TITAN.canon.portee - 0.01) impactsBalles.ajouter(imp.point, normaleImpact(monde, imp.point, m.o));
+        sons.canon(positionSon(m.o));
+        break;
+      }
       default:
         break;
     }
@@ -815,6 +1046,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
     for (const a of index.get(code) ?? []) {
       switch (a) {
         case "saut": sautDemande = true; break;
+        case "sprint": dashDemande = true; break;
         case "recharger": demarrerRecharge(); break;
         case "tir": if (vivant) { tirMaintenu = true; tirPresse = t; tirConsomme = false; } break;
         case "visee": viseMaintenu = true; break;
@@ -1014,6 +1246,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
       voix: !voix.actif() ? "" : voix.emet() ? "emet" : "pret",
       voixParlants: voix.actif() ? voix.parlants().map(pseudoDe).join(" · ") : "",
       killcamPhase: phase === "rejeu" || phase === "carte" ? phase : "",
+      titan: pilote(),
     };
   }
   function emettreHud(force = false) {
@@ -1119,17 +1352,17 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
     etatsRendu = enReplay && joueursRejouesCache ? joueursRejouesCache : etats;
     // pendant le rejeu, notre propre avatar est dessiné (on se voit mourir) ; sinon jamais
     for (const [id, e] of etatsRendu) {
-      if (id === client.id && !enReplay) continue;
+      if ((id === client.id && !enReplay) || e.titan) continue;
       const d = distants.get(id) ?? creerAvatarDistant(id);
       d.avatar.maj(e, dt);
     }
     for (const id of [...distants.keys()]) {
-      if (!etatsRendu.has(id) || (id === client.id && !enReplay)) retirerAvatar(id);
+      if (!etatsRendu.has(id) || (id === client.id && !enReplay) || etatsRendu.get(id)?.titan) retirerAvatar(id);
     }
     // pseudos : seulement si le joueur est VU (distance, champ de vision, ligne de vue), jamais pendant le rejeu
     listeVisible.length = 0;
     for (const [id, e] of etatsRendu) {
-      if (id === client.id) continue;
+      if (id === client.id || e.titan) continue;
       listeVisible.push({ id, p: e.p, accroupi: !!e.accroupi || !!e.vehicule, vivant: e.vivant });
     }
     const te = dyn.elsaTete();
@@ -1182,6 +1415,54 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
     }
     dyn.majVoituresJoueurs(liste, couleurs);
     dyn.majElsa(mondeJeu.elsa(), t);
+    if (!enReplay) {
+      const mienne = vehicule.estConducteur() ? vehicule.actif()?.vehicule : undefined;
+      for (const v of liste) suivreTraces(`v${v.id}`, v.p, v.cap, v.v, dt, 0.8, 1.5, v.id === mienne ? vehicule.derapage() > 0.15 : undefined);
+    }
+    tracesPneus.maj(dt);
+  }
+
+  /** (v3) Monstres : interpolés comme les joueurs ; mon titan est à l'état local (sans retard). Pas lourds du tigre et du titan. */
+  function majMonstres(dt: number) {
+    const tsServeur = client.maintenantServeur();
+    monstresImage = jm.a(tsServeur - JEU.interpolationMs);
+    const local = titan.etat();
+    if (local && monstresImage.titan && client.id) monstresImage.titan = { ...monstresImage.titan, p: local.p, cap: local.cap, v: local.v };
+    const ti = monstresImage.titan;
+    rm.maj(enReplay ? {} : monstresImage, enReplay ? [] : jm.lasers(tsServeur), t, tsServeur, dt, ti ? couleurDe(ti.pilote) : "#9be9ff", pilote());
+    // Truck Muche fou : coups de klaxon réguliers, entendus de loin
+    const tr = monstresImage.truck;
+    if (tr && !enReplay) suivreTraces("truck", tr.p, tr.cap, tr.v, dt, 1.2, 1.9);
+    if (tr && !enReplay) {
+      klaxonDans -= dt;
+      if (klaxonDans <= 0) {
+        klaxonDans = KLAXON_TRUCK_S.min + Math.random() * (KLAXON_TRUCK_S.max - KLAXON_TRUCK_S.min);
+        sons.klaxonCamion(positionSon(tr.p));
+      }
+    } else klaxonDans = 0.6;
+    // effondrements en cours (le nuanceur écrase la hauteur), traces d'impact
+    for (const [id, t0] of effondrements) {
+      const k = Math.min(1, (t - t0) / DUREE_EFFONDREMENT_S);
+      destruction.poser(id, k * k);
+      if (k >= 1) effondrements.delete(id);
+    }
+    for (const [id, o] of ouvertures) {
+      const k = Math.min(1, (t - o.t0) / DUREE_BRECHE_S);
+      const e = 1 - (1 - k) * (1 - k);
+      destruction.breche(id, o.de.x + (o.vers.x - o.de.x) * e, o.de.z + (o.vers.z - o.de.z) * e, o.de.r + (o.vers.r - o.de.r) * e);
+      if (k >= 1) ouvertures.delete(id);
+    }
+    debris.maj(dt);
+    impactsBalles.maj(dt);
+    const tg = monstresImage.tigre;
+    if (tg && !enReplay) {
+      distTigre += Math.abs(tg.v) * dt;
+      if (distTigre > FOULEE_LOURDE_M) { distTigre = 0; sons.pasLourd(positionSon(tg.p)); }
+    }
+    if (ti && !enReplay) {
+      distTitan += Math.abs(ti.v) * dt;
+      if (distTitan > FOULEE_LOURDE_M * TITAN.echelle) { distTitan = 0; sons.pasLourd(ti.pilote === client.id ? undefined : positionSon(ti.p)); }
+    }
   }
 
   function reconnexion() {
@@ -1197,6 +1478,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
       // aucun état résiduel de l'ancienne session : voiture, killcam, pseudos, radar, Elsa
       terminerKillcam();
       quitterVehicule();
+      titan.sortir();
+      jm.reinitialiser();
       mondeJeu.reinitialiser();
       visib.vider();
       suiviRadar.vider();
@@ -1210,6 +1493,11 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
   function envoyerEtat() {
     if (!apparu || !vivant) return;
     const vue = tangageDeVue(tangage, kick);
+    if (pilote()) {
+      const m = titan.message(lacet, vue);
+      if (m) client.envoyer(m);
+      return;
+    }
     const info = vehicule.actif();
     if (info) {
       if (vehicule.estConducteur()) {
@@ -1262,9 +1550,11 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
       camTangage = -0.5;
     } else if (vivant) {
       const assis = vehicule.actif() !== null;
-      const cible = assis ? OEIL_SIEGE : hauteurOeil(moi.accroupi);
+      const cible = pilote() ? OEIL_TITAN : assis ? OEIL_SIEGE : hauteurOeil(moi.accroupi);
       hauteurOeilLissee += (cible - hauteurOeilLissee) * lissage(LISSAGE_OEIL, dt);
-      const bob = reduit || assis ? 0 : Math.sin(t * 11) * 0.025 * Math.min(1, vh / 9) * (moi.auSol && !moi.glisse ? 1 : 0);
+      const bob = reduit || assis ? 0 : pilote()
+        ? Math.abs(Math.sin(t * 4.2)) * 0.12 * Math.min(1, Math.abs(titan.etat()?.v ?? 0) / 5)
+        : Math.sin(t * 11) * 0.025 * Math.min(1, vh / 9) * (moi.auSol && !moi.glisse ? 1 : 0);
       const o = oeil();
       camera.position.set(o[0], o[1] + bob, o[2]);
       const [rx, ry, rz] = rotationCamera(lacet, tangage, kick, assis ? 0 : moi.inclinaison, secousse);
@@ -1340,8 +1630,22 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
     const info = vehicule.actif();
     // Le fusil à lunette ne vise pas pendant le rechargement : l'arme reste visible et le champ normal
     // (sinon, clic droit tenu, l'arme disparaissait sans lunette ni animation de rechargement).
-    const vise = viseMaintenu && peutAgir() && !!a && !(a.zoom !== null && armes.rechargeEnCours()) && !enKillcam();
-    if (info) {
+    const vise = viseMaintenu && peutAgir() && !!a && !(a.zoom !== null && armes.rechargeEnCours()) && !enKillcam() && !pilote();
+    if (pilote()) {
+      // titan : simulé en local, le joueur est à ses pieds (l'œil est à OEIL_TITAN)
+      const avantDash = titan.etat()?.dash ?? 0, avantSol = titan.etat()?.auSol ?? true;
+      titan.maj(dt, actif ? { avant: en.avant, droite: en.droite, lacet, dash: dashDemande, saut: sautDemande } : { avant: 0, droite: 0, lacet }, monde);
+      dashDemande = false;
+      const te = titan.etat();
+      if (te) {
+        // dash : souffle ; saut : pas lourd (l'atterrissage écrase : le serveur annonce l'explosion)
+        if ((te.dash ?? 0) > avantDash + 1e-3) sons.coup(false);
+        if (avantSol && te.auSol === false && (te.vy ?? 0) > 0) sons.pasLourd();
+        moi.p = [te.p[0], te.p[1], te.p[2]];
+        moi.v = [-Math.sin(te.cap) * te.v, 0, -Math.cos(te.cap) * te.v];
+        moi.auSol = true;
+      }
+    } else if (info) {
       // dans une voiture : le conducteur la simule, le passager la suit ; le joueur n'a plus de mouvement propre
       if (vehicule.estConducteur()) {
         vehicule.maj(dt, actif ? commandesDepuisEntrees({ avant: en.avant, droite: en.droite, saut: en.saut }) : { accel: 0, direction: 0, frein: false });
@@ -1353,7 +1657,9 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
       const ve = vehicule.etat();
       if (s && ve) {
         moi.p = [s[0], s[1], s[2]];
-        moi.v = [-Math.sin(ve.cap) * ve.v, 0, -Math.cos(ve.cap) * ve.v];
+        // vitesse du monde : axe de la caisse + glissade latérale (dérapage)
+        const vl = ve.vl ?? 0;
+        moi.v = [-Math.sin(ve.cap) * ve.v + Math.cos(ve.cap) * vl, 0, -Math.cos(ve.cap) * ve.v - Math.sin(ve.cap) * vl];
         moi.auSol = true;
       }
       const choc = vehicule.choc();
@@ -1367,7 +1673,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
 
     // --- tir (boucle bornée : les armes rapides tirent plus d'une fois par image) ---
     if (actif) {
-      const auto = a === null ? true : a.auto;
+      // le canon du titan tire en continu tant que le bouton est tenu
+      const auto = pilote() || a === null ? true : a.auto;
       const veutTirer = auto ? tirMaintenu : !tirConsomme && tirPresse > t - 0.12;
       let n = 0;
       while (veutTirer && n < TIRS_PAR_IMAGE_MAX && tirer()) {
@@ -1385,7 +1692,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
     }
 
     // --- sons de déplacement ---
-    const vh = info ? 0 : vitesseH();
+    const vh = info || pilote() ? 0 : vitesseH();
     if (apparu && vivant && !info && moi.auSol && vh > 1.5 && !moi.glisse) {
       distPas += vh * dt;
       if (distPas > FOULEE_M) { distPas = 0; sons.pas(); }
@@ -1395,7 +1702,9 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
     const glisse = apparu && vivant && !!moi.glisse && !info;
     if (glisse !== glisseSon) { glisseSon = glisse; sons.glisse(glisse); }
     const ve = vehicule.etat();
-    sons.moteur(info && ve && vivant && !enReplay ? Math.abs(ve.v) : null);
+    const roule = !!info && !!ve && vivant && !enReplay;
+    sons.moteur(roule ? Math.abs(ve!.v) : null);
+    sons.derapage(roule ? vehicule.derapage() : 0);
 
     // --- envoi de l'état ---
     accEtat += dt;
@@ -1420,9 +1729,10 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
     majDistants(dt);
     majMondeDynamique(dt);
     majVoix();
+    majMonstres(dt);
     effets.maj(dt);
 
-    porteArme.visible = apparu && (vivant || enReplay) && !(info && tireInterdit());
+    porteArme.visible = apparu && (vivant || enReplay) && !(info && tireInterdit()) && !pilote();
     armeMain.maj(dt, { vitesseH: vh, auSol: moi.auSol, vise: vise && !enReplay });
 
     remplirRadar(dt);
@@ -1466,6 +1776,18 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
       radarFrame.lacet = lacet;
       return radarFrame;
     },
+    monstres() {
+      const ti = monstresImage.titan, tg = monstresImage.tigre, enCours = jm.titan();
+      return {
+        evenement: jm.evenement(),
+        tigre: tg ? { pv: tg.pv, pvMax: tg.pvMax, rage: !!tg.rage } : null,
+        titan: ti && enCours ? {
+          pilote: ti.pilote, pv: ti.pv, pvMax: ti.pvMax, finT: enCours.finT,
+          dash: 1 - Math.min(1, (titan.etat()?.recharge ?? 0) / (TITAN.dash.rechargeMs / 1000)),
+          vitesse: Math.abs(ti.v), altitude: ti.p[1], cap: ti.pilote === client.id ? lacet : ti.cap,
+        } : null,
+      };
+    },
     touches(cfg: ConfigTouches) { config = cfg; index = indexTouches(cfg); toutRelacher(); },
     dispose() {
       if (disposed) return;
@@ -1496,6 +1818,11 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
       for (const id of [...distants.keys()]) retirerAvatar(id);
       dyn.dispose();
       feux.dispose();
+      rm.dispose();
+      impactsBalles.dispose();
+      tracesPneus.dispose();
+      debris.dispose();
+      destruction.dispose();
       porteArme.remove(armeMain.group);
       camera.remove(porteArme);
       armeMain.dispose();
@@ -1571,10 +1898,12 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
         return {
           pnj: mondeJeu.etatsPnj(ts).map((e) => ({ p: e.p, cap: e.cap, v: e.v })),
           vehicules: [...vehiculesAffichees().values()],
+          traces: tracesPneus.nombre(),
           sieges: [...vehiculesAffichees().keys()].map((id) => ({ id, sieges: [...mondeJeu.siegesDe(id)] })),
           elsa: mondeJeu.elsa(),
           invite: mondeJeu.invite(moi.p, assisSiege(), ts),
           radar: { joueurs: radarFrame.nJoueurs, pnj: radarFrame.nPnj, voitures: radarFrame.nVoitures, echos: radarFrame.nEchos },
+          monstres: monstresImage, evenement: jm.evenement(), titan: jm.titan(), pilote: pilote(),
         };
       },
     },

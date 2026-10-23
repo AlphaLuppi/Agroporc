@@ -5,7 +5,7 @@ import type { Building, SceneData, Vec2 } from "../agroparc3d/types";
 import { construireMonde, resoudre } from "./collision";
 import { OEIL_SIEGE, SILHOUETTE, type Siege } from "./protocole";
 import {
-  SIEGES_LOCAUX, VEH, coinsVehicule, distanceVehicule, etatVehiculeInitial, pasVehicule, pointDeSortie, positionSiege, renverse,
+  SIEGES_LOCAUX, VEH, coinsVehicule, distanceVehicule, etatVehiculeInitial, intensiteDerapage, pasVehicule, pointDeSortie, positionSiege, renverse,
   type CommandesVehicule, type EtatVehicule,
 } from "./vehicule";
 
@@ -119,6 +119,42 @@ describe("pasVehicule : direction", () => {
     const avec = rouler(e0, { accel: 0, direction: 1, frein: true }, 0.5).etat;
     expect(Math.abs(avec.cap - CAP_EST)).toBeGreaterThanOrEqual(Math.abs(sans.cap - CAP_EST));
     expect(avec.v).toBeLessThan(sans.v);
+  });
+
+  it("dérapage (Espace) : la caisse pivote plus que la trajectoire, la voiture glisse de côté, puis se raccroche", () => {
+    const e0: EtatVehicule = { p: [0, 0, 0], cap: CAP_EST, v: 20 };
+    const derive = rouler(e0, { accel: 1, direction: 1, frein: true }, 0.6).etat;
+    const normal = rouler(e0, { accel: 1, direction: 1, frein: false }, 0.6).etat;
+    // la caisse a bien plus tourné qu'en virage normal
+    expect(Math.abs(ecart(derive.cap, CAP_EST))).toBeGreaterThan(Math.abs(ecart(normal.cap, CAP_EST)) * 1.5);
+    // virage à droite : l'élan pousse la voiture vers l'extérieur, donc vers sa gauche (vl < 0), et franchement
+    expect(derive.vl ?? 0).toBeLessThan(-4);
+    expect(intensiteDerapage(derive)).toBeGreaterThan(0.3);
+    // en virage normal les pneus tiennent : pas de glissade audible
+    expect(intensiteDerapage(normal)).toBe(0);
+    // la vitesse totale se conserve en grande partie (on entretient la glissade aux gaz)
+    expect(Math.hypot(derive.v, derive.vl ?? 0)).toBeGreaterThan(14);
+    // relâcher Espace : les pneus ramènent la voiture dans son axe en moins d'une seconde
+    const raccroche = rouler(derive, { accel: 1, direction: 0, frein: false }, 1).etat;
+    expect(Math.abs(raccroche.vl ?? 0)).toBeLessThan(0.01);
+    expect(intensiteDerapage(raccroche)).toBe(0);
+  });
+
+  it("dérapage : la trajectoire suit l'élan (la voiture avance encore vers l'est alors que le capot est tourné)", () => {
+    const e0: EtatVehicule = { p: [0, 0, 0], cap: CAP_EST, v: 22 };
+    const r = rouler(e0, { accel: 0, direction: 1, frein: true }, 0.4).etat;
+    const tourne = Math.abs(ecart(r.cap, CAP_EST));
+    // direction réelle du déplacement (monde) vs direction du capot
+    const ax = -Math.sin(r.cap), az = -Math.cos(r.cap), dx = Math.cos(r.cap), dz = -Math.sin(r.cap);
+    const wx = ax * r.v + dx * (r.vl ?? 0), wz = az * r.v + dz * (r.vl ?? 0);
+    const angleTrajectoire = Math.abs(Math.atan2(wz, wx)); // 0 = plein est
+    expect(tourne).toBeGreaterThan(0.5);
+    expect(angleTrajectoire).toBeLessThan(tourne - 0.2);
+  });
+
+  it("un état sans `vl` (serveur, snap) reste valide et une voiture qui roule droit n'en a jamais", () => {
+    const r = rouler({ p: [0, 0, 0], cap: CAP_EST, v: 10 }, GAZ, 1).etat;
+    expect(r.vl).toBeUndefined();
   });
 
   it("déterministe : mêmes entrées, mêmes sorties à l'octet", () => {

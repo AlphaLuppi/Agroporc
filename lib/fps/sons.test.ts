@@ -152,6 +152,22 @@ describe("sons : effets ajoutés par la v2", () => {
     sons.dispose();
   });
 
+  it("crissement des pneus : démarre au premier dérapage, suit l'intensité sans rien relancer, s'éteint à 0", () => {
+    const sons = creerSons();
+    sons.derapage(0);
+    sons.derapage(Number.NaN);
+    expect(journal.demarres).toBe(0);
+    sons.derapage(0.5);
+    const demarres = journal.demarres;
+    expect(demarres).toBe(1);
+    sons.derapage(1);
+    sons.derapage(7);
+    expect(journal.demarres).toBe(demarres);
+    sons.derapage(0);
+    expect(journal.arretes).toBe(1);
+    sons.dispose();
+  });
+
   it("`dispose` arrête les boucles en cours, ferme le contexte et rend tout appel muet", () => {
     const sons = creerSons();
     sons.glisse(true);
@@ -190,3 +206,4 @@ describe("sons : sans WebAudio", () => {
     expect(journal.demarres).toBe(0);
   });
 });
+
