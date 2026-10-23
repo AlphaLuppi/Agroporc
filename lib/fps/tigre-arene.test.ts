@@ -174,6 +174,18 @@ describe("attaque", () => {
     expect(c.every((x) => x.degats === 25 && x.action === "patte" && x.cible === "a")).toBe(true);
   });
 
+  it("s'arrête à 2,2 m de sa cible, dans la portée de la patte, et ses coups portent", () => {
+    expect(TIGRE.arretM).toBe(2.2);
+    expect(TIGRE.arretM).toBeLessThan(TIGRE.patte.portee);
+    const { t, debut } = enAttaque();
+    t.prochainBondT = Infinity;
+    t.p = [15, 0, 0];
+    const { ev } = tourner(t, env(VIDE, [joueur("a", 0, 0)]), debut, 4000);
+    expect(Math.hypot(t.p[0], t.p[2])).toBeGreaterThan(TIGRE.arretM - 0.1);
+    expect(Math.hypot(t.p[0], t.p[2])).toBeLessThan(TIGRE.arretM + 0.1);
+    expect(coups(ev).length).toBeGreaterThanOrEqual(2);
+  });
+
   it("la patte manque une cible qui s'est écartée pendant l'armement", () => {
     const { t, debut } = enAttaque();
     t.prochainBondT = Infinity;
@@ -401,6 +413,16 @@ describe("tigre allié", () => {
     const c = coups(ev);
     expect(c.length).toBeGreaterThanOrEqual(3);
     expect(c.every((x) => x.cible === "p" && x.degats === 15 && x.action === "patte")).toBe(true);
+  });
+
+  it("s'arrête lui aussi à 2,2 m de sa cible et la frappe", () => {
+    const t = allie();
+    const l = lanceur();
+    const cible = joueur("p", 12, 0);
+    const { ev } = tournerAllie(t, l, env(VIDE, [l, cible]), T0, 4000);
+    expect(Math.hypot(t.p[0] - 12, t.p[2])).toBeGreaterThan(TIGRE.arretM - 0.1);
+    expect(Math.hypot(t.p[0] - 12, t.p[2])).toBeLessThan(TIGRE.arretM + 0.1);
+    expect(coups(ev).length).toBeGreaterThanOrEqual(2);
   });
 
   it("ne bondit jamais", () => {

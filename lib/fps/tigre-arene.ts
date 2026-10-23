@@ -36,8 +36,8 @@ export const TIGRE = {
   sansCibleMs: 6000,
   /** perception (cibles, lignes de vue) toutes les 100 ms, pas à chaque tic */
   perceptionMs: 100,
-  /** le tigre s'arrête à cette distance horizontale de sa cible (m) */
-  arretM: 1.5,
+  /** le tigre s'arrête à cette distance horizontale de sa cible (m), dans la portée du coup de patte (2,5 m) */
+  arretM: 2.2,
   /** écart vertical maximal pour qu'un coup porte (m) : un joueur sur un toit est hors d'atteinte */
   ecartVerticalMax: 2,
   patte: { portee: 2.5, degats: 25, cadenceMs: 1200, armeMs: 250, margeM: 0.5 },
