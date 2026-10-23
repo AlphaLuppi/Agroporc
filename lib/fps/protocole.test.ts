@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   ARMES, ARMES_PRINCIPALES, ARMES_SECONDAIRES, ARMES_SPECIALES, ECHELLE_AVATAR, EQUIPEMENT_DEFAUT, JEU, OEIL_SIEGE, PLAFONDS,
   SILHOUETTE, SILHOUETTE_ACCROUPIE, SLOTS, VERSION_PROTOCOLE, copierEquipement, oeilDe, silhouetteDe,
+  type CauseMort, type MessageClient, type MessageServeur, type PassageAvion, type TigreSnap,
 } from "./protocole";
 import { STATS } from "./armes";
 
@@ -108,5 +109,35 @@ describe("constantes", () => {
     expect(JEU.memoSanteMs).toBe(60_000);
     expect(JEU.etatPassagerHz).toBeLessThan(JEU.etatHz);
     expect(JEU.protectionMs).toBeLessThan(JEU.delaiReapparitionMs);
+  });
+});
+
+describe("messages v3 (tigres)", () => {
+  // littéraux typés : la compilation vérifie la forme, le test vérifie qu'ils passent tels quels en JSON
+  const passage: PassageAvion = { id: 1, depart: [-300, 10], arrivee: [350, -40], altitude: 120, vitesse: 60, debutT: 1000, finT: 11_850, largageT: 6000 };
+  const tigre: TigreSnap = { id: "t1", genre: "sauvage", p: [60, 0, 0], cap: 0.5, etat: "attaque", pose: "course", pv: 2478, action: "ramasse", actionT: 5000 };
+  const allie: TigreSnap = { id: "t2", genre: "allie", lanceur: "j1", p: [1, 0, 2], cap: 0, etat: "suivi", pose: "debout", pv: 500 };
+  const serveur: MessageServeur[] = [
+    { t: "snap", ts: 1, j: [], tigres: [tigre, allie] },
+    { t: "avion", evenement: "passage", avion: passage },
+    { t: "avion", evenement: "largage", avion: passage, tigre: "t1" },
+    { t: "avion", evenement: "etat", avion: null },
+    { t: "tigre", evenement: "apparu", id: "t2", genre: "allie", lanceur: "j1", p: [1, 0, 2] },
+    { t: "tigre", evenement: "touche", id: "t1", genre: "sauvage", p: [60, 0, 0], par: "j2", degats: 22, pv: 2478, zone: "corps" },
+    { t: "tigre", evenement: "mort", id: "t1", genre: "sauvage", p: [60, 0, 0], par: "j2" },
+    { t: "sort", evenement: "gagne", joueur: "j2" },
+    { t: "sort", evenement: "lance", joueur: "j2", tigre: "t3" },
+    { t: "sort", evenement: "perdu", joueur: "j2", raison: "mort" },
+    { t: "mort", cible: "j3", par: "j1", arme: "couteau", cause: "tigre", zone: "corps", ts: 1, delai: 4000 },
+  ];
+  const client: MessageClient = { t: "invoquer" };
+
+  it("chaque message survit à JSON tel quel", () => {
+    for (const m of [...serveur, client]) expect(JSON.parse(JSON.stringify(m))).toEqual(m);
+  });
+
+  it("la cause de mort « tigre » existe à côté des autres", () => {
+    const causes: CauseMort[] = ["arme", "ecrase_pnj", "ecrase_vehicule", "tigre"];
+    expect(new Set(causes).size).toBe(4);
   });
 });
