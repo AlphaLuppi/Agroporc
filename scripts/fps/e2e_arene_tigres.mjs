@@ -6,9 +6,9 @@
  * Spec : docs/superpowers/specs/2026-10-23-arene-tigres-design.md (Tests et vérification)
  *
  * Scénario (chaque étape imprime OK / ÉCHEC, des captures sont prises en route) :
- *  1. vue 3D (code « myrtille »), lobby, entrée des deux joueurs
+ *  1. vue 3D (code « myrtille »), lobby, entrée des deux joueurs, Alice en orange (lanceur le plus proche de la fourrure)
  *  2. un avion largue un premier tigre sauvage (souvent dès l'entrée des joueurs) : `avion{largage}`, `tigre{apparu}` chez A et B
- *  3. le tigre se pose dans une cachette et se tapit (capturé de près)
+ *  3. le tigre se pose dans une cachette et se tapit (vérifié avant puis pendant l'approche de A à 28 m, capturé)
  *  4. A l'abat (B l'aide puis le laisse finir) : touches confirmées, mort par A, sort gagné, fil « a abattu le tigre », icône du sort
  *  5. l'avion suivant passe (capturé) et largue un tigre en parachute (capturé), annonce « Un tigre a été largué ! » au HUD
  *  6. A lance le sort (touche T) : tigre allié à côté de lui, liseré de sa couleur (vu par A et par B)
@@ -117,7 +117,11 @@ class Joueur {
     /** fermetures de la WebSocket en cours de scénario (le client se reconnecte seul : à surveiller) */
     this.fermetures = [];
     page.on("pageerror", (e) => this.erreurs.push(`pageerror : ${String(e).slice(0, 300)}`));
-    page.on("console", (m) => { if (m.type() === "error") this.erreurs.push(`console.error : ${m.text().slice(0, 300)}`); });
+    page.on("console", (m) => {
+      if (m.type() === "error") this.erreurs.push(`console.error : ${m.text().slice(0, 300)}`);
+      // avertissements de l'arène (filtre du bloom inattendu : le halo du tigre n'est plus exclu) comptés comme des erreurs
+      else if (m.type() === "warning" && m.text().startsWith("arène :")) this.erreurs.push(`console.warn : ${m.text().slice(0, 300)}`);
+    });
     page.on("websocket", (ws) => {
       ws.on("framereceived", (f) => { try { const m = JSON.parse(String(f.payload)); this.recus.push({ t: m.t, m, a: Date.now() }); } catch { /* binaire */ } });
       ws.on("framesent", (f) => { try { const m = JSON.parse(String(f.payload)); this.envoyes.push({ t: m.t, m, a: Date.now() }); } catch { /* binaire */ } });
@@ -177,13 +181,30 @@ function distBatiments(x, z) {
   return m;
 }
 const estLibre = (x, z, route = 8, bat = 3) => distRoutes(x, z) >= route && distBatiments(x, z) >= bat;
-/** Le point libre le plus proche de (x, z) (spirale de 4 m en 4 m, 40 m au plus), (x, z) lui-même s'il n'y en a pas. */
-function pointLibre(x, z) {
+/** Les segments [a, b] et [c, d] (x, z) se coupent. */
+function secants(a, b, c, d) {
+  const o = (p, q, r) => (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]);
+  return o(a, b, c) * o(a, b, d) < 0 && o(c, d, a) * o(c, d, b) < 0;
+}
+/**
+ * Aucun bâtiment entre (x, z) et `cible` (x, z), au sol : un tigre tapi ou couché a la tête vers 1 m, sous le toit de n'importe quel
+ * bâtiment. Une cachette est souvent à quelques mètres d'une façade : sans ce contrôle, un joueur posé « de son côté » tire dans le mur.
+ */
+function vueLibre(x, z, cible) {
+  for (const b of batiments) for (let i = 0; i < b.r.length - 1; i++) if (secants([x, z], cible, b.r[i], b.r[i + 1])) return false;
+  return true;
+}
+/**
+ * Le point libre le plus proche de (x, z) (spirale de 4 m en 4 m, 40 m au plus), (x, z) lui-même s'il n'y en a pas. Avec `eviter`
+ * ({ c: [x, z], r }), le point reste à plus de `r` m de `c` (un tigre tapi s'alerte à 20 m).
+ */
+function pointLibre(x, z, eviter = null) {
   for (let r = 0; r <= 40; r += 4) {
     const n = r === 0 ? 1 : Math.ceil((2 * Math.PI * r) / 4);
     for (let k = 0; k < n; k++) {
       const a = (2 * Math.PI * k) / n;
       const cx = x + r * Math.cos(a), cz = z + r * Math.sin(a);
+      if (eviter && Math.hypot(cx - eviter.c[0], cz - eviter.c[1]) <= eviter.r) continue;
       if (estLibre(cx, cz)) return [cx, cz];
     }
   }
@@ -209,8 +230,9 @@ function trouverPiste(longueur = 26) {
  * Pose `j` en `pos` : `teleporter` ne change que la position CLIENT, et le serveur n'accepte un état que s'il reste dans la vitesse permise
  * depuis le dernier état accepté (`VITESSE_MAX_H_M_S × dt + 1`, dt plafonné à 5 s, il grandit tant que les états sont refusés). Un saut est donc
  * découpé en étapes de 40 m (posées loin des routes : une voiture PNJ tue), chacune attendue chez `autre` (qui voit `j` là où le serveur l'a accepté).
+ * Le serveur ne connaît que ces étapes (pas le trajet entre elles) : avec `eviter` (cf. `pointLibre`), aucune n'est posée près de `eviter.c`.
  */
-async function poser(j, autre, pos, tolerance = 2.5) {
+async function poser(j, autre, pos, tolerance = 2.5, eviter = null) {
   const idJ = await j.id();
   let vu = null;
   const PAS = 40;
@@ -219,7 +241,7 @@ async function poser(j, autre, pos, tolerance = 2.5) {
     const reste = Math.hypot(pos[0] - moi[0], pos[2] - moi[2]);
     const k = reste > PAS ? PAS / reste : 1;
     let cible = [moi[0] + (pos[0] - moi[0]) * k, pos[1], moi[2] + (pos[2] - moi[2]) * k];
-    if (k < 1) { const [lx, lz] = pointLibre(cible[0], cible[2]); cible = [lx, pos[1], lz]; } // étape intermédiaire : loin des routes
+    if (k < 1) { const [lx, lz] = pointLibre(cible[0], cible[2], eviter); cible = [lx, pos[1], lz]; } // étape intermédiaire : loin des routes
     let accepte = false;
     for (let essai = 0; essai < 3 && !accepte; essai++) {
       await j.teleporter(cible);
@@ -361,14 +383,31 @@ try {
       const champ = j.page.getByLabel("Nom de joueur");
       if (await champ.waitFor({ state: "visible", timeout: 30_000 }).then(() => true, () => false)) await champ.fill(j.nom).catch(() => null);
     }
+    // Bob se connecte d'abord : la palette donne le rouge au premier et l'orange au second. Alice, qui lancera le sort, a l'orange, la
+    // couleur la plus proche de la fourrure : le cas le plus difficile pour distinguer son tigre allié d'un tigre sauvage
     let stable = 0;
     for (let tour = 1; tour <= 8 && stable < 2; tour++) {
       let tous = true;
-      for (const j of joueurs) if (!(await ouvert(j))) { tous = false; await ouvrir(j); }
+      for (const j of [B, A]) if (!(await ouvert(j))) { tous = false; await ouvrir(j); }
       if (tous) { stable++; await dormir(2500); } else stable = 0;
     }
     verifier(stable >= 2, "la vue Palantir et le lobby ne restent pas ouverts chez les deux joueurs");
     await jusqua(async () => (await A.etat().catch(() => null))?.connexion === "ouvert" && (await B.etat().catch(() => null))?.connexion === "ouvert", { ms: 60_000, quoi: async () => `connexion WebSocket des deux joueurs (A ${JSON.stringify((await A.etat().catch(() => ({})))?.connexion)}, B ${JSON.stringify((await B.etat().catch(() => ({})))?.connexion)} ; erreurs ${[...A.erreurs, ...B.erreurs].slice(0, 4).join(" | ")} ; URL du serveur ${urlWs})` });
+    // un `next dev` à froid a pu recharger les pages dans le désordre : si Alice n'a pas l'orange, les deux pages se déconnectent (couleurs
+    // libérées) puis Bob se reconnecte avant elle (`next dev` est chaud, plus de rechargement)
+    const ORANGE = "#ff8f2e";
+    const couleurDe = async (j) => {
+      const id = (await j.etat().catch(() => null))?.monId;
+      return j.recus.filter((r) => r.t === "presence" || r.t === "bienvenue").map((r) => r.m.joueurs?.find((x) => x.id === id)?.couleur).filter(Boolean).at(-1);
+    };
+    const connecte = (j) => jusqua(async () => (await j.etat().catch(() => null))?.connexion === "ouvert", { ms: 60_000, quoi: `connexion de ${j.nom}` });
+    for (let essai = 0; essai < 2 && (await couleurDe(A)) !== ORANGE; essai++) {
+      for (const j of joueurs) await j.page.goto("about:blank");
+      await dormir(1500);
+      for (const j of [B, A]) { await ouvrir(j); await jusqua(() => ouvert(j), { ms: 30_000, quoi: `lobby de ${j.nom}` }); await connecte(j); await dormir(1000); }
+    }
+    const couleurA = await couleurDe(A);
+    verifier(couleurA === ORANGE, `Alice n'a pas l'orange (${couleurA}), le cas d'un lanceur orange ne serait pas vérifié`);
     await dormir(800);
     await A.capture("01-lobby-1920");
     for (const j of joueurs) await j.ev(() => window.__arene.entrer({ principale: "sniper", secondaire: "revolver" }));
@@ -400,15 +439,38 @@ try {
     const dx = p[0] - o[0], dy = p[1] - o[1], dz = p[2] - o[2];
     await j.ev(([l, t]) => window.__arene.regarder(l, t), [Math.atan2(-dx, -dz), Math.atan2(dy, Math.hypot(dx, dz))]);
   }
-  /** Point libre (loin des routes et des bâtiments) à `d` m de `c` (x, z), dans la direction `angle` ou la plus proche qui convienne. */
-  function pres(c, d, angle) {
-    for (let k = 0; k < 16; k++) {
-      const a = angle + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * (Math.PI / 8);
-      const x = c[0] + Math.cos(a) * d, z = c[2] + Math.sin(a) * d;
-      if (estLibre(x, z, 6, 3)) return [x, 0, z];
+  /**
+   * Point libre (loin des routes et des bâtiments) à `d` m de `c` (x, z), dans la direction `angle` ou la plus proche qui convienne. Avec
+   * `vise` (x, z), le point doit aussi le voir sans bâtiment entre eux (`vueLibre`), à défaut un point libre sans cette condition.
+   */
+  function pres(c, d, angle, vise = null) {
+    for (const exigerVue of vise ? [true, false] : [false]) {
+      for (let k = 0; k < 32; k++) {
+        const a = angle + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * (Math.PI / 16);
+        const x = c[0] + Math.cos(a) * d, z = c[2] + Math.sin(a) * d;
+        if (estLibre(x, z, 6, 3) && (!exigerVue || vueLibre(x, z, vise))) return [x, 0, z];
+      }
     }
-    const [x, z] = pointLibre(c[0] + Math.cos(angle) * d, c[2] + Math.sin(angle) * d);
+    const [x, z] = pointLibre(c[0] + Math.cos(angle) * d, c[2] + Math.sin(angle) * d, { c: [c[0], c[2]], r: 0.75 * d });
     return [x, 0, z];
+  }
+  /**
+   * Amène `j` à `d` m du point `c` (x, y, z), à l'angle `angle` ou au plus près où il voit `vise` (x, z) : d'abord à `d` m de son côté, en
+   * ligne droite vers `c`, puis le long du cercle de rayon `d` par pas de π/8 au plus. Il ne passe jamais plus près que `d` m de `c` (à la
+   * tolérance de pose près) : un tigre tapi ne s'alerte pas (20 m). Renvoie la position visée.
+   */
+  async function approcher(j, autre, c, d, angle, vise) {
+    const cote = (p) => Math.atan2(p[2] - c[2], p[0] - c[0]);
+    // ni les étapes intermédiaires de `poser` ni un point de repli de `pres` ne s'approchent à moins de d − 4 m
+    const eviter = { c: [c[0], c[2]], r: d - 4 };
+    await poser(j, autre, pres(c, d, cote((await j.jeu()).p)), 2.5, eviter);
+    const but = pres(c, d, angle, vise);
+    const depart = cote((await j.jeu()).p);
+    const delta = Math.atan2(Math.sin(cote(but) - depart), Math.cos(cote(but) - depart));
+    const n = Math.ceil(Math.abs(delta) / (Math.PI / 8));
+    for (let i = 1; i < n; i++) await poser(j, autre, pres(c, d, depart + (delta * i) / n), 2.5, eviter);
+    await poser(j, autre, but, 2.5, eviter);
+    return but;
   }
   /** Les deux joueurs vivants et apparus (réapparition après une mort comprise). */
   async function vivants(ms = 40_000) {
@@ -469,14 +531,37 @@ try {
   await etape("3. le tigre se pose dans sa cachette et se tapit (vu de près)", async () => {
     verifier(tigreId, "pas de tigre");
     const t = await jusqua(async () => { const x = await sauvage(A); return x && x.id === tigreId && x.etat !== "descente" ? x : null; }, { ms: 30_000, pas: 300, quoi: "atterrissage du tigre" });
-    // A à 22 m (hors du rayon d'alerte de 20 m) regarde le tigre tapi, puis B se place à 26 m de l'autre côté
-    await poser(A, B, pres(t.p, 22, 0));
+    // posé loin des joueurs (cachette à plus de 30 m d'eux au largage, et ils n'ont pas bougé) : il doit se tapir, AVANT toute approche
+    const distances = async () => {
+      const d = (await Promise.all(joueurs.map(async (j) => { const s = await j.jeu(); return `${j.nom} à ${distXZ(s.p, [t.p[0], t.p[2]]).toFixed(0)} m`; }))).join(", ");
+      // alerte : le joueur qui l'a déclenchée (ou un tir, sans message d'alerte)
+      const al = A.msgs("tigre").filter((m) => m.evenement === "alerte" && m.id === t.id).map((m) => (m.cible === idA ? "Alice" : m.cible === idB ? "Bob" : m.cible));
+      return `${d}${al.length ? `, alerte par ${al.join(", ")}` : ""}`;
+    };
+    await jusqua(async () => (await sauvage(A))?.etat === "tapi", { ms: 8000, pas: 200, quoi: async () => `tigre tapi après l'atterrissage (état ${(await sauvage(A))?.etat}, ${await distances()})` });
+    // A s'approche de son côté et s'arrête à 28 m, hors du rayon d'alerte (20 m, tolérance de pose et repli des étapes intermédiaires
+    // compris), puis tourne autour jusqu'à voir la tête : le tigre doit rester tapi pendant qu'on le regarde
+    const cote = (p) => Math.atan2(p[2] - t.p[2], p[0] - t.p[0]);
+    // tête de la hitbox (la cible de `tirerVers`) en vue : aucun bâtiment entre le tireur et elle
+    const teteT = (await sauvage(A)).hitbox.c;
+    const vise = [teteT[0], teteT[2]];
+    await approcher(A, B, t.p, 28, cote((await A.jeu()).p), vise);
     const t3 = await sauvage(A);
     verifier(t3, "le tigre a disparu");
+    verifier(t3.etat === "tapi", `le tigre n'est plus tapi quand A arrive à 28 m (état ${t3.etat}, ${await distances()})`);
     await regarderVers(A, [t3.p[0], t3.p[1] + 0.6, t3.p[2]]);
     await dormir(800);
-    await A.capture(`04-tigre-${(await sauvage(A))?.etat ?? "absent"}-A-1920`);
-    await poser(B, A, pres(t.p, 26, Math.PI));
+    await A.capture("04-tigre-tapi-A-1920");
+    // B à 30 m, écarté de 0,8 rad de la ligne de A (du côté où B se trouve) : A ne lui masque pas le tigre
+    const aA = cote((await A.jeu()).p);
+    const ecartB = Math.atan2(Math.sin(cote((await B.jeu()).p) - aA), Math.cos(cote((await B.jeu()).p) - aA));
+    await approcher(B, A, t.p, 30, aA + (ecartB >= 0 ? 0.8 : -0.8), vise);
+    // le sauvage vu par B, à comparer au tigre allié vu par B à l'étape 6 (plaque et liseré)
+    const t5 = await sauvage(B);
+    verifier(t5?.etat === "tapi", `le tigre n'est plus tapi quand B arrive à 30 m (état ${t5?.etat}, ${await distances()})`);
+    await regarderVers(B, [t5.p[0], t5.p[1] + 0.8, t5.p[2]]);
+    await dormir(700);
+    await B.capture("04-tigre-tapi-vu-par-B-1920");
     // calage de la silhouette de touche sur le GLB dessiné : écart entre le centre de la tête dessinée (milieu de l'os de la tête et du bout
     // du museau) et la sphère de tête de la hitbox, dans la pose du moment
     const t4 = (await A.ev(() => window.__arene.tigres(true)))?.tigres.find((x) => x.genre === "sauvage") ?? null;
@@ -498,6 +583,13 @@ try {
     let captureAttaque = false;
     let mort = null;
     const fin = Date.now() + 150_000;
+    /** tirs partis (`tirerVers` vrai) et touches confirmées : 20 tirs de suite sans touche arrêtent l'étape, avec le contexte des derniers */
+    const tirs = [];
+    let touchesVues = 0, sansTouche = 0;
+    /** tigre au galop vu par un tireur (capture, calage de la tête dessinée sur la hitbox « course ») et tigre au contact de A (capture) */
+    let galop = null, contact = false;
+    /** galop vu de profil par le joueur que le tigre ne charge pas (allure et pieds au sol lisibles), deux images */
+    let profil = null;
     while (Date.now() < fin && !mort) {
       mort = A.msgs("tigre", depuis).find((m) => m.evenement === "mort" && m.id === tigreId) ?? null;
       if (mort) break;
@@ -510,11 +602,52 @@ try {
         if (j === B && t.pv <= 700) continue;
         const d = Math.hypot(t.p[0] - s.p[0], t.p[2] - s.p[2]);
         if (d > 40) {
-          // le tigre s'enfuit vers une autre cachette (ou le joueur vient de réapparaître) : on le rejoint par étapes acceptées du serveur
-          await poser(j, j === A ? B : A, pres(t.p, 16, Math.atan2(s.p[2] - t.p[2], s.p[0] - t.p[0]))).catch(() => null);
+          // le tigre s'enfuit vers une autre cachette (ou le joueur vient de réapparaître) : on le rejoint par étapes acceptées du serveur, à
+          // 28 m et en vue de sa tête. À 16 m, un tigre qui attaque (10,5 m/s) arrivait au contact en 1,5 s et, sous le rendu logiciel (un tir
+          // par seconde environ), tuait les deux joueurs plus vite qu'ils ne l'abattaient (13 morts en 150 s, tigre vivant)
+          await poser(j, j === A ? B : A, pres(t.p, 28, Math.atan2(s.p[2] - t.p[2], s.p[0] - t.p[0]), [t.hitbox.c[0], t.hitbox.c[2]])).catch(() => null);
           continue;
         }
-        await j.ev((id) => window.__arene.tirerVers(id), tigreId);
+        const parti = await j.ev((id) => window.__arene.tirerVers(id), tigreId);
+        if (!parti) continue;
+        tirs.push(`${j.nom} à ${d.toFixed(1)} m, ${t.etat}/${t.pose}${t.action ? `/${t.action}` : ""} v=${t.v.toFixed(1)}`);
+        const touches = A.msgs("tigre", depuis).filter((m) => m.evenement === "touche" && m.id === tigreId && m.par).length;
+        if (touches > touchesVues) { touchesVues = touches; sansTouche = 0; } else sansTouche++;
+        verifier(sansTouche < 20, `${sansTouche} tirs de suite sans touche confirmée (${touchesVues} touches avant), derniers tirs : ${tirs.slice(-6).join(" | ")}`);
+        // `tirerVers` vient de tourner la vue de j vers la tête du tigre : les captures le cadrent
+        if (!galop && t.pose === "course" && t.v > 8 && !t.action && d < 30) {
+          const tm = (await j.ev(() => window.__arene.tigres(true)))?.tigres.find((x) => x.id === tigreId);
+          if (tm?.rendu && tm.pose === "course" && tm.v > 8) {
+            const r = tm.rendu, c = tm.hitbox.c;
+            const ecart = Math.hypot(...[0, 1, 2].map((k) => (r.tete[k] + r.museau[k]) / 2 - c[k]));
+            galop = `galop à ${tm.v.toFixed(1)} m/s vu par ${j.nom} à ${d.toFixed(0)} m, tête dessinée à ${ecart.toFixed(2)} m du centre de la tête de la hitbox (rayon ${tm.hitbox.rTete} m)`;
+            verifier(ecart < 0.6, `silhouette de touche décalée du tigre au galop : ${galop}`);
+            await j.capture(`05-tigre-galop-${j.nom[0]}-1920`);
+          }
+        }
+        if (!contact && j === A && d < 4) {
+          contact = true;
+          await A.capture("05-tigre-contact-A-1920");
+        }
+      }
+      if (!profil && t.pose === "course" && t.v > 8 && !t.action) {
+        // direction de course (cap en convention lacet) et ligne de vue de chaque joueur : profil si elles font plus de 45°
+        const f = [-Math.sin(t.cap), -Math.cos(t.cap)];
+        for (const j of joueurs) {
+          const s = await j.jeu();
+          if (!s.vivant || !s.apparu || s.killcam) continue;
+          const u = [t.p[0] - s.p[0], t.p[2] - s.p[2]], d = Math.hypot(u[0], u[1]);
+          const sinus = Math.abs(f[0] * u[1] - f[1] * u[0]) / Math.max(d, 1e-6);
+          if (d < 6 || d > 35 || sinus < 0.7) continue;
+          for (let i = 1; i <= 2; i++) {
+            const tv = await sauvage(j);
+            if (!tv || tv.pose !== "course") break;
+            await regarderVers(j, [tv.p[0], tv.p[1] + 0.9, tv.p[2]]);
+            await j.capture(`05-tigre-galop-profil-${j.nom[0]}-${i}-1920`);
+            profil = `galop vu de profil par ${j.nom} à ${d.toFixed(0)} m (${(Math.asin(Math.min(1, sinus)) * 180 / Math.PI).toFixed(0)}° de la direction de course, v=${tv.v.toFixed(1)} m/s)`;
+          }
+          break;
+        }
       }
       if (!captureAttaque && (t.etat === "attaque" || t.action)) {
         captureAttaque = true;
@@ -535,7 +668,7 @@ try {
     await jusqua(async () => A.ev(() => !!document.querySelector("section[aria-label='Sort d\\'invocation disponible']")), { ms: 3000, quoi: "icône du sort dans le DOM de A" });
     await A.capture("07-icone-sort-A-1920");
     const pvVus = touches.map((m) => m.pv);
-    return `${touches.length} touches de A confirmées (PV ${pvVus[0]} → ${pvVus.at(-1)}), tête : ${touches.filter((m) => m.zone === "tete").length}, tué par A, sort gagné`;
+    return `${touches.length} touches de A confirmées (PV ${pvVus[0]} → ${pvVus.at(-1)}), tête : ${touches.filter((m) => m.zone === "tete").length}, tué par A, sort gagné, ${tirs.length} tirs en tout, ${galop ?? "galop non observé de près"}, contact avec A ${contact ? "capturé" : "non observé"}, ${profil ?? "galop de profil non observé"}`;
   });
 
   // ------------------------------------------------------------------ 5. l'avion suivant, vu de près
@@ -578,7 +711,9 @@ try {
     if (t2) await regarderVers(B, [t2.p[0], t2.p[1] + 0.8, t2.p[2]]);
     await dormir(700);
     await B.capture("08-tigre-allie-vu-par-B-1920");
-    return `tigre ${allieId} à ${Math.hypot(t.p[0] - sA.p[0], t.p[2] - sA.p[2]).toFixed(1)} m de A`;
+    const couleurA = A.recus.filter((r) => r.t === "presence" || r.t === "bienvenue").map((r) => r.m.joueurs?.find((x) => x.id === idA)?.couleur).filter(Boolean).at(-1);
+    const dB = Math.hypot(t.p[0] - (await B.jeu()).p[0], t.p[2] - (await B.jeu()).p[2]);
+    return `tigre ${allieId} à ${Math.hypot(t.p[0] - sA.p[0], t.p[2] - sA.p[2]).toFixed(1)} m de A, vu par B à ${dB.toFixed(0)} m, couleur d'Alice ${couleurA ?? "inconnue"}`;
   });
 
   // ------------------------------------------------------------------ 7. le tigre allié attaque B

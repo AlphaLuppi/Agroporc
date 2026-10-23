@@ -167,6 +167,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
   const renduTigres = creerRenduTigres(scene);
   /** tigres interpolés à l'instant du rendu : cibles des tirs et des coups de couteau, sons */
   let tigresVus = new Map<string, TigreClient>();
+  /** tigres de la dernière image dessinée (crochet de test : mesures du GLB comparées à la hitbox du même instant) */
+  let tigresDessines = tigresVus;
   /** orange des giclées sur un tigre */
   const COULEUR_TIGRE = "#ff9a3c";
 
@@ -1156,6 +1158,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
     const tsServeur = client.maintenantServeur();
     const ts = tsServeur - JEU.interpolationMs;
     tigresVus = mondeTigres.tigresA(ts);
+    tigresDessines = tigresVus;
     const av = mondeTigres.avionA(tsServeur);
     renduTigres.maj(tigresVus, av, ts, dt, couleurDe, pseudoDe, !enReplay);
     const sonsTigres = mondeTigres.sons(tigresVus);
@@ -1516,6 +1519,10 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
       tirerVers(id) {
         if (!peutAgir()) return false;
         const o = oeil();
+        // tigres échantillonnés à l'instant du tir, comme un joueur à 60 images par seconde. Sous un rendu lent (tests sans GPU), ceux
+        // de la dernière image dateraient de plusieurs centaines de ms : un tigre qui court serait visé hors de la fenêtre de
+        // compensation du serveur (`REWIND_MAX_MS`), et tous les tirs rejetés
+        tigresVus = mondeTigres.tigresA(client.maintenantServeur() - JEU.interpolationMs);
         // tigre : centre de la tête de sa silhouette de touche (pose courante)
         const tg = tigresVus.get(id);
         if (tg) {
@@ -1569,8 +1576,9 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
       },
       tigres(mesures = false) {
         const ts = client.maintenantServeur();
+        // avec les mesures du GLB : les tigres de l'image dessinée (`tirerVers` a pu rééchantillonner `tigresVus` depuis)
         return {
-          tigres: [...tigresVus.values()].map((tg) => {
+          tigres: [...(mesures ? tigresDessines : tigresVus).values()].map((tg) => {
             const h = hitboxTigre(tg);
             return {
               id: tg.id, genre: tg.genre, lanceur: tg.lanceur ?? null, p: tg.p, cap: tg.cap, etat: tg.etat, pose: tg.pose, pv: tg.pv,
