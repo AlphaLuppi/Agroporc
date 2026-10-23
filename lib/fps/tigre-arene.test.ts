@@ -9,7 +9,7 @@ import type { Vec3 } from "./protocole";
 import {
   TIGRE, TIGRE_ALLIE, avancerTigreAllie, avancerTigreSauvage, blesserTigre, capDeCachette, capVers, choisirCachetteFuite,
   chercherChemin, coupTigreVraisemblable, creerTigreAllie, creerTigreSauvage, grilleNav, hitboxTigre, recoupeVoiture, routeLibre,
-  toucheTigreVraisemblable, tracerTigre,
+  SILHOUETTES_TIGRE, toucheTigreVraisemblable, tracerTigre,
   type CachetteTigre, type EnvTigre, type EvenementTigre, type JoueurVu, type ObstacleVoiture, type Tigre,
 } from "./tigre-arene";
 
@@ -455,18 +455,28 @@ describe("silhouette de touche selon la pose", () => {
   });
 
   it("tracerTigre : tête visée → tête, corps visé → corps, au-dessus → rien", () => {
-    const tete = tracerTigre([10, 1.0, -1.2], [-1, 0, 0], debout, 100);
+    const S = SILHOUETTES_TIGRE.debout;
+    const tete = tracerTigre([10, S.tete.y, -S.tete.avance], [-1, 0, 0], debout, 100);
     expect(tete?.zone).toBe("tete");
-    expect(tete?.distance).toBeCloseTo(10 - 0.32, 5);
-    expect(tracerTigre([10, 0.75, 0.3], [-1, 0, 0], debout, 100)?.zone).toBe("corps");
-    expect(tracerTigre([10, 2, 0], [-1, 0, 0], debout, 100)).toBeNull();
-    expect(tracerTigre([10, 0.75, 0], [-1, 0, 0], debout, 5)).toBeNull(); // au-delà de la limite
+    expect(tete?.distance).toBeCloseTo(10 - S.tete.rayon, 5);
+    expect(tracerTigre([10, S.corps.y, 0.3], [-1, 0, 0], debout, 100)?.zone).toBe("corps");
+    expect(tracerTigre([10, 2.5, 0], [-1, 0, 0], debout, 100)).toBeNull();
+    expect(tracerTigre([10, S.corps.y, 0], [-1, 0, 0], debout, 5)).toBeNull(); // au-delà de la limite
   });
 
-  it("couché, il est plus bas : un rayon à 1,0 m touche le tigre debout mais passe au-dessus du tigre couché", () => {
-    expect(tracerTigre([10, 1.0, 0], [-1, 0, 0], debout, 100)).not.toBeNull();
-    expect(tracerTigre([10, 1.0, 0], [-1, 0, 0], couche, 100)).toBeNull();
-    expect(tracerTigre([10, 0.4, 0], [-1, 0, 0], couche, 100)?.zone).toBe("corps");
+  it("couché, il est plus bas : un rayon à 1,5 m touche le tigre debout mais passe au-dessus du tigre couché", () => {
+    expect(tracerTigre([10, 1.5, 0], [-1, 0, 0], debout, 100)).not.toBeNull();
+    expect(tracerTigre([10, 1.5, 0], [-1, 0, 0], couche, 100)).toBeNull();
+    expect(tracerTigre([10, SILHOUETTES_TIGRE.couche.corps.y, 0], [-1, 0, 0], couche, 100)?.zone).toBe("corps");
+  });
+
+  it("la silhouette suit le GLB dessiné : tête au-dessus du corps et devant lui, plus basse tapi que debout", () => {
+    for (const s of Object.values(SILHOUETTES_TIGRE)) {
+      expect(s.tete.y).toBeGreaterThan(s.corps.y);
+      expect(s.tete.avance).toBeGreaterThan(s.corps.demiLongueur);
+    }
+    expect(SILHOUETTES_TIGRE.couche.tete.y).toBeLessThan(SILHOUETTES_TIGRE.debout.tete.y);
+    expect(SILHOUETTES_TIGRE.couche.corps.y).toBeLessThan(SILHOUETTES_TIGRE.course.corps.y);
   });
 
   it("toucheTigreVraisemblable : rayon sur le corps accepté, à 2 m à côté refusé, à travers un mur refusé", () => {

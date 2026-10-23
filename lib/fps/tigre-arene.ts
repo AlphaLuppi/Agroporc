@@ -922,16 +922,18 @@ export function avancerTigreAllie(t: Tigre, lanceur: JoueurVu | null, maintenant
 
 /**
  * Silhouette de touche d'une pose : corps = capsule HORIZONTALE le long du cap (centrée sur `p`, demi-longueur, hauteur `y`, rayon),
- * tête = sphère `avance` m devant `p`, à hauteur `y`. Ordre de grandeur du GLB du thème Tigre : 2,4 m du museau à la croupe.
+ * tête = sphère `avance` m devant `p`, à hauteur `y`. Calée sur le GLB du thème Tigre tel que l'arène le dessine (échelle du thème,
+ * 3,75 m queue comprise, lib/fps/rendu-tigres.ts), mesuré au client dans chaque pose : 2,5 m du museau à la croupe, croupe à 1,15 m et
+ * tête vers 1,7 m debout (le modèle stylisé a de longues pattes et une grosse tête), croupe à 0,9 m et tête vers 1,15 m tapi.
  */
 export interface SilhouetteTigre {
   readonly corps: { readonly y: number; readonly demiLongueur: number; readonly rayon: number };
   readonly tete: { readonly avance: number; readonly y: number; readonly rayon: number };
 }
 export const SILHOUETTES_TIGRE: Readonly<Record<PoseTigre, SilhouetteTigre>> = {
-  couche: { corps: { y: 0.4, demiLongueur: 0.8, rayon: 0.4 }, tete: { avance: 1.25, y: 0.5, rayon: 0.3 } },
-  debout: { corps: { y: 0.75, demiLongueur: 0.75, rayon: 0.45 }, tete: { avance: 1.2, y: 1.0, rayon: 0.32 } },
-  course: { corps: { y: 0.7, demiLongueur: 0.9, rayon: 0.42 }, tete: { avance: 1.35, y: 0.85, rayon: 0.3 } },
+  couche: { corps: { y: 0.8, demiLongueur: 0.8, rayon: 0.45 }, tete: { avance: 1.3, y: 1.15, rayon: 0.38 } },
+  debout: { corps: { y: 1.15, demiLongueur: 0.8, rayon: 0.5 }, tete: { avance: 1.25, y: 1.7, rayon: 0.4 } },
+  course: { corps: { y: 1.1, demiLongueur: 0.9, rayon: 0.48 }, tete: { avance: 1.3, y: 1.6, rayon: 0.38 } },
 };
 
 /** Position d'un tigre à valider : un point de son historique (position, cap, pose). */
