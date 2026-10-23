@@ -26,7 +26,8 @@ export interface EvenementEnCours {
   finT: number;
 }
 
-export interface LaserAnnonce { de: Vec3; vers: Vec3; rayon: number; tirT: number }
+/** Laser (rayon des yeux + disque d'impact) ou onde de choc (`onde` : disque seul, plus grand). */
+export interface LaserAnnonce { de: Vec3; vers: Vec3; rayon: number; tirT: number; onde?: boolean }
 
 export interface TitanEnCours { pilote: string; finT: number }
 
@@ -79,6 +80,9 @@ export class MondeMonstres {
   ajouterLaser(m: Extract<MessageServeur, { t: "laser" }>): void {
     this.lasersEnAttente.push({ de: m.de, vers: m.vers, rayon: m.rayon, tirT: m.tirT });
   }
+  ajouterOnde(m: Extract<MessageServeur, { t: "onde" }>): void {
+    this.lasersEnAttente.push({ de: m.p, vers: m.p, rayon: m.rayon, tirT: m.tirT, onde: true });
+  }
   /** Lasers dont l'impact n'est pas passé depuis plus de `apresMs` (l'éclair de l'impact se dessine encore un instant). */
   lasers(ts: number, apresMs = 250): LaserAnnonce[] {
     this.lasersEnAttente = this.lasersEnAttente.filter((l) => ts - l.tirT <= apresMs);
@@ -109,28 +113,31 @@ export class ControleurTitan {
     return this.e !== null;
   }
   entrer(p: Vec3, cap: number): void {
-    this.e = { p: [p[0], 0, p[2]], cap, v: 0 };
+    this.e = { p: [p[0], p[1], p[2]], cap, v: 0, vy: 0, auSol: p[1] <= 0.01 };
     this.seq = 0;
   }
   sortir(): void {
     this.e = null;
   }
   etat(): EtatMarcheur | null {
-    return this.e ? { p: [this.e.p[0], this.e.p[1], this.e.p[2]], cap: this.e.cap, v: this.e.v } : null;
+    return this.e ? { ...this.e, p: [this.e.p[0], this.e.p[1], this.e.p[2]] } : null;
   }
   /** Pas découpé à 1/60 s, plafonné à 0,1 s (onglet ralenti). */
   maj(dt: number, en: EntreesTitan, monde: Monde): void {
     if (!this.e || !(dt > 0)) return;
     let reste = Math.min(dt, 0.1);
+    // dash et saut sont des impulsions : seulement au premier sous-pas
+    let impulsions: EntreesTitan = en;
     while (reste > 1e-9) {
       const h = Math.min(reste, 1 / 60);
-      this.e = pasTitan(this.e, en, h, monde);
+      this.e = pasTitan(this.e, impulsions, h, monde);
+      impulsions = { avant: en.avant, droite: en.droite, lacet: en.lacet };
       reste -= h;
     }
   }
   message(lacet: number, tangage: number): Extract<MessageClient, { t: "pilotage" }> | null {
     if (!this.e) return null;
     const r = (x: number) => Math.round(x * 100) / 100 + 0;
-    return { t: "pilotage", seq: ++this.seq, p: [r(this.e.p[0]), 0, r(this.e.p[2])], cap: Math.round(this.e.cap * 1000) / 1000 + 0, lacet, tangage };
+    return { t: "pilotage", seq: ++this.seq, p: [r(this.e.p[0]), r(this.e.p[1]), r(this.e.p[2])], cap: Math.round(this.e.cap * 1000) / 1000 + 0, lacet, tangage };
   }
 }

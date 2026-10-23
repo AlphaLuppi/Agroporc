@@ -111,6 +111,30 @@ describe("Truck Muche fou", () => {
 });
 
 describe("tigre robot géant et titan tigre", () => {
+  it("saut du tigre : onde de choc annoncée ; au sol on est touché, en l'air on l'esquive", () => {
+    const s = salle({ forcerType: "tigre", pvTigre: 99_999, attaqueTigre: "saut", premiereAttaqueMs: 0 }, ["a", "b"]);
+    tenir(s, "a", [300, 0, 300]);
+    tenir(s, "b", [300, 0, -300]);
+    const r0 = avancer(s, T0, T0 + EVENEMENTS.annonceMs + 100, (x) => rafraichir(s, ["a", "b"], x));
+    const tg = dernierMonstres(r0.sorties)!.tigre!;
+    // a au sol près du tigre, b « en l'air » près aussi : le tigre finit par sauter (attaques tirées au hasard)
+    const pres = (dx: number): Vec3 => [tg.p[0] + dx, 0, tg.p[2] + 6];
+    let onde: Extract<MessageServeur, { t: "onde" }> | undefined;
+    const r = avancer(s, r0.t, r0.t + 2_000, (x) => {
+      if (j(s, "a").vivant) { tenir(s, "a", pres(4)); j(s, "a").posture = "sol"; }
+      if (j(s, "b").vivant) { tenir(s, "b", pres(-4)); j(s, "b").posture = "air"; j(s, "b").p = [pres(-4)[0], 5, pres(-4)[2]]; }
+      rafraichir(s, ["a", "b"], x);
+    });
+    onde = messages(r.sorties, "onde")[0];
+    expect(onde).toBeDefined();
+    expect(onde!.rayon).toBe(TIGRE_ROBOT.saut.rayon);
+    const degats = messages(r.sorties, "degats").filter((d) => d.par === "");
+    expect(degats.find((d) => d.cible === "a")?.degats).toBe(TIGRE_ROBOT.saut.degats);
+    // b était en l'air à l'atterrissage du premier saut : épargné par l'onde (le premier dégât de a arrive avant tout dégât de b)
+    const iA = degats.findIndex((d) => d.cible === "a"), iB = degats.findIndex((d) => d.cible === "b");
+    expect(iB === -1 || iB > iA).toBe(true);
+  });
+
   /** Tigre apparu (PV réduits), `a` à 45 m de lui, hors de portée du coup de patte. */
   function avecTigre(pvTigre = 120, pvTitan?: number) {
     const s = salle({ forcerType: "tigre", pvTigre, pvTitan }, ["a", "b"]);
@@ -205,6 +229,22 @@ describe("tigre robot géant et titan tigre", () => {
     expect(messages(r, "titan")[0].pilote).toBe("a");
     const q = s.recevoir("a", { t: "quitter" }, t + 2500);
     expect(messages(q, "titan")).toEqual([expect.objectContaining({ phase: "fin", raison: "depart" })]);
+  });
+
+  it("titan : retomber d'un saut écrase les joueurs au sol autour", () => {
+    const { s, t, tigre } = avecTigre(1);
+    const r = tirerSur(s, "a", CIBLE_TIGRE, pointLocal(tigre.p, tigre.cap, ECHELLE_TIGRE, 0, 0.33, -0.03), t + 2000);
+    const p0 = messages(r, "titan")[0].p;
+    let tt = t + 2100;
+    tenir(s, "b", [p0[0] + 5, 0, p0[2]]);
+    j(s, "b").protegeJusqua = 0;
+    // monte à 8 m puis redescend au sol
+    let seq = 1;
+    for (const y of [3, 6, 8, 6, 3, 0]) {
+      tt += 150;
+      const sorties = s.recevoir("a", { t: "pilotage", seq: seq++, p: [p0[0], y, p0[2]], cap: 0, lacet: 0, tangage: 0 }, tt);
+      if (y === 0) expect(messages(sorties, "mort")[0]).toMatchObject({ cible: "b", par: "a", cause: "titan" });
+    }
   });
 
   it("le coup de patte tue un joueur planté devant le tigre", () => {

@@ -104,6 +104,9 @@ const SECOUSSE_EXPLOSION = 0.09;
 /** (v4) Foulée (m) d'un pas lourd du tigre robot et du titan, et distance (m) à laquelle une explosion de monstre secoue la caméra. */
 const FOULEE_LOURDE_M = 4.5;
 const SECOUSSE_MONSTRE_M = 40;
+/** (v3) Caméra du pilote à la 3ᵉ personne : derrière le titan (m), visée au-dessus de son dos (part de l'échelle), surélévation (m). */
+/** (v3) Caméra du pilote à la 3ᵉ personne, par-dessus l'épaule : recul (m), point visé au-dessus du dos (part de l'échelle), hausse et décalage à droite (m). */
+const CAMERA_TITAN = { recul: 30, viseeHaut: 0.55, hausse: 3.5, epaule: 8 } as const;
 
 function lireSensibilite(): number {
   try {
@@ -258,6 +261,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
   let tirPresse = -Infinity;
   let tirConsomme = true;
   let sautDemande = false;
+  /** (v3) Maj pressée : dash du titan */
+  let dashDemande = false;
   /** crochet de test : joue sans pointer lock (navigateur sans écran) */
   let forceActif = false;
 
@@ -402,8 +407,13 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
   /** (v3) Canon du titan : rayon unique, cadence propre, déclaré au serveur (`canon`), qui le revalide. */
   function tirerCanon(): boolean {
     if (t < prochainDe("couteau") || !peutAgir() || entracte) return false;
+    // vue à la 3ᵉ personne : on vise le point sous le réticule (rayon depuis la caméra), le canon tire de la tête du titan vers ce point
     const o = oeil();
-    const d = directionVisee(lacet, tangage, 0);
+    const vue = directionVisee(lacet, tangage, 0);
+    const vise = tracer(monde, [camPos[0], camPos[1], camPos[2]], vue, TITAN.canon.portee + CAMERA_TITAN.recul, cibles(), client.id ?? "").point;
+    const vx = vise[0] - o[0], vy = vise[1] - o[1], vz = vise[2] - o[2];
+    const lv = Math.hypot(vx, vy, vz);
+    const d: Vec3 = lv > 3 && (vx * vue[0] + vy * vue[1] + vz * vue[2]) / lv > 0.86 ? [vx / lv, vy / lv, vz / lv] : vue;
     const imp = tracer(monde, o, d, TITAN.canon.portee, cibles(), client.id ?? "");
     const touches: { cible: string; zone: Zone }[] = imp.cible && imp.zone ? [{ cible: imp.cible, zone: imp.zone }] : [];
     client.envoyer({ t: "canon", o, d, touches });
@@ -900,11 +910,17 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
         jm.ajouterLaser(m);
         sons.laser(positionSon(m.de));
         break;
+      case "onde":
+        // saut du tigre : anneau d'impact au sol, rugissement
+        jm.ajouterOnde(m);
+        sons.alerte("tigre");
+        break;
       case "explosionMonstre": {
         rm.explosion(m.p, m.rayon);
         const pos = positionSon(m.p);
         sons.explosionMonstre(Math.min(1, m.rayon / 9), pos);
-        if (pos.distance < SECOUSSE_MONSTRE_M && !reduit) secousse = 0.06 * (1 - pos.distance / SECOUSSE_MONSTRE_M) * (Math.random() < 0.5 ? -1 : 1);
+        const portee = Math.max(SECOUSSE_MONSTRE_M, m.rayon * 3);
+        if (pos.distance < portee && !reduit) secousse = 0.07 * (1 - pos.distance / portee) * (Math.random() < 0.5 ? -1 : 1);
         break;
       }
       case "titan":
@@ -934,6 +950,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
     for (const a of index.get(code) ?? []) {
       switch (a) {
         case "saut": sautDemande = true; break;
+        case "sprint": dashDemande = true; break;
         case "recharger": demarrerRecharge(); break;
         case "tir": if (vivant) { tirMaintenu = true; tirPresse = t; tirConsomme = false; } break;
         case "visee": viseMaintenu = true; break;
@@ -1311,7 +1328,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
     const local = titan.etat();
     if (local && monstresImage.titan && client.id) monstresImage.titan = { ...monstresImage.titan, p: local.p, cap: local.cap, v: local.v };
     const ti = monstresImage.titan;
-    rm.maj(enReplay ? {} : monstresImage, enReplay ? [] : jm.lasers(tsServeur), t, tsServeur, dt, ti ? couleurDe(ti.pilote) : "#9be9ff", pilote());
+    rm.maj(enReplay ? {} : monstresImage, enReplay ? [] : jm.lasers(tsServeur), t, tsServeur, dt, ti ? couleurDe(ti.pilote) : "#9be9ff", false);
     const tg = monstresImage.tigre;
     if (tg && !enReplay) {
       distTigre += Math.abs(tg.v) * dt;
@@ -1408,7 +1425,26 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
       camTangage = -0.5;
     } else if (vivant) {
       const assis = vehicule.actif() !== null;
-      const cible = pilote() ? OEIL_TITAN : assis ? OEIL_SIEGE : hauteurOeil(moi.accroupi);
+      if (pilote()) {
+        // titan : vue à la 3ᵉ personne, derrière lui et au-dessus de son dos (on voit qu'on pilote le tigre)
+        hauteurOeilLissee += (OEIL_TITAN - hauteurOeilLissee) * lissage(LISSAGE_OEIL, dt);
+        const te = titan.etat();
+        const base: Vec3 = te ? [te.p[0], te.p[1] + TITAN.echelle * CAMERA_TITAN.viseeHaut, te.p[2]] : oeil();
+        const dv = directionVisee(lacet, tangage, 0);
+        // par-dessus l'épaule droite : le tigre à gauche du réticule, jamais devant lui
+        const rx = Math.cos(lacet), rz = -Math.sin(lacet);
+        const cx = base[0] - dv[0] * CAMERA_TITAN.recul + rx * CAMERA_TITAN.epaule;
+        const cz = base[2] - dv[2] * CAMERA_TITAN.recul + rz * CAMERA_TITAN.epaule;
+        const cy = Math.max(base[1] - dv[1] * CAMERA_TITAN.recul + CAMERA_TITAN.hausse, (te?.p[1] ?? 0) + 2);
+        camera.position.set(cx, cy, cz);
+        const [ax, ay, az] = rotationCamera(lacet, tangage, kick, 0, secousse);
+        camera.rotation.set(ax, ay, az);
+        camPos[0] = cx; camPos[1] = cy; camPos[2] = cz;
+        camLacet = lacet;
+        camTangage = ax;
+        return;
+      }
+      const cible = assis ? OEIL_SIEGE : hauteurOeil(moi.accroupi);
       hauteurOeilLissee += (cible - hauteurOeilLissee) * lissage(LISSAGE_OEIL, dt);
       const bob = reduit || assis ? 0 : pilote()
         ? Math.abs(Math.sin(t * 4.2)) * 0.12 * Math.min(1, Math.abs(titan.etat()?.v ?? 0) / 5)
@@ -1491,10 +1527,15 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
     const vise = viseMaintenu && peutAgir() && !!a && !(a.zoom !== null && armes.rechargeEnCours()) && !enKillcam() && !pilote();
     if (pilote()) {
       // titan : simulé en local, le joueur est à ses pieds (l'œil est à OEIL_TITAN)
-      titan.maj(dt, actif ? { avant: en.avant, droite: en.droite, lacet } : { avant: 0, droite: 0, lacet }, monde);
+      const avantDash = titan.etat()?.dash ?? 0, avantSol = titan.etat()?.auSol ?? true;
+      titan.maj(dt, actif ? { avant: en.avant, droite: en.droite, lacet, dash: dashDemande, saut: sautDemande } : { avant: 0, droite: 0, lacet }, monde);
+      dashDemande = false;
       const te = titan.etat();
       if (te) {
-        moi.p = [te.p[0], 0, te.p[2]];
+        // dash : souffle ; saut : pas lourd (l'atterrissage écrase : le serveur annonce l'explosion)
+        if ((te.dash ?? 0) > avantDash + 1e-3) sons.coup(false);
+        if (avantSol && te.auSol === false && (te.vy ?? 0) > 0) sons.pasLourd();
+        moi.p = [te.p[0], te.p[1], te.p[2]];
         moi.v = [-Math.sin(te.cap) * te.v, 0, -Math.cos(te.cap) * te.v];
         moi.auSol = true;
       }
@@ -1633,7 +1674,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
       const ti = monstresImage.titan, tg = monstresImage.tigre, enCours = jm.titan();
       return {
         evenement: jm.evenement(),
-        tigre: tg ? { pv: tg.pv, pvMax: tg.pvMax } : null,
+        tigre: tg ? { pv: tg.pv, pvMax: tg.pvMax, rage: !!tg.rage } : null,
         titan: ti && enCours ? { pilote: ti.pilote, pv: ti.pv, pvMax: ti.pvMax, finT: enCours.finT } : null,
       };
     },

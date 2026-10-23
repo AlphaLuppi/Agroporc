@@ -91,6 +91,7 @@ const options: OptionsSalle = {
       : {}),
     ...(evtType ? { forcerType: evtType } : {}),
     ...(dureeEnv("PDJ_FPS_TIGRE_PV") !== undefined ? { pvTigre: dureeEnv("PDJ_FPS_TIGRE_PV") } : {}),
+    ...(["laser", "saut", "charge"].includes(process.env.PDJ_FPS_TIGRE_ATTAQUE ?? "") ? { attaqueTigre: process.env.PDJ_FPS_TIGRE_ATTAQUE as "laser" | "saut" | "charge" } : {}),
   },
 };
 const salle = new Salle(monde, apparitions, Math.random, Date.now(), options);

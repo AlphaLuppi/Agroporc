@@ -440,7 +440,7 @@
   border-color: var(--ag-danger);
 }
 .evtBande[data-type="truck"] { border-color: var(--ag-amber); animation: evtPulse 0.5s ease-in-out infinite alternate; }
-.evtTitan { top: calc(270 * var(--u)); border-color: var(--ag-amber); }
+.evtTitan { top: auto; left: auto; right: calc(24 * var(--u)); bottom: calc(24 * var(--u)); transform: none; width: calc(460 * var(--u)); border-color: var(--ag-amber); }
 .evtTitan[data-moi="oui"] { border-color: var(--ag-amber); box-shadow: 0 0 calc(18 * var(--u)) color-mix(in srgb, var(--ag-amber) 35%, transparent); }
 .evtBandeTitre { font: 600 max(11px, calc(14 * var(--u)))/1 var(--ag-display), var(--ag-mono), monospace; letter-spacing: 0.12em; color: var(--ag-ink); white-space: nowrap; }
 .evtVie { position: relative; height: calc(10 * var(--u)); min-height: 6px; background: var(--ag-line-strong); }
@@ -452,3 +452,4 @@
 @keyframes evtPulse { from { filter: brightness(1); } to { filter: brightness(1.35); } }
 @keyframes evtDefile { from { background-position: 0 0; } to { background-position: 40px 0; } }
 @media (prefers-reduced-motion: reduce) { .evtAlerte, .evtBande, .evtRayures { animation: none; } }
+.evtRage { color: var(--ag-danger); animation: evtPulse 0.35s ease-in-out infinite alternate; }

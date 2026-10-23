@@ -31,6 +31,9 @@ function BandeauEvenementBrut({ monstres, maintenantServeur, joueurs, monId }: P
   lire.current = monstres;
   const horloge = useRef(maintenantServeur);
   horloge.current = maintenantServeur;
+  /** consignes du pilote : affichées 8 s à la prise du titan */
+  const [aideTitan, setAideTitan] = useState(false);
+  const piloteDepuis = useRef<string | null>(null);
 
   useEffect(() => {
     const id = setInterval(() => {
@@ -39,6 +42,15 @@ function BandeauEvenementBrut({ monstres, maintenantServeur, joueurs, monId }: P
     }, 150);
     return () => clearInterval(id);
   }, []);
+
+  const cleTitan = etat?.titan && etat.titan.pilote === monId ? `${etat.titan.finT}` : null;
+  useEffect(() => {
+    if (!cleTitan || piloteDepuis.current === cleTitan) return;
+    piloteDepuis.current = cleTitan;
+    setAideTitan(true);
+    const m = setTimeout(() => setAideTitan(false), 8000);
+    return () => clearTimeout(m);
+  }, [cleTitan]);
 
   if (!etat) return null;
   const ev = etat.evenement;
@@ -57,7 +69,10 @@ function BandeauEvenementBrut({ monstres, maintenantServeur, joueurs, monId }: P
       )}
       {ev && ev.phase === "actif" && (
         <div className={`${styles.plaque} ${styles.evtBande}`} data-type={ev.type}>
-          <span className={styles.evtBandeTitre}><span aria-hidden="true">{TEXTES[ev.type].icone} </span>{TEXTES[ev.type].court}</span>
+          <span className={styles.evtBandeTitre}>
+            <span aria-hidden="true">{TEXTES[ev.type].icone} </span>{TEXTES[ev.type].court}
+            {ev.type === "tigre" && etat.tigre?.rage && <span className={styles.evtRage}> · ENRAGÉ</span>}
+          </span>
           {ev.type === "tigre" && etat.tigre && (
             <span className={styles.evtVie} role="progressbar" aria-label="Vie du tigre robot" aria-valuemin={0} aria-valuemax={100}
               aria-valuenow={Math.round((100 * etat.tigre.pv) / Math.max(1, etat.tigre.pvMax))}>
@@ -78,7 +93,7 @@ function BandeauEvenementBrut({ monstres, maintenantServeur, joueurs, monId }: P
             <i style={{ width: `${(100 * titan.pv) / Math.max(1, titan.pvMax)}%` }} />
           </span>
           <span className={styles.evtTemps}>{formatSecondes(Math.max(0, titan.finT - maintenant) / 1000)}</span>
-          {titan.pilote === monId && <span className={styles.evtAide}>Clic : canon · écrase les agents en marchant · invulnérable tant que le titan tient</span>}
+          {titan.pilote === monId && aideTitan && <span className={styles.evtAide}>Clic : canon · Maj : dash · Espace : saut (on écrase en retombant, on monte sur les toits) · invulnérable tant que le titan tient</span>}
         </div>
       )}
     </>

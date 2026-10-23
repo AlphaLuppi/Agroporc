@@ -134,7 +134,7 @@ export type JeuEvenement =
 /** (v3) État des événements pour le bandeau du HUD (lu à intervalle par `BandeauEvenement`, hors rendu à 60 Hz). */
 export interface EtatMonstresHud {
   evenement: { type: TypeEvenement; phase: "annonce" | "actif"; debutT: number; finT: number } | null;
-  tigre: { pv: number; pvMax: number } | null;
+  tigre: { pv: number; pvMax: number; rage: boolean } | null;
   titan: { pilote: string; pv: number; pvMax: number; finT: number } | null;
 }
 

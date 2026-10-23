@@ -5,7 +5,7 @@
  * Repère de protocole.ts : avant d'un cap = (−sin cap, −cos cap), droite = (cos cap, −sin cap).
  * Spec : docs/superpowers/specs/2026-10-24-arene-evenements-design.md
  */
-import { lancerRayon, resoudre, type Monde } from "./collision";
+import { lancerRayon, resoudre, solSous, type Monde } from "./collision";
 import { OEIL_TITAN, type Vec3, type Zone } from "./protocole";
 import { pasVehicule, type CommandesVehicule, type EtatVehicule } from "./vehicule";
 
@@ -34,37 +34,53 @@ export const TRUCK_FOU = {
 } as const;
 
 export const TIGRE_ROBOT = {
-  dureeMs: 150_000,
-  /** marche (m/s) et rotation (rad/s) */
-  vitesse: 6, rotation: 1.1,
+  dureeMs: 180_000,
+  /** marche (m/s) et rotation (rad/s) : il ENJAMBE les bâtiments (plus haut qu'eux), aucun contournement */
+  vitesse: 8, rotation: 0.9,
   rayonCollision: 3.6,
   /** PV : base + par joueur en arène au début (plafonné à 16) */
-  pvBase: 1_500, pvParJoueur: 500,
+  pvBase: 4_000, pvParJoueur: 1_500,
+  /** sous cette part de PV, il enrage : attaques plus fréquentes, triple laser */
+  seuilRage: 0.5,
   /** s'arrête à cette distance (m) de sa cible pour frapper */
-  arret: 13,
-  patte: { portee: 18, cosMin: 0.35, armeMs: 650, rechargeMs: 2_200 },
-  laser: { premierMs: 4_000, periodeMs: 8_000, avisMs: 1_400, rayon: 3.5, degats: 75, portee: 140 },
+  arret: 24,
+  patte: { portee: 32, cosMin: 0.3, armeMs: 700, rechargeMs: 2_400 },
+  laser: { premierMs: 4_000, avisMs: 1_400, rayon: 5, degats: 80, portee: 240, ecartTripleMs: 350 },
+  /** attaques spéciales : une toutes les `periodeMs` (× `facteurRage` enragé) */
+  attaques: { premierMs: 6_000, periodeMs: 6_500, facteurRage: 0.55 },
+  /** saut et onde de choc : bond de `dureeMs`, à l'atterrissage tout joueur AU SOL à moins de `rayon` m prend `degats` (on l'évite en sautant) */
+  saut: { dureeMs: 1_300, hauteur: 18, rayon: 32, degats: 70, portee: 60, avance: 9 },
+  /** charge : il se ramasse `armeMs` puis fonce `dureeMs` en ligne droite à `vitesse` m/s et écrase tout sur son passage */
+  charge: { armeMs: 800, dureeMs: 1_500, vitesse: 34, porteeMin: 30, porteeMax: 160 },
   /** pieds et ventre : un joueur sous le tigre qui marche est écrasé (m du modèle, cf. `sousLeTigre`) */
   rayonEcrase: 0.16,
 } as const;
 
 export const TITAN = {
   dureeMs: 90_000,
-  pvMax: 1_500,
-  /** marche du titan (m/s) ; le serveur tolère +1 m/s et 1 m de marge */
-  vitesse: 10,
-  rayonCollision: 2.2,
-  /** le titan est le même tigre, plus petit que le boss (m de l'arène par m du modèle : 12 m du museau au bout de la queue) */
-  echelle: 11,
+  pvMax: 2_500,
+  /** marche du titan (m/s) */
+  vitesse: 13,
+  rayonCollision: 3.2,
+  /** le titan est le même tigre, plus petit que le boss (m de l'arène par m du modèle : 20 m du museau au bout de la queue) */
+  echelle: 18,
   rayonEcrase: 0.18,
-  canon: { cadenceS: 0.12, degats: 28, portee: 300 },
+  canon: { cadenceS: 0.12, degats: 30, portee: 320 },
+  /** dash (Maj) : pointe de vitesse dans la direction des touches (ou devant), puis recharge */
+  dash: { vitesse: 42, dureeMs: 320, rechargeMs: 1_600 },
+  /** saut (Espace) et gravité ; il peut finir sur un toit */
+  saut: { vitesse: 24, gravite: 34 },
+  /** atterrissage d'au moins `chuteMin` m : tout joueur au sol à moins de `rayon` m est écrasé */
+  atterrissage: { chuteMin: 3, rayon: 10 },
+  /** vitesse horizontale et verticale tolérées par le serveur (m/s) */
+  vitesseMaxServeur: 44, vitesseVerticaleMax: 45,
 } as const;
 
 /**
  * Échelle du tigre robot (boss) : m de l'arène par m du modèle 3D du tigre (`public/tigre/tigre.glb`, 1,104 m du museau au bout de la
- * queue). À 24 : 26 m de long, près de 10 m au garrot, la tête vers 13 m, plus haut que les bâtiments d'Agroparc.
+ * queue). À 40 : 44 m de long, 16 m au garrot, la tête vers 21 m : il domine Agroparc et enjambe ses bâtiments.
  */
-export const ECHELLE_TIGRE = 24;
+export const ECHELLE_TIGRE = 40;
 
 // ---------------------------------------------------------------------------------------------
 // Outils
@@ -192,8 +208,11 @@ export function ecraseParTruck(e: EtatVehicule, p: Vec3, rayon: number, marge = 
 // Tigre robot (boss)
 // ---------------------------------------------------------------------------------------------
 
-/** `detour` : cap de contournement retenu tant qu'il reste dégagé (évite d'hésiter entre les deux côtés d'un bâtiment). */
-export interface EtatMarcheur { p: Vec3; cap: number; v: number; detour?: number }
+/**
+ * `detour` : cap de contournement retenu tant qu'il reste dégagé (évite d'hésiter entre les deux côtés d'un bâtiment).
+ * Titan seulement : `vy` vitesse verticale, `auSol`, `dash` (s de dash restantes), `recharge` (s avant le prochain dash).
+ */
+export interface EtatMarcheur { p: Vec3; cap: number; v: number; detour?: number; vy?: number; auSol?: boolean; dash?: number; recharge?: number }
 
 /**
  * Contournement par « moustaches » : si le chemin vers `capVoulu` est barré par un bâtiment avant `portee` m (trois rayons, au centre et sur
@@ -220,28 +239,40 @@ export function capContournement(monde: Monde, p: Vec3, capVoulu: number, portee
 }
 
 /**
- * Un pas du tigre : il pivote vers sa cible (vitesse de rotation bornée), avance d'autant moins qu'il est de travers, s'arrête à
- * `arret` m pour frapper, glisse le long des bâtiments. Sans cible, il reste sur place.
+ * Un pas du tigre géant : il pivote vers sa cible (rotation bornée), avance d'autant moins qu'il est de travers, s'arrête à `arret` m
+ * pour frapper. Plus haut que les bâtiments, il les ENJAMBE (aucune collision, seulement les bornes de l'arène). `vitesse` / `rotation`
+ * remplacent la marche (bond du saut). Sans cible, il reste sur place.
  */
-export function pasTigre(e: EtatMarcheur, cible: Vec3 | null, dt: number, monde: Monde, vers?: Vec3 | null): EtatMarcheur {
+export function pasTigre(
+  e: EtatMarcheur, cible: Vec3 | null, dt: number, monde: Monde, _vers?: Vec3 | null,
+  vitesse: number = TIGRE_ROBOT.vitesse, rotation: number = TIGRE_ROBOT.rotation,
+): EtatMarcheur {
   if (!cible || !(dt > 0)) return { p: [e.p[0], e.p[1], e.p[2]], cap: e.cap, v: 0 };
   const T = TIGRE_ROBOT;
   const dist = Math.hypot(cible[0] - e.p[0], cible[2] - e.p[2]);
-  // `vers` : point du chemin calculé (navigation.ts) ; sinon droit sur la cible
-  const but = vers ?? cible;
-  const voulu = capVers(e.p[0], e.p[2], but[0], but[2]);
-  // un bâtiment barre encore le chemin : il le contourne par le côté dégagé le plus proche
-  const capCible = capContournement(monde, e.p, voulu, Math.min(Math.hypot(but[0] - e.p[0], but[2] - e.p[2]), 16), T.rayonCollision, e.detour);
-  const detour = capCible !== voulu ? capCible : undefined;
-  const ecart = enrouler(capCible - e.cap);
-  const cap = enrouler(e.cap + borne(ecart, -T.rotation * dt, T.rotation * dt));
+  const ecart = enrouler(capVers(e.p[0], e.p[2], cible[0], cible[2]) - e.cap);
+  const cap = enrouler(e.cap + borne(ecart, -rotation * dt, rotation * dt));
   const alignement = Math.max(0, Math.cos(ecart));
-  const vVoulue = dist > T.arret || detour !== undefined || (vers && vers !== cible) ? T.vitesse * alignement * alignement : 0;
+  const v = dist > T.arret ? vitesse * alignement * alignement : 0;
   const [fx, fz] = avant(cap);
-  const r = resoudre(monde, [e.p[0] + fx * vVoulue * dt, 0, e.p[2] + fz * vVoulue * dt], T.rayonCollision, 8);
-  // vitesse RÉELLE (contre un mur, il piétine : les pattes ralentissent)
-  const v = Math.hypot(r.p[0] - e.p[0], r.p[2] - e.p[2]) / dt;
-  return { p: [r.p[0], e.p[1], r.p[2]], cap, v, ...(detour !== undefined ? { detour } : {}) };
+  return { p: borner(monde, e.p[0] + fx * v * dt, e.p[1], e.p[2] + fz * v * dt), cap, v };
+}
+
+/** Avance en ligne droite (charge du tigre) à `vitesse` m/s le long de son cap, dans les bornes. */
+export function foncer(e: EtatMarcheur, vitesse: number, dt: number, monde: Monde): EtatMarcheur {
+  const [fx, fz] = avant(e.cap);
+  return { p: borner(monde, e.p[0] + fx * vitesse * dt, e.p[1], e.p[2] + fz * vitesse * dt), cap: e.cap, v: vitesse };
+}
+
+/** Hauteur du bond du tigre (m) au temps `k` ∈ [0, 1] du saut : parabole. */
+export function hauteurSaut(k: number): number {
+  const x = borne(k, 0, 1);
+  return 4 * TIGRE_ROBOT.saut.hauteur * x * (1 - x);
+}
+
+function borner(monde: Monde, x: number, y: number, z: number): Vec3 {
+  const b = monde.bornes, m = 10;
+  return [borne(x, b.x0 + m, b.x1 - m), y, borne(z, b.z0 + m, b.z1 - m)];
 }
 
 /** Bout du museau au sol (point de départ du coup de patte). */
@@ -258,7 +289,7 @@ export function dansCoupDePatte(e: EtatMarcheur, p: Vec3): boolean {
   const T = TIGRE_ROBOT.patte;
   const dx = p[0] - e.p[0], dz = p[2] - e.p[2];
   const dist = Math.hypot(dx, dz);
-  if (dist > T.portee || p[1] > 12) return false;
+  if (dist > T.portee || p[1] - e.p[1] > 0.3 * ECHELLE_TIGRE) return false;
   if (dist < 1e-6) return true;
   const [fx, fz] = avant(e.cap);
   return (dx * fx + dz * fz) / dist >= T.cosMin;
@@ -266,7 +297,8 @@ export function dansCoupDePatte(e: EtatMarcheur, p: Vec3): boolean {
 
 /** Le joueur est-il sous le corps du tigre (écrasé s'il marche) ? */
 export function sousLeTigre(e: EtatMarcheur, p: Vec3, echelle: number = ECHELLE_TIGRE, rayon: number = TIGRE_ROBOT.rayonEcrase): boolean {
-  if (p[1] > 0.25 * echelle) return false;
+  // pieds du joueur entre le sol sous le monstre et son ventre (il saute ou il est sur un toit : épargné)
+  if (p[1] - e.p[1] > 0.25 * echelle || p[1] < e.p[1] - 1.5) return false;
   const [fx, fz] = avant(e.cap);
   // deux disques sous le corps (pattes avant et arrière), en m du modèle
   for (const a of [0.13, -0.22]) {
@@ -285,21 +317,44 @@ export function pvTigre(joueurs: number): number {
 // Titan tigre (piloté)
 // ---------------------------------------------------------------------------------------------
 
-/** Entrées du pilote : avant/arrière, gauche/droite (−1..1) et lacet de la vue (le titan regarde où regarde le pilote). */
-export interface EntreesTitan { avant: number; droite: number; lacet: number }
+/**
+ * Entrées du pilote : avant/arrière, gauche/droite (−1..1), lacet de la vue (le titan regarde où regarde le pilote), et deux impulsions
+ * (front montant) : `dash` (Maj) et `saut` (Espace).
+ */
+export interface EntreesTitan { avant: number; droite: number; lacet: number; dash?: boolean; saut?: boolean }
 
-/** Un pas du titan (client du pilote) : se déplace dans le repère de la vue, glisse le long des bâtiments. */
+/**
+ * Un pas du titan (client du pilote) : marche dans le repère de la vue, dash (pointe de vitesse dans la direction des touches, sinon
+ * devant), saut avec gravité ; il glisse le long des murs, se pose sur un toit (`solSous`) et retombe dans le vide en quittant le toit.
+ */
 export function pasTitan(e: EtatMarcheur, en: EntreesTitan, dt: number, monde: Monde): EtatMarcheur {
+  const T = TITAN;
   const cap = enrouler(en.lacet);
-  if (!(dt > 0)) return { p: [e.p[0], e.p[1], e.p[2]], cap, v: 0 };
+  if (!(dt > 0)) return { ...e, p: [e.p[0], e.p[1], e.p[2]], cap, v: 0 };
   let ax = borne(Number.isFinite(en.avant) ? en.avant : 0, -1, 1), dr = borne(Number.isFinite(en.droite) ? en.droite : 0, -1, 1);
   const n = Math.hypot(ax, dr);
   if (n > 1) { ax /= n; dr /= n; }
   const [fx, fz] = avant(cap), [rx, rz] = droite(cap);
-  const vx = (fx * ax + rx * dr) * TITAN.vitesse, vz = (fz * ax + rz * dr) * TITAN.vitesse;
-  const r = resoudre(monde, [e.p[0] + vx * dt, 0, e.p[2] + vz * dt], TITAN.rayonCollision, 8);
+  let dash = Math.max(0, (e.dash ?? 0) - dt);
+  let recharge = Math.max(0, (e.recharge ?? 0) - dt);
+  if (en.dash && recharge <= 0) { dash = T.dash.dureeMs / 1000; recharge = T.dash.rechargeMs / 1000; }
+  let vx = (fx * ax + rx * dr) * T.vitesse, vz = (fz * ax + rz * dr) * T.vitesse;
+  if (dash > 0) {
+    // dash : dans la direction des touches, sinon droit devant
+    const dx = n > 0.01 ? fx * ax + rx * dr : fx, dz = n > 0.01 ? fz * ax + rz * dr : fz;
+    const l = Math.hypot(dx, dz) || 1;
+    vx = (dx / l) * T.dash.vitesse; vz = (dz / l) * T.dash.vitesse;
+  }
+  let vy = e.vy ?? 0;
+  let auSol = e.auSol ?? true;
+  if (en.saut && auSol) { vy = T.saut.vitesse; auSol = false; }
+  vy -= T.saut.gravite * dt;
+  let y = e.p[1] + vy * dt;
+  const r = resoudre(monde, [e.p[0] + vx * dt, Math.max(0, e.p[1]), e.p[2] + vz * dt], T.rayonCollision, 8);
+  const sol = solSous(monde, r.p[0], r.p[2], Math.max(e.p[1], y) + 0.01, 0.6);
+  if (y <= sol) { y = sol; vy = 0; auSol = true; } else auSol = false;
   const v = Math.hypot(r.p[0] - e.p[0], r.p[2] - e.p[2]) / dt;
-  return { p: [r.p[0], e.p[1], r.p[2]], cap, v: ax < 0 ? -v : v };
+  return { p: [r.p[0], y, r.p[2]], cap, v: ax < 0 && dash <= 0 ? -v : v, vy, auSol, dash, recharge };
 }
 
 /** Œil du pilote (canon et caméra). */

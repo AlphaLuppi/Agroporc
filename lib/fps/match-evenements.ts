@@ -8,11 +8,11 @@
  * Ne voit la salle que par `ContexteSalle`.
  * Spec : docs/superpowers/specs/2026-10-24-arene-evenements-design.md
  */
-import { resoudre, visible } from "./collision";
+import { resoudre, solSous, visible } from "./collision";
 import { carteNavigation, chemin, pointDeVisee } from "./navigation";
 import type { ContexteSalle, JoueurSalle, ServiceEvenements, Sortie } from "./match-contexte";
 import {
-  EVENEMENTS, TIGRE_ROBOT, TITAN, TRUCK_FOU, capVers, dansCoupDePatte, ecraseParTruck, enrouler, oeilTitan, pasTigre, pasTruck,
+  EVENEMENTS, TIGRE_ROBOT, TITAN, TRUCK_FOU, capVers, foncer, hauteurSaut, dansCoupDePatte, ecraseParTruck, enrouler, oeilTitan, pasTigre, pasTruck,
   pvTigre, sousLeTigre, toucheTigre, yeuxTigre, ECHELLE_TIGRE, type EtatMarcheur,
 } from "./monstres";
 import {
@@ -36,6 +36,9 @@ export interface OptionsServiceEvenements {
   /** PV imposés au tigre et au titan (tests) */
   pvTigre?: number;
   pvTitan?: number;
+  /** attaque spéciale imposée au tigre et délai avant la première (tests, `PDJ_FPS_TIGRE_ATTAQUE`) */
+  attaqueTigre?: "laser" | "saut" | "charge";
+  premiereAttaqueMs?: number;
 }
 
 const DT_MAX_S = 0.05;
@@ -69,11 +72,22 @@ type Phase =
     }
   | {
       k: "tigre"; finT: number; debutT: number; e: EtatMarcheur; pv: number; pvMax: number; cible: string | null; cibleT: number;
-      patteT: number | null; patteDispo: number; laserT: number; laser: { vers: Vec3; tirT: number; de: Vec3 } | null;
-      ch: [number, number][] | null; chT: number;
+      patteT: number | null; patteDispo: number;
+      /** prochaine attaque spéciale (laser, saut, charge) et celle en cours */
+      attaqueT: number; speciale: Speciale | null;
+      lasers: { vers: Vec3; tirT: number; de: Vec3 }[];
     };
 
-interface Titan { pilote: string; e: EtatMarcheur; pv: number; finT: number; seq: number; etatT: number; prochainCanon: number }
+/** Attaque spéciale du tigre en cours : saut (bond puis onde de choc) ou charge (ramassé puis ruée en ligne droite). */
+type Speciale =
+  | { type: "saut"; t0: number; fin: number; impact: Vec3 }
+  | { type: "charge"; t0: number; ruee: number; fin: number };
+
+interface Titan {
+  pilote: string; e: EtatMarcheur; pv: number; finT: number; seq: number; etatT: number; prochainCanon: number;
+  /** hauteur la plus haute depuis que le titan a quitté le sol (null au sol) : l'atterrissage écrase */
+  chuteDepuis: number | null;
+}
 
 export function creerServiceEvenements(ctx: ContexteSalle, opts: OptionsServiceEvenements): ServiceEvenements {
   const premier = opts.premier ?? { minMs: EVENEMENTS.premierMinMs, maxMs: EVENEMENTS.premierMaxMs };
@@ -140,8 +154,7 @@ export function creerServiceEvenements(ctx: ContexteSalle, opts: OptionsServiceE
     phase = {
       k: "tigre", debutT: maintenant, finT: maintenant + TIGRE_ROBOT.dureeMs, pv: pvMax, pvMax,
       e: { p, cap: capVers(p[0], p[2], opts.centre.x, opts.centre.z), v: 0 }, cible: null, cibleT: -Infinity,
-      patteT: null, patteDispo: maintenant + 1_500, laserT: maintenant + TIGRE_ROBOT.laser.premierMs, laser: null,
-      ch: null, chT: -Infinity,
+      patteT: null, patteDispo: maintenant + 1_500, attaqueT: maintenant + (opts.premiereAttaqueMs ?? TIGRE_ROBOT.attaques.premierMs), speciale: null, lasers: [],
     };
     return [{ a: "tous", m: { t: "evenement", type: "tigre", phase: "debut", debutT: maintenant, finT: phase.finT } }];
   }
@@ -175,6 +188,58 @@ export function creerServiceEvenements(ctx: ContexteSalle, opts: OptionsServiceE
     return sorties;
   }
 
+  /** Le tigre enrage sous `seuilRage` de ses PV : attaques plus fréquentes, triple laser. */
+  const enRage = (ph: Extract<Phase, { k: "tigre" }>) => ph.pv < TIGRE_ROBOT.seuilRage * ph.pvMax;
+  /** Le joueur a les pieds au sol (il n'esquive pas l'onde de choc en sautant). */
+  const auSol = (j: JoueurSalle) => j.posture !== "air" && j.p[1] - solSous(ctx.monde, j.p[0], j.p[2], j.p[1] + 0.05) < 0.8;
+
+  /** Choisit et lance une attaque spéciale parmi celles possibles (laser sur un joueur en vue, saut si on est proche, charge à distance). */
+  function lancerAttaque(ph: Extract<Phase, { k: "tigre" }>, cible: JoueurSalle | undefined, maintenant: number): Sortie[] {
+    const T = TIGRE_ROBOT;
+    const rage = enRage(ph);
+    const yeux = yeuxTigre(ph.e);
+    const enVue = vivants()
+      .filter((j) => Math.hypot(j.p[0] - yeux[0], j.p[2] - yeux[2]) <= T.laser.portee)
+      .filter((j) => visible(ctx.monde, yeux, [j.p[0], j.p[1] + 1, j.p[2]]));
+    const proches = vivants().filter((j) => Math.hypot(j.p[0] - ph.e.p[0], j.p[2] - ph.e.p[2]) <= T.saut.portee);
+    const dCible = cible ? Math.hypot(cible.p[0] - ph.e.p[0], cible.p[2] - ph.e.p[2]) : Infinity;
+    const choix: ("laser" | "saut" | "charge")[] = [];
+    if (enVue.length) choix.push("laser", "laser");
+    if (proches.length) choix.push("saut", "saut");
+    if (cible && dCible >= T.charge.porteeMin && dCible <= T.charge.porteeMax) choix.push("charge", "charge");
+    const impose = opts.attaqueTigre;
+    // aucune attaque possible (personne à portée ni en vue) : on réessaie bientôt
+    if (impose ? !choix.includes(impose) : !choix.length) { ph.attaqueT = maintenant + 500; return []; }
+    ph.attaqueT = maintenant + T.attaques.periodeMs * (rage ? T.attaques.facteurRage : 1) * (0.8 + 0.4 * ctx.alea());
+    const quoi = impose ?? choix[Math.floor(ctx.alea() * choix.length) % choix.length];
+    if (quoi === "laser") {
+      // une rafale de 1 laser (3 enragé), chacun sur un joueur en vue, un peu devant lui (il court)
+      const n = rage ? 3 : 1;
+      const sorties: Sortie[] = [];
+      for (let k = 0; k < n; k++) {
+        const v = enVue[k % enVue.length];
+        const avance = (T.laser.avisMs + k * T.laser.ecartTripleMs) / 1000 * 0.6;
+        const vers = cm([v.p[0] + v.v[0] * avance, 0, v.p[2] + v.v[2] * avance]);
+        const l = { vers, de: cm(yeux), tirT: maintenant + T.laser.avisMs + k * T.laser.ecartTripleMs };
+        ph.lasers.push(l);
+        sorties.push({ a: "tous", m: { t: "laser", de: l.de, vers, rayon: T.laser.rayon, tirT: l.tirT } });
+      }
+      return sorties;
+    }
+    if (quoi === "saut") {
+      const fin = maintenant + T.saut.dureeMs;
+      // il bondit vers le joueur visé : point d'impact annoncé tout de suite (anneau au sol)
+      const vise = cible ?? proches[0];
+      const [fx, fz] = [-Math.sin(ph.e.cap), -Math.cos(ph.e.cap)];
+      const portee = Math.min(T.saut.avance * (T.saut.dureeMs / 1000), Math.hypot(vise.p[0] - ph.e.p[0], vise.p[2] - ph.e.p[2]));
+      const impact = cm([ph.e.p[0] + fx * portee, 0, ph.e.p[2] + fz * portee]);
+      ph.speciale = { type: "saut", t0: maintenant, fin, impact };
+      return [{ a: "tous", m: { t: "onde", p: impact, rayon: T.saut.rayon, tirT: fin } }];
+    }
+    ph.speciale = { type: "charge", t0: maintenant, ruee: maintenant + T.charge.armeMs, fin: maintenant + T.charge.armeMs + T.charge.dureeMs };
+    return [];
+  }
+
   function ticTigre(ph: Extract<Phase, { k: "tigre" }>, dt: number, maintenant: number): Sortie[] {
     if (maintenant >= ph.finT) return finEvenement("tigre", maintenant, "temps");
     const T = TIGRE_ROBOT;
@@ -185,48 +250,66 @@ export function creerServiceEvenements(ctx: ContexteSalle, opts: OptionsServiceE
       ph.cibleT = maintenant;
     }
     const cible = ph.cible ? ctx.joueur(ph.cible) : undefined;
-    // pendant le coup de patte, il reste planté
-    if (cible && maintenant - ph.chT >= CHEMIN_MS) {
-      ph.chT = maintenant;
-      ph.ch = chemin(carteNavigation(ctx.monde, DEGAGEMENT_TIGRE_M), [ph.e.p[0], ph.e.p[2]], [cible.p[0], cible.p[2]]);
-    }
-    const vers = cible && ph.ch ? pointDeVisee(ctx.monde, ph.e.p, ph.ch, TIGRE_ROBOT.rayonCollision) : null;
-    ph.e = ph.patteT !== null ? { ...ph.e, v: 0 } : pasTigre(ph.e, cible ? cible.p : null, dt, ctx.monde, vers);
+    const sp = ph.speciale;
 
-    // écrasement sous les pattes quand il marche
-    if (ph.e.v > 1) for (const j of vivants()) if (sousLeTigre(ph.e, j.p)) sorties.push(...ctx.tuer(j, null, "tigre_robot", maintenant));
-
-    // coup de patte : armé si quelqu'un est devant, porté `armeMs` plus tard
-    if (ph.patteT === null && maintenant >= ph.patteDispo && vivants().some((j) => dansCoupDePatte(ph.e, j.p))) {
-      ph.patteT = maintenant + T.patte.armeMs;
-    } else if (ph.patteT !== null && maintenant >= ph.patteT) {
-      ph.patteT = null;
-      ph.patteDispo = maintenant + T.patte.rechargeMs;
-      for (const j of vivants()) if (dansCoupDePatte(ph.e, j.p)) sorties.push(...ctx.tuer(j, null, "tigre_robot", maintenant));
-    }
-
-    // laser : visée annoncée, impact `avisMs` plus tard sur un disque
-    if (ph.laser && maintenant >= ph.laser.tirT) {
-      const { vers, de } = ph.laser;
-      ph.laser = null;
-      sorties.push({ a: "tous", m: { t: "explosionMonstre", p: vers, rayon: T.laser.rayon } });
-      for (const j of vivants()) {
-        if (j.p[1] < 4 && Math.hypot(j.p[0] - vers[0], j.p[2] - vers[2]) <= T.laser.rayon) {
-          sorties.push(...ctx.infliger(j, T.laser.degats, null, "tigre_robot", "corps", "couteau", maintenant, de));
+    // ---- déplacement : attaque spéciale en cours, coup de patte (planté) ou marche (il enjambe les bâtiments)
+    if (sp?.type === "saut") {
+      const k = (maintenant - sp.t0) / (sp.fin - sp.t0);
+      const avant = pasTigre(ph.e, sp.impact, dt, ctx.monde, null, T.saut.avance * 1.4, T.rotation * 2);
+      ph.e = { ...avant, p: [avant.p[0], hauteurSaut(k), avant.p[2]] };
+      if (maintenant >= sp.fin) {
+        // atterrissage : onde de choc, tout joueur au sol dans le rayon est touché (sauter l'esquive)
+        ph.speciale = null;
+        ph.e = { ...ph.e, p: [ph.e.p[0], 0, ph.e.p[2]] };
+        sorties.push({ a: "tous", m: { t: "explosionMonstre", p: cm([ph.e.p[0], 1, ph.e.p[2]]), rayon: T.saut.rayon * 0.5 } });
+        for (const j of vivants()) {
+          if (Math.hypot(j.p[0] - ph.e.p[0], j.p[2] - ph.e.p[2]) <= T.saut.rayon && auSol(j)) {
+            sorties.push(...ctx.infliger(j, T.saut.degats, null, "tigre_robot", "corps", "couteau", maintenant, ph.e.p));
+          }
         }
       }
-    } else if (!ph.laser && maintenant >= ph.laserT) {
-      ph.laserT = maintenant + T.laser.periodeMs;
-      const yeux = yeuxTigre(ph.e);
-      const vise = vivants()
-        .filter((j) => Math.hypot(j.p[0] - yeux[0], j.p[2] - yeux[2]) <= T.laser.portee)
-        .find((j) => visible(ctx.monde, yeux, [j.p[0], j.p[1] + 1, j.p[2]]));
-      if (vise) {
-        const vers = cm([vise.p[0], 0, vise.p[2]]);
-        ph.laser = { vers, de: cm(yeux), tirT: maintenant + T.laser.avisMs };
-        sorties.push({ a: "tous", m: { t: "laser", de: ph.laser.de, vers, rayon: T.laser.rayon, tirT: ph.laser.tirT } });
+    } else if (sp?.type === "charge") {
+      if (maintenant < sp.ruee) {
+        // il se ramasse face à sa cible
+        ph.e = cible ? { ...pasTigre(ph.e, cible.p, dt, ctx.monde, null, 0, T.rotation * 3), v: 0 } : { ...ph.e, v: 0 };
+      } else {
+        ph.e = foncer(ph.e, T.charge.vitesse, dt, ctx.monde);
+        for (const j of vivants()) if (sousLeTigre(ph.e, j.p, ECHELLE_TIGRE, T.rayonEcrase * 1.5)) sorties.push(...ctx.tuer(j, null, "tigre_robot", maintenant));
+      }
+      if (maintenant >= sp.fin) ph.speciale = null;
+    } else if (ph.patteT !== null) {
+      ph.e = { ...ph.e, v: 0 };
+    } else {
+      ph.e = pasTigre(ph.e, cible ? cible.p : null, dt, ctx.monde);
+    }
+
+    // écrasement sous les pattes quand il marche
+    if (!sp && ph.e.v > 1) for (const j of vivants()) if (sousLeTigre(ph.e, j.p)) sorties.push(...ctx.tuer(j, null, "tigre_robot", maintenant));
+
+    // coup de patte (hors attaque spéciale) : armé si quelqu'un est devant, porté `armeMs` plus tard
+    if (!ph.speciale) {
+      if (ph.patteT === null && maintenant >= ph.patteDispo && vivants().some((j) => dansCoupDePatte(ph.e, j.p))) {
+        ph.patteT = maintenant + T.patte.armeMs;
+      } else if (ph.patteT !== null && maintenant >= ph.patteT) {
+        ph.patteT = null;
+        ph.patteDispo = maintenant + T.patte.rechargeMs * (enRage(ph) ? 0.6 : 1);
+        for (const j of vivants()) if (dansCoupDePatte(ph.e, j.p)) sorties.push(...ctx.tuer(j, null, "tigre_robot", maintenant));
       }
     }
+
+    // lasers : impact `avisMs` après la visée, sur un disque
+    for (const l of ph.lasers.filter((x) => maintenant >= x.tirT)) {
+      sorties.push({ a: "tous", m: { t: "explosionMonstre", p: l.vers, rayon: T.laser.rayon } });
+      for (const j of vivants()) {
+        if (j.p[1] < 4 && Math.hypot(j.p[0] - l.vers[0], j.p[2] - l.vers[2]) <= T.laser.rayon) {
+          sorties.push(...ctx.infliger(j, T.laser.degats, null, "tigre_robot", "corps", "couteau", maintenant, l.de));
+        }
+      }
+    }
+    ph.lasers = ph.lasers.filter((x) => maintenant < x.tirT);
+
+    // prochaine attaque spéciale
+    if (!ph.speciale && ph.patteT === null && maintenant >= ph.attaqueT) sorties.push(...lancerAttaque(ph, cible, maintenant));
     return sorties;
   }
 
@@ -235,7 +318,7 @@ export function creerServiceEvenements(ctx: ContexteSalle, opts: OptionsServiceE
   function demarrerTitan(j: JoueurSalle, p: Vec3, cap: number, maintenant: number): Sortie[] {
     const sorties: Sortie[] = [...ctx.libererVehicule(j, maintenant)];
     const r = resoudre(ctx.monde, [p[0], 0, p[2]], TITAN.rayonCollision, 8).p;
-    titan = { pilote: j.id, e: { p: [r[0], 0, r[2]], cap, v: 0 }, pv: opts.pvTitan ?? TITAN.pvMax, finT: maintenant + TITAN.dureeMs, seq: -1, etatT: maintenant, prochainCanon: -Infinity };
+    titan = { pilote: j.id, e: { p: [r[0], 0, r[2]], cap, v: 0 }, pv: opts.pvTitan ?? TITAN.pvMax, finT: maintenant + TITAN.dureeMs, seq: -1, etatT: maintenant, prochainCanon: -Infinity, chuteDepuis: null };
     j.p = [r[0], 0, r[2]];
     j.v = [0, 0, 0];
     j.etatT = maintenant;
@@ -284,23 +367,41 @@ export function creerServiceEvenements(ctx: ContexteSalle, opts: OptionsServiceE
   function recevoirPilotage(j: JoueurSalle, m: Extract<MessageClient, { t: "pilotage" }>, maintenant: number): Sortie[] {
     if (!titan || titan.pilote !== j.id) return [];
     if (!Number.isFinite(m.seq) || m.seq <= titan.seq) return [];
-    if (!Array.isArray(m.p) || ![m.p[0], m.p[2], m.cap, m.lacet, m.tangage].every(Number.isFinite)) return [];
+    if (!Array.isArray(m.p) || ![m.p[0], m.p[1], m.p[2], m.cap, m.lacet, m.tangage].every(Number.isFinite)) return [];
     const dt = Math.min(Math.max((maintenant - titan.etatT) / 1000, 1 / 120), 0.5);
     const dh = Math.hypot(m.p[0] - titan.e.p[0], m.p[2] - titan.e.p[2]);
-    if (dh > (TITAN.vitesse + 1) * dt + MARGE_TITAN_M) return [];
-    const r = resoudre(ctx.monde, [m.p[0], 0, m.p[2]], TITAN.rayonCollision, 8);
+    // marche, dash (pointe de vitesse) et saut : vitesses bornées, jamais dans un bâtiment (toits permis)
+    if (dh > TITAN.vitesseMaxServeur * dt + MARGE_TITAN_M) return [];
+    const y = m.p[1];
+    if (y < -0.5 || y > 80 || Math.abs(y - titan.e.p[1]) > TITAN.vitesseVerticaleMax * dt + MARGE_TITAN_M) return [];
+    const r = resoudre(ctx.monde, [m.p[0], Math.max(0, y), m.p[2]], TITAN.rayonCollision, 8);
     if (r.contacts.some((c) => c.profondeur > PENETRATION_MAX_M)) return [];
     titan.seq = m.seq;
-    titan.e = { p: [m.p[0], 0, m.p[2]], cap: enrouler(m.cap), v: dh / dt };
+    titan.e = { p: [m.p[0], Math.max(0, y), m.p[2]], cap: enrouler(m.cap), v: dh / dt };
     titan.etatT = maintenant;
     j.etatT = maintenant;
-    j.p = [m.p[0], 0, m.p[2]];
+    j.p = [m.p[0], Math.max(0, y), m.p[2]];
+    // atterrissage après une chute : tout joueur au sol autour est écrasé
+    const sol = solSous(ctx.monde, m.p[0], m.p[2], y + 0.6, 0.6);
+    const sorties: Sortie[] = [];
+    if (titan.chuteDepuis !== null && y - sol < 0.7) {
+      if (titan.chuteDepuis - y >= TITAN.atterrissage.chuteMin) {
+        sorties.push({ a: "tous", m: { t: "explosionMonstre", p: cm([m.p[0], y + 0.5, m.p[2]]), rayon: TITAN.atterrissage.rayon * 0.6 } });
+        for (const c of vivants()) {
+          if (Math.hypot(c.p[0] - m.p[0], c.p[2] - m.p[2]) <= TITAN.atterrissage.rayon && Math.abs(c.p[1] - y) < 3) sorties.push(...ctx.tuer(c, j, "titan", maintenant));
+        }
+      }
+      titan.chuteDepuis = null;
+    } else if (y - sol >= 0.7) {
+      titan.chuteDepuis = Math.max(titan.chuteDepuis ?? y, y);
+    }
+
     j.v = [0, 0, 0];
     j.lacet = m.lacet;
     j.tangage = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, m.tangage));
     j.posture = "sol";
     j.mur = 0;
-    return [];
+    return sorties;
   }
 
   function recevoirCanon(j: JoueurSalle, m: Extract<MessageClient, { t: "canon" }>, maintenant: number): Sortie[] {
@@ -389,7 +490,11 @@ export function creerServiceEvenements(ctx: ContexteSalle, opts: OptionsServiceE
       const ph = phase;
       if (ph?.k === "truck") m.truck = { p: cm(ph.e.p), cap: mrad(ph.e.cap), v: ARRONDI(Math.hypot(ph.e.v, ph.e.vl ?? 0)) };
       if (ph?.k === "tigre") {
-        m.tigre = { p: cm(ph.e.p), cap: mrad(ph.e.cap), v: ARRONDI(ph.e.v), pv: Math.max(0, Math.round(ph.pv)), pvMax: ph.pvMax, ...(ph.patteT !== null ? { a: "patte" as const } : {}) };
+        const a = ph.speciale ? ph.speciale.type : ph.patteT !== null ? "patte" as const : null;
+        m.tigre = {
+          p: cm(ph.e.p), cap: mrad(ph.e.cap), v: ARRONDI(ph.e.v), pv: Math.max(0, Math.round(ph.pv)), pvMax: ph.pvMax,
+          ...(a ? { a } : {}), ...(enRage(ph) ? { rage: true } : {}),
+        };
       }
       if (titan) m.titan = { pilote: titan.pilote, p: cm(titan.e.p), cap: mrad(titan.e.cap), v: ARRONDI(titan.e.v), pv: Math.max(0, Math.round(titan.pv)), pvMax: opts.pvTitan ?? TITAN.pvMax };
       return m.truck || m.tigre || m.titan ? m : null;

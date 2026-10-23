@@ -65,3 +65,19 @@ Serveur : `PDJ_FPS_EVT_MIN_MS` / `PDJ_FPS_EVT_MAX_MS` (délai avant chaque évé
 - Pas de marqueur des monstres sur la mini-carte.
 - Le tigre traverse les voitures conduisibles et PNJ (ni collision ni écrasement des voitures elles-mêmes, leurs occupants meurent sous lui).
 - Le pilote voit depuis la tête du titan : son propre titan n'est pas dessiné.
+
+## Révision du 2026-10-24 (après essais)
+
+- **Tigre géant** : `ECHELLE_TIGRE` = 40 (44 m de long, 16 m au garrot, tête vers 21 m). Plus haut que les bâtiments, il les **enjambe**
+  (aucune collision, plus de chemin A* pour lui ; la navigation sert au Truck). PV = 4 000 + 1 500 par joueur. Marche à 8 m/s, s'arrête à 24 m.
+- **Attaques** (`lancerAttaque`, une toutes les 6,5 s ± 20 %, réessai 0,5 s si personne n'est à portée) : **laser** (1, ou 3 en rafale
+  enragé, visée un peu devant le joueur qui court), **saut** (bond de 1,3 s jusqu'à 18 m, anneau d'impact annoncé `onde`, à l'atterrissage
+  70 dégâts à tout joueur AU SOL dans 32 m : sauter l'esquive), **charge** (ramassé 0,8 s face à sa cible puis ruée de 1,5 s à 34 m/s qui
+  écrase), plus le **coup de patte** (32 m devant lui). **Rage** sous 50 % des PV (`TigreSnap.rage`) : attaques 1,8 fois plus fréquentes,
+  triple laser, maillage rouge, « ENRAGÉ » dans le bandeau. `TigreSnap.a` : `patte`, `saut` (p[1] = hauteur du bond), `charge`.
+- **Titan** : échelle 18 (20 m), 2 500 PV, 13 m/s, **dash** (Maj : 42 m/s pendant 0,32 s, recharge 1,6 s), **saut** (Espace : 24 m/s,
+  gravité 34) qui permet de monter sur les toits (`solSous`), **atterrissage** d'au moins 3 m de chute qui écrase les joueurs au sol dans
+  10 m. Le serveur borne 44 m/s à l'horizontale, 45 m/s à la verticale, refuse toute pénétration > 0,6 m dans un bâtiment (toits permis).
+  `OEIL_TITAN` = 9,5 m. **Vue à la 3ᵉ personne par-dessus l'épaule** (`CAMERA_TITAN` de `jeu.ts`) : on voit son tigre ; le canon tire
+  de sa tête vers le point sous le réticule (rayon depuis la caméra).
+- Essais : `PDJ_FPS_TIGRE_ATTAQUE` (`laser`, `saut` ou `charge`) impose l'attaque spéciale.

@@ -194,9 +194,9 @@ export default function HudArene(p: PropsHudArene) {
                 siege={hud.siege} vehiculeId={hud.vehiculeId} sieges={p.sieges} joueurs={joueurs} monId={monId}
                 toucheInteragir={t("interagir")} toucheSiege={t("siege")} refKmh={refKmh}
               />
-            ) : (
+            ) : !hud.titan ? (
               <p className={styles.course}>COURSE <span ref={refVitesse} /></p>
-            )}
+            ) : null}
             {!pause && <p className={styles.aideBas} aria-hidden="true">{t("scores")} : scores · {t("carte")} : carte</p>}
           </div>
         </>

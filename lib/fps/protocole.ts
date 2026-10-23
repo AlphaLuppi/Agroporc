@@ -154,7 +154,13 @@ export interface InfoVehicule { id: number; sieges: (string | null)[] }
 /** Truck Muche fou (v3) : position, cap et vitesse signée le long du cap. */
 export interface TruckSnap { p: Vec3; cap: number; v: number }
 /** Tigre robot géant (boss, v3). `a` = coup de patte armé ou en cours (animation). */
-export interface TigreSnap { p: Vec3; cap: number; v: number; pv: number; pvMax: number; a?: "patte" }
+export interface TigreSnap {
+  p: Vec3; cap: number; v: number; pv: number; pvMax: number;
+  /** attaque en cours : coup de patte, saut (`p[1]` = hauteur du bond), charge (ramassé puis ruée) */
+  a?: "patte" | "saut" | "charge";
+  /** enragé (moins de la moitié de ses PV) */
+  rage?: boolean;
+}
 /** Titan tigre piloté (v3). */
 export interface TitanSnap { pilote: string; p: Vec3; cap: number; v: number; pv: number; pvMax: number }
 /** Monstres présents (snap des joueurs en arène). */
@@ -339,6 +345,8 @@ export type MessageServeur =
   | { t: "evenement"; type: TypeEvenement; phase: "annonce" | "debut" | "fin" | "etat"; debutT: number; finT: number; raison?: "temps" | "vaincu"; par?: string }
   /** Laser des yeux du tigre (v4) : visée affichée tout de suite, impact à `tirT` sur un disque autour de `vers`. */
   | { t: "laser"; de: Vec3; vers: Vec3; rayon: number; tirT: number }
+  /** Onde de choc annoncée (saut du tigre) : anneau au sol tout de suite, impact à `tirT` sur un disque (les joueurs au sol). */
+  | { t: "onde"; p: Vec3; rayon: number; tirT: number }
   /** Explosion d'un monstre (mort du tigre, titan détruit, impact du laser) : effet seulement. */
   | { t: "explosionMonstre"; p: Vec3; rayon: number }
   /**
@@ -440,7 +448,7 @@ export function silhouetteDe(accroupi: boolean | undefined): Silhouette {
 export const OEIL_SIEGE = 1.3;
 
 /** Hauteur de l'œil du pilote du titan tigre (m au-dessus des pieds du titan). */
-export const OEIL_TITAN = 6.6;
+export const OEIL_TITAN = 9.5;
 
 /** Hauteur de l'œil d'un joueur : pilote du titan, assis (`vehicule` défini), accroupi ou debout. SEULE source pour caméra, serveur, killcam et visibilité. */
 export function oeilDe(e: { accroupi?: boolean; vehicule?: unknown; titan?: boolean }): number {

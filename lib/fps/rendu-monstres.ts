@@ -177,7 +177,7 @@ function creerTigreBoites(parent: THREE.Object3D, couleur: number | string, aDis
       m.ligne.color.set(c);
       m.fond.color.set(c).multiplyScalar(0.09);
     },
-    maj(s: { p: Vec3; cap: number; v: number; a?: "patte" } | undefined, echelle: number, tS: number, dt: number, laserProche: number) {
+    maj(s: { p: Vec3; cap: number; v: number; a?: "patte" | "saut" | "charge"; rage?: boolean } | undefined, echelle: number, tS: number, dt: number, laserProche: number) {
       if (!s) { group.visible = false; return; }
       group.visible = true;
       group.position.set(s.p[0], s.p[1], s.p[2]);
@@ -294,6 +294,7 @@ function creerTigre(parent: THREE.Object3D, couleur: number | string, aDisposer:
   const boites = creerTigreBoites(parent, couleur, aDisposer);
   let robot: TigreRobot | null = null;
   let couleurCourante: string | number = couleur;
+  let rageAvant = false;
   let detruit = false;
   chargerModele().then((m) => {
     if (detruit) return;
@@ -308,7 +309,7 @@ function creerTigre(parent: THREE.Object3D, couleur: number | string, aDisposer:
         robot.metal.color.set(c).lerp(new THREE.Color(0xffffff), 0.35).multiplyScalar(TEINTE_METAL);
       }
     },
-    maj(s: { p: Vec3; cap: number; v: number; a?: "patte" } | undefined, echelle: number, tS: number, dt: number, laserProche: number) {
+    maj(s: { p: Vec3; cap: number; v: number; a?: "patte" | "saut" | "charge"; rage?: boolean } | undefined, echelle: number, tS: number, dt: number, laserProche: number) {
       if (!robot) { boites.maj(s, echelle / 10, tS, dt, laserProche); return; }
       boites.maj(undefined, 1, tS, dt, 0);
       const r = robot;
@@ -318,10 +319,12 @@ function creerTigre(parent: THREE.Object3D, couleur: number | string, aDisposer:
       // le corps marche le long de +x de son repère : +x devient l'avant (−sin cap, −cos cap)
       r.group.rotation.y = s.cap + Math.PI / 2;
       r.tigre.groupe.scale.setScalar(echelle);
-      r.anim.maj(dt, s.v, echelle, s.a === "patte");
+      r.anim.maj(dt, s.v, echelle, s.a === "patte" || s.a === "charge" || s.a === "saut");
       r.tigre.appliquer(r.anim.pose(), r.anim.x());
       // les yeux s'embrasent quand le laser est armé ; le maillage pulse doucement
       r.yeux.color.setRGB(1, 0.1 + 0.25 * laserProche, 0.12 + 0.2 * laserProche);
+      // enragé : le maillage vire au rouge
+      if (s.rage !== rageAvant) { rageAvant = !!s.rage; r.maillage.color.set(s.rage ? 0xff2a2a : couleurCourante); }
       for (const o of r.oeils) o.scale.setScalar(o.userData.base * (1 + 0.8 * laserProche));
       r.maillage.opacity = OPACITE_MAILLAGE * (0.85 + 0.15 * Math.sin(tS * 3)) + 0.12 * laserProche;
     },
@@ -378,7 +381,8 @@ function creerLaser(parent: THREE.Object3D, aDisposer: { dispose(): void }[]) {
         const epaisseur = avant > 0 ? 0.05 + 0.18 * k : 0.9;
         r.scale.set(epaisseur, epaisseur, longueur);
         (r.material as THREE.MeshBasicMaterial).opacity = avant > 0 ? 0.25 + 0.5 * k : 0.95;
-        r.visible = true;
+        // onde de choc : pas de rayon, seulement l'anneau au sol
+        r.visible = !l.onde && longueur > 0.1;
         an.position.set(l.vers[0], 0, l.vers[2]);
         const pulse = 1 + 0.08 * Math.sin(ts / 60);
         an.scale.set(l.rayon * pulse, 1, l.rayon * pulse);

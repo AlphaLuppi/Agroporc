@@ -3,8 +3,8 @@ import { describe, expect, it } from "vitest";
 import type { Building, SceneData } from "../agroparc3d/types";
 import { construireMonde } from "./collision";
 import {
-  ECHELLE_TIGRE, TIGRE_ROBOT, TITAN, TRUCK_FOU, capVers, commandesPoursuite, dansCoupDePatte, ecraseParTruck, pasTigre, pasTitan, pasTruck, pointLocal, pvTigre,
-  sousLeTigre, toucheTigre,
+  ECHELLE_TIGRE, TIGRE_ROBOT, TITAN, TRUCK_FOU, capVers, foncer, hauteurSaut, commandesPoursuite, dansCoupDePatte, ecraseParTruck, pasTigre, pasTitan, pasTruck, pointLocal, pvTigre,
+  sousLeTigre, toucheTigre, type EtatMarcheur,
 } from "./monstres";
 import type { Vec3 } from "./protocole";
 
@@ -60,31 +60,37 @@ describe("Truck Muche fou", () => {
 });
 
 describe("tigre robot", () => {
-  it("pivote puis marche vers sa cible, s'arrête à portée de patte, et ne traverse pas les bâtiments", () => {
+  it("pivote puis marche vers sa cible, s'arrête à portée de patte, et enjambe les bâtiments (plus haut qu'eux)", () => {
     let e = { p: [0, 0, 0] as Vec3, cap: 0, v: 0 };
-    for (let i = 0; i < 60 * 12; i++) e = pasTigre(e, [60, 0, 0], 1 / 60, vide);
-    expect(e.p[0]).toBeGreaterThan(45);
-    expect(e.p[0]).toBeLessThan(60);
-    // un mur de 30 m de large entre lui et sa cible : il le contourne au lieu de piétiner devant
+    for (let i = 0; i < 60 * 15; i++) e = pasTigre(e, [100, 0, 0], 1 / 60, vide);
+    expect(e.p[0]).toBeGreaterThan(100 - TIGRE_ROBOT.arret - 1);
+    expect(e.p[0]).toBeLessThan(100 - TIGRE_ROBOT.arret + 1);
+    // un bâtiment entre lui et sa cible : il passe par-dessus, en ligne droite
     const mur = mondeAvec(rect(20, -15, 30, 15));
     let f = { p: [0, 0, 0] as Vec3, cap: CAP_EST, v: 0 };
-    let auPlusPres = Infinity;
-    for (let i = 0; i < 60 * 30; i++) {
-      f = pasTigre(f, [60, 0, 0], 1 / 60, mur);
-      expect(f.p[0] > 20 - 2.9 && f.p[0] < 30 + 2.9 && Math.abs(f.p[2]) < 15 + 2.9).toBe(false); // jamais dans le bâtiment
-      auPlusPres = Math.min(auPlusPres, Math.hypot(60 - f.p[0], f.p[2]));
-    }
-    expect(auPlusPres).toBeLessThan(TIGRE_ROBOT.arret + 1.5); // il s'arrête à portée de patte
+    for (let i = 0; i < 60 * 15; i++) f = pasTigre(f, [100, 0, 0], 1 / 60, mur);
+    expect(Math.abs(f.p[2])).toBeLessThan(1e-6);
+    expect(f.p[0]).toBeGreaterThan(100 - TIGRE_ROBOT.arret - 1);
+  });
+
+  it("saut : parabole qui culmine à mi-bond ; charge : ruée en ligne droite", () => {
+    expect(hauteurSaut(0)).toBe(0);
+    expect(hauteurSaut(0.5)).toBeCloseTo(TIGRE_ROBOT.saut.hauteur, 6);
+    expect(hauteurSaut(1)).toBe(0);
+    const e = foncer({ p: [0, 0, 0], cap: CAP_EST, v: 0 }, 30, 0.5, vide);
+    expect(e.p[0]).toBeCloseTo(15, 6);
+    expect(e.p[2]).toBeCloseTo(0, 6);
   });
 
   it("coup de patte devant seulement, écrasement sous le corps", () => {
     const e = { p: [0, 0, 0] as Vec3, cap: CAP_EST, v: 0 };
     expect(dansCoupDePatte(e, [14, 0, 0])).toBe(true);
     expect(dansCoupDePatte(e, [-14, 0, 0])).toBe(false);
-    expect(dansCoupDePatte(e, [24, 0, 0])).toBe(false);
-    // sous les pattes avant (0,13 m du modèle devant le centre, × 24) et entre les flancs
+    expect(dansCoupDePatte(e, [TIGRE_ROBOT.patte.portee + 5, 0, 0])).toBe(false);
+    // sous les pattes avant (0,13 m du modèle devant le centre, × 40) ; un joueur en l'air au-dessus du dos est épargné
     expect(sousLeTigre(e, [3.1, 0, 1])).toBe(true);
-    expect(sousLeTigre(e, [0, 0, 8])).toBe(false);
+    expect(sousLeTigre(e, [0, 0, 12])).toBe(false);
+    expect(sousLeTigre(e, [3.1, 0.3 * ECHELLE_TIGRE, 1])).toBe(false);
   });
 
   it("formes de touche : tête devant (zone tete), corps, raté, et un bâtiment entre les deux protège", () => {
@@ -106,8 +112,8 @@ describe("tigre robot", () => {
   });
 
   it("PV selon le nombre de joueurs, bornés à 16", () => {
-    expect(pvTigre(1)).toBe(2000);
-    expect(pvTigre(4)).toBe(3500);
+    expect(pvTigre(1)).toBe(TIGRE_ROBOT.pvBase + TIGRE_ROBOT.pvParJoueur);
+    expect(pvTigre(4)).toBe(TIGRE_ROBOT.pvBase + 4 * TIGRE_ROBOT.pvParJoueur);
     expect(pvTigre(40)).toBe(pvTigre(16));
   });
 });
@@ -122,5 +128,33 @@ describe("titan", () => {
     let f = { p: [0, 0, 0] as Vec3, cap: 0, v: 0 };
     for (let i = 0; i < 120; i++) f = pasTitan(f, { avant: 1, droite: 0, lacet: CAP_EST }, 1 / 60, mur);
     expect(f.p[0]).toBeLessThanOrEqual(5 - TITAN.rayonCollision + 0.01);
+  });
+
+  it("dash : pointe de vitesse puis recharge (un second dash trop tôt ne part pas)", () => {
+    let e = { p: [0, 0, 0] as Vec3, cap: 0, v: 0 };
+    e = pasTitan(e, { avant: 0, droite: 0, lacet: CAP_EST, dash: true }, 1 / 60, vide);
+    expect(e.v).toBeCloseTo(TITAN.dash.vitesse, 0);
+    for (let i = 0; i < 30; i++) e = pasTitan(e, { avant: 0, droite: 0, lacet: CAP_EST }, 1 / 60, vide);
+    expect(e.v).toBe(0);
+    e = pasTitan(e, { avant: 0, droite: 0, lacet: CAP_EST, dash: true }, 1 / 60, vide);
+    expect(e.v).toBe(0); // encore en recharge
+  });
+
+  it("saut : monte, retombe au sol ; se pose sur un toit assez bas", () => {
+    let e: EtatMarcheur = { p: [0, 0, 0], cap: 0, v: 0 };
+    e = pasTitan(e, { avant: 0, droite: 0, lacet: 0, saut: true }, 1 / 60, vide);
+    let haut = 0;
+    for (let i = 0; i < 120; i++) { e = pasTitan(e, { avant: 0, droite: 0, lacet: 0 }, 1 / 60, vide); haut = Math.max(haut, e.p[1]); }
+    expect(haut).toBeGreaterThan(7);
+    expect(e.p[1]).toBe(0);
+    expect(e.auSol).toBe(true);
+    // toit de 5 m devant : saut puis avance, il finit dessus
+    const toit = mondeAvec(rect(6, -20, 40, 20, 5));
+    let f: EtatMarcheur = { p: [0, 0, 0], cap: 0, v: 0 };
+    f = pasTitan(f, { avant: 0, droite: 0, lacet: CAP_EST, saut: true }, 1 / 60, toit);
+    for (let i = 0; i < 90; i++) f = pasTitan(f, { avant: 1, droite: 0, lacet: CAP_EST }, 1 / 60, toit);
+    expect(f.p[0]).toBeGreaterThan(10);
+    expect(f.p[1]).toBeCloseTo(5, 1);
+    expect(f.auSol).toBe(true);
   });
 });
