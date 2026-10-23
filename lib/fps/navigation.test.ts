@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { Building, SceneData } from "../agroparc3d/types";
 import { construireMonde, pointsApparition, resoudre } from "./collision";
-import { pasTigre, pasTruck, type EtatMarcheur } from "./monstres";
+import { TIGRE_ROBOT, pasTigre, pasTruck, type EtatMarcheur } from "./monstres";
 import { carteNavigation, chemin, pointDeVisee } from "./navigation";
 import type { Vec3 } from "./protocole";
 import type { EtatVehicule } from "./vehicule";
@@ -52,7 +52,7 @@ describe("navigation", () => {
 
   it("vraie carte : le tigre parti à 85 m du rond-point rejoint le rond-point", () => {
     const rp = trouverRondPoint(scene)!;
-    const c = carteNavigation(reel, 3.3);
+    const c = carteNavigation(reel, TIGRE_ROBOT.rayonCollision + 0.3);
     let essais = 0, reussites = 0;
     for (let a = 0; a < 8; a++) {
       const p: Vec3 = [rp.centre[0] + Math.cos((a * Math.PI) / 4) * 85, 0, rp.centre[1] + Math.sin((a * Math.PI) / 4) * 85];
@@ -61,9 +61,9 @@ describe("navigation", () => {
       let e: EtatMarcheur = { p, cap: 0, v: 0 };
       let t = 0, ch: [number, number][] | null = null, chT = -9;
       const cible: Vec3 = [rp.centre[0], 0, rp.centre[1] + rp.rayon + 6];
-      while (Math.hypot(e.p[0] - cible[0], e.p[2] - cible[2]) > 9 && t < 60) {
+      while (Math.hypot(e.p[0] - cible[0], e.p[2] - cible[2]) > TIGRE_ROBOT.arret + 2 && t < 60) {
         if (t - chT > 1.2) { chT = t; ch = chemin(c, [e.p[0], e.p[2]], [cible[0], cible[2]]); }
-        e = pasTigre(e, cible, 1 / 60, reel, ch ? pointDeVisee(reel, e.p, ch, 3) : null);
+        e = pasTigre(e, cible, 1 / 60, reel, ch ? pointDeVisee(reel, e.p, ch, TIGRE_ROBOT.rayonCollision) : null);
         t += 1 / 60;
       }
       if (t < 60) reussites++;

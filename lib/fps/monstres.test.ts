@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { Building, SceneData } from "../agroparc3d/types";
 import { construireMonde } from "./collision";
 import {
-  TITAN, TRUCK_FOU, capVers, commandesPoursuite, dansCoupDePatte, ecraseParTruck, pasTigre, pasTitan, pasTruck, pointLocal, pvTigre,
+  ECHELLE_TIGRE, TIGRE_ROBOT, TITAN, TRUCK_FOU, capVers, commandesPoursuite, dansCoupDePatte, ecraseParTruck, pasTigre, pasTitan, pasTruck, pointLocal, pvTigre,
   sousLeTigre, toucheTigre,
 } from "./monstres";
 import type { Vec3 } from "./protocole";
@@ -74,31 +74,35 @@ describe("tigre robot", () => {
       expect(f.p[0] > 20 - 2.9 && f.p[0] < 30 + 2.9 && Math.abs(f.p[2]) < 15 + 2.9).toBe(false); // jamais dans le bâtiment
       auPlusPres = Math.min(auPlusPres, Math.hypot(60 - f.p[0], f.p[2]));
     }
-    expect(auPlusPres).toBeLessThan(10);
+    expect(auPlusPres).toBeLessThan(TIGRE_ROBOT.arret + 1.5); // il s'arrête à portée de patte
   });
 
   it("coup de patte devant seulement, écrasement sous le corps", () => {
     const e = { p: [0, 0, 0] as Vec3, cap: CAP_EST, v: 0 };
-    expect(dansCoupDePatte(e, [7, 0, 0])).toBe(true);
-    expect(dansCoupDePatte(e, [-7, 0, 0])).toBe(false);
-    expect(dansCoupDePatte(e, [15, 0, 0])).toBe(false);
-    expect(sousLeTigre(e, [2, 0, 0.5])).toBe(true);
-    expect(sousLeTigre(e, [0, 0, 6])).toBe(false);
+    expect(dansCoupDePatte(e, [14, 0, 0])).toBe(true);
+    expect(dansCoupDePatte(e, [-14, 0, 0])).toBe(false);
+    expect(dansCoupDePatte(e, [24, 0, 0])).toBe(false);
+    // sous les pattes avant (0,13 m du modèle devant le centre, × 24) et entre les flancs
+    expect(sousLeTigre(e, [3.1, 0, 1])).toBe(true);
+    expect(sousLeTigre(e, [0, 0, 8])).toBe(false);
   });
 
   it("formes de touche : tête devant (zone tete), corps, raté, et un bâtiment entre les deux protège", () => {
     const p: Vec3 = [0, 0, 0];
-    const tete = pointLocal(p, CAP_EST, 1, 0, 5.4, 5.6);
-    const corps = pointLocal(p, CAP_EST, 1, 0, 4.5, -0.4);
+    const S = ECHELLE_TIGRE;
+    const tete = pointLocal(p, CAP_EST, S, 0, 0.47, 0.37);
+    const corps = pointLocal(p, CAP_EST, S, 0, 0.33, -0.03);
     const viser = (o: Vec3, c: Vec3): Vec3 => { const v = [c[0] - o[0], c[1] - o[1], c[2] - o[2]]; const l = Math.hypot(v[0], v[1], v[2]); return [v[0] / l, v[1] / l, v[2] / l]; };
-    const de: Vec3 = [0, 2, 40];
-    expect(toucheTigre(de, viser(de, tete), 400, p, CAP_EST, 1, vide)?.zone).toBe("tete");
-    expect(toucheTigre(de, viser(de, corps), 400, p, CAP_EST, 1, vide)?.zone).toBe("corps");
-    expect(toucheTigre(de, viser(de, [30, 4, 0]), 400, p, CAP_EST, 1, vide)).toBeNull();
-    const abri = mondeAvec(rect(-20, 15, 20, 20, 20));
-    expect(toucheTigre(de, viser(de, corps), 400, p, CAP_EST, 1, abri)).toBeNull();
-    // à l'échelle du titan, le même rayon à hauteur de tête du tigre passe au-dessus
-    expect(toucheTigre(de, viser(de, [0, 6.5, 0]), 400, p, CAP_EST, TITAN.echelle, vide)).toBeNull();
+    // de côté (le tigre regarde vers l'est), à 60 m au sud
+    const de: Vec3 = [0, 2, 60];
+    expect(toucheTigre(de, viser(de, tete), 400, p, CAP_EST, S, vide)?.zone).toBe("tete");
+    expect(toucheTigre(de, viser(de, corps), 400, p, CAP_EST, S, vide)?.zone).toBe("corps");
+    expect(toucheTigre(de, viser(de, [40, 4, 0]), 400, p, CAP_EST, S, vide)).toBeNull();
+    const abri = mondeAvec(rect(-30, 25, 30, 30, 40));
+    expect(toucheTigre(de, viser(de, corps), 400, p, CAP_EST, S, abri)).toBeNull();
+    // le titan est plus petit : un rayon à hauteur du dos du boss passe au-dessus de lui
+    expect(toucheTigre(de, viser(de, [0, 0.42 * S, 0]), 400, p, CAP_EST, TITAN.echelle, vide)).toBeNull();
+    expect(toucheTigre(de, viser(de, [0, 0.42 * S, 0]), 400, p, CAP_EST, S, vide)).not.toBeNull();
   });
 
   it("PV selon le nombre de joueurs, bornés à 16", () => {

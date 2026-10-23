@@ -275,7 +275,7 @@ export function creerServiceEvenements(ctx: ContexteSalle, opts: OptionsServiceE
     const sorties: Sortie[] = [];
     if (Math.abs(titan.e.v) > 1.5) {
       for (const j of vivants()) {
-        if (sousLeTigre(titan.e, j.p, TITAN.echelle, TITAN.rayonEcrase / TITAN.echelle)) sorties.push(...ctx.tuer(j, pilote, "titan", maintenant));
+        if (sousLeTigre(titan.e, j.p, TITAN.echelle, TITAN.rayonEcrase)) sorties.push(...ctx.tuer(j, pilote, "titan", maintenant));
       }
     }
     return sorties;

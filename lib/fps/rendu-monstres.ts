@@ -1,15 +1,20 @@
 /**
- * Rendu des monstres des événements (three, v3) : Truck Muche fou (caisse orange, gyrophares), tigre robot géant (corps, tête aux yeux
- * rouges, pattes articulées qui marchent, queue, rayures), titan tigre (même robot réduit, aux couleurs du pilote), visée du laser
+ * Rendu des monstres des événements (three, v3) : Truck Muche fou (caisse orange, gyrophares), tigre robot géant (le VRAI tigre 3D du
+ * thème Tigre, `public/tigre/tigre.glb`, à l'échelle `ECHELLE_TIGRE` : pelage rayé assombri en métal, maillage lumineux par-dessus, yeux
+ * rouges incandescents, démarche du moteur `lib/tigre3d/corps.ts` via `tigre-geant.ts`, rugissement au coup de patte ; tant que le modèle
+ * n'est pas chargé, ou s'il ne charge pas, un robot en boîtes le remplace), titan tigre (même tigre plus petit, aux couleurs du pilote), visée du laser
  * (rayon rouge qui se densifie, disque d'impact au sol) et explosions (sphères filaires qui gonflent). Même langage visuel que
  * `rendu-monde.ts` : arêtes lumineuses, faces sombres. Aucun test vitest (three) : les régressions se voient aux captures.
  * Repère : un monstre est un `Group` posé au sol, orienté par `rotation.y = cap`, avant local = −z.
  * Spec : docs/superpowers/specs/2026-10-24-arene-evenements-design.md
  */
 import * as THREE from "three";
+import { chargerModele, creerTigre as creerTigre3D, type ModeleTigre, type Tigre } from "../tigre3d/modele";
+import { squelette } from "../tigre3d/squelette";
 import type { LaserAnnonce } from "./jeu-monstres";
-import { TITAN, TRUCK_FOU } from "./monstres";
+import { ECHELLE_TIGRE, TITAN, TRUCK_FOU } from "./monstres";
 import type { TigreSnap, TitanSnap, TruckSnap, Vec3 } from "./protocole";
+import { creerAnimTigreGeant, type AnimTigreGeant } from "./tigre-geant";
 
 export interface RenduMonstres {
   /** Pose les monstres interpolés ; `tS` = horloge locale (s), `tsServeur` = horloge serveur (ms) pour les lasers ; `piloteMoi` cache mon titan. */
@@ -111,7 +116,8 @@ function creerTruck(parent: THREE.Object3D, aDisposer: { dispose(): void }[]) {
 
 interface Patte { hanche: THREE.Group; genou: THREE.Group; phase: number; avant: boolean; droite: boolean }
 
-function creerTigre(parent: THREE.Object3D, couleur: number | string, aDisposer: { dispose(): void }[]) {
+/** Robot en boîtes : remplaçant du tigre 3D tant que son modèle n'est pas chargé (ou s'il ne charge pas). Taille d'origine : 11 m de long. */
+function creerTigreBoites(parent: THREE.Object3D, couleur: number | string, aDisposer: { dispose(): void }[]) {
   const group = new THREE.Group();
   group.visible = false;
   parent.add(group);
@@ -199,6 +205,127 @@ function creerTigre(parent: THREE.Object3D, couleur: number | string, aDisposer:
       // les yeux s'embrasent quand le laser est armé
       for (const y of yeux) (y.material as THREE.MeshBasicMaterial).color.setRGB(1, 0.12 + 0.6 * laserProche, 0.2 + 0.6 * laserProche);
     },
+  };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Tigre robot géant : le vrai tigre 3D
+// ---------------------------------------------------------------------------------------------
+
+/** Pelage du tigre assombri (métal) : sous le seuil du halo, pour que seuls le maillage et les yeux brillent. */
+const TEINTE_METAL = 0.32;
+/** Opacité du maillage lumineux posé sur le corps. */
+const OPACITE_MAILLAGE = 0.1;
+/** Yeux en repère du modèle (museau +Z, gauche du tigre +X) et leur rayon (m du modèle). */
+const YEUX_MODELE: readonly [number, number, number][] = [[0.037, 0.502, 0.428], [-0.037, 0.502, 0.428]];
+const RAYON_OEIL = 0.016;
+
+interface TigreRobot {
+  /** groupe orienté (`rotation.y = cap + π/2`) et mis à l'échelle */
+  group: THREE.Group;
+  tigre: Tigre;
+  anim: AnimTigreGeant;
+  maillage: THREE.MeshBasicMaterial;
+  metal: THREE.MeshBasicMaterial;
+  yeux: THREE.MeshBasicMaterial;
+  /** sphères des yeux (grossissent quand le laser est armé), `userData.base` = échelle de repos */
+  oeils: THREE.Mesh[];
+}
+
+/**
+ * Clone du tigre 3D en robot : copies propres du matériau, de la texture et de la géométrie (comme la chasse au tigre : sinon three
+ * attache le renderer aux objets du modèle partagé et garde le contexte WebGL après la sortie de l'arène), maillage lumineux (même
+ * géométrie, même squelette), yeux sur l'os de la tête.
+ */
+function creerTigreRobot(parent: THREE.Object3D, m: ModeleTigre, couleur: number | string, aDisposer: { dispose(): void }[]): TigreRobot {
+  const tigre = creerTigre3D(m);
+  aDisposer.push(tigre);
+  const metal = new THREE.MeshBasicMaterial({ color: new THREE.Color(couleur).lerp(new THREE.Color(0xffffff), 0.35).multiplyScalar(TEINTE_METAL) });
+  const maillage = new THREE.MeshBasicMaterial({ color: couleur, wireframe: true, transparent: true, opacity: OPACITE_MAILLAGE, depthWrite: false, blending: THREE.AdditiveBlending });
+  aDisposer.push(metal, maillage);
+  const vus = new Map<object, THREE.BufferGeometry>();
+  const maillages: THREE.SkinnedMesh[] = [];
+  tigre.groupe.traverse((o) => { if ((o as THREE.SkinnedMesh).isSkinnedMesh) maillages.push(o as THREE.SkinnedMesh); });
+  for (const mesh of maillages) {
+    const orig = mesh.material as THREE.MeshBasicMaterial;
+    if (orig.map && !metal.map) { metal.map = orig.map.clone(); metal.map.needsUpdate = true; aDisposer.push(metal.map); }
+    mesh.material = metal;
+    let geo = vus.get(mesh.geometry);
+    if (!geo) { geo = mesh.geometry.clone(); vus.set(mesh.geometry, geo); aDisposer.push(geo); }
+    mesh.geometry = geo;
+    // la main humaine du thème Tigre n'a rien à faire ici
+    if (mesh.morphTargetInfluences?.length) mesh.morphTargetInfluences[0] = 0;
+    const fil = new THREE.SkinnedMesh(geo, maillage);
+    fil.bind(mesh.skeleton, mesh.bindMatrix);
+    fil.frustumCulled = false;
+    fil.renderOrder = ORDRE + 1;
+    mesh.parent?.add(fil);
+  }
+  // pas d'ombre floue : le monstre est posé sur la grille de l'arène
+  tigre.ombre.visible = false;
+  // yeux : posés au repos en repère du modèle, puis rattachés à l'os de la tête (ils suivent ses mouvements)
+  const yeux = new THREE.MeshBasicMaterial({ color: COULEUR_YEUX });
+  const geoOeil = new THREE.SphereGeometry(RAYON_OEIL, 10, 8);
+  aDisposer.push(yeux, geoOeil);
+  tigre.groupe.updateMatrixWorld(true);
+  const osTete = tigre.os[squelette().i.tete];
+  const oeils: THREE.Mesh[] = [];
+  // l'armature du GLB a sa propre échelle : la sphère, enfant de l'os, la compense pour garder son rayon en m du modèle
+  const echelleOs = osTete.getWorldScale(new THREE.Vector3()).x / tigre.groupe.getWorldScale(new THREE.Vector3()).x;
+  for (const [x, y, z] of YEUX_MODELE) {
+    const oeil = new THREE.Mesh(geoOeil, yeux);
+    const local = osTete.worldToLocal(tigre.groupe.localToWorld(new THREE.Vector3(x, y, z)));
+    oeil.position.copy(local);
+    oeil.scale.setScalar(1 / Math.max(echelleOs, 1e-6));
+    oeil.userData.base = oeil.scale.x;
+    oeils.push(oeil);
+    oeil.renderOrder = ORDRE + 2;
+    osTete.add(oeil);
+  }
+  const group = new THREE.Group();
+  group.visible = false;
+  group.add(tigre.groupe);
+  parent.add(group);
+  return { group, tigre, anim: creerAnimTigreGeant(), maillage, metal, yeux, oeils };
+}
+
+/** Tigre robot (boss ou titan) : le vrai tigre une fois le modèle chargé, le robot en boîtes avant. */
+function creerTigre(parent: THREE.Object3D, couleur: number | string, aDisposer: { dispose(): void }[]) {
+  const boites = creerTigreBoites(parent, couleur, aDisposer);
+  let robot: TigreRobot | null = null;
+  let couleurCourante: string | number = couleur;
+  let detruit = false;
+  chargerModele().then((m) => {
+    if (detruit) return;
+    robot = creerTigreRobot(parent, m, couleurCourante, aDisposer);
+  }).catch(() => { /* le robot en boîtes reste */ });
+  return {
+    couleur(c: string) {
+      couleurCourante = c;
+      boites.couleur(c);
+      if (robot) {
+        robot.maillage.color.set(c);
+        robot.metal.color.set(c).lerp(new THREE.Color(0xffffff), 0.35).multiplyScalar(TEINTE_METAL);
+      }
+    },
+    maj(s: { p: Vec3; cap: number; v: number; a?: "patte" } | undefined, echelle: number, tS: number, dt: number, laserProche: number) {
+      if (!robot) { boites.maj(s, echelle / 10, tS, dt, laserProche); return; }
+      boites.maj(undefined, 1, tS, dt, 0);
+      const r = robot;
+      if (!s) { r.group.visible = false; return; }
+      r.group.visible = true;
+      r.group.position.set(s.p[0], s.p[1], s.p[2]);
+      // le corps marche le long de +x de son repère : +x devient l'avant (−sin cap, −cos cap)
+      r.group.rotation.y = s.cap + Math.PI / 2;
+      r.tigre.groupe.scale.setScalar(echelle);
+      r.anim.maj(dt, s.v, echelle, s.a === "patte");
+      r.tigre.appliquer(r.anim.pose(), r.anim.x());
+      // les yeux s'embrasent quand le laser est armé ; le maillage pulse doucement
+      r.yeux.color.setRGB(1, 0.1 + 0.25 * laserProche, 0.12 + 0.2 * laserProche);
+      for (const o of r.oeils) o.scale.setScalar(o.userData.base * (1 + 0.8 * laserProche));
+      r.maillage.opacity = OPACITE_MAILLAGE * (0.85 + 0.15 * Math.sin(tS * 3)) + 0.12 * laserProche;
+    },
+    detruire() { detruit = true; },
   };
 }
 
@@ -319,7 +446,7 @@ export function creerRenduMonstres(scene: THREE.Scene): RenduMonstres {
     maj(m, lasers, tS, tsServeur, dt, couleur, piloteMoi) {
       truck.maj(m.truck, tS);
       const proche = lasers.length ? Math.max(...lasers.map((l) => (l.tirT > tsServeur ? 1 - Math.min(1, (l.tirT - tsServeur) / 1400) : 0))) : 0;
-      tigre.maj(m.tigre, 1, tS, dt, proche);
+      tigre.maj(m.tigre, ECHELLE_TIGRE, tS, dt, proche);
       if (couleur !== couleurTitan) { couleurTitan = couleur; titan.couleur(couleur); }
       // le pilote ne voit pas son propre titan (vue depuis la tête)
       titan.maj(piloteMoi ? undefined : m.titan, TITAN.echelle, tS, dt, 0);
@@ -330,6 +457,8 @@ export function creerRenduMonstres(scene: THREE.Scene): RenduMonstres {
       explosions.lancer(p, rayon);
     },
     dispose() {
+      tigre.detruire();
+      titan.detruire();
       scene.remove(racine);
       for (const x of aDisposer) x.dispose();
       aDisposer.length = 0;

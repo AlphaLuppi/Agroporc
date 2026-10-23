@@ -440,7 +440,7 @@ export function silhouetteDe(accroupi: boolean | undefined): Silhouette {
 export const OEIL_SIEGE = 1.3;
 
 /** Hauteur de l'œil du pilote du titan tigre (m au-dessus des pieds du titan). */
-export const OEIL_TITAN = 5.2;
+export const OEIL_TITAN = 6.6;
 
 /** Hauteur de l'œil d'un joueur : pilote du titan, assis (`vehicule` défini), accroupi ou debout. SEULE source pour caméra, serveur, killcam et visibilité. */
 export function oeilDe(e: { accroupi?: boolean; vehicule?: unknown; titan?: boolean }): number {

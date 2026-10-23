@@ -37,15 +37,15 @@ export const TIGRE_ROBOT = {
   dureeMs: 150_000,
   /** marche (m/s) et rotation (rad/s) */
   vitesse: 6, rotation: 1.1,
-  rayonCollision: 3,
+  rayonCollision: 3.6,
   /** PV : base + par joueur en arène au début (plafonné à 16) */
   pvBase: 1_500, pvParJoueur: 500,
   /** s'arrête à cette distance (m) de sa cible pour frapper */
-  arret: 6.5,
-  patte: { portee: 9.5, cosMin: 0.35, armeMs: 650, rechargeMs: 2_200 },
-  laser: { premierMs: 4_000, periodeMs: 8_000, avisMs: 1_400, rayon: 3.5, degats: 75, portee: 110 },
-  /** pieds et ventre : un joueur sous le tigre qui marche est écrasé */
-  rayonEcrase: 3,
+  arret: 13,
+  patte: { portee: 18, cosMin: 0.35, armeMs: 650, rechargeMs: 2_200 },
+  laser: { premierMs: 4_000, periodeMs: 8_000, avisMs: 1_400, rayon: 3.5, degats: 75, portee: 140 },
+  /** pieds et ventre : un joueur sous le tigre qui marche est écrasé (m du modèle, cf. `sousLeTigre`) */
+  rayonEcrase: 0.16,
 } as const;
 
 export const TITAN = {
@@ -54,14 +54,17 @@ export const TITAN = {
   /** marche du titan (m/s) ; le serveur tolère +1 m/s et 1 m de marge */
   vitesse: 10,
   rayonCollision: 2.2,
-  /** le titan est un tigre réduit */
-  echelle: 0.7,
-  rayonEcrase: 2.4,
+  /** le titan est le même tigre, plus petit que le boss (m de l'arène par m du modèle : 12 m du museau au bout de la queue) */
+  echelle: 11,
+  rayonEcrase: 0.18,
   canon: { cadenceS: 0.12, degats: 28, portee: 300 },
 } as const;
 
-/** Échelle de dessin et de touche du tigre (boss) et du titan. */
-export const ECHELLE_TIGRE = 1;
+/**
+ * Échelle du tigre robot (boss) : m de l'arène par m du modèle 3D du tigre (`public/tigre/tigre.glb`, 1,104 m du museau au bout de la
+ * queue). À 24 : 26 m de long, près de 10 m au garrot, la tête vers 13 m, plus haut que les bâtiments d'Agroparc.
+ */
+export const ECHELLE_TIGRE = 24;
 
 // ---------------------------------------------------------------------------------------------
 // Outils
@@ -90,19 +93,22 @@ export function pointLocal(p: Vec3, cap: number, echelle: number, d: number, h: 
 // Formes de touche
 // ---------------------------------------------------------------------------------------------
 
-/** Sphère de touche d'un tigre, en repère local (droite, haut, avant), à l'échelle 1. */
+/** Sphère de touche d'un tigre, en repère local (droite, haut, avant), en m du MODÈLE 3D (multipliées par l'échelle du monstre). */
 export interface SphereForme { d: number; h: number; a: number; r: number; zone: Zone }
 
-/** Tigre robot : tête (zone « tete »), trois sphères de corps, quatre pattes. Le titan est la même forme à `TITAN.echelle`. */
+/**
+ * Tigre robot, d'après le squelette au repos du modèle 3D (museau à +0,44 m, garrot à 0,40 m, tête à 0,54 m) : tête (zone « tete »),
+ * poitrail, ventre, croupe, quatre pattes. Le titan est la même forme à `TITAN.echelle`.
+ */
 export const FORME_TIGRE: readonly SphereForme[] = [
-  { d: 0, h: 5.4, a: 5.6, r: 1.7, zone: "tete" },
-  { d: 0, h: 4.6, a: 2.4, r: 2.4, zone: "corps" },
-  { d: 0, h: 4.5, a: -0.4, r: 2.5, zone: "corps" },
-  { d: 0, h: 4.4, a: -3.2, r: 2.3, zone: "corps" },
-  { d: -1.4, h: 1.6, a: 3, r: 1.1, zone: "corps" },
-  { d: 1.4, h: 1.6, a: 3, r: 1.1, zone: "corps" },
-  { d: -1.4, h: 1.6, a: -3.4, r: 1.1, zone: "corps" },
-  { d: 1.4, h: 1.6, a: -3.4, r: 1.1, zone: "corps" },
+  { d: 0, h: 0.47, a: 0.37, r: 0.1, zone: "tete" },
+  { d: 0, h: 0.35, a: 0.17, r: 0.12, zone: "corps" },
+  { d: 0, h: 0.33, a: -0.03, r: 0.12, zone: "corps" },
+  { d: 0, h: 0.33, a: -0.21, r: 0.11, zone: "corps" },
+  { d: -0.09, h: 0.14, a: 0.15, r: 0.055, zone: "corps" },
+  { d: 0.09, h: 0.14, a: 0.15, r: 0.055, zone: "corps" },
+  { d: -0.09, h: 0.15, a: -0.28, r: 0.06, zone: "corps" },
+  { d: 0.09, h: 0.15, a: -0.28, r: 0.06, zone: "corps" },
 ];
 
 /** Plus petit t ≥ 0 où le rayon (o, d normalisé) entre dans la sphère, Infinity sinon. */
@@ -133,7 +139,8 @@ export function toucheTigre(
     const t = rayonSphere(o, d, c, s.r * echelle + marge);
     if (t === Infinity || t > portee) continue;
     // la tête l'emporte sur une sphère de corps à peine plus proche (elle dépasse du cou)
-    if (s.zone === "tete" ? t < meilleur + 0.6 : t < meilleur - (zone === "tete" ? 0.6 : 0)) { meilleur = t; zone = s.zone; }
+    const ecart = 0.03 * echelle;
+    if (s.zone === "tete" ? t < meilleur + ecart : t < meilleur - (zone === "tete" ? ecart : 0)) { meilleur = t; zone = s.zone; }
   }
   if (meilleur === Infinity) return null;
   if (monde && lancerRayon(monde, o, d, meilleur) < meilleur - 0.05) return null;
@@ -239,11 +246,11 @@ export function pasTigre(e: EtatMarcheur, cible: Vec3 | null, dt: number, monde:
 
 /** Bout du museau au sol (point de départ du coup de patte). */
 export function museau(e: EtatMarcheur, echelle: number = ECHELLE_TIGRE): Vec3 {
-  return pointLocal(e.p, e.cap, echelle, 0, 0, 5.6);
+  return pointLocal(e.p, e.cap, echelle, 0, 0, 0.44);
 }
 /** Yeux du tigre (origine du laser). */
 export function yeuxTigre(e: EtatMarcheur, echelle: number = ECHELLE_TIGRE): Vec3 {
-  return pointLocal(e.p, e.cap, echelle, 0, 5.6, 6.6);
+  return pointLocal(e.p, e.cap, echelle, 0, 0.5, 0.4);
 }
 
 /** Le joueur est-il dans le balayage du coup de patte (devant le tigre, à portée) ? */
@@ -251,7 +258,7 @@ export function dansCoupDePatte(e: EtatMarcheur, p: Vec3): boolean {
   const T = TIGRE_ROBOT.patte;
   const dx = p[0] - e.p[0], dz = p[2] - e.p[2];
   const dist = Math.hypot(dx, dz);
-  if (dist > T.portee || p[1] > 6) return false;
+  if (dist > T.portee || p[1] > 12) return false;
   if (dist < 1e-6) return true;
   const [fx, fz] = avant(e.cap);
   return (dx * fx + dz * fz) / dist >= T.cosMin;
@@ -259,10 +266,10 @@ export function dansCoupDePatte(e: EtatMarcheur, p: Vec3): boolean {
 
 /** Le joueur est-il sous le corps du tigre (écrasé s'il marche) ? */
 export function sousLeTigre(e: EtatMarcheur, p: Vec3, echelle: number = ECHELLE_TIGRE, rayon: number = TIGRE_ROBOT.rayonEcrase): boolean {
-  if (p[1] > 2.5 * echelle) return false;
+  if (p[1] > 0.25 * echelle) return false;
   const [fx, fz] = avant(e.cap);
-  // deux disques le long du corps (avant et arrière)
-  for (const a of [2.4, -2.6]) {
+  // deux disques sous le corps (pattes avant et arrière), en m du modèle
+  for (const a of [0.13, -0.22]) {
     const cx = e.p[0] + fx * a * echelle, cz = e.p[2] + fz * a * echelle;
     if (Math.hypot(p[0] - cx, p[2] - cz) <= rayon * echelle) return true;
   }

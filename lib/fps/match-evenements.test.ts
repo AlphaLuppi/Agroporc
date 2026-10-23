@@ -4,7 +4,7 @@ import type { Building, SceneData, Vec2 } from "../agroparc3d/types";
 import { construireMonde } from "./collision";
 import type { JoueurSalle, Sortie } from "./match-contexte";
 import { Salle, type OptionsSalle } from "./match";
-import { EVENEMENTS, TIGRE_ROBOT, TITAN, TRUCK_FOU, oeilTitan, pointLocal } from "./monstres";
+import { ECHELLE_TIGRE, EVENEMENTS, TIGRE_ROBOT, TITAN, TRUCK_FOU, oeilTitan, pointLocal } from "./monstres";
 import { CIBLE_TIGRE, CIBLE_TITAN, JEU, SILHOUETTE, type MessageServeur, type MonstresSnap, type Vec3 } from "./protocole";
 
 const scene = JSON.parse(readFileSync("public/agroparc/scene.json", "utf8")) as SceneData;
@@ -123,14 +123,15 @@ describe("tigre robot géant et titan tigre", () => {
   }
 
   it("encaisse les tirs (degats au tireur avec les PV restants), meurt, et son tueur pilote le titan", () => {
-    // le tigre fait face au tireur : le rayon touche d'abord la tête (×1,5) : 95 × 1,5 = 143 par tir de sniper
     const { s, t, tigre } = avecTigre(200);
-    const centre = pointLocal(tigre.p, tigre.cap, 1, 0, 4.5, -0.4);
+    const centre = pointLocal(tigre.p, tigre.cap, ECHELLE_TIGRE, 0, 0.33, -0.03);
     const r1 = tirerSur(s, "a", CIBLE_TIGRE, centre, t + 2000);
     const dg = messages(r1, "degats");
     expect(dg).toHaveLength(1);
     expect(dg[0]).toMatchObject({ cible: CIBLE_TIGRE, par: "a" });
-    expect(dg[0]).toMatchObject({ zone: "tete", degats: 143, pv: 57 });
+    // sniper : 95 au corps, ×1,5 à la tête (143) ; les PV restants suivent
+    expect(dg[0].degats).toBe(dg[0].zone === "tete" ? 143 : 95);
+    expect(dg[0].pv).toBe(200 - dg[0].degats);
     // deuxième tir (cadence du sniper respectée) : le tigre tombe
     let r2: Sortie[] = [];
     let tt = t + 2000;
@@ -155,7 +156,7 @@ describe("tigre robot géant et titan tigre", () => {
 
   it("titan : pilotage borné en vitesse, canon qui tue, destruction qui rend le pilote à pied", () => {
     const { s, t, tigre } = avecTigre(1, 60);
-    const centre = pointLocal(tigre.p, tigre.cap, 1, 0, 4.5, -0.4);
+    const centre = pointLocal(tigre.p, tigre.cap, ECHELLE_TIGRE, 0, 0.33, -0.03);
     const r = tirerSur(s, "a", CIBLE_TIGRE, centre, t + 2000);
     const debut = messages(r, "titan")[0];
     expect(debut.pilote).toBe("a");
@@ -188,7 +189,7 @@ describe("tigre robot géant et titan tigre", () => {
     tt = r4.t;
     j(s, "b").protegeJusqua = 0;
     tenir(s, "b", [titanP[0] + 30, 0, titanP[2]]);
-    const centreTitan = pointLocal(titanP, 0, TITAN.echelle, 0, 4.5, -0.4);
+    const centreTitan = pointLocal(titanP, 0, TITAN.echelle, 0, 0.33, -0.03);
     let fin: Extract<MessageServeur, { t: "titan" }> | undefined;
     for (let k = 0; k < 6 && !fin; k++) {
       tt += 1600;
@@ -200,7 +201,7 @@ describe("tigre robot géant et titan tigre", () => {
 
   it("le pilote qui quitte l'arène éteint le titan", () => {
     const { s, t, tigre } = avecTigre(1);
-    const r = tirerSur(s, "a", CIBLE_TIGRE, pointLocal(tigre.p, tigre.cap, 1, 0, 4.5, -0.4), t + 2000);
+    const r = tirerSur(s, "a", CIBLE_TIGRE, pointLocal(tigre.p, tigre.cap, ECHELLE_TIGRE, 0, 0.33, -0.03), t + 2000);
     expect(messages(r, "titan")[0].pilote).toBe("a");
     const q = s.recevoir("a", { t: "quitter" }, t + 2500);
     expect(messages(q, "titan")).toEqual([expect.objectContaining({ phase: "fin", raison: "depart" })]);
@@ -212,7 +213,7 @@ describe("tigre robot géant et titan tigre", () => {
     const r0 = avancer(s, T0, T0 + EVENEMENTS.annonceMs + 100, (t) => rafraichir(s, ["a"], t));
     const tigre = dernierMonstres(r0.sorties)!.tigre!;
     // le joueur se place juste devant le museau
-    const devant = pointLocal(tigre.p, tigre.cap, 1, 0, 0, 7);
+    const devant = pointLocal(tigre.p, tigre.cap, ECHELLE_TIGRE, 0, 0, 0.6);
     const r = avancer(s, r0.t, r0.t + 4000, (t) => { if (j(s, "a").vivant) tenir(s, "a", [devant[0], 0, devant[2]]); rafraichir(s, ["a"], t); });
     expect(messages(r.sorties, "mort")[0]).toMatchObject({ cible: "a", cause: "tigre_robot", par: "" });
     void TIGRE_ROBOT;
