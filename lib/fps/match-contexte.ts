@@ -180,6 +180,8 @@ export interface ServiceTigres {
   snap(): TigreSnap[];
   /** le joueur a-t-il une charge du sort ? (tests et supervision) */
   charge(id: string): boolean;
+  /** donne une charge du sort à un joueur vivant en arène qui n'en a pas (tests de charge et supervision) : `sort{gagne}` */
+  accorderCharge(id: string): Sortie[];
   /** état interne d'un tigre (tests et supervision) */
   tigre(id: string): Readonly<Tigre> | undefined;
 }

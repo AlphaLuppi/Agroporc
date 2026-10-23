@@ -10,7 +10,7 @@ import type { ContexteSalle, JoueurSalle, ServiceTigres, Sortie } from "./match-
 import type { MessageClient, MessageServeur, TigreSnap, Vec3, Zone } from "./protocole";
 import {
   avancerTigreAllie, avancerTigreSauvage, blesserTigre, coupTigreVraisemblable, creerTigreAllie, creerTigreSauvage, distanceTigre,
-  toucheTigreVraisemblable, type CachetteTigre, type EnvTigre, type EvenementTigre, type JoueurVu, type ObstacleVoiture,
+  grilleNav, toucheTigreVraisemblable, type CachetteTigre, type EnvTigre, type EvenementTigre, type JoueurVu, type ObstacleVoiture,
   type PositionTigre, type Tigre,
 } from "./tigre-arene";
 import type { Vec2 } from "../agroparc3d/types";
@@ -49,6 +49,8 @@ const cm = (v: Vec3): Vec3 => [arrondi(v[0], 100), arrondi(v[1], 100), arrondi(v
 
 export function creerServiceTigres(ctx: ContexteSalle, opts: OptionsServiceTigres): ServiceTigres {
   const cachettes = cachettesDansAnneau(opts.cachettes, opts.anneau);
+  // grille de navigation construite tout de suite (une fois par monde) : pas de pic au premier chemin calculé en jeu
+  grilleNav(ctx.monde);
   const aPied = opts.aPied ?? (() => true);
   const intervalle = opts.intervalle;
   // minuteur non armé (échéance infinie) tant qu'aucune horloge n'est connue, comme Elsa
@@ -271,6 +273,13 @@ export function creerServiceTigres(ctx: ContexteSalle, opts: OptionsServiceTigre
 
     charge(id) {
       return charges.has(id);
+    },
+
+    accorderCharge(id) {
+      const j = ctx.joueur(id);
+      if (!j || !j.enJeu || !j.vivant || charges.has(id)) return [];
+      charges.add(id);
+      return [vers({ t: "sort", evenement: "gagne", joueur: id })];
     },
 
     tigre(id) {
