@@ -1991,7 +1991,12 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
           lacet = r.lacet;
           tangage = r.tangage;
           kick = 0;
-          return tirer(true);
+          // tir en lunette, comme un joueur qui vise : le sniper sans lunette se disperse depuis la v3 (`dispersionTir`)
+          const vise = viseMaintenu;
+          viseMaintenu = true;
+          const parti = tirer(true);
+          viseMaintenu = vise;
+          return parti;
         }
         const e = etats.get(id);
         if (!e) return false;
