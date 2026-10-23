@@ -7,17 +7,21 @@
  * d'apparition et le cycle des matchs (jeu → entracte → jeu). Chaque méthode renvoie les messages à émettre : le
  * serveur Node (`serveur-fps/`) ne fait que les router.
  *
- * Elsa et les véhicules / la circulation PNJ sont des services (`match-elsa.ts`, `match-vehicules.ts`) qui ne voient
- * la salle que par `ContexteSalle` (`match-contexte.ts`), implémenté ici.
- * Spec : docs/superpowers/specs/2026-10-22-arene-v2-design.md (§6.1, §13) et 2026-10-23-arene-hud-design.md (§3.5)
+ * Elsa, les véhicules / la circulation PNJ et les tigres (avion, tigre sauvage, sort d'invocation) sont des services
+ * (`match-elsa.ts`, `match-vehicules.ts`, `match-tigres.ts`) qui ne voient la salle que par `ContexteSalle` (`match-contexte.ts`),
+ * implémenté ici. Un tir ou un coup de couteau dont la cible est un tigre est validé par le service des tigres.
+ * Spec : docs/superpowers/specs/2026-10-22-arene-v2-design.md (§6.1, §13), 2026-10-23-arene-hud-design.md (§3.5) et
+ * 2026-10-23-arene-tigres-design.md
  */
 import { COUTEAU, STATS, degatsPlomb, gerbeRespectee } from "./armes";
 import { ecarterDesCircuits, type Circuit, type VoiturePnj } from "./circulation";
 import type { Monde } from "./collision";
+import type { IntervalleAvion } from "./avion";
 import type { IntervalleElsa } from "./elsa";
 import { armeDuSlot, depuisAlias, estPrincipale, estSecondaire, estSlot, normaliserEquipement } from "./equipement";
-import type { ContexteSalle, JoueurSalle, ServiceElsa, ServiceVehicules, Sortie } from "./match-contexte";
+import type { ContexteSalle, JoueurSalle, ServiceElsa, ServiceTigres, ServiceVehicules, Sortie } from "./match-contexte";
 import { creerServiceElsa } from "./match-elsa";
+import { creerServiceTigres } from "./match-tigres";
 import { creerServiceVehicules } from "./match-vehicules";
 import { REWIND_MELEE_MS, coupVraisemblable } from "./melee";
 import {
@@ -26,8 +30,9 @@ import {
   type JoueurPublic, type LigneClassement, type LigneStats, type MessageClient, type Slot, type Vec3, type Zone,
 } from "./protocole";
 import { appliquerDegats, memoriserSante, regenerer, reinitialiserSante, restaurerSante, tuer as tuerSante } from "./sante";
+import type { CachetteTigre } from "./tigre-arene";
 import { toucheVraisemblable } from "./tir";
-import { choisirPointZone, lacetVers, filtrerApparitions, type ZoneApparition } from "./zones";
+import { ROND_POINT, ZONE_APPARITION, choisirPointZone, lacetVers, filtrerApparitions, type ZoneApparition } from "./zones";
 import type { Vec2 } from "../agroparc3d/types";
 
 // `Sortie` et `JoueurSalle` vivent dans match-contexte.ts (partagés avec les services Elsa / véhicules) ; réexportés pour les appelants.
@@ -142,6 +147,11 @@ export interface OptionsSalle {
   circulation?: { circuits: Circuit[]; voitures: VoiturePnj[] };
   /** voitures conduisibles (§2.12) : emplacements de départ */
   vehicules?: readonly { p: Vec2; cap: number }[];
+  /**
+   * Avion et tigres (v3) : cachettes (public/agroparc/cachettes.json, cap en convention lacet), dont seules celles de l'anneau de
+   * `zoneApparition` (sinon `ZONE_APPARITION` autour du rond-point) servent, et intervalle des passages surchargeable.
+   */
+  tigres?: { cachettes: readonly CachetteTigre[]; intervalle?: IntervalleAvion };
 }
 
 /** Ce que la salle retient d'un joueur en plus de `JoueurSalle` : l'équipement de la PROCHAINE apparition et le slot d'avant. */
@@ -161,6 +171,7 @@ export class Salle implements ContexteSalle {
   private readonly zone: ZoneApparition | null;
   private readonly elsa: ServiceElsa | null;
   private readonly vehicules: ServiceVehicules | null;
+  private readonly tigres: ServiceTigres | null;
   private numero = 1;
   private phase: "jeu" | "entracte" = "jeu";
   private fin: number | null;
@@ -196,6 +207,14 @@ export class Salle implements ContexteSalle {
       : null;
     this.vehicules = options.vehicules || options.circulation
       ? creerServiceVehicules(this, { vehicules: options.vehicules, circulation: options.circulation, maintenant })
+      : null;
+    // les tigres ne ciblent ni ne frappent un occupant de véhicule, et voient les voitures (obstacles, chocs)
+    const anneau = this.zone ?? { centre: ROND_POINT.centre, ...ZONE_APPARITION };
+    this.tigres = options.tigres
+      ? creerServiceTigres(this, {
+        cachettes: options.tigres.cachettes, anneau, intervalle: options.tigres.intervalle, maintenant,
+        aPied: (j) => !this.vehicules?.occupation(j.id), voitures: (t) => this.vehicules?.voitures?.(t) ?? [],
+      })
       : null;
   }
 
@@ -390,6 +409,7 @@ export class Salle implements ContexteSalle {
       case "monter": case "descendre": case "siege": case "conduite":
         return j.enJeu && this.vehicules ? this.vehicules.recevoir(j, msg, maintenant) : [];
       case "vueScores": return this.vueScores(j, msg.ouvert, maintenant);
+      case "invoquer": return j.enJeu && this.tigres ? this.tigres.recevoir(j, msg, maintenant) : [];
       case "ping": return estNombre(msg.t0) ? [{ a: id, m: { t: "pong", t0: msg.t0, maintenant } }] : [];
       default: return []; // "bonjour" : déjà traité par connecter
     }
@@ -455,6 +475,7 @@ export class Salle implements ContexteSalle {
     // l'état d'Elsa et des sièges n'est pas dans `bienvenue` : le jeu est lancé après lui, il ne les a pas vus
     if (this.elsa) sorties.push(...this.elsa.synchro(j.id));
     if (this.vehicules) sorties.push(...this.vehicules.synchro(j.id));
+    if (this.tigres) sorties.push(...this.tigres.synchro(j.id));
     return sorties;
   }
 
@@ -635,9 +656,22 @@ export class Salle implements ContexteSalle {
     const touches = Array.isArray(tir.touches) ? tir.touches : [];
     const plombsVus = new Set<number>();
     const cumul = new Map<string, { degats: number; zone: Zone }>();
+    /** touches sur des tigres, cumulées par tigre comme pour les joueurs (hors statistiques du tableau des scores) */
+    const cumulTigres = new Map<string, { degats: number; zone: Zone }>();
     for (const t of touches) {
       if (!t || typeof t.cible !== "string" || !estZone(t.zone) || !Number.isInteger(t.plomb)) continue;
       if (t.plomb < 0 || t.plomb >= dirs.length || plombsVus.has(t.plomb)) continue;
+      if (this.tigres?.estTigre(t.cible)) {
+        // positions du tigre rejouées sur son historique serveur, mêmes règles que pour un joueur
+        const distance = this.tigres.validerTir(j, t.cible, tir.o, dirs[t.plomb], arme.portee, maintenant, REWIND_MAX_MS);
+        if (distance === null) continue;
+        plombsVus.add(t.plomb);
+        const degats = degatsPlomb(armeTiree, t.zone, distance);
+        const cu = cumulTigres.get(t.cible);
+        if (cu) { cu.degats += degats; if (t.zone === "tete") cu.zone = "tete"; }
+        else cumulTigres.set(t.cible, { degats, zone: t.zone });
+        continue;
+      }
       const c = this.joueurs.get(t.cible);
       if (!c || c.id === j.id || !c.enJeu || !c.vivant || maintenant < c.protegeJusqua) continue;
       const vitesseCible = Math.hypot(c.v[0], c.v[1], c.v[2]);
@@ -668,6 +702,9 @@ export class Salle implements ContexteSalle {
       // la fin de match éventuelle suit la présence, comme avec un seul mort
       const i = sorties.findIndex((s) => s.m.t === "match");
       sorties.splice(i < 0 ? sorties.length : i, 0, this.presence());
+    }
+    if (this.tigres && this.phase === "jeu") {
+      for (const [id, { degats, zone }] of cumulTigres) sorties.push(...this.tigres.blesser(id, degats, j, zone, maintenant));
     }
     return sorties;
   }
@@ -702,6 +739,12 @@ export class Salle implements ContexteSalle {
     j.protegeJusqua = 0;
     const d = dirs[0];
     const sorties: Sortie[] = [{ a: "tous", sauf: j.id, m: { t: "coup", id: j.id, o: coup.o, d } }];
+    if (typeof coup.cible === "string" && this.tigres?.estTigre(coup.cible)) {
+      if (this.tigres.validerCoup(j, coup.cible, coup.o, d, maintenant, REWIND_MELEE_MS)) {
+        sorties.push(...this.tigres.blesser(coup.cible, COUTEAU.degats, j, "corps", maintenant));
+      }
+      return sorties;
+    }
     const c = typeof coup.cible === "string" ? this.joueurs.get(coup.cible) : undefined;
     if (!c || c.id === j.id || !c.enJeu || !c.vivant || maintenant < c.protegeJusqua) return sorties;
     const vitesseCible = Math.hypot(c.v[0], c.v[1], c.v[2]);
@@ -762,6 +805,7 @@ export class Salle implements ContexteSalle {
     for (const j of this.joueurs.values()) if (j.enJeu && j.vivant) regenerer(j, maintenant, dt);
     if (this.elsa) sorties.push(...this.elsa.tic(maintenant));
     if (this.vehicules) sorties.push(...this.vehicules.tic(maintenant));
+    if (this.tigres) sorties.push(...this.tigres.tic(maintenant));
     let evince = false;
     for (const j of this.joueurs.values()) {
       if (j.enJeu && !j.vivant && j.reapparitionT !== null && maintenant >= j.reapparitionT) {
@@ -784,13 +828,17 @@ export class Salle implements ContexteSalle {
   }
 
   /**
-   * Instantané : aux joueurs en arène à 20 Hz avec les véhicules ; aux spectateurs de la vue Palantir (inscrits hors arène) un sur deux
+   * Instantané : aux joueurs en arène à 20 Hz avec les véhicules et les tigres, aux spectateurs de la vue Palantir (inscrits hors arène) un sur deux
    * (10 Hz), sans véhicules, et seulement s'il y en a.
    */
   private sortiesSnap(maintenant: number): Sortie[] {
     const j = this.snap(maintenant);
     const vehicules = this.vehicules?.snap() ?? [];
-    const sorties: Sortie[] = [{ a: "joueurs", m: { t: "snap", ts: maintenant, j, ...(vehicules.length ? { vehicules } : {}) } }];
+    const tigres = this.tigres?.snap() ?? [];
+    const sorties: Sortie[] = [{
+      a: "joueurs",
+      m: { t: "snap", ts: maintenant, j, ...(vehicules.length ? { vehicules } : {}), ...(tigres.length ? { tigres } : {}) },
+    }];
     if (this.rangSnap++ % 2 === 0 && this.nombreJoueurs() > this.nombreEnJeu()) {
       sorties.push({ a: "spectateurs", m: { t: "snap", ts: maintenant, j } });
     }
@@ -835,6 +883,7 @@ export class Salle implements ContexteSalle {
     const sorties: Sortie[] = [];
     this.elsa?.reinitialiser(maintenant);
     if (this.vehicules) sorties.push(...this.vehicules.reinitialiser(maintenant));
+    if (this.tigres) sorties.push(...this.tigres.reinitialiser(maintenant));
     for (const j of this.joueurs.values()) {
       j.kills = 0;
       j.morts = 0;

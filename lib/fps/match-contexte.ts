@@ -8,8 +8,9 @@
 import type { Monde } from "./collision";
 import type { MemoSante } from "./sante";
 import type {
-  ArmeId, CauseMort, CoteMur, Equipement, MessageClient, MessageServeur, Posture, Siege, Slot, Vec3, VehiculeSnap, Zone,
+  ArmeId, CauseMort, CoteMur, Equipement, MessageClient, MessageServeur, Posture, Siege, Slot, TigreSnap, Vec3, VehiculeSnap, Zone,
 } from "./protocole";
+import type { ObstacleVoiture, Tigre } from "./tigre-arene";
 
 /**
  * Un message à émettre. `a` : "tous" (tous les inscrits), "joueurs" (en arène), "spectateurs" (inscrits hors arène) ou l'id d'un client ;
@@ -152,4 +153,33 @@ export interface ServiceVehicules {
   /** yeux acceptables pour un `tir.o` d'occupant (null si le joueur est à pied) ; le conducteur n'a pas le droit de tirer (`CONDUCTEUR_TIRE`) */
   oeilsPossibles(j: JoueurSalle, maintenant: number, fenetreMs: number): Vec3[] | null;
   estConducteur(id: string): boolean;
+  /** voitures conduisibles (vitesse mesurée, conducteur) et PNJ à l'instant donné : obstacles et chocs des tigres */
+  voitures(maintenant: number): ObstacleVoiture[];
+}
+
+/** Avion, tigres et sort d'invocation (v3, `match-tigres.ts` : `creerServiceTigres(ctx, opts)`). */
+export interface ServiceTigres {
+  /** avion et largage, tigres (coups par `ctx.infliger`, chocs de voitures, départs), charges perdues, messages `avion`, `tigre`, `sort` */
+  tic(maintenant: number): Sortie[];
+  /** `invoquer` (les autres types renvoient []) : tigre allié à 2 m du lanceur, `sort{lance}` et `tigre{apparu}` */
+  recevoir(j: JoueurSalle, m: MessageClient, maintenant: number): Sortie[];
+  estTigre(id: string): boolean;
+  /**
+   * Touche de tir déclarée sur le tigre `id`, validée sur ses positions rejouées sur `fenetreMs`. Renvoie la distance de l'œil au centre
+   * de la silhouette (chute de dégâts) ou null. Le lanceur ne peut pas toucher son propre tigre.
+   */
+  validerTir(tireur: JoueurSalle, id: string, o: Vec3, d: Vec3, portee: number, maintenant: number, fenetreMs: number): number | null;
+  /** Coup de couteau déclaré sur le tigre `id`, validé sur ses positions rejouées sur `fenetreMs`. */
+  validerCoup(tireur: JoueurSalle, id: string, o: Vec3, d: Vec3, maintenant: number, fenetreMs: number): boolean;
+  /** Dégâts d'arme sur un tigre : `tigre{touche}`, puis à la mort `tigre{mort}` et, pour un sauvage, `sort{gagne}` à `par`. */
+  blesser(id: string, degats: number, par: JoueurSalle, zone: Zone, maintenant: number): Sortie[];
+  /** nouveau match : tigres partis, charges perdues, avion ré-armé */
+  reinitialiser(maintenant: number): Sortie[];
+  /** `avion{evenement:"etat"}` adressé à `idDest` (réponse à `rejoindre`) */
+  synchro(idDest: string): Sortie[];
+  snap(): TigreSnap[];
+  /** le joueur a-t-il une charge du sort ? (tests et supervision) */
+  charge(id: string): boolean;
+  /** état interne d'un tigre (tests et supervision) */
+  tigre(id: string): Readonly<Tigre> | undefined;
 }
