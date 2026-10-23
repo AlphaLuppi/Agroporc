@@ -657,6 +657,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
           vivant = false;
           evince = true;
           quitterVehicule();
+          // le serveur a retiré la charge du sort à la sortie de l'arène, son annonce peut ne jamais nous parvenir
+          mondeTigres.perdreCharge();
           // onglet caché : on attend son retour, sinon on réapparaîtrait en cible immobile toutes les 20 s
           if (!document.hidden) reentrer();
         }

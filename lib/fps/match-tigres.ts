@@ -64,6 +64,11 @@ export function creerServiceTigres(ctx: ContexteSalle, opts: OptionsServiceTigre
   let dernierTicT: number | null = null;
 
   const vers = (m: MessageServeur): Sortie => ({ a: "joueurs", m });
+  /**
+   * Charge perdue : adressée au joueur lui-même. Sorti de l'arène, il n'est plus dans l'audience « joueurs » et ne recevrait pas
+   * l'annonce, son icône du sort resterait affichée (lui seul en a besoin, le HUD des autres ne montre pas les charges).
+   */
+  const perdue = (id: string, raison: "mort" | "quitte" | "fin_match"): Sortie => ({ a: id, m: { t: "sort", evenement: "perdu", joueur: id, raison } });
   const infoTigre = (t: Tigre) => ({ id: t.id, genre: t.genre, ...(t.lanceur ? { lanceur: t.lanceur } : {}), p: cm(t.p) });
   const sauvageEnVie = () => [...tigres.values()].some((t) => t.genre === "sauvage");
 
@@ -95,7 +100,7 @@ export function creerServiceTigres(ctx: ContexteSalle, opts: OptionsServiceTigre
     const sorties: Sortie[] = [];
     for (const t of tigres.values()) sorties.push(vers({ t: "tigre", evenement: "parti", ...infoTigre(t) }));
     tigres.clear();
-    for (const id of charges) sorties.push(vers({ t: "sort", evenement: "perdu", joueur: id, raison: "fin_match" }));
+    for (const id of charges) sorties.push(perdue(id, "fin_match"));
     charges.clear();
     if (avion.passage) sorties.push(vers({ t: "avion", evenement: "etat", avion: null }));
     avion.passage = null;
@@ -168,7 +173,7 @@ export function creerServiceTigres(ctx: ContexteSalle, opts: OptionsServiceTigre
         const j = ctx.joueur(id);
         if (j && j.enJeu && j.vivant) continue;
         charges.delete(id);
-        sorties.push(vers({ t: "sort", evenement: "perdu", joueur: id, raison: j && j.enJeu ? "mort" : "quitte" }));
+        sorties.push(perdue(id, j && j.enJeu ? "mort" : "quitte"));
       }
 
       const enJeu = ctx.joueursEnJeu();

@@ -178,8 +178,8 @@ describe("tirs, couteau et mort du tigre sauvage", () => {
     s.blesser(id, 3000, a, "corps", fin);
     expect(s.charge("a")).toBe(true);
     a.vivant = false;
-    const perdu = messages(s.tic(fin + 20), "sort");
-    expect(perdu).toEqual([{ t: "sort", evenement: "perdu", joueur: "a", raison: "mort" }]);
+    const perdu = s.tic(fin + 20).filter((x) => x.m.t === "sort");
+    expect(perdu).toEqual([{ a: "a", m: { t: "sort", evenement: "perdu", joueur: "a", raison: "mort" } }]);
     expect(s.charge("a")).toBe(false);
   });
 
@@ -187,12 +187,15 @@ describe("tirs, couteau et mort du tigre sauvage", () => {
     const { s, id, fin, a, etat } = avecTigrePose();
     s.blesser(id, 3000, a, "corps", fin);
     a.enJeu = false;
-    expect(messages(s.tic(fin + 20), "sort")).toEqual([{ t: "sort", evenement: "perdu", joueur: "a", raison: "quitte" }]);
+    // sorti de l'arène, le joueur n'est plus dans l'audience « joueurs » : l'annonce lui est adressée directement
+    const sortie = s.tic(fin + 20).filter((x) => x.m.t === "sort");
+    expect(sortie).toEqual([{ a: "a", m: { t: "sort", evenement: "perdu", joueur: "a", raison: "quitte" } }]);
     a.enJeu = true;
     const autre = avecTigrePose();
     autre.s.blesser(autre.id, 3000, autre.a, "corps", autre.fin);
     autre.etat.phaseJeu = false;
-    expect(messages(autre.s.tic(autre.fin + 20), "sort")).toEqual([{ t: "sort", evenement: "perdu", joueur: "a", raison: "fin_match" }]);
+    const fin2 = autre.s.tic(autre.fin + 20).filter((x) => x.m.t === "sort");
+    expect(fin2).toEqual([{ a: "a", m: { t: "sort", evenement: "perdu", joueur: "a", raison: "fin_match" } }]);
     expect(etat.phaseJeu).toBe(true);
   });
 

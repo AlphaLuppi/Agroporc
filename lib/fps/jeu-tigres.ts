@@ -205,6 +205,14 @@ export class MondeTigres {
     return r;
   }
 
+  /**
+   * Sortie de l'arène sans message du serveur (éviction d'un onglet gelé) : la charge est perdue côté serveur, l'icône du sort et la
+   * touche « invoquer » ne doivent pas survivre à la réentrée. Tigres et avion restent (les snaps et la synchronisation les tiennent).
+   */
+  perdreCharge(): void {
+    this.charge = false;
+  }
+
   /** Changement de partie ou d'id de client : plus de tigre, d'avion ni de charge. */
   reinitialiser(): void {
     this.interp.vider();

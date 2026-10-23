@@ -67,6 +67,15 @@ describe("MondeTigres", () => {
     expect(m.aCharge()).toBe(false);
   });
 
+  it("évincé de l'arène : la charge tombe sans message, l'avion en cours reste", () => {
+    const m = new MondeTigres();
+    m.recevoir({ t: "avion", evenement: "passage", avion: passage }, "moi");
+    m.recevoir({ t: "sort", evenement: "gagne", joueur: "moi" }, "moi");
+    m.perdreCharge();
+    expect(m.aCharge()).toBe(false);
+    expect(m.avionA(20_000)).not.toBeNull();
+  });
+
   it("l'avion n'existe que de `debutT` à `finT`, même sans message de fin", () => {
     const m = new MondeTigres();
     m.recevoir({ t: "avion", evenement: "passage", avion: passage }, "moi");
