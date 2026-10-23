@@ -68,6 +68,8 @@ export interface HudEtat {
   /** −1 hors killcam, sinon progression 0..1 (arrondie à 0,02) */
   killcam: number;
   killcamPhase: "" | "rejeu" | "carte";
+  /** une charge du sort d'invocation est disponible (tigre sauvage abattu, v3) : icône du sort au HUD */
+  sort: boolean;
 
   // ---- COMPATIBILITÉ v1 (shim du lot 0, tous optionnels) ----
   // Champs que le HUD v1 lit encore et que `jeu.ts` v1 émet toujours. La spec HUD (§3.2) les retire de `HudEtat` : le lot J1 cesse
@@ -159,7 +161,7 @@ export interface JeuHandle {
     etat(): Record<string, unknown>;
     teleporter(p: Vec3): void;
     regarder(lacet: number, tangage: number): void;
-    /** Vise le centre de la cible et tire ; false si le tir n'est pas possible. */
+    /** Vise le centre de la cible (le corps d'un joueur, la tête d'un tigre) et tire, false si le tir n'est pas possible. */
     tirerVers(id: string): boolean;
     /** Appuie ou relâche une touche (code KeyboardEvent ou `Souris0`…) sans clavier. */
     touche(code: string, appuyee: boolean): void;
@@ -170,5 +172,9 @@ export interface JeuHandle {
     /** état de la killcam, des voitures PNJ et d'Elsa pour les captures */
     killcam(): Record<string, unknown> | null;
     monde(): Record<string, unknown>;
+    /** tigres interpolés (id, genre, lanceur, position, état, PV, centre de la silhouette), avion en cours, charge du sort, GLB chargé */
+    tigres(): Record<string, unknown>;
+    /** lance le sort (comme la touche « invoquer »), false si aucune charge ou si le lancer est impossible */
+    invoquer(): boolean;
   };
 }
