@@ -658,7 +658,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
   // ---------- sort d'invocation ----------
   /** Lance le sort (touche « invoquer ») : il faut une charge, être vivant, à pied et hors entracte. Le serveur revalide tout. */
   function invoquer(): boolean {
-    if (!peutAgir() || enKillcam() || entracte || vehicule.actif() || !mondeTigres.aCharge()) return false;
+    // le pilote du titan ne lance pas le sort (le serveur le refuse aussi)
+    if (!peutAgir() || enKillcam() || entracte || vehicule.actif() || pilote() || !mondeTigres.aCharge()) return false;
     client.envoyer({ t: "invoquer" });
     return true;
   }
