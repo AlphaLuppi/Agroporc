@@ -346,10 +346,11 @@ export type MessageServeur =
   /** Laser des yeux du tigre (v4) : visée affichée tout de suite, impact à `tirT` sur un disque autour de `vers`. */
   | { t: "laser"; de: Vec3; vers: Vec3; rayon: number; tirT: number }
   /**
-   * Bâtiments écrasés (v3) : `detruits` = liste COMPLÈTE des ids (index de `scene.json`) à terre, `nouveaux` = ceux qui viennent de
-   * tomber (effondrement animé, poussière). Liste vide = tout est relevé (nouveau match). Envoyé aussi à `rejoindre` s'il y a des ruines.
+   * Bâtiments écrasés (v3) : `detruits` = ids (index de `scene.json`) effondrés en entier, `breches` = [id, x, z, r] (m, au décimètre) des
+   * brèches arrachées aux bâtiments encore debout. `complet` : état entier qui remplace le précédent (listes vides = tout est relevé, nouveau
+   * match ; envoyé aussi à `rejoindre`), sinon les seuls changements, animés (effondrement, brèche qui s'ouvre, débris).
    */
-  | { t: "batiments"; detruits: number[]; nouveaux: number[] }
+  | { t: "batiments"; complet: boolean; detruits: number[]; breches: [number, number, number, number][] }
   /** Onde de choc annoncée (saut du tigre) : anneau au sol tout de suite, impact à `tirT` sur un disque (les joueurs au sol). */
   | { t: "onde"; p: Vec3; rayon: number; tirT: number }
   /** Explosion d'un monstre (mort du tigre, titan détruit, impact du laser) : effet seulement. */

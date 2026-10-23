@@ -454,30 +454,126 @@
 @media (prefers-reduced-motion: reduce) { .evtAlerte, .evtBande, .evtRayures { animation: none; } }
 .evtRage { color: var(--ag-danger); animation: evtPulse 0.35s ease-in-out infinite alternate; }
 
-/* ---------- cockpit du titan (v3) : calque léger, vitre centrale dégagée ---------- */
-.cockpit { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
-.cockpitSvg { position: absolute; inset: 0; width: 100%; height: 100%; }
-.cockpitPanneau { fill: var(--ag-hud-fond-fort); stroke: var(--ag-cadre); stroke-width: 2; vector-effect: non-scaling-stroke; }
-.cockpitArmature { fill: none; stroke: var(--ag-line-strong); stroke-width: 3; vector-effect: non-scaling-stroke; }
-.cockpitVoyant { fill: var(--ag-cyan); }
-.cockpitVoyantAmbre { fill: var(--ag-amber); animation: evtPulse 0.9s ease-in-out infinite alternate; }
+/* ---------- cockpit du titan (v3) : panneaux CSS adaptatifs (clip-path en %, tailles en clamp), vitre centrale dégagée ---------- */
+.cockpit {
+  position: absolute; inset: 0; z-index: 2; pointer-events: none; overflow: hidden;
+  --ck-metal: color-mix(in srgb, var(--ag-line) 55%, var(--ag-ground));
+  --ck-metal-clair: color-mix(in srgb, var(--ag-line-strong) 45%, var(--ag-ground));
+  --ck-lueur: color-mix(in srgb, var(--ag-cyan) 70%, transparent);
+  --ck-haut: clamp(30px, 8vh, 84px);
+  --ck-bas: clamp(78px, 19vh, 180px);
+  --ck-montant: clamp(18px, 7vw, 132px);
+}
+.cockpit[data-critique="oui"] { --ck-lueur: color-mix(in srgb, var(--ag-danger) 80%, transparent); }
+/* vitre : vignette, reflet oblique, lignes de balayage très légères */
+.cockpitVitre {
+  position: absolute; inset: 0;
+  background:
+    radial-gradient(ellipse 75% 70% at 50% 48%, transparent 62%, color-mix(in srgb, var(--ag-ground) 60%, transparent) 100%),
+    linear-gradient(112deg, transparent 22%, color-mix(in srgb, var(--ag-cyan) 6%, transparent) 30%, transparent 37%, transparent 70%, color-mix(in srgb, var(--ag-cyan) 4%, transparent) 74%, transparent 78%),
+    repeating-linear-gradient(0deg, color-mix(in srgb, var(--ag-cyan) 3%, transparent) 0 1px, transparent 1px 4px);
+}
+.cockpitChoc { position: absolute; inset: 0; box-shadow: inset 0 0 14vmin 2vmin color-mix(in srgb, var(--ag-danger) 55%, transparent); animation: ckChoc 0.45s ease-out forwards; }
+@keyframes ckChoc { from { box-shadow: inset 0 0 14vmin 2vmin color-mix(in srgb, var(--ag-danger) 55%, transparent); } to { box-shadow: inset 0 0 14vmin 2vmin transparent; } }
+.cockpit[data-critique="oui"] .cockpitVitre { animation: ckCritique 0.8s ease-in-out infinite alternate; }
+@keyframes ckCritique { from { box-shadow: inset 0 0 10vmin color-mix(in srgb, var(--ag-danger) 10%, transparent); } to { box-shadow: inset 0 0 10vmin color-mix(in srgb, var(--ag-danger) 35%, transparent); } }
+
+/* armature : un seul calque filtré (liseré lumineux le long des découpes) */
+.cockpitCadre { position: absolute; inset: 0; filter: drop-shadow(0 0 1px var(--ck-lueur)) drop-shadow(0 0 6px color-mix(in srgb, var(--ag-cyan) 18%, transparent)); }
+.cockpitCanopee, .cockpitMontant, .cockpitTableau { position: absolute; }
+.cockpitCanopee {
+  top: 0; left: 0; right: 0; height: var(--ck-haut);
+  background: linear-gradient(180deg, var(--ck-metal-clair), var(--ck-metal) 60%, var(--ag-ground));
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 76% 62%, 62% 62%, 58% 92%, 42% 92%, 38% 62%, 24% 62%, 0 100%);
+}
+.cockpitMontant {
+  top: 0; bottom: 0; width: var(--ck-montant);
+  background:
+    repeating-linear-gradient(172deg, transparent 0 22px, color-mix(in srgb, var(--ag-line-strong) 40%, transparent) 22px 24px),
+    linear-gradient(90deg, var(--ag-ground), var(--ck-metal) 55%, var(--ck-metal-clair));
+}
+.cockpitMontant[data-cote="g"] { left: 0; clip-path: polygon(0 0, 100% 0, 46% 42%, 74% 100%, 0 100%); }
+.cockpitMontant[data-cote="d"] { right: 0; transform: scaleX(-1); clip-path: polygon(0 0, 100% 0, 46% 42%, 74% 100%, 0 100%); }
+.cockpitTableau {
+  left: 0; right: 0; bottom: 0; height: var(--ck-bas);
+  background:
+    repeating-linear-gradient(90deg, transparent 0 46px, color-mix(in srgb, var(--ag-line-strong) 25%, transparent) 46px 47px),
+    linear-gradient(180deg, var(--ck-metal-clair), var(--ck-metal) 35%, var(--ag-ground));
+  clip-path: polygon(0 34%, 14% 8%, 30% 0, 70% 0, 86% 8%, 100% 34%, 100% 100%, 0 100%);
+}
+
+/* compas en tête de l'écran central */
+.cockpitCompas {
+  position: relative; align-self: stretch; height: clamp(16px, 2.6vh, 24px); flex: none;
+  overflow: hidden; font: 600 clamp(8px, 0.9vw, 11px)/1 var(--ag-mono), monospace; color: var(--ag-cyan); letter-spacing: 0.06em;
+  border-bottom: 1px solid color-mix(in srgb, var(--ag-cyan) 45%, transparent);
+  -webkit-mask-image: linear-gradient(90deg, transparent, var(--ag-ground) 15%, var(--ag-ground) 85%, transparent);
+  mask-image: linear-gradient(90deg, transparent, var(--ag-ground) 15%, var(--ag-ground) 85%, transparent);
+}
+.cockpitCompas span { position: absolute; bottom: 0; width: 1px; height: 22%; background: var(--ag-cyan); }
+.cockpitCompas span[data-nom="oui"] { width: auto; height: auto; background: none; transform: translateX(-50%); bottom: 26%; color: var(--ag-ink); }
+.cockpitCompas b {
+  position: absolute; left: 50%; top: 0; transform: translateX(-50%); padding: 1px 5px; background: var(--ag-hud-fond-fort);
+  border: 1px solid var(--ag-amber); color: var(--ag-amber); font-weight: 700;
+}
+
+/* cadre de visée : quatre coins */
+.cockpitVisee { position: absolute; left: 50%; top: 50%; width: clamp(120px, 34vmin, 400px); aspect-ratio: 16 / 10; transform: translate(-50%, -50%); }
+.cockpitVisee i { position: absolute; width: 14%; height: 18%; border: 0 solid color-mix(in srgb, var(--ag-cyan) 60%, transparent); }
+.cockpitVisee i:nth-child(1) { left: 0; top: 0; border-left-width: 2px; border-top-width: 2px; }
+.cockpitVisee i:nth-child(2) { right: 0; top: 0; border-right-width: 2px; border-top-width: 2px; }
+.cockpitVisee i:nth-child(3) { left: 0; bottom: 0; border-left-width: 2px; border-bottom-width: 2px; }
+.cockpitVisee i:nth-child(4) { right: 0; bottom: 0; border-right-width: 2px; border-bottom-width: 2px; }
+.cockpit[data-critique="oui"] .cockpitVisee i { border-color: color-mix(in srgb, var(--ag-danger) 75%, transparent); }
+
+/* tableau de bord : trois écrans posés dans la console */
+.cockpitBord {
+  position: absolute; left: 50%; bottom: calc(var(--ck-bas) * 0.1); transform: translateX(-50%); width: min(94vw, 980px);
+  height: calc(var(--ck-bas) * 0.72); display: grid; grid-template-columns: 1fr 1.15fr 1fr; gap: clamp(6px, 1.6vw, 22px);
+}
 .cockpitEcran {
-  position: absolute; top: 48%; width: calc(64 * var(--u)); min-width: 44px; padding: calc(8 * var(--u)) 0; display: flex; flex-direction: column;
-  align-items: center; gap: calc(6 * var(--u)); background: var(--ag-hud-fond); border: 1px solid var(--ag-cyan);
-  font: 600 max(10px, calc(11 * var(--u)))/1 var(--ag-mono), monospace; letter-spacing: 0.08em; color: var(--ag-cyan);
+  display: flex; flex-direction: column; justify-content: space-between; gap: 4px; min-width: 0; padding: clamp(4px, 0.8vw, 10px) clamp(6px, 1vw, 14px);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--ag-cyan) 7%, var(--ag-hud-fond-fort)), var(--ag-hud-fond-fort));
+  border: 1px solid color-mix(in srgb, var(--ag-cyan) 55%, transparent); border-radius: 4px;
+  box-shadow: inset 0 0 18px color-mix(in srgb, var(--ag-cyan) 10%, transparent);
+  font: 600 clamp(9px, 1.05vw, 13px)/1.1 var(--ag-mono), monospace; letter-spacing: 0.08em; color: var(--ag-cyan); overflow: hidden;
 }
-.cockpitEcranGauche { left: calc(14 * var(--u)); }
-.cockpitEcranDroite { right: calc(14 * var(--u)); }
-.cockpitJauge { position: relative; display: block; width: calc(16 * var(--u)); min-width: 10px; height: calc(150 * var(--u)); background: var(--ag-line-strong); }
-.cockpitJauge b { position: absolute; left: 0; right: 0; bottom: 0; background: var(--ag-cyan); transition: height 0.12s linear; }
-.cockpitJauge b[data-bas="oui"] { background: var(--ag-danger); }
-.cockpitJauge b[data-pret="oui"] { background: var(--ag-amber); }
-.cockpitConsole {
-  position: absolute; left: 50%; bottom: calc(10 * var(--u)); transform: translateX(-50%); display: flex; gap: calc(14 * var(--u));
-  align-items: baseline; font: 600 max(11px, calc(14 * var(--u)))/1.2 var(--ag-display), var(--ag-mono), monospace; letter-spacing: 0.12em; color: var(--ag-amber);
+.cockpitEcran header { color: var(--ag-ink-dim); font-size: clamp(8px, 0.9vw, 11px); letter-spacing: 0.14em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cockpitEcran strong { color: var(--ag-ink); font-size: clamp(12px, 1.7vw, 22px); white-space: nowrap; }
+.cockpitEcran small { color: var(--ag-ink-dim); font-size: 0.7em; }
+.cockpitEcran[data-alerte="oui"] { border-color: var(--ag-danger); color: var(--ag-danger); }
+.cockpitEcran[data-alerte="oui"] strong { color: var(--ag-danger); }
+.cockpitEcran[data-pret="oui"] { border-color: var(--ag-amber); }
+.cockpitEcran[data-pret="oui"] strong { color: var(--ag-amber); }
+.cockpitEcranCentre { align-items: center; text-align: center; }
+.cockpitSegments { display: grid; grid-template-columns: repeat(20, 1fr); gap: 2px; height: clamp(8px, 1.6vh, 16px); }
+.cockpitSegments i { background: var(--ag-line-strong); transform: skewX(-18deg); }
+.cockpitSegments i[data-on="oui"] { background: var(--ag-cyan); box-shadow: 0 0 4px color-mix(in srgb, var(--ag-cyan) 50%, transparent); }
+.cockpitEcran[data-alerte="oui"] .cockpitSegments i[data-on="oui"] { background: var(--ag-danger); }
+.cockpitMesures { display: flex; gap: clamp(8px, 2.4vw, 32px); justify-content: center; align-items: flex-end; }
+.cockpitMesures span { display: flex; flex-direction: column; align-items: center; }
+.cockpitTemps { font-family: var(--ag-mono), monospace; color: var(--ag-amber) !important; }
+.cockpitDash { position: relative; height: clamp(8px, 1.6vh, 16px); background: var(--ag-line-strong); transform: skewX(-18deg); }
+.cockpitDash i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--ag-cyan); transition: width 0.08s linear; }
+.cockpitEcran[data-pret="oui"] .cockpitDash i { background: var(--ag-amber); }
+.cockpitTouche { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cockpitAlerte {
+  position: absolute; left: 50%; top: calc(var(--ck-haut) + 2vh); transform: translateX(-50%); margin: 0; padding: 4px 12px;
+  background: var(--ag-hud-fond-fort); border: 1px solid var(--ag-danger); color: var(--ag-danger);
+  font: 700 clamp(11px, 1.4vw, 16px)/1.2 var(--ag-display), var(--ag-mono), monospace; letter-spacing: 0.16em; animation: evtPulse 0.4s ease-in-out infinite alternate;
 }
-.cockpitConsole span { color: var(--ag-ink); font-family: var(--ag-mono), monospace; }
-.cockpitConsole em { font-style: normal; font-size: max(10px, calc(11 * var(--u))); letter-spacing: 0.04em; color: var(--ag-ink); }
+.cockpitAide {
+  position: absolute; left: 50%; bottom: calc(var(--ck-bas) + 1.5vh); transform: translateX(-50%); margin: 0; padding: 4px 10px; max-width: 90vw;
+  background: var(--ag-hud-fond); border: 1px solid var(--ag-cadre); color: var(--ag-ink); text-align: center;
+  font: 500 clamp(10px, 1.1vw, 13px)/1.3 var(--ag-mono), monospace; letter-spacing: 0.03em;
+}
+/* téléphone en portrait : console plus haute, écrans latéraux réduits à l'essentiel */
+@media (max-aspect-ratio: 4/5) {
+  .cockpit { --ck-bas: clamp(96px, 16vh, 150px); --ck-montant: clamp(12px, 5vw, 40px); }
+  .cockpitBord { grid-template-columns: 1fr 1fr 1fr; gap: 4px; width: 96vw; }
+  .cockpitTouche, .cockpitEcran small { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { .cockpitChoc, .cockpitAlerte, .cockpit[data-critique="oui"] .cockpitVitre { animation: none; } }
 
 /* barre de vie du boss (tigre robot) : plus large et plus haute, sans minuterie */
 .evtBoss { width: calc(720 * var(--u)); min-width: 320px; }

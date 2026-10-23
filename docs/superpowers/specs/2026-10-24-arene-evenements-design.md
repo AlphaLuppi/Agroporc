@@ -1,6 +1,6 @@
 # Événements de l'arène : Truck Muche fou, tigre robot géant, titan tigre — design
 
-Date : 2026-10-24 · Branche : `feat/arene-evenements` · Protocole : `VERSION_PROTOCOLE = 3`
+Date : 2026-10-24 · Branche : `feat/arene-evenements` · Protocole : `VERSION_PROTOCOLE = 4` (rebasé sur la v3 d'Alphaluppi : voitures qui explosent, chat vocal ; l'explosion d'un monstre s'appelle `explosionMonstre`)
 
 ## Demande
 
@@ -37,11 +37,11 @@ Rendre l'arène plus drôle avec des événements qui touchent tout le monde :
   **Écrasement** des joueurs sous le titan quand il marche. Le titan a 1 500 PV ; les autres le criblent (`CIBLE_TITAN`). Fin : détruit
   (explosion, `par` = destructeur), durée écoulée ou pilote parti ; le pilote reprend pied à sa place, PV pleins.
 
-## Protocole v3 (`lib/fps/protocole.ts`)
+## Protocole v4 (`lib/fps/protocole.ts`)
 
 - Client → serveur : `pilotage{seq, p, cap, lacet, tangage}`, `canon{o, d, touches}` ; `tir.touches[].cible` accepte `CIBLE_TIGRE` / `CIBLE_TITAN`.
 - Serveur → client : `evenement{type, phase: annonce|debut|fin|etat, debutT, finT, raison?, par?}`, `laser{de, vers, rayon, tirT}`,
-  `explosion{p, rayon}`, `titan{phase: debut|fin|etat, pilote, p, cap, finT, raison?, par?}`, `canon{id, o, d}` ; `snap.monstres{truck?, tigre?, titan?}`
+  `explosionMonstre{p, rayon}`, `titan{phase: debut|fin|etat, pilote, p, cap, finT, raison?, par?}`, `canon{id, o, d}` ; `snap.monstres{truck?, tigre?, titan?}`
   (joueurs en arène seulement) ; `EtatJoueurSnap.titan` marque le pilote (avatar ni dessiné ni touchable) ; causes `truck_fou`, `tigre_robot`, `titan`.
 - `rejoindre` reçoit l'état en cours (`evenement{phase:"etat"}`, `titan{phase:"etat"}`).
 
@@ -96,3 +96,25 @@ Serveur : `PDJ_FPS_EVT_MIN_MS` / `PDJ_FPS_EVT_MAX_MS` (délai avant chaque évé
 - **Titan à la 1ʳᵉ personne dans un cockpit** (`hud/CockpitTitan.tsx`) : calque SVG (poutre, montants fins, console, armature, voyants)
   et deux écrans (intégrité, recharge du dash), vitre centrale dégagée ; son propre titan n'est pas dessiné.
 - **Tigre** : barre de vie de boss avec les PV en chiffres, plus de minuterie affichée ; durée maximale portée à 5 min.
+
+## Révision 3 du 2026-10-24
+
+- **Brèches** (remplacent l'aplatissement immédiat) : chaque coup arrache au bâtiment un cylindre vertical (`creuserBatiment` de
+  `collision.ts` : 5 m sous chaque appui du tigre qui marche, 7 m en charge, 22 m à l'atterrissage du saut, 7 m quand le titan retombe).
+  La brèche fusionne avec la précédente (plus petit cercle contenant les deux) ; elle n'est notée que si son rayon gagne 0,8 m. Dans la
+  brèche : ni mur ni toit, on y entre et on tire à travers ; son bord est une paroi (`pousser`, `rayonPrisme`). Au-delà de 55 % de
+  l'emprise couverte (échantillonnage 8 × 8), le bâtiment s'effondre en entier. Message `batiments{complet, detruits, breches}` :
+  changements seuls (animés) ou état complet (arrivée, nouveau match). Rendu : texture de flottants [avancement, x, z, r] par bâtiment ;
+  le nuanceur de fragments jette les fragments dans la brèche et au-dessus d'une coupe en pente déchiquetée, liseré orange sur la cassure ;
+  rayon animé en 0,5 s ; débris (`rendu-debris.ts`, un `InstancedMesh` de 420 blocs, arêtes dessinées par le nuanceur, gravité, un
+  rebond, restent au sol jusqu'au match suivant). Limite : la coupe en pente n'est que visuelle (collision en cylindre droit).
+- **Traces de pneus** (`rendu-traces.ts`) : roues arrière de ma voiture (`derapage()` > 0,15), des voitures des autres et du Truck fou
+  (glissement latéral mesuré sur les positions > 3 m/s au-delà de 6 m/s) ; segments posés tous les 0,6 m, un `InstancedMesh` de 700,
+  mélange multiplicatif (le sol s'assombrit), effacés en 25 s.
+- **Impacts au sol** : un tir qui descend et touche le sol avant tout mur ou joueur laisse une trace (`tracerEffets` de `jeu.ts`).
+- **Animations du tigre** (`tigre-geant.ts`) : rugir (patte), bond du tigre 3D étiré sur 1,3 s (saut), ramassé tête basse et queue qui
+  fouette (charge), cabré gueule ouverte et tremblement (laser armé), gestes de repos à l'arrêt au hasard sans répétition (regard,
+  étirement, léchage, ronron, rugissement), grelottement enragé.
+- **Cockpit** refait en panneaux CSS (`clip-path` en %, tailles en `clamp()`, jamais déformé) : verrière, montants inclinés, vitre
+  (vignette, reflet, balayage), cadre de visée, tableau de bord à trois écrans (intégrité segmentée ; compas, km/h, altitude, temps ;
+  dash), flash rouge à chaque coup, alerte sous 25 %. `EtatMonstresHud.titan` porte `vitesse`, `altitude` et `cap`.

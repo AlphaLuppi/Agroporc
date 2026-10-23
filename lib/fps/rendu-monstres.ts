@@ -319,7 +319,7 @@ function creerTigre(parent: THREE.Object3D, couleur: number | string, aDisposer:
       // le corps marche le long de +x de son repère : +x devient l'avant (−sin cap, −cos cap)
       r.group.rotation.y = s.cap + Math.PI / 2;
       r.tigre.groupe.scale.setScalar(echelle);
-      r.anim.maj(dt, s.v, echelle, s.a === "patte" || s.a === "charge" || s.a === "saut");
+      r.anim.maj(dt, s.v, echelle, { attaque: s.a, laser: laserProche, rage: s.rage });
       r.tigre.appliquer(r.anim.pose(), r.anim.x());
       // les yeux s'embrasent quand le laser est armé ; le maillage pulse doucement
       r.yeux.color.setRGB(1, 0.1 + 0.25 * laserProche, 0.12 + 0.2 * laserProche);

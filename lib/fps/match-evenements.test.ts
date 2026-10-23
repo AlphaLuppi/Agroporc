@@ -122,8 +122,12 @@ describe("tigre robot géant et titan tigre", () => {
     const r = avancer(s, T0, T0 + 20_000, (x) => { if (j(s, "a").vivant) tenir(s, "a", [80, 0, 0]); rafraichir(s, ["a"], x); });
     const b = messages(r.sorties, "batiments");
     expect(b.length).toBeGreaterThan(0);
-    expect(b[0].nouveaux).toContain(2);
+    expect(b[0].complet).toBe(false);
+    expect(b.some((x) => x.detruits.includes(2) || x.breches.some((y) => y[0] === 2))).toBe(true);
+    // brèche qui grandit sous ses pas, puis effondrement complet
     expect(decor.prismes[2].h).toBe(0);
+    expect(b.some((x) => x.detruits.includes(2))).toBe(true);
+    expect(b.some((x) => x.breches.some((y) => y[0] === 2))).toBe(true);
   });
 
   it("saut du tigre : onde de choc annoncée ; au sol on est touché, en l'air on l'esquive", () => {

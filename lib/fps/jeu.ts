@@ -28,8 +28,10 @@
 import * as THREE from "three";
 import type { SceneData } from "../agroparc3d/types";
 import { C, construireDecor, creerEtatDestruction } from "../agroparc3d/decor";
-import { construireMonde, detruireBatiment, normaleImpact, releverBatiment, type Monde } from "./collision";
+import { construireMonde, detruireBatiment, normaleImpact, poserBreche, releverBatiment, type Creux, type Monde } from "./collision";
 import { creerImpactsBalles } from "./rendu-impacts";
+import { creerDebris } from "./rendu-debris";
+import { creerTracesPneus, glissementLateral, rouesArriere } from "./rendu-traces";
 import { construireCircuits, flotte } from "./circulation";
 import { coteMurDe, etape, etatInitial, hauteurOeil, postureDe, type Entrees, type EtatMouvement } from "./mouvement";
 import { COUTEAU, STATS, degatsPlomb, delaiRecul, devier, directionsTir, dispersionTir, niveauZoomDefaut, niveauxZoom, retourRecul, vitesseArme } from "./armes";
@@ -105,9 +107,10 @@ const SECOUSSE_EXPLOSION = 0.09;
 /** (v4) Foulée (m) d'un pas lourd du tigre robot et du titan, et distance (m) à laquelle une explosion de monstre secoue la caméra. */
 const FOULEE_LOURDE_M = 4.5;
 const SECOUSSE_MONSTRE_M = 40;
-/** (v3) Caméra du pilote à la 3ᵉ personne : derrière le titan (m), visée au-dessus de son dos (part de l'échelle), surélévation (m). */
 /** (v3) Durée (s) de l'effondrement d'un bâtiment et intervalle (s) entre deux coups de klaxon du Truck Muche fou. */
 const DUREE_EFFONDREMENT_S = 1.1;
+/** Durée (s) de l'ouverture animée d'une brèche. */
+const DUREE_BRECHE_S = 0.5;
 const KLAXON_TRUCK_S = { min: 2.2, max: 3.6 } as const;
 
 function lireSensibilite(): number {
@@ -165,7 +168,28 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
   construireDecor(decor, data, { fantomes: false, destruction });
   /** effondrements en cours : id → instant (s, horloge locale) du début */
   const effondrements = new Map<number, number>();
+  /** brèches qui s'ouvrent : id → instant du début et cercles de départ et d'arrivée (le rayon grandit en `DUREE_BRECHE_S`) */
+  const ouvertures = new Map<number, { t0: number; de: Creux; vers: Creux }>();
+  let sonBrecheT = -Infinity;
+  const debris = creerDebris(scene, C.cyan);
+  /** demi-diagonale de la boîte d'une emprise (m) */
+  const emprise = (r: readonly (readonly [number, number])[]) => {
+    let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+    for (const [x, z] of r) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z); }
+    return Math.hypot(x1 - x0, z1 - z0) / 2;
+  };
   const impactsBalles = creerImpactsBalles(scene);
+  // traces de pneus des voitures et du Truck fou qui dérapent (v3)
+  const tracesPneus = creerTracesPneus(scene);
+  const precedentsTraces = new Map<string, { x: number; z: number }>();
+  /** Une image d'un véhicule : glisse s'il est imposé (`force`), sinon si sa vitesse latérale mesurée dépasse 3 m/s à plus de 6 m/s. */
+  function suivreTraces(cle: string, p: Vec3, cap: number, v: number, dt: number, demiVoie: number, recul: number, force?: boolean) {
+    const av = precedentsTraces.get(cle);
+    precedentsTraces.set(cle, { x: p[0], z: p[2] });
+    let glisse = force ?? false;
+    if (force === undefined && av && dt > 0) glisse = Math.abs(v) > 6 && glissementLateral(cap, p[0] - av.x, p[2] - av.z, dt) > 3;
+    tracesPneus.roues(cle, rouesArriere(p, cap, demiVoie, recul), glisse && p[1] < 0.6);
+  }
   const effets = creerEffets(scene);
   const post = creerPostTraitement(renderer, scene, camera);
   const sons = creerSons();
@@ -378,6 +402,18 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
     return r;
   }
 
+  /**
+   * (v3) Rayon de tir pour les EFFETS : `tracer` (joueurs, murs, toits) complété par le sol (y = 0), que `tracer` ne connaît pas : la
+   * balle qui part vers le bas s'arrête au sol, avec son étincelle et sa trace. Les touches déclarées au serveur ne changent pas.
+   */
+  function tracerEffets(o: Vec3, d: Vec3, portee: number, liste: ReturnType<typeof cibles>, ignore: string) {
+    const imp = tracer(monde, o, d, portee, liste, ignore);
+    if (imp.cible || d[1] >= -1e-4 || o[1] <= 0) return imp;
+    const tSol = -o[1] / d[1];
+    if (tSol >= imp.distance) return imp;
+    return { cible: null, zone: null, distance: tSol, point: [o[0] + d[0] * tSol, 0, o[2] + d[2] * tSol] as Vec3 };
+  }
+
   const _bouche = new THREE.Vector3();
 
   /** Coup de couteau : `coup` au serveur (jamais `tir`), cadence de 0,5 s, pas de recul ni de traçante. */
@@ -419,7 +455,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
     // vue à la 1ʳᵉ personne depuis le cockpit : le canon tire dans l'axe du réticule
     const o = oeil();
     const d = directionVisee(lacet, tangage, 0);
-    const imp = tracer(monde, o, d, TITAN.canon.portee, cibles(), client.id ?? "");
+    const imp = tracerEffets(o, d, TITAN.canon.portee, cibles(), client.id ?? "");
     const touches: { cible: string; zone: Zone }[] = imp.cible && imp.zone ? [{ cible: imp.cible, zone: imp.zone }] : [];
     client.envoyer({ t: "canon", o, d, touches });
     effets.traçante([o[0] + d[0] * 2, o[1] - 0.9, o[2] + d[2] * 2], imp.point, "minigun");
@@ -464,7 +500,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
       : [_bouche.x, _bouche.y, _bouche.z];
     let impactsAffiches = 0;
     dirs.forEach((d, i) => {
-      const imp = tracer(monde, o, d, Math.min(a.portee, PORTEE_EFFETS_M), liste, client.id ?? "");
+      const imp = tracerEffets(o, d, Math.min(a.portee, PORTEE_EFFETS_M), liste, client.id ?? "");
       // (v3) le tigre robot ou un titan devant le premier joueur / mur touché
       const monstre = toucheMonstre(o, d, imp.distance);
       if (monstre) {
@@ -793,7 +829,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
         const vus = [...vehiculesAffichees().values()];
         const tsV = client.maintenantServeur();
         for (const d of m.d) {
-          const imp = tracer(monde, m.o, d, Math.min(a.portee, PORTEE_EFFETS_M), liste, m.id);
+          const imp = tracerEffets(m.o, d, Math.min(a.portee, PORTEE_EFFETS_M), liste, m.id);
           const v = mondeJeu.impactVoiture(m.o, d, imp.distance, tsV, vus, etats.get(m.id)?.vehicule?.id ?? null);
           if (v && !imp.cible) {
             const fin: Vec3 = [m.o[0] + d[0] * v.distance, m.o[1] + d[1] * v.distance, m.o[2] + d[2] * v.distance];
@@ -924,26 +960,49 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
         sons.laser(positionSon(m.de));
         break;
       case "batiments": {
-        // liste complète des ruines : ce qui tombe s'effondre (animé si `nouveaux`), ce qui n'y est plus se relève (nouveau match)
-        const ruines = new Set(m.detruits);
-        const nouveaux = new Set(m.nouveaux);
-        for (let id = 0; id < data.buildings.length; id++) {
-          const aTerre = monde.prismes[id]?.h === 0 && (monde.prismes[id]?.hOrigine ?? 0) > 0;
-          if (ruines.has(id) && !aTerre) {
-            detruireBatiment(monde, id);
-            if (nouveaux.has(id) && !enReplay) {
-              effondrements.set(id, t);
-              const b = data.buildings[id];
-              rm.explosion([b.c[0], b.h * 0.4, b.c[1]], Math.min(14, 4 + b.h * 0.6));
-              sons.effondrement(positionSon([b.c[0], 0, b.c[1]]));
-            } else destruction.poser(id, 1);
-          } else if (!ruines.has(id) && aTerre) {
-            releverBatiment(monde, id);
+        if (m.complet) {
+          // état entier (nouveau match, arrivée) : ce qui n'y figure pas est debout et intact, sans animation
+          const ruines = new Set(m.detruits);
+          const br = new Map(m.breches.map((x) => [x[0], x] as const));
+          for (let id = 0; id < data.buildings.length; id++) {
+            const pr = monde.prismes[id];
+            if (!pr) continue;
             effondrements.delete(id);
-            destruction.poser(id, 0);
+            ouvertures.delete(id);
+            if (ruines.has(id)) { detruireBatiment(monde, id); destruction.poser(id, 1); }
+            else if ((pr.h === 0 && pr.hOrigine > 0) || pr.creux) { releverBatiment(monde, id); destruction.poser(id, 0); }
+            const x = br.get(id);
+            if (x && !ruines.has(id)) { poserBreche(monde, id, { x: x[1], z: x[2], r: x[3] }); destruction.breche(id, x[1], x[2], x[3]); }
+            else destruction.breche(id, 0, 0, 0);
           }
+          if (!m.detruits.length && !m.breches.length) { impactsBalles.vider(); tracesPneus.vider(); debris.vider(); }
+          break;
         }
-        if (!m.detruits.length) impactsBalles.vider();
+        // changements : effondrement complet ou brèche qui s'ouvre, animés, avec débris
+        for (const id of m.detruits) {
+          const pr = monde.prismes[id];
+          if (!pr || pr.h === 0) continue;
+          detruireBatiment(monde, id);
+          ouvertures.delete(id);
+          if (enReplay) { destruction.poser(id, 1); continue; }
+          effondrements.set(id, t);
+          const b = data.buildings[id];
+          const r = emprise(b.r);
+          rm.explosion([b.c[0], b.h * 0.4, b.c[1]], Math.min(14, 4 + b.h * 0.6));
+          sons.effondrement(positionSon([b.c[0], 0, b.c[1]]));
+          debris.projeter(b.c[0], b.c[1], r * 0.8, b.h * 0.7, Math.round(Math.min(40, 12 + r * 1.5)));
+        }
+        for (const [id, x, z, r] of m.breches) {
+          const pr = monde.prismes[id];
+          if (!pr || pr.h === 0) continue;
+          const avant = pr.creux;
+          poserBreche(monde, id, { x, z, r });
+          if (enReplay) { destruction.breche(id, x, z, r); continue; }
+          ouvertures.set(id, { t0: t, de: avant ? { ...avant } : { x, z, r: 0 }, vers: { x, z, r } });
+          const neuf = r - (avant?.r ?? 0);
+          debris.projeter(x, z, Math.min(r, 8), pr.hOrigine * 0.6, Math.round(Math.min(26, 5 + neuf * 2)), avant?.x, avant?.z);
+          if (t - sonBrecheT > 0.4) { sonBrecheT = t; sons.effondrement(positionSon([x, 0, z])); }
+        }
         break;
       }
       case "onde":
@@ -968,7 +1027,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
         break;
       case "canon": {
         if (m.id === client.id || enReplay) break;
-        const imp = tracer(monde, m.o, m.d, TITAN.canon.portee, cibles(), m.id);
+        const imp = tracerEffets(m.o, m.d, TITAN.canon.portee, cibles(), m.id);
         effets.traçante([m.o[0], m.o[1] - 0.9, m.o[2]], imp.point, "minigun");
         if (!imp.cible && imp.distance < TITAN.canon.portee - 0.01) impactsBalles.ajouter(imp.point, normaleImpact(monde, imp.point, m.o));
         sons.canon(positionSon(m.o));
@@ -1356,6 +1415,11 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
     }
     dyn.majVoituresJoueurs(liste, couleurs);
     dyn.majElsa(mondeJeu.elsa(), t);
+    if (!enReplay) {
+      const mienne = vehicule.estConducteur() ? vehicule.actif()?.vehicule : undefined;
+      for (const v of liste) suivreTraces(`v${v.id}`, v.p, v.cap, v.v, dt, 0.8, 1.5, v.id === mienne ? vehicule.derapage() > 0.15 : undefined);
+    }
+    tracesPneus.maj(dt);
   }
 
   /** (v3) Monstres : interpolés comme les joueurs ; mon titan est à l'état local (sans retard). Pas lourds du tigre et du titan. */
@@ -1368,6 +1432,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
     rm.maj(enReplay ? {} : monstresImage, enReplay ? [] : jm.lasers(tsServeur), t, tsServeur, dt, ti ? couleurDe(ti.pilote) : "#9be9ff", pilote());
     // Truck Muche fou : coups de klaxon réguliers, entendus de loin
     const tr = monstresImage.truck;
+    if (tr && !enReplay) suivreTraces("truck", tr.p, tr.cap, tr.v, dt, 1.2, 1.9);
     if (tr && !enReplay) {
       klaxonDans -= dt;
       if (klaxonDans <= 0) {
@@ -1381,6 +1446,13 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
       destruction.poser(id, k * k);
       if (k >= 1) effondrements.delete(id);
     }
+    for (const [id, o] of ouvertures) {
+      const k = Math.min(1, (t - o.t0) / DUREE_BRECHE_S);
+      const e = 1 - (1 - k) * (1 - k);
+      destruction.breche(id, o.de.x + (o.vers.x - o.de.x) * e, o.de.z + (o.vers.z - o.de.z) * e, o.de.r + (o.vers.r - o.de.r) * e);
+      if (k >= 1) ouvertures.delete(id);
+    }
+    debris.maj(dt);
     impactsBalles.maj(dt);
     const tg = monstresImage.tigre;
     if (tg && !enReplay) {
@@ -1712,6 +1784,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
         titan: ti && enCours ? {
           pilote: ti.pilote, pv: ti.pv, pvMax: ti.pvMax, finT: enCours.finT,
           dash: 1 - Math.min(1, (titan.etat()?.recharge ?? 0) / (TITAN.dash.rechargeMs / 1000)),
+          vitesse: Math.abs(ti.v), altitude: ti.p[1], cap: ti.pilote === client.id ? lacet : ti.cap,
         } : null,
       };
     },
@@ -1747,6 +1820,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
       feux.dispose();
       rm.dispose();
       impactsBalles.dispose();
+      tracesPneus.dispose();
+      debris.dispose();
       destruction.dispose();
       porteArme.remove(armeMain.group);
       camera.remove(porteArme);
@@ -1823,6 +1898,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
         return {
           pnj: mondeJeu.etatsPnj(ts).map((e) => ({ p: e.p, cap: e.cap, v: e.v })),
           vehicules: [...vehiculesAffichees().values()],
+          traces: tracesPneus.nombre(),
           sieges: [...vehiculesAffichees().keys()].map((id) => ({ id, sieges: [...mondeJeu.siegesDe(id)] })),
           elsa: mondeJeu.elsa(),
           invite: mondeJeu.invite(moi.p, assisSiege(), ts),

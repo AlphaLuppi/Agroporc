@@ -198,7 +198,7 @@ export default function HudArene(p: PropsHudArene) {
             ) : !hud.titan ? (
               <p className={styles.course}>COURSE <span ref={refVitesse} /></p>
             ) : null}
-            {!pause && <p className={styles.aideBas} aria-hidden="true">{t("scores")} : scores · {t("carte")} : carte</p>}
+            {!pause && !hud.titan && <p className={styles.aideBas} aria-hidden="true">{t("scores")} : scores · {t("carte")} : carte</p>}
           </div>
         </>
       )}

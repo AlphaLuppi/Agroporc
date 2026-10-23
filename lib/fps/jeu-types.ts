@@ -135,8 +135,8 @@ export type JeuEvenement =
 export interface EtatMonstresHud {
   evenement: { type: TypeEvenement; phase: "annonce" | "actif"; debutT: number; finT: number } | null;
   tigre: { pv: number; pvMax: number; rage: boolean } | null;
-  /** `dash` : 0..1, 1 = dash prêt (seulement pour le pilote) */
-  titan: { pilote: string; pv: number; pvMax: number; finT: number; dash: number } | null;
+  /** `dash` : 0..1, 1 = dash prêt (seulement pour le pilote) ; `vitesse` (m/s), `altitude` (m), `cap` (rad, lacet) pour le cockpit */
+  titan: { pilote: string; pv: number; pvMax: number; finT: number; dash: number; vitesse: number; altitude: number; cap: number } | null;
 }
 
 export interface JeuCallbacks {
