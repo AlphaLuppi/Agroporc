@@ -1,11 +1,11 @@
 /**
  * Contrôle d'une voiture côté client (PUR, entrées injectées) : le conducteur simule en local et envoie `conduite` à 30 Hz ; le passager
- * suit l'état interpolé de la voiture. Touches → commandes : avant/arrière → accel, gauche/droite → direction, saut → frein à main.
+ * suit l'état interpolé de la voiture. Touches → commandes : avant/arrière → accel, gauche/droite → direction, saut → frein à main (dérapage).
  * Spec : docs/superpowers/specs/2026-10-22-arene-v2-design.md (§2.12, §5.9)
  */
 import type { Monde } from "./collision";
 import type { EtatJoueurSnap, MessageClient, Siege, Vec3 } from "./protocole";
-import { pasVehicule, positionSiege, type EtatVehicule, type CommandesVehicule } from "./vehicule";
+import { intensiteDerapage, pasVehicule, positionSiege, type EtatVehicule, type CommandesVehicule } from "./vehicule";
 
 export interface InfoSiegeLocal { vehicule: number; siege: Siege }
 
@@ -33,7 +33,7 @@ export class ControleurVehicule {
   /** Prend (ou change de) place. Le serveur remet sa séquence de `conduite` à zéro à chaque arrivée au siège 0 : la nôtre aussi. */
   entrer(info: InfoSiegeLocal, etat: EtatVehicule): void {
     this.info = { ...info };
-    this.e = { p: [etat.p[0], etat.p[1], etat.p[2]], cap: etat.cap, v: etat.v };
+    this.e = { p: [etat.p[0], etat.p[1], etat.p[2]], cap: etat.cap, v: etat.v, ...(etat.vl ? { vl: etat.vl } : {}) };
     this.seq = 0;
     this.chocPas = 0;
   }
@@ -70,7 +70,15 @@ export class ControleurVehicule {
   }
 
   etat(): EtatVehicule | null {
-    return this.e ? { p: [this.e.p[0], this.e.p[1], this.e.p[2]], cap: this.e.cap, v: this.e.v } : null;
+    if (!this.e) return null;
+    const e: EtatVehicule = { p: [this.e.p[0], this.e.p[1], this.e.p[2]], cap: this.e.cap, v: this.e.v };
+    if (this.e.vl) e.vl = this.e.vl;
+    return e;
+  }
+
+  /** Conducteur : intensité du dérapage (0..1) pour le crissement des pneus ; 0 pour un passager. */
+  derapage(): number {
+    return this.e && this.estConducteur() ? intensiteDerapage(this.e) : 0;
   }
 
   estConducteur(): boolean {

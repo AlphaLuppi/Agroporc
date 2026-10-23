@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   ARMES, ARMES_PRINCIPALES, ARMES_SECONDAIRES, ARMES_SPECIALES, ECHELLE_AVATAR, EQUIPEMENT_DEFAUT, JEU, OEIL_SIEGE, PLAFONDS,
   SILHOUETTE, SILHOUETTE_ACCROUPIE, SLOTS, VERSION_PROTOCOLE, copierEquipement, oeilDe, silhouetteDe,
-  type CauseMort, type MessageClient, type MessageServeur, type PassageAvion, type TigreSnap,
+  type CauseMort, type MessageClient, type MessageServeur, type PassageAvion, type TigreLargueSnap,
 } from "./protocole";
 import { STATS } from "./armes";
 
@@ -90,8 +90,8 @@ describe("silhouette", () => {
 });
 
 describe("constantes", () => {
-  it("version 3 du protocole (tigres, avion, sort d'invocation)", () => {
-    expect(VERSION_PROTOCOLE).toBe(3);
+  it("version 5 du protocole (événements de la v4 et tigres largués, avion, sort d'invocation)", () => {
+    expect(VERSION_PROTOCOLE).toBe(5);
   });
 
   it("chaîne de plafonds de vitesse : sprint couteau ≤ plafond horizontal ≤ plafond déclaré", () => {
@@ -115,8 +115,8 @@ describe("constantes", () => {
 describe("messages v3 (tigres)", () => {
   // littéraux typés : la compilation vérifie la forme, le test vérifie qu'ils passent tels quels en JSON
   const passage: PassageAvion = { id: 1, depart: [-300, 10], arrivee: [350, -40], altitude: 120, vitesse: 60, debutT: 1000, finT: 11_850, largageT: 6000 };
-  const tigre: TigreSnap = { id: "t1", genre: "sauvage", p: [60, 0, 0], cap: 0.5, etat: "attaque", pose: "course", pv: 2478, action: "ramasse", actionT: 5000 };
-  const allie: TigreSnap = { id: "t2", genre: "allie", lanceur: "j1", p: [1, 0, 2], cap: 0, etat: "suivi", pose: "debout", pv: 500 };
+  const tigre: TigreLargueSnap = { id: "t1", genre: "sauvage", p: [60, 0, 0], cap: 0.5, etat: "attaque", pose: "course", pv: 2478, action: "ramasse", actionT: 5000 };
+  const allie: TigreLargueSnap = { id: "t2", genre: "allie", lanceur: "j1", p: [1, 0, 2], cap: 0, etat: "suivi", pose: "debout", pv: 500 };
   const serveur: MessageServeur[] = [
     { t: "snap", ts: 1, j: [], tigres: [tigre, allie] },
     { t: "avion", evenement: "passage", avion: passage },

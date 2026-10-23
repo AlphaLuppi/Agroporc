@@ -79,11 +79,11 @@ describe("touches de l'arène", () => {
     expect(libelleTouche(null)).toBe("—");
   });
 
-  it("actions de l'équipement, du HUD, « passer » et « invoquer » : 10 de la v1 conservées, 13 nouvelles, aucune arme1..4", () => {
+  it("actions de l'équipement, du HUD, « passer », de la v3 et « invoquer » : 10 de la v1 conservées, 15 nouvelles, aucune arme1..4", () => {
     expect(ACTIONS_V1).toHaveLength(10);
-    expect(ACTIONS_NOUVELLES).toHaveLength(13);
-    expect(ACTIONS).toHaveLength(23);
-    expect(new Set(ACTIONS).size).toBe(23);
+    expect(ACTIONS_NOUVELLES).toHaveLength(15);
+    expect(ACTIONS).toHaveLength(25);
+    expect(new Set(ACTIONS).size).toBe(25);
     expect(Object.keys(touchesParDefaut()).sort()).toEqual([...ACTIONS].sort());
     expect(Object.keys(LIBELLES_ACTIONS).sort()).toEqual([...ACTIONS].sort());
     expect(ACTIONS as readonly string[]).not.toContain("arme1");
@@ -103,12 +103,14 @@ describe("touches de l'arène", () => {
     expect(d.siege).toEqual(["KeyF", null]);
     expect(d.carte).toEqual(["KeyM", null]);
     expect(d.minimapCoin).toEqual([null, null]);
-    expect(d.invoquer).toEqual(["KeyT", null]);
+    expect(d.invoquer).toEqual(["KeyG", null]);
+    // T reste au chat vocal : le sort du tigre ne partage aucune touche avec « parler »
+    expect(d.parler).toEqual(["KeyT", null]);
   });
 
-  it("une sauvegarde qui a déjà mis T ailleurs laisse « invoquer » sans touche, signalé dans le menu pause", () => {
-    const cfg = normaliser({ ...touchesParDefaut(), recharger: ["KeyT", null], invoquer: undefined });
-    expect(cfg.recharger).toEqual(["KeyT", null]);
+  it("une sauvegarde qui a déjà mis G ailleurs laisse « invoquer » sans touche, signalé dans le menu pause", () => {
+    const cfg = normaliser({ ...touchesParDefaut(), recharger: ["KeyG", null], invoquer: undefined });
+    expect(cfg.recharger).toEqual(["KeyG", null]);
     expect(cfg.invoquer).toEqual([null, null]);
     expect(actionsSansTouche(cfg)).toContain("invoquer");
   });

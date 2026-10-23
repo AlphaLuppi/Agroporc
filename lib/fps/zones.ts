@@ -1,5 +1,5 @@
 /**
- * Zones de l'arène (PUR) : rond-point, zone d'apparition près du rond-point, position d'Elsa au Truck Muche, emplacements des
+ * Zones de l'arène (PUR) : rond-point, zone d'apparition près du rond-point, Truck Muche garé et point de service d'Elsa, emplacements des
  * voitures conduisibles, conversions lacet / cap. Repère de scene.json : x est, z sud ; lacet / cap 0 = vers −z.
  * Spec : docs/superpowers/specs/2026-10-22-arene-v2-design.md (§2.7, §2.10, §5.3, annexe §10)
  */
@@ -90,10 +90,90 @@ function ajusterCercle(pts: readonly Vec2[]): { centre: Vec2; rayon: number; res
   for (const [x, z] of pts) residu = Math.max(residu, Math.abs(Math.hypot(x - cx, z - cz) - rayon));
   return { centre: [cx, cz], rayon, residu };
 }
-/** (−120 ; 39) : 5 m à l'est du POI `truck` ; repli si le POI est absent. */
+/**
+ * Le Truck Muche garé dans l'arène (v3 §2) : Elsa est DEDANS et sert par le passe-plat, sur le flanc droit (côté trottoir). Repère local
+ * du truck : avant = −z (cabine), droite = +x (passe-plat), y haut ; le groupe three est tourné de `cap` (convention lacet).
+ * Dimensions en mètres ; le truck est un obstacle du monde de collision (`obstacleTruck`, ajouté par `construireMonde`).
+ */
+export const TRUCK = {
+  /** caisse + cabine, de l'arrière (+z) à l'avant (−z) */
+  longueur: 7.4,
+  largeur: 2.4,
+  /** toit de la caisse */
+  hauteur: 3.2,
+  /** la cabine (à l'avant) : longueur et hauteur */
+  cabine: 2,
+  hauteurCabine: 2.5,
+  /** plancher de la caisse, où se tient Elsa */
+  plancher: 0.9,
+  /** passe-plat : comptoir (bas), linteau (haut), centre et largeur le long du flanc (z local) */
+  comptoir: 1.85,
+  linteau: 3.0,
+  fenetreZ: 1.0,
+  fenetreLargeur: 3.2,
+  /** Elsa : distance du flanc vers l'intérieur ; point de service : distance du flanc vers l'extérieur */
+  retraitElsa: 0.75,
+  avanceService: 1.4,
+} as const;
+
+/** Place du truck : centre au sol, cap, point de service (dehors, devant le passe-plat) et position d'Elsa (dedans, sur le plancher). */
+export interface PlaceTruck { x: number; z: number; cap: number; service: Vec2; elsa: Vec2 }
+
+/** Repli quand le POI ou la voie d'arrivée manquent : POI historique, nez vers l'ouest-sud-ouest. */
+const TRUCK_REPLI = { x: -125, z: 39, cap: capDepuisDirection(-0.83, -0.56) };
+
+/** Point local (x à droite, z vers l'arrière) du truck garé → monde. */
+export function versMondeTruck(t: { x: number; z: number; cap: number }, lx: number, lz: number): Vec2 {
+  const c = Math.cos(t.cap), s = Math.sin(t.cap);
+  // rotation.y = cap : (lx, lz) → (lx·cos + lz·sin, −lx·sin + lz·cos)
+  return [t.x + lx * c + lz * s, t.z - lx * s + lz * c];
+}
+
+/**
+ * Le truck garé sur sa place (POI `truck`), dans le sens où il y arrive (dernier segment du trajet de la vue aérienne : du point de la voie
+ * `truckRoad` le plus proche jusqu'à la place). Arrondis au centimètre / milliradian : identiques côté client et serveur.
+ */
+export function placeTruck(data: SceneData): PlaceTruck {
+  const poi = data.pois.find((p) => p.type === "truck");
+  let base = TRUCK_REPLI;
+  if (poi) {
+    let cap = TRUCK_REPLI.cap;
+    const route = data.truckRoad ?? [];
+    if (route.length >= 2) {
+      let best = { d: Infinity, x: 0, z: 0 };
+      for (let i = 0; i < route.length - 1; i++) {
+        const [ax, az] = route[i], [bx, bz] = route[i + 1];
+        const abx = bx - ax, abz = bz - az;
+        const u = Math.min(1, Math.max(0, ((poi.x - ax) * abx + (poi.z - az) * abz) / Math.max(abx * abx + abz * abz, 1e-6)));
+        const x = ax + abx * u, z = az + abz * u;
+        const d = Math.hypot(poi.x - x, poi.z - z);
+        if (d < best.d) best = { d, x, z };
+      }
+      if (best.d > 1) cap = capDepuisDirection(poi.x - best.x, poi.z - best.z);
+    }
+    base = { x: poi.x, z: poi.z, cap: Math.round(cap * 1000) / 1000 };
+  }
+  const arrondi = (v: Vec2): Vec2 => [Math.round(v[0] * 100) / 100, Math.round(v[1] * 100) / 100];
+  const flanc = TRUCK.largeur / 2;
+  return {
+    ...base,
+    service: arrondi(versMondeTruck(base, flanc + TRUCK.avanceService, TRUCK.fenetreZ)),
+    elsa: arrondi(versMondeTruck(base, flanc - TRUCK.retraitElsa, TRUCK.fenetreZ)),
+  };
+}
+
+/** Emprise (rectangle, sens trigonométrique) et hauteur du truck garé, comme un bâtiment de scene.json (obstacle du monde de collision). */
+export function obstacleTruck(data: SceneData): { r: Vec2[]; h: number } | null {
+  if (!data.pois.some((p) => p.type === "truck")) return null;
+  const t = placeTruck(data);
+  const l = TRUCK.largeur / 2, L = TRUCK.longueur / 2;
+  return { r: [versMondeTruck(t, -l, -L), versMondeTruck(t, l, -L), versMondeTruck(t, l, L), versMondeTruck(t, -l, L)], h: TRUCK.hauteur };
+}
+
+/** Point de service d'Elsa (le ramassage se fait là, devant le passe-plat du truck) ; repli (−120 ; 39) sans POI `truck`. */
 export function positionElsa(data: SceneData): Vec2 {
-  const truck = data.pois.find((p) => p.type === "truck");
-  return truck ? [truck.x + 5, truck.z] : [-120, 39];
+  if (!data.pois.some((p) => p.type === "truck")) return [-120, 39];
+  return placeTruck(data).service;
 }
 /** Six emplacements de `parkings[3]` (rangée A puis B, 9 m entre eux), cap en convention lacet (−1,808 rad : voitures vers l'est-sud-est). */
 export const EMPLACEMENTS_VOITURES: readonly { readonly p: Vec2; readonly cap: number }[] = [

@@ -39,6 +39,8 @@ function creerContexte() {
     joueur: (id) => joueurs.get(id),
     joueursEnJeu: () => [...joueurs.values()].filter((j) => j.enJeu),
     memoriserPrecedent: () => {},
+    libererVehicule: () => [],
+    toucheJoueur: () => false,
     infliger: () => [],
     // comme la salle : mort immédiate, `mort` diffusé
     tuer: (cible, par, cause, t) => {
@@ -365,12 +367,13 @@ describe("libération des sièges", () => {
     expect(b.svc.reinitialiser(6000)).toEqual([]); // plus personne : rien à diffuser
   });
 
-  it("synchro : sieges adressé au seul destinataire avec l'occupation courante", () => {
+  it("synchro : sieges puis voitures abîmées, adressés au seul destinataire", () => {
     const b = banc();
     const a = b.ajouter(joueur("a", PRES));
     b.monter(a);
     const s = b.svc.synchro("tardif");
-    expect(s).toHaveLength(1);
+    expect(s).toHaveLength(2);
+    expect(s[1]).toEqual({ a: "tardif", m: { t: "voitures", etats: [] } });
     expect(s[0].a).toBe("tardif");
     expect(siegesDe(s)).toEqual([{ id: 0, sieges: ["a", null, null, null] }, { id: 1, sieges: [null, null, null, null] }]);
   });

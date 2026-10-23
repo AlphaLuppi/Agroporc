@@ -9,7 +9,7 @@
 import { COUTEAU } from "./armes";
 import { positionAvion } from "./avion";
 import type { Monde } from "./collision";
-import type { MessageServeur, PassageAvion, TigreSnap, Vec3, Zone } from "./protocole";
+import type { MessageServeur, PassageAvion, TigreLargueSnap, Vec3, Zone } from "./protocole";
 import { lerpAngle } from "./reseau";
 import { TIGRE, coupTigreVraisemblable, distanceSurfaceTigre, tracerTigre, type PositionTigre } from "./tigre-arene";
 
@@ -23,16 +23,16 @@ const MARGE_SAUT_M = 3;
 const DISTANCE_COUP_TIGRE_M = 3;
 
 /** Tigre à dessiner : le snap interpolé et sa vitesse horizontale mesurée (m/s), qui règle la vitesse de lecture de la marche. */
-export interface TigreClient extends TigreSnap {
+export interface TigreClient extends TigreLargueSnap {
   v: number;
 }
 
 /** Avion à l'instant demandé : position (altitude comprise), cap en convention lacet (0 = vers −z) et passage. */
 export interface AvionClient { p: Vec3; cap: number; passage: PassageAvion }
 
-interface Echantillon { ts: number; tigres: Map<string, TigreSnap> }
+interface Echantillon { ts: number; tigres: Map<string, TigreLargueSnap> }
 
-function copie(t: TigreSnap): TigreSnap {
+function copie(t: TigreLargueSnap): TigreLargueSnap {
   return { ...t, p: [t.p[0], t.p[1], t.p[2]] };
 }
 
@@ -47,7 +47,7 @@ export class InterpolateurTigres {
   constructor(private readonly tamponMs: number = TAMPON_MS) {}
 
   /** `tigres` absent du snap = aucun tigre (le serveur l'omet quand la liste est vide). */
-  ajouter(ts: number, tigres: readonly TigreSnap[] | undefined): void {
+  ajouter(ts: number, tigres: readonly TigreLargueSnap[] | undefined): void {
     const e: Echantillon = { ts, tigres: new Map((tigres ?? []).map((t) => [t.id, copie(t)])) };
     let i = this.echantillons.length;
     while (i > 0 && this.echantillons[i - 1].ts > ts) i--;
@@ -108,7 +108,7 @@ export class InterpolateurTigres {
     return res;
   }
 
-  private saut(a: TigreSnap, b: TigreSnap, dtS: number): boolean {
+  private saut(a: TigreLargueSnap, b: TigreLargueSnap, dtS: number): boolean {
     return Math.hypot(b.p[0] - a.p[0], b.p[1] - a.p[1], b.p[2] - a.p[2]) > TIGRE.bond.vitesse * dtS + MARGE_SAUT_M;
   }
 }
@@ -131,7 +131,7 @@ export class MondeTigres {
   private actions = new Map<string, string>();
 
   /** Snap reçu (tous les snaps des joueurs en arène, avec ou sans `tigres`). */
-  alimenter(ts: number, tigres: readonly TigreSnap[] | undefined): void {
+  alimenter(ts: number, tigres: readonly TigreLargueSnap[] | undefined): void {
     this.interp.ajouter(ts, tigres);
   }
 

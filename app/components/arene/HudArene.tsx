@@ -10,6 +10,8 @@ import { aideChoixEquipement, armeSuivanteDuGroupe, groupePrincipale, groupeSeco
 import type { PropsHudArene } from "./contrats";
 import AideCommandes, { toucheDe } from "./hud/AideCommandes";
 import AnnoncesElsa from "./hud/AnnoncesElsa";
+import BandeauEvenement from "./hud/BandeauEvenement";
+import CockpitTitan from "./hud/CockpitTitan";
 import BarreMatch from "./hud/BarreMatch";
 import BlocArmes from "./hud/BlocArmes";
 import BlocVehicule from "./hud/BlocVehicule";
@@ -22,6 +24,7 @@ import GrandeCarte from "./hud/GrandeCarte";
 import IconeSort from "./hud/IconeSort";
 import InvitesAction from "./hud/InvitesAction";
 import Lunette from "./hud/Lunette";
+import BlocVoix from "./hud/BlocVoix";
 import MenuPause from "./hud/MenuPause";
 import MiniMap from "./hud/MiniMap";
 import RetoursTouche from "./hud/RetoursTouche";
@@ -139,7 +142,7 @@ export default function HudArene(p: PropsHudArene) {
   const combat = !hud.mort && !entracte;
   const couteau = hud.arme === "couteau";
   const conduite = hud.vehicule && hud.tireInterdit;
-  const inviteRecharge = combat && !couteau && !hud.tireInterdit && !hud.recharge && ["critique", "vide"].includes(niveauMunitions(hud.munitions, hud.chargeur));
+  const inviteRecharge = combat && !hud.titan && !couteau && !hud.tireInterdit && !hud.recharge && ["critique", "vide"].includes(niveauMunitions(hud.munitions, hud.chargeur));
   const reglMap = p.reglagesHud.minimap;
   const coinMap = reglMap.coin;
   const effetsReduits = p.reglagesHud.interface.effets === "reduits";
@@ -170,8 +173,8 @@ export default function HudArene(p: PropsHudArene) {
       {combat && (
         <>
           {hud.lunette
-            ? <Lunette zoomX={hud.zoomX} distanceVisee={hud.distanceVisee} />
-            : <Viseur protege={hud.protege} conduite={conduite} couteau={couteau} recharge={hud.recharge} refAnneau={refAnneau} />}
+            ? <Lunette zoomX={hud.zoomX} distanceVisee={hud.distanceVisee} niveau={hud.zoomNiveau} niveaux={hud.zoomNiveaux} toucheZoom={t("zoomLunette")} />
+            : <Viseur protege={hud.protege} conduite={conduite} couteau={couteau} recharge={hud.recharge} refAnneau={refAnneau} ecart={hud.ecartViseur} />}
           <RetoursTouche chiffres={chiffres} marqueur={marqueur} kill={kill} />
           <BarreMatch
             rang={synthese.rang} exAequo={synthese.exAequo} mesKills={synthese.mesKills} serie={synthese.serie}
@@ -187,26 +190,32 @@ export default function HudArene(p: PropsHudArene) {
           />
           {toast && <ToastCentre texte={toast} />}
           <div className={styles.milieu}>
+            {hud.voix && <BlocVoix etat={hud.voix} parlants={hud.voixParlants} mode={p.voix.mode} toucheParler={t("parler")} />}
             {hud.vehicule ? (
               <BlocVehicule
                 siege={hud.siege} vehiculeId={hud.vehiculeId} sieges={p.sieges} joueurs={joueurs} monId={monId}
                 toucheInteragir={t("interagir")} toucheSiege={t("siege")} refKmh={refKmh}
               />
-            ) : (
+            ) : !hud.titan ? (
               <p className={styles.course}>COURSE <span ref={refVitesse} /></p>
-            )}
-            {!pause && <p className={styles.aideBas} aria-hidden="true">{t("scores")} : scores · {t("carte")} : carte</p>}
+            ) : null}
+            {!pause && !hud.titan && <p className={styles.aideBas} aria-hidden="true">{t("scores")} : scores · {t("carte")} : carte</p>}
           </div>
         </>
       )}
+
+      {/* cockpit du titan (v3) : sous tout le reste du HUD */}
+      {combat && hud.titan && p.monstres && <CockpitTitan monstres={p.monstres} maintenantServeur={maintenantServeur} />}
+      {/* événements (v3) : visibles aussi pendant la mort (le Truck vient de vous écraser : on veut savoir combien de temps il roule encore) */}
+      {!entracte && p.monstres && <BandeauEvenement monstres={p.monstres} maintenantServeur={maintenantServeur} joueurs={joueurs} monId={monId} />}
 
       <CoinHud coin="hg" coinMinimap={coinMap} miniMap={miniMap} />
       <CoinHud coin="hd" coinMinimap={coinMap} miniMap={miniMap}>
         {combat && <FilEliminations fil={p.fil} annonces={p.annonces} />}
       </CoinHud>
       <CoinHud coin="bg" coinMinimap={coinMap} miniMap={miniMap}>
-        {combat && hud.sort && <IconeSort touche={t("invoquer")} />}
-        {combat && (
+        {combat && hud.sort && !hud.titan && <IconeSort touche={t("invoquer")} />}
+        {combat && !hud.titan && (
           <BlocVie
             pv={hud.pv} bouclier={hud.bouclier} regen={hud.regen} accroupi={hud.accroupi} glisse={hud.glisse} mur={hud.mur}
             protegeRestant={hud.protegeRestant} rupture={rupture} refTraitRegen={refRegen}
@@ -214,7 +223,7 @@ export default function HudArene(p: PropsHudArene) {
         )}
       </CoinHud>
       <CoinHud coin="bd" coinMinimap={coinMap} miniMap={miniMap}>
-        {combat && (
+        {combat && !hud.titan && (
           <BlocArmes
             arme={hud.arme} slot={hud.slot} slots={hud.slots} munitions={hud.munitions} chargeur={hud.chargeur} reserve={hud.reserve}
             recharge={hud.recharge} degainage={hud.degainage} tireInterdit={hud.tireInterdit} bonusVitesse={hud.bonusVitesse}
@@ -257,6 +266,7 @@ export default function HudArene(p: PropsHudArene) {
           equipement={p.equipement} surEquipement={p.surEquipement} pseudo={p.pseudo} surPseudo={p.surPseudo}
           sensibilite={p.sensibilite} surSensibilite={p.surSensibilite}
           accroupiBascule={p.accroupiBascule} surAccroupiBascule={p.surAccroupiBascule} actionsSansTouche={p.actionsSansTouche}
+          voix={p.voix} surVoix={p.surVoix} voixErreur={p.voixErreur} toucheParler={t("parler")}
           touches={p.touches} surTouches={p.surTouches} reglagesHud={p.reglagesHud} surReglagesHud={p.surReglagesHud}
         />
       )}

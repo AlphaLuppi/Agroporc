@@ -42,6 +42,8 @@ function creerContexte(alea: () => number = () => 0.5) {
       return [];
     },
     tuer: () => [],
+    libererVehicule: () => [],
+    toucheJoueur: () => false,
   };
   const ajouter = (j: JoueurSalle) => { joueurs.set(j.id, j); return j; };
   return { ctx, etat, coups, ajouter, joueurs };

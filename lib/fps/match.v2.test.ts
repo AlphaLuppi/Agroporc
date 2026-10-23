@@ -63,6 +63,7 @@ vi.mock("./match-vehicules", () => ({
       snap: () => fakes.snapVehicules,
       oeilsPossibles: (j: JoueurSalle) => fakes.yeux.get(j.id) ?? null,
       estConducteur: (id: string) => fakes.conducteurs.has(id),
+      tirVoitures: () => [],
     };
   },
 }));
@@ -855,7 +856,7 @@ describe("services Elsa et véhicules", () => {
     const s = nouvelleSalle({ elsa: { x: 0, z: 0 }, vehicules: [{ p: [0, 0], cap: 0 }] });
     const [bienvenue] = messages(s.connecter("a", "Alice", T0), "bienvenue");
     expect(Object.keys(bienvenue).sort()).toEqual(["couleur", "id", "joueurs", "maintenant", "match", "t"]);
-    expect(VERSION_PROTOCOLE).toBe(3);
+    expect(VERSION_PROTOCOLE).toBe(5);
   });
 });
 

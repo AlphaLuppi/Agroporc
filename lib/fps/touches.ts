@@ -14,7 +14,7 @@ export type Action =
   | "armePrincipale" | "armeSecondaire" | "couteau" | "armeSpeciale" | "armePrecedente" | "couteauRapide"
   | "accroupi" | "interagir" | "siege"
   | "carte" | "minimapCoin" | "passer"
-  | "invoquer";
+  | "zoomLunette" | "parler" | "invoquer";
 
 /**
  * Les 10 actions de la v1 qui restent (`arme1..arme4` ont disparu). Leurs touches enregistrées sont relues AVANT celles des
@@ -25,12 +25,12 @@ export const ACTIONS_V1: readonly Action[] = [
 ];
 
 /**
- * Actions apparues avec la v2 (équipement, accroupi, véhicules), puis le HUD (grande carte, coin de la mini-map), puis les tigres (sort
- * d'invocation, protocole v3).
+ * Actions apparues avec la v2 (équipement, accroupi, véhicules), le HUD (grande carte, coin de la mini-map), la v3 (niveau de zoom
+ * de la lunette, appuyer pour parler au chat vocal) puis les tigres largués (sort d'invocation).
  */
 export const ACTIONS_NOUVELLES: readonly Action[] = [
   "armePrincipale", "armeSecondaire", "couteau", "armeSpeciale", "armePrecedente", "couteauRapide",
-  "accroupi", "interagir", "siege", "carte", "minimapCoin", "passer", "invoquer",
+  "accroupi", "interagir", "siege", "carte", "minimapCoin", "passer", "zoomLunette", "parler", "invoquer",
 ];
 
 /**
@@ -44,14 +44,14 @@ const contexteDe = (a: Action): "mort" | "vie" => (ACTIONS_MORT.includes(a) ? "m
 export const ACTIONS: readonly Action[] = [...ACTIONS_V1, ...ACTIONS_NOUVELLES];
 
 /** Actions qui peuvent rester sans touche sans que ce soit un problème (pas d'avertissement dans le menu pause). */
-export const ACTIONS_FACULTATIVES: readonly Action[] = ["minimapCoin", "passer"];
+export const ACTIONS_FACULTATIVES: readonly Action[] = ["minimapCoin", "passer", "zoomLunette", "parler"];
 
 export const LIBELLES_ACTIONS: Record<Action, string> = {
   avant: "Avancer",
   arriere: "Reculer",
   gauche: "Aller à gauche",
   droite: "Aller à droite",
-  saut: "Sauter, double saut, saut de mur",
+  saut: "Sauter, double saut, saut de mur (en voiture : déraper)",
   sprint: "Sprinter",
   accroupi: "S'accroupir (en sprint : glissade)",
   tir: "Tirer (maintenir : rafale)",
@@ -69,16 +69,18 @@ export const LIBELLES_ACTIONS: Record<Action, string> = {
   carte: "Grande carte (maintenir)",
   minimapCoin: "Mini-carte : coin suivant",
   passer: "Passer le rejeu (mort)",
+  zoomLunette: "Lunette : niveau de zoom suivant (molette en lunette)",
+  parler: "Chat vocal : appuyer pour parler",
   invoquer: "Invoquer le tigre (sort gagné)",
 };
 
 /** Regroupement du menu pause : chaque action y figure une seule fois. */
 export const GROUPES_ACTIONS: { titre: string; actions: Action[] }[] = [
   { titre: "Déplacement", actions: ["avant", "arriere", "gauche", "droite", "saut", "sprint", "accroupi"] },
-  { titre: "Combat", actions: ["tir", "visee", "recharger", "invoquer"] },
+  { titre: "Combat", actions: ["tir", "visee", "recharger", "zoomLunette", "invoquer"] },
   { titre: "Équipement", actions: ["armePrincipale", "armeSecondaire", "couteau", "armeSpeciale", "armePrecedente", "couteauRapide"] },
   { titre: "Véhicule", actions: ["interagir", "siege"] },
-  { titre: "Divers", actions: ["scores", "carte", "minimapCoin", "passer"] },
+  { titre: "Divers", actions: ["scores", "carte", "minimapCoin", "passer", "parler"] },
 ];
 
 /** Deux emplacements par action ; `null` = vide. */
@@ -114,7 +116,11 @@ export function touchesParDefaut(): ConfigTouches {
     carte: ["KeyM", null],
     minimapCoin: [null, null],
     passer: ["Space", null],
-    invoquer: ["KeyT", null],
+    // clic milieu : la molette, elle, change d'arme hors lunette et de zoom en lunette
+    zoomLunette: ["Souris1", "KeyX"],
+    parler: ["KeyT", null],
+    // G et non T : T appuie pour parler au chat vocal (v3 de l'arène)
+    invoquer: ["KeyG", null],
   };
 }
 

@@ -14,10 +14,17 @@
 import { dedans, distSegment } from "../agroparc3d/cachettes";
 import type { SceneData, Vec2 } from "../agroparc3d/types";
 import type { Vec3 } from "./protocole";
+import { obstacleTruck } from "./zones";
 
 export interface Boite { x0: number; z0: number; x1: number; z1: number }
 
-export interface Prisme { anneau: Vec2[]; trous: Vec2[][]; h: number; boite: Boite }
+/**
+ * `h` = hauteur courante (0 une fois détruit : gravats plats, ni mur ni toit) ; `hOrigine` = hauteur de `scene.json` ; `creux` = brèche
+ * (cylindre vertical arraché par le tigre ou le titan, null s'il est intact) : vide dans l'emprise, son bord est une paroi. `fixe` : jamais détruit (le Truck Muche garé).
+ */
+export interface Prisme { anneau: Vec2[]; trous: Vec2[][]; h: number; hOrigine: number; boite: Boite; creux: Creux | null; fixe?: boolean }
+/** Brèche d'un bâtiment : cercle (m) au sol. */
+export interface Creux { x: number; z: number; r: number }
 
 /** Grille uniforme : `cases[i + j × nx]` liste les prismes dont la boîte touche la case. */
 export interface GrilleMonde {
@@ -58,7 +65,11 @@ function boiteDe(pts: Vec2[]): Boite {
 }
 
 export function construireMonde(data: SceneData): Monde {
-  const prismes: Prisme[] = data.buildings.map((b) => ({ anneau: b.r, trous: b.holes ?? [], h: b.h, boite: boiteDe(b.r) }));
+  const prismes: Prisme[] = data.buildings.map((b) => ({ anneau: b.r, trous: b.holes ?? [], h: b.h, hOrigine: b.h, boite: boiteDe(b.r), creux: null }));
+  // le Truck Muche garé (v3 §2) est un obstacle comme un bâtiment : on ne le traverse pas, il arrête les balles, on peut monter dessus ;
+  // il n'est pas destructible (`fixe`)
+  const truck = obstacleTruck(data);
+  if (truck) prismes.push({ anneau: truck.r, trous: [], h: truck.h, hOrigine: truck.h, boite: boiteDe(truck.r), creux: null, fixe: true });
   let bx0 = Infinity, bz0 = Infinity, bx1 = -Infinity, bz1 = -Infinity;
   for (const b of data.buildings) {
     bx0 = Math.min(bx0, b.c[0]); bx1 = Math.max(bx1, b.c[0]); bz0 = Math.min(bz0, b.c[1]); bz1 = Math.max(bz1, b.c[1]);
@@ -95,13 +106,20 @@ function candidats(m: Monde, x0: number, z0: number, x1: number, z1: number, sor
   return sortie;
 }
 
-/** Le point (x, z) est dans la partie pleine du prisme : dans l'emprise, hors des cours. */
-function dansSolide(p: Prisme, x: number, z: number): boolean {
+/** Le point (x, z) est dans l'emprise du prisme, hors des cours (brèche ignorée). */
+function dansEmprise(p: Prisme, x: number, z: number): boolean {
   const b = p.boite;
   if (x < b.x0 || x > b.x1 || z < b.z0 || z > b.z1) return false;
   if (!dedans(x, z, p.anneau)) return false;
   for (const t of p.trous) if (dedans(x, z, t)) return false;
   return true;
+}
+
+const dansCreux = (c: Creux | null, x: number, z: number): boolean => c !== null && (x - c.x) * (x - c.x) + (z - c.z) * (z - c.z) < c.r * c.r;
+
+/** Le point (x, z) est dans la partie pleine du prisme : dans l'emprise, hors des cours et de la brèche. */
+function dansSolide(p: Prisme, x: number, z: number): boolean {
+  return dansEmprise(p, x, z) && !dansCreux(p.creux, x, z);
 }
 
 const tamponSol: number[] = [];
@@ -141,11 +159,39 @@ const correction = { x: 0, z: 0, nx: 0, nz: 0, profondeur: 0 };
 function pousser(p: Prisme, x: number, z: number, rayon: number): boolean {
   const b = p.boite;
   if (x < b.x0 - rayon || x > b.x1 + rayon || z < b.z0 - rayon || z > b.z1 + rayon) return false;
+  const c = p.creux;
+  if (c) {
+    const dc = Math.hypot(x - c.x, z - c.z);
+    if (dc < c.r) {
+      // dans la brèche : seule sa paroi (l'arc resté debout, dans l'emprise) arrête
+      const pen = dc + rayon - c.r;
+      if (pen <= 0 || dc < EPSILON) return false;
+      const ux = (x - c.x) / dc, uz = (z - c.z) / dc;
+      if (!dansEmprise(p, c.x + ux * (c.r + 0.05), c.z + uz * (c.r + 0.05))) return false;
+      correction.x = c.x + ux * (c.r - rayon);
+      correction.z = c.z + uz * (c.r - rayon);
+      correction.nx = -ux; correction.nz = -uz; correction.profondeur = pen;
+      return true;
+    }
+  }
   const sol = dansSolide(p, x, z);
   proche.d = Infinity;
   plusProcheAnneau(p.anneau, x, z);
   for (const t of p.trous) plusProcheAnneau(t, x, z);
+  if (sol && c) {
+    // dans le plein près de la brèche : on en sort par la brèche si c'est plus court
+    const dc = Math.hypot(x - c.x, z - c.z), dArc = dc - c.r;
+    if (dArc < proche.d && dc > EPSILON) {
+      const ux = (x - c.x) / dc, uz = (z - c.z) / dc;
+      correction.x = c.x + ux * (c.r - rayon);
+      correction.z = c.z + uz * (c.r - rayon);
+      correction.nx = -ux; correction.nz = -uz; correction.profondeur = dArc + rayon;
+      return true;
+    }
+  }
   if (!sol && proche.d >= rayon) return false;
+  // arête arrachée (dans la brèche) : plus de mur à cet endroit
+  if (!sol && dansCreux(c, proche.qx, proche.qz)) return false;
   // Normale sortante du plein : centre dedans → on va du centre vers le point le plus proche
   // (qui est sur la sortie) ; centre dehors → on s'éloigne de ce point.
   let nx: number, nz: number;
@@ -233,11 +279,29 @@ function rayonPrisme(p: Prisme, ox: number, oy: number, oz: number, dx: number, 
       if (u < 0 || u > 1) continue;
       const yy = oy + dy * t;
       if (yy < 0 || yy > p.h) continue;
+      if (dansCreux(p.creux, ox + dx * t, oz + dz * t)) continue;
       meilleur = t;
     }
   };
   arete(p.anneau);
   for (const t of p.trous) arete(t);
+  const c = p.creux;
+  if (c) {
+    // paroi de la brèche : le rayon sort du cylindre (seconde racine) vers le plein
+    const fx = ox - c.x, fz = oz - c.z;
+    const a = dx * dx + dz * dz;
+    if (a > 1e-12) {
+      const b = fx * dx + fz * dz, cc = fx * fx + fz * fz - c.r * c.r, disc = b * b - a * cc;
+      if (disc > 0) {
+        const t = (-b + Math.sqrt(disc)) / a;
+        if (t >= 0 && t <= max && t < meilleur) {
+          const yy = oy + dy * t;
+          const ex = ox + dx * t, ez = oz + dz * t, n = Math.hypot(ex - c.x, ez - c.z) || 1;
+          if (yy >= 0 && yy <= p.h && dansEmprise(p, ex + ((ex - c.x) / n) * 1e-3, ez + ((ez - c.z) / n) * 1e-3)) meilleur = t;
+        }
+      }
+    }
+  }
   return meilleur;
 }
 
@@ -344,4 +408,160 @@ export function pointsApparition(data: SceneData, m: Monde): Vec2[] {
     essayer(fx, fz);
   }
   return gardes;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Destruction (v3 : le tigre robot écrase les bâtiments)
+// ---------------------------------------------------------------------------------------------
+
+/** Détruit le bâtiment `id` : sa hauteur passe à 0 (gravats plats : plus de mur ni de toit pour le mouvement, les tirs et les vues). */
+export function detruireBatiment(m: Monde, id: number): boolean {
+  const p = m.prismes[id];
+  if (!p || p.fixe || p.h === 0) return false;
+  p.h = 0;
+  p.creux = null;
+  return true;
+}
+
+/** Part de l'emprise (hors cours) à couvrir par la brèche pour que le bâtiment s'effondre en entier. */
+export const PART_EFFONDREMENT = 0.55;
+/** Croissance minimale (m) du rayon d'une brèche pour la noter : le tigre qui piétine n'inonde pas le réseau. */
+const CROISSANCE_MIN_M = 0.8;
+
+/** Part (0..1) de l'emprise du prisme dans le cercle (échantillonnage 8 × 8 de sa boîte) ; 1 pour une emprise sans échantillon. */
+function partCouverte(p: Prisme, c: Creux): number {
+  const b = p.boite;
+  let n = 0, dans = 0;
+  for (let i = 0; i < 8; i++) for (let j = 0; j < 8; j++) {
+    const x = b.x0 + ((i + 0.5) / 8) * (b.x1 - b.x0), z = b.z0 + ((j + 0.5) / 8) * (b.z1 - b.z0);
+    if (!dansEmprise(p, x, z)) continue;
+    n++;
+    if (dansCreux(c, x, z)) dans++;
+  }
+  return n ? dans / n : 1;
+}
+
+/**
+ * Arrache au bâtiment `id` le cylindre (x, z, r) : il s'ajoute à sa brèche (plus petit cercle contenant les deux). Si la brèche couvre
+ * `PART_EFFONDREMENT` de l'emprise, le bâtiment s'effondre en entier (`detruit`). Renvoie `breche` si la brèche est nouvelle ou a grandi
+ * d'au moins `CROISSANCE_MIN_M`, null si rien ne change (bâtiment déjà à terre, coup dans la brèche).
+ */
+export function creuserBatiment(m: Monde, id: number, x: number, z: number, r: number): "breche" | "detruit" | null {
+  const p = m.prismes[id];
+  if (!p || p.fixe || p.h === 0) return null;
+  let c: Creux = { x, z, r };
+  const a = p.creux;
+  if (a) {
+    const d = Math.hypot(x - a.x, z - a.z);
+    if (d + r <= a.r) return null;
+    if (d + a.r > r) {
+      const R = (d + a.r + r) / 2;
+      const k = d > EPSILON ? (R - a.r) / d : 0;
+      c = { x: a.x + (x - a.x) * k, z: a.z + (z - a.z) * k, r: R };
+    }
+    if (c.r - a.r < CROISSANCE_MIN_M) return null;
+  }
+  if (partCouverte(p, c) >= PART_EFFONDREMENT) {
+    p.h = 0;
+    p.creux = null;
+    return "detruit";
+  }
+  p.creux = c;
+  return "breche";
+}
+
+/** Brèches des bâtiments debout : [id, x, z, r]. */
+export function breches(m: Monde): [number, number, number, number][] {
+  const r: [number, number, number, number][] = [];
+  m.prismes.forEach((p, id) => { if (p.creux && p.h > 0) r.push([id, p.creux.x, p.creux.z, p.creux.r]); });
+  return r;
+}
+
+/** Pose une brèche reçue (client) ; null l'efface. */
+export function poserBreche(m: Monde, id: number, c: Creux | null): void {
+  const p = m.prismes[id];
+  if (p) p.creux = c;
+}
+
+const tamponTouches: number[] = [];
+/** Bâtiments debout que le disque (x, z, r) touche (brèche ignorée) : emprise contenant le centre ou arête à moins de r. */
+export function batimentsTouches(m: Monde, x: number, z: number, r: number): number[] {
+  const res: number[] = [];
+  for (const id of candidats(m, x - r, z - r, x + r, z + r, tamponTouches)) {
+    const p = m.prismes[id];
+    if (p.h === 0 || p.fixe) continue;
+    if (dansEmprise(p, x, z)) { res.push(id); continue; }
+    proche.d = Infinity;
+    plusProcheAnneau(p.anneau, x, z);
+    if (proche.d < r) res.push(id);
+  }
+  return res;
+}
+
+/** Relève le bâtiment `id`. */
+export function releverBatiment(m: Monde, id: number): void {
+  const p = m.prismes[id];
+  if (p) { p.h = p.hOrigine; p.creux = null; }
+}
+
+/** Relève tous les bâtiments (nouveau match). */
+export function releverBatiments(m: Monde): void {
+  for (const p of m.prismes) { p.h = p.hOrigine; p.creux = null; }
+}
+
+/** Ids des bâtiments détruits, dans l'ordre. */
+export function batimentsDetruits(m: Monde): number[] {
+  const r: number[] = [];
+  m.prismes.forEach((p, id) => { if (p.h === 0 && p.hOrigine > 0) r.push(id); });
+  return r;
+}
+
+const tamponSous: number[] = [];
+/** Bâtiments debout dont l'emprise contient (x, z), ou en est à moins de `marge` m (approché par la boîte élargie puis un point au bord). */
+export function batimentsSous(m: Monde, x: number, z: number, marge = 0): number[] {
+  const r: number[] = [];
+  for (const id of candidats(m, x - marge, z - marge, x + marge, z + marge, tamponSous)) {
+    const p = m.prismes[id];
+    if (p.h === 0) continue;
+    if (dansSolide(p, x, z)) { r.push(id); continue; }
+    if (marge > 0) {
+      const b = p.boite;
+      const cx = Math.min(Math.max(x, b.x0), b.x1), cz = Math.min(Math.max(z, b.z0), b.z1);
+      // point du bord de la boîte le plus proche, poussé d'un millimètre vers l'intérieur
+      const ix = cx + Math.sign((b.x0 + b.x1) / 2 - cx) * 1e-3, iz = cz + Math.sign((b.z0 + b.z1) / 2 - cz) * 1e-3;
+      if (Math.hypot(cx - x, cz - z) <= marge && dansSolide(p, ix, iz)) r.push(id);
+    }
+  }
+  return r;
+}
+
+const tamponNormale: number[] = [];
+/**
+ * Normale de la surface touchée en `pt` (impact d'un tir) : sol ou toit → vers le haut, sinon la normale du mur le plus proche, tournée
+ * vers `de` (le tireur). Sert à poser les traces d'impact à plat sur les murs.
+ */
+export function normaleImpact(m: Monde, pt: Vec3, de: Vec3): Vec3 {
+  if (pt[1] < 0.06) return [0, 1, 0];
+  let meilleur = Infinity, nx = 0, nz = 0;
+  for (const id of candidats(m, pt[0] - 1, pt[2] - 1, pt[0] + 1, pt[2] + 1, tamponNormale)) {
+    const p = m.prismes[id];
+    if (p.h === 0) continue;
+    if (pt[1] >= p.h - 0.06 && dansSolide(p, pt[0], pt[2])) return [0, 1, 0];
+    const tester = (anneau: Vec2[]) => {
+      for (let i = 0, j = anneau.length - 1; i < anneau.length; j = i++) {
+        const ax = anneau[j][0], az = anneau[j][1], bx = anneau[i][0], bz = anneau[i][1];
+        const ex = bx - ax, ez = bz - az, l2 = ex * ex + ez * ez;
+        if (l2 < 1e-9) continue;
+        const k = Math.max(0, Math.min(1, ((pt[0] - ax) * ex + (pt[2] - az) * ez) / l2));
+        const d = Math.hypot(pt[0] - (ax + ex * k), pt[2] - (az + ez * k));
+        if (d < meilleur) { meilleur = d; const l = Math.sqrt(l2); nx = -ez / l; nz = ex / l; }
+      }
+    };
+    tester(p.anneau);
+    for (const t of p.trous) tester(t);
+  }
+  if (meilleur === Infinity) return [0, 1, 0];
+  // vers le tireur
+  if (nx * (de[0] - pt[0]) + nz * (de[2] - pt[2]) < 0) { nx = -nx; nz = -nz; }
+  return [nx + 0, 0, nz + 0];
 }

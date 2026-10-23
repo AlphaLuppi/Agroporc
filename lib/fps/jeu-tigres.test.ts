@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { construireMonde } from "./collision";
 import { InterpolateurTigres, MondeTigres, coupDeMonTigre, tracerTigres, trouverTigreCouteau, type TigreClient } from "./jeu-tigres";
-import type { PassageAvion, TigreSnap, Vec3 } from "./protocole";
+import type { PassageAvion, TigreLargueSnap, Vec3 } from "./protocole";
 import { SILHOUETTES_TIGRE } from "./tigre-arene";
 import type { SceneData } from "../agroparc3d/types";
 
-function tg(id: string, x: number, extra: Partial<TigreSnap> = {}): TigreSnap {
+function tg(id: string, x: number, extra: Partial<TigreLargueSnap> = {}): TigreLargueSnap {
   return { id, genre: "sauvage", p: [x, 0, 0], cap: 0, etat: "attaque", pose: "debout", pv: 2500, ...extra };
 }
 
@@ -98,7 +98,7 @@ describe("MondeTigres", () => {
 
   it("sons : une action nouvelle (bond annoncé, coup de patte) donne un son, une seule fois, jamais au premier regard", () => {
     const m = new MondeTigres();
-    const vue = (extra: Partial<TigreSnap>) => new Map<string, TigreClient>([["t1", { ...tg("t1", 0, extra), v: 0 }]]);
+    const vue = (extra: Partial<TigreLargueSnap>) => new Map<string, TigreClient>([["t1", { ...tg("t1", 0, extra), v: 0 }]]);
     expect(m.sons(vue({ action: "patte", actionT: 100 }))).toEqual([]);
     expect(m.sons(vue({ action: "patte", actionT: 100 }))).toEqual([]);
     expect(m.sons(vue({ action: "patte", actionT: 1300 })).map((s) => s.son)).toEqual(["patte"]);

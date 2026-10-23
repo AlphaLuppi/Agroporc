@@ -7,7 +7,7 @@
  */
 import { avancerAvion, cachettesDansAnneau, creerAvion, rearmerAvion, type EtatAvion, type IntervalleAvion } from "./avion";
 import type { ContexteSalle, JoueurSalle, ServiceTigres, Sortie } from "./match-contexte";
-import type { MessageClient, MessageServeur, TigreSnap, Vec3, Zone } from "./protocole";
+import type { MessageClient, MessageServeur, TigreLargueSnap, Vec3, Zone } from "./protocole";
 import {
   avancerTigreAllie, avancerTigreSauvage, blesserTigre, coupTigreVraisemblable, creerTigreAllie, creerTigreSauvage, distanceTigre,
   grilleNav, toucheTigreVraisemblable, type CachetteTigre, type EnvTigre, type EvenementTigre, type JoueurVu, type ObstacleVoiture,
@@ -266,7 +266,7 @@ export function creerServiceTigres(ctx: ContexteSalle, opts: OptionsServiceTigre
     },
 
     snap() {
-      const r: TigreSnap[] = [];
+      const r: TigreLargueSnap[] = [];
       for (const t of tigres.values()) {
         r.push({
           id: t.id, genre: t.genre, ...(t.lanceur ? { lanceur: t.lanceur } : {}), p: cm(t.p), cap: arrondi(t.cap, 1000),

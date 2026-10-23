@@ -140,15 +140,31 @@ describe("sons : effets ajoutés par la v2", () => {
     expect(journal.demarres).toBe(0);
     sons.moteur(0);
     const demarres = journal.demarres;
-    expect(demarres).toBeGreaterThanOrEqual(3); // deux oscillateurs + le grain d'échappement
+    expect(demarres).toBeGreaterThanOrEqual(2); // repli synthétisé (boucle pas encore chargée) : un oscillateur + le grain d'échappement
     sons.moteur(12);
     sons.moteur(-20);
     sons.moteur(200);
     expect(journal.demarres).toBe(demarres);
     sons.moteur(null);
-    expect(journal.arretes).toBeGreaterThanOrEqual(3);
+    expect(journal.arretes).toBeGreaterThanOrEqual(2);
     sons.moteur(5); // redémarre proprement
     expect(journal.demarres).toBeGreaterThan(demarres);
+    sons.dispose();
+  });
+
+  it("crissement des pneus : démarre au premier dérapage, suit l'intensité sans rien relancer, s'éteint à 0", () => {
+    const sons = creerSons();
+    sons.derapage(0);
+    sons.derapage(Number.NaN);
+    expect(journal.demarres).toBe(0);
+    sons.derapage(0.5);
+    const demarres = journal.demarres;
+    expect(demarres).toBe(1);
+    sons.derapage(1);
+    sons.derapage(7);
+    expect(journal.demarres).toBe(demarres);
+    sons.derapage(0);
+    expect(journal.arretes).toBe(1);
     sons.dispose();
   });
 
@@ -228,3 +244,4 @@ describe("sons : sans WebAudio", () => {
     expect(journal.demarres).toBe(0);
   });
 });
+

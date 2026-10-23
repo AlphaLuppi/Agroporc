@@ -3,7 +3,7 @@
  * PUR : aucun import three ni DOM. `jeu.ts` les ré-exporte (`export type { … } from "./jeu-types"`).
  * Spec : docs/superpowers/specs/2026-10-22-arene-v2-design.md (§5.18) et 2026-10-23-arene-hud-design.md (§3.2, §3.4)
  */
-import type { ArmeFeuId, ArmeId, ArmePrincipaleId, ArmeSecondaireId, ArmeSpecialeId, CauseMort, InfoTueur, MessageServeur, Slot, Vec3, Zone } from "./protocole";
+import type { ArmeFeuId, ArmeId, ArmePrincipaleId, ArmeSecondaireId, ArmeSpecialeId, CauseMort, InfoTueur, MessageServeur, Slot, TypeEvenement, Vec3, Zone } from "./protocole";
 import type { RadarFrame } from "./radar";
 import type { ConfigTouches } from "./touches";
 
@@ -35,6 +35,12 @@ export interface HudEtat {
   lunette: boolean;
   /** « ×4 » en lunette (entier, 0 hors lunette) */
   zoomX: number;
+  /** niveau de zoom de la lunette (index, du plus large au plus serré), −1 hors lunette */
+  zoomNiveau: number;
+  /** nombre de niveaux de zoom de la lunette, 0 hors lunette */
+  zoomNiveaux: number;
+  /** rayon du cercle de dispersion du viseur (part de la demi-hauteur de l'écran), 0 = aucune dispersion (sniper sans lunette seulement, v3 §1) */
+  ecartViseur: number;
   /** télémétrie de lunette : distance (m, entier) de la cible visée, −1 = rien ; seulement en lunette */
   distanceVisee: number;
   mur: boolean;
@@ -70,6 +76,12 @@ export interface HudEtat {
   killcamPhase: "" | "rejeu" | "carte";
   /** une charge du sort d'invocation est disponible (tigre sauvage abattu, v3) : icône du sort au HUD */
   sort: boolean;
+  /** chat vocal (v3 §5) : "" coupé, "pret" activé micro fermé, "emet" le micro émet */
+  voix: "" | "pret" | "emet";
+  /** pseudos des joueurs qu'on entend parler en ce moment, séparés par « · » ("" = personne) */
+  voixParlants: string;
+  /** (v3) je pilote le titan tigre (bloc d'armes remplacé par le bandeau du titan) */
+  titan: boolean;
 
   // ---- COMPATIBILITÉ v1 (shim du lot 0, tous optionnels) ----
   // Champs que le HUD v1 lit encore et que `jeu.ts` v1 émet toujours. La spec HUD (§3.2) les retire de `HudEtat` : le lot J1 cesse
@@ -121,6 +133,14 @@ export type JeuEvenement =
   /** le serveur a refusé `monter` / `siege` (message `refus`) : toast « Voiture trop loin », « Voiture pleine »… ; `rejoindre` : arène pleine */
   | { type: "refus"; action: "monter" | "siege" | "rejoindre"; raison: "loin" | "plein" | "deja" | "inconnu" | "mort" };
 
+/** (v3) État des événements pour le bandeau du HUD (lu à intervalle par `BandeauEvenement`, hors rendu à 60 Hz). */
+export interface EtatMonstresHud {
+  evenement: { type: TypeEvenement; phase: "annonce" | "actif"; debutT: number; finT: number } | null;
+  tigre: { pv: number; pvMax: number; rage: boolean } | null;
+  /** `dash` : 0..1, 1 = dash prêt (seulement pour le pilote) ; `vitesse` (m/s), `altitude` (m), `cap` (rad, lacet) pour le cockpit */
+  titan: { pilote: string; pv: number; pvMax: number; finT: number; dash: number; vitesse: number; altitude: number; cap: number } | null;
+}
+
 export interface JeuCallbacks {
   /** ≈ 15 Hz, seulement quand quelque chose a changé */
   hud(e: HudEtat): void;
@@ -149,12 +169,16 @@ export interface JeuHandle {
   accroupiBascule(b: boolean): void;
   /** saute le rejeu de la killcam et passe à la carte du tueur (sans effet hors rejeu) */
   passerKillcam(): void;
+  /** Chat vocal de proximité (v3 §5) : `activer` demande le micro (à appeler sur un geste), `mode` appuyer pour parler / micro ouvert. */
+  voix: { activer(): Promise<"ok" | "refuse" | "indisponible">; desactiver(): void; mode(m: "appuyer" | "ouvert"): void };
   /** Touches modifiées par le joueur (menu pause), appliquées tout de suite. */
   touches(cfg: ConfigTouches): void;
   /** Valeurs continues du HUD, mises à jour à chaque image (objet stable, jamais remplacé). */
   readonly live: HudLive;
   /** Remplit et renvoie LE MÊME `RadarFrame` (tableaux préalloués) : mini-map et flèche d'Elsa, lu en rAF. */
   radar(): RadarFrame;
+  /** (v3) Événement en cours, PV du tigre robot et du titan (bandeau du HUD). */
+  monstres(): EtatMonstresHud;
   dispose(): void;
   /** Crochet de test (window.__arene en développement). */
   debug: {
@@ -179,5 +203,7 @@ export interface JeuHandle {
     tigres(mesures?: boolean): Record<string, unknown>;
     /** lance le sort (comme la touche « invoquer »), false si aucune charge ou si le lancer est impossible */
     invoquer(): boolean;
+    /** chat vocal : connexions, audibilité, joueurs entendus */
+    voix(): Record<string, unknown>;
   };
 }

@@ -21,7 +21,8 @@ import { EMPLACEMENTS_VOITURES, ROND_POINT, ZONE_APPARITION, positionElsa, trouv
 
 const PORT = Number(process.env.PORT) || 8787;
 const TIC_MS = 1000 / 60;
-const TAILLE_MAX_OCTETS = 4096;
+/** 16 ko : une offre SDP du chat vocal (candidats ICE compris) dépasse parfois 4 ko ; les autres messages restent bien en dessous. */
+const TAILLE_MAX_OCTETS = 16_384;
 const MESSAGES_PAR_SECONDE_MAX = 90;
 const PING_MS = 5_000;
 /** Un client qui n'absorbe plus ce qu'on lui envoie est coupé (connexion saturée). */
@@ -76,6 +77,10 @@ const fichierCachettes = cheminDonnees("cachettes.json", "CACHETTES_JSON");
 const cachettes = lireCachettes(JSON.parse(readFileSync(fichierCachettes, "utf8")) as FichierCachettes)
   .map((c) => ({ x: c.x, z: c.z, cap: capDeCachette(c.cap) }));
 const [elsaX, elsaZ] = positionElsa(scene);
+// Événements (v3) : délai avant chaque événement et type imposé, pour les tests de bout en bout
+const evtMin = dureeEnv("PDJ_FPS_EVT_MIN_MS");
+const evtMax = dureeEnv("PDJ_FPS_EVT_MAX_MS");
+const evtType = process.env.PDJ_FPS_EVT_TYPE === "truck" || process.env.PDJ_FPS_EVT_TYPE === "tigre" ? process.env.PDJ_FPS_EVT_TYPE : undefined;
 const circuits = construireCircuits();
 const rondPoint = trouverRondPoint(scene) ?? ROND_POINT;
 const options: OptionsSalle = {
@@ -84,6 +89,20 @@ const options: OptionsSalle = {
   circulation: { circuits, voitures: flotte(circuits) },
   vehicules: EMPLACEMENTS_VOITURES,
   tigres: { cachettes, intervalle: intervalleEnv(avionMin, avionMax) },
+  // v3 : Truck Muche fou (départ du stand d'Elsa) et tigre robot (autour du rond-point) ; délais surchargeables pour les tests
+  evenements: {
+    truck: { x: elsaX, z: elsaZ },
+    centre: { x: rondPoint.centre[0], z: rondPoint.centre[1] },
+    ...(evtMin !== undefined || evtMax !== undefined
+      ? {
+          premier: { minMs: evtMin ?? evtMax!, maxMs: Math.max(evtMin ?? 0, evtMax ?? evtMin!) },
+          intervalle: { minMs: evtMin ?? evtMax!, maxMs: Math.max(evtMin ?? 0, evtMax ?? evtMin!) },
+        }
+      : {}),
+    ...(evtType ? { forcerType: evtType } : {}),
+    ...(dureeEnv("PDJ_FPS_TIGRE_PV") !== undefined ? { pvTigre: dureeEnv("PDJ_FPS_TIGRE_PV") } : {}),
+    ...(["laser", "saut", "charge"].includes(process.env.PDJ_FPS_TIGRE_ATTAQUE ?? "") ? { attaqueTigre: process.env.PDJ_FPS_TIGRE_ATTAQUE as "laser" | "saut" | "charge" } : {}),
+  },
 };
 const salle = new Salle(monde, apparitions, Math.random, Date.now(), options);
 

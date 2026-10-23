@@ -5,10 +5,11 @@ import type {
   ArmeId, ArmePrincipaleId, ArmeSecondaireId, ArmeSpecialeId, CauseMort, EtatElsaMsg, EtatJoueurSnap, InfoMatch, InfoTueur, InfoVehicule,
   JoueurPublic, LigneClassement, LigneStats, Zone,
 } from "@/lib/fps/protocole";
-import type { HudEtat, HudLive, JeuEvenement } from "@/lib/fps/jeu-types";
+import type { EtatMonstresHud, HudEtat, HudLive, JeuEvenement } from "@/lib/fps/jeu-types";
 import type { RadarFrame } from "@/lib/fps/radar";
 import type { ReglagesHud } from "@/lib/fps/reglages-hud";
 import type { Action, ConfigTouches } from "@/lib/fps/touches";
+import type { ReglagesVoix } from "@/lib/fps/voix";
 
 /**
  * Contrats React entre l'hôte (`Agroparc3D.tsx`), `useArene` et l'interface du jeu : ils sont écrits ici pour que les lots U1 (lobby, hôte)
@@ -103,6 +104,10 @@ export interface PropsHudArene {
   /** accroupi : true = bascule, false = maintenir */
   accroupiBascule: boolean;
   surAccroupiBascule(b: boolean): void;
+  /** chat vocal de proximité (v3 §5) : réglages (`pdj-fps-voix`), changement, et message d'échec (micro refusé…) ou "" */
+  voix: ReglagesVoix;
+  surVoix(r: ReglagesVoix): void;
+  voixErreur: string;
   /** carte du tueur (UseArene.killcamInfo) ; la phase et la progression viennent de `hud.killcamPhase` / `hud.killcam` (la machine `Killcam` reste dans jeu.ts) */
   killcamInfo: InfoTueur | null;
   /** « Passer » : saute le rejeu (le HUD appelle `jeuRef.current.passerKillcam()` via l'hôte) */
@@ -123,6 +128,8 @@ export interface PropsHudArene {
   degatsAuTueur: number;
   /** scène 3D (`scene.json`) pour la couche statique de la mini-map et la grande carte ; null tant qu'elle n'est pas chargée */
   scene?: SceneData | null;
+  /** (v3) `JeuHandle.monstres()` : événement en cours, PV du tigre robot et du titan (bandeau), null hors partie */
+  monstres?(): EtatMonstresHud | null;
 }
 
 /** Props de `ChoixEquipement` (écrit par U1, utilisé par U1 : lobby, et par U2 : écran de mort, killcam, pause). */

@@ -25,6 +25,7 @@ import HudArene from "./arene/HudArene";
 import { useArene } from "./arene/useArene";
 import type { EquipementChoisi } from "./arene/contrats";
 import { actionsSansTouche, ecrireTouches, lireTouches, stockageNavigateur, type ConfigTouches } from "@/lib/fps/touches";
+import { ecrireReglagesVoix, lireReglagesVoix, type ReglagesVoix } from "@/lib/fps/voix";
 import { useReglagesHud } from "./arene/hud/useReglagesHud";
 import { CLASSEMENT_INDISPONIBLE, EnregistrerScore, PanneauClassement } from "./ClassementTigre";
 import styles from "./Agroparc3D.module.css";
@@ -98,10 +99,10 @@ const HUD_REPOS: HudEtat = {
   pv: 100, bouclier: 0, arme: "fusil_assaut", slot: "principale",
   slots: "principale:fusil_assaut:30:30:-1|secondaire:pistolet:12:12:-1|couteau:couteau:0:0",
   equipSuivant: "fusil_assaut|pistolet", munitions: 30, chargeur: 30, reserve: -1, recharge: false, degainage: false,
-  vise: false, lunette: false, zoomX: 0, distanceVisee: -1, mur: false, mort: false, reapparitionDans: 0, protege: false,
+  vise: false, lunette: false, zoomX: 0, zoomNiveau: -1, zoomNiveaux: 0, ecartViseur: 0, distanceVisee: -1, mur: false, mort: false, reapparitionDans: 0, protege: false,
   protegeRestant: 0, verrouille: true, connecte: true, entracte: false, accroupi: false, glisse: false, regen: false,
   bonusVitesse: 1, invite: "", inviteDetail: "", vehicule: false, vehiculeId: -1, siege: -1, tireInterdit: false,
-  embarquement: false, killcam: -1, killcamPhase: "", sort: false,
+  embarquement: false, killcam: -1, killcamPhase: "", sort: false, voix: "", voixParlants: "", titan: false,
 };
 function sensibiliteInitiale(): number {
   try {
@@ -175,6 +176,9 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
   const [pseudoConnecte, setPseudoConnecte] = useState(() => pseudoInitial().trim() || "Agent");
   const [equipement, setEquipement] = useState<EquipementChoisi>(equipementInitial);
   const [accroupiBascule, setAccroupiBascule] = useState(accroupiBasculeInitial);
+  // chat vocal de proximité (v3 §5) : réglages gardés (`pdj-fps-voix`), message si le micro est refusé
+  const [reglagesVoix, setReglagesVoix] = useState<ReglagesVoix>(() => lireReglagesVoix(stockageNavigateur()));
+  const [voixErreur, setVoixErreur] = useState("");
   const [sensibilite, setSensibilite] = useState(sensibiliteInitiale);
   const [touches, setTouches] = useState<ConfigTouches>(() => lireTouches(stockageNavigateur()));
   // mini-map et taille de l'interface (clés `pdj-fps-minimap` et `pdj-fps-hud`), réglables au lobby comme en pause
@@ -184,12 +188,15 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
   const arene = useArene(pseudoConnecte, jeuRef);
   // identité stable : le HUD le lit en rAF (mini-map, flèche d'Elsa), sans repasser par React
   const radar = useCallback(() => jeuRef.current?.radar() ?? RADAR_VIDE, []);
+  const monstres = useCallback(() => jeuRef.current?.monstres() ?? null, []);
   const enAreneRef = useRef(enArene);
   enAreneRef.current = enArene;
   const equipementRef = useRef(equipement);
   equipementRef.current = equipement;
   const accroupiBasculeRef = useRef(accroupiBascule);
   accroupiBasculeRef.current = accroupiBascule;
+  const reglagesVoixRef = useRef(reglagesVoix);
+  reglagesVoixRef.current = reglagesVoix;
   const sensibiliteRef = useRef(sensibilite);
   sensibiliteRef.current = sensibilite;
 
@@ -217,6 +224,29 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
     setAccroupiBascule(b);
     jeuRef.current?.accroupiBascule(b);
     try { localStorage.setItem(CLE_ACCROUPI_BASCULE, b ? "1" : "0"); } catch { /* non retenu */ }
+  };
+  /** Active le micro de la partie en cours ; en cas d'échec, la voix est décochée et la raison affichée dans le menu pause. */
+  const activerVoix = useCallback((jeu: JeuHandle, r: ReglagesVoix) => {
+    void jeu.voix.activer().then((res) => {
+      if (res === "ok") return;
+      setVoixErreur(res === "refuse"
+        ? "Micro refusé : autorisez-le pour ce site dans le navigateur, puis réessayez."
+        : "Chat vocal indisponible dans ce navigateur.");
+      const coupe = { ...r, actif: false };
+      setReglagesVoix(coupe);
+      ecrireReglagesVoix(coupe, stockageNavigateur());
+    });
+  }, []);
+  const reglerVoix = (r: ReglagesVoix) => {
+    setVoixErreur("");
+    const jeu = jeuRef.current;
+    if (jeu) {
+      jeu.voix.mode(r.mode);
+      if (r.actif && !reglagesVoixRef.current.actif) activerVoix(jeu, r);
+      else if (!r.actif) jeu.voix.desactiver();
+    }
+    setReglagesVoix(r);
+    ecrireReglagesVoix(r, stockageNavigateur());
   };
   const regler = (x: number) => {
     setSensibilite(x);
@@ -354,6 +384,8 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
         jeuRef.current = jeu;
         jeu.sensibilite(sensibiliteRef.current);
         jeu.accroupiBascule(accroupiBasculeRef.current);
+        jeu.voix.mode(reglagesVoixRef.current.mode);
+        if (reglagesVoixRef.current.actif) activerVoix(jeu, reglagesVoixRef.current);
         // le jeu n'a pas vu le « bienvenue » : pseudos, couleurs et phase du match
         jeu.recevoir({ t: "presence", joueurs: arene.joueursRef.current });
         if (arene.matchRef.current) jeu.recevoir({ t: "match", match: arene.matchRef.current, classement: [] });
@@ -462,6 +494,14 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
       tigres: (mesures) => jeuRef.current?.debug.tigres(mesures) ?? null,
       invoquer: () => jeuRef.current?.debug.invoquer() ?? false,
       forcerHud: (partiel) => setHudForce(partiel ? { ...partiel } : null),
+      voix: (mode) => {
+        const j = jeuRef.current;
+        if (!j) return Promise.resolve("indisponible");
+        if (mode === null) { j.voix.desactiver(); return Promise.resolve("ok"); }
+        j.voix.mode(mode);
+        return j.voix.activer();
+      },
+      etatVoix: () => jeuRef.current?.debug.voix() ?? null,
     };
     return () => { delete window.__arene; };
   }, []);
@@ -598,12 +638,16 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
           bonus={arene.bonus}
           accroupiBascule={accroupiBascule}
           surAccroupiBascule={reglerAccroupiBascule}
+          voix={reglagesVoix}
+          surVoix={reglerVoix}
+          voixErreur={voixErreur}
           killcamInfo={arene.killcamInfo}
           surPasserKillcam={() => jeuRef.current?.passerKillcam()}
           stats={arene.stats}
           surVueScores={arene.demanderScores}
           live={jeuRef.current?.live ?? LIVE_VIDE}
           radar={radar}
+          monstres={monstres}
           reglagesHud={reglagesHud}
           surReglagesHud={setReglagesHud}
           degatsAuTueur={arene.degatsAuTueur}
@@ -821,6 +865,10 @@ declare global {
       invoquer(): boolean;
       /** Superpose un état partiel au HUD (base : repos si le jeu n'émet rien) ; `null` rend la main au jeu. */
       forcerHud(partiel: Partial<HudEtat> | null): void;
+      /** Active le chat vocal dans ce mode (null : le coupe), comme la case du menu pause. */
+      voix(mode: "appuyer" | "ouvert" | null): Promise<string>;
+      /** Diagnostic du chat vocal (connexions WebRTC, audibilité, joueurs entendus). */
+      etatVoix(): Record<string, unknown> | null;
     };
     /** Crochet de test de la chasse au tigre, présent en développement seulement. */
     __palantir?: {

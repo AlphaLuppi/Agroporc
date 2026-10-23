@@ -8,7 +8,8 @@
 import type { Monde } from "./collision";
 import type { MemoSante } from "./sante";
 import type {
-  ArmeId, CauseMort, CoteMur, Equipement, MessageClient, MessageServeur, Posture, Siege, Slot, TigreSnap, Vec3, VehiculeSnap, Zone,
+  ArmeFeuId, ArmeId, CauseMort, CoteMur, Equipement, GenreVoiture, MessageClient, MessageServeur, MonstresSnap, Posture, Siege, Slot, TigreLargueSnap, Vec3,
+  VehiculeSnap, Zone,
 } from "./protocole";
 import type { ObstacleVoiture, Tigre } from "./tigre-arene";
 
@@ -36,6 +37,8 @@ export interface JoueurSalleV2 {
   /** glissade déclarée par le client (n'a de sens qu'accroupi, au sol) : recopiée dans le snap pour la pose des avatars distants */
   glisse: boolean;
   memoSante: MemoSante | null;
+  /** chat vocal activé (v3 §5) : diffusé dans la présence, condition du relais des signaux ; absent = non */
+  voix?: boolean;
 }
 
 /**
@@ -121,6 +124,33 @@ export interface ContexteSalle {
   infliger(cible: JoueurSalle, degats: number, par: JoueurSalle | null, cause: CauseMort, zone: Zone, arme: ArmeId, maintenant: number, src?: Vec3): Sortie[];
   /** mort instantanée (écrasement) : bouclier ignoré, mêmes sorties que `infliger` ; `par` null pour la circulation PNJ (aucun kill) */
   tuer(cible: JoueurSalle, par: JoueurSalle | null, cause: CauseMort, maintenant: number): Sortie[];
+  /** (v3) fait descendre le joueur de sa voiture s'il en occupe une (le vainqueur du tigre passe aux commandes du titan) */
+  libererVehicule(j: JoueurSalle, maintenant: number): Sortie[];
+  /** (v3) un rayon (o, d) touche-t-il vraisemblablement la cible, rejouée sur ses positions récentes (canon du titan) ? */
+  toucheJoueur(c: JoueurSalle, o: Vec3, d: Vec3, portee: number, maintenant: number): boolean;
+}
+
+/** Événements de l'arène (v3, `match-evenements.ts` : `creerServiceEvenements(ctx, opts)`) : Truck Muche fou, tigre robot, titan tigre. */
+export interface ServiceEvenements {
+  /** minuteur, annonces, simulation des monstres, écrasements, attaques, fin du titan */
+  tic(maintenant: number): Sortie[];
+  /** nouveau match : événement et titan arrêtés, minuteur ré-armé */
+  reinitialiser(maintenant: number): Sortie[];
+  /** événement et titan en cours, adressés à `idDest` (réponse à `rejoindre`) */
+  synchro(idDest: string): Sortie[];
+  snap(): MonstresSnap | null;
+  /**
+   * Plomb validé par la salle et déclaré sur `cible` (CIBLE_TIGRE ou CIBLE_TITAN) : la touche est revérifiée sur la forme du monstre ;
+   * renvoie la zone et la distance, ou null si le rayon le manque.
+   */
+  toucheMonstre(cible: string, o: Vec3, d: Vec3, portee: number): { zone: Zone; distance: number } | null;
+  /** dégâts cumulés d'un tir sur un monstre : `degats` au tireur, mort du tigre (titan pour `par`) ou destruction du titan */
+  blesserMonstre(cible: string, degats: number, par: JoueurSalle, zone: Zone, maintenant: number): Sortie[];
+  /** `pilotage` / `canon` du pilote ; les autres types renvoient [] */
+  recevoir(j: JoueurSalle, m: MessageClient, maintenant: number): Sortie[];
+  estPilote(id: string): boolean;
+  /** le joueur quitte l'arène (ou se déconnecte) : s'il pilote, le titan s'éteint */
+  liberer(j: JoueurSalle, maintenant: number): Sortie[];
 }
 
 /** Elsa (lot S2, `match-elsa.ts` : `creerServiceElsa(ctx, opts)`). */
@@ -153,6 +183,15 @@ export interface ServiceVehicules {
   /** yeux acceptables pour un `tir.o` d'occupant (null si le joueur est à pied) ; le conducteur n'a pas le droit de tirer (`CONDUCTEUR_TIRE`) */
   oeilsPossibles(j: JoueurSalle, maintenant: number, fenetreMs: number): Vec3[] | null;
   estConducteur(id: string): boolean;
+  /**
+   * Plombs d'un tir arrêtés par une voiture selon le tireur (v3 §4) : chaque déclaration est revalidée (caisse rejouée sur 300 ms, marge
+   * de 0,8 m, ligne de vue, portée), un plomb ne compte qu'une fois et jamais s'il est dans `plombsPris` (déjà sur un joueur). Dégâts au
+   * corps selon la distance ; une voiture à 0 explose (`explosion`, occupants tués, souffle, voisines abîmées). `voitures` si un état change.
+   */
+  tirVoitures(
+    j: JoueurSalle, o: Vec3, dirs: readonly Vec3[], declarations: readonly { genre: GenreVoiture; id: number; plomb: number }[] | undefined,
+    arme: ArmeFeuId, plombsPris: ReadonlySet<number>, maintenant: number,
+  ): Sortie[];
   /** voitures conduisibles (vitesse mesurée, conducteur) et PNJ à l'instant donné : obstacles et chocs des tigres */
   voitures(maintenant: number): ObstacleVoiture[];
 }
@@ -177,7 +216,7 @@ export interface ServiceTigres {
   reinitialiser(maintenant: number): Sortie[];
   /** `avion{evenement:"etat"}` adressé à `idDest` (réponse à `rejoindre`) */
   synchro(idDest: string): Sortie[];
-  snap(): TigreSnap[];
+  snap(): TigreLargueSnap[];
   /** le joueur a-t-il une charge du sort ? (tests et supervision) */
   charge(id: string): boolean;
   /** donne une charge du sort à un joueur vivant en arène qui n'en a pas (tests de charge et supervision) : `sort{gagne}` */

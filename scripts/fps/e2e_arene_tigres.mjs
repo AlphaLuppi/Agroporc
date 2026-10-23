@@ -11,7 +11,7 @@
  *  3. le tigre se pose dans une cachette et se tapit (vérifié avant puis pendant l'approche de A à 28 m, capturé)
  *  4. A l'abat (B l'aide puis le laisse finir) : touches confirmées, mort par A, sort gagné, fil « a abattu le tigre », icône du sort
  *  5. l'avion suivant passe (capturé) et largue un tigre en parachute (capturé), annonce « Un tigre a été largué ! » au HUD
- *  6. A lance le sort (touche T) : tigre allié à côté de lui, liseré de sa couleur (vu par A et par B)
+ *  6. A lance le sort (touche G) : tigre allié à côté de lui, liseré de sa couleur (vu par A et par B)
  *  7. le tigre allié attaque B : dégâts crédités à A, B éliminé (cause « tigre »), ligne « Tigre » au fil de A
  *  8. aucune erreur JavaScript ni `erreur` du serveur, aucune WebSocket coupée en partie
  *
@@ -683,7 +683,7 @@ try {
 
   // ------------------------------------------------------------------ 6. A lance le sort
   let allieId = null;
-  await etape("6. A lance le sort (touche T) : tigre allié à côté de lui, liseré de sa couleur, vu par B", async () => {
+  await etape("6. A lance le sort (touche G) : tigre allié à côté de lui, liseré de sa couleur, vu par B", async () => {
     await vivants();
     const charge = (await tigresDe(A)).charge;
     verifier(charge, "A n'a plus de charge du sort (mort entre-temps ?)");
@@ -697,7 +697,7 @@ try {
     // B à 25 m de A (hors de portée du tigre allié, 18 m) pour le regarder apparaître
     await poser(B, A, pres(sA.p, 25, 0));
     const depuis = Date.now();
-    await A.appui("KeyT");
+    await A.appui("KeyG");
     const lance = await jusqua(() => A.msgs("sort", depuis).find((m) => m.evenement === "lance" && m.joueur === idA) ?? null, { ms: 5000, quoi: `sort{lance} (${A.resume(depuis)})` });
     allieId = lance.tigre;
     const t = await jusqua(async () => (await tigresDe(A)).tigres.find((x) => x.id === allieId) ?? null, { ms: 5000, quoi: "tigre allié dans les snaps" });

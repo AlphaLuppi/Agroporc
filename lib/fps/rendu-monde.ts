@@ -1,6 +1,7 @@
 /**
- * Rendu du monde dynamique de l'arène (three) : voitures PNJ, voitures conduisibles (couleur du conducteur), Elsa (petit personnage
- * fil de fer ambre), caisse tournante et faisceau vertical de son cadeau. Aucun test vitest (three) : les régressions se voient aux captures.
+ * Rendu du monde dynamique de l'arène (three) : voitures PNJ, voitures conduisibles (couleur du conducteur), le Truck Muche garé (v3 §2) avec
+ * Elsa (petit personnage fil de fer ambre) DEDANS, derrière le passe-plat, le cadeau posé sur le comptoir et le faisceau vertical au point de
+ * service. Aucun test vitest (three) : les régressions se voient aux captures.
  * Spec : docs/superpowers/specs/2026-10-22-arene-v2-design.md (§2.7, §2.11, §2.12, §5.15)
  *
  * Même langage visuel que les avatars de `rendu.ts` : fil de fer lumineux, faces sombres qui masquent les arêtes cachées et sont elles-mêmes
@@ -15,13 +16,16 @@
  */
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
-import type { EtatElsaMsg, VehiculeSnap, Vec3 } from "./protocole";
+import type { EtatElsaMsg, EtatVoitureMsg, VehiculeSnap, Vec3 } from "./protocole";
 import { VOITURE, type EtatVoiture } from "./circulation";
 import { hauteurPlaquePx } from "./visibilite";
+import { TRUCK, versMondeTruck, type PlaceTruck } from "./zones";
 
 export interface MondeDynamique {
-  /** Voitures PNJ (une entrée par voiture, dans l'ordre de `flotte`). */
-  majVoituresPnj(etats: readonly EtatVoiture[]): void;
+  /** Voitures PNJ (une entrée par voiture, dans l'ordre de `flotte`) ; `cachee(i)` : PNJ en épave, non dessinée (v3 §4). */
+  majVoituresPnj(etats: readonly EtatVoiture[], cachee?: (i: number) => boolean): void;
+  /** Épaves (v3 §4) : carcasses calcinées aux positions des explosions (les entrées `etat: "epave"`). */
+  majEpaves(etats: Iterable<EtatVoitureMsg>): void;
   /** Voitures conduisibles (interpolées) ; `couleurs` : couleur du conducteur par id de véhicule si occupé. */
   majVoituresJoueurs(vehicules: readonly VehiculeSnap[], couleurs: ReadonlyMap<number, string>): void;
   /** Elsa (toujours là) + caisse et faisceau quand `elsa.offre` ; `tS` en secondes pour l'animation. */
@@ -44,17 +48,23 @@ const ORDRE_PSEUDO = 10;
 const ANGLE_OR_DEG = 137.508;
 /** Carrosserie d'une voiture conduisible LIBRE : grise, pour qu'elle se distingue des PNJ saturés et des joueurs colorés. */
 const COULEUR_VOITURE_LIBRE = "#b9c4d0";
+/** Carcasse calcinée d'une épave : rouille éteinte. */
+const COULEUR_EPAVE = "#7a5a46";
 const COULEUR_ELSA = 0xffb35c;
 const COULEUR_CADEAU_SOIN = 0x5cff9c;
 const COULEUR_CADEAU_ARME = 0xffd24d;
-/** Elsa : échelle (spec §2.7), hauteur de l'étiquette au-dessus du sol et de la tête (m, repère monde). */
-const ECHELLE_ELSA = 0.8;
-const Y_PSEUDO_ELSA = 1.85;
-const Y_TETE_ELSA = 1.3;
-/** Elsa regarde vers l'ouest (−x), côté du POI du Truck Muche. */
-const CAP_ELSA = Math.PI / 2;
-/** Le cadeau flotte devant Elsa (vers −x) et non dans son corps ; reste à moins de 2,5 m du point de ramassage. */
-const DECALAGE_CADEAU_M = 1.1;
+/** Elsa : échelle (spec §2.7), debout sur le plancher du truck. Étiquette au-dessus du toit (sinon le truck la cache). */
+const ECHELLE_ELSA = 0.9;
+const Y_PSEUDO_ELSA = TRUCK.hauteur + 1.1;
+/**
+ * Point de visibilité de l'étiquette (VisibilitePseudos) : dans l'ouverture du passe-plat, juste DEHORS (Elsa elle-même est dans le prisme
+ * du truck, toujours « cachée » pour un rayon). Local (x hors du flanc, y au niveau de sa tête).
+ */
+const VISEE_ELSA_LOCAL = { x: TRUCK.largeur / 2 + 0.3, y: TRUCK.plancher + 1.55 };
+/** Le cadeau tourne au-dessus du comptoir, côté extérieur. */
+const CADEAU_LOCAL_X = TRUCK.largeur / 2 + 0.2;
+/** Couleur du truck (ambre de la vue aérienne). */
+const COULEUR_TRUCK = 0xffb35c;
 const HAUTEUR_FAISCEAU_M = 60;
 /** Rayon de ramassage (m) : l'anneau au sol le montre (elsa.ts : 2,5 m). */
 const RAYON_ANNEAU_M = 2.5;
@@ -264,10 +274,91 @@ function geometrieAnneau(): THREE.BufferGeometry {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Truck Muche (v3 §2)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * Le Truck Muche en repère local (avant = −z, droite = +x, origine au sol au centre) : châssis, cabine, caisse en PANNEAUX minces (on voit
+ * dedans par le passe-plat ouvert du flanc droit), comptoir, volet relevé en auvent, roues et enseigne. Un seul maillage fusionné.
+ */
+function geometrieTruck(): THREE.BufferGeometry {
+  const { longueur: L, largeur: l, hauteur: H, cabine, hauteurCabine, plancher, comptoir, linteau, fenetreZ, fenetreLargeur } = TRUCK;
+  const e = 0.06; // épaisseur des panneaux
+  const z0 = -L / 2 + cabine, z1 = L / 2; // caisse
+  const zc = (z0 + z1) / 2, lc = z1 - z0;
+  const f0 = fenetreZ - fenetreLargeur / 2, f1 = fenetreZ + fenetreLargeur / 2;
+  const m: THREE.BufferGeometry[] = [];
+  const b = (w: number, h: number, d: number, x: number, y: number, z: number) => m.push(nu(boite(w, h, d, x, y, z)));
+  // châssis plein sous le plancher, cabine
+  b(l, plancher - 0.35, L, 0, (plancher + 0.35) / 2, 0);
+  b(l, hauteurCabine - plancher, cabine, 0, (plancher + hauteurCabine) / 2, -L / 2 + cabine / 2);
+  // caisse : toit, flanc gauche, cloison avant, porte arrière
+  b(l, e, lc, 0, H - e / 2, zc);
+  b(e, H - plancher, lc, -l / 2 + e / 2, (plancher + H) / 2, zc);
+  b(l, H - plancher, e, 0, (plancher + H) / 2, z0 + e / 2);
+  b(l, H - plancher, e, 0, (plancher + H) / 2, z1 - e / 2);
+  // flanc droit autour du passe-plat : allège, bandeau, deux montants
+  const xd = l / 2 - e / 2;
+  b(e, comptoir - plancher, lc, xd, (plancher + comptoir) / 2, zc);
+  b(e, H - linteau, lc, xd, (linteau + H) / 2, zc);
+  b(e, linteau - comptoir, f0 - z0, xd, (comptoir + linteau) / 2, (z0 + f0) / 2);
+  b(e, linteau - comptoir, z1 - f1, xd, (comptoir + linteau) / 2, (f1 + z1) / 2);
+  // comptoir en saillie
+  b(0.42, 0.06, fenetreLargeur, l / 2 + 0.15, comptoir, fenetreZ);
+  // volet relevé en auvent, articulé au linteau
+  const volet = boite(1.25, 0.05, fenetreLargeur + 0.2, 0.625, 0, 0);
+  volet.rotateZ(0.42);
+  volet.translate(l / 2, linteau + 0.04, fenetreZ);
+  m.push(nu(volet));
+  // enseigne sur le toit, côté passe-plat
+  b(0.08, 0.55, 3.6, l / 2 - 0.25, H + 0.35, fenetreZ);
+  // roues (avant sous la cabine, arrière sous la caisse)
+  for (const sx of [-1, 1]) {
+    for (const z of [-L / 2 + 1, L / 2 - 1.3]) {
+      const r = new THREE.CylinderGeometry(0.45, 0.45, 0.3, 12, 1, false);
+      r.rotateZ(Math.PI / 2);
+      r.translate(sx * (l / 2 - 0.12), 0.45, z);
+      m.push(nu(r));
+    }
+  }
+  // pare-brise : un cadre incliné à l'avant de la cabine
+  const pb = boite(l - 0.3, 0.9, 0.05, 0, 0, 0);
+  pb.rotateX(-0.35);
+  pb.translate(0, hauteurCabine - 0.55, -L / 2 - 0.08);
+  m.push(nu(pb));
+  const fusion = mergeGeometries(m, false);
+  for (const g of m) g.dispose();
+  if (!fusion) throw new Error("rendu-monde : fusion du truck impossible");
+  return fusion;
+}
+
+/** Texture de l'enseigne « LE TRUCK MUCHE » (null hors navigateur). */
+function textureEnseigne(): THREE.CanvasTexture | null {
+  if (typeof document === "undefined") return null;
+  const cv = document.createElement("canvas");
+  cv.width = 512;
+  cv.height = 80;
+  const ctx = cv.getContext("2d");
+  if (ctx) {
+    ctx.fillStyle = "#06080c";
+    ctx.fillRect(0, 0, 512, 80);
+    ctx.font = `700 46px "Chakra Petch", "IBM Plex Mono", ui-monospace, system-ui, sans-serif`;
+    ctx.fillStyle = `#${new THREE.Color(COULEUR_TRUCK).getHexString()}`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("LE TRUCK MUCHE", 256, 43);
+  }
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  return tex;
+}
+
+// ---------------------------------------------------------------------------------------------
 // Fabrique
 // ---------------------------------------------------------------------------------------------
 
-export function creerMondeDynamique(scene: THREE.Scene, o: { nbPnj: number; nbVehicules: number; elsa: [number, number] }): MondeDynamique {
+export function creerMondeDynamique(scene: THREE.Scene, o: { nbPnj: number; nbVehicules: number; truck: PlaceTruck }): MondeDynamique {
   const racine = new THREE.Group();
   racine.name = "monde-dynamique";
   scene.add(racine);
@@ -279,6 +370,7 @@ export function creerMondeDynamique(scene: THREE.Scene, o: { nbPnj: number; nbVe
   const geoVoiture = enPiece(geometrieVoiture());
   const pnj: InstanceVoiture[] = [];
   const joueurs: InstanceVoiture[] = [];
+  const epaves: InstanceVoiture[] = [];
   /** id de véhicule → rang d'instance : un véhicule garde le même maillage tant que le monde vit */
   const rangVehicule = new Map<number, number>();
   const voiturePnj = (i: number) => {
@@ -297,11 +389,34 @@ export function creerMondeDynamique(scene: THREE.Scene, o: { nbPnj: number; nbVe
   for (let i = 0; i < o.nbPnj; i++) voiturePnj(i);
   for (let i = 0; i < o.nbVehicules; i++) joueurs.push(creerInstanceVoiture(racine, geoVoiture, COULEUR_VOITURE_LIBRE));
 
-  // ---- Elsa : petit personnage fil de fer ambre, échelle 0,8, tourné vers l'ouest ----
+  // ---- Truck Muche garé : Elsa est dedans, le cadeau et l'étiquette s'y placent en repère local ----
+  const truck = new THREE.Group();
+  truck.position.set(o.truck.x, 0, o.truck.z);
+  truck.rotation.y = o.truck.cap;
+  racine.add(truck);
+  const geoTruck = enPiece(geometrieTruck());
+  suivre({ dispose: () => libererPiece(geoTruck) });
+  const mTruck = creerMateriaux(new THREE.Color(COULEUR_TRUCK));
+  suivre({ dispose: () => libererMateriaux(mTruck) });
+  piece(truck, geoTruck, mTruck);
+  const texEnseigne = textureEnseigne();
+  if (texEnseigne) {
+    suivre(texEnseigne);
+    const matEnseigne = suivre(new THREE.MeshBasicMaterial({ map: texEnseigne, toneMapped: false }));
+    const geoEnseigne = suivre(new THREE.PlaneGeometry(3.4, 0.5));
+    const enseigne = new THREE.Mesh(geoEnseigne, matEnseigne);
+    enseigne.rotation.y = Math.PI / 2; // face au flanc droit (+x local)
+    enseigne.position.set(TRUCK.largeur / 2 - 0.2, TRUCK.hauteur + 0.35, TRUCK.fenetreZ);
+    enseigne.renderOrder = ORDRE_BASE + 1;
+    truck.add(enseigne);
+  }
+
+  // ---- Elsa : petit personnage fil de fer ambre, debout sur le plancher, face au passe-plat ----
   const elsa = new THREE.Group();
-  elsa.position.set(o.elsa[0], 0, o.elsa[1]);
-  elsa.rotation.y = CAP_ELSA;
-  racine.add(elsa);
+  elsa.position.set(TRUCK.largeur / 2 - TRUCK.retraitElsa, TRUCK.plancher, TRUCK.fenetreZ);
+  // l'avant d'Elsa est −z : un quart de tour la tourne vers +x (le passe-plat)
+  elsa.rotation.y = -Math.PI / 2;
+  truck.add(elsa);
   const corpsElsa = new THREE.Group();
   corpsElsa.scale.setScalar(ECHELLE_ELSA);
   elsa.add(corpsElsa);
@@ -384,13 +499,18 @@ export function creerMondeDynamique(scene: THREE.Scene, o: { nbPnj: number; nbVe
     etiquette.scale.set(h * ratio, h, 1);
     etiquette.updateMatrixWorld();
   };
-  // enfant de la racine et non d'Elsa (elle tourne) ; la position suit Elsa dans `majElsa`
-  racine.add(etiquette);
+  // enfant du truck et non d'Elsa (elle tourne) : au-dessus du toit, à l'aplomb d'Elsa
+  etiquette.position.set(TRUCK.largeur / 2 - TRUCK.retraitElsa, Y_PSEUDO_ELSA, TRUCK.fenetreZ);
+  truck.add(etiquette);
 
-  // ---- cadeau : caisse tournante, faisceau additif de 60 m (profondeur testée), anneau de ramassage ----
+  // ---- cadeau : caisse tournante sur le comptoir ; faisceau additif de 60 m (profondeur testée) et anneau de ramassage au point de service ----
   const cadeau = new THREE.Group();
   cadeau.visible = false;
   racine.add(cadeau);
+  const caisseComptoir = new THREE.Group();
+  caisseComptoir.position.set(CADEAU_LOCAL_X, 0, TRUCK.fenetreZ);
+  caisseComptoir.visible = false;
+  truck.add(caisseComptoir);
   const mCadeau = creerMateriaux(new THREE.Color(COULEUR_CADEAU_ARME));
   suivre({ dispose: () => libererMateriaux(mCadeau) });
   const piecesCadeau = [
@@ -400,7 +520,8 @@ export function creerMondeDynamique(scene: THREE.Scene, o: { nbPnj: number; nbVe
   ];
   for (const p of piecesCadeau) suivre({ dispose: () => libererPiece(p) });
   const caisse = new THREE.Group();
-  cadeau.add(caisse);
+  caisse.scale.setScalar(0.75);
+  caisseComptoir.add(caisse);
   for (const p of piecesCadeau) piece(caisse, p, mCadeau);
 
   const geoFaisceauInt = suivre(geometrieFaisceau(0.12));
@@ -436,18 +557,36 @@ export function creerMondeDynamique(scene: THREE.Scene, o: { nbPnj: number; nbVe
     matAnneau.color.set(c);
   };
 
-  // direction « devant Elsa » dans le monde (−x) : le cadeau y flotte
-  const posCadeau = (x: number, z: number) => cadeau.position.set(x - DECALAGE_CADEAU_M, 0, z);
-
-  const _pos = new THREE.Vector3();
-  let elsaX = o.elsa[0], elsaZ = o.elsa[1];
-  etiquette.position.set(elsaX, Y_PSEUDO_ELSA, elsaZ);
-  posCadeau(elsaX, elsaZ);
+  // faisceau et anneau au point de service (là où le serveur fait ramasser)
+  cadeau.position.set(o.truck.service[0], 0, o.truck.service[1]);
+  const [viseeX, viseeZ] = versMondeTruck(o.truck, VISEE_ELSA_LOCAL.x, TRUCK.fenetreZ);
 
   return {
-    majVoituresPnj(etats) {
-      for (let i = 0; i < etats.length; i++) poserVoiture(voiturePnj(i), etats[i].p, etats[i].cap);
+    majVoituresPnj(etats, cachee) {
+      for (let i = 0; i < etats.length; i++) {
+        if (cachee?.(i)) voiturePnj(i).group.visible = false;
+        else poserVoiture(voiturePnj(i), etats[i].p, etats[i].cap);
+      }
       for (let i = etats.length; i < pnj.length; i++) pnj[i].group.visible = false;
+    },
+
+    majEpaves(etats) {
+      let n = 0;
+      for (const e of etats) {
+        if (e.etat !== "epave" || !e.p) continue;
+        while (epaves.length <= n) {
+          const v = creerInstanceVoiture(racine, geoVoiture, COULEUR_EPAVE);
+          // affaissée et de travers : elle a sauté
+          v.group.scale.set(1, 0.72, 1);
+          v.group.rotation.order = "YXZ";
+          v.group.rotation.x = 0.05;
+          v.group.rotation.z = 0.09;
+          epaves.push(v);
+        }
+        poserVoiture(epaves[n], e.p, e.cap ?? 0);
+        n++;
+      }
+      for (let i = n; i < epaves.length; i++) epaves[i].group.visible = false;
     },
 
     majVoituresJoueurs(vehicules, couleurs) {
@@ -461,13 +600,7 @@ export function creerMondeDynamique(scene: THREE.Scene, o: { nbPnj: number; nbVe
     },
 
     majElsa(msg, tS) {
-      if (msg) {
-        elsaX = msg.x;
-        elsaZ = msg.z;
-        elsa.position.set(elsaX, 0, elsaZ);
-        etiquette.position.set(elsaX, Y_PSEUDO_ELSA, elsaZ);
-        posCadeau(elsaX, elsaZ);
-      }
+      // Elsa et son truck ne bougent pas (la position du message est le point de service, déjà connu)
       const offre = msg?.offre ?? null;
 
       // Elsa respire, tourne la tête et, quand elle a un cadeau, salue du bras droit.
@@ -487,9 +620,10 @@ export function creerMondeDynamique(scene: THREE.Scene, o: { nbPnj: number; nbVe
       }
 
       cadeau.visible = !!offre;
+      caisseComptoir.visible = !!offre;
       if (!offre) return;
       colorerCadeau(offre.genre);
-      caisse.position.y = 1.1 + 0.12 * Math.sin(tS * 2.2);
+      caisse.position.y = TRUCK.comptoir + 0.32 + 0.06 * Math.sin(tS * 2.2);
       caisse.rotation.y = tS * 1.2;
       caisse.rotation.x = 0.18 * Math.sin(tS * 0.8);
       // le faisceau et l'anneau pulsent doucement ; le faisceau garde une largeur lisible de loin
@@ -500,8 +634,7 @@ export function creerMondeDynamique(scene: THREE.Scene, o: { nbPnj: number; nbVe
     },
 
     elsaTete() {
-      _pos.set(elsaX, Y_TETE_ELSA, elsaZ);
-      return [_pos.x, _pos.y, _pos.z];
+      return [viseeX, VISEE_ELSA_LOCAL.y, viseeZ];
     },
 
     afficherPseudoElsa(alpha) {
@@ -514,6 +647,8 @@ export function creerMondeDynamique(scene: THREE.Scene, o: { nbPnj: number; nbVe
       racine.removeFromParent();
       for (const v of pnj) libererMateriaux(v.m);
       for (const v of joueurs) libererMateriaux(v.m);
+      for (const v of epaves) libererMateriaux(v.m);
+      epaves.length = 0;
       pnj.length = 0;
       joueurs.length = 0;
       rangVehicule.clear();

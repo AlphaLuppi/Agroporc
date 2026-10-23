@@ -3,9 +3,11 @@ import { describe, expect, it } from "vitest";
 import { aleaGraine, dedans, distSegment } from "../agroparc3d/cachettes";
 import type { SceneData, Vec2 } from "../agroparc3d/types";
 import { construireMonde, pointsApparition } from "./collision";
+import { SILHOUETTE } from "./protocole";
 import {
   EMPLACEMENTS_VOITURES, ROND_POINT, ZONE_APPARITION, capDepuisDirection, choisirPointZone, filtrerApparitions, lacetVers, positionElsa, trouverRondPoint,
   type ZoneApparition,
+  TRUCK, obstacleTruck, placeTruck,
 } from "./zones";
 
 const scene = JSON.parse(readFileSync("public/agroparc/scene.json", "utf8")) as SceneData;
@@ -158,19 +160,38 @@ describe("choisirPointZone", () => {
   });
 });
 
-describe("positionElsa", () => {
-  it("(−120 ; 39), à > 10 m de tout bâtiment, hors eau", () => {
+describe("Truck Muche garé et positionElsa (v3 §2)", () => {
+  it("le truck est garé sur le POI, dans le sens d'arrivée (nez vers l'ouest-sud-ouest), loin des bâtiments", () => {
+    const t = placeTruck(scene);
+    expect([t.x, t.z]).toEqual([-125, 39]);
+    // avant (−sin cap, −cos cap) : vers l'ouest et le nord (z < 0), comme le trajet de la vue aérienne
+    expect(-Math.sin(t.cap)).toBeLessThan(-0.6);
+    expect(-Math.cos(t.cap)).toBeLessThan(-0.3);
+    const o = obstacleTruck(scene)!;
+    for (const [x, z] of o.r) expect(distBatiments(x, z)).toBeGreaterThan(5);
+  });
+  it("Elsa est dans la caisse, le point de service dehors devant le passe-plat, à > 10 m des bâtiments, hors eau", () => {
+    const t = placeTruck(scene);
+    const o = obstacleTruck(scene)!;
+    expect(dedans(t.elsa[0], t.elsa[1], o.r)).toBe(true);
     const p = positionElsa(scene);
-    expect(p).toEqual([-120, 39]);
+    expect(p).toEqual(t.service);
+    expect(dedans(p[0], p[1], o.r)).toBe(false);
     expect(distBatiments(p[0], p[1])).toBeGreaterThan(10);
     expect(distEau(p[0], p[1])).toBeGreaterThan(0);
-    // même résultat vu par le monde de collision : aucun prisme ne contient ce point
+    // aucun prisme du monde (truck compris) ne contient ce point, et un joueur collé au flanc est à portée de ramassage (2,5 m)
     expect(monde.prismes.some((b) => dedans(p[0], p[1], b.anneau))).toBe(false);
+    expect(TRUCK.avanceService - SILHOUETTE.rayon).toBeLessThan(2.5);
+    // le passe-plat (Elsa → service) est perpendiculaire au flanc : 0,75 + 1,4 m
+    expect(Math.hypot(p[0] - t.elsa[0], p[1] - t.elsa[1])).toBeCloseTo(TRUCK.retraitElsa + TRUCK.avanceService, 1);
   });
   it("repli (−120 ; 39) sans POI truck, suit le POI sinon", () => {
     expect(positionElsa({ ...scene, pois: [] })).toEqual([-120, 39]);
+    expect(obstacleTruck({ ...scene, pois: [] })).toBeNull();
     const deplace = { ...scene, pois: scene.pois.map((p) => (p.type === "truck" ? { ...p, x: 10, z: -4 } : p)) };
-    expect(positionElsa(deplace)).toEqual([15, -4]);
+    const t = placeTruck(deplace);
+    expect([t.x, t.z]).toEqual([10, -4]);
+    expect(Math.hypot(positionElsa(deplace)[0] - 10, positionElsa(deplace)[1] + 4)).toBeGreaterThan(TRUCK.largeur / 2);
   });
 });
 

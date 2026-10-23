@@ -14,6 +14,8 @@
  *  8. voiture conduisible : montée, conduite de quelques mètres, passager qui tire sur le conducteur ; sortie, sièges libérés
  *  9. Elsa (intervalle court passé au serveur) : offre annoncée à tous, HUD, ramassage
  * 10. mini-carte présente et déplaçable de coin (N), tableau des scores (Tab) riche, grande carte (M), HUD de combat
+ * 10e–10g. v3 : rafale sur une voiture garée jusqu'à l'explosion (fumée / feu / épave du serveur), lunette à niveaux et cercle de dispersion
+ *     (HUD forcé), chat vocal de proximité entre les deux navigateurs (faux micro de Chromium : entendu à 3 m, muet à 100 m)
  * 11. recaptures en 1280×720 (les étapes précédentes sont capturées en 1920×1080, sauf la killcam, en 1280×720 pour tenir dans sa durée)
  * 12. aucune erreur JavaScript ni `erreur` du serveur, aucune WebSocket coupée en partie
  *
@@ -44,7 +46,8 @@ const SORTIE = process.env.E2E_OUT ?? join(tmpdir(), "pdj-e2e-arene-v2");
 const PAGE = process.env.E2E_PAGE ?? "/arene-e2e-introuvable";
 /** Centre du rond-point (scene.json) : la réapparition doit se faire à 25–140 m de là. */
 const ROND_POINT = [28.2, 2.5];
-const ELSA = [-120, 39];
+/** Point de service d'Elsa, devant le passe-plat du Truck Muche garé (zones.ts, `positionElsa`). */
+const ELSA = [-122.7, 37.42];
 
 // ---------------------------------------------------------------------------------------------------------------- utilitaires
 
@@ -262,6 +265,9 @@ async function garantirMatch() {
 async function etape(nom, fn) {
   // E2E_JUSQUA=5 : s'arrête après l'étape 5 (mise au point) ; les étapes suivantes sont ignorées
   if (process.env.E2E_JUSQUA && parseInt(nom, 10) > Number(process.env.E2E_JUSQUA)) return true;
+  // E2E_SEULES=1,9,10e : ne joue que ces étapes (numéro avant le point ; la 1 est toujours jouée, elle fait entrer les joueurs)
+  const numero = nom.split(".")[0];
+  if (process.env.E2E_SEULES && numero !== "1" && !process.env.E2E_SEULES.split(",").includes(numero)) return true;
   const t0 = Date.now();
   etapeCourante = nom;
   process.stdout.write(`- ${nom} ... `);
@@ -332,11 +338,16 @@ try {
   // --- navigateurs
   navigateur = await chromium.launch({
     headless: !process.env.E2E_HEADED,
-    args: ["--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist", "--autoplay-policy=no-user-gesture-required"],
+    // faux micro (bips) accordé sans demande : chat vocal de l'étape 10g
+    args: [
+      "--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist", "--autoplay-policy=no-user-gesture-required",
+      "--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream",
+    ],
   });
   const joueurs = [];
   for (const nom of ["Alice", "Bob"]) {
-    const ctx = await navigateur.newContext({ viewport: { width: 1920, height: 1080 } });
+    // E2E_1280=1 : tout en 1280×720 (rendu logiciel plus rapide, captures plus fiables)
+    const ctx = await navigateur.newContext({ viewport: process.env.E2E_1280 ? { width: 1280, height: 720 } : { width: 1920, height: 1080 } });
     // « N » = coin suivant de la mini-carte (aucune touche par défaut) ; les autres actions reprennent leurs touches par défaut
     await ctx.addInitScript(() => {
       try { localStorage.setItem("pdj-fps-touches", JSON.stringify({ minimapCoin: ["KeyN", null] })); } catch { /* stockage indisponible */ }
@@ -645,7 +656,7 @@ try {
     verifier(/Elsa/i.test(hud), "le HUD n'affiche pas le cadeau d'Elsa");
     await A.capture("09-elsa-offre-A-1920");
     const depuis = Date.now();
-    await poser(A, B, [ELSA[0], 0, ELSA[1] + 1]);
+    await poser(A, B, [ELSA[0], 0, ELSA[1]]);
     const pris = await jusqua(async () => A.msgs("ramassage", depuis)[0] ?? A.msgs("elsa", depuis).find((x) => x.evenement === "prise"), { ms: 10_000, quoi: async () => `ramassage de l'offre d'Elsa (${A.resume(depuis)} ; monde.elsa ${JSON.stringify(await A.ev(() => window.__arene.monde().elsa))} ; A ${JSON.stringify(await A.jeu().then((x) => ({ p: x.p, vivant: x.vivant, vehicule: x.vehicule, pv: x.pv })))} ; vu par B ${JSON.stringify((await B.jeu()).distants.map((d) => ({ p: d.p, vivant: d.vivant, vehicule: d.vehicule })))} ; match ${JSON.stringify((await A.etat()).match)} ; sieges ${JSON.stringify((await A.ev(() => window.__arene.monde())).sieges).slice(0, 160)})` });
     await dormir(700);
     await A.capture("09-elsa-ramassage-A-1920");
@@ -703,6 +714,88 @@ try {
     for (const [nom, aria] of [["santé", "Santé"], ["armes et munitions", "Armes et munitions"], ["match", "Match"]]) {
       await A.page.locator(`section[aria-label="${aria}"]`).first().waitFor({ state: "visible", timeout: 4000 }).catch(() => { throw new Error(`bloc HUD « ${nom} » absent`); });
     }
+  });
+
+  // ------------------------------------------------------------------ 10e–10f. v3
+  await etape("10e. v3 : rafale sur une voiture garée jusqu'à l'explosion (fumée, feu, épave confirmés par le serveur)", async () => {
+    await A.appui("Digit1");
+    const monde = await A.ev(() => window.__arene.monde());
+    const libres = (monde.sieges ?? []).filter((s) => s.sieges.every((x) => !x)).map((s) => s.id);
+    const veh = [...(monde.vehicules ?? [])].reverse().find((v) => libres.includes(v.id));
+    verifier(veh, "aucune voiture conduisible libre");
+    // A à 14 m de la voiture, côté opposé au parking ; B loin du souffle
+    const pa = [veh.p[0] + Math.cos(veh.cap) * 14, 0, veh.p[2] - Math.sin(veh.cap) * 14];
+    const [bx, bz] = pointLibre(ROND_POINT[0] + 40, ROND_POINT[1] + 40);
+    await poser(B, A, [bx, 0, bz]);
+    await poser(A, B, pa, 3);
+    const depuis = Date.now();
+    const viser = () => A.ev((v) => {
+      const j = window.__arene.etat().jeu;
+      const o = j.oeil;
+      const dx = v.p[0] - o[0], dy = 0.9 - o[1], dz = v.p[2] - o[2];
+      window.__arene.regarder(Math.atan2(-dx, -dz), Math.atan2(dy, Math.hypot(dx, dz)));
+    }, veh);
+    await viser();
+    await A.touche("Souris0", true);
+    try {
+      await jusqua(async () => {
+        await viser();
+        if ((await A.jeu()).munitions === 0) { await A.touche("Souris0", false); await A.appui("KeyR"); await dormir(2600); await A.touche("Souris0", true); }
+        return A.msgs("explosion", depuis).find((m) => m.genre === "vehicule" && m.id === veh.id);
+      }, { ms: 60_000, pas: 300, quoi: async () => `explosion de la voiture ${veh.id} (${A.resume(depuis)})` });
+    } finally {
+      await A.touche("Souris0", false);
+    }
+    const etats = A.msgs("voitures", depuis).flatMap((m) => m.etats.filter((e) => e.genre === "vehicule" && e.id === veh.id).map((e) => e.etat));
+    verifier(etats.includes("fumee") || etats.includes("feu"), `ni fumée ni feu avant l'explosion : ${JSON.stringify(etats)}`);
+    verifier(etats.includes("epave"), `pas d'épave annoncée : ${JSON.stringify(etats)}`);
+    await jusqua(async () => B.msgs("explosion", depuis).some((m) => m.id === veh.id), { ms: 4000, quoi: "explosion reçue par B" });
+    await dormir(250);
+    await A.capture("10e-explosion-A-1920");
+    await dormir(1500);
+    await A.capture("10e-epave-A-1920");
+    const apres = await A.ev(() => window.__arene.monde());
+    verifier(!apres.vehicules.some((v) => v.id === veh.id), "la voiture explosée est encore dans le snap");
+    verifier((await A.jeu()).vivant, "A est mort de sa propre explosion à 14 m");
+    return `voiture ${veh.id} : ${[...new Set(etats)].join(" → ")}`;
+  });
+
+  await etape("10f. v3 : lunette à niveaux de zoom et cercle de dispersion du sniper (HUD forcé)", async () => {
+    await A.ev(() => window.__arene.forcerHud({ arme: "sniper", lunette: true, vise: true, zoomX: 12, zoomNiveau: 2, zoomNiveaux: 3, distanceVisee: 87 }));
+    await dormir(400);
+    await A.page.getByText("×12").first().waitFor({ state: "visible", timeout: 4000 });
+    await A.capture("10f-lunette-x12-A-1920");
+    await A.ev(() => window.__arene.forcerHud({ arme: "sniper", lunette: false, vise: false, zoomX: 0, zoomNiveau: -1, zoomNiveaux: 0, ecartViseur: 0.09 }));
+    await dormir(400);
+    await A.capture("10f-hanche-sniper-A-1920");
+    await A.ev(() => window.__arene.forcerHud({ voix: "emet", voixParlants: "Bob · Chloé" }));
+    await dormir(300);
+    await A.page.getByText("Vous parlez").first().waitFor({ state: "visible", timeout: 4000 });
+    await A.capture("10f-voix-A-1920");
+    await A.ev(() => window.__arene.forcerHud(null));
+  });
+
+  await etape("10g. v3 : chat vocal de proximité (WebRTC entre les deux navigateurs, faux micro) : entendu de près, muet de loin", async () => {
+    const idA = await A.id(), idB = await B.id();
+    const [ax, az] = pointLibre(ROND_POINT[0] + 40, ROND_POINT[1] + 40);
+    const [bx, bz] = pointLibre(ax + 3, az);
+    verifier(Math.hypot(bx - ax, bz - az) < 6, "pas de second point libre à moins de 6 m");
+    await poser(A, B, [ax, 0, az]);
+    await poser(B, A, [bx, 0, bz]);
+    for (const j of [A, B]) verifier((await j.ev(() => window.__arene.voix("ouvert"))) === "ok", `${j.nom} : micro refusé`);
+    const connecte = (j, autre) => j.ev(() => window.__arene.etatVoix()).then((v) => v?.pairs?.find((x) => x.id === autre && x.connexion === "connected" && x.flux));
+    await jusqua(async () => (await connecte(A, idB)) && (await connecte(B, idA)), { ms: 30_000, quoi: async () => `connexion WebRTC (A ${JSON.stringify(await A.ev(() => window.__arene.etatVoix()))} ; B ${JSON.stringify(await B.ev(() => window.__arene.etatVoix()))})` });
+    // le faux micro émet des bips : A entend B parler, à 3 m
+    await jusqua(async () => (await A.ev(() => window.__arene.etatVoix())).parlants.includes(idB), { ms: 12_000, pas: 100, quoi: async () => `A entend B (${JSON.stringify(await A.ev(() => window.__arene.etatVoix()))})` });
+    await dormir(300);
+    await A.capture("10g-voix-proche-A-1920");
+    // B s'éloigne de 100 m : plus audible
+    const [lx, lz] = pointLibre(ax, az + 100);
+    await poser(B, A, [lx, 0, lz]);
+    await jusqua(async () => { const v = await A.ev(() => window.__arene.etatVoix()); return v.pairs.some((x) => x.id === idB && !x.audible) && !v.parlants.includes(idB); }, { ms: 8000, quoi: async () => `B inaudible à 100 m (${JSON.stringify(await A.ev(() => window.__arene.etatVoix()))})` });
+    for (const j of [A, B]) await j.ev(() => window.__arene.voix(null));
+    await jusqua(async () => ((await A.ev(() => window.__arene.etatVoix())).pairs.length === 0), { ms: 5000, quoi: "connexions vocales fermées" });
+    return "connectés, entendu à 3 m, inaudible à 100 m, coupé";
   });
 
   // ------------------------------------------------------------------ 11. 1280×720
