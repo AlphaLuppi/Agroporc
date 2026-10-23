@@ -9,7 +9,7 @@
  */
 import { dedans, distSegment } from "../agroparc3d/cachettes";
 import { COUTEAU } from "./armes";
-import { lancerRayon, resoudre, solSous, visible, type Monde } from "./collision";
+import { lancerRayon, resoudre, solSous, visible, type Monde, type Prisme } from "./collision";
 import type { ActionTigre, EtatTigre, GenreTigre, PoseTigre, Vec3, Zone } from "./protocole";
 import { LATENCE_TOLEREE_S, MARGE_PORTEE_M, TOLERANCE_RAYON_M } from "./tir";
 
@@ -259,8 +259,10 @@ const DEGAGEMENT_NAV_M = TIGRE.rayon + 0.2;
 const NOEUDS_MAX = 20_000;
 
 /**
- * Grille de navigation d'un monde (cases de `PAS_NAV_M` m) : une case est libre si son centre est hors des bâtiments, à
- * `DEGAGEMENT_NAV_M` au moins de leurs murs et à plus de 1 m des bornes. Tampons de la recherche A* réutilisés (non réentrant).
+ * Grille de navigation d'un monde (cases de `PAS_NAV_M` m) : une case est libre si son centre est hors des bâtiments debout, à
+ * `DEGAGEMENT_NAV_M` au moins de leurs murs et à plus de 1 m des bornes. Un bâtiment détruit (hauteur nulle) ne ferme rien, une brèche
+ * (`creux` de collision.ts) libère les cases à `DEGAGEMENT_NAV_M` au moins de son bord. `etats` garde la hauteur et la brèche de chaque
+ * prisme au dernier calcul (4 nombres par prisme). Tampons de la recherche A* réutilisés (non réentrant).
  */
 export interface GrilleNav {
   x0: number;
@@ -273,46 +275,105 @@ export interface GrilleNav {
   vu: Uint32Array;
   ferme: Uint32Array;
   tampon: number;
+  etats: Float64Array;
 }
 
 const GRILLES = new WeakMap<Monde, GrilleNav>();
 
-/** Grille de navigation de `monde`, construite à la première demande puis gardée (une par monde). */
+/** Plage de cases [i0, i1] × [j0, j1] du voisinage d'une boîte (emprise d'un prisme élargie du dégagement), bornée à la grille. */
+function plage(g: GrilleNav, b: { x0: number; z0: number; x1: number; z1: number }): [number, number, number, number] {
+  const d = DEGAGEMENT_NAV_M;
+  return [
+    Math.max(0, Math.floor((b.x0 - d - g.x0) / PAS_NAV_M)), Math.min(g.nx - 1, Math.floor((b.x1 + d - g.x0) / PAS_NAV_M)),
+    Math.max(0, Math.floor((b.z0 - d - g.z0) / PAS_NAV_M)), Math.min(g.nz - 1, Math.floor((b.z1 + d - g.z0) / PAS_NAV_M)),
+  ];
+}
+
+/** Rouvre les cases de la plage selon les seules bornes du monde (avant que les prismes voisins ne les referment). */
+function ouvrirPlage(g: GrilleNav, monde: Monde, [i0, i1, j0, j1]: [number, number, number, number]): void {
+  const b = monde.bornes;
+  for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+    const x = g.x0 + (i + 0.5) * PAS_NAV_M, z = g.z0 + (j + 0.5) * PAS_NAV_M;
+    g.libre[i + j * g.nx] = x > b.x0 + 1 && x < b.x1 - 1 && z > b.z0 + 1 && z < b.z1 - 1 ? 1 : 0;
+  }
+}
+
+/** Ferme les cases de la plage que le prisme occupe ou frôle (rien s'il est à terre, cases au fond de sa brèche épargnées). */
+function fermerPar(g: GrilleNav, pr: Prisme, [i0, i1, j0, j1]: [number, number, number, number]): void {
+  if (pr.h <= 0.05) return;
+  const d = DEGAGEMENT_NAV_M;
+  const c = pr.creux;
+  const anneaux = [pr.anneau, ...pr.trous];
+  for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+    const k = i + j * g.nx;
+    if (!g.libre[k]) continue;
+    const x = g.x0 + (i + 0.5) * PAS_NAV_M, z = g.z0 + (j + 0.5) * PAS_NAV_M;
+    // tout le disque de dégagement est dans la brèche : ni mur ni sol du bâtiment autour de la case
+    if (c && Math.hypot(x - c.x, z - c.z) <= c.r - d) continue;
+    let ferme = dedans(x, z, pr.anneau) && !pr.trous.some((t) => dedans(x, z, t));
+    for (const a of anneaux) {
+      if (ferme) break;
+      for (let u = 0, v = a.length - 1; u < a.length; v = u++) {
+        if (distSegment(x, z, a[v][0], a[v][1], a[u][0], a[u][1]) < d) { ferme = true; break; }
+      }
+    }
+    if (ferme) g.libre[k] = 0;
+  }
+}
+
+/** Note la hauteur et la brèche du prisme `k` dans `etats`. Vrai si elles ont changé depuis le dernier calcul. */
+function noterEtat(g: GrilleNav, pr: Prisme, k: number): boolean {
+  const e = g.etats, o = 4 * k;
+  const h = pr.h, cx = pr.creux?.x ?? 0, cz = pr.creux?.z ?? 0, cr = pr.creux?.r ?? 0;
+  if (e[o] === h && e[o + 1] === cx && e[o + 2] === cz && e[o + 3] === cr) return false;
+  e[o] = h;
+  e[o + 1] = cx;
+  e[o + 2] = cz;
+  e[o + 3] = cr;
+  return true;
+}
+
+/**
+ * Tient la grille à jour des bâtiments détruits, des brèches et des bâtiments relevés (événements de match-evenements.ts) : seules les
+ * cases autour d'un prisme qui a changé sont recalculées, contre tous les prismes qui les touchent.
+ */
+function actualiserGrille(g: GrilleNav, monde: Monde): void {
+  monde.prismes.forEach((pr, k) => {
+    if (!noterEtat(g, pr, k)) return;
+    const zone = plage(g, pr.boite);
+    ouvrirPlage(g, monde, zone);
+    const [i0, i1, j0, j1] = zone;
+    for (const autre of monde.prismes) {
+      const [a0, a1, b0, b1] = plage(g, autre.boite);
+      if (a1 < i0 || a0 > i1 || b1 < j0 || b0 > j1) continue;
+      fermerPar(g, autre, [Math.max(i0, a0), Math.min(i1, a1), Math.max(j0, b0), Math.min(j1, b1)]);
+    }
+  });
+}
+
+/**
+ * Grille de navigation de `monde`, construite à la première demande puis gardée (une par monde), et mise à jour à chaque demande des
+ * bâtiments qui ont changé depuis.
+ */
 export function grilleNav(monde: Monde): GrilleNav {
   const deja = GRILLES.get(monde);
-  if (deja) return deja;
+  if (deja) {
+    actualiserGrille(deja, monde);
+    return deja;
+  }
   const b = monde.bornes;
   const nx = Math.max(1, Math.ceil((b.x1 - b.x0) / PAS_NAV_M)), nz = Math.max(1, Math.ceil((b.z1 - b.z0) / PAS_NAV_M));
   const n = nx * nz;
-  const libre = new Uint8Array(n);
-  for (let j = 0; j < nz; j++) for (let i = 0; i < nx; i++) {
-    const x = b.x0 + (i + 0.5) * PAS_NAV_M, z = b.z0 + (j + 0.5) * PAS_NAV_M;
-    libre[i + j * nx] = x > b.x0 + 1 && x < b.x1 - 1 && z > b.z0 + 1 && z < b.z1 - 1 ? 1 : 0;
-  }
-  // chaque bâtiment ferme les cases de son emprise et de son voisinage immédiat
-  const d = DEGAGEMENT_NAV_M;
-  for (const pr of monde.prismes) {
-    if (pr.h <= 0.05) continue;
-    const i0 = Math.max(0, Math.floor((pr.boite.x0 - d - b.x0) / PAS_NAV_M)), i1 = Math.min(nx - 1, Math.floor((pr.boite.x1 + d - b.x0) / PAS_NAV_M));
-    const j0 = Math.max(0, Math.floor((pr.boite.z0 - d - b.z0) / PAS_NAV_M)), j1 = Math.min(nz - 1, Math.floor((pr.boite.z1 + d - b.z0) / PAS_NAV_M));
-    const anneaux = [pr.anneau, ...pr.trous];
-    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
-      const k = i + j * nx;
-      if (!libre[k]) continue;
-      const x = b.x0 + (i + 0.5) * PAS_NAV_M, z = b.z0 + (j + 0.5) * PAS_NAV_M;
-      let ferme = dedans(x, z, pr.anneau) && !pr.trous.some((t) => dedans(x, z, t));
-      for (const a of anneaux) {
-        if (ferme) break;
-        for (let u = 0, v = a.length - 1; u < a.length; v = u++) {
-          if (distSegment(x, z, a[v][0], a[v][1], a[u][0], a[u][1]) < d) { ferme = true; break; }
-        }
-      }
-      if (ferme) libre[k] = 0;
-    }
-  }
   const g: GrilleNav = {
-    x0: b.x0, z0: b.z0, nx, nz, libre, g: new Float64Array(n), parent: new Int32Array(n), vu: new Uint32Array(n), ferme: new Uint32Array(n), tampon: 0,
+    x0: b.x0, z0: b.z0, nx, nz, libre: new Uint8Array(n), g: new Float64Array(n), parent: new Int32Array(n), vu: new Uint32Array(n),
+    ferme: new Uint32Array(n), tampon: 0, etats: new Float64Array(4 * monde.prismes.length),
   };
+  ouvrirPlage(g, monde, [0, nx - 1, 0, nz - 1]);
+  // chaque bâtiment ferme les cases de son emprise et de son voisinage immédiat
+  monde.prismes.forEach((pr, k) => {
+    noterEtat(g, pr, k);
+    fermerPar(g, pr, plage(g, pr.boite));
+  });
   GRILLES.set(monde, g);
   return g;
 }

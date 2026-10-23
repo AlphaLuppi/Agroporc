@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { lireCachettes, type FichierCachettes } from "../agroparc3d/cachettes";
 import type { Building, SceneData } from "../agroparc3d/types";
 import { cachettesDansAnneau } from "./avion";
-import { construireMonde, pointsApparition, type Monde } from "./collision";
+import { construireMonde, creuserBatiment, detruireBatiment, pointsApparition, releverBatiments, type Monde } from "./collision";
 import { ROND_POINT, ZONE_APPARITION } from "./zones";
 import type { Vec3 } from "./protocole";
 import {
@@ -501,6 +501,59 @@ describe("silhouette de touche selon la pose", () => {
 });
 
 // ---------- chemins sur la vraie carte ----------
+
+describe("bâtiments détruits et brèches (événements du tigre géant)", () => {
+  /** Indice du mur dans `monde(MUR)` : après les deux plots. */
+  const ID_MUR = PLOTS.length;
+  /** Le chemin de (0, 8) à (0, −8) passe-t-il par le mur (|x| < 10, |z| < 1) ? */
+  const traverse = (ch: [number, number][] | null) => !!ch && ch.some(([x, z]) => Math.abs(x) < 10 && Math.abs(z) < 1.5);
+  const chemin = (m: Monde) => chercherChemin(grilleNav(m), 0, 8, 0, -8);
+
+  it("mur détruit : le chemin passe tout droit. Mur relevé (nouveau match) : il le contourne de nouveau", () => {
+    const m = monde(MUR);
+    expect(traverse(chemin(m))).toBe(false);
+    expect(detruireBatiment(m, ID_MUR)).toBe(true);
+    const droit = chemin(m)!;
+    expect(droit.every(([x]) => Math.abs(x) < 3)).toBe(true);
+    releverBatiments(m);
+    expect(traverse(chemin(m))).toBe(false);
+  });
+
+  it("une brèche assez large ouvre un passage, une brèche étroite non", () => {
+    const large = monde(MUR);
+    expect(traverse(chemin(large))).toBe(false);
+    expect(creuserBatiment(large, ID_MUR, 0, 0, 4)).toBe("breche");
+    expect(traverse(chemin(large))).toBe(true);
+    const etroite = monde(MUR);
+    expect(creuserBatiment(etroite, ID_MUR, 0, 0, 1)).toBe("breche");
+    expect(traverse(chemin(etroite))).toBe(false);
+  });
+
+  it("ligne de vue : un joueur à 15 m derrière un mur détruit alerte le tigre tapi", () => {
+    const m = monde(MUR);
+    const t = tapi(m);
+    t.p = [0, 0, 5];
+    expect(tourner(t, env(m, [joueur("a", 0, -10)]), T0, 300).ev).toEqual([]);
+    detruireBatiment(m, ID_MUR);
+    expect(tourner(t, env(m, [joueur("a", 0, -10)]), T0 + 300, 300).ev).toEqual([{ type: "alerte", cible: "a" }]);
+  });
+
+  it("collision : le tigre qui attaque passe par la brèche plutôt que de contourner le mur", () => {
+    const m = monde(MUR);
+    creuserBatiment(m, ID_MUR, 0, 0, 4);
+    const t = tapi(m);
+    t.p = [0, 0, 8];
+    blesserTigre(t, 10, "a", T0);
+    t.prochainBondT = Infinity;
+    const e = env(m, [joueur("a", 0, -8)]);
+    let parLaBreche = false;
+    const { ev } = tourner(t, e, T0, TIGRE.alerteMs + 3000, () => {
+      if (Math.abs(t.p[2]) < 0.5 && Math.abs(t.p[0]) < 4) parLaBreche = true;
+    });
+    expect(parLaBreche).toBe(true);
+    expect(ev.some((x) => x.type === "coup")).toBe(true);
+  });
+});
 
 describe("chemins autour des bâtiments de scene.json", () => {
   const scene = JSON.parse(readFileSync("public/agroparc/scene.json", "utf8")) as SceneData;
