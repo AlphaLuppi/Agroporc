@@ -46,7 +46,7 @@ Le serveur `serveur-fps` arbitre le tigre, comme Elsa et les voitures PNJ : appa
 
 *Choix de l'auteur* pour les valeurs. Toutes sont des constantes nommées et ajustables.
 
-- **Vie** : 2 500 PV, sans régénération en combat. Pas de bouclier. Le fusil d'assaut (`STATS` de `armes.ts` : 22 dégâts toutes les 0,10 s, chargeur de 30) inflige 220 dégâts par seconde au corps : il faut environ 11 s de tir continu et 4 chargeurs, recharges comprises, pour l'abattre seul. Il faut donc le tenir à distance ou s'y mettre à plusieurs.
+- **Vie** : 2 500 PV, sans régénération en combat. Pas de bouclier. Le fusil d'assaut (`STATS` de `armes.ts` : 22 dégâts toutes les 0,10 s, chargeur de 30) inflige 220 dégâts par seconde au corps, avant la chute de dégâts à distance. Il faut 114 balles au corps, soit 4 chargeurs : 11,4 s de tir et 3 recharges de 2,2 s, environ 18 s pour un joueur seul qui touche à chaque balle. Il faut donc le tenir à distance ou s'y mettre à plusieurs.
 - **Zones** : tête et corps, avec le multiplicateur de tête des armes existantes. La silhouette de touche suit la pose (couché, debout, en course).
 - **Machine d'états** :
   1. **Tapi** dans sa cachette après l'atterrissage, posture basse, immobile.
