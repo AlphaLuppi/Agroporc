@@ -2,8 +2,8 @@
  * Boucle de jeu de l'arène FPS : vue à la première personne sur le canvas de la vue Palantir.
  * Assemble les modules purs (mouvement prédit, armes, équipement, tir, couteau, véhicules, killcam, monde dynamique, visibilité,
  * interpolation) et le rendu three.js (décor de lib/agroparc3d/decor.ts, avatars, arme en main, effets, monde dynamique, bloom) + les sons.
- * `jeu.ts` ORCHESTRE : la logique vit dans les modules purs testés (`jeu-equipement`, `jeu-killcam`, `jeu-monde`, `jeu-vehicule`,
- * `jeu-visee`, `jeu-radar`, `visibilite`, `melee`, `tir`…).
+ * `jeu.ts` ORCHESTRE : la logique vit dans les modules purs testés (`jeu-equipement`, `jeu-killcam`, `jeu-monde`, `jeu-tigres`,
+ * `jeu-vehicule`, `jeu-visee`, `jeu-radar`, `visibilite`, `melee`, `tir`…). Les tigres et l'avion (v3) sont dessinés par `rendu-tigres.ts`.
  *
  * Le mouvement est autoritaire côté client (prédiction, aucune réconciliation, voiture comprise pour son conducteur) : l'état est envoyé
  * à `JEU.etatHz` (`conduite` à la place d'`etat` pour le conducteur, `etat` à `JEU.etatPassagerHz` pour un passager), le serveur borne
@@ -23,7 +23,7 @@
  *
  * Les types du contrat avec l'hôte (HudEtat, JeuEvenement, JeuCallbacks, JeuHandle…) sont dans `jeu-types.ts` et réexportés ici.
  * Spec : docs/superpowers/specs/2026-10-22-agroparc-fps-design.md, 2026-10-22-arene-v2-design.md (§6.2, §13),
- * 2026-10-23-arene-hud-design.md (§3)
+ * 2026-10-23-arene-hud-design.md (§3), 2026-10-23-arene-tigres-design.md (Rendu, Sort d'invocation, Réseau)
  */
 import * as THREE from "three";
 import type { SceneData } from "../agroparc3d/types";
@@ -50,9 +50,12 @@ import {
   creerArmeEnMain, creerAvatar, creerEffets, creerPostTraitement, type ArmeEnMain, type AvatarJoueur,
 } from "./rendu";
 import { creerMondeDynamique, type MondeDynamique } from "./rendu-monde";
+import { creerRenduTigres } from "./rendu-tigres";
+import { MondeTigres, coupDeMonTigre, tracerTigres, trouverTigreCouteau, type TigreClient } from "./jeu-tigres";
+import { hitboxTigre } from "./tigre-arene";
 import { creerFeux, type SourceFeu } from "./rendu-feux";
 import { creerChatVocal } from "./voix-rtc";
-import { creerSons } from "./sons";
+import { creerSons, type PositionSon } from "./sons";
 import { angleRelatif, anglesVers, fovVerticalDeg, lissage, panSon } from "./vue";
 import { TANGAGE_MAX, directionVisee, rotationCamera, tangageDeVue } from "./jeu-visee";
 import { ControleurArmes } from "./jeu-equipement";
@@ -217,6 +220,16 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
   /** s avant le prochain coup de klaxon du Truck Muche fou */
   let klaxonDans = 0.6;
   let distTitan = 0;
+
+  // ---------- tigres et avion (v3) ----------
+  const mondeTigres = new MondeTigres();
+  const renduTigres = creerRenduTigres(scene);
+  /** tigres interpolés à l'instant du rendu : cibles des tirs et des coups de couteau, sons */
+  let tigresVus = new Map<string, TigreClient>();
+  /** tigres de la dernière image dessinée (crochet de test : mesures du GLB comparées à la hitbox du même instant) */
+  let tigresDessines = tigresVus;
+  /** orange des giclées sur un tigre */
+  const COULEUR_TIGRE = "#ff9a3c";
 
   // ---------- état du joueur ----------
   const [cx, cz] = ROND_POINT.centre;
@@ -416,13 +429,15 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
 
   const _bouche = new THREE.Vector3();
 
-  /** Coup de couteau : `coup` au serveur (jamais `tir`), cadence de 0,5 s, pas de recul ni de traçante. */
+  /** Coup de couteau : `coup` au serveur (jamais `tir`), cadence de 0,5 s, pas de recul ni de traçante. Un tigre plus proche que le joueur visé est la cible. */
   function coupCouteau(): boolean {
     if (t < prochainDe("couteau")) return false;
     const o = oeil();
     const d = directionVisee(lacet, tangage, kick);
     const res = trouverCibleCouteau(monde, o, d, cibles(), client.id ?? "");
-    client.envoyer({ t: "coup", o, d, cible: res ? res.cible : null });
+    const tigre = trouverTigreCouteau(monde, o, d, mondeTigres.cibles(tigresVus, client.id));
+    const cible = tigre && (!res || tigre.distance < res.distance) ? tigre.id : res ? res.cible : null;
+    client.envoyer({ t: "coup", o, d, cible });
     prochains.set("couteau", t + COUTEAU.cadenceS);
     armeMain.coup();
     sons.coup(false);
@@ -490,6 +505,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
     const voituresDecl: { genre: "pnj" | "vehicule"; id: number; plomb: number }[] = [];
     const cumul = new Map<string, { degats: number; zone: Zone }>();
     const liste = cibles();
+    const listeTigres = mondeTigres.cibles(tigresVus, client.id);
     const tsVoitures = client.maintenantServeur();
     const vehiculesVus = [...vehiculesAffichees().values()];
     const maVoiture = vehicule.actif()?.vehicule ?? null;
@@ -501,8 +517,11 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
     let impactsAffiches = 0;
     dirs.forEach((d, i) => {
       const imp = tracerEffets(o, d, Math.min(a.portee, PORTEE_EFFETS_M), liste, client.id ?? "");
-      // (v3) le tigre robot ou un titan devant le premier joueur / mur touché
-      const monstre = toucheMonstre(o, d, imp.distance);
+      // un tigre largué devant le joueur, le mur ou la portée prend la balle (mes tigres alliés ne sont pas des cibles)
+      const tg = tracerTigres(o, d, imp.distance, listeTigres);
+      const limite = tg ? tg.distance : imp.distance;
+      // (v3) le tigre robot ou un titan devant le premier joueur, tigre largué ou mur touché
+      const monstre = toucheMonstre(o, d, limite);
       if (monstre) {
         const fin: Vec3 = [o[0] + d[0] * monstre.distance, o[1] + d[1] * monstre.distance, o[2] + d[2] * monstre.distance];
         effets.traçante(depart, fin, arme);
@@ -511,13 +530,22 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
         return;
       }
       // une voiture plus proche que le joueur (ou le mur) visé arrête la balle (v3 §4) ; l'occupant d'une voiture reste touchable à travers elle
-      const v = mondeJeu.impactVoiture(o, d, imp.distance, tsVoitures, vehiculesVus, maVoiture);
-      const occupantDe = (vid: number) => !!imp.cible && etats.get(imp.cible)?.vehicule?.id === vid;
+      const v = mondeJeu.impactVoiture(o, d, limite, tsVoitures, vehiculesVus, maVoiture);
+      const occupantDe = (vid: number) => !tg && !!imp.cible && etats.get(imp.cible)?.vehicule?.id === vid;
       if (v && !(v.genre === "vehicule" && occupantDe(v.id))) {
         const fin: Vec3 = [o[0] + d[0] * v.distance, o[1] + d[1] * v.distance, o[2] + d[2] * v.distance];
         effets.traçante(depart, fin, arme);
         voituresDecl.push({ genre: v.genre, id: v.id, plomb: i });
         if (impactsAffiches < 5) { impactsAffiches++; effets.impact(fin, [-d[0], -d[1], -d[2]], "#ffd9a0"); }
+        return;
+      }
+      if (tg) {
+        effets.traçante(depart, [o[0] + d[0] * tg.distance, o[1] + d[1] * tg.distance, o[2] + d[2] * tg.distance], arme);
+        touchesDecl.push({ cible: tg.id, zone: tg.zone, plomb: i });
+        const dg = degatsPlomb(arme, tg.zone, tg.distance);
+        const c = cumul.get(tg.id);
+        if (c) { c.degats += dg; if (tg.zone === "tete") c.zone = "tete"; }
+        else cumul.set(tg.id, { degats: dg, zone: tg.zone });
         return;
       }
       const fin = imp.point;
@@ -625,6 +653,52 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
     }
     client.envoyer({ t: "siege", siege: cible });
     attendreReponseVehicule();
+  }
+
+  // ---------- sort d'invocation ----------
+  /** Lance le sort (touche « invoquer ») : il faut une charge, être vivant, à pied et hors entracte. Le serveur revalide tout. */
+  function invoquer(): boolean {
+    // le pilote du titan ne lance pas le sort (le serveur le refuse aussi)
+    if (!peutAgir() || enKillcam() || entracte || vehicule.actif() || pilote() || !mondeTigres.aCharge()) return false;
+    client.envoyer({ t: "invoquer" });
+    return true;
+  }
+
+  /** Position d'un son par rapport à la caméra (distance et panoramique). */
+  function placeSon(p: Vec3): PositionSon {
+    const dx = p[0] - camPos[0], dz = p[2] - camPos[2];
+    return { distance: Math.hypot(dx, p[1] - camPos[1], dz), pan: panSon(camLacet, dx, dz) };
+  }
+
+  /** Messages des tigres (v3) : sons, giclées, retour de touche de mes tirs sur un tigre, effondrement à la mort, fumée de l'invocation. */
+  function recevoirTigre(m: Extract<MessageServeur, { t: "tigre" }>) {
+    switch (m.evenement) {
+      case "apparu":
+        if (m.genre === "allie" && !enReplay) renduTigres.fumee(m.p);
+        break;
+      case "alerte":
+        if (!enReplay) sons.rugissement(placeSon(m.p));
+        break;
+      case "touche":
+        if (!enReplay && m.par) {
+          const e = tigresVus.get(m.id);
+          const p = e?.p ?? m.p;
+          effets.eclaboussure([p[0], p[1] + (m.zone === "tete" ? 1.0 : 0.75), p[2]], COULEUR_TIGRE);
+        }
+        // retour de touche CONFIRMÉ, comme un `degats` (§13.2.1) : le serveur donne les dégâts réellement subis et les PV restants
+        if (m.par && m.par === client.id && m.degats !== undefined) {
+          sons.touche(m.zone === "tete");
+          cb.evenement({ type: "confirme", cible: m.id, degats: m.degats, absorbe: 0, zone: m.zone ?? "corps", tue: (m.pv ?? 1) <= 0 });
+        }
+        break;
+      case "mort":
+        renduTigres.mourir(m.id);
+        if (!enReplay) sons.plainte(placeSon(m.p));
+        if (m.par && m.par === client.id) sons.kill();
+        break;
+      default:
+        break;
+    }
   }
 
   function entrerVehicule(id: number, siege: Siege, etat: EtatVehicule) {
@@ -784,6 +858,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
           vivant = false;
           evince = true;
           quitterVehicule();
+          // le serveur a retiré la charge du sort à la sortie de l'arène, son annonce peut ne jamais nous parvenir
+          mondeTigres.perdreCharge();
           // onglet caché : on attend son retour, sinon on réapparaîtrait en cible immobile toutes les 20 s
           if (!document.hidden) reentrer();
         }
@@ -796,6 +872,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
         interp.ajouter({ ts: m.ts, j: m.j });
         kc.alimenter(m.ts, m.j, m.vehicules);
         mondeJeu.alimenterVehicules(m.ts, m.vehicules);
+        mondeTigres.alimenter(m.ts, m.tigres);
         jm.alimenter(m.ts, m.monstres);
         const s = m.j.find((x) => x.id === client.id);
         if (s && vivant) {
@@ -880,7 +957,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
             if (c) effets.eclaboussure(c, couleurDe(m.cible));
             distants.get(m.cible)?.avatar.toucher();
           }
-          if (m.par === client.id) toucheConfirmee(m);
+          // les coups de patte de mon tigre allié me sont crédités (`par` = moi) : ce ne sont pas des touches de mes armes
+          if (m.par === client.id && !coupDeMonTigre(m.src, oeil(), tigresVus, client.id)) toucheConfirmee(m);
         }
         break;
       }
@@ -950,6 +1028,17 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
       case "descente":
         // sortie volontaire ou expulsion (nouveau match) : on se téléporte, sans toucher aux munitions
         quitterVehicule(m.p);
+        break;
+      case "avion":
+        mondeTigres.recevoir(m, client.id);
+        break;
+      case "tigre":
+        mondeTigres.recevoir(m, client.id);
+        recevoirTigre(m);
+        break;
+      case "sort":
+        // sort gagné : carillon de l'arme ramassée (l'icône du sort apparaît au HUD)
+        if (mondeTigres.recevoir(m, client.id) && m.evenement === "gagne") sons.ramassage("arme");
         break;
       case "evenement":
         jm.majEvenement(m);
@@ -1061,6 +1150,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
         case "interagir": interagir(); break;
         case "siege": changerSiege(); break;
         case "passer": if (kc.actif() && kc.phase() === "rejeu") kc.passer(); break;
+        case "invoquer": invoquer(); break;
         case "zoomLunette": if (lunetteActive()) changerZoom(1, true); break;
         case "parler": voix.parler(true); break;
         default: break;
@@ -1246,6 +1336,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
       voix: !voix.actif() ? "" : voix.emet() ? "emet" : "pret",
       voixParlants: voix.actif() ? voix.parlants().map(pseudoDe).join(" · ") : "",
       killcamPhase: phase === "rejeu" || phase === "carte" ? phase : "",
+      sort: vivant && mondeTigres.aCharge(),
       titan: pilote(),
     };
   }
@@ -1465,6 +1556,26 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
     }
   }
 
+  /**
+   * Tigres (interpolés comme les joueurs) et avion (à l'horloge serveur, sa trajectoire est connue d'avance) : rendu, sons des actions et
+   * moteur de l'avion. Pendant le rejeu de la killcam, rien du présent ne se superpose au passé : tigres, avion et leurs sons sont coupés.
+   */
+  function majTigres(dt: number) {
+    const tsServeur = client.maintenantServeur();
+    const ts = tsServeur - JEU.interpolationMs;
+    tigresVus = mondeTigres.tigresA(ts);
+    tigresDessines = tigresVus;
+    const av = mondeTigres.avionA(tsServeur);
+    renduTigres.maj(tigresVus, av, ts, dt, couleurDe, pseudoDe, !enReplay);
+    const sonsTigres = mondeTigres.sons(tigresVus);
+    if (enReplay) { sons.avion(null); return; }
+    for (const s of sonsTigres) {
+      if (s.son === "rugissement") sons.rugissement(placeSon(s.p));
+      else sons.patte(placeSon(s.p));
+    }
+    sons.avion(av ? placeSon(av.p) : null);
+  }
+
   function reconnexion() {
     // la connexion a été refaite (coupure réseau) : nouvel identifiant, plus dans l'arène
     if (client.id !== null && client.id !== idConnu) {
@@ -1481,6 +1592,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
       titan.sortir();
       jm.reinitialiser();
       mondeJeu.reinitialiser();
+      mondeTigres.reinitialiser();
       visib.vider();
       suiviRadar.vider();
       client.envoyer({ t: "rejoindre", principale: equipSuivant.principale, secondaire: equipSuivant.secondaire });
@@ -1721,13 +1833,17 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
     // --- télémétrie de la lunette : la distance de ce qui est sous le réticule (un rayon par image, seulement en lunette) ---
     if (lunetteAct && a) {
       const o = oeil();
-      const imp = tracer(monde, o, directionVisee(lacet, tangage, kick), a.portee, cibles(), client.id ?? "");
-      distanceVisee = imp.distance < a.portee - 0.01 ? Math.round(imp.distance) : -1;
+      const dv = directionVisee(lacet, tangage, kick);
+      const imp = tracer(monde, o, dv, a.portee, cibles(), client.id ?? "");
+      const tg = tracerTigres(o, dv, imp.distance, mondeTigres.cibles(tigresVus, client.id));
+      const dist = tg ? tg.distance : imp.distance;
+      distanceVisee = dist < a.portee - 0.01 ? Math.round(dist) : -1;
     } else distanceVisee = -1;
 
     // --- joueurs distants, monde dynamique et effets ---
     majDistants(dt);
     majMondeDynamique(dt);
+    majTigres(dt);
     majVoix();
     majMonstres(dt);
     effets.maj(dt);
@@ -1810,6 +1926,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
       sons.mur(false);
       sons.glisse(false);
       sons.moteur(null);
+      sons.avion(null);
       sons.dispose();
       voix.dispose();
       terminerKillcam();
@@ -1817,6 +1934,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
       suiviRadar.vider();
       for (const id of [...distants.keys()]) retirerAvatar(id);
       dyn.dispose();
+      renduTigres.dispose();
       feux.dispose();
       rm.dispose();
       impactsBalles.dispose();
@@ -1859,9 +1977,29 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
       teleporter(p) { moi = etatInitial(p); },
       regarder(l, tg) { lacet = l; tangage = borne(tg, -TANGAGE_MAX, TANGAGE_MAX); },
       tirerVers(id) {
-        const e = etats.get(id);
-        if (!e || !peutAgir()) return false;
+        if (!peutAgir()) return false;
         const o = oeil();
+        // tigres échantillonnés à l'instant du tir, comme un joueur à 60 images par seconde. Sous un rendu lent (tests sans GPU), ceux
+        // de la dernière image dateraient de plusieurs centaines de ms : un tigre qui court serait visé hors de la fenêtre de
+        // compensation du serveur (`REWIND_MAX_MS`), et tous les tirs rejetés
+        tigresVus = mondeTigres.tigresA(client.maintenantServeur() - JEU.interpolationMs);
+        // tigre : centre de la tête de sa silhouette de touche (pose courante)
+        const tg = tigresVus.get(id);
+        if (tg) {
+          const h = hitboxTigre(tg);
+          const r = anglesVers(h.c[0] - o[0], h.c[1] - o[1], h.c[2] - o[2]);
+          lacet = r.lacet;
+          tangage = r.tangage;
+          kick = 0;
+          // tir en lunette, comme un joueur qui vise : le sniper sans lunette se disperse depuis la v3 (`dispersionTir`)
+          const vise = viseMaintenu;
+          viseMaintenu = true;
+          const parti = tirer(true);
+          viseMaintenu = vise;
+          return parti;
+        }
+        const e = etats.get(id);
+        if (!e) return false;
         const r = anglesVers(e.p[0] - o[0], e.p[1] + 1.2 - o[1], e.p[2] - o[2]);
         lacet = r.lacet;
         tangage = r.tangage;
@@ -1906,6 +2044,24 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
           monstres: monstresImage, evenement: jm.evenement(), titan: jm.titan(), pilote: pilote(),
         };
       },
+      tigres(mesures = false) {
+        const ts = client.maintenantServeur();
+        // avec les mesures du GLB : les tigres de l'image dessinée (`tirerVers` a pu rééchantillonner `tigresVus` depuis)
+        return {
+          tigres: [...(mesures ? tigresDessines : tigresVus).values()].map((tg) => {
+            const h = hitboxTigre(tg);
+            return {
+              id: tg.id, genre: tg.genre, lanceur: tg.lanceur ?? null, p: tg.p, cap: tg.cap, etat: tg.etat, pose: tg.pose, pv: tg.pv,
+              action: tg.action ?? null, v: tg.v, centre: [(h.a[0] + h.b[0]) / 2, (h.a[1] + h.b[1]) / 2, (h.a[2] + h.b[2]) / 2],
+              hitbox: h, rendu: mesures ? renduTigres.mesures(tg.id) : null,
+            };
+          }),
+          avion: mondeTigres.avionA(ts),
+          charge: mondeTigres.aCharge(),
+          modele: renduTigres.modeleCharge(),
+        };
+      },
+      invoquer() { forceActif = true; return invoquer(); },
     },
   };
 }

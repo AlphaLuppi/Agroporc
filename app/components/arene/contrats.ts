@@ -33,8 +33,8 @@ export type EvenementHud =
 /** Ma dernière mort ; remise à `null` sur `apparition`. */
 export interface DerniereMort { par: string; parCouleur: string; arme: ArmeId; cause: CauseMort; zone: Zone; tueur: InfoTueur | null }
 
-/** Fil d'annonces du HUD (4 au plus, 8 s chacune). */
-export interface Annonce { id: number; texte: string; genre: "elsa" | "info" }
+/** Fil d'annonces du HUD (4 au plus, 8 s chacune). `tigre` : largage et tigre abattu (v3), aussi affichés en toast. */
+export interface Annonce { id: number; texte: string; genre: "elsa" | "info" | "tigre" }
 /** Toast de bonus (j'ai pris le cadeau d'Elsa). */
 export interface Bonus { id: number; genre: "soin" | "arme"; arme?: ArmeSpecialeId }
 /**

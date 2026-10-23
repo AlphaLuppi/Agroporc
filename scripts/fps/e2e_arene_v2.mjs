@@ -20,6 +20,8 @@
  * 12. aucune erreur JavaScript ni `erreur` du serveur, aucune WebSocket coupée en partie
  *
  * Usage : node scripts/fps/e2e_arene_v2.mjs        (Node 22 ; Playwright : `npm i --no-save playwright` ou PLAYWRIGHT_DIR=/dossier/avec/node_modules)
+ * L'avion des tigres est neutralisé sur le serveur lancé par le script (`PDJ_FPS_AVION_*` à 10 min). Un serveur déjà lancé (E2E_WS) doit
+ * l'être de même, sinon un tigre largué peut gâcher une étape. Les tigres ont leur propre scénario : scripts/fps/e2e_arene_tigres.mjs.
  * Variables : E2E_OUT (captures, défaut <tmp>/pdj-e2e-arene-v2), E2E_URL (Next déjà lancé : on ne le démarre pas),
  *             E2E_WS (serveur déjà lancé), E2E_WS_PORT (port imposé au serveur lancé par le script, à faire coïncider avec NEXT_PUBLIC_FPS_WS_URL d'un Next déjà lancé),
  *             E2E_PAGE (page qui monte le code « myrtille », défaut une 404 : aucune lecture de la base), E2E_HEADED=1,
@@ -312,7 +314,13 @@ try {
     if (build.status !== 0) throw new Error(`build de serveur-fps en échec :\n${build.stdout}${build.stderr}`);
     const srv = lancer("serveur-fps", process.execPath, ["dist/index.js"], {
       cwd: join(RACINE, "serveur-fps"),
-      env: { ...process.env, PORT: String(portWs), PDJ_FPS_ELSA_MIN_MS: "6000", PDJ_FPS_ELSA_MAX_MS: "7000", SCENE_JSON: join(RACINE, "public/agroparc/scene.json") },
+      // l'avion des tigres passerait toutes les 90 à 180 s, les événements (Truck Muche fou, tigre géant) au bout de 45 à 70 s : neutralisés
+      // ici, l'avion est testé par e2e_arene_tigres.mjs
+      env: {
+        ...process.env, PORT: String(portWs), PDJ_FPS_ELSA_MIN_MS: "6000", PDJ_FPS_ELSA_MAX_MS: "7000",
+        PDJ_FPS_AVION_MIN_MS: "600000", PDJ_FPS_AVION_MAX_MS: "600000", PDJ_FPS_EVT_MIN_MS: "600000", PDJ_FPS_EVT_MAX_MS: "600000",
+        SCENE_JSON: join(RACINE, "public/agroparc/scene.json"),
+      },
     });
     await attendreHttp(`http://localhost:${portWs}/sante`, 20_000, "serveur-fps").catch((e) => { throw new Error(`${e.message}\n${srv.journal.join("")}`); });
   }

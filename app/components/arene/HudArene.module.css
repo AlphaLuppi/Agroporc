@@ -226,9 +226,21 @@
 .filMoi { background: color-mix(in srgb, var(--ag-amber) 14%, var(--ag-hud-fond)) !important; border-right-color: var(--ag-amber) !important; }
 .filAnnonce { justify-content: flex-end; color: var(--ag-ink); border-right-color: var(--ag-amber) !important; white-space: normal !important; text-align: right; }
 .filAnnonce[data-genre="info"] { border-right-color: var(--ag-cyan) !important; }
+.filAnnonce[data-genre="tigre"] { border-right-color: var(--ag-danger) !important; }
 @keyframes filEntree { from { opacity: 0; transform: translateX(calc(10 * var(--u))); } }
 /* fenêtre basse : 4 lignes au plus (les plus anciennes se retirent) */
 @media (max-height: 800px) { .fil > li:nth-last-child(n+5) { display: none; } }
+
+/* ---------- sort d'invocation (tigres, v3) : au-dessus du bloc vie ---------- */
+.sort {
+  width: calc(264 * var(--u)); padding: calc(6 * var(--u)) calc(12 * var(--u)); display: flex; align-items: center; gap: calc(10 * var(--u));
+  border-color: var(--ag-amber); animation: elsaPuce 0.6s ease-out;
+}
+.sortPatte { flex: 0 0 auto; width: calc(30 * var(--u)); height: calc(30 * var(--u)); fill: var(--ag-amber); }
+.sortTexte { display: flex; flex-direction: column; gap: calc(2 * var(--u)); flex: 1 1 auto; min-width: 0; }
+.sortTexte .label { color: var(--ag-amber); }
+.sortDetail { font-size: max(11px, calc(12 * var(--u))); color: var(--ag-ink-dim); letter-spacing: 0.06em; }
+.sortSansTouche { font-size: max(11px, calc(11 * var(--u))); color: var(--ag-ink-dim); }
 
 /* ---------- bloc vie (§5.1) ---------- */
 .vie { width: calc(264 * var(--u)); padding: calc(10 * var(--u)) calc(12 * var(--u)); display: flex; flex-direction: column; gap: calc(6 * var(--u)); }

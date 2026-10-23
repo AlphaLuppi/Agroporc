@@ -2,18 +2,21 @@
  * Serveur temps réel de l'arène FPS (vue Palantir) : HTTP `GET /sante` + WebSocket sur le même port,
  * une salle unique. Toute la logique de jeu est dans lib/fps/match.ts (pur) ; ce fichier ne fait que
  * l'I/O : connexions, anti-flood, origines, ping, boucle de tic à 60 Hz.
- * Spec : docs/superpowers/specs/2026-10-22-agroparc-fps-design.md (v1) et 2026-10-22-arene-v2-design.md (v2)
+ * Spec : docs/superpowers/specs/2026-10-22-agroparc-fps-design.md (v1), 2026-10-22-arene-v2-design.md (v2) et
+ * 2026-10-23-arene-tigres-design.md (v3 : avion, tigres, sort d'invocation)
  */
 import { existsSync, readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { resolve } from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
+import { lireCachettes, type FichierCachettes } from "../../lib/agroparc3d/cachettes";
 import type { SceneData } from "../../lib/agroparc3d/types";
 import { construireCircuits, flotte } from "../../lib/fps/circulation";
 import { construireMonde, pointsApparition } from "../../lib/fps/collision";
 import { ipClient } from "../../lib/fps/ip-client";
 import { Salle, type OptionsSalle, type Sortie } from "../../lib/fps/match";
 import { VERSION_PROTOCOLE, type MessageClient, type MessageServeur } from "../../lib/fps/protocole";
+import { capDeCachette } from "../../lib/fps/tigre-arene";
 import { EMPLACEMENTS_VOITURES, ROND_POINT, ZONE_APPARITION, positionElsa, trouverRondPoint } from "../../lib/fps/zones";
 
 const PORT = Number(process.env.PORT) || 8787;
@@ -37,19 +40,20 @@ const SPECTATEUR_INACTIF_MS = 15 * 60_000;
 const ORIGINES = (process.env.ORIGINES ?? "").split(",").map((o) => o.trim()).filter(Boolean)
   .map((o) => new RegExp(`^${o.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[^/]*")}$`));
 
-function cheminScene(): string {
+/** Fichier de données d'Agroparc : la variable `variable`, sinon `public/agroparc/` vu de serveur-fps ou de la racine, sinon à côté. */
+function cheminDonnees(nom: string, variable: string): string {
   const candidats = [
-    process.env.SCENE_JSON,
-    resolve(process.cwd(), "../public/agroparc/scene.json"),
-    resolve(process.cwd(), "public/agroparc/scene.json"),
-    resolve(process.cwd(), "scene.json"),
+    process.env[variable],
+    resolve(process.cwd(), `../public/agroparc/${nom}`),
+    resolve(process.cwd(), `public/agroparc/${nom}`),
+    resolve(process.cwd(), nom),
   ].filter((c): c is string => !!c);
   const trouve = candidats.find((c) => existsSync(c));
-  if (!trouve) throw new Error(`scene.json introuvable (SCENE_JSON). Essayé : ${candidats.join(", ")}`);
+  if (!trouve) throw new Error(`${nom} introuvable (${variable}). Essayé : ${candidats.join(", ")}`);
   return trouve;
 }
 
-const fichierScene = cheminScene();
+const fichierScene = cheminDonnees("scene.json", "SCENE_JSON");
 const scene = JSON.parse(readFileSync(fichierScene, "utf8")) as SceneData;
 const monde = construireMonde(scene);
 const apparitions = pointsApparition(scene, monde);
@@ -62,6 +66,16 @@ function dureeEnv(nom: string): number | undefined {
 // Elsa : intervalle surchargeable pour des tests de bout en bout déterministes (offre en quelques secondes au lieu de 20 à 50 s)
 const elsaMin = dureeEnv("PDJ_FPS_ELSA_MIN_MS");
 const elsaMax = dureeEnv("PDJ_FPS_ELSA_MAX_MS");
+// Avion des tigres : idem (un passage toutes les 90 à 180 s par défaut, quelques secondes pour les tests de bout en bout)
+const avionMin = dureeEnv("PDJ_FPS_AVION_MIN_MS");
+const avionMax = dureeEnv("PDJ_FPS_AVION_MAX_MS");
+/** Intervalle surchargé par l'environnement. Une seule des deux variables suffit, elle sert aux deux bornes. */
+const intervalleEnv = (min: number | undefined, max: number | undefined) =>
+  min !== undefined || max !== undefined ? { minMs: min ?? max!, maxMs: Math.max(min ?? 0, max ?? min!) } : undefined;
+// Cachettes du tigre (le cap du fichier est une rotation three, converti en convention lacet)
+const fichierCachettes = cheminDonnees("cachettes.json", "CACHETTES_JSON");
+const cachettes = lireCachettes(JSON.parse(readFileSync(fichierCachettes, "utf8")) as FichierCachettes)
+  .map((c) => ({ x: c.x, z: c.z, cap: capDeCachette(c.cap) }));
 const [elsaX, elsaZ] = positionElsa(scene);
 // Événements (v3) : délai avant chaque événement et type imposé, pour les tests de bout en bout
 const evtMin = dureeEnv("PDJ_FPS_EVT_MIN_MS");
@@ -71,14 +85,10 @@ const circuits = construireCircuits();
 const rondPoint = trouverRondPoint(scene) ?? ROND_POINT;
 const options: OptionsSalle = {
   zoneApparition: { centre: rondPoint.centre, ...ZONE_APPARITION },
-  elsa: {
-    x: elsaX, z: elsaZ,
-    intervalle: elsaMin !== undefined || elsaMax !== undefined
-      ? { minMs: elsaMin ?? elsaMax!, maxMs: Math.max(elsaMin ?? 0, elsaMax ?? elsaMin!) }
-      : undefined,
-  },
+  elsa: { x: elsaX, z: elsaZ, intervalle: intervalleEnv(elsaMin, elsaMax) },
   circulation: { circuits, voitures: flotte(circuits) },
   vehicules: EMPLACEMENTS_VOITURES,
+  tigres: { cachettes, intervalle: intervalleEnv(avionMin, avionMax) },
   // v3 : Truck Muche fou (départ du stand d'Elsa) et tigre robot (autour du rond-point) ; délais surchargeables pour les tests
   evenements: {
     truck: { x: elsaX, z: elsaZ },
@@ -240,7 +250,7 @@ const timerTic = setInterval(() => {
 }, TIC_MS);
 
 http.listen(PORT, "0.0.0.0", () => {
-  console.log(`Arène FPS : ws://0.0.0.0:${PORT} (scène ${fichierScene}, ${apparitions.length} points d'apparition, origines : ${ORIGINES.join(", ") || "toutes"})`);
+  console.log(`Arène FPS : ws://0.0.0.0:${PORT} (scène ${fichierScene}, ${apparitions.length} points d'apparition, ${cachettes.length} cachettes, origines : ${ORIGINES.join(", ") || "toutes"})`);
 });
 
 function arreter(): void {

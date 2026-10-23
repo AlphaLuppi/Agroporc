@@ -39,6 +39,11 @@ export interface OptionsServiceEvenements {
   /** attaque spéciale imposée au tigre et délai avant la première (tests, `PDJ_FPS_TIGRE_ATTAQUE`) */
   attaqueTigre?: "laser" | "saut" | "charge";
   premiereAttaqueMs?: number;
+  /**
+   * le tigre géant peut-il être annoncé maintenant ? Faux tant que l'avion des tigres largués survole l'arène ou qu'un tigre sauvage
+   * largué vit (match-tigres.ts) : l'annonce attend alors 5 s et réessaie, le Truck Muche fou n'est pas concerné
+   */
+  tigrePermis?: () => boolean;
 }
 
 const DT_MAX_S = 0.05;
@@ -74,7 +79,8 @@ const DEGAGEMENT_TIGRE_M = TIGRE_ROBOT.rayonCollision + 0.3;
 const DEGAGEMENT_TRUCK_M = 1.8;
 
 type Phase =
-  | { k: "attente"; t: number }
+  /** `type` : événement déjà tiré qui attend son tour (tigre géant retenu par un tigre largué, cf. `tigrePermis`) */
+  | { k: "attente"; t: number; type?: TypeEvenement }
   | { k: "annonce"; type: TypeEvenement; debutT: number }
   | {
       k: "truck"; finT: number; debutT: number; e: EtatVehicule; cible: string | null; cibleT: number; bloqueDepuis: number | null; reculJusqua: number;
@@ -481,11 +487,12 @@ export function creerServiceEvenements(ctx: ContexteSalle, opts: OptionsServiceE
       sorties.push(...ticTitan(maintenant));
       const ph = phase;
       if (ph.k === "attente") {
-        // jamais pendant le titan (un monstre à la fois), ni dans une arène vide
+        // jamais pendant le titan (un monstre à la fois), ni dans une arène vide, ni le tigre géant à côté d'un tigre largué
         if (maintenant >= ph.t) {
-          if (titan || !ctx.joueursEnJeu().length) ph.t = maintenant + 5_000;
+          const type = titan || !ctx.joueursEnJeu().length ? null : (ph.type ?? prochainType());
+          if (type === null) ph.t = maintenant + 5_000;
+          else if (type === "tigre" && opts.tigrePermis && !opts.tigrePermis()) { ph.t = maintenant + 5_000; ph.type = type; }
           else {
-            const type = prochainType();
             const debutT = maintenant + EVENEMENTS.annonceMs;
             phase = { k: "annonce", type, debutT };
             sorties.push({ a: "tous", m: { t: "evenement", type, phase: "annonce", debutT, finT: debutT + duree(type) } });
@@ -582,6 +589,10 @@ export function creerServiceEvenements(ctx: ContexteSalle, opts: OptionsServiceE
 
     estPilote(id) {
       return titan?.pilote === id;
+    },
+
+    tigreGeantEnCours() {
+      return phase?.k === "tigre" || (phase?.k === "annonce" && phase.type === "tigre");
     },
 
     liberer(j, maintenant) {

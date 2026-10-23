@@ -21,6 +21,7 @@ import EcranMort from "./hud/EcranMort";
 import FilEliminations from "./hud/FilEliminations";
 import FinDeMatch from "./hud/FinDeMatch";
 import GrandeCarte from "./hud/GrandeCarte";
+import IconeSort from "./hud/IconeSort";
 import InvitesAction from "./hud/InvitesAction";
 import Lunette from "./hud/Lunette";
 import BlocVoix from "./hud/BlocVoix";
@@ -213,6 +214,7 @@ export default function HudArene(p: PropsHudArene) {
         {combat && <FilEliminations fil={p.fil} annonces={p.annonces} />}
       </CoinHud>
       <CoinHud coin="bg" coinMinimap={coinMap} miniMap={miniMap}>
+        {combat && hud.sort && !hud.titan && <IconeSort touche={t("invoquer")} />}
         {combat && !hud.titan && (
           <BlocVie
             pv={hud.pv} bouclier={hud.bouclier} regen={hud.regen} accroupi={hud.accroupi} glisse={hud.glisse} mur={hud.mur}

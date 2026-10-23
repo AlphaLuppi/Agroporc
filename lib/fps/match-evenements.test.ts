@@ -65,6 +65,34 @@ function tirerSur(s: Salle, id: string, cible: string, point: Vec3, t: number): 
   return s.recevoir(id, { t: "tir", arme: a.arme as "sniper", o, d: [d], touches: [{ cible, zone: "corps", plomb: 0 }] }, t);
 }
 
+describe("cohabitation avec les tigres largués", () => {
+  const service = (s: Salle) => (s as unknown as { evenements: { tigreGeantEnCours(): boolean } }).evenements;
+
+  it("le tigre géant attend tant que `tigrePermis` est faux (avion ou tigre sauvage largué), puis est annoncé au plus 5 s après", () => {
+    const permis = { ok: false };
+    const s = salle({ forcerType: "tigre", tigrePermis: () => permis.ok }, ["a"]);
+    tenir(s, "a", [200, 0, 200]);
+    const r1 = avancer(s, T0, T0 + 12_000, (t) => rafraichir(s, ["a"], t));
+    expect(messages(r1.sorties, "evenement")).toEqual([]);
+    expect(service(s).tigreGeantEnCours()).toBe(false);
+    permis.ok = true;
+    const r2 = avancer(s, r1.t, r1.t + 5_100, (t) => rafraichir(s, ["a"], t));
+    expect(messages(r2.sorties, "evenement")).toEqual([expect.objectContaining({ type: "tigre", phase: "annonce" })]);
+    expect(service(s).tigreGeantEnCours()).toBe(true);
+    const r3 = avancer(s, r2.t, r2.t + EVENEMENTS.annonceMs + 200, (t) => rafraichir(s, ["a"], t));
+    expect(messages(r3.sorties, "evenement").map((e) => e.phase)).toEqual(["debut"]);
+    expect(service(s).tigreGeantEnCours()).toBe(true);
+  });
+
+  it("le Truck Muche fou ne dépend pas des tigres largués", () => {
+    const s = salle({ forcerType: "truck", tigrePermis: () => false }, ["a"]);
+    tenir(s, "a", [200, 0, 200]);
+    const r = avancer(s, T0, T0 + 100, (t) => rafraichir(s, ["a"], t));
+    expect(messages(r.sorties, "evenement")).toEqual([expect.objectContaining({ type: "truck", phase: "annonce" })]);
+    expect(service(s).tigreGeantEnCours()).toBe(false);
+  });
+});
+
 describe("événements : minuteur et annonces", () => {
   it("annonce l'événement à tous, le démarre `annonceMs` plus tard, le diffuse dans le snap puis le termine", () => {
     const s = salle({ forcerType: "truck" }, ["a"]);

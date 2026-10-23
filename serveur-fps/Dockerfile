@@ -1,6 +1,6 @@
 # Serveur temps réel de l'arène FPS. Contexte de build = RACINE du dépôt :
 #   docker build -f serveur-fps/Dockerfile -t pdj-fps .
-# (le serveur regroupe lib/fps et lib/agroparc3d, partagés avec le site, et lit public/agroparc/scene.json)
+# (le serveur regroupe lib/fps et lib/agroparc3d, partagés avec le site, et lit public/agroparc/scene.json et cachettes.json)
 
 # ---- 1. build : esbuild regroupe src/index.ts + lib/fps/* + ws en un seul dist/index.js ----
 FROM node:22-alpine AS build
@@ -18,10 +18,12 @@ RUN npm run typecheck && npm run build
 FROM node:22-alpine
 ENV NODE_ENV=production \
     PORT=8787 \
-    SCENE_JSON=/app/scene.json
+    SCENE_JSON=/app/scene.json \
+    CACHETTES_JSON=/app/cachettes.json
 WORKDIR /app
 COPY --from=build /depot/serveur-fps/dist/index.js ./index.js
 COPY public/agroparc/scene.json ./scene.json
+COPY public/agroparc/cachettes.json ./cachettes.json
 USER node
 EXPOSE 8787
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
