@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Test de bout en bout des tigres de l'arène FPS (protocole v3) : DEUX navigateurs Chromium headless contre un `serveur-fps` local, dont
+ * Test de bout en bout des tigres de l'arène FPS (protocole v5) : DEUX navigateurs Chromium headless contre un `serveur-fps` local, dont
  * l'avion passe toutes les 4 à 5 s (`PDJ_FPS_AVION_MIN_MS` / `PDJ_FPS_AVION_MAX_MS`), et un `next dev` local, pilotés par le crochet de
  * développement `window.__arene` (cf. app/components/Agroparc3D.tsx : `tigres()`, `invoquer()`, `tirerVers(id)` qui vise aussi un tigre).
  * Spec : docs/superpowers/specs/2026-10-23-arene-tigres-design.md (Tests et vérification)
@@ -17,7 +17,8 @@
  *
  * Usage : node scripts/fps/e2e_arene_tigres.mjs     (Node 22, Playwright : `npm i --no-save playwright` ou PLAYWRIGHT_DIR=/dossier/avec/node_modules)
  * Variables : celles de e2e_arene_v2.mjs (E2E_OUT, défaut <tmp>/pdj-e2e-arene-tigres, E2E_URL, E2E_WS, E2E_WS_PORT, E2E_PAGE, E2E_HEADED,
- *             E2E_GARDER, E2E_JUSQUA). Un serveur déjà lancé (E2E_WS) doit avoir un avion fréquent (PDJ_FPS_AVION_MIN_MS=4000, MAX=5000).
+ *             E2E_GARDER, E2E_JUSQUA). Un serveur déjà lancé (E2E_WS) doit avoir un avion fréquent (PDJ_FPS_AVION_MIN_MS=4000, MAX=5000)
+ *             et les événements neutralisés (PDJ_FPS_EVT_MIN_MS=600000, MAX=600000).
  * Code de sortie : 0 si toutes les étapes passent, 1 sinon.
  *
  * À savoir : le tigre sauvage a 2 500 PV et poursuit son agresseur. Les deux joueurs entrent au fusil à lunette (237 dégâts à la tête, sans
@@ -325,9 +326,10 @@ try {
     if (build.status !== 0) throw new Error(`build de serveur-fps en échec :\n${build.stdout}${build.stderr}`);
     const srv = lancer("serveur-fps", process.execPath, ["dist/index.js"], {
       cwd: join(RACINE, "serveur-fps"),
-      // avion toutes les 4 à 5 s (un seul tigre sauvage à la fois), Elsa neutralisée
+      // avion toutes les 4 à 5 s (un seul tigre sauvage à la fois), Elsa et événements (Truck Muche fou, tigre géant) neutralisés
       env: {
         ...process.env, PORT: String(portWs), PDJ_FPS_ELSA_MIN_MS: "600000", PDJ_FPS_ELSA_MAX_MS: "600000",
+        PDJ_FPS_EVT_MIN_MS: "600000", PDJ_FPS_EVT_MAX_MS: "600000",
         PDJ_FPS_AVION_MIN_MS: "4000", PDJ_FPS_AVION_MAX_MS: "5000", SCENE_JSON: join(RACINE, "public/agroparc/scene.json"),
       },
     });
