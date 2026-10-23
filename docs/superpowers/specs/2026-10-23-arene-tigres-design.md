@@ -27,7 +27,7 @@ Le serveur `serveur-fps` arbitre le tigre, comme Elsa et les voitures PNJ : appa
 
 - **Logique pure, testée** : `lib/fps/tigre-arene.ts` (état d'un tigre, machine d'états, attaques, fuite, sort), `lib/fps/avion.ts` (passage de l'avion, point et instant du largage).
 - **Service de salle** : `lib/fps/match-tigres.ts`, sur le modèle de `match-elsa.ts`, branché par `ContexteSalle` dans `lib/fps/match.ts` et assemblé dans `serveur-fps/src/index.ts`.
-- **Protocole** : `lib/fps/protocole.ts`, `VERSION_PROTOCOLE` passe de 2 à 3. Le serveur déployé sur `wss://pdj-fps.toam.tech` doit être redéployé avec la branche, sinon les clients reçoivent `erreur{version}`.
+- **Protocole** : `lib/fps/protocole.ts`, `VERSION_PROTOCOLE` passe de 2 à 3, puis à 5 à la fusion avec les événements de l'arène (section « Cohabitation avec le tigre géant »). Le serveur déployé sur `wss://pdj-fps.toam.tech` doit être redéployé avec la branche, sinon les clients reçoivent `erreur{version}`.
 - **Client** : rendu de l'avion, du parachute et des tigres dans `lib/fps/rendu-monde.ts` ou un module voisin, état dans `lib/fps/jeu-monde.ts`, HUD dans `app/components/arene/`.
 
 ## Avion et largage
@@ -51,7 +51,7 @@ Le serveur `serveur-fps` arbitre le tigre, comme Elsa et les voitures PNJ : appa
 - **Machine d'états** :
   1. **Tapi** dans sa cachette après l'atterrissage, posture basse, immobile.
   2. **Alerte** quand un joueur vivant entre à moins de 20 m avec ligne de vue, ou dès qu'il reçoit des dégâts. Il se tourne vers ce joueur.
-  3. **Attaque** : il poursuit le dernier joueur qui l'a blessé, sinon le plus proche en vue, à 10,5 m/s (sous le sprint des joueurs, 12,5 m/s).
+  3. **Attaque** : il poursuit le dernier joueur qui l'a blessé, sinon le plus proche en vue, à 10,5 m/s (sous le sprint des joueurs, 12,5 m/s), et s'arrête à 2,2 m de lui (`TIGRE.arretM`, 1,5 m avant le 2026-10-23, proposition validée par l'utilisateur), dans la portée du coup de patte.
      - Coup de patte à 2,5 m : 25 dégâts, toutes les 1,2 s.
      - Bond : annoncé 0,6 s à l'avance (il se ramasse, rugit), portée 6 à 10 m, 40 dégâts au contact, une fois toutes les 7 s.
      - Aucun coup ne dépasse 40 dégâts, donc aucun coup ne tue un joueur à 100 PV.
@@ -66,7 +66,7 @@ Le serveur `serveur-fps` arbitre le tigre, comme Elsa et les voitures PNJ : appa
 *Choix de l'auteur* pour toute cette section.
 
 - **Gain** : une charge, au joueur qui tue le tigre sauvage. Au plus une charge à la fois. Elle est perdue à la mort du joueur et à la fin du match.
-- **Lancer** : touche `T` par défaut, modifiable dans le réglage des touches (`touches.ts`, action « invoquer »). Le HUD montre l'icône du sort quand une charge est disponible.
+- **Lancer** : touche `G` par défaut, modifiable dans le réglage des touches (`touches.ts`, action « invoquer »). C'était `T` avant la fusion avec la v3 de l'arène, où `T` appuie pour parler au chat vocal. Le HUD montre l'icône du sort quand une charge est disponible.
 - **Tigre allié** : il apparaît à 2 m du lanceur avec une courte animation de fumée. Il dure 30 s ou jusqu'à sa mort.
   - 500 PV, que les autres joueurs peuvent abattre : environ 2,3 s de fusil d'assaut au corps.
   - Il suit le lanceur à 3 à 6 m.
@@ -89,6 +89,30 @@ Le serveur `serveur-fps` arbitre le tigre, comme Elsa et les voitures PNJ : appa
 - Le snap porte les tigres présents : identifiant, sauvage ou allié (avec le lanceur), position, cap, état, PV, et l'instant de début de l'action en cours (bond, coup) pour que le client cale ses animations.
 - Messages nouveaux : `avion` (passage, trajectoire, largage), `tigre` (apparu, alerte, mort, parti), `sort` (gagné, lancé, perdu).
 - Les tirs et coups de couteau sur un tigre passent par la validation existante, avec des positions de tigre rejouées sur l'historique serveur pour la compensation de latence. La cible d'une touche est l'identifiant du tigre.
+
+## Cohabitation avec le tigre géant
+
+Fusion du 2026-10-23 avec `origin/main`, qui apporte l'arène v3 et les événements de Kilian (spec `2026-10-24-arene-evenements-design.md` : Truck Muche fou, tigre géant, titan, bâtiments destructibles avec brèches). Le tigre géant reste le boss des événements. Les tigres de ce document restent les tigres largués.
+
+- **Protocole 5** : `VERSION_PROTOCOLE = 5`. Le snap porte `tigres` (tigres largués, type `TigreLargueSnap`) à côté de `monstres` (Truck Muche fou, tigre géant, titan). Les messages des deux côtés coexistent : `avion`, `tigre`, `sort` et `invoquer` d'un côté, `evenement`, `laser`, `onde`, `batiments`, `titan`, `pilotage` et `canon` de l'autre.
+- **L'avion ne passe pas pendant l'événement du tigre géant**, annonce comprise. Son échéance est repoussée d'un intervalle entier. Un passage déjà en vol largue sans tigre (`ConditionsAvion.evenementTigre` de `avion.ts`).
+- **Le tigre géant attend les tigres largués** : il n'est pas annoncé pendant le survol de l'avion ni tant qu'un tigre sauvage largué vit. L'annonce réessaie toutes les 5 s et garde le type tiré (`tigrePermis` de `match-evenements.ts`, branché sur `avionOuSauvage` de `match-tigres.ts`). Le Truck Muche fou n'est pas concerné. En pratique, le tigre sauvage parti, le tigre géant passe dans les 5 s, l'avion attendant 90 s au moins.
+- **Bâtiments détruits et brèches** : collision, sol, lignes de vue et validation des tirs passent par `collision.ts`, qui en tient compte pour les tigres comme pour les joueurs. La grille des chemins A* (`grilleNav` de `tigre-arene.ts`) recalcule les cases autour d'un bâtiment qui change : un bâtiment à terre ne ferme plus rien, une brèche ouvre un passage dès que le tigre y tient, le nouveau match referme tout.
+- **Rien ne se mélange** :
+
+| | Tigres largués | Tigre géant et titan |
+| --- | --- | --- |
+| Identifiants | `t1`, `t2`, et ainsi de suite, jamais `tigre` ni `titan` | cibles réservées `CIBLE_TIGRE` (`tigre`) et `CIBLE_TITAN` (`titan`) |
+| Modules | `tigre-arene.ts`, `avion.ts`, `match-tigres.ts`, `jeu-tigres.ts`, `rendu-tigres.ts` | `monstres.ts`, `match-evenements.ts`, `jeu-monstres.ts`, `rendu-monstres.ts`, `tigre-geant.ts` |
+| Sons | `rugissement`, `patte`, `plainte`, `avion` | `alerte`, `laser`, `pasLourd`, `explosionMonstre`, `canon` |
+| Cause de mort | `tigre` | `tigre_robot`, `titan` |
+| Fil et HUD | « Tigre », « Tué par le tigre », « Un tigre a été largué ! », « a abattu le tigre » | « Déchiqueté par le tigre robot », « Titan tigre de », bandeau des événements |
+| Touche | `invoquer` sur G | dash et saut du titan |
+
+- **Touches** : `T` reste au chat vocal (`parler`). Le sort passe sur `G`. Une sauvegarde qui a déjà mis `G` ailleurs laisse « invoquer » sans touche, signalée dans le menu pause.
+- **Pilote du titan** : les tigres largués ne le ciblent ni ne le frappent, comme un occupant de voiture. Il ne lance pas le sort, et son icône est masquée pendant le pilotage.
+- **Modèle 3D** : le cache du GLB (`chargerModele`) est partagé par le thème Tigre, la vue Palantir, le tigre géant et les tigres largués. Ni l'arène ni la vue Palantir n'appellent `libererModele`. Chacun libère ses propres copies de géométrie, de matériau, de texture et de squelette. Seule la scène du thème Tigre (`lib/tigre3d/scene.ts`) appelle encore `libererModele` à son démontage, comme avant la fusion : elle dessine les objets partagés eux-mêmes.
+- **Limites** : le canon du titan, l'écrasement et les attaques du tigre géant ne touchent pas les tigres largués. La grille de navigation du Truck Muche fou (`navigation.ts`) ne suit pas les destructions.
 
 ## Tests et vérification
 
