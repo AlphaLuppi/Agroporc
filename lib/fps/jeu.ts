@@ -532,6 +532,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
     vehicule.sortir();
     embarquementFin = 0;
     sons.moteur(null);
+    sons.derapage(0);
     if (etaitAssis || p) {
       // à la descente l'œil part de la hauteur du siège et se relève jusqu'à 1,95 m (lissage)
       moi = etatInitial(p ?? [moi.p[0], moi.p[1], moi.p[2]]);
@@ -751,6 +752,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
           vehicule.sortir();
           embarquementFin = 0;
           sons.moteur(null);
+          sons.derapage(0);
           sons.mur(false);
           kc.surMort(m, client.id);
           cb.evenement({ type: "mort", par: m.par, arme: m.arme, cause: m.cause, zone: m.zone, delai: m.delai, ts: m.ts, tueur: m.tueur });
@@ -1353,7 +1355,9 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
       const ve = vehicule.etat();
       if (s && ve) {
         moi.p = [s[0], s[1], s[2]];
-        moi.v = [-Math.sin(ve.cap) * ve.v, 0, -Math.cos(ve.cap) * ve.v];
+        // vitesse du monde : axe de la caisse + glissade latérale (dérapage)
+        const vl = ve.vl ?? 0;
+        moi.v = [-Math.sin(ve.cap) * ve.v + Math.cos(ve.cap) * vl, 0, -Math.cos(ve.cap) * ve.v - Math.sin(ve.cap) * vl];
         moi.auSol = true;
       }
       const choc = vehicule.choc();
@@ -1395,7 +1399,9 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
     const glisse = apparu && vivant && !!moi.glisse && !info;
     if (glisse !== glisseSon) { glisseSon = glisse; sons.glisse(glisse); }
     const ve = vehicule.etat();
-    sons.moteur(info && ve && vivant && !enReplay ? Math.abs(ve.v) : null);
+    const roule = !!info && !!ve && vivant && !enReplay;
+    sons.moteur(roule ? Math.abs(ve!.v) : null);
+    sons.derapage(roule ? vehicule.derapage() : 0);
 
     // --- envoi de l'état ---
     accEtat += dt;

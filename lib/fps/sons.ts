@@ -49,6 +49,8 @@ export interface Sons {
    * `null` l'éteint (descente, mort, killcam). Plusieurs appels par seconde sont attendus : seule la hauteur change.
    */
   moteur(vitesse: number | null): void;
+  /** Crissement des pneus en dérapage : intensité 0 (silence) à 1 ; la boucle ne tourne que tant qu'elle est > 0. */
+  derapage(intensite: number): void;
   /** Choc de voiture ; `force` de 0 (frôlement) à 1 (plein fouet). */
   choc(force: number): void;
   /** Coup de klaxon (facultatif, réservé au conducteur). */
@@ -240,6 +242,8 @@ export function creerSons(): Sons {
       .then((buf) => { if (!fini) moteurBuf = buf; })
       .catch(() => { /* le moteur synthétisé reste */ });
   };
+  /** crissement des pneus (bruit en boucle, passe-bande aigu) */
+  let crissement: { src: AudioBufferSourceNode; gain: GainNode; filtre: BiquadFilterNode } | null = null;
 
   const ouvrir = () => {
     if (ctx || fini || typeof window === "undefined") return;
@@ -569,6 +573,37 @@ export function creerSons(): Sons {
       m.filtre.frequency.setTargetAtTime(600 + 1800 * k, now, 0.1);
       m.gain.gain.setTargetAtTime(GAIN_MOTEUR_RALENTI + (GAIN_MOTEUR_MAX - GAIN_MOTEUR_RALENTI) * k, now, 0.15);
     },
+    derapage(intensite) {
+      const k = Number.isFinite(intensite) ? Math.min(Math.max(intensite, 0), 1) : 0;
+      if (k <= 0) {
+        if (!crissement) return;
+        const cr = crissement;
+        crissement = null;
+        eteindre(cr.gain, [cr.src], 0.08);
+        return;
+      }
+      if (!crissement && !prete()) return;
+      const c = ctx;
+      if (!c) return;
+      if (!crissement) {
+        const src = c.createBufferSource();
+        src.buffer = bruitBuf;
+        src.loop = true;
+        const filtre = c.createBiquadFilter();
+        filtre.type = "bandpass";
+        filtre.Q.value = 6;
+        const g = c.createGain();
+        g.gain.value = 0.0001;
+        src.connect(filtre);
+        filtre.connect(g);
+        g.connect(master!);
+        src.start(c.currentTime, Math.random() * 0.9);
+        crissement = { src, gain: g, filtre };
+      }
+      const now = c.currentTime;
+      crissement.filtre.frequency.setTargetAtTime(1500 + k * 900, now, 0.05);
+      crissement.gain.gain.setTargetAtTime(0.05 + k * 0.17, now, 0.05);
+    },
     choc(force) {
       if (!prete()) return;
       const t = ctx!.currentTime + 0.001;
@@ -623,6 +658,10 @@ export function creerSons(): Sons {
           try { o.stop(); } catch { /* déjà arrêté */ }
         }
         moteurVoix = null;
+      }
+      if (crissement) {
+        try { crissement.src.stop(); } catch { /* déjà arrêté */ }
+        crissement = null;
       }
       if (souffle) {
         try { souffle.src.stop(); souffle.lfo.stop(); } catch { /* déjà arrêtés */ }

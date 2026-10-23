@@ -27,7 +27,7 @@ export function commandes(cfg: ConfigTouches, d: ReadonlyMap<string, string> | n
     ["Souris", "Viser"],
     [t("tir"), "Tirer (maintenir : rafale)"],
     [t("visee"), "Viser / lunette"],
-    [t("saut"), "Sauter, double saut, saut de mur"],
+    [t("saut"), "Sauter, double saut, saut de mur ; en voiture : déraper"],
     [t("sprint"), "Sprinter"],
     [t("accroupi"), "S'accroupir (en sprint : glissade)"],
     [t("recharger"), "Recharger"],
