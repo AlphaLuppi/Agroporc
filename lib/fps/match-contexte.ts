@@ -149,6 +149,8 @@ export interface ServiceEvenements {
   /** `pilotage` / `canon` du pilote ; les autres types renvoient [] */
   recevoir(j: JoueurSalle, m: MessageClient, maintenant: number): Sortie[];
   estPilote(id: string): boolean;
+  /** l'événement du tigre géant est annoncé ou en cours (l'avion des tigres largués ne passe pas) */
+  tigreGeantEnCours(): boolean;
   /** le joueur quitte l'arène (ou se déconnecte) : s'il pilote, le titan s'éteint */
   liberer(j: JoueurSalle, maintenant: number): Sortie[];
 }
@@ -203,6 +205,8 @@ export interface ServiceTigres {
   /** `invoquer` (les autres types renvoient []) : tigre allié à 2 m du lanceur, `sort{lance}` et `tigre{apparu}` */
   recevoir(j: JoueurSalle, m: MessageClient, maintenant: number): Sortie[];
   estTigre(id: string): boolean;
+  /** un avion survole l'arène ou un tigre sauvage largué est en vie (le tigre géant attend, cf. `OptionsServiceEvenements.tigrePermis`) */
+  avionOuSauvage(): boolean;
   /**
    * Touche de tir déclarée sur le tigre `id`, validée sur ses positions rejouées sur `fenetreMs`. Renvoie la distance de l'œil au centre
    * de la silhouette (chute de dégâts) ou null. Le lanceur ne peut pas toucher son propre tigre.

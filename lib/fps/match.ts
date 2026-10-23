@@ -230,9 +230,15 @@ export class Salle implements ContexteSalle {
       ? creerServiceTigres(this, {
         cachettes: options.tigres.cachettes, anneau, intervalle: options.tigres.intervalle, maintenant,
         aPied: (j) => !this.vehicules?.occupation(j.id) && !this.pilote(j.id), voitures: (t) => this.vehicules?.voitures?.(t) ?? [],
+        evenementTigre: () => this.evenements?.tigreGeantEnCours() ?? false,
       })
       : null;
-    this.evenements = options.evenements ? creerServiceEvenements(this, { ...options.evenements, maintenant }) : null;
+    // le tigre géant n'est pas annoncé pendant le survol de l'avion ni tant qu'un tigre sauvage largué vit (spec des tigres, Cohabitation)
+    this.evenements = options.evenements
+      ? creerServiceEvenements(this, {
+        ...options.evenements, maintenant, ...(this.tigres ? { tigrePermis: () => !this.tigres?.avionOuSauvage() } : {}),
+      })
+      : null;
   }
 
   /** (v3) Pilote du titan tigre : invulnérable, ni arme ni voiture ni état à pied. */

@@ -36,6 +36,8 @@ export interface OptionsServiceTigres {
   aPied?: (j: JoueurSalle) => boolean;
   /** voitures conduisibles et PNJ à l'instant donné (obstacles et chocs) */
   voitures?: (maintenant: number) => ObstacleVoiture[];
+  /** l'événement du tigre géant est-il annoncé ou en cours ? (aucun largage pendant ce temps, cf. `ConditionsAvion.evenementTigre`) */
+  evenementTigre?: () => boolean;
 }
 
 interface TigreSalle extends Tigre {
@@ -183,6 +185,7 @@ export function creerServiceTigres(ctx: ContexteSalle, opts: OptionsServiceTigre
       // avion : passage, largage du tigre sauvage
       const evAvion = avancerAvion(avion, maintenant, ctx.alea, {
         phaseJeu: true, enArene: enJeu.length, vivants: vivants.map((j): Vec2 => [j.p[0], j.p[2]]), tigreSauvage: sauvageEnVie(),
+        evenementTigre: opts.evenementTigre?.() ?? false,
       }, cachettes, ctx.monde.bornes, intervalle);
       for (const e of evAvion) {
         if (e.type === "passage") sorties.push(vers({ t: "avion", evenement: "passage", avion: e.passage }));
@@ -229,6 +232,10 @@ export function creerServiceTigres(ctx: ContexteSalle, opts: OptionsServiceTigre
 
     estTigre(id) {
       return tigres.has(id);
+    },
+
+    avionOuSauvage() {
+      return avion.passage !== null || sauvageEnVie();
     },
 
     validerTir(tireur, id, o, d, portee, maintenant, fenetreMs) {

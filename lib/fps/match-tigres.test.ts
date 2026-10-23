@@ -138,6 +138,31 @@ describe("avion et largage", () => {
   });
 });
 
+describe("cohabitation avec le tigre géant des événements", () => {
+  it("aucun passage pendant l'événement du tigre géant, le passage suit sa fin", () => {
+    const c = creerContexte(() => 0);
+    c.ajouter(joueur("a", [-60, 0, 5]));
+    c.ajouter(joueur("b", [-55, 0, -5]));
+    const geant = { enCours: true };
+    const s = creerServiceTigres(c.ctx, opts({ evenementTigre: () => geant.enCours }));
+    const pendant = tourner(s, T0, 30_000);
+    expect(messages(pendant.sorties, "avion")).toEqual([]);
+    expect(s.avionOuSauvage()).toBe(false);
+    geant.enCours = false;
+    const apres = tourner(s, pendant.fin, 1100);
+    expect(messages(apres.sorties, "avion").map((m) => m.evenement)).toEqual(["passage"]);
+    expect(s.avionOuSauvage()).toBe(true);
+  });
+
+  it("avionOuSauvage : vrai pendant le survol et tant que le tigre sauvage vit, faux à sa mort", () => {
+    const { s, id, fin, a } = avecTigrePose();
+    expect(s.avionOuSauvage()).toBe(true);
+    s.blesser(id, 5000, a, "corps", fin + 10);
+    expect(s.tigre(id)).toBeUndefined();
+    expect(s.avionOuSauvage()).toBe(false);
+  });
+});
+
 describe("tirs, couteau et mort du tigre sauvage", () => {
   it("tir validé sur la position courante, et sur une position passée dans la fenêtre de rejeu seulement", () => {
     const { s, id, fin, a } = avecTigrePose();

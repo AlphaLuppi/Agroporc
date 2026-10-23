@@ -73,6 +73,25 @@ describe("fréquence et conditions", () => {
   });
 });
 
+describe("cohabitation avec le tigre géant des événements", () => {
+  it("pendant l'événement du tigre géant, l'échéance est repoussée d'un intervalle entier, sans passage", () => {
+    const e = creerAvion(T0, () => 0, INTERVALLE);
+    expect(avancerAvion(e, T0 + 1000, () => 0.3, { ...ok(), evenementTigre: true }, CACHETTES, BORNES, INTERVALLE)).toEqual([]);
+    expect(e.passage).toBeNull();
+    expect(e.prochaineT).toBe(T0 + 2000);
+    expect(types(avancerAvion(e, T0 + 2000, () => 0.3, ok(), CACHETTES, BORNES, INTERVALLE))).toEqual(["passage"]);
+  });
+
+  it("un passage déjà en vol quand l'événement commence largue sans tigre, et le minuteur repart après la fin du passage", () => {
+    const e = creerAvion(T0, () => 0, INTERVALLE);
+    const [p] = avancerAvion(e, T0 + 1000, () => 0.3, ok(), CACHETTES, BORNES, INTERVALLE) as [Extract<EvenementAvion, { type: "passage" }>];
+    const largage = avancerAvion(e, p.passage.largageT, () => 0.3, { ...ok(), evenementTigre: true }, CACHETTES, BORNES, INTERVALLE);
+    expect(largage).toEqual([expect.objectContaining({ type: "largage", cachette: null })]);
+    expect(types(avancerAvion(e, p.passage.finT, () => 0, ok(), CACHETTES, BORNES, INTERVALLE))).toEqual(["fin"]);
+    expect(e.prochaineT).toBe(p.passage.finT + 1000);
+  });
+});
+
 describe("trajectoire et largage", () => {
   it("ligne droite d'un bord à l'autre, à 120 m et 60 m/s, à moins de 60 m de la cachette, largage au point le plus proche", () => {
     for (const graine of [0.05, 0.2, 0.45, 0.7, 0.95]) {

@@ -51,6 +51,11 @@ export interface ConditionsAvion {
   vivants: readonly Vec2[];
   /** un tigre sauvage est en vie */
   tigreSauvage: boolean;
+  /**
+   * l'événement du tigre géant est annoncé ou en cours (match-evenements.ts) : aucun passage ne commence, l'échéance est repoussée d'un
+   * intervalle entier, et un passage déjà en vol largue sans tigre
+   */
+  evenementTigre?: boolean;
 }
 
 export type EvenementAvion =
@@ -142,9 +147,10 @@ export function ecartTrajectoire(p: PassageAvion, x: number, z: number): number 
 
 /**
  * Avance le minuteur et le passage en cours. Sans passage, à l'échéance : passage si la phase est « jeu », 2 joueurs au moins sont en
- * arène, aucun tigre sauvage ne vit et une cachette de l'anneau est à plus de 30 m de tout vivant, sinon l'échéance est repoussée d'un
- * intervalle entier (jamais de passage qui attendrait les joueurs). Au largage, la cachette est revérifiée (les joueurs ont bougé
- * pendant le vol) et remplacée au besoin. Après le passage, le minuteur reste à l'arrêt tant que le tigre largué vit.
+ * arène, aucun tigre sauvage ne vit, l'événement du tigre géant n'est ni annoncé ni en cours et une cachette de l'anneau est à plus de
+ * 30 m de tout vivant, sinon l'échéance est repoussée d'un intervalle entier (jamais de passage qui attendrait). Au largage, la cachette
+ * est revérifiée (les joueurs ont bougé pendant le vol) et remplacée au besoin. Après le passage, le minuteur reste à l'arrêt tant que
+ * le tigre largué vit.
  */
 export function avancerAvion(
   e: EtatAvion, maintenant: number, alea: () => number, cond: ConditionsAvion, cachettes: readonly CachetteTigre[], bornes: Boite,
@@ -156,7 +162,8 @@ export function avancerAvion(
     if (!e.largue && maintenant >= p.largageT) {
       e.largue = true;
       const proche = (c: CachetteTigre) => cond.vivants.some(([x, z]) => Math.hypot(c.x - x, c.z - z) <= AVION.distanceJoueursMinM);
-      if (e.cachette && proche(e.cachette)) e.cachette = choisirCachetteLargage(cachettes, cond.vivants, alea);
+      if (cond.evenementTigre) e.cachette = null;
+      else if (e.cachette && proche(e.cachette)) e.cachette = choisirCachetteLargage(cachettes, cond.vivants, alea);
       ev.push({ type: "largage", passage: p, cachette: e.cachette, point: positionAvion(p, maintenant) });
     }
     if (maintenant >= p.finT) {
@@ -172,7 +179,7 @@ export function avancerAvion(
   }
   if (cond.tigreSauvage || maintenant < e.prochaineT) return ev;
   const repousser = () => { e.prochaineT = maintenant + intervalleAvion(alea, intervalle); };
-  if (!cond.phaseJeu || cond.enArene < AVION.joueursMin) { repousser(); return ev; }
+  if (!cond.phaseJeu || cond.enArene < AVION.joueursMin || cond.evenementTigre) { repousser(); return ev; }
   const cachette = choisirCachetteLargage(cachettes, cond.vivants, alea);
   const passage = cachette ? tracerPassage(e.compteur + 1, cachette, bornes, maintenant, alea) : null;
   if (!cachette || !passage) { repousser(); return ev; }
