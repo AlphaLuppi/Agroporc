@@ -31,10 +31,34 @@ export const SEUIL_CLIC_PX = 6;
 /** Délai (s) avant le retour du tigre dans une autre cachette. */
 export const DELAI_RETOUR_S = 1.5;
 /**
- * Teinte multipliée à la texture : le matériau du GLB est sans éclairage, un pelage blanc à 0,2
- * reste sous le seuil du halo (UnrealBloomPass, 0,24) et ne brille pas sur le fond noir.
+ * Teinte multipliée à la texture (le matériau du GLB est sans éclairage). À 0,2, le tigre restait
+ * introuvable depuis la vue de départ (2 à 4 px brun sombre sur fond sombre). À 0,5, l'orange se
+ * détache et le pelage blanc passe juste au-dessus du seuil du halo (UnrealBloomPass, 0,24) : une
+ * lueur discrète trahit le tigre quand on balaie la carte, sans le désigner de loin.
  */
-const TEINTE = 0.2;
+const TEINTE = 0.5;
+/** Signature thermique du tigre : diamètre (m), opacité au sommet du battement, période (s). */
+export const LUEUR = { tailleM: 14, opacite: 0.65, periodeS: 4 } as const;
+
+/** Battement de la lueur (phase en périodes) : une bosse sinusoïdale sur le premier quart de la période, 0 le reste du temps. */
+export function battement(phase: number): number {
+  const u = phase - Math.floor(phase);
+  return u < 0.25 ? Math.sin((u / 0.25) * Math.PI) : 0;
+}
+
+/** Disque flou blanc (teinté par le matériau) pour la lueur. */
+function textureLueur(): THREE.CanvasTexture {
+  const c = document.createElement("canvas");
+  c.width = c.height = 64;
+  const ctx = c.getContext("2d") as CanvasRenderingContext2D;
+  const g = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+  g.addColorStop(0, "rgba(255,255,255,1)");
+  g.addColorStop(0.35, "rgba(255,255,255,0.45)");
+  g.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 64, 64);
+  return new THREE.CanvasTexture(c);
+}
 /** Le tigre se tapit : corps abaissé (m du modèle, pattes repliées par l'IK), museau vers le sol, tête basse. */
 const TAPI = { dy: -0.09, tangage: -0.03, baisseTete: 0.3 };
 
@@ -95,6 +119,21 @@ export function creerTigreCache(o: OptionsTigre): TigreCache {
   sphere.visible = false;
   sphere.position.y = 0.8;
   conteneur.add(sphere);
+
+  // Signature thermique : lueur orange faible qui traverse les bâtiments, comme le reste de la vue
+  // « rayons X ». Elle ne s'allume qu'une fois par période, en un battement bref : vue de loin, un
+  // point de 12 à 18 px qui clignote, à repérer en balayant la carte, puis il faut zoomer pour voir
+  // le tigre lui-même.
+  const texLueur = textureLueur();
+  const matLueur = new THREE.SpriteMaterial({
+    map: texLueur, color: 0xffa040, transparent: true, depthWrite: false, depthTest: false, blending: THREE.AdditiveBlending, opacity: 0,
+  });
+  const lueur = new THREE.Sprite(matLueur);
+  lueur.scale.setScalar(LUEUR.tailleM);
+  lueur.position.y = 1;
+  lueur.renderOrder = 3;
+  conteneur.add(lueur);
+  let horloge = 0;
 
   let tigre: Tigre | null = null;
   /** Copies propres à ce tigre, libérées par dispose(). */
@@ -210,6 +249,8 @@ export function creerTigreCache(o: OptionsTigre): TigreCache {
       return sortie.set(courante.x, 0.8, courante.z);
     },
     maj(dt) {
+      horloge += dt;
+      matLueur.opacity = LUEUR.opacite * battement(horloge / LUEUR.periodeS);
       if (retourDans > 0) {
         retourDans -= dt;
         if (retourDans <= 0) tirer();
@@ -231,6 +272,8 @@ export function creerTigreCache(o: OptionsTigre): TigreCache {
       squelettes = [];
       geoClic.dispose();
       matClic.dispose();
+      matLueur.dispose();
+      texLueur.dispose();
     },
   };
 }
