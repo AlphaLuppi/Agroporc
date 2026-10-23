@@ -89,8 +89,8 @@ describe("silhouette", () => {
 });
 
 describe("constantes", () => {
-  it("version 2 du protocole", () => {
-    expect(VERSION_PROTOCOLE).toBe(2);
+  it("version 3 du protocole (tigres, avion, sort d'invocation)", () => {
+    expect(VERSION_PROTOCOLE).toBe(3);
   });
 
   it("chaîne de plafonds de vitesse : sprint couteau ≤ plafond horizontal ≤ plafond déclaré", () => {

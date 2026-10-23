@@ -6,11 +6,15 @@
  * `tangage` (pitch) dans [−π/2, π/2], positif = regard vers le haut. Le `cap` d'un véhicule suit
  * la même convention que le lacet.
  * Spec : docs/superpowers/specs/2026-10-22-agroparc-fps-design.md (v1), 2026-10-22-arene-v2-design.md (v2),
- * 2026-10-23-arene-hud-design.md (HUD : `absorbe`, `LigneStats`, `vueScores` / `scores`, `serie`)
+ * 2026-10-23-arene-hud-design.md (HUD : `absorbe`, `LigneStats`, `vueScores` / `scores`, `serie`),
+ * 2026-10-23-arene-tigres-design.md (v3 : avion, tigres, sort d'invocation)
  */
 
-/** v2 : équipement, couteau, bouclier, accroupi, Elsa, véhicules, killcam. Client et serveur se déploient ensemble. */
-export const VERSION_PROTOCOLE = 2;
+/**
+ * v2 : équipement, couteau, bouclier, accroupi, Elsa, véhicules, killcam. v3 : avion, tigres (snap `tigres`, messages `avion`, `tigre`,
+ * `sort`, client `invoquer`), cause de mort "tigre". Client et serveur se déploient ensemble.
+ */
+export const VERSION_PROTOCOLE = 3;
 
 export type Vec3 = [number, number, number];
 
@@ -69,8 +73,11 @@ export type CoteMur = -1 | 0 | 1;
 export type Siege = 0 | 1 | 2 | 3;
 export const SIEGES_PAR_VEHICULE = 4;
 
-/** Comment un joueur est mort. `arme` d'un message `mort` n'a de sens que pour la cause "arme". */
-export type CauseMort = "arme" | "ecrase_pnj" | "ecrase_vehicule";
+/**
+ * Comment un joueur est mort. `arme` d'un message `mort` n'a de sens que pour la cause "arme". "tigre" (v3) : coup d'un tigre, sauvage
+ * (`par` = "") ou allié (`par` = le lanceur, crédité du kill).
+ */
+export type CauseMort = "arme" | "ecrase_pnj" | "ecrase_vehicule" | "tigre";
 
 // ---------- données publiques ----------
 
@@ -127,6 +134,50 @@ export interface InfoVehicule { id: number; sieges: (string | null)[] }
 export interface OffreElsa { id: number; genre: "soin" | "arme"; arme?: ArmeSpecialeId; finT: number }
 /** Elsa : position fixe, offre en cours ou null. `finT` = horodatage serveur (ms). */
 export interface EtatElsaMsg { x: number; z: number; offre: OffreElsa | null }
+
+// ---------- tigres (v3) ----------
+
+/** Tigre largué par l'avion (sauvage) ou invoqué par le sort d'un joueur (allié). */
+export type GenreTigre = "sauvage" | "allie";
+/**
+ * État d'un tigre. Sauvage : `descente` (parachute) → `tapi` → `alerte` → `attaque` → `fuite` (sous 30 % des PV) → `repos` (régénération
+ * dans la nouvelle cachette) → `tapi`, et `retour` = sans cible, il rentre à sa cachette. Allié : `suivi` (accompagne le lanceur) ou `attaque`.
+ */
+export type EtatTigre = "descente" | "tapi" | "alerte" | "attaque" | "fuite" | "repos" | "retour" | "suivi";
+/** Pose du tigre, qui fixe sa silhouette de touche (`SILHOUETTES_TIGRE` de tigre-arene.ts). */
+export type PoseTigre = "couche" | "debout" | "course";
+/** Action en cours : coup de patte, bond annoncé (le tigre se ramasse et rugit) puis bond. */
+export type ActionTigre = "patte" | "ramasse" | "bond";
+
+/** Tigre dans le snap (positions au centime, angles au milliradian). `actionT` = horodatage serveur du début de `action`. */
+export interface TigreSnap {
+  id: string;
+  genre: GenreTigre;
+  /** lanceur d'un tigre allié */
+  lanceur?: string;
+  p: Vec3;
+  cap: number;
+  etat: EtatTigre;
+  pose: PoseTigre;
+  pv: number;
+  action?: ActionTigre;
+  actionT?: number;
+}
+
+/**
+ * Passage d'un avion : ligne droite de `depart` à `arrivee` (x, z) à `altitude` et `vitesse` constantes, de `debutT` à `finT` (horodatages
+ * serveur, ms). `largageT` = instant où le tigre quitte l'avion. Le point d'atterrissage n'est pas transmis.
+ */
+export interface PassageAvion {
+  id: number;
+  depart: [number, number];
+  arrivee: [number, number];
+  altitude: number;
+  vitesse: number;
+  debutT: number;
+  finT: number;
+  largageT: number;
+}
 
 /** Photographie du tueur à l'instant de la mort (killcam : carte finale et repli si le tueur a quitté). */
 export interface InfoTueur {
@@ -221,6 +272,8 @@ export type MessageClient =
   | { t: "conduite"; seq: number; vehicule: number; p: Vec3; cap: number; v: number; lacet: number; tangage: number }
   /** Tableau des scores ouvert (Tab maintenu) ou refermé : le serveur n'envoie `scores` qu'aux clients ouverts (HUD §3.5, 1 par 250 ms). */
   | { t: "vueScores"; ouvert: boolean }
+  /** Lancer le sort d'invocation (v3) : ignoré sans charge, mort, hors phase de jeu ou dans un véhicule. */
+  | { t: "invoquer" }
   | { t: "ping"; t0: number };
 
 // ---------- serveur → client ----------
@@ -229,8 +282,8 @@ export type MessageServeur =
   | { t: "bienvenue"; id: string; couleur: string; joueurs: JoueurPublic[]; match: InfoMatch; maintenant: number }
   /** Liste complète des connectés, renvoyée à chaque changement (arrivée, départ, score, entrée/sortie d'arène). */
   | { t: "presence"; joueurs: JoueurPublic[] }
-  /** Instantané des joueurs en jeu ; `ts` = horodatage serveur ms. `vehicules` = véhicules conduisibles. */
-  | { t: "snap"; ts: number; j: EtatJoueurSnap[]; vehicules?: VehiculeSnap[] }
+  /** Instantané des joueurs en jeu, `ts` = horodatage serveur ms. `vehicules` = véhicules conduisibles. `tigres` = tigres présents (v3, absent = aucun). */
+  | { t: "snap"; ts: number; j: EtatJoueurSnap[]; vehicules?: VehiculeSnap[]; tigres?: TigreSnap[] }
   /**
    * Apparition (ou réapparition) d'un joueur : le client concerné SE TÉLÉPORTE à `p`. `arme` = arme en main.
    * Après `rejoindre`, le serveur envoie dans l'ordre : `apparition`, `presence` (à tous), puis au seul joueur `elsa{evenement:"etat"}` et `sieges`
@@ -275,6 +328,22 @@ export type MessageServeur =
   | { t: "refus"; action: "monter" | "siege" | "rejoindre"; raison: "loin" | "plein" | "deja" | "inconnu" | "mort" }
   /** Le destinataire n'est plus dans un véhicule : il se téléporte à `p` (sortie, expulsion). Privé. */
   | { t: "descente"; p: Vec3; lacet: number; raison: "volontaire" | "expulse" }
+  /**
+   * Avion (v3) : `passage` au début d'un survol, `largage` quand le tigre `tigre` quitte l'avion (annonce HUD), `etat` = synchronisation
+   * privée envoyée à `rejoindre` (`avion` null hors survol).
+   */
+  | { t: "avion"; evenement: "passage" | "largage" | "etat"; avion: PassageAvion | null; tigre?: string }
+  /**
+   * Tigre (v3) : `apparu` (largage ou invocation), `alerte` (il a repéré `cible`), `touche` (dégâts reçus : `par`, `degats`, `pv`, `zone`),
+   * `mort` (`par` = auteur du dernier coup, "" sans joueur), `parti` (départ du sauvage au bout de 4 min, fin du tigre allié).
+   * `p` = position du tigre à l'événement.
+   */
+  | {
+      t: "tigre"; evenement: "apparu" | "alerte" | "touche" | "mort" | "parti"; id: string; genre: GenreTigre; lanceur?: string; p: Vec3;
+      cible?: string; par?: string; degats?: number; pv?: number; zone?: Zone;
+    }
+  /** Sort d'invocation (v3) : `gagne` (tigre sauvage abattu par `joueur`), `lance` (tigre allié `tigre`), `perdu` (mort, sortie, fin de match). */
+  | { t: "sort"; evenement: "gagne" | "lance" | "perdu"; joueur: string; tigre?: string; raison?: "mort" | "quitte" | "fin_match" }
   /** Statistiques du tableau des scores : réponse immédiate à `vueScores{ouvert:true}` puis 1 Hz, seulement aux clients ouverts. */
   | { t: "scores"; lignes: LigneStats[] }
   | { t: "pong"; t0: number; maintenant: number }
