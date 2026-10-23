@@ -3,13 +3,15 @@
  * Spec : docs/superpowers/specs/2026-10-23-arene-tigres-design.md (Rendu, Avion et largage, Sort d'invocation)
  *
  *  - Tigres : le GLB du thème Tigre (`chargerModele` de lib/tigre3d/modele.ts, cache PARTAGÉ avec le thème Tigre et la chasse de la vue
- *    Palantir), un clone par tigre, texture gardée telle quelle (pas d'assombrissement). Clips du GLB lus dans le registre de
- *    lib/tigre3d/clips.ts : « Walking » pour la marche et la course (vitesse de lecture proportionnelle à la vitesse mesurée), « Attack
- *    jump » pour le bond annoncé puis le bond (et, raccourci, pour le coup de patte), « Curious » pour l'alerte, pose tapie
- *    (`poseTapie` de lib/agroparc3d/tigre.ts) dans la cachette. Chaque image, la pose courante rejoint la pose visée par un ressort : les
- *    changements de clip se font sans cassure.
+ *    Palantir), un clone par tigre, texture gardée telle quelle (pas d'assombrissement) et exclue du halo du bloom (`sansHalo` de
+ *    rendu.ts) : sa fourrure claire saturait l'écran en aplat jaune au contact. Clips du GLB lus dans le registre de lib/tigre3d/clips.ts :
+ *    « Walking » pour la marche (vitesse de lecture proportionnelle à la vitesse mesurée), « Attack jump » pour le bond annoncé puis le
+ *    bond (et, raccourci, pour le coup de patte), « Curious » pour l'alerte, pose tapie (`poseTapie` de lib/agroparc3d/tigre.ts) dans la
+ *    cachette. Au-delà de ce que « Walking » suit sans glisser, le galop du moteur du corps, pieds plantés (`course-tigre.ts`). Chaque
+ *    image, la pose courante rejoint la pose visée par un ressort : les changements de clip se font sans cassure.
  *  - Tigre allié : liseré de la couleur du lanceur, une coque inversée (maillage animé par le même squelette, faces arrière, sommets
- *    poussés le long de la normale) qui dessine le contour du tigre.
+ *    poussés le long de la normale) qui dessine le contour du tigre, et qui seule garde le halo. La couleur ne suffit pas (un lanceur
+ *    orange sur une fourrure orange) : une plaque « Tigre · pseudo du lanceur », au style des pseudos des joueurs, flotte au-dessus.
  *  - Avion : silhouette en fil de fer de l'avion de la vue aérienne (lib/agroparc3d/scene.ts), feux de position. Parachute : voilure et
  *    suspentes en fil de fer au-dessus du tigre en descente.
  *  - Tant que le GLB n'est pas chargé (ou s'il ne se charge pas), un tigre est dessiné en silhouette fil de fer à la taille de sa hitbox.
@@ -31,16 +33,24 @@ import { chargerModele, creerTigre, type ModeleTigre, type Tigre as Tigre3D } fr
 import type { Role } from "../tigre3d/os";
 import { nouvellePose, squelette, type PoseTigre } from "../tigre3d/squelette";
 import { ECHELLE_MODELE } from "../tigre3d/troupe";
+import type { Corps } from "../tigre3d/corps";
+import { avancerCourse, creerCourse } from "./course-tigre";
 import type { AvionClient, TigreClient } from "./jeu-tigres";
 import type { Vec3 } from "./protocole";
+import { sansHalo, texturePseudo } from "./rendu";
 import { SILHOUETTES_TIGRE, TIGRE } from "./tigre-arene";
+import { hauteurPlaquePx } from "./visibilite";
 
 export interface RenduTigres {
   /**
-   * Tigres à dessiner (interpolés) et avion en cours, à l'horloge serveur `tsServeur` (ms), `dt` en s. `couleurDe` donne la couleur du
-   * lanceur d'un tigre allié. `visible` faux (rejeu de la killcam) cache tout : rien du présent ne se superpose au passé.
+   * Tigres à dessiner (interpolés) et avion en cours, à l'horloge serveur `tsServeur` (ms), `dt` en s. `couleurDe` et `pseudoDe` donnent
+   * la couleur et le pseudo du lanceur d'un tigre allié. `visible` faux (rejeu de la killcam) cache tout : rien du présent ne se superpose
+   * au passé.
    */
-  maj(tigres: ReadonlyMap<string, TigreClient>, avion: AvionClient | null, tsServeur: number, dt: number, couleurDe: (id: string) => string, visible: boolean): void;
+  maj(
+    tigres: ReadonlyMap<string, TigreClient>, avion: AvionClient | null, tsServeur: number, dt: number,
+    couleurDe: (id: string) => string, pseudoDe: (id: string) => string, visible: boolean,
+  ): void;
   /** Le tigre `id` vient de mourir : il s'effondre sur place puis disparaît. */
   mourir(id: string): void;
   /** Bouffée de fumée (apparition du tigre allié). */
@@ -68,10 +78,20 @@ const ECHELLE = ECHELLE_MODELE;
 const VITESSE_CLIP_MARCHE = 1.6;
 /** Vitesse de lecture maximale de la marche (au-delà, les pattes deviennent illisibles en course à 10,5 m/s). */
 const LECTURE_MAX = 4.5;
+/**
+ * Galop du moteur du corps (`course-tigre.ts`) : au-dessus de `entre` m/s, et jusqu'à ce que la vitesse redescende sous `quitte` (pas de
+ * va-et-vient autour du seuil). « Walking » lu à `LECTURE_MAX` suit le sol jusqu'à 7,2 m/s, le moteur prend le relais avant.
+ */
+const GALOP = { entre: 6, quitte: 5 };
 /** Sous cette vitesse (m/s), le tigre est arrêté. */
 const ARRET_M_S = 0.4;
-/** Raideur (1/s) du ressort qui mène la pose courante vers la pose visée. */
+/**
+ * Raideur (1/s) du ressort qui mène la pose courante vers la pose visée, et durée (s) du fondu après un changement de source de pose
+ * (clip ou moteur du galop) : le ressort ne sert qu'au fondu, puis la pose visée est suivie exactement. Un ressort permanent (83 ms de
+ * retard) amortirait de 40 % une foulée de 2 à 3 Hz et la déphaserait : les pieds glisseraient au sol.
+ */
 const RAIDEUR_POSE = 12;
+const FONDU_S = 0.3;
 /** Plage du clip « Attack jump » (s du clip) : élan (bond annoncé), vol (bond), et durée de vol visée (s) d'un bond de 6 à 10 m à 18 m/s. */
 const SAUT = { elanFin: 0.62, volFin: 1.95, dureeVol: 0.5 };
 /** Coup de patte : le début du vol d'« Attack jump », joué pendant l'armement du coup. */
@@ -81,8 +101,14 @@ const PATTE = { debut: 0.3, fin: 0.95, dureeS: TIGRE.patte.armeMs / 1000 };
  * sur le tigre debout (le clip entier l'assoit, tête à 2,5 m, loin de sa silhouette de touche).
  */
 const CURIEUX = { debut: 1.4, vitesse: 1.75, os: ["cou", "tete", "machoire", "oreilleG", "oreilleD", "oreille_boutG", "oreille_boutD"] as readonly Role[] };
-/** Liseré du tigre allié : épaisseur (m du modèle, environ 5 cm au monde). */
-const EPAISSEUR_LISERE = 0.015;
+/** Liseré du tigre allié : épaisseur (m du modèle, environ 8 cm au monde). */
+const EPAISSEUR_LISERE = 0.025;
+/**
+ * Plaque du tigre allié : hauteur de son ancre au-dessus des pieds (m, au-dessus de la tête debout), ancre au BAS de la plaque, relevée de
+ * `releve` fois sa hauteur, et texte. Celle d'un joueur est CENTRÉE sur son ancre (`Y_PSEUDO` de rendu.ts, 2,5 m debout, la même que celle du tigre) : à toute distance,
+ * la plaque du tigre reste au-dessus de celle de son lanceur quand l'un passe derrière l'autre (même hauteur à l'écran, elles se masquaient).
+ */
+const PLAQUE = { y: 2.5, releve: 0.6, texte: (pseudo: string) => `Tigre · ${pseudo}` };
 /** Mort : bascule sur le flanc en 0,6 s, reste 0,9 s, disparaît. */
 const MORT = { basculeS: 0.6, finS: 1.5 };
 /** Parachute : hauteur de la voilure au-dessus de l'attache (m), rayon, hauteur de l'attache sur le dos, couleur. */
@@ -214,6 +240,15 @@ interface Instance {
   couleurLisere: string | null;
   repli: THREE.LineSegments;
   parachute: THREE.Group | null;
+  /** plaque du tigre allié (null pour un sauvage) et la clé de sa texture (`couleur|pseudo`) */
+  plaque: THREE.Sprite | null;
+  clePlaque: string | null;
+  /** moteur du corps du galop (créé au premier galop) et galop en cours */
+  corps: Corps | null;
+  galop: boolean;
+  /** source de la pose visée (clip ou moteur, cf. `viser`) et temps écoulé depuis qu'elle a changé (s) */
+  source: string;
+  sourceS: number;
   pose: PoseTigre;
   cible: PoseTigre;
   origineX: number;
@@ -239,6 +274,8 @@ export function creerRenduTigres(scene: THREE.Scene): RenduTigres {
   /** copies du modèle partagé, propres à cette arène (cf. en-tête), clé = objet d'origine */
   const copies = new Map<object, THREE.Material | THREE.BufferGeometry | THREE.Texture>();
   const materiauxLisere = new Map<string, THREE.MeshBasicMaterial>();
+  /** textures des plaques des tigres alliés, clé `couleur|pseudo` */
+  const plaques = new Map<string, { mat: THREE.SpriteMaterial; ratio: number }>();
   const instances = new Map<string, Instance>();
   const mourants: Instance[] = [];
 
@@ -281,6 +318,8 @@ export function creerRenduTigres(scene: THREE.Scene): RenduTigres {
     let c = copies.get(orig) as T | undefined;
     if (!c) {
       c = orig.clone() as T;
+      // fourrure : texture intacte, mais hors du halo du bloom (cf. en-tête)
+      if ((c as unknown as THREE.Material).isMaterial) sansHalo(c as unknown as THREE.Material);
       const map = (orig as unknown as THREE.MeshBasicMaterial).map;
       if (map) {
         let mc = copies.get(map) as THREE.Texture | undefined;
@@ -356,6 +395,55 @@ export function creerRenduTigres(scene: THREE.Scene): RenduTigres {
     }
   }
 
+  function materiauPlaque(couleur: string, pseudo: string): { mat: THREE.SpriteMaterial; ratio: number } {
+    const cle = `${couleur}|${pseudo}`;
+    let p = plaques.get(cle);
+    if (!p) {
+      const { tex, ratio } = texturePseudo(PLAQUE.texte(pseudo), new THREE.Color(couleur));
+      p = { mat: new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, depthTest: true, toneMapped: false }), ratio };
+      plaques.set(cle, p);
+    }
+    return p;
+  }
+
+  /**
+   * Plaque « Tigre · pseudo » du tigre allié, de la couleur du lanceur : masquée par les bâtiments, de hauteur écran réglée par la distance
+   * comme celle des joueurs (`hauteurPlaquePx`). Retirée pour un sauvage.
+   */
+  function plaque(inst: Instance, couleur: string | null, pseudo: string): void {
+    const cle = couleur ? `${couleur}|${pseudo}` : null;
+    if (inst.clePlaque === cle) return;
+    inst.clePlaque = cle;
+    if (!couleur) {
+      inst.plaque?.removeFromParent();
+      inst.plaque = null;
+      return;
+    }
+    const { mat, ratio } = materiauPlaque(couleur, pseudo);
+    if (!inst.plaque) {
+      const s = new THREE.Sprite(mat);
+      s.position.y = PLAQUE.y;
+      s.center.set(0.5, -PLAQUE.releve);
+      s.renderOrder = 10;
+      s.frustumCulled = false;
+      const pw = new THREE.Vector3(), pc = new THREE.Vector3();
+      s.onBeforeRender = (renderer, _scene, camera) => {
+        const cam = camera as THREE.PerspectiveCamera;
+        s.getWorldPosition(pw);
+        pc.setFromMatrixPosition(cam.matrixWorld);
+        const d = Math.max(pw.distanceTo(pc), 0.5);
+        const hPx = (renderer.domElement as HTMLCanvasElement).clientHeight || 800;
+        const h = (hauteurPlaquePx(d) / hPx) * 2 * d * Math.tan(((cam.fov || 90) * Math.PI) / 360);
+        s.scale.set(h * (s.userData.ratio as number), h, 1);
+        s.updateMatrixWorld();
+      };
+      inst.racine.add(s);
+      inst.plaque = s;
+    }
+    inst.plaque.material = mat;
+    inst.plaque.userData.ratio = ratio;
+  }
+
   function creerInstance(t: TigreClient): Instance {
     const r = new THREE.Group();
     racine.add(r);
@@ -363,7 +451,8 @@ export function creerRenduTigres(scene: THREE.Scene): RenduTigres {
     repli.frustumCulled = false;
     r.add(repli);
     const inst: Instance = {
-      id: t.id, racine: r, t3d: null, squelettes: [], contours: [], couleurLisere: null, repli, parachute: null,
+      id: t.id, racine: r, t3d: null, squelettes: [], contours: [], couleurLisere: null, repli, parachute: null, plaque: null, clePlaque: null,
+      corps: null, galop: false, source: "", sourceS: 0,
       pose: nouvellePose(sq), cible: nouvellePose(sq), origineX: 0, posee: false, phaseMarche: Math.random() * 2, alerteT: null,
       mortS: null, vu: true,
     };
@@ -382,8 +471,11 @@ export function creerRenduTigres(scene: THREE.Scene): RenduTigres {
     inst.t3d = null;
   }
 
-  /** Pose visée d'un tigre vivant à cet instant (et l'abscisse du corps à ramener à l'origine, cf. `Tigre.appliquer`). */
-  function viser(inst: Instance, t: TigreClient, tsServeur: number, dt: number): { pose: PoseTigre; x: number } {
+  /**
+   * Pose visée d'un tigre vivant à cet instant, l'abscisse du corps à ramener à l'origine (cf. `Tigre.appliquer`) et la source de la pose
+   * (clip ou moteur) : un changement de source ouvre un fondu (`FONDU_S`).
+   */
+  function viser(inst: Instance, t: TigreClient, tsServeur: number, dt: number): { pose: PoseTigre; x: number; source: string } {
     const depuisAction = t.action && t.actionT !== undefined ? Math.max(0, (tsServeur - t.actionT) / 1000) : 0;
     const saut = clipNomme("Attack jump");
     if (saut && (t.action === "ramasse" || t.action === "bond" || t.action === "patte")) {
@@ -391,7 +483,7 @@ export function creerRenduTigres(scene: THREE.Scene): RenduTigres {
       if (t.action === "ramasse") u = Math.min(SAUT.elanFin, depuisAction * (SAUT.elanFin / (TIGRE.bond.annonceMs / 1000)));
       else if (t.action === "bond") u = Math.min(dureeClip(saut), SAUT.elanFin + depuisAction * ((SAUT.volFin - SAUT.elanFin) / SAUT.dureeVol));
       else u = PATTE.debut + (PATTE.fin - PATTE.debut) * Math.min(1, depuisAction / PATTE.dureeS);
-      return { pose: poseDepuisImage(echantillonnerClip(saut, u), inst.cible), x: 0 };
+      return { pose: poseDepuisImage(echantillonnerClip(saut, u), inst.cible), x: 0, source: "saut" };
     }
     const marche = clipNomme("Walking");
     if (t.etat === "alerte") {
@@ -404,16 +496,21 @@ export function creerRenduTigres(scene: THREE.Scene): RenduTigres {
           const q = img.os?.[r];
           if (q) inst.cible.q[sq.i[r]].set(q[0], q[1], q[2], q[3]);
         }
-        return { pose: inst.cible, x: 0 };
+        return { pose: inst.cible, x: 0, source: "alerte" };
       }
     } else inst.alerteT = null;
-    if ((t.etat === "tapi" || t.etat === "repos") && t.v < ARRET_M_S) return tapie();
-    if (!marche) return tapie();
-    if (t.etat === "descente") return { pose: poseDepuisImage(echantillonnerClip(marche, 0), inst.cible), x: 0 };
+    if (((t.etat === "tapi" || t.etat === "repos") && t.v < ARRET_M_S) || !marche) return { ...tapie(), source: "tapie" };
+    if (t.etat === "descente") return { pose: poseDepuisImage(echantillonnerClip(marche, 0), inst.cible), x: 0, source: "descente" };
+    // course : galop du moteur du corps, pieds plantés (sa vitesse est celle du tigre dessiné)
+    inst.galop = t.v > (inst.galop ? GALOP.quitte : GALOP.entre);
+    if (inst.galop) {
+      inst.corps ??= creerCourse();
+      return { pose: avancerCourse(inst.corps, t.v, dt, inst.cible), x: 0, source: "galop" };
+    }
     // vitesse de lecture proportionnelle à la vitesse au sol, arrêté la marche se fige sur l'image courante
     const lecture = t.v < ARRET_M_S ? 0 : Math.min(LECTURE_MAX, t.v / VITESSE_CLIP_MARCHE);
     inst.phaseMarche = (inst.phaseMarche + dt * lecture) % Math.max(0.001, dureeClip(marche));
-    return { pose: poseDepuisImage(echantillonnerClip(marche, inst.phaseMarche, true), inst.cible), x: 0 };
+    return { pose: poseDepuisImage(echantillonnerClip(marche, inst.phaseMarche, true), inst.cible), x: 0, source: "marche" };
   }
 
   function parachute(inst: Instance, descente: boolean): void {
@@ -439,7 +536,7 @@ export function creerRenduTigres(scene: THREE.Scene): RenduTigres {
   }
 
   return {
-    maj(tigres, av, tsServeur, dt, couleurDe, visible) {
+    maj(tigres, av, tsServeur, dt, couleurDe, pseudoDe, visible) {
       horloge += dt;
       racine.visible = visible;
 
@@ -451,21 +548,27 @@ export function creerRenduTigres(scene: THREE.Scene): RenduTigres {
       } else avion.visible = false;
 
       for (const inst of instances.values()) inst.vu = false;
-      const k = 1 - Math.exp(-RAIDEUR_POSE * dt);
+      const ressort = 1 - Math.exp(-RAIDEUR_POSE * dt);
       for (const t of tigres.values()) {
         const inst = instances.get(t.id) ?? creerInstance(t);
         inst.vu = true;
         inst.racine.position.set(t.p[0], t.p[1], t.p[2]);
         inst.racine.rotation.set(0, t.cap + Math.PI, 0);
         parachute(inst, t.etat === "descente");
-        lisere(inst, t.genre === "allie" && t.lanceur ? couleurDe(t.lanceur) : null);
+        const lanceur = t.genre === "allie" && t.lanceur ? t.lanceur : null;
+        lisere(inst, lanceur ? couleurDe(lanceur) : null);
+        plaque(inst, lanceur ? couleurDe(lanceur) : null, lanceur ? pseudoDe(lanceur) : "");
         if (!inst.t3d) continue;
         const v = viser(inst, t, tsServeur, dt);
         if (!inst.posee) {
           for (let i = 0; i < inst.pose.q.length; i++) { inst.pose.q[i].copy(v.pose.q[i]); inst.pose.t[i].copy(v.pose.t[i]); }
           inst.origineX = v.x;
+          inst.source = v.source;
           inst.posee = true;
         } else {
+          // ressort pendant le fondu qui suit un changement de source, puis pose visée suivie exactement (pieds plantés du galop)
+          if (v.source !== inst.source) { inst.source = v.source; inst.sourceS = 0; } else inst.sourceS += dt;
+          const k = inst.sourceS >= FONDU_S ? 1 : Math.max(ressort, inst.sourceS / FONDU_S);
           rapprocher(inst.pose, v.pose, k);
           inst.origineX += (v.x - inst.origineX) * k;
         }
@@ -511,6 +614,7 @@ export function creerRenduTigres(scene: THREE.Scene): RenduTigres {
       if (!inst) return;
       instances.delete(id);
       inst.mortS = 0;
+      if (inst.plaque) inst.plaque.visible = false;
       mourants.push(inst);
     },
 
@@ -558,6 +662,8 @@ export function creerRenduTigres(scene: THREE.Scene): RenduTigres {
       copies.clear();
       for (const m of materiauxLisere.values()) m.dispose();
       materiauxLisere.clear();
+      for (const p of plaques.values()) { p.mat.map?.dispose(); p.mat.dispose(); }
+      plaques.clear();
       for (const g of geosAvion) g.dispose();
       for (const x of [matAvion, geoFeu, matFeuRouge, matFeuVert, geoPara.voilure, geoPara.suspentes, matPara, matSuspentes, geoRepli, matRepli, geoFumee]) x.dispose();
     },

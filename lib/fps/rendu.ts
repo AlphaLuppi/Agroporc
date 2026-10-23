@@ -864,7 +864,7 @@ const Y_PSEUDO_BAS = silhouetteDe(true).tete.y + 0.5;
 const SILHOUETTE_LOIN = { largeur: 0.5, hauteur: 2.2, hauteurBas: 1.4, opacite: 0.35, debutM: 45, pleinM: 50 };
 
 /** Plaque du pseudo : sombre, bordée et écrite de la couleur du joueur. */
-function texturePseudo(pseudo: string, couleur: THREE.Color): { tex: THREE.CanvasTexture; ratio: number } {
+export function texturePseudo(pseudo: string, couleur: THREE.Color): { tex: THREE.CanvasTexture; ratio: number } {
   const L = 384, H = 72;
   const cv = document.createElement("canvas");
   cv.width = L;
@@ -1612,11 +1612,40 @@ export function creerEffets(scene: THREE.Object3D): Effets {
 // Post-traitement (bloom de la vue aérienne)
 // ---------------------------------------------------------------------------------------------
 
-/** Compositeur RenderPass → bloom → OutputPass, réglé comme scene.ts. */
+/** Le filtre de luminosité du bloom ignore un pixel d'alpha nul (cf. `sansHalo`), alpha borné à 1 (le mélange additif le dépasse). */
+const FILTRE_HALO_D_ORIGINE = "gl_FragColor = mix( outputColor, texel, alpha );";
+const FILTRE_HALO_SELECTIF = "gl_FragColor = mix( outputColor, texel, alpha * clamp( texel.a, 0.0, 1.0 ) );";
+
+/**
+ * Exclut un matériau OPAQUE du halo du bloom de l'arène (`creerPostTraitement`) : il écrit un alpha nul, que le filtre de luminosité
+ * lit comme « pas de halo ». Sans effet sur sa couleur (la toile de l'arène n'a pas de canal alpha). Le matériau ne doit pas être
+ * transparent : un mélange normal recalculerait l'alpha.
+ */
+export function sansHalo(m: THREE.Material): void {
+  const avant = m.onBeforeCompile;
+  m.onBeforeCompile = (shader, renderer) => {
+    avant.call(m, shader, renderer);
+    shader.fragmentShader = shader.fragmentShader.replace("#include <dithering_fragment>", "#include <dithering_fragment>\n\tgl_FragColor.a = 0.0;");
+  };
+  const cle = m.customProgramCacheKey.bind(m);
+  m.customProgramCacheKey = () => `${cle()}|sans-halo`;
+}
+
+/**
+ * Compositeur RenderPass → bloom → OutputPass, réglé comme scene.ts. Un matériau qui écrit un alpha nul (opaque, donc sans mélange)
+ * est exclu du halo : le tigre de l'arène, texture claire et pleine lumière, saturait l'écran en aplat jaune dès qu'il s'approchait de la
+ * caméra (seuil de luminosité de 0,24). Tout le reste de la scène garde un alpha de 1 (fond effacé à 1, mélanges normal et additif).
+ */
 export function creerPostTraitement(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera): PostTraitement {
   const composer = new EffectComposer(renderer);
   composer.addPass(new RenderPass(scene, camera));
   const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.62, 0.42, 0.24);
+  const filtre = bloom.materialHighPassFilter;
+  // filtre de three changé (mise à jour) : le halo redevient global, signalé en console plutôt que de casser l'arène
+  if (filtre.fragmentShader.includes(FILTRE_HALO_D_ORIGINE)) {
+    filtre.fragmentShader = filtre.fragmentShader.replace(FILTRE_HALO_D_ORIGINE, FILTRE_HALO_SELECTIF);
+    filtre.needsUpdate = true;
+  } else console.warn("arène : filtre de luminosité du bloom inattendu, halo du tigre non exclu");
   composer.addPass(bloom);
   composer.addPass(new OutputPass());
   return {

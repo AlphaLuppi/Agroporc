@@ -1157,7 +1157,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
     const ts = tsServeur - JEU.interpolationMs;
     tigresVus = mondeTigres.tigresA(ts);
     const av = mondeTigres.avionA(tsServeur);
-    renduTigres.maj(tigresVus, av, ts, dt, couleurDe, !enReplay);
+    renduTigres.maj(tigresVus, av, ts, dt, couleurDe, pseudoDe, !enReplay);
     const sonsTigres = mondeTigres.sons(tigresVus);
     if (enReplay) { sons.avion(null); return; }
     for (const s of sonsTigres) {
