@@ -65,9 +65,9 @@ const TAPI = { dy: -0.09, tangage: -0.03, baisseTete: 0.3 };
 /**
  * Pose tapie, sans animation : le moteur du tigre (lib/tigre3d/corps.ts) à l'arrêt, pattes au
  * sol, avec une couche « corps abaissé, tête basse ». Quelques secondes simulées laissent les
- * ressorts se poser. Calculée une fois par tigre.
+ * ressorts se poser. Calculée une fois par tigre (ici et dans l'arène FPS, lib/fps/rendu-tigres.ts).
  */
-function poseTapie(): { pose: PoseTigre; x: number } {
+export function poseTapie(): { pose: PoseTigre; x: number } {
   const corps = creerCorps({ cap: 0, graine: 7 });
   const deltas: NonNullable<PoseGeste["deltas"]> = {};
   tete(deltas, 0, 0, TAPI.baisseTete);
