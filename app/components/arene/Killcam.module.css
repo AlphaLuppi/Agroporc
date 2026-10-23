@@ -1,0 +1,44 @@
+/*
+ * Habillage de la killcam (rejeu) : bandes noires de 8 vh. Le HUD de combat est retiré pendant la killcam ; seules ces bandes et la carte du
+ * tueur portent du texte, sur --ag-ground (contraste maximal). Cotes en `u` héritées de .hud (HudArene.module.css). Aucune couleur en dur.
+ */
+.killcam { position: absolute; inset: 0; pointer-events: none; z-index: 6; font-family: var(--ag-mono), ui-monospace, monospace; text-shadow: none; }
+.bandeHaut, .bandeBas {
+  position: absolute; left: 0; right: 0; height: 8vh; min-height: calc(44 * var(--u, 1px)); background: var(--ag-ground); color: var(--ag-ink);
+  display: flex; align-items: center; gap: calc(16 * var(--u, 1px)); padding: 0 calc(32 * var(--u, 1px)); box-sizing: border-box;
+}
+.bandeHaut { top: 0; justify-content: space-between; animation: bandeHaut 0.25s ease-out; }
+.bandeBas { bottom: 0; animation: bandeBas 0.25s ease-out; }
+@keyframes bandeHaut { from { transform: translateY(-100%); } }
+@keyframes bandeBas { from { transform: translateY(100%); } }
+
+/* entre les bandes : la carte du tueur (centrée) et le choix d'équipement ; pendant le rejeu, en bas pour laisser voir la scène */
+.centre {
+  position: absolute; left: 0; right: 0; top: 8vh; bottom: 8vh; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: calc(12 * var(--u, 1px)); padding: calc(12 * var(--u, 1px)); box-sizing: border-box; pointer-events: none;
+}
+.killcam[data-phase="rejeu"] .centre { justify-content: flex-end; }
+
+.legende { margin: 0; display: flex; align-items: center; gap: calc(8 * var(--u, 1px)); flex-wrap: wrap; font-size: max(11px, calc(14 * var(--u, 1px))); letter-spacing: 0.14em; text-transform: uppercase; }
+.legende b { font-weight: 600; color: var(--ag-ink); }
+.legendeSuite { display: inline-flex; align-items: center; gap: calc(8 * var(--u, 1px)); color: var(--ag-ink); }
+.rec { color: var(--ag-danger); }
+.pastille { display: inline-block; width: calc(10 * var(--u, 1px)); height: calc(10 * var(--u, 1px)); min-width: 7px; min-height: 7px; }
+
+.passer {
+  pointer-events: auto; min-height: 40px; min-width: 40px; padding: 0 calc(16 * var(--u, 1px)); display: inline-flex; align-items: center; gap: calc(10 * var(--u, 1px));
+  background: transparent; border: 1px solid var(--ag-cadre); color: var(--ag-white); cursor: pointer;
+  font: inherit; font-size: max(11px, calc(14 * var(--u, 1px))); letter-spacing: 0.14em; text-transform: uppercase;
+}
+.passer:hover, .passer:focus-visible { border-color: var(--ag-amber); color: var(--ag-amber); }
+.passer:focus-visible { outline: 2px solid var(--ag-white); outline-offset: 2px; }
+.passer kbd { font: inherit; font-size: max(11px, calc(12 * var(--u, 1px))); padding: 1px 6px; border: 1px solid var(--ag-cadre); color: var(--ag-cyan); letter-spacing: 0.06em; }
+
+.progression { flex: 0 1 calc(360 * var(--u, 1px)); min-width: 80px; height: calc(8 * var(--u, 1px)); min-height: 5px; background: var(--ag-line-strong); position: relative; }
+.progression i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--ag-amber); }
+.titre { margin: 0; text-transform: uppercase; font-family: var(--ag-display), var(--ag-mono), monospace; font-weight: 700; font-size: max(11px, calc(32 * var(--u, 1px))); letter-spacing: 0.14em; color: var(--ag-danger); line-height: 1; }
+.delai { text-transform: uppercase; font-size: max(11px, calc(14 * var(--u, 1px))); letter-spacing: 0.1em; color: var(--ag-ink); font-variant-numeric: tabular-nums; }
+
+@media (prefers-reduced-motion: reduce) {
+  .bandeHaut, .bandeBas { animation: none; }
+}

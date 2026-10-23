@@ -16,7 +16,7 @@
 import type { Contact, Monde } from "./collision";
 import { resoudre, solSous } from "./collision";
 import type { CoteMur, Posture, Vec3 } from "./protocole";
-import { SILHOUETTE } from "./protocole";
+import { SILHOUETTE, SILHOUETTE_ACCROUPIE } from "./protocole";
 
 export interface Entrees {
   /** −1..1 (1 = vers l'avant) */
@@ -26,6 +26,8 @@ export interface Entrees {
   /** maintenu (le front montant est détecté ici) */
   saut: boolean;
   sprint: boolean;
+  /** accroupi voulu (maintenu ou basculé par `jeu.ts`) ; absent = debout. Le front montant déclenche la glissade. */
+  accroupi?: boolean;
   /** cap de la vue (rad) */
   lacet: number;
 }
@@ -46,6 +48,17 @@ export interface EtatMouvement {
   murRecent: { prisme: number; nx: number; nz: number; t: number } | null;
   /** roulis caméra lissé (rad, + = penche à droite) */
   inclinaison: number;
+  /** accroupi effectif : seulement au sol hors wall-run (la hitbox et l'œil suivent, cf. `hauteurOeil`) */
+  accroupi: boolean;
+  /**
+   * glissade en cours (v2 §2.8, §13.3) : `t` = temps écoulé, `v0` = vitesse horizontale à l'entrée, `dir` = direction
+   * unitaire (x, z) figée à l'entrée. `null` hors glissade.
+   */
+  glisse: { t: number; v0: number; dir: [number, number] } | null;
+  /** s restantes avant de pouvoir glisser de nouveau (`MOUV.glisseRechargeS` à la fin d'une glissade, quelle qu'en soit la raison) */
+  glisseRecharge: number;
+  /** pour détecter le front montant de `accroupi` (la glissade ne part qu'à l'appui, pas à l'atterrissage touche tenue) */
+  accroupiPrecedent: boolean;
 }
 
 /** Toutes les constantes du contrôleur (exportées pour les tests et le réglage). */
@@ -57,14 +70,16 @@ export const MOUV = {
   /** plus grand dt accepté par appel (onglet gelé) */
   dtMaxS: 0.25,
 
-  marche: 6.5,
-  sprint: 9,
-  accelSol: 60,
+  /** v2 §2.1 : ≈ +40 % de vitesse (marche 6,5 → 9, sprint 9 → 12,5) */
+  marche: 9,
+  sprint: 12.5,
+  /** le sprint est atteint en 0,149 s */
+  accelSol: 84,
   /** décélération sans entrée au sol (m/s²) */
-  frictionSol: 55,
+  frictionSol: 75,
   /** perte de vitesse au sol au-dessus de la vitesse de course (on garde l'élan du saut de mur) */
-  frictionExces: 22,
-  accelAir: 12,
+  frictionExces: 30,
+  accelAir: 16,
   saut: 6.8,
   /** impulsion du double saut */
   sautAir: 6.6,
@@ -76,11 +91,24 @@ export const MOUV = {
   /** marche franchissable en montant (m) */
   toleranceMarche: 0.3,
 
+  /** accroupi (v2 §2.8) : multiplie marche et sprint */
+  accroupiMult: 0.5,
+  /** glissade (v2 §2.8 et §13.3) : accroupi pressé au sol à au moins `glisseVitesseMin` m/s, elle dure `glisseDureeS` s */
+  glisseDureeS: 0.75,
+  /** vitesse d'entrée minimale d'une glissade, pour un multiplicateur d'arme de 1 : le seuil réel la multiplie par celui de l'arme (0,84 × le sprint) */
+  glisseVitesseMin: 10.5,
+  /** temps de recharge (s) entre la fin d'une glissade et la suivante : pas de glissades enchaînées pour garder l'élan du sprint */
+  glisseRechargeS: 0.6,
+  /** roulis caméra pendant la glissade (rad, léger : environ 4°) */
+  glisseInclinaison: 0.07,
+  /** une glissade qui perd plus de la moitié de sa vitesse théorique (mur de face) s'arrête */
+  glisseArretRatio: 0.5,
+
   /** wall-run */
-  murVitesseEntreeMin: 4,
+  murVitesseEntreeMin: 5.5,
   murAngleMaxDeg: 65,
-  murVitesse: 8.5,
-  murVitesseMax: 11,
+  murVitesse: 10,
+  murVitesseMax: 13,
   murVyInit: 1.2,
   murGravite: 3,
   /** vitesse vers le mur qui garde le contact (m/s) */
@@ -112,12 +140,13 @@ export const MOUV = {
   monteeAvance: 4.5,
 
   /**
-   * Plafond de vitesse horizontale (m/s). Les sauts de mur (jusqu'à 12,8 m/s) enchaînés avec le
-   * contrôle en l'air dépassaient 16 m/s ; le serveur refuse les états à plus de 14 m/s
-   * (`VITESSE_MAX_H_M_S` de match.ts) : après une coupure du réseau, un joueur aussi rapide restait gelé
-   * côté serveur. Ce plafond reste au-dessus de tout ce que prévoient les règles.
+   * Plafond de vitesse horizontale (m/s). Les sauts de mur (jusqu'à hypot(13 ; 6,5) = 14,5 m/s) enchaînés avec le
+   * contrôle en l'air dépassaient largement le sprint ; le serveur refuse les états à plus de 19 m/s
+   * (`PLAFONDS.vitesseHorizontaleMax`) : après une coupure du réseau, un joueur aussi rapide restait gelé
+   * côté serveur. Ce plafond reste au-dessus de tout ce que prévoient les règles (invariant testé : sprint du
+   * couteau 16,25 ≤ 18 < 19 ≤ 24).
    */
-  vitesseMaxH: 13.5,
+  vitesseMaxH: 18,
 
   /** lissage du roulis caméra (1/s) */
   inclinaisonVitesse: 10,
@@ -125,6 +154,11 @@ export const MOUV = {
 
 const COS_RECOLLAGE = Math.cos((MOUV.murRecollageAngleDeg * Math.PI) / 180);
 const SIN_ANGLE_MUR = Math.sin((MOUV.murAngleMaxDeg * Math.PI) / 180);
+
+/** Hauteur de l'œil au-dessus des pieds (m) : 1,95 debout, 1,30 accroupi. Le lissage de la caméra (12/s) est côté `jeu.ts`. */
+export function hauteurOeil(accroupi: boolean): number {
+  return accroupi ? SILHOUETTE_ACCROUPIE.oeil : SILHOUETTE.oeil;
+}
 
 export function etatInitial(p: Vec3): EtatMouvement {
   return {
@@ -137,6 +171,10 @@ export function etatInitial(p: Vec3): EtatMouvement {
     coyote: MOUV.coyoteS,
     murRecent: null,
     inclinaison: 0,
+    accroupi: false,
+    glisse: null,
+    glisseRecharge: 0,
+    accroupiPrecedent: false,
   };
 }
 
@@ -161,6 +199,10 @@ function copier(e: EtatMouvement): EtatMouvement {
     coyote: e.coyote,
     murRecent: e.murRecent ? { ...e.murRecent } : null,
     inclinaison: e.inclinaison,
+    accroupi: e.accroupi,
+    glisse: e.glisse ? { ...e.glisse, dir: [e.glisse.dir[0], e.glisse.dir[1]] } : null,
+    glisseRecharge: e.glisseRecharge,
+    accroupiPrecedent: e.accroupiPrecedent,
   };
 }
 
@@ -176,7 +218,7 @@ interface Souhait {
   avant: number;
 }
 
-function souhait(en: Entrees, mult: number): Souhait {
+function souhait(en: Entrees, mult: number, accroupi: boolean): Souhait {
   const avant = Math.max(-1, Math.min(1, en.avant || 0));
   const droite = Math.max(-1, Math.min(1, en.droite || 0));
   const sl = Math.sin(en.lacet), cl = Math.cos(en.lacet);
@@ -187,7 +229,8 @@ function souhait(en: Entrees, mult: number): Souhait {
   const mag = Math.min(1, l);
   if (l > 1e-6) { wx /= l; wz /= l; } else { wx = 0; wz = 0; }
   const course = en.sprint && avant > 0.1;
-  return { dx: wx, dz: wz, mag, vmax: (course ? MOUV.sprint : MOUV.marche) * mult * mag, avant };
+  const posture = accroupi ? MOUV.accroupiMult : 1;
+  return { dx: wx, dz: wz, mag, vmax: (course ? MOUV.sprint : MOUV.marche) * mult * mag * posture, avant };
 }
 
 /** Fait tourner la direction (dx, dz) vers (cx, cz), au plus de `max` radians. */
@@ -284,16 +327,86 @@ function essayerAccrocher(s: EtatMouvement, m: Monde, w: Souhait, vx: number, vz
   return true;
 }
 
+/** Vitesse de marche accroupi (m/s) : celle où la glissade se fond à sa fin, sans à-coup. */
+function vitesseAccroupi(mult: number): number {
+  return MOUV.marche * MOUV.accroupiMult * mult;
+}
+
+/**
+ * Vitesse horizontale minimale pour déclencher une glissade : RELATIVE à l'arme en main (`mult`). Un seuil absolu de 10,5 m/s empêchait de
+ * glisser avec le minigun (sprint 12,5 × 0,75 = 9,4 m/s) ou le sniper en visée, sans le moindre retour. Pour `mult` = 1 c'est 10,5 m/s.
+ */
+export function seuilGlisse(mult: number = 1): number {
+  return MOUV.glisseVitesseMin * mult;
+}
+
+/** Vitesse théorique d'une glissade à l'instant `t` : v(t) = vAccroupi + (v0 − vAccroupi)·(1 − t/durée)². */
+export function vitesseGlisse(v0: number, t: number, mult: number = 1): number {
+  const va = vitesseAccroupi(mult);
+  const k = Math.max(0, 1 - t / MOUV.glisseDureeS);
+  return va + (v0 - va) * k * k;
+}
+
+/**
+ * Posture d'un pas (v2 §2.8, §13.3) : accroupi effectif, début / avancement / fin de la glissade. Renvoie la
+ * vitesse que la glissade impose à ce pas (null hors glissade). Elle a son propre état et ne passe PAS par la
+ * branche « excès de vitesse » de `accelererSol` (friction 30 : 12,5 m/s retomberait en 0,2 s au lieu de 0,75 s).
+ */
+function preparerPosture(s: EtatMouvement, en: Entrees, front: boolean, frontAccroupi: boolean, dt: number, mult: number): number | null {
+  const veut = !!en.accroupi;
+  const libre = s.auSol && !s.mur;
+
+  // Début : appui sur accroupi au sol, assez vite (la vitesse horizontale suffit : seul le sprint, le saut de mur ou
+  // l'élan d'une chute en donnent autant).
+  if (frontAccroupi && libre && !s.glisse && s.glisseRecharge <= 0) {
+    const vh = Math.hypot(s.v[0], s.v[2]);
+    if (vh >= seuilGlisse(mult)) s.glisse = { t: 0, v0: vh, dir: [s.v[0] / vh, s.v[2] / vh] };
+  }
+  // Fin : quitter le sol (chute, wall-run) ou sauter (saut glissé : la vitesse du moment est gardée en l'air).
+  if (s.glisse && (!libre || front)) {
+    s.glisse = null;
+    if (front && libre) { s.accroupi = false; return null; }
+  }
+
+  if (s.glisse) {
+    s.glisse.t += dt;
+    if (s.glisse.t >= MOUV.glisseDureeS - 1e-9) {
+      // fin de durée : la formule vaut alors vAccroupi, `accelererSol` reprend la main
+      s.glisse = null;
+    } else {
+      const vs = vitesseGlisse(s.glisse.v0, s.glisse.t, mult);
+      s.v[0] = s.glisse.dir[0] * vs;
+      s.v[2] = s.glisse.dir[1] * vs;
+      s.accroupi = true;
+      return vs;
+    }
+  }
+  // Accroupi : seulement au sol hors wall-run ; se relever est toujours possible.
+  s.accroupi = veut && libre;
+  return null;
+}
+
+/** Une glissade qui a perdu plus de la moitié de sa vitesse théorique (mur de face) ou le sol s'arrête. */
+function verifierGlisse(s: EtatMouvement, vs: number): void {
+  if (!s.auSol || Math.hypot(s.v[0], s.v[2]) < vs * MOUV.glisseArretRatio) s.glisse = null;
+}
+
 /** Un pas de simulation (dt ≤ pasMaxS) : mur, sinon sol / air. Modifie `s` en place. */
-function pas(s: EtatMouvement, en: Entrees, front: boolean, dt: number, m: Monde, mult: number): void {
+function pas(s: EtatMouvement, en: Entrees, front: boolean, frontAccroupi: boolean, dt: number, m: Monde, mult: number): void {
   if (s.coyote > 0) s.coyote = Math.max(0, s.coyote - dt);
   if (s.murRecent) {
     s.murRecent.t += dt;
     if (s.murRecent.t > MOUV.murRecollageS) s.murRecent = null;
   }
-  const w = souhait(en, mult);
+  if (s.glisseRecharge > 0) s.glisseRecharge = Math.max(0, s.glisseRecharge - dt);
+  const glissait = !!s.glisse;
+  const vitesseGlisse = preparerPosture(s, en, front, frontAccroupi, dt, mult);
+  const w = souhait(en, mult, s.accroupi);
   if (s.mur) pasMur(s, en, front, dt, m, mult, w);
   else pasLibre(s, front, dt, m, mult, w);
+  if (s.glisse && vitesseGlisse !== null) verifierGlisse(s, vitesseGlisse);
+  // fin de glissade (durée, saut, chute, mur de face) : recharge avant la suivante. Le pas qui ENTRE en glissade ne compte pas.
+  if (glissait && !s.glisse) s.glisseRecharge = MOUV.glisseRechargeS;
 
   const vh = Math.hypot(s.v[0], s.v[2]);
   if (vh > MOUV.vitesseMaxH) {
@@ -301,8 +414,8 @@ function pas(s: EtatMouvement, en: Entrees, front: boolean, dt: number, m: Monde
     s.v[0] *= k; s.v[2] *= k;
   }
 
-  // Roulis caméra : penche à l'opposé du mur pendant le wall-run.
-  const cible = s.mur ? -s.mur.cote * MOUV.murInclinaison : 0;
+  // Roulis caméra : penche à l'opposé du mur pendant le wall-run, légèrement à droite pendant la glissade.
+  const cible = s.mur ? -s.mur.cote * MOUV.murInclinaison : s.glisse ? MOUV.glisseInclinaison : 0;
   s.inclinaison += (cible - s.inclinaison) * (1 - Math.exp(-MOUV.inclinaisonVitesse * dt));
 }
 
@@ -387,7 +500,8 @@ function pasLibre(s: EtatMouvement, front: boolean, dt: number, m: Monde, mult: 
   const v = s.v;
   let saute = false;
 
-  if (s.auSol) accelererSol(s, w, dt); else accelererAir(s, w, dt);
+  // Pendant la glissade, `preparerPosture` a déjà imposé la vitesse : ni accélération ni friction.
+  if (s.glisse) { /* vitesse imposée */ } else if (s.auSol) accelererSol(s, w, dt); else accelererAir(s, w, dt);
 
   if (front) {
     if (s.auSol || s.coyote > 0) {
@@ -470,11 +584,16 @@ export function etape(e: EtatMouvement, entrees: Entrees, dt: number, monde: Mon
   const n = Math.max(1, Math.ceil(total / MOUV.pasMaxS - 1e-6));
   const h = total / n;
   let precedent = e.sautPrecedent;
+  let accroupiAvant = e.accroupiPrecedent;
+  const accroupi = !!entrees.accroupi;
   for (let i = 0; i < n; i++) {
     const front = entrees.saut && !precedent;
+    const frontAccroupi = accroupi && !accroupiAvant;
     precedent = entrees.saut;
-    pas(s, entrees, front, h, monde, vitesseArme);
+    accroupiAvant = accroupi;
+    pas(s, entrees, front, frontAccroupi, h, monde, vitesseArme);
   }
   s.sautPrecedent = entrees.saut;
+  s.accroupiPrecedent = accroupi;
   return s;
 }

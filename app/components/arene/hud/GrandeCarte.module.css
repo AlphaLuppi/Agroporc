@@ -1,0 +1,17 @@
+/* Grande carte : plaque centrée, 600 unités de large (bornée par la fenêtre), ratio de la zone jouable en --ratio. */
+.voile { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; }
+.panneau {
+  display: flex; flex-direction: column; gap: calc(6 * var(--u, 1px));
+  width: min(calc(600 * var(--u, 1px)), 92vw, calc(76vh * var(--ratio, 1.33)));
+  padding: calc(8 * var(--u, 1px)); background: var(--ag-hud-fond-fort); border: 1px solid var(--ag-cadre);
+}
+.cadre { position: relative; width: 100%; aspect-ratio: var(--ratio, 1.33); }
+.canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.legende {
+  margin: 0; color: var(--ag-ink-dim); text-shadow: none;
+  font-family: var(--ag-display), var(--ag-mono), monospace; font-weight: 600; letter-spacing: 0.08em;
+  font-size: max(11px, calc(11 * var(--u, 1px))); line-height: 1.3;
+}
+.touche {
+  font: inherit; padding: 0 calc(4 * var(--u, 1px)); border: 1px solid var(--ag-cadre); color: var(--ag-cyan); background: transparent;
+}

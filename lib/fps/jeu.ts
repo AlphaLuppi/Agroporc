@@ -1,11 +1,15 @@
 /**
  * Boucle de jeu de l'arène FPS : vue à la première personne sur le canvas de la vue Palantir.
- * Assemble les modules purs (mouvement prédit, armes, tir, collision, interpolation) et le rendu
- * three.js (décor de lib/agroparc3d/decor.ts, avatars, arme en main, effets, bloom) + les sons.
+ * Assemble les modules purs (mouvement prédit, armes, équipement, tir, couteau, véhicules, killcam, monde dynamique, visibilité,
+ * interpolation) et le rendu three.js (décor de lib/agroparc3d/decor.ts, avatars, arme en main, effets, monde dynamique, bloom) + les sons.
+ * `jeu.ts` ORCHESTRE : la logique vit dans les modules purs testés (`jeu-equipement`, `jeu-killcam`, `jeu-monde`, `jeu-vehicule`,
+ * `jeu-visee`, `jeu-radar`, `visibilite`, `melee`, `tir`…).
  *
- * Le mouvement est autoritaire côté client (prédiction, aucune réconciliation) : l'état est envoyé
- * à `JEU.etatHz`, le serveur borne la vitesse. Les tirs sont tracés ici contre les avatars
- * INTERPOLÉS (ce que le tireur voit) puis déclarés au serveur, qui les revalide.
+ * Le mouvement est autoritaire côté client (prédiction, aucune réconciliation, voiture comprise pour son conducteur) : l'état est envoyé
+ * à `JEU.etatHz` (`conduite` à la place d'`etat` pour le conducteur, `etat` à `JEU.etatPassagerHz` pour un passager), le serveur borne
+ * la vitesse. Les tirs sont tracés ici contre les avatars INTERPOLÉS (ce que le tireur voit) puis déclarés au serveur, qui les revalide.
+ * Aucune dispersion (v2 §13.1) : le tir part exactement de l'axe de la vue, et la caméra regarde exactement la même direction
+ * (`jeu-visee.ts`, §13.2.4). Le retour de touche (son, marqueur, chiffre) ne part QU'À LA RÉCEPTION du `degats` du serveur (§13.2.1).
  * Les messages du serveur arrivent par `JeuHandle.recevoir` (l'hôte les relaie tous).
  *
  * Contrat d'intégration (hôte React : app/components/Agroparc3D.tsx) :
@@ -13,105 +17,53 @@
  *    plus créer de contexte ; l'hôte change donc de `<canvas key>` à chaque bascule ;
  *  - `lancerJeu` envoie lui-même `rejoindre` ; `dispose` envoie `quitter` ;
  *  - juste après la création, l'hôte relaie la dernière `presence` (pseudos et couleurs des avatars) ;
- *  - Tab (tableau des scores) et le menu pause sont dans l'UI React ; Échap libère simplement la souris.
- * Spec : docs/superpowers/specs/2026-10-22-agroparc-fps-design.md
+ *  - Tab (tableau des scores, `vueScores`), M (grande carte) et le menu pause sont dans l'UI React ; Échap libère simplement la souris ;
+ *  - les valeurs continues du HUD sont dans `JeuHandle.live` (60 Hz, hors React) et la mini-map lit `JeuHandle.radar()`.
+ *
+ * Les types du contrat avec l'hôte (HudEtat, JeuEvenement, JeuCallbacks, JeuHandle…) sont dans `jeu-types.ts` et réexportés ici.
+ * Spec : docs/superpowers/specs/2026-10-22-agroparc-fps-design.md, 2026-10-22-arene-v2-design.md (§6.2, §13),
+ * 2026-10-23-arene-hud-design.md (§3)
  */
 import * as THREE from "three";
 import type { SceneData } from "../agroparc3d/types";
 import { C, construireDecor } from "../agroparc3d/decor";
 import { construireMonde, type Monde } from "./collision";
-import { etape, etatInitial, coteMurDe, postureDe, type Entrees, type EtatMouvement } from "./mouvement";
-import { STATS, apresTir, degatsPlomb, delaiRecul, delaiRefroidissement, directionsTir, dispersionCourante, refroidir, retourRecul } from "./armes";
+import { construireCircuits, flotte } from "./circulation";
+import { coteMurDe, etape, etatInitial, hauteurOeil, postureDe, type Entrees, type EtatMouvement } from "./mouvement";
+import { COUTEAU, STATS, degatsPlomb, delaiRecul, directionsTir, retourRecul, vitesseArme } from "./armes";
 import { tracer, type Cible } from "./tir";
+import { trouverCibleCouteau } from "./melee";
 import {
-  ARMES, JEU, SILHOUETTE,
-  type ArmeId, type EtatJoueurSnap, type JoueurPublic, type MessageServeur, type Vec3, type Zone,
+  JEU, OEIL_SIEGE, SILHOUETTE,
+  type ArmeFeuId, type ArmeId, type EtatJoueurSnap, type JoueurPublic, type MessageServeur, type Siege, type Slot, type Vec3, type VehiculeSnap, type Zone,
 } from "./protocole";
+import type { EquipementJeu, HudEtat, HudLive, JeuCallbacks, JeuHandle } from "./jeu-types";
+import { ajouterEcho, creerRadarFrame, definirElsa, ajouterVoiture, ajouterVoiturePnj, purgerEchos, viderRadarFrame, type RadarFrame } from "./radar";
+import { SuiviRadar, type JoueurRadarEntree } from "./jeu-radar";
 import { Interpolateur, type ClientArene } from "./reseau";
 import { codeSouris, indexTouches, lireTouches, stockageNavigateur, type Action, type ConfigTouches } from "./touches";
-import { creerArmeEnMain, creerAvatar, creerEffets, creerPostTraitement, type ArmeEnMain, type AvatarJoueur } from "./rendu";
+import {
+  creerArmeEnMain, creerAvatar, creerEffets, creerPostTraitement, type ArmeEnMain, type AvatarJoueur,
+} from "./rendu";
+import { creerMondeDynamique, type MondeDynamique } from "./rendu-monde";
 import { creerSons } from "./sons";
-import { angleRelatif, anglesVers, directionRegard, fovVerticalDeg, lissage, panSon } from "./vue";
+import { angleRelatif, anglesVers, fovVerticalDeg, lissage, panSon } from "./vue";
+import { TANGAGE_MAX, directionVisee, rotationCamera, tangageDeVue } from "./jeu-visee";
+import { ControleurArmes } from "./jeu-equipement";
+import { serialiserSlots } from "./equipement";
+import { ControleurKillcam } from "./jeu-killcam";
+import { MondeJeu } from "./jeu-monde";
+import { ControleurVehicule, commandesDepuisEntrees, recalerOccupants } from "./jeu-vehicule";
+import { CONDUCTEUR_TIRE } from "./garage";
+import type { EtatVehicule } from "./vehicule";
+import { VisibilitePseudos, type JoueurVisible } from "./visibilite";
+import { positionElsa, ROND_POINT, EMPLACEMENTS_VOITURES } from "./zones";
 
 // ---------------------------------------------------------------------------------------------
 // Contrat avec l'hôte
 // ---------------------------------------------------------------------------------------------
 
-export interface HudEtat {
-  pv: number;
-  arme: ArmeId;
-  /** arme de la prochaine apparition (choisie avec 1 à 4) */
-  armeSuivante: ArmeId;
-  munitions: number;
-  chargeur: number;
-  /** avancement du rechargement, 0 = rien */
-  recharge: number;
-  vise: boolean;
-  /** lunette du sniper en place (cache noir et réticule) */
-  lunette: boolean;
-  /** vitesse horizontale, m/s */
-  vitesse: number;
-  /** wall-run en cours */
-  mur: boolean;
-  mort: boolean;
-  /** s avant la réapparition (0 = en attente du serveur) */
-  reapparitionDans: number;
-  protege: boolean;
-  /** pointer lock actif */
-  verrouille: boolean;
-  /** demi-angle du cône de dispersion, rad */
-  dispersion: number;
-  /** champ de vision vertical courant, ° */
-  fov: number;
-  /** connexion au serveur vivante */
-  connecte: boolean;
-  /** entracte (classement affiché, plus de tirs) */
-  entracte: boolean;
-}
-
-export type JeuEvenement =
-  /** j'ai touché quelqu'un (estimation locale, immédiate) */
-  | { type: "touche"; cible: string; zone: Zone; degats: number }
-  /** j'ai tué quelqu'un */
-  | { type: "kill"; cible: string; zone: Zone; arme: ArmeId }
-  /** je suis mort */
-  | { type: "mort"; par: string; arme: ArmeId; zone: Zone; delai: number }
-  /** j'ai pris des dégâts ; `angle` relatif à ma vue (0 = devant, + = à droite) */
-  | { type: "degat"; par: string; degats: number; angle: number };
-
-export interface JeuCallbacks {
-  /** ≈ 15 Hz, seulement quand quelque chose a changé */
-  hud(e: HudEtat): void;
-  evenement(e: JeuEvenement): void;
-  /** le joueur a quitté l'arène (ou le rendu est devenu inutilisable) */
-  sortir(): void;
-  /** problème technique à montrer au joueur (contexte WebGL perdu) */
-  erreur?(message: string): void;
-}
-
-export interface JeuHandle {
-  /** Arme de la prochaine apparition (immédiate si mort). */
-  choisirArme(a: ArmeId): void;
-  /** Message du serveur (tous types, l'hôte relaie tout). */
-  recevoir(m: MessageServeur): void;
-  /** Redemande la souris (bouton « Reprendre » du menu pause). */
-  verrouiller(): void;
-  /** Sensibilité de la souris (1 = défaut). */
-  sensibilite(x: number): void;
-  /** Touches modifiées par le joueur (menu pause), appliquées tout de suite. */
-  touches(cfg: ConfigTouches): void;
-  dispose(): void;
-  /** Crochet de test (window.__arene en développement). */
-  debug: {
-    etat(): Record<string, unknown>;
-    teleporter(p: Vec3): void;
-    regarder(lacet: number, tangage: number): void;
-    /** Vise le centre de la cible et tire sans dispersion ; false si le tir n'est pas possible. */
-    tirerVers(id: string): boolean;
-    /** Appuie ou relâche une touche (code KeyboardEvent ou `Souris0`…) sans clavier. */
-    touche(code: string, appuyee: boolean): void;
-  };
-}
+export type { EquipementJeu, HudEtat, HudLive, JeuCallbacks, JeuEvenement, JeuHandle } from "./jeu-types";
 
 // ---------------------------------------------------------------------------------------------
 // Réglages
@@ -124,7 +76,22 @@ const FOV_H = 90;
 const FOV_H_VISEE = 78;
 const PORTEE_EFFETS_M = 400;
 const ECART_HUD_S = 1 / 15;
-const ARME_DE_L_ACTION: Partial<Record<Action, ArmeId>> = { arme1: ARMES[0], arme2: ARMES[1], arme3: ARMES[2], arme4: ARMES[3] };
+/** Tirs au plus par image (minigun à 25 tirs/s et 30 images/s : un coup par image plafonnerait la cadence, v2 §2.4). */
+const TIRS_PAR_IMAGE_MAX = 3;
+/** Retard maximal (s) rattrapé sur la cadence : au-delà (onglet gelé), on repart de maintenant plutôt que de tirer en rafale. */
+const RATTRAPAGE_CADENCE_S = 0.1;
+/** Attente maximale (s) de la réponse du serveur à `monter` / `siege` / `descendre` (HUD `embarquement`). */
+const EMBARQUEMENT_MAX_S = 1;
+/** Écart minimal (s) entre deux crans de molette (les trackpads en envoient des dizaines). */
+const MOLETTE_ECART_S = 0.15;
+/** Lissage (1/s) de la hauteur de l'œil (accroupi, siège) : v2 §2.8. */
+const LISSAGE_OEIL = 12;
+/** Roulis (rad) de la secousse d'un dégât reçu : ne touche pas le tangage (v2 §13.2.4). */
+const SECOUSSE_DEGAT = 0.03;
+/** Distance (m) de pas : la foulée est plus longue depuis le sprint à 12,5 m/s. */
+const FOULEE_M = 3.2;
+/** Vitesse perdue au contact (m/s) à partir de laquelle un choc de voiture s'entend. */
+const CHOC_SEUIL = 2;
 
 function lireSensibilite(): number {
   try {
@@ -141,7 +108,6 @@ function dansUnChamp(cible: EventTarget | null): boolean {
 }
 
 const borne = (x: number, a: number, b: number) => Math.min(b, Math.max(a, x));
-const TANGAGE_MAX = Math.PI / 2 - 0.01;
 
 interface Distant {
   avatar: AvatarJoueur;
@@ -149,11 +115,20 @@ interface Distant {
   couleur: string;
 }
 
+/** Slot appelé par chaque action d'arme. */
+const SLOT_DE_L_ACTION: Partial<Record<Action, Slot>> = {
+  armePrincipale: "principale", armeSecondaire: "secondaire", couteau: "couteau", armeSpeciale: "speciale",
+};
+
 // ---------------------------------------------------------------------------------------------
 // Jeu
 // ---------------------------------------------------------------------------------------------
 
-export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: ClientArene, arme: ArmeId, cb: JeuCallbacks): JeuHandle {
+/**
+ * `equip` : l'équipement choisi (lobby, écran de mort, pause) ; on entre avec l'arme principale en main.
+ */
+export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: ClientArene, equip: EquipementJeu, cb: JeuCallbacks): JeuHandle {
+  let equipSuivant: EquipementJeu = { principale: equip.principale, secondaire: equip.secondaire };
   const monde: Monde = construireMonde(data);
   const reduit = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -174,27 +149,44 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
   const sons = creerSons();
   const interp = new Interpolateur();
 
+  // ---------- monde dynamique (voitures PNJ et conduisibles, Elsa) ----------
+  const nbPnj = flotte(construireCircuits()).length;
+  const [elsaX, elsaZ] = positionElsa(data);
+  const mondeJeu = new MondeJeu(data, monde);
+  const dyn: MondeDynamique = creerMondeDynamique(scene, { nbPnj, nbVehicules: EMPLACEMENTS_VOITURES.length, elsa: [elsaX, elsaZ] });
+  const visib = new VisibilitePseudos(monde);
+  const suiviRadar = new SuiviRadar(monde);
+  const kc = new ControleurKillcam();
+  const vehicule = new ControleurVehicule(monde);
+
   // ---------- état du joueur ----------
-  const [fx, fz] = data.focus;
-  let moi: EtatMouvement = etatInitial([fx, 0, fz]);
+  const [cx, cz] = ROND_POINT.centre;
+  let moi: EtatMouvement = etatInitial([cx, 0, cz]);
   let lacet = 0;
   let tangage = 0;
   let apparu = false;
   let vivant = false;
   let pv: number = JEU.pvMax;
+  let bouclier = 0;
   let protege = false;
-  let armeId: ArmeId = arme;
-  let armeSuivante: ArmeId = arme;
-  let munitions = STATS[arme].chargeur;
-  let rechargeDebut = 0;
-  let rechargeFin = 0;
-  let prochainTir = 0;
-  let chaleur = 0;
-  /** instant du dernier tir (la chaleur et le recul ne retombent qu'un moment après) */
+  let protegeFin = 0;
+  /** instant (horloge locale, s) du dernier dégât reçu : la régénération démarre `JEU.regenDelaiMs` plus tard */
+  let dernierDegatT = -Infinity;
+  let dernierSonRegenT = -Infinity;
+  /** équipement et munitions : `ControleurArmes` (dégainage, chargeurs par arme, recharge) */
+  const armes = new ControleurArmes({ principale: equip.principale, secondaire: equip.secondaire, speciale: null }, "principale");
+  /** cadence locale par arme (le serveur garde la sienne) */
+  const prochains = new Map<ArmeId, number>();
+  let delaiApparitionT = 0;
+  /** instant du dernier tir et son arme (le recul ne retombe qu'un moment après) */
   let dernierTirT = -Infinity;
+  let dernierTirArme: ArmeFeuId = equip.principale;
   /** recul de tangage (rad) ajouté par les tirs et pas encore revenu ni compensé à la souris */
   let reculAcc = 0;
+  /** recul visuel (rad) : s'ajoute au tangage de la vue ET du tir, retombe vite (v2 §13.2.4) */
   let kick = 0;
+  /** secousse des dégâts reçus : roulis de la caméra seulement, jamais le tangage */
+  let secousse = 0;
   let fovH = FOV_H;
   let fovV = 60;
   let reapparitionFin = 0;
@@ -207,6 +199,26 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
   let disposed = false;
   /** retiré de l'arène par le serveur (inactivité) et pas encore rentré */
   let evince = false;
+  /** hauteur de l'œil au-dessus des pieds, lissée (accroupi : 1,30 m ; assis : OEIL_SIEGE) */
+  let hauteurOeilLissee: number = SILHOUETTE.oeil;
+  /** accroupi : true = bascule, false = maintenir (réglage de l'hôte) */
+  let accroupiBascule = false;
+  let accroupiBascTenu = false;
+  let glisseSon = false;
+  /** réponse du serveur à `monter` / `siege` / `descendre` attendue jusqu'à cet instant (0 = rien) */
+  let embarquementFin = 0;
+  let dernierChocT = -Infinity;
+  let derniereMoletteT = -Infinity;
+  let distanceVisee = -1;
+  /** caméra du tueur pendant le rejeu, gardée pour la carte (« caméra figée sur son dernier état ») */
+  let camTueurCache: { pos: Vec3; lacet: number; tangage: number } | null = null;
+  let tempsRejeuCache: number | null = null;
+  let joueursRejouesCache: Map<string, EtatJoueurSnap> | null = null;
+  let vehiculesRejouesCache: Map<number, VehiculeSnap> | null = null;
+  /** caméra courante (monde), pour les pseudos et le radar */
+  const camPos: Vec3 = [0, 0, 0];
+  let camLacet = 0;
+  let camTangage = 0;
 
   // ---------- entrées ----------
   // Touches du joueur (lib/fps/touches.ts) : codes clavier ET boutons de souris (`Souris0`…) passent
@@ -235,8 +247,12 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
   // ---------- joueurs distants ----------
   const infos = new Map<string, JoueurPublic>();
   const distants = new Map<string, Distant>();
+  /** joueurs interpolés à l'instant du rendu (HORS rejeu) : cibles des tirs, positions des effets */
   let etats = new Map<string, EtatJoueurSnap>();
+  /** joueurs dessinés cette image : `etats`, ou le tampon long pendant la killcam */
+  let etatsRendu = new Map<string, EtatJoueurSnap>();
   let t = 0; // horloge locale, s
+  const ms = () => t * 1000;
 
   const couleurDe = (id: string) => infos.get(id)?.couleur ?? "#9be9ff";
   const pseudoDe = (id: string) => infos.get(id)?.pseudo ?? "Agent";
@@ -251,56 +267,84 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
   const porteArme = new THREE.Group();
   porteArme.visible = false;
   camera.add(porteArme);
-  let armeMain: ArmeEnMain = creerArmeEnMain(armeId, couleurMoi());
+  const armeMain: ArmeEnMain = creerArmeEnMain(armes.armeEnMain(), couleurMoi());
   porteArme.add(armeMain.group);
-  function changerArmeMain(id: ArmeId) {
-    porteArme.remove(armeMain.group);
-    armeMain.dispose();
-    armeMain = creerArmeEnMain(id, couleurMoi());
-    porteArme.add(armeMain.group);
-  }
 
   // ---------- utilitaires de jeu ----------
-  const oeil = (): Vec3 => [moi.p[0], moi.p[1] + SILHOUETTE.oeil, moi.p[2]];
+  const assisSiege = (): Siege | null => vehicule.actif()?.siege ?? null;
+  const conducteur = () => assisSiege() === 0;
+  const tireInterdit = () => conducteur() && !CONDUCTEUR_TIRE;
   const vitesseH = () => Math.hypot(moi.v[0], moi.v[2]);
   const peutAgir = () => apparu && vivant;
+  /** killcam en cours : rien de ce que je fais n'a de sens (mort), les effets en direct sont coupés pendant le rejeu */
+  const enKillcam = () => kc.actif();
 
-  function demarrerRecharge() {
-    if (!peutAgir() || rechargeFin > 0 || munitions >= STATS[armeId].chargeur) return;
-    const a = STATS[armeId];
-    rechargeDebut = t;
-    rechargeFin = t + a.rechargeS;
-    armeMain.recharger(a.rechargeS);
-    sons.recharge(armeId);
+  /** Rejeu à la première personne en cours (phase « rejeu » avec la caméra du tueur) ou carte figée sur son dernier état. */
+  let enReplay = false;
+
+  /** Œil du joueur (monde), debout, accroupi (lissé) ou assis. */
+  function oeil(): Vec3 {
+    const s = vehicule.positionSiege();
+    if (s) return [s[0], s[1] + OEIL_SIEGE, s[2]];
+    return [moi.p[0], moi.p[1] + hauteurOeilLissee, moi.p[2]];
   }
 
-  function annulerRecharge() {
-    rechargeFin = 0;
-    rechargeDebut = 0;
+  /** Arme à feu en main (null pour le couteau). */
+  const armeFeu = (): ArmeFeuId | null => {
+    const a = armes.armeEnMain();
+    return a === "couteau" ? null : a;
+  };
+  const prochainDe = (a: ArmeId) => Math.max(prochains.get(a) ?? 0, delaiApparitionT);
+
+  function demarrerRecharge() {
+    const a = armeFeu();
+    if (!a || !peutAgir() || enKillcam()) return;
+    if (!armes.demarrerRecharge(ms())) return;
+    armeMain.recharger(STATS[a].rechargeS);
+    sons.recharge(a);
   }
 
   function cibles(): Cible[] {
     const r: Cible[] = [];
     for (const [id, e] of etats) {
       if (id === client.id) continue;
-      r.push({ id, p: e.p, vivant: e.vivant });
+      r.push({ id, p: e.p, vivant: e.vivant, accroupi: !!e.accroupi || !!e.vehicule });
     }
     return r;
   }
 
   const _bouche = new THREE.Vector3();
 
-  /** Un tir. `force` : outil de test (ignore la souris, aucune dispersion). Renvoie vrai si le tir est parti. */
-  function tirer(force = false): boolean {
-    if (!peutAgir() || entracte || rechargeFin > 0) return false;
-    if (munitions <= 0) { demarrerRecharge(); return false; }
-    if (t < prochainTir) return false;
-    const a = STATS[armeId];
+  /** Coup de couteau : `coup` au serveur (jamais `tir`), cadence de 0,5 s, pas de recul ni de traçante. */
+  function coupCouteau(): boolean {
+    if (t < prochainDe("couteau")) return false;
     const o = oeil();
-    const regard = directionRegard(lacet, tangage);
+    const d = directionVisee(lacet, tangage, kick);
+    const res = trouverCibleCouteau(monde, o, d, cibles(), client.id ?? "");
+    client.envoyer({ t: "coup", o, d, cible: res ? res.cible : null });
+    prochains.set("couteau", t + COUTEAU.cadenceS);
+    armeMain.coup();
+    sons.coup(false);
+    return true;
+  }
+
+  /**
+   * Un tir (aucune dispersion, v2 §13.1 : gerbe fixe pour le pompe), pile dans l'axe de la vue (§13.2.4). `_force` : outil de test (ignore la
+   * souris). Renvoie vrai si le tir est parti. Le retour de touche (son, marqueur, giclée) attend le `degats` du serveur (§13.2.1).
+   */
+  function tirer(_force = false): boolean {
+    if (!peutAgir() || entracte || enKillcam() || tireInterdit()) return false;
+    if (armes.degainage(ms())) return false;
+    const arme = armes.armeEnMain();
+    if (arme === "couteau") return coupCouteau();
+    const a = STATS[arme];
+    if (armes.rechargeEnCours()) return false;
+    if (armes.munitions() <= 0) { demarrerRecharge(); return false; }
+    if (t < prochainDe(arme)) return false;
+    const o = oeil();
+    const regard = directionVisee(lacet, tangage, kick);
     const vise = viseMaintenu;
-    const disp = force ? 0 : dispersionCourante(armeId, { vitesseH: vitesseH(), auSol: moi.auSol, vise, chaleur });
-    const dirs = directionsTir(armeId, regard, disp, Math.random);
+    const dirs = directionsTir(arme, regard);
     const lunette = vise && a.zoom !== null;
     const touchesDecl: { cible: string; zone: Zone; plomb: number }[] = [];
     const cumul = new Map<string, { degats: number; zone: Zone }>();
@@ -314,58 +358,133 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
     dirs.forEach((d, i) => {
       const imp = tracer(monde, o, d, Math.min(a.portee, PORTEE_EFFETS_M), liste, client.id ?? "");
       const fin = imp.point;
-      effets.traçante(depart, fin, couleurMoi());
+      effets.traçante(depart, fin, arme);
       if (imp.cible && imp.zone) {
         const e = etats.get(imp.cible);
         if (e && !e.protege) {
           touchesDecl.push({ cible: imp.cible, zone: imp.zone, plomb: i });
-          const dg = degatsPlomb(armeId, imp.zone, imp.distance);
+          const dg = degatsPlomb(arme, imp.zone, imp.distance);
           const c = cumul.get(imp.cible);
           if (c) { c.degats += dg; if (imp.zone === "tete") c.zone = "tete"; }
           else cumul.set(imp.cible, { degats: dg, zone: imp.zone });
         }
-        effets.eclaboussure(fin, couleurDe(imp.cible));
+        // la giclée sur la cible part à la réception de `degats` (§13.2.1), pas ici
       } else if (imp.distance < a.portee - 0.01 && impactsAffiches < 5) {
         impactsAffiches++;
         effets.impact(fin, [-d[0], -d[1], -d[2]], couleurMoi());
       }
     });
 
-    client.envoyer({ t: "tir", arme: armeId, o, d: dirs, touches: touchesDecl });
+    client.envoyer({ t: "tir", arme, o, d: dirs, touches: touchesDecl });
 
-    // retour immédiat : l'estimation locale ne dépend pas de l'aller-retour réseau
-    for (const [id, c] of cumul) {
-      sons.touche();
-      cb.evenement({ type: "touche", cible: id, zone: c.zone, degats: c.degats });
-    }
+    // estimation locale (le HUD l'ignore : seul `confirme`, reçu du serveur, compte, HUD §3.4) ; ni son ni marqueur ici
+    for (const [id, c] of cumul) cb.evenement({ type: "touche", cible: id, zone: c.zone, degats: c.degats });
 
-    // cadence (rattrape le retard d'une image pour ne pas perdre de cadence à 60 Hz)
-    prochainTir = t - prochainTir < 0.02 ? prochainTir + a.cadenceS : t + a.cadenceS;
-    munitions--;
-    chaleur = apresTir(armeId, chaleur);
+    // cadence (rattrape le retard d'une image, borné : onglet gelé = on repart de maintenant)
+    const prevu = prochainDe(arme);
+    prochains.set(arme, t - prevu < RATTRAPAGE_CADENCE_S ? prevu + a.cadenceS : t + a.cadenceS);
+    armes.tirEffectue();
     armeMain.tirer();
-    sons.tir(armeId);
+    sons.tir(arme);
     const k = vise ? 0.6 : 1;
     const monte = a.recul.tangage * k * (0.8 + 0.4 * Math.random());
     const avant = tangage;
     tangage = borne(tangage + monte, -TANGAGE_MAX, TANGAGE_MAX);
     reculAcc += tangage - avant;
     dernierTirT = t;
+    dernierTirArme = arme;
     lacet += (Math.random() - 0.5) * 2 * a.recul.lacet * k;
     kick += a.recul.tangage * 0.9;
-    if (munitions <= 0) prochainTir = Math.max(prochainTir, t + 0.15);
+    if (armes.munitions() <= 0 && armes.armeEnMain() === arme) prochains.set(arme, Math.max(prochainDe(arme), t + 0.15));
     return true;
+  }
+
+  // ---------- équipement ----------
+  /** Envoie `main` après un changement d'arme accepté localement (le dégainage et la recharge annulée sont gérés par le contrôleur). */
+  function apresChangementArme(ok: boolean) {
+    if (!ok) return;
+    client.envoyer({ t: "main", slot: armes.slotActif() });
+    viseMaintenu = viseMaintenu && armes.armeEnMain() !== "couteau";
+  }
+  const peutChangerArme = () => peutAgir() && !enKillcam();
+  function changerSlot(slot: Slot) {
+    if (!peutChangerArme()) return;
+    apresChangementArme(armes.equiper(slot, ms()));
+  }
+  function molette(sens: 1 | -1) {
+    if (!peutChangerArme()) return;
+    apresChangementArme(armes.molette(sens, ms()));
   }
 
   function reentrer() {
     evince = false;
-    client.envoyer({ t: "rejoindre", arme: armeSuivante });
+    client.envoyer({ t: "rejoindre", principale: equipSuivant.principale, secondaire: equipSuivant.secondaire });
   }
 
-  function choisirArme(a: ArmeId) {
-    if (!ARMES.includes(a)) return;
-    armeSuivante = a;
-    client.envoyer({ t: "arme", arme: a });
+  /** Équipement de la prochaine apparition (immédiat si mort). */
+  function equiper(principale: EquipementJeu["principale"], secondaire: EquipementJeu["secondaire"]) {
+    equipSuivant = { principale, secondaire };
+    client.envoyer({ t: "equiper", principale, secondaire });
+  }
+
+  // ---------- véhicules ----------
+  function attendreReponseVehicule() {
+    embarquementFin = t + EMBARQUEMENT_MAX_S;
+  }
+
+  /** E : monter dans la voiture à portée, ou en descendre. Le serveur attribue le siège ; on attend sa réponse (≤ 1 s). */
+  function interagir() {
+    if (!peutAgir() || enKillcam() || embarquementFin > 0) return;
+    if (vehicule.actif()) {
+      client.envoyer({ t: "descendre" });
+      attendreReponseVehicule();
+      return;
+    }
+    const inv = mondeJeu.invite(moi.p, null, client.maintenantServeur());
+    if (inv.invite === "monter" && inv.vehicule !== null) {
+      client.envoyer({ t: "monter", vehicule: inv.vehicule });
+      attendreReponseVehicule();
+    }
+  }
+
+  /** F : change de place dans la voiture (la prochaine place libre, sinon la suivante : le serveur répond `refus` si elle est prise). */
+  function changerSiege() {
+    const info = vehicule.actif();
+    if (!info || !peutAgir() || enKillcam() || embarquementFin > 0) return;
+    const occupants = mondeJeu.siegesDe(info.vehicule);
+    let cible = ((info.siege + 1) % 4) as Siege;
+    for (let k = 1; k <= 3; k++) {
+      const s = ((info.siege + k) % 4) as Siege;
+      if (occupants[s] == null) { cible = s; break; }
+    }
+    client.envoyer({ t: "siege", siege: cible });
+    attendreReponseVehicule();
+  }
+
+  function entrerVehicule(id: number, siege: Siege, etat: EtatVehicule) {
+    vehicule.entrer({ vehicule: id, siege }, etat);
+    embarquementFin = 0;
+    // à pied, rien ne reste en cours : glissade, accroupi, visée
+    moi.glisse = null;
+    moi.accroupi = false;
+    accroupiBascTenu = false;
+    viseMaintenu = false;
+    sons.mur(false);
+    const s = vehicule.positionSiege();
+    if (s) { moi.p = [s[0], s[1], s[2]]; moi.v = [0, 0, 0]; }
+  }
+
+  /** Sort de la voiture. `p` (message `descente`) téléporte le joueur, même si le jeu ne se croyait plus assis. */
+  function quitterVehicule(p?: Vec3) {
+    const etaitAssis = vehicule.actif() !== null;
+    vehicule.sortir();
+    embarquementFin = 0;
+    sons.moteur(null);
+    if (etaitAssis || p) {
+      // à la descente l'œil part de la hauteur du siège et se relève jusqu'à 1,95 m (lissage)
+      moi = etatInitial(p ?? [moi.p[0], moi.p[1], moi.p[2]]);
+      hauteurOeilLissee = OEIL_SIEGE;
+    }
   }
 
   // ---------- messages du serveur ----------
@@ -384,6 +503,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
     scene.remove(d.avatar.group);
     d.avatar.dispose();
     distants.delete(id);
+    visib.oublier(id);
   }
 
   function majInfos(liste: JoueurPublic[]) {
@@ -396,34 +516,58 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
     }
   }
 
-  function posCentre(id: string): Vec3 | null {
+  function posTouche(id: string, zone: Zone): Vec3 | null {
     const e = etats.get(id);
-    return e ? [e.p[0], e.p[1] + 1.1, e.p[2]] : null;
+    if (!e) return null;
+    const s = e.accroupi || e.vehicule ? { tete: 1.3 - 0.1, centre: 0.8 } : { tete: SILHOUETTE.tete.y - 0.1, centre: SILHOUETTE.centreY };
+    return [e.p[0], e.p[1] + (zone === "tete" ? s.tete : s.centre), e.p[2]];
+  }
+
+  function terminerKillcam() {
+    kc.terminer();
+    camTueurCache = null;
+    tempsRejeuCache = null;
+    joueursRejouesCache = null;
+    vehiculesRejouesCache = null;
+    enReplay = false;
   }
 
   function apparaitre(m: Extract<MessageServeur, { t: "apparition" }>) {
+    terminerKillcam();
+    quitterVehicule();
     moi = etatInitial(m.p);
     lacet = m.lacet;
     tangage = 0;
     kick = 0;
+    secousse = 0;
     reculAcc = 0;
     dernierTirT = -Infinity;
     apparu = true;
     evince = false;
     vivant = true;
     pv = m.pv;
+    bouclier = m.bouclier;
     protege = true;
-    if (m.arme !== armeId) { armeId = m.arme; changerArmeMain(armeId); }
-    munitions = STATS[armeId].chargeur;
-    annulerRecharge();
-    chaleur = 0;
-    prochainTir = t + 0.3;
+    protegeFin = t + JEU.protectionMs / 1000;
+    dernierDegatT = t;
+    armes.appliquerServeur(m, ms());
+    prochains.clear();
+    delaiApparitionT = t + 0.3;
+    hauteurOeilLissee = hauteurOeil(false);
+    accroupiBascTenu = false;
+    embarquementFin = 0;
     viseMaintenu = false;
     mortT = 0;
     // un tir maintenu pendant la mort ne doit pas partir tout seul à l'apparition (il ferait perdre la
     // protection d'apparition) : mitraillette comprise, il faut relâcher puis réappuyer
     tirConsomme = true;
     tirMaintenu = false;
+  }
+
+  /** `degats` dont je suis l'auteur : retour de touche CONFIRMÉ par le serveur (zone et dégâts du serveur, §13.2.1). */
+  function toucheConfirmee(m: Extract<MessageServeur, { t: "degats" }>) {
+    sons.touche(m.zone === "tete");
+    cb.evenement({ type: "confirme", cible: m.cible, degats: m.degats, absorbe: m.absorbe ?? 0, zone: m.zone, tue: m.pv <= 0 });
   }
 
   function recevoir(m: MessageServeur) {
@@ -442,6 +586,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
           apparu = false;
           vivant = false;
           evince = true;
+          quitterVehicule();
           // onglet caché : on attend son retour, sinon on réapparaîtrait en cible immobile toutes les 20 s
           if (!document.hidden) reentrer();
         }
@@ -452,42 +597,80 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
         break;
       case "snap": {
         interp.ajouter({ ts: m.ts, j: m.j });
+        kc.alimenter(m.ts, m.j, m.vehicules);
+        mondeJeu.alimenterVehicules(m.ts, m.vehicules);
         const s = m.j.find((x) => x.id === client.id);
-        if (s && vivant) { pv = s.pv; protege = s.protege; }
+        if (s && vivant) {
+          // des PV qui remontent sans cadeau d'Elsa : la régénération tourne (le délai de 5 s est donc écoulé)
+          if (s.pv > pv && s.pv < JEU.pvMax) {
+            dernierDegatT = Math.min(dernierDegatT, t - JEU.regenDelaiMs / 1000);
+            if (t - dernierSonRegenT > 0.25) { dernierSonRegenT = t; sons.regen(); }
+          }
+          pv = s.pv;
+          bouclier = s.bouclier ?? 0;
+          protege = s.protege;
+        }
         break;
       }
       case "apparition":
         if (m.id === client.id) apparaitre(m);
         break;
+      case "equipement":
+        armes.appliquerServeur(m, ms());
+        break;
       case "tir": {
         if (m.id === client.id) break;
+        // écho de la mini-map : un tir entendu dont le tireur n'est pas à l'écran (HUD §3.3)
+        ajouterEcho(radarFrame, m.o[0], m.o[2], suiviRadar.vu(m.id) > 0);
+        // pendant le rejeu, rien du présent ne se superpose au passé (§2.5)
+        if (enReplay) break;
         const a = STATS[m.arme];
         const liste = cibles();
+        const avatar = distants.get(m.id)?.avatar;
+        const depart: Vec3 = avatar ? avatar.positionBouche() : m.o;
         for (const d of m.d) {
           const imp = tracer(monde, m.o, d, Math.min(a.portee, PORTEE_EFFETS_M), liste, m.id);
-          effets.traçante(m.o, imp.point, couleurDe(m.id));
+          effets.traçante(depart, imp.point, m.arme);
           if (!imp.cible && imp.distance < a.portee - 0.01) effets.impact(imp.point, [-d[0], -d[1], -d[2]], couleurDe(m.id));
         }
-        distants.get(m.id)?.avatar.tirer();
+        avatar?.tirer();
         const cam = oeil();
         const dx = m.o[0] - cam[0], dz = m.o[2] - cam[2];
         sons.tir(m.arme, { distance: Math.hypot(dx, m.o[1] - cam[1], dz), pan: panSon(lacet, dx, dz) });
         break;
       }
+      case "coup": {
+        if (m.id === client.id || enReplay) break;
+        distants.get(m.id)?.avatar.coup();
+        const cam = oeil();
+        const dx = m.o[0] - cam[0], dz = m.o[2] - cam[2];
+        sons.coup(false, { distance: Math.hypot(dx, m.o[1] - cam[1], dz), pan: panSon(lacet, dx, dz) });
+        break;
+      }
       case "degats": {
         if (m.cible === client.id) {
           pv = m.pv;
+          bouclier = m.bouclier;
+          dernierDegatT = t;
           if (vivant) {
             sons.degat();
-            kick += 0.025;
-            const par = etats.get(m.par);
-            const ang = par ? angleRelatif(lacet, par.p[0] - moi.p[0], par.p[2] - moi.p[2]) : 0;
+            const sens = Math.random() < 0.5 ? -1 : 1;
+            secousse = SECOUSSE_DEGAT * sens;
+            let ang = 0;
+            if (m.src) ang = angleRelatif(lacet, m.src[0] - moi.p[0], m.src[2] - moi.p[2]);
+            else {
+              const par = etats.get(m.par);
+              if (par) ang = angleRelatif(lacet, par.p[0] - moi.p[0], par.p[2] - moi.p[2]);
+            }
             cb.evenement({ type: "degat", par: m.par, degats: m.degats, angle: ang });
           }
         } else {
-          const c = posCentre(m.cible);
-          if (c) effets.eclaboussure(c, couleurDe(m.cible));
-          distants.get(m.cible)?.avatar.toucher();
+          if (!enReplay) {
+            const c = posTouche(m.cible, m.zone);
+            if (c) effets.eclaboussure(c, couleurDe(m.cible));
+            distants.get(m.cible)?.avatar.toucher();
+          }
+          if (m.par === client.id) toucheConfirmee(m);
         }
         break;
       }
@@ -495,35 +678,80 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
         if (m.cible === client.id) {
           vivant = false;
           pv = 0;
+          bouclier = 0;
           mortT = 0;
           mortSigne = Math.random() < 0.5 ? -1 : 1;
           reapparitionFin = t + m.delai / 1000;
           viseMaintenu = false;
           tirMaintenu = false;
-          annulerRecharge();
+          accroupiBascTenu = false;
+          // l'occupant d'un véhicule en est éjecté à sa mort
+          vehicule.sortir();
+          embarquementFin = 0;
+          sons.moteur(null);
           sons.mur(false);
-          cb.evenement({ type: "mort", par: m.par, arme: m.arme, zone: m.zone, delai: m.delai });
+          kc.surMort(m, client.id);
+          cb.evenement({ type: "mort", par: m.par, arme: m.arme, cause: m.cause, zone: m.zone, delai: m.delai, ts: m.ts, tueur: m.tueur });
         } else if (m.par === client.id) {
           sons.kill();
           cb.evenement({ type: "kill", cible: m.cible, zone: m.zone, arme: m.arme });
         }
         break;
       }
+      case "elsa":
+        mondeJeu.majElsa(m.elsa);
+        break;
+      case "ramassage":
+        if (m.par === client.id) {
+          sons.ramassage(m.genre);
+          cb.evenement({ type: "bonus", genre: m.genre, arme: m.arme });
+        }
+        break;
+      case "sieges":
+        mondeJeu.majSieges(m.vehicules);
+        break;
+      case "embarque":
+        if (vivant) entrerVehicule(m.vehicule, m.siege, { p: m.p, cap: m.cap, v: 0 });
+        break;
+      case "refus":
+        embarquementFin = 0;
+        cb.evenement({ type: "refus", action: m.action, raison: m.raison });
+        // arène pleine (16 agents en jeu) : on ne reste pas devant un rond-point vide à attendre une apparition qui n'arrivera pas
+        if (m.action === "rejoindre") cb.sortir();
+        break;
+      case "descente":
+        // sortie volontaire ou expulsion (nouveau match) : on se téléporte, sans toucher aux munitions
+        quitterVehicule(m.p);
+        break;
       default:
         break;
     }
   }
 
   // ---------- entrées : événements ----------
-  /** Front montant d'une touche : déclenche les actions ponctuelles (saut, recharge, tir). */
+  /** Front montant d'une touche : déclenche les actions ponctuelles (saut, recharge, tir, armes, accroupi, véhicule). */
   const presser = (code: string) => {
     if (appuyees.has(code)) return;
     appuyees.add(code);
     for (const a of index.get(code) ?? []) {
-      if (a === "saut") sautDemande = true;
-      else if (a === "recharger") demarrerRecharge();
-      else if (a === "tir") { if (vivant) { tirMaintenu = true; tirPresse = t; tirConsomme = false; } }
-      else if (a === "visee") viseMaintenu = true;
+      switch (a) {
+        case "saut": sautDemande = true; break;
+        case "recharger": demarrerRecharge(); break;
+        case "tir": if (vivant) { tirMaintenu = true; tirPresse = t; tirConsomme = false; } break;
+        case "visee": viseMaintenu = true; break;
+        case "accroupi": if (accroupiBascule) accroupiBascTenu = !accroupiBascTenu; break;
+        case "armePrincipale": case "armeSecondaire": case "couteau": case "armeSpeciale": {
+          const s = SLOT_DE_L_ACTION[a];
+          if (s) changerSlot(s);
+          break;
+        }
+        case "armePrecedente": if (peutChangerArme()) apresChangementArme(armes.rapide(ms())); break;
+        case "couteauRapide": if (peutChangerArme()) apresChangementArme(armes.couteauRapide(ms())); break;
+        case "interagir": interagir(); break;
+        case "siege": changerSiege(); break;
+        case "passer": if (kc.actif() && kc.phase() === "rejeu") kc.passer(); break;
+        default: break;
+      }
     }
   };
   const relacher = (code: string) => {
@@ -536,14 +764,11 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
   };
   const surKeyDown = (e: KeyboardEvent) => {
     if (dansUnChamp(e.target)) return;
-    const actions = index.get(e.code);
-    const arme = actions?.map((a) => ARME_DE_L_ACTION[a]).find(Boolean);
-    if (arme) {
-      if (!e.repeat) choisirArme(arme);
-      e.preventDefault();
-      return;
-    }
     if (!verrouille()) return;
+    const actions = index.get(e.code);
+    // l'action « passer » (Espace par défaut, remappable) saute le rejeu de la killcam ; elle partage Espace avec « saut », qui ne doit
+    // pas partir pendant la mort (sinon un saut en attente suit le joueur à sa réapparition)
+    if (actions?.includes("passer") && kc.actif() && kc.phase() === "rejeu") { e.preventDefault(); if (!e.repeat) kc.passer(); return; }
     // le tableau des scores (Tab par défaut) est géré par l'UI React, qui bloque elle-même le focus
     if (actions && !actions.includes("scores")) e.preventDefault();
     if (e.repeat) return;
@@ -578,6 +803,14 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
       if (dy > 0) reculAcc = Math.max(0, reculAcc - dy * s);
     }
   };
+  /** Molette : slot suivant / précédent (comportement fixe, non remappable). */
+  const surWheel = (e: WheelEvent) => {
+    if (!verrouille()) return;
+    e.preventDefault();
+    if (Math.abs(e.deltaY) < 1 || t - derniereMoletteT < MOLETTE_ECART_S) return;
+    derniereMoletteT = t;
+    molette(e.deltaY > 0 ? 1 : -1);
+  };
   const surVerrou = () => {
     if (!verrouille()) toutRelacher();
     emettreHud(true);
@@ -598,6 +831,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
   window.addEventListener("blur", toutRelacher);
   window.addEventListener("mouseup", surMouseUp);
   window.addEventListener("mousemove", surMouseMove);
+  window.addEventListener("wheel", surWheel, { passive: false });
   document.addEventListener("pointerlockchange", surVerrou);
   document.addEventListener("visibilitychange", surVisibilite);
   canvas.addEventListener("mousedown", surMouseDown);
@@ -622,30 +856,65 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
   ro.observe(canvas);
 
   // ---------- HUD ----------
+  /** Valeurs continues du HUD : objet stable, mis à jour à chaque image (lu en rAF par `useHudLive`, aucun rendu React). */
+  const live: HudLive = { recharge: 0, vitesse: 0, vitesseKmh: 0, regenDelai: 1 };
+  const radarFrame: RadarFrame = creerRadarFrame();
   let dernierHud: HudEtat | null = null;
   let accHud = ECART_HUD_S;
+  /** régénération en cours : PV manquants et délai sans dégâts écoulé */
+  const regenEnCours = () => vivant && pv < JEU.pvMax && t - dernierDegatT >= JEU.regenDelaiMs / 1000;
+  /** Grossissement affiché en lunette (« ×6 ») : rapport des tangentes du demi-champ normal et du demi-champ zoomé. */
+  const zoomX = (zoom: number | null) => (zoom === null ? 0 : Math.round(Math.tan((FOV_H * Math.PI) / 360) / Math.tan((zoom * Math.PI) / 360)));
+
   function etatHud(): HudEtat {
-    const a = STATS[armeId];
-    const lunette = viseMaintenu && a.zoom !== null && peutAgir() && rechargeFin === 0;
+    const arme = armes.armeEnMain();
+    const a = arme === "couteau" ? null : STATS[arme];
+    const info = vehicule.actif();
+    const lunette = !!a && a.zoom !== null && viseMaintenu && peutAgir() && !armes.rechargeEnCours();
+    const inv = peutAgir() && !enKillcam()
+      ? mondeJeu.invite(moi.p, info ? info.siege : null, client.maintenantServeur())
+      : { invite: "" as const, detail: "", vehicule: null };
+    const kcActif = kc.actif();
+    const phase = kcActif ? kc.phase() : "";
+    const progression = kcActif ? kc.progression() : -1;
     return {
       pv: Math.max(0, Math.round(pv)),
-      arme: armeId,
-      armeSuivante,
-      munitions,
-      chargeur: a.chargeur,
-      recharge: rechargeFin > 0 ? borne((t - rechargeDebut) / Math.max(0.001, rechargeFin - rechargeDebut), 0.001, 1) : 0,
+      bouclier: Math.max(0, Math.round(bouclier)),
+      arme,
+      slot: armes.slotActif(),
+      slots: serialiserSlots(armes.lignes()),
+      equipSuivant: `${equipSuivant.principale}|${equipSuivant.secondaire}`,
+      munitions: arme === "couteau" ? 0 : Math.max(0, armes.munitions()),
+      chargeur: armes.chargeur(),
+      // spéciale d'Elsa (munitions totales, retirée à 0) : aucune réserve ; les autres armes ont une réserve illimitée
+      reserve: a?.sansRecharge ? 0 : -1,
+      recharge: armes.rechargeEnCours(),
+      degainage: armes.degainage(ms()),
       vise: viseMaintenu && peutAgir(),
       lunette,
-      vitesse: Math.round(vitesseH() * 10) / 10,
+      zoomX: lunette && a ? zoomX(a.zoom) : 0,
+      distanceVisee: lunette ? distanceVisee : -1,
       mur: !!moi.mur && vivant,
       mort: !vivant,
       reapparitionDans: vivant ? 0 : Math.max(0, Math.round((reapparitionFin - t) * 10) / 10),
       protege: protege && vivant,
+      protegeRestant: protege && vivant ? Math.max(0.5, Math.ceil((protegeFin - t) * 2) / 2) : 0,
       verrouille: verrouille(),
-      dispersion: Math.round(dispersionCourante(armeId, { vitesseH: vitesseH(), auSol: moi.auSol, vise: viseMaintenu, chaleur }) * 10000) / 10000,
-      fov: Math.round(fovV * 10) / 10,
       connecte: client.id !== null,
       entracte,
+      accroupi: vivant && moi.accroupi && !info,
+      glisse: vivant && !!moi.glisse && !info,
+      regen: regenEnCours(),
+      bonusVitesse: arme === "couteau" ? COUTEAU.vitesse : 1,
+      invite: inv.invite,
+      inviteDetail: inv.detail,
+      vehicule: !!info,
+      vehiculeId: info ? info.vehicule : -1,
+      siege: info ? info.siege : -1,
+      tireInterdit: tireInterdit(),
+      embarquement: embarquementFin > 0,
+      killcam: progression < 0 ? -1 : Math.round(progression * 50) / 50,
+      killcamPhase: phase === "rejeu" || phase === "carte" ? phase : "",
     };
   }
   function emettreHud(force = false) {
@@ -658,6 +927,51 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
     }
     dernierHud = e;
     cb.hud(e);
+  }
+
+  // ---------- radar (mini-map) ----------
+  const listeRadar: JoueurRadarEntree[] = [];
+  /** Remplit le `RadarFrame` unique : joueurs VUS seulement (pas de wallhack), voitures, échos, Elsa. Une fois par image. */
+  function remplirRadar(dt: number) {
+    const info = vehicule.actif();
+    viderRadarFrame(radarFrame);
+    const pos = vehicule.positionSiege() ?? moi.p;
+    radarFrame.x = pos[0];
+    radarFrame.z = pos[2];
+    radarFrame.lacet = lacet;
+    const ve = vehicule.etat();
+    radarFrame.capVehicule = info && ve ? ve.cap : NaN;
+    radarFrame.vitesse = info && ve ? Math.abs(ve.v) : vitesseH();
+    // joueurs : évalués sur l'œil et le regard de la caméra courante
+    listeRadar.length = 0;
+    if (!enReplay) {
+      for (const [id, e] of etatsRendu) {
+        if (id === client.id) continue;
+        const dansMonVehicule = !!info && !!e.vehicule && e.vehicule.id === info.vehicule;
+        listeRadar.push({
+          id, p: e.p, lacet: e.lacet, couleur: couleurDe(id), vivant: e.vivant, accroupi: !!e.accroupi,
+          enVoiture: !!e.vehicule, dansMonVehicule,
+        });
+      }
+      suiviRadar.maj(radarFrame, t, dt, camPos, directionVisee(camLacet, camTangage, 0), listeRadar);
+    }
+    // voitures PNJ (calculées à l'horloge serveur) et conduisibles
+    const tsServeur = client.maintenantServeur();
+    const pnj = mondeJeu.etatsPnj(tsServeur);
+    for (let i = 0; i < pnj.length; i++) ajouterVoiturePnj(radarFrame, pnj[i].p[0], pnj[i].p[2], pnj[i].cap);
+    for (const v of vehiculesAffichees().values()) {
+      const sieges = mondeJeu.siegesDe(v.id);
+      let occupants = 0;
+      for (const s of sieges) if (s != null) occupants++;
+      ajouterVoiture(radarFrame, { id: v.id, x: v.p[0], z: v.p[2], cap: v.cap, occupants, places: 4, moi: !!info && info.vehicule === v.id });
+    }
+    // Elsa : losange fixe, cadeau fléché pendant l'offre
+    const pe = mondeJeu.position();
+    radarFrame.elsaPos.x = pe.x;
+    radarFrame.elsaPos.z = pe.z;
+    const offre = mondeJeu.elsa()?.offre ?? null;
+    definirElsa(radarFrame, offre ? { genre: offre.genre, finT: offre.finT } : null);
+    purgerEchos(radarFrame, dt);
   }
 
   // ---------- boucle ----------
@@ -675,18 +989,76 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
       droite: k("droite") - k("gauche"),
       saut: actionActive("saut") || sautDemande,
       sprint: actionActive("sprint"),
+      accroupi: accroupiBascule ? accroupiBascTenu : actionActive("accroupi"),
       lacet,
     };
   }
 
+  /** Voitures conduisibles interpolées à l'instant du rendu (calculées une fois par image) ; le tampon long en rejeu. */
+  let baseVehicules = new Map<number, VehiculeSnap>();
+  /** Voitures conduisibles à dessiner : interpolées, sauf la mienne quand je la conduis (état local, sans retard). */
+  function vehiculesAffichees(): Map<number, VehiculeSnap> {
+    const base = baseVehicules;
+    const info = vehicule.actif();
+    if (!info || !vehicule.estConducteur() || enReplay) return base;
+    const e = vehicule.etat();
+    if (!e) return base;
+    const res = new Map(base);
+    res.set(info.vehicule, { id: info.vehicule, p: [e.p[0], e.p[1], e.p[2]], cap: e.cap, v: e.v });
+    return res;
+  }
+
+  const listeVisible: JoueurVisible[] = [];
   function majDistants(dt: number) {
     etats = interp.echantillon(client.maintenantServeur() - JEU.interpolationMs);
-    for (const [id, e] of etats) {
-      if (id === client.id) continue;
+    {
+      // conducteur : les occupants de ma voiture (dessinée à l'état local) suivent la caisse, sinon ils flottent 3 à 4 m derrière
+      const info = vehicule.actif();
+      const ev = info && vehicule.estConducteur() ? vehicule.etat() : null;
+      if (info && ev) etats = recalerOccupants(etats, client.id, info.vehicule, ev);
+    }
+    etatsRendu = enReplay && joueursRejouesCache ? joueursRejouesCache : etats;
+    // pendant le rejeu, notre propre avatar est dessiné (on se voit mourir) ; sinon jamais
+    for (const [id, e] of etatsRendu) {
+      if (id === client.id && !enReplay) continue;
       const d = distants.get(id) ?? creerAvatarDistant(id);
       d.avatar.maj(e, dt);
     }
-    for (const id of [...distants.keys()]) if (!etats.has(id) || id === client.id) retirerAvatar(id);
+    for (const id of [...distants.keys()]) {
+      if (!etatsRendu.has(id) || (id === client.id && !enReplay)) retirerAvatar(id);
+    }
+    // pseudos : seulement si le joueur est VU (distance, champ de vision, ligne de vue), jamais pendant le rejeu
+    listeVisible.length = 0;
+    for (const [id, e] of etatsRendu) {
+      if (id === client.id) continue;
+      listeVisible.push({ id, p: e.p, accroupi: !!e.accroupi || !!e.vehicule, vivant: e.vivant });
+    }
+    const te = dyn.elsaTete();
+    listeVisible.push({ id: "elsa", p: [te[0], te[1] - SILHOUETTE.tete.y, te[2]], vivant: true });
+    const regard = directionVisee(camLacet, camTangage, 0);
+    visib.maj(t, dt, camPos, regard, listeVisible);
+    for (const [id, d] of distants) {
+      const e = etatsRendu.get(id);
+      if (!e) continue;
+      const dist = Math.hypot(e.p[0] - camPos[0], e.p[1] - camPos[1], e.p[2] - camPos[2]);
+      d.avatar.afficherPseudo(enReplay ? 0 : visib.alpha(id), dist);
+    }
+    dyn.afficherPseudoElsa(enReplay ? 0 : visib.alpha("elsa"));
+  }
+
+  /** Voitures PNJ, voitures conduisibles et Elsa (rendu three), à l'horloge serveur ou, en rejeu, à l'instant rejoué. */
+  function majMondeDynamique() {
+    const tsServeur = client.maintenantServeur();
+    const tsPnj = enReplay && tempsRejeuCache !== null ? tempsRejeuCache : tsServeur;
+    dyn.majVoituresPnj(mondeJeu.etatsPnj(tsPnj));
+    const liste = [...vehiculesAffichees().values()];
+    const couleurs = new Map<number, string>();
+    for (const v of liste) {
+      const pilote = mondeJeu.siegesDe(v.id)[0];
+      if (pilote) couleurs.set(v.id, couleurDe(pilote));
+    }
+    dyn.majVoituresJoueurs(liste, couleurs);
+    dyn.majElsa(mondeJeu.elsa(), t);
   }
 
   function reconnexion() {
@@ -699,9 +1071,96 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
       vivant = false;
       interp.vider();
       for (const id of [...distants.keys()]) retirerAvatar(id);
-      client.envoyer({ t: "rejoindre", arme: armeSuivante });
+      // aucun état résiduel de l'ancienne session : voiture, killcam, pseudos, radar, Elsa
+      terminerKillcam();
+      quitterVehicule();
+      mondeJeu.reinitialiser();
+      visib.vider();
+      suiviRadar.vider();
+      client.envoyer({ t: "rejoindre", principale: equipSuivant.principale, secondaire: equipSuivant.secondaire });
     } else if (client.id !== null) {
       idConnu = client.id;
+    }
+  }
+
+  /** Message d'état du joueur (à pied, ou passager d'une voiture) ; le conducteur envoie `conduite`. */
+  function envoyerEtat() {
+    if (!apparu || !vivant) return;
+    const vue = tangageDeVue(tangage, kick);
+    const info = vehicule.actif();
+    if (info) {
+      if (vehicule.estConducteur()) {
+        const m = vehicule.messageConduite(lacet, vue);
+        if (m) client.envoyer(m);
+      } else {
+        const ve = vehicule.etat();
+        const s = vehicule.positionSiege();
+        if (!ve || !s) return;
+        const av = [-Math.sin(ve.cap) * ve.v, 0, -Math.cos(ve.cap) * ve.v] as Vec3;
+        client.envoyer({ t: "etat", seq: ++seq, p: [s[0], s[1], s[2]], v: av, lacet, tangage: vue, posture: "sol", mur: 0 });
+      }
+      return;
+    }
+    client.envoyer({
+      t: "etat", seq: ++seq, p: [moi.p[0], moi.p[1], moi.p[2]], v: [moi.v[0], moi.v[1], moi.v[2]],
+      lacet, tangage: vue, posture: postureDe(moi), mur: coteMurDe(moi),
+      ...(moi.accroupi ? { accroupi: true } : {}),
+      ...(moi.accroupi && moi.glisse ? { glisse: true } : {}),
+    });
+  }
+
+  /** Place la caméra : survol avant la première apparition, première personne, rejeu du tueur ou caméra de mort. */
+  function placerCamera(dt: number, vise: boolean, lunetteAct: boolean, vh: number) {
+    const a = armeFeu();
+    const cibleFov = lunetteAct && a ? (STATS[a].zoom ?? FOV_H) : vise ? FOV_H_VISEE : FOV_H;
+    fovH += (cibleFov - fovH) * lissage(14, dt);
+    appliquerFov();
+    kick *= Math.exp(-11 * dt);
+    secousse *= Math.exp(-11 * dt);
+
+    if (enReplay) {
+      // vue du tueur : il est assis ou debout, ses angles sont ceux de son dernier snap rejoué
+      const c = camTueurCache;
+      if (c) {
+        camera.position.set(c.pos[0], c.pos[1], c.pos[2]);
+        camera.rotation.set(tangageDeVue(c.tangage, 0), c.lacet, 0);
+        camPos[0] = c.pos[0]; camPos[1] = c.pos[1]; camPos[2] = c.pos[2];
+        camLacet = c.lacet;
+        camTangage = c.tangage;
+      }
+      return;
+    }
+    if (!apparu) {
+      // en attente de la première apparition : survol de l'arène, centré sur le rond-point
+      camera.position.set(cx, 70, cz + 90);
+      camera.rotation.set(-0.5, 0, 0);
+      camPos[0] = cx; camPos[1] = 70; camPos[2] = cz + 90;
+      camLacet = 0;
+      camTangage = -0.5;
+    } else if (vivant) {
+      const assis = vehicule.actif() !== null;
+      const cible = assis ? OEIL_SIEGE : hauteurOeil(moi.accroupi);
+      hauteurOeilLissee += (cible - hauteurOeilLissee) * lissage(LISSAGE_OEIL, dt);
+      const bob = reduit || assis ? 0 : Math.sin(t * 11) * 0.025 * Math.min(1, vh / 9) * (moi.auSol && !moi.glisse ? 1 : 0);
+      const o = oeil();
+      camera.position.set(o[0], o[1] + bob, o[2]);
+      const [rx, ry, rz] = rotationCamera(lacet, tangage, kick, assis ? 0 : moi.inclinaison, secousse);
+      camera.rotation.set(rx, ry, rz);
+      camPos[0] = o[0]; camPos[1] = o[1] + bob; camPos[2] = o[2];
+      camLacet = lacet;
+      camTangage = rx;
+    } else {
+      // mort sans rejeu (repli) : la caméra s'effondre et bascule sur le côté
+      mortT += dt;
+      const k = borne(mortT / 0.7, 0, 1);
+      const e = 1 - (1 - k) * (1 - k);
+      const base = vehicule.positionSiege() ?? moi.p;
+      const haut = base[1] + hauteurOeilLissee + (0.3 - hauteurOeilLissee) * e;
+      camera.position.set(base[0], haut, base[2]);
+      camera.rotation.set(tangage + (-0.35 - tangage) * e, lacet, mortSigne * 1.15 * e);
+      camPos[0] = base[0]; camPos[1] = haut; camPos[2] = base[2];
+      camLacet = lacet;
+      camTangage = tangage;
     }
   }
 
@@ -713,113 +1172,172 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
     t += dt;
     reconnexion();
 
-    // --- recharge ---
-    if (rechargeFin > 0 && t >= rechargeFin) {
-      munitions = STATS[armeId].chargeur;
-      annulerRecharge();
+    // --- killcam : machine, rejeu ou carte figée ---
+    if (kc.actif()) {
+      kc.maj(dt);
+      const phase = kc.phase();
+      const cam = phase === "rejeu" ? kc.camera() : null;
+      if (cam) {
+        camTueurCache = cam;
+        tempsRejeuCache = kc.tempsServeur();
+        joueursRejouesCache = kc.joueursRejoues();
+        vehiculesRejouesCache = kc.vehiculesRejoues();
+      } else if (phase === "carte" && camTueurCache) {
+        // carte du tueur : le monde reste figé à l'instant de la mort (jamais les Maps vides de `joueursRejoues`, hors rejeu)
+        const ts = kc.tempsFige();
+        if (ts !== null) {
+          tempsRejeuCache = ts;
+          joueursRejouesCache = kc.joueursFiges();
+          vehiculesRejouesCache = kc.vehiculesFiges();
+          camTueurCache = kc.cameraFigee() ?? camTueurCache;
+        }
+      }
+      enReplay = (phase === "rejeu" || phase === "carte") && camTueurCache !== null;
+    } else if (enReplay) {
+      terminerKillcam();
     }
-    if (peutAgir() && munitions <= 0 && rechargeFin === 0 && t >= prochainTir) demarrerRecharge();
+
+    baseVehicules = enReplay && vehiculesRejouesCache ? vehiculesRejouesCache : mondeJeu.vehiculesA(client.maintenantServeur() - JEU.interpolationMs);
+
+    // --- état des armes : recharge, rechargement automatique, modèle en main ---
+    armes.majRecharge(ms());
+    {
+      const a = armeFeu();
+      if (a && peutAgir() && !enKillcam() && armes.munitions() <= 0 && !armes.rechargeEnCours() && t >= prochainDe(a)) demarrerRecharge();
+    }
+    armeMain.changer(enReplay ? (kc.info()?.arme ?? armes.armeEnMain()) : armes.armeEnMain());
+    if (embarquementFin > 0 && t >= embarquementFin) embarquementFin = 0;
 
     // --- mouvement ---
     const aVerrou = verrouille();
     const en = entrees();
-    const actif = vivant && apparu && (aVerrou || forceActif);
-    const a = STATS[armeId];
+    const actif = vivant && apparu && !enReplay && (aVerrou || forceActif);
+    const arme = armes.armeEnMain();
+    const a = arme === "couteau" ? null : STATS[arme];
+    const info = vehicule.actif();
     // Le fusil à lunette ne vise pas pendant le rechargement : l'arme reste visible et le champ normal
     // (sinon, clic droit tenu, l'arme disparaissait sans lunette ni animation de rechargement).
-    const vise = viseMaintenu && peutAgir() && !(a.zoom !== null && rechargeFin > 0);
-    if (apparu) {
-      const entreesUtiles: Entrees = actif ? en : { avant: 0, droite: 0, saut: false, sprint: false, lacet };
-      const mult = a.vitesse * (vise ? 0.8 : 1);
+    const vise = viseMaintenu && peutAgir() && !!a && !(a.zoom !== null && armes.rechargeEnCours()) && !enKillcam();
+    if (info) {
+      // dans une voiture : le conducteur la simule, le passager la suit ; le joueur n'a plus de mouvement propre
+      if (vehicule.estConducteur()) {
+        vehicule.maj(dt, actif ? commandesDepuisEntrees({ avant: en.avant, droite: en.droite, saut: en.saut }) : { accel: 0, direction: 0, frein: false });
+      } else {
+        const v = vehiculesAffichees().get(info.vehicule);
+        if (v) vehicule.suivre({ p: v.p, cap: v.cap, v: v.v });
+      }
+      const s = vehicule.positionSiege();
+      const ve = vehicule.etat();
+      if (s && ve) {
+        moi.p = [s[0], s[1], s[2]];
+        moi.v = [-Math.sin(ve.cap) * ve.v, 0, -Math.cos(ve.cap) * ve.v];
+        moi.auSol = true;
+      }
+      const choc = vehicule.choc();
+      if (choc > CHOC_SEUIL && t - dernierChocT > 0.3) { dernierChocT = t; sons.choc(borne(choc / 12, 0, 1)); }
+    } else if (apparu) {
+      const entreesUtiles: Entrees = actif ? en : { avant: 0, droite: 0, saut: false, sprint: false, accroupi: false, lacet };
+      const mult = vitesseArme(arme) * (vise ? 0.8 : 1);
       moi = etape(moi, entreesUtiles, dt, monde, mult);
     }
     sautDemande = false;
 
-    // --- tir ---
+    // --- tir (boucle bornée : les armes rapides tirent plus d'une fois par image) ---
     if (actif) {
-      const veutTirer = a.auto ? tirMaintenu : !tirConsomme && tirPresse > t - 0.12;
-      if (veutTirer && tirer() && !a.auto) tirConsomme = true;
+      const auto = a === null ? true : a.auto;
+      const veutTirer = auto ? tirMaintenu : !tirConsomme && tirPresse > t - 0.12;
+      let n = 0;
+      while (veutTirer && n < TIRS_PAR_IMAGE_MAX && tirer()) {
+        n++;
+        if (!auto) { tirConsomme = true; break; }
+      }
     }
-    // La chaleur (dispersion) et le recul ne retombent qu'un instant après le dernier tir : pendant
-    // une rafale ils s'accumulent ; ensuite la vue revient d'elle-même sur ce que le recul a soulevé
-    // (le fusil à pompe, qui tire toutes les 0,85 s, retrouve sa visée avant le tir suivant).
+    // Le recul ne retombe qu'un instant après le dernier tir : pendant une rafale il s'accumule ; ensuite la vue
+    // revient d'elle-même sur ce que le recul a soulevé (le fusil à pompe, qui tire toutes les 0,85 s, retrouve sa visée).
     const depuisTir = t - dernierTirT;
-    if (depuisTir > delaiRefroidissement(armeId)) chaleur = refroidir(armeId, chaleur, dt);
-    if (reculAcc > 0 && vivant && depuisTir > delaiRecul(armeId)) {
+    if (reculAcc > 0 && vivant && depuisTir > delaiRecul(dernierTirArme)) {
       const rendu = retourRecul(reculAcc, dt);
       tangage = borne(tangage - rendu, -TANGAGE_MAX, TANGAGE_MAX);
       reculAcc -= rendu;
     }
 
     // --- sons de déplacement ---
-    const vh = vitesseH();
-    if (apparu && vivant && moi.auSol && vh > 1.5) {
+    const vh = info ? 0 : vitesseH();
+    if (apparu && vivant && !info && moi.auSol && vh > 1.5 && !moi.glisse) {
       distPas += vh * dt;
-      if (distPas > 2.4) { distPas = 0; sons.pas(); }
+      if (distPas > FOULEE_M) { distPas = 0; sons.pas(); }
     } else distPas = 0;
-    const surMur = apparu && vivant && !!moi.mur;
+    const surMur = apparu && vivant && !!moi.mur && !info;
     if (surMur !== murActif) { murActif = surMur; sons.mur(surMur); }
+    const glisse = apparu && vivant && !!moi.glisse && !info;
+    if (glisse !== glisseSon) { glisseSon = glisse; sons.glisse(glisse); }
+    const ve = vehicule.etat();
+    sons.moteur(info && ve && vivant && !enReplay ? Math.abs(ve.v) : null);
 
     // --- envoi de l'état ---
     accEtat += dt;
-    if (accEtat >= 1 / JEU.etatHz) {
+    const periodeEtat = info && !vehicule.estConducteur() ? 1 / JEU.etatPassagerHz : 1 / JEU.etatHz;
+    if (accEtat >= periodeEtat) {
       accEtat = 0;
-      if (apparu && vivant) {
-        client.envoyer({
-          t: "etat", seq: ++seq, p: [moi.p[0], moi.p[1], moi.p[2]], v: [moi.v[0], moi.v[1], moi.v[2]],
-          lacet, tangage, posture: postureDe(moi), mur: coteMurDe(moi),
-        });
-      }
+      envoyerEtat();
     }
 
-    // --- joueurs distants et effets ---
+    // --- caméra (avant les pseudos et le radar, qui s'évaluent depuis elle) ---
+    const lunetteAct = vise && !!a && a.zoom !== null && !armes.rechargeEnCours();
+    placerCamera(dt, vise, lunetteAct, vh);
+
+    // --- télémétrie de la lunette : la distance de ce qui est sous le réticule (un rayon par image, seulement en lunette) ---
+    if (lunetteAct && a) {
+      const o = oeil();
+      const imp = tracer(monde, o, directionVisee(lacet, tangage, kick), a.portee, cibles(), client.id ?? "");
+      distanceVisee = imp.distance < a.portee - 0.01 ? Math.round(imp.distance) : -1;
+    } else distanceVisee = -1;
+
+    // --- joueurs distants, monde dynamique et effets ---
     majDistants(dt);
+    majMondeDynamique();
     effets.maj(dt);
 
-    // --- caméra ---
-    const lunette = vise && a.zoom !== null && rechargeFin === 0;
-    const cibleFov = lunette && a.zoom !== null ? a.zoom : vise ? FOV_H_VISEE : FOV_H;
-    fovH += (cibleFov - fovH) * lissage(14, dt);
-    appliquerFov();
-    kick *= Math.exp(-11 * dt);
+    porteArme.visible = apparu && (vivant || enReplay) && !(info && tireInterdit());
+    armeMain.maj(dt, { vitesseH: vh, auSol: moi.auSol, vise: vise && !enReplay });
 
-    if (!apparu) {
-      // en attente de la première apparition : survol de l'arène
-      camera.position.set(fx, 70, fz + 90);
-      camera.rotation.set(-0.5, 0, 0);
-    } else if (vivant) {
-      const bob = reduit ? 0 : Math.sin(t * 11) * 0.025 * Math.min(1, vh / 7) * (moi.auSol ? 1 : 0);
-      camera.position.set(moi.p[0], moi.p[1] + SILHOUETTE.oeil + bob, moi.p[2]);
-      camera.rotation.set(tangage + kick, lacet, -moi.inclinaison);
-    } else {
-      // mort : la caméra s'effondre et bascule sur le côté
-      mortT += dt;
-      const k = borne(mortT / 0.7, 0, 1);
-      const e = 1 - (1 - k) * (1 - k);
-      camera.position.set(moi.p[0], moi.p[1] + SILHOUETTE.oeil + (0.3 - SILHOUETTE.oeil) * e, moi.p[2]);
-      camera.rotation.set(tangage + (-0.35 - tangage) * e, lacet, mortSigne * 1.15 * e);
-    }
-
-    porteArme.visible = apparu && vivant;
-    armeMain.maj(dt, { vitesseH: vh, auSol: moi.auSol, vise });
-
+    remplirRadar(dt);
     post.rendre();
 
+    // --- valeurs continues du HUD (60 Hz, hors React) ---
+    live.recharge = armes.rechargeEnCours() ? Math.max(0.001, armes.rechargeProgression(ms())) : 0;
+    live.vitesse = info && ve ? Math.abs(ve.v) : vh;
+    live.vitesseKmh = info ? vehicule.vitesseKmh() : 0;
+    live.regenDelai = !vivant || pv >= JEU.pvMax ? 1 : borne((t - dernierDegatT) / (JEU.regenDelaiMs / 1000), 0, 1);
     accHud += dt;
     if (accHud >= ECART_HUD_S) { accHud = 0; emettreHud(); }
   }
   raf = requestAnimationFrame(frame);
 
-  client.envoyer({ t: "rejoindre", arme });
+  client.envoyer({ t: "rejoindre", principale: equipSuivant.principale, secondaire: equipSuivant.secondaire });
   emettreHud(true);
 
   // ---------- poignée ----------
   return {
-    choisirArme,
+    equiper,
     recevoir,
     verrouiller: demanderVerrou,
     sensibilite(x) { sensibilite = borne(x, 0.2, 3); },
-    touches(cfg) { config = cfg; index = indexTouches(cfg); toutRelacher(); },
+    accroupiBascule(b) {
+      accroupiBascule = b;
+      accroupiBascTenu = false;
+    },
+    passerKillcam() { if (kc.actif() && kc.phase() === "rejeu") kc.passer(); },
+    live,
+    radar() {
+      // rempli à chaque image ; position et regard rafraîchis au cas où le HUD lit avant la prochaine image
+      const pos = vehicule.positionSiege() ?? moi.p;
+      radarFrame.x = pos[0];
+      radarFrame.z = pos[2];
+      radarFrame.lacet = lacet;
+      return radarFrame;
+    },
+    touches(cfg: ConfigTouches) { config = cfg; index = indexTouches(cfg); toutRelacher(); },
     dispose() {
       if (disposed) return;
       disposed = true;
@@ -830,6 +1348,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
       window.removeEventListener("blur", toutRelacher);
       window.removeEventListener("mouseup", surMouseUp);
       window.removeEventListener("mousemove", surMouseMove);
+      window.removeEventListener("wheel", surWheel);
       document.removeEventListener("pointerlockchange", surVerrou);
       document.removeEventListener("visibilitychange", surVisibilite);
       canvas.removeEventListener("mousedown", surMouseDown);
@@ -838,8 +1357,14 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
       if (!sorti) { sorti = true; client.envoyer({ t: "quitter" }); }
       if (verrouille()) document.exitPointerLock();
       sons.mur(false);
+      sons.glisse(false);
+      sons.moteur(null);
       sons.dispose();
+      terminerKillcam();
+      visib.vider();
+      suiviRadar.vider();
       for (const id of [...distants.keys()]) retirerAvatar(id);
+      dyn.dispose();
       porteArme.remove(armeMain.group);
       camera.remove(porteArme);
       armeMain.dispose();
@@ -858,11 +1383,19 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
     },
     debug: {
       etat() {
+        const info = vehicule.actif();
         return {
-          id: client.id, apparu, vivant, pv, protege, arme: armeId, armeSuivante, munitions, recharge: rechargeFin > 0,
+          id: client.id, apparu, vivant, pv, bouclier, protege, arme: armes.armeEnMain(), slot: armes.slotActif(), slots: serialiserSlots(armes.lignes()),
+          armeSuivante: equipSuivant.principale, equipSuivant: { ...equipSuivant }, munitions: armes.munitions(), recharge: armes.rechargeEnCours(),
+          degainage: armes.degainage(ms()), accroupi: moi.accroupi, glisse: !!moi.glisse, regen: regenEnCours(),
+          vehicule: info ? { ...info } : null, embarquement: embarquementFin > 0,
+          killcam: kc.actif() ? { phase: kc.phase(), progression: kc.progression() } : null,
           p: [...moi.p], v: [...moi.v], auSol: moi.auSol, posture: postureDe(moi), mur: coteMurDe(moi),
-          lacet, tangage, verrouille: verrouille(), entracte, fov: fovV,
-          distants: [...etats.entries()].filter(([id]) => id !== client.id).map(([id, e]) => ({ id, p: e.p, vivant: e.vivant, protege: e.protege })),
+          lacet, tangage, verrouille: verrouille(), entracte, fov: fovV, oeil: oeil(),
+          distants: [...etats.entries()].filter(([id]) => id !== client.id).map(([id, e]) => ({
+            id, p: e.p, vivant: e.vivant, protege: e.protege, arme: e.arme, accroupi: !!e.accroupi, glisse: !!e.glisse, vehicule: e.vehicule ?? null,
+            pseudoAlpha: visib.alpha(id),
+          })),
         };
       },
       teleporter(p) { moi = etatInitial(p); },
@@ -874,12 +1407,41 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
         const r = anglesVers(e.p[0] - o[0], e.p[1] + 1.2 - o[1], e.p[2] - o[2]);
         lacet = r.lacet;
         tangage = r.tangage;
+        kick = 0;
         return tirer(true);
       },
       touche(code, appuyee) {
         forceActif = true;
         if (appuyee) presser(code);
         else relacher(code);
+      },
+      slot(s) { changerSlot(s); },
+      monter(id) {
+        const v = mondeJeu.vehiculesA(client.maintenantServeur() - JEU.interpolationMs).get(id);
+        if (!v || !peutAgir()) return;
+        forceActif = true;
+        // à 2,2 m à droite de la caisse, puis demande d'entrée
+        moi = etatInitial([v.p[0] + Math.cos(v.cap) * 2.2, 0, v.p[2] - Math.sin(v.cap) * 2.2]);
+        client.envoyer({ t: "monter", vehicule: id });
+        attendreReponseVehicule();
+      },
+      killcam() {
+        if (!kc.actif()) return null;
+        return {
+          phase: kc.phase(), progression: kc.progression(), tueur: kc.tueurId(), info: kc.info(), tempsServeur: kc.tempsServeur(),
+          camera: kc.camera(), rejeu: enReplay,
+        };
+      },
+      monde() {
+        const ts = client.maintenantServeur();
+        return {
+          pnj: mondeJeu.etatsPnj(ts).map((e) => ({ p: e.p, cap: e.cap, v: e.v })),
+          vehicules: [...vehiculesAffichees().values()],
+          sieges: [...vehiculesAffichees().keys()].map((id) => ({ id, sieges: [...mondeJeu.siegesDe(id)] })),
+          elsa: mondeJeu.elsa(),
+          invite: mondeJeu.invite(moi.p, assisSiege(), ts),
+          radar: { joueurs: radarFrame.nJoueurs, pnj: radarFrame.nPnj, voitures: radarFrame.nVoitures, echos: radarFrame.nEchos },
+        };
       },
     },
   };

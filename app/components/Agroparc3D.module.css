@@ -10,6 +10,14 @@
   --ag-line: #163040; /* filets décoratifs */
   --ag-line-strong: #43657a; /* contours de contrôles et pistes de jauge : ≥ 3,2:1 */
   --ag-panel: rgba(6, 10, 14, 0.9);
+  /* Jetons du HUD de l'arène (spec HUD §2.1) : les modules HUD ne redéfinissent aucune couleur en dur. */
+  --ag-danger: #ff7a6b; /* PV bas, chargeur vide, kill, tir entendu : 5,7:1 sur la plaque */
+  --ag-shield: #7fb2ff; /* bouclier : 6,8:1 */
+  --ag-ok: #6ff0a8; /* soin, régénération, ping bon : 10,2:1 */
+  --ag-tete: #ffd166; /* tir à la tête : 10,1:1 */
+  --ag-hud-fond: rgba(4, 6, 10, 0.86); /* toute plaque qui porte du texte < 24u */
+  --ag-hud-fond-fort: rgba(4, 6, 10, 0.94); /* tableau, carte du tueur, fin de match */
+  --ag-cadre: var(--ag-ink-dim); /* contours ESSENTIELS (mini-map, plaques) ; --ag-line-strong reste aux filets décoratifs */
   position: fixed;
   inset: 0;
   z-index: 1000;

@@ -1,0 +1,133 @@
+/**
+ * Équipement d'un joueur (PUR) : principale + secondaire + spéciale éventuelle (+ couteau toujours présent), garde-fous de types,
+ * alias v1 (`arme`), navigation entre slots, mémorisation (`localStorage` `pdj-fps-equipement`, migration de `pdj-fps-arme`, stockage injecté),
+ * chaîne des slots du HUD.
+ * Spec : docs/superpowers/specs/2026-10-22-arene-v2-design.md (§2.4, §5.12)
+ */
+import {
+  ARMES, ARMES_PRINCIPALES, ARMES_SECONDAIRES, ARMES_SPECIALES, EQUIPEMENT_DEFAUT, SLOTS, copierEquipement,
+  type ArmeFeuId, type ArmeId, type ArmePrincipaleId, type ArmeSecondaireId, type ArmeSpecialeId, type Equipement, type Slot,
+} from "./protocole";
+
+export const estPrincipale = (x: unknown): x is ArmePrincipaleId => (ARMES_PRINCIPALES as readonly unknown[]).includes(x);
+export const estSecondaire = (x: unknown): x is ArmeSecondaireId => (ARMES_SECONDAIRES as readonly unknown[]).includes(x);
+export const estSpeciale = (x: unknown): x is ArmeSpecialeId => (ARMES_SPECIALES as readonly unknown[]).includes(x);
+export const estArmeFeu = (x: unknown): x is ArmeFeuId => (ARMES as readonly unknown[]).includes(x);
+export const estSlot = (x: unknown): x is Slot => (SLOTS as readonly unknown[]).includes(x);
+
+/** Arme d'un slot ("couteau" pour le couteau ; null si le slot spécial est vide). */
+export function armeDuSlot(eq: Equipement, slot: Slot): ArmeId | null {
+  switch (slot) {
+    case "principale": return eq.principale;
+    case "secondaire": return eq.secondaire;
+    case "couteau": return "couteau";
+    case "speciale": return eq.speciale;
+  }
+}
+
+/** Slot qui porte `arme` dans cet équipement, null si elle n'y est pas. */
+export function slotDeLArme(eq: Equipement, arme: ArmeId): Slot | null {
+  if (arme === "couteau") return "couteau";
+  if (arme === eq.principale) return "principale";
+  if (arme === eq.secondaire) return "secondaire";
+  if (eq.speciale !== null && arme === eq.speciale) return "speciale";
+  return null;
+}
+
+/** Équipement valide : valeurs invalides remplacées par `prec`. La spéciale est celle de `prec` (elle ne se choisit pas). */
+export function normaliserEquipement(brut: { principale?: unknown; secondaire?: unknown }, prec: Equipement): Equipement {
+  const res = copierEquipement(prec);
+  if (brut && typeof brut === "object") {
+    if (estPrincipale(brut.principale)) res.principale = brut.principale;
+    if (estSecondaire(brut.secondaire)) res.secondaire = brut.secondaire;
+  }
+  return res;
+}
+
+/** Alias v1 `arme` → équipement + slot en main ; null si l'arme est invalide ou spéciale. */
+export function depuisAlias(arme: unknown, prec: Equipement): { equip: Equipement; main: Slot } | null {
+  if (estPrincipale(arme)) return { equip: { ...copierEquipement(prec), principale: arme }, main: "principale" };
+  if (estSecondaire(arme)) return { equip: { ...copierEquipement(prec), secondaire: arme }, main: "secondaire" };
+  return null;
+}
+
+/** Slot suivant/précédent portant une arme (saute le spécial vide), cyclique. Sans autre slot, renvoie `depuis`. */
+export function slotVoisin(eq: Equipement, depuis: Slot, sens: 1 | -1): Slot {
+  const n = SLOTS.length;
+  const i0 = SLOTS.indexOf(depuis);
+  for (let k = 1; k <= n; k++) {
+    const s = SLOTS[(((i0 + sens * k) % n) + n) % n];
+    if (armeDuSlot(eq, s) !== null) return s;
+  }
+  return depuis;
+}
+
+export const CLE_EQUIPEMENT = "pdj-fps-equipement";
+/** Clé de la v1 : une seule arme, en chaîne brute. */
+const CLE_ARME_V1 = "pdj-fps-arme";
+
+export interface ChoixArmes { principale: ArmePrincipaleId; secondaire: ArmeSecondaireId }
+
+/**
+ * Lecture localStorage `{principale, secondaire}` ; migre `pdj-fps-arme` (l'arme est rangée dans son slot par catégorie, l'autre
+ * slot prend le défaut). JSON abîmé, valeurs inconnues ou stockage absent : défaut, champ par champ. Stockage injecté.
+ */
+export function lireEquipement(stockage?: { getItem(k: string): string | null } | null): ChoixArmes {
+  const defaut: ChoixArmes = { principale: EQUIPEMENT_DEFAUT.principale, secondaire: EQUIPEMENT_DEFAUT.secondaire };
+  if (!stockage) return defaut;
+  try {
+    const s = stockage.getItem(CLE_EQUIPEMENT);
+    if (s) {
+      const brut: unknown = JSON.parse(s);
+      if (brut && typeof brut === "object" && !Array.isArray(brut)) {
+        const e = normaliserEquipement(brut as Record<string, unknown>, { ...defaut, speciale: null });
+        return { principale: e.principale, secondaire: e.secondaire };
+      }
+    }
+  } catch {
+    // JSON abîmé : on retombe sur l'ancienne clé, puis sur le défaut
+  }
+  try {
+    const alias = depuisAlias(stockage.getItem(CLE_ARME_V1), { ...defaut, speciale: null });
+    if (alias) return { principale: alias.equip.principale, secondaire: alias.equip.secondaire };
+  } catch {
+    // stockage inaccessible
+  }
+  return defaut;
+}
+
+export function ecrireEquipement(eq: ChoixArmes, stockage?: { setItem(k: string, v: string): void } | null): boolean {
+  try {
+    if (!stockage) return false;
+    stockage.setItem(CLE_EQUIPEMENT, JSON.stringify({ principale: eq.principale, secondaire: eq.secondaire }));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Chaîne HUD "principale:fusil_assaut:23:30|secondaire:pistolet:12:12|couteau:couteau:0:0|speciale:railgun:4:6" et son décodage.
+ * Le couteau porte 0 / 0 (pas de munitions). Une éventuelle 5ᵉ colonne (réserve, HUD §3.2) est tolérée à la lecture et ignorée ici.
+ */
+export interface LigneSlot { slot: Slot; arme: ArmeId; munitions: number; chargeur: number }
+
+const entierPositif = (v: number) => (Number.isFinite(v) && v > 0 ? Math.floor(v) : 0);
+
+export function serialiserSlots(lignes: readonly LigneSlot[]): string {
+  return lignes.map((l) => `${l.slot}:${l.arme}:${entierPositif(l.munitions)}:${entierPositif(l.chargeur)}`).join("|");
+}
+
+export function lireSlots(s: string): LigneSlot[] {
+  const res: LigneSlot[] = [];
+  if (typeof s !== "string" || s === "") return res;
+  for (const morceau of s.split("|")) {
+    const c = morceau.split(":");
+    if (c.length !== 4 && c.length !== 5) continue;
+    const [slot, arme, m, ch] = c;
+    if (!estSlot(slot) || !(arme === "couteau" || estArmeFeu(arme))) continue;
+    if (!/^\d+$/.test(m) || !/^\d+$/.test(ch)) continue;
+    res.push({ slot, arme, munitions: Number(m), chargeur: Number(ch) });
+  }
+  return res;
+}

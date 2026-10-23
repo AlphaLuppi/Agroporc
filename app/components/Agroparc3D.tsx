@@ -1,12 +1,15 @@
 "use client";
 
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { Chakra_Petch, IBM_Plex_Mono } from "next/font/google";
 import type { Carte, PdjEntry, Plat } from "@/lib/db";
 import type { Poi, SceneData } from "@/lib/agroparc3d/types";
 import type { JoueurAerien, SceneHandle } from "@/lib/agroparc3d/scene";
 import type { JeuHandle, HudEtat } from "@/lib/fps/jeu";
-import { ARMES, type ArmeId, type Vec3 } from "@/lib/fps/protocole";
+import type { HudLive } from "@/lib/fps/jeu-types";
+import type { ArmeFeuId, ArmePrincipaleId, ArmeSecondaireId, Slot, Vec3 } from "@/lib/fps/protocole";
+import { ecrireEquipement, estPrincipale, estSecondaire, lireEquipement } from "@/lib/fps/equipement";
+import { creerRadarFrame } from "@/lib/fps/radar";
 import { nomPersonnage } from "@/lib/characters";
 import { lireCachettes, type Cachette, type FichierCachettes } from "@/lib/agroparc3d/cachettes";
 import { etatRestaurant } from "@/lib/agroparc3d/panneau";
@@ -20,7 +23,9 @@ import RestoBadge from "./RestoBadge";
 import Arene from "./arene/Arene";
 import HudArene from "./arene/HudArene";
 import { useArene } from "./arene/useArene";
-import { ecrireTouches, lireTouches, stockageNavigateur, type ConfigTouches } from "@/lib/fps/touches";
+import type { EquipementChoisi } from "./arene/contrats";
+import { actionsSansTouche, ecrireTouches, lireTouches, stockageNavigateur, type ConfigTouches } from "@/lib/fps/touches";
+import { useReglagesHud } from "./arene/hud/useReglagesHud";
 import { CLASSEMENT_INDISPONIBLE, EnregistrerScore, PanneauClassement } from "./ClassementTigre";
 import styles from "./Agroparc3D.module.css";
 
@@ -61,7 +66,8 @@ function dansUnChamp(cible: EventTarget | null): boolean {
 }
 
 const CLE_PSEUDO = "pdj-fps-pseudo";
-const CLE_ARME = "pdj-fps-arme";
+/** Accroupi : « 1 » = bascule, « 0 » (défaut) = maintenir. */
+const CLE_ACCROUPI_BASCULE = "pdj-fps-accroupi-bascule";
 const CLE_SENSIBILITE = "pdj-fps-sensibilite";
 /** Personnage choisi dans les commentaires (app/CommentForm.tsx) : pseudo par défaut dans l'arène. */
 const CLE_PERSONNAGE = "pdj-selected-character";
@@ -76,13 +82,27 @@ function pseudoInitial(): string {
   } catch { /* stockage indisponible */ }
   return "Agent";
 }
-function armeInitiale(): ArmeId {
-  try {
-    const a = localStorage.getItem(CLE_ARME) as ArmeId | null;
-    if (a && ARMES.includes(a)) return a;
-  } catch { /* stockage indisponible */ }
-  return "pistolet";
+/** Équipement mémorisé (clé `pdj-fps-equipement`, migration de l'ancienne clé `pdj-fps-arme` faite par `lireEquipement`). */
+function equipementInitial(): EquipementChoisi {
+  return lireEquipement(stockageNavigateur());
 }
+function accroupiBasculeInitial(): boolean {
+  try { return localStorage.getItem(CLE_ACCROUPI_BASCULE) === "1"; } catch { return false; }
+}
+/** Valeurs de repli du HUD tant que la partie n'est pas lancée (objets stables). */
+const LIVE_VIDE: HudLive = { recharge: 0, vitesse: 0, vitesseKmh: 0, regenDelai: 1 };
+const RADAR_VIDE = creerRadarFrame();
+
+/** HUD de repos (à pied, vivant, fusil d'assaut + pistolet) : base de `window.__arene.forcerHud`, qui y superpose un état partiel. */
+const HUD_REPOS: HudEtat = {
+  pv: 100, bouclier: 0, arme: "fusil_assaut", slot: "principale",
+  slots: "principale:fusil_assaut:30:30:-1|secondaire:pistolet:12:12:-1|couteau:couteau:0:0",
+  equipSuivant: "fusil_assaut|pistolet", munitions: 30, chargeur: 30, reserve: -1, recharge: false, degainage: false,
+  vise: false, lunette: false, zoomX: 0, distanceVisee: -1, mur: false, mort: false, reapparitionDans: 0, protege: false,
+  protegeRestant: 0, verrouille: true, connecte: true, entracte: false, accroupi: false, glisse: false, regen: false,
+  bonusVitesse: 1, invite: "", inviteDetail: "", vehicule: false, vehiculeId: -1, siege: -1, tireInterdit: false,
+  embarquement: false, killcam: -1, killcamPhase: "",
+};
 function sensibiliteInitiale(): number {
   try {
     const v = Number(localStorage.getItem(CLE_SENSIBILITE));
@@ -146,19 +166,30 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
   const [enArene, setEnArene] = useState(false);
   const [cleCanvas, setCleCanvas] = useState(0);
   const [areneOuverte, setAreneOuverte] = useState(false);
-  const [hud, setHud] = useState<HudEtat | null>(null);
+  const [hudJeu, setHud] = useState<HudEtat | null>(null);
+  // dev : état forcé par `window.__arene.forcerHud` (captures des états du HUD sans jouer) ; null = le vrai état du jeu
+  const [hudForce, setHudForce] = useState<Partial<HudEtat> | null>(null);
+  // `verrouille` à vrai par défaut : sans pointer lock (captures, tests) le menu pause masquerait l'état forcé
+  const hud = hudForce ? { ...(hudJeu ?? HUD_REPOS), verrouille: true, ...hudForce } : hudJeu;
   const [pseudoSaisi, setPseudoSaisi] = useState(pseudoInitial);
   const [pseudoConnecte, setPseudoConnecte] = useState(() => pseudoInitial().trim() || "Agent");
-  const [arme, setArme] = useState<ArmeId>(armeInitiale);
+  const [equipement, setEquipement] = useState<EquipementChoisi>(equipementInitial);
+  const [accroupiBascule, setAccroupiBascule] = useState(accroupiBasculeInitial);
   const [sensibilite, setSensibilite] = useState(sensibiliteInitiale);
   const [touches, setTouches] = useState<ConfigTouches>(() => lireTouches(stockageNavigateur()));
+  // mini-map et taille de l'interface (clés `pdj-fps-minimap` et `pdj-fps-hud`), réglables au lobby comme en pause
+  const [reglagesHud, setReglagesHud] = useReglagesHud();
   const [tactile, setTactile] = useState(false);
   const jeuRef = useRef<JeuHandle | null>(null);
   const arene = useArene(pseudoConnecte, jeuRef);
+  // identité stable : le HUD le lit en rAF (mini-map, flèche d'Elsa), sans repasser par React
+  const radar = useCallback(() => jeuRef.current?.radar() ?? RADAR_VIDE, []);
   const enAreneRef = useRef(enArene);
   enAreneRef.current = enArene;
-  const armeRef = useRef(arme);
-  armeRef.current = arme;
+  const equipementRef = useRef(equipement);
+  equipementRef.current = equipement;
+  const accroupiBasculeRef = useRef(accroupiBascule);
+  accroupiBasculeRef.current = accroupiBascule;
   const sensibiliteRef = useRef(sensibilite);
   sensibiliteRef.current = sensibilite;
 
@@ -175,10 +206,17 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
     setPseudoSaisi(v);
     try { localStorage.setItem(CLE_PSEUDO, v); } catch { /* non retenu */ }
   };
-  const choisirArme = (a: ArmeId) => {
-    setArme(a);
-    jeuRef.current?.choisirArme(a);
-    try { localStorage.setItem(CLE_ARME, a); } catch { /* non retenu */ }
+  // Lobby, écran de mort et pause : l'équipement de la prochaine apparition (principale + secondaire, couteau toujours là).
+  // Mémorisé tout de suite ; en partie, `equiper` le transmet au jeu (immédiat si mort).
+  const choisirEquipement = (principale: ArmePrincipaleId, secondaire: ArmeSecondaireId) => {
+    setEquipement({ principale, secondaire });
+    jeuRef.current?.equiper(principale, secondaire);
+    ecrireEquipement({ principale, secondaire }, stockageNavigateur());
+  };
+  const reglerAccroupiBascule = (b: boolean) => {
+    setAccroupiBascule(b);
+    jeuRef.current?.accroupiBascule(b);
+    try { localStorage.setItem(CLE_ACCROUPI_BASCULE, b ? "1" : "0"); } catch { /* non retenu */ }
   };
   const regler = (x: number) => {
     setSensibilite(x);
@@ -307,7 +345,7 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
         const client = arene.clientRef.current;
         if (annule) return;
         if (!client) { quitterRef.current(); return; }
-        jeu = lancerJeu(canvas, scene.data, client, armeRef.current, {
+        jeu = lancerJeu(canvas, scene.data, client, equipementRef.current, {
           hud: setHud,
           evenement: arene.pousserEvenement,
           sortir: () => quitterRef.current(),
@@ -315,6 +353,7 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
         });
         jeuRef.current = jeu;
         jeu.sensibilite(sensibiliteRef.current);
+        jeu.accroupiBascule(accroupiBasculeRef.current);
         // le jeu n'a pas vu le « bienvenue » : pseudos, couleurs et phase du match
         jeu.recevoir({ t: "presence", joueurs: arene.joueursRef.current });
         if (arene.matchRef.current) jeu.recevoir({ t: "match", match: arene.matchRef.current, classement: [] });
@@ -328,6 +367,7 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
       jeu?.dispose();
       if (jeuRef.current === jeu) jeuRef.current = null;
       setHud(null);
+      setHudForce(null);
     };
     // `arene` change à chaque rendu : seules ses refs et son callback stable servent ici
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -387,30 +427,46 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
     return () => { delete window.__palantir; };
   }, [ready, scene]);
 
-  // Crochet de développement de l'arène : état, entrer, téléporter, forcer un tir (tests bout à bout).
-  const dev = useRef({ arene, hud, enArene });
-  dev.current = { arene, hud, enArene };
+  // Crochet de développement de l'arène : état, entrer, téléporter, forcer un tir, changer de slot, monter en voiture, killcam, monde
+  // (tests bout à bout et captures).
+  const dev = useRef({ arene, hud, enArene, equipement });
+  dev.current = { arene, hud, enArene, equipement };
   useEffect(() => {
     if (process.env.NODE_ENV === "production") return;
     window.__arene = {
       etat: () => ({
         connexion: dev.current.arene.etat, monId: dev.current.arene.monId, joueurs: dev.current.arene.joueurs,
-        match: dev.current.arene.match, enArene: dev.current.enArene, hud: dev.current.hud,
+        match: dev.current.arene.match, enArene: dev.current.enArene, hud: dev.current.hud, equipement: dev.current.equipement,
         jeu: jeuRef.current?.debug.etat() ?? null,
       }),
-      entrer: (a) => { if (a) choisirArmeRef.current(a); entrerRef.current(); },
+      // une arme seule (v1) la range dans son slot par catégorie ; un équipement règle les deux ; sans argument, l'équipement mémorisé
+      entrer: (a) => {
+        const eq = dev.current.equipement;
+        if (typeof a === "string") {
+          if (estPrincipale(a)) choisirEquipementRef.current(a, eq.secondaire);
+          else if (estSecondaire(a)) choisirEquipementRef.current(eq.principale, a);
+        } else if (a) {
+          choisirEquipementRef.current(a.principale ?? eq.principale, a.secondaire ?? eq.secondaire);
+        }
+        entrerRef.current();
+      },
       quitter: () => quitterRef.current(),
       teleporter: (p) => jeuRef.current?.debug.teleporter(p),
       regarder: (lacet, tangage) => jeuRef.current?.debug.regarder(lacet, tangage),
       tirerVers: (id) => jeuRef.current?.debug.tirerVers(id) ?? false,
       touche: (code, appuyee) => jeuRef.current?.debug.touche(code, appuyee),
+      slot: (s) => jeuRef.current?.debug.slot(s),
+      monter: (id) => jeuRef.current?.debug.monter(id),
+      killcam: () => jeuRef.current?.debug.killcam() ?? null,
+      monde: () => jeuRef.current?.debug.monde() ?? null,
+      forcerHud: (partiel) => setHudForce(partiel ? { ...partiel } : null),
     };
     return () => { delete window.__arene; };
   }, []);
   const entrerRef = useRef(entrerArene);
   entrerRef.current = entrerArene;
-  const choisirArmeRef = useRef(choisirArme);
-  choisirArmeRef.current = choisirArme;
+  const choisirEquipementRef = useRef(choisirEquipement);
+  choisirEquipementRef.current = choisirEquipement;
 
   // Plat du jour du POI cliqué (+ carte permanente en dépliant), ou statut + carte quand il n'en a pas.
   const chargement = !ready || !!error;
@@ -499,8 +555,11 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
           match={arene.match}
           pseudo={pseudoSaisi}
           surPseudo={saisirPseudo}
-          arme={arme}
-          surArme={choisirArme}
+          equipement={equipement}
+          surEquipement={choisirEquipement}
+          touches={touches}
+          reglagesHud={reglagesHud}
+          surReglagesHud={setReglagesHud}
           surEntrer={entrerArene}
           surFermer={() => setAreneOuverte(false)}
           erreur={arene.erreur}
@@ -527,8 +586,26 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
           pseudo={pseudoSaisi}
           surPseudo={saisirPseudo}
           surReprendre={() => jeuRef.current?.verrouiller()}
-          surChoisirArme={choisirArme}
           surQuitter={quitterArene}
+          actionsSansTouche={actionsSansTouche(touches)}
+          equipement={equipement}
+          surEquipement={choisirEquipement}
+          elsa={arene.elsa}
+          annonces={arene.annonces}
+          sieges={arene.sieges}
+          bonus={arene.bonus}
+          accroupiBascule={accroupiBascule}
+          surAccroupiBascule={reglerAccroupiBascule}
+          killcamInfo={arene.killcamInfo}
+          surPasserKillcam={() => jeuRef.current?.passerKillcam()}
+          stats={arene.stats}
+          surVueScores={arene.demanderScores}
+          live={jeuRef.current?.live ?? LIVE_VIDE}
+          radar={radar}
+          reglagesHud={reglagesHud}
+          surReglagesHud={setReglagesHud}
+          degatsAuTueur={arene.degatsAuTueur}
+          scene={scene?.data ?? null}
         />
       )}
 
@@ -719,7 +796,8 @@ declare global {
     /** Crochet de test de l'arène FPS, présent en développement seulement. */
     __arene?: {
       etat(): Record<string, unknown>;
-      entrer(arme?: ArmeId): void;
+      /** Entre dans l'arène. Une arme seule la range dans son slot par catégorie ; un équipement règle les deux slots. */
+      entrer(equipement?: ArmeFeuId | Partial<EquipementChoisi>): void;
       quitter(): void;
       teleporter(p: Vec3): void;
       regarder(lacet: number, tangage: number): void;
@@ -727,6 +805,16 @@ declare global {
       tirerVers(id: string): boolean;
       /** Appuie (true) ou relâche (false) une touche par son `KeyboardEvent.code`, sans pointer lock. */
       touche(code: string, appuyee: boolean): void;
+      /** Change de slot sans clavier. */
+      slot(s: Slot): void;
+      /** Entre dans le véhicule `id` (téléporte à côté puis envoie `monter`). */
+      monter(id: number): void;
+      /** État de la killcam (null hors killcam). */
+      killcam(): Record<string, unknown> | null;
+      /** État du monde dynamique : voitures PNJ, voitures conduisibles, Elsa. */
+      monde(): Record<string, unknown> | null;
+      /** Superpose un état partiel au HUD (base : repos si le jeu n'émet rien) ; `null` rend la main au jeu. */
+      forcerHud(partiel: Partial<HudEtat> | null): void;
     };
     /** Crochet de test de la chasse au tigre, présent en développement seulement. */
     __palantir?: {

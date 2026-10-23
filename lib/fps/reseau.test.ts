@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EtatJoueurSnap, MessageServeur } from "./protocole";
+import { KILLCAM } from "./killcam";
 import { HorlogeServeur, Interpolateur, connecterArene, lerpAngle, urlArene, type SocketLike } from "./reseau";
 
 function joueur(id: string, x: number, extra: Partial<EtatJoueurSnap> = {}): EtatJoueurSnap {
@@ -116,6 +117,38 @@ describe("Interpolateur", () => {
 
   it("renvoie une table vide sans snap", () => {
     expect(new Interpolateur().echantillon(100).size).toBe(0);
+  });
+
+  it("tampon long (killcam) : garde 4 s là où le tampon par défaut en garde 1", () => {
+    const court = new Interpolateur();
+    const long = new Interpolateur(KILLCAM.tamponMs);
+    for (let i = 0; i <= 200; i++) { // 10 s à 20 Hz
+      const snap = { ts: i * 50, j: [joueur("a", i)] };
+      court.ajouter(snap);
+      long.ajouter(snap);
+    }
+    // dernier snap à 10 000 ms : le long remonte à 6 000 ms (x = 120), le court seulement à 9 000 ms (x = 180)
+    expect(long.echantillon(6000).get("a")!.p[0]).toBeCloseTo(120, 10);
+    expect(long.echantillon(7500).get("a")!.p[0]).toBeCloseTo(150, 10);
+    expect(court.echantillon(7500).get("a")!.p[0]).toBeCloseTo(180, 10); // trop ancien : plus ancien état conservé
+    expect(long.echantillon(5000).get("a")!.p[0]).toBeCloseTo(120, 10); // avant l'historique : tient le plus ancien
+  });
+
+  it("Interpolateur() garde 1 s (valeur par défaut inchangée)", () => {
+    const it = new Interpolateur();
+    for (let i = 0; i <= 100; i++) it.ajouter({ ts: i * 50, j: [joueur("a", i)] });
+    expect(it.echantillon(0).get("a")!.p[0]).toBeGreaterThanOrEqual(80);
+  });
+
+  it("recopie aussi l'occupation d'un véhicule (pas de référence partagée)", () => {
+    const it = new Interpolateur();
+    const s = joueur("a", 0, { vehicule: { id: 3, siege: 1 } });
+    it.ajouter({ ts: 0, j: [s] });
+    it.ajouter({ ts: 50, j: [joueur("a", 1, { vehicule: { id: 3, siege: 1 } })] });
+    const e = it.echantillon(25).get("a")!;
+    expect(e.vehicule).toEqual({ id: 3, siege: 1 });
+    e.vehicule!.id = 99;
+    expect(s.vehicule!.id).toBe(3);
   });
 });
 
@@ -308,6 +341,40 @@ describe("connecterArene", () => {
   });
 });
 
+describe("connecterArene : messages périssables", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(100_000);
+    FauxSocket.tous = [];
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it("ne rejoue pas les coups ni les commandes de conduite après une coupure", () => {
+    const messages: MessageServeur[] = [];
+    const client = connecterArene("ws://x", "Bob", (m) => messages.push(m), () => {}, { creerSocket: (u) => new FauxSocket(u) });
+    const socket = () => FauxSocket.tous[FauxSocket.tous.length - 1];
+    for (let i = 0; i < 100; i++) {
+      client.envoyer({ t: "coup", o: [0, 0, 0], d: [0, 0, -1], cible: null });
+      client.envoyer({ t: "conduite", seq: i, vehicule: 1, p: [0, 0, 0], cap: 0, v: 0, lacet: 0, tangage: 0 });
+    }
+    client.envoyer({ t: "descendre" });
+    socket().ouvrir();
+    // bonjour, le message durable (descendre) puis le ping d'ouverture
+    expect(socket().types()).toEqual(["bonjour", "descendre", "ping"]);
+    client.fermer();
+  });
+
+  it("envoie coup et conduite tels quels quand le socket est ouvert", () => {
+    const client = connecterArene("ws://x", "Bob", () => {}, () => {}, { creerSocket: (u) => new FauxSocket(u) });
+    const s = FauxSocket.tous[FauxSocket.tous.length - 1];
+    s.ouvrir();
+    client.envoyer({ t: "coup", o: [0, 0, 0], d: [0, 0, -1], cible: "j2" });
+    client.envoyer({ t: "conduite", seq: 1, vehicule: 1, p: [0, 0, 0], cap: 0, v: 0, lacet: 0, tangage: 0 });
+    expect(s.types().slice(-2)).toEqual(["coup", "conduite"]);
+    client.fermer();
+  });
+});
+
 describe("urlArene", () => {
   const env = process.env.NEXT_PUBLIC_FPS_WS_URL;
   afterEach(() => {
@@ -327,7 +394,7 @@ describe("urlArene", () => {
     vi.stubGlobal("location", { hostname: "127.0.0.1" });
     expect(urlArene()).toBe("ws://localhost:8787");
   });
-  it("utilise la prod ailleurs (et hors navigateur)", () => {
+  it("utilise la prod v2 ailleurs (et hors navigateur)", () => {
     delete process.env.NEXT_PUBLIC_FPS_WS_URL;
     vi.stubGlobal("location", { hostname: "pdj.toam.tech" });
     expect(urlArene()).toBe("wss://pdj-fps.toam.tech");

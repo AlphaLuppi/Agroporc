@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import {
-  ACTIONS, LIBELLES_ACTIONS, TOUCHE_RESERVEE, assigner, codeSouris, estParDefaut, libelleTouche,
+  GROUPES_ACTIONS, LIBELLES_ACTIONS, TOUCHE_RESERVEE, assigner, codeSouris, estParDefaut, libelleTouche,
   touchesParDefaut, type Action, type ConfigTouches,
 } from "@/lib/fps/touches";
 import styles from "./HudArene.module.css";
@@ -25,9 +25,9 @@ export function useDisposition(): ReadonlyMap<string, string> | null {
 }
 
 /**
- * Touches de l'arène dans le menu pause : on clique un emplacement puis on appuie sur la touche
- * ou le bouton de souris voulu (Échap annule, Retour arrière vide l'emplacement). Une touche déjà
- * prise quitte son ancienne action, qui est signalée. Enregistré par l'hôte (localStorage).
+ * Touches de l'arène dans le menu pause, groupées (`GROUPES_ACTIONS` : Déplacement, Combat, Équipement, Véhicule, Divers) :
+ * on clique un emplacement puis on appuie sur la touche ou le bouton de souris voulu (Échap annule, Retour arrière vide
+ * l'emplacement). Une touche déjà prise quitte son ancienne action, qui est signalée. Enregistré par l'hôte (localStorage).
  */
 export default function ReglageTouches({ config, surChange }: Props) {
   const disposition = useDisposition();
@@ -93,35 +93,42 @@ export default function ReglageTouches({ config, surChange }: Props) {
           ? <>Appuyez sur une touche ou cliquez pour « {LIBELLES_ACTIONS[capture.action]} » · <kbd>Échap</kbd> annule · <kbd>Retour arrière</kbd> vide</>
           : message ?? "Cliquez sur une touche pour la changer. Enregistré dans ce navigateur."}
       </p>
-      <dl className={styles.touchesListe}>
-        {ACTIONS.map((a) => (
-          <div key={a}>
-            <dt>{LIBELLES_ACTIONS[a]}</dt>
-            <dd>
-              {([0, 1] as const).map((slot) => {
-                const code = config[a][slot];
-                const enCapture = capture?.action === a && capture.slot === slot;
-                return (
-                  <button
-                    key={slot}
-                    type="button"
-                    className={`${styles.toucheBtn} ${code === null ? styles.toucheVide : ""}`}
-                    aria-pressed={enCapture}
-                    aria-label={`${LIBELLES_ACTIONS[a]}, touche ${slot + 1} : ${code === null ? "aucune" : libelleTouche(code, disposition)}. Changer`}
-                    onClick={() => { setMessage(null); setCapture(enCapture ? null : { action: a, slot }); }}
-                  >
-                    {enCapture ? "…" : libelleTouche(code, disposition)}
-                  </button>
-                );
-              })}
-            </dd>
-          </div>
-        ))}
-        <div>
-          <dt>Menu pause</dt>
-          <dd><span className={styles.toucheFixe}>Échap</span></dd>
+      {GROUPES_ACTIONS.map((g, i) => (
+        <div key={g.titre} className={styles.touchesGroupe} role="group" aria-labelledby={`touches-groupe-${i}`}>
+          <h3 id={`touches-groupe-${i}`}>{g.titre}</h3>
+          <dl className={styles.touchesListe}>
+            {g.actions.map((a) => (
+              <div key={a}>
+                <dt>{LIBELLES_ACTIONS[a]}</dt>
+                <dd>
+                  {([0, 1] as const).map((slot) => {
+                    const code = config[a][slot];
+                    const enCapture = capture?.action === a && capture.slot === slot;
+                    return (
+                      <button
+                        key={slot}
+                        type="button"
+                        className={`${styles.toucheBtn} ${code === null ? styles.toucheVide : ""}`}
+                        aria-pressed={enCapture}
+                        aria-label={`${LIBELLES_ACTIONS[a]}, touche ${slot + 1} : ${code === null ? "aucune" : libelleTouche(code, disposition)}. Changer`}
+                        onClick={() => { setMessage(null); setCapture(enCapture ? null : { action: a, slot }); }}
+                      >
+                        {enCapture ? "…" : libelleTouche(code, disposition)}
+                      </button>
+                    );
+                  })}
+                </dd>
+              </div>
+            ))}
+            {g.titre === "Divers" && (
+              <div>
+                <dt>Menu pause</dt>
+                <dd><span className={styles.toucheFixe}>Échap</span></dd>
+              </div>
+            )}
+          </dl>
         </div>
-      </dl>
+      ))}
     </section>
   );
 }
