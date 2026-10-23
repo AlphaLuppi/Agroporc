@@ -130,6 +130,10 @@ describe("formats français", () => {
     expect(libelleFil("couteau", "ecrase_pnj", "")).toBe("Écrasé par la circulation");
     expect(libelleFil("couteau", "ecrase_vehicule", "Lea")).toBe("Renversé par Lea");
   });
+  it("libellé du fil : un coup de tigre n'est jamais « Couteau » (arme portée par le serveur)", () => {
+    expect(libelleFil("couteau", "tigre", "Lea")).toBe("Tigre");
+    expect(libelleFil("couteau", "tigre", "")).toBe("Tué par le tigre");
+  });
   it("textes d'Elsa", () => {
     expect(texteOffreElsa("soin")).toBe("SOIN COMPLET : PV 100 + BOUCLIER 100");
     expect(texteOffreElsa("arme", "railgun")).toBe("ARME : RAILGUN, 6 tirs");

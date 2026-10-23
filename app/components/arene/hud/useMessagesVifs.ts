@@ -90,15 +90,16 @@ export function useMessagesVifs(p: EntreesMessagesVifs): { toast: string | null;
     else if (avant > 0 && bouclier === 0) pousser("Bouclier détruit", PRIORITE_VIVE.bouclier);
   }, [bouclier, mort, pousser]);
 
-  // annonces du fil (Elsa, refus d'un siège…)
+  // annonces du fil (Elsa, refus d'un siège, tigres), celles des tigres (largage, tigre abattu, sort) passent aussi en toast
   const dernierIdAnnonce = useRef(0);
   useEffect(() => {
     for (const a of annonces) {
       if (a.id <= dernierIdAnnonce.current) continue;
       dernierIdAnnonce.current = a.id;
-      pousser(a.texte, a.genre === "elsa" ? PRIORITE_VIVE.elsa : PRIORITE_VIVE.info);
+      pousser(a.texte, a.genre === "elsa" || a.genre === "tigre" ? PRIORITE_VIVE.elsa : PRIORITE_VIVE.info);
+      if (a.genre === "tigre") afficherToast(a.texte);
     }
-  }, [annonces, pousser]);
+  }, [annonces, pousser, afficherToast]);
 
   // cadeau d'Elsa ramassé : toast + annonce
   const dernierBonus = useRef(0);
