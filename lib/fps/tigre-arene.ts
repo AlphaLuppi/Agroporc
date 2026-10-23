@@ -149,7 +149,12 @@ export interface Tigre {
   sansCibleDepuis: number;
   contournement: 1 | -1;
   blocage: { t: number; p: Vec3 };
-  /** étape de contournement d'un bâtiment (coin à rejoindre), null si la route directe est libre, recalculée toutes les 100 ms */
+  /** chemin autour des bâtiments (points à suivre, le dernier est la destination), null si la route directe est libre */
+  chemin: [number, number][] | null;
+  /** destination du chemin et instant de son calcul */
+  cheminBut: [number, number] | null;
+  cheminT: number;
+  /** point suivi en ce moment (le plus lointain du chemin encore en vue), choisi toutes les 100 ms */
   etape: [number, number] | null;
   etapeT: number;
   voitureT: number;
@@ -244,57 +249,187 @@ export function pasVers(t: Tigre, monde: Monde, voitures: readonly ObstacleVoitu
   return horizontal(avant, np);
 }
 
-/** Prisme dont un mur passe à moins de 0,3 m de (x, z), ou qui le contient. -1 sinon. */
-function prismeEn(monde: Monde, x: number, z: number): number {
-  const g = monde.grille;
-  const i = Math.floor((x - g.x0) / g.taille), j = Math.floor((z - g.z0) / g.taille);
-  if (i < 0 || j < 0 || i >= g.nx || j >= g.nz) return -1;
-  for (const id of g.cases[i + j * g.nx]) {
-    const pr = monde.prismes[id];
-    const b = pr.boite;
-    if (x < b.x0 - 0.3 || x > b.x1 + 0.3 || z < b.z0 - 0.3 || z > b.z1 + 0.3) continue;
-    if (dedans(x, z, pr.anneau)) return id;
-    for (let a = 0, c = pr.anneau.length - 1; a < pr.anneau.length; c = a++) {
-      if (distSegment(x, z, pr.anneau[c][0], pr.anneau[c][1], pr.anneau[a][0], pr.anneau[a][1]) < 0.3) return id;
-    }
-  }
-  return -1;
-}
+// ---------- chemin autour des bâtiments ----------
 
-/** Écart (m) entre un coin de bâtiment et le point de passage du tigre, écarté du mur. */
-const MARGE_COIN_M = TIGRE.rayon + 0.8;
+/** Pas (m) de la grille de navigation des tigres. */
+export const PAS_NAV_M = 1.5;
+/** Dégagement (m) d'une case libre : le centre de la case est à cette distance au moins de tout mur (rayon du tigre + marge). */
+const DEGAGEMENT_NAV_M = TIGRE.rayon + 0.2;
+/** Nœuds explorés au plus par une recherche de chemin (au-delà, pas de chemin : le tigre se débrouille par balayage d'angles). */
+const NOEUDS_MAX = 20_000;
 
 /**
- * Étape de contournement de `de` vers (x, z) : null si un rayon à 0,5 m du sol va droit au but. Sinon, parmi les coins du bâtiment qui
- * barre la route (écartés de `MARGE_COIN_M` vers l'extérieur), le coin visible de `de` qui minimise le détour. Null si aucun coin
- * n'est visible (le pas de `pasVers` se débrouille alors par balayage d'angles).
+ * Grille de navigation d'un monde (cases de `PAS_NAV_M` m) : une case est libre si son centre est hors des bâtiments, à
+ * `DEGAGEMENT_NAV_M` au moins de leurs murs et à plus de 1 m des bornes. Tampons de la recherche A* réutilisés (non réentrant).
  */
-export function etapeContournement(monde: Monde, de: Vec3, x: number, z: number): [number, number] | null {
+export interface GrilleNav {
+  x0: number;
+  z0: number;
+  nx: number;
+  nz: number;
+  libre: Uint8Array;
+  g: Float64Array;
+  parent: Int32Array;
+  vu: Uint32Array;
+  ferme: Uint32Array;
+  tampon: number;
+}
+
+const GRILLES = new WeakMap<Monde, GrilleNav>();
+
+/** Grille de navigation de `monde`, construite à la première demande puis gardée (une par monde). */
+export function grilleNav(monde: Monde): GrilleNav {
+  const deja = GRILLES.get(monde);
+  if (deja) return deja;
+  const b = monde.bornes;
+  const nx = Math.max(1, Math.ceil((b.x1 - b.x0) / PAS_NAV_M)), nz = Math.max(1, Math.ceil((b.z1 - b.z0) / PAS_NAV_M));
+  const n = nx * nz;
+  const libre = new Uint8Array(n);
+  for (let j = 0; j < nz; j++) for (let i = 0; i < nx; i++) {
+    const x = b.x0 + (i + 0.5) * PAS_NAV_M, z = b.z0 + (j + 0.5) * PAS_NAV_M;
+    libre[i + j * nx] = x > b.x0 + 1 && x < b.x1 - 1 && z > b.z0 + 1 && z < b.z1 - 1 ? 1 : 0;
+  }
+  // chaque bâtiment ferme les cases de son emprise et de son voisinage immédiat
+  const d = DEGAGEMENT_NAV_M;
+  for (const pr of monde.prismes) {
+    if (pr.h <= 0.05) continue;
+    const i0 = Math.max(0, Math.floor((pr.boite.x0 - d - b.x0) / PAS_NAV_M)), i1 = Math.min(nx - 1, Math.floor((pr.boite.x1 + d - b.x0) / PAS_NAV_M));
+    const j0 = Math.max(0, Math.floor((pr.boite.z0 - d - b.z0) / PAS_NAV_M)), j1 = Math.min(nz - 1, Math.floor((pr.boite.z1 + d - b.z0) / PAS_NAV_M));
+    const anneaux = [pr.anneau, ...pr.trous];
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+      const k = i + j * nx;
+      if (!libre[k]) continue;
+      const x = b.x0 + (i + 0.5) * PAS_NAV_M, z = b.z0 + (j + 0.5) * PAS_NAV_M;
+      let ferme = dedans(x, z, pr.anneau) && !pr.trous.some((t) => dedans(x, z, t));
+      for (const a of anneaux) {
+        if (ferme) break;
+        for (let u = 0, v = a.length - 1; u < a.length; v = u++) {
+          if (distSegment(x, z, a[v][0], a[v][1], a[u][0], a[u][1]) < d) { ferme = true; break; }
+        }
+      }
+      if (ferme) libre[k] = 0;
+    }
+  }
+  const g: GrilleNav = {
+    x0: b.x0, z0: b.z0, nx, nz, libre, g: new Float64Array(n), parent: new Int32Array(n), vu: new Uint32Array(n), ferme: new Uint32Array(n), tampon: 0,
+  };
+  GRILLES.set(monde, g);
+  return g;
+}
+
+/** Case libre la plus proche de (x, z), à 4 cases au plus. -1 sinon. */
+function caseLibre(g: GrilleNav, x: number, z: number): number {
+  const ci = Math.floor((x - g.x0) / PAS_NAV_M), cj = Math.floor((z - g.z0) / PAS_NAV_M);
+  let meilleure = -1, dMin = Infinity;
+  for (let r = 0; r <= 4 && meilleure < 0; r++) {
+    for (let j = cj - r; j <= cj + r; j++) for (let i = ci - r; i <= ci + r; i++) {
+      if (Math.max(Math.abs(i - ci), Math.abs(j - cj)) !== r || i < 0 || j < 0 || i >= g.nx || j >= g.nz) continue;
+      const k = i + j * g.nx;
+      if (!g.libre[k]) continue;
+      const d = (i - ci) ** 2 + (j - cj) ** 2;
+      if (d < dMin) { dMin = d; meilleure = k; }
+    }
+  }
+  return meilleure;
+}
+
+const VOISINS: ReadonlyArray<readonly [number, number, number]> = [
+  [1, 0, 1], [-1, 0, 1], [0, 1, 1], [0, -1, 1], [1, 1, Math.SQRT2], [1, -1, Math.SQRT2], [-1, 1, Math.SQRT2], [-1, -1, Math.SQRT2],
+];
+
+/**
+ * Chemin de (x0, z0) à (x1, z1) sur la grille de navigation (A*, 8 voisins, pas de coin coupé en diagonale, heuristique octile).
+ * Renvoie les centres des cases traversées (le dernier point est la destination elle-même), ou null si la destination est
+ * injoignable dans la limite de `NOEUDS_MAX` nœuds.
+ */
+export function chercherChemin(g: GrilleNav, x0: number, z0: number, x1: number, z1: number): [number, number][] | null {
+  const s = caseLibre(g, x0, z0), b = caseLibre(g, x1, z1);
+  if (s < 0 || b < 0) return null;
+  if (s === b) return [[x1, z1]];
+  const tampon = ++g.tampon;
+  const bi = b % g.nx, bj = Math.floor(b / g.nx);
+  const h = (k: number): number => {
+    const di = Math.abs((k % g.nx) - bi), dj = Math.abs(Math.floor(k / g.nx) - bj);
+    return Math.max(di, dj) + (Math.SQRT2 - 1) * Math.min(di, dj);
+  };
+  // tas binaire de (f, case)
+  const tasF: number[] = [], tasK: number[] = [];
+  const pousser = (f: number, k: number) => {
+    let i = tasF.length;
+    tasF.push(f);
+    tasK.push(k);
+    while (i > 0) {
+      const p = (i - 1) >> 1;
+      if (tasF[p] <= f) break;
+      tasF[i] = tasF[p]; tasK[i] = tasK[p];
+      i = p;
+    }
+    tasF[i] = f; tasK[i] = k;
+  };
+  const extraire = (): number => {
+    const k = tasK[0];
+    const fDernier = tasF.pop()!, kDernier = tasK.pop()!;
+    if (tasF.length) {
+      let i = 0;
+      for (;;) {
+        const a = 2 * i + 1, c = a + 1;
+        let m = i, fm = fDernier;
+        if (a < tasF.length && tasF[a] < fm) { m = a; fm = tasF[a]; }
+        if (c < tasF.length && tasF[c] < fm) { m = c; fm = tasF[c]; }
+        if (m === i) break;
+        tasF[i] = tasF[m]; tasK[i] = tasK[m];
+        i = m;
+      }
+      tasF[i] = fDernier; tasK[i] = kDernier;
+    }
+    return k;
+  };
+  g.vu[s] = tampon;
+  g.g[s] = 0;
+  g.parent[s] = -1;
+  pousser(h(s), s);
+  let explores = 0, trouve = false;
+  while (tasF.length) {
+    const k = extraire();
+    if (g.ferme[k] === tampon) continue;
+    g.ferme[k] = tampon;
+    if (k === b) { trouve = true; break; }
+    if (++explores > NOEUDS_MAX) break;
+    const i = k % g.nx, j = Math.floor(k / g.nx);
+    for (const [di, dj, cout] of VOISINS) {
+      const ni = i + di, nj = j + dj;
+      if (ni < 0 || nj < 0 || ni >= g.nx || nj >= g.nz) continue;
+      const nk = ni + nj * g.nx;
+      if (!g.libre[nk] || g.ferme[nk] === tampon) continue;
+      if (di !== 0 && dj !== 0 && (!g.libre[i + di + j * g.nx] || !g.libre[i + (j + dj) * g.nx])) continue;
+      const ng = g.g[k] + cout;
+      if (g.vu[nk] === tampon && ng >= g.g[nk]) continue;
+      g.vu[nk] = tampon;
+      g.g[nk] = ng;
+      g.parent[nk] = k;
+      pousser(ng + h(nk), nk);
+    }
+  }
+  if (!trouve) return null;
+  const r: [number, number][] = [[x1, z1]];
+  for (let k = g.parent[b]; k >= 0 && k !== s; k = g.parent[k]) {
+    r.push([g.x0 + ((k % g.nx) + 0.5) * PAS_NAV_M, g.z0 + (Math.floor(k / g.nx) + 0.5) * PAS_NAV_M]);
+  }
+  return r.reverse();
+}
+
+/** La route de `de` à (x, z) est-elle libre pour le tigre ? Trois rayons parallèles à 0,5 m du sol (axe et flancs). */
+export function routeLibre(monde: Monde, de: Vec3, x: number, z: number): boolean {
   const dx = x - de[0], dz = z - de[2];
   const dist = Math.hypot(dx, dz);
-  if (dist < 0.5) return null;
-  const o: Vec3 = [de[0], de[1] + HAUTEUR_SONDE, de[2]];
-  const t = lancerRayon(monde, o, [dx / dist, 0, dz / dist], dist);
-  if (t === Infinity) return null;
-  const id = prismeEn(monde, o[0] + (dx / dist) * t, o[2] + (dz / dist) * t);
-  if (id < 0) return null;
-  const anneau = monde.prismes[id].anneau;
-  let cx = 0, cz = 0;
-  for (const [ax, az] of anneau) { cx += ax; cz += az; }
-  cx /= anneau.length;
-  cz /= anneau.length;
-  let meilleur: [number, number] | null = null;
-  let cout = Infinity;
-  for (const [ax, az] of anneau) {
-    const ux = ax - cx, uz = az - cz, l = Math.hypot(ux, uz) || 1;
-    const q = resoudre(monde, [ax + (ux / l) * MARGE_COIN_M, de[1], az + (uz / l) * MARGE_COIN_M], TIGRE.rayon, 1).p;
-    const vx = q[0] - de[0], vz = q[2] - de[2], lv = Math.hypot(vx, vz);
-    if (lv < 0.3) continue;
-    if (lancerRayon(monde, o, [vx / lv, 0, vz / lv], lv) !== Infinity) continue;
-    const c = lv + Math.hypot(x - q[0], z - q[2]);
-    if (c < cout) { cout = c; meilleur = [q[0], q[2]]; }
+  if (dist < 1e-3) return true;
+  const ux = dx / dist, uz = dz / dist;
+  const r = TIGRE.rayon * 0.9;
+  for (const s of [0, -1, 1]) {
+    const o: Vec3 = [de[0] - uz * s * r, de[1] + HAUTEUR_SONDE, de[2] + ux * s * r];
+    if (lancerRayon(monde, o, [ux, 0, uz], dist) !== Infinity) return false;
   }
-  return meilleur;
+  return true;
 }
 
 // ---------- création ----------
@@ -305,7 +440,8 @@ function nouveau(id: string, genre: GenreTigre, lanceur: string | null, p: Vec3,
     dernierDegatT: -Infinity, action: null, actionT: 0, actionCible: null, bondDest: null, bondTouche: false,
     prochainePatteT: maintenant, prochainBondT: maintenant, cachette, fuiteFaite: false, fuiteAChoisir: false, regenAcc: 0,
     finT: Infinity, descente: null, perceptionT: -Infinity, sansCibleDepuis: maintenant, contournement: 1,
-    blocage: { t: maintenant, p: [p[0], p[1], p[2]] }, etape: null, etapeT: -Infinity, voitureT: -Infinity,
+    blocage: { t: maintenant, p: [p[0], p[1], p[2]] }, chemin: null, cheminBut: null, cheminT: -Infinity, etape: null, etapeT: -Infinity,
+    voitureT: -Infinity,
   };
 }
 
@@ -509,23 +645,62 @@ function combattre(t: Tigre, c: JoueurVu, maintenant: number, dt: number, env: E
   return false;
 }
 
+/** Un chemin est recalculé au plus toutes les 250 ms, et dès que sa destination a bougé de plus de 2 m (ou au bout de 1,5 s). */
+const CHEMIN_MIN_MS = 250;
+const CHEMIN_MAX_MS = 1500;
+const CHEMIN_ECART_M = 2;
+/** Points du chemin examinés à chaque choix d'étape (le plus lointain en vue est suivi). */
+const ETAPES_REGARDEES = 8;
+
 /**
- * Poursuite : un pas vers (x, z), arrêt à `arret`. Un bâtiment sur la route est contourné par ses coins (`etapeContournement`, recalculée
- * toutes les 100 ms), et le côté du balayage d'angles change si le tigre piétine.
+ * Point à suivre vers (x, z) : la destination elle-même si la route est libre, sinon le point le plus lointain encore en vue d'un chemin
+ * A* autour des bâtiments (`chercherChemin`). Null si aucun chemin n'existe (le pas se fait alors droit au but, avec balayage d'angles).
+ */
+function choisirEtape(t: Tigre, monde: Monde, x: number, z: number, maintenant: number): [number, number] | null {
+  if (routeLibre(monde, t.p, x, z)) {
+    t.chemin = null;
+    return [x, z];
+  }
+  const perime = !t.chemin || !t.cheminBut || Math.hypot(t.cheminBut[0] - x, t.cheminBut[1] - z) > CHEMIN_ECART_M
+    || maintenant - t.cheminT > CHEMIN_MAX_MS;
+  if (perime && maintenant - t.cheminT >= CHEMIN_MIN_MS) {
+    t.chemin = chercherChemin(grilleNav(monde), t.p[0], t.p[2], x, z);
+    t.cheminBut = [x, z];
+    t.cheminT = maintenant;
+  }
+  const ch = t.chemin;
+  if (!ch || !ch.length) return null;
+  for (let k = Math.min(ETAPES_REGARDEES, ch.length) - 1; k >= 0; k--) {
+    if (k === 0 || routeLibre(monde, t.p, ch[k][0], ch[k][1])) {
+      ch.splice(0, k);
+      return ch[0];
+    }
+  }
+  return ch[0];
+}
+
+/**
+ * Poursuite : un pas vers (x, z), arrêt à `arret`. Un bâtiment sur la route est contourné par un chemin A* sur la grille de navigation,
+ * suivi de point en vue en point en vue (choisi toutes les 100 ms). Si le tigre piétine, il change de côté de balayage d'angles.
  */
 function poursuivre(t: Tigre, x: number, z: number, vitesse: number, dt: number, env: EnvTigre, maintenant: number, arret: number): void {
-  if (maintenant - t.etapeT >= TIGRE.perceptionMs) {
+  const proche = t.etape && Math.hypot(t.etape[0] - t.p[0], t.etape[1] - t.p[2]) < 0.75;
+  if (maintenant - t.etapeT >= TIGRE.perceptionMs || proche || !t.etape) {
     t.etapeT = maintenant;
-    t.etape = etapeContournement(env.monde, t.p, x, z);
+    if (proche && t.chemin && t.chemin.length > 1) t.chemin.shift();
+    t.etape = choisirEtape(t, env.monde, x, z, maintenant);
   }
-  if (t.etape && Math.hypot(t.etape[0] - t.p[0], t.etape[1] - t.p[2]) < 0.4) t.etape = etapeContournement(env.monde, t.p, x, z);
-  const parcouru = t.etape
-    ? pasVers(t, env.monde, env.voitures, t.etape[0], t.etape[1], vitesse, dt)
-    : pasVers(t, env.monde, env.voitures, x, z, vitesse, dt, arret);
+  const direct = !t.etape || t.chemin === null || (t.etape[0] === x && t.etape[1] === z);
+  const parcouru = direct
+    ? pasVers(t, env.monde, env.voitures, x, z, vitesse, dt, arret)
+    : pasVers(t, env.monde, env.voitures, t.etape![0], t.etape![1], vitesse, dt);
   t.pose = parcouru > 1e-3 ? "course" : "debout";
   if (maintenant - t.blocage.t >= TIGRE.blocageMs) {
     const loin = Math.hypot(x - t.p[0], z - t.p[2]) > arret + 0.5;
-    if (loin && horizontal(t.blocage.p, t.p) < TIGRE.blocageM) t.contournement = t.contournement === 1 ? -1 : 1;
+    if (loin && horizontal(t.blocage.p, t.p) < TIGRE.blocageM) {
+      t.contournement = t.contournement === 1 ? -1 : 1;
+      t.cheminT = -Infinity; // chemin recalculé tout de suite
+    }
     t.blocage = { t: maintenant, p: [t.p[0], t.p[1], t.p[2]] };
   }
 }
@@ -592,7 +767,7 @@ export function avancerTigreSauvage(t: Tigre, maintenant: number, dt: number, en
     case "tapi":
     case "retour": {
       if (t.etat === "retour") {
-        pasVers(t, env.monde, env.voitures, t.cachette.x, t.cachette.z, TIGRE.vitesseRetour, dt);
+        poursuivre(t, t.cachette.x, t.cachette.z, TIGRE.vitesseRetour, dt, env, maintenant, 0);
         t.pose = "course";
         if (Math.hypot(t.cachette.x - t.p[0], t.cachette.z - t.p[2]) < TIGRE.arriveeM) {
           changerEtat(t, "tapi", maintenant);

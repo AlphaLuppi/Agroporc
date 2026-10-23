@@ -1,10 +1,15 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { lireCachettes, type FichierCachettes } from "../agroparc3d/cachettes";
 import type { Building, SceneData } from "../agroparc3d/types";
-import { construireMonde, type Monde } from "./collision";
+import { cachettesDansAnneau } from "./avion";
+import { construireMonde, pointsApparition, type Monde } from "./collision";
+import { ROND_POINT, ZONE_APPARITION } from "./zones";
 import type { Vec3 } from "./protocole";
 import {
   TIGRE, TIGRE_ALLIE, avancerTigreAllie, avancerTigreSauvage, blesserTigre, capDeCachette, capVers, choisirCachetteFuite,
-  coupTigreVraisemblable, creerTigreAllie, creerTigreSauvage, hitboxTigre, recoupeVoiture, toucheTigreVraisemblable, tracerTigre,
+  chercherChemin, coupTigreVraisemblable, creerTigreAllie, creerTigreSauvage, grilleNav, hitboxTigre, recoupeVoiture, routeLibre,
+  toucheTigreVraisemblable, tracerTigre,
   type CachetteTigre, type EnvTigre, type EvenementTigre, type JoueurVu, type ObstacleVoiture, type Tigre,
 } from "./tigre-arene";
 
@@ -482,5 +487,59 @@ describe("silhouette de touche selon la pose", () => {
   it("capVers : direction (1, 0) donne un cap dont l'avant est +x", () => {
     const c = capVers(1, 0);
     expect(-Math.sin(c)).toBeCloseTo(1, 9);
+  });
+});
+
+// ---------- chemins sur la vraie carte ----------
+
+describe("chemins autour des bâtiments de scene.json", () => {
+  const scene = JSON.parse(readFileSync("public/agroparc/scene.json", "utf8")) as SceneData;
+  const reel = construireMonde(scene);
+  const fichier = JSON.parse(readFileSync("public/agroparc/cachettes.json", "utf8")) as FichierCachettes;
+  const anneau = cachettesDansAnneau(
+    lireCachettes(fichier).map((c) => ({ x: c.x, z: c.z, cap: capDeCachette(c.cap) })),
+    { centre: ROND_POINT.centre, rMin: ZONE_APPARITION.rMin, rMax: ZONE_APPARITION.rMax },
+  );
+  const points = pointsApparition(scene, reel);
+
+  it("chercherChemin : un chemin qui ne traverse aucun bâtiment, de case libre en case libre", () => {
+    const g = grilleNav(reel);
+    const c = anneau[0];
+    const cible = points.find(([x, z]) => Math.hypot(x - c.x, z - c.z) > 40)!;
+    const ch = chercherChemin(g, c.x, c.z, cible[0], cible[1])!;
+    expect(ch).not.toBeNull();
+    expect(ch[ch.length - 1]).toEqual(cible);
+    let de: Vec3 = [c.x, 0, c.z];
+    for (const [x, z] of ch.slice(0, -1)) {
+      expect(routeLibre(reel, de, x, z) || Math.hypot(x - de[0], z - de[2]) < 2.2).toBe(true);
+      de = [x, 0, z];
+    }
+  });
+
+  it("depuis chaque cachette de l'anneau, le tigre rejoint un joueur placé à 25 à 60 m en moins de 20 s (3 joueurs par cachette)", () => {
+    let essais = 0, atteints = 0, pire = 0;
+    for (const c of anneau) {
+      const cibles = points.filter(([x, z]) => { const d = Math.hypot(x - c.x, z - c.z); return d > 25 && d < 60; }).slice(0, 3);
+      for (const [cx, cz] of cibles) {
+        essais++;
+        const t = creerTigreSauvage("t", [c.x, 0, c.z], c, 0);
+        const e = (js: JoueurVu[]): EnvTigre => ({ monde: reel, alea: () => 0, joueurs: js, voitures: [], cachettes: anneau });
+        avancerTigreSauvage(t, TIGRE.descenteMs, DT, e([]));
+        blesserTigre(t, 1, "a", TIGRE.descenteMs);
+        t.prochainBondT = Infinity;
+        let m = TIGRE.descenteMs;
+        for (let k = 0; k < 60 * 20; k++) {
+          m += PAS_MS;
+          if (avancerTigreSauvage(t, m, DT, e([joueur("a", cx, cz)])).some((x) => x.type === "coup")) {
+            atteints++;
+            pire = Math.max(pire, (m - TIGRE.descenteMs) / 1000);
+            break;
+          }
+        }
+      }
+    }
+    expect(essais).toBeGreaterThanOrEqual(60);
+    expect(atteints).toBe(essais);
+    expect(pire).toBeLessThan(20);
   });
 });
