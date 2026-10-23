@@ -3,7 +3,7 @@
  * PUR : aucun import three ni DOM. `jeu.ts` les ré-exporte (`export type { … } from "./jeu-types"`).
  * Spec : docs/superpowers/specs/2026-10-22-arene-v2-design.md (§5.18) et 2026-10-23-arene-hud-design.md (§3.2, §3.4)
  */
-import type { ArmeFeuId, ArmeId, ArmePrincipaleId, ArmeSecondaireId, ArmeSpecialeId, CauseMort, InfoTueur, MessageServeur, Slot, Vec3, Zone } from "./protocole";
+import type { ArmeFeuId, ArmeId, ArmePrincipaleId, ArmeSecondaireId, ArmeSpecialeId, CauseMort, InfoTueur, MessageServeur, Slot, TypeEvenement, Vec3, Zone } from "./protocole";
 import type { RadarFrame } from "./radar";
 import type { ConfigTouches } from "./touches";
 
@@ -78,6 +78,8 @@ export interface HudEtat {
   voix: "" | "pret" | "emet";
   /** pseudos des joueurs qu'on entend parler en ce moment, séparés par « · » ("" = personne) */
   voixParlants: string;
+  /** (v3) je pilote le titan tigre (bloc d'armes remplacé par le bandeau du titan) */
+  titan: boolean;
 
   // ---- COMPATIBILITÉ v1 (shim du lot 0, tous optionnels) ----
   // Champs que le HUD v1 lit encore et que `jeu.ts` v1 émet toujours. La spec HUD (§3.2) les retire de `HudEtat` : le lot J1 cesse
@@ -129,6 +131,13 @@ export type JeuEvenement =
   /** le serveur a refusé `monter` / `siege` (message `refus`) : toast « Voiture trop loin », « Voiture pleine »… ; `rejoindre` : arène pleine */
   | { type: "refus"; action: "monter" | "siege" | "rejoindre"; raison: "loin" | "plein" | "deja" | "inconnu" | "mort" };
 
+/** (v3) État des événements pour le bandeau du HUD (lu à intervalle par `BandeauEvenement`, hors rendu à 60 Hz). */
+export interface EtatMonstresHud {
+  evenement: { type: TypeEvenement; phase: "annonce" | "actif"; debutT: number; finT: number } | null;
+  tigre: { pv: number; pvMax: number } | null;
+  titan: { pilote: string; pv: number; pvMax: number; finT: number } | null;
+}
+
 export interface JeuCallbacks {
   /** ≈ 15 Hz, seulement quand quelque chose a changé */
   hud(e: HudEtat): void;
@@ -165,6 +174,8 @@ export interface JeuHandle {
   readonly live: HudLive;
   /** Remplit et renvoie LE MÊME `RadarFrame` (tableaux préalloués) : mini-map et flèche d'Elsa, lu en rAF. */
   radar(): RadarFrame;
+  /** (v3) Événement en cours, PV du tigre robot et du titan (bandeau du HUD). */
+  monstres(): EtatMonstresHud;
   dispose(): void;
   /** Crochet de test (window.__arene en développement). */
   debug: {

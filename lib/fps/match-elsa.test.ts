@@ -35,6 +35,8 @@ function creerContexte(alea: () => number) {
     joueur: (id) => joueurs.get(id),
     joueursEnJeu: () => [...joueurs.values()].filter((j) => j.enJeu),
     memoriserPrecedent: () => {},
+    libererVehicule: () => [],
+    toucheJoueur: () => false,
     infliger: () => [],
     tuer: () => [],
   };

@@ -63,6 +63,10 @@ function dureeEnv(nom: string): number | undefined {
 const elsaMin = dureeEnv("PDJ_FPS_ELSA_MIN_MS");
 const elsaMax = dureeEnv("PDJ_FPS_ELSA_MAX_MS");
 const [elsaX, elsaZ] = positionElsa(scene);
+// Événements (v3) : délai avant chaque événement et type imposé, pour les tests de bout en bout
+const evtMin = dureeEnv("PDJ_FPS_EVT_MIN_MS");
+const evtMax = dureeEnv("PDJ_FPS_EVT_MAX_MS");
+const evtType = process.env.PDJ_FPS_EVT_TYPE === "truck" || process.env.PDJ_FPS_EVT_TYPE === "tigre" ? process.env.PDJ_FPS_EVT_TYPE : undefined;
 const circuits = construireCircuits();
 const rondPoint = trouverRondPoint(scene) ?? ROND_POINT;
 const options: OptionsSalle = {
@@ -75,6 +79,19 @@ const options: OptionsSalle = {
   },
   circulation: { circuits, voitures: flotte(circuits) },
   vehicules: EMPLACEMENTS_VOITURES,
+  // v3 : Truck Muche fou (départ du stand d'Elsa) et tigre robot (autour du rond-point) ; délais surchargeables pour les tests
+  evenements: {
+    truck: { x: elsaX, z: elsaZ },
+    centre: { x: rondPoint.centre[0], z: rondPoint.centre[1] },
+    ...(evtMin !== undefined || evtMax !== undefined
+      ? {
+          premier: { minMs: evtMin ?? evtMax!, maxMs: Math.max(evtMin ?? 0, evtMax ?? evtMin!) },
+          intervalle: { minMs: evtMin ?? evtMax!, maxMs: Math.max(evtMin ?? 0, evtMax ?? evtMin!) },
+        }
+      : {}),
+    ...(evtType ? { forcerType: evtType } : {}),
+    ...(dureeEnv("PDJ_FPS_TIGRE_PV") !== undefined ? { pvTigre: dureeEnv("PDJ_FPS_TIGRE_PV") } : {}),
+  },
 };
 const salle = new Salle(monde, apparitions, Math.random, Date.now(), options);
 

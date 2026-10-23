@@ -418,3 +418,37 @@
 }
 .hud[data-effets="reduits"] * { animation: none !important; transition: none !important; }
 .hud[data-effets="reduits"] .chiffre { animation: fonduSurPlace 0.15s ease-out 0.55s both !important; }
+
+/* ---------- événements (v3) : alerte à rayures, bande compacte, titan ---------- */
+.evtAlerte {
+  position: absolute; z-index: 6; top: 24%; left: 50%; transform: translateX(-50%); width: min(92vw, calc(820 * var(--u)));
+  padding: calc(18 * var(--u)) calc(24 * var(--u)); text-align: center; overflow: hidden; color: var(--ag-white);
+  background: var(--ag-hud-fond-fort); border: 2px solid var(--ag-danger); box-shadow: 0 0 calc(40 * var(--u)) color-mix(in srgb, var(--ag-danger) 45%, transparent);
+  animation: evtEntree 0.3s ease-out, evtPulse 0.7s ease-in-out infinite alternate;
+}
+.evtAlerte[data-type="truck"] { border-color: var(--ag-amber); box-shadow: 0 0 calc(40 * var(--u)) color-mix(in srgb, var(--ag-amber) 50%, transparent); }
+.evtRayures {
+  position: absolute; inset: 0 0 auto 0; height: calc(10 * var(--u)); min-height: 6px;
+  background: repeating-linear-gradient(-45deg, var(--ag-amber) 0 14px, var(--ag-ground) 14px 28px); animation: evtDefile 0.6s linear infinite;
+}
+.evtTitre { margin: calc(8 * var(--u)) 0 0; font: 700 max(18px, calc(40 * var(--u)))/1.1 var(--ag-display), var(--ag-mono), monospace; letter-spacing: 0.06em; }
+.evtSous { margin: calc(8 * var(--u)) 0 0; font-size: max(12px, calc(17 * var(--u))); letter-spacing: 0.04em; color: var(--ag-ink); }
+.evtCompte { margin: calc(10 * var(--u)) 0 0; font: 600 max(14px, calc(24 * var(--u)))/1 var(--ag-mono), monospace; color: var(--ag-amber); font-variant-numeric: tabular-nums; }
+.evtBande {
+  position: absolute; z-index: 5; top: calc(224 * var(--u)); left: 50%; transform: translateX(-50%); width: calc(560 * var(--u)); min-width: 280px;
+  padding: calc(8 * var(--u)) calc(14 * var(--u)); display: grid; grid-template-columns: auto 1fr auto; gap: calc(12 * var(--u)); align-items: center;
+  border-color: var(--ag-danger);
+}
+.evtBande[data-type="truck"] { border-color: var(--ag-amber); animation: evtPulse 0.5s ease-in-out infinite alternate; }
+.evtTitan { top: calc(270 * var(--u)); border-color: var(--ag-amber); }
+.evtTitan[data-moi="oui"] { border-color: var(--ag-amber); box-shadow: 0 0 calc(18 * var(--u)) color-mix(in srgb, var(--ag-amber) 35%, transparent); }
+.evtBandeTitre { font: 600 max(11px, calc(14 * var(--u)))/1 var(--ag-display), var(--ag-mono), monospace; letter-spacing: 0.12em; color: var(--ag-ink); white-space: nowrap; }
+.evtVie { position: relative; height: calc(10 * var(--u)); min-height: 6px; background: var(--ag-line-strong); }
+.evtVie i { position: absolute; left: 0; top: 0; bottom: 0; background: linear-gradient(90deg, var(--ag-danger), var(--ag-amber)); transition: width 0.15s linear; }
+.evtTitan .evtVie i { background: var(--ag-amber); }
+.evtTemps { font: 500 max(11px, calc(14 * var(--u)))/1 var(--ag-mono), monospace; color: var(--ag-ink); font-variant-numeric: tabular-nums; }
+.evtAide { grid-column: 1 / -1; font-size: max(11px, calc(12 * var(--u))); color: var(--ag-ink); letter-spacing: 0.04em; }
+@keyframes evtEntree { from { opacity: 0; transform: translate(-50%, -20px) scale(0.96); } to { opacity: 1; transform: translate(-50%, 0) scale(1); } }
+@keyframes evtPulse { from { filter: brightness(1); } to { filter: brightness(1.35); } }
+@keyframes evtDefile { from { background-position: 0 0; } to { background-position: 40px 0; } }
+@media (prefers-reduced-motion: reduce) { .evtAlerte, .evtBande, .evtRayures { animation: none; } }

@@ -104,6 +104,8 @@ function banc(avecCirculation = false) {
     memoriserPrecedent: () => {},
     infliger: (cible, degats, _par, cause) => { coups.push({ cible: cible.id, degats, cause }); return []; },
     tuer: (cible, par, cause) => { cible.vivant = false; morts.push({ cible: cible.id, par: par?.id ?? null, cause }); return []; },
+    libererVehicule: () => [],
+    toucheJoueur: () => false,
   };
   const circuits = construireCircuits();
   const svc = creerServiceVehicules(ctx, {

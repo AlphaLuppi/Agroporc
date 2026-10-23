@@ -61,6 +61,16 @@ export interface Sons {
   tole(): void;
   /** Explosion d'une voiture (v3 §4) ; `position` pour l'atténuer avec la distance. */
   explosion(position?: PositionSon): void;
+  /** (v4) Sirène d'alerte d'un événement : klaxon furieux pour le Truck Muche, rugissement métallique pour le tigre robot. */
+  alerte(genre: "truck" | "tigre"): void;
+  /** (v4) Charge du laser des yeux du tigre (montée aiguë) ; `position` = yeux du tigre. */
+  laser(position?: PositionSon): void;
+  /** (v4) Explosion d'un monstre (impact du laser, mort du tigre, titan détruit) ; `force` 0..1. */
+  explosionMonstre(force: number, position?: PositionSon): void;
+  /** (v4) Tir du canon du titan (le mien, ou celui du pilote à `position`). */
+  canon(position?: PositionSon): void;
+  /** (v4) Pas lourd du tigre ou du titan. */
+  pasLourd(position?: PositionSon): void;
   dispose(): void;
 }
 
@@ -645,6 +655,52 @@ export function creerSons(): Sons {
       // Deux notes rapprochées (tierce), signal court.
       ton(master!, t, { dur: 0.32, type: "square", f0: 415, gain: 0.07, att: 0.01 });
       ton(master!, t, { dur: 0.32, type: "square", f0: 523, gain: 0.07, att: 0.01 });
+    },
+    alerte(genre) {
+      if (!prete()) return;
+      const t = ctx!.currentTime + 0.001;
+      if (genre === "truck") {
+        // klaxon de camion qui s'emballe : quatre coups, de plus en plus aigus
+        for (let i = 0; i < 4; i++) {
+          ton(master!, t + i * 0.22, { dur: 0.18, type: "sawtooth", f0: 233 + i * 30, gain: 0.09, att: 0.01 });
+          ton(master!, t + i * 0.22, { dur: 0.18, type: "sawtooth", f0: 294 + i * 38, gain: 0.08, att: 0.01 });
+        }
+        return;
+      }
+      // rugissement : grave qui monte puis retombe, grain de bruit, harmonique métallique
+      ton(master!, t, { dur: 1.3, type: "sawtooth", f0: 70, f1: 45, gain: 0.35, att: 0.15 });
+      ton(master!, t, { dur: 1.1, type: "square", f0: 140, f1: 95, gain: 0.08, att: 0.2 });
+      bruit(master!, t, { dur: 1.2, type: "lowpass", f0: 900, f1: 200, q: 1.5, gain: 0.5, att: 0.2 });
+      bruit(master!, t + 0.1, { dur: 0.9, type: "bandpass", f0: 2400, f1: 1300, q: 6, gain: 0.12, att: 0.1 });
+    },
+    laser(position) {
+      if (!prete()) return;
+      const out = sortie(position);
+      const t = ctx!.currentTime + 0.001;
+      ton(out, t, { dur: 1.35, type: "sine", f0: 300, f1: 2200, gain: 0.18, att: 0.3 });
+      ton(out, t, { dur: 1.35, type: "triangle", f0: 305, f1: 2230, gain: 0.08, att: 0.3 });
+    },
+    explosionMonstre(force, position) {
+      if (!prete()) return;
+      const out = sortie(position);
+      const t = ctx!.currentTime + 0.001;
+      const k = Math.min(Math.max(force, 0), 1);
+      bruit(out, t, { dur: 0.5 + 0.9 * k, type: "lowpass", f0: 2500, f1: 90, gain: 0.7 + 0.3 * k });
+      ton(out, t, { dur: 0.6 + 0.8 * k, type: "sine", f0: 90, f1: 28, gain: 0.8 });
+    },
+    canon(position) {
+      if (!prete()) return;
+      const out = sortie(position);
+      const t = ctx!.currentTime + 0.001;
+      bruit(out, t, { dur: 0.16, type: "lowpass", f0: 3200, f1: 300, gain: 0.55 });
+      ton(out, t, { dur: 0.14, type: "square", f0: 160, f1: 70, gain: 0.22 });
+    },
+    pasLourd(position) {
+      if (!prete()) return;
+      const out = sortie(position);
+      const t = ctx!.currentTime + 0.001;
+      ton(out, t, { dur: 0.35, type: "sine", f0: 60, f1: 32, gain: 0.55 });
+      bruit(out, t, { dur: 0.18, type: "lowpass", f0: 500, f1: 120, gain: 0.3 });
     },
     dispose() {
       fini = true;

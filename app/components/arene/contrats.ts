@@ -5,7 +5,7 @@ import type {
   ArmeId, ArmePrincipaleId, ArmeSecondaireId, ArmeSpecialeId, CauseMort, EtatElsaMsg, EtatJoueurSnap, InfoMatch, InfoTueur, InfoVehicule,
   JoueurPublic, LigneClassement, LigneStats, Zone,
 } from "@/lib/fps/protocole";
-import type { HudEtat, HudLive, JeuEvenement } from "@/lib/fps/jeu-types";
+import type { EtatMonstresHud, HudEtat, HudLive, JeuEvenement } from "@/lib/fps/jeu-types";
 import type { RadarFrame } from "@/lib/fps/radar";
 import type { ReglagesHud } from "@/lib/fps/reglages-hud";
 import type { Action, ConfigTouches } from "@/lib/fps/touches";
@@ -128,6 +128,8 @@ export interface PropsHudArene {
   degatsAuTueur: number;
   /** scène 3D (`scene.json`) pour la couche statique de la mini-map et la grande carte ; null tant qu'elle n'est pas chargée */
   scene?: SceneData | null;
+  /** (v3) `JeuHandle.monstres()` : événement en cours, PV du tigre robot et du titan (bandeau), null hors partie */
+  monstres?(): EtatMonstresHud | null;
 }
 
 /** Props de `ChoixEquipement` (écrit par U1, utilisé par U1 : lobby, et par U2 : écran de mort, killcam, pause). */

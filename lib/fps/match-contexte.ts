@@ -8,7 +8,7 @@
 import type { Monde } from "./collision";
 import type { MemoSante } from "./sante";
 import type {
-  ArmeFeuId, ArmeId, CauseMort, CoteMur, Equipement, GenreVoiture, MessageClient, MessageServeur, Posture, Siege, Slot, Vec3, VehiculeSnap, Zone,
+  ArmeFeuId, ArmeId, CauseMort, CoteMur, Equipement, GenreVoiture, MessageClient, MessageServeur, MonstresSnap, Posture, Siege, Slot, Vec3, VehiculeSnap, Zone,
 } from "./protocole";
 
 /**
@@ -122,6 +122,33 @@ export interface ContexteSalle {
   infliger(cible: JoueurSalle, degats: number, par: JoueurSalle | null, cause: CauseMort, zone: Zone, arme: ArmeId, maintenant: number, src?: Vec3): Sortie[];
   /** mort instantanée (écrasement) : bouclier ignoré, mêmes sorties que `infliger` ; `par` null pour la circulation PNJ (aucun kill) */
   tuer(cible: JoueurSalle, par: JoueurSalle | null, cause: CauseMort, maintenant: number): Sortie[];
+  /** (v3) fait descendre le joueur de sa voiture s'il en occupe une (le vainqueur du tigre passe aux commandes du titan) */
+  libererVehicule(j: JoueurSalle, maintenant: number): Sortie[];
+  /** (v3) un rayon (o, d) touche-t-il vraisemblablement la cible, rejouée sur ses positions récentes (canon du titan) ? */
+  toucheJoueur(c: JoueurSalle, o: Vec3, d: Vec3, portee: number, maintenant: number): boolean;
+}
+
+/** Événements de l'arène (v3, `match-evenements.ts` : `creerServiceEvenements(ctx, opts)`) : Truck Muche fou, tigre robot, titan tigre. */
+export interface ServiceEvenements {
+  /** minuteur, annonces, simulation des monstres, écrasements, attaques, fin du titan */
+  tic(maintenant: number): Sortie[];
+  /** nouveau match : événement et titan arrêtés, minuteur ré-armé */
+  reinitialiser(maintenant: number): Sortie[];
+  /** événement et titan en cours, adressés à `idDest` (réponse à `rejoindre`) */
+  synchro(idDest: string): Sortie[];
+  snap(): MonstresSnap | null;
+  /**
+   * Plomb validé par la salle et déclaré sur `cible` (CIBLE_TIGRE ou CIBLE_TITAN) : la touche est revérifiée sur la forme du monstre ;
+   * renvoie la zone et la distance, ou null si le rayon le manque.
+   */
+  toucheMonstre(cible: string, o: Vec3, d: Vec3, portee: number): { zone: Zone; distance: number } | null;
+  /** dégâts cumulés d'un tir sur un monstre : `degats` au tireur, mort du tigre (titan pour `par`) ou destruction du titan */
+  blesserMonstre(cible: string, degats: number, par: JoueurSalle, zone: Zone, maintenant: number): Sortie[];
+  /** `pilotage` / `canon` du pilote ; les autres types renvoient [] */
+  recevoir(j: JoueurSalle, m: MessageClient, maintenant: number): Sortie[];
+  estPilote(id: string): boolean;
+  /** le joueur quitte l'arène (ou se déconnecte) : s'il pilote, le titan s'éteint */
+  liberer(j: JoueurSalle, maintenant: number): Sortie[];
 }
 
 /** Elsa (lot S2, `match-elsa.ts` : `creerServiceElsa(ctx, opts)`). */

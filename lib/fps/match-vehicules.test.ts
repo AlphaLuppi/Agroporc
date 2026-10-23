@@ -39,6 +39,8 @@ function creerContexte() {
     joueur: (id) => joueurs.get(id),
     joueursEnJeu: () => [...joueurs.values()].filter((j) => j.enJeu),
     memoriserPrecedent: () => {},
+    libererVehicule: () => [],
+    toucheJoueur: () => false,
     infliger: () => [],
     // comme la salle : mort immédiate, `mort` diffusé
     tuer: (cible, par, cause, t) => {

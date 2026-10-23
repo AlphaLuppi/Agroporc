@@ -102,7 +102,7 @@ const HUD_REPOS: HudEtat = {
   vise: false, lunette: false, zoomX: 0, zoomNiveau: -1, zoomNiveaux: 0, ecartViseur: 0, distanceVisee: -1, mur: false, mort: false, reapparitionDans: 0, protege: false,
   protegeRestant: 0, verrouille: true, connecte: true, entracte: false, accroupi: false, glisse: false, regen: false,
   bonusVitesse: 1, invite: "", inviteDetail: "", vehicule: false, vehiculeId: -1, siege: -1, tireInterdit: false,
-  embarquement: false, killcam: -1, killcamPhase: "", voix: "", voixParlants: "",
+  embarquement: false, killcam: -1, killcamPhase: "", voix: "", voixParlants: "", titan: false,
 };
 function sensibiliteInitiale(): number {
   try {
@@ -188,6 +188,7 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
   const arene = useArene(pseudoConnecte, jeuRef);
   // identité stable : le HUD le lit en rAF (mini-map, flèche d'Elsa), sans repasser par React
   const radar = useCallback(() => jeuRef.current?.radar() ?? RADAR_VIDE, []);
+  const monstres = useCallback(() => jeuRef.current?.monstres() ?? null, []);
   const enAreneRef = useRef(enArene);
   enAreneRef.current = enArene;
   const equipementRef = useRef(equipement);
@@ -644,6 +645,7 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
           surVueScores={arene.demanderScores}
           live={jeuRef.current?.live ?? LIVE_VIDE}
           radar={radar}
+          monstres={monstres}
           reglagesHud={reglagesHud}
           surReglagesHud={setReglagesHud}
           degatsAuTueur={arene.degatsAuTueur}

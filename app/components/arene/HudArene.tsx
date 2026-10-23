@@ -10,6 +10,7 @@ import { aideChoixEquipement, armeSuivanteDuGroupe, groupePrincipale, groupeSeco
 import type { PropsHudArene } from "./contrats";
 import AideCommandes, { toucheDe } from "./hud/AideCommandes";
 import AnnoncesElsa from "./hud/AnnoncesElsa";
+import BandeauEvenement from "./hud/BandeauEvenement";
 import BarreMatch from "./hud/BarreMatch";
 import BlocArmes from "./hud/BlocArmes";
 import BlocVehicule from "./hud/BlocVehicule";
@@ -201,6 +202,9 @@ export default function HudArene(p: PropsHudArene) {
         </>
       )}
 
+      {/* événements (v3) : visibles aussi pendant la mort (le Truck vient de vous écraser : on veut savoir combien de temps il roule encore) */}
+      {!entracte && p.monstres && <BandeauEvenement monstres={p.monstres} maintenantServeur={maintenantServeur} joueurs={joueurs} monId={monId} />}
+
       <CoinHud coin="hg" coinMinimap={coinMap} miniMap={miniMap} />
       <CoinHud coin="hd" coinMinimap={coinMap} miniMap={miniMap}>
         {combat && <FilEliminations fil={p.fil} annonces={p.annonces} />}
@@ -214,7 +218,7 @@ export default function HudArene(p: PropsHudArene) {
         )}
       </CoinHud>
       <CoinHud coin="bd" coinMinimap={coinMap} miniMap={miniMap}>
-        {combat && (
+        {combat && !hud.titan && (
           <BlocArmes
             arme={hud.arme} slot={hud.slot} slots={hud.slots} munitions={hud.munitions} chargeur={hud.chargeur} reserve={hud.reserve}
             recharge={hud.recharge} degainage={hud.degainage} tireInterdit={hud.tireInterdit} bonusVitesse={hud.bonusVitesse}

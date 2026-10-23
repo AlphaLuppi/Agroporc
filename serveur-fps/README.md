@@ -23,6 +23,9 @@ Le site (`npm run dev` à la racine) s'y connecte tout seul en dev (`ws://localh
 | `SCENE_JSON` | `../public/agroparc/scene.json` | scène d'Agroparc (bâtiments, routes) |
 | `ORIGINES` | vide = toutes | origines `Origin` autorisées, séparées par des virgules ; `*` = suite de caractères hors `/` (previews Vercel : `https://*.vercel.app`) |
 | `PDJ_FPS_ELSA_MIN_MS` / `PDJ_FPS_ELSA_MAX_MS` | 20 000 / 50 000 | intervalle (ms) entre deux offres d'Elsa au Truck Muche ; courts (6 000 / 7 000) pour les tests de bout en bout. Une seule des deux : elle sert aux deux bornes |
+| `PDJ_FPS_EVT_MIN_MS` / `PDJ_FPS_EVT_MAX_MS` | 45–70 s puis 70–110 s | délai (ms) avant chaque événement (Truck Muche fou, tigre robot) ; courts pour les essais |
+| `PDJ_FPS_EVT_TYPE` | alternance | `truck` ou `tigre` : toujours le même événement |
+| `PDJ_FPS_TIGRE_PV` | 1 500 + 500 / joueur | PV imposés au tigre robot (essais) |
 
 `GET /sante` renvoie `{ ok, joueurs, enJeu, match }` (connectés, joueurs en arène, numéro du match). Limites : messages ≤ 4 Ko, ≤ 90 messages/s par
 client (sinon `erreur flood` et fermeture), ping WebSocket toutes les 5 s (connexion morte fermée au bout de 10 s : un joueur parti ne reste pas en cible),
