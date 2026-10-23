@@ -5,7 +5,7 @@ import styles from "../HudArene.module.css";
 
 /**
  * Icône du sort d'invocation (bas-gauche, au-dessus du bloc vie) : affichée seulement quand une charge est disponible, c'est-à-dire après avoir
- * abattu le tigre sauvage. Empreinte de patte, nom du sort et touche réelle du joueur (action « invoquer », T par défaut). La région vive
+ * abattu le tigre sauvage. Empreinte de patte, nom du sort et touche réelle du joueur (action « invoquer », G par défaut). La région vive
  * annonce le gain du sort (annonce « Sort d'invocation gagné »), ce bloc n'est pas `aria-live`.
  * Spec : docs/superpowers/specs/2026-10-23-arene-tigres-design.md (Sort d'invocation)
  */

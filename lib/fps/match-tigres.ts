@@ -7,7 +7,7 @@
  */
 import { avancerAvion, cachettesDansAnneau, creerAvion, rearmerAvion, type EtatAvion, type IntervalleAvion } from "./avion";
 import type { ContexteSalle, JoueurSalle, ServiceTigres, Sortie } from "./match-contexte";
-import type { MessageClient, MessageServeur, TigreLargueSnap, Vec3, Zone } from "./protocole";
+import { CIBLE_TIGRE, CIBLE_TITAN, type MessageClient, type MessageServeur, type TigreLargueSnap, type Vec3, type Zone } from "./protocole";
 import {
   avancerTigreAllie, avancerTigreSauvage, blesserTigre, coupTigreVraisemblable, creerTigreAllie, creerTigreSauvage, distanceTigre,
   grilleNav, toucheTigreVraisemblable, type CachetteTigre, type EnvTigre, type EvenementTigre, type JoueurVu, type ObstacleVoiture,
@@ -73,6 +73,12 @@ export function creerServiceTigres(ctx: ContexteSalle, opts: OptionsServiceTigre
   const perdue = (id: string, raison: "mort" | "quitte" | "fin_match"): Sortie => ({ a: id, m: { t: "sort", evenement: "perdu", joueur: id, raison } });
   const infoTigre = (t: Tigre) => ({ id: t.id, genre: t.genre, ...(t.lanceur ? { lanceur: t.lanceur } : {}), p: cm(t.p) });
   const sauvageEnVie = () => [...tigres.values()].some((t) => t.genre === "sauvage");
+  /** Identifiant d'un nouveau tigre (« t » puis le compteur en base 36), jamais une cible réservée du tigre géant ou du titan. */
+  const nouvelId = (): string => {
+    let id: string;
+    do id = `t${(++compteur).toString(36)}`; while (id === CIBLE_TIGRE || id === CIBLE_TITAN);
+    return id;
+  };
 
   function ajouter(t: Tigre, maintenant: number): TigreSalle {
     const ts: TigreSalle = Object.assign(t, { histo: [{ t: maintenant, p: [...t.p] as Vec3, cap: t.cap, pose: t.pose }], vitesse: 0 });
@@ -194,7 +200,7 @@ export function creerServiceTigres(ctx: ContexteSalle, opts: OptionsServiceTigre
             sorties.push(vers({ t: "avion", evenement: "largage", avion: e.passage }));
             continue;
           }
-          const t = ajouter(creerTigreSauvage(`t${(++compteur).toString(36)}`, e.point, e.cachette, maintenant), maintenant);
+          const t = ajouter(creerTigreSauvage(nouvelId(), e.point, e.cachette, maintenant), maintenant);
           sorties.push(vers({ t: "avion", evenement: "largage", avion: e.passage, tigre: t.id }));
           sorties.push(vers({ t: "tigre", evenement: "apparu", ...infoTigre(t) }));
         }
@@ -223,7 +229,7 @@ export function creerServiceTigres(ctx: ContexteSalle, opts: OptionsServiceTigre
       if (m.t !== "invoquer") return [];
       if (!ctx.enPhaseJeu() || !j.enJeu || !j.vivant || !charges.has(j.id) || !aPied(j)) return [];
       charges.delete(j.id);
-      const t = ajouter(creerTigreAllie(`t${(++compteur).toString(36)}`, j, ctx.monde, maintenant), maintenant);
+      const t = ajouter(creerTigreAllie(nouvelId(), j, ctx.monde, maintenant), maintenant);
       return [
         vers({ t: "sort", evenement: "lance", joueur: j.id, tigre: t.id }),
         vers({ t: "tigre", evenement: "apparu", ...infoTigre(t) }),

@@ -112,7 +112,7 @@ describe("constantes", () => {
   });
 });
 
-describe("messages v3 (tigres)", () => {
+describe("messages v5 (tigres largués à côté des événements)", () => {
   // littéraux typés : la compilation vérifie la forme, le test vérifie qu'ils passent tels quels en JSON
   const passage: PassageAvion = { id: 1, depart: [-300, 10], arrivee: [350, -40], altitude: 120, vitesse: 60, debutT: 1000, finT: 11_850, largageT: 6000 };
   const tigre: TigreLargueSnap = { id: "t1", genre: "sauvage", p: [60, 0, 0], cap: 0.5, etat: "attaque", pose: "course", pv: 2478, action: "ramasse", actionT: 5000 };
@@ -136,8 +136,16 @@ describe("messages v3 (tigres)", () => {
     for (const m of [...serveur, client]) expect(JSON.parse(JSON.stringify(m))).toEqual(m);
   });
 
-  it("la cause de mort « tigre » existe à côté des autres", () => {
-    const causes: CauseMort[] = ["arme", "ecrase_pnj", "ecrase_vehicule", "tigre"];
-    expect(new Set(causes).size).toBe(4);
+  it("les causes de mort des deux côtés coexistent : « tigre » (tigres largués) et « tigre_robot » (tigre géant) sont distinctes", () => {
+    const causes: CauseMort[] = ["arme", "ecrase_pnj", "ecrase_vehicule", "tigre", "explosion", "truck_fou", "tigre_robot", "titan"];
+    expect(new Set(causes).size).toBe(8);
+  });
+
+  it("un snap porte à la fois les tigres largués (`tigres`) et les monstres des événements (`monstres`)", () => {
+    const snap: MessageServeur = {
+      t: "snap", ts: 1, j: [], tigres: [tigre, allie],
+      monstres: { tigre: { p: [80, 0, 0], cap: 0, v: 8, pv: 5500, pvMax: 5500, rage: true }, titan: { pilote: "j4", p: [0, 0, 0], cap: 0, v: 0, pv: 2500, pvMax: 2500 } },
+    };
+    expect(JSON.parse(JSON.stringify(snap))).toEqual(snap);
   });
 });
