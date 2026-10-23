@@ -2,6 +2,22 @@
 
 Date : 2026-10-22 · Branche : `feat/agroparc-fps`
 
+> **Version 1, remplacée par la v2** : `2026-10-22-arene-v2-design.md` (branche `feat/arene-v2` ; ses §13 et §13.6 priment sur tout le reste) et
+> `2026-10-23-arene-hud-design.md` (HUD, mini-carte, tableau des scores). Ce document garde l'historique de la v1 ; l'architecture ci-dessous (client
+> prédictif, serveur `Salle` pur, validation des tirs avec compensation de latence) est toujours celle de la v2. **Écarts de la v2 avec ce document** :
+> * armes : le choix « une arme parmi quatre » devient un **équipement** (principale + secondaire + couteau, slot 4 pour l'arme spéciale d'Elsa), registre extensible dans `lib/fps/armes.ts` ;
+> * **plus aucune dispersion** (le tir part de l'axe du réticule, gerbe fixe du pompe), retours de touche confirmés par le serveur (`degats`) ;
+> * mouvement plus rapide, personnages plus gros, **accroupi** et **glissade** ; portée des pseudos : visibles seulement si le joueur est vu (≤ 70 m, ligne de vue) ;
+> * mort : **killcam** (rejeu du tueur puis carte du tueur), **réapparition près du rond-point** au bout de 4 s, PV + bouclier + régénération ;
+> * monde vivant : **Elsa** au Truck Muche (soin ou arme spéciale), **voitures PNJ** mortelles à pied, **voitures conduisibles** (conducteur + passagers qui tirent) ;
+> * protocole `VERSION_PROTOCOLE = 2` (un client v1 reçoit `erreur{version}`), serveur déployé au même hôte `wss://pdj-fps.toam.tech` (la v2 remplace la v1, aucun second hôte) ;
+> * capacité : 16 places pour les joueurs EN ARÈNE (les spectateurs n'en occupent aucune ; 64 connexions inscrites, 96 au total, 24 par IP) ;
+> * HUD refondu : mini-carte déplaçable de coin, grande carte, tableau des scores riche, fin de match avec podium, touches modifiables (menu pause) ;
+> * bout en bout : `scripts/fps/e2e_arene_v2.mjs` (deux navigateurs headless contre un serveur local, `window.__arene`).
+>
+> Les « Limites connues » ci-dessous qui sont **résolues par la v2** : bridage de vitesse par message (plafonds de vitesse validés par le serveur, `PLAFONDS`),
+> `quitter` puis `rejoindre` qui contournait la réapparition (`reentreeT`), limite de 16 spectateurs compris (séparée de la limite en jeu), dispersion.
+
 ## Demande
 
 Dans la vue Palantir (code « myrtille », `app/components/Agroparc3D.tsx`), on peut lancer une partie

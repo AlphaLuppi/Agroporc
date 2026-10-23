@@ -3,9 +3,9 @@ import { describe, expect, it } from "vitest";
 import { aleaGraine, dedans } from "../agroparc3d/cachettes";
 import type { Building, SceneData } from "../agroparc3d/types";
 import { construireMonde, pointsApparition, type Monde } from "./collision";
-import { coteMurDe, etape, etatInitial, MOUV, postureDe, type Entrees, type EtatMouvement } from "./mouvement";
+import { coteMurDe, etape, etatInitial, hauteurOeil, MOUV, postureDe, seuilGlisse, type Entrees, type EtatMouvement } from "./mouvement";
 import type { Vec3 } from "./protocole";
-import { SILHOUETTE } from "./protocole";
+import { PLAFONDS, SILHOUETTE } from "./protocole";
 
 const scene = JSON.parse(readFileSync("public/agroparc/scene.json", "utf8")) as SceneData;
 const R = SILHOUETTE.rayon;
@@ -59,7 +59,7 @@ function lancerContreMur(m: Monde = mondeMur): { e: EtatMouvement; trace: { t: n
 
 describe("sol", () => {
   const m = mondeDe();
-  it("marche à 6,5 m/s, sprint à 9 m/s vers l'avant seulement", () => {
+  it("marche à MOUV.marche (9 m/s), sprint à MOUV.sprint (12,5 m/s) vers l'avant seulement", () => {
     const marche = avancer(etatInitial([0, 0, 0]), 1, { avant: 1, droite: 0, saut: false, sprint: false, lacet: 0 }, m);
     expect(Math.hypot(marche.v[0], marche.v[2])).toBeCloseTo(MOUV.marche, 5);
     expect(marche.p[2]).toBeLessThan(-5);
@@ -74,7 +74,7 @@ describe("sol", () => {
     const a = etape(etatInitial([0, 0, 0]), { avant: 1, droite: 0, saut: false, sprint: true, lacet: 0 }, 0.15, m);
     expect(Math.hypot(a.v[0], a.v[2])).toBeCloseTo(MOUV.sprint, 5);
     const lent = etape(etatInitial([0, 0, 0]), { avant: 1, droite: 0, saut: false, sprint: true, lacet: 0 }, 0.05, m);
-    expect(Math.hypot(lent.v[0], lent.v[2])).toBeCloseTo(3, 5);
+    expect(Math.hypot(lent.v[0], lent.v[2])).toBeCloseTo(MOUV.accelSol * 0.05, 5);
     const stop = avancer(a, 0.25, ENTREES_REPOS, m);
     expect(Math.hypot(avancer(a, 0.05, ENTREES_REPOS, m).v[0], 0)).toBeLessThan(MOUV.sprint);
     expect(Math.hypot(stop.v[0], stop.v[2])).toBe(0);
@@ -89,6 +89,29 @@ describe("sol", () => {
     expect(e.v[2]).toBeCloseTo(0, 5);
     const sniper = etape(etatInitial([0, 0, 0]), { avant: 1, droite: 0, saut: false, sprint: false, lacet: 0 }, 1, m, 0.9);
     expect(Math.hypot(sniper.v[0], sniper.v[2])).toBeCloseTo(MOUV.marche * 0.9, 5);
+  });
+
+  it("le sprint est atteint en 0,15 s au plus ; à 0,05 s la vitesse vaut accelSol × 0,05", () => {
+    const sprint: Entrees = { avant: 1, droite: 0, saut: false, sprint: true, lacet: 0 };
+    expect(MOUV.sprint / MOUV.accelSol).toBeLessThanOrEqual(0.15);
+    const a = etape(etatInitial([0, 0, 0]), sprint, 0.15, m);
+    expect(Math.hypot(a.v[0], a.v[2])).toBeCloseTo(MOUV.sprint, 5);
+    const b = etape(etatInitial([0, 0, 0]), sprint, 0.05, m);
+    expect(Math.hypot(b.v[0], b.v[2])).toBeCloseTo(MOUV.accelSol * 0.05, 5);
+  });
+
+  it("couteau (×1,3) : sprint 16,25 m/s, jamais au-dessus du plafond MOUV.vitesseMaxH", () => {
+    const sprint: Entrees = { avant: 1, droite: 0, saut: false, sprint: true, lacet: 0 };
+    let e = etatInitial([0, 0, 0]);
+    let max = 0;
+    for (let k = 0; k < 120; k++) {
+      e = etape(e, sprint, DT, m, 1.3);
+      max = Math.max(max, Math.hypot(e.v[0], e.v[2]));
+    }
+    expect(max).toBeCloseTo(MOUV.sprint * 1.3, 5);
+    expect(max).toBeLessThanOrEqual(MOUV.vitesseMaxH);
+    // couteau et saut de mur : la tangente 13 × 1,3 plus la normale restent bornées par le plafond
+    expect(MOUV.murVitesseMax * 1.3).toBeLessThan(MOUV.vitesseMaxH + 3);
   });
 
   it("le résultat dépend peu du dt (60 Hz, 30 Hz, un grand pas)", () => {
@@ -201,11 +224,11 @@ describe("wall-run", () => {
     const m = mondeMur;
     const sansAvant = avancer(etatA([-20, 0, -2.2], [9 * FX, 0, 9 * FZ]), 1.2, (t) => ({ ...coursebiais, avant: 0, saut: t <= DT + 1e-9 }), m, (s) => expect(s.mur).toBeNull());
     void sansAvant;
-    // 3 m/s seulement le long du mur, en l'air : pas d'accroche (vitesse d'entrée < 4 m/s).
+    // 3 m/s seulement le long du mur, en l'air : pas d'accroche (vitesse d'entrée < murVitesseEntreeMin).
     const lent = etatA([-10, 3, -0.45], [3, 0, 0], { auSol: false });
     expect(etape(lent, { ...coursebiais, sprint: false, lacet: lacetVers(1, 0.2) }, DT, m).mur).toBeNull();
-    // À 5 m/s, si.
-    const vite = etatA([-10, 3, -0.45], [5, 0, 0], { auSol: false });
+    // Juste au-dessus du seuil d'entrée, si.
+    const vite = etatA([-10, 3, -0.45], [MOUV.murVitesseEntreeMin + 1, 0, 0], { auSol: false });
     expect(etape(vite, { ...coursebiais, sprint: false, lacet: lacetVers(1, 0.2) }, DT, m).mur).not.toBeNull();
   });
 
@@ -516,6 +539,313 @@ describe("pas de traversée à grande vitesse", () => {
     }
     expect(dedansPas / total).toBeLessThan(0.002);
     expect(accroches).toBeGreaterThan(0); // le scénario exerce bien des wall-runs
+  });
+});
+
+describe("constantes de vitesse (v2 §2.1)", () => {
+  it("chaîne de plafonds : marche × mult ≤ sprint × mult (couteau) ≤ vitesseMaxH < plafond serveur ≤ vitesse déclarée", () => {
+    expect(MOUV.marche * 1.3).toBeLessThanOrEqual(MOUV.sprint * 1.3);
+    expect(MOUV.sprint * 1.3).toBeCloseTo(16.25, 9);
+    expect(MOUV.sprint * 1.3).toBeLessThanOrEqual(MOUV.vitesseMaxH);
+    expect(MOUV.vitesseMaxH).toBeLessThan(PLAFONDS.vitesseHorizontaleMax);
+    expect(PLAFONDS.vitesseHorizontaleMax).toBeLessThanOrEqual(PLAFONDS.vitesseDeclareeMax);
+    // un saut de mur (tangente maximale + normale) tient sous le plafond
+    expect(MOUV.vitesseMaxH).toBeGreaterThan(Math.hypot(MOUV.murVitesseMax, MOUV.murSautNormale));
+  });
+
+  it("valeurs de la spec", () => {
+    expect([MOUV.marche, MOUV.sprint, MOUV.accelSol, MOUV.frictionSol, MOUV.frictionExces, MOUV.accelAir]).toEqual([9, 12.5, 84, 75, 30, 16]);
+    expect([MOUV.murVitesseEntreeMin, MOUV.murVitesse, MOUV.murVitesseMax, MOUV.vitesseMaxH]).toEqual([5.5, 10, 13, 18]);
+    expect(MOUV.murSautNormale).toBe(6.5);
+    expect(MOUV.murSautVy).toBe(7);
+  });
+
+  it("wall-run : murVitesse est atteignable avec la nouvelle vitesse de course", () => {
+    const { trace } = lancerContreMur();
+    const acc = trace.find((s) => s.e.mur !== null)!;
+    expect(acc).toBeDefined();
+    expect(Math.hypot(acc.e.v[0], acc.e.v[2])).toBeGreaterThanOrEqual(MOUV.murVitesse - 1e-6);
+    expect(MOUV.murVitesse).toBeLessThanOrEqual(MOUV.sprint);
+  });
+});
+
+describe("accroupi (v2 §2.8)", () => {
+  const m = mondeDe();
+  const base: Entrees = { avant: 1, droite: 0, saut: false, sprint: false, lacet: 0 };
+
+  it("état initial : debout, sans glissade", () => {
+    const e = etatInitial([0, 0, 0]);
+    expect(e.accroupi).toBe(false);
+    expect(e.glisse).toBeNull();
+  });
+
+  it("hauteurOeil : 1,95 debout, 1,30 accroupi", () => {
+    expect(hauteurOeil(false)).toBe(1.95);
+    expect(hauteurOeil(true)).toBe(1.3);
+  });
+
+  it("accroupi au sol : vitesse × 0,5 (marche et sprint), multiplicateur d'arme compris", () => {
+    const marche = avancer(etatInitial([0, 0, 0]), 1, { ...base, accroupi: true }, m);
+    expect(marche.accroupi).toBe(true);
+    expect(Math.hypot(marche.v[0], marche.v[2])).toBeCloseTo(MOUV.marche * MOUV.accroupiMult, 5);
+    const sprint = avancer(etatInitial([0, 0, 0]), 1, { ...base, sprint: true, accroupi: true }, m);
+    expect(Math.hypot(sprint.v[0], sprint.v[2])).toBeCloseTo(MOUV.sprint * MOUV.accroupiMult, 5);
+    const couteau = etape(etatInitial([0, 0, 0]), { ...base, sprint: true, accroupi: true }, 1, m, 1.3);
+    expect(Math.hypot(couteau.v[0], couteau.v[2])).toBeCloseTo(MOUV.sprint * MOUV.accroupiMult * 1.3, 5);
+  });
+
+  it("se relever est toujours possible : la vitesse revient à la course", () => {
+    let e = avancer(etatInitial([0, 0, 0]), 0.5, { ...base, accroupi: true }, m);
+    expect(e.accroupi).toBe(true);
+    e = avancer(e, 0.5, { ...base, accroupi: false }, m);
+    expect(e.accroupi).toBe(false);
+    expect(Math.hypot(e.v[0], e.v[2])).toBeCloseTo(MOUV.marche, 5);
+  });
+
+  it("refusé en l'air : un état aérien ne devient pas accroupi, et le saut relève", () => {
+    const air = etape(etatA([0, 5, 0], [0, 0, 0], { auSol: false }), { ...base, accroupi: true }, DT, m);
+    expect(air.accroupi).toBe(false);
+    let e = avancer(etatInitial([0, 0, 0]), 0.3, { ...base, accroupi: true }, m);
+    expect(e.accroupi).toBe(true);
+    e = etape(e, { ...base, accroupi: true, saut: true }, DT, m);
+    expect(e.auSol).toBe(false);
+    e = etape(e, { ...base, accroupi: true, saut: true }, DT, m);
+    expect(e.accroupi).toBe(false);
+    // et il peut s'accroupir de nouveau à l'atterrissage, touche tenue
+    e = avancer(e, 2, { ...base, accroupi: true }, m);
+    expect(e.auSol).toBe(true);
+    expect(e.accroupi).toBe(true);
+  });
+
+  it("refusé en wall-run", () => {
+    const { trace } = lancerContreMur();
+    const iAccroche = trace.findIndex((s) => s.e.mur !== null);
+    let e = trace[iAccroche + 5].e;
+    expect(e.mur).not.toBeNull();
+    e = etape(e, { ...coursebiais, accroupi: true }, DT, mondeMur);
+    expect(e.accroupi).toBe(false);
+    expect(e.glisse).toBeNull();
+  });
+
+  it("la tenue de la touche ne fait pas glisser : seul l'appui déclenche, jamais l'atterrissage touche tenue", () => {
+    const vite = etatA([0, 6, 0], [0, 0, -12.5], { auSol: false });
+    let e = vite;
+    let glisse = false;
+    e = avancer(e, 2, { avant: 1, droite: 0, saut: false, sprint: true, lacet: 0, accroupi: true }, m, (s) => { if (s.glisse) glisse = true; });
+    expect(e.auSol).toBe(true);
+    expect(glisse).toBe(false);
+  });
+});
+
+describe("glissade (v2 §2.8 et §13.3)", () => {
+  const m = mondeDe();
+  const sprint: Entrees = { avant: 1, droite: 0, saut: false, sprint: true, lacet: 0 };
+  const VA = MOUV.marche * MOUV.accroupiMult;
+
+  /** Sprint établi (12,5 m/s vers −z). */
+  function enCourse(): EtatMouvement {
+    return avancer(etatInitial([0, 0, 0]), 0.5, sprint, m);
+  }
+  const glisser = (e: EtatMouvement, entrees: Entrees = sprint, monde: Monde = m) => etape(e, { ...entrees, accroupi: true }, DT, monde);
+
+  it("l'appui à ≥ 10,5 m/s déclenche la glissade : état propre, direction figée, hitbox accroupie", () => {
+    const e = glisser(enCourse());
+    expect(e.glisse).not.toBeNull();
+    expect(e.glisse!.v0).toBeCloseTo(MOUV.sprint, 5);
+    expect(e.glisse!.dir[0]).toBeCloseTo(0, 6);
+    expect(e.glisse!.dir[1]).toBeCloseTo(-1, 6);
+    expect(e.accroupi).toBe(true);
+    expect(e.auSol).toBe(true);
+  });
+
+  it("pas de glissade sous 10,5 m/s (marche, sprint du sniper trop lent) ni en l'air", () => {
+    const marche = avancer(etatInitial([0, 0, 0]), 0.5, { ...sprint, sprint: false }, m);
+    const e = glisser(marche, { ...sprint, sprint: false });
+    expect(e.glisse).toBeNull();
+    expect(e.accroupi).toBe(true);
+    expect(Math.hypot(e.v[0], e.v[2])).toBeLessThan(MOUV.glisseVitesseMin);
+    // exactement au seuil, ça passe ; juste dessous non
+    const seuil = etatA([0, 0, 0], [0, 0, -MOUV.glisseVitesseMin]);
+    expect(glisser(seuil, { ...sprint, avant: 0, sprint: false }).glisse).not.toBeNull();
+    const dessous = etatA([0, 0, 0], [0, 0, -(MOUV.glisseVitesseMin - 0.3)]);
+    expect(glisser(dessous, { ...sprint, avant: 0, sprint: false }).glisse).toBeNull();
+    const air = etatA([0, 5, 0], [0, 0, -12.5], { auSol: false });
+    expect(glisser(air).glisse).toBeNull();
+  });
+
+  it("durée 0,75 s, vitesse = formule quadratique, décroissance monotone, ni accélération ni friction normales", () => {
+    const depart = enCourse();
+    const zDepart = depart.p[2];
+    let e = glisser(depart);
+    const v0 = e.glisse!.v0;
+    const vitesses: number[] = [];
+    let fin = -1;
+    // le premier pas est déjà fait (t = DT)
+    for (let k = 1; k <= 60; k++) {
+      vitesses.push(Math.hypot(e.v[0], e.v[2]));
+      expect(e.glisse).not.toBeNull();
+      // la vitesse suit exactement la formule au temps écoulé
+      expect(vitesses[vitesses.length - 1]).toBeCloseTo(VA + (v0 - VA) * (1 - e.glisse!.t / MOUV.glisseDureeS) ** 2, 6);
+      e = etape(e, { ...sprint, accroupi: true }, DT, m);
+      if (!e.glisse) { fin = k * DT + DT; break; }
+    }
+    // t = 0,75 s : fin (45 pas de 1/60 s, le premier étant dans glisser())
+    expect(fin).toBeCloseTo(MOUV.glisseDureeS, 2);
+    for (let i = 1; i < vitesses.length; i++) expect(vitesses[i]).toBeLessThan(vitesses[i - 1]);
+    // la vitesse est restée au-dessus de l'accroupi tout du long, et s'y fond à la fin
+    expect(Math.min(...vitesses)).toBeGreaterThan(VA);
+    expect(vitesses[vitesses.length - 1]).toBeCloseTo(VA, 1);
+    // sans la friction de 75 m/s² (qui l'aurait tuée en 0,17 s) : 1/4 de durée plus tard on a encore > 60 % de v0
+    expect(vitesses[11]).toBeGreaterThan(0.6 * v0);
+    // distance parcourue : intégrale de la formule, vAccroupi·T + (v0 − vAccroupi)·T/3 = 5,375 m, bien plus qu'un arrêt en 0,17 s (≈ 1,1 m)
+    expect(zDepart - e.p[2]).toBeGreaterThan(5.2);
+    expect(zDepart - e.p[2]).toBeLessThan(5.6);
+  });
+
+  it("la direction est figée : braquer pendant la glissade ne la tourne pas", () => {
+    let e = glisser(enCourse());
+    for (let k = 0; k < 20; k++) e = etape(e, { avant: 1, droite: 1, saut: false, sprint: true, lacet: 1.5, accroupi: true }, DT, m);
+    expect(e.glisse).not.toBeNull();
+    expect(e.v[0]).toBeCloseTo(0, 6);
+    expect(e.v[2]).toBeLessThan(0);
+  });
+
+  it("lâcher la touche ne l'interrompt pas (hitbox accroupie jusqu'au bout)", () => {
+    let e = glisser(enCourse());
+    e = etape(e, sprint, DT, m); // accroupi relâché
+    expect(e.glisse).not.toBeNull();
+    expect(e.accroupi).toBe(true);
+  });
+
+  it("à la fin, on repart debout (touche relâchée) ou accroupi (touche tenue), sans à-coup de vitesse", () => {
+    let tenue = glisser(enCourse());
+    let relache = tenue;
+    tenue = avancer(tenue, 1, { ...sprint, accroupi: true }, m);
+    relache = avancer(relache, 1, sprint, m);
+    expect(tenue.glisse).toBeNull();
+    expect(tenue.accroupi).toBe(true);
+    expect(Math.hypot(tenue.v[0], tenue.v[2])).toBeCloseTo(MOUV.sprint * MOUV.accroupiMult, 4);
+    expect(relache.accroupi).toBe(false);
+    expect(Math.hypot(relache.v[0], relache.v[2])).toBeCloseTo(MOUV.sprint, 4);
+  });
+
+  it("glissade → saut = saut glissé : la glissade s'arrête, l'élan est gardé en l'air", () => {
+    let e = enCourse();
+    e = glisser(e);
+    e = avancer(e, 0.2, { ...sprint, accroupi: true }, m);
+    expect(e.glisse).not.toBeNull();
+    const vSaut = Math.hypot(e.v[0], e.v[2]);
+    expect(vSaut).toBeGreaterThan(MOUV.sprint * MOUV.accroupiMult + 2);
+    e = etape(e, { ...sprint, accroupi: true, saut: true }, DT, m);
+    expect(e.glisse).toBeNull();
+    expect(e.auSol).toBe(false);
+    expect(e.accroupi).toBe(false);
+    expect(e.v[1]).toBeGreaterThan(MOUV.saut - 0.5);
+    // l'élan est gardé (aucune friction en l'air) : sans entrée contraire, la vitesse horizontale ne chute pas
+    const apres = avancer(e, 0.3, { ...sprint, accroupi: true, saut: true }, m);
+    expect(Math.hypot(apres.v[0], apres.v[2])).toBeGreaterThanOrEqual(vSaut - 0.5);
+  });
+
+  it("quitter le sol (rebord d'un toit) l'arrête", () => {
+    const toit = mondeDe(rect(-30, -30, 30, 30, 8));
+    let e = etatA([0, 8, -22], [0, 0, -12.5]);
+    e = avancer(e, 0.3, sprint, toit);
+    expect(e.auSol).toBe(true);
+    e = glisser(e, sprint, toit);
+    expect(e.glisse).not.toBeNull();
+    let fin = false;
+    e = avancer(e, 0.75, { ...sprint, accroupi: true }, toit, (s) => { if (!s.glisse && !s.auSol) fin = true; });
+    expect(fin).toBe(true);
+  });
+
+  it("contre un mur de face elle s'arrête, sans traverser", () => {
+    const mur = mondeDe(rect(-20, -12, 20, -10, 6));
+    let e = avancer(etatA([0, 0, -3]), 0.2, sprint, mur);
+    e = glisser(e);
+    e = avancer(e, 0.75, { ...sprint, accroupi: true }, mur);
+    expect(e.glisse).toBeNull();
+    expect(e.p[2]).toBeGreaterThanOrEqual(-10 + R - 1e-6);
+    expect(Math.hypot(e.v[0], e.v[2])).toBeLessThan(1);
+  });
+
+  it("ne dépend pas du dt (60 Hz, 30 Hz)", () => {
+    const fin = (dt: number) => {
+      let e = enCourse();
+      e = etape(e, { ...sprint, accroupi: true }, dt, m);
+      for (let t = dt; t < 0.7; t += dt) e = etape(e, { ...sprint, accroupi: true }, dt, m);
+      return e.p[2];
+    };
+    expect(Math.abs(fin(1 / 60) - fin(1 / 30))).toBeLessThan(0.2);
+  });
+
+  it("couteau : la formule part de la vitesse réelle (16,25) et se fond dans l'accroupi du couteau", () => {
+    let e = avancer(etatInitial([0, 0, 0]), 0.5, sprint, m);
+    for (let k = 0; k < 30; k++) e = etape(e, sprint, DT, m, 1.3);
+    e = etape(e, { ...sprint, accroupi: true }, DT, m, 1.3);
+    expect(e.glisse!.v0).toBeCloseTo(MOUV.sprint * 1.3, 5);
+    for (let k = 0; k < 60; k++) e = etape(e, { ...sprint, accroupi: true }, DT, m, 1.3);
+    expect(e.glisse).toBeNull();
+    expect(Math.hypot(e.v[0], e.v[2])).toBeCloseTo(MOUV.marche * MOUV.accroupiMult * 1.3 * (MOUV.sprint / MOUV.marche), 1);
+  });
+
+  it("seuil RELATIF à l'arme : le sprint du minigun (×0,75) ou du sniper en visée glisse aussi (régression : seuil absolu de 10,5 m/s)", () => {
+    for (const mult of [0.75, 0.9 * 0.8, 0.88, 1.3]) {
+      let e = etatInitial([0, 0, 0]);
+      for (let k = 0; k < 40; k++) e = etape(e, sprint, DT, m, mult);
+      const vh = Math.hypot(e.v[0], e.v[2]);
+      expect(vh).toBeCloseTo(MOUV.sprint * mult, 3);
+      expect(vh).toBeGreaterThanOrEqual(seuilGlisse(mult));
+      e = etape(e, { ...sprint, accroupi: true }, DT, m, mult);
+      expect(e.glisse, `mult ${mult}`).not.toBeNull();
+    }
+    // la marche ne glisse jamais, quelle que soit l'arme
+    for (const mult of [0.75, 1, 1.3]) {
+      let e = etatInitial([0, 0, 0]);
+      for (let k = 0; k < 40; k++) e = etape(e, { ...sprint, sprint: false }, DT, m, mult);
+      expect(etape(e, { ...sprint, sprint: false, accroupi: true }, DT, m, mult).glisse).toBeNull();
+    }
+    expect(seuilGlisse(1)).toBe(MOUV.glisseVitesseMin);
+  });
+
+  it("recharge de 0,6 s entre deux glissades (finitions)", () => {
+    expect(MOUV.glisseRechargeS).toBe(0.6);
+    // glissade 1, puis fin de durée touche relâchée, sprint rétabli
+    let e = glisser(enCourse());
+    e = avancer(e, MOUV.glisseDureeS + 0.05, { ...sprint, accroupi: true }, m);
+    expect(e.glisse).toBeNull();
+    expect(e.glisseRecharge).toBeGreaterThan(0);
+    // relâcher, retrouver le sprint (pour que la vitesse ne soit pas en cause), puis réappuyer trop tôt : refusé
+    e = etatA(e.p, [0, 0, -MOUV.sprint], { glisseRecharge: e.glisseRecharge });
+    e = etape(e, sprint, DT, m);
+    const tot = glisser(e);
+    expect(tot.glisse).toBeNull();
+    // après 0,6 s le même appui déclenche
+    let tard = etatA(e.p, [0, 0, -MOUV.sprint], { glisseRecharge: e.glisseRecharge });
+    tard = avancer(tard, MOUV.glisseRechargeS + 0.05, sprint, m);
+    expect(tard.glisseRecharge).toBe(0);
+    expect(glisser(tard).glisse).not.toBeNull();
+  });
+
+  it("la recharge démarre aussi quand la glissade s'arrête par un saut", () => {
+    let e = glisser(enCourse());
+    e = etape(e, { ...sprint, accroupi: true, saut: true }, DT, m);
+    expect(e.glisse).toBeNull();
+    expect(e.glisseRecharge).toBeGreaterThan(0.5);
+  });
+
+  it("le roulis caméra penche pendant la glissade et revient après", () => {
+    let e = glisser(enCourse());
+    e = avancer(e, 0.4, { ...sprint, accroupi: true }, m);
+    expect(e.inclinaison).toBeGreaterThan(MOUV.glisseInclinaison * 0.8);
+    e = avancer(e, 1, sprint, m);
+    expect(Math.abs(e.inclinaison)).toBeLessThan(0.01);
+  });
+
+  it("etape ne modifie pas l'état glissant reçu", () => {
+    const e = glisser(enCourse());
+    const copie = JSON.stringify(e);
+    etape(e, { ...sprint, accroupi: true }, DT, m);
+    expect(JSON.stringify(e)).toBe(copie);
   });
 });
 

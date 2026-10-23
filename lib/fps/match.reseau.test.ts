@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { Building, SceneData, Vec2 } from "../agroparc3d/types";
 import { construireMonde } from "./collision";
 import { INACTIF_MS, REWIND_MAX_MS, Salle, type JoueurSalle, type Sortie } from "./match";
-import { JEU, SILHOUETTE, type MessageClient, type MessageServeur, type Vec3 } from "./protocole";
+import { JEU, PLAFONDS, SILHOUETTE, type MessageClient, type MessageServeur, type Vec3 } from "./protocole";
 
 /** Tests réseau de la salle : compensation de latence des tirs, états abusifs, joueurs fantômes. */
 
@@ -62,7 +62,7 @@ describe("compensation de latence des tirs", () => {
     const fin = courirPuisStopper(s, t);
     expect(j(s, "b").p[2]).toBeGreaterThan(21.5);
     // A voit B vers z = 20,3 (200 ms de retard) et tire : sans historique, B est à 1,3 m du rayon > 1,2 m
-    const sorties = tirerVers(s, [10, SILHOUETTE.hauteur / 2, 20.3], fin + 50);
+    const sorties = tirerVers(s, [10, SILHOUETTE.centreY, 20.3], fin + 50);
     expect(messages(sorties, "degats")).toHaveLength(1);
     expect(j(s, "b").pv).toBe(JEU.pvMax - 28);
   });
@@ -74,7 +74,7 @@ describe("compensation de latence des tirs", () => {
     let seq = 100;
     for (let i = 1; i <= 30; i++) s.recevoir("b", etat(++seq, [10, 0, 21.6]), fin + i * 33);
     expect(REWIND_MAX_MS).toBeLessThan(900);
-    const sorties = tirerVers(s, [10, SILHOUETTE.hauteur / 2, 20.3], fin + 30 * 33 + 50);
+    const sorties = tirerVers(s, [10, SILHOUETTE.centreY, 20.3], fin + 30 * 33 + 50);
     expect(messages(sorties, "degats")).toHaveLength(0);
     expect(j(s, "b").pv).toBe(JEU.pvMax);
   });
@@ -87,6 +87,20 @@ describe("compensation de latence des tirs", () => {
     s.recevoir("b", { t: "rejoindre", arme: "pistolet" }, t + 500);
     expect(j(s, "b").histo).toEqual([]);
   });
+
+  it("quitter puis rejoindre : jamais refusé, la santé est restaurée (pas de soin gratuit), l'historique est vidé", () => {
+    const { s, t } = duel();
+    j(s, "b").pv = 40;
+    j(s, "b").bouclier = 25;
+    s.recevoir("b", { t: "quitter" }, t + 400);
+    s.recevoir("b", { t: "rejoindre", arme: "pistolet" }, t + 500);
+    // le retour attend le délai de réapparition (pas de contournement par quitter / rejoindre)
+    const sorties = s.tic(t + 400 + JEU.delaiReapparitionMs);
+    expect(messages(sorties, "apparition")).toHaveLength(1);
+    expect(j(s, "b")).toMatchObject({ enJeu: true, vivant: true, pv: 40, bouclier: 25 });
+    expect(messages(sorties, "apparition")[0]).toMatchObject({ pv: 40, bouclier: 25 });
+    expect(j(s, "b").histo).toEqual([]);
+  });
 });
 
 describe("états abusifs", () => {
@@ -94,7 +108,7 @@ describe("états abusifs", () => {
     const { s, t } = duel();
     s.recevoir("a", etat(1, [-10, 0, 20], [80, 80, 80]), t);
     const [vx, vy, vz] = j(s, "a").v;
-    expect(Math.hypot(vx, vz)).toBeLessThanOrEqual(20.001);
+    expect(Math.hypot(vx, vz)).toBeLessThanOrEqual(PLAFONDS.vitesseDeclareeMax + 0.001);
     expect(Math.abs(vy)).toBeLessThanOrEqual(45);
   });
 });

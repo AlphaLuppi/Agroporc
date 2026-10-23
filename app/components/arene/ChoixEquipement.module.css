@@ -1,0 +1,50 @@
+/* Choix de l'équipement : tokens --ag-* de la racine de la vue Palantir (hérités), aucune couleur en dur. */
+
+/* ---------- variante « lobby » : cartes détaillées ---------- */
+.lobby { display: flex; flex-direction: column; gap: 14px; margin-top: 14px; }
+.groupe { border: 0; padding: 0; margin: 0; min-width: 0; }
+.groupe legend { padding: 0; margin-bottom: 6px; font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ag-ink-dim); }
+.grille { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+/* plus de 6 cartes : grille serrée, sans description (le nom et les barres suffisent) */
+.grilleCompacte { grid-template-columns: repeat(3, 1fr); }
+.grilleCompacte .carteDesc { display: none; }
+
+.carte {
+  position: relative; display: flex; flex-direction: column; gap: 6px; padding: 10px; cursor: pointer; min-width: 0;
+  border: 1px solid var(--ag-line-strong); background: var(--ag-hud-fond);
+}
+.carte:hover { border-color: var(--ag-ink-dim); }
+.carte input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+.carte:has(input:focus-visible) { outline: 2px solid var(--ag-white); outline-offset: 2px; }
+.carteChoisie { border-color: var(--ag-amber); background: color-mix(in srgb, var(--ag-amber) 12%, var(--ag-ground)); box-shadow: inset 0 0 0 1px var(--ag-amber); }
+.carteNom { font-family: var(--ag-display), var(--ag-mono), monospace; font-weight: 600; font-size: 13px; color: var(--ag-white); letter-spacing: 0.04em; text-transform: uppercase; overflow-wrap: anywhere; }
+.carteChoisie .carteNom { color: var(--ag-amber); }
+/* l'état choisi ne tient pas qu'à la couleur : coche décorative (l'état « coché » de la radio est annoncé par le navigateur) */
+.carteChoisie .carteNom::after { content: " ✓"; content: " ✓" / ""; }
+.carteDesc { font-size: 11px; line-height: 1.4; color: var(--ag-ink-dim); }
+.barres { display: flex; flex-direction: column; gap: 3px; margin-top: auto; padding-top: 4px; }
+.barre { display: flex; align-items: center; gap: 6px; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ag-ink-dim); }
+.barre > span { flex: 0 0 10ch; white-space: nowrap; } /* « CONTRÔLE » et « DÉGÂTS » avec l'espacement des lettres */
+.barre > i { flex: 1; min-width: 12px; height: 3px; background: var(--ag-line-strong); position: relative; display: block; }
+.barre > i > i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--ag-cyan); box-shadow: 0 0 6px var(--ag-cyan); }
+.carteChoisie .barre > i > i { background: var(--ag-amber); box-shadow: 0 0 6px var(--ag-amber); }
+.grilleCompacte .barre > span { flex-basis: 8ch; letter-spacing: 0.02em; font-size: 10px; }
+
+/* ---------- variante « compact » : boutons (mort, killcam, pause, entracte) ---------- */
+.compact { display: flex; flex-direction: column; gap: 8px; }
+.ligne { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.ligneTitre { flex: 0 0 auto; min-width: 9ch; font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ag-ink-dim); }
+.boutons { display: flex; flex-wrap: wrap; gap: 6px; }
+.bouton {
+  min-height: 40px; padding: 0 12px; font: inherit; font-size: 12px; letter-spacing: 0.06em; cursor: pointer;
+  background: var(--ag-hud-fond); color: var(--ag-ink); border: 1px solid var(--ag-line-strong);
+}
+.bouton:hover { border-color: var(--ag-ink-dim); }
+.bouton:focus-visible { outline: 2px solid var(--ag-white); outline-offset: 2px; }
+.boutonChoisi { color: var(--ag-amber); border-color: var(--ag-amber); box-shadow: inset 0 0 0 1px var(--ag-amber); font-weight: 600; }
+.boutonChoisi::before { content: "✓ "; content: "✓ " / ""; }
+
+@media (max-width: 480px) {
+  .grille, .grilleCompacte { grid-template-columns: 1fr 1fr; }
+  .carteDesc { display: none; }
+}

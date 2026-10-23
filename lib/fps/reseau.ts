@@ -123,7 +123,7 @@ export function connecterArene(
     if (socket && socket.readyState === SOCKET_OUVERT) {
       try { socket.send(texte); return; } catch { /* repli sur la file */ }
     }
-    // Un état, un tir ou un ping de la coupure n'a plus de sens à la reconnexion (et 64 états rejoués
+    // Un état, un tir, un coup, une commande de conduite ou un ping de la coupure n'a plus de sens à la reconnexion (et 64 états rejoués
     // d'un coup avec le bonjour dépassent les 90 messages/s tolérés : le serveur couperait pour flood).
     if (perissable) return;
     file.push(texte);
@@ -205,7 +205,7 @@ export function connecterArene(
 
   return {
     envoyer(m) {
-      ecrire(JSON.stringify(m), m.t === "etat" || m.t === "tir" || m.t === "ping");
+      ecrire(JSON.stringify(m), m.t === "etat" || m.t === "tir" || m.t === "coup" || m.t === "conduite" || m.t === "ping");
     },
     renommer(nouveau) {
       if (nouveau === pseudo) return;
@@ -239,7 +239,7 @@ export function connecterArene(
 
 // ---------- interpolation ----------
 
-/** Durée d'historique gardée (ms). */
+/** Durée d'historique gardée par défaut (ms) ; le client en garde deux : celle-ci (affichage) et `KILLCAM.tamponMs` (rejeu). */
 const TAMPON_MS = 1000;
 /** Au-delà de ce retard du tampon, on extrapole au plus pendant cette durée (ms). */
 const EXTRAPOLATION_MAX_MS = 150;
@@ -259,19 +259,23 @@ function lerpVec(a: Vec3, b: Vec3, t: number): Vec3 {
 }
 
 function copie(e: EtatJoueurSnap): EtatJoueurSnap {
-  return { ...e, p: [...e.p] as Vec3, v: [...e.v] as Vec3 };
+  const c = { ...e, p: [...e.p] as Vec3, v: [...e.v] as Vec3 };
+  if (e.vehicule) c.vehicule = { ...e.vehicule };
+  return c;
 }
 
 type Snap = { ts: number; j: EtatJoueurSnap[] };
 
 /**
- * Tampon d'instantanés ordonnés par `ts` (≈ 1 s). `echantillon(ts)` donne l'état des joueurs
+ * Tampon d'instantanés ordonnés par `ts` (`tamponMs`, 1 s par défaut ; 4 s pour la killcam). `echantillon(ts)` donne l'état des joueurs
  * à l'horodatage serveur demandé (en pratique `maintenantServeur() − JEU.interpolationMs`) :
  * positions interpolées linéairement, angles par le plus court chemin, extrapolation bornée
  * à 150 ms quand le tampon est en retard. Un joueur absent du dernier snap est retiré.
  */
 export class Interpolateur {
   private snaps: Snap[] = [];
+
+  constructor(private readonly tamponMs: number = TAMPON_MS) {}
 
   ajouter(snap: Snap): void {
     const s: Snap = { ts: snap.ts, j: snap.j };
@@ -280,7 +284,7 @@ export class Interpolateur {
     while (i > 0 && this.snaps[i - 1].ts > s.ts) i--;
     if (i > 0 && this.snaps[i - 1].ts === s.ts) this.snaps[i - 1] = s;
     else this.snaps.splice(i, 0, s);
-    const limite = this.snaps[this.snaps.length - 1].ts - TAMPON_MS;
+    const limite = this.snaps[this.snaps.length - 1].ts - this.tamponMs;
     while (this.snaps.length > 2 && this.snaps[0].ts < limite) this.snaps.shift();
   }
 
@@ -346,7 +350,11 @@ export class Interpolateur {
 
 // ---------- URL ----------
 
-/** `NEXT_PUBLIC_FPS_WS_URL`, sinon le serveur local en dev, sinon le serveur de prod. */
+/**
+ * `NEXT_PUBLIC_FPS_WS_URL`, sinon le serveur local en dev, sinon le serveur de prod. La v2 REMPLACE la v1 sur le même hôte
+ * (`wss://pdj-fps.toam.tech`) : client et serveur sont déployés ensemble ; un client v1 encore en cache reçoit `erreur version`
+ * (« rechargez la page »).
+ */
 export function urlArene(): string {
   const env = process.env.NEXT_PUBLIC_FPS_WS_URL;
   if (env) return env;

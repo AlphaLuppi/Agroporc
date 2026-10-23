@@ -1,0 +1,63 @@
+/* Réglages d'interface (menu pause et lobby) : sélecteur de coin, radios en segments, cibles de 40 px minimum (spec HUD §4.5, §5.9).
+   Cotes en px : ce panneau vit dans le menu pause et le lobby, hors de l'échelle --u du HUD. Aucune couleur en dur. */
+.interface { margin: 18px 0 0; padding-top: 14px; border-top: 1px solid var(--ag-line); text-align: left; text-shadow: none; }
+.interface > summary, .titre {
+  margin: 0; min-height: 40px; display: flex; align-items: center; cursor: pointer; list-style: none;
+  font: 600 11px/1.2 var(--ag-display), var(--ag-mono), monospace; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ag-ink-dim);
+}
+.titre { cursor: default; min-height: 0; padding-bottom: 8px; }
+.interface > summary::-webkit-details-marker { display: none; }
+.interface > summary::before { content: "+"; display: inline-block; width: 1.4em; color: var(--ag-cyan); font-family: var(--ag-mono), monospace; }
+.interface[open] > summary::before { content: "−"; }
+.interface > summary:focus-visible { outline: 2px solid var(--ag-white); outline-offset: 2px; }
+
+.corps { display: grid; gap: 14px; padding-top: 6px; }
+.aide { margin: 0; font-size: 11px; line-height: 1.4; color: var(--ag-ink-dim); }
+.bloc { margin: 0; padding: 0; border: 0; min-width: 0; }
+.bloc > legend, .etiquette {
+  padding: 0; margin-bottom: 6px; font: 600 11px/1.2 var(--ag-display), var(--ag-mono), monospace; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ag-ink-dim);
+}
+.mini { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-start; }
+.reglagesMini { display: grid; gap: 12px; flex: 1 1 220px; min-width: 0; }
+.segments { display: flex; flex-wrap: wrap; gap: 6px; }
+.segment { position: relative; display: inline-flex; }
+.segment input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.segment span {
+  min-height: 40px; min-width: 56px; box-sizing: border-box; padding: 0 12px; display: inline-flex; align-items: center; justify-content: center;
+  background: var(--ag-ground); border: 1px solid var(--ag-line-strong); color: var(--ag-ink); font-size: 12px; text-align: center;
+}
+.segment:hover span { border-color: var(--ag-ink-dim); }
+.segment input:checked + span { border-color: var(--ag-amber); background: color-mix(in srgb, var(--ag-amber) 14%, var(--ag-ground)); color: var(--ag-amber); }
+.segment input:focus-visible + span { outline: 2px solid var(--ag-white); outline-offset: 2px; }
+.segment input:disabled + span { color: var(--ag-ink-dim); }
+.ligne { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+
+/* ---------- sélecteur de coin ---------- */
+.coin { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.ecranSchema {
+  position: relative; width: 144px; height: 81px; box-sizing: content-box; display: grid; grid-template: 1fr 1fr / 1fr 1fr;
+  background: var(--ag-ground); border: 2px solid var(--ag-cadre);
+}
+.coinBtn {
+  position: relative; min-width: 40px; min-height: 40px; margin: 0; padding: 0; background: none; border: 1px dashed var(--ag-line-strong);
+  color: var(--ag-ink); cursor: pointer; font: inherit;
+}
+.coinBtn:hover { border-color: var(--ag-ink-dim); }
+.coinBtn:focus-visible { outline: 2px solid var(--ag-white); outline-offset: -2px; z-index: 1; }
+/* la mini-map dessinée dans le coin choisi */
+.coinBtn::after { content: ""; position: absolute; width: 22px; height: 22px; border: 1px solid var(--ag-cadre); background: transparent; }
+.coinBtn[data-coin="hg"]::after { top: 3px; left: 3px; }
+.coinBtn[data-coin="hd"]::after { top: 3px; right: 3px; }
+.coinBtn[data-coin="bg"]::after { bottom: 3px; left: 3px; }
+.coinBtn[data-coin="bd"]::after { bottom: 3px; right: 3px; }
+.coinBtn[aria-checked="true"] { border-style: solid; border-color: var(--ag-amber); }
+.coinBtn[aria-checked="true"]::after { border-color: var(--ag-amber); background: color-mix(in srgb, var(--ag-amber) 40%, transparent); }
+.masquee {
+  min-height: 40px; box-sizing: border-box; padding: 0 12px; display: inline-flex; align-items: center; gap: 8px;
+  background: var(--ag-ground); border: 1px solid var(--ag-line-strong); color: var(--ag-ink); font: inherit; font-size: 12px; cursor: pointer;
+}
+.masquee:hover { border-color: var(--ag-ink-dim); }
+.masquee:focus-visible { outline: 2px solid var(--ag-white); outline-offset: 2px; }
+.masquee[aria-checked="true"] { border-color: var(--ag-amber); background: color-mix(in srgb, var(--ag-amber) 14%, var(--ag-ground)); color: var(--ag-amber); }
+.sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.valeurCoin { margin: 0; font-size: 12px; color: var(--ag-ink); }

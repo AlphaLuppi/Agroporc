@@ -3,19 +3,44 @@
  * three ; le stockage est injecté). Une touche est un `KeyboardEvent.code` (position physique :
  * `KeyW` est le Z d'un clavier AZERTY) ou un bouton de souris `Souris0` (gauche), `Souris1`
  * (milieu), `Souris2` (droit), `Souris3` / `Souris4` (boutons latéraux).
- * Chaque action a deux emplacements ; une touche ne sert qu'à une action à la fois.
+ * Chaque action a deux emplacements ; une touche ne sert qu'à une action à la fois, sauf entre le contexte « mort » (`ACTIONS_MORT` :
+ * passer le rejeu de la killcam) et le contexte « en vie » : on ne saute pas pendant qu'on regarde son rejeu, Espace sert aux deux.
  * Échap n'est jamais assignable : elle libère toujours la souris (menu pause).
  */
 
 export type Action =
   | "avant" | "arriere" | "gauche" | "droite"
-  | "saut" | "sprint" | "tir" | "visee" | "recharger"
-  | "arme1" | "arme2" | "arme3" | "arme4" | "scores";
+  | "saut" | "sprint" | "tir" | "visee" | "recharger" | "scores"
+  | "armePrincipale" | "armeSecondaire" | "couteau" | "armeSpeciale" | "armePrecedente" | "couteauRapide"
+  | "accroupi" | "interagir" | "siege"
+  | "carte" | "minimapCoin" | "passer";
 
-export const ACTIONS: readonly Action[] = [
-  "avant", "arriere", "gauche", "droite", "saut", "sprint", "tir", "visee", "recharger",
-  "arme1", "arme2", "arme3", "arme4", "scores",
+/**
+ * Les 10 actions de la v1 qui restent (`arme1..arme4` ont disparu). Leurs touches enregistrées sont relues AVANT celles des
+ * actions nouvelles : une sauvegarde v1 ne perd jamais une touche à cause d'une nouveauté (cf. `normaliser`).
+ */
+export const ACTIONS_V1: readonly Action[] = [
+  "avant", "arriere", "gauche", "droite", "saut", "sprint", "tir", "visee", "recharger", "scores",
 ];
+
+/** Actions apparues avec la v2 (équipement, accroupi, véhicules) puis le HUD (grande carte, coin de la mini-map). */
+export const ACTIONS_NOUVELLES: readonly Action[] = [
+  "armePrincipale", "armeSecondaire", "couteau", "armeSpeciale", "armePrecedente", "couteauRapide",
+  "accroupi", "interagir", "siege", "carte", "minimapCoin", "passer",
+];
+
+/**
+ * Actions du contexte « mort » (killcam). Elles ne se disputent une touche qu'entre elles : Espace est à la fois « Sauter » (en vie) et
+ * « Passer le rejeu » (mort), sans conflit puisque les deux ne sont jamais actives ensemble.
+ */
+export const ACTIONS_MORT: readonly Action[] = ["passer"];
+const contexteDe = (a: Action): "mort" | "vie" => (ACTIONS_MORT.includes(a) ? "mort" : "vie");
+
+/** Ordre de priorité du dédoublonnage : les actions v1, puis les nouvelles. */
+export const ACTIONS: readonly Action[] = [...ACTIONS_V1, ...ACTIONS_NOUVELLES];
+
+/** Actions qui peuvent rester sans touche sans que ce soit un problème (pas d'avertissement dans le menu pause). */
+export const ACTIONS_FACULTATIVES: readonly Action[] = ["minimapCoin", "passer"];
 
 export const LIBELLES_ACTIONS: Record<Action, string> = {
   avant: "Avancer",
@@ -24,15 +49,32 @@ export const LIBELLES_ACTIONS: Record<Action, string> = {
   droite: "Aller à droite",
   saut: "Sauter, double saut, saut de mur",
   sprint: "Sprinter",
+  accroupi: "S'accroupir (en sprint : glissade)",
   tir: "Tirer (maintenir : rafale)",
   visee: "Viser / lunette",
   recharger: "Recharger",
-  arme1: "Pistolet (prochaine apparition)",
-  arme2: "Mitraillette (prochaine apparition)",
-  arme3: "Fusil à pompe (prochaine apparition)",
-  arme4: "Sniper (prochaine apparition)",
+  armePrincipale: "Arme principale",
+  armeSecondaire: "Arme secondaire",
+  couteau: "Couteau",
+  armeSpeciale: "Arme spéciale (si portée)",
+  armePrecedente: "Dernière arme utilisée",
+  couteauRapide: "Couteau rapide (rappuyer : retour)",
+  interagir: "Monter / descendre d'une voiture",
+  siege: "Changer de place dans la voiture",
   scores: "Tableau des scores (maintenir)",
+  carte: "Grande carte (maintenir)",
+  minimapCoin: "Mini-carte : coin suivant",
+  passer: "Passer le rejeu (mort)",
 };
+
+/** Regroupement du menu pause : chaque action y figure une seule fois. */
+export const GROUPES_ACTIONS: { titre: string; actions: Action[] }[] = [
+  { titre: "Déplacement", actions: ["avant", "arriere", "gauche", "droite", "saut", "sprint", "accroupi"] },
+  { titre: "Combat", actions: ["tir", "visee", "recharger"] },
+  { titre: "Équipement", actions: ["armePrincipale", "armeSecondaire", "couteau", "armeSpeciale", "armePrecedente", "couteauRapide"] },
+  { titre: "Véhicule", actions: ["interagir", "siege"] },
+  { titre: "Divers", actions: ["scores", "carte", "minimapCoin", "passer"] },
+];
 
 /** Deux emplacements par action ; `null` = vide. */
 export type Emplacements = [string | null, string | null];
@@ -53,11 +95,20 @@ export function touchesParDefaut(): ConfigTouches {
     tir: ["Souris0", null],
     visee: ["Souris2", null],
     recharger: ["KeyR", null],
-    arme1: ["Digit1", "Numpad1"],
-    arme2: ["Digit2", "Numpad2"],
-    arme3: ["Digit3", "Numpad3"],
-    arme4: ["Digit4", "Numpad4"],
     scores: ["Tab", null],
+    armePrincipale: ["Digit1", "Numpad1"],
+    armeSecondaire: ["Digit2", "Numpad2"],
+    couteau: ["Digit3", "Numpad3"],
+    armeSpeciale: ["Digit4", "Numpad4"],
+    armePrecedente: ["KeyQ", null],
+    couteauRapide: ["KeyV", null],
+    // C, jamais Ctrl gauche : Ctrl+W ferme l'onglet et Ctrl+1..4 en change (v2 §2.8)
+    accroupi: ["KeyC", null],
+    interagir: ["KeyE", null],
+    siege: ["KeyF", null],
+    carte: ["KeyM", null],
+    minimapCoin: [null, null],
+    passer: ["Space", null],
   };
 }
 
@@ -67,20 +118,28 @@ export function codeValide(code: unknown): code is string {
 }
 
 /**
- * Relit une configuration enregistrée : les actions absentes ou abîmées reprennent leurs
- * touches par défaut, une touche en double ne reste que sur la première action qui l'a.
+ * Relit une configuration enregistrée : les actions absentes ou abîmées reprennent leurs touches par défaut, une touche en
+ * double ne reste que sur la première action qui l'a. Les actions v1 passent d'abord (elles gardent leurs touches, y compris
+ * une sauvegarde v1 qui aurait mis `recharger` sur `KeyE`) ; une action nouvelle absente de la sauvegarde ne prend que celles
+ * de ses touches par défaut encore libres, ramenées vers le premier emplacement (aucune : sans touche, cf. `actionsSansTouche`).
+ * Une touche peut servir à une action « en vie » et à une action « mort » (`ACTIONS_MORT`). Les clés inconnues (`arme1..arme4` d'une sauvegarde v1) sont ignorées.
  */
 export function normaliser(brut: unknown): ConfigTouches {
   const defaut = touchesParDefaut();
-  if (!brut || typeof brut !== "object") return defaut;
-  const src = brut as Record<string, unknown>;
-  const vus = new Set<string>();
+  const src: Record<string, unknown> = brut && typeof brut === "object" ? (brut as Record<string, unknown>) : {};
+  const vusParContexte = { vie: new Set<string>(), mort: new Set<string>() };
   const res = {} as ConfigTouches;
   for (const a of ACTIONS) {
+    const vus = vusParContexte[contexteDe(a)];
     const v = src[a];
-    const lu: Emplacements = Array.isArray(v) && v.length === 2 && v.every((c) => c === null || codeValide(c))
-      ? [v[0] as string | null, v[1] as string | null]
-      : defaut[a];
+    const valide = Array.isArray(v) && v.length === 2 && v.every((c) => c === null || codeValide(c));
+    if (!valide && ACTIONS_NOUVELLES.includes(a)) {
+      const libres = defaut[a].filter((c): c is string => c !== null && !vus.has(c));
+      res[a] = [libres[0] ?? null, libres[1] ?? null];
+      for (const c of libres) vus.add(c);
+      continue;
+    }
+    const lu: Emplacements = valide ? [v[0] as string | null, v[1] as string | null] : defaut[a];
     res[a] = lu.map((c) => {
       if (c === null || vus.has(c)) return null;
       vus.add(c);
@@ -88,6 +147,14 @@ export function normaliser(brut: unknown): ConfigTouches {
     }) as Emplacements;
   }
   return res;
+}
+
+/**
+ * Actions obligatoires restées sans aucune touche (conflit d'une sauvegarde plus ancienne, touche vidée) : affichées en
+ * avertissement dans le menu pause. Les actions facultatives (`minimapCoin`) n'en font pas partie.
+ */
+export function actionsSansTouche(cfg: ConfigTouches): Action[] {
+  return ACTIONS.filter((a) => !ACTIONS_FACULTATIVES.includes(a) && cfg[a].every((c) => c === null));
 }
 
 export interface Stockage { getItem(k: string): string | null; setItem(k: string, v: string): void; removeItem(k: string): void }
@@ -129,7 +196,8 @@ export function assigner(cfg: ConfigTouches, action: Action, slot: 0 | 1, code: 
   for (const a of ACTIONS) {
     res[a] = cfg[a].map((c, i) => {
       if (a === action && i === slot) return code;
-      if (code !== null && c === code) {
+      // un contexte ne dépossède pas l'autre (Espace : saut en vie, rejeu de la killcam à la mort)
+      if (code !== null && c === code && contexteDe(a) === contexteDe(action)) {
         if (a !== action) depossedee = a;
         return null;
       }

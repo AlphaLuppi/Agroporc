@@ -12,8 +12,8 @@ import {
 } from "./armes";
 import { construireMonde, type Monde } from "./collision";
 import { VITESSE_MAX_H_M_S } from "./match";
-import { etape, etatInitial, MOUV, type Entrees, type EtatMouvement } from "./mouvement";
-import { ARMES, type ArmeId } from "./protocole";
+import { etape, etatInitial, hauteurOeil, MOUV, vitesseGlisse, type Entrees, type EtatMouvement } from "./mouvement";
+import { ARMES, PLAFONDS, type ArmeFeuId } from "./protocole";
 
 const scene = JSON.parse(readFileSync("public/agroparc/scene.json", "utf8")) as SceneData;
 
@@ -29,7 +29,7 @@ function mondeDe(...batiments: Building[]): Monde {
  * Boucle de tir de jeu.ts : un tir dès que la cadence le permet, la chaleur ne retombe qu'après
  * `delaiRefroidissement`. Renvoie la chaleur après chaque tir.
  */
-function rafale(arme: ArmeId, intervalleS: number, tirs: number, dt = 1 / 60): number[] {
+function rafale(arme: ArmeFeuId, intervalleS: number, tirs: number, dt = 1 / 60): number[] {
   const a = STATS[arme];
   let t = 0, chaleur = 0, prochain = 0, dernier = -Infinity, fait = 0;
   const apres: number[] = [];
@@ -52,14 +52,15 @@ describe("chaleur des armes", () => {
     for (const id of ARMES) expect(delaiRefroidissement(id)).toBeGreaterThan(STATS[id].cadenceS);
   });
 
-  it("une rafale de mitraillette chauffe jusqu'au plafond, la dispersion monte bien au-dessus de la base", () => {
+  it("une rafale de mitraillette chauffe jusqu'au plafond (la chaleur est suivie mais n'écarte plus le tir)", () => {
     const chaleurs = rafale("mitraillette", STATS.mitraillette.cadenceS, 32);
     const d = STATS.mitraillette.dispersion;
     expect(chaleurs[0]).toBeCloseTo(d.parTir, 9);
     expect(chaleurs[9]).toBeGreaterThan(8 * d.parTir); // sans délai, elle retombait entre deux balles
     expect(chaleurs[31]).toBeCloseTo(d.max, 9);
+    // v2 §13.1 : plus aucune dispersion, la chaleur n'écarte plus le tir
     const ctx = { vitesseH: 0, auSol: true, vise: false };
-    expect(dispersionCourante("mitraillette", { ...ctx, chaleur: chaleurs[31] })).toBeGreaterThan(4 * d.base);
+    expect(dispersionCourante("mitraillette", { ...ctx, chaleur: chaleurs[31] })).toBe(0);
   });
 
   it("le pistolet cliqué à la cadence maximale se dérègle, espacé il reste précis", () => {
@@ -109,7 +110,7 @@ describe("wall-run dans un coin rentrant", () => {
   it("la course s'arrête au coin au lieu d'y rester collée jusqu'à la fin du chrono", () => {
     const FX = Math.cos(Math.PI / 6), FZ = Math.sin(Math.PI / 6);
     const lacet = Math.atan2(-FX, -FZ);
-    let e: EtatMouvement = { ...etatInitial([19, 0, -0.5]), v: [9 * FX, 0, 9 * FZ] };
+    let e: EtatMouvement = { ...etatInitial([19, 0, -0.5]), v: [MOUV.sprint * FX, 0, MOUV.sprint * FZ] };
     let pasCollesAuCoin = 0;
     let finie = false;
     for (let k = 0; k < 140; k++) {
@@ -120,7 +121,7 @@ describe("wall-run dans un coin rentrant", () => {
     expect(finie).toBe(true);
     expect(pasCollesAuCoin).toBeLessThanOrEqual(2);
     // elle a bien eu lieu avant le coin
-    let e2: EtatMouvement = { ...etatInitial([19, 0, -0.5]), v: [9 * FX, 0, 9 * FZ] };
+    let e2: EtatMouvement = { ...etatInitial([19, 0, -0.5]), v: [MOUV.sprint * FX, 0, MOUV.sprint * FZ] };
     let vuMur = false;
     for (let k = 0; k < 40; k++) {
       e2 = etape(e2, { avant: 1, droite: 0, saut: k === 0, sprint: true, lacet }, DT, m);
@@ -138,7 +139,7 @@ describe("wall-run dans un coin rentrant", () => {
     };
     const mc = mondeDe(pan);
     const lacet = Math.atan2(-Math.cos(Math.PI / 6), -Math.sin(Math.PI / 6));
-    let e: EtatMouvement = { ...etatInitial([-80, 0, -0.5]), v: [9 * Math.cos(Math.PI / 6), 0, 9 * Math.sin(Math.PI / 6)] };
+    let e: EtatMouvement = { ...etatInitial([-80, 0, -0.5]), v: [MOUV.sprint * Math.cos(Math.PI / 6), 0, MOUV.sprint * Math.sin(Math.PI / 6)] };
     let tMax = 0;
     for (let k = 0; k < 120; k++) {
       e = etape(e, { avant: 1, droite: 0, saut: k === 0, sprint: true, lacet }, DT, mc);
@@ -151,16 +152,19 @@ describe("wall-run dans un coin rentrant", () => {
 describe("plafond de vitesse horizontale", () => {
   it("reste sous la limite que le serveur accepte", () => {
     expect(MOUV.vitesseMaxH).toBeLessThan(VITESSE_MAX_H_M_S);
-    // au-dessus de tout ce que prévoient les règles (saut de mur : tangente 11 + normale 6,5)
+    // au-dessus de tout ce que prévoient les règles (saut de mur : tangente 13 + normale 6,5 = 14,5)
     expect(MOUV.vitesseMaxH).toBeGreaterThan(Math.hypot(MOUV.murVitesseMax, MOUV.murSautNormale));
+    // et le sprint du couteau (×1,3) tient dessous, avec la marge du plafond serveur (v2 §2.1)
+    expect(MOUV.sprint * 1.3).toBeLessThanOrEqual(MOUV.vitesseMaxH);
+    expect(MOUV.vitesseMaxH).toBeLessThan(PLAFONDS.vitesseHorizontaleMax);
   });
 
   it("une vitesse trop grande, en l'air ou au sol, est ramenée au plafond", () => {
     const m = mondeDe();
     const marche: Entrees = { avant: 1, droite: 0, saut: false, sprint: true, lacet: 0 };
-    const air = etape({ ...etatInitial([0, 5, 0]), auSol: false, v: [18, 0, 0] }, marche, 1 / 60, m);
+    const air = etape({ ...etatInitial([0, 5, 0]), auSol: false, v: [MOUV.vitesseMaxH + 5, 0, 0] }, marche, 1 / 60, m);
     expect(Math.hypot(air.v[0], air.v[2])).toBeLessThanOrEqual(MOUV.vitesseMaxH + 1e-9);
-    const sol = etape({ ...etatInitial([0, 0, 0]), v: [20, 0, 0] }, marche, 1 / 60, m);
+    const sol = etape({ ...etatInitial([0, 0, 0]), v: [MOUV.vitesseMaxH + 6, 0, 0] }, marche, 1 / 60, m);
     expect(Math.hypot(sol.v[0], sol.v[2])).toBeLessThanOrEqual(MOUV.vitesseMaxH + 1e-9);
   });
 
@@ -179,6 +183,97 @@ describe("plafond de vitesse horizontale", () => {
         max = Math.max(max, Math.hypot(e.v[0], e.v[2]));
       }
     }
+    expect(max).toBeLessThanOrEqual(MOUV.vitesseMaxH + 1e-9);
+  });
+});
+
+describe("glissade (v2 §13.3) : ressenti", () => {
+  const DT = 1 / 60;
+  const m = mondeDe();
+  const sprint: Entrees = { avant: 1, droite: 0, saut: false, sprint: true, lacet: 0 };
+  const VA = MOUV.marche * MOUV.accroupiMult;
+  const courir = () => {
+    let e = etatInitial([0, 0, 0]);
+    for (let k = 0; k < 30; k++) e = etape(e, sprint, DT, m);
+    return e;
+  };
+
+  it("sprint puis accroupi : une vraie glissade de 0,75 s, sans à-coup de vitesse ni de position, caméra basse", () => {
+    let e = courir();
+    const z0 = e.p[2];
+    let prev = Math.hypot(e.v[0], e.v[2]);
+    let pasGlisses = 0;
+    let derniereZ = z0;
+    const marche = (MOUV.sprint - VA) * (2 / MOUV.glisseDureeS) * DT; // pente maximale de la formule (t = 0), par image
+    for (let k = 0; k < 90; k++) {
+      e = etape(e, { ...sprint, accroupi: true }, DT, m);
+      if (!e.glisse) break;
+      pasGlisses++;
+      const v = Math.hypot(e.v[0], e.v[2]);
+      // décroissance régulière : jamais d'à-coup supérieur à la pente de la formule
+      expect(prev - v).toBeGreaterThan(0);
+      expect(prev - v).toBeLessThanOrEqual(marche + 1e-6);
+      prev = v;
+      // la position avance de v·dt à chaque image
+      expect(derniereZ - e.p[2]).toBeCloseTo(v * DT, 2);
+      derniereZ = e.p[2];
+      // caméra basse et hitbox accroupie
+      expect(e.accroupi).toBe(true);
+      expect(hauteurOeil(e.accroupi)).toBe(1.3);
+    }
+    expect(pasGlisses * DT).toBeCloseTo(MOUV.glisseDureeS, 1);
+    // elle emmène loin : plus de 5 m, soit plus de 2 fois la distance d'un arrêt immédiat de l'ancienne glissade (friction seule)
+    expect(z0 - e.p[2]).toBeGreaterThan(5);
+  });
+
+  it("la vitesse suit vitesseGlisse(v0, t) exactement", () => {
+    let e = etape(courir(), { ...sprint, accroupi: true }, DT, m);
+    for (let k = 0; k < 30; k++) {
+      expect(Math.hypot(e.v[0], e.v[2])).toBeCloseTo(vitesseGlisse(e.glisse!.v0, e.glisse!.t), 9);
+      e = etape(e, { ...sprint, accroupi: true }, DT, m);
+    }
+  });
+
+  it("saut glissé : on franchit plus de distance en l'air qu'avec un saut depuis la marche accroupie", () => {
+    const distanceAerienne = (e0: EtatMouvement, entrees: Entrees): number => {
+      let e = etape(e0, { ...entrees, saut: true }, DT, m);
+      const z0 = e.p[2];
+      for (let k = 0; k < 120 && !e.auSol; k++) e = etape(e, { ...entrees, saut: false }, DT, m);
+      return z0 - e.p[2];
+    };
+    let glisse = etape(courir(), { ...sprint, accroupi: true }, DT, m);
+    for (let k = 0; k < 9; k++) glisse = etape(glisse, { ...sprint, accroupi: true }, DT, m);
+    expect(glisse.glisse).not.toBeNull();
+    let accroupi = etatInitial([0, 0, 0]);
+    for (let k = 0; k < 40; k++) accroupi = etape(accroupi, { ...sprint, sprint: false, accroupi: true }, DT, m);
+    expect(accroupi.glisse).toBeNull();
+    const dGlisse = distanceAerienne(glisse, { ...sprint, accroupi: true });
+    const dAccroupi = distanceAerienne(accroupi, { ...sprint, sprint: false, accroupi: true });
+    expect(dGlisse).toBeGreaterThan(dAccroupi * 1.5);
+    // et la glissade est bien terminée par le saut
+    expect(etape(glisse, { ...sprint, accroupi: true, saut: true }, DT, m).glisse).toBeNull();
+  });
+
+  it("vrai scene.json : glisser dans tous les sens sans traverser de bâtiment ni dépasser le plafond de vitesse", () => {
+    const monde = construireMonde(scene);
+    const alea = aleaGraine(21);
+    let max = 0, glissades = 0;
+    for (let run = 0; run < 40; run++) {
+      const b = scene.buildings[Math.floor(alea() * scene.buildings.length)];
+      const an = b.r[Math.floor(alea() * b.r.length)];
+      let e = etatInitial([an[0] + 5, 0, an[1] + 5]);
+      let lacet = alea() * 6.28;
+      for (let k = 0; k < 60 * 10; k++) {
+        lacet += (alea() - 0.5) * 0.1;
+        // accroupi pressé par intermittence : des glissades quand la vitesse suffit
+        const accroupi = Math.floor(k / 20) % 4 === 1;
+        e = etape(e, { avant: 1, droite: 0, saut: alea() < 0.02, sprint: true, accroupi, lacet }, DT, monde);
+        if (e.glisse && e.glisse.t <= DT + 1e-6) glissades++;
+        max = Math.max(max, Math.hypot(e.v[0], e.v[2]));
+        expect(Number.isFinite(e.p[0] + e.p[1] + e.p[2])).toBe(true);
+      }
+    }
+    expect(glissades).toBeGreaterThan(20);
     expect(max).toBeLessThanOrEqual(MOUV.vitesseMaxH + 1e-9);
   });
 });

@@ -2,8 +2,14 @@
 
 import { useId, type CSSProperties } from "react";
 import type { EtatConnexion } from "@/lib/fps/reseau";
-import { ARMES, JEU, type ArmeId, type InfoMatch, type JoueurPublic } from "@/lib/fps/protocole";
-import { INFOS_ARMES, LIBELLES_BARRES } from "./armesInfo";
+import { JEU, type ArmePrincipaleId, type ArmeSecondaireId, type InfoMatch, type JoueurPublic } from "@/lib/fps/protocole";
+import type { ConfigTouches } from "@/lib/fps/touches";
+import type { ReglagesHud } from "@/lib/fps/reglages-hud";
+import ChoixEquipement from "./ChoixEquipement";
+import ReglageInterface from "./hud/ReglageInterface";
+import { useDisposition } from "./ReglageTouches";
+import type { EquipementChoisi } from "./contrats";
+import { REGLES_TIR, TEXTE_ARMES_SPECIALES, TEXTE_COUTEAU, TITRE_COMMENT_CA_TIRE, commandesLobby } from "./lobby-modele";
 import styles from "./Arene.module.css";
 
 export const PSEUDO_MAX = 16;
@@ -15,8 +21,14 @@ interface Props {
   match: InfoMatch | null;
   pseudo: string;
   surPseudo(v: string): void;
-  arme: ArmeId;
-  surArme(a: ArmeId): void;
+  /** équipement de la prochaine apparition (principale + secondaire ; le couteau est toujours là, les spéciales viennent d'Elsa) */
+  equipement: EquipementChoisi;
+  surEquipement(principale: ArmePrincipaleId, secondaire: ArmeSecondaireId): void;
+  /** touches du joueur : l'aide des commandes en est construite (jamais « Z Q S D » écrit en dur) */
+  touches: ConfigTouches;
+  /** réglages de la mini-map et de l'interface (section « Interface », repliée) */
+  reglagesHud: ReglagesHud;
+  surReglagesHud(r: ReglagesHud): void;
   surEntrer(): void;
   surFermer(): void;
   /** message d'erreur du serveur (arène pleine, version…) */
@@ -33,9 +45,12 @@ function statut(etat: EtatConnexion, monId: string | null): { texte: string; cla
   return { texte: "Serveur injoignable, nouvelle tentative…", classe: styles.ko };
 }
 
-/** Panneau « Arène » de la vue Palantir : présence, pseudo, arme, bouton d'entrée. */
-export default function Arene({ etat, monId, joueurs, match, pseudo, surPseudo, arme, surArme, surEntrer, surFermer, erreur, tactile, pseudoParDefaut = false }: Props) {
+/** Panneau « Arène » de la vue Palantir : présence, pseudo, équipement (principale + secondaire), règles de tir, réglages d'interface, bouton d'entrée. */
+export default function Arene({
+  etat, monId, joueurs, match, pseudo, surPseudo, equipement, surEquipement, touches, reglagesHud, surReglagesHud, surEntrer, surFermer, erreur, tactile, pseudoParDefaut = false,
+}: Props) {
   const idPseudo = useId();
+  const disposition = useDisposition();
   const s = statut(etat, monId);
   const connecte = etat === "ouvert" && !!monId;
   const enJeu = joueurs.filter((j) => j.enJeu).length;
@@ -43,7 +58,9 @@ export default function Arene({ etat, monId, joueurs, match, pseudo, surPseudo, 
   // même règle que le serveur (nettoyerPseudo de lib/fps/match.ts) : 2 lettres ou chiffres au moins
   const nomTropCourt = Array.from(pseudo.replace(/[^\p{L}\p{N}]/gu, "")).length < 2;
   const monPseudo = joueurs.find((j) => j.id === monId)?.pseudo ?? null;
-  const peutEntrer = connecte && !tactile && !nomTropCourt && !(erreur && joueurs.length >= JEU.joueursMax && !joueurs.some((j) => j.id === monId));
+  // l'arène est pleine quand 16 AGENTS sont en jeu (les spectateurs de la vue 3D n'occupent aucune place)
+  const arenePleine = enJeu >= JEU.joueursMax && !joueurs.some((j) => j.id === monId && j.enJeu);
+  const peutEntrer = connecte && !tactile && !nomTropCourt && !arenePleine;
 
   return (
     <aside className={styles.arene} aria-label="Arène">
@@ -103,40 +120,38 @@ export default function Arene({ etat, monId, joueurs, match, pseudo, surPseudo, 
         ))}
       </ul>
 
-      <fieldset className={styles.armes}>
-        <legend>Arme</legend>
-        <div className={styles.grille}>
-        {ARMES.map((id) => {
-          const info = INFOS_ARMES[id];
-          return (
-            <label key={id} className={`${styles.carte} ${arme === id ? styles.carteChoisie : ""}`}>
-              <input type="radio" name="arme-arene" value={id} checked={arme === id} onChange={() => surArme(id)} />
-              <span className={styles.carteNom}>{info.nom}</span>
-              <span className={styles.carteDesc}>{info.description}</span>
-              <span className={styles.barres}>
-                {LIBELLES_BARRES.map((b) => (
-                  <span key={b.cle} className={styles.barre} role="img" aria-label={`${b.nom} ${Math.round(info.barres[b.cle] * 10)} sur 10`}>
-                    <span>{b.nom}</span>
-                    <i><i style={{ width: `${Math.max(4, info.barres[b.cle] * 100)}%` }} /></i>
-                  </span>
-                ))}
-              </span>
-            </label>
-          );
-        })}
-        </div>
-      </fieldset>
+      <ChoixEquipement principale={equipement.principale} secondaire={equipement.secondaire} surChanger={surEquipement} variante="lobby" idGroupe="lobby" />
+      <p className={styles.note}>{TEXTE_COUTEAU}</p>
+      <p className={styles.note}>{TEXTE_ARMES_SPECIALES}</p>
+
+      <section className={styles.tir} aria-labelledby={`${idPseudo}-tir`}>
+        <h3 id={`${idPseudo}-tir`}>{TITRE_COMMENT_CA_TIRE}</h3>
+        <ul>
+          {REGLES_TIR.map((r) => <li key={r}>{r}</li>)}
+        </ul>
+      </section>
+
+      <ReglageInterface reglages={reglagesHud} surReglages={surReglagesHud} replie />
 
       {tactile ? (
         <p className={styles.tactile}>L&apos;arène se joue au clavier et à la souris.</p>
       ) : (
         <>
-          <button type="button" className={styles.entrer} disabled={!peutEntrer} onClick={surEntrer}>
-            Entrer dans l&apos;arène
-          </button>
-          <p className={styles.astuce}>
-            <b>Z Q S D</b> ou <b>W A S D</b> pour bouger, <b>Espace</b> pour sauter : contre un mur, vous courez dessus et rebondissez de mur en mur.
-          </p>
+          <dl className={styles.commandes} aria-label="Commandes">
+            {commandesLobby(touches, disposition).map((c) => (
+              <div key={c.libelle}>
+                <dt><kbd>{c.touches}</kbd></dt>
+                <dd>{c.libelle}</dd>
+              </div>
+            ))}
+          </dl>
+          <p className={styles.astuce}>Toutes les touches se changent en partie : Échap puis « Touches ».</p>
+          {/* collé en bas du panneau : l'entrée reste atteignable malgré la longueur du lobby */}
+          <div className={styles.pied}>
+            <button type="button" className={styles.entrer} disabled={!peutEntrer} onClick={surEntrer}>
+              Entrer dans l&apos;arène
+            </button>
+          </div>
         </>
       )}
     </aside>

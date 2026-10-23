@@ -1,9 +1,9 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { Building, SceneData } from "../agroparc3d/types";
-import { construireMonde } from "./collision";
-import { SILHOUETTE, type Vec3 } from "./protocole";
-import { tracer, toucheVraisemblable, type Cible } from "./tir";
+import { construireMonde, lancerRayon } from "./collision";
+import { SILHOUETTE, SILHOUETTE_ACCROUPIE, type Vec3 } from "./protocole";
+import { pointsVisibilite, tracer, toucheVraisemblable, type Cible } from "./tir";
 
 const scene = JSON.parse(readFileSync("public/agroparc/scene.json", "utf8")) as SceneData;
 
@@ -17,7 +17,8 @@ const libre = monde([rect(0, 100, 5, 110, 10)]);
 const avecMur = monde([rect(10, -5, 14, 5, 20), rect(0, 100, 5, 110, 10)]);
 
 const E = SILHOUETTE;
-const cible = (id: string, x: number, z = 0, y = 0, vivant = true): Cible => ({ id, p: [x, y, z], vivant });
+const cible = (id: string, x: number, z = 0, y = 0, vivant = true, accroupi = false): Cible => ({ id, p: [x, y, z], vivant, accroupi });
+const accroupie = (id: string, x: number, z = 0): Cible => cible(id, x, z, 0, true, true);
 const X: Vec3 = [1, 0, 0];
 
 describe("tracer : joueurs", () => {
@@ -153,9 +154,109 @@ describe("toucheVraisemblable", () => {
   it("accepte ce que `tracer` touche, refuse ce qu'il manque loin", () => {
     for (const dz of [0, 0.2, -0.3]) {
       const c = cible("b", 25, dz);
-      expect(tracer(libre, o, X, 100, [c], "a").cible === "b").toBe(Math.abs(dz) < 0.38);
+      expect(tracer(libre, o, X, 100, [c], "a").cible === "b").toBe(Math.abs(dz) < E.corps.rayon);
       expect(toucheVraisemblable(libre, o, X, 100, c, 0)).toBe(true);
     }
+  });
+});
+
+describe("tracer : cible accroupie", () => {
+  const A = SILHOUETTE_ACCROUPIE;
+  it("un tir à hauteur de tête debout passe au-dessus d'un accroupi", () => {
+    const o: Vec3 = [0, E.tete.y, 0];
+    expect(tracer(libre, o, X, 100, [cible("b", 20)], "a").zone).toBe("tete");
+    expect(tracer(libre, o, X, 100, [accroupie("b", 20)], "a").cible).toBeNull();
+  });
+
+  it("la tête accroupie est plus bas : touchée à A.tete.y, jamais à celle de l'accroupi debout", () => {
+    const i = tracer(libre, [0, A.tete.y, 0], X, 100, [accroupie("b", 20)], "a");
+    expect(i.cible).toBe("b");
+    expect(i.zone).toBe("tete");
+    expect(i.distance).toBeCloseTo(20 - A.tete.rayon, 6);
+  });
+
+  it("le corps accroupi est touché au torse, pas au-dessus de son sommet", () => {
+    expect(tracer(libre, [0, 0.7, 0], X, 100, [accroupie("b", 20)], "a").zone).toBe("corps");
+    // 1,65 m : sous le sommet d'un debout (corps jusqu'à 1,73), au-dessus de celui d'un accroupi (tête jusqu'à 1,6)
+    expect(tracer(libre, [0, 1.65, 0], X, 100, [accroupie("b", 20)], "a").cible).toBeNull();
+    expect(tracer(libre, [0, 1.65, 0], X, 100, [cible("b", 20)], "a").cible).toBe("b");
+  });
+
+  it("la boule englobante suit la silhouette : un accroupi proche est touché à son sommet", () => {
+    const i = tracer(libre, [0, A.tete.y + A.tete.rayon - 0.02, 0], X, 100, [accroupie("b", 3)], "a");
+    expect(i.zone).toBe("tete");
+  });
+});
+
+describe("toucheVraisemblable : sommet de la tête", () => {
+  // `tracer` touche le sommet de la tête (2,28 m debout, 1,58 m accroupi) : la validation serveur doit l'accepter à toute distance.
+  const sommet = (acc: boolean) => (acc ? A_ACCROUPIE : E).tete.y + (acc ? A_ACCROUPIE : E).tete.rayon - 0.02;
+  const A_ACCROUPIE = SILHOUETTE_ACCROUPIE;
+  for (const acc of [false, true]) {
+    for (const dist of [10, 30, 100, 300]) {
+      it(`${acc ? "accroupi" : "debout"} à ${dist} m, cible immobile`, () => {
+        const o: Vec3 = [0, sommet(acc), 0];
+        const c = cible("b", dist, 0, 0, true, acc);
+        expect(tracer(libre, o, X, dist + 50, [c], "a").zone).toBe("tete");
+        expect(toucheVraisemblable(libre, o, X, dist + 50, c, 0)).toBe(true);
+      });
+    }
+  }
+
+  it("une cible à 1,3 m du rayon reste refusée, debout comme accroupie", () => {
+    const o: Vec3 = [0, 0.9, 0];
+    expect(toucheVraisemblable(libre, o, X, 100, cible("b", 20, 1.3), 0)).toBe(false);
+    expect(toucheVraisemblable(libre, o, X, 100, accroupie("b", 20, 1.3), 0)).toBe(false);
+  });
+
+  it("l'axe accroupi est plus court : un tir à 2,1 m de haut passe trop loin d'un accroupi, pas d'un debout", () => {
+    const o: Vec3 = [0, 3.6, 0];
+    expect(toucheVraisemblable(libre, o, X, 100, cible("b", 20), 0)).toBe(false);
+    expect(toucheVraisemblable(libre, [0, 2.9, 0], X, 100, cible("b", 20), 0)).toBe(true);
+    expect(toucheVraisemblable(libre, [0, 2.9, 0], X, 100, accroupie("b", 20), 0)).toBe(false);
+  });
+});
+
+describe("toucheVraisemblable : cible collée à un mur (§13.2.3)", () => {
+  // Mur x ∈ [10 ; 14], z ∈ [-5 ; 5] ; cible dont l'axe est à 0,45 m de sa face ouest, au pied de l'angle (10 ; 5).
+  // Le tireur est à l'est, au-delà de l'angle : son rayon rase l'angle et touche la capsule, mais le rayon prolongé jusqu'au pied de l'axe entre dans le mur.
+  const mur = monde([rect(10, -5, 14, 5, 20), rect(0, 100, 5, 110, 10)]);
+  const o: Vec3 = [20, 1.5, 11];
+  const d: Vec3 = [-0.857088636473505, 0, -0.5151689715306891];
+  const collee = cible("b", 9.55, 5);
+
+  it("`tracer` touche la cible", () => {
+    expect(tracer(mur, o, d, 100, [collee], "a").cible).toBe("b");
+  });
+
+  it("la validation serveur l'accepte (ligne de vue jusqu'à l'entrée dans la capsule)", () => {
+    expect(toucheVraisemblable(mur, o, d, 100, collee, 0)).toBe(true);
+  });
+
+  it("le rayon qui entre dans la capsule est libre jusqu'à `proj − rayon`, il ne l'est pas jusqu'à l'axe", () => {
+    const proj = (9.55 - o[0]) * d[0] + (5 - o[2]) * d[2];
+    expect(lancerRayon(mur, o, d, proj)).not.toBe(Infinity);
+    expect(lancerRayon(mur, o, d, proj - E.corps.rayon)).toBe(Infinity);
+  });
+
+  it("derrière le mur, la cible reste refusée", () => {
+    expect(toucheVraisemblable(mur, [0, 1.5, 0], X, 100, cible("b", 18), 0)).toBe(false);
+    expect(toucheVraisemblable(mur, [0, 1.5, 0], X, 100, cible("b", 14.3), 0)).toBe(false);
+    // tireur collé à un mur épais avec la cible derrière : l'entrée dans la capsule est encore derrière le mur
+    expect(toucheVraisemblable(mur, [9.8, 1.5, 0], X, 100, cible("b", 14.45), 0)).toBe(false);
+  });
+
+  it("pointsVisibilite : des points côté tireur, à l'aplomb l'axe lui-même", () => {
+    const [tete, centre, pieds] = pointsVisibilite([20, 1.5, 5], collee);
+    expect(tete[0]).toBeCloseTo(9.55 + E.tete.rayon, 9);
+    expect(centre[0]).toBeCloseTo(9.55 + E.corps.rayon, 9);
+    expect(tete[1]).toBe(E.tete.y);
+    expect(pieds[1]).toBeCloseTo(E.corps.y0 + 0.1, 9);
+    expect(pointsVisibilite([9.55, 1.5, 5], collee)[1]).toEqual([9.55, E.centreY, 5]);
+    // œil plus proche que le rayon : on ne dépasse pas l'œil
+    expect(pointsVisibilite([9.7, 1.5, 5], collee)[1][0]).toBeCloseTo(9.7, 9);
+    // accroupie : silhouette basse
+    expect(pointsVisibilite([20, 1.5, 5], accroupie("b", 9.55, 5))[0][1]).toBe(SILHOUETTE_ACCROUPIE.tete.y);
   });
 });
 

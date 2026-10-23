@@ -1,23 +1,24 @@
 /**
  * Hitscan de l'arène FPS (PUR) : premier objet touché par un rayon (joueur ou bâtiment) et
- * validation serveur d'une touche déclarée par le client. Hitbox = SILHOUETTE de protocole.ts :
- * tête = sphère, corps = capsule verticale (pieds en p).
- * Spec : docs/superpowers/specs/2026-10-22-agroparc-fps-design.md
+ * validation serveur d'une touche déclarée par le client. Hitbox = silhouette de protocole.ts (`silhouetteDe(cible.accroupi)`) :
+ * tête = sphère, corps = capsule verticale (pieds en p), agrandies par `ECHELLE_AVATAR`, plus basses quand la cible est accroupie.
+ * Spec : docs/superpowers/specs/2026-10-22-agroparc-fps-design.md, 2026-10-22-arene-v2-design.md (§2.1, §6, §13.2)
  */
 import { lancerRayon, visible, type Monde } from "./collision";
-import { SILHOUETTE, type Vec3, type Zone } from "./protocole";
+import { silhouetteDe, type Vec3, type Zone } from "./protocole";
 
-export interface Cible { id: string; p: Vec3; vivant: boolean }
+/** Cible d'un tir : position des pieds, vivante ou non, accroupie (silhouette basse, `SILHOUETTE_ACCROUPIE`) ou debout (défaut). */
+export interface Cible { id: string; p: Vec3; vivant: boolean; accroupi?: boolean }
 export interface Impact { cible: string | null; zone: Zone | null; distance: number; point: Vec3 }
 
-/** Tolérance de `toucheVraisemblable` : écart maximal (m) entre le centre de la cible et le rayon, vitesse nulle. */
+/** Tolérance de `toucheVraisemblable` : écart maximal (m) entre l'AXE de la silhouette de la cible et le rayon, vitesse nulle. */
 export const TOLERANCE_RAYON_M = 1.2;
 /** Latence couverte (s) par la marge proportionnelle à la vitesse de la cible. */
 export const LATENCE_TOLEREE_S = 0.2;
 /** Marge (m) sur la portée à la validation. */
 export const MARGE_PORTEE_M = 2;
-/** Hauteur du centre de la silhouette (m au-dessus des pieds). */
-const CENTRE_Y = SILHOUETTE.hauteur / 2;
+/** Nombre de points de l'axe de la silhouette (de `corps.y0` à `tete.y`) dont `toucheVraisemblable` mesure l'écart au rayon. */
+const POINTS_AXE = 5;
 
 /** Plus petite distance t ≥ 0 d'entrée du rayon dans la sphère (c, r), 0 si l'origine est dedans, Infinity sinon. */
 function rayonSphere(o: Vec3, d: Vec3, cx: number, cy: number, cz: number, r: number): number {
@@ -63,14 +64,13 @@ export function tracer(monde: Monde, o: Vec3, d: Vec3, portee: number, cibles: C
   let tMeilleur = Infinity;
   let touche: Cible | null = null;
   let zone: Zone | null = null;
-  const { tete, corps } = SILHOUETTE;
   for (const c of cibles) {
     if (c.id === tireur || !c.vivant) continue;
+    const { tete, corps, centreY, rayonEnglobant: rb } = silhouetteDe(c.accroupi);
     const [px, py, pz] = c.p;
-    // rejet rapide : le rayon passe-t-il à portée de la boule englobante ?
-    const wx = px - o[0], wy = py + CENTRE_Y - o[1], wz = pz - o[2];
+    // rejet rapide : le rayon passe-t-il à portée de la boule englobante de CETTE silhouette ?
+    const wx = px - o[0], wy = py + centreY - o[1], wz = pz - o[2];
     const proj = wx * d[0] + wy * d[1] + wz * d[2];
-    const rb = SILHOUETTE.hauteur / 2 + SILHOUETTE.rayon;
     if (proj < -rb || proj > limite + rb) continue;
     if (wx * wx + wy * wy + wz * wz - proj * proj > rb * rb) continue;
     const tTete = rayonSphere(o, d, px, py + tete.y, pz, tete.rayon);
@@ -89,27 +89,61 @@ export function tracer(monde: Monde, o: Vec3, d: Vec3, portee: number, cibles: C
 }
 
 /**
+ * Points de visibilité de la cible vus de l'œil `o` : tête, centre, pieds (+ 0,1 m) de SA silhouette, ramenés vers l'œil de
+ * `rayon` (rayon de la tête pour la tête, du corps pour les deux autres), c'est-à-dire sur la surface de la hitbox côté tireur et
+ * non sur son axe : une cible collée à un angle de mur est touchable par un rayon qui rase l'angle alors que son axe, lui, est
+ * derrière (§13.2.3). Partagé avec `melee.ts`.
+ */
+export function pointsVisibilite(o: Vec3, cible: Cible): Vec3[] {
+  const { tete, corps, centreY } = silhouetteDe(cible.accroupi);
+  const [px, py, pz] = cible.p;
+  const hx = o[0] - px, hz = o[2] - pz;
+  const l = Math.hypot(hx, hz);
+  const vers = (y: number, r: number): Vec3 => {
+    // œil à l'aplomb de la cible : aucun côté à privilégier, l'axe lui-même
+    if (l < 1e-6) return [px, py + y, pz];
+    const k = Math.min(r, l) / l;
+    return [px + hx * k, py + y, pz + hz * k];
+  };
+  return [vers(tete.y, tete.rayon), vers(centreY, corps.rayon), vers(corps.y0 + 0.1, corps.rayon)];
+}
+
+/**
  * Validation serveur d'une touche déclarée (tolérance de latence) : cible vivante, distance ≤
- * portée + 2, centre de la cible à ≤ 1,2 m du rayon (+ marge proportionnelle à la vitesse de la
- * cible), ligne de vue non bloquée (le rayon jusqu'au point le plus proche de la cible est libre ET
- * la tête, le centre ou les pieds de la cible sont visibles de l'œil du tireur).
+ * portée + 2, AXE de la silhouette de la cible (5 points de `corps.y0` à `tete.y`, debout ou accroupie) à ≤ 1,2 m du rayon (+ marge
+ * proportionnelle à la vitesse de la cible), ligne de vue non bloquée (le rayon est libre jusqu'au POINT D'ENTRÉE dans la capsule,
+ * `proj − corps.rayon`, et non jusqu'au centre, ET la tête, le centre ou les pieds de la cible sont visibles de l'œil du tireur).
+ *
+ * L'écart se mesure à l'axe et non au centre : le centre est à 1,05 m, une touche au sommet de la tête (2,3 m) était
+ * acceptée par `tracer` mais refusée ici. Élargir la tolérance à 1,5 m aurait cassé `match.reseau.test.ts` (une cible à
+ * 1,3 m du rayon doit être refusée) ; mesurer à l'axe laisse la tolérance horizontale à 1,2 m.
+ *
+ * Ligne de vue limitée à l'entrée dans la capsule (§13.2.3) : une cible collée à un mur a son axe dans l'ombre du mur pour un rayon
+ * rasant ; le rayon qui la touche pourtant (`tracer`) était rejeté parce qu'il devait atteindre l'axe.
  */
 export function toucheVraisemblable(monde: Monde, o: Vec3, d: Vec3, portee: number, cible: Cible, vitesseCible: number): boolean {
   if (!cible.vivant) return false;
   const [px, py, pz] = cible.p;
-  const wx = px - o[0], wy = py + CENTRE_Y - o[1], wz = pz - o[2];
+  const { tete, corps, centreY } = silhouetteDe(cible.accroupi);
+  const wx = px - o[0], wy = py + centreY - o[1], wz = pz - o[2];
   const dist = Math.hypot(wx, wy, wz);
   if (dist > portee + MARGE_PORTEE_M) return false;
   const tolerance = TOLERANCE_RAYON_M + Math.max(0, vitesseCible) * LATENCE_TOLEREE_S;
+  // écart minimal entre le rayon et l'axe de la silhouette
+  let ecart = Infinity;
+  for (let k = 0; k < POINTS_AXE; k++) {
+    const y = corps.y0 + ((tete.y - corps.y0) * k) / (POINTS_AXE - 1);
+    const ax = px - o[0], ay = py + y - o[1], az = pz - o[2];
+    const t = ax * d[0] + ay * d[1] + az * d[2];
+    const e = t < 0
+      ? Math.hypot(ax, ay, az)
+      : Math.hypot(ax - d[0] * t, ay - d[1] * t, az - d[2] * t);
+    if (e < ecart) ecart = e;
+  }
   const proj = wx * d[0] + wy * d[1] + wz * d[2];
-  if (proj < 0) return dist <= tolerance;
-  const ex = wx - d[0] * proj, ey = wy - d[1] * proj, ez = wz - d[2] * proj;
-  if (Math.hypot(ex, ey, ez) > tolerance) return false;
-  // le rayon doit être libre jusqu'à la cible
-  if (lancerRayon(monde, o, d, Math.min(proj, portee + MARGE_PORTEE_M)) !== Infinity) return false;
-  return (
-    visible(monde, o, [px, py + CENTRE_Y, pz]) ||
-    visible(monde, o, [px, py + SILHOUETTE.tete.y, pz]) ||
-    visible(monde, o, [px, py + SILHOUETTE.corps.y0 + 0.1, pz])
-  );
+  if (proj < 0) return ecart <= tolerance;
+  if (ecart > tolerance) return false;
+  // le rayon doit être libre jusqu'à l'entrée dans la capsule (un mur collé à la cible ne compte pas)
+  if (lancerRayon(monde, o, d, Math.min(proj - corps.rayon, portee + MARGE_PORTEE_M)) !== Infinity) return false;
+  return pointsVisibilite(o, cible).some((pt) => visible(monde, o, pt));
 }

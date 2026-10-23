@@ -1,0 +1,192 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ARMES } from "./protocole";
+import { STATS } from "./armes";
+import { creerSons } from "./sons";
+
+/** Faux contexte audio : compte les sources démarrées / arrêtées et les nœuds créés, sans produire de son. */
+class FauxParam {
+  value = 0;
+  setValueAtTime() { return this; }
+  linearRampToValueAtTime() { return this; }
+  exponentialRampToValueAtTime() { return this; }
+  cancelScheduledValues() { return this; }
+  setTargetAtTime() { return this; }
+}
+const journal = { demarres: 0, arretes: 0, noeuds: 0, fermes: 0 };
+class FauxNoeud {
+  type = "";
+  buffer: unknown = null;
+  loop = false;
+  frequency = new FauxParam();
+  gain = new FauxParam();
+  Q = new FauxParam();
+  pan = new FauxParam();
+  threshold = new FauxParam();
+  ratio = new FauxParam();
+  constructor() { journal.noeuds++; }
+  connect() { return this; }
+  start() { journal.demarres++; }
+  stop() { journal.arretes++; }
+}
+class FauxAudioContext {
+  currentTime = 0;
+  state = "running";
+  sampleRate = 48000;
+  destination = new FauxNoeud();
+  createGain() { return new FauxNoeud(); }
+  createDynamicsCompressor() { return new FauxNoeud(); }
+  createBiquadFilter() { return new FauxNoeud(); }
+  createOscillator() { return new FauxNoeud(); }
+  createBufferSource() { return new FauxNoeud(); }
+  createStereoPanner() { return new FauxNoeud(); }
+  createBuffer(_c: number, n: number) { return { getChannelData: () => new Float32Array(n) }; }
+  resume() { return Promise.resolve(); }
+  close() { journal.fermes++; return Promise.resolve(); }
+}
+
+beforeEach(() => {
+  journal.demarres = journal.arretes = journal.noeuds = journal.fermes = 0;
+  vi.stubGlobal("window", { AudioContext: FauxAudioContext, addEventListener() {}, removeEventListener() {} });
+  vi.stubGlobal("navigator", { userActivation: { hasBeenActive: true } });
+});
+afterEach(() => { vi.unstubAllGlobals(); });
+
+describe("sons : profils de tir et de rechargement", () => {
+  it("chaque arme à feu produit du son au tir, local comme distant", () => {
+    const sons = creerSons();
+    for (const id of ARMES) {
+      const avant = journal.demarres;
+      sons.tir(id);
+      expect(journal.demarres, `${id} (local)`).toBeGreaterThan(avant);
+      const avantDistant = journal.demarres;
+      sons.tir(id, { distance: 80, pan: -0.4 });
+      expect(journal.demarres, `${id} (distant)`).toBeGreaterThan(avantDistant);
+    }
+    sons.dispose();
+  });
+
+  it("le rechargement sonne pour les armes qui se rechargent, jamais pour les spéciales (sansRecharge)", () => {
+    const sons = creerSons();
+    for (const id of ARMES) {
+      const avant = journal.demarres;
+      sons.recharge(id);
+      if (STATS[id].sansRecharge) expect(journal.demarres, id).toBe(avant);
+      else expect(journal.demarres, id).toBeGreaterThan(avant);
+    }
+    sons.dispose();
+  });
+
+  it("le rechargement long de la mitrailleuse dépasse celui du pistolet en nombre de clics", () => {
+    const sons = creerSons();
+    const mesure = (id: (typeof ARMES)[number]) => { const a = journal.demarres; sons.recharge(id); return journal.demarres - a; };
+    expect(mesure("mitrailleuse")).toBeGreaterThan(mesure("pistolet"));
+    sons.dispose();
+  });
+});
+
+describe("sons : effets ajoutés par la v2", () => {
+  it("touche (corps et tête), coup de couteau (dans le vide et sur la chair), ramassage, régénération, choc, klaxon", () => {
+    const sons = creerSons();
+    const essais: [string, () => void][] = [
+      ["touche corps", () => sons.touche()],
+      ["touche tête", () => sons.touche(true)],
+      ["coup dans le vide", () => sons.coup(false)],
+      ["coup sur la chair", () => sons.coup(true)],
+      ["coup distant", () => sons.coup(true, { distance: 12, pan: 0.3 })],
+      ["ramassage soin", () => sons.ramassage("soin")],
+      ["ramassage arme", () => sons.ramassage("arme")],
+      ["régénération", () => sons.regen()],
+      ["choc léger", () => sons.choc(0)],
+      ["choc fort", () => sons.choc(1)],
+      ["choc hors bornes", () => sons.choc(7)],
+      ["klaxon", () => sons.klaxon()],
+    ];
+    for (const [nom, f] of essais) {
+      const avant = journal.demarres;
+      f();
+      expect(journal.demarres, nom).toBeGreaterThan(avant);
+    }
+    sons.dispose();
+  });
+
+  it("le coup qui touche fait plus de bruit que celui qui rate", () => {
+    const sons = creerSons();
+    let a = journal.demarres;
+    sons.coup(false);
+    const rate = journal.demarres - a;
+    a = journal.demarres;
+    sons.coup(true);
+    expect(journal.demarres - a).toBeGreaterThan(rate);
+    sons.dispose();
+  });
+
+  it("la glissade est une boucle : un seul démarrage tant qu'elle dure, arrêt à `false`, `false` seul sans effet", () => {
+    const sons = creerSons();
+    sons.glisse(false);
+    expect(journal.arretes).toBe(0);
+    sons.glisse(true);
+    const apres = journal.demarres;
+    expect(apres).toBeGreaterThan(0);
+    sons.glisse(true);
+    expect(journal.demarres).toBe(apres);
+    sons.glisse(false);
+    expect(journal.arretes).toBeGreaterThan(0);
+    sons.dispose();
+  });
+
+  it("le moteur démarre une fois, ne fait que suivre la vitesse ensuite, s'éteint avec `null` et accepte une vitesse négative", () => {
+    const sons = creerSons();
+    sons.moteur(null);
+    expect(journal.demarres).toBe(0);
+    sons.moteur(0);
+    const demarres = journal.demarres;
+    expect(demarres).toBeGreaterThanOrEqual(3); // deux oscillateurs + le grain d'échappement
+    sons.moteur(12);
+    sons.moteur(-20);
+    sons.moteur(200);
+    expect(journal.demarres).toBe(demarres);
+    sons.moteur(null);
+    expect(journal.arretes).toBeGreaterThanOrEqual(3);
+    sons.moteur(5); // redémarre proprement
+    expect(journal.demarres).toBeGreaterThan(demarres);
+    sons.dispose();
+  });
+
+  it("`dispose` arrête les boucles en cours, ferme le contexte et rend tout appel muet", () => {
+    const sons = creerSons();
+    sons.glisse(true);
+    sons.moteur(10);
+    sons.mur(true);
+    sons.dispose();
+    expect(journal.fermes).toBe(1);
+    const avant = journal.demarres;
+    sons.tir("pistolet");
+    sons.coup(true);
+    sons.moteur(10);
+    sons.glisse(true);
+    expect(journal.demarres).toBe(avant);
+  });
+});
+
+describe("sons : sans WebAudio", () => {
+  it("tous les appels sont sans effet", () => {
+    vi.stubGlobal("window", { addEventListener() {}, removeEventListener() {} });
+    const sons = creerSons();
+    expect(() => {
+      sons.tir("railgun");
+      sons.recharge("pompe");
+      sons.touche(true);
+      sons.coup(true);
+      sons.glisse(true);
+      sons.glisse(false);
+      sons.moteur(10);
+      sons.moteur(null);
+      sons.ramassage("arme");
+      sons.regen();
+      sons.choc(1);
+      sons.klaxon();
+      sons.dispose();
+    }).not.toThrow();
+    expect(journal.demarres).toBe(0);
+  });
+});

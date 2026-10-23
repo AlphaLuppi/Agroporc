@@ -1,13 +1,13 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { Building, SceneData, Vec2 } from "../agroparc3d/types";
-import { STATS, degatsPlomb } from "./armes";
+import { STATS, degatsPlomb, directionsTir } from "./armes";
 import { construireMonde, pointsApparition } from "./collision";
 import {
-  COS_VISEE_MIN, PALETTE, PSEUDO_DEFAUT, Salle, nettoyerPseudo, pseudoUnique,
+  COS_VISEE_MIN, PALETTE, PSEUDO_DEFAUT, Salle, VITESSE_DECLAREE_MAX_H_M_S, VITESSE_MAX_H_M_S, nettoyerPseudo, pseudoUnique,
   type JoueurSalle, type Sortie,
 } from "./match";
-import { JEU, SILHOUETTE, type ArmeId, type MessageClient, type MessageServeur, type Vec3 } from "./protocole";
+import { EQUIPEMENT_DEFAUT, JEU, PLAFONDS, SILHOUETTE, type ArmeFeuId, type MessageClient, type MessageServeur, type Vec3 } from "./protocole";
 
 const scene = JSON.parse(readFileSync("public/agroparc/scene.json", "utf8")) as SceneData;
 
@@ -22,7 +22,7 @@ function nouvelleSalle(alea: () => number = () => 0): Salle {
   return new Salle(mondePetit, POINTS, alea, T0);
 }
 /** Salle avec n joueurs "a", "b"… connectés ; chacun en jeu avec l'arme demandée. */
-function salleEnJeu(armes: ArmeId[], t = T0): Salle {
+function salleEnJeu(armes: ArmeFeuId[], t = T0): Salle {
   const s = nouvelleSalle();
   armes.forEach((arme, i) => {
     const id = String.fromCharCode(97 + i);
@@ -40,20 +40,20 @@ function messages<T extends MessageServeur["t"]>(sorties: Sortie[], t: T): Extra
 function tirer(s: Salle, tireur: string, cible: string, t: number, opts: { plombs?: number; touches?: number[]; zone?: "tete" | "corps" } = {}): Sortie[] {
   const a = j(s, tireur), c = j(s, cible);
   const o: Vec3 = [a.p[0], a.p[1] + SILHOUETTE.oeil, a.p[2]];
-  const vx = c.p[0] - o[0], vy = c.p[1] + SILHOUETTE.hauteur / 2 - o[1], vz = c.p[2] - o[2];
+  const vx = c.p[0] - o[0], vy = c.p[1] + SILHOUETTE.centreY - o[1], vz = c.p[2] - o[2];
   const l = Math.hypot(vx, vy, vz);
   const d: Vec3 = [vx / l, vy / l, vz / l];
   a.lacet = Math.atan2(-d[0], -d[2]);
   a.tangage = Math.asin(d[1]);
   const n = opts.plombs ?? 1;
   const msg: MessageClient = {
-    t: "tir", arme: a.arme, o, d: Array.from({ length: n }, () => [...d] as Vec3),
+    t: "tir", arme: a.arme as ArmeFeuId, o, d: Array.from({ length: n }, (_, i) => directionsTir(a.arme as ArmeFeuId, d)[i] ?? ([...d] as Vec3)),
     touches: (opts.touches ?? [0]).map((plomb) => ({ cible, zone: opts.zone ?? "corps", plomb })),
   };
   return s.recevoir(tireur, msg, t);
 }
 /** Deux joueurs en jeu face à face, à 20 m, ligne dégagée, protection d'apparition écoulée. */
-function duel(armeA: ArmeId = "pistolet", armeB: ArmeId = "pistolet") {
+function duel(armeA: ArmeFeuId = "pistolet", armeB: ArmeFeuId = "pistolet") {
   const t = T0 + JEU.protectionMs + 100;
   const s = salleEnJeu([armeA, armeB]);
   placer(s, "a", [-10, 0, 20]);
@@ -98,13 +98,42 @@ describe("connexion", () => {
     expect(PALETTE).toContain(j(s, "b").couleur);
     expect(j(s, "a").enJeu).toBe(false);
   });
-  it("16 joueurs au plus, le 17e reçoit erreur plein et n'est pas enregistré", () => {
+  it("16 couleurs distinctes pour 16 connectés", () => {
     const s = nouvelleSalle();
     for (let i = 0; i < JEU.joueursMax; i++) s.connecter(`j${i}`, `Agent${i}`, T0);
     expect(new Set([...Array(16).keys()].map((i) => j(s, `j${i}`).couleur)).size).toBe(16);
+  });
+  it("les spectateurs de la vue 3D n'occupent aucune place de l'arène (régression : 16 sockets bloquaient l'arène)", () => {
+    const s = nouvelleSalle();
+    for (let i = 0; i < 30; i++) s.connecter(`spec${i}`, `Spec${i}`, T0);
+    expect(s.nombreJoueurs()).toBe(30);
+    expect(s.nombreEnJeu()).toBe(0);
+    // un vrai joueur peut encore entrer, et 16 au total
+    for (let i = 0; i < JEU.joueursMax; i++) {
+      const sorties = s.recevoir(`spec${i}`, { t: "rejoindre", arme: "pistolet" }, T0 + 10);
+      expect(messages(sorties, "apparition")).toHaveLength(1);
+    }
+    expect(s.nombreEnJeu()).toBe(JEU.joueursMax);
+  });
+  it("le 17e joueur en arène reçoit un refus `plein` SANS erreur (la socket reste ouverte) et n'entre pas ; une place libérée lui sert", () => {
+    const s = nouvelleSalle();
+    for (let i = 0; i < JEU.joueursMax + 1; i++) s.connecter(`j${i}`, `Agent${i}`, T0);
+    for (let i = 0; i < JEU.joueursMax; i++) s.recevoir(`j${i}`, { t: "rejoindre", arme: "pistolet" }, T0 + 10);
+    const refus = s.recevoir("j16", { t: "rejoindre", arme: "pistolet" }, T0 + 20);
+    expect(refus).toEqual([{ a: "j16", m: { t: "refus", action: "rejoindre", raison: "plein" } }]);
+    expect(messages(refus, "erreur")).toEqual([]);
+    expect(j(s, "j16").enJeu).toBe(false);
+    expect(s.nombreEnJeu()).toBe(JEU.joueursMax);
+    // le refusé reste connecté ; il entre dès qu'une place se libère
+    s.recevoir("j0", { t: "quitter" }, T0 + 30);
+    expect(messages(s.recevoir("j16", { t: "rejoindre", arme: "pistolet" }, T0 + 40), "apparition")).toHaveLength(1);
+  });
+  it("le serveur plafonne les connexions (64) : la suivante reçoit erreur plein et n'est pas enregistrée", () => {
+    const s = nouvelleSalle();
+    for (let i = 0; i < JEU.connexionsMax; i++) s.connecter(`c${i}`, `Agent${i}`, T0);
     const sorties = s.connecter("de-trop", "Trop", T0);
     expect(sorties).toEqual([{ a: "de-trop", m: expect.objectContaining({ t: "erreur", code: "plein" }) }]);
-    expect(s.nombreJoueurs()).toBe(16);
+    expect(s.nombreJoueurs()).toBe(JEU.connexionsMax);
     expect(s.deconnecter("de-trop", T0)).toEqual([]);
   });
   it("déconnexion : présence pour tous, plus dans les instantanés", () => {
@@ -152,7 +181,7 @@ describe("entrée dans l'arène", () => {
     s.recevoir("a", { t: "rejoindre", arme: "pompe" }, T0);
     expect(s.recevoir("a", { t: "rejoindre", arme: "pompe" }, T0 + 1)).toEqual([]);
     s.connecter("b", "Bob", T0);
-    s.recevoir("b", { t: "rejoindre", arme: "laser" as ArmeId }, T0);
+    s.recevoir("b", { t: "rejoindre", arme: "laser" as ArmeFeuId }, T0);
     expect(j(s, "b").arme).toBe("pistolet");
   });
   it("les points d'apparition suivants sont les plus loin des vivants", () => {
@@ -213,6 +242,37 @@ describe("états reçus", () => {
   });
 });
 
+describe("réentrée dans l'arène (§13.2.2)", () => {
+  const etat = (seq: number, p: Vec3): MessageClient =>
+    ({ t: "etat", seq, p, v: [0, 0, 0], lacet: 0, tangage: 0, posture: "sol", mur: 0 });
+
+  it("après quitter puis rejoindre sur la même connexion, les états repartant de seq 0 sont acceptés", () => {
+    const s = salleEnJeu(["pistolet"]);
+    const [x, , z] = j(s, "a").p;
+    for (let seq = 0; seq < 6; seq++) s.recevoir("a", etat(seq, [x, 0, z]), T0 + 50 + seq * 33);
+    expect(j(s, "a").seq).toBe(5);
+    s.recevoir("a", { t: "quitter" }, T0 + 400);
+    s.recevoir("a", { t: "rejoindre", arme: "pistolet" }, T0 + 500);
+    s.tic(T0 + 400 + JEU.delaiReapparitionMs); // le joueur sorti en vie attend le délai de réapparition avant de revenir
+    // le client repart de seq 0 : sans la remise à -1, tous ces états seraient ignorés (et tous les tirs rejetés)
+    expect(j(s, "a").seq).toBe(-1);
+    const [x2, , z2] = j(s, "a").p;
+    s.recevoir("a", etat(0, [x2 + 0.1, 0, z2]), T0 + 400 + JEU.delaiReapparitionMs + 30);
+    expect(j(s, "a").seq).toBe(0);
+    expect(j(s, "a").p[0]).toBeCloseTo(x2 + 0.1, 6);
+  });
+
+  it("une réapparition après la mort remet aussi la séquence à zéro", () => {
+    const { s, t } = duel();
+    s.recevoir("b", etat(40, [10, 0, 20]), t);
+    expect(j(s, "b").seq).toBe(40);
+    for (let i = 0; i < 4; i++) tirer(s, "a", "b", t + i * 250);
+    expect(j(s, "b").vivant).toBe(false);
+    s.tic(t + 750 + JEU.delaiReapparitionMs);
+    expect(j(s, "b")).toMatchObject({ vivant: true, seq: -1 });
+  });
+});
+
 describe("tirs", () => {
   it("touche validée : dégâts calculés par le serveur, tir diffusé aux autres seulement", () => {
     const { s, t } = duel();
@@ -220,7 +280,7 @@ describe("tirs", () => {
     const [tirMsg] = sorties.filter((x) => x.m.t === "tir");
     expect(tirMsg).toMatchObject({ a: "tous", sauf: "a" });
     const [deg] = messages(sorties, "degats");
-    const dist = Math.hypot(20, SILHOUETTE.oeil - SILHOUETTE.hauteur / 2);
+    const dist = Math.hypot(20, SILHOUETTE.oeil - SILHOUETTE.centreY);
     expect(deg).toMatchObject({ cible: "b", par: "a", degats: degatsPlomb("pistolet", "corps", dist), zone: "corps" });
     expect(deg.degats).toBe(28);
     expect(deg.pv).toBe(JEU.pvMax - 28);
@@ -248,13 +308,13 @@ describe("tirs", () => {
     const t2 = t + 5000;
     acceptes = 0;
     for (let i = 0; i < 20; i++) acceptes += tirer(s, "a", "b", t2 + i * 20).length > 0 ? 1 : 0;
-    expect(acceptes).toBeLessThanOrEqual(9); // 400 ms à 64 ms l'intervalle + crédit de rafale (3 intervalles)
+    expect(acceptes).toBeLessThanOrEqual(10); // 400 ms à 64 ms l'intervalle + crédit de rafale (max(3 intervalles, 200 ms) = 200 ms)
   });
   it("trop de plombs, arme qui n'est pas la sienne, œil loin du joueur, direction non normalisée ou dans le dos : refusés", () => {
     const { s, t } = duel();
     expect(tirer(s, "a", "b", t, { plombs: 2 })).toEqual([]);
     const a = j(s, "a");
-    const base = { t: "tir" as const, arme: "pistolet" as ArmeId, touches: [] };
+    const base = { t: "tir" as const, arme: "pistolet" as ArmeFeuId, touches: [] };
     const o: Vec3 = [a.p[0], a.p[1] + SILHOUETTE.oeil, a.p[2]];
     const visee: Vec3 = [-Math.sin(a.lacet) * Math.cos(a.tangage), Math.sin(a.tangage), -Math.cos(a.lacet) * Math.cos(a.tangage)];
     expect(s.recevoir("a", { ...base, arme: "sniper", o, d: [visee] }, t + 1000)).toEqual([]);
@@ -264,6 +324,29 @@ describe("tirs", () => {
     expect(visee[0] * dos[0] + visee[1] * dos[1] + visee[2] * dos[2]).toBeLessThan(COS_VISEE_MIN);
     expect(s.recevoir("a", { ...base, o, d: [dos] }, t + 1000)).toEqual([]);
     expect(s.recevoir("a", { ...base, o, d: [visee] }, t + 1000)).toHaveLength(1); // tir à blanc valide : seulement diffusé
+  });
+  it("pompe : la gerbe fixe est vérifiée à 0,02 rad près (tous les plombs dans l'axe, ou un plomb déplacé : tir refusé)", () => {
+    const { s, t } = duel("pompe", "pistolet");
+    placer(s, "b", [-10 + 6, 0, 20]);
+    const a = j(s, "a");
+    const o: Vec3 = [a.p[0], a.p[1] + SILHOUETTE.oeil, a.p[2]];
+    const c = j(s, "b");
+    const v = [c.p[0] - o[0], c.p[1] + SILHOUETTE.centreY - o[1], c.p[2] - o[2]];
+    const l = Math.hypot(v[0], v[1], v[2]);
+    const d: Vec3 = [v[0] / l, v[1] / l, v[2] / l];
+    a.lacet = Math.atan2(-d[0], -d[2]);
+    a.tangage = Math.asin(d[1]);
+    const touches = [{ cible: "b", zone: "corps" as const, plomb: 0 }];
+    const gerbe = directionsTir("pompe", d);
+    // tous les plombs dans l'axe : un client qui supprime la gerbe est refusé (aucun tir diffusé)
+    expect(s.recevoir("a", { t: "tir", arme: "pompe", o, d: Array.from({ length: 9 }, () => [...d] as Vec3), touches }, t)).toEqual([]);
+    expect(a.tirs).toBe(0);
+    // un plomb décalé de 0,06 rad
+    const faux = gerbe.map((g, i) => (i === 3 ? ([g[0] + 0.06, g[1], g[2]] as Vec3) : g));
+    expect(s.recevoir("a", { t: "tir", arme: "pompe", o, d: faux, touches }, t)).toEqual([]);
+    // la vraie gerbe passe
+    expect(messages(s.recevoir("a", { t: "tir", arme: "pompe", o, d: gerbe, touches }, t), "degats")).toHaveLength(1);
+    expect(a.tirs).toBe(1);
   });
   it("ligne de vue : un bâtiment entre les deux, pas de dégâts", () => {
     const { s, t } = duel();
@@ -296,7 +379,7 @@ describe("tirs", () => {
     placer(s, "b", [-10 + 12, 0, 20]); // 12 m
     const sorties = tirer(s, "a", "b", t, { plombs: 9, touches: [0, 1, 2, 3, 4, 4, 2] });
     const [deg] = messages(sorties, "degats");
-    const dist = Math.hypot(12, SILHOUETTE.oeil - SILHOUETTE.hauteur / 2);
+    const dist = Math.hypot(12, SILHOUETTE.oeil - SILHOUETTE.centreY);
     expect(deg.degats).toBe(5 * degatsPlomb("pompe", "corps", dist));
     expect(deg.degats).toBeGreaterThan(STATS.pompe.degats);
     const tete = messages(tirer(s, "a", "b", t + 2000, { plombs: 9, touches: [0] , zone: "tete" }), "degats")[0];
@@ -340,7 +423,10 @@ describe("mort, score, réapparition", () => {
     expect(j(s, "b").vivant).toBe(true);
     const sorties = tirer(s, "a", "b", t + 750);
     const [mort] = messages(sorties, "mort");
-    expect(mort).toEqual({ t: "mort", cible: "b", par: "a", arme: "pistolet", zone: "corps", delai: JEU.delaiReapparitionMs });
+    expect(mort).toMatchObject({ t: "mort", cible: "b", par: "a", arme: "pistolet", zone: "corps", delai: JEU.delaiReapparitionMs });
+    // v2 : cause de la mort et horodatage serveur (ancre de la killcam)
+    expect(mort.cause).toBe("arme");
+    expect(mort.ts).toBe(t + 750);
     const [deg] = messages(sorties, "degats");
     expect(deg.pv).toBe(0);
     const pres = messages(sorties, "presence")[0].joueurs;
@@ -368,14 +454,14 @@ describe("mort, score, réapparition", () => {
   });
   it("un tir de pompe peut tuer plusieurs cibles", () => {
     const s = salleEnJeu(["pompe", "pistolet", "pistolet"]);
-    placer(s, "a", [-10, 0, 20]); placer(s, "b", [-3, 0, 20]); placer(s, "c", [-3, 0, 20.3]);
+    placer(s, "a", [-10, 0, 20]); placer(s, "b", [-3, 0, 20]); placer(s, "c", [-3, 0, 19.7]);
     for (const id of ["b", "c"]) j(s, id).pv = 20;
     const t = T0 + 2000;
     const o: Vec3 = [-10, SILHOUETTE.oeil, 20];
     const d: Vec3 = [(7) / Math.hypot(7, 0.72), -0.72 / Math.hypot(7, 0.72), 0];
     j(s, "a").lacet = -Math.PI / 2; j(s, "a").tangage = Math.asin(d[1]);
     const sorties = s.recevoir("a", {
-      t: "tir", arme: "pompe", o, d: [d, d],
+      t: "tir", arme: "pompe", o, d: directionsTir("pompe", d).slice(0, 2),
       touches: [{ cible: "b", zone: "corps", plomb: 0 }, { cible: "c", zone: "corps", plomb: 1 }],
     }, t);
     expect(messages(sorties, "mort").map((m) => m.cible).sort()).toEqual(["b", "c"]);
@@ -432,7 +518,8 @@ describe("instantanés", () => {
     s.recevoir("a", { t: "rejoindre", arme: "pistolet" }, T0 + 60);
     let n = 0, dernier = 0;
     for (let t = T0 + 100; t < T0 + 1100; t += 16 + (Math.floor(t / 16) % 3)) {
-      for (const sortie of s.tic(t)) if (sortie.m.t === "snap") { n++; expect(sortie.m.ts).toBe(t); dernier = t; }
+    // v2 : les spectateurs reçoivent un snap sur deux à part ; on compte ceux des joueurs (20 Hz)
+    for (const sortie of s.tic(t)) if (sortie.m.t === "snap" && sortie.a === "joueurs") { n++; expect(sortie.m.ts).toBe(t); dernier = t; }
     }
     expect(dernier).toBeGreaterThan(0);
     expect(n).toBeGreaterThanOrEqual(17);
@@ -485,5 +572,45 @@ describe("changement de pseudo", () => {
     expect(s.recevoir("a", { t: "pseudo", pseudo: "Yan" }, T0 + 2100)).toEqual([]);
     s.recevoir("a", { t: "pseudo", pseudo: "Yan" }, T0 + 12_100);
     expect(j(s, "a").pseudo).toBe("Yan");
+  });
+});
+
+describe("socle v2 (lot 0, sans changement de comportement)", () => {
+  it("les plafonds de vitesse du serveur suivent PLAFONDS", () => {
+    expect(VITESSE_MAX_H_M_S).toBe(PLAFONDS.vitesseHorizontaleMax);
+    expect(VITESSE_DECLAREE_MAX_H_M_S).toBe(PLAFONDS.vitesseDeclareeMax);
+  });
+
+  it("chaque joueur a sa propre copie de l'équipement (EQUIPEMENT_DEFAUT reste figé et intact)", () => {
+    const s = salleEnJeu(["pistolet", "pistolet"]);
+    expect(j(s, "a").equip).toEqual(EQUIPEMENT_DEFAUT);
+    expect(j(s, "a").equip).not.toBe(EQUIPEMENT_DEFAUT);
+    expect(j(s, "a").equip).not.toBe(j(s, "b").equip);
+    j(s, "a").equip.speciale = "railgun";
+    expect(j(s, "b").equip.speciale).toBeNull();
+    expect(EQUIPEMENT_DEFAUT.speciale).toBeNull();
+    expect(j(s, "a").main).toBe("secondaire");
+    expect(j(s, "a").bouclier).toBe(0);
+  });
+
+  it("l'apparition, les dégâts et la mort portent les champs v2 (bouclier, équipement, cause, horodatage)", () => {
+    const s = nouvelleSalle();
+    s.connecter("a", "Alice", T0);
+    const [apparition] = messages(s.recevoir("a", { t: "rejoindre", arme: "pistolet" }, T0), "apparition");
+    expect(apparition).toMatchObject({ bouclier: 0, main: "secondaire", munSpeciale: 0, equip: EQUIPEMENT_DEFAUT });
+    expect(apparition.equip).not.toBe(EQUIPEMENT_DEFAUT);
+    const { s: duelle, t } = duel();
+    const [degats] = messages(tirer(duelle, "a", "b", t), "degats");
+    expect(degats.bouclier).toBe(0);
+  });
+
+  it("une arme du nouveau catalogue est acceptée à l'entrée, une arme inconnue non", () => {
+    const s = nouvelleSalle();
+    s.connecter("a", "Alice", T0);
+    s.recevoir("a", { t: "rejoindre", arme: "revolver" }, T0);
+    expect(j(s, "a").arme).toBe("revolver");
+    s.connecter("b", "Bob", T0);
+    s.recevoir("b", { t: "rejoindre", arme: "laser" as ArmeFeuId }, T0);
+    expect(j(s, "b").arme).toBe("pistolet");
   });
 });
