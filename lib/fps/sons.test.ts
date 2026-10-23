@@ -168,6 +168,39 @@ describe("sons : effets ajoutés par la v2", () => {
   });
 });
 
+describe("sons : tigres et avion", () => {
+  it("rugissement, coup de patte et plainte sonnent, proches comme lointains", () => {
+    const sons = creerSons();
+    for (const [nom, f] of [["rugissement", sons.rugissement], ["patte", sons.patte], ["plainte", sons.plainte]] as const) {
+      let avant = journal.demarres;
+      f();
+      expect(journal.demarres, nom).toBeGreaterThan(avant);
+      avant = journal.demarres;
+      f({ distance: 40, pan: 0.6 });
+      expect(journal.demarres, `${nom} lointain`).toBeGreaterThan(avant);
+    }
+    sons.dispose();
+  });
+
+  it("l'avion est une boucle : un démarrage, puis il ne fait que suivre la position, `null` l'éteint, `dispose` aussi", () => {
+    const sons = creerSons();
+    sons.avion(null);
+    expect(journal.demarres).toBe(0);
+    sons.avion({ distance: 300, pan: -1 });
+    const demarres = journal.demarres;
+    expect(demarres).toBeGreaterThanOrEqual(3); // deux hélices + le souffle
+    sons.avion({ distance: 120, pan: 0.2 });
+    sons.avion({ distance: 0, pan: 4 });
+    expect(journal.demarres).toBe(demarres);
+    sons.avion(null);
+    expect(journal.arretes).toBeGreaterThanOrEqual(3);
+    sons.avion({ distance: 200, pan: 0 });
+    const arretes = journal.arretes;
+    sons.dispose();
+    expect(journal.arretes).toBeGreaterThan(arretes);
+  });
+});
+
 describe("sons : sans WebAudio", () => {
   it("tous les appels sont sans effet", () => {
     vi.stubGlobal("window", { addEventListener() {}, removeEventListener() {} });
@@ -185,6 +218,11 @@ describe("sons : sans WebAudio", () => {
       sons.regen();
       sons.choc(1);
       sons.klaxon();
+      sons.rugissement();
+      sons.patte({ distance: 5, pan: 0 });
+      sons.plainte();
+      sons.avion({ distance: 100, pan: 0 });
+      sons.avion(null);
       sons.dispose();
     }).not.toThrow();
     expect(journal.demarres).toBe(0);
