@@ -69,6 +69,10 @@ export interface Sons {
   explosionMonstre(force: number, position?: PositionSon): void;
   /** (v4) Tir du canon du titan (le mien, ou celui du pilote à `position`). */
   canon(position?: PositionSon): void;
+  /** (v4) Klaxon de camion (trompe à air, accord de trois notes) du Truck Muche fou, entendu de loin dans toute l'arène. */
+  klaxonCamion(position?: PositionSon): void;
+  /** (v4) Bâtiment qui s'effondre (grondement long et fracas). */
+  effondrement(position?: PositionSon): void;
   /** (v4) Pas lourd du tigre ou du titan. */
   pasLourd(position?: PositionSon): void;
   dispose(): void;
@@ -694,6 +698,38 @@ export function creerSons(): Sons {
       const t = ctx!.currentTime + 0.001;
       bruit(out, t, { dur: 0.16, type: "lowpass", f0: 3200, f1: 300, gain: 0.55 });
       ton(out, t, { dur: 0.14, type: "square", f0: 160, f1: 70, gain: 0.22 });
+    },
+    klaxonCamion(position) {
+      if (!prete()) return;
+      const c = ctx!;
+      const t = c.currentTime + 0.001;
+      // atténuation douce (on l'entend à 300 m), aigus filtrés avec la distance, panoramique
+      const d = position ? Math.max(position.distance, 1) : 1;
+      const lp = c.createBiquadFilter();
+      lp.type = "lowpass";
+      lp.frequency.value = Math.max(900, 5200 / (1 + d / 120));
+      const g = c.createGain();
+      g.gain.value = Math.max(0.12, 1 / (1 + d / 70));
+      lp.connect(g);
+      if (position && typeof c.createStereoPanner === "function") {
+        const pn = c.createStereoPanner();
+        pn.pan.value = Math.max(-1, Math.min(1, position.pan));
+        g.connect(pn);
+        pn.connect(master!);
+      } else g.connect(master!);
+      // trompe : accord grave et un peu désaccordé, attaque nette, tenue, petite chute de hauteur à la fin
+      for (const [f, gain] of [[185, 0.16], [233, 0.14], [277, 0.11]] as const) {
+        ton(lp, t, { dur: 0.95, type: "sawtooth", f0: f, f1: f * 0.97, gain, att: 0.03 });
+        ton(lp, t, { dur: 0.95, type: "square", f0: f * 1.004, f1: f * 0.975, gain: gain * 0.35, att: 0.03 });
+      }
+    },
+    effondrement(position) {
+      if (!prete()) return;
+      const out = sortie(position);
+      const t = ctx!.currentTime + 0.001;
+      bruit(out, t, { dur: 1.6, type: "lowpass", f0: 1400, f1: 70, gain: 0.8, att: 0.05 });
+      ton(out, t, { dur: 1.4, type: "sine", f0: 55, f1: 25, gain: 0.7, att: 0.05 });
+      for (let i = 0; i < 4; i++) bruit(out, t + 0.1 + i * 0.18, { dur: 0.12, type: "bandpass", f0: 1800 - i * 250, q: 1.4, gain: 0.25 });
     },
     pasLourd(position) {
       if (!prete()) return;

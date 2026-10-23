@@ -81,3 +81,18 @@ Serveur : `PDJ_FPS_EVT_MIN_MS` / `PDJ_FPS_EVT_MAX_MS` (délai avant chaque évé
   `OEIL_TITAN` = 9,5 m. **Vue à la 3ᵉ personne par-dessus l'épaule** (`CAMERA_TITAN` de `jeu.ts`) : on voit son tigre ; le canon tire
   de sa tête vers le point sous le réticule (rayon depuis la caméra).
 - Essais : `PDJ_FPS_TIGRE_ATTAQUE` (`laser`, `saut` ou `charge`) impose l'attaque spéciale.
+
+## Révision 2 du 2026-10-24
+
+- **Bâtiments destructibles** : `collision.ts` (`detruireBatiment` met la hauteur du prisme à 0 : gravats plats, ni mur ni toit ni
+  ligne de vue ; `releverBatiment(s)`, `batimentsDetruits`, `batimentsSous`). Le serveur écrase ce qui est sous les pattes et le ventre
+  du tigre qui marche ou charge, tout dans 22 m à l'atterrissage de son saut, et dans 7 m quand le titan retombe ; message
+  `batiments{detruits, nouveaux}` (liste complète, liste vide au nouveau match, envoyé à `rejoindre` s'il y a des ruines). Rendu
+  (`decor.ts`, `creerEtatDestruction`) : un attribut `aBat` (index du bâtiment) par sommet et une texture d'une ligne lue par le
+  nuanceur de sommets, qui écrase la hauteur à 5 % (aucune géométrie reconstruite) ; effondrement animé en 1,1 s, poussière, grondement.
+- **Traces d'impact** (`rendu-impacts.ts`) : brûlures orange à plat sur la surface touchée (`normaleImpact`), un seul `InstancedMesh`
+  de 240 traces en anneau, éteintes en 20 s, couleurs mises à jour 4 fois par seconde.
+- **Klaxon du Truck Muche fou** : trompe à air (`sons.klaxonCamion`) toutes les 2,2 à 3,6 s, atténuation douce (on l'entend à 300 m).
+- **Titan à la 1ʳᵉ personne dans un cockpit** (`hud/CockpitTitan.tsx`) : calque SVG (poutre, montants fins, console, armature, voyants)
+  et deux écrans (intégrité, recharge du dash), vitre centrale dégagée ; son propre titan n'est pas dessiné.
+- **Tigre** : barre de vie de boss avec les PV en chiffres, plus de minuterie affichée ; durée maximale portée à 5 min.

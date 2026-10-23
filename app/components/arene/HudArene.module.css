@@ -453,3 +453,32 @@
 @keyframes evtDefile { from { background-position: 0 0; } to { background-position: 40px 0; } }
 @media (prefers-reduced-motion: reduce) { .evtAlerte, .evtBande, .evtRayures { animation: none; } }
 .evtRage { color: var(--ag-danger); animation: evtPulse 0.35s ease-in-out infinite alternate; }
+
+/* ---------- cockpit du titan (v3) : calque léger, vitre centrale dégagée ---------- */
+.cockpit { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
+.cockpitSvg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.cockpitPanneau { fill: var(--ag-hud-fond-fort); stroke: var(--ag-cadre); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.cockpitArmature { fill: none; stroke: var(--ag-line-strong); stroke-width: 3; vector-effect: non-scaling-stroke; }
+.cockpitVoyant { fill: var(--ag-cyan); }
+.cockpitVoyantAmbre { fill: var(--ag-amber); animation: evtPulse 0.9s ease-in-out infinite alternate; }
+.cockpitEcran {
+  position: absolute; top: 48%; width: calc(64 * var(--u)); min-width: 44px; padding: calc(8 * var(--u)) 0; display: flex; flex-direction: column;
+  align-items: center; gap: calc(6 * var(--u)); background: var(--ag-hud-fond); border: 1px solid var(--ag-cyan);
+  font: 600 max(10px, calc(11 * var(--u)))/1 var(--ag-mono), monospace; letter-spacing: 0.08em; color: var(--ag-cyan);
+}
+.cockpitEcranGauche { left: calc(14 * var(--u)); }
+.cockpitEcranDroite { right: calc(14 * var(--u)); }
+.cockpitJauge { position: relative; display: block; width: calc(16 * var(--u)); min-width: 10px; height: calc(150 * var(--u)); background: var(--ag-line-strong); }
+.cockpitJauge b { position: absolute; left: 0; right: 0; bottom: 0; background: var(--ag-cyan); transition: height 0.12s linear; }
+.cockpitJauge b[data-bas="oui"] { background: var(--ag-danger); }
+.cockpitJauge b[data-pret="oui"] { background: var(--ag-amber); }
+.cockpitConsole {
+  position: absolute; left: 50%; bottom: calc(10 * var(--u)); transform: translateX(-50%); display: flex; gap: calc(14 * var(--u));
+  align-items: baseline; font: 600 max(11px, calc(14 * var(--u)))/1.2 var(--ag-display), var(--ag-mono), monospace; letter-spacing: 0.12em; color: var(--ag-amber);
+}
+.cockpitConsole span { color: var(--ag-ink); font-family: var(--ag-mono), monospace; }
+.cockpitConsole em { font-style: normal; font-size: max(10px, calc(11 * var(--u))); letter-spacing: 0.04em; color: var(--ag-ink); }
+
+/* barre de vie du boss (tigre robot) : plus large et plus haute, sans minuterie */
+.evtBoss { width: calc(720 * var(--u)); min-width: 320px; }
+.evtBoss .evtVie { height: calc(16 * var(--u)); min-height: 10px; }

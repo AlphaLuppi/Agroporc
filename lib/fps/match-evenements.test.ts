@@ -111,6 +111,21 @@ describe("Truck Muche fou", () => {
 });
 
 describe("tigre robot géant et titan tigre", () => {
+  it("le tigre écrase les bâtiments sur son passage (message batiments), relevés au match suivant", () => {
+    // un bâtiment sur la route du tigre, entre son point d'apparition et le joueur
+    const decor = construireMonde({ ...scene, buildings: [rect(-2000, -2000, -1999, -1999), rect(1999, 1999, 2000, 2000), rect(-6, -6, 6, 6)], pois: [] } as SceneData);
+    const s = new Salle(decor, POINTS, () => 0.5, T0, {
+      evenements: { truck: { x: -60, z: 0 }, centre: { x: 0, z: 0 }, rayonApparition: 60, premier: { minMs: 0, maxMs: 0 }, forcerType: "tigre", pvTigre: 99_999 },
+    });
+    s.connecter("a", "A", T0);
+    s.recevoir("a", { t: "rejoindre" }, T0);
+    const r = avancer(s, T0, T0 + 20_000, (x) => { if (j(s, "a").vivant) tenir(s, "a", [80, 0, 0]); rafraichir(s, ["a"], x); });
+    const b = messages(r.sorties, "batiments");
+    expect(b.length).toBeGreaterThan(0);
+    expect(b[0].nouveaux).toContain(2);
+    expect(decor.prismes[2].h).toBe(0);
+  });
+
   it("saut du tigre : onde de choc annoncée ; au sol on est touché, en l'air on l'esquive", () => {
     const s = salle({ forcerType: "tigre", pvTigre: 99_999, attaqueTigre: "saut", premiereAttaqueMs: 0 }, ["a", "b"]);
     tenir(s, "a", [300, 0, 300]);

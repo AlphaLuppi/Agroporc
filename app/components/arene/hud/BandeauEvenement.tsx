@@ -19,6 +19,8 @@ export interface PropsBandeauEvenement {
   monId: string | null;
 }
 
+const FR = new Intl.NumberFormat("fr-FR");
+
 const TEXTES = {
   truck: { titre: "LE TRUCK MUCHE EST DEVENU FOU !", sous: "Il fonce sur tout le monde. Courez, montez sur un toit !", court: "TRUCK MUCHE FOU", icone: "🚚" },
   tigre: { titre: "ALERTE : TIGRE ROBOT GÉANT", sous: "Celui qui l'achève prend les commandes du TITAN TIGRE", court: "TIGRE ROBOT", icone: "🐯" },
@@ -68,7 +70,7 @@ function BandeauEvenementBrut({ monstres, maintenantServeur, joueurs, monId }: P
         </section>
       )}
       {ev && ev.phase === "actif" && (
-        <div className={`${styles.plaque} ${styles.evtBande}`} data-type={ev.type}>
+        <div className={`${styles.plaque} ${styles.evtBande} ${ev.type === "tigre" ? styles.evtBoss : ""}`} data-type={ev.type}>
           <span className={styles.evtBandeTitre}>
             <span aria-hidden="true">{TEXTES[ev.type].icone} </span>{TEXTES[ev.type].court}
             {ev.type === "tigre" && etat.tigre?.rage && <span className={styles.evtRage}> · ENRAGÉ</span>}
@@ -79,10 +81,12 @@ function BandeauEvenementBrut({ monstres, maintenantServeur, joueurs, monId }: P
               <i style={{ width: `${(100 * etat.tigre.pv) / Math.max(1, etat.tigre.pvMax)}%` }} />
             </span>
           )}
-          <span className={styles.evtTemps}>{formatSecondes(Math.max(0, ev.finT - maintenant) / 1000)}</span>
+          {ev.type === "tigre"
+            ? <span className={styles.evtTemps}>{etat.tigre ? `${FR.format(Math.round(etat.tigre.pv))} PV` : ""}</span>
+            : <span className={styles.evtTemps}>{formatSecondes(Math.max(0, ev.finT - maintenant) / 1000)}</span>}
         </div>
       )}
-      {titan && (
+      {titan && titan.pilote !== monId && (
         <div className={`${styles.plaque} ${styles.evtBande} ${styles.evtTitan}`} data-moi={titan.pilote === monId ? "oui" : "non"}>
           <span className={styles.evtBandeTitre}>
             <span aria-hidden="true">🐯 </span>

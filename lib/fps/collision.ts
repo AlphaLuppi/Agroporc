@@ -18,7 +18,8 @@ import { obstacleTruck } from "./zones";
 
 export interface Boite { x0: number; z0: number; x1: number; z1: number }
 
-export interface Prisme { anneau: Vec2[]; trous: Vec2[][]; h: number; boite: Boite }
+/** `h` = hauteur courante (0 une fois détruit : gravats plats, ni mur ni toit) ; `hOrigine` = hauteur de `scene.json`. */
+export interface Prisme { anneau: Vec2[]; trous: Vec2[][]; h: number; hOrigine: number; boite: Boite; fixe?: boolean }
 
 /** Grille uniforme : `cases[i + j × nx]` liste les prismes dont la boîte touche la case. */
 export interface GrilleMonde {
@@ -59,10 +60,11 @@ function boiteDe(pts: Vec2[]): Boite {
 }
 
 export function construireMonde(data: SceneData): Monde {
-  const prismes: Prisme[] = data.buildings.map((b) => ({ anneau: b.r, trous: b.holes ?? [], h: b.h, boite: boiteDe(b.r) }));
-  // le Truck Muche garé (v3 §2) est un obstacle comme un bâtiment : on ne le traverse pas, il arrête les balles, on peut monter dessus
+  const prismes: Prisme[] = data.buildings.map((b) => ({ anneau: b.r, trous: b.holes ?? [], h: b.h, hOrigine: b.h, boite: boiteDe(b.r) }));
+  // le Truck Muche garé (v3 §2) est un obstacle comme un bâtiment : on ne le traverse pas, il arrête les balles, on peut monter dessus ;
+  // il n'est pas destructible (`fixe`)
   const truck = obstacleTruck(data);
-  if (truck) prismes.push({ anneau: truck.r, trous: [], h: truck.h, boite: boiteDe(truck.r) });
+  if (truck) prismes.push({ anneau: truck.r, trous: [], h: truck.h, hOrigine: truck.h, boite: boiteDe(truck.r), fixe: true });
   let bx0 = Infinity, bz0 = Infinity, bx1 = -Infinity, bz1 = -Infinity;
   for (const b of data.buildings) {
     bx0 = Math.min(bx0, b.c[0]); bx1 = Math.max(bx1, b.c[0]); bz0 = Math.min(bz0, b.c[1]); bz1 = Math.max(bz1, b.c[1]);
@@ -348,4 +350,84 @@ export function pointsApparition(data: SceneData, m: Monde): Vec2[] {
     essayer(fx, fz);
   }
   return gardes;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Destruction (v3 : le tigre robot écrase les bâtiments)
+// ---------------------------------------------------------------------------------------------
+
+/** Détruit le bâtiment `id` : sa hauteur passe à 0 (gravats plats : plus de mur ni de toit pour le mouvement, les tirs et les vues). */
+export function detruireBatiment(m: Monde, id: number): boolean {
+  const p = m.prismes[id];
+  if (!p || p.fixe || p.h === 0) return false;
+  p.h = 0;
+  return true;
+}
+
+/** Relève le bâtiment `id`. */
+export function releverBatiment(m: Monde, id: number): void {
+  const p = m.prismes[id];
+  if (p) p.h = p.hOrigine;
+}
+
+/** Relève tous les bâtiments (nouveau match). */
+export function releverBatiments(m: Monde): void {
+  for (const p of m.prismes) p.h = p.hOrigine;
+}
+
+/** Ids des bâtiments détruits, dans l'ordre. */
+export function batimentsDetruits(m: Monde): number[] {
+  const r: number[] = [];
+  m.prismes.forEach((p, id) => { if (p.h === 0 && p.hOrigine > 0) r.push(id); });
+  return r;
+}
+
+const tamponSous: number[] = [];
+/** Bâtiments debout dont l'emprise contient (x, z), ou en est à moins de `marge` m (approché par la boîte élargie puis un point au bord). */
+export function batimentsSous(m: Monde, x: number, z: number, marge = 0): number[] {
+  const r: number[] = [];
+  for (const id of candidats(m, x - marge, z - marge, x + marge, z + marge, tamponSous)) {
+    const p = m.prismes[id];
+    if (p.h === 0) continue;
+    if (dansSolide(p, x, z)) { r.push(id); continue; }
+    if (marge > 0) {
+      const b = p.boite;
+      const cx = Math.min(Math.max(x, b.x0), b.x1), cz = Math.min(Math.max(z, b.z0), b.z1);
+      // point du bord de la boîte le plus proche, poussé d'un millimètre vers l'intérieur
+      const ix = cx + Math.sign((b.x0 + b.x1) / 2 - cx) * 1e-3, iz = cz + Math.sign((b.z0 + b.z1) / 2 - cz) * 1e-3;
+      if (Math.hypot(cx - x, cz - z) <= marge && dansSolide(p, ix, iz)) r.push(id);
+    }
+  }
+  return r;
+}
+
+const tamponNormale: number[] = [];
+/**
+ * Normale de la surface touchée en `pt` (impact d'un tir) : sol ou toit → vers le haut, sinon la normale du mur le plus proche, tournée
+ * vers `de` (le tireur). Sert à poser les traces d'impact à plat sur les murs.
+ */
+export function normaleImpact(m: Monde, pt: Vec3, de: Vec3): Vec3 {
+  if (pt[1] < 0.06) return [0, 1, 0];
+  let meilleur = Infinity, nx = 0, nz = 0;
+  for (const id of candidats(m, pt[0] - 1, pt[2] - 1, pt[0] + 1, pt[2] + 1, tamponNormale)) {
+    const p = m.prismes[id];
+    if (p.h === 0) continue;
+    if (pt[1] >= p.h - 0.06 && dansSolide(p, pt[0], pt[2])) return [0, 1, 0];
+    const tester = (anneau: Vec2[]) => {
+      for (let i = 0, j = anneau.length - 1; i < anneau.length; j = i++) {
+        const ax = anneau[j][0], az = anneau[j][1], bx = anneau[i][0], bz = anneau[i][1];
+        const ex = bx - ax, ez = bz - az, l2 = ex * ex + ez * ez;
+        if (l2 < 1e-9) continue;
+        const k = Math.max(0, Math.min(1, ((pt[0] - ax) * ex + (pt[2] - az) * ez) / l2));
+        const d = Math.hypot(pt[0] - (ax + ex * k), pt[2] - (az + ez * k));
+        if (d < meilleur) { meilleur = d; const l = Math.sqrt(l2); nx = -ez / l; nz = ex / l; }
+      }
+    };
+    tester(p.anneau);
+    for (const t of p.trous) tester(t);
+  }
+  if (meilleur === Infinity) return [0, 1, 0];
+  // vers le tireur
+  if (nx * (de[0] - pt[0]) + nz * (de[2] - pt[2]) < 0) { nx = -nx; nz = -nz; }
+  return [nx + 0, 0, nz + 0];
 }

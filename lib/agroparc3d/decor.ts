@@ -42,17 +42,27 @@ export function extrude(b: Building): THREE.BufferGeometry {
  * `ghostOpacity` à 0 supprime les arêtes cachées (à la première personne, elles dévoileraient
  * les joueurs et les couloirs derrière les murs).
  */
-export function buildingGroup(list: Building[], edgeColor: number, faceColor: number, faceOpacity: number, ghostOpacity: number): THREE.Group {
+export function buildingGroup(
+  list: Building[], edgeColor: number, faceColor: number, faceOpacity: number, ghostOpacity: number,
+  destruction?: { indices: readonly number[]; etat: EtatDestruction },
+): THREE.Group {
   const faces: THREE.BufferGeometry[] = [];
   const edges: THREE.BufferGeometry[] = [];
-  for (const b of list) {
+  list.forEach((b, k) => {
     const g = extrude(b);
-    edges.push(new THREE.EdgesGeometry(g, 12));
+    const e = new THREE.EdgesGeometry(g, 12);
     const f = new THREE.BufferGeometry();
     f.setAttribute("position", g.getAttribute("position"));
+    if (destruction) {
+      // numéro du bâtiment (index de scene.json) sur chaque sommet : le nuanceur l'écrase selon l'état de destruction
+      const id = destruction.indices[k];
+      f.setAttribute("aBat", new THREE.Float32BufferAttribute(new Float32Array(f.getAttribute("position").count).fill(id), 1));
+      e.setAttribute("aBat", new THREE.Float32BufferAttribute(new Float32Array(e.getAttribute("position").count).fill(id), 1));
+    }
+    edges.push(e);
     faces.push(f);
     g.dispose();
-  }
+  });
   const grp = new THREE.Group();
   const faceGeo = mergeGeometries(faces, false);
   const edgeGeo = mergeGeometries(edges, false);
@@ -64,6 +74,10 @@ export function buildingGroup(list: Building[], edgeColor: number, faceColor: nu
   mesh.renderOrder = 1;
   const bright = new THREE.LineSegments(edgeGeo, new THREE.LineBasicMaterial({ color: edgeColor, transparent: true, opacity: 0.95 }));
   bright.renderOrder = 2;
+  if (destruction) {
+    effondrable(mesh.material as THREE.Material, destruction.etat);
+    effondrable(bright.material as THREE.Material, destruction.etat);
+  }
   if (ghostOpacity > 0) {
     const ghost = new THREE.LineSegments(edgeGeo, new THREE.LineBasicMaterial({ color: edgeColor, transparent: true, opacity: ghostOpacity, depthTest: false, depthWrite: false }));
     ghost.renderOrder = 0;
@@ -83,6 +97,56 @@ export function edgesOf(geo: THREE.BufferGeometry, color: number, opacity = 0.95
 export interface OptionsDecor {
   /** Arêtes cachées en fantôme à travers les murs (vue aérienne : oui, défaut ; arène FPS : non). */
   fantomes?: boolean;
+  /** Bâtiments effondrables (arène FPS) : état partagé, cf. `creerEtatDestruction`. */
+  destruction?: EtatDestruction;
+}
+
+/**
+ * Effondrement des bâtiments (arène, v3) : une texture d'une ligne, un texel par bâtiment (index de scene.json), rouge = avancement de
+ * l'effondrement (0 debout, 1 à terre). Le nuanceur de sommets écrase la hauteur selon cet avancement : aucune géométrie à reconstruire,
+ * une lecture de texture par sommet.
+ */
+export interface EtatDestruction {
+  texture: THREE.DataTexture;
+  /** Avancement (0..1) du bâtiment `id` ; la texture n'est envoyée qu'au rendu suivant. */
+  poser(id: number, avancement: number): void;
+  dispose(): void;
+}
+
+/** Hauteur gardée par un bâtiment à terre (part de sa hauteur) : un tas de gravats. */
+const RESTE_RUINE = 0.05;
+
+export function creerEtatDestruction(n: number): EtatDestruction {
+  const nb = Math.max(1, n);
+  const data = new Uint8Array(nb * 4);
+  const texture = new THREE.DataTexture(data, nb, 1, THREE.RGBAFormat);
+  texture.magFilter = THREE.NearestFilter;
+  texture.minFilter = THREE.NearestFilter;
+  texture.needsUpdate = true;
+  return {
+    texture,
+    poser(id, avancement) {
+      if (id < 0 || id >= nb) return;
+      const v = Math.round(Math.min(1, Math.max(0, avancement)) * 255);
+      if (data[id * 4] === v) return;
+      data[id * 4] = v;
+      texture.needsUpdate = true;
+    },
+    dispose() { texture.dispose(); },
+  };
+}
+
+/** Branche l'effondrement sur un matériau de bâtiment (faces ou arêtes). */
+function effondrable(mat: THREE.Material, etat: EtatDestruction): void {
+  const n = etat.texture.image.width;
+  mat.onBeforeCompile = (sh) => {
+    sh.uniforms.uDetruits = { value: etat.texture };
+    sh.vertexShader = `attribute float aBat;\nuniform sampler2D uDetruits;\n${sh.vertexShader}`.replace(
+      "#include <begin_vertex>",
+      `#include <begin_vertex>\nfloat pDetruit = texture2D(uDetruits, vec2((aBat + 0.5) / ${n.toFixed(1)}, 0.5)).r;\ntransformed.y *= mix(1.0, ${RESTE_RUINE.toFixed(2)}, pDetruit);`,
+    );
+  };
+  mat.customProgramCacheKey = () => "batiment-effondrable";
 }
 
 /** Bâtiments ordinaires (cyan), base (blanc) et restaurants (ambre). */
@@ -90,9 +154,14 @@ export function ajouterBatiments(scene: THREE.Object3D, data: SceneData, opts: O
   const fantomes = opts.fantomes !== false;
   const special = new Map<number, Poi["type"]>();
   for (const p of data.pois) if (p.type === "home" || p.type === "resto") special.set(p.b, p.type);
-  scene.add(buildingGroup(data.buildings.filter((_, i) => !special.has(i)), C.cyan, 0x05080c, 0.82, fantomes ? 0.16 : 0));
-  scene.add(buildingGroup(data.buildings.filter((_, i) => special.get(i) === "home"), C.white, 0x0c141a, 0.9, fantomes ? 0.35 : 0));
-  scene.add(buildingGroup(data.buildings.filter((_, i) => special.get(i) === "resto"), C.amber, 0x120e08, 0.9, fantomes ? 0.3 : 0));
+  const groupe = (garder: (i: number) => boolean, arete: number, face: number, opacite: number, fantome: number) => {
+    const indices = data.buildings.map((_, i) => i).filter(garder);
+    scene.add(buildingGroup(indices.map((i) => data.buildings[i]), arete, face, opacite, fantomes ? fantome : 0,
+      opts.destruction ? { indices, etat: opts.destruction } : undefined));
+  };
+  groupe((i) => !special.has(i), C.cyan, 0x05080c, 0.82, 0.16);
+  groupe((i) => special.get(i) === "home", C.white, 0x0c141a, 0.9, 0.35);
+  groupe((i) => special.get(i) === "resto", C.amber, 0x120e08, 0.9, 0.3);
 }
 
 /** Voirie, parkings, eau : un seul LineSegments à couleurs par sommet. */

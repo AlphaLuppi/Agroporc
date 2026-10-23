@@ -8,11 +8,11 @@
  * Ne voit la salle que par `ContexteSalle`.
  * Spec : docs/superpowers/specs/2026-10-24-arene-evenements-design.md
  */
-import { resoudre, solSous, visible } from "./collision";
+import { batimentsDetruits, batimentsSous, detruireBatiment, releverBatiments, resoudre, solSous, visible } from "./collision";
 import { carteNavigation, chemin, pointDeVisee } from "./navigation";
 import type { ContexteSalle, JoueurSalle, ServiceEvenements, Sortie } from "./match-contexte";
 import {
-  EVENEMENTS, TIGRE_ROBOT, TITAN, TRUCK_FOU, capVers, foncer, hauteurSaut, dansCoupDePatte, ecraseParTruck, enrouler, oeilTitan, pasTigre, pasTruck,
+  EVENEMENTS, TIGRE_ROBOT, TITAN, TRUCK_FOU, capVers, foncer, hauteurSaut, pointLocal, dansCoupDePatte, ecraseParTruck, enrouler, oeilTitan, pasTigre, pasTruck,
   pvTigre, sousLeTigre, toucheTigre, yeuxTigre, ECHELLE_TIGRE, type EtatMarcheur,
 } from "./monstres";
 import {
@@ -55,6 +55,11 @@ const MARGE_TITAN_M = 1.5;
 const PENETRATION_MAX_M = 0.6;
 /** Le tigre change de cible au plus tôt après ce délai (ms). */
 const CHANGEMENT_CIBLE_TIGRE_MS = 2_000;
+/** Points d'appui du tigre (m du modèle, droite / avant) : quatre pattes et le ventre ; un bâtiment sous l'un d'eux s'effondre. */
+const APPUIS_TIGRE: readonly [number, number][] = [[-0.09, 0.15], [0.09, 0.15], [-0.09, -0.28], [0.09, -0.28], [0, -0.05]];
+/** Rayon (m) des ruines à l'atterrissage d'un saut du tigre et d'un titan qui retombe. */
+const RUINES_SAUT_TIGRE_M = 22;
+const RUINES_TITAN_M = 7;
 /** Bonus de la tête du tigre / du titan. */
 const MULT_TETE_MONSTRE = 1.5;
 /** Le chemin vers la cible est recalculé à cet intervalle (ms). */
@@ -99,6 +104,16 @@ export function creerServiceEvenements(ctx: ContexteSalle, opts: OptionsServiceE
   let dernierTicT: number | null = null;
 
   const vivants = (sauf?: string) => ctx.joueursEnJeu().filter((j) => j.vivant && j.id !== sauf && j.id !== titan?.pilote);
+  /** Effondre les bâtiments sous ces points (marge en m) ; renvoie le message `batiments` s'il en tombe. */
+  function ecraser(points: readonly [number, number][], marge: number): Sortie[] {
+    const nouveaux: number[] = [];
+    for (const [x, z] of points) for (const id of batimentsSous(ctx.monde, x, z, marge)) if (detruireBatiment(ctx.monde, id)) nouveaux.push(id);
+    return nouveaux.length ? [{ a: "tous", m: { t: "batiments", detruits: batimentsDetruits(ctx.monde), nouveaux } }] : [];
+  }
+  /** Points d'appui du tigre au sol (pattes et ventre). */
+  const appuis = (e: EtatMarcheur, echelle: number): [number, number][] =>
+    APPUIS_TIGRE.map(([d, a]) => { const q = pointLocal(e.p, e.cap, echelle, d, 0, a); return [q[0], q[2]] as [number, number]; });
+
   const prochainType = (): TypeEvenement => {
     if (opts.forcerType) return opts.forcerType;
     if (dernierType === null) return ctx.alea() < 0.5 ? "truck" : "tigre";
@@ -262,6 +277,7 @@ export function creerServiceEvenements(ctx: ContexteSalle, opts: OptionsServiceE
         ph.speciale = null;
         ph.e = { ...ph.e, p: [ph.e.p[0], 0, ph.e.p[2]] };
         sorties.push({ a: "tous", m: { t: "explosionMonstre", p: cm([ph.e.p[0], 1, ph.e.p[2]]), rayon: T.saut.rayon * 0.5 } });
+        sorties.push(...ecraser([[ph.e.p[0], ph.e.p[2]]], RUINES_SAUT_TIGRE_M));
         for (const j of vivants()) {
           if (Math.hypot(j.p[0] - ph.e.p[0], j.p[2] - ph.e.p[2]) <= T.saut.rayon && auSol(j)) {
             sorties.push(...ctx.infliger(j, T.saut.degats, null, "tigre_robot", "corps", "couteau", maintenant, ph.e.p));
@@ -274,6 +290,7 @@ export function creerServiceEvenements(ctx: ContexteSalle, opts: OptionsServiceE
         ph.e = cible ? { ...pasTigre(ph.e, cible.p, dt, ctx.monde, null, 0, T.rotation * 3), v: 0 } : { ...ph.e, v: 0 };
       } else {
         ph.e = foncer(ph.e, T.charge.vitesse, dt, ctx.monde);
+        sorties.push(...ecraser(appuis(ph.e, ECHELLE_TIGRE), 2));
         for (const j of vivants()) if (sousLeTigre(ph.e, j.p, ECHELLE_TIGRE, T.rayonEcrase * 1.5)) sorties.push(...ctx.tuer(j, null, "tigre_robot", maintenant));
       }
       if (maintenant >= sp.fin) ph.speciale = null;
@@ -283,8 +300,11 @@ export function creerServiceEvenements(ctx: ContexteSalle, opts: OptionsServiceE
       ph.e = pasTigre(ph.e, cible ? cible.p : null, dt, ctx.monde);
     }
 
-    // écrasement sous les pattes quand il marche
-    if (!sp && ph.e.v > 1) for (const j of vivants()) if (sousLeTigre(ph.e, j.p)) sorties.push(...ctx.tuer(j, null, "tigre_robot", maintenant));
+    // écrasement sous les pattes quand il marche : joueurs et bâtiments
+    if (!sp && ph.e.v > 1) {
+      for (const j of vivants()) if (sousLeTigre(ph.e, j.p)) sorties.push(...ctx.tuer(j, null, "tigre_robot", maintenant));
+      sorties.push(...ecraser(appuis(ph.e, ECHELLE_TIGRE), 1));
+    }
 
     // coup de patte (hors attaque spéciale) : armé si quelqu'un est devant, porté `armeMs` plus tard
     if (!ph.speciale) {
@@ -387,6 +407,7 @@ export function creerServiceEvenements(ctx: ContexteSalle, opts: OptionsServiceE
     if (titan.chuteDepuis !== null && y - sol < 0.7) {
       if (titan.chuteDepuis - y >= TITAN.atterrissage.chuteMin) {
         sorties.push({ a: "tous", m: { t: "explosionMonstre", p: cm([m.p[0], y + 0.5, m.p[2]]), rayon: TITAN.atterrissage.rayon * 0.6 } });
+        sorties.push(...ecraser([[m.p[0], m.p[2]]], RUINES_TITAN_M));
         for (const c of vivants()) {
           if (Math.hypot(c.p[0] - m.p[0], c.p[2] - m.p[2]) <= TITAN.atterrissage.rayon && Math.abs(c.p[1] - y) < 3) sorties.push(...ctx.tuer(c, j, "titan", maintenant));
         }
@@ -470,6 +491,10 @@ export function creerServiceEvenements(ctx: ContexteSalle, opts: OptionsServiceE
       }
       phase = { k: "attente", t: maintenant + delai(premier) };
       dernierTicT = maintenant;
+      if (batimentsDetruits(ctx.monde).length) {
+        releverBatiments(ctx.monde);
+        sorties.push({ a: "tous", m: { t: "batiments", detruits: [], nouveaux: [] } });
+      }
       return sorties;
     },
 
@@ -481,6 +506,8 @@ export function creerServiceEvenements(ctx: ContexteSalle, opts: OptionsServiceE
       } else if (ph?.k === "truck" || ph?.k === "tigre") {
         sorties.push({ a: idDest, m: { t: "evenement", type: ph.k, phase: "etat", debutT: ph.debutT, finT: ph.finT } });
       }
+      const ruines = batimentsDetruits(ctx.monde);
+      if (ruines.length) sorties.push({ a: idDest, m: { t: "batiments", detruits: ruines, nouveaux: [] } });
       if (titan) sorties.push({ a: idDest, m: { t: "titan", phase: "etat", pilote: titan.pilote, p: cm(titan.e.p), cap: mrad(titan.e.cap), finT: titan.finT } });
       return sorties;
     },

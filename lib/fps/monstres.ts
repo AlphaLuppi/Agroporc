@@ -34,7 +34,8 @@ export const TRUCK_FOU = {
 } as const;
 
 export const TIGRE_ROBOT = {
-  dureeMs: 180_000,
+  /** au plus 5 min (jamais affiché : le bandeau montre ses PV à faire tomber), puis il quitte Agroparc */
+  dureeMs: 300_000,
   /** marche (m/s) et rotation (rad/s) : il ENJAMBE les bâtiments (plus haut qu'eux), aucun contournement */
   vitesse: 8, rotation: 0.9,
   rayonCollision: 3.6,

@@ -27,8 +27,9 @@
  */
 import * as THREE from "three";
 import type { SceneData } from "../agroparc3d/types";
-import { C, construireDecor } from "../agroparc3d/decor";
-import { construireMonde, type Monde } from "./collision";
+import { C, construireDecor, creerEtatDestruction } from "../agroparc3d/decor";
+import { construireMonde, detruireBatiment, normaleImpact, releverBatiment, type Monde } from "./collision";
+import { creerImpactsBalles } from "./rendu-impacts";
 import { construireCircuits, flotte } from "./circulation";
 import { coteMurDe, etape, etatInitial, hauteurOeil, postureDe, type Entrees, type EtatMouvement } from "./mouvement";
 import { COUTEAU, STATS, degatsPlomb, delaiRecul, devier, directionsTir, dispersionTir, niveauZoomDefaut, niveauxZoom, retourRecul, vitesseArme } from "./armes";
@@ -105,8 +106,9 @@ const SECOUSSE_EXPLOSION = 0.09;
 const FOULEE_LOURDE_M = 4.5;
 const SECOUSSE_MONSTRE_M = 40;
 /** (v3) Caméra du pilote à la 3ᵉ personne : derrière le titan (m), visée au-dessus de son dos (part de l'échelle), surélévation (m). */
-/** (v3) Caméra du pilote à la 3ᵉ personne, par-dessus l'épaule : recul (m), point visé au-dessus du dos (part de l'échelle), hausse et décalage à droite (m). */
-const CAMERA_TITAN = { recul: 30, viseeHaut: 0.55, hausse: 3.5, epaule: 8 } as const;
+/** (v3) Durée (s) de l'effondrement d'un bâtiment et intervalle (s) entre deux coups de klaxon du Truck Muche fou. */
+const DUREE_EFFONDREMENT_S = 1.1;
+const KLAXON_TRUCK_S = { min: 2.2, max: 3.6 } as const;
 
 function lireSensibilite(): number {
   try {
@@ -158,7 +160,12 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
   scene.add(camera);
   const decor = new THREE.Group();
   scene.add(decor);
-  construireDecor(decor, data, { fantomes: false });
+  // bâtiments effondrables (v3) : le tigre robot et le titan les écrasent ; l'effondrement est animé par le nuanceur
+  const destruction = creerEtatDestruction(data.buildings.length);
+  construireDecor(decor, data, { fantomes: false, destruction });
+  /** effondrements en cours : id → instant (s, horloge locale) du début */
+  const effondrements = new Map<number, number>();
+  const impactsBalles = creerImpactsBalles(scene);
   const effets = creerEffets(scene);
   const post = creerPostTraitement(renderer, scene, camera);
   const sons = creerSons();
@@ -183,6 +190,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
   /** monstres interpolés de l'image (cibles des tirs, rendu) */
   let monstresImage: ReturnType<MondeMonstres["a"]> = {};
   let distTigre = 0;
+  /** s avant le prochain coup de klaxon du Truck Muche fou */
+  let klaxonDans = 0.6;
   let distTitan = 0;
 
   // ---------- état du joueur ----------
@@ -407,18 +416,17 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
   /** (v3) Canon du titan : rayon unique, cadence propre, déclaré au serveur (`canon`), qui le revalide. */
   function tirerCanon(): boolean {
     if (t < prochainDe("couteau") || !peutAgir() || entracte) return false;
-    // vue à la 3ᵉ personne : on vise le point sous le réticule (rayon depuis la caméra), le canon tire de la tête du titan vers ce point
+    // vue à la 1ʳᵉ personne depuis le cockpit : le canon tire dans l'axe du réticule
     const o = oeil();
-    const vue = directionVisee(lacet, tangage, 0);
-    const vise = tracer(monde, [camPos[0], camPos[1], camPos[2]], vue, TITAN.canon.portee + CAMERA_TITAN.recul, cibles(), client.id ?? "").point;
-    const vx = vise[0] - o[0], vy = vise[1] - o[1], vz = vise[2] - o[2];
-    const lv = Math.hypot(vx, vy, vz);
-    const d: Vec3 = lv > 3 && (vx * vue[0] + vy * vue[1] + vz * vue[2]) / lv > 0.86 ? [vx / lv, vy / lv, vz / lv] : vue;
+    const d = directionVisee(lacet, tangage, 0);
     const imp = tracer(monde, o, d, TITAN.canon.portee, cibles(), client.id ?? "");
     const touches: { cible: string; zone: Zone }[] = imp.cible && imp.zone ? [{ cible: imp.cible, zone: imp.zone }] : [];
     client.envoyer({ t: "canon", o, d, touches });
     effets.traçante([o[0] + d[0] * 2, o[1] - 0.9, o[2] + d[2] * 2], imp.point, "minigun");
-    if (!imp.cible && imp.distance < TITAN.canon.portee - 0.01) effets.impact(imp.point, [-d[0], -d[1], -d[2]], couleurMoi());
+    if (!imp.cible && imp.distance < TITAN.canon.portee - 0.01) {
+      effets.impact(imp.point, [-d[0], -d[1], -d[2]], couleurMoi());
+      impactsBalles.ajouter(imp.point, normaleImpact(monde, imp.point, o));
+    }
     prochains.set("couteau", t + TITAN.canon.cadenceS);
     sons.canon();
     kick += 0.012;
@@ -491,6 +499,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
       } else if (imp.distance < a.portee - 0.01 && impactsAffiches < 5) {
         impactsAffiches++;
         effets.impact(fin, [-d[0], -d[1], -d[2]], couleurMoi());
+        // trace durable (20 s) seulement sur un mur ou un toit (pas en l'air au bout de la portée)
+        if (imp.distance < Math.min(a.portee, PORTEE_EFFETS_M) - 0.01) impactsBalles.ajouter(fin, normaleImpact(monde, fin, o));
       }
     });
 
@@ -792,7 +802,10 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
             continue;
           }
           effets.traçante(depart, imp.point, m.arme);
-          if (!imp.cible && imp.distance < a.portee - 0.01) effets.impact(imp.point, [-d[0], -d[1], -d[2]], couleurDe(m.id));
+          if (!imp.cible && imp.distance < a.portee - 0.01) {
+            effets.impact(imp.point, [-d[0], -d[1], -d[2]], couleurDe(m.id));
+            if (imp.distance < Math.min(a.portee, PORTEE_EFFETS_M) - 0.01) impactsBalles.ajouter(imp.point, normaleImpact(monde, imp.point, m.o));
+          }
         }
         avatar?.tirer();
         const cam = oeil();
@@ -910,6 +923,29 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
         jm.ajouterLaser(m);
         sons.laser(positionSon(m.de));
         break;
+      case "batiments": {
+        // liste complète des ruines : ce qui tombe s'effondre (animé si `nouveaux`), ce qui n'y est plus se relève (nouveau match)
+        const ruines = new Set(m.detruits);
+        const nouveaux = new Set(m.nouveaux);
+        for (let id = 0; id < data.buildings.length; id++) {
+          const aTerre = monde.prismes[id]?.h === 0 && (monde.prismes[id]?.hOrigine ?? 0) > 0;
+          if (ruines.has(id) && !aTerre) {
+            detruireBatiment(monde, id);
+            if (nouveaux.has(id) && !enReplay) {
+              effondrements.set(id, t);
+              const b = data.buildings[id];
+              rm.explosion([b.c[0], b.h * 0.4, b.c[1]], Math.min(14, 4 + b.h * 0.6));
+              sons.effondrement(positionSon([b.c[0], 0, b.c[1]]));
+            } else destruction.poser(id, 1);
+          } else if (!ruines.has(id) && aTerre) {
+            releverBatiment(monde, id);
+            effondrements.delete(id);
+            destruction.poser(id, 0);
+          }
+        }
+        if (!m.detruits.length) impactsBalles.vider();
+        break;
+      }
       case "onde":
         // saut du tigre : anneau d'impact au sol, rugissement
         jm.ajouterOnde(m);
@@ -934,6 +970,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
         if (m.id === client.id || enReplay) break;
         const imp = tracer(monde, m.o, m.d, TITAN.canon.portee, cibles(), m.id);
         effets.traçante([m.o[0], m.o[1] - 0.9, m.o[2]], imp.point, "minigun");
+        if (!imp.cible && imp.distance < TITAN.canon.portee - 0.01) impactsBalles.ajouter(imp.point, normaleImpact(monde, imp.point, m.o));
         sons.canon(positionSon(m.o));
         break;
       }
@@ -1328,7 +1365,23 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
     const local = titan.etat();
     if (local && monstresImage.titan && client.id) monstresImage.titan = { ...monstresImage.titan, p: local.p, cap: local.cap, v: local.v };
     const ti = monstresImage.titan;
-    rm.maj(enReplay ? {} : monstresImage, enReplay ? [] : jm.lasers(tsServeur), t, tsServeur, dt, ti ? couleurDe(ti.pilote) : "#9be9ff", false);
+    rm.maj(enReplay ? {} : monstresImage, enReplay ? [] : jm.lasers(tsServeur), t, tsServeur, dt, ti ? couleurDe(ti.pilote) : "#9be9ff", pilote());
+    // Truck Muche fou : coups de klaxon réguliers, entendus de loin
+    const tr = monstresImage.truck;
+    if (tr && !enReplay) {
+      klaxonDans -= dt;
+      if (klaxonDans <= 0) {
+        klaxonDans = KLAXON_TRUCK_S.min + Math.random() * (KLAXON_TRUCK_S.max - KLAXON_TRUCK_S.min);
+        sons.klaxonCamion(positionSon(tr.p));
+      }
+    } else klaxonDans = 0.6;
+    // effondrements en cours (le nuanceur écrase la hauteur), traces d'impact
+    for (const [id, t0] of effondrements) {
+      const k = Math.min(1, (t - t0) / DUREE_EFFONDREMENT_S);
+      destruction.poser(id, k * k);
+      if (k >= 1) effondrements.delete(id);
+    }
+    impactsBalles.maj(dt);
     const tg = monstresImage.tigre;
     if (tg && !enReplay) {
       distTigre += Math.abs(tg.v) * dt;
@@ -1425,26 +1478,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
       camTangage = -0.5;
     } else if (vivant) {
       const assis = vehicule.actif() !== null;
-      if (pilote()) {
-        // titan : vue à la 3ᵉ personne, derrière lui et au-dessus de son dos (on voit qu'on pilote le tigre)
-        hauteurOeilLissee += (OEIL_TITAN - hauteurOeilLissee) * lissage(LISSAGE_OEIL, dt);
-        const te = titan.etat();
-        const base: Vec3 = te ? [te.p[0], te.p[1] + TITAN.echelle * CAMERA_TITAN.viseeHaut, te.p[2]] : oeil();
-        const dv = directionVisee(lacet, tangage, 0);
-        // par-dessus l'épaule droite : le tigre à gauche du réticule, jamais devant lui
-        const rx = Math.cos(lacet), rz = -Math.sin(lacet);
-        const cx = base[0] - dv[0] * CAMERA_TITAN.recul + rx * CAMERA_TITAN.epaule;
-        const cz = base[2] - dv[2] * CAMERA_TITAN.recul + rz * CAMERA_TITAN.epaule;
-        const cy = Math.max(base[1] - dv[1] * CAMERA_TITAN.recul + CAMERA_TITAN.hausse, (te?.p[1] ?? 0) + 2);
-        camera.position.set(cx, cy, cz);
-        const [ax, ay, az] = rotationCamera(lacet, tangage, kick, 0, secousse);
-        camera.rotation.set(ax, ay, az);
-        camPos[0] = cx; camPos[1] = cy; camPos[2] = cz;
-        camLacet = lacet;
-        camTangage = ax;
-        return;
-      }
-      const cible = assis ? OEIL_SIEGE : hauteurOeil(moi.accroupi);
+      const cible = pilote() ? OEIL_TITAN : assis ? OEIL_SIEGE : hauteurOeil(moi.accroupi);
       hauteurOeilLissee += (cible - hauteurOeilLissee) * lissage(LISSAGE_OEIL, dt);
       const bob = reduit || assis ? 0 : pilote()
         ? Math.abs(Math.sin(t * 4.2)) * 0.12 * Math.min(1, Math.abs(titan.etat()?.v ?? 0) / 5)
@@ -1675,7 +1709,10 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
       return {
         evenement: jm.evenement(),
         tigre: tg ? { pv: tg.pv, pvMax: tg.pvMax, rage: !!tg.rage } : null,
-        titan: ti && enCours ? { pilote: ti.pilote, pv: ti.pv, pvMax: ti.pvMax, finT: enCours.finT } : null,
+        titan: ti && enCours ? {
+          pilote: ti.pilote, pv: ti.pv, pvMax: ti.pvMax, finT: enCours.finT,
+          dash: 1 - Math.min(1, (titan.etat()?.recharge ?? 0) / (TITAN.dash.rechargeMs / 1000)),
+        } : null,
       };
     },
     touches(cfg: ConfigTouches) { config = cfg; index = indexTouches(cfg); toutRelacher(); },
@@ -1709,6 +1746,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
       dyn.dispose();
       feux.dispose();
       rm.dispose();
+      impactsBalles.dispose();
+      destruction.dispose();
       porteArme.remove(armeMain.group);
       camera.remove(porteArme);
       armeMain.dispose();
