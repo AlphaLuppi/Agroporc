@@ -44,7 +44,7 @@ export class MondeMonstres {
   }
 
   /** Monstres interpolés à l'instant serveur `ts` (en général maintenant − retard d'interpolation). */
-  a(ts: number): { truck?: TruckSnap; tigre?: TigreSnap; titan?: TitanSnap } {
+  a(ts: number): MonstresSnap {
     const s = this.snaps;
     if (!s.length) return {};
     if (ts <= s[0].ts) return { ...(s[0].m ?? {}) };
@@ -52,13 +52,18 @@ export class MondeMonstres {
       if (ts > s[i].ts) continue;
       const A = s[i - 1], B = s[i];
       const k = (ts - A.ts) / Math.max(1, B.ts - A.ts);
-      const r: { truck?: TruckSnap; tigre?: TigreSnap; titan?: TitanSnap } = {};
+      const r: MonstresSnap = {};
       const truck = interpoler(A.m?.truck, B.m?.truck, k);
       const tigre = interpoler(A.m?.tigre, B.m?.tigre, k);
       const titan = interpoler(A.m?.titan, B.m?.titan, k);
+      const bus = interpoler(A.m?.bus, B.m?.bus, k);
       if (truck) r.truck = truck;
       if (tigre) r.tigre = tigre;
       if (titan) r.titan = titan;
+      if (bus) r.bus = bus;
+      if (B.m?.armesLachees) r.armesLachees = B.m.armesLachees;
+      if (B.m?.fumigenes) r.fumigenes = B.m.fumigenes;
+      if (B.m?.frappes) r.frappes = B.m.frappes;
       return r;
     }
     return { ...(s[s.length - 1].m ?? {}) };

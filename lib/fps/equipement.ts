@@ -5,13 +5,15 @@
  * Spec : docs/superpowers/specs/2026-10-22-arene-v2-design.md (§2.4, §5.12)
  */
 import {
-  ARMES, ARMES_PRINCIPALES, ARMES_SECONDAIRES, ARMES_SPECIALES, EQUIPEMENT_DEFAUT, SLOTS, copierEquipement,
-  type ArmeFeuId, type ArmeId, type ArmePrincipaleId, type ArmeSecondaireId, type ArmeSpecialeId, type Equipement, type Slot,
+  ARMES, ARMES_PRINCIPALES, ARMES_SECONDAIRES, ARMES_SPECIALES, ARMES_UNIQUES, EQUIPEMENT_DEFAUT, SLOTS, copierEquipement,
+  type ArmeFeuId, type ArmeId, type ArmePrincipaleId, type ArmeSecondaireId, type ArmeSpecialeId, type ArmeUniqueId, type Equipement, type Slot,
 } from "./protocole";
 
 export const estPrincipale = (x: unknown): x is ArmePrincipaleId => (ARMES_PRINCIPALES as readonly unknown[]).includes(x);
 export const estSecondaire = (x: unknown): x is ArmeSecondaireId => (ARMES_SECONDAIRES as readonly unknown[]).includes(x);
 export const estSpeciale = (x: unknown): x is ArmeSpecialeId => (ARMES_SPECIALES as readonly unknown[]).includes(x);
+export const estUnique = (x: unknown): x is ArmeUniqueId => (ARMES_UNIQUES as readonly unknown[]).includes(x);
+export const estSpecialeOuUnique = (x: unknown): x is ArmeSpecialeId | ArmeUniqueId => estSpeciale(x) || estUnique(x);
 export const estArmeFeu = (x: unknown): x is ArmeFeuId => (ARMES as readonly unknown[]).includes(x);
 export const estSlot = (x: unknown): x is Slot => (SLOTS as readonly unknown[]).includes(x);
 
@@ -118,6 +120,15 @@ export function serialiserSlots(lignes: readonly LigneSlot[]): string {
   return lignes.map((l) => `${l.slot}:${l.arme}:${entierPositif(l.munitions)}:${entierPositif(l.chargeur)}`).join("|");
 }
 
+export function armeValidePourSlot(slot: Slot, arme: string): boolean {
+  switch (slot) {
+    case "principale": return estPrincipale(arme);
+    case "secondaire": return estSecondaire(arme);
+    case "couteau": return arme === "couteau";
+    case "speciale": return estSpecialeOuUnique(arme);
+  }
+}
+
 export function lireSlots(s: string): LigneSlot[] {
   const res: LigneSlot[] = [];
   if (typeof s !== "string" || s === "") return res;
@@ -125,9 +136,9 @@ export function lireSlots(s: string): LigneSlot[] {
     const c = morceau.split(":");
     if (c.length !== 4 && c.length !== 5) continue;
     const [slot, arme, m, ch] = c;
-    if (!estSlot(slot) || !(arme === "couteau" || estArmeFeu(arme))) continue;
+    if (!estSlot(slot) || !armeValidePourSlot(slot, arme)) continue;
     if (!/^\d+$/.test(m) || !/^\d+$/.test(ch)) continue;
-    res.push({ slot, arme, munitions: Number(m), chargeur: Number(ch) });
+    res.push({ slot, arme: arme as ArmeId, munitions: Number(m), chargeur: Number(ch) });
   }
   return res;
 }

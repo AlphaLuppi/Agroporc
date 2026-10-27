@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  CLE_EQUIPEMENT, armeDuSlot, depuisAlias, ecrireEquipement, estArmeFeu, estPrincipale, estSecondaire, estSlot, estSpeciale,
+  CLE_EQUIPEMENT, armeDuSlot, depuisAlias, ecrireEquipement, estArmeFeu, estPrincipale, estSecondaire, estSlot, estSpeciale, estUnique,
   lireEquipement, lireSlots, normaliserEquipement, serialiserSlots, slotDeLArme, slotVoisin, type LigneSlot,
 } from "./equipement";
 import { ARMES, EQUIPEMENT_DEFAUT, copierEquipement, type Equipement } from "./protocole";
@@ -19,7 +19,7 @@ const base = (): Equipement => ({ principale: "fusil_assaut", secondaire: "revol
 describe("garde-fous de types", () => {
   it("chaque arme est dans une seule catégorie", () => {
     for (const a of ARMES) {
-      const n = [estPrincipale(a), estSecondaire(a), estSpeciale(a)].filter(Boolean).length;
+      const n = [estPrincipale(a), estSecondaire(a), estSpeciale(a), estUnique(a)].filter(Boolean).length;
       expect(n, a).toBe(1);
       expect(estArmeFeu(a)).toBe(true);
     }

@@ -638,6 +638,14 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
     if (inv.invite === "monter" && inv.vehicule !== null) {
       client.envoyer({ t: "monter", vehicule: inv.vehicule });
       attendreReponseVehicule();
+      return;
+    }
+    if (monstresImage?.bus && monstresImage.bus.actif) {
+      const dx = moi.p[0] - monstresImage.bus.p[0];
+      const dz = moi.p[2] - monstresImage.bus.p[2];
+      if (Math.hypot(dx, dz) < 8) {
+        monterBus();
+      }
     }
   }
 
@@ -662,6 +670,26 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
     if (!peutAgir() || enKillcam() || entracte || vehicule.actif() || pilote() || !mondeTigres.aCharge()) return false;
     client.envoyer({ t: "invoquer" });
     return true;
+  }
+
+  function lancerFrappe(cible: Vec3) {
+    if (!peutAgir() || enKillcam() || entracte) return;
+    client.envoyer({ t: "lancerFrappe", cible });
+    sons.sireneFrappe();
+  }
+
+  function lancerFumigene() {
+    if (!peutAgir() || enKillcam() || entracte || vehicule.actif() || pilote()) return;
+    const o = oeil();
+    const dir = directionVisee(lacet, tangage, 0);
+    const v: Vec3 = [dir[0] * 18, dir[1] * 18 + 4, dir[2] * 18];
+    client.envoyer({ t: "lancerFumigene", p: [o[0], o[1], o[2]], v });
+    sons.fumigene();
+  }
+
+  function monterBus() {
+    if (!peutAgir() || enKillcam() || entracte || vehicule.actif() || pilote()) return;
+    client.envoyer({ t: "monterBus" });
   }
 
   /** Position d'un son par rapport à la caméra (distance et panoramique). */
@@ -1122,6 +1150,19 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
         sons.canon(positionSon(m.o));
         break;
       }
+      case "busC3":
+        sons.klaxonBus();
+        break;
+      case "frappe":
+        sons.sireneFrappe();
+        if (m.evenement === "lancee" && m.joueur === client.id) sons.alerte("tigre");
+        break;
+      case "fumigene":
+        sons.fumigene();
+        break;
+      case "ramassageArme":
+        if (m.id === client.id) sons.ramassage("arme");
+        break;
       default:
         break;
     }
@@ -1151,6 +1192,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
         case "siege": changerSiege(); break;
         case "passer": if (kc.actif() && kc.phase() === "rejeu") kc.passer(); break;
         case "invoquer": invoquer(); break;
+        case "fumigene": lancerFumigene(); break;
+        case "frappeAerienne": break;
         case "zoomLunette": if (lunetteActive()) changerZoom(1, true); break;
         case "parler": voix.parler(true); break;
         default: break;
@@ -1338,6 +1381,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
       killcamPhase: phase === "rejeu" || phase === "carte" ? phase : "",
       sort: vivant && mondeTigres.aCharge(),
       titan: pilote(),
+      dansFumee: vivant && (monstresImage?.fumigenes?.some((f) => Math.hypot(moi.p[0] - f.p[0], moi.p[2] - f.p[2]) <= 12) ?? false),
     };
   }
   function emettreHud(force = false) {
@@ -1395,6 +1439,24 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
     const offre = mondeJeu.elsa()?.offre ?? null;
     definirElsa(radarFrame, offre ? { genre: offre.genre, finT: offre.finT } : null);
     purgerEchos(radarFrame, dt);
+
+    // Bus C3, fumigènes et frappes aériennes sur la carte
+    if (monstresImage?.bus && monstresImage.bus.actif) {
+      radarFrame.bus = { x: monstresImage.bus.p[0], z: monstresImage.bus.p[2], cap: monstresImage.bus.cap, actif: true };
+    } else {
+      radarFrame.bus = null;
+    }
+    if (monstresImage?.fumigenes && monstresImage.fumigenes.length > 0) {
+      radarFrame.fumigenes = monstresImage.fumigenes.map((f) => ({ x: f.p[0], z: f.p[2], r: 12 }));
+    } else {
+      radarFrame.fumigenes = [];
+    }
+    if (monstresImage?.frappes && monstresImage.frappes.length > 0) {
+      const f = monstresImage.frappes[0];
+      radarFrame.frappeZone = { x: f.cible[0], z: f.cible[2], r: 18 };
+    } else {
+      radarFrame.frappeZone = null;
+    }
   }
 
   // ---------- boucle ----------
@@ -1904,6 +1966,9 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
         } : null,
       };
     },
+    lancerFrappe(cible) { lancerFrappe(cible); },
+    lancerFumigene() { lancerFumigene(); },
+    monterBus() { monterBus(); },
     touches(cfg: ConfigTouches) { config = cfg; index = indexTouches(cfg); toutRelacher(); },
     dispose() {
       if (disposed) return;

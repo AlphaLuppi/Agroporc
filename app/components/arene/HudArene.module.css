@@ -590,3 +590,34 @@
 /* barre de vie du boss (tigre robot) : plus large et plus haute, sans minuterie */
 .evtBoss { width: calc(720 * var(--u)); min-width: 320px; }
 .evtBoss .evtVie { height: calc(16 * var(--u)); min-height: 10px; }
+
+/* Voile de fumée volumétrique lorsque le joueur est dans un fumigène */
+.fumeeOverlay {
+  position: absolute; inset: 0; pointer-events: none;
+  background: radial-gradient(circle at center, color-mix(in srgb, var(--ag-ground) 75%, transparent) 0%, color-mix(in srgb, var(--ag-ground) 90%, transparent) 100%);
+  backdrop-filter: blur(8px);
+  mix-blend-mode: normal;
+  z-index: 5;
+  animation: fumeeFade 0.3s ease-out;
+}
+@keyframes fumeeFade { from { opacity: 0; } to { opacity: 1; } }
+
+.banniereFrappe {
+  position: absolute;
+  bottom: calc(90 * var(--u, 1px));
+  left: calc(20 * var(--u, 1px));
+  padding: calc(6 * var(--u, 1px)) calc(12 * var(--u, 1px));
+  background: color-mix(in srgb, var(--ag-danger) 25%, transparent);
+  border: 1px solid var(--ag-danger);
+  color: var(--ag-white);
+  font-family: var(--ag-display), var(--ag-mono), monospace;
+  font-weight: 700;
+  font-size: max(11px, calc(12 * var(--u, 1px)));
+  letter-spacing: 0.08em;
+  border-radius: 2px;
+  animation: pulseFrappe 0.8s infinite alternate;
+}
+@keyframes pulseFrappe {
+  from { opacity: 0.8; box-shadow: 0 0 5px color-mix(in srgb, var(--ag-danger) 50%, transparent); }
+  to { opacity: 1; box-shadow: 0 0 15px color-mix(in srgb, var(--ag-danger) 90%, transparent); }
+}

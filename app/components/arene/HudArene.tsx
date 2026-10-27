@@ -83,6 +83,7 @@ export default function HudArene(p: PropsHudArene) {
   const verrouille = !!hud?.verrouille;
   const tab = useToucheMaintenue(verrouille, p.touches.scores);
   const carteMaintenue = useToucheMaintenue(verrouille, p.touches.carte);
+  const [carteForcee, setCarteForcee] = useState(false);
   useEffect(() => {
     vueScoresRef.current(tab);
   }, [tab]);
@@ -94,6 +95,12 @@ export default function HudArene(p: PropsHudArene) {
   const { toast, surPalier, afficher } = useMessagesVifs({
     hud, derniereMort, annonces: p.annonces, bonus: p.bonus, match,
     toucheSpeciale: toucheDe(p.touches, "armeSpeciale", disposition), pousser: vive.pousser,
+  });
+  const synthese = useMemo(() => syntheseMatch(joueurs, monId, match?.objectif ?? JEU.objectifKills), [joueurs, monId, match?.objectif]);
+  const frappeDisponible = synthese.serie >= 5 || !!hud?.frappeDisponible;
+
+  useToucheAppui(verrouille && frappeDisponible, p.touches.frappeAerienne, () => {
+    setCarteForcee((prev) => !prev);
   });
   // Coin suivant de la mini-carte (action « minimapCoin ») : réglage enregistré par l'hôte + toast « Mini-carte : bas-gauche »
   const reglagesRef = useRef(p.reglagesHud);
@@ -119,7 +126,6 @@ export default function HudArene(p: PropsHudArene) {
     const { equipement, sur } = equipRef.current;
     sur(equipement.principale, armeSuivanteDuGroupe(groupeSecondaire(), equipement.secondaire));
   });
-  const synthese = useMemo(() => syntheseMatch(joueurs, monId, match?.objectif ?? JEU.objectifKills), [joueurs, monId, match?.objectif]);
 
   if (hud?.verrouille) dejaVerrouille.current = true;
   // Aide des commandes au premier lancement : 12 s après la prise de la souris.
@@ -166,6 +172,7 @@ export default function HudArene(p: PropsHudArene) {
 
       {combat && hud.pv <= 30 && <div className={styles.sang} aria-hidden="true" />}
       {combat && rupture && <div className={styles.vignetteBouclier} aria-hidden="true" />}
+      {combat && hud.dansFumee && <div className={styles.fumeeOverlay} aria-hidden="true" />}
       {combat && degats.map((d) => (
         <div key={d.id} className={styles.degat} style={{ transform: `rotate(${d.angle}rad)` }} aria-hidden="true"><i /></div>
       ))}
@@ -214,6 +221,11 @@ export default function HudArene(p: PropsHudArene) {
         {combat && <FilEliminations fil={p.fil} annonces={p.annonces} />}
       </CoinHud>
       <CoinHud coin="bg" coinMinimap={coinMap} miniMap={miniMap}>
+        {combat && frappeDisponible && !hud.titan && (
+          <div className={styles.banniereFrappe}>
+            ⚡ FRAPPE AÉRIENNE ({t("carte") || "M"})
+          </div>
+        )}
         {combat && hud.sort && !hud.titan && <IconeSort touche={t("invoquer")} />}
         {combat && !hud.titan && (
           <BlocVie
@@ -258,7 +270,18 @@ export default function HudArene(p: PropsHudArene) {
           maintenantServeur={maintenantServeur}
         />
       )}
-      <GrandeCarte scene={p.scene ?? null} radar={radar} visible={carteMaintenue && !hud.mort && !pause} toucheCarte={t("carte") || "M"} effetsReduits={effetsReduits} />
+      <GrandeCarte
+        scene={p.scene ?? null}
+        radar={radar}
+        visible={(carteMaintenue || carteForcee) && !hud.mort && !pause}
+        toucheCarte={t("carte") || "M"}
+        effetsReduits={effetsReduits}
+        frappeDisponible={frappeDisponible}
+        surLancerFrappe={(cible) => {
+          p.surLancerFrappe?.(cible);
+          setCarteForcee(false);
+        }}
+      />
 
       {pause && (
         <MenuPause

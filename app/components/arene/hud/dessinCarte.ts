@@ -282,10 +282,71 @@ function dessinerMoi(ctx: CanvasRenderingContext2D, f: RadarFrame, p: ParamsMarq
   ctx.restore();
 }
 
+function dessinerBusC3(ctx: CanvasRenderingContext2D, f: RadarFrame, p: ParamsMarqueurs): void {
+  if (!f.bus || !f.bus.actif) return;
+  const { u, palette } = p;
+  p.proj(f.bus.x, f.bus.z, sortie);
+  if (!dedans(p, sortie.x, sortie.y, 0)) return;
+  ctx.save();
+  ctx.translate(sortie.x, sortie.y);
+  ctx.rotate(p.angle(f.bus.cap));
+  ctx.lineWidth = Math.max(2, 2 * u);
+  ctx.strokeStyle = palette.cyan;
+  ctx.fillStyle = palette.fond;
+  ctx.fillRect(-3 * u, -7 * u, 6 * u, 14 * u);
+  ctx.strokeRect(-3 * u, -7 * u, 6 * u, 14 * u);
+  ctx.fillStyle = palette.ambre;
+  ctx.font = `bold ${Math.max(9, Math.round(7 * u))}px ${p.police}`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("C3", 0, 0);
+  ctx.restore();
+}
+
+function dessinerFumigenes(ctx: CanvasRenderingContext2D, f: RadarFrame, p: ParamsMarqueurs): void {
+  if (!f.fumigenes || !f.fumigenes.length) return;
+  const { u, pxParM } = p;
+  for (const fum of f.fumigenes) {
+    p.proj(fum.x, fum.z, sortie);
+    if (!dedans(p, sortie.x, sortie.y, 0)) continue;
+    const rPx = fum.r * pxParM;
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(sortie.x, sortie.y, rPx, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(200, 210, 225, 0.25)";
+    ctx.fill();
+    ctx.strokeStyle = "rgba(200, 210, 225, 0.6)";
+    ctx.lineWidth = Math.max(1, u);
+    ctx.setLineDash([3 * u, 3 * u]);
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+function dessinerFrappeZone(ctx: CanvasRenderingContext2D, f: RadarFrame, p: ParamsMarqueurs): void {
+  if (!f.frappeZone) return;
+  const { u, pxParM } = p;
+  p.proj(f.frappeZone.x, f.frappeZone.z, sortie);
+  if (!dedans(p, sortie.x, sortie.y, 0)) return;
+  const rPx = f.frappeZone.r * pxParM;
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(sortie.x, sortie.y, rPx, 0, Math.PI * 2);
+  ctx.fillStyle = "rgba(255, 30, 60, 0.2)";
+  ctx.fill();
+  ctx.strokeStyle = "rgba(255, 30, 60, 0.85)";
+  ctx.lineWidth = Math.max(2, 2 * u);
+  ctx.stroke();
+  ctx.restore();
+}
+
 /** Dessine tous les marqueurs dynamiques du `RadarFrame` (ordre : PNJ, voitures, échos, Elsa, joueurs, moi). */
 export function dessinerMarqueurs(ctx: CanvasRenderingContext2D, f: RadarFrame, p: ParamsMarqueurs): void {
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
+  dessinerFumigenes(ctx, f, p);
+  dessinerFrappeZone(ctx, f, p);
+  dessinerBusC3(ctx, f, p);
   dessinerVoituresPnj(ctx, f, p);
   dessinerVoitures(ctx, f, p);
   dessinerEchos(ctx, f, p);

@@ -38,6 +38,12 @@ export interface RadarFrame {
   elsa: RadarElsa | null;
   /** Elsa présente même sans offre (losange fixe) */
   elsaPos: { x: number; z: number };
+  /** Bus C3 express */
+  bus?: { x: number; z: number; cap: number; actif: boolean } | null;
+  /** Zones de fumée actives */
+  fumigenes?: { x: number; z: number; r: number }[];
+  /** Zone de frappe aérienne en cours */
+  frappeZone?: { x: number; z: number; r: number } | null;
 }
 
 /** Capacités des tableaux préalloués d'un `RadarFrame`. */

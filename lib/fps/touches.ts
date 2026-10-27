@@ -14,7 +14,8 @@ export type Action =
   | "armePrincipale" | "armeSecondaire" | "couteau" | "armeSpeciale" | "armePrecedente" | "couteauRapide"
   | "accroupi" | "interagir" | "siege"
   | "carte" | "minimapCoin" | "passer"
-  | "zoomLunette" | "parler" | "invoquer";
+  | "zoomLunette" | "parler" | "invoquer"
+  | "fumigene" | "frappeAerienne";
 
 /**
  * Les 10 actions de la v1 qui restent (`arme1..arme4` ont disparu). Leurs touches enregistrées sont relues AVANT celles des
@@ -31,6 +32,7 @@ export const ACTIONS_V1: readonly Action[] = [
 export const ACTIONS_NOUVELLES: readonly Action[] = [
   "armePrincipale", "armeSecondaire", "couteau", "armeSpeciale", "armePrecedente", "couteauRapide",
   "accroupi", "interagir", "siege", "carte", "minimapCoin", "passer", "zoomLunette", "parler", "invoquer",
+  "fumigene", "frappeAerienne",
 ];
 
 /**
@@ -44,7 +46,7 @@ const contexteDe = (a: Action): "mort" | "vie" => (ACTIONS_MORT.includes(a) ? "m
 export const ACTIONS: readonly Action[] = [...ACTIONS_V1, ...ACTIONS_NOUVELLES];
 
 /** Actions qui peuvent rester sans touche sans que ce soit un problème (pas d'avertissement dans le menu pause). */
-export const ACTIONS_FACULTATIVES: readonly Action[] = ["minimapCoin", "passer", "zoomLunette", "parler"];
+export const ACTIONS_FACULTATIVES: readonly Action[] = ["minimapCoin", "passer", "zoomLunette", "parler", "fumigene", "frappeAerienne"];
 
 export const LIBELLES_ACTIONS: Record<Action, string> = {
   avant: "Avancer",
@@ -72,12 +74,14 @@ export const LIBELLES_ACTIONS: Record<Action, string> = {
   zoomLunette: "Lunette : niveau de zoom suivant (molette en lunette)",
   parler: "Chat vocal : appuyer pour parler",
   invoquer: "Invoquer le tigre (sort gagné)",
+  fumigene: "Lancer un fumigène",
+  frappeAerienne: "Cibler la frappe aérienne (série de 5)",
 };
 
 /** Regroupement du menu pause : chaque action y figure une seule fois. */
 export const GROUPES_ACTIONS: { titre: string; actions: Action[] }[] = [
   { titre: "Déplacement", actions: ["avant", "arriere", "gauche", "droite", "saut", "sprint", "accroupi"] },
-  { titre: "Combat", actions: ["tir", "visee", "recharger", "zoomLunette", "invoquer"] },
+  { titre: "Combat", actions: ["tir", "visee", "recharger", "zoomLunette", "invoquer", "fumigene", "frappeAerienne"] },
   { titre: "Équipement", actions: ["armePrincipale", "armeSecondaire", "couteau", "armeSpeciale", "armePrecedente", "couteauRapide"] },
   { titre: "Véhicule", actions: ["interagir", "siege"] },
   { titre: "Divers", actions: ["scores", "carte", "minimapCoin", "passer", "parler"] },
@@ -121,6 +125,8 @@ export function touchesParDefaut(): ConfigTouches {
     parler: ["KeyT", null],
     // G et non T : T appuie pour parler au chat vocal (v3 de l'arène)
     invoquer: ["KeyG", null],
+    fumigene: ["KeyB", null],
+    frappeAerienne: ["KeyK", null],
   };
 }
 

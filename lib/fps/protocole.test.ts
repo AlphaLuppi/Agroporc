@@ -1,16 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
-  ARMES, ARMES_PRINCIPALES, ARMES_SECONDAIRES, ARMES_SPECIALES, ECHELLE_AVATAR, EQUIPEMENT_DEFAUT, JEU, OEIL_SIEGE, PLAFONDS,
+  ARMES, ARMES_PRINCIPALES, ARMES_SECONDAIRES, ARMES_SPECIALES, ARMES_UNIQUES, ECHELLE_AVATAR, EQUIPEMENT_DEFAUT, JEU, OEIL_SIEGE, PLAFONDS,
   SILHOUETTE, SILHOUETTE_ACCROUPIE, SLOTS, VERSION_PROTOCOLE, copierEquipement, oeilDe, silhouetteDe,
   type CauseMort, type MessageClient, type MessageServeur, type PassageAvion, type TigreLargueSnap,
 } from "./protocole";
 import { STATS } from "./armes";
 
 describe("armes", () => {
-  it("ARMES : 11 armes sans doublon, listes de catégories disjointes", () => {
-    expect(ARMES).toHaveLength(11);
+  it("ARMES : 14 armes sans doublon, listes de catégories disjointes", () => {
+    expect(ARMES).toHaveLength(14);
     expect(new Set(ARMES).size).toBe(ARMES.length);
-    const toutes = [...ARMES_PRINCIPALES, ...ARMES_SECONDAIRES, ...ARMES_SPECIALES];
+    const toutes = [...ARMES_PRINCIPALES, ...ARMES_SECONDAIRES, ...ARMES_SPECIALES, ...ARMES_UNIQUES];
     expect(new Set(toutes).size).toBe(toutes.length);
     expect([...ARMES].sort()).toEqual([...toutes].sort());
     expect(ARMES).not.toContain("couteau");

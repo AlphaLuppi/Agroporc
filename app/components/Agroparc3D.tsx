@@ -652,6 +652,8 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
           surReglagesHud={setReglagesHud}
           degatsAuTueur={arene.degatsAuTueur}
           scene={scene?.data ?? null}
+          surLancerFrappe={(cible) => jeuRef.current?.lancerFrappe?.(cible)}
+          surLancerFumigene={() => jeuRef.current?.lancerFumigene?.()}
         />
       )}
 

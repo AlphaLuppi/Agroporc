@@ -130,6 +130,10 @@ export interface PropsHudArene {
   scene?: SceneData | null;
   /** (v3) `JeuHandle.monstres()` : événement en cours, PV du tigre robot et du titan (bandeau), null hors partie */
   monstres?(): EtatMonstresHud | null;
+  /** Déclenchement d'une frappe aérienne (série de 5 kills) */
+  surLancerFrappe?(cible: [number, number, number]): void;
+  /** Lancer d'un fumigène */
+  surLancerFumigene?(): void;
 }
 
 /** Props de `ChoixEquipement` (écrit par U1, utilisé par U1 : lobby, et par U2 : écran de mort, killcam, pause). */
