@@ -5,6 +5,7 @@
  */
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
+import { SEUIL_ALLUMEES, FENETRE_H_M, FENETRE_L_M, PAS_COLONNE_M, MARGE_COLONNE_M, PORTE_H_M, PORTE_L_M, murDePorte, mursDe, nbEtages, placementsToit } from "./facade";
 import type { Building, Poi, SceneData, Vec2 } from "./types";
 
 export const C = {
@@ -37,6 +38,51 @@ export function extrude(b: Building): THREE.BufferGeometry {
   return g;
 }
 
+/** Style d'une pièce de la carte zombies (`Building.type`) : porte payante, barricade, champ passe-tigres. */
+export type StylePiece = "porte" | "barricade" | "champ";
+
+export interface OptionsGroupe {
+  /** numéro de chaque bâtiment de la liste dans `scene.json` (attribut `aBat`, posé avec la destruction ou le détail) */
+  indices?: readonly number[];
+  /** état de destruction partagé : le nuanceur écrase les bâtiments et découpe les brèches */
+  etat?: EtatDestruction;
+  /** façades détaillées : murs en quads (étages, fenêtres, corniche, porte) ; `portes[k]` = arête de porte du bâtiment k */
+  detail?: { portes: readonly (number | null)[] };
+  /** style d'une pièce de la carte zombies (matériau et motif propres) */
+  style?: StylePiece;
+}
+
+/** Murs en quads d'un bâtiment + toit repris de l'extrusion : attributs `aBat`, `aMur` = (u, L, nEtages, porte) et `aHaut`. */
+function facesDetaillees(g: THREE.BufferGeometry, b: Building, id: number, porte: number | null): THREE.BufferGeometry {
+  const src = g.index ? g.toNonIndexed() : g;
+  const p = src.getAttribute("position");
+  const pos: number[] = [];
+  const mur: number[] = [];
+  // toit : triangles du couvercle haut (y = h)
+  for (let i = 0; i + 2 < p.count; i += 3) {
+    if (p.getY(i) > b.h / 2 && p.getY(i + 1) > b.h / 2 && p.getY(i + 2) > b.h / 2) {
+      for (let k = 0; k < 3; k++) { pos.push(p.getX(i + k), p.getY(i + k), p.getZ(i + k)); mur.push(0, 0, 0, 0); }
+    }
+  }
+  if (src !== g) src.dispose();
+  const n = nbEtages(b.h);
+  for (const m of mursDe(b, porte)) {
+    const [ax, az] = m.a, [bx, bz] = m.b;
+    const lisse = m.lisse ? 0 : n;
+    const coin = (x: number, z: number, y: number, u: number) => { pos.push(x, y, z); mur.push(u, m.L, lisse, m.porte ? 1 : 0); };
+    // A bas, B bas, B haut puis A bas, B haut, A haut : face avant du côté de la normale sortante
+    coin(ax, az, 0, 0); coin(bx, bz, 0, m.L); coin(bx, bz, b.h, m.L);
+    coin(ax, az, 0, 0); coin(bx, bz, b.h, m.L); coin(ax, az, b.h, 0);
+  }
+  const nb = pos.length / 3;
+  const f = new THREE.BufferGeometry();
+  f.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  f.setAttribute("aBat", new THREE.Float32BufferAttribute(new Float32Array(nb).fill(id), 1));
+  f.setAttribute("aMur", new THREE.Float32BufferAttribute(mur, 4));
+  f.setAttribute("aHaut", new THREE.Float32BufferAttribute(new Float32Array(nb).fill(b.h), 1));
+  return f;
+}
+
 /**
  * Groupe fil de fer : arêtes cachées en fantôme, faces sombres, arêtes visibles lumineuses.
  * `ghostOpacity` à 0 supprime les arêtes cachées (à la première personne, elles dévoileraient
@@ -44,21 +90,26 @@ export function extrude(b: Building): THREE.BufferGeometry {
  */
 export function buildingGroup(
   list: Building[], edgeColor: number, faceColor: number, faceOpacity: number, ghostOpacity: number,
-  destruction?: { indices: readonly number[]; etat: EtatDestruction },
+  opts: OptionsGroupe = {},
 ): THREE.Group {
+  const { indices, etat, detail, style } = opts;
+  if (!list.length) return new THREE.Group();
   const faces: THREE.BufferGeometry[] = [];
   const edges: THREE.BufferGeometry[] = [];
   list.forEach((b, k) => {
     const g = extrude(b);
     const e = new THREE.EdgesGeometry(g, 12);
-    const f = new THREE.BufferGeometry();
-    f.setAttribute("position", g.getAttribute("position"));
-    if (destruction) {
-      // numéro du bâtiment (index de scene.json) sur chaque sommet : le nuanceur l'écrase selon l'état de destruction
-      const id = destruction.indices[k];
-      f.setAttribute("aBat", new THREE.Float32BufferAttribute(new Float32Array(f.getAttribute("position").count).fill(id), 1));
-      e.setAttribute("aBat", new THREE.Float32BufferAttribute(new Float32Array(e.getAttribute("position").count).fill(id), 1));
+    const id = indices ? indices[k] : 0;
+    let f: THREE.BufferGeometry;
+    if (detail) {
+      f = facesDetaillees(g, b, id, detail.portes[k] ?? null);
+    } else {
+      f = new THREE.BufferGeometry();
+      f.setAttribute("position", g.getAttribute("position"));
+      if (etat) f.setAttribute("aBat", new THREE.Float32BufferAttribute(new Float32Array(f.getAttribute("position").count).fill(id), 1));
     }
+    // numéro du bâtiment (index de scene.json) sur chaque sommet : le nuanceur l'écrase selon l'état de destruction
+    if (etat) e.setAttribute("aBat", new THREE.Float32BufferAttribute(new Float32Array(e.getAttribute("position").count).fill(id), 1));
     edges.push(e);
     faces.push(f);
     g.dispose();
@@ -67,16 +118,22 @@ export function buildingGroup(
   const faceGeo = mergeGeometries(faces, false);
   const edgeGeo = mergeGeometries(edges, false);
   if (!faceGeo || !edgeGeo) return grp;
+  const champ = style === "champ";
   const mesh = new THREE.Mesh(
     faceGeo,
-    new THREE.MeshBasicMaterial({ color: faceColor, transparent: true, opacity: faceOpacity, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 2 }),
+    new THREE.MeshBasicMaterial({
+      color: faceColor, transparent: style === "porte" || style === "barricade" ? false : true, opacity: style === "porte" || style === "barricade" ? 1 : faceOpacity,
+      polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 2,
+      ...(champ ? { depthWrite: false, side: THREE.DoubleSide } : {}),
+    }),
   );
-  mesh.renderOrder = 1;
-  const bright = new THREE.LineSegments(edgeGeo, new THREE.LineBasicMaterial({ color: edgeColor, transparent: true, opacity: 0.95 }));
-  bright.renderOrder = 2;
-  if (destruction) {
-    effondrable(mesh.material as THREE.Material, destruction.etat);
-    effondrable(bright.material as THREE.Material, destruction.etat);
+  mesh.renderOrder = champ ? 3 : 1;
+  const bright = new THREE.LineSegments(edgeGeo, new THREE.LineBasicMaterial({ color: edgeColor, transparent: true, opacity: champ ? 0.5 : 0.95 }));
+  bright.renderOrder = champ ? 4 : 2;
+  const motif = style === "barricade" || style === "champ" ? style : undefined;
+  if (etat || detail || motif) {
+    brancherShader(mesh.material as THREE.Material, { etat, facade: !!detail, motif });
+    if (etat) brancherShader(bright.material as THREE.Material, { etat });
   }
   if (ghostOpacity > 0) {
     const ghost = new THREE.LineSegments(edgeGeo, new THREE.LineBasicMaterial({ color: edgeColor, transparent: true, opacity: ghostOpacity, depthTest: false, depthWrite: false }));
@@ -99,6 +156,11 @@ export interface OptionsDecor {
   fantomes?: boolean;
   /** Bâtiments effondrables (arène FPS) : état partagé, cf. `creerEtatDestruction`. */
   destruction?: EtatDestruction;
+  /**
+   * Bâtiments détaillés : étages, fenêtres, corniche, porte, équipements de toit (cf. facade.ts). Défaut : vrai quand `destruction`
+   * est fourni (arène, zombies), faux sinon (vue aérienne, visuellement inchangée).
+   */
+  detail?: boolean;
 }
 
 /**
@@ -146,24 +208,142 @@ export function creerEtatDestruction(n: number): EtatDestruction {
   };
 }
 
-/** Branche la destruction sur un matériau de bâtiment (faces ou arêtes). */
-function effondrable(mat: THREE.Material, etat: EtatDestruction): void {
-  const n = etat.texture.image.width;
+/** Options du nuanceur des bâtiments (faces, arêtes, équipements de toit). */
+interface OptionsShader {
+  /** destruction : écrasement par `aBat` et brèches */
+  etat?: EtatDestruction;
+  /** façades : lit `aMur` / `aHaut` (faces détaillées de `facesDetaillees`) */
+  facade?: boolean;
+  /** matériau d'un InstancedMesh : l'écrasement se fait après la matrice d'instance */
+  instance?: boolean;
+  /** motif d'une pièce de la carte zombies */
+  motif?: "barricade" | "champ";
+}
+
+/** Fonctions GLSL du hachage des fenêtres allumées (miroir de `fenetreAllumee` de facade.ts : mêmes constantes, produits modulo 2^32). */
+const GLSL_HACHAGE = `uint hachageB(uint x) {
+  x ^= x >> 16u; x *= 0x7feb352du; x ^= x >> 15u; x *= 0x846ca68bu; x ^= x >> 16u;
+  return x;
+}
+`;
+
+/**
+ * Façade d'un mur (étages, fenêtres, corniche, porte), insérée avant `opaque_fragment`. `vMondeB.y` est la hauteur NON écrasée :
+ * le motif suit l'effondrement. Le détail s'estompe avec la distance (`fwidth`, relevé en tête de `main` : les dérivées restent
+ * valides même quand un `discard` de brèche suit) pour éviter le moiré. Les teintes restent sous le seuil du bloom (0,24) sauf les
+ * fenêtres allumées. Constantes recopiées de facade.ts.
+ */
+const GLSL_FACADE = `
+if (vMur.z > 0.5) {
+  float L = vMur.y;
+  float u = vMur.x;
+  float nE = floor(vMur.z + 0.5);
+  float y = vMondeB.y;
+  float hE = vHaut / nE;
+  float fy = clamp(y / hE, 0.0, nE - 0.001);
+  float et = floor(fy);
+  float ty = (fy - et) * hE;
+  float px = max(max(fwuB, fwyB), 0.002);
+  float estompe = smoothstep(0.28, 0.85, px);
+  float aa = px * 0.75;
+  vec3 cy = vec3(0.33, 0.81, 1.0);
+  vec3 chaud = vec3(0.62, 0.38, 0.16);
+  vec3 c0 = outgoingLight;
+  float yh = vHaut - y;
+  float socle = 1.0 - smoothstep(0.6 - aa, 0.6 + aa, y);
+  float pil = 1.0 - smoothstep(0.45 - aa, 0.45 + aa, min(u, L - u));
+  float plancher = et > 0.5 ? 1.0 - smoothstep(0.16 - aa, 0.16 + aa, ty) : 0.0;
+  float corniche = 1.0 - smoothstep(0.5 - aa, 0.5 + aa, yh);
+  float levre = 1.0 - smoothstep(0.08 - aa, 0.08 + aa, yh);
+  float xu = L - ${(2 * MARGE_COLONNE_M).toFixed(1)};
+  float nCol = xu < ${FENETRE_L_M.toFixed(1)} ? 0.0 : max(1.0, floor(xu / ${PAS_COLONNE_M.toFixed(1)} + 0.5));
+  float ddp = abs(u - 0.5 * L);
+  float fen = 0.0;
+  float verre = 0.0;
+  float allumee = 0.0;
+  if (nCol > 0.5 && !(vMur.w > 0.5 && et < 0.5 && ddp < ${(PORTE_L_M / 2 + 0.65).toFixed(2)})) {
+    float pas = xu / nCol;
+    float col = clamp(floor((u - ${MARGE_COLONNE_M.toFixed(1)}) / pas), 0.0, nCol - 1.0);
+    float du = abs(u - (${MARGE_COLONNE_M.toFixed(1)} + (col + 0.5) * pas));
+    float wb = (hE - ${FENETRE_H_M.toFixed(1)}) * 0.55;
+    float dv = abs(ty - (wb + ${(FENETRE_H_M / 2).toFixed(1)}));
+    float d = max(du - ${(FENETRE_L_M / 2).toFixed(2)}, dv - ${(FENETRE_H_M / 2).toFixed(1)});
+    fen = (1.0 - smoothstep(-aa, aa, d)) * (1.0 - corniche);
+    verre = (1.0 - smoothstep(-0.08 - aa, -0.08 + aa, d)) * (1.0 - corniche);
+    uint cle = (uint(vBatF + 0.5) * 73856093u) ^ (uint(et) * 19349663u) ^ (uint(col) * 83492791u) ^ (uint(L * 8.0) * 2654435761u);
+    allumee = (hachageB(cle) & 0xffffu) < ${SEUIL_ALLUMEES}u ? 1.0 : 0.0;
+  }
+  float porte = 0.0;
+  float interP = 0.0;
+  if (vMur.w > 0.5) {
+    float dP = max(ddp - ${(PORTE_L_M / 2).toFixed(1)}, y - ${PORTE_H_M.toFixed(1)});
+    porte = 1.0 - smoothstep(-aa, aa, dP);
+    interP = 1.0 - smoothstep(-0.1 - aa, -0.1 + aa, dP);
+  }
+  vec3 c = mix(c0, c0 * 0.3, socle);
+  c += cy * 0.03 * pil;
+  c += cy * 0.06 * plancher;
+  c += cy * 0.07 * corniche + cy * 0.2 * levre;
+  c = mix(c, vec3(0.002, 0.008, 0.014), verre);
+  c = mix(c, chaud, verre * allumee);
+  c += cy * 0.2 * (fen - verre) * (1.0 - 0.6 * allumee);
+  c = mix(c, vec3(0.006, 0.02, 0.028), interP);
+  c += cy * 0.28 * (porte - interP);
+  vec3 moyen = c0 * 0.9 + cy * 0.025 + chaud * 0.04;
+  outgoingLight = mix(c, moyen, estompe);
+  diffuseColor.a = mix(diffuseColor.a, 0.95, max(max(fen, porte), corniche * 0.6) * (1.0 - estompe));
+}
+`;
+
+/** Motifs des pièces de la carte zombies. */
+const GLSL_MOTIF = {
+  // bandes obliques ambre et sombres : « barrée »
+  barricade: `
+float bandeB = step(0.5, fract((vMondeB.x + vMondeB.z + vMondeB.y) * 0.8));
+outgoingLight = mix(outgoingLight * 0.35, vec3(0.42, 0.22, 0.03), bandeB);
+`,
+  // champ d'énergie translucide : traits horizontaux tous les mètres
+  champ: `
+diffuseColor.a *= 0.6 + 0.8 * step(0.5, fract(vMondeB.y * 0.5));
+`,
+} as const;
+
+/**
+ * Branche sur un matériau de bâtiment (faces, arêtes ou équipements) : l'écrasement par la destruction, les brèches, le motif des
+ * façades et celui des pièces de la carte zombies. Le programme est identifié par ses options (`customProgramCacheKey`).
+ */
+function brancherShader(mat: THREE.Material, o: OptionsShader): void {
+  const etat = o.etat;
+  const n = etat ? etat.texture.image.width : 0;
   mat.onBeforeCompile = (sh) => {
-    sh.uniforms.uDetruits = { value: etat.texture };
-    sh.vertexShader = `attribute float aBat;\nuniform sampler2D uDetruits;\nvarying vec4 vBreche;\nvarying vec3 vMondeB;\n${sh.vertexShader}`.replace(
-      "#include <begin_vertex>",
-      `#include <begin_vertex>
-vec4 etatB = texture2D(uDetruits, vec2((aBat + 0.5) / ${n.toFixed(1)}, 0.5));
-vBreche = etatB;
-vMondeB = (modelMatrix * vec4(transformed, 1.0)).xyz;
-transformed.y *= mix(1.0, ${RESTE_RUINE.toFixed(2)}, etatB.r);`,
-    );
-    sh.fragmentShader = `varying vec4 vBreche;\nvarying vec3 vMondeB;\n${sh.fragmentShader}`
-      .replace(
-        "void main() {",
-        `void main() {
-float bordB = 0.0;
+    if (etat) sh.uniforms.uDetruits = { value: etat.texture };
+    // ---- sommets
+    const declV = ["varying vec3 vMondeB;"];
+    if (etat) declV.push("attribute float aBat;", "uniform sampler2D uDetruits;", "varying vec4 vBreche;");
+    else if (o.facade) declV.push("attribute float aBat;");
+    if (o.facade) declV.push("attribute vec4 aMur;", "attribute float aHaut;", "varying vec4 vMur;", "varying float vHaut;", "varying float vBatF;");
+    let debut = "#include <begin_vertex>\n";
+    if (etat) debut += `vec4 etatB = texture2D(uDetruits, vec2((aBat + 0.5) / ${n.toFixed(1)}, 0.5));\nvBreche = etatB;\n`;
+    debut += `vMondeB = (${o.instance ? "modelMatrix * instanceMatrix" : "modelMatrix"} * vec4(transformed, 1.0)).xyz;\n`;
+    if (o.facade) debut += "vMur = aMur;\nvHaut = aHaut;\nvBatF = aBat;\n";
+    if (etat && !o.instance) debut += `transformed.y *= mix(1.0, ${RESTE_RUINE.toFixed(2)}, etatB.r);\n`;
+    sh.vertexShader = `${declV.join("\n")}\n${sh.vertexShader}`.replace("#include <begin_vertex>", () => debut);
+    if (etat && o.instance) {
+      // l'instance pose le bâtiment sur son toit : l'écrasement s'applique au monde, après la matrice d'instance
+      sh.vertexShader = sh.vertexShader.replace("#include <project_vertex>", () => `vec4 mvPosition = vec4(transformed, 1.0);
+mvPosition = instanceMatrix * mvPosition;
+mvPosition.y *= mix(1.0, ${RESTE_RUINE.toFixed(2)}, etatB.r);
+mvPosition = modelViewMatrix * mvPosition;
+gl_Position = projectionMatrix * mvPosition;`);
+    }
+    // ---- fragments
+    const declF = ["varying vec3 vMondeB;"];
+    if (etat) declF.push("varying vec4 vBreche;");
+    if (o.facade) declF.push("varying vec4 vMur;", "varying float vHaut;", "varying float vBatF;", GLSL_HACHAGE);
+    let main = "void main() {\n";
+    if (o.facade) main += "float fwuB = fwidth(vMur.x);\nfloat fwyB = fwidth(vMondeB.y);\n";
+    if (etat) {
+      main += `float bordB = 0.0;
 if (vBreche.w > 0.0) {
   vec2 dB = vMondeB.xz - vBreche.yz;
   float aB = atan(dB.y, dB.x);
@@ -171,30 +351,97 @@ if (vBreche.w > 0.0) {
   float coupe = (length(dB) - vBreche.w) * 1.15 + 1.6 * sin(aB * 9.0 + vBreche.w) + 0.9 * sin(aB * 23.0 + vMondeB.y * 0.9);
   if (vMondeB.y > coupe) discard;
   bordB = 1.0 - smoothstep(0.0, 0.9, coupe - vMondeB.y);
-}`,
-      )
-      .replace(
-        "#include <opaque_fragment>",
-        `#include <opaque_fragment>
-gl_FragColor = mix(gl_FragColor, vec4(1.0, 0.42, 0.12, 0.9), bordB * 0.85);`,
-      );
+}`;
+    }
+    let fin = "";
+    if (o.facade) fin += GLSL_FACADE;
+    if (o.motif) fin += GLSL_MOTIF[o.motif];
+    fin += "#include <opaque_fragment>\n";
+    if (etat) fin += "gl_FragColor = mix(gl_FragColor, vec4(1.0, 0.42, 0.12, 0.9), bordB * 0.85);";
+    sh.fragmentShader = `${declF.join("\n")}\n${sh.fragmentShader}`
+      .replace("void main() {", () => main)
+      .replace("#include <opaque_fragment>", () => fin);
   };
-  mat.customProgramCacheKey = () => "batiment-effondrable-2";
+  mat.customProgramCacheKey = () => `batiment-effondrable-3-${n}-${etat ? "d" : "-"}${o.facade ? "f" : "-"}${o.instance ? "i" : "-"}${o.motif ?? "-"}`;
 }
 
-/** Bâtiments ordinaires (cyan), base (blanc) et restaurants (ambre). */
+/** Équipements de toit : une boîte unitaire instanciée (clim, édicules, antennes) et ses arêtes, un tirage par bâtiment. */
+function ajouterEquipementsToit(scene: THREE.Object3D, data: SceneData, etat?: EtatDestruction): void {
+  const liste: { id: number; h: number; e: ReturnType<typeof placementsToit>[number] }[] = [];
+  data.buildings.forEach((b, id) => {
+    if (b.type && b.type !== "mur") return;
+    for (const e of placementsToit(b, id)) liste.push({ id, h: b.h, e });
+  });
+  if (!liste.length) return;
+  const n = liste.length;
+  const boite = new THREE.BoxGeometry(1, 1, 1);
+  boite.translate(0, 0.5, 0);
+  const ids = new Float32Array(n);
+  const matrices: THREE.Matrix4[] = [];
+  const q = new THREE.Quaternion(), p = new THREE.Vector3(), sc = new THREE.Vector3(), axe = new THREE.Vector3(0, 1, 0);
+  liste.forEach(({ id, h, e }, i) => {
+    q.setFromAxisAngle(axe, e.rot);
+    matrices.push(new THREE.Matrix4().compose(p.set(e.x, h, e.z), q, sc.set(e.sx, e.sy, e.sz)));
+    ids[i] = id;
+  });
+  if (etat) boite.setAttribute("aBat", new THREE.InstancedBufferAttribute(ids, 1));
+  const mesh = new THREE.InstancedMesh(boite, new THREE.MeshBasicMaterial({ color: 0x0b1820, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 2 }), n);
+  matrices.forEach((m, i) => mesh.setMatrixAt(i, m));
+  mesh.instanceMatrix.needsUpdate = true;
+  mesh.renderOrder = 1;
+  // arêtes : les 12 arêtes de chaque boîte, posées en coordonnées du monde (même nuanceur que les arêtes des bâtiments)
+  const coins: THREE.Vector3[] = [];
+  for (let k = 0; k < 8; k++) coins.push(new THREE.Vector3((k & 1 ? 0.5 : -0.5), (k & 2 ? 1 : 0), (k & 4 ? 0.5 : -0.5)));
+  const paires = [[0, 1], [2, 3], [4, 5], [6, 7], [0, 2], [1, 3], [4, 6], [5, 7], [0, 4], [1, 5], [2, 6], [3, 7]];
+  const pos = new Float32Array(n * paires.length * 6);
+  const aBat = new Float32Array(n * paires.length * 2);
+  const v = new THREE.Vector3();
+  let o = 0, ob = 0;
+  matrices.forEach((m, i) => {
+    for (const [a, b] of paires) {
+      v.copy(coins[a]).applyMatrix4(m); pos[o++] = v.x; pos[o++] = v.y; pos[o++] = v.z;
+      v.copy(coins[b]).applyMatrix4(m); pos[o++] = v.x; pos[o++] = v.y; pos[o++] = v.z;
+      aBat[ob++] = ids[i]; aBat[ob++] = ids[i];
+    }
+  });
+  const gl = new THREE.BufferGeometry();
+  gl.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  if (etat) gl.setAttribute("aBat", new THREE.BufferAttribute(aBat, 1));
+  const aretes = new THREE.LineSegments(gl, new THREE.LineBasicMaterial({ color: C.cyan, transparent: true, opacity: 0.55 }));
+  aretes.renderOrder = 2;
+  if (etat) {
+    brancherShader(mesh.material as THREE.Material, { etat, instance: true });
+    brancherShader(aretes.material as THREE.Material, { etat });
+  }
+  scene.add(mesh, aretes);
+}
+
+/** Bâtiments ordinaires (cyan), base (blanc), restaurants (ambre) et pièces de la carte zombies (ambre, par style). */
 export function ajouterBatiments(scene: THREE.Object3D, data: SceneData, opts: OptionsDecor = {}): void {
   const fantomes = opts.fantomes !== false;
+  const detail = opts.detail ?? opts.destruction !== undefined;
   const special = new Map<number, Poi["type"]>();
   for (const p of data.pois) if (p.type === "home" || p.type === "resto") special.set(p.b, p.type);
-  const groupe = (garder: (i: number) => boolean, arete: number, face: number, opacite: number, fantome: number) => {
-    const indices = data.buildings.map((_, i) => i).filter(garder);
-    scene.add(buildingGroup(indices.map((i) => data.buildings[i]), arete, face, opacite, fantomes ? fantome : 0,
-      opts.destruction ? { indices, etat: opts.destruction } : undefined));
+  const stylePiece = (i: number): StylePiece | undefined => {
+    const t = data.buildings[i].type;
+    return t === "porte" || t === "barricade" || t === "champ" ? t : undefined;
   };
-  groupe((i) => !special.has(i), C.cyan, 0x05080c, 0.82, 0.16);
+  const groupe = (garder: (i: number) => boolean, arete: number, face: number, opacite: number, fantome: number, style?: StylePiece) => {
+    const indices = data.buildings.map((_, i) => i).filter(garder);
+    if (style && !indices.length) return;
+    const liste = indices.map((i) => data.buildings[i]);
+    scene.add(buildingGroup(liste, arete, face, opacite, fantomes ? fantome : 0, {
+      indices, etat: opts.destruction, style,
+      detail: detail && !style ? { portes: liste.map((b) => murDePorte(b, data.roads)) } : undefined,
+    }));
+  };
+  groupe((i) => !special.has(i) && !stylePiece(i), C.cyan, 0x05080c, 0.82, 0.16);
   groupe((i) => special.get(i) === "home", C.white, 0x0c141a, 0.9, 0.35);
   groupe((i) => special.get(i) === "resto", C.amber, 0x120e08, 0.9, 0.3);
+  groupe((i) => stylePiece(i) === "porte", C.amber, 0x8a5a1c, 1, 0.3, "porte");
+  groupe((i) => stylePiece(i) === "barricade", C.amber, 0x2a1a08, 1, 0.3, "barricade");
+  groupe((i) => stylePiece(i) === "champ", C.amber, C.amber, 0.16, 0, "champ");
+  if (detail) ajouterEquipementsToit(scene, data, opts.destruction);
 }
 
 /** Voirie, parkings, eau : un seul LineSegments à couleurs par sommet. */
