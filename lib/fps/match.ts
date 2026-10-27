@@ -772,7 +772,8 @@ export class Salle implements ContexteSalle {
     const d = dirs[0];
     const sorties: Sortie[] = [{ a: "tous", sauf: j.id, m: { t: "coup", id: j.id, o: coup.o, d, arme: "couteau" } }];
     // une seule cible tant que l'épée n'est pas branchée côté salle (le message en porte jusqu'à nbCiblesMax)
-    const idCible = coup.cibles[0] ?? null;
+    // `cibles` vient du réseau : un tableau absent ou mal formé (ancien format `cible`, client truqué) vaut un coup dans le vide
+    const idCible = Array.isArray(coup.cibles) ? coup.cibles[0] ?? null : null;
     const c = typeof idCible === "string" ? this.joueurs.get(idCible) : undefined;
     if (!c || c.id === j.id || !c.enJeu || !c.vivant || maintenant < c.protegeJusqua) return sorties;
     const vue = this.positionsCible(c, maintenant, REWIND_MELEE_MS).find((pos) =>

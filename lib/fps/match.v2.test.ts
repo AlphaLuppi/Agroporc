@@ -366,6 +366,23 @@ describe("couteau", () => {
     expect(j(s, "b").pv).toBe(JEU.pvMax);
   });
 
+  it("`cibles` absent ou mal formé (ancien format `cible`, client truqué) : coup dans le vide, sans exception ni dégât", () => {
+    const formes: unknown[] = [undefined, null, "b", 42, { 0: "b" }, [null], [42], [{ id: "b" }]];
+    formes.forEach((cibles, i) => {
+      const { s, t } = duelCouteau();
+      const { o, d } = regarder(s, "a", [-8.5, 1, 20]);
+      const msg = { t: "coup", o, d, cibles } as unknown as MessageClient;
+      const sorties = s.recevoir("a", msg, t + i);
+      expect(sorties).toHaveLength(1);
+      expect(sorties[0].m).toMatchObject({ t: "coup", id: "a", arme: "couteau" });
+      expect(j(s, "b").pv).toBe(JEU.pvMax);
+    });
+    const { s, t } = duelCouteau();
+    const { o, d } = regarder(s, "a", [-8.5, 1, 20]);
+    expect(s.recevoir("a", { t: "coup", o, d, cible: "b" } as unknown as MessageClient, t)).toHaveLength(1);
+    expect(j(s, "b").pv).toBe(JEU.pvMax);
+  });
+
   it("cadence : un deuxième coup trop tôt est refusé, refusé aussi pendant le dégainage et sans couteau en main", () => {
     const { s, t } = duelCouteau();
     j(s, "b").bouclier = 100; // pour survivre au premier coup
