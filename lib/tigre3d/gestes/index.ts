@@ -15,6 +15,12 @@ import { lecher } from "./lecher";
 import { etirement } from "./etirement";
 import { serreMain } from "./serre-main";
 import { batte } from "./batte";
+import { griffe } from "./griffe";
 
 export const GESTES: Record<Reaction, Geste> = { regard, saut, tape, sursaut, ronron, rugir, salut, lecher, etirement, "serre-main": serreMain, batte };
+/**
+ * Gestes hors du thème Tigre : ils ne sont pas des `Reaction` (donc jamais tirés, jamais dans `POIDS_REACTIONS`, ni textes ni bulle) ;
+ * seul le mode zombies de l'arène les lance. « griffe » : coup de patte du tigre zombie (lib/fps/zombies-anim.ts).
+ */
+export const GESTES_ARENE = { griffe } as const;
 export type { Geste, PoseGeste, ContexteGeste, ClipImages, EvenementGeste } from "./types";

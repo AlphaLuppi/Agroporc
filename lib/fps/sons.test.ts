@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ARMES } from "./protocole";
 import { STATS } from "./armes";
-import { creerSons } from "./sons";
+import { VOIX_TIGRES_MAX, creerSons } from "./sons";
 
 /** Faux contexte audio : compte les sources démarrées / arrêtées et les nœuds créés, sans produire de son. */
 class FauxParam {
@@ -29,6 +29,8 @@ class FauxNoeud {
   stop() { journal.arretes++; }
 }
 class FauxAudioContext {
+  static derniere: FauxAudioContext | null = null;
+  constructor() { FauxAudioContext.derniere = this; }
   currentTime = 0;
   state = "running";
   sampleRate = 48000;
@@ -227,3 +229,44 @@ describe("sons : sans WebAudio", () => {
   });
 });
 
+
+
+describe("sons du mode zombies", () => {
+  it("rugissement de tigre : spatialisé, au plus 4 voix en même temps, de nouveau libre une fois les voix finies", () => {
+    const sons = creerSons();
+    expect(VOIX_TIGRES_MAX).toBe(4);
+    const joues: boolean[] = [];
+    for (let i = 0; i < 6; i++) joues.push(sons.rugissementTigre({ distance: 30, pan: 0.5 }));
+    expect(joues).toEqual([true, true, true, true, false, false]);
+    // le cri de mort compte aussi comme une voix
+    expect(sons.rugissementTigre({ distance: 10, pan: 0 }, true)).toBe(false);
+    // 1,5 s plus tard (horloge audio) les voix sont finies
+    FauxAudioContext.derniere!.currentTime = 1.5;
+    expect(sons.rugissementTigre(undefined, true)).toBe(true);
+    const avant = journal.demarres;
+    expect(sons.rugissementTigre({ distance: 80, pan: -1 })).toBe(true);
+    expect(journal.demarres).toBeGreaterThan(avant);
+    sons.dispose();
+  });
+
+  it("griffe, achat accepté / refusé, pièce et nouvelle manche produisent du son", () => {
+    const sons = creerSons();
+    for (const jouer of [
+      () => sons.griffe(), () => sons.griffe({ distance: 12, pan: 0.2 }), () => sons.achat(true), () => sons.achat(false), () => sons.piece(), () => sons.manche(),
+    ]) {
+      const avant = journal.demarres;
+      jouer();
+      expect(journal.demarres).toBeGreaterThan(avant);
+    }
+    sons.dispose();
+  });
+
+  it("sans contexte audio (navigateur sans WebAudio), tout est sans effet et le rugissement renvoie faux", () => {
+    vi.stubGlobal("window", { addEventListener() {}, removeEventListener() {} });
+    vi.stubGlobal("navigator", {});
+    const sons = creerSons();
+    expect(sons.rugissementTigre()).toBe(false);
+    expect(() => { sons.griffe(); sons.achat(true); sons.piece(); sons.manche(); }).not.toThrow();
+    sons.dispose();
+  });
+});

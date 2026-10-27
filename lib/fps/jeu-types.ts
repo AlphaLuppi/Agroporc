@@ -3,7 +3,10 @@
  * PUR : aucun import three ni DOM. `jeu.ts` les ré-exporte (`export type { … } from "./jeu-types"`).
  * Spec : docs/superpowers/specs/2026-10-22-arene-v2-design.md (§5.18) et 2026-10-23-arene-hud-design.md (§3.2, §3.4)
  */
-import type { ArmeFeuId, ArmeId, ArmeMeleeId, ArmePrincipaleId, ArmeSecondaireId, ArmeSpecialeId, CauseMort, InfoTueur, MessageServeur, Slot, TypeEvenement, Vec3, Zone } from "./protocole";
+import type {
+  ArmeFeuId, ArmeId, ArmeMeleeId, ArmePrincipaleId, ArmeSecondaireId, ArmeSpecialeId, CauseMort, EtatPartieZombies, InfoTueur, MessageServeur,
+  ModeSalle, RaisonAchat, Slot, TypeEvenement, Vec3, Zone,
+} from "./protocole";
 import type { RadarFrame } from "./radar";
 import type { ConfigTouches } from "./touches";
 
@@ -59,8 +62,8 @@ export interface HudEtat {
   /** multiplicateur de course de l'arme en main (couteau 1,3 ; sinon 1 ; arrondi à 0,01) */
   bonusVitesse: number;
   /** invite d'interaction affichée sous le viseur */
-  invite: "" | "elsa" | "monter" | "descendre";
-  /** "2/4" occupants pour "monter" ; distance « 12 m » pour "elsa" */
+  invite: "" | "elsa" | "monter" | "descendre" | "acheter" | "porte" | "boite" | "soin" | "reanimer";
+  /** "2/4" occupants pour "monter" ; distance « 12 m » pour "elsa" ; zombies : « Pompe — 900 $ », « Ouvrir la porte — 1 250 $ », « Réanimer Léa » (texte après « [E] ») */
   inviteDetail: string;
   vehicule: boolean;
   /** id du véhicule occupé (choisit la ligne de `sieges: InfoVehicule[]`), −1 hors véhicule */
@@ -80,6 +83,23 @@ export interface HudEtat {
   voixParlants: string;
   /** (v3) je pilote le titan tigre (bloc d'armes remplacé par le bandeau du titan) */
   titan: boolean;
+
+  // ---- MODE ZOMBIES (v5) : tous optionnels, absents en arène (les littéraux `HudEtat` existants restent valides) ----
+  /** mode de la salle : "arene" ou "zombies" */
+  mode?: ModeSalle;
+  /** argent ($) */
+  argent?: number;
+  /** manche en cours (0 avant la première) et tigres restants à tuer (pas encore apparus compris) */
+  manche?: number;
+  restants?: number;
+  /** je suis à terre (relevable par un coéquipier) / éliminé (spectateur jusqu'à la pause suivante) */
+  aTerre?: boolean;
+  elimine?: boolean;
+  /** invite d'achat : prix ($) et argent suffisant (toujours vrai pour une relève) */
+  invitePrix?: number;
+  inviteAssez?: boolean;
+  /** je maintiens E sur un coéquipier à terre (la progression 0..1 est dans `HudLive.reanimation`) */
+  reanime?: boolean;
 
   // ---- COMPATIBILITÉ v1 (shim du lot 0, tous optionnels) ----
   // Champs que le HUD v1 lit encore et que `jeu.ts` v1 émet toujours. La spec HUD (§3.2) les retire de `HudEtat` : le lot J1 cesse
@@ -111,6 +131,8 @@ export interface HudLive {
   vitesseKmh: number;
   /** 0..1 : écoulé du délai de 5 s avant régénération ; 1 = régénération en cours ou PV pleins */
   regenDelai: number;
+  /** (zombies) 0..1 : avancement de la relève d'un coéquipier que je maintiens, 0 = aucune */
+  reanimation?: number;
 }
 
 export type JeuEvenement =
@@ -138,6 +160,33 @@ export interface EtatMonstresHud {
   /** `dash` : 0..1, 1 = dash prêt (seulement pour le pilote) ; `vitesse` (m/s), `altitude` (m), `cap` (rad, lacet) pour le cockpit */
   titan: { pilote: string; pv: number; pvMax: number; finT: number; dash: number; vitesse: number; altitude: number; cap: number } | null;
 }
+
+/**
+ * (zombies) État lu à intervalle par le HUD (comme `EtatMonstresHud`, hors rendu à 60 Hz) : argent, dernier gain et dernier refus d'achat
+ * (le compteur `n` augmente à chaque nouvel événement : le HUD anime sur le changement), dernier état de la partie reçu du serveur.
+ */
+export interface EtatZombiesHud {
+  argent: number;
+  manche: number;
+  /** tigres restants à tuer et tigres vivants (dessinés) */
+  restants: number;
+  vivants: number;
+  gain: { n: number; delta: number; motif: string } | null;
+  refus: { n: number; id: string; raison: RaisonAchat } | null;
+  /** achat réussi (nombre d'achats réussis depuis l'entrée, pour animer) */
+  achats: number;
+  /** relève que je maintiens : id du coéquipier (null si aucune) et avancement 0..1 */
+  reanimation: { cible: string; progression: number } | null;
+  aTerre: boolean;
+  elimine: boolean;
+  /** horodatage serveur (ms) de mon élimination si je suis à terre, sinon 0 */
+  terreFinT: number;
+  /** dernier `zombies{etat}` reçu (null avant le premier) */
+  partie: EtatPartieZombies | null;
+}
+
+/** Options de `lancerJeu` : le mode de la salle (arène par défaut, comportement historique). */
+export interface JeuOptions { mode?: ModeSalle }
 
 export interface JeuCallbacks {
   /** ≈ 15 Hz, seulement quand quelque chose a changé */
@@ -177,6 +226,8 @@ export interface JeuHandle {
   radar(): RadarFrame;
   /** (v3) Événement en cours, PV du tigre robot et du titan (bandeau du HUD). */
   monstres(): EtatMonstresHud;
+  /** (v5) État du mode zombies (argent, gains, refus, relève) ; objet neuf à chaque appel, valeurs neutres en arène. */
+  zombies(): EtatZombiesHud;
   dispose(): void;
   /** Crochet de test (window.__arene en développement). */
   debug: {

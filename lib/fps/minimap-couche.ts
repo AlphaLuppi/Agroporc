@@ -45,8 +45,8 @@ export interface OptionsCouche { avecPietons?: boolean }
  * Dimensions et échelle de la couche pour cette scène (échelle plafonnée à `COUCHE.pixelsMax`). `pxParM` permet une résolution plus
  * faible (grande carte : la taille d'affichage suffit), jamais au-delà de `COUCHE.pxParM`.
  */
-export function dimensionsCouche(scene: SceneData, pxParM: number = COUCHE.pxParM): DimensionsCouche {
-  const z = ZONE_CARTE(scene);
+export function dimensionsCouche(scene: SceneData, pxParM: number = COUCHE.pxParM, zone?: ZoneJouable): DimensionsCouche {
+  const z = zone ?? ZONE_CARTE(scene);
   const lm = z.x1 - z.x0, hm = z.z1 - z.z0;
   const aire = Math.max(1, lm * hm);
   const echelle = Math.min(COUCHE.pxParM, Math.max(0.05, pxParM), Math.sqrt(COUCHE.pixelsMax / aire));

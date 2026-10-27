@@ -38,10 +38,15 @@ export interface RadarFrame {
   elsa: RadarElsa | null;
   /** Elsa présente même sans offre (losange fixe) */
   elsaPos: { x: number; z: number };
+  /** mode zombies : tigres VUS [x, z, vu] × 24 (points rouges), portes encore fermées [px, pz, qx, qz] × 5 (grande carte) */
+  zombies: Float32Array; nZombies: number;
+  portes: Float32Array; nPortes: number;
+  /** vrai en mode zombies : la carte est restreinte aux bornes de la zone de jeu (`ZONE_CARTE(scene, "zombies")`) */
+  modeZombies: boolean;
 }
 
 /** Capacités des tableaux préalloués d'un `RadarFrame`. */
-export const RADAR_CAPACITES = { joueurs: 16, voitures: 6, echos: 8, pnj: 12 } as const;
+export const RADAR_CAPACITES = { joueurs: 16, voitures: 6, echos: 8, pnj: 12, zombies: 24, portes: 5 } as const;
 /** Échos de tir sur la mini-map : activés ; une constante les coupe (choix de gameplay à valider, HUD §14). */
 export const ECHOS_TIR = true;
 export const ECHO = { rayonM: 70, dureeS: 1.2, pasM: 8 } as const;
@@ -63,12 +68,15 @@ export function creerRadarFrame(): RadarFrame {
     nEchos: 0,
     elsa: null,
     elsaPos: { x: 0, z: 0 },
+    zombies: new Float32Array(RADAR_CAPACITES.zombies * 3), nZombies: 0,
+    portes: new Float32Array(RADAR_CAPACITES.portes * 4), nPortes: 0,
+    modeZombies: false,
   };
 }
 
 /** Remet les compteurs d'un `RadarFrame` à zéro avant un remplissage (les tableaux gardent leur identité et leur taille). */
 export function viderRadarFrame(f: RadarFrame): void {
-  f.nJoueurs = 0; f.nPnj = 0; f.nVoitures = 0;
+  f.nJoueurs = 0; f.nPnj = 0; f.nVoitures = 0; f.nZombies = 0; f.nPortes = 0;
   // Les échos sont persistants d'une image à l'autre (vieillis par `purgerEchos`), pas remis à zéro ici.
   f.elsa = null;
   f.capVehicule = NaN;
@@ -111,6 +119,25 @@ export function ajouterJoueur(f: RadarFrame, j: { id: string; x: number; z: numb
   if (f.nJoueurs >= f.joueurs.length) return false;
   const e = f.joueurs[f.nJoueurs++];
   e.id = j.id; e.x = j.x; e.z = j.z; e.cap = j.cap; e.couleur = j.couleur; e.etat = j.etat; e.vu = Math.min(1, j.vu); e.age = age;
+  return true;
+}
+
+/**
+ * Ajoute un tigre zombie VU au frame (`vu` ∈ ]0, 1], jamais de tigre non vu : pas de wallhack) ; capacité 24 (le plafond de tigres vivants).
+ * Renvoie vrai s'il a été ajouté.
+ */
+export function ajouterZombie(f: RadarFrame, x: number, z: number, vu: number): boolean {
+  if (!(vu > 0) || f.nZombies >= RADAR_CAPACITES.zombies) return false;
+  const i = f.nZombies++ * 3;
+  f.zombies[i] = x; f.zombies[i + 1] = z; f.zombies[i + 2] = Math.min(1, vu);
+  return true;
+}
+
+/** Ajoute une porte payante encore fermée (segment p → q, repère de la carte) ; capacité 5. */
+export function ajouterPorte(f: RadarFrame, px: number, pz: number, qx: number, qz: number): boolean {
+  if (f.nPortes >= RADAR_CAPACITES.portes) return false;
+  const i = f.nPortes++ * 4;
+  f.portes[i] = px; f.portes[i + 1] = pz; f.portes[i + 2] = qx; f.portes[i + 3] = qz;
   return true;
 }
 

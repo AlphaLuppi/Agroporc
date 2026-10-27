@@ -101,6 +101,10 @@ export function formatSecondes(s: number): string {
   const v = Math.round(Math.max(0, s) * 10) / 10;
   return Number.isInteger(v) ? `${FR0.format(v)}${NBSP}s` : `${FR1.format(v)}${NBSP}s`;
 }
+/** Argent des zombies : « 1 250 $ » (espaces insécables). */
+export function formatArgent(n: number): string {
+  return `${FR0.format(Math.round(n))}${NBSP}$`;
+}
 /** Pourcentage d'une fraction 0..1 : « 44 % ». */
 export function formatPourcent(x: number): string {
   return `${FR0.format(Math.round(x * 100))}${NBSP}%`;

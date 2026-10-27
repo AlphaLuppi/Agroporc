@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   FILE_VIVE_MAX, INTERVALLE_VIF_MS, NBSP, PIPS, PRIORITE_VIVE, SEUILS_MUNITIONS, SEUILS_PV,
-  cacheLiveVide, delaiVif, etapeRupture, ecrireLive, fileViveVide, formatKills, formatMetres, formatNombre, formatPourcent, formatRang, formatSecondes,
+  cacheLiveVide, delaiVif, etapeRupture, ecrireLive, fileViveVide, formatArgent, formatKills, formatMetres, formatNombre, formatPourcent, formatRang, formatSecondes,
   formatVitesse, libelleFil, libellePvBas, niveauMunitions, niveauPv, palierFranchi, parseSlots, pips, prendreVif, pousserVif,
   syntheseMatch, texteBonus, texteOffreElsa, type ElementEcrivable, type MessageVif,
 } from "./hud-modele";
@@ -333,5 +333,27 @@ describe("hud-modele : rupture du bouclier", () => {
     // bouclier brisé, puis mort moins de 400 ms plus tard : le rendu suivant est « inactif » et doit tout remettre à faux
     expect(etapeRupture(0, 0, false)).toBe("annuler");
     expect(etapeRupture(40, 0, false)).toBe("annuler");
+  });
+});
+
+describe("zombies : slots sans arme principale, argent", () => {
+  it("parseSlots lit un équipement sans principale (pistolet + couteau) et avec réserve finie", () => {
+    const s = parseSlots("secondaire:pistolet:12:12:48|couteau:epee:0:0:-1");
+    expect(s.map((x) => x.slot)).toEqual(["secondaire", "couteau"]);
+    expect(s[0]).toMatchObject({ arme: "pistolet", munitions: 12, chargeur: 12, reserve: 48 });
+    expect(s[1]).toMatchObject({ arme: "epee", reserve: -1 });
+    // sans la réserve (4 champs) : infinie
+    expect(parseSlots("secondaire:pistolet:3:12|couteau:couteau:0:0").map((x) => x.reserve)).toEqual([-1, -1]);
+  });
+
+  it("formatArgent : « 1 250 $ » avec espaces insécables", () => {
+    expect(formatArgent(1250)).toMatch(/^1[\u202f\u00a0 ]250\u00a0\$$/);
+    expect(formatArgent(500)).toBe(`500${NBSP}$`);
+    expect(formatArgent(0)).toBe(`0${NBSP}$`);
+    expect(formatArgent(124.6)).toBe(`125${NBSP}$`);
+  });
+
+  it("le fil des éliminations nomme la griffe d'un tigre", () => {
+    expect(libelleFil("couteau", "tigre_zombie", "")).toBe("Griffé par un tigre");
   });
 });

@@ -7,7 +7,7 @@ import type { Poi, SceneData } from "@/lib/agroparc3d/types";
 import type { JoueurAerien, SceneHandle } from "@/lib/agroparc3d/scene";
 import type { JeuHandle, HudEtat } from "@/lib/fps/jeu";
 import type { HudLive } from "@/lib/fps/jeu-types";
-import type { ArmeFeuId, ArmeMeleeId, ArmePrincipaleId, ArmeSecondaireId, Slot, Vec3 } from "@/lib/fps/protocole";
+import type { ArmeFeuId, ArmeMeleeId, ArmePrincipaleId, ArmeSecondaireId, ModeSalle, Slot, Vec3 } from "@/lib/fps/protocole";
 import { ecrireEquipement, estPrincipale, estSecondaire, lireEquipement } from "@/lib/fps/equipement";
 import { creerRadarFrame } from "@/lib/fps/radar";
 import { nomPersonnage } from "@/lib/characters";
@@ -103,6 +103,8 @@ const HUD_REPOS: HudEtat = {
   protegeRestant: 0, verrouille: true, connecte: true, entracte: false, accroupi: false, glisse: false, regen: false,
   bonusVitesse: 1, invite: "", inviteDetail: "", vehicule: false, vehiculeId: -1, siege: -1, tireInterdit: false,
   embarquement: false, killcam: -1, killcamPhase: "", voix: "", voixParlants: "", titan: false,
+  // mode zombies (champs optionnels de HudEtat) : valeurs neutres, `forcerHud({ mode: "zombies", argent: 1250… })` les surcharge
+  mode: "arene", argent: 0, manche: 0, restants: 0, aTerre: false, elimine: false, invitePrix: 0, inviteAssez: true, reanime: false,
 };
 function sensibiliteInitiale(): number {
   try {
@@ -189,6 +191,8 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
   // identité stable : le HUD le lit en rAF (mini-map, flèche d'Elsa), sans repasser par React
   const radar = useCallback(() => jeuRef.current?.radar() ?? RADAR_VIDE, []);
   const monstres = useCallback(() => jeuRef.current?.monstres() ?? null, []);
+  /** Mode de la salle où le jeu est lancé ("arene" par défaut) : lu au lancement de `lancerJeu`, qui bâtit le monde du mode. */
+  const modeJeuRef = useRef<ModeSalle>("arene");
   const enAreneRef = useRef(enArene);
   enAreneRef.current = enArene;
   const equipementRef = useRef(equipement);
@@ -384,7 +388,7 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
           evenement: arene.pousserEvenement,
           sortir: () => quitterRef.current(),
           erreur: (texte) => setMessage({ id: Date.now(), texte }),
-        });
+        }, { mode: modeJeuRef.current });
         jeuRef.current = jeu;
         jeu.sensibilite(sensibiliteRef.current);
         jeu.accroupiBascule(accroupiBasculeRef.current);

@@ -13,6 +13,9 @@ const MAIN_INITIALE: Slot = "principale";
 /** Slots de repli, dans l'ordre : le premier qui porte une arme (la principale peut manquer, zombies v5). */
 const SLOTS_REPLI: readonly Slot[] = ["principale", "secondaire", "couteau"];
 
+/** Options du contrôleur : `reserveChargeurs` = chargeurs de réserve par arme (zombies, v5) ; absent = réserve infinie (arène). */
+export interface OptionsArmes { reserveChargeurs?: number }
+
 export class ControleurArmes {
   private equip: Equipement;
   private main: Slot;
@@ -20,6 +23,10 @@ export class ControleurArmes {
   private precedent: Slot;
   /** chargeur courant par arme à feu portée */
   private mun: Partial<Record<ArmeFeuId, number>> = {};
+  /** réserve (balles) par arme à feu portée, seulement si la réserve est limitée (zombies) ; les spéciales n'en ont pas */
+  private reserve: Partial<Record<ArmeFeuId, number>> = {};
+  /** chargeurs de réserve par arme, null = réserve infinie (arène) */
+  private readonly reserveChargeurs: number | null;
   /** pas de tir ni de recharge avant cet instant */
   private sortieFin = 0;
   private sortieDebut = 0;
@@ -29,7 +36,8 @@ export class ControleurArmes {
   /** dernier instant vu (pour les actions sans `t`, comme `tirEffectue`) */
   private dernierT = 0;
 
-  constructor(equip: Equipement, main: Slot = MAIN_INITIALE) {
+  constructor(equip: Equipement, main: Slot = MAIN_INITIALE, opts: OptionsArmes = {}) {
+    this.reserveChargeurs = opts.reserveChargeurs !== undefined && opts.reserveChargeurs >= 0 ? Math.floor(opts.reserveChargeurs) : null;
     this.equip = copierEquipement(equip);
     this.main = this.slotUtilisable(main) ? main : this.slotRepli();
     this.precedent = this.autrePrincipale(this.main);
@@ -60,6 +68,20 @@ export class ControleurArmes {
   }
 
   munitionsDe(arme: ArmeFeuId): number { return this.mun[arme] ?? 0; }
+
+  /** La réserve est limitée (zombies) : une recharge puise dedans. */
+  reserveLimitee(): boolean { return this.reserveChargeurs !== null; }
+
+  /** Réserve (balles) d'une arme à feu : −1 si elle est infinie (arène, ou arme sans réserve comme le couteau). */
+  reserveDe(arme: ArmeFeuId): number {
+    return this.reserveChargeurs === null ? -1 : (this.reserve[arme] ?? 0);
+  }
+
+  /** Réserve de l'arme en main (−1 : infinie, ou arme blanche). */
+  reserveEnMain(): number {
+    const a = this.armeEnMain();
+    return estMelee(a) ? -1 : this.reserveDe(a);
+  }
 
   /** Une ligne par slot, dans l'ordre principale, secondaire, couteau, spéciale (seulement si portée). */
   lignes(): LigneSlot[] {
@@ -134,6 +156,7 @@ export class ControleurArmes {
     if (estMelee(a) || STATS[a].sansRecharge) return false;
     if (this.rechargeEnCours() || t < this.sortieFin) return false;
     if ((this.mun[a] ?? 0) >= STATS[a].chargeur) return false;
+    if (this.reserveChargeurs !== null && (this.reserve[a] ?? 0) <= 0) return false;
     this.rechargeDebut = t;
     this.rechargeFin = t + STATS[a].rechargeS * 1000;
     return true;
@@ -146,7 +169,16 @@ export class ControleurArmes {
     this.dernierT = t;
     if (!this.rechargeEnCours() || t < this.rechargeFin) return false;
     const a = this.armeEnMain();
-    if (!estMelee(a)) this.mun[a] = STATS[a].chargeur;
+    if (!estMelee(a)) {
+      const manque = STATS[a].chargeur - (this.mun[a] ?? 0);
+      if (this.reserveChargeurs === null) this.mun[a] = STATS[a].chargeur;
+      else {
+        // réserve limitée : on ne recharge que ce que la réserve contient
+        const pris = Math.max(0, Math.min(manque, this.reserve[a] ?? 0));
+        this.mun[a] = (this.mun[a] ?? 0) + pris;
+        this.reserve[a] = (this.reserve[a] ?? 0) - pris;
+      }
+    }
     this.annulerRecharge();
     return true;
   }
@@ -183,6 +215,7 @@ export class ControleurArmes {
     this.main = estSlot(m.main) && this.slotUtilisable(m.main) ? m.main : this.slotRepli();
     if (apparition) {
       this.mun = {};
+      this.reserve = {};
       this.annulerRecharge();
       this.sortieFin = 0;
       this.sortieDebut = 0;
@@ -199,7 +232,15 @@ export class ControleurArmes {
       if (a !== null && estArmeFeu(a)) portees.add(a);
     }
     for (const a of Object.keys(this.mun) as ArmeFeuId[]) if (!portees.has(a)) delete this.mun[a];
-    for (const a of portees) if (this.mun[a] === undefined) this.mun[a] = STATS[a].chargeur;
+    for (const a of Object.keys(this.reserve) as ArmeFeuId[]) if (!portees.has(a)) delete this.reserve[a];
+    for (const a of portees) {
+      if (this.mun[a] === undefined) { this.mun[a] = STATS[a].chargeur; this.reserve[a] = this.reservePleine(a); }
+    }
+    // ravitaillement acheté (zombies) : chargeur ET réserve de l'arme sont remplis
+    if (m.t === "equipement" && m.ravitaille !== undefined && portees.has(m.ravitaille)) {
+      this.mun[m.ravitaille] = STATS[m.ravitaille].chargeur;
+      this.reserve[m.ravitaille] = this.reservePleine(m.ravitaille);
+    }
     if (this.equip.speciale !== null) this.mun[this.equip.speciale] = Math.max(0, Math.floor(m.munSpeciale));
     // une recharge qui n'est plus celle de l'arme en main n'a plus de sens
     const a = this.armeEnMain();
@@ -232,10 +273,17 @@ export class ControleurArmes {
 
   private remplirTout(): void {
     this.mun = {};
+    this.reserve = {};
     for (const slot of ["principale", "secondaire", "speciale"] as const) {
       const a = armeDuSlot(this.equip, slot);
-      if (a !== null && estArmeFeu(a)) this.mun[a] = STATS[a].chargeur;
+      if (a !== null && estArmeFeu(a)) { this.mun[a] = STATS[a].chargeur; this.reserve[a] = this.reservePleine(a); }
     }
+  }
+
+  /** Réserve initiale d'une arme (balles) : `reserveChargeurs` chargeurs, rien pour une spéciale (sans recharge). */
+  private reservePleine(a: ArmeFeuId): number {
+    if (this.reserveChargeurs === null || STATS[a].sansRecharge) return 0;
+    return this.reserveChargeurs * STATS[a].chargeur;
   }
 
   private debuterSortie(t: number): void {

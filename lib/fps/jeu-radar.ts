@@ -8,7 +8,7 @@
  */
 import type { Monde } from "./collision";
 import type { Vec3 } from "./protocole";
-import { ajouterJoueur, lisserVu, type RadarFrame, type RadarJoueur } from "./radar";
+import { ajouterJoueur, ajouterZombie, lisserVu, type RadarFrame, type RadarJoueur } from "./radar";
 import { PSEUDO, dansChampDeVue, ligneDeVue } from "./visibilite";
 
 /** Un joueur à évaluer (position interpolée du rendu). */
@@ -50,8 +50,14 @@ function hachage01(id: string): number {
   return (h >>> 0) / 4294967296;
 }
 
+/** Un tigre zombie à évaluer (position interpolée du rendu). */
+export interface ZombieRadarEntree { id: number; x: number; z: number }
+
 export class SuiviRadar {
   private etats = new Map<string, EtatSuivi>();
+  /** tigres : même suivi que les joueurs (champ de vue, ligne de vue à `PSEUDO.hzTest`, fondu de 0,6 s), clé = id numérique */
+  private zombies = new Map<number, EtatSuivi>();
+  private presentsZ = new Set<number>();
 
   constructor(private readonly monde: Monde) {}
 
@@ -100,6 +106,39 @@ export class SuiviRadar {
     for (const id of this.etats.keys()) if (!presents.has(id)) this.etats.delete(id);
   }
 
+  /**
+   * Tigres zombies VUS (mêmes règles que les joueurs : pas de wallhack), ajoutés à `f.zombies` (capacité 24) avec leur visibilité lissée.
+   * `n` = nombre de tigres valides de `zombies` (tableau préalloué). À appeler après `viderRadarFrame`.
+   */
+  majZombies(f: RadarFrame, t: number, dt: number, oeil: Vec3, regard: Vec3, zombies: readonly ZombieRadarEntree[], n: number): void {
+    const periode = 1 / PSEUDO.hzTest;
+    const pas = Number.isFinite(dt) && dt > 0 ? dt : 0;
+    this.presentsZ.clear();
+    for (let i = 0; i < n; i++) {
+      const z = zombies[i];
+      this.presentsZ.add(z.id);
+      let e = this.zombies.get(z.id);
+      if (!e) {
+        e = { vu: 0, phase: hachage01(`z${z.id}`) * periode, tranche: Number.NaN, ligne: false, morteT: null };
+        this.zombies.set(z.id, e);
+      }
+      let estVu = false;
+      // le tigre est grand (≈ 1,5 m au garrot) : le centre de son corps sert de point de visée
+      const centre: Vec3 = [z.x, 1.1, z.z];
+      if (dansChampDeVue(oeil, regard, centre)) {
+        const tranche = Math.floor((t + e.phase) / periode);
+        if (tranche !== e.tranche) {
+          e.tranche = tranche;
+          e.ligne = ligneDeVue(this.monde, oeil, [z.x, 0, z.z], false);
+        }
+        estVu = e.ligne;
+      } else e.tranche = Number.NaN;
+      e.vu = lisserVu(e.vu, estVu, pas);
+      ajouterZombie(f, z.x, z.z, e.vu);
+    }
+    for (const id of this.zombies.keys()) if (!this.presentsZ.has(id)) this.zombies.delete(id);
+  }
+
   /** Visibilité courante (0..1) d'un joueur déjà évalué, 0 si inconnu. */
   vu(id: string): number {
     return this.etats.get(id)?.vu ?? 0;
@@ -111,5 +150,6 @@ export class SuiviRadar {
 
   vider(): void {
     this.etats.clear();
+    this.zombies.clear();
   }
 }

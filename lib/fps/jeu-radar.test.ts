@@ -104,3 +104,51 @@ describe("SuiviRadar : pas de wallhack", () => {
     expect(suivi.vu("a")).toBe(0);
   });
 });
+
+describe("SuiviRadar : tigres zombies (pas de wallhack non plus)", () => {
+  const tigres = (...l: [number, number, number][]) => l.map(([id, x, z]) => ({ id, x, z }));
+  function imageZ(suivi: SuiviRadar, f: ReturnType<typeof creerRadarFrame>, t: number, dt: number, liste: { id: number; x: number; z: number }[], regard = DEVANT) {
+    viderRadarFrame(f);
+    suivi.majZombies(f, t, dt, OEIL, regard, liste, liste.length);
+  }
+
+  it("un tigre en ligne de vue et dans le champ est dessiné, quelle que soit sa distance", () => {
+    const suivi = new SuiviRadar(mondeAvec());
+    const f = creerRadarFrame();
+    imageZ(suivi, f, 1, 0.016, tigres([5, 0, -80]));
+    expect(f.nZombies).toBe(1);
+    expect(Array.from(f.zombies.slice(0, 3))).toEqual([0, -80, 1]);
+  });
+
+  it("derrière un bâtiment ou hors du champ de vue : jamais dessiné", () => {
+    const suivi = new SuiviRadar(mondeAvec(rect(-10, -30, 10, -20, 20)));
+    const f = creerRadarFrame();
+    imageZ(suivi, f, 1, 0.016, tigres([5, 0, -60]));
+    expect(f.nZombies).toBe(0);
+    imageZ(suivi, f, 1.5, 0.016, tigres([5, 0, 60]));
+    expect(f.nZombies).toBe(0);
+  });
+
+  it("la visibilité redescend en 0,6 s, puis le tigre disparaît ; un tigre mort est oublié", () => {
+    const suivi = new SuiviRadar(mondeAvec());
+    const f = creerRadarFrame();
+    imageZ(suivi, f, 1, 0.016, tigres([5, 0, -40]));
+    expect(f.zombies[2]).toBe(1);
+    // il sort du champ de vue : fondu linéaire
+    const derriere = DEVANT.map((x) => -x) as Vec3;
+    imageZ(suivi, f, 1.3, 0.3, tigres([5, 0, -40]), derriere);
+    expect(f.zombies[2]).toBeCloseTo(0.5, 5);
+    imageZ(suivi, f, 1.6, 0.31, tigres([5, 0, -40]), derriere);
+    expect(f.nZombies).toBe(0);
+    imageZ(suivi, f, 2, 0.1, []);
+    expect(f.nZombies).toBe(0);
+  });
+
+  it("capacité de 24 tigres", () => {
+    const suivi = new SuiviRadar(mondeAvec());
+    const f = creerRadarFrame();
+    const liste = Array.from({ length: 30 }, (_, i) => ({ id: i + 1, x: (i % 5) - 2, z: -20 - i }));
+    imageZ(suivi, f, 1, 0.016, liste);
+    expect(f.nZombies).toBe(24);
+  });
+});

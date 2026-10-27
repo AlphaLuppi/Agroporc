@@ -2,10 +2,12 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { SceneData } from "../agroparc3d/types";
 import {
-  ANCRE_NORD, ANCRE_REGARD, BISEAU_U, Cadence, TAILLE_CARTE_U, ZONE_CARTE, arrondi, capEcran, capEcranObjet, chevronBord, estDansCarte, matriceCouche,
+  ANCRE_NORD, ANCRE_REGARD, BISEAU_U, Cadence, TAILLE_CARTE_U, ZONE_CARTE, estSceneZombies, arrondi, capEcran, capEcranObjet, chevronBord, estDansCarte, matriceCouche,
   nomCourtPoi, nomZone, polygoneCadre, positionNord, projeter, rayonAuto, tailleEffective, versCarte, versZone, type VueCarte,
 } from "./minimap";
 import { ROND_POINT, ZONE_APPARITION, positionElsa } from "./zones";
+import { BORNES_ZOMBIES, donneesZombies } from "./zombies-carte";
+import { dimensionsCouche } from "./minimap-couche";
 
 const scene = JSON.parse(readFileSync("public/agroparc/scene.json", "utf8")) as SceneData;
 const vue = (surcharge: Partial<VueCarte> = {}): VueCarte => ({ px: 100, pz: 50, psi: 0, taille: 200, rayonM: 100, mode: "regard", ...surcharge });
@@ -297,5 +299,33 @@ describe("Cadence adaptative (60 → 30 Hz)", () => {
     expect(c.reduit).toBe(true);
     for (let i = 0; i < 400; i++) c.noter(3);
     expect(c.reduit).toBe(true);
+  });
+});
+
+describe("ZONE_CARTE en mode zombies", () => {
+  const dz = donneesZombies(scene).data;
+  const bornes = { x0: BORNES_ZOMBIES.x0, z0: BORNES_ZOMBIES.z0, x1: BORNES_ZOMBIES.x1, z1: BORNES_ZOMBIES.z1 };
+
+  it("se restreint aux bornes de la zone de jeu, avec le mode explicite ou sur la scène des zombies", () => {
+    expect(ZONE_CARTE(scene, "zombies")).toEqual(bornes);
+    expect(ZONE_CARTE(dz)).toEqual(bornes);
+    expect(ZONE_CARTE(dz, "zombies")).toEqual(bornes);
+    // l'arène garde sa zone, même avec la scène zombies si on la demande
+    expect(ZONE_CARTE(scene)).toEqual(ZONE_CARTE(scene, "arene"));
+    expect(ZONE_CARTE(dz, "arene").x0).toBeLessThan(bornes.x0);
+  });
+
+  it("reconnaît la scène des zombies (pièces synthétiques ajoutées) et pas celle de l'arène", () => {
+    expect(estSceneZombies(dz)).toBe(true);
+    expect(estSceneZombies(scene)).toBe(false);
+  });
+
+  it("la couche statique de la mini-map couvre les bornes zombies seulement (bien plus petite que l'arène)", () => {
+    const zombies = dimensionsCouche(dz);
+    const arene = dimensionsCouche(scene);
+    expect(zombies.x0).toBe(bornes.x0);
+    expect(zombies.z0).toBe(bornes.z0);
+    expect(zombies.largeurPx * zombies.hauteurPx).toBeLessThan(arene.largeurPx * arene.hauteurPx / 4);
+    expect(dimensionsCouche(scene, 1, ZONE_CARTE(scene, "zombies")).x0).toBe(bornes.x0);
   });
 });
