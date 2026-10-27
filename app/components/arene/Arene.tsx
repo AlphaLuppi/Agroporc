@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, type CSSProperties } from "react";
+import { useId, type CSSProperties, type ReactNode } from "react";
 import type { EtatConnexion } from "@/lib/fps/reseau";
 import { JEU, type ArmeMeleeId, type ArmePrincipaleId, type ArmeSecondaireId, type InfoMatch, type JoueurPublic } from "@/lib/fps/protocole";
 import type { ConfigTouches } from "@/lib/fps/touches";
@@ -37,6 +37,8 @@ interface Props {
   tactile: boolean;
   /** aucun nom choisi jusqu'ici (« Agent ») : le champ prend le focus */
   pseudoParDefaut?: boolean;
+  /** `ChoixMode` posé sous le titre (v5 : choix entre l'arène et les zombies) */
+  choixMode?: ReactNode;
 }
 
 function statut(etat: EtatConnexion, monId: string | null): { texte: string; classe: string } {
@@ -47,7 +49,7 @@ function statut(etat: EtatConnexion, monId: string | null): { texte: string; cla
 
 /** Panneau « Arène » de la vue Palantir : présence, pseudo, équipement (principale + secondaire), règles de tir, réglages d'interface, bouton d'entrée. */
 export default function Arene({
-  etat, monId, joueurs, match, pseudo, surPseudo, equipement, surEquipement, touches, reglagesHud, surReglagesHud, surEntrer, surFermer, erreur, tactile, pseudoParDefaut = false,
+  etat, monId, joueurs, match, pseudo, surPseudo, equipement, surEquipement, touches, reglagesHud, surReglagesHud, surEntrer, surFermer, erreur, tactile, pseudoParDefaut = false, choixMode,
 }: Props) {
   const idPseudo = useId();
   const disposition = useDisposition();
@@ -69,6 +71,7 @@ export default function Arene({
         <button type="button" className={styles.fermer} onClick={surFermer}>Fermer</button>
       </p>
       <h2 className={styles.titre}>Arène</h2>
+      {choixMode}
       <p className={styles.statut} role="status" aria-live="polite">
         <i className={`${styles.pastille} ${s.classe}`} aria-hidden="true" />
         <span>

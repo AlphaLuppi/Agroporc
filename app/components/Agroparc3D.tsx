@@ -1,13 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Chakra_Petch, IBM_Plex_Mono } from "next/font/google";
 import type { Carte, PdjEntry, Plat } from "@/lib/db";
 import type { Poi, SceneData } from "@/lib/agroparc3d/types";
 import type { JoueurAerien, SceneHandle } from "@/lib/agroparc3d/scene";
 import type { JeuHandle, HudEtat } from "@/lib/fps/jeu";
 import type { HudLive } from "@/lib/fps/jeu-types";
-import type { ArmeFeuId, ArmeMeleeId, ArmePrincipaleId, ArmeSecondaireId, ModeSalle, Slot, Vec3 } from "@/lib/fps/protocole";
+import { MODES_SALLE, type ArmeFeuId, type ArmeMeleeId, type ArmePrincipaleId, type ArmeSecondaireId, type ModeSalle, type Slot, type Vec3 } from "@/lib/fps/protocole";
+import { donneesZombies } from "@/lib/fps/zombies-carte";
 import { ecrireEquipement, estPrincipale, estSecondaire, lireEquipement } from "@/lib/fps/equipement";
 import { creerRadarFrame } from "@/lib/fps/radar";
 import { nomPersonnage } from "@/lib/characters";
@@ -21,7 +22,9 @@ import { restoParNom } from "@/lib/restaurants";
 import { CLE_CLASSEMENT, messageEnregistre } from "@/lib/tigre-scores";
 import RestoBadge from "./RestoBadge";
 import Arene from "./arene/Arene";
+import ChoixMode from "./arene/ChoixMode";
 import HudArene from "./arene/HudArene";
+import LobbyZombies from "./arene/LobbyZombies";
 import { useArene } from "./arene/useArene";
 import type { EquipementChoisi } from "./arene/contrats";
 import { actionsSansTouche, ecrireTouches, lireTouches, stockageNavigateur, type ConfigTouches } from "@/lib/fps/touches";
@@ -67,6 +70,8 @@ function dansUnChamp(cible: EventTarget | null): boolean {
 }
 
 const CLE_PSEUDO = "pdj-fps-pseudo";
+/** Mode de jeu choisi au dernier passage (« arene » par défaut) : il ne fait que présélectionner la carte du choix du mode. */
+const CLE_MODE = "pdj-fps-mode";
 /** Accroupi : « 1 » = bascule, « 0 » (défaut) = maintenir. */
 const CLE_ACCROUPI_BASCULE = "pdj-fps-accroupi-bascule";
 const CLE_SENSIBILITE = "pdj-fps-sensibilite";
@@ -82,6 +87,13 @@ function pseudoInitial(): string {
     if (c) return nomPersonnage(c);
   } catch { /* stockage indisponible */ }
   return "Agent";
+}
+function modeInitial(): ModeSalle {
+  try {
+    const m = localStorage.getItem(CLE_MODE);
+    if ((MODES_SALLE as readonly string[]).includes(m ?? "")) return m as ModeSalle;
+  } catch { /* stockage indisponible */ }
+  return "arene";
 }
 /** Équipement mémorisé (clé `pdj-fps-equipement`, migration de l'ancienne clé `pdj-fps-arme` faite par `lireEquipement`). */
 function equipementInitial(): EquipementChoisi {
@@ -186,13 +198,18 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
   // mini-map et taille de l'interface (clés `pdj-fps-minimap` et `pdj-fps-hud`), réglables au lobby comme en pause
   const [reglagesHud, setReglagesHud] = useReglagesHud();
   const [tactile, setTactile] = useState(false);
+  // mode de jeu mémorisé : présélectionne la carte du choix du mode (v5) ; le panneau l'envoie à son ouverture
+  const [modeMemo, setModeMemo] = useState<ModeSalle>(modeInitial);
   const jeuRef = useRef<JeuHandle | null>(null);
   const arene = useArene(pseudoConnecte, jeuRef);
   // identité stable : le HUD le lit en rAF (mini-map, flèche d'Elsa), sans repasser par React
   const radar = useCallback(() => jeuRef.current?.radar() ?? RADAR_VIDE, []);
   const monstres = useCallback(() => jeuRef.current?.monstres() ?? null, []);
+  const etatZombies = useCallback(() => jeuRef.current?.zombies() ?? null, []);
   /** Mode de la salle où le jeu est lancé ("arene" par défaut) : lu au lancement de `lancerJeu`, qui bâtit le monde du mode. */
   const modeJeuRef = useRef<ModeSalle>("arene");
+  /** zombies : sortie volontaire ou forcée en cours, tant que le serveur n'a pas montré « non admis » le jeu ne se remonte pas */
+  const sortieZombies = useRef(false);
   const enAreneRef = useRef(enArene);
   enAreneRef.current = enArene;
   const equipementRef = useRef(equipement);
@@ -266,23 +283,78 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
     jeuRef.current?.touches(cfg);
     ecrireTouches(cfg, stockageNavigateur());
   };
-  const entrerArene = () => {
-    if (!scene || !arene.monId) return;
-    // le nom tapé juste avant de cliquer part tout de suite, sans attendre la pause de frappe
+  /** Monte le jeu sur un canvas neuf pour le mode `m` (le monde, le décor et les règles en dépendent : lu au lancement par `lancerJeu`). */
+  const monterJeu = (m: ModeSalle) => {
+    // le nom tapé juste avant d'entrer part tout de suite, sans attendre la pause de frappe
     const nom = pseudoSaisi.trim() || "Agent";
     setPseudoConnecte(nom);
     arene.clientRef.current?.renommer(nom);
+    modeJeuRef.current = m;
     setSelected(null);
     setAreneOuverte(false);
     setCleCanvas((k) => k + 1);
     setEnArene(true);
   };
+  const entrerArene = () => {
+    if (!scene || !arene.monId) return;
+    monterJeu("arene");
+  };
+  /**
+   * Sortie du jeu. En zombies on revient au lobby de la salle (panneau rouvert) et le jeu ne se remonte pas tout seul tant que le serveur ne
+   * nous a pas montré « non admis » (état d'avant la sortie encore en mémoire, fin de partie, reconnexion).
+   */
   const quitterArene = () => {
     setCleCanvas((k) => k + 1);
     setEnArene(false);
+    if (modeJeuRef.current === "zombies") {
+      sortieZombies.current = true;
+      setAreneOuverte(true);
+    }
+  };
+  /** Zombies : sort de la partie ET referme le panneau (retour à la vue aérienne). */
+  const quitterEtFermer = () => {
+    quitterArene();
+    setAreneOuverte(false);
   };
   const quitterRef = useRef(quitterArene);
   quitterRef.current = quitterArene;
+  // ---------- choix du mode (v5) ----------
+  const choisirMode = (m: ModeSalle) => {
+    setModeMemo(m);
+    try { localStorage.setItem(CLE_MODE, m); } catch { /* non retenu */ }
+    arene.choisirMode(m);
+  };
+  /** Ouvre ou ferme le panneau « Arène ». À l'ouverture, le mode mémorisé est demandé au serveur (une action du joueur : rien ne part au chargement). */
+  const basculerPanneauArene = () => {
+    setSelected(null);
+    if (!areneOuverte && modeMemo !== arene.modeVoulu) arene.choisirMode(modeMemo);
+    setAreneOuverte((o) => !o);
+  };
+  /** Hôte du lobby des zombies : lance la partie (le nom tapé part avant). */
+  const lancerZombies = () => {
+    const nom = pseudoSaisi.trim() || "Agent";
+    setPseudoConnecte(nom);
+    arene.clientRef.current?.renommer(nom);
+    arene.lancerPartie();
+  };
+  // Le serveur dit « non admis » (ou lobby) : la sortie est actée, le jeu pourra se remonter à la prochaine admission.
+  const moiZ = arene.zombies?.joueurs.find((j) => j.id === arene.monId) ?? null;
+  const admisZ = arene.mode === "zombies" && !!moiZ?.admis && arene.zombies?.phase !== "lobby";
+  useEffect(() => {
+    if (arene.mode !== "zombies" || !admisZ) sortieZombies.current = false;
+  }, [arene.mode, admisZ]);
+  // Zombies : admis à une partie lancée (lancement par l'hôte, ou prochaine pause pour un arrivant) pendant que le panneau est ouvert : le jeu se monte.
+  useEffect(() => {
+    if (!admisZ || enArene || !areneOuverte || !scene || tactile || sortieZombies.current) return;
+    monterJeu("zombies");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [admisZ, enArene, areneOuverte, scene, tactile]);
+  // Panneau refermé hors partie : on libère sa place dans la salle zombies (la salle réserve 8 places, lobby compris). Rouvrir la redemande.
+  useEffect(() => {
+    if (!areneOuverte && !enArene && arene.mode === "zombies" && arene.modeVoulu === "zombies") arene.choisirMode("arene");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [areneOuverte, enArene, arene.mode, arene.modeVoulu]);
+
   // Le bouton « Entrer » / « Quitter l'arène » disparaît avec son panneau : sans cela le focus tombe sur
   // <body>, hors du dialogue. On le ramène sur la racine à chaque bascule (pas au montage : déjà fait plus bas).
   const basculeVue = useRef(false);
@@ -478,18 +550,34 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
         connexion: dev.current.arene.etat, monId: dev.current.arene.monId, joueurs: dev.current.arene.joueurs,
         match: dev.current.arene.match, enArene: dev.current.enArene, hud: dev.current.hud, equipement: dev.current.equipement,
         jeu: jeuRef.current?.debug.etat() ?? null,
+        mode: dev.current.arene.mode, modeVoulu: dev.current.arene.modeVoulu, salons: dev.current.arene.salons, zombies: dev.current.arene.zombies,
+        argent: dev.current.arene.argent,
       }),
-      // une arme seule (v1) la range dans son slot par catégorie ; un équipement règle les deux ; sans argument, l'équipement mémorisé
+      // une arme seule (v1) la range dans son slot par catégorie ; un équipement règle les deux ; sans argument, l'équipement mémorisé.
+      // `{ mode: "zombies" }` : ouvre le lobby des zombies (le jeu se monte seul à l'admission, `lancerZombies` lance la partie) ; sans mode : l'arène.
       entrer: (a) => {
         const eq = dev.current.equipement;
+        const mode = typeof a === "object" && a?.mode ? a.mode : "arene";
+        if (mode === "zombies") { ouvrirZombiesRef.current(); return; }
         if (typeof a === "string") {
           if (estPrincipale(a)) choisirEquipementRef.current(a, eq.secondaire);
           else if (estSecondaire(a)) choisirEquipementRef.current(eq.principale, a);
         } else if (a) {
           choisirEquipementRef.current(a.principale ?? eq.principale, a.secondaire ?? eq.secondaire, a.melee ?? eq.melee ?? "couteau");
         }
+        // venant du lobby des zombies : on redemande d'abord l'arène (la salle change, puis l'entrée part)
+        if (dev.current.arene.mode === "zombies") {
+          choisirModeRef.current("arene");
+          let essais = 0;
+          const attente = setInterval(() => {
+            if (dev.current.arene.mode === "arene" && dev.current.arene.monId) { clearInterval(attente); entrerRef.current(); }
+            else if (++essais > 60) clearInterval(attente);
+          }, 100);
+          return;
+        }
         entrerRef.current();
       },
+      lancerZombies: () => lancerZombiesRef.current(),
       quitter: () => quitterRef.current(),
       teleporter: (p) => jeuRef.current?.debug.teleporter(p),
       regarder: (lacet, tangage) => jeuRef.current?.debug.regarder(lacet, tangage),
@@ -513,8 +601,21 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
   }, []);
   const entrerRef = useRef(entrerArene);
   entrerRef.current = entrerArene;
+  const choisirModeRef = useRef(choisirMode);
+  choisirModeRef.current = choisirMode;
+  const lancerZombiesRef = useRef(lancerZombies);
+  lancerZombiesRef.current = lancerZombies;
+  /** dev : ouvre le lobby des zombies et y demande la salle (le panneau reste ouvert : le jeu se monte à l'admission) */
+  const ouvrirZombiesRef = useRef(() => {});
+  ouvrirZombiesRef.current = () => { setSelected(null); setAreneOuverte(true); choisirMode("zombies"); };
   const choisirEquipementRef = useRef(choisirEquipement);
   choisirEquipementRef.current = choisirEquipement;
+
+  // Scène de la mini-map et de la grande carte : en zombies, la copie aux pièces synthétiques (même fonction que le jeu), restreinte à ses bornes.
+  const sceneHud = useMemo(() => {
+    if (!scene) return null;
+    return enArene && modeJeuRef.current === "zombies" ? donneesZombies(scene.data).data : scene.data;
+  }, [scene, enArene]);
 
   // Plat du jour du POI cliqué (+ carte permanente en dépliant), ou statut + carte quand il n'en a pas.
   const chargement = !ready || !!error;
@@ -552,7 +653,7 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
           <button type="button" className={styles.action} aria-expanded={classementOuvert && !selected && !areneOuverte} onClick={() => { setAreneOuverte(false); ouvrirClassement(!(classementOuvert && !selected && !areneOuverte)); }}>
             Classement
           </button>
-          <button type="button" className={styles.action} aria-expanded={areneOuverte} onClick={() => { setSelected(null); setAreneOuverte((o) => !o); }}>
+          <button type="button" className={styles.action} aria-expanded={areneOuverte} onClick={basculerPanneauArene}>
             Arène{arene.etat === "ouvert" && arene.joueurs.length > 0 && ` · ${arene.joueurs.length} en ligne`}
           </button>
         </div>
@@ -594,27 +695,50 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
       </div>
       </>)}
 
-      {/* Un seul panneau à droite : le restaurant choisi passe devant le classement, qui reste ouvert derrière. */}
-      {!enArene && areneOuverte && !selected && (
-        <Arene
-          etat={arene.etat}
-          monId={arene.monId}
-          joueurs={arene.joueurs}
-          match={arene.match}
-          pseudo={pseudoSaisi}
-          surPseudo={saisirPseudo}
-          equipement={equipement}
-          surEquipement={choisirEquipement}
-          touches={touches}
-          reglagesHud={reglagesHud}
-          surReglagesHud={setReglagesHud}
-          surEntrer={entrerArene}
-          surFermer={() => setAreneOuverte(false)}
-          erreur={arene.erreur}
-          tactile={tactile}
-          pseudoParDefaut={!pseudoSaisi.trim() || pseudoSaisi.trim() === "Agent"}
-        />
-      )}
+      {/* Un seul panneau à droite : le restaurant choisi passe devant le classement, qui reste ouvert derrière. Le choix du mode est posé en tête du
+          lobby du mode CONFIRMÉ par le serveur (la carte cochée est celle qui est demandée). */}
+      {!enArene && areneOuverte && !selected && (() => {
+        const choixMode = <ChoixMode mode={arene.modeVoulu} salons={arene.salons} surChoisir={choisirMode} desactive={arene.etat !== "ouvert"} />;
+        const pseudoParDefaut = !pseudoSaisi.trim() || pseudoSaisi.trim() === "Agent";
+        return arene.mode === "zombies" ? (
+          <LobbyZombies
+            etat={arene.etat}
+            monId={arene.monId}
+            partie={arene.zombies}
+            pseudo={pseudoSaisi}
+            surPseudo={saisirPseudo}
+            touches={touches}
+            reglagesHud={reglagesHud}
+            surReglagesHud={setReglagesHud}
+            surLancer={lancerZombies}
+            surFermer={() => setAreneOuverte(false)}
+            erreur={arene.erreur}
+            tactile={tactile}
+            pseudoParDefaut={pseudoParDefaut}
+            choixMode={choixMode}
+          />
+        ) : (
+          <Arene
+            etat={arene.etat}
+            monId={arene.monId}
+            joueurs={arene.joueurs}
+            match={arene.match}
+            pseudo={pseudoSaisi}
+            surPseudo={saisirPseudo}
+            equipement={equipement}
+            surEquipement={choisirEquipement}
+            touches={touches}
+            reglagesHud={reglagesHud}
+            surReglagesHud={setReglagesHud}
+            surEntrer={entrerArene}
+            surFermer={() => setAreneOuverte(false)}
+            erreur={arene.erreur}
+            tactile={tactile}
+            pseudoParDefaut={pseudoParDefaut}
+            choixMode={choixMode}
+          />
+        );
+      })()}
 
       {enArene && (
         <HudArene
@@ -654,10 +778,13 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
           live={jeuRef.current?.live ?? LIVE_VIDE}
           radar={radar}
           monstres={monstres}
+          zombies={etatZombies}
+          surRejouer={quitterArene}
+          surQuitterVue={quitterEtFermer}
           reglagesHud={reglagesHud}
           surReglagesHud={setReglagesHud}
           degatsAuTueur={arene.degatsAuTueur}
-          scene={scene?.data ?? null}
+          scene={sceneHud}
         />
       )}
 
@@ -849,7 +976,9 @@ declare global {
     __arene?: {
       etat(): Record<string, unknown>;
       /** Entre dans l'arène. Une arme seule la range dans son slot par catégorie ; un équipement règle les deux slots. */
-      entrer(equipement?: ArmeFeuId | Partial<EquipementChoisi>): void;
+      entrer(equipement?: ArmeFeuId | (Partial<EquipementChoisi> & { mode?: ModeSalle })): void;
+      /** Zombies : l'hôte du lobby lance la partie (sans effet pour un autre joueur). */
+      lancerZombies(): void;
       quitter(): void;
       teleporter(p: Vec3): void;
       regarder(lacet: number, tangage: number): void;

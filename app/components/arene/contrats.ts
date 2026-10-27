@@ -2,10 +2,10 @@ import type { MutableRefObject } from "react";
 import type { SceneData } from "@/lib/agroparc3d/types";
 import type { ClientArene, EtatConnexion } from "@/lib/fps/reseau";
 import type {
-  ArmeId, ArmeMeleeId, ArmePrincipaleId, ArmeSecondaireId, ArmeSpecialeId, CauseMort, EtatElsaMsg, EtatJoueurSnap, InfoMatch, InfoTueur, InfoVehicule,
-  JoueurPublic, LigneClassement, LigneStats, Zone,
+  ArmeId, ArmeMeleeId, ArmePrincipaleId, ArmeSecondaireId, ArmeSpecialeId, CauseMort, EtatElsaMsg, EtatJoueurSnap, EtatPartieZombies, InfoMatch, InfoTueur,
+  InfoVehicule, JoueurPublic, LigneClassement, LigneStats, MessageServeur, ModeSalle, Zone,
 } from "@/lib/fps/protocole";
-import type { EtatMonstresHud, HudEtat, HudLive, JeuEvenement } from "@/lib/fps/jeu-types";
+import type { EtatMonstresHud, EtatZombiesHud, HudEtat, HudLive, JeuEvenement } from "@/lib/fps/jeu-types";
 import type { RadarFrame } from "@/lib/fps/radar";
 import type { ReglagesHud } from "@/lib/fps/reglages-hud";
 import type { Action, ConfigTouches } from "@/lib/fps/touches";
@@ -44,6 +44,12 @@ export interface Bonus { id: number; genre: "soin" | "arme"; arme?: ArmeSpeciale
  */
 export interface RepereElsa { elsaAngle: number; elsaDistance: number }
 
+/** Résumé des deux salles (message `salons`, sans son type) : compteurs du choix du mode. */
+export type Salons = Omit<Extract<MessageServeur, { t: "salons" }>, "t">;
+
+/** Gain d'argent le plus récent (zombies) : `n` augmente à chaque message `argent`, pour animer à chaque changement. */
+export interface GainArgent { n: number; delta: number; motif: string }
+
 /** Retour de `useArene(pseudo, jeuRef)` (ex-interface `UseArene`, étendue). */
 export interface UseArene {
   etat: EtatConnexion; monId: string | null; joueurs: JoueurPublic[]; match: InfoMatch | null;
@@ -69,6 +75,22 @@ export interface UseArene {
   demanderScores(ouvert: boolean): void;
   /** dégâts que j'ai infligés au tueur (cumul des `confirme` sur lui pendant ma vie), remis à 0 sur `apparition` : carte du tueur */
   degatsAuTueur: number;
+  // ---- v5 : modes de jeu ----
+  /** mode de la salle où je suis (confirmé par le serveur) */
+  mode: ModeSalle;
+  /** mode demandé (carte cochée du choix du mode) : égal à `mode` hors changement en cours ou refusé */
+  modeVoulu: ModeSalle;
+  /** résumé des deux salles (null avant le premier message) */
+  salons: Salons | null;
+  /** dernier état de la partie de zombies reçu, null hors de la salle zombies ou avant le premier */
+  zombies: EtatPartieZombies | null;
+  /** argent des zombies (dernier solde reçu) et dernier gain, pour l'animation */
+  argent: number;
+  gainArgent: GainArgent | null;
+  /** demande à changer de salle (refusée : message dans `erreur`, `modeVoulu` revient à `mode`) */
+  choisirMode(mode: ModeSalle): void;
+  /** hôte du lobby des zombies : lance la partie */
+  lancerPartie(): void;
 }
 
 /** Props de `HudArene` (U2 l'implémente, U1/l'hôte les fournit). */
@@ -132,6 +154,12 @@ export interface PropsHudArene {
   scene?: SceneData | null;
   /** (v3) `JeuHandle.monstres()` : événement en cours, PV du tigre robot et du titan (bandeau), null hors partie */
   monstres?(): EtatMonstresHud | null;
+  /** (v5) `JeuHandle.zombies()` : état du mode zombies lu à intervalle par le HUD ; absent = HUD de l'arène */
+  zombies?(): EtatZombiesHud | null;
+  /** (v5) « Rejouer » de la fin de partie : retour au lobby de la salle (le jeu est démonté) */
+  surRejouer?(): void;
+  /** (v5) « Quitter » de la fin de partie : sort ET referme le panneau (absent : comme `surQuitter`, retour au lobby) */
+  surQuitterVue?(): void;
 }
 
 /** Props de `ChoixEquipement` (écrit par U1, utilisé par U1 : lobby, et par U2 : écran de mort, killcam, pause). */

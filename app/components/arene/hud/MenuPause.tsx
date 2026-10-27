@@ -2,7 +2,7 @@
 
 import { LIBELLES_ACTIONS, type Action, type ConfigTouches } from "@/lib/fps/touches";
 import type { ReglagesHud } from "@/lib/fps/reglages-hud";
-import type { ArmeMeleeId, ArmePrincipaleId, ArmeSecondaireId } from "@/lib/fps/protocole";
+import type { ArmeMeleeId, ArmePrincipaleId, ArmeSecondaireId, ModeSalle } from "@/lib/fps/protocole";
 import type { ReglagesVoix } from "@/lib/fps/voix";
 import type { EquipementChoisi } from "../contrats";
 import ChoixEquipement from "../ChoixEquipement";
@@ -15,6 +15,8 @@ import styles from "../HudArene.module.css";
  * nom de joueur, sensibilité, accroupi maintenir / basculer, chat vocal de proximité (activé, appuyer pour parler ou micro ouvert, v3 §5),
  * avertissement des actions sans touche, Quitter, puis « Interface » (mini-map,
  * taille, effets) au-dessus des touches groupées. La mini-map reste nette sous le voile pour juger les réglages (HUD §4.5).
+ * Zombies (`mode`) : la partie continue pour les autres (« les tigres ne s'arrêtent pas »), pas de choix d'équipement (le départ est imposé,
+ * les armes s'achètent) et « Quitter la partie » ramène au lobby.
  */
 export interface PropsMenuPause {
   premiereFois: boolean;
@@ -38,26 +40,33 @@ export interface PropsMenuPause {
   surTouches(cfg: ConfigTouches): void;
   reglagesHud: ReglagesHud;
   surReglagesHud(r: ReglagesHud): void;
+  /** mode de la salle (absent = arène) */
+  mode?: ModeSalle;
 }
 
 export default function MenuPause(p: PropsMenuPause) {
+  const zombies = p.mode === "zombies";
   return (
     <div className={styles.pause} onClick={(e) => { if (e.target === e.currentTarget) p.surReprendre(); }}>
       <div className={styles.pausePanneau} role="group" aria-label="Menu pause">
         <h2>{p.premiereFois ? "Prêt ?" : "Pause"}</h2>
-        <p className={styles.pauseTexte}>{p.premiereFois ? "Cliquez pour prendre la souris et jouer." : "La partie continue : vous êtes toujours dans l'arène."}</p>
+        <p className={styles.pauseTexte}>{p.premiereFois
+          ? "Cliquez pour prendre la souris et jouer."
+          : zombies ? "La partie continue : les tigres ne s'arrêtent pas, vos coéquipiers non plus." : "La partie continue : vous êtes toujours dans l'arène."}</p>
         <button type="button" className={styles.reprendre} autoFocus onClick={p.surReprendre}>{p.premiereFois ? "Jouer" : "Reprendre"}</button>
-        <div className={styles.pauseArmes}>
-          <span>Équipement de la prochaine apparition</span>
-          <ChoixEquipement
-            principale={p.equipement.principale}
-            secondaire={p.equipement.secondaire}
-            melee={p.equipement.melee}
-            surChanger={p.surEquipement}
-            variante="compact"
-            idGroupe="pause"
-          />
-        </div>
+        {!zombies && (
+          <div className={styles.pauseArmes}>
+            <span>Équipement de la prochaine apparition</span>
+            <ChoixEquipement
+              principale={p.equipement.principale}
+              secondaire={p.equipement.secondaire}
+              melee={p.equipement.melee}
+              surChanger={p.surEquipement}
+              variante="compact"
+              idGroupe="pause"
+            />
+          </div>
+        )}
         <label className={styles.sens}>
           <span>Nom de joueur</span>
           <input
@@ -101,7 +110,7 @@ export default function MenuPause(p: PropsMenuPause) {
             Sans touche : {p.actionsSansTouche.map((a) => LIBELLES_ACTIONS[a]).join(", ")}. Assignez-en une ci-dessous.
           </p>
         )}
-        <button type="button" className={styles.quitter} onClick={p.surQuitter}>Quitter l&apos;arène</button>
+        <button type="button" className={styles.quitter} onClick={p.surQuitter}>{zombies ? "Quitter la partie" : "Quitter l'arène"}</button>
         <ReglageInterface reglages={p.reglagesHud} surReglages={p.surReglagesHud} />
         <ReglageTouches config={p.touches} surChange={p.surTouches} />
       </div>

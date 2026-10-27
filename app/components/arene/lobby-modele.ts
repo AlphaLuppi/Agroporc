@@ -1,5 +1,8 @@
 import { COUTEAU, MELEE, STATS } from "@/lib/fps/armes";
-import { ARMES_SPECIALES, type ArmeMeleeId, type ArmePrincipaleId, type ArmeSecondaireId } from "@/lib/fps/protocole";
+import { ARMES_SPECIALES, type ArmeMeleeId, type ArmePrincipaleId, type ArmeSecondaireId, type EtatPartieZombies, type ModeSalle } from "@/lib/fps/protocole";
+import { ZOMBIES } from "@/lib/fps/zombies-vagues";
+import { formatArgent } from "@/lib/fps/hud-modele";
+import type { Salons } from "./contrats";
 import { libelleTouche, type Action, type ConfigTouches } from "@/lib/fps/touches";
 import { LIBELLES_BARRES, LIBELLES_BARRES_MELEE, armesBlanches, armesParCategorie, type InfoArme, type InfoArmeBlanche } from "./armesInfo";
 
@@ -129,3 +132,94 @@ export function commandesLobby(cfg: ConfigTouches, disposition?: ReadonlyMap<str
     { touches: t("interagir"), libelle: "Monter dans une voiture" },
   ];
 }
+
+// ---------- choix du mode et lobby des zombies (v5) ----------
+
+export interface CarteMode { mode: ModeSalle; titre: string; description: string }
+
+/** Les deux cartes du choix du mode, dans l'ordre d'affichage. */
+export const CARTES_MODE: readonly CarteMode[] = [
+  { mode: "arene", titre: "Arène", description: "Chacun pour soi : premier à 30 kills, voitures, Elsa et monstres géants." },
+  { mode: "zombies", titre: "Zombies tigres", description: "Coopératif : survivez à des manches de tigres, achetez des armes et ouvrez la carte." },
+];
+
+const pluriel = (n: number, mot: string) => `${n} ${mot}${n > 1 ? "s" : ""}`;
+
+/** Compteur de la carte d'un mode, d'après le message `salons` (tiret tant qu'il n'est pas arrivé). */
+export function compteurMode(mode: ModeSalle, salons: Salons | null | undefined): string {
+  if (!salons) return "—";
+  if (mode === "arene") return `${salons.arene.joueurs} en ligne · ${salons.arene.enJeu} en jeu`;
+  const z = salons.zombies;
+  const effectif = `${z.joueurs}/${ZOMBIES.joueursMax}`;
+  if (z.joueurs >= ZOMBIES.joueursMax) return `Salle pleine · ${effectif}`;
+  if (z.phase === "lobby") return `Lobby · ${effectif}`;
+  if (z.phase === "fin") return `Bilan · ${effectif}`;
+  return `Manche ${z.manche} · ${effectif}`;
+}
+
+/** Texte d'introduction du lobby des zombies. */
+export const TEXTE_ZOMBIES = `Coopératif : des tigres arrivent par manches de plus en plus nombreuses et rapides. Vous partez avec un pistolet, un couteau, 100 PV et ${formatArgent(ZOMBIES.argentDepart)} ; la partie est perdue quand plus personne n'est debout.`;
+
+/** Règles condensées du lobby des zombies (valeurs tirées de `ZOMBIES`). */
+export const TITRE_REGLES_ZOMBIES = "Règles";
+export const REGLES_ZOMBIES: string[] = [
+  "Chaque touche rapporte 10 $, chaque tigre abattu 60 $ (100 $ à la tête ou à l'arme blanche).",
+  "Achetez des armes aux murs et ouvrez les portes payantes pour agrandir la zone de jeu.",
+  `À terre : un coéquipier vous relève en maintenant la touche d'action ${ZOMBIES.reanimationS} s à moins de ${ZOMBIES.reanimationPortee} m. Sans relève, vous êtes éliminé au bout de ${Math.round(ZOMBIES.terreMs / 1000)} s et revenez à la pause suivante.`,
+  `Munitions limitées : ${ZOMBIES.ravitaillementChargeurs} chargeurs par arme, rechargés à moitié prix aux murs.`,
+  "Pas de tir allié. Les tigres sont plus lents que vous au sprint : on peut les semer.",
+];
+
+/** Phrase affichée quand une partie est déjà lancée. */
+export const TEXTE_PARTIE_EN_COURS = "Partie en cours : vous entrerez à la prochaine pause.";
+
+/** Aide des commandes du lobby des zombies : celles de l'arène, la touche d'action servant à acheter, ouvrir et réanimer. */
+export function commandesLobbyZombies(cfg: ConfigTouches, disposition?: ReadonlyMap<string, string> | null): CommandeLobby[] {
+  return commandesLobby(cfg, disposition).map((c) => (
+    c.libelle === "Monter dans une voiture" ? { ...c, libelle: "Acheter, ouvrir une porte, réanimer (maintenir)" } : c
+  ));
+}
+
+export interface SituationLobbyZombies {
+  /** sous-titre de statut */
+  message: string;
+  /** je suis l'hôte du lobby */
+  hote: boolean;
+  /** le bouton « Lancer la partie » est actif (hôte, lobby, connecté) */
+  peutLancer: boolean;
+  /** une partie est en cours (le lobby sert de salle d'attente) */
+  enCours: boolean;
+  /** membres de la salle / capacité */
+  joueurs: number;
+  capacite: number;
+}
+
+/** Situation du lobby d'après le dernier `zombies{etat}` reçu (null avant le premier) : qui peut lancer, que dire au joueur. */
+export function situationLobbyZombies(partie: EtatPartieZombies | null, monId: string | null, connecte: boolean): SituationLobbyZombies {
+  if (!partie || !connecte) {
+    return { message: "Connexion à la salle…", hote: false, peutLancer: false, enCours: false, joueurs: partie?.joueurs.length ?? 0, capacite: partie?.capacite ?? ZOMBIES.joueursMax };
+  }
+  const hote = monId !== null && partie.hote === monId;
+  const base = { hote, joueurs: partie.joueurs.length, capacite: partie.capacite };
+  if (partie.phase === "lobby") {
+    return {
+      ...base, enCours: false, peutLancer: hote && partie.joueurs.length >= 1,
+      message: hote ? "Vous êtes l'hôte : lancez la partie quand tout le monde est là." : "En attendant l'hôte…",
+    };
+  }
+  if (partie.phase === "fin") return { ...base, enCours: true, peutLancer: false, message: "Partie terminée : retour au lobby dans un instant." };
+  return { ...base, enCours: true, peutLancer: false, message: TEXTE_PARTIE_EN_COURS };
+}
+
+/** Étiquette d'état d'un joueur dans la liste du lobby. */
+export function etiquetteEtatZombies(etat: EtatPartieZombies["joueurs"][number]["etat"]): string {
+  switch (etat) {
+    case "attente": return "attente";
+    case "debout": return "en jeu";
+    case "terre": return "à terre";
+    default: return "éliminé";
+  }
+}
+
+/** « 3 / 8 joueurs ». */
+export const texteEffectif = (n: number, capacite: number): string => `${pluriel(n, "joueur")} · ${n}/${capacite}`;

@@ -6,7 +6,7 @@
  * Spec : docs/superpowers/specs/2026-10-23-arene-hud-design.md (§8, §10)
  */
 import { MELEE, STATS, nomArme } from "./armes";
-import { estMelee, type ArmeId, type JoueurPublic, type LigneClassement, type LigneStats } from "./protocole";
+import { estMelee, type ArmeId, type JoueurPublic, type JoueurZombies, type LigneClassement, type LigneStats } from "./protocole";
 
 /** Colonnes du tableau, de gauche à droite (HUD §8.1). */
 export type ColonneScore = "rang" | "agent" | "k" | "m" | "kd" | "ser" | "prec" | "tete" | "deg" | "arme" | "ping";
@@ -310,4 +310,42 @@ export function titreVainqueur(lignes: readonly LigneScore[]): string {
   const r = rangs(lignes);
   if (lignes.length > 1 && r[1] === 1) return "Égalité en tête";
   return `${lignes[0].pseudo} remporte la partie`;
+}
+
+// ---------- bilan d'une partie de zombies ----------
+
+/** Ligne du tableau de fin de partie des zombies. */
+export interface LigneBilanZombies {
+  id: string; pseudo: string; couleur: string;
+  /** tigres tués */
+  kills: number;
+  /** argent gagné pendant la partie ($) */
+  gagne: number;
+  /** coéquipiers relevés */
+  reanimations: number;
+  moi: boolean;
+}
+
+/**
+ * Lignes du bilan : les joueurs qui ont participé (admis, ou ayant tué, gagné ou relevé quelqu'un), triés par tigres tués, puis argent gagné,
+ * puis relèves, puis pseudo (`localeCompare("fr")`). Un joueur resté dans le lobby sans jouer n'y figure pas.
+ */
+export function lignesBilanZombies(joueurs: readonly JoueurZombies[], monId: string | null): LigneBilanZombies[] {
+  return joueurs
+    .filter((j) => j.admis || j.kills > 0 || j.gagne > 0 || j.reanimations > 0)
+    .map((j) => ({ id: j.id, pseudo: j.pseudo, couleur: j.couleur, kills: j.kills, gagne: j.gagne, reanimations: j.reanimations, moi: j.id === monId }))
+    .sort((a, b) => b.kills - a.kills || b.gagne - a.gagne || b.reanimations - a.reanimations || a.pseudo.localeCompare(b.pseudo, "fr"));
+}
+
+/** Totaux de l'équipe pour le bilan (tigres tués, argent gagné, relèves). */
+export function totauxBilanZombies(lignes: readonly Pick<LigneBilanZombies, "kills" | "gagne" | "reanimations">[]): { kills: number; gagne: number; reanimations: number } {
+  return lignes.reduce((t, l) => ({ kills: t.kills + l.kills, gagne: t.gagne + l.gagne, reanimations: t.reanimations + l.reanimations }), { kills: 0, gagne: 0, reanimations: 0 });
+}
+
+/** Durée d'une partie, « 12 min 05 s » ou « 48 s » (espaces insécables). */
+export function formatDureePartie(ms: number): string {
+  const total = Math.max(0, Math.round(ms / 1000));
+  const min = Math.floor(total / 60);
+  const sec = total % 60;
+  return min > 0 ? `${min}${NBSP}min ${String(sec).padStart(2, "0")}${NBSP}s` : `${sec}${NBSP}s`;
 }
