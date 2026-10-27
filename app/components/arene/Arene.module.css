@@ -54,6 +54,8 @@
 .carteModeChoisie { border-color: var(--ag-amber); background: color-mix(in srgb, var(--ag-amber) 12%, var(--ag-ground)); box-shadow: inset 0 0 0 1px var(--ag-amber); }
 .carteModeNom { font-family: var(--ag-display), var(--ag-mono), monospace; font-weight: 600; font-size: 13px; color: var(--ag-white); letter-spacing: 0.04em; text-transform: uppercase; overflow-wrap: anywhere; }
 .carteModeChoisie .carteModeNom { color: var(--ag-amber); }
+.carteModeFermee .carteModeNom, .carteModeFermee .carteModeCompteur { color: var(--ag-ink-dim); }
+.carteModeFermee:hover { border-color: var(--ag-line-strong); }
 /* l'état choisi ne tient pas qu'à la couleur : coche décorative (l'état coché de la radio est annoncé par le navigateur) */
 .carteModeChoisie .carteModeNom::after { content: " ✓"; content: " ✓" / ""; }
 .carteModeCompteur { font-size: 11px; color: var(--ag-ink); font-variant-numeric: tabular-nums; }

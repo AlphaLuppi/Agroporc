@@ -23,6 +23,7 @@ import { CLE_CLASSEMENT, messageEnregistre } from "@/lib/tigre-scores";
 import RestoBadge from "./RestoBadge";
 import Arene from "./arene/Arene";
 import ChoixMode from "./arene/ChoixMode";
+import { flecheReserveeAuChamp } from "./arene/lobby-modele";
 import HudArene from "./arene/HudArene";
 import LobbyZombies from "./arene/LobbyZombies";
 import { useArene } from "./arene/useArene";
@@ -318,8 +319,24 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
   };
   const quitterRef = useRef(quitterArene);
   quitterRef.current = quitterArene;
+  /**
+   * Zombies : le jeu n'a pas pu se monter alors que nous sommes admis à la partie. Sans `rejoindre` il n'y a pas de message `quitter` qui vaille
+   * (le serveur ne retire que les joueurs en jeu) : l'admis resterait un « fantôme debout » qui empêche la défaite. On quitte la salle, une fois
+   * le jeu démonté (le serveur refuse le changement de salle d'un joueur encore en jeu).
+   */
+  const [abandonZ, setAbandonZ] = useState(0);
+  const abandonnerZombiesRef = useRef(() => {});
+  abandonnerZombiesRef.current = () => { if (modeJeuRef.current === "zombies") setAbandonZ((n) => n + 1); };
+  useEffect(() => {
+    if (abandonZ === 0 || enArene) return;
+    setAbandonZ(0); // une seule fois : une sortie normale ultérieure ne doit pas ramener à l'arène
+    arene.choisirMode("arene");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [abandonZ, enArene]);
   // ---------- choix du mode (v5) ----------
   const choisirMode = (m: ModeSalle) => {
+    // un écran tactile ne joue pas aux zombies : s'il y entrait, il resterait au lobby (voire hôte, sans pouvoir lancer) ou admis sans jamais jouer
+    if (tactile && m === "zombies") return;
     setModeMemo(m);
     try { localStorage.setItem(CLE_MODE, m); } catch { /* non retenu */ }
     arene.choisirMode(m);
@@ -327,7 +344,7 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
   /** Ouvre ou ferme le panneau « Arène ». À l'ouverture, le mode mémorisé est demandé au serveur (une action du joueur : rien ne part au chargement). */
   const basculerPanneauArene = () => {
     setSelected(null);
-    if (!areneOuverte && modeMemo !== arene.modeVoulu) arene.choisirMode(modeMemo);
+    if (!areneOuverte && modeMemo !== arene.modeVoulu && !(tactile && modeMemo === "zombies")) arene.choisirMode(modeMemo);
     setAreneOuverte((o) => !o);
   };
   /** Hôte du lobby des zombies : lance la partie (le nom tapé part avant). */
@@ -375,6 +392,16 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
     };
     window.addEventListener("keydown", surTouche);
     return () => window.removeEventListener("keydown", surTouche);
+  }, []);
+
+  // Les flèches déplacent la carte (OrbitControls écoute `window` et appelle preventDefault) : dans un champ, une liste ou une radio elles doivent
+  // garder leur rôle natif (caret du nom de joueur, flèches du choix du mode). L'arrêt se fait au document, avant la phase de bulle de `window`.
+  useEffect(() => {
+    const garder = (e: KeyboardEvent) => {
+      if (flecheReserveeAuChamp(e.code, e.target as HTMLElement | null)) e.stopPropagation();
+    };
+    document.addEventListener("keydown", garder);
+    return () => document.removeEventListener("keydown", garder);
   }, []);
 
   // Le site derrière ne doit plus défiler tant que la vue 3D est ouverte.
@@ -454,7 +481,7 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
       .then(({ lancerJeu }) => {
         const client = arene.clientRef.current;
         if (annule) return;
-        if (!client) { quitterRef.current(); return; }
+        if (!client) { quitterRef.current(); abandonnerZombiesRef.current(); return; }
         jeu = lancerJeu(canvas, scene.data, client, equipementRef.current, {
           hud: setHud,
           evenement: arene.pousserEvenement,
@@ -473,6 +500,7 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
       .catch((e: Error) => {
         setMessage({ id: Date.now(), texte: `L'arène n'a pas pu démarrer (${e.message}). WebGL est-il activé ?` });
         quitterRef.current();
+        abandonnerZombiesRef.current();
       });
     return () => {
       annule = true;
@@ -698,7 +726,7 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
       {/* Un seul panneau à droite : le restaurant choisi passe devant le classement, qui reste ouvert derrière. Le choix du mode est posé en tête du
           lobby du mode CONFIRMÉ par le serveur (la carte cochée est celle qui est demandée). */}
       {!enArene && areneOuverte && !selected && (() => {
-        const choixMode = <ChoixMode mode={arene.modeVoulu} salons={arene.salons} surChoisir={choisirMode} desactive={arene.etat !== "ouvert"} />;
+        const choixMode = <ChoixMode mode={arene.modeVoulu} salons={arene.salons} surChoisir={choisirMode} desactive={arene.etat !== "ouvert"} indisponibles={tactile ? ["zombies"] : []} />;
         const pseudoParDefaut = !pseudoSaisi.trim() || pseudoSaisi.trim() === "Agent";
         return arene.mode === "zombies" ? (
           <LobbyZombies

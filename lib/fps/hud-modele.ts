@@ -418,11 +418,12 @@ export function lireRecordZombies(stockage?: Stockage | null): RecordZombies {
   }
 }
 
-/** Évalue une partie contre le record (pur) : `battu` si la manche atteinte le dépasse (à manche égale, plus de tigres tués). */
+/** Évalue une partie contre le record (pur) : `battu` si la manche atteinte le dépasse (à manche égale, plus de tigres tués) ; zéro tigre tué : jamais. */
 export function evaluerRecordZombies(ancien: RecordZombies, manche: number, kills: number): { record: RecordZombies; battu: boolean } {
   const m = entierPositif(manche);
   const k = entierPositif(kills);
-  const battu = m > ancien.manche || (m === ancien.manche && m > 0 && k > ancien.kills);
+  // une partie sans aucun tigre abattu n'est jamais un record (sinon « NOUVEAU RECORD » dès la première partie perdue en manche 1)
+  const battu = k > 0 && (m > ancien.manche || (m === ancien.manche && m > 0 && k > ancien.kills));
   return { record: battu ? { manche: m, kills: k } : ancien, battu };
 }
 

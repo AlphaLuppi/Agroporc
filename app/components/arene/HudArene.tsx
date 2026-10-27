@@ -237,7 +237,7 @@ export default function HudArene(p: PropsHudArene) {
           finT={partieZ?.finT ?? 0} maintenantServeur={maintenantServeur}
         />
       )}
-      {zombies && !finZ && bandeauManche && <BandeauManche manche={bandeauManche.manche} restants={bandeauManche.restants} />}
+      {zombies && !finZ && !pause && bandeauManche && <BandeauManche manche={bandeauManche.manche} restants={bandeauManche.restants} />}
 
       {/* cockpit du titan (v3) : sous tout le reste du HUD */}
       {combat && hud.titan && p.monstres && <CockpitTitan monstres={p.monstres} maintenantServeur={maintenantServeur} />}

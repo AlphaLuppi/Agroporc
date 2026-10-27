@@ -15,7 +15,7 @@ import MenuPause from "../../app/components/arene/hud/MenuPause";
 import TableauZombies from "../../app/components/arene/hud/TableauZombies";
 import { commandes } from "../../app/components/arene/hud/AideCommandes";
 import {
-  CARTES_MODE, REGLES_ZOMBIES, TEXTE_PARTIE_EN_COURS, TEXTE_ZOMBIES, commandesLobbyZombies, compteurMode, etiquetteEtatZombies, situationLobbyZombies, texteEffectif,
+  CARTES_MODE, REGLES_ZOMBIES, TEXTE_MODE_INDISPONIBLE, TEXTE_PARTIE_EN_COURS, TEXTE_ZOMBIES, commandesLobbyZombies, compteurMode, etiquetteEtatZombies, flecheReserveeAuChamp, situationLobbyZombies, texteEffectif,
 } from "../../app/components/arene/lobby-modele";
 import type { Salons } from "../../app/components/arene/contrats";
 import {
@@ -156,6 +156,8 @@ describe("record local", () => {
     expect(evaluerRecordZombies(ancien, 6, 99)).toEqual({ record: ancien, battu: false });
     expect(evaluerRecordZombies(RECORD_ZOMBIES_VIDE, 0, 0).battu).toBe(false);
     expect(evaluerRecordZombies(RECORD_ZOMBIES_VIDE, 3, 10).battu).toBe(true);
+    // aucun tigre abattu : pas de record, même au premier essai
+    expect(evaluerRecordZombies(RECORD_ZOMBIES_VIDE, 1, 0)).toEqual({ record: RECORD_ZOMBIES_VIDE, battu: false });
   });
 
   it("l'enregistrement n'écrit que si le record est battu ; un stockage qui refuse est toléré", () => {
@@ -319,6 +321,15 @@ describe("ChoixMode", () => {
   it("hors connexion : le groupe est désactivé", () => {
     expect(rendre({ desactive: true })).toMatch(/<fieldset[^>]*disabled/);
     expect(rendre()).not.toMatch(/<fieldset[^>]*disabled/);
+  });
+
+  it("écran tactile : la radio des zombies est désactivée et le dit, l'arène reste choisissable", () => {
+    const html = rendre({ indisponibles: ["zombies"] });
+    expect(html).toMatch(/<input[^>]*value="zombies"[^>]*disabled|<input[^>]*disabled[^>]*value="zombies"/);
+    expect(html).not.toMatch(/<input[^>]*value="arene"[^>]*disabled|<input[^>]*disabled[^>]*value="arene"/);
+    expect(html).toContain(TEXTE_MODE_INDISPONIBLE);
+    expect(html).not.toContain("Lobby · 2/8");
+    expect(rendre()).not.toContain(TEXTE_MODE_INDISPONIBLE);
   });
 });
 
@@ -722,4 +733,17 @@ describe("MenuPause en zombies", () => {
 beforeEach(() => {
   // les composants lisent `localStorage` seulement dans des effets : le rendu statique ne doit jamais en avoir besoin
   expect(typeof (globalThis as { localStorage?: unknown }).localStorage).toBe("undefined");
+});
+
+describe("flèches réservées aux champs (choix du mode au clavier)", () => {
+  it("une flèche sur une radio, un champ de texte ou une liste ne déplace pas la carte", () => {
+    for (const tagName of ["INPUT", "TEXTAREA", "SELECT"]) expect(flecheReserveeAuChamp("ArrowDown", { tagName })).toBe(true);
+    expect(flecheReserveeAuChamp("ArrowLeft", { tagName: "DIV", isContentEditable: true })).toBe(true);
+  });
+  it("hors champ, ou pour une autre touche, la carte garde les flèches", () => {
+    expect(flecheReserveeAuChamp("ArrowUp", { tagName: "DIV" })).toBe(false);
+    expect(flecheReserveeAuChamp("ArrowUp", { tagName: "BUTTON" })).toBe(false);
+    expect(flecheReserveeAuChamp("ArrowUp", null)).toBe(false);
+    expect(flecheReserveeAuChamp("KeyW", { tagName: "INPUT" })).toBe(false);
+  });
 });

@@ -197,6 +197,13 @@ export function useArene(pseudo: string, jeuRef: MutableRefObject<JeuHandle | nu
           }
           break;
         case "mode":
+          // simple écho (déjà dans cette salle, ex. demande rejouée après une reconnexion) : le serveur n'enverra ni « bienvenue » ni état,
+          // tout effacer ici laisserait le lobby sans état jusqu'au prochain changement
+          if (m.mode === modeRef.current) {
+            modeVouluRef.current = m.mode;
+            setModeVoulu(m.mode);
+            break;
+          }
           // changement de salle confirmé : l'état de l'ancienne salle ne vaut plus rien (le « bienvenue » et l'état de la nouvelle suivent)
           modeRef.current = m.mode;
           modeVouluRef.current = m.mode;

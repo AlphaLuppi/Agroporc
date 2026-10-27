@@ -157,6 +157,9 @@ export function compteurMode(mode: ModeSalle, salons: Salons | null | undefined)
   return `Manche ${z.manche} · ${effectif}`;
 }
 
+/** Compteur d'une carte de mode choisie impossible sur l'appareil (écran tactile). */
+export const TEXTE_MODE_INDISPONIBLE = "Clavier et souris requis";
+
 /** Texte d'introduction du lobby des zombies. */
 export const TEXTE_ZOMBIES = `Coopératif : des tigres arrivent par manches de plus en plus nombreuses et rapides. Vous partez avec un pistolet, un couteau, 100 PV et ${formatArgent(ZOMBIES.argentDepart)} ; la partie est perdue quand plus personne n'est debout.`;
 
@@ -223,3 +226,13 @@ export function etiquetteEtatZombies(etat: EtatPartieZombies["joueurs"][number][
 
 /** « 3 / 8 joueurs ». */
 export const texteEffectif = (n: number, capacite: number): string => `${pluriel(n, "joueur")} · ${n}/${capacite}`;
+
+/**
+ * Les flèches du clavier déplacent la carte de la vue Palantir (OrbitControls écoute `window` et appelle `preventDefault`). Dans un champ,
+ * une liste ou une radio (choix du mode, caret du nom de joueur) elles doivent garder leur rôle natif : vrai quand la touche est une flèche
+ * dont la cible est un tel contrôle.
+ */
+export function flecheReserveeAuChamp(code: string, cible: { tagName?: string; isContentEditable?: boolean } | null | undefined): boolean {
+  if (!code.startsWith("Arrow") || !cible) return false;
+  return !!cible.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(cible.tagName ?? "");
+}

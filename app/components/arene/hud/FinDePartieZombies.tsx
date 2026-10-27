@@ -1,12 +1,15 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { EtatPartieZombies } from "@/lib/fps/protocole";
 import { stockageNavigateur } from "@/lib/fps/touches";
 import { lignesBilanZombies, totauxBilanZombies, formatDureePartie } from "@/lib/fps/classement";
 import { evaluerRecordZombies, formatArgent, formatNombre, lireRecordZombies, majRecordZombies, secondesAvant, type RecordZombies } from "@/lib/fps/hud-modele";
 import { ZOMBIES } from "@/lib/fps/zombies-vagues";
 import styles from "./FinDePartieZombies.module.css";
+
+/** Délai avant de donner le focus à « Rejouer » (ms). */
+const DELAI_FOCUS_MS = 1500;
 
 /**
  * Fin d'une partie de zombies (phase `fin`, `ZOMBIES.finAffichageMs` avant le retour automatique au lobby) : « PARTIE PERDUE », la manche
@@ -45,6 +48,13 @@ export default function FinDePartieZombies({ partie, monId, maintenantServeur, s
   useEffect(() => {
     const i = setInterval(() => setTick((n) => n + 1), 250);
     return () => clearInterval(i);
+  }, []);
+  // Focus sur « Rejouer » après un court délai seulement : un joueur qui martèle Espace (saut, frein à main) ou Entrée au moment de la défaite
+  // activerait sinon le bouton avant d'avoir vu le bilan.
+  const boutonRejouer = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    const t = setTimeout(() => boutonRejouer.current?.focus({ preventScroll: true }), DELAI_FOCUS_MS);
+    return () => clearTimeout(t);
   }, []);
 
   const secondes = secondesAvant(partie.finT, maintenantServeur());
@@ -102,7 +112,7 @@ export default function FinDePartieZombies({ partie, monId, maintenantServeur, s
           <p className={styles.compte}>Retour automatique au lobby dans <b>{secondes}</b>{" "}s</p>
           <div className={styles.barre} aria-hidden="true"><i style={{ width: `${Math.round(part * 100)}%` }} /></div>
           <div className={styles.boutons}>
-            <button type="button" className={styles.rejouer} autoFocus onClick={surRejouer}>Rejouer</button>
+            <button ref={boutonRejouer} type="button" className={styles.rejouer} onClick={surRejouer}>Rejouer</button>
             <button type="button" className={styles.quitter} onClick={surQuitter}>Quitter</button>
           </div>
           <p className={styles.aide}>Rejouer : retour au lobby pour relancer une partie.</p>
