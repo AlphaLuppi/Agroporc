@@ -345,6 +345,51 @@ describe("pointsApparition", () => {
   });
 });
 
+describe("prismes passe-tigres (carte zombies)", () => {
+  const champ: Building = { ...rect(-1, -10, 1, 10, 6), type: "champ" };
+  const mur: Building = rect(10, -10, 12, 10, 6);
+  const m = construireMonde(sceneAvec([champ, mur]));
+
+  it("construireMonde pose passeTigre pour les seuls bâtiments de type champ", () => {
+    expect(m.prismes[0].passeTigre).toBe(true);
+    expect("passeTigre" in m.prismes[1]).toBe(false);
+    expect(monde.prismes.some((p) => p.passeTigre)).toBe(false);
+  });
+
+  it("resoudre bloque le joueur sur un champ, pas avec ignorerPasseTigre ; un mur ordinaire bloque toujours", () => {
+    const dedansChamp: Vec3 = [0.2, 0, 0];
+    const normal = resoudre(m, dedansChamp, 0.4, 1.8);
+    expect(normal.contacts.length).toBeGreaterThan(0);
+    expect(normal.p[0]).not.toBeCloseTo(0.2, 3);
+    const tigre = resoudre(m, dedansChamp, 0.6, 2, true);
+    expect(tigre.contacts).toHaveLength(0);
+    expect(tigre.p).toEqual(dedansChamp);
+    // le mur ordinaire arrête aussi le tigre
+    expect(resoudre(m, [10.2, 0, 0], 0.6, 2, true).contacts.length).toBeGreaterThan(0);
+    // marche d'un tigre à travers le champ : rien ne l'arrête (pas de 0,1 m)
+    let p: Vec3 = [-4, 0, 0];
+    for (let k = 0; k < 80; k++) p = resoudre(m, [p[0] + 0.1, 0, p[2]], 0.6, 2, true).p;
+    expect(p[0]).toBeCloseTo(4, 6);
+    // le joueur, lui, reste de son côté
+    p = [-4, 0, 0];
+    for (let k = 0; k < 80; k++) p = resoudre(m, [p[0] + 0.1, 0, p[2]], 0.4, 1.8).p;
+    expect(p[0]).toBeLessThan(-1);
+  });
+
+  it("lancerRayon et visible traversent un champ mais pas un mur", () => {
+    expect(lancerRayon(m, [-5, 1, 0], [1, 0, 0], 30)).toBeCloseTo(15, 6); // le champ est ignoré, le mur est à x = 10
+    expect(lancerRayon(m, [-5, 1, 0], [1, 0, 0], 8)).toBe(Infinity);
+    expect(visible(m, [-5, 1, 0], [5, 1, 0])).toBe(true);
+    expect(visible(m, [5, 1, 0], [15, 1, 0])).toBe(false);
+    // origine DANS le champ : pas de touche à 0
+    expect(lancerRayon(m, [0, 1, 0], [1, 0, 0], 30)).toBeCloseTo(10, 6);
+    // sans champ (même géométrie, type absent), le rayon s'arrête au champ
+    const sans = construireMonde(sceneAvec([{ ...champ, type: undefined }, mur]));
+    expect(lancerRayon(sans, [-5, 1, 0], [1, 0, 0], 30)).toBeCloseTo(4, 6);
+    expect(visible(sans, [-5, 1, 0], [5, 1, 0])).toBe(false);
+  });
+});
+
 describe("performance", () => {
   it("resoudre : moins de 0,05 ms par appel en moyenne", () => {
     const alea = aleaGraine(3);
