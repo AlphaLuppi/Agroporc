@@ -392,6 +392,7 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     // simulation des tigres : cibles = joueurs en jeu et debout
     const cibles = membresSalle.filter((j) => peutJouer(j) && membre(j.id).etat === "debout").map((j) => ({ id: j.id, p: j.p, vivant: true }));
     for (const e of simu.tic(t, dt, cibles)) {
+      if (phase !== "manche") break; // une griffe précédente a couché le dernier joueur debout : partie perdue, les suivantes ne comptent plus
       if (e.t !== "griffe") continue;
       const j = ctx.joueur(e.joueur);
       if (!j || !peutJouer(j) || t < j.protegeJusqua) continue;

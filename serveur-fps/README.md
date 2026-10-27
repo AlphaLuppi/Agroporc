@@ -26,8 +26,12 @@ Le site (`npm run dev` à la racine) s'y connecte tout seul en dev (`ws://localh
 | `PDJ_FPS_EVT_MIN_MS` / `PDJ_FPS_EVT_MAX_MS` | 45–70 s puis 70–110 s | délai (ms) avant chaque événement (Truck Muche fou, tigre robot) ; courts pour les essais |
 | `PDJ_FPS_EVT_TYPE` | alternance | `truck` ou `tigre` : toujours le même événement |
 | `PDJ_FPS_TIGRE_PV` | 1 500 + 500 / joueur | PV imposés au tigre robot (essais) |
+| `PDJ_FPS_ZOMBIES_ARGENT` | 500 | argent de départ ($) du mode zombies (essais) |
+| `PDJ_FPS_ZOMBIES_TOTAL` | selon la manche et les joueurs | nombre de tigres de la manche 1 (essais) |
+| `PDJ_FPS_ZOMBIES_PAUSE_MS` | 8 000 (décompte) / 10 000 (pauses) | durée du décompte de départ et des pauses entre manches ; le bilan de fin reste de 25 s |
+| `PDJ_FPS_ZOMBIES_GRIFFE` | selon la manche | dégâts de griffe imposés (ex. 100 : un seul coup met à terre) |
 
-`GET /sante` renvoie `{ ok, joueurs, enJeu, match }` (connectés, joueurs en arène, numéro du match). Limites : messages ≤ 4 Ko, ≤ 90 messages/s par
+`GET /sante` renvoie `{ ok, joueurs, enJeu, match, zombies: { joueurs, enJeu, phase, manche } }` (connectés, joueurs en arène, numéro du match, puis la salle des zombies tigres : deuxième salle du même serveur, 8 membres au plus lobby compris, une seule partie à la fois). Limites : messages ≤ 4 Ko, ≤ 90 messages/s par
 client (sinon `erreur flood` et fermeture), ping WebSocket toutes les 5 s (connexion morte fermée au bout de 10 s : un joueur parti ne reste pas en cible),
 « bonjour » attendu dans les 10 s. Capacité : 16 joueurs EN ARÈNE (les spectateurs de la vue 3D n'occupent aucune place ; `rejoindre` au-delà répond `refus plein`, la socket reste ouverte), 64 connexions inscrites au plus, 96 connexions au total et 24 par IP (dernier élément de `x-forwarded-for`, fermeture 1013 au-delà), un spectateur muet depuis 15 min est recyclé (le client se reconnecte seul). Un joueur vivant sans état accepté depuis 20 s (onglet gelé) est retiré de l'arène
 (le client redemande à entrer). Les tirs sont validés contre les positions de la cible des 300 dernières ms

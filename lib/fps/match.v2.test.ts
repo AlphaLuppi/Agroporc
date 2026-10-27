@@ -533,6 +533,7 @@ describe("épée", () => {
     const sorties = s.recevoir("a", { t: "coup", o, d, cibles: ["b", "c", "d", "e"] }, t);
     expect(messages(sorties, "degats").map((m) => m.cible).sort()).toEqual(["b", "c", "d"]);
     expect(messages(sorties, "mort")).toHaveLength(3);
+    expect(messages(sorties, "presence")).toHaveLength(1); // une seule présence pour trois morts, comme un tir de pompe
     expect(j(s, "e").pv).toBe(JEU.pvMax);
     expect(j(s, "a")).toMatchObject({ kills: 3, serie: 3, killsParArme: { epee: 3 } });
     // doublons : « b, b, b, c » = deux cibles distinctes
@@ -543,6 +544,20 @@ describe("épée", () => {
     const dbl = autre.s.recevoir("a", { t: "coup", o: v.o, d: v.d, cibles: ["b", "b", "b", "c"] }, autre.t);
     expect(messages(dbl, "degats").map((m) => m.cible).sort()).toEqual(["b", "c"]);
     expect(j(autre.s, "d").pv).toBe(JEU.pvMax);
+  });
+
+  it("le premier mort d'une salve qui atteint l'objectif met fin au match : présence avant `match`, les autres cibles ne sont plus frappées", () => {
+    const { s, t } = duelEpee([rejoindreVide, rejoindreVide, rejoindreVide]);
+    placer(s, "b", [-8.5, 0, 19]); placer(s, "c", [-8.5, 0, 20]); placer(s, "d", [-8.5, 0, 21]);
+    j(s, "a").kills = JEU.objectifKills - 1;
+    const { o, d } = regarder(s, "a", [-8.5, 1, 20]);
+    const sorties = s.recevoir("a", { t: "coup", o, d, cibles: ["b", "c", "d"] }, t);
+    expect(messages(sorties, "mort")).toHaveLength(1);
+    expect(j(s, "c").pv).toBe(JEU.pvMax);
+    expect(j(s, "d").pv).toBe(JEU.pvMax);
+    const ts = sorties.map((x) => x.m.t);
+    expect(ts.filter((x) => x === "presence")).toHaveLength(1);
+    expect(ts.indexOf("presence")).toBeLessThan(ts.indexOf("match"));
   });
 
   it("une cible hors du cône de 140° n'est pas touchée (dos tourné), même à portée", () => {

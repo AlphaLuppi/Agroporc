@@ -934,7 +934,9 @@ export class Salle implements ContexteSalle {
       ? [...new Set(coup.cibles.filter((x): x is string => typeof x === "string"))].slice(0, m.nbCiblesMax)
       : [];
     let premierTigre = true;
+    let presence = false;
     for (const id of ids) {
+      if (this.phase !== "jeu") break; // un coup précédent de la salve a mis fin au match : la suite ne compte plus
       if (this.zombies) {
         if (!estIdZombie(id)) continue; // pas de coup allié
         const vu = this.zombies.toucheMelee(id, coup.o, d, m.portee + m.margePortee, m.cosCone, maintenant);
@@ -947,7 +949,16 @@ export class Salle implements ContexteSalle {
       if (!c || c.id === j.id || !c.enJeu || !c.vivant || maintenant < c.protegeJusqua) continue;
       const vue = this.positionsCible(c, maintenant, REWIND_MELEE_MS).find((pos) =>
         coupVraisemblable(this.monde, coup.o, d, { id: c.id, p: pos.p, vivant: true, accroupi: pos.accroupi }, arme));
-      if (vue) sorties.push(...this.infliger(c, m.degats, j, "arme", "corps", arme, maintenant, coup.o));
+      if (!vue) continue;
+      for (const s of this.infliger(c, m.degats, j, "arme", "corps", arme, maintenant, coup.o)) {
+        // une épée qui tue plusieurs joueurs : une seule présence (la dernière, qui a tous les scores), avant la fin de match éventuelle
+        if (s.m.t === "presence") { presence = true; continue; }
+        sorties.push(s);
+      }
+    }
+    if (presence) {
+      const i = sorties.findIndex((s) => s.m.t === "match");
+      sorties.splice(i < 0 ? sorties.length : i, 0, this.presence());
     }
     return sorties;
   }
