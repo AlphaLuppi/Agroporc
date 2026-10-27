@@ -14,7 +14,14 @@ export interface Building {
   /** centroïde */
   c: Vec2;
   holes?: Vec2[][];
+  /**
+   * Pièce synthétique de la carte zombies (jamais dans `scene.json`) : porte payante, barricade, « champ » passe-tigres (bloque les
+   * joueurs, laisse passer tigres, balles et regards) ou mur ajouté. Absent = bâtiment ordinaire.
+   */
+  type?: BatimentType;
 }
+
+export type BatimentType = "porte" | "barricade" | "champ" | "mur";
 
 /** M : voie principale, R : résidentielle, S : desserte/service, F : piéton */
 export type RoadClass = "M" | "R" | "S" | "F";
