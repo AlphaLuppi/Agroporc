@@ -285,10 +285,14 @@ describe("champDistance (file à seaux de Dial) et descente", () => {
     const sortie = new Int32Array(carte.nx * carte.nz);
     const sources = [libres[0], libres[3]];
     for (let k = 0; k < 40; k++) champDistance(carte, sources, { sortie });
-    const n = 100;
-    const t0 = performance.now();
-    for (let k = 0; k < n; k++) champDistance(carte, sources, { sortie });
-    const moyenne = (performance.now() - t0) / n;
+    // meilleure moyenne de cinq lots : insensible à une machine chargée (vitest en parallèle) qui gonfle un lot isolé
+    const n = 30;
+    let moyenne = Infinity;
+    for (let lot = 0; lot < 5; lot++) {
+      const t0 = performance.now();
+      for (let k = 0; k < n; k++) champDistance(carte, sources, { sortie });
+      moyenne = Math.min(moyenne, (performance.now() - t0) / n);
+    }
     expect(moyenne).toBeLessThan(5);
   });
 });
