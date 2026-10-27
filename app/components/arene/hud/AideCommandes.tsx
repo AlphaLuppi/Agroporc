@@ -31,7 +31,7 @@ export function commandes(cfg: ConfigTouches, d: ReadonlyMap<string, string> | n
     [t("sprint"), "Sprinter"],
     [t("accroupi"), "S'accroupir (en sprint : glissade)"],
     [t("recharger"), "Recharger"],
-    [[t("armePrincipale"), t("armeSecondaire"), t("couteau"), t("armeSpeciale")].filter(Boolean).join(" "), "Changer d'arme (3 : couteau ou épée)"],
+    [[t("armePrincipale"), t("armeSecondaire"), t("couteau"), t("armeSpeciale")].filter(Boolean).join(" "), "Changer d'arme (la 3e touche : couteau ou épée)"],
     [t("couteauRapide"), "Arme blanche rapide (rappuyer : retour)"],
     [t("interagir"), "Monter / descendre d'une voiture"],
     [t("scores"), "Scores (maintenir)"],

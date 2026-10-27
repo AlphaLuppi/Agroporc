@@ -1695,10 +1695,14 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
     if (actif) {
       // le canon du titan tire en continu tant que le bouton est tenu
       const auto = pilote() || a === null ? true : a.auto;
-      const veutTirer = auto ? tirMaintenu : !tirConsomme && tirPresse > t - 0.12;
+      // arme blanche : maintenue elle enchaîne les coups, mais un clic bref (ou donné juste avant la fin de la cadence, 0,85 s à l'épée)
+      // est mémorisé 0,12 s comme pour une arme semi-automatique, sinon il se perd entre deux images
+      const tampon = !pilote() && a === null;
+      const veutTirer = auto ? tirMaintenu || (tampon && !tirConsomme && tirPresse > t - 0.12) : !tirConsomme && tirPresse > t - 0.12;
       let n = 0;
       while (veutTirer && n < TIRS_PAR_IMAGE_MAX && tirer()) {
         n++;
+        if (tampon) tirConsomme = true;
         if (!auto) { tirConsomme = true; break; }
       }
     }
