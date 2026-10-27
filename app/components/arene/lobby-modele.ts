@@ -1,7 +1,7 @@
 import { COUTEAU, MELEE, STATS } from "@/lib/fps/armes";
 import { ARMES_SPECIALES, type ArmeMeleeId, type ArmePrincipaleId, type ArmeSecondaireId, type EtatPartieZombies, type ModeSalle } from "@/lib/fps/protocole";
 import { ZOMBIES } from "@/lib/fps/zombies-vagues";
-import { formatArgent } from "@/lib/fps/hud-modele";
+import { formatArgent, formatDecimal } from "@/lib/fps/hud-modele";
 import type { Salons } from "./contrats";
 import { libelleTouche, type Action, type ConfigTouches } from "@/lib/fps/touches";
 import { LIBELLES_BARRES, LIBELLES_BARRES_MELEE, armesBlanches, armesParCategorie, type InfoArme, type InfoArmeBlanche } from "./armesInfo";
@@ -165,7 +165,7 @@ export const TITRE_REGLES_ZOMBIES = "Règles";
 export const REGLES_ZOMBIES: string[] = [
   "Chaque touche rapporte 10 $, chaque tigre abattu 60 $ (100 $ à la tête ou à l'arme blanche).",
   "Achetez des armes aux murs et ouvrez les portes payantes pour agrandir la zone de jeu.",
-  `À terre : un coéquipier vous relève en maintenant la touche d'action ${ZOMBIES.reanimationS} s à moins de ${ZOMBIES.reanimationPortee} m. Sans relève, vous êtes éliminé au bout de ${Math.round(ZOMBIES.terreMs / 1000)} s et revenez à la pause suivante.`,
+  `À terre : un coéquipier vous relève en maintenant la touche d'action ${ZOMBIES.reanimationS} s à moins de ${formatDecimal(ZOMBIES.reanimationPortee)} m. Sans relève, vous êtes éliminé au bout de ${Math.round(ZOMBIES.terreMs / 1000)} s et revenez à la pause suivante.`,
   `Munitions limitées : ${ZOMBIES.ravitaillementChargeurs} chargeurs par arme, rechargés à moitié prix aux murs.`,
   "Pas de tir allié. Les tigres sont plus lents que vous au sprint : on peut les semer.",
 ];

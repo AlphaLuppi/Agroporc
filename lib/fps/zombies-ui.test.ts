@@ -19,7 +19,7 @@ import {
 } from "../../app/components/arene/lobby-modele";
 import type { Salons } from "../../app/components/arene/contrats";
 import {
-  CLE_RECORD_ZOMBIES, NBSP, RECORD_ZOMBIES_VIDE, ZONE_PORTE, annoncesZombies, evaluerRecordZombies, formatArgent, libelleGain, libelleTigres, libelleVague, lireRecordZombies,
+  CLE_RECORD_ZOMBIES, NBSP, RECORD_ZOMBIES_VIDE, ZONE_PORTE, annoncesZombies, evaluerRecordZombies, formatArgent, formatDecimal, libelleGain, libelleTigres, libelleVague, lireRecordZombies,
   majRecordZombies, manqueInvite, memeEtatZombiesHud, secondesAvant, texteRefusAchat,
 } from "./hud-modele";
 import { formatDureePartie, lignesBilanZombies, totauxBilanZombies } from "./classement";
@@ -248,6 +248,13 @@ describe("modèle du lobby des zombies", () => {
     expect(compteurMode("zombies", { ...salons, zombies: { phase: "manche", joueurs: 3, manche: 4 } })).toBe("Manche 4 · 3/8");
     expect(compteurMode("zombies", { ...salons, zombies: { phase: "fin", joueurs: 3, manche: 4 } })).toBe("Bilan · 3/8");
     expect(compteurMode("zombies", { ...salons, zombies: { phase: "manche", joueurs: 8, manche: 4 } })).toBe("Salle pleine · 8/8");
+  });
+
+  it("décimales à la française dans les règles (2,5 m, jamais 2.5)", () => {
+    expect(formatDecimal(2.5)).toBe("2,5");
+    expect(formatDecimal(3)).toBe("3");
+    expect(REGLES_ZOMBIES.join(" ")).toContain("à moins de 2,5 m");
+    expect(REGLES_ZOMBIES.join(" ")).not.toMatch(/\d\.\d/);
   });
 
   it("textes dérivés des constantes du jeu", () => {
@@ -541,6 +548,7 @@ describe("EcranMort en zombies", () => {
     const html = rendre(hud({ mort: true, aTerre: true }), { terreFinT: 45_000, maintenantServeur: () => 13_000 });
     expect(html).toMatch(/role="status"[^>]*>À terre</);
     expect(html).toContain("Un coéquipier peut vous relever");
+    expect(html).toContain("à moins de 2,5 m pendant 3 s");
     expect(html).toContain(`Éliminé dans <b>32${NBSP}s</b>`);
     expect(html).toContain('role="progressbar"');
     expect(html).toContain('aria-valuenow="71"');

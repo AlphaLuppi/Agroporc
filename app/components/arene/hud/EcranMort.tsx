@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import type { InfoTueur, JoueurPublic } from "@/lib/fps/protocole";
 import { ZOMBIES } from "@/lib/fps/zombies-vagues";
-import { formatSecondes, secondesAvant } from "@/lib/fps/hud-modele";
+import { formatDecimal, formatSecondes, secondesAvant } from "@/lib/fps/hud-modele";
 import type { HudEtat } from "@/lib/fps/jeu-types";
 import type { ConfigTouches } from "@/lib/fps/touches";
 import ChoixEquipement from "../ChoixEquipement";
@@ -75,7 +75,7 @@ export default function EcranMort({
         <div className={styles.repli}>
           <section className={styles.carte} aria-label="À terre">
             <h2 className={styles.titre} role="status">À terre</h2>
-            <p className={styles.degats}>Un coéquipier peut vous relever : il maintient la touche d&apos;action à moins de {ZOMBIES.reanimationPortee} m pendant {ZOMBIES.reanimationS} s.</p>
+            <p className={styles.degats}>Un coéquipier peut vous relever : il maintient la touche d&apos;action à moins de {formatDecimal(ZOMBIES.reanimationPortee)} m pendant {ZOMBIES.reanimationS} s.</p>
             {terreFinT > 0 && maintenantServeur ? <BarreSaignement terreFinT={terreFinT} maintenantServeur={maintenantServeur} /> : <p className={styles.reapparition}>Sans relève, vous serez éliminé.</p>}
           </section>
         </div>

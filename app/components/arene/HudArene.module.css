@@ -204,7 +204,7 @@
 
 /* ---------- invites et toast (centre) ---------- */
 .invite {
-  position: absolute; left: 50%; top: 62%; transform: translateX(-50%); margin: 0; padding: calc(4 * var(--u)) calc(14 * var(--u)); min-height: calc(28 * var(--u));
+  position: absolute; z-index: 7; left: 50%; top: 62%; transform: translateX(-50%); margin: 0; padding: calc(4 * var(--u)) calc(14 * var(--u)); min-height: calc(28 * var(--u));
   display: flex; align-items: center; gap: calc(8 * var(--u)); font-size: max(11px, calc(16 * var(--u))); letter-spacing: 0.06em; white-space: nowrap;
 }
 .inviteDanger { border-color: var(--ag-danger); color: var(--ag-danger); font-weight: 600; letter-spacing: 0.12em; }

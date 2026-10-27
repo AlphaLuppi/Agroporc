@@ -102,6 +102,11 @@ export function formatSecondes(s: number): string {
   const v = Math.round(Math.max(0, s) * 10) / 10;
   return Number.isInteger(v) ? `${FR0.format(v)}${NBSP}s` : `${FR1.format(v)}${NBSP}s`;
 }
+const FR_MAX1 = new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 1 });
+/** Nombre à une décimale au plus, virgule française : « 2,5 », « 3 ». */
+export function formatDecimal(n: number): string {
+  return FR_MAX1.format(n);
+}
 /** Argent des zombies : « 1 250 $ » (espaces insécables). */
 export function formatArgent(n: number): string {
   return `${FR0.format(Math.round(n))}${NBSP}$`;
