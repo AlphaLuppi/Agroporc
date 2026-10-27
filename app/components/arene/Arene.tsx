@@ -2,7 +2,7 @@
 
 import { useId, type CSSProperties } from "react";
 import type { EtatConnexion } from "@/lib/fps/reseau";
-import { JEU, type ArmePrincipaleId, type ArmeSecondaireId, type InfoMatch, type JoueurPublic } from "@/lib/fps/protocole";
+import { JEU, type ArmeMeleeId, type ArmePrincipaleId, type ArmeSecondaireId, type InfoMatch, type JoueurPublic } from "@/lib/fps/protocole";
 import type { ConfigTouches } from "@/lib/fps/touches";
 import type { ReglagesHud } from "@/lib/fps/reglages-hud";
 import ChoixEquipement from "./ChoixEquipement";
@@ -21,9 +21,9 @@ interface Props {
   match: InfoMatch | null;
   pseudo: string;
   surPseudo(v: string): void;
-  /** équipement de la prochaine apparition (principale + secondaire ; le couteau est toujours là, les spéciales viennent d'Elsa) */
+  /** équipement de la prochaine apparition (principale, secondaire et arme blanche ; les spéciales viennent d'Elsa) */
   equipement: EquipementChoisi;
-  surEquipement(principale: ArmePrincipaleId, secondaire: ArmeSecondaireId): void;
+  surEquipement(principale: ArmePrincipaleId, secondaire: ArmeSecondaireId, melee?: ArmeMeleeId): void;
   /** touches du joueur : l'aide des commandes en est construite (jamais « Z Q S D » écrit en dur) */
   touches: ConfigTouches;
   /** réglages de la mini-map et de l'interface (section « Interface », repliée) */
@@ -120,7 +120,7 @@ export default function Arene({
         ))}
       </ul>
 
-      <ChoixEquipement principale={equipement.principale} secondaire={equipement.secondaire} surChanger={surEquipement} variante="lobby" idGroupe="lobby" />
+      <ChoixEquipement principale={equipement.principale} secondaire={equipement.secondaire} melee={equipement.melee} surChanger={surEquipement} variante="lobby" idGroupe="lobby" />
       <p className={styles.note}>{TEXTE_COUTEAU}</p>
       <p className={styles.note}>{TEXTE_ARMES_SPECIALES}</p>
 

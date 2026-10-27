@@ -2,7 +2,7 @@
 
 import { LIBELLES_ACTIONS, type Action, type ConfigTouches } from "@/lib/fps/touches";
 import type { ReglagesHud } from "@/lib/fps/reglages-hud";
-import type { ArmePrincipaleId, ArmeSecondaireId } from "@/lib/fps/protocole";
+import type { ArmeMeleeId, ArmePrincipaleId, ArmeSecondaireId } from "@/lib/fps/protocole";
 import type { ReglagesVoix } from "@/lib/fps/voix";
 import type { EquipementChoisi } from "../contrats";
 import ChoixEquipement from "../ChoixEquipement";
@@ -21,7 +21,7 @@ export interface PropsMenuPause {
   surReprendre(): void;
   surQuitter(): void;
   equipement: EquipementChoisi;
-  surEquipement(principale: ArmePrincipaleId, secondaire: ArmeSecondaireId): void;
+  surEquipement(principale: ArmePrincipaleId, secondaire: ArmeSecondaireId, melee?: ArmeMeleeId): void;
   pseudo: string;
   surPseudo(v: string): void;
   sensibilite: number;
@@ -52,6 +52,7 @@ export default function MenuPause(p: PropsMenuPause) {
           <ChoixEquipement
             principale={p.equipement.principale}
             secondaire={p.equipement.secondaire}
+            melee={p.equipement.melee}
             surChanger={p.surEquipement}
             variante="compact"
             idGroupe="pause"

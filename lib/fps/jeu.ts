@@ -418,16 +418,28 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
 
   const _bouche = new THREE.Vector3();
 
-  /** Coup d'arme blanche (couteau ou épée) : `coup` au serveur (jamais `tir`), cadence de l'arme, pas de recul ni de traçante. */
+  /**
+   * POINT D'EXTENSION : cibles de mêlée en plus des joueurs (les tigres du mode zombies, ids `z<n>`), dans le même format que `cibles()`.
+   * Vide tant qu'aucun mode ne les fournit ; le coup les ajoute aux joueurs, trie le tout par distance et garde les `nbCiblesMax` plus proches.
+   */
+  function ciblesSupplementaires(): Cible[] { return []; }
+
+  /** Cibles possibles d'un coup d'arme blanche : joueurs (positions interpolées) puis `ciblesSupplementaires`. */
+  const ciblesMelee = (): Cible[] => [...cibles(), ...ciblesSupplementaires()];
+
+  /**
+   * Coup d'arme blanche (couteau ou épée) : `coup` au serveur (jamais `tir`), cadence propre de l'arme (le tir maintenu les enchaîne), pas
+   * de recul ni de traçante. Les cibles sont celles de l'arc de l'arme (portée, cône, ligne de vue) : jusqu'à `nbCiblesMax` pour l'épée.
+   */
   function coupMelee(arme: ArmeMeleeId): boolean {
     if (t < prochainDe("couteau")) return false;
     const o = oeil();
     const d = directionVisee(lacet, tangage, kick);
-    const res = trouverCiblesMelee(monde, o, d, cibles(), client.id ?? "", arme);
+    const res = trouverCiblesMelee(monde, o, d, ciblesMelee(), client.id ?? "", arme);
     client.envoyer({ t: "coup", o, d, cibles: res.map((r) => r.cible) });
     prochains.set("couteau", t + MELEE[arme].cadenceS);
     armeMain.coup();
-    sons.coup(false);
+    sons.coup(false, undefined, arme);
     return true;
   }
 
@@ -589,8 +601,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
     client.envoyer({ t: "rejoindre", ...choixEquipement() });
   }
 
-  /** Équipement de la prochaine apparition (immédiat si mort). */
-  function equiper(principale: EquipementJeu["principale"], secondaire: EquipementJeu["secondaire"], melee?: ArmeMeleeId) {
+  /** Équipement de la prochaine apparition (immédiat si mort). `melee` omis = l'arme blanche déjà choisie. */
+  function equiper(principale: EquipementJeu["principale"], secondaire: EquipementJeu["secondaire"], melee: ArmeMeleeId | undefined = equipSuivant.melee) {
     equipSuivant = melee === "epee" ? { principale, secondaire, melee } : { principale, secondaire };
     client.envoyer({ t: "equiper", ...choixEquipement() });
   }
@@ -862,7 +874,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
         distants.get(m.id)?.avatar.coup();
         const cam = oeil();
         const dx = m.o[0] - cam[0], dz = m.o[2] - cam[2];
-        sons.coup(false, { distance: Math.hypot(dx, m.o[1] - cam[1], dz), pan: panSon(lacet, dx, dz) });
+        sons.coup(false, { distance: Math.hypot(dx, m.o[1] - cam[1], dz), pan: panSon(lacet, dx, dz) }, m.arme);
         break;
       }
       case "degats": {
@@ -1057,7 +1069,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
         case "sprint": dashDemande = true; break;
         case "recharger": demarrerRecharge(); break;
         case "tir": if (vivant) { tirMaintenu = true; tirPresse = t; tirConsomme = false; } break;
-        case "visee": viseMaintenu = true; break;
+        case "visee": viseMaintenu = !estMelee(armes.armeEnMain()); break; // pas de visée avec une arme blanche
         case "accroupi": if (accroupiBascule) accroupiBascTenu = !accroupiBascTenu; break;
         case "armePrincipale": case "armeSecondaire": case "couteau": case "armeSpeciale": {
           const s = SLOT_DE_L_ACTION[a];
@@ -1217,7 +1229,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
       arme,
       slot: armes.slotActif(),
       slots: serialiserSlots(armes.lignes()),
-      equipSuivant: `${equipSuivant.principale}|${equipSuivant.secondaire}`,
+      equipSuivant: `${equipSuivant.principale}|${equipSuivant.secondaire}${equipSuivant.melee === "epee" ? "|epee" : ""}`,
       munitions: estMelee(arme) ? 0 : Math.max(0, armes.munitions()),
       chargeur: armes.chargeur(),
       // spéciale d'Elsa (munitions totales, retirée à 0) : aucune réserve ; les autres armes ont une réserve illimitée

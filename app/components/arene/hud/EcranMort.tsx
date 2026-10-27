@@ -28,7 +28,7 @@ export interface PropsEcranMort {
   /** touches du joueur : libellé de « Passer » (action `passer`, Espace par défaut) */
   touches: ConfigTouches;
   equipement: EquipementChoisi;
-  surEquipement(principale: EquipementChoisi["principale"], secondaire: EquipementChoisi["secondaire"]): void;
+  surEquipement(principale: EquipementChoisi["principale"], secondaire: EquipementChoisi["secondaire"], melee?: EquipementChoisi["melee"]): void;
   surPasserKillcam(): void;
   /** présence : K et M du tueur sur sa carte (facultatif) */
   joueurs?: readonly Pick<JoueurPublic, "id" | "kills" | "morts">[];
@@ -54,6 +54,7 @@ export default function EcranMort({
       <ChoixEquipement
         principale={equipement.principale}
         secondaire={equipement.secondaire}
+        melee={equipement.melee}
         surChanger={surEquipement}
         variante="compact"
         idGroupe="mort"

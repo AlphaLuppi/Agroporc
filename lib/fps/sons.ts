@@ -10,7 +10,7 @@
  * ralenti CC0, cf. public/arene/CREDITS.txt) joué en boucle, dont la vitesse de lecture (donc le régime) suit celle de la voiture (v3 §3).
  * Tant qu'il n'est pas chargé (ou s'il ne se charge pas), un moteur synthétisé doux le remplace.
  */
-import type { ArmeFeuId } from "./protocole";
+import type { ArmeFeuId, ArmeMeleeId } from "./protocole";
 
 export interface PositionSon {
   /** distance au tireur (m) */
@@ -36,10 +36,10 @@ export interface Sons {
   /** Frottement de la glissade : `true` le lance (en boucle), `false` l'éteint. */
   glisse(on: boolean): void;
   /**
-   * Coup de couteau (sifflement de lame ; `touche` ajoute l'impact sur la chair). `position` pour le coup d'un autre joueur
-   * (omis = le mien).
+   * Coup d'arme blanche (sifflement de lame ; `touche` ajoute l'impact sur la chair). `position` pour le coup d'un autre joueur
+   * (omis = le mien). `arme` : le couteau par défaut ; l'épée siffle plus longtemps, tinte (métal) et frappe plus lourd.
    */
-  coup(touche: boolean, position?: PositionSon): void;
+  coup(touche: boolean, position?: PositionSon, arme?: ArmeMeleeId): void;
   /** Cadeau d'Elsa ramassé : carillon doux pour la vie, carillon plus grave et cliquetis métallique pour une arme. */
   ramassage(genre: "soin" | "arme"): void;
   /** Un cran de régénération de vie (tic doux). */
@@ -489,11 +489,25 @@ export function creerSons(): Sons {
       src.start(t, Math.random() * 0.9);
       frottement = { src, gain: g, filtre };
     },
-    coup(touche, position) {
+    coup(touche, position, arme = "couteau") {
       if (!prete()) return;
       const out = sortie(position);
       const t = ctx!.currentTime + 0.001;
       const v = 0.94 + Math.random() * 0.12;
+      if (arme === "epee") {
+        // Taille d'épée : sifflement long et grave, qui monte puis retombe, tintement métallique de la lame (triangle 900-2300 Hz).
+        bruit(out, t, { dur: 0.36, type: "bandpass", f0: 700 * v, f1: 3200, q: 1.3, gain: 0.55, att: 0.12 });
+        bruit(out, t + 0.14, { dur: 0.2, type: "highpass", f0: 5000, gain: 0.2, att: 0.06 });
+        ton(out, t + 0.1, { dur: 0.45, type: "triangle", f0: 2300 * v, f1: 900, gain: 0.1 });
+        if (touche) {
+          // Choc plus lourd : coup sourd profond, claquement humide et tintement qui résonne.
+          bruit(out, t + 0.18, { dur: 0.2, type: "lowpass", f0: 1600, f1: 160, gain: 1 });
+          ton(out, t + 0.18, { dur: 0.24, type: "sine", f0: 120 * v, f1: 40, gain: 0.85 });
+          bruit(out, t + 0.18, { dur: 0.04, type: "bandpass", f0: 2400, q: 1.2, gain: 0.4 });
+          ton(out, t + 0.19, { dur: 0.5, type: "triangle", f0: 1500 * v, f1: 1100, gain: 0.08 });
+        }
+        return;
+      }
       // Sifflement de la lame : bruit passe-bande qui monte puis retombe.
       bruit(out, t, { dur: 0.22, type: "bandpass", f0: 1200 * v, f1: 4200, q: 1.6, gain: 0.5, att: 0.06 });
       bruit(out, t + 0.1, { dur: 0.12, type: "highpass", f0: 5500, gain: 0.18, att: 0.04 });

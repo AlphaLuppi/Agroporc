@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ControleurArmes } from "./jeu-equipement";
 import { STATS } from "./armes";
 import { JEU, type Equipement } from "./protocole";
+import { serialiserSlots } from "./equipement";
 
 const equip = (): Equipement => ({ principale: "fusil_assaut", secondaire: "pistolet", speciale: null });
 const avecSpeciale = (): Equipement => ({ principale: "fusil_assaut", secondaire: "pistolet", speciale: "railgun" });
@@ -144,6 +145,50 @@ describe("changement d'arme", () => {
     expect(c.demarrerRecharge(10_000)).toBe(false);
     c.tirEffectue();
     expect(c.slotActif()).toBe("couteau");
+  });
+});
+
+describe("ControleurArmes : épée", () => {
+  const avecEpee = (): Equipement => ({ principale: "fusil_assaut", secondaire: "pistolet", melee: "epee", speciale: null });
+
+  it("le slot 3 (couteau) porte l'épée : touche 3 et arme blanche rapide la sortent", () => {
+    const c = new ControleurArmes(avecEpee());
+    expect(c.equiper("couteau", 0)).toBe(true);
+    expect(c.slotActif()).toBe("couteau");
+    expect(c.armeEnMain()).toBe("epee");
+    const d = new ControleurArmes(avecEpee(), "secondaire");
+    expect(d.couteauRapide(0)).toBe(true);
+    expect(d.armeEnMain()).toBe("epee");
+    expect(d.couteauRapide(1000)).toBe(true);
+    expect(d.armeEnMain()).toBe("pistolet");
+  });
+
+  it("sans arme blanche choisie, le slot 3 reste le couteau", () => {
+    const c = new ControleurArmes(equip());
+    c.equiper("couteau", 0);
+    expect(c.armeEnMain()).toBe("couteau");
+  });
+
+  it("l'épée ne tire pas, n'a pas de chargeur et ne se recharge pas", () => {
+    const c = new ControleurArmes(avecEpee());
+    c.equiper("couteau", 0);
+    expect(c.peutTirer(10_000)).toBe(false);
+    expect(c.munitions()).toBe(Infinity);
+    expect(c.chargeur()).toBe(0);
+    expect(c.demarrerRecharge(10_000)).toBe(false);
+  });
+
+  it("lignes : le slot couteau montre l'épée avec 0 / 0 ; la sérialisation HUD la garde", () => {
+    const l = new ControleurArmes(avecEpee()).lignes();
+    expect(l).toContainEqual({ slot: "couteau", arme: "epee", munitions: 0, chargeur: 0 });
+    expect(serialiserSlots(l)).toContain("couteau:epee:0:0");
+  });
+
+  it("l'équipement reçu du serveur remplace le couteau par l'épée (apparition suivante)", () => {
+    const c = new ControleurArmes(equip());
+    c.appliquerServeur({ t: "apparition", equip: avecEpee(), main: "principale", munSpeciale: 0 } as never, 0);
+    c.equiper("couteau", 0);
+    expect(c.armeEnMain()).toBe("epee");
   });
 });
 

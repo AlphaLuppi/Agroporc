@@ -9,7 +9,7 @@ import styles from "../HudArene.module.css";
 
 /**
  * Bloc armes (bas-droite, §5.1) : nom de l'arme en main, munitions fixes (`Chargeur`), rack de slots `> [1] FUSIL 23/30`, `[2] PISTOLET 12/12`,
- * `[3] COUTEAU VITESSE +30 %`, `[4] RAILGUN 4` (étiquette « SPÉCIALE », présent seulement s'il est porté). Les noms courts restent complets en
+ * `[3] COUTEAU VITESSE +30 %` (ou `[3] ÉPÉE VITESSE +20 %`), `[4] RAILGUN 4` (étiquette « SPÉCIALE », présent seulement s'il est porté). Les noms courts restent complets en
  * permanence ; l'actif porte un cadre ambre et `aria-current="true"` ; pendant le dégainage (350 ms) la ligne du slot se remplit.
  * Conducteur : bloc lisible mais en `--ag-ink-dim`, avec la ligne « TIR IMPOSSIBLE ». Scalaires uniquement.
  */
@@ -35,7 +35,7 @@ export interface PropsBlocArmes {
   refTemps: RefObject<HTMLSpanElement | null>;
 }
 
-const LIBELLE_SLOT: Record<Slot, string> = { principale: "Principale", secondaire: "Secondaire", couteau: "Couteau", speciale: "Spéciale" };
+const LIBELLE_SLOT: Record<Slot, string> = { principale: "Principale", secondaire: "Secondaire", couteau: "Arme blanche", speciale: "Spéciale" };
 
 function BlocArmesBrut(p: PropsBlocArmes) {
   const slots = parseSlots(p.slots);

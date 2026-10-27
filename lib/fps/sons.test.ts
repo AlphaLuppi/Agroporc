@@ -109,6 +109,26 @@ describe("sons : effets ajoutés par la v2", () => {
     sons.dispose();
   });
 
+  it("l'épée sonne (dans le vide, sur la chair, distante), sans contexte audio rien ne plante, et dépasse le couteau", () => {
+    const sons = creerSons();
+    const mesure = (f: () => void) => { const a = journal.demarres; f(); return journal.demarres - a; };
+    expect(mesure(() => sons.coup(false, undefined, "epee"))).toBeGreaterThan(0);
+    expect(mesure(() => sons.coup(true, undefined, "epee"))).toBeGreaterThan(mesure(() => sons.coup(false, undefined, "epee")));
+    expect(mesure(() => sons.coup(true, { distance: 15, pan: -0.5 }, "epee"))).toBeGreaterThan(0);
+    // l'épée tinte en plus du sifflement
+    expect(mesure(() => sons.coup(false, undefined, "epee"))).toBeGreaterThan(mesure(() => sons.coup(false, undefined, "couteau")));
+    // appel explicite du couteau = appel par défaut
+    expect(mesure(() => sons.coup(true, undefined, "couteau"))).toBe(mesure(() => sons.coup(true)));
+    sons.dispose();
+  });
+
+  it("sans WebAudio, le coup d'épée est sans effet et ne plante pas", () => {
+    vi.stubGlobal("window", { addEventListener() {}, removeEventListener() {} });
+    const sons = creerSons();
+    expect(() => sons.coup(true, undefined, "epee")).not.toThrow();
+    sons.dispose();
+  });
+
   it("le coup qui touche fait plus de bruit que celui qui rate", () => {
     const sons = creerSons();
     let a = journal.demarres;

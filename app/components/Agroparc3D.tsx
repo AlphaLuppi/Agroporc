@@ -7,7 +7,7 @@ import type { Poi, SceneData } from "@/lib/agroparc3d/types";
 import type { JoueurAerien, SceneHandle } from "@/lib/agroparc3d/scene";
 import type { JeuHandle, HudEtat } from "@/lib/fps/jeu";
 import type { HudLive } from "@/lib/fps/jeu-types";
-import type { ArmeFeuId, ArmePrincipaleId, ArmeSecondaireId, Slot, Vec3 } from "@/lib/fps/protocole";
+import type { ArmeFeuId, ArmeMeleeId, ArmePrincipaleId, ArmeSecondaireId, Slot, Vec3 } from "@/lib/fps/protocole";
 import { ecrireEquipement, estPrincipale, estSecondaire, lireEquipement } from "@/lib/fps/equipement";
 import { creerRadarFrame } from "@/lib/fps/radar";
 import { nomPersonnage } from "@/lib/characters";
@@ -213,12 +213,16 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
     setPseudoSaisi(v);
     try { localStorage.setItem(CLE_PSEUDO, v); } catch { /* non retenu */ }
   };
-  // Lobby, écran de mort et pause : l'équipement de la prochaine apparition (principale + secondaire, couteau toujours là).
-  // Mémorisé tout de suite ; en partie, `equiper` le transmet au jeu (immédiat si mort).
-  const choisirEquipement = (principale: ArmePrincipaleId, secondaire: ArmeSecondaireId) => {
-    setEquipement({ principale, secondaire });
-    jeuRef.current?.equiper(principale, secondaire);
-    ecrireEquipement({ principale, secondaire }, stockageNavigateur());
+  // Lobby, écran de mort et pause : l'équipement de la prochaine apparition (principale, secondaire, arme blanche : couteau ou épée).
+  // Mémorisé tout de suite ; en partie, `equiper` le transmet au jeu (immédiat si mort). `melee` omis (raccourcis clavier qui ne changent
+  // que les armes à feu) = l'arme blanche déjà choisie ; l'épée seule est écrite, couteau = absent.
+  const choisirEquipement = (principale: ArmePrincipaleId, secondaire: ArmeSecondaireId, meleeChoisie?: ArmeMeleeId) => {
+    const melee = meleeChoisie ?? equipementRef.current.melee ?? "couteau";
+    const eq: EquipementChoisi = melee === "epee" ? { principale, secondaire, melee } : { principale, secondaire };
+    equipementRef.current = eq;
+    setEquipement(eq);
+    jeuRef.current?.equiper(principale, secondaire, melee);
+    ecrireEquipement(eq, stockageNavigateur());
   };
   const reglerAccroupiBascule = (b: boolean) => {
     setAccroupiBascule(b);
@@ -478,7 +482,7 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
           if (estPrincipale(a)) choisirEquipementRef.current(a, eq.secondaire);
           else if (estSecondaire(a)) choisirEquipementRef.current(eq.principale, a);
         } else if (a) {
-          choisirEquipementRef.current(a.principale ?? eq.principale, a.secondaire ?? eq.secondaire);
+          choisirEquipementRef.current(a.principale ?? eq.principale, a.secondaire ?? eq.secondaire, a.melee ?? eq.melee ?? "couteau");
         }
         entrerRef.current();
       },

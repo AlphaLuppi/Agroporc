@@ -4,11 +4,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 import Arene from "../../app/components/arene/Arene";
 import ChoixEquipement from "../../app/components/arene/ChoixEquipement";
 import {
-  BONUS_COUTEAU_POURCENT, CARTES_MAX_DETAILLEES, REGLES_TIR, TEXTE_ARMES_SPECIALES, TEXTE_COUTEAU, commandesLobby, groupePrincipale,
-  groupeSecondaire, largeurBarre, noteSur10, toucheDe, armeSuivanteDuGroupe, aideChoixEquipement,
+  BONUS_COUTEAU_POURCENT, BONUS_EPEE_POURCENT, CARTES_MAX_DETAILLEES, REGLES_TIR, TEXTE_ARMES_SPECIALES, TEXTE_COUTEAU, commandesLobby, groupePrincipale,
+  groupeSecondaire, groupeMelee, choixApresChangement, largeurBarre, noteSur10, toucheDe, armeSuivanteDuGroupe, aideChoixEquipement,
 } from "../../app/components/arene/lobby-modele";
 import { STATS } from "./armes";
-import { ARMES, ARMES_PRINCIPALES, ARMES_SECONDAIRES, ARMES_SPECIALES, JEU, type InfoMatch, type JoueurPublic } from "./protocole";
+import { libelleCause } from "../../app/components/arene/armesInfo";
+import { ARMES, ARMES_MELEE, ARMES_PRINCIPALES, ARMES_SECONDAIRES, ARMES_SPECIALES, JEU, type InfoMatch, type JoueurPublic } from "./protocole";
 import { REGLAGES_HUD_DEFAUT } from "./reglages-hud";
 import { touchesParDefaut } from "./touches";
 
@@ -18,6 +19,28 @@ describe("modèle du lobby", () => {
     expect(groupeSecondaire().armes.map((a) => a.id)).toEqual([...ARMES_SECONDAIRES]);
     const toutes = [...groupePrincipale().armes, ...groupeSecondaire().armes].map((a) => a.id as string);
     for (const s of ARMES_SPECIALES) expect(toutes).not.toContain(s);
+  });
+
+  it("groupe arme blanche : couteau puis épée, barres propres, jamais compact", () => {
+    const g = groupeMelee();
+    expect(g.cle).toBe("melee");
+    expect(g.titre).toBe("Arme blanche");
+    expect(g.armes.map((a) => a.id)).toEqual([...ARMES_MELEE]);
+    expect(g.compacte).toBe(false);
+    expect(g.barres.map((b) => b.nom)).toEqual(["Dégâts", "Cadence", "Portée", "Course"]);
+    const [couteau, epee] = g.armes;
+    // l'épée frappe plus fort et plus loin, le couteau frappe plus vite et court plus vite
+    expect(epee.barres.degats).toBeGreaterThan(couteau.barres.degats);
+    expect(epee.barres.portee).toBeGreaterThan(couteau.barres.portee);
+    expect(couteau.barres.cadence).toBeGreaterThan(epee.barres.cadence);
+    expect(couteau.barres.controle).toBeGreaterThan(epee.barres.controle);
+    for (const a of g.armes) for (const v of Object.values(a.barres)) expect(v).toBeGreaterThan(0);
+  });
+
+  it("libellés d'élimination : épée et tigre de zombies", () => {
+    expect(libelleCause("epee", "arme", "Lea")).toBe("Épée");
+    expect(libelleCause("couteau", "arme", "Lea")).toBe("Couteau");
+    expect(libelleCause("epee", "tigre_zombie", "")).toBe("Griffé par un tigre");
   });
 
   it("la grille passe en version compacte au-delà de 6 cartes", () => {
@@ -45,7 +68,9 @@ describe("modèle du lobby", () => {
   it("couteau et armes spéciales dérivés des données", () => {
     expect(BONUS_COUTEAU_POURCENT).toBe(30);
     expect(TEXTE_COUTEAU).toContain("30 %");
-    expect(TEXTE_COUTEAU).toContain("toujours équipé");
+    expect(TEXTE_COUTEAU).toContain("toujours équipée");
+    expect(BONUS_EPEE_POURCENT).toBe(20);
+    expect(TEXTE_COUTEAU).toContain("140°");
     for (const id of ARMES_SPECIALES) expect(TEXTE_ARMES_SPECIALES).toContain(STATS[id].nom);
     expect(TEXTE_ARMES_SPECIALES).toContain("Elsa");
     expect(TEXTE_ARMES_SPECIALES).toContain("Truck Muche");
@@ -77,19 +102,24 @@ const cochee = (html: string, arme: string) => {
 };
 
 describe("ChoixEquipement", () => {
-  const rendu = (variante: "lobby" | "compact", principale: string, secondaire: string) =>
+  const rendu = (variante: "lobby" | "compact", principale: string, secondaire: string, melee?: string) =>
     renderToStaticMarkup(createElement(ChoixEquipement, {
-      principale: principale as never, secondaire: secondaire as never, surChanger: () => {}, variante, idGroupe: "test",
+      principale: principale as never, secondaire: secondaire as never, melee: melee as never, surChanger: () => {}, variante, idGroupe: "test",
     }));
+  const NB_ARMES = ARMES_PRINCIPALES.length + ARMES_SECONDAIRES.length + ARMES_MELEE.length;
 
-  it("lobby : deux fieldset, une radio par arme choisissable, une seule cochée par groupe", () => {
+  it("lobby : trois fieldset, une radio par arme choisissable, une seule cochée par groupe", () => {
     const html = rendu("lobby", "pompe", "revolver");
-    expect(html.match(/<fieldset/g)).toHaveLength(2);
+    expect(html.match(/<fieldset/g)).toHaveLength(3);
     expect(html).toContain("Arme principale");
     expect(html).toContain("Arme secondaire");
-    expect(html.match(/type="radio"/g)).toHaveLength(ARMES_PRINCIPALES.length + ARMES_SECONDAIRES.length);
-    expect(html.match(/checked=""/g)).toHaveLength(2);
+    expect(html).toContain("Arme blanche");
+    expect(html.match(/type="radio"/g)).toHaveLength(NB_ARMES);
+    expect(html.match(/checked=""/g)).toHaveLength(3);
     expect(cochee(html, "pompe")).toBe(true);
+    // arme blanche absente = couteau
+    expect(cochee(html, "couteau")).toBe(true);
+    expect(cochee(html, "epee")).toBe(false);
     expect(cochee(html, "revolver")).toBe(true);
     expect(cochee(html, "mitraillette")).toBe(false);
     // aucune carte pour les armes d'Elsa
@@ -98,9 +128,9 @@ describe("ChoixEquipement", () => {
 
   it("lobby : quatre barres role=img « X sur 10 » par carte, nom et description reliés à la radio", () => {
     const html = rendu("lobby", "mitraillette", "pistolet");
-    const nb = ARMES_PRINCIPALES.length + ARMES_SECONDAIRES.length;
+    const nb = NB_ARMES;
     expect(html.match(/role="img"/g)).toHaveLength(nb * 4);
-    expect(html.match(/aria-label="(Dégâts|Cadence|Portée|Contrôle) (10|[1-9]) sur 10"/g)).toHaveLength(nb * 4);
+    expect(html.match(/aria-label="(Dégâts|Cadence|Portée|Contrôle|Course) (10|[1-9]) sur 10"/g)).toHaveLength(nb * 4);
     expect(html.match(/aria-labelledby=/g)).toHaveLength(nb);
     expect(html.match(/aria-describedby=/g)).toHaveLength(nb);
     expect(html).not.toContain("Précision");
@@ -109,12 +139,30 @@ describe("ChoixEquipement", () => {
   it("compact : des boutons aria-pressed, un seul pressé par groupe, 40 px et plus au CSS", () => {
     const html = rendu("compact", "sniper", "mini_uzi");
     expect(html).not.toContain("<fieldset");
-    expect(html.match(/role="group"/g)).toHaveLength(2);
-    expect(html.match(/<button/g)).toHaveLength(ARMES_PRINCIPALES.length + ARMES_SECONDAIRES.length);
-    expect(html.match(/aria-pressed="true"/g)).toHaveLength(2);
-    expect(html.match(/aria-pressed="false"/g)).toHaveLength(ARMES_PRINCIPALES.length + ARMES_SECONDAIRES.length - 2);
+    expect(html.match(/role="group"/g)).toHaveLength(3);
+    expect(html.match(/<button/g)).toHaveLength(NB_ARMES);
+    expect(html.match(/aria-pressed="true"/g)).toHaveLength(3);
+    expect(html.match(/aria-pressed="false"/g)).toHaveLength(NB_ARMES - 3);
     expect(html).toContain(">Sniper<");
     expect(html).toContain(">Mini Uzi<");
+  });
+
+  it("lobby : l'épée choisie est cochée, les barres de l'arme blanche ont « Course » au lieu de « Contrôle »", () => {
+    const html = rendu("lobby", "pompe", "revolver", "epee");
+    expect(cochee(html, "epee")).toBe(true);
+    expect(cochee(html, "couteau")).toBe(false);
+    expect(html.match(/aria-label="Course (10|[1-9]) sur 10"/g)).toHaveLength(ARMES_MELEE.length);
+    expect(html).toContain(">Épée<");
+    expect(html).toContain(">Couteau<");
+  });
+
+  it("changer un groupe garde les deux autres (principale, secondaire, arme blanche)", () => {
+    const eq = { principale: "pompe", secondaire: "revolver", melee: "epee" } as const;
+    expect(choixApresChangement(eq, "principale", "sniper")).toEqual(["sniper", "revolver", "epee"]);
+    expect(choixApresChangement(eq, "secondaire", "mini_uzi")).toEqual(["pompe", "mini_uzi", "epee"]);
+    expect(choixApresChangement(eq, "melee", "couteau")).toEqual(["pompe", "revolver", "couteau"]);
+    // arme blanche absente = couteau, toujours transmise explicitement
+    expect(choixApresChangement({ principale: "pompe", secondaire: "revolver" }, "principale", "sniper")).toEqual(["sniper", "revolver", "couteau"]);
   });
 
   it("deux instances à l'écran : noms de groupes radio distincts", () => {
@@ -141,7 +189,12 @@ describe("Arene (lobby)", () => {
     const html = rendu();
     expect(html).toContain("Arme principale");
     expect(html).toContain("Arme secondaire");
-    expect(html).toContain("Couteau : toujours équipé");
+    expect(html).toContain("Arme blanche : toujours équipée");
+    expect(html).toContain("Épée : course 20 %");
+    expect(html).toContain("jusqu&#x27;à 3 joueurs");
+    expect(html).toContain("<legend>Arme blanche</legend>");
+    expect(cochee(html, "couteau")).toBe(true);
+    expect(cochee(html, "epee")).toBe(false);
     expect(html).toContain("offertes par Elsa au Truck Muche");
     expect(html).toContain("Comment ça tire");
     expect(html).toContain("la balle ne chute pas");

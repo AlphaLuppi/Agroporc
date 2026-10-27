@@ -18,9 +18,9 @@ export interface HudEtat {
   /** arme en main et son slot */
   arme: ArmeId;
   slot: Slot;
-  /** "principale:fusil_assaut:23:30|secondaire:pistolet:12:12|couteau:couteau:0:0|speciale:railgun:4:6" ; speciale absente si non portée */
+  /** "principale:fusil_assaut:23:30|secondaire:pistolet:12:12|couteau:couteau:0:0|speciale:railgun:4:6" (le slot `couteau` porte l'arme blanche : `couteau:epee:0:0` pour l'épée) ; speciale absente si non portée */
   slots: string;
-  /** équipement de la prochaine apparition : "fusil_assaut|pistolet" */
+  /** équipement de la prochaine apparition : "fusil_assaut|pistolet", suivi de "|epee" si l'épée est choisie (absent = couteau) */
   equipSuivant: string;
   /** munitions / chargeur de l'arme en main (couteau : 0 / 0) */
   munitions: number;

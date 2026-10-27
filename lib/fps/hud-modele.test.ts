@@ -15,6 +15,18 @@ describe("hud-modele : seuils de la spec", () => {
   });
 });
 
+describe("parseSlots : épée", () => {
+  it("le slot couteau peut porter l'épée (0 / 0, jamais d'alerte de munitions)", () => {
+    const s = parseSlots("principale:fusil_assaut:23:30|secondaire:pistolet:12:12|couteau:epee:0:0");
+    expect(s).toEqual([
+      { slot: "principale", arme: "fusil_assaut", munitions: 23, chargeur: 30, reserve: -1 },
+      { slot: "secondaire", arme: "pistolet", munitions: 12, chargeur: 12, reserve: -1 },
+      { slot: "couteau", arme: "epee", munitions: 0, chargeur: 0, reserve: -1 },
+    ]);
+    expect(niveauMunitions(0, 0)).toBe("normal");
+  });
+});
+
 describe("parseSlots", () => {
   it("décode 4 champs (réserve infinie)", () => {
     const s = parseSlots("principale:fusil_assaut:23:30|secondaire:pistolet:12:12|couteau:couteau:0:0|speciale:railgun:4:6");
@@ -127,6 +139,7 @@ describe("formats français", () => {
     expect(libelleFil("fusil_assaut", "arme", "Lea")).toBe("Fusil");
     expect(libelleFil("mitrailleuse", "arme", "Lea")).toBe("M. lourde");
     expect(libelleFil("couteau", "arme", "Lea")).toBe("Couteau");
+    expect(libelleFil("epee", "arme", "Lea")).toBe("Épée");
     expect(libelleFil("couteau", "ecrase_pnj", "")).toBe("Écrasé par la circulation");
     expect(libelleFil("couteau", "ecrase_vehicule", "Lea")).toBe("Renversé par Lea");
   });

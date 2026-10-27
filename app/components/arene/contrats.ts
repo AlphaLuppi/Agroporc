@@ -2,7 +2,7 @@ import type { MutableRefObject } from "react";
 import type { SceneData } from "@/lib/agroparc3d/types";
 import type { ClientArene, EtatConnexion } from "@/lib/fps/reseau";
 import type {
-  ArmeId, ArmePrincipaleId, ArmeSecondaireId, ArmeSpecialeId, CauseMort, EtatElsaMsg, EtatJoueurSnap, InfoMatch, InfoTueur, InfoVehicule,
+  ArmeId, ArmeMeleeId, ArmePrincipaleId, ArmeSecondaireId, ArmeSpecialeId, CauseMort, EtatElsaMsg, EtatJoueurSnap, InfoMatch, InfoTueur, InfoVehicule,
   JoueurPublic, LigneClassement, LigneStats, Zone,
 } from "@/lib/fps/protocole";
 import type { EtatMonstresHud, HudEtat, HudLive, JeuEvenement } from "@/lib/fps/jeu-types";
@@ -17,7 +17,8 @@ import type { ReglagesVoix } from "@/lib/fps/voix";
  * Spec : docs/superpowers/specs/2026-10-22-arene-v2-design.md (§5.17) et 2026-10-23-arene-hud-design.md (§3.6)
  */
 
-export interface EquipementChoisi { principale: ArmePrincipaleId; secondaire: ArmeSecondaireId }
+/** `melee` absent = couteau (rétrocompatible : les littéraux sans arme blanche restent valides). */
+export interface EquipementChoisi { principale: ArmePrincipaleId; secondaire: ArmeSecondaireId; melee?: ArmeMeleeId }
 
 /** Ligne du fil des kills. `arme` n'a de sens que pour cause "arme" : afficher `libelleCause(arme, cause, par)`, jamais `INFOS_ARMES[arme]` seul. */
 export interface EntreeFil {
@@ -94,7 +95,8 @@ export interface PropsHudArene {
   // ---- v2 ----
   /** équipement de la prochaine apparition (remplace `surChoisirArme`) */
   equipement: EquipementChoisi;
-  surEquipement(principale: ArmePrincipaleId, secondaire: ArmeSecondaireId): void;
+  /** `melee` omis = l'arme blanche déjà choisie (les raccourcis clavier de l'écran de mort ne changent que les armes à feu) */
+  surEquipement(principale: ArmePrincipaleId, secondaire: ArmeSecondaireId, melee?: ArmeMeleeId): void;
   elsa: EtatElsaMsg | null;
   annonces: Annonce[];
   sieges: InfoVehicule[];
@@ -135,7 +137,9 @@ export interface PropsHudArene {
 /** Props de `ChoixEquipement` (écrit par U1, utilisé par U1 : lobby, et par U2 : écran de mort, killcam, pause). */
 export interface PropsChoixEquipement {
   principale: ArmePrincipaleId; secondaire: ArmeSecondaireId;
-  surChanger(principale: ArmePrincipaleId, secondaire: ArmeSecondaireId): void;
+  /** arme blanche choisie (absent = couteau) */
+  melee?: ArmeMeleeId;
+  surChanger(principale: ArmePrincipaleId, secondaire: ArmeSecondaireId, melee?: ArmeMeleeId): void;
   /** "lobby" = cartes détaillées avec barres ; "compact" = boutons (écran de mort, killcam, pause) */
   variante: "lobby" | "compact";
   /** préfixe d'id (deux instances à l'écran : noms de groupes radio distincts) */
