@@ -1,8 +1,9 @@
 /**
  * Serveur temps réel de l'arène FPS (vue Palantir) : HTTP `GET /sante` + WebSocket sur le même port,
- * une salle unique. Toute la logique de jeu est dans lib/fps/match.ts (pur) ; ce fichier ne fait que
- * l'I/O : connexions, anti-flood, origines, ping, boucle de tic à 60 Hz.
- * Spec : docs/superpowers/specs/2026-10-22-agroparc-fps-design.md (v1) et 2026-10-22-arene-v2-design.md (v2)
+ * deux salles (v5) : l'arène « chacun pour soi » et les zombies tigres (coopératif par manches). Toute la logique de jeu est dans
+ * lib/fps/match.ts et match-zombies.ts (purs) ; ce fichier ne fait que l'I/O : connexions, anti-flood, origines, ping, boucle de tic à 60 Hz,
+ * routage du message `mode` (changement de salle) et résumé `salons`.
+ * Spec : docs/superpowers/specs/2026-10-22-agroparc-fps-design.md (v1), 2026-10-22-arene-v2-design.md (v2), 2026-10-27-arene-zombies-design.md (v5)
  */
 import { existsSync, readFileSync } from "node:fs";
 import { createServer } from "node:http";
@@ -14,6 +15,8 @@ import { construireMonde, pointsApparition } from "../../lib/fps/collision";
 import { ipClient } from "../../lib/fps/ip-client";
 import { Salle, type OptionsSalle, type Sortie } from "../../lib/fps/match";
 import { VERSION_PROTOCOLE, type MessageClient, type MessageServeur } from "../../lib/fps/protocole";
+import { decisionMode, messageSalons } from "../../lib/fps/salons";
+import { DEPARTS, construireMondeZombies, donneesZombies } from "../../lib/fps/zombies-carte";
 import { EMPLACEMENTS_VOITURES, ROND_POINT, ZONE_APPARITION, positionElsa, trouverRondPoint } from "../../lib/fps/zones";
 
 const PORT = Number(process.env.PORT) || 8787;
@@ -94,7 +97,24 @@ const options: OptionsSalle = {
     ...(["laser", "saut", "charge"].includes(process.env.PDJ_FPS_TIGRE_ATTAQUE ?? "") ? { attaqueTigre: process.env.PDJ_FPS_TIGRE_ATTAQUE as "laser" | "saut" | "charge" } : {}),
   },
 };
-const salle = new Salle(monde, apparitions, Math.random, Date.now(), options);
+const salleArene = new Salle(monde, apparitions, Math.random, Date.now(), options);
+
+// Zombies (v5) : son propre monde MUTABLE (portes qui s'ouvrent), sans Elsa, circulation, voitures ni événements. La grille de navigation des
+// tigres est précalculée à la création du service (17 à 40 ms), puis recalculée une fois par porte achetée.
+const argentZombies = dureeEnv("PDJ_FPS_ZOMBIES_ARGENT");
+const totalZombies = dureeEnv("PDJ_FPS_ZOMBIES_TOTAL");
+const pauseZombies = dureeEnv("PDJ_FPS_ZOMBIES_PAUSE_MS");
+const griffeZombies = dureeEnv("PDJ_FPS_ZOMBIES_GRIFFE");
+const optionsZombies: OptionsSalle = {
+  zombies: {
+    donnees: donneesZombies(scene),
+    ...(argentZombies !== undefined ? { argentDepart: argentZombies } : {}),
+    ...(totalZombies !== undefined ? { total1: totalZombies } : {}),
+    ...(pauseZombies !== undefined ? { pauseMs: pauseZombies } : {}),
+    ...(griffeZombies !== undefined ? { degatsGriffe: griffeZombies } : {}),
+  },
+};
+const salleZombies = new Salle(construireMondeZombies(scene), DEPARTS.map((d) => [d[0], d[1]] as [number, number]), Math.random, Date.now(), optionsZombies);
 
 /** Ids courts (« j1 », « j2 »… en base 36) : un id figure dans chaque joueur de chaque snap, `randomUUID` pesait 36 octets par occurrence. */
 let compteurId = 0;
@@ -112,6 +132,8 @@ interface Client {
   ip: string;
   /** dernier message utile (tout sauf ping et vueScores) ; sert à recycler les spectateurs oubliés */
   utileT: number;
+  /** salle où le client est inscrit : l'arène à `bonjour`, puis celle qu'il choisit par `mode` */
+  salle: Salle;
 }
 const clients = new Map<string, Client>();
 
@@ -124,15 +146,16 @@ function envoyer(c: Client, texte: string): void {
 }
 
 /**
- * Route les sorties de la salle ; une erreur adressée à un client le déconnecte après envoi. Adresses : « tous » (tous les inscrits),
- * « joueurs » (en arène) ou « spectateurs » (inscrits hors arène, vue Palantir) selon `salle.inspecter(id).enJeu`, ou l'id d'un client.
+ * Route les sorties d'une salle ; une erreur adressée à un client le déconnecte après envoi. Adresses : « tous » (tous les inscrits DE CETTE
+ * SALLE), « joueurs » (en jeu) ou « spectateurs » (inscrits hors jeu : vue Palantir, lobby des zombies) selon `salle.inspecter(id).enJeu`, ou l'id
+ * d'un client (n'importe quelle salle).
  */
-function diffuser(sorties: Sortie[]): void {
+function diffuser(salle: Salle, sorties: Sortie[]): void {
   for (const s of sorties) {
     const texte = JSON.stringify(s.m);
     if (s.a === "tous" || s.a === "joueurs" || s.a === "spectateurs") {
       for (const c of clients.values()) {
-        if (!c.inscrit || c.id === s.sauf) continue;
+        if (!c.inscrit || c.salle !== salle || c.id === s.sauf) continue;
         if (s.a !== "tous" && (s.a === "joueurs") !== (salle.inspecter(c.id)?.enJeu ?? false)) continue;
         envoyer(c, texte);
       }
@@ -150,6 +173,44 @@ function refuser(c: Client, code: Extract<MessageServeur, { t: "erreur" }>["code
   c.ws.close(1008, code);
 }
 
+/** Résumé des deux salles (choix du mode, compteurs). */
+function salons(): MessageServeur {
+  const z = salleZombies.resumeZombies() ?? { phase: "lobby" as const, joueurs: salleZombies.nombreJoueurs(), manche: 0 };
+  return messageSalons({ joueurs: salleArene.nombreJoueurs(), enJeu: salleArene.nombreEnJeu() }, z);
+}
+let dernierSalons = "";
+
+/** `salons` à tous les inscrits si le résumé a changé ; à un seul client (`vers`), toujours (à sa connexion). */
+function diffuserSalons(vers?: Client): void {
+  const texte = JSON.stringify(salons());
+  if (vers) { envoyer(vers, texte); return; }
+  if (texte === dernierSalons) return;
+  dernierSalons = texte;
+  for (const c of clients.values()) if (c.inscrit) envoyer(c, texte);
+}
+
+/**
+ * Changement de salle (`mode`). Refusé AVANT de quitter l'ancienne salle (sinon `connecter` renverrait `erreur{plein}` et la socket serait
+ * fermée) : en jeu (`lobby`), salle d'arrivée pleine (`plein`). Le pseudo et l'id sont conservés ; la nouvelle salle répond `mode` (écho) puis `bienvenue`.
+ */
+function changerMode(c: Client, mode: unknown, maintenant: number): void {
+  const decision = decisionMode({
+    mode, salleActuelle: c.salle === salleZombies ? "zombies" : "arene", enJeu: c.salle.inspecter(c.id)?.enJeu ?? false,
+    joueursCible: (mode === "zombies" ? salleZombies : salleArene).nombreJoueurs(),
+  });
+  if (!decision) return;
+  if (decision.action === "echo") { envoyer(c, JSON.stringify({ t: "mode", mode: decision.mode } satisfies MessageServeur)); return; }
+  if (decision.action === "refus") { envoyer(c, JSON.stringify({ t: "refus", action: "mode", raison: decision.raison } satisfies MessageServeur)); return; }
+  const cible = decision.mode === "zombies" ? salleZombies : salleArene;
+  const pseudo = c.salle.inspecter(c.id)?.pseudo ?? "";
+  const ancienne = c.salle;
+  const depart = ancienne.deconnecter(c.id, maintenant);
+  c.salle = cible; // avant de diffuser le départ : le client ne reçoit plus rien de l'ancienne salle
+  diffuser(ancienne, depart);
+  diffuser(cible, [{ a: c.id, m: { t: "mode", mode: decision.mode } }, ...cible.connecter(c.id, pseudo, maintenant)]);
+  diffuserSalons();
+}
+
 function traiter(c: Client, brut: string): void {
   let msg: unknown;
   try { msg = JSON.parse(brut); } catch { return; }
@@ -159,20 +220,28 @@ function traiter(c: Client, brut: string): void {
   if (!c.inscrit) {
     if (m.t !== "bonjour") return;
     if (m.v !== VERSION_PROTOCOLE) return refuser(c, "version", "Version du protocole incompatible : rechargez la page.");
-    const sorties = salle.connecter(c.id, typeof m.pseudo === "string" ? m.pseudo : "", maintenant);
+    const sorties = c.salle.connecter(c.id, typeof m.pseudo === "string" ? m.pseudo : "", maintenant);
     c.inscrit = !sorties.some((s) => s.a === c.id && s.m.t === "erreur");
-    diffuser(sorties);
-    if (c.inscrit) console.log(`+ ${salle.inspecter(c.id)?.pseudo} (${salle.nombreJoueurs()} en ligne)`);
+    diffuser(c.salle, sorties);
+    if (c.inscrit) {
+      console.log(`+ ${c.salle.inspecter(c.id)?.pseudo} (${c.salle.nombreJoueurs()} en ligne)`);
+      diffuserSalons(c);
+    }
     return;
   }
   if (m.t === "bonjour") return;
   if (m.t !== "ping" && m.t !== "vueScores") c.utileT = maintenant;
-  diffuser(salle.recevoir(c.id, m, maintenant));
+  if (m.t === "mode") return changerMode(c, m.mode, maintenant);
+  diffuser(c.salle, c.salle.recevoir(c.id, m, maintenant));
 }
 
 const http = createServer((req, res) => {
   if (req.method === "GET" && req.url?.split("?")[0] === "/sante") {
-    const corps = JSON.stringify({ ok: true, joueurs: salle.nombreJoueurs(), enJeu: salle.nombreEnJeu(), match: salle.infoMatch().numero });
+    const z = salleZombies.resumeZombies();
+    const corps = JSON.stringify({
+      ok: true, joueurs: salleArene.nombreJoueurs(), enJeu: salleArene.nombreEnJeu(), match: salleArene.infoMatch().numero,
+      zombies: { joueurs: salleZombies.nombreJoueurs(), enJeu: salleZombies.nombreEnJeu(), phase: z?.phase ?? "lobby", manche: z?.manche ?? 0 },
+    });
     res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
     res.end(corps);
     return;
@@ -194,14 +263,14 @@ wss.on("connection", (ws, req) => {
     return;
   }
   parIp.set(ip, (parIp.get(ip) ?? 0) + 1);
-  const c: Client = { id: nouvelId(), ws, inscrit: false, vivant: true, pingEnvoyeA: Date.now(), fenetreDebut: Date.now(), fenetreNb: 0, ip, utileT: Date.now() };
+  const c: Client = { id: nouvelId(), ws, inscrit: false, vivant: true, pingEnvoyeA: Date.now(), fenetreDebut: Date.now(), fenetreNb: 0, ip, utileT: Date.now(), salle: salleArene };
   clients.set(c.id, c);
   // un client qui ne dit pas « bonjour » dans les 10 s est libéré
   setTimeout(() => { if (!c.inscrit && ws.readyState === ws.OPEN) ws.close(1008, "bonjour attendu"); }, 10_000).unref();
   ws.ping(); // première mesure de latence tout de suite
   ws.on("pong", () => {
     c.vivant = true;
-    if (c.inscrit) salle.majPing(c.id, Date.now() - c.pingEnvoyeA);
+    if (c.inscrit) c.salle.majPing(c.id, Date.now() - c.pingEnvoyeA);
   });
   ws.on("message", (donnees, binaire) => {
     if (binaire) return;
@@ -216,9 +285,9 @@ wss.on("connection", (ws, req) => {
     if (n <= 0) parIp.delete(c.ip);
     else parIp.set(c.ip, n);
     if (!c.inscrit) return;
-    const pseudo = salle.inspecter(c.id)?.pseudo;
-    try { diffuser(salle.deconnecter(c.id, Date.now())); } catch (e) { console.error("déconnexion:", e); }
-    console.log(`- ${pseudo} (${salle.nombreJoueurs()} en ligne)`);
+    const pseudo = c.salle.inspecter(c.id)?.pseudo;
+    try { diffuser(c.salle, c.salle.deconnecter(c.id, Date.now())); } catch (e) { console.error("déconnexion:", e); }
+    console.log(`- ${pseudo} (${c.salle.nombreJoueurs()} en ligne)`);
   });
   ws.on("error", () => ws.terminate());
 });
@@ -228,7 +297,7 @@ const timerPing = setInterval(() => {
   const maintenant = Date.now();
   for (const c of clients.values()) {
     if (!c.vivant) { c.ws.terminate(); continue; }
-    if (c.inscrit && maintenant - c.utileT > SPECTATEUR_INACTIF_MS && !salle.inspecter(c.id)?.enJeu) { c.ws.close(1001, "inactif"); continue; }
+    if (c.inscrit && maintenant - c.utileT > SPECTATEUR_INACTIF_MS && !c.salle.inspecter(c.id)?.enJeu) { c.ws.close(1001, "inactif"); continue; }
     c.vivant = false;
     c.pingEnvoyeA = Date.now();
     c.ws.ping();
@@ -236,8 +305,17 @@ const timerPing = setInterval(() => {
 }, PING_MS);
 
 const timerTic = setInterval(() => {
-  try { diffuser(salle.tic(Date.now())); } catch (e) { console.error("tic:", e); }
+  try { diffuser(salleArene, salleArene.tic(Date.now())); } catch (e) { console.error("tic:", e); }
+  // la salle des zombies vide ne coûte rien
+  if (salleZombies.nombreJoueurs() > 0) {
+    try { diffuser(salleZombies, salleZombies.tic(Date.now())); } catch (e) { console.error("tic zombies:", e); }
+  }
 }, TIC_MS);
+
+// Résumé des salles : à tous, une fois par seconde s'il a changé (le choix du mode affiche les compteurs en direct)
+const timerSalons = setInterval(() => {
+  try { diffuserSalons(); } catch (e) { console.error("salons:", e); }
+}, 1000);
 
 http.listen(PORT, "0.0.0.0", () => {
   console.log(`Arène FPS : ws://0.0.0.0:${PORT} (scène ${fichierScene}, ${apparitions.length} points d'apparition, origines : ${ORIGINES.join(", ") || "toutes"})`);
@@ -246,6 +324,7 @@ http.listen(PORT, "0.0.0.0", () => {
 function arreter(): void {
   clearInterval(timerPing);
   clearInterval(timerTic);
+  clearInterval(timerSalons);
   for (const c of clients.values()) c.ws.close(1001, "arrêt du serveur");
   wss.close();
   http.close(() => process.exit(0));

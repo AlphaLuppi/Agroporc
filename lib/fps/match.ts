@@ -9,26 +9,31 @@
  *
  * Elsa, les véhicules / la circulation PNJ et les événements (v3 : Truck Muche fou, tigre robot, titan tigre) sont des services
  * (`match-elsa.ts`, `match-vehicules.ts`, `match-evenements.ts`) qui ne voient la salle que par `ContexteSalle` (`match-contexte.ts`), implémenté ici.
+ * Avec l'option `zombies` (v5), la salle est celle du mode « zombies tigres » : le service `match-zombies.ts` mène la partie (lobby, manches, argent,
+ * achats, tigres), la salle n'y ajoute que l'admission à `rejoindre`, les tirs et coups sur les tigres, la mise à terre à la place de la mort
+ * et l'absence de cycle de matchs ; le comportement de l'arène (sans cette option) est inchangé.
  * Spec : docs/superpowers/specs/2026-10-22-arene-v2-design.md (§6.1, §13) et 2026-10-23-arene-hud-design.md (§3.5)
  */
-import { COUTEAU, STATS, degatsPlomb, gerbeRespectee } from "./armes";
+import { MELEE, STATS, degatsPlomb, gerbeRespectee } from "./armes";
 import { ecarterDesCircuits, type Circuit, type VoiturePnj } from "./circulation";
 import type { Monde } from "./collision";
 import type { IntervalleElsa } from "./elsa";
 import { armeDuSlot, depuisAlias, estPrincipale, estSecondaire, estSlot, normaliserEquipement } from "./equipement";
-import type { ContexteSalle, JoueurSalle, ServiceElsa, ServiceEvenements, ServiceVehicules, Sortie } from "./match-contexte";
+import type { ContexteSalle, JoueurSalle, ResumeZombies, ServiceElsa, ServiceEvenements, ServiceVehicules, ServiceZombies, Sortie } from "./match-contexte";
 import { creerServiceElsa } from "./match-elsa";
 import { creerServiceEvenements, type OptionsServiceEvenements } from "./match-evenements";
 import { creerServiceVehicules } from "./match-vehicules";
+import { EQUIPEMENT_DEPART_ZOMBIES, MAIN_DEPART_ZOMBIES, creerServiceZombies, departPour, type OptionsServiceZombies } from "./match-zombies";
 import { REWIND_MELEE_MS, coupVraisemblable } from "./melee";
 import {
-  CIBLE_TIGRE, CIBLE_TITAN, EQUIPEMENT_DEFAUT, JEU, PLAFONDS, SLOT_DEFAUT, copierEquipement, oeilDe, silhouetteDe,
-  type ArmeFeuId, type ArmeId, type CauseMort, type EtatJoueurSnap, type Equipement, type InfoMatch, type InfoTueur,
+  CIBLE_TIGRE, CIBLE_TITAN, EQUIPEMENT_DEFAUT, JEU, PLAFONDS, SLOT_DEFAUT, copierEquipement, estIdZombie, estMelee, oeilDe, silhouetteDe,
+  type ArmeFeuId, type ArmeId, type ArmeMeleeId, type CauseMort, type EtatJoueurSnap, type Equipement, type InfoMatch, type InfoTueur,
   type JoueurPublic, type LigneClassement, type LigneStats, type MessageClient, type SignalVoix, type Slot, type Vec3, type Zone,
 } from "./protocole";
 import { appliquerDegats, memoriserSante, regenerer, reinitialiserSante, restaurerSante, tuer as tuerSante } from "./sante";
 import { toucheVraisemblable } from "./tir";
 import { choisirPointZone, lacetVers, filtrerApparitions, type ZoneApparition } from "./zones";
+import { ZOMBIES } from "./zombies-vagues";
 import type { Vec2 } from "../agroparc3d/types";
 
 // `Sortie` et `JoueurSalle` vivent dans match-contexte.ts (partagés avec les services Elsa / véhicules) ; réexportés pour les appelants.
@@ -155,6 +160,12 @@ export interface OptionsSalle {
   vehicules?: readonly { p: Vec2; cap: number }[];
   /** événements (v3) : Truck Muche fou, tigre robot géant, titan tigre */
   evenements?: Omit<OptionsServiceEvenements, "maintenant">;
+  /**
+   * Salle du mode zombies (v5) : machine d'états, tigres, argent, achats (`match-zombies.ts`). Les tirs et coups entre joueurs n'ont aucun
+   * effet, `rejoindre` n'est accepté que d'un joueur admis, l'équipement est imposé, aucune règle de réapparition ni de cycle de match.
+   * Sans Elsa, voitures ni événements (ne pas les passer avec cette option).
+   */
+  zombies?: Omit<OptionsServiceZombies, "alea">;
 }
 
 /** Ce que la salle retient d'un joueur en plus de `JoueurSalle` : l'équipement de la PROCHAINE apparition et le slot d'avant. */
@@ -168,13 +179,14 @@ interface SuiviJoueur {
 interface PositionCible { p: Vec3; accroupi: boolean }
 
 export class Salle implements ContexteSalle {
-  private readonly joueurs = new Map<string, JoueurSalle>();
+  private readonly table = new Map<string, JoueurSalle>();
   private readonly suivi = new Map<string, SuiviJoueur>();
   private readonly apparitions: Vec2[];
   private readonly zone: ZoneApparition | null;
   private readonly elsa: ServiceElsa | null;
   private readonly vehicules: ServiceVehicules | null;
   private readonly evenements: ServiceEvenements | null;
+  private readonly zombies: ServiceZombies | null;
   private numero = 1;
   private phase: "jeu" | "entracte" = "jeu";
   private fin: number | null;
@@ -191,7 +203,7 @@ export class Salle implements ContexteSalle {
     maintenant: number,
     options: OptionsSalle = {},
   ) {
-    this.fin = maintenant + JEU.dureeMatchMs;
+    this.fin = options.zombies ? null : maintenant + JEU.dureeMatchMs;
     this.prochainSnap = maintenant;
     this.dernierTicT = maintenant;
     this.zone = options.zoneApparition ?? null;
@@ -212,6 +224,7 @@ export class Salle implements ContexteSalle {
       ? creerServiceVehicules(this, { vehicules: options.vehicules, circulation: options.circulation, maintenant })
       : null;
     this.evenements = options.evenements ? creerServiceEvenements(this, { ...options.evenements, maintenant }) : null;
+    this.zombies = options.zombies ? creerServiceZombies(this, { ...options.zombies, alea }) : null;
   }
 
   /** (v3) Pilote du titan tigre : invulnérable, ni arme ni voiture ni état à pied. */
@@ -232,8 +245,10 @@ export class Salle implements ContexteSalle {
   // ---------- ContexteSalle (vue de la salle pour les services) ----------
 
   enPhaseJeu(): boolean { return this.phase === "jeu"; }
-  joueur(id: string): JoueurSalle | undefined { return this.joueurs.get(id); }
-  joueursEnJeu(): JoueurSalle[] { return [...this.joueurs.values()].filter((j) => j.enJeu); }
+  joueur(id: string): JoueurSalle | undefined { return this.table.get(id); }
+  joueursEnJeu(): JoueurSalle[] { return [...this.table.values()].filter((j) => j.enJeu); }
+  /** (v5) tous les membres de la salle, lobby compris, dans l'ordre d'arrivée */
+  joueurs(): JoueurSalle[] { return [...this.table.values()]; }
   memoriserPrecedent(j: JoueurSalle): void {
     const suivi = this.suivi.get(j.id);
     if (suivi && j.main !== "speciale") suivi.precedent = j.main;
@@ -279,6 +294,20 @@ export class Salle implements ContexteSalle {
 
   /** Mort d'un joueur dont les PV viennent de tomber à 0 : compteurs, éjection du siège, kill du tueur, présence, fin de match. */
   private mourir(cible: JoueurSalle, par: JoueurSalle | null, cause: CauseMort, zone: Zone, arme: ArmeId, maintenant: number): Sortie[] {
+    if (this.zombies) {
+      // zombies : le joueur est « à terre » (ni `mort`, ni killcam, ni réapparition à 4 s, ni objectif de kills) ; le service décide de la suite
+      cible.vivant = false;
+      cible.posture = "mort";
+      cible.mur = 0;
+      cible.accroupi = false;
+      cible.glisse = false;
+      cible.morts++;
+      cible.serie = 0;
+      cible.equip.speciale = null;
+      cible.munSpeciale = 0;
+      cible.memoSante = null;
+      return this.zombies.surMort(cible, maintenant);
+    }
     cible.vivant = false;
     cible.posture = "mort";
     cible.mur = 0;
@@ -319,26 +348,100 @@ export class Salle implements ContexteSalle {
     };
   }
 
+  /**
+   * (v5, zombies) Place le joueur en `p` : PV, équipement (copie propre), arme en main, protection d'apparition ; l'état de mouvement est remis
+   * à zéro (le client repart de `seq` 0). Ne change ni `enJeu` ni les règles de réentrée de l'arène. Renvoie le message `apparition`.
+   */
+  placerJoueur(j: JoueurSalle, p: Vec3, lacet: number, opts: { pv: number; equip: Equipement; main: Slot; munSpeciale?: number }, maintenant: number): Sortie[] {
+    j.p = [p[0], p[1], p[2]];
+    j.v = [0, 0, 0];
+    j.lacet = lacet;
+    j.tangage = 0;
+    j.posture = "sol";
+    j.mur = 0;
+    j.accroupi = false;
+    j.glisse = false;
+    j.seq = -1;
+    j.equip = copierEquipement(opts.equip);
+    j.main = opts.main;
+    j.arme = armeDuSlot(j.equip, j.main) ?? j.equip.secondaire;
+    j.munSpeciale = j.equip.speciale ? opts.munSpeciale ?? 0 : 0;
+    j.sortieJusqua = maintenant;
+    j.cadenceArme = {};
+    j.prochainTir = -Infinity;
+    j.pv = opts.pv;
+    j.bouclier = 0;
+    j.regenAcc = 0;
+    j.dernierDegatT = maintenant;
+    j.memoSante = null;
+    j.vivant = true;
+    j.protegeJusqua = maintenant + JEU.protectionMs;
+    j.reapparitionT = null;
+    j.etatT = maintenant;
+    j.histo = [];
+    const suivi = this.suivi.get(j.id);
+    if (suivi) suivi.precedent = j.main === "principale" ? "secondaire" : "principale";
+    return [{
+      a: "tous",
+      m: {
+        t: "apparition", id: j.id, p: j.p, lacet, arme: j.arme, pv: j.pv, bouclier: j.bouclier,
+        equip: copierEquipement(j.equip), main: j.main, munSpeciale: j.munSpeciale,
+      },
+    }];
+  }
+
+  /** (v5, zombies) Sortie d'arène sans règle de réentrée ni mémo de santé ; renvoie la libération des sièges (aucun en zombies). */
+  retirerJoueur(j: JoueurSalle, maintenant: number): Sortie[] {
+    const liberation = [...(this.vehicules ? this.vehicules.liberer(j, maintenant) : []), ...(this.evenements ? this.evenements.liberer(j, maintenant) : [])];
+    j.enJeu = false;
+    j.vivant = false;
+    j.reapparitionT = null;
+    j.memoSante = null;
+    j.histo = [];
+    j.equip.speciale = null;
+    j.munSpeciale = 0;
+    j.accroupi = false;
+    j.glisse = false;
+    j.scoresOuvert = false;
+    return liberation;
+  }
+
+  /** (v5, zombies) Équipement EN COURS (achat, boîte) et arme en main ; le dégainage ne recommence que si l'arme en main change. */
+  equiper(j: JoueurSalle, equip: Equipement, main: Slot, maintenant: number, ravitaille?: ArmeFeuId): Sortie[] {
+    const arme = armeDuSlot(equip, main) ?? armeDuSlot(equip, "secondaire") ?? j.arme;
+    const change = arme !== j.arme || main !== j.main;
+    j.equip = copierEquipement(equip);
+    j.main = main;
+    j.arme = arme;
+    if (change) j.sortieJusqua = maintenant + JEU.degainageMs;
+    return [{
+      a: j.id,
+      m: { t: "equipement", equip: copierEquipement(j.equip), main: j.main, munSpeciale: j.munSpeciale, ...(ravitaille ? { ravitaille } : {}) },
+    }];
+  }
+
   // ---------- lecture ----------
 
   infoMatch(): InfoMatch {
-    return { numero: this.numero, fin: this.fin, objectif: JEU.objectifKills, phase: this.phase, prochain: this.prochain };
+    return { numero: this.numero, fin: this.fin, objectif: this.zombies ? 0 : JEU.objectifKills, phase: this.phase, prochain: this.prochain };
   }
-  nombreJoueurs(): number { return this.joueurs.size; }
-  nombreEnJeu(): number { let n = 0; for (const j of this.joueurs.values()) if (j.enJeu) n++; return n; }
+  /** (v5) Résumé de la partie de zombies (message `salons`, `/sante`) ; null dans l'arène. */
+  resumeZombies(): ResumeZombies | null { return this.zombies ? this.zombies.resume() : null; }
+  nombreJoueurs(): number { return this.table.size; }
+  nombreEnJeu(): number { let n = 0; for (const j of this.table.values()) if (j.enJeu) n++; return n; }
   /** État interne d'un joueur (lecture seule : tests et supervision). */
-  inspecter(id: string): Readonly<JoueurSalle> | undefined { return this.joueurs.get(id); }
+  inspecter(id: string): Readonly<JoueurSalle> | undefined { return this.table.get(id); }
   /** Équipement de la prochaine apparition d'un joueur (tests et supervision) ; l'équipement en cours est `inspecter(id).equip`. */
   equipementProchain(id: string): Readonly<Equipement> | undefined { return this.suivi.get(id)?.prochain; }
   joueursPublics(): JoueurPublic[] {
-    return [...this.joueurs.values()].map((j) => ({
+    return [...this.table.values()].map((j) => ({
       id: j.id, pseudo: j.pseudo, couleur: j.couleur, enJeu: j.enJeu, kills: j.kills, morts: j.morts, ping: j.ping,
       ...(j.serie > 0 ? { serie: j.serie } : {}),
       ...(j.voix ? { voix: true } : {}),
     }));
   }
   classement(): LigneClassement[] {
-    return [...this.joueurs.values()]
+    return [...this.table.values()]
       .filter((j) => j.enJeu || j.kills > 0 || j.morts > 0)
       .sort((a, b) => b.kills - a.kills || a.morts - b.morts || a.pseudo.localeCompare(b.pseudo, "fr"))
       .map((j) => ({
@@ -348,7 +451,7 @@ export class Salle implements ContexteSalle {
   }
   /** Statistiques du match de tous les joueurs du classement (message `scores`). */
   lignesStats(): LigneStats[] {
-    return [...this.joueurs.values()]
+    return [...this.table.values()]
       .filter((j) => j.enJeu || j.kills > 0 || j.morts > 0)
       .map((j) => ({
         id: j.id, serie: j.serie, serieMax: j.serieMax, tirs: j.tirs, touches: j.touches, tetes: j.tetes, degats: j.degats,
@@ -357,21 +460,22 @@ export class Salle implements ContexteSalle {
   }
   /** Dernière mesure de latence (ms), mesurée par le serveur ; pas de diffusion immédiate. */
   majPing(id: string, ms: number): void {
-    const j = this.joueurs.get(id);
+    const j = this.table.get(id);
     if (j && estNombre(ms) && ms >= 0) j.ping = Math.round(ms);
   }
 
   // ---------- connexion ----------
 
   connecter(id: string, pseudo: string, maintenant: number): Sortie[] {
-    if (this.joueurs.has(id)) return [];
+    if (this.table.has(id)) return [];
     // la capacité de JEU (16) se contrôle à `rejoindre` : les spectateurs de la vue 3D ne doivent pas la saturer
-    if (this.joueurs.size >= JEU.connexionsMax) {
+    // (zombies : la salle entière, lobby compris, est limitée à `ZOMBIES.joueursMax`)
+    if (this.table.size >= (this.zombies ? ZOMBIES.joueursMax : JEU.connexionsMax)) {
       return [{ a: id, m: { t: "erreur", code: "plein", message: "Le serveur de l'arène est saturé, réessayez plus tard." } }];
     }
-    const pris = new Set([...this.joueurs.values()].map((j) => j.pseudo.toLocaleLowerCase("fr")));
-    const couleursPrises = new Set([...this.joueurs.values()].map((j) => j.couleur));
-    const couleur = PALETTE.find((c) => !couleursPrises.has(c)) ?? PALETTE[this.joueurs.size % PALETTE.length];
+    const pris = new Set([...this.table.values()].map((j) => j.pseudo.toLocaleLowerCase("fr")));
+    const couleursPrises = new Set([...this.table.values()].map((j) => j.couleur));
+    const couleur = PALETTE.find((c) => !couleursPrises.has(c)) ?? PALETTE[this.table.size % PALETTE.length];
     const j: JoueurSalle = {
       id, pseudo: pseudoUnique(nettoyerPseudo(pseudo), pris), couleur, enJeu: false, kills: 0, morts: 0, ping: 0,
       p: [0, 0, 0], v: [0, 0, 0], lacet: 0, tangage: 0, posture: "sol", mur: 0,
@@ -385,35 +489,41 @@ export class Salle implements ContexteSalle {
       tirs: 0, touches: 0, tetes: 0, degats: 0, serie: 0, serieMax: 0, killsParArme: {},
       scoresOuvert: false, scoresDemandeT: -Infinity, scoresEnvoyeT: -Infinity,
     };
-    this.joueurs.set(id, j);
+    this.table.set(id, j);
     this.suivi.set(id, { prochain: copierEquipement(EQUIPEMENT_DEFAUT), precedent: "principale" });
     return [
       { a: id, m: { t: "bienvenue", id, couleur, joueurs: this.joueursPublics(), match: this.infoMatch(), maintenant } },
       { a: "tous", sauf: id, m: { t: "presence", joueurs: this.joueursPublics() } },
+      // zombies : le nouvel arrivant entre dans le lobby, tout le monde apprend la nouvelle liste
+      ...(this.zombies ? this.zombies.arrivee(j, maintenant) : []),
     ];
   }
 
   deconnecter(id: string, maintenant: number): Sortie[] {
-    const j = this.joueurs.get(id);
+    const j = this.table.get(id);
     if (!j) return [];
     // le siège est libéré AVANT de retirer le joueur (voiture arrêtée, `sieges` diffusé) ; un pilote laisse le titan s'éteindre
     const liberation = j.enJeu ? [...(this.vehicules ? this.vehicules.liberer(j, maintenant) : []), ...(this.evenements ? this.evenements.liberer(j, maintenant) : [])] : [];
-    this.joueurs.delete(id);
+    this.table.delete(id);
     this.suivi.delete(id);
-    return [...liberation, this.presence()];
+    // zombies : le service compte les membres restants (hôte suivant, défaite si c'était le dernier debout) ; le joueur est déjà retiré
+    const sortieZombies = this.zombies ? this.zombies.liberer(j, maintenant) : [];
+    return [...liberation, this.presence(), ...sortieZombies];
   }
 
   // ---------- messages des clients ----------
 
   recevoir(id: string, msg: MessageClient, maintenant: number): Sortie[] {
-    const j = this.joueurs.get(id);
+    const j = this.table.get(id);
     if (!j || !msg || typeof msg !== "object") return [];
     switch (msg.t) {
       case "pseudo": return this.renommer(j, msg.pseudo, maintenant);
-      case "rejoindre": return this.rejoindre(j, msg, maintenant);
+      case "rejoindre": return this.zombies ? this.rejoindreZombies(j, maintenant) : this.rejoindre(j, msg, maintenant);
       case "quitter": return this.quitter(j, maintenant);
-      case "arme": this.choisir(j, { arme: msg.arme }); return [];
-      case "equiper": this.choisir(j, msg); return [];
+      case "arme": if (!this.zombies) this.choisir(j, { arme: msg.arme }); return [];
+      case "equiper": if (!this.zombies) this.choisir(j, msg); return [];
+      case "lancerPartie": case "acheter": case "reanimer":
+        return this.zombies ? this.zombies.recevoir(j, msg, maintenant) : [];
       case "main": return this.changerMain(j, msg.slot, maintenant);
       case "etat": this.recevoirEtat(j, msg, maintenant); return [];
       case "tir": return this.recevoirTir(j, msg, maintenant);
@@ -442,7 +552,7 @@ export class Salle implements ContexteSalle {
   /** Signal relayé tel quel au joueur `a`, si les deux sont en arène avec la voix activée et que le signal a la bonne forme. */
   private relayerVoix(j: JoueurSalle, a: unknown, s: unknown): Sortie[] {
     if (typeof a !== "string" || a === j.id || !signalVoixValide(s)) return [];
-    const dest = this.joueurs.get(a);
+    const dest = this.table.get(a);
     if (!dest || !j.voix || !dest.voix || !j.enJeu || !dest.enJeu) return [];
     return [{ a, m: { t: "voix", de: j.id, s } }];
   }
@@ -452,7 +562,7 @@ export class Salle implements ContexteSalle {
     j.renommages = j.renommages.filter((t) => maintenant - t < RENOMMER_FENETRE_MS);
     if (j.renommages.length >= RENOMMER_MAX) return [];
     const base = nettoyerPseudo(brut);
-    const pris = new Set([...this.joueurs.values()].filter((x) => x !== j).map((x) => x.pseudo.toLocaleLowerCase("fr")));
+    const pris = new Set([...this.table.values()].filter((x) => x !== j).map((x) => x.pseudo.toLocaleLowerCase("fr")));
     const pseudo = pseudoUnique(base, pris);
     if (pseudo === j.pseudo) return [];
     j.pseudo = pseudo;
@@ -511,6 +621,25 @@ export class Salle implements ContexteSalle {
     return sorties;
   }
 
+  /**
+   * `rejoindre` en zombies : refusé (`lobby`) tant que le joueur n'est pas admis à la partie ; sinon placé sur le point de départ le plus
+   * éloigné des autres, équipement de départ imposé (le client ne choisit rien), sans règle de réentrée ni mémo de santé.
+   */
+  private rejoindreZombies(j: JoueurSalle, maintenant: number): Sortie[] {
+    if (j.enJeu) return [];
+    if (!this.zombies!.admis(j.id)) return [{ a: j.id, m: { t: "refus", action: "rejoindre", raison: "lobby" } }];
+    if (this.nombreEnJeu() >= ZOMBIES.joueursMax) return [{ a: j.id, m: { t: "refus", action: "rejoindre", raison: "plein" } }];
+    j.enJeu = true;
+    j.memoSante = null;
+    j.reentreeT = -Infinity;
+    const d = departPour([...this.table.values()].filter((o) => o !== j && o.enJeu && o.vivant).map((o) => o.p));
+    return [
+      ...this.placerJoueur(j, d.p, d.lacet, { pv: JEU.pvMax, equip: copierEquipement(EQUIPEMENT_DEPART_ZOMBIES), main: MAIN_DEPART_ZOMBIES }, maintenant),
+      this.presence(),
+      ...this.zombies!.synchro(j.id),
+    ];
+  }
+
   private quitter(j: JoueurSalle, maintenant: number): Sortie[] {
     if (!j.enJeu) return [];
     return [...this.retirerDeLArene(j, maintenant), this.presence()];
@@ -521,6 +650,10 @@ export class Salle implements ContexteSalle {
    * revenant), un mort repart à 100 PV ; le siège est libéré ; l'arme spéciale est perdue. Renvoie les messages de libération du siège.
    */
   private retirerDeLArene(j: JoueurSalle, maintenant: number): Sortie[] {
+    if (this.zombies) {
+      // zombies : pas de réentrée différée ni de mémo de santé ; le service repasse le joueur en attente (défaite s'il était le dernier debout)
+      return [...this.retirerJoueur(j, maintenant), ...this.zombies.liberer(j, maintenant)];
+    }
     j.memoSante = j.vivant ? memoriserSante(j, maintenant) : null;
     // un mort garde son délai de réapparition (sans le raccourcir en quittant) ; un vivant doit attendre le même délai avant de revenir
     j.reentreeT = j.vivant
@@ -690,6 +823,8 @@ export class Salle implements ContexteSalle {
     const cumul = new Map<string, { degats: number; zone: Zone }>();
     /** (v3) dégâts sur le tigre robot / le titan, zone et distance revérifiées sur la forme du monstre */
     const cumulMonstres = new Map<string, { degats: number; zone: Zone }>();
+    /** (zombies) dégâts cumulés par tigre sur ce tir (les plombs du pompe s'additionnent) */
+    const cumulTigres = new Map<string, { degats: number; zone: Zone }>();
     for (const t of touches) {
       if (!t || typeof t.cible !== "string" || !estZone(t.zone) || !Number.isInteger(t.plomb)) continue;
       if (t.plomb < 0 || t.plomb >= dirs.length || plombsVus.has(t.plomb)) continue;
@@ -703,7 +838,19 @@ export class Salle implements ContexteSalle {
         else cumulMonstres.set(t.cible, { degats: dg, zone: vu.zone });
         continue;
       }
-      const c = this.joueurs.get(t.cible);
+      if (this.zombies) {
+        // zombies : seuls les tigres sont des cibles (pas de tir allié), touche revérifiée sur leur forme avec rejeu de latence
+        if (!estIdZombie(t.cible)) continue;
+        const vu = this.zombies.toucheZombie(t.cible, tir.o, dirs[t.plomb], arme.portee, maintenant);
+        if (!vu) continue;
+        plombsVus.add(t.plomb);
+        const dg = degatsPlomb(armeTiree, vu.zone, vu.distance);
+        const cu = cumulTigres.get(t.cible);
+        if (cu) { cu.degats += dg; if (vu.zone === "tete") cu.zone = "tete"; }
+        else cumulTigres.set(t.cible, { degats: dg, zone: vu.zone });
+        continue;
+      }
+      const c = this.table.get(t.cible);
       if (!c || c.id === j.id || !c.enJeu || !c.vivant || maintenant < c.protegeJusqua) continue;
       const vitesseCible = Math.hypot(c.v[0], c.v[1], c.v[2]);
       const vue = this.positionsCible(c, maintenant, REWIND_MAX_MS).find((pos) =>
@@ -720,14 +867,20 @@ export class Salle implements ContexteSalle {
     // plombs arrêtés par une voiture (v3 §4) : dégâts de carrosserie, explosion éventuelle
     if (this.vehicules) sorties.push(...this.vehicules.tirVoitures(j, tir.o, dirs, tir.voitures, armeTiree, plombsVus, maintenant));
 
-    if (cumul.size > 0 || cumulMonstres.size > 0) {
+    if (cumul.size > 0 || cumulMonstres.size > 0 || cumulTigres.size > 0) {
       j.touches++;
-      if ([...cumul.values(), ...cumulMonstres.values()].some((cu) => cu.zone === "tete")) j.tetes++;
+      if ([...cumul.values(), ...cumulMonstres.values(), ...cumulTigres.values()].some((cu) => cu.zone === "tete")) j.tetes++;
     }
     for (const [cibleId, { degats, zone }] of cumulMonstres) sorties.push(...this.evenements!.blesserMonstre(cibleId, degats, j, zone, maintenant));
+    // le gain d'une touche (+10 $) est unique par tir, quel que soit le nombre de tigres ou de plombs
+    let premier = true;
+    for (const [cibleId, { degats, zone }] of cumulTigres) {
+      sorties.push(...this.zombies!.blesser(cibleId, degats, j, zone, maintenant, { arme: armeTiree, gain: premier }));
+      premier = false;
+    }
     let presence = false;
     for (const [cibleId, { degats, zone }] of cumul) {
-      for (const s of this.infliger(this.joueurs.get(cibleId)!, degats, j, "arme", zone, armeTiree, maintenant, tir.o)) {
+      for (const s of this.infliger(this.table.get(cibleId)!, degats, j, "arme", zone, armeTiree, maintenant, tir.o)) {
         // un tir qui tue plusieurs cibles : une seule présence (la dernière, qui a tous les scores)
         if (s.m.t === "presence") { presence = true; continue; }
         sorties.push(s);
@@ -747,7 +900,9 @@ export class Salle implements ContexteSalle {
     if (j.munSpeciale > 0) return [];
     j.equip.speciale = null;
     const precedent = this.suivi.get(j.id)?.precedent;
-    const retour: Slot = precedent && precedent !== "speciale" && armeDuSlot(j.equip, precedent) !== null ? precedent : "principale";
+    // (zombies : sans arme principale, le repli est la secondaire)
+    const retour: Slot = precedent && precedent !== "speciale" && armeDuSlot(j.equip, precedent) !== null ? precedent
+      : armeDuSlot(j.equip, "principale") !== null ? "principale" : "secondaire";
     j.main = retour;
     j.arme = armeDuSlot(j.equip, retour) ?? j.equip.principale;
     j.sortieJusqua = maintenant + JEU.degainageMs;
@@ -755,30 +910,45 @@ export class Salle implements ContexteSalle {
   }
 
   /**
-   * Un coup d'arme blanche : mêmes contrôles anti-triche que le tir (arme en main, dégainage, cadence 0,5 s, œil, direction, angle de visée),
-   * puis `coupVraisemblable` (portée de surface + marge, cône, ligne de vue) sur les positions de la cible rejouées sur
-   * `REWIND_MELEE_MS`. 100 dégâts : tue un joueur sans bouclier. Le coup est diffusé aux autres même dans le vide.
+   * Un coup d'arme blanche (couteau ou épée) : mêmes contrôles anti-triche que le tir (arme blanche en main, dégainage, cadence de l'arme, œil,
+   * direction, angle de visée), puis chaque cible déclarée (au plus `nbCiblesMax`, distinctes) est revalidée : joueur (positions rejouées sur
+   * `REWIND_MELEE_MS`, `coupVraisemblable`) ou tigre zombie (`toucheMelee`). Dégâts de l'arme ; le couteau tue un joueur sans bouclier, l'épée aussi
+   * et touche jusqu'à trois cibles. En zombies seuls les tigres sont des cibles. Le coup est diffusé aux autres même dans le vide.
    */
   private recevoirCoup(j: JoueurSalle, coup: Extract<MessageClient, { t: "coup" }>, maintenant: number): Sortie[] {
     if (!j.enJeu || !j.vivant || this.phase !== "jeu" || this.pilote(j.id)) return [];
-    if (j.main !== "couteau" || j.arme !== "couteau") return [];
+    if (j.main !== "couteau" || !estMelee(j.arme)) return [];
+    const arme: ArmeMeleeId = j.arme;
+    const m = MELEE[arme];
     if (!CONDUCTEUR_TIRE && this.vehicules?.estConducteur(j.id)) return [];
     if (!this.sortie(j, maintenant)) return [];
     if (!estVec3(coup.o) || !estVec3(coup.d)) return [];
     const dirs = this.validerVisee(j, coup.o, [coup.d], maintenant);
     if (!dirs) return [];
-    if (!this.cadenceOk(j, "couteau", COUTEAU.cadenceS, false, maintenant)) return [];
+    if (!this.cadenceOk(j, arme, m.cadenceS, false, maintenant)) return [];
     j.protegeJusqua = 0;
     const d = dirs[0];
-    const sorties: Sortie[] = [{ a: "tous", sauf: j.id, m: { t: "coup", id: j.id, o: coup.o, d, arme: "couteau" } }];
-    // une seule cible tant que l'épée n'est pas branchée côté salle (le message en porte jusqu'à nbCiblesMax)
+    const sorties: Sortie[] = [{ a: "tous", sauf: j.id, m: { t: "coup", id: j.id, o: coup.o, d, arme } }];
     // `cibles` vient du réseau : un tableau absent ou mal formé (ancien format `cible`, client truqué) vaut un coup dans le vide
-    const idCible = Array.isArray(coup.cibles) ? coup.cibles[0] ?? null : null;
-    const c = typeof idCible === "string" ? this.joueurs.get(idCible) : undefined;
-    if (!c || c.id === j.id || !c.enJeu || !c.vivant || maintenant < c.protegeJusqua) return sorties;
-    const vue = this.positionsCible(c, maintenant, REWIND_MELEE_MS).find((pos) =>
-      coupVraisemblable(this.monde, coup.o, d, { id: c.id, p: pos.p, vivant: true, accroupi: pos.accroupi }, "couteau"));
-    if (vue) sorties.push(...this.infliger(c, COUTEAU.degats, j, "arme", "corps", "couteau", maintenant, coup.o));
+    const ids = Array.isArray(coup.cibles)
+      ? [...new Set(coup.cibles.filter((x): x is string => typeof x === "string"))].slice(0, m.nbCiblesMax)
+      : [];
+    let premierTigre = true;
+    for (const id of ids) {
+      if (this.zombies) {
+        if (!estIdZombie(id)) continue; // pas de coup allié
+        const vu = this.zombies.toucheMelee(id, coup.o, d, m.portee + m.margePortee, m.cosCone, maintenant);
+        if (!vu) continue;
+        sorties.push(...this.zombies.blesser(id, m.degatsZombie, j, "corps", maintenant, { melee: true, arme, gain: premierTigre }));
+        premierTigre = false;
+        continue;
+      }
+      const c = this.table.get(id);
+      if (!c || c.id === j.id || !c.enJeu || !c.vivant || maintenant < c.protegeJusqua) continue;
+      const vue = this.positionsCible(c, maintenant, REWIND_MELEE_MS).find((pos) =>
+        coupVraisemblable(this.monde, coup.o, d, { id: c.id, p: pos.p, vivant: true, accroupi: pos.accroupi }, arme));
+      if (vue) sorties.push(...this.infliger(c, m.degats, j, "arme", "corps", arme, maintenant, coup.o));
+    }
     return sorties;
   }
 
@@ -805,7 +975,7 @@ export class Salle implements ContexteSalle {
   private sortiesScores(maintenant: number): Sortie[] {
     const sorties: Sortie[] = [];
     let lignes: LigneStats[] | null = null;
-    for (const j of this.joueurs.values()) {
+    for (const j of this.table.values()) {
       if (!j.enJeu || !j.scoresOuvert) continue;
       const depuis = maintenant - j.scoresEnvoyeT;
       const enAttente = j.scoresDemandeT > -Infinity;
@@ -824,18 +994,22 @@ export class Salle implements ContexteSalle {
     const dt = Math.max(0, (maintenant - this.dernierTicT) / 1000);
     this.dernierTicT = maintenant;
     const sorties: Sortie[] = [];
-    if (this.phase === "entracte" && this.prochain !== null && maintenant >= this.prochain) {
-      sorties.push(...this.demarrerMatch(maintenant));
-    } else if (this.phase === "jeu" && this.fin !== null && maintenant >= this.fin) {
-      sorties.push(...this.terminer(maintenant));
+    // zombies : pas de cycle de matchs (la partie est celle du service)
+    if (!this.zombies) {
+      if (this.phase === "entracte" && this.prochain !== null && maintenant >= this.prochain) {
+        sorties.push(...this.demarrerMatch(maintenant));
+      } else if (this.phase === "jeu" && this.fin !== null && maintenant >= this.fin) {
+        sorties.push(...this.terminer(maintenant));
+      }
     }
     // régénération : +20 PV/s après 5 s sans dégât (le bouclier ne se régénère pas)
-    for (const j of this.joueurs.values()) if (j.enJeu && j.vivant) regenerer(j, maintenant, dt);
+    for (const j of this.table.values()) if (j.enJeu && j.vivant) regenerer(j, maintenant, dt);
     if (this.elsa) sorties.push(...this.elsa.tic(maintenant));
     if (this.vehicules) sorties.push(...this.vehicules.tic(maintenant));
     if (this.evenements) sorties.push(...this.evenements.tic(maintenant));
+    if (this.zombies) sorties.push(...this.zombies.tic(maintenant));
     let evince = false;
-    for (const j of this.joueurs.values()) {
+    for (const j of this.table.values()) {
       if (j.enJeu && !j.vivant && j.reapparitionT !== null && maintenant >= j.reapparitionT) {
         sorties.push(this.placer(j, maintenant));
       } else if (j.enJeu && j.vivant && maintenant - j.etatT > INACTIF_MS) {
@@ -863,8 +1037,13 @@ export class Salle implements ContexteSalle {
     const j = this.snap(maintenant);
     const vehicules = this.vehicules?.snap() ?? [];
     const monstres = this.evenements?.snap() ?? null;
-    const sorties: Sortie[] = [{ a: "joueurs", m: { t: "snap", ts: maintenant, j, ...(vehicules.length ? { vehicules } : {}), ...(monstres ? { monstres } : {}) } }];
-    if (this.rangSnap++ % 2 === 0 && this.nombreJoueurs() > this.nombreEnJeu()) {
+    const zombies = this.zombies?.snap() ?? null;
+    const sorties: Sortie[] = [{
+      a: "joueurs",
+      m: { t: "snap", ts: maintenant, j, ...(vehicules.length ? { vehicules } : {}), ...(monstres ? { monstres } : {}), ...(zombies ? { zombies } : {}) },
+    }];
+    // zombies : le lobby n'a rien à voir de la partie (ni joueurs ni tigres)
+    if (!this.zombies && this.rangSnap++ % 2 === 0 && this.nombreJoueurs() > this.nombreEnJeu()) {
       sorties.push({ a: "spectateurs", m: { t: "snap", ts: maintenant, j } });
     }
     return sorties;
@@ -873,7 +1052,7 @@ export class Salle implements ContexteSalle {
   /** Instantané sérialisé : p et v au centime, angles au milliradian ; `bouclier`, `accroupi`, `glisse` et `vehicule` seulement s'ils sont non nuls. */
   private snap(maintenant: number): EtatJoueurSnap[] {
     const r: EtatJoueurSnap[] = [];
-    for (const j of this.joueurs.values()) {
+    for (const j of this.table.values()) {
       if (!j.enJeu) continue;
       const occupation = this.vehicules?.occupation(j.id) ?? null;
       r.push({
@@ -910,7 +1089,7 @@ export class Salle implements ContexteSalle {
     this.elsa?.reinitialiser(maintenant);
     if (this.vehicules) sorties.push(...this.vehicules.reinitialiser(maintenant));
     if (this.evenements) sorties.push(...this.evenements.reinitialiser(maintenant));
-    for (const j of this.joueurs.values()) {
+    for (const j of this.table.values()) {
       j.kills = 0;
       j.morts = 0;
       j.tirs = 0;
@@ -925,7 +1104,7 @@ export class Salle implements ContexteSalle {
       if (j.enJeu) { j.vivant = false; j.reapparitionT = null; }
     }
     sorties.push({ a: "tous", m: { t: "match", match: this.infoMatch(), classement: this.classement() } });
-    for (const j of this.joueurs.values()) if (j.enJeu) sorties.push(this.placer(j, maintenant));
+    for (const j of this.table.values()) if (j.enJeu) sorties.push(this.placer(j, maintenant));
     sorties.push(this.presence());
     return sorties;
   }
@@ -986,7 +1165,7 @@ export class Salle implements ContexteSalle {
 
   private choisirApparition(id: string): Vec2 {
     const points = this.apparitions;
-    const vivants = [...this.joueurs.values()].filter((o) => o.id !== id && o.enJeu && o.vivant);
+    const vivants = [...this.table.values()].filter((o) => o.id !== id && o.enJeu && o.vivant);
     if (this.zone) {
       return choisirPointZone(points, vivants.map((o): Vec2 => [o.p[0], o.p[2]]), this.zone, this.alea);
     }
@@ -1005,7 +1184,7 @@ export class Salle implements ContexteSalle {
     return notes[Math.min(n - 1, Math.floor(this.alea() * n))].pt;
   }
 
-  private presence(): Sortie {
+  presence(): Sortie {
     return { a: "tous", m: { t: "presence", joueurs: this.joueursPublics() } };
   }
 }

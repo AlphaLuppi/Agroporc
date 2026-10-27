@@ -8,7 +8,8 @@
 import type { Monde } from "./collision";
 import type { MemoSante } from "./sante";
 import type {
-  ArmeFeuId, ArmeId, CauseMort, CoteMur, Equipement, GenreVoiture, MessageClient, MessageServeur, MonstresSnap, Posture, Siege, Slot, Vec3, VehiculeSnap, Zone,
+  ArmeFeuId, ArmeId, CauseMort, CoteMur, Equipement, EtatPartieZombies, GenreVoiture, MessageClient, MessageServeur, MonstresSnap, PhaseZombies, Posture, Siege,
+  Slot, SnapZombies, Vec3, VehiculeSnap, Zone,
 } from "./protocole";
 
 /**
@@ -126,6 +127,24 @@ export interface ContexteSalle {
   libererVehicule(j: JoueurSalle, maintenant: number): Sortie[];
   /** (v3) un rayon (o, d) touche-t-il vraisemblablement la cible, rejouée sur ses positions récentes (canon du titan) ? */
   toucheJoueur(c: JoueurSalle, o: Vec3, d: Vec3, portee: number, maintenant: number): boolean;
+  // ---- v5 (zombies) : ce que le service zombies voit en plus de la salle ----
+  /** tous les membres de la salle (lobby compris), dans l'ordre d'arrivée */
+  joueurs(): JoueurSalle[];
+  /**
+   * Place le joueur en `p` (pieds) tourné vers `lacet` : PV, équipement (copie propre), arme en main, protection d'apparition de 1,5 s, état
+   * remis à zéro (vivant, seq, historique) ; renvoie le message `apparition`. `munSpeciale` (facultatif) : munitions de la spéciale portée.
+   * Ne touche ni à `enJeu` ni aux règles de réentrée de l'arène.
+   */
+  placerJoueur(j: JoueurSalle, p: Vec3, lacet: number, opts: { pv: number; equip: Equipement; main: Slot; munSpeciale?: number }, maintenant: number): Sortie[];
+  /** sortie d'arène sans règle de réentrée ni mémo de santé (`enJeu` à faux, plus vivant, spéciale perdue) ; renvoie la libération des sièges */
+  retirerJoueur(j: JoueurSalle, maintenant: number): Sortie[];
+  /** message `presence` de la salle (scores, entrées / sorties d'arène) */
+  presence(): Sortie;
+  /**
+   * Change l'équipement EN COURS (achat) et l'arme en main ; renvoie le message `equipement` privé. `ravitaille` : arme dont le client remplit
+   * chargeur ET réserve. Le dégainage ne recommence que si l'arme en main change.
+   */
+  equiper(j: JoueurSalle, equip: Equipement, main: Slot, maintenant: number, ravitaille?: ArmeFeuId): Sortie[];
 }
 
 /** Événements de l'arène (v3, `match-evenements.ts` : `creerServiceEvenements(ctx, opts)`) : Truck Muche fou, tigre robot, titan tigre. */
@@ -190,4 +209,47 @@ export interface ServiceVehicules {
     j: JoueurSalle, o: Vec3, dirs: readonly Vec3[], declarations: readonly { genre: GenreVoiture; id: number; plomb: number }[] | undefined,
     arme: ArmeFeuId, plombsPris: ReadonlySet<number>, maintenant: number,
   ): Sortie[];
+}
+
+/** Résumé d'une salle zombies (message `salons`). */
+export interface ResumeZombies { phase: PhaseZombies; joueurs: number; manche: number }
+
+/**
+ * Mode zombies (v5, `match-zombies.ts` : `creerServiceZombies(ctx, opts)`) : machine d'états lobby → pause → manche → … → fin, tigres, argent,
+ * achats, portes, joueurs à terre, relève et bilan. Une salle zombies en possède un ; l'arène n'en a pas.
+ */
+export interface ServiceZombies {
+  /** machine d'états, apparitions, tigres, griffes, relèves, éliminations, diffusion de `zombies{etat}` (≤ 5 Hz) */
+  tic(maintenant: number): Sortie[];
+  /** nouvelle partie à blanc : tigres retirés, portes refermées, retour au lobby (aucune sortie utile si personne n'est là) */
+  reinitialiser(maintenant: number): Sortie[];
+  /** état de la partie, argent et bâtiments (portes) adressés à `idDest` (réponse à `rejoindre`) */
+  synchro(idDest: string): Sortie[];
+  /** tigres du snap des joueurs ; null dans le lobby */
+  snap(): SnapZombies | null;
+  /** `id` est celui d'un tigre vivant (`z<n>`) */
+  possede(id: string): boolean;
+  /** le joueur est admis à la partie en cours (condition de `rejoindre`) */
+  admis(id: string): boolean;
+  /** touche d'un plomb sur un tigre revérifiée sur sa forme (rejeu de latence) ; null si le rayon le manque ou si le tigre est mort */
+  toucheZombie(cible: string, o: Vec3, d: Vec3, portee: number, maintenant: number): { zone: Zone; distance: number } | null;
+  /** coup d'arme blanche revérifié (portée de l'arme + marge, cône) ; null si manqué */
+  toucheMelee(cible: string, o: Vec3, d: Vec3, portee: number, cosCone: number, maintenant: number): { distance: number } | null;
+  /**
+   * Dégâts cumulés d'un tir ou d'un coup sur un tigre : `degats` au tireur, argent (+10 $ par touche si `gain`, kill 60 / 100 $), `zombieMort`,
+   * `kills` du tireur et `presence`. `gain: false` pour les tigres suivants d'un même tir (le gain de touche est unique par tir).
+   */
+  blesser(cible: string, degats: number, par: JoueurSalle, zone: Zone, maintenant: number, opts?: { melee?: boolean; arme?: ArmeId; gain?: boolean }): Sortie[];
+  /** `lancerPartie`, `acheter`, `reanimer` ; les autres types renvoient [] */
+  recevoir(j: JoueurSalle, m: MessageClient, maintenant: number): Sortie[];
+  /** le joueur vient de tomber à 0 PV (`Salle.mourir`) : à terre, défaite éventuelle, `zombies{etat}` immédiat + `presence` */
+  surMort(j: JoueurSalle, maintenant: number): Sortie[];
+  /** sortie de la partie (Quitter, inactivité, déconnexion) : repasse en attente, argent perdu ; défaite si c'était le dernier debout */
+  liberer(j: JoueurSalle, maintenant: number): Sortie[];
+  /** nouvel arrivant dans la salle : membre du lobby, `zombies{etat}` à tous */
+  arrivee(j: JoueurSalle, maintenant: number): Sortie[];
+  /** partie en cours (pause ou manche) */
+  enCours(): boolean;
+  etat(): EtatPartieZombies;
+  resume(): ResumeZombies;
 }
