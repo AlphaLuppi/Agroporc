@@ -156,6 +156,9 @@ describe("ajouterBatiments : détail vrai (arène)", () => {
     expect(sh.fragmentShader).toContain("uint hachageB(uint x)");
     expect(sh.fragmentShader).toContain("float fwuB = fwidth(vMur.x);");
     expect(sh.fragmentShader).toMatch(/16384u/);
+    // le mur entre dans le hachage arrondi (une longueur ronde interpolée à 1e-7 près ne doit pas osciller entre deux entiers)
+    expect(sh.fragmentShader).toContain("uint(L * 8.0 + 0.5)");
+    expect(sh.fragmentShader).not.toContain("uint(L * 8.0)");
     // la façade est calculée avant l'écriture de la couleur, l'incandescence des brèches après
     const iFacade = sh.fragmentShader.indexOf("if (vMur.z > 0.5)");
     const iOpaque = sh.fragmentShader.indexOf("#include <opaque_fragment>");

@@ -270,7 +270,7 @@ if (vMur.z > 0.5) {
     float d = max(du - ${(FENETRE_L_M / 2).toFixed(2)}, dv - ${(FENETRE_H_M / 2).toFixed(1)});
     fen = (1.0 - smoothstep(-aa, aa, d)) * (1.0 - corniche);
     verre = (1.0 - smoothstep(-0.08 - aa, -0.08 + aa, d)) * (1.0 - corniche);
-    uint cle = (uint(vBatF + 0.5) * 73856093u) ^ (uint(et) * 19349663u) ^ (uint(col) * 83492791u) ^ (uint(L * 8.0) * 2654435761u);
+    uint cle = (uint(vBatF + 0.5) * 73856093u) ^ (uint(et) * 19349663u) ^ (uint(col) * 83492791u) ^ (uint(L * 8.0 + 0.5) * 2654435761u);
     allumee = (hachageB(cle) & 0xffffu) < ${SEUIL_ALLUMEES}u ? 1.0 : 0.0;
   }
   float porte = 0.0;

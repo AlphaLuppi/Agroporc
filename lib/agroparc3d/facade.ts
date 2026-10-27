@@ -81,7 +81,7 @@ export const SEUIL_ALLUMEES = Math.round(PART_ALLUMEES * 65536);
 
 /**
  * La fenêtre (étage, colonne) du bâtiment `aBat` est-elle allumée ? Déterministe (≈ 25 %). `mur` distingue les murs d'un même
- * bâtiment (le nuanceur passe `floor(L × 8)`), pour que les façades ne se répètent pas.
+ * bâtiment (le nuanceur passe `floor(L × 8 + 0,5)` : l'arrondi évite qu'une longueur ronde, interpolée avec une erreur de 1e-7, tombe au hasard d'un côté ou de l'autre de l'entier), pour que les façades ne se répètent pas.
  */
 export function fenetreAllumee(aBat: number, etage: number, colonne: number, mur = 0): boolean {
   const cle = (Math.imul(aBat, 73856093) ^ Math.imul(etage, 19349663) ^ Math.imul(colonne, 83492791) ^ Math.imul(mur, 2654435761)) >>> 0;
