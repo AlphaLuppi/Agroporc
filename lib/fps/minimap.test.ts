@@ -318,6 +318,9 @@ describe("ZONE_CARTE en mode zombies", () => {
   it("reconnaît la scène des zombies (pièces synthétiques ajoutées) et pas celle de l'arène", () => {
     expect(estSceneZombies(dz)).toBe(true);
     expect(estSceneZombies(scene)).toBe(false);
+    // une scène d'arène qui grossirait un jour (bâtiments ordinaires en plus) ne bascule pas en zombies
+    const grossie = { ...scene, buildings: [...scene.buildings, { ...scene.buildings[0] }] } as SceneData;
+    expect(estSceneZombies(grossie)).toBe(false);
   });
 
   it("la couche statique de la mini-map couvre les bornes zombies seulement (bien plus petite que l'arène)", () => {

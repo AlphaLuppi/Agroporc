@@ -2062,7 +2062,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       visib.vider();
       suiviRadar.vider();
       for (const id of [...distants.keys()]) retirerAvatar(id);
-      arreterReanimation();
+      reanimCible = null; // `quitter` est déjà parti : rien à annoncer au serveur
       dyn.dispose();
       feux.dispose();
       rm.dispose();

@@ -55,6 +55,8 @@ interface Emplacement {
   type: number;
   dtAcc: number;
   vuImage: number;
+  /** drapeau « griffe armée » de l'image précédente (front montant du son, indépendant du culling et du LOD) */
+  griffePrec: boolean;
 }
 
 export function creerRenduZombies(scene: THREE.Scene): RenduZombies {
@@ -131,7 +133,7 @@ export function creerRenduZombies(scene: THREE.Scene): RenduZombies {
     groupe.visible = false;
     groupe.add(tigre.groupe);
     racine.add(groupe);
-    const e: Emplacement = { tigre, groupe, anim: creerAnimZombie(emplacements.length + 1), maillages, id: 0, type: 0, dtAcc: 0, vuImage: -1 };
+    const e: Emplacement = { tigre, groupe, anim: creerAnimZombie(emplacements.length + 1), maillages, id: 0, type: 0, dtAcc: 0, vuImage: -1, griffePrec: false };
     emplacements.push(e);
     return e;
   }
@@ -187,10 +189,16 @@ export function creerRenduZombies(scene: THREE.Scene): RenduZombies {
           if (!e) continue; // pool pas encore entièrement créé : il apparaîtra dans quelques images
           e.id = v.id;
           e.dtAcc = 0;
+          // l'emplacement a servi à un autre tigre : pose, foulée et geste repartent de zéro (graine propre au tigre)
+          e.anim = creerAnimZombie(v.id);
+          e.griffePrec = v.griffe;
           parId.set(v.id, e);
           teinter(e, v.type);
         }
         e.vuImage = image;
+        // le son de la griffe part au front montant du drapeau, même si le tigre n'est pas dessiné (culling) ou animé cette image (LOD)
+        if (v.griffe && !e.griffePrec) rappels?.surGriffe(v);
+        e.griffePrec = v.griffe;
         e.dtAcc = Math.min(0.25, e.dtAcc + dt);
         if (v.type !== e.type) teinter(e, v.type);
         e.groupe.visible = affiche;
@@ -200,10 +208,9 @@ export function creerRenduZombies(scene: THREE.Scene): RenduZombies {
         e.groupe.rotation.y = v.cap + Math.PI / 2;
         e.tigre.groupe.scale.setScalar(v.echelle);
         if (animerCetteImage(d, image, v.id)) {
-          const lancee = e.anim.maj(e.dtAcc, v.vitesse, v.echelle, v.griffe);
+          e.anim.maj(e.dtAcc, v.vitesse, v.echelle, v.griffe);
           e.dtAcc = 0;
           e.tigre.appliquer(e.anim.pose(), e.anim.x());
-          if (lancee) rappels?.surGriffe(v);
         }
       }
     },

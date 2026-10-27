@@ -9,6 +9,7 @@ import {
 } from "./jeu-zombies";
 import { FORME_TIGRE, pointLocal, toucheTigre } from "./monstres";
 import { encoderZombies, type Equipement, type Vec3, type ZombieSnap } from "./protocole";
+import { creerSimuZombies } from "./zombies";
 import { ACHATS, PORTES_PAYANTES, construireMondeZombies } from "./zombies-carte";
 import { ZOMBIES, echelleZombie } from "./zombies-vagues";
 
@@ -101,7 +102,7 @@ describe("MondeZombies : interpolation", () => {
     // le plus ancien gardé est à ≤ 1,5 s du plus récent : en deçà le snap est tenu
     m.echantillon(0);
     expect(m.parId(1)!.x).toBeGreaterThanOrEqual((99 * 50 - TAMPON_ZOMBIES_MS) / 50 - 1);
-    m.alimenter(10, encoderZombies(1, [zs(1, 999, 0)])); // trop vieux
+    m.alimenter(99 * 50 - 100, encoderZombies(1, [zs(1, 999, 0)])); // retardataire
     m.echantillon(99 * 50);
     expect(m.parId(1)!.x).toBe(99);
     m.alimenter(99 * 50, encoderZombies(1, [zs(1, 500, 0)]));
@@ -112,6 +113,21 @@ describe("MondeZombies : interpolation", () => {
     expect(m.restants()).toBe(0);
     m.vider();
     expect(m.echantillon(0)).toBe(0);
+  });
+
+  it("une horloge serveur repartie de zéro (redéploiement) vide le tampon au lieu de figer les tigres", () => {
+    const m = new MondeZombies();
+    for (let i = 0; i < 20; i++) m.alimenter(100_000 + i * 50, encoderZombies(1, [zs(1, i, 0)]));
+    // quelques secondes plus tard, l'horloge repart de 0 : les nouveaux snaps sont suivis
+    m.alimenter(200, encoderZombies(1, [zs(7, 40, 0)]));
+    m.alimenter(250, encoderZombies(1, [zs(7, 41, 0)]));
+    expect(m.echantillon(225)).toBe(1);
+    expect(m.parId(7)!.x).toBeCloseTo(40.5, 5);
+    expect(m.parId(1)).toBeNull();
+    // un simple retardataire de quelques dizaines de ms reste ignoré
+    m.alimenter(240, encoderZombies(1, [zs(7, 999, 0)]));
+    m.echantillon(250);
+    expect(m.parId(7)!.x).toBe(41);
   });
 });
 
@@ -319,9 +335,11 @@ describe("inviteZombies", () => {
     expect(inviteZombies(entree([p1.point[0] - 1.2, p1.point[1] + 0.6], { portesOuvertes: ["P1"] })).id).not.toBe("P1");
     const p2 = PORTES_PAYANTES.find((p) => p.id === "P2")!;
     const ferme = inviteZombies(entree([p2.point[0], p2.point[1]], { argent: 5000 }));
-    expect(ferme).toMatchObject({ invite: "porte", id: "P2", prix: 1250 });
+    expect(ferme).toMatchObject({ invite: "porte", id: "P2", prix: 1250, assez: false });
     expect(ferme.detail).toMatch(/verrouillée/i);
-    expect(inviteZombies(entree([p2.point[0], p2.point[1]], { argent: 5000, portesOuvertes: ["P1"] })).detail).toMatch(/^Ouvrir la porte/);
+    const ouvrable = inviteZombies(entree([p2.point[0], p2.point[1]], { argent: 5000, portesOuvertes: ["P1"] }));
+    expect(ouvrable.detail).toMatch(/^Ouvrir la porte/);
+    expect(ouvrable.assez).toBe(true);
   });
 
   it("un coéquipier à terre à moins de 2,5 m passe avant les achats", () => {
@@ -344,5 +362,68 @@ describe("portes fermées de la grande carte", () => {
     for (const s of sans) {
       expect(Math.hypot(s.q[0] - s.p[0], s.q[1] - s.p[1])).toBeGreaterThan(2);
     }
+  });
+});
+
+describe("parité client / serveur", () => {
+  /** Un tigre posé par la simulation serveur, passé par le snap compact puis l'interpolation du client. */
+  function tigresDuServeur() {
+    const simu = creerSimuZombies({ monde, alea: aleaGraine(3) });
+    const pts: [number, number, number][] = [[128, -50, 0.4], [133, -46, 2.2], [123, -53, -1.1]];
+    pts.forEach(([x, z, cap], i) => simu.apparaitre((i % 3) as 0 | 1 | 2, [x, z], 4, 0, cap));
+    const mz = new MondeZombies();
+    mz.alimenter(1000, simu.snap(3, 1000));
+    mz.echantillon(1000);
+    return { simu, mz };
+  }
+
+  it("le snap compact redonne la position à 1 cm et le cap à 1 mrad : les tigres du client sont ceux du serveur", () => {
+    const { simu, mz } = tigresDuServeur();
+    expect(mz.nombre()).toBe(3);
+    for (const v of mz.zombies().slice(0, 3)) {
+      const z = simu.zombie(v.id)!;
+      expect(Math.abs(v.x - z.p[0])).toBeLessThan(0.011);
+      expect(Math.abs(v.z - z.p[2])).toBeLessThan(0.011);
+      expect(Math.abs(Math.atan2(Math.sin(v.cap - z.cap), Math.cos(v.cap - z.cap)))).toBeLessThan(0.0011);
+      expect(v.type).toBe(z.type);
+      expect(v.echelle).toBe(z.echelle);
+    }
+  });
+
+  it("tout tir que le client déclare touché est validé par le serveur (même zone), sur 3 000 rayons", () => {
+    const { simu, mz } = tigresDuServeur();
+    const alea = aleaGraine(11);
+    let declares = 0;
+    for (let i = 0; i < 3000; i++) {
+      const o: Vec3 = [128 + (alea() - 0.5) * 24, 0.2 + alea() * 3, -50 + (alea() - 0.5) * 24];
+      const a = alea() * Math.PI * 2, e = (alea() - 0.5) * 0.9;
+      const d: Vec3 = [Math.cos(a) * Math.cos(e), Math.sin(e), Math.sin(a) * Math.cos(e)];
+      const c = trouverZombieTouche(o, d, 60, mz.zombies(), monde, mz.nombre());
+      if (!c) continue;
+      declares++;
+      const s = simu.toucheZombie(Number(c.cible.slice(1)), o, d, 60, 1000);
+      expect(s, `rayon ${i}`).not.toBeNull();
+      expect(s!.zone).toBe(c.zone);
+    }
+    expect(declares).toBeGreaterThan(30);
+  });
+
+  it("tout coup que le client déclare porté est validé par le serveur (portée de l'arme + marge)", () => {
+    const { simu, mz } = tigresDuServeur();
+    const alea = aleaGraine(5);
+    let declares = 0;
+    for (const arme of ["couteau", "epee"] as const) {
+      const m = MELEE[arme];
+      for (let i = 0; i < 1500; i++) {
+        const o: Vec3 = [128 + (alea() - 0.5) * 12, 1.2 + alea() * 0.6, -50 + (alea() - 0.5) * 12];
+        const a = alea() * Math.PI * 2;
+        const d: Vec3 = [Math.cos(a), 0, Math.sin(a)];
+        for (const c of trouverZombiesMelee(o, d, mz.zombies(), arme, monde, mz.nombre())) {
+          declares++;
+          expect(simu.toucheMelee(Number(c.cible.slice(1)), o, d, m.portee + m.margePortee, m.cosCone, 1000), `${arme} ${i}`).not.toBeNull();
+        }
+      }
+    }
+    expect(declares).toBeGreaterThan(30);
   });
 });

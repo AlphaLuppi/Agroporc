@@ -93,8 +93,11 @@ export class MondeZombies {
   alimenter(ts: number, snap: SnapZombies | undefined): void {
     if (this.compte > 0) {
       const dernier = this.e(this.compte - 1);
-      if (ts < dernier.ts) return; // snap arrivé dans le désordre
-      if (ts === dernier.ts) { this.compte--; } // même horodatage : remplace
+      // horloge serveur repartie de zéro (serveur redéployé, resynchronisation) : l'ancien tampon ne sert plus à rien, sinon tous les snaps
+      // suivants seraient pris pour des retardataires et les tigres figés
+      if (ts < dernier.ts - TAMPON_ZOMBIES_MS) this.vider();
+      else if (ts < dernier.ts) return; // snap arrivé dans le désordre
+      else if (ts === dernier.ts) this.compte--; // même horodatage : remplace
     }
     if (this.compte >= ANNEAU) { this.debut = (this.debut + 1) % ANNEAU; this.compte--; }
     const cible = this.anneau[(this.debut + this.compte) % ANNEAU];
@@ -343,12 +346,12 @@ function possede(eq: Equipement, a: ArmeFeuId): boolean {
 }
 
 /** Libellé, prix et genre d'un achat pour ce joueur ; null s'il n'y a rien à acheter (épée déjà possédée, soin inutile). */
-function descriptionAchat(a: Achat, e: EntreeInvite): Omit<InviteZombies, "assez" | "cible"> | null {
+function descriptionAchat(a: Achat, e: EntreeInvite): (Omit<InviteZombies, "assez" | "cible"> & { verrou?: boolean }) | null {
   switch (a.genre) {
     case "porte": {
       const porte = a.porte ? porteDeId(a.porte) : null;
       const ouvertes = e.portesOuvertes instanceof Set ? e.portesOuvertes : new Set(e.portesOuvertes);
-      if (porte?.prerequis && !ouvertes.has(porte.prerequis)) return { invite: "porte", detail: `Porte verrouillée — ${formatArgent(a.prix)}`, prix: a.prix, id: a.id };
+      if (porte?.prerequis && !ouvertes.has(porte.prerequis)) return { invite: "porte", detail: `Porte verrouillée — ${formatArgent(a.prix)}`, prix: a.prix, id: a.id, verrou: true };
       return { invite: "porte", detail: `Ouvrir la porte — ${formatArgent(a.prix)}`, prix: a.prix, id: a.id };
     }
     case "boite":
@@ -389,7 +392,9 @@ export function inviteZombies(e: EntreeInvite): InviteZombies {
   for (const a of achatsProches([e.pos[0], e.pos[1]], e.portesOuvertes)) {
     const d = descriptionAchat(a, e);
     if (!d) continue;
-    return { ...d, assez: e.argent >= d.prix && !((e.soinDans ?? 0) > 0 && d.invite === "soin"), cible: null };
+    const { verrou, ...reste } = d;
+    // une porte verrouillée (prérequis fermé) ou un soin pas encore prêt ne s'achètent pas, même avec l'argent
+    return { ...reste, assez: e.argent >= d.prix && !verrou && !((e.soinDans ?? 0) > 0 && d.invite === "soin"), cible: null };
   }
   return INVITE_VIDE;
 }

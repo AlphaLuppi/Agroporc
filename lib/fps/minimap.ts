@@ -129,7 +129,8 @@ export interface ZoneJouable { x0: number; z0: number; x1: number; z1: number }
  * `ZONE_CARTE` s'y restreint tout seul aux bornes de la zone de jeu, sans que l'appelant ait à passer le mode.
  */
 export function estSceneZombies(scene: SceneData): boolean {
-  return scene.buildings.length > INDEX_PREMIERE_PIECE;
+  // la première pièce synthétique porte un `type` (jamais dans scene.json) : un jour où scene.json grossirait ne bascule pas l'arène en zombies
+  return scene.buildings.length > INDEX_PREMIERE_PIECE && scene.buildings[INDEX_PREMIERE_PIECE].type !== undefined;
 }
 /**
  * Zone jouable de la carte : boîte englobante des bâtiments + marge de 60 m, élargie (sans marge) aux parkings, aux POI et à Elsa quand ils
