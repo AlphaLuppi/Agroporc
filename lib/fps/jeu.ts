@@ -34,12 +34,12 @@ import { creerDebris } from "./rendu-debris";
 import { creerTracesPneus, glissementLateral, rouesArriere } from "./rendu-traces";
 import { construireCircuits, flotte } from "./circulation";
 import { coteMurDe, etape, etatInitial, hauteurOeil, postureDe, type Entrees, type EtatMouvement } from "./mouvement";
-import { COUTEAU, STATS, degatsPlomb, delaiRecul, devier, directionsTir, dispersionTir, niveauZoomDefaut, niveauxZoom, retourRecul, vitesseArme } from "./armes";
+import { MELEE, STATS, degatsPlomb, delaiRecul, devier, directionsTir, dispersionTir, niveauZoomDefaut, niveauxZoom, retourRecul, vitesseArme } from "./armes";
 import { tracer, type Cible } from "./tir";
-import { trouverCibleCouteau } from "./melee";
+import { trouverCiblesMelee } from "./melee";
 import {
-  CIBLE_TIGRE, CIBLE_TITAN, JEU, OEIL_SIEGE, OEIL_TITAN, SILHOUETTE, oeilDe,
-  type ArmeFeuId, type ArmeId, type EtatJoueurSnap, type JoueurPublic, type MessageServeur, type Siege, type Slot, type Vec3, type VehiculeSnap, type Zone,
+  CIBLE_TIGRE, CIBLE_TITAN, JEU, OEIL_SIEGE, OEIL_TITAN, SILHOUETTE, estMelee, oeilDe,
+  type ArmeFeuId, type ArmeId, type ArmeMeleeId, type EtatJoueurSnap, type JoueurPublic, type MessageServeur, type Siege, type Slot, type Vec3, type VehiculeSnap, type Zone,
 } from "./protocole";
 import type { EquipementJeu, HudEtat, HudLive, JeuCallbacks, JeuHandle } from "./jeu-types";
 import { ajouterEcho, creerRadarFrame, definirElsa, ajouterVoiture, ajouterVoiturePnj, purgerEchos, viderRadarFrame, type RadarFrame } from "./radar";
@@ -148,7 +148,9 @@ const SLOT_DE_L_ACTION: Partial<Record<Action, Slot>> = {
  * `equip` : l'équipement choisi (lobby, écran de mort, pause) ; on entre avec l'arme principale en main.
  */
 export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: ClientArene, equip: EquipementJeu, cb: JeuCallbacks): JeuHandle {
-  let equipSuivant: EquipementJeu = { principale: equip.principale, secondaire: equip.secondaire };
+  let equipSuivant: EquipementJeu = equip.melee === "epee"
+    ? { principale: equip.principale, secondaire: equip.secondaire, melee: "epee" }
+    : { principale: equip.principale, secondaire: equip.secondaire };
   const monde: Monde = construireMonde(data);
   const reduit = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -357,7 +359,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
   /** Arme à feu en main (null pour le couteau). */
   const armeFeu = (): ArmeFeuId | null => {
     const a = armes.armeEnMain();
-    return a === "couteau" ? null : a;
+    return estMelee(a) ? null : a;
   };
   const prochainDe = (a: ArmeId) => Math.max(prochains.get(a) ?? 0, delaiApparitionT);
 
@@ -416,14 +418,14 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
 
   const _bouche = new THREE.Vector3();
 
-  /** Coup de couteau : `coup` au serveur (jamais `tir`), cadence de 0,5 s, pas de recul ni de traçante. */
-  function coupCouteau(): boolean {
+  /** Coup d'arme blanche (couteau ou épée) : `coup` au serveur (jamais `tir`), cadence de l'arme, pas de recul ni de traçante. */
+  function coupMelee(arme: ArmeMeleeId): boolean {
     if (t < prochainDe("couteau")) return false;
     const o = oeil();
     const d = directionVisee(lacet, tangage, kick);
-    const res = trouverCibleCouteau(monde, o, d, cibles(), client.id ?? "");
-    client.envoyer({ t: "coup", o, d, cible: res ? res.cible : null });
-    prochains.set("couteau", t + COUTEAU.cadenceS);
+    const res = trouverCiblesMelee(monde, o, d, cibles(), client.id ?? "", arme);
+    client.envoyer({ t: "coup", o, d, cibles: res.map((r) => r.cible) });
+    prochains.set("couteau", t + MELEE[arme].cadenceS);
     armeMain.coup();
     sons.coup(false);
     return true;
@@ -474,7 +476,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
     if (!peutAgir() || entracte || enKillcam() || tireInterdit()) return false;
     if (armes.degainage(ms())) return false;
     const arme = armes.armeEnMain();
-    if (arme === "couteau") return coupCouteau();
+    if (estMelee(arme)) return coupMelee(arme);
     const a = STATS[arme];
     if (armes.rechargeEnCours()) return false;
     if (armes.munitions() <= 0) { demarrerRecharge(); return false; }
@@ -570,7 +572,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
   function apresChangementArme(ok: boolean) {
     if (!ok) return;
     client.envoyer({ t: "main", slot: armes.slotActif() });
-    viseMaintenu = viseMaintenu && armes.armeEnMain() !== "couteau";
+    viseMaintenu = viseMaintenu && !estMelee(armes.armeEnMain());
   }
   const peutChangerArme = () => peutAgir() && !enKillcam() && !pilote();
   function changerSlot(slot: Slot) {
@@ -584,13 +586,19 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
 
   function reentrer() {
     evince = false;
-    client.envoyer({ t: "rejoindre", principale: equipSuivant.principale, secondaire: equipSuivant.secondaire });
+    client.envoyer({ t: "rejoindre", ...choixEquipement() });
   }
 
   /** Équipement de la prochaine apparition (immédiat si mort). */
-  function equiper(principale: EquipementJeu["principale"], secondaire: EquipementJeu["secondaire"]) {
-    equipSuivant = { principale, secondaire };
-    client.envoyer({ t: "equiper", principale, secondaire });
+  function equiper(principale: EquipementJeu["principale"], secondaire: EquipementJeu["secondaire"], melee?: ArmeMeleeId) {
+    equipSuivant = melee === "epee" ? { principale, secondaire, melee } : { principale, secondaire };
+    client.envoyer({ t: "equiper", ...choixEquipement() });
+  }
+
+  /** Champs d'équipement de `rejoindre` / `equiper` (l'arme blanche n'est envoyée que pour l'épée : absent = couteau). */
+  function choixEquipement(): { principale: EquipementJeu["principale"]; secondaire: EquipementJeu["secondaire"]; melee?: ArmeMeleeId } {
+    const { principale, secondaire, melee } = equipSuivant;
+    return melee === "epee" ? { principale, secondaire, melee } : { principale, secondaire };
   }
 
   // ---------- véhicules ----------
@@ -1193,7 +1201,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
 
   function etatHud(): HudEtat {
     const arme = armes.armeEnMain();
-    const a = arme === "couteau" ? null : STATS[arme];
+    const a = estMelee(arme) ? null : STATS[arme];
     const info = vehicule.actif();
     const lunette = lunetteActive();
     const af = armeFeu();
@@ -1210,7 +1218,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
       slot: armes.slotActif(),
       slots: serialiserSlots(armes.lignes()),
       equipSuivant: `${equipSuivant.principale}|${equipSuivant.secondaire}`,
-      munitions: arme === "couteau" ? 0 : Math.max(0, armes.munitions()),
+      munitions: estMelee(arme) ? 0 : Math.max(0, armes.munitions()),
       chargeur: armes.chargeur(),
       // spéciale d'Elsa (munitions totales, retirée à 0) : aucune réserve ; les autres armes ont une réserve illimitée
       reserve: a?.sansRecharge ? 0 : -1,
@@ -1234,7 +1242,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
       accroupi: vivant && moi.accroupi && !info,
       glisse: vivant && !!moi.glisse && !info,
       regen: regenEnCours(),
-      bonusVitesse: arme === "couteau" ? COUTEAU.vitesse : 1,
+      bonusVitesse: estMelee(arme) ? MELEE[arme].vitesse : 1,
       invite: inv.invite,
       inviteDetail: inv.detail,
       vehicule: !!info,
@@ -1483,7 +1491,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
       mondeJeu.reinitialiser();
       visib.vider();
       suiviRadar.vider();
-      client.envoyer({ t: "rejoindre", principale: equipSuivant.principale, secondaire: equipSuivant.secondaire });
+      client.envoyer({ t: "rejoindre", ...choixEquipement() });
     } else if (client.id !== null) {
       idConnu = client.id;
     }
@@ -1626,7 +1634,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
     const en = entrees();
     const actif = vivant && apparu && !enReplay && (aVerrou || forceActif);
     const arme = armes.armeEnMain();
-    const a = arme === "couteau" ? null : STATS[arme];
+    const a = estMelee(arme) ? null : STATS[arme];
     const info = vehicule.actif();
     // Le fusil à lunette ne vise pas pendant le rechargement : l'arme reste visible et le champ normal
     // (sinon, clic droit tenu, l'arme disparaissait sans lunette ni animation de rechargement).
@@ -1748,7 +1756,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
   }
   raf = requestAnimationFrame(frame);
 
-  client.envoyer({ t: "rejoindre", principale: equipSuivant.principale, secondaire: equipSuivant.secondaire });
+  client.envoyer({ t: "rejoindre", ...choixEquipement() });
   emettreHud(true);
 
   // ---------- poignée ----------

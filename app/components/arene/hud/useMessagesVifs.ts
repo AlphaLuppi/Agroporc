@@ -11,7 +11,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { STATS } from "@/lib/fps/armes";
 import { niveauMunitions, parseSlots, PRIORITE_VIVE, texteBonus } from "@/lib/fps/hud-modele";
 import type { HudEtat } from "@/lib/fps/jeu-types";
-import type { ArmeSpecialeId, InfoMatch } from "@/lib/fps/protocole";
+import { estMelee, type ArmeSpecialeId, type InfoMatch } from "@/lib/fps/protocole";
 import type { Annonce, Bonus, DerniereMort } from "../contrats";
 import { libelleCause } from "../armesInfo";
 
@@ -114,7 +114,7 @@ export function useMessagesVifs(p: EntreesMessagesVifs): { toast: string | null;
   const suiviChargeur = useRef<{ arme: string | null; bas: boolean }>({ arme, bas: false });
   useEffect(() => {
     const s = suiviChargeur.current;
-    const niveau = arme && arme !== "couteau" && !tireInterdit ? niveauMunitions(munitions, chargeur) : "normal";
+    const niveau = arme && !estMelee(arme) && !tireInterdit ? niveauMunitions(munitions, chargeur) : "normal";
     const bas = niveau !== "normal";
     if (s.arme !== arme) { suiviChargeur.current = { arme, bas }; return; }
     if (bas && !s.bas && !mort && !mortPrecedente.current) pousser("Chargeur bas", PRIORITE_VIVE.info);

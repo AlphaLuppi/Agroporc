@@ -3,7 +3,7 @@
  * PUR : aucun import three ni DOM. `jeu.ts` les ré-exporte (`export type { … } from "./jeu-types"`).
  * Spec : docs/superpowers/specs/2026-10-22-arene-v2-design.md (§5.18) et 2026-10-23-arene-hud-design.md (§3.2, §3.4)
  */
-import type { ArmeFeuId, ArmeId, ArmePrincipaleId, ArmeSecondaireId, ArmeSpecialeId, CauseMort, InfoTueur, MessageServeur, Slot, TypeEvenement, Vec3, Zone } from "./protocole";
+import type { ArmeFeuId, ArmeId, ArmeMeleeId, ArmePrincipaleId, ArmeSecondaireId, ArmeSpecialeId, CauseMort, InfoTueur, MessageServeur, Slot, TypeEvenement, Vec3, Zone } from "./protocole";
 import type { RadarFrame } from "./radar";
 import type { ConfigTouches } from "./touches";
 
@@ -129,7 +129,7 @@ export type JeuEvenement =
   /** j'ai pris le cadeau d'Elsa */
   | { type: "bonus"; genre: "soin" | "arme"; arme?: ArmeSpecialeId }
   /** le serveur a refusé `monter` / `siege` (message `refus`) : toast « Voiture trop loin », « Voiture pleine »… ; `rejoindre` : arène pleine */
-  | { type: "refus"; action: "monter" | "siege" | "rejoindre"; raison: "loin" | "plein" | "deja" | "inconnu" | "mort" };
+  | { type: "refus"; action: "monter" | "siege" | "rejoindre" | "mode"; raison: "loin" | "plein" | "deja" | "inconnu" | "mort" | "lobby" };
 
 /** (v3) État des événements pour le bandeau du HUD (lu à intervalle par `BandeauEvenement`, hors rendu à 60 Hz). */
 export interface EtatMonstresHud {
@@ -152,11 +152,11 @@ export interface JeuCallbacks {
 }
 
 /** Équipement choisi (lobby, écran de mort, pause) : l'arme principale et l'arme secondaire. */
-export interface EquipementJeu { principale: ArmePrincipaleId; secondaire: ArmeSecondaireId }
+export interface EquipementJeu { principale: ArmePrincipaleId; secondaire: ArmeSecondaireId; melee?: ArmeMeleeId }
 
 export interface JeuHandle {
   /** Équipement de la prochaine apparition (immédiat si mort). */
-  equiper(principale: ArmePrincipaleId, secondaire: ArmeSecondaireId): void;
+  equiper(principale: ArmePrincipaleId, secondaire: ArmeSecondaireId, melee?: ArmeMeleeId): void;
   /** Message du serveur (tous types, l'hôte relaie tout). */
   recevoir(m: MessageServeur): void;
   /** Redemande la souris (bouton « Reprendre » du menu pause). */

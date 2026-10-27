@@ -5,8 +5,8 @@
  * Toutes les fonctions qui reçoivent des lignes les supposent DÉJÀ TRIÉES (sortie de `construireLignes` / `trierLignes`).
  * Spec : docs/superpowers/specs/2026-10-23-arene-hud-design.md (§8, §10)
  */
-import { STATS, nomArme } from "./armes";
-import type { ArmeId, JoueurPublic, LigneClassement, LigneStats } from "./protocole";
+import { MELEE, STATS, nomArme } from "./armes";
+import { estMelee, type ArmeId, type JoueurPublic, type LigneClassement, type LigneStats } from "./protocole";
 
 /** Colonnes du tableau, de gauche à droite (HUD §8.1). */
 export type ColonneScore = "rang" | "agent" | "k" | "m" | "kd" | "ser" | "prec" | "tete" | "deg" | "arme" | "ping";
@@ -165,7 +165,7 @@ export function texteDegats(l: Pick<LigneScore, "degats">): string {
 export function texteArmeFav(l: Pick<LigneScore, "armeFav">, court = true): string {
   const a = l.armeFav;
   if (!a) return TIRET;
-  return court ? (a === "couteau" ? "Couteau" : STATS[a].nomCourt) : nomArme(a);
+  return court ? (estMelee(a) ? MELEE[a].nomCourt : STATS[a].nomCourt) : nomArme(a);
 }
 
 export type QualitePing = "bon" | "moyen" | "mauvais";

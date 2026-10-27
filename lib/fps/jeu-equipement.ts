@@ -4,12 +4,14 @@
  * Les instants `t` sont en millisecondes (horloge du jeu), comme `JEU.degainageMs`.
  * Spec : docs/superpowers/specs/2026-10-22-arene-v2-design.md (§2.4, §5.13)
  */
-import { JEU, copierEquipement, type ArmeFeuId, type ArmeId, type Equipement, type MessageServeur, type Slot } from "./protocole";
+import { JEU, copierEquipement, estMelee, type ArmeFeuId, type ArmeId, type Equipement, type MessageServeur, type Slot } from "./protocole";
 import { STATS } from "./armes";
-import { armeDuSlot, estArmeFeu, estSlot, slotVoisin, type LigneSlot } from "./equipement";
+import { armeDuSlot, estArmeFeu, estSlot, meleeDe, slotVoisin, type LigneSlot } from "./equipement";
 
 /** Slot en main quand l'appelant n'en donne pas : on entre dans l'arène avec la principale (v2 : `mainSuivante` = principale). */
 const MAIN_INITIALE: Slot = "principale";
+/** Slots de repli, dans l'ordre : le premier qui porte une arme (la principale peut manquer, zombies v5). */
+const SLOTS_REPLI: readonly Slot[] = ["principale", "secondaire", "couteau"];
 
 export class ControleurArmes {
   private equip: Equipement;
@@ -29,7 +31,7 @@ export class ControleurArmes {
 
   constructor(equip: Equipement, main: Slot = MAIN_INITIALE) {
     this.equip = copierEquipement(equip);
-    this.main = this.slotUtilisable(main) ? main : MAIN_INITIALE;
+    this.main = this.slotUtilisable(main) ? main : this.slotRepli();
     this.precedent = this.autrePrincipale(this.main);
     this.remplirTout();
   }
@@ -40,7 +42,7 @@ export class ControleurArmes {
 
   slotActif(): Slot { return this.main; }
 
-  armeEnMain(): ArmeId { return armeDuSlot(this.equip, this.main) ?? "couteau"; }
+  armeEnMain(): ArmeId { return armeDuSlot(this.equip, this.main) ?? meleeDe(this.equip); }
 
   /** Slot tenu avant l'actuel (celui que `rapide` rejoint). */
   slotPrecedent(): Slot { return this.precedent; }
@@ -48,13 +50,13 @@ export class ControleurArmes {
   /** Munitions du chargeur de l'arme en main (`Infinity` pour le couteau : le HUD affiche 0). */
   munitions(): number {
     const a = this.armeEnMain();
-    return a === "couteau" ? Infinity : (this.mun[a] ?? 0);
+    return estMelee(a) ? Infinity : (this.mun[a] ?? 0);
   }
 
   /** Taille du chargeur de l'arme en main (0 pour le couteau ; pour une spéciale, les munitions totales offertes). */
   chargeur(): number {
     const a = this.armeEnMain();
-    return a === "couteau" ? 0 : STATS[a].chargeur;
+    return estMelee(a) ? 0 : STATS[a].chargeur;
   }
 
   munitionsDe(arme: ArmeFeuId): number { return this.mun[arme] ?? 0; }
@@ -65,7 +67,7 @@ export class ControleurArmes {
     for (const slot of ["principale", "secondaire", "couteau", "speciale"] as const) {
       const arme = armeDuSlot(this.equip, slot);
       if (arme === null) continue;
-      if (arme === "couteau") res.push({ slot, arme, munitions: 0, chargeur: 0 });
+      if (estMelee(arme)) res.push({ slot, arme, munitions: 0, chargeur: 0 });
       else res.push({ slot, arme, munitions: this.mun[arme] ?? 0, chargeur: STATS[arme].chargeur });
     }
     return res;
@@ -105,7 +107,7 @@ export class ControleurArmes {
   peutTirer(t: number): boolean {
     this.dernierT = t;
     const a = this.armeEnMain();
-    return a !== "couteau" && t >= this.sortieFin && (this.mun[a] ?? 0) > 0 && !this.rechargeEnCours();
+    return !estMelee(a) && t >= this.sortieFin && (this.mun[a] ?? 0) > 0 && !this.rechargeEnCours();
   }
 
   /**
@@ -114,7 +116,7 @@ export class ControleurArmes {
    */
   tirEffectue(): void {
     const a = this.armeEnMain();
-    if (a === "couteau") return;
+    if (estMelee(a)) return;
     const reste = Math.max(0, (this.mun[a] ?? 0) - 1);
     if (this.main === "speciale" && reste === 0) {
       this.retirerSpeciale(this.dernierT);
@@ -129,7 +131,7 @@ export class ControleurArmes {
   demarrerRecharge(t: number): boolean {
     this.dernierT = t;
     const a = this.armeEnMain();
-    if (a === "couteau" || STATS[a].sansRecharge) return false;
+    if (estMelee(a) || STATS[a].sansRecharge) return false;
     if (this.rechargeEnCours() || t < this.sortieFin) return false;
     if ((this.mun[a] ?? 0) >= STATS[a].chargeur) return false;
     this.rechargeDebut = t;
@@ -144,7 +146,7 @@ export class ControleurArmes {
     this.dernierT = t;
     if (!this.rechargeEnCours() || t < this.rechargeFin) return false;
     const a = this.armeEnMain();
-    if (a !== "couteau") this.mun[a] = STATS[a].chargeur;
+    if (!estMelee(a)) this.mun[a] = STATS[a].chargeur;
     this.annulerRecharge();
     return true;
   }
@@ -178,7 +180,7 @@ export class ControleurArmes {
     const apparition = m.t === "apparition";
     const ancien = this.main;
     this.equip = copierEquipement(m.equip);
-    this.main = estSlot(m.main) && this.slotUtilisable(m.main) ? m.main : MAIN_INITIALE;
+    this.main = estSlot(m.main) && this.slotUtilisable(m.main) ? m.main : this.slotRepli();
     if (apparition) {
       this.mun = {};
       this.annulerRecharge();
@@ -201,7 +203,7 @@ export class ControleurArmes {
     if (this.equip.speciale !== null) this.mun[this.equip.speciale] = Math.max(0, Math.floor(m.munSpeciale));
     // une recharge qui n'est plus celle de l'arme en main n'a plus de sens
     const a = this.armeEnMain();
-    if (this.rechargeEnCours() && (a === "couteau" || STATS[a].sansRecharge)) this.annulerRecharge();
+    if (this.rechargeEnCours() && (estMelee(a) || STATS[a].sansRecharge)) this.annulerRecharge();
   }
 
   // ---------- interne ----------
@@ -211,9 +213,16 @@ export class ControleurArmes {
     return armeDuSlot(this.equip, slot) !== null;
   }
 
-  /** Le slot de repli le plus naturel : la principale, ou la secondaire si c'est la principale qui est en main. */
+  /** Le slot de repli le plus naturel : la principale (`MAIN_INITIALE`), sinon le premier slot utilisable. */
+  private slotRepli(): Slot {
+    return SLOTS_REPLI.find((s) => this.slotUtilisable(s)) ?? MAIN_INITIALE;
+  }
+
+  /** Le slot « autre » le plus naturel : la principale, ou la secondaire si c'est la principale qui est en main (premier slot utilisable différent de `main`). */
   private autrePrincipale(main: Slot): Slot {
-    return main === "principale" ? "secondaire" : "principale";
+    const nominal: Slot = main === "principale" ? "secondaire" : "principale";
+    if (this.slotUtilisable(nominal)) return nominal;
+    return SLOTS_REPLI.find((s) => s !== main && this.slotUtilisable(s)) ?? nominal;
   }
 
   private precedentUtilisable(): Slot {
@@ -243,7 +252,7 @@ export class ControleurArmes {
     const a = this.equip.speciale;
     if (a !== null) delete this.mun[a];
     this.equip.speciale = null;
-    this.main = this.precedent !== "speciale" && this.slotUtilisable(this.precedent) ? this.precedent : MAIN_INITIALE;
+    this.main = this.precedent !== "speciale" && this.slotUtilisable(this.precedent) ? this.precedent : this.slotRepli();
     this.precedent = this.autrePrincipale(this.main);
     this.annulerRecharge();
     this.debuterSortie(t);

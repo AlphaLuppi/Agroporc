@@ -35,9 +35,10 @@ function contenuOffre(genre: "soin" | "arme", arme?: ArmeSpecialeId): string {
 /** `rejoindre` refusé : 16 agents sont déjà en arène (les spectateurs de la vue 3D ne comptent pas). */
 export const TEXTE_ARENE_PLEINE = `L'arène est pleine (${JEU.joueursMax} agents en jeu), réessayez dans un instant.`;
 
-/** Texte du refus d'un `monter` / `siege` / `rejoindre` par le serveur. */
-function texteRefus(action: "monter" | "siege" | "rejoindre", raison: "loin" | "plein" | "deja" | "inconnu" | "mort"): string {
-  if (action === "rejoindre") return TEXTE_ARENE_PLEINE;
+/** Texte du refus d'un `monter` / `siege` / `rejoindre` / `mode` par le serveur. */
+function texteRefus(action: "monter" | "siege" | "rejoindre" | "mode", raison: "loin" | "plein" | "deja" | "inconnu" | "mort" | "lobby"): string {
+  if (action === "rejoindre") return raison === "lobby" ? "Partie de zombies : attendez le lancement par l'hôte." : TEXTE_ARENE_PLEINE;
+  if (action === "mode") return raison === "lobby" ? "Impossible de changer de mode en pleine partie." : "La partie de zombies est pleine.";
   switch (raison) {
     case "loin": return "Voiture trop loin";
     case "plein": return action === "siege" ? "Place occupée" : "Voiture pleine";

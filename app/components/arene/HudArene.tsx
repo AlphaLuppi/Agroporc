@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { JEU } from "@/lib/fps/protocole";
+import { JEU, estMelee } from "@/lib/fps/protocole";
 import type { Action } from "@/lib/fps/touches";
 import { niveauMunitions, syntheseMatch } from "@/lib/fps/hud-modele";
 import { LIBELLES_COINS, coinSuivant } from "@/lib/fps/reglages-hud";
@@ -139,7 +139,7 @@ export default function HudArene(p: PropsHudArene) {
   const pause = !hud.verrouille;
   const premiereFois = pause && !dejaVerrouille.current;
   const combat = !hud.mort && !entracte;
-  const couteau = hud.arme === "couteau";
+  const couteau = estMelee(hud.arme);
   const conduite = hud.vehicule && hud.tireInterdit;
   const inviteRecharge = combat && !hud.titan && !couteau && !hud.tireInterdit && !hud.recharge && ["critique", "vide"].includes(niveauMunitions(hud.munitions, hud.chargeur));
   const reglMap = p.reglagesHud.minimap;

@@ -130,7 +130,7 @@ function tirer(s: Salle, tireur: string, cible: string, t: number, opts: { haute
 function coup(s: Salle, tireur: string, cible: string | null, t: number, point?: Vec3): Sortie[] {
   const c = cible ? j(s, cible) : null;
   const { o, d } = regarder(s, tireur, point ?? [c!.p[0], c!.p[1] + SILHOUETTE.centreY, c!.p[2]]);
-  return s.recevoir(tireur, { t: "coup", o, d, cible }, t);
+  return s.recevoir(tireur, { t: "coup", o, d, cibles: cible ? [cible] : [] }, t);
 }
 /** Deux joueurs face à face à 20 m (pistolet en main), protection écoulée. */
 function duel(options?: OptionsSalle, a: Partial<Extract<MessageClient, { t: "rejoindre" }>> = { arme: "pistolet" }, b: Partial<Extract<MessageClient, { t: "rejoindre" }>> = { arme: "pistolet" }) {
@@ -409,7 +409,7 @@ describe("couteau", () => {
     const { s, t } = duelCouteau();
     const a = j(s, "a");
     const { o, d } = regarder(s, "a", [-8.5, 1, 20]);
-    const base = { t: "coup" as const, cible: "b" };
+    const base = { t: "coup" as const, cibles: ["b"] };
     expect(s.recevoir("a", { ...base, o: [o[0] + 10, o[1], o[2]], d }, t)).toEqual([]);
     expect(s.recevoir("a", { ...base, o, d: [d[0] * 3, d[1] * 3, d[2] * 3] }, t)).toEqual([]);
     const dos: Vec3 = [-d[0], -d[1], -d[2]];
@@ -856,7 +856,7 @@ describe("services Elsa et véhicules", () => {
     const s = nouvelleSalle({ elsa: { x: 0, z: 0 }, vehicules: [{ p: [0, 0], cap: 0 }] });
     const [bienvenue] = messages(s.connecter("a", "Alice", T0), "bienvenue");
     expect(Object.keys(bienvenue).sort()).toEqual(["couleur", "id", "joueurs", "maintenant", "match", "t"]);
-    expect(VERSION_PROTOCOLE).toBe(4);
+    expect(VERSION_PROTOCOLE).toBe(5);
   });
 });
 

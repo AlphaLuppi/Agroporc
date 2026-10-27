@@ -755,7 +755,7 @@ export class Salle implements ContexteSalle {
   }
 
   /**
-   * Un coup de couteau : mêmes contrôles anti-triche que le tir (arme en main, dégainage, cadence 0,5 s, œil, direction, angle de visée),
+   * Un coup d'arme blanche : mêmes contrôles anti-triche que le tir (arme en main, dégainage, cadence 0,5 s, œil, direction, angle de visée),
    * puis `coupVraisemblable` (portée de surface + marge, cône, ligne de vue) sur les positions de la cible rejouées sur
    * `REWIND_MELEE_MS`. 100 dégâts : tue un joueur sans bouclier. Le coup est diffusé aux autres même dans le vide.
    */
@@ -770,12 +770,13 @@ export class Salle implements ContexteSalle {
     if (!this.cadenceOk(j, "couteau", COUTEAU.cadenceS, false, maintenant)) return [];
     j.protegeJusqua = 0;
     const d = dirs[0];
-    const sorties: Sortie[] = [{ a: "tous", sauf: j.id, m: { t: "coup", id: j.id, o: coup.o, d } }];
-    const c = typeof coup.cible === "string" ? this.joueurs.get(coup.cible) : undefined;
+    const sorties: Sortie[] = [{ a: "tous", sauf: j.id, m: { t: "coup", id: j.id, o: coup.o, d, arme: "couteau" } }];
+    // une seule cible tant que l'épée n'est pas branchée côté salle (le message en porte jusqu'à nbCiblesMax)
+    const idCible = coup.cibles[0] ?? null;
+    const c = typeof idCible === "string" ? this.joueurs.get(idCible) : undefined;
     if (!c || c.id === j.id || !c.enJeu || !c.vivant || maintenant < c.protegeJusqua) return sorties;
-    const vitesseCible = Math.hypot(c.v[0], c.v[1], c.v[2]);
     const vue = this.positionsCible(c, maintenant, REWIND_MELEE_MS).find((pos) =>
-      coupVraisemblable(this.monde, coup.o, d, { id: c.id, p: pos.p, vivant: true, accroupi: pos.accroupi }, vitesseCible));
+      coupVraisemblable(this.monde, coup.o, d, { id: c.id, p: pos.p, vivant: true, accroupi: pos.accroupi }, "couteau"));
     if (vue) sorties.push(...this.infliger(c, COUTEAU.degats, j, "arme", "corps", "couteau", maintenant, coup.o));
     return sorties;
   }

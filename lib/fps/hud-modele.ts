@@ -4,8 +4,8 @@
  * Tolère 4 champs par slot (`slot:arme:munitions:chargeur`) ou 5 (réserve finie en plus, −1 = infinie).
  * Spec : docs/superpowers/specs/2026-10-23-arene-hud-design.md (§3.2, §5.1, §7.2, §12)
  */
-import { COUTEAU, STATS } from "./armes";
-import { ARMES, SLOTS, type ArmeId, type ArmeSpecialeId, type CauseMort, type JoueurPublic, type Slot } from "./protocole";
+import { MELEE, STATS } from "./armes";
+import { ARMES, SLOTS, estMelee, type ArmeId, type ArmeSpecialeId, type CauseMort, type JoueurPublic, type Slot } from "./protocole";
 import type { HudLive } from "./jeu-types";
 
 /** Espace insécable (avant m, s, km/h, %). */
@@ -40,7 +40,7 @@ export function parseSlots(s: string): SlotHud[] {
     const slot = c[0] as Slot;
     const arme = c[1];
     if (!SLOTS.includes(slot)) continue;
-    if (arme !== "couteau" && !(ARMES as readonly string[]).includes(arme)) continue;
+    if (!estMelee(arme) && !(ARMES as readonly string[]).includes(arme)) continue;
     const munitions = entier(c[2]);
     const chargeur = entier(c[3]);
     const reserve = c.length === 5 ? entier(c[4]) : -1;
@@ -126,7 +126,8 @@ export function libelleFil(arme: ArmeId, cause: CauseMort, par: string): string 
   if (cause === "truck_fou") return "Écrasé par le Truck Muche fou";
   if (cause === "tigre_robot") return "Déchiqueté par le tigre robot";
   if (cause === "titan") return par ? `Titan tigre de ${par}` : "Titan tigre";
-  return arme === "couteau" ? COUTEAU.nomCourt : STATS[arme].nomCourt;
+  if (cause === "tigre_zombie") return "Griffé par un tigre";
+  return estMelee(arme) ? MELEE[arme].nomCourt : STATS[arme].nomCourt;
 }
 
 /** Texte du contenu d'une offre d'Elsa (bandeau et annonce). */

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   CLE_EQUIPEMENT, armeDuSlot, depuisAlias, ecrireEquipement, estArmeFeu, estPrincipale, estSecondaire, estSlot, estSpeciale,
-  lireEquipement, lireSlots, normaliserEquipement, serialiserSlots, slotDeLArme, slotVoisin, type LigneSlot,
+  lireEquipement, lireSlots, meleeDe, normaliserEquipement, serialiserSlots, slotDeLArme, slotVoisin, type LigneSlot,
 } from "./equipement";
 import { ARMES, EQUIPEMENT_DEFAUT, copierEquipement, type Equipement } from "./protocole";
 
@@ -211,5 +211,103 @@ describe("copie", () => {
     const a = copierEquipement(base());
     a.speciale = "minigun";
     expect(base().speciale).toBeNull();
+  });
+});
+
+describe("arme blanche : melee optionnel (épée)", () => {
+  it("meleeDe : couteau tant que la clé est absente", () => {
+    expect(meleeDe(base())).toBe("couteau");
+    expect(meleeDe({ ...base(), melee: "epee" })).toBe("epee");
+    expect(meleeDe(EQUIPEMENT_DEFAUT)).toBe("couteau");
+  });
+
+  it("armeDuSlot(couteau) renvoie l'arme blanche équipée ; slotDeLArme('epee') = couteau", () => {
+    const eq: Equipement = { ...base(), melee: "epee" };
+    expect(armeDuSlot(eq, "couteau")).toBe("epee");
+    expect(armeDuSlot(base(), "couteau")).toBe("couteau");
+    expect(slotDeLArme(eq, "epee")).toBe("couteau");
+    expect(slotDeLArme(base(), "epee")).toBe("couteau");
+    expect(slotDeLArme(eq, "couteau")).toBe("couteau");
+    // le reste ne change pas
+    expect(armeDuSlot(eq, "principale")).toBe("fusil_assaut");
+  });
+
+  it("normaliserEquipement : seul l'épée écrit la clé, 'couteau' = absent, valeur inconnue = ancienne valeur", () => {
+    expect(normaliserEquipement({ melee: "epee" }, base())).toEqual({ ...base(), melee: "epee" });
+    const rendu = normaliserEquipement({ melee: "couteau" }, { ...base(), melee: "epee" });
+    expect(rendu).toEqual(base());
+    expect("melee" in rendu).toBe(false);
+    expect(normaliserEquipement({ melee: "hache" }, { ...base(), melee: "epee" }).melee).toBe("epee");
+    expect("melee" in normaliserEquipement({ melee: "hache" }, base())).toBe(false);
+    expect("melee" in normaliserEquipement({ principale: "pompe" }, base())).toBe(false);
+  });
+
+  it("lireEquipement / ecrireEquipement : aller-retour de l'épée, sauvegarde ancienne sans melee toujours valide", () => {
+    const s = memoire();
+    expect(ecrireEquipement({ principale: "sniper", secondaire: "revolver", melee: "epee" }, s)).toBe(true);
+    expect(JSON.parse(s.donnees[CLE_EQUIPEMENT])).toEqual({ principale: "sniper", secondaire: "revolver", melee: "epee" });
+    expect(lireEquipement(s)).toEqual({ principale: "sniper", secondaire: "revolver", melee: "epee" });
+    // le couteau n'écrit pas la clé
+    const s2 = memoire();
+    ecrireEquipement({ principale: "sniper", secondaire: "revolver", melee: "couteau" }, s2);
+    expect(JSON.parse(s2.donnees[CLE_EQUIPEMENT])).toEqual({ principale: "sniper", secondaire: "revolver" });
+    expect(lireEquipement(s2)).toEqual({ principale: "sniper", secondaire: "revolver" });
+    // sauvegarde d'avant la v5
+    const ancienne = memoire({ [CLE_EQUIPEMENT]: JSON.stringify({ principale: "pompe", secondaire: "mini_uzi" }) });
+    const lu = lireEquipement(ancienne);
+    expect(lu).toEqual({ principale: "pompe", secondaire: "mini_uzi" });
+    expect("melee" in lu).toBe(false);
+    // valeur abîmée
+    expect(lireEquipement(memoire({ [CLE_EQUIPEMENT]: JSON.stringify({ principale: "pompe", secondaire: "mini_uzi", melee: 3 }) })))
+      .toEqual({ principale: "pompe", secondaire: "mini_uzi" });
+  });
+
+  it("lireSlots / serialiserSlots acceptent l'épée", () => {
+    const lignes: LigneSlot[] = [
+      { slot: "secondaire", arme: "pistolet", munitions: 12, chargeur: 12 },
+      { slot: "couteau", arme: "epee", munitions: 0, chargeur: 0 },
+    ];
+    const s = serialiserSlots(lignes);
+    expect(s).toBe("secondaire:pistolet:12:12|couteau:epee:0:0");
+    expect(lireSlots(s)).toEqual(lignes);
+    expect(lireSlots("couteau:hache:0:0")).toEqual([]);
+  });
+
+  it("copierEquipement garde melee", () => {
+    expect(copierEquipement({ ...base(), melee: "epee" }).melee).toBe("epee");
+  });
+});
+
+describe("équipement sans arme principale (zombies)", () => {
+  const sans = (): Equipement => ({ principale: "mitraillette", secondaire: "pistolet", speciale: null, sansPrincipale: true });
+
+  it("armeDuSlot(principale) = null, les autres slots inchangés", () => {
+    expect(armeDuSlot(sans(), "principale")).toBeNull();
+    expect(armeDuSlot(sans(), "secondaire")).toBe("pistolet");
+    expect(armeDuSlot(sans(), "couteau")).toBe("couteau");
+    expect(armeDuSlot({ ...sans(), melee: "epee" }, "couteau")).toBe("epee");
+  });
+
+  it("slotDeLArme : la valeur de remplissage n'est pas portée", () => {
+    expect(slotDeLArme(sans(), "mitraillette")).toBeNull();
+    expect(slotDeLArme(sans(), "pistolet")).toBe("secondaire");
+    // sans le drapeau, la mitraillette est bien la principale
+    expect(slotDeLArme({ ...sans(), sansPrincipale: undefined }, "mitraillette")).toBe("principale");
+  });
+
+  it("slotVoisin saute la principale (et la spéciale vide), dans les deux sens", () => {
+    const eq = sans();
+    expect(slotVoisin(eq, "secondaire", 1)).toBe("couteau");
+    expect(slotVoisin(eq, "couteau", 1)).toBe("secondaire");
+    expect(slotVoisin(eq, "secondaire", -1)).toBe("couteau");
+    expect(slotVoisin(eq, "couteau", -1)).toBe("secondaire");
+  });
+
+  it("depuisAlias avec une principale retire le drapeau, avec une secondaire le garde", () => {
+    const a = depuisAlias("sniper", sans());
+    expect(a?.equip.principale).toBe("sniper");
+    expect(a?.equip.sansPrincipale).toBeUndefined();
+    expect(armeDuSlot(a!.equip, "principale")).toBe("sniper");
+    expect(depuisAlias("revolver", sans())?.equip.sansPrincipale).toBe(true);
   });
 });

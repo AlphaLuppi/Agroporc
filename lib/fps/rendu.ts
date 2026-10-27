@@ -631,7 +631,9 @@ function creerModeleArme(id: ArmeId, m: Materiaux, devant: boolean): ModeleArme 
       };
       break;
     }
-    case "couteau": {
+    // PLACEHOLDER : l'épée utilise le modèle du couteau tant que son modèle fil de fer n'est pas dessiné
+    case "couteau":
+    case "epee": {
       // Couteau de combat : lame verticale (tranchant vers le bas), garde, manche et pommeau ; la lame est relevée de 0,25 rad. Pas de flash ni de recul.
       const lame = new THREE.Group();
       lame.rotation.x = 0.25;
@@ -743,6 +745,8 @@ const PLACEMENT: Record<ArmeId, PlacementArme> = {
   minigun: { repos: [0.2, -0.24, -0.14], vise: [0, -0.1, -0.1], lacet: 0.04, reculZ: 0.015, reculRot: 0.03 },
   magnum_dore: { repos: [0.17, -0.18, -0.36], vise: [0, -0.08, -0.3], lacet: 0.05, reculZ: 0.08, reculRot: 0.26 },
   couteau: { repos: [0.2, -0.2, -0.36], vise: [0.2, -0.2, -0.36], lacet: -0.05, reculZ: 0, reculRot: 0 },
+  // PLACEHOLDER : même placement que le couteau
+  epee: { repos: [0.2, -0.2, -0.36], vise: [0.2, -0.2, -0.36], lacet: -0.05, reculZ: 0, reculRot: 0 },
 };
 
 const COULEUR_ARME_PAR_DEFAUT = 0xbfefff;
