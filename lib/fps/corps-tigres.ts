@@ -5,7 +5,9 @@
  * Dimensions, d'après `FORME_TIGRE` (monstres.ts, en m du modèle × l'échelle du tigre) : le corps va de −0,335 (croupe) à +0,315
  * (poitrail), sur 0,115 de rayon, jusqu'au dos (0,45) ; rayon d'au moins `rayonMinM`. Le ratio, à BO1 : un tigre seul (0,62 m de large)
  * dans une porte de 2,6 m laisse 0,99 m de chaque côté, le joueur (0,8 m) passe de justesse ; deux tigres côte à côte (1,4 m d'entraxe,
- * `ZOMBIES.separationM`) ne laissent que 0,78 m entre eux et ferment la porte. Le rayon minimal vaut aussi pour les petits du Truck : un
+ * `ZOMBIES.separationM`) ne laissent que 0,78 m entre eux : ils arrêtent qui marche droit, mais on se faufile en sautant ou en pas chassé
+ * (le joueur s'efface face aux tigres : `rayonContreTigres` de `mouvement.ts`) ; il faut deux tigres bien placés (de biais, ou un collé au
+ * montant) pour fermer la porte. Le rayon minimal vaut aussi pour les petits du Truck : un
  * groupe de petits ferme le passage comme des grands, mais on saute par-dessus un petit (dos à 0,68 m). Un tigre arrêté à portée de patte
  * (`porteePatte − griffeMargeDepartM`) ne touche pas le joueur : on bute sur lui seulement en fonçant dedans (testé pour chaque type).
  *

@@ -106,6 +106,17 @@ function traverser(x: number, obs: readonly Capsule[], sprint = false): { z: num
   return { z: e.p[2], fantome };
 }
 
+/** La même porte dans le monde des zombies (sans parkour : sauter contre un montant ne lance pas de course au mur). */
+const mondePorteZ: Monde = { ...mondePorte, sansParkour: true };
+/** Pas chassé vers −z (regard vers −x, entrée « droite ») depuis (x, 3) pendant 3 s : z final. */
+function traverserEnCrabe(x: number, obs: readonly Capsule[]): number {
+  return avancer(etatA([x, 0, 3]), 3, { avant: 0, droite: 1, saut: false, sprint: false, lacet: lacetVers(-1, 0) }, mondePorteZ, obs).p[2];
+}
+/** Saut en courant vers −z, lancé de (x, 2) à 9 m/s : z final après 1,5 s. */
+function traverserEnSautant(x: number, obs: readonly Capsule[]): number {
+  return avancer(etatA([x, 0, 2], [0, 0, -9]), 1.5, { avant: 1, droite: 0, saut: true, sprint: false, lacet: lacetVers(0, -1) }, mondePorteZ, obs).p[2];
+}
+
 describe("porte de 2,6 m (ratio de Black Ops 1)", () => {
   it("sans tigre, on passe", () => {
     expect(traverser(0, []).z).toBeLessThan(-3);
@@ -125,7 +136,7 @@ describe("porte de 2,6 m (ratio de Black Ops 1)", () => {
     expect(traverser(-0.3, pres).z).toBeLessThan(-3);
   });
 
-  it("deux tigres côte à côte (1,4 m d'entraxe) ferment la porte, sans que l'anti-coinçage ne les traverse", () => {
+  it("deux tigres côte à côte (1,4 m d'entraxe) arrêtent qui marche droit, sans que l'anti-coinçage ne les traverse", () => {
     const L = ZOMBIES.separationM;
     const corps = [capsuleTigre(tigre(-L / 2, 0, 0)), capsuleTigre(tigre(L / 2, 0, 0))];
     for (let x = -1.2; x <= 1.2 + 1e-9; x += 0.1) {
@@ -134,6 +145,37 @@ describe("porte de 2,6 m (ratio de Black Ops 1)", () => {
         expect(r.z, `x = ${x.toFixed(1)}`).toBeGreaterThan(0.2);
         expect(r.fantome).toBe(false);
       }
+    }
+  });
+
+  it("deux tigres côte à côte dans l'axe : on se faufile entre eux en sautant ou en pas chassé (0,78 m entre leurs flancs)", () => {
+    const L = ZOMBIES.separationM;
+    const corps = [capsuleTigre(tigre(-L / 2, 0, 0)), capsuleTigre(tigre(L / 2, 0, 0))];
+    expect(traverserEnCrabe(0, corps)).toBeLessThan(-2.5);
+    expect(traverserEnSautant(0, corps)).toBeLessThan(-2.5);
+    // mais pas entre un tigre et le montant (0,29 m)
+    expect(traverserEnCrabe(-1.15, corps)).toBeGreaterThan(0.2);
+    expect(traverserEnSautant(-1.15, corps)).toBeGreaterThan(0.2);
+  });
+
+  it("entre un tigre et le montant : on passe en sautant ou en crabe s'il en est à 0,79 m, pas s'il en est à 0,44 m", () => {
+    // contre le montant, le joueur garde son rayon de 0,4 m : il faut 0,4 + 0,33 en crabe, 0,4 + 0,26 en l'air, 0,8 en marchant
+    const loin = [capsuleTigre(tigre(0.2, 0, 0))];
+    expect(traverser(0.87, loin).z).toBeGreaterThan(0.2);
+    expect(traverserEnCrabe(0.87, loin)).toBeLessThan(-2.5);
+    expect(traverserEnSautant(0.87, loin)).toBeLessThan(-2.5);
+    const pres = [capsuleTigre(tigre(0.55, 0, 0))];
+    expect(traverserEnCrabe(1.08, pres)).toBeGreaterThan(0.2);
+    expect(traverserEnSautant(1.08, pres)).toBeGreaterThan(0.2);
+  });
+
+  it("deux tigres bien placés (de biais en travers de la porte) la ferment même à qui saute ou passe en crabe", () => {
+    // deux tigres de biais (cap ±60°, 1,4 m d'entraxe) : leurs corps se recouvrent presque d'un montant à l'autre
+    const L = ZOMBIES.separationM;
+    const corps = [capsuleTigre(tigre(-L / 2, 0, Math.PI / 3)), capsuleTigre(tigre(L / 2, 0, -Math.PI / 3))];
+    for (let x = -1.1; x <= 1.1 + 1e-9; x += 0.2) {
+      expect(traverserEnCrabe(x, corps), `crabe x = ${x.toFixed(1)}`).toBeGreaterThan(0.2);
+      expect(traverserEnSautant(x, corps), `saut x = ${x.toFixed(1)}`).toBeGreaterThan(0.2);
     }
   });
 

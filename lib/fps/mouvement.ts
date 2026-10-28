@@ -168,6 +168,13 @@ export const MOUV = {
   rayonTete: SILHOUETTE.tete.rayon,
   /** (zombies) vitesse (m/s) à laquelle un tigre qui chevauche déjà le joueur (apparu sur lui, poussé par la foule) le repousse */
   capsulePoussee: 4,
+  /**
+   * (zombies) rayon du joueur face aux corps des tigres (`MOUV.rayon` contre les murs) : en pas chassé (entrée latérale ≥ 0,5) on
+   * s'efface de l'épaule, en l'air on rentre les jambes. Deux tigres côte à côte (0,78 m entre leurs flancs) arrêtent qui marche droit
+   * (0,8 m) mais pas qui saute ou passe en crabe ; il faut deux tigres bien placés (de biais, ou un collé au montant) pour fermer une porte.
+   */
+  rayonTigreCrabe: 0.33,
+  rayonTigreAir: 0.26,
   /** (zombies) pris en étau par des tigres (aucune direction libre) pendant `coinceS` s sans bouger de `coinceDeplacementM` m : on passe à travers pendant `fantomeS` s */
   coinceS: 0.5,
   coinceDeplacementM: 0.2,
@@ -242,6 +249,7 @@ interface Souhait {
   /** vitesse cible (m/s), déjà multipliée par l'intensité et l'arme */
   vmax: number;
   avant: number;
+  droite: number;
 }
 
 function souhait(en: Entrees, mult: number, accroupi: boolean): Souhait {
@@ -256,7 +264,7 @@ function souhait(en: Entrees, mult: number, accroupi: boolean): Souhait {
   if (l > 1e-6) { wx /= l; wz /= l; } else { wx = 0; wz = 0; }
   const course = en.sprint && avant > 0.1;
   const posture = accroupi ? MOUV.accroupiMult : 1;
-  return { dx: wx, dz: wz, mag, vmax: (course ? MOUV.sprint : MOUV.marche) * mult * mag * posture, avant };
+  return { dx: wx, dz: wz, mag, vmax: (course ? MOUV.sprint : MOUV.marche) * mult * mag * posture, avant, droite };
 }
 
 /** Fait tourner la direction (dx, dz) vers (cx, cz), au plus de `max` radians. */
@@ -532,10 +540,10 @@ function enfoncementAdmis(c: Capsule, R: number, x0: number, z0: number, dt: num
  * Vrai si le joueur en `p` est plus enfoncé dans un corps qu'au début du pas. Contrainte dure, plus large que `enfoncementAdmis` (la
  * poussée douce n'est qu'un but) : coincé contre un mur par un tigre qui le chevauche, le joueur peut encore glisser le long du mur.
  */
-function tropEnfonce(obs: readonly Capsule[], x0: number, z0: number, p: Vec3): boolean {
+function tropEnfonce(obs: readonly Capsule[], x0: number, z0: number, p: Vec3, rj: number): boolean {
   for (const c of obs) {
     if (p[1] >= c.haut) continue;
-    const R = c.r + MOUV.rayon;
+    const R = c.r + rj;
     const avant = Math.max(0, R - distanceCapsule(c, x0, z0, contactCapsule).d);
     if (R - distanceCapsule(c, p[0], p[2], contactCapsule).d > avant + TOLERANCE_CAPSULE_M) return true;
   }
@@ -548,12 +556,12 @@ function tropEnfonce(obs: readonly Capsule[], x0: number, z0: number, p: Vec3): 
  * lui, poussé par la foule, affiché en retard) ne le repousse qu'à `capsulePoussee` m/s, sans saut de position. Rend les contacts
  * (`prisme` = `PRISME_CAPSULE`, normale vers le joueur) dans `contacts`. Les poussées peuvent se contredire (pas de place) : cf. `tropEnfonce`.
  */
-function repousserCapsules(obs: readonly Capsule[], x0: number, z0: number, p: Vec3, dt: number, contacts: Contact[]): void {
+function repousserCapsules(obs: readonly Capsule[], x0: number, z0: number, p: Vec3, dt: number, contacts: Contact[], rj: number): void {
   for (let passe = 0; passe < PASSES_CAPSULES; passe++) {
     let bouge = false;
     for (const c of obs) {
       if (p[1] >= c.haut) continue; // au-dessus du dos (un petit sauté) : rien
-      const R = c.r + MOUV.rayon;
+      const R = c.r + rj;
       const admis = enfoncementAdmis(c, R, x0, z0, dt);
       const { d, nx, nz } = distanceCapsule(c, p[0], p[2], contactCapsule);
       const pen = R - d;
@@ -568,6 +576,12 @@ function repousserCapsules(obs: readonly Capsule[], x0: number, z0: number, p: V
   }
 }
 const PASSES_CAPSULES = 4;
+
+/** Rayon du joueur face aux corps des tigres pour ce pas : en l'air, en pas chassé, sinon celui des murs (cf. `MOUV.rayonTigreAir`). */
+export function rayonContreTigres(enLAir: boolean, droite: number): number {
+  if (enLAir) return MOUV.rayonTigreAir;
+  return Math.abs(droite) >= 0.5 ? MOUV.rayonTigreCrabe : MOUV.rayon;
+}
 const TOLERANCE_CAPSULE_M = 2e-3;
 
 /**
@@ -602,6 +616,8 @@ function majCoince(s: EtatMouvement, etau: boolean, veut: boolean, dt: number): 
 function pasLibre(s: EtatMouvement, front: boolean, dt: number, m: Monde, mult: number, w: Souhait, obs: readonly Capsule[] | undefined): void {
   const v = s.v;
   let saute = false;
+  // (zombies) rayon face aux tigres, jugé au début du pas (un joueur qui retombe sur un flanc en est repoussé doucement, cf. `capsulePoussee`)
+  const rj = obs ? rayonContreTigres(!s.auSol, w.droite) : MOUV.rayon;
 
   // Pendant la glissade, `preparerPosture` a déjà imposé la vitesse : ni accélération ni friction.
   if (s.glisse) { /* vitesse imposée */ } else if (s.auSol) accelererSol(s, w, dt); else accelererAir(s, w, dt);
@@ -659,13 +675,13 @@ function pasLibre(s: EtatMouvement, front: boolean, dt: number, m: Monde, mult: 
     const fantome = (s.coince?.fantome ?? 0) > 0;
     if (!fantome && obs.length) {
       const avant = res.contacts.length;
-      repousserCapsules(obs, x0, z0, res.p, dt, res.contacts);
+      repousserCapsules(obs, x0, z0, res.p, dt, res.contacts, rj);
       if (res.contacts.length > avant) {
         const murs = resoudre(m, res.p, MOUV.rayon, MOUV.hauteur);
         res.p = murs.p;
         for (const c of murs.contacts) res.contacts.push(c);
         // pas de place (deux tigres, ou un tigre et un mur, à moins de la largeur du joueur) : on reste où l'on était à ce pas
-        if (tropEnfonce(obs, x0, z0, res.p)) { res.p[0] = x0; res.p[2] = z0; }
+        if (tropEnfonce(obs, x0, z0, res.p, rj)) { res.p[0] = x0; res.p[2] = z0; }
       }
     }
     s.p = res.p;
