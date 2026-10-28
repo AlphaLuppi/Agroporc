@@ -528,9 +528,17 @@ try {
     const depuis = Date.now();
     const argentAvant = (await A.jeu()).argent;
     for (const j of joueurs) await j.reduire(true);
-    await aller(A, B, SPOTS[0]);
-    await A.appui("Digit2", 100);
-    await jusqua(async () => (await A.jeu()).slot === "secondaire", { quoi: "pistolet en main" });
+    // l'open space est petit : Alice fuit les tigres pendant qu'elle sort le pistolet (un tigre sorti du sol peut déjà être à 8 m)
+    if ((await menace()) < 9) await fuir();
+    await jusqua(async () => {
+      const s = await A.jeu();
+      verifier(s && s.vivant, `Alice à terre avant le tir : ${A.resume(depuis)}`);
+      if (s.slot === "secondaire") return true;
+      if ((await menace()) < 9) await fuir();
+      await A.appui("Digit2", 100);
+      await dormir(600);
+      return false;
+    }, { ms: 30_000, pas: 50, quoi: "pistolet en main" });
     let tire = 0;
     const fin = Date.now() + 80_000;
     let tue = null;
