@@ -50,7 +50,7 @@ import { creerRenduInterieurs } from "./rendu-interieurs";
 import { creerRenduObjetsZombies } from "./rendu-objets-zombies";
 import { creerModeleTruckMuche } from "./rendu-monde";
 import { objectifZombies } from "./zombies-lore";
-import { ACHATS, NOTES, achatDeId, fenetreDeId, fenetrePlusProche } from "./zombies-carte";
+import { ACHATS, NOTES, PACK_A_PUNCH, achatDeId, fenetreDeId, fenetrePlusProche } from "./zombies-carte";
 import { boiteA } from "./zombies-boites";
 import { NOMS_BONUS } from "./zombies-vagues";
 import { profilZombie, nomZombie } from "./armes";
@@ -1539,9 +1539,14 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
           }
           case "atout": if (e.joueur === client.id) sons.jingleAtout(e.atout); break;
           case "pap": {
+            // (v8, BO1) dépôt : porte et bourdonnement ; cuite : BIP BIP BIP, à reprendre ; reprise ou perdue
             const a = ACHATS.find((x) => x.genre === "pap")!;
-            sons.microondes(e.pret, positionSon([a.position[0], 1.3, a.position[1]]));
-            if (e.pret && e.joueur === client.id) annoncer(`${nomZombie(e.arme, true)} servi !`, "pap");
+            const pos = positionSon([a.position[0], 1.3, a.position[1]]);
+            const moiPap = e.joueur === client.id;
+            if (e.fin === "reprise") { if (moiPap) annoncer(`${nomZombie(e.arme, true)} servi !`, "pap"); }
+            else if (e.fin === "perdue") { if (moiPap) { sons.achat(false); annoncer(`Trop tard : ${nomZombie(e.arme, true)} est perdu`, "pap"); } }
+            else if (e.pret) { sons.microOndesBip(pos); if (moiPap) annoncer(`C'est prêt ! Reprenez votre arme (${Math.round(PACK_A_PUNCH.repriseMs / 1000)} s)`, "pap"); }
+            else sons.microOndesCuisson(pos);
             break;
           }
           case "truck":
@@ -2708,6 +2713,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
         };
       },
       invoquer() { forceActif = true; return invoquer(); },
+      simuler(m) { recevoir(m); },
       tuerZombie(id, o = {}) {
         // (zombies) mort jouée côté client seulement, comme à la réception de `zombieMort` : le serveur garde le tigre (captures du ragdoll)
         // `o.p` : un tigre d'essai qui court là (cap `o.cap`, type `o.type`), sans tigre du serveur

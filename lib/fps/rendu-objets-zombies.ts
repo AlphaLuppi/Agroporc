@@ -11,6 +11,7 @@ import { STATS } from "./armes";
 import type { ArmeFeuId, EtatPartieZombies, Vec3 } from "./protocole";
 import { creerModeleArmeMonde, sansHalo } from "./rendu";
 import { creerModeleRemontoir } from "./rendu-grenades";
+import { creerRenduMicroondes } from "./rendu-microondes";
 import {
   ACHATS, ATOUTS, BOITE, FENETRES, NB_EMPLACEMENTS_BOITE, NOTES, PRIX_BOITE, achatBoite, pieceDe, type Achat, type ArmeAchat, type AtoutId, type Facade,
   type Fenetre,
@@ -293,17 +294,12 @@ export function creerRenduObjetsZombies(scene: THREE.Scene): RenduObjetsZombies 
     racine.add(g);
   }
 
-  // ---- Micro-ondes Gratinator (Pack-a-Punch) ----
+  // ---- Micro-ondes Gratinator (Pack-a-Punch) : meuble, puis la machine creuse (cavité, plateau, porte vitrée), cf. rendu-microondes.ts ----
   const achatPap = ACHATS.find((a) => a.genre === "pap")!;
   const gPap = contreMur(achatPap.facade!, 0.6, 0);
   boiteFil(gPap, mMetal, 1.8, 0.95, 1.0, 0, 0.475, 0, jetables);
-  boiteFil(gPap, mMetal, 1.8, 0.85, 1.0, 0, 1.4, 0, jetables);
-  const vitrePap = panneau(gPap, null, 1.1, 0.6, -0.2, 1.4, 0.51, jetables, { color: 0xb44dff, opacity: 0.25, blending: THREE.AdditiveBlending, depthWrite: false });
   panneau(gPap, textureEtiquette("MICRO-ONDES GRATINATOR", "#d58cff"), 1.7, 0.3, 0, 2.05, 0.51, jetables);
-  const platPap = new THREE.Group();
-  platPap.position.set(-0.2, 1.15, 0.05);
-  gPap.add(platPap);
-  let modelePap: { arme: ArmeFeuId; m: { group: THREE.Group; dispose(): void } } | null = null;
+  const microondes = creerRenduMicroondes(gPap, mMetal);
   racine.add(gPap);
 
   // ---- disjoncteur ----
@@ -611,18 +607,8 @@ export function creerRenduObjetsZombies(scene: THREE.Scene): RenduObjetsZombies 
         (d.face.material as THREE.MeshBasicMaterial).color.setScalar(k);
         (d.halo.material as THREE.MeshBasicMaterial).opacity = allume ? 0.12 : 0;
       }
-      // Pack-a-Punch
-      const pap = etat.pap;
-      (vitrePap.material as THREE.MeshBasicMaterial).opacity = !etat.courant ? 0.04 : pap.etat === "cuisson" ? 0.45 + 0.3 * Math.sin(t * 12) : 0.2;
-      if (pap.etat === "cuisson" && pap.arme) {
-        if (modelePap?.arme !== pap.arme) {
-          modelePap?.m.dispose();
-          modelePap = { arme: pap.arme, m: creerModeleArmeMonde(pap.arme, 0xd58cff) };
-          modelePap.m.group.scale.setScalar(1.4);
-          platPap.add(modelePap.m.group);
-        }
-        platPap.rotation.y += dt * 2.5;
-      } else if (modelePap) { modelePap.m.dispose(); modelePap = null; }
+      // Pack-a-Punch : l'arme déposée, cuite, puis à reprendre
+      microondes.maj(etat.pap, etat.courant, tServeur, t, dt);
       // disjoncteur, four
       if (etat.courant !== courantVu) courantVu = etat.courant;
       levier.rotation.x += ((etat.courant ? -0.9 : 0.9) - levier.rotation.x) * (1 - Math.exp(-dt * 10));
@@ -663,7 +649,7 @@ export function creerRenduObjetsZombies(scene: THREE.Scene): RenduObjetsZombies 
       scene.remove(racine);
       for (const m of modelesMur.values()) m.dispose();
       for (const rb of boites) for (const m of rb.modeles.values()) m.dispose();
-      modelePap?.m.dispose();
+      microondes.dispose();
       for (const e of bonus.values()) for (const x of e.g.userData.jetables as { dispose(): void }[]) x.dispose();
       for (const x of jetables) x.dispose();
       jetables.length = 0;

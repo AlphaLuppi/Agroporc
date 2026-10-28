@@ -708,6 +708,12 @@ export const ATOUTS: Readonly<Record<AtoutId, { nom: string; prix: number; prixS
 };
 /** Prix du Pack-a-Punch, des munitions d'une arme améliorée, de la boîte (BO1) et de la boîte en Happy hour. */
 export const PRIX_PAP = 5000;
+/**
+ * (v8) Micro-ondes Gratinator, déroulé de BO1 (`vending_weapon_upgrade`) : l'arme payée est déposée DANS la machine (`entreeMs` : elle y
+ * entre, la porte se ferme), cuit `cuissonMs` en tout (BO1 : reprise possible 4,35 s après le paiement), puis attend `repriseMs` que son
+ * joueur vienne la reprendre (BO1 `packapunch_timeout` = 15 s), sinon elle est perdue, sans remboursement.
+ */
+export const PACK_A_PUNCH = { entreeMs: 700, cuissonMs: 4_000, repriseMs: 15_000 } as const;
 export const PRIX_MUNITIONS_AMELIOREE = 2500;
 export const PRIX_BOITE = 950;
 export const PRIX_BOITE_SOLDES = 10;

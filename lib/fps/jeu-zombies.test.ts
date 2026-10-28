@@ -365,6 +365,13 @@ describe("inviteZombies", () => {
     expect(ok.detail).toMatch(/^Gratiner : Pistolet — 5\s000\s\$$/);
     expect(ici({ partie: partieInvite({ courant: true }), enMain: "couteau" }).bloque).toBe("Prenez une arme à feu");
     expect(ici({ partie: partieInvite({ courant: true }), equip: { ...equipDepart, ameliorees: ["pistolet"] } }).bloque).toBe("Déjà gratinée");
+    // (v8) l'arme cuite attend : « Reprendre » (gratuit, couteau en main) pour celui qui l'a déposée, « Occupé » pour les autres
+    const pret = partieInvite({ courant: true, pap: { etat: "pret", joueur: "a", arme: "pistolet", finT: 9000 } });
+    const reprise = ici({ partie: pret, moi: "a", enMain: "couteau", argent: 0 });
+    expect(reprise).toMatchObject({ invite: "pap", prix: 0, assez: true });
+    expect(reprise.detail).toMatch(/^Reprendre : /);
+    expect(ici({ partie: pret, moi: "b" })).toMatchObject({ invite: "pap", bloque: "Occupé", assez: false });
+    expect(ici({ partie: partieInvite({ courant: true, pap: { etat: "cuisson", joueur: "a", arme: "pistolet", finT: 9000 } }), moi: "a" }).bloque).toBe("En cuisson");
     const co = achat("courant");
     expect(inviteZombies(entree([co.position[0], co.position[1]], { partie: partieInvite() }))).toMatchObject({ invite: "courant", assez: true });
     expect(inviteZombies(entree([co.position[0], co.position[1]], { partie: partieInvite({ courant: true }) })).invite).not.toBe("courant");

@@ -291,6 +291,11 @@ export interface JeuHandle {
     tuerZombie(id: number, o?: {
       arme?: ArmeId; ameliore?: boolean; zone?: Zone; cause?: "explosion" | "nuke" | "melee"; src?: Vec3; p?: Vec3; cap?: number; type?: 0 | 1 | 2 | 3;
     }): boolean;
+    /**
+     * (v8) traite `m` comme s'il venait du serveur, côté client seulement (captures : boîtes du Happy hour, Micro-ondes, ouverture d'une
+     * porte) ; le serveur n'en sait rien
+     */
+    simuler(m: MessageServeur): void;
     /** chat vocal : connexions, audibilité, joueurs entendus */
     voix(): Record<string, unknown>;
   };

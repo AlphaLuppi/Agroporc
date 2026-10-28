@@ -15,7 +15,7 @@ import {
   type ZoneId,
 } from "./zombies-carte";
 import { ZOMBIES, delaiApparition, gainKill, gainTouche, pvZombie, totalManche, type GenreBonus } from "./zombies-vagues";
-import { CUISSON_PAP_MS, CUISSON_RECETTE_MS, OFFRE_BOITE_MS, TIRAGE_BOITE_MS, AUTO_RELEVE_MS, ENVOL_BOITE_MS } from "./match-zombies";
+import { CUISSON_PAP_MS, CUISSON_RECETTE_MS, OFFRE_BOITE_MS, REPRISE_PAP_MS, TIRAGE_BOITE_MS, AUTO_RELEVE_MS, ENVOL_BOITE_MS } from "./match-zombies";
 
 /**
  * Service zombies isolé : contexte factice (la salle est testée dans match.zombies.test.ts), vrai monde de la carte « Service de midi ».
@@ -720,7 +720,7 @@ describe("achats", () => {
     expect(j.pv).toBe(ZOMBIES.reanimationPv);
   });
 
-  it("courant (local technique) : rétabli une fois, `zevt courant` ; Pack-a-Punch (5 000 $) : cuisson 3,5 s puis arme améliorée", () => {
+  it("courant (local technique) : rétabli une fois, `zevt courant` ; Pack-a-Punch (5 000 $) : dépôt, cuisson 4 s, reprise de l'arme améliorée", () => {
     const co = achat("courant");
     const { b, j } = avec(co.position, 20_000);
     const pa = achat("pap");
@@ -736,14 +736,70 @@ describe("achats", () => {
     const t = T_MANCHE1 + 200;
     const p = acheter(b, j, "pap", t);
     expect(msgs(p, "argent")[0]).toMatchObject({ delta: -5000 });
-    expect(b.svc.etat().pap).toMatchObject({ etat: "cuisson", joueur: "a", arme: "pistolet", finT: t + CUISSON_PAP_MS });
+    expect(b.svc.etat().pap).toMatchObject({ etat: "cuisson", joueur: "a", arme: "pistolet", debutT: t, finT: t + CUISSON_PAP_MS });
+    // (v8, BO1) l'arme est retirée de l'inventaire : son slot est vide, le joueur passe au couteau
+    expect(msgs(p, "equipement")[0]).toMatchObject({ main: "couteau", equip: { enCuisson: "pistolet" } });
+    expect(armeDuSlot(j.equip, "secondaire")).toBeNull();
+    expect(j.arme).toBe("couteau");
+    expect(msgs(p, "zevt")[0].e).toEqual({ e: "pap", joueur: "a", arme: "pistolet", pret: false });
     expect(msgs(acheter(b, j, "pap", t + 100), "achat")[0]).toMatchObject({ ok: false, raison: "occupe" });
     const fin = avancer(b, t + 50, t + CUISSON_PAP_MS + 100);
-    expect(msgs(fin, "equipement")[0].equip.ameliorees).toEqual(["pistolet"]);
-    expect(msgs(fin, "zevt").some((m) => m.e.e === "pap" && m.e.pret)).toBe(true);
+    // cuite : elle attend dans la machine, rien n'est rendu tant que le joueur ne vient pas la reprendre
+    expect(msgs(fin, "equipement")).toEqual([]);
+    expect(msgs(fin, "zevt").map((m) => m.e)).toContainEqual({ e: "pap", joueur: "a", arme: "pistolet", pret: true });
+    expect(b.svc.etat().pap).toMatchObject({ etat: "pret", joueur: "a", arme: "pistolet" });
+    expect(b.svc.etat().pap.finT).toBeGreaterThanOrEqual(t + CUISSON_PAP_MS + REPRISE_PAP_MS);
+    const r = acheter(b, j, "pap", t + 5000);
+    expect(msgs(r, "achat")[0]).toMatchObject({ ok: true });
+    expect(msgs(r, "argent")).toEqual([]);
+    expect(msgs(r, "equipement")[0]).toMatchObject({ main: "secondaire", ravitaille: "pistolet" });
+    expect(msgs(r, "equipement")[0].equip.ameliorees).toEqual(["pistolet"]);
+    expect(msgs(r, "equipement")[0].equip.enCuisson).toBeUndefined();
+    expect(msgs(r, "zevt")[0].e).toMatchObject({ e: "pap", fin: "reprise" });
+    expect(j.arme).toBe("pistolet");
     expect(b.svc.etat().pap.etat).toBe("libre");
     expect(b.svc.degatsTir(j, "pistolet", "corps", 5, t + 5000)).toBe(160);
-    expect(msgs(acheter(b, j, "pap", t + 5000), "achat")[0]).toMatchObject({ ok: false, raison: "deja" });
+    expect(msgs(acheter(b, j, "pap", t + 5100), "achat")[0]).toMatchObject({ ok: false, raison: "deja" });
+  });
+
+  it("(v8) Micro-ondes : seul celui qui a déposé l'arme la reprend ; passé 15 s elle est perdue, sans remboursement, son slot reste vide", () => {
+    const pa = achat("pap");
+    const b = partieEnCours(["a", "c"], { argentDepart: 20_000, courant: true });
+    avancer(b, T0 + 100, T_MANCHE1 + 50);
+    const j = b.j("a"), autre = b.j("c");
+    j.p = [pa.position[0], 0, pa.position[1]];
+    autre.p = [pa.position[0] + 0.5, 0, pa.position[1]];
+    const t = T_MANCHE1 + 100;
+    expect(msgs(acheter(b, j, "pap", t), "achat")[0]).toMatchObject({ ok: true });
+    avancer(b, t + 50, t + CUISSON_PAP_MS + 100);
+    expect(b.svc.etat().pap.etat).toBe("pret");
+    expect(msgs(acheter(b, autre, "pap", t + CUISSON_PAP_MS + 200), "achat")[0]).toMatchObject({ ok: false, raison: "occupe" });
+    // le slot attend la reprise : pas de mini Uzi (secondaire) au mur entre-temps
+    const uzi = achat("mur:mini_uzi");
+    j.p = [uzi.position[0], 0, uzi.position[1]];
+    expect(msgs(acheter(b, j, uzi.id, t + CUISSON_PAP_MS + 300), "achat")[0]).toMatchObject({ ok: false, raison: "occupe" });
+    const perte = avancer(b, t + CUISSON_PAP_MS + 400, t + CUISSON_PAP_MS + REPRISE_PAP_MS + 200);
+    expect(msgs(perte, "zevt").map((m) => m.e)).toContainEqual({ e: "pap", joueur: "a", arme: "pistolet", pret: false, fin: "perdue" });
+    expect(msgs(perte, "argent").filter((m) => m.delta > 0 && m.motif !== "touche" && m.motif !== "kill")).toEqual([]);
+    expect(b.svc.etat().pap.etat).toBe("libre");
+    expect(armeDuSlot(j.equip, "secondaire")).toBeNull();
+    // une arme de la même catégorie remplit le slot vide
+    const s = acheter(b, j, uzi.id, t + CUISSON_PAP_MS + REPRISE_PAP_MS + 300);
+    expect(msgs(s, "achat")[0]).toMatchObject({ ok: true });
+    expect(j.equip.enCuisson).toBeUndefined();
+    expect(j).toMatchObject({ main: "secondaire", arme: "mini_uzi" });
+  });
+
+  it("(v8) Micro-ondes : un joueur qui part libère la machine", () => {
+    const pa = achat("pap");
+    const b = partieEnCours(["a", "c"], { argentDepart: 20_000, courant: true });
+    avancer(b, T0 + 100, T_MANCHE1 + 50);
+    const j = b.j("a");
+    j.p = [pa.position[0], 0, pa.position[1]];
+    acheter(b, j, "pap", T_MANCHE1 + 100);
+    expect(b.svc.etat().pap.etat).toBe("cuisson");
+    b.part("a", T_MANCHE1 + 200);
+    expect(b.svc.etat().pap.etat).toBe("libre");
   });
 
   it("Recette ultime : trois ingrédients (la truffe et le four exigent le courant), 30 s de cuisson, Rayon Goulaf amélioré + un atout", () => {

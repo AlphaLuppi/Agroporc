@@ -422,7 +422,9 @@ export interface EntreeInvite {
   maintenant?: number;
 }
 
+/** L'arme `a` est portée (pas celle déposée au Micro-ondes). */
 function possede(eq: Equipement, a: ArmeFeuId): boolean {
+  if (eq.enCuisson === a) return false;
   return (!eq.sansPrincipale && eq.principale === a) || eq.secondaire === a || eq.speciale === a;
 }
 
@@ -468,6 +470,11 @@ function descriptionAchat(a: Achat, e: EntreeInvite): Description | null {
     case "pap": {
       const arme = e.enMain;
       const d: Description = { invite: "pap", detail: `Micro-ondes Gratinator — ${formatArgent(a.prix)}`, prix: a.prix, id: a.id };
+      // (v8) l'arme gratinée attend son joueur : lui seul la reprend, gratuitement
+      if (p && p.pap.etat === "pret" && p.pap.arme) {
+        if (p.pap.joueur === e.moi) return { ...d, detail: `Reprendre : ${nomZombie(p.pap.arme, true)}`, prix: 0 };
+        return { ...d, detail: "Micro-ondes Gratinator", prix: 0, bloque: "Occupé" };
+      }
       if (p && !p.courant) return { ...d, bloque: "Courant coupé" };
       if (p && p.pap.etat !== "libre") return { ...d, bloque: "En cuisson" };
       if (!arme || estMelee(arme)) return { ...d, bloque: "Prenez une arme à feu" };

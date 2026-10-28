@@ -80,8 +80,9 @@ export interface Equipement {
   /** (v7, zombies) armes passées au Pack-a-Punch ; absent = aucune */
   ameliorees?: ArmeFeuId[];
   /**
-   * (v8, zombies) arme déposée dans le Micro-ondes Gratinator : elle reste dans son slot mais ce slot est vide (`armeDuSlot` /
-   * `slotDeLArme` de equipement.ts renvoient null) jusqu'à la reprise ; absent = aucune
+   * (v8, zombies) arme déposée dans le Micro-ondes Gratinator, ou perdue faute d'avoir été reprise à temps : elle reste écrite dans son slot
+   * mais ce slot est vide (`armeDuSlot` / `slotDeLArme` de equipement.ts renvoient null) jusqu'à la reprise, ou jusqu'à une nouvelle arme
+   * de sa catégorie ; absent = aucune
    */
   enCuisson?: ArmeFeuId;
 }
