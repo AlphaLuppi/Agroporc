@@ -759,6 +759,15 @@ export const ACHATS: readonly Achat[] = ([
   mur("epee", 3000, undefined, "est", surMur([176.7, -62.5], [201.7, -55.4], 0.7, [188, -45])),
   // Cour Ouest : le sniper
   mur("sniper", 1500, 750, "ouest", surMur([97.7, -83.1], [90.5, -57.9], 0.5, [80, -70])),
+  // (v8) armes des zombies le long du chemin, de moins en moins chères à mesure qu'on s'éloigne du départ (BO1 : Olympia, FAL, PPSh, CZ75)
+  // Passage Ouest : le Coupe-baguette, sur la façade du Labo
+  mur("baguette", 750, 375, "i1", surMur([101.7, -34.5], [95.7, -36.2], 0.5, [102, -42])),
+  // Passage Est : l'Agrafeuse, sur la façade de la Cuisine
+  mur("agrafeuse", 1200, 600, "i2", surMur([148.1, -37.3], [156.0, -35.1], 0.5, [154, -22])),
+  // Local technique : la Photocopieuse, à côté du disjoncteur
+  mur("photocopieuse", 1500, 750, "local", surMurLocal(62, [0, -7.4], [0, 0], 0.88, [-5, -3])),
+  // Labo : la Perforeuse, sur le mur du Micro-ondes
+  mur("perforeuse", 1000, 500, "labo", surMurLocal(74, [49.7, -14.5], [49.6, -4.1], 0.12, [44, -9])),
   // atouts
   { id: "atout:pausecafe", genre: "atout", atout: "pausecafe", prix: ATOUTS.pausecafe.prix, rayon: R_ACHAT, zone: "pause", ...surMurLocal(72, [23.3, 4.2], [11.8, 4.1], 0.5, [17, -2]) },
   { id: "atout:expresso", genre: "atout", atout: "expresso", prix: ATOUTS.expresso.prix, rayon: R_ACHAT, zone: "cuisine", ...surMurLocal(70, [1.5, 1.7], [1.5, 9.0], 0.5, [-4, 5]) },
