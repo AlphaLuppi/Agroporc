@@ -45,6 +45,9 @@ import {
 } from "./zombies-vagues";
 import type { Vec2 } from "../agroparc3d/types";
 
+/** Position arrondie au centimètre (origine d'un coup dans `zombieMort` : quelques octets de moins par mort). */
+const arrondi = (v: Vec3): Vec3 => [Math.round(v[0] * 100) / 100, Math.round(v[1] * 100) / 100, Math.round(v[2] * 100) / 100];
+
 /** Équipement de départ (copie à prendre avec `copierEquipement`) : pistolet et couteau seulement, pas d'arme principale. */
 export const EQUIPEMENT_DEPART_ZOMBIES: Readonly<Equipement> = Object.freeze({
   principale: "mitraillette", secondaire: "pistolet", speciale: null, sansPrincipale: true as const,
@@ -674,7 +677,7 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     sorties.push(zev({ e: "truck", quoi: "explosion", p }));
     for (const z of [...simu.liste()]) {
       if (Math.hypot(z.p[0] - p[0], z.p[2] - p[2]) > TRUCK.souffleM) continue;
-      sorties.push(...tuerTigre(z.id, par, t, "explosion", false));
+      sorties.push(...tuerTigre(z.id, par, t, "explosion", false, p));
     }
     for (const j of ctx.joueurs()) if (membre(j.id).admis && j.enJeu) sorties.push(crediter(j, GAIN_TRUCK, "truck"));
     immediat = true;
@@ -771,10 +774,10 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
    * Tue le tigre `id` (nuke, souffle du Truck) : `zombieMort` (cause), kill crédité à `par` ; `points` : gain de kill au tueur (jamais pour la
    * nuke) ; bonus éventuel sauf pour la nuke.
    */
-  function tuerTigre(id: number, par: JoueurSalle, t: number, cause: "explosion" | "nuke", points: boolean): Sortie[] {
+  function tuerTigre(id: number, par: JoueurSalle, t: number, cause: "explosion" | "nuke", points: boolean, src?: Vec3): Sortie[] {
     const r = simu.blesser(id, INSTAKILL, t);
     if (!r.mort) return [];
-    const sorties: Sortie[] = [{ a: "joueurs", m: { t: "zombieMort", id: idZombie(id), p: r.p ?? [0, 0, 0], par: par.id, zone: "corps", cause } }];
+    const sorties: Sortie[] = [{ a: "joueurs", m: { t: "zombieMort", id: idZombie(id), p: r.p ?? [0, 0, 0], par: par.id, zone: "corps", cause, ...(src ? { src: arrondi(src) } : {}) } }];
     par.kills++;
     if (points) sorties.push(crediter(par, gainKill({ double: doublePoints(t) }), "kill"));
     if (cause !== "nuke") lacherApresKill(r.type, r.p ?? [0, 0, 0], t, sorties);
@@ -1422,7 +1425,7 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
         const degats = t < effets.instakillFinT ? INSTAKILL : degatsExplosion(e, Math.max(0, dz - 0.6));
         if (degats <= 0) continue;
         const pvAvant = z.pv, pvMax = z.pvMax, type = z.type, id = z.id;
-        sorties.push(...this.blesser(idZombie(id), degats, j, "corps", t, { arme, gain: premier, cause: "explosion" }));
+        sorties.push(...this.blesser(idZombie(id), degats, j, "corps", t, { arme, gain: premier, cause: "explosion", src: c }));
         premier = false;
         // un souffle qui ne tue pas peut couper les pattes arrière (rampant)
         const apres = simu.zombie(id);
@@ -1448,7 +1451,12 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
         par.serie++;
         par.serieMax = Math.max(par.serieMax, par.serie);
         if (o.arme) par.killsParArme[o.arme] = (par.killsParArme[o.arme] ?? 0) + 1;
-        sorties.push({ a: "joueurs", m: { t: "zombieMort", id: cible, p: r.p ?? [0, 0, 0], par: par.id, zone, ...(o.cause ? { cause: o.cause } : melee ? { cause: "melee" as const } : {}) } });
+        // (v8) arme, amélioration et origine du coup : le client en tire la mort désarticulée du tigre
+        const ameliore = o.arme !== undefined && !estMelee(o.arme) && estAmelioree(par.equip, o.arme);
+        sorties.push({ a: "joueurs", m: {
+          t: "zombieMort", id: cible, p: r.p ?? [0, 0, 0], par: par.id, zone, ...(o.cause ? { cause: o.cause } : melee ? { cause: "melee" as const } : {}),
+          ...(o.arme ? { arme: o.arme } : {}), ...(ameliore ? { ameliore: true as const } : {}), ...(o.src ? { src: arrondi(o.src) } : {}),
+        } });
       } else if (o.gain !== false) {
         gain += gainTouche({ double });
       }

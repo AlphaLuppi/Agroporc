@@ -618,6 +618,7 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
       monde: () => jeuRef.current?.debug.monde() ?? null,
       tigres: (mesures) => jeuRef.current?.debug.tigres(mesures) ?? null,
       invoquer: () => jeuRef.current?.debug.invoquer() ?? false,
+      tuerZombie: (id, o) => jeuRef.current?.debug.tuerZombie(id, o) ?? false,
       forcerHud: (partiel) => setHudForce(partiel ? { ...partiel } : null),
       voix: (mode) => {
         const j = jeuRef.current;
@@ -1031,6 +1032,8 @@ declare global {
       tigres(mesures?: boolean): Record<string, unknown> | null;
       /** Lance le sort d'invocation comme la touche « invoquer » (false sans charge). */
       invoquer(): boolean;
+      /** Zombies : joue côté client la mort désarticulée du tigre `id` (numéro de `z<n>`) avec cette arme, zone, cause, origine (captures). */
+      tuerZombie(id: number, o?: Parameters<JeuHandle["debug"]["tuerZombie"]>[1]): boolean;
       /** Superpose un état partiel au HUD (base : repos si le jeu n'émet rien) ; `null` rend la main au jeu. */
       forcerHud(partiel: Partial<HudEtat> | null): void;
       /** Active le chat vocal dans ce mode (null : le coupe), comme la case du menu pause. */

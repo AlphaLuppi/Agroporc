@@ -25,7 +25,8 @@ import type { Difficulte, GenreBonus } from "./zombies-vagues";
  * après une micro-coupure : `bienvenue.jeton` / `bienvenue.reprise`, `bonjour.reprise`), carte « Service de midi » redécoupée
  * (aménagements ajoutés aux pièces : index des prismes de `batiments{detruits}` et positions d'achats partagés) et grenades balistiques
  * des zombies (client `lancerGrenade`, serveur `grenade`, `zevt{grenade}`, stocks `JoueurZombies.grenades` / `remontoirs`, tigre à
- * remontoir de la boîte). Client et serveur se déploient ensemble.
+ * remontoir de la boîte) ; `zombieMort` dit aussi comment le tigre est mort (`arme`, `ameliore`, `src` : ragdoll côté client). Client et
+ * serveur se déploient ensemble.
  */
 export const VERSION_PROTOCOLE = 8;
 
@@ -678,8 +679,12 @@ export type MessageServeur =
   | { t: "argent"; solde: number; delta: number; motif: string }
   /** Réponse à `acheter`. Privé. */
   | { t: "achat"; ok: boolean; id: string; raison?: RaisonAchat }
-  /** Un tigre zombie est mort en `p`, tué par `par` (effets et sons ; jamais dans le fil des éliminations). */
-  | { t: "zombieMort"; id: string; p: Vec3; par: string; zone: Zone; cause?: "explosion" | "nuke" | "melee" }
+  /**
+   * Un tigre zombie est mort en `p`, tué par `par` (effets et sons ; jamais dans le fil des éliminations). (v8, optionnels) `arme` qui l'a
+   * tué, `ameliore` si elle est passée au Pack-a-Punch, `src` = d'où vient le coup (bouche du canon, centre du souffle, œil du joueur en
+   * mêlée ; absent pour la nuke) : le client en tire l'impulsion de sa mort désarticulée (`lib/fps/ragdoll-tigre.ts`).
+   */
+  | { t: "zombieMort"; id: string; p: Vec3; par: string; zone: Zone; cause?: "explosion" | "nuke" | "melee"; arme?: ArmeId; ameliore?: true; src?: Vec3 }
   /** (v7) Effet ponctuel de la partie de zombies (aux membres de la salle). */
   | { t: "zevt"; e: EvenementZombies }
   /**

@@ -281,7 +281,7 @@ export interface ServiceZombies {
    */
   blesser(
     cible: string, degats: number, par: JoueurSalle, zone: Zone, maintenant: number,
-    opts?: { melee?: boolean; arme?: ArmeId; gain?: boolean; cause?: "explosion" | "nuke" | "melee" },
+    opts?: { melee?: boolean; arme?: ArmeId; gain?: boolean; cause?: "explosion" | "nuke" | "melee"; src?: Vec3 },
   ): Sortie[];
   // ---- v7 ----
   /** dégâts d'un plomb sur un tigre (profil zombies de l'arme, amélioration, insta-kill) */

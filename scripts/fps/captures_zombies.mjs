@@ -4,6 +4,7 @@
  * photographie la carte « Service de midi » depuis une liste de points de vue (téléportation CÔTÉ CLIENT seulement : le serveur garde le joueur au
  * départ, ce qui suffit pour photographier le décor), puis attend les premiers tigres aux fenêtres de l'open space.
  * Usage : node scripts/fps/captures_zombies.mjs   (E2E_OUT = dossier des captures, défaut <tmp>/pdj-captures-zombies ; E2E_URL / E2E_WS réutilisent des serveurs lancés)
+ * RAGDOLL=1 (avec PAUSE courte) : au lieu des points de vue, les morts désarticulées des tigres, une par arme (SCENARIOS, DELAIS en ms).
  */
 import { spawn, spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
@@ -118,7 +119,52 @@ try {
   await entrer();
   await capture("00-entree");
   const depart = await ev(() => window.__arene.etat().jeu.p);
-  for (const [nom, p, cible] of VUES) {
+  if (process.env.RAGDOLL) {
+    // (v8) morts désarticulées : à chaque scénario, un tigre d'essai (côté client, `tuerZombie` avec `p`) meurt dans la cour avec cette arme,
+    // touché de côté, photographié trois fois pendant sa chute (rendu logiciel lent : le ragdoll avance d'au plus 8 pas de 1/120 s par image,
+    // la chute dure plusieurs secondes réelles). Caméra en CAM, tigre en TIGRE (x, z), coup venant de 5 m sur son côté.
+    const SCENARIOS = JSON.parse(process.env.SCENARIOS ?? "null") ?? [
+      ["pistolet", { arme: "pistolet" }],
+      ["pompe", { arme: "pompe" }],
+      ["tete-revolver", { arme: "revolver", zone: "tete" }],
+      ["couteau", { arme: "couteau", cause: "melee" }],
+      ["epee", { arme: "epee", cause: "melee" }],
+      ["grenade", { arme: "lance_grenades", cause: "explosion" }],
+      ["rayon", { arme: "rayon" }],
+      ["rayon-goulaf", { arme: "rayon", ameliore: true }],
+      ["petit-pompe", { arme: "pompe", type: 3 }],
+      ["chef-rayon", { arme: "rayon", type: 2 }],
+      ["rayon-mur", { arme: "rayon", depuis: "camera" }],
+    ];
+    const DELAIS = JSON.parse(process.env.DELAIS ?? "null") ?? [800, 3500, 9000];
+    const CAM = JSON.parse(process.env.CAM ?? "null") ?? [124, -45];
+    const TIGRE = JSON.parse(process.env.TIGRE ?? "null") ?? [131.5, -55.5];
+    let n = 0;
+    for (const [nom, o] of SCENARIOS) {
+      if (!(await ev(() => !!window.__arene?.etat().jeu).catch(() => false))) { console.log("rechargée : nouvelle entrée"); await entrer(); }
+      const ok = await ev(([o, cam, t, n]) => {
+        window.__arene.teleporter([cam[0], 0, cam[1]]);
+        const e = window.__arene.etat().jeu.oeil;
+        const vx = t[0] - e[0], vz = t[1] - e[2], l = Math.hypot(vx, vz), ux = vx / l, uz = vz / l;
+        window.__arene.regarder(Math.atan2(-vx, -vz), Math.atan2(0.5 - e[1], l));
+        // le tireur est de côté, à 5 m du tigre qui le chargeait (`depuis: "camera"` : c'est la caméra qui tire, le tigre part vers le fond)
+        const [sx, sz] = o.depuis === "camera" ? [-ux, -uz] : [uz, -ux];
+        const src = o.cause === "explosion" ? [t[0] + sx * 1.2, 0.3, t[1] + sz * 1.2] : o.depuis === "camera" ? e : [t[0] + sx * 5, 1.6, t[1] + sz * 5];
+        const cap = Math.atan2(-sx, -sz);
+        const { depuis, ...reste } = o;
+        return window.__arene.tuerZombie(-1000 - n, { ...reste, src, p: [t[0], 0, t[1]], cap });
+      }, [o, CAM, TIGRE, n++]);
+      console.log("mort", nom, ok);
+      let avant = 0;
+      for (const d of DELAIS) {
+        await dormir(d - avant);
+        avant = d;
+        await capture(`30-ragdoll-${nom}-${d}`);
+      }
+      console.log("ragdolls", JSON.stringify(await ev(() => window.__arene.etat().jeu.rugissements).catch(() => null)));
+    }
+  }
+  for (const [nom, p, cible] of process.env.RAGDOLL ? [] : VUES) {
     // `next dev` recharge parfois la page (compilation à la demande) : on rentre en partie
     if (!(await ev(() => !!window.__arene?.etat().jeu).catch(() => false))) { console.log("rechargée : nouvelle entrée"); await entrer(); }
     await ev(([p, c]) => {
@@ -131,7 +177,7 @@ try {
     await capture(nom);
     console.log("capture", nom);
   }
-  if (!process.env.SANS_TIGRES) {
+  if (!process.env.SANS_TIGRES && !process.env.RAGDOLL) {
     // retour au départ (position du serveur) : on attend la manche et les tigres aux fenêtres
     await ev((p) => window.__arene.teleporter(p), depart);
     let n = 0;

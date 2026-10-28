@@ -173,6 +173,12 @@ describe("tirs sur les tigres", () => {
     const mort = toutes.find((x) => x.m.t === "zombieMort")!;
     expect(mort.a).toBe("joueurs");
     expect(mort.m).toMatchObject({ id, par: "a" });
+    // (v8) comment il est mort : l'arme et l'origine du tir (l'œil du tireur), pour la mort désarticulée côté client
+    const m8 = mort.m as { arme?: string; src?: number[]; ameliore?: boolean };
+    expect(m8.arme).toBe("pistolet");
+    expect(m8.ameliore).toBeUndefined();
+    const o = [a.p[0], a.p[1] + SILHOUETTE.oeil, a.p[2]];
+    m8.src!.forEach((v, k) => expect(v).toBeCloseTo(o[k], 1));
     const zoneMort = (mort.m as { zone: "tete" | "corps" }).zone;
     expect(a.kills).toBe(1);
     expect(a.touches).toBe(degats.length);
@@ -251,6 +257,8 @@ describe("tirs sur les tigres", () => {
     expect(degats.length).toBeLessThanOrEqual(3);
     expect(degats.every((m) => m.degats === 1000 && m.pv === 0 && m.cible.startsWith("z"))).toBe(true);
     expect(messages(resultat, "zombieMort")).toHaveLength(degats.length);
+    // (v8) morts à l'épée : cause mêlée, arme et position du coup (le client fauche les tigres de côté)
+    expect(messages(resultat, "zombieMort").every((m) => m.cause === "melee" && m.arme === "epee" && m.src && Math.abs(m.src[0] - o[0]) < 0.01)).toBe(true);
     expect(a.killsParArme).toEqual({ epee: degats.length });
     const gain = messages(resultat, "argent").reduce((n, m) => n + m.delta, 0);
     expect(gain).toBe(degats.length * gainKill({ melee: true }));

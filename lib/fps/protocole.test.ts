@@ -91,7 +91,7 @@ describe("silhouette", () => {
 });
 
 describe("constantes", () => {
-  it("version 8 du protocole (événements de la v4, tigres largués de la v5, zombies et épée, réseau, carte et grenades de la v8)", () => {
+  it("version 8 du protocole (événements de la v4, tigres largués de la v5, zombies et épée, réseau, carte, grenades et morts désarticulées de la v8)", () => {
     expect(VERSION_PROTOCOLE).toBe(8);
   });
 

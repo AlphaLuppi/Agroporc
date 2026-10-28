@@ -10,15 +10,22 @@
  * Tant que le GLB n'est pas prêt (ou s'il ne charge pas), les tigres sont de simples silhouettes en boîtes. Orientation : le corps marche
  * le long de +x de son repère, le groupe est donc tourné de `cap + π/2` (comme `rendu-monstres.ts`).
  * v7 : quatre teintes (tigre, doré qui luit, chef coiffé d'une toque, petit), sortie du sol, arrachage des planches, saut par la fenêtre,
- * rampant, recul à l'impact et trois morts (de côté, en avant à la tête, projeté par une explosion) : le cadavre garde son emplacement
- * `DUREE_CADAVRE_S` puis s'enfonce.
+ * rampant, recul à l'impact. v8 : la mort est un ragdoll (`ragdoll-tigre.ts` : particules de Verlet sur les os du GLB, sol, tables et murs
+ * du monde, impulsion selon l'arme, la zone et l'origine du coup), au plus `RAGDOLL.actifsMax` simulés à la fois (les plus anciens se
+ * figent) ; repli sur les trois morts rigides de la v7 (de côté, en avant à la tête, projeté par une explosion) sans collisions. Le cadavre
+ * garde son emplacement `DUREE_CADAVRE_S` (`DUREE_CADAVRE_PROJETE_S` s'il a été projeté) puis s'enfonce. Un tigre mort est ignoré des snaps
+ * suivants (l'affichage a `JEU.interpolationMs` de retard : sans cela il réapparaîtrait vivant à côté de son cadavre).
  * Aucun test vitest (three, WebGL) : la logique est dans `jeu-zombies.ts` et `zombies-anim.ts`, les régressions se voient aux captures.
  * Spec : docs/superpowers/specs/2026-10-27-arene-zombies-design.md (« Rendu et performances côté client »), 2026-10-28-zombies-bo1-design.md (« Animations »)
  */
 import * as THREE from "three";
 import { chargerModele, creerTigre, type ModeleTigre, type Tigre } from "../tigre3d/modele";
+import { creerMonde, squelette } from "../tigre3d/squelette";
 import { animerCetteImage, tigreAffiche, type ZombieVue } from "./jeu-zombies";
 import { JEU, type Vec3 } from "./protocole";
+import {
+  creerRagdoll, limiterActifs, osDeLaPose, type CauseMort, type CollisionsRagdoll, type ImpulsionRagdoll, type Ragdoll,
+} from "./ragdoll-tigre";
 import { creerAnimZombie, type AnimZombie } from "./zombies-anim";
 import { ZOMBIES } from "./zombies-vagues";
 
@@ -27,12 +34,17 @@ export const TAILLE_POOL = ZOMBIES.plafondVivants;
 export const CREATIONS_PAR_IMAGE = 2;
 /** Teintes multipliées à la texture du pelage : tigre brun sombre, doré, chef rouge sombre, petit plus clair. */
 export const TEINTES_ZOMBIES: readonly number[] = [0x6e5442, 0xffd25a, 0x8c2a24, 0xc49a74];
-/** Un cadavre reste à l'écran cette durée (s), dont la dernière seconde à s'enfoncer. */
-export const DUREE_CADAVRE_S = 2.6;
+/** Un cadavre reste à l'écran cette durée (s), dont la dernière seconde à s'enfoncer ; plus longtemps s'il a été projeté (il faut le voir voler). */
+export const DUREE_CADAVRE_S = 4;
+export const DUREE_CADAVRE_PROJETE_S = 5;
+/** Au-delà de cette impulsion (m/s), le tigre est projeté (Pistolet à rayons, armes gratinées explosives). */
+const VITESSE_PROJECTION = 12;
+/** Vitesse de course (m/s) gardée par le cadavre au plus. */
+const LANCEE_MAX = 8;
 /** Profondeur (m) d'où sort un tigre qui émerge du sol. */
 const PROFONDEUR_SOL_M = 1.7;
 /** Façon de mourir (cause du message `zombieMort`). */
-export type MortZombie = "corps" | "tete" | "explosion" | "nuke" | "melee";
+export type MortZombie = CauseMort;
 /** Silhouette de remplacement (m) : long, haut, large, avant la fin du chargement du modèle. */
 const BOITE = { l: 1.1, h: 0.55, w: 0.3 } as const;
 
@@ -56,8 +68,18 @@ export interface RenduZombies {
   pret(): boolean;
   /** Tigres dessinés à la dernière image (essais). */
   affiches(): number;
-  /** (v7) le tigre `id` vient de mourir : son emplacement joue la mort puis s'enfonce */
-  mort(id: number, cause: MortZombie): void;
+  /**
+   * (v7) le tigre `id` vient de mourir : son emplacement joue la mort puis s'enfonce. (v8) `impulsion` : ragdoll lancé ainsi (sinon il
+   * s'effondre sur place) ; sans collisions ni modèle, la mort rigide de la v7
+   */
+  mort(id: number, cause: MortZombie, impulsion?: ImpulsionRagdoll): void;
+  /** ragdolls en cours de simulation (essais) */
+  ragdollsActifs(): number;
+  /**
+   * (essais) un tigre qui courait en (x, z) meurt aussitôt (`mort`) : cadavre d'un emplacement libre, sans tigre du serveur. false si le
+   * modèle n'est pas prêt
+   */
+  cadavreEssai(v: { x: number; z: number; cap: number; echelle: number; type: number }, cause: MortZombie, impulsion?: ImpulsionRagdoll): boolean;
   /** (v7) le tigre `id` est touché (recul : la tête à la tête, l'épaule au corps) */
   touche(id: number, tete: boolean): void;
   dispose(): void;
@@ -82,14 +104,19 @@ interface Emplacement {
   reculSens: number;
   mortT: number;
   mortCause: MortZombie | null;
-  /** dernière pose connue (le cadavre se fige là) */
-  x: number; z: number; cap: number; echelle: number;
+  /** dernière pose connue (le cadavre se fige là) et vitesse mesurée (le cadavre part sur sa lancée) */
+  x: number; z: number; cap: number; echelle: number; vitesse: number;
+  /** (v8) ragdoll du cadavre (null : mort rigide de la v7), sa pose a été recopiée depuis qu'il dort, durée du cadavre */
+  ragdoll: Ragdoll | null;
+  poseRagdoll: boolean;
+  dureeCadavre: number;
+  ageCadavre: number;
   /** prochain coup de patte sur les planches (s, horloge locale) ; son de ce coup déjà demandé */
   arracheT: number;
   arracheSonne: boolean;
 }
 
-export function creerRenduZombies(scene: THREE.Scene): RenduZombies {
+export function creerRenduZombies(scene: THREE.Scene, collisions: CollisionsRagdoll | null = null): RenduZombies {
   const racine = new THREE.Group();
   racine.name = "zombies";
   scene.add(racine);
@@ -122,6 +149,12 @@ export function creerRenduZombies(scene: THREE.Scene): RenduZombies {
   /** numéro de l'image du `maj` précédent */
   let imagePrec = -1;
   const geosPrivees = new Map<THREE.BufferGeometry, THREE.BufferGeometry>();
+  /** (v8) tigres morts → instant local de la mort : ignorés des snaps suivants le temps du cadavre */
+  const morts = new Map<number, number>();
+  const osMort = creerMonde(squelette());
+  let nRagdollsActifs = 0;
+  /** ids (négatifs) des tigres d'essai */
+  let idEssai = 0;
 
   chargerModele().then((m) => {
     if (detruit) return;
@@ -169,8 +202,8 @@ export function creerRenduZombies(scene: THREE.Scene): RenduZombies {
     racine.add(groupe);
     const e: Emplacement = {
       tigre, groupe, anim: creerAnimZombie(emplacements.length + 1), maillages, id: 0, type: 0, dtAcc: 0, vuImage: -1, griffePrec: false,
-      mode: "chasse", modeT: 0, recul: 0, reculSens: 1, mortT: -1, mortCause: null, x: 0, z: 0, cap: 0, echelle: 1, arracheT: 0,
-      arracheSonne: false,
+      mode: "chasse", modeT: 0, recul: 0, reculSens: 1, mortT: -1, mortCause: null, x: 0, z: 0, cap: 0, echelle: 1, vitesse: 0, arracheT: 0,
+      arracheSonne: false, ragdoll: null, poseRagdoll: false, dureeCadavre: DUREE_CADAVRE_S, ageCadavre: 0,
     };
     emplacements.push(e);
     return e;
@@ -188,8 +221,13 @@ export function creerRenduZombies(scene: THREE.Scene): RenduZombies {
     // pool plein : le plus vieux cadavre cède sa place
     let vieux: Emplacement | null = null;
     for (const e of emplacements) if (e.mortCause !== null && (!vieux || e.mortT < vieux.mortT)) vieux = e;
-    if (vieux) { vieux.mortCause = null; vieux.groupe.visible = false; vieux.id = 0; }
+    if (vieux) liberer(vieux);
     return vieux;
+  }
+
+  /** Le cadavre disparaît : l'emplacement est libre (et son ragdoll oublié). */
+  function liberer(e: Emplacement): void {
+    e.mortCause = null; e.groupe.visible = false; e.id = 0; e.ragdoll = null;
   }
 
   // ---- lueur du tigre doré, toque du chef ----
@@ -266,13 +304,35 @@ export function creerRenduZombies(scene: THREE.Scene): RenduZombies {
     e.groupe.rotation.x = e.recul * e.reculSens * 0.18;
   }
 
-  /** Mort en cours : de côté, en avant (tête), projeté (explosion) ; s'enfonce la dernière seconde. */
+  /**
+   * Cadavre : (v8) le ragdoll avance de `dt` (sauf s'il dort ou s'il a été figé par le plafond) et sa pose est recopiée sur le clone ;
+   * s'enfonce la dernière seconde, puis l'emplacement est libéré. L'âge du cadavre suit le temps simulé tant que le ragdoll bouge : sous
+   * une image lente, la chute ralentit et le cadavre ne disparaît pas avant d'être tombé.
+   */
+  function poserCadavre(e: Emplacement, tLocal: number, dt: number): void {
+    const r = e.ragdoll;
+    if (!r) { poserMort(e, tLocal); return; }
+    const u = e.ageCadavre;
+    if (u >= e.dureeCadavre) { liberer(e); return; }
+    const enfonce = Math.max(0, u - (e.dureeCadavre - 1)) * 0.9;
+    e.groupe.visible = true;
+    e.groupe.position.set(r.repere.x, -enfonce, r.repere.z);
+    e.groupe.rotation.set(0, r.repere.cap + Math.PI / 2, 0);
+    e.tigre.groupe.scale.setScalar(r.repere.echelle);
+    const dormait = r.endormi();
+    const simule = r.pas(dt);
+    e.ageCadavre += dormait ? dt : simule;
+    // endormi : la pose ne change plus, on ne la recopie qu'une fois
+    if (!dormait || !e.poseRagdoll) { e.tigre.appliquer(r.pose(), r.repere.origineX); e.poseRagdoll = dormait; }
+  }
+
+  /** (v7, repli sans ragdoll) mort rigide : de côté, en avant (tête), projeté (explosion) ; s'enfonce la dernière seconde. */
   function poserMort(e: Emplacement, tLocal: number): boolean {
     const u = tLocal - e.mortT;
-    if (u >= DUREE_CADAVRE_S) { e.mortCause = null; e.groupe.visible = false; e.id = 0; return false; }
+    if (u >= e.dureeCadavre) { liberer(e); return false; }
     const k = Math.min(1, u / 0.45);
     const s = 1 - (1 - k) * (1 - k);
-    const enfonce = Math.max(0, u - (DUREE_CADAVRE_S - 1)) * 0.9;
+    const enfonce = Math.max(0, u - (e.dureeCadavre - 1)) * 0.9;
     let y = -enfonce, rx = 0, rz = 0;
     switch (e.mortCause) {
       case "tete": rz = -1.1 * s; y -= 0.15 * s; break;
@@ -305,7 +365,14 @@ export function creerRenduZombies(scene: THREE.Scene): RenduZombies {
         if (e.mortCause === null) { e.id = 0; e.groupe.visible = false; }
       }
       tempsLocal += dt;
-      for (const e of emplacements) if (e.mortCause !== null && !parId.has(e.id)) poserMort(e, tempsLocal);
+      // (le cadavre peut durer plus longtemps en temps réel sous une image lente : on garde l'id tant qu'il est là)
+      for (const [id, t] of morts) {
+        if (tempsLocal - t > DUREE_CADAVRE_PROJETE_S + 1 && !emplacements.some((e) => e.id === id && e.mortCause !== null)) morts.delete(id);
+      }
+      // (v8) plafond des ragdolls simulés : les plus anciens se figent
+      const cadavres = emplacements.filter((e) => e.mortCause !== null && e.ragdoll !== null).sort((a, b) => a.mortT - b.mortT);
+      nRagdollsActifs = limiterActifs(cadavres as (Emplacement & { ragdoll: Ragdoll })[]).length;
+      for (const e of emplacements) if (e.mortCause !== null && !parId.has(e.id)) poserCadavre(e, tempsLocal, dt);
       for (let k = 0; k < nLueurs; k++) lueurs[k].visible = false;
       for (let k = 0; k < nToques; k++) toques[k].visible = false;
       nLueurs = 0; nToques = 0;
@@ -313,6 +380,8 @@ export function creerRenduZombies(scene: THREE.Scene): RenduZombies {
 
       for (let i = 0; i < n; i++) {
         const v = zombies[i];
+        // mort : encore dans les snaps interpolés (retard d'affichage), son cadavre le remplace
+        if (morts.has(v.id)) continue;
         const d = Math.hypot(v.x - cam[0], v.z - cam[2]);
         const affiche = tigreAffiche(cam, regardX, regardZ, v.x, v.z);
         if (!prets) {
@@ -334,6 +403,7 @@ export function creerRenduZombies(scene: THREE.Scene): RenduZombies {
           e.id = v.id;
           e.dtAcc = 0;
           e.mortCause = null;
+          e.ragdoll = null;
           e.mode = v.mode;
           e.modeT = tempsLocal;
           e.recul = 0;
@@ -350,7 +420,7 @@ export function creerRenduZombies(scene: THREE.Scene): RenduZombies {
         e.dtAcc = Math.min(0.25, e.dtAcc + dt);
         if (v.type !== e.type) teinter(e, v.type);
         if (v.mode !== e.mode) { e.mode = v.mode; e.modeT = tempsLocal; }
-        e.x = v.x; e.z = v.z; e.cap = v.cap; e.echelle = v.echelle;
+        e.x = v.x; e.z = v.z; e.cap = v.cap; e.echelle = v.echelle; e.vitesse = v.vitesse;
         e.groupe.visible = affiche;
         if (!affiche) continue;
         nAffiches++;
@@ -388,12 +458,47 @@ export function creerRenduZombies(scene: THREE.Scene): RenduZombies {
     pret() {
       return modele !== null && emplacements.length >= TAILLE_POOL;
     },
-    mort(id, cause) {
+    cadavreEssai(v, cause, impulsion) {
+      const e = modele ? emplacementLibre() : null;
+      if (!e) return false;
+      const id = --idEssai;
+      e.id = id;
+      e.anim = creerAnimZombie(-id);
+      // une seconde de course : la pose de départ du ragdoll est celle d'un tigre lancé
+      for (let k = 0; k < 60; k++) e.anim.maj(1 / 60, 4, v.echelle, false);
+      e.tigre.appliquer(e.anim.pose(), e.anim.x());
+      teinter(e, v.type);
+      e.x = v.x; e.z = v.z; e.cap = v.cap; e.echelle = v.echelle; e.vitesse = 4;
+      parId.set(id, e);
+      this.mort(id, cause, impulsion);
+      return true;
+    },
+    mort(id, cause, impulsion) {
+      morts.set(id, tempsLocal);
       const e = parId.get(id);
       if (!e) return;
       parId.delete(id);
       e.mortCause = cause;
       e.mortT = tempsLocal;
+      e.ragdoll = null;
+      e.poseRagdoll = false;
+      e.ageCadavre = 0;
+      e.dureeCadavre = DUREE_CADAVRE_S;
+      if (!collisions || !modele) return;
+      // le ragdoll part de la pose affichée (celle du moteur de course, recopiée sur le clone à sa dernière animation), sur sa lancée
+      const sq = squelette();
+      const th = e.cap + Math.PI / 2, v = Math.min(e.vitesse, LANCEE_MAX);
+      const r = creerRagdoll(sq, osDeLaPose(sq, e.anim.pose(), osMort), { x: e.x, z: e.z, cap: e.cap, echelle: e.echelle, origineX: e.anim.x() }, collisions, {
+        vitesse: [Math.cos(th) * v, 0, -Math.sin(th) * v], graine: id,
+      });
+      if (impulsion) {
+        r.impulsion(impulsion);
+        if (impulsion.vitesse >= VITESSE_PROJECTION) e.dureeCadavre = DUREE_CADAVRE_PROJETE_S;
+      }
+      e.ragdoll = r;
+    },
+    ragdollsActifs() {
+      return nRagdollsActifs;
     },
     touche(id, tete) {
       const e = parId.get(id);
@@ -413,6 +518,7 @@ export function creerRenduZombies(scene: THREE.Scene): RenduZombies {
       }
       emplacements.length = 0;
       parId.clear();
+      morts.clear();
       for (const x of aDisposer) x.dispose();
       aDisposer.length = 0;
     },
