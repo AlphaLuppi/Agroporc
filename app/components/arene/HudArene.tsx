@@ -38,6 +38,7 @@ import ToastCentre from "./hud/ToastCentre";
 import Viseur from "./hud/Viseur";
 import ZoneVive, { useFileVive } from "./hud/ZoneVive";
 import { useEphemere, useEtatZombies, useProgressionReanimation } from "./hud/useEtatZombies";
+import { AnnonceZombies, AtoutsZombies, BonusActifs, IntroZombies, MancheCraie, NoteZombies, ObjectifZombies } from "./hud/PanneauZombies";
 import { useHudLive } from "./hud/useHudLive";
 import { useMessagesVifs } from "./hud/useMessagesVifs";
 import { useRetoursTouche } from "./hud/useRetoursTouche";
@@ -109,6 +110,10 @@ export default function HudArene(p: PropsHudArene) {
   const refusAchat = useMemo(() => (ez?.refus ? { n: ez.refus.n, texte: texteRefusAchat(ez.refus.raison) } : null), [ez?.refus?.n, ez?.refus?.raison]); // eslint-disable-line react-hooks/exhaustive-deps
   const mancheEnCours = partieZ?.phase === "manche" ? partieZ.manche : 0;
   const bandeauManche = useEphemere(mancheEnCours > 0 ? mancheEnCours : null, ez ? { manche: mancheEnCours, restants: ez.restants } : null, 4200);
+  // (v7) annonces (bonus, courant, livraison…) et introduction de la partie
+  const annonceZ = useEphemere(ez?.annonce?.n ?? 0, ez?.annonce ?? null, 3200);
+  const introZ = useEphemere(partieZ?.phase === "pause" && partieZ.manche === 1 ? partieZ.debutT : null, true, 7600);
+  const mesAtoutsZ = partieZ?.joueurs.find((j) => j.id === monId)?.atouts ?? [];
   const refReanim = useRef<HTMLSpanElement | null>(null);
   useProgressionReanimation(p.live, refReanim, zombies && !!hud?.reanime);
   const { toast, surPalier, afficher } = useMessagesVifs({
@@ -239,6 +244,11 @@ export default function HudArene(p: PropsHudArene) {
         />
       )}
       {zombies && !finZ && !pause && bandeauManche && <BandeauManche manche={bandeauManche.manche} restants={bandeauManche.restants} />}
+      {zombies && !finZ && ez && <ObjectifZombies texte={ez.objectif} />}
+      {zombies && !finZ && partieZ && <BonusActifs effets={partieZ.effets} maintenantServeur={maintenantServeur} />}
+      {zombies && !finZ && !pause && annonceZ && <AnnonceZombies texte={annonceZ.texte} genre={annonceZ.genre} />}
+      {zombies && !finZ && !pause && introZ && <IntroZombies />}
+      {zombies && !finZ && !pause && ez?.note != null && <NoteZombies id={ez.note} touche={t("interagir")} />}
 
       {/* cockpit du titan (v3) : sous tout le reste du HUD */}
       {combat && hud.titan && p.monstres && <CockpitTitan monstres={p.monstres} maintenantServeur={maintenantServeur} />}
@@ -250,6 +260,8 @@ export default function HudArene(p: PropsHudArene) {
         {combat && <FilEliminations fil={p.fil} annonces={p.annonces} />}
       </CoinHud>
       <CoinHud coin="bg" coinMinimap={coinMap} miniMap={miniMap}>
+        {zombies && !finZ && <MancheCraie manche={partieZ?.manche ?? 0} truck={!!partieZ?.mancheTruck} />}
+        {zombies && !finZ && <AtoutsZombies atouts={mesAtoutsZ} />}
         {zombies && !finZ && (
           <BlocArgent
             argent={ez?.argent ?? hud.argent ?? 0} gain={gainTexte} cleGain={ez?.gain?.n ?? 0} gainPositif={(ez?.gain?.delta ?? 0) > 0} refus={refusTexte}
@@ -260,6 +272,7 @@ export default function HudArene(p: PropsHudArene) {
           <BlocVie
             pv={hud.pv} bouclier={hud.bouclier} regen={hud.regen} accroupi={hud.accroupi} glisse={hud.glisse} mur={hud.mur}
             protegeRestant={hud.protegeRestant} rupture={rupture} refTraitRegen={refRegen}
+            {...(zombies ? { pvMax: ez?.pvMax ?? 100, regenParS: 60 } : {})}
           />
         )}
       </CoinHud>

@@ -145,7 +145,7 @@ export interface ContexteSalle {
    * Change l'équipement EN COURS (achat) et l'arme en main ; renvoie le message `equipement` privé. `ravitaille` : arme dont le client remplit
    * chargeur ET réserve. Le dégainage ne recommence que si l'arme en main change.
    */
-  equiper(j: JoueurSalle, equip: Equipement, main: Slot, maintenant: number, ravitaille?: ArmeFeuId): Sortie[];
+  equiper(j: JoueurSalle, equip: Equipement, main: Slot, maintenant: number, ravitaille?: ArmeFeuId | "tout"): Sortie[];
 }
 
 /** Événements de l'arène (v3, `match-evenements.ts` : `creerServiceEvenements(ctx, opts)`) : Truck Muche fou, tigre robot, titan tigre. */
@@ -275,7 +275,30 @@ export interface ServiceZombies {
    * Dégâts cumulés d'un tir ou d'un coup sur un tigre : `degats` au tireur, argent (+10 $ par touche si `gain`, kill 60 / 100 $), `zombieMort`,
    * `kills` du tireur et `presence`. `gain: false` pour les tigres suivants d'un même tir (le gain de touche est unique par tir).
    */
-  blesser(cible: string, degats: number, par: JoueurSalle, zone: Zone, maintenant: number, opts?: { melee?: boolean; arme?: ArmeId; gain?: boolean }): Sortie[];
+  blesser(
+    cible: string, degats: number, par: JoueurSalle, zone: Zone, maintenant: number,
+    opts?: { melee?: boolean; arme?: ArmeId; gain?: boolean; cause?: "explosion" | "nuke" | "melee" },
+  ): Sortie[];
+  // ---- v7 ----
+  /** dégâts d'un plomb sur un tigre (profil zombies de l'arme, amélioration, insta-kill) */
+  degatsTir(j: JoueurSalle, arme: ArmeFeuId, zone: Zone, distance: number, maintenant: number): number;
+  /** dégâts d'un coup d'arme blanche sur un tigre (insta-kill compris) */
+  degatsMelee(j: JoueurSalle, arme: ArmeMeleeId, maintenant: number): number;
+  /** la balle de cette arme traverse tous les tigres alignés */
+  perce(j: JoueurSalle, arme: ArmeFeuId): boolean;
+  /** multiplicateur de l'intervalle entre deux tirs (Double Ristretto : 1 / 1,33) */
+  cadence(j: JoueurSalle): number;
+  /** santé du joueur dans la salle zombies : PV max (Gratin), régénération */
+  sante(j: JoueurSalle): { pvMax: number; delaiMs: number; pvParS: number };
+  /** distance du rayon au Truck Muche d'une manche de livraison, null s'il le manque ou s'il n'y en a pas */
+  toucheTruck(o: Vec3, d: Vec3, portee: number): number | null;
+  /** dégâts sur le Truck (explosion à 0, souffle, +500 $ à chacun) */
+  blesserTruck(degats: number, par: JoueurSalle, maintenant: number): Sortie[];
+  /**
+   * Souffle d'une arme explosive (pistolet gratiné, pistolet à rayons) : au premier tigre touché (`distanceTouche`), sinon au premier mur ou
+   * au sol ; dégâts dégressifs sur les tigres proches, rampants possibles, `zevt{explosion}` aux autres joueurs.
+   */
+  explosionTir(j: JoueurSalle, arme: ArmeFeuId, o: Vec3, d: Vec3, distanceTouche: number | null, portee: number, maintenant: number): Sortie[];
   /** `lancerPartie`, `acheter`, `reanimer` ; les autres types renvoient [] */
   recevoir(j: JoueurSalle, m: MessageClient, maintenant: number): Sortie[];
   /** le joueur vient de tomber à 0 PV (`Salle.mourir`) : à terre, défaite éventuelle, `zombies{etat}` immédiat + `presence` */

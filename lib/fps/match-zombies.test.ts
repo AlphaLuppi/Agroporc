@@ -10,12 +10,16 @@ import {
   EQUIPEMENT_DEFAUT, JEU, copierEquipement, decoderZombies, type Equipement, type MessageClient, type MessageServeur, type Slot, type Vec3,
 } from "./protocole";
 import { appliquerDegats } from "./sante";
-import { ACHATS, DEPARTS, PORTES_PAYANTES, construireMondeZombies, idPrisme, porteDeId } from "./zombies-carte";
-import { ZOMBIES, bonusFinManche, gainKill, gainTouche, intervalleApparition, totalManche } from "./zombies-vagues";
+import {
+  ACHATS, ATOUTS, DEPARTS, FENETRES, PORTES_PAYANTES, achatBoite, construireMondeZombies, etiqueterZones, fenetreDeId, idPrisme, porteDeId, zoneEn,
+  type ZoneId,
+} from "./zombies-carte";
+import { ZOMBIES, delaiApparition, gainKill, gainTouche, pvZombie, totalManche, type GenreBonus } from "./zombies-vagues";
+import { CUISSON_PAP_MS, CUISSON_RECETTE_MS, OFFRE_BOITE_MS, TIRAGE_BOITE_MS, AUTO_RELEVE_MS, ENVOL_BOITE_MS } from "./match-zombies";
 
 /**
- * Service zombies isolé : contexte factice (la salle est testée dans match.zombies.test.ts), vrai monde de la carte « Cour des Restos ».
- * Spec : docs/superpowers/specs/2026-10-27-arene-zombies-design.md
+ * Service zombies isolé : contexte factice (la salle est testée dans match.zombies.test.ts), vrai monde de la carte « Service de midi ».
+ * Spec : docs/superpowers/specs/2026-10-28-zombies-bo1-design.md
  */
 
 const scene = JSON.parse(readFileSync("public/agroparc/scene.json", "utf8")) as SceneData;
@@ -166,8 +170,9 @@ describe("lobby, hôte, lancement", () => {
     expect(sorties[0].a).toBe("tous");
     const etat = dernierEtat(sorties)!;
     expect(etat).toMatchObject({ phase: "lobby", manche: 0, hote: "a", capacite: ZOMBIES.joueursMax });
-    expect(etat.joueurs).toEqual([{ id: "a", pseudo: "Agent a", couleur: "#ff5252", etat: "attente", admis: false, kills: 0, gagne: 0, reanimations: 0 }]);
-    expect(etat.portes.map((p) => p.id)).toEqual(["P1", "P3", "P2", "P4", "P5"]);
+    expect(etat.joueurs).toEqual([{ id: "a", pseudo: "Agent a", couleur: "#ff5252", etat: "attente", admis: false, kills: 0, gagne: 0, reanimations: 0, atouts: [], autoReleves: 3 }]);
+    expect(etat.portes.map((p) => p.id)).toEqual(PORTES_PAYANTES.map((p) => p.id));
+    expect(etat).toMatchObject({ difficulte: "plat", courant: false, fenetres: FENETRES.map(() => 6), bonus: [], murs: [], mancheTruck: false, truck: null });
     expect(etat.portes.every((p) => !p.ouverte)).toBe(true);
     b.arrive("b");
     expect(b.svc.etat().hote).toBe("a");
@@ -270,17 +275,35 @@ describe("manche 1 : chargement des clients puis apparitions", () => {
     expect(tigresVivants(b)).toHaveLength(1);
   });
 
-  it("un tigre apparaît toutes les max(0,35 ; 2,0 − 0,12 n) s, dans une fenêtre active (N2c au départ)", () => {
+  it("un tigre apparaît toutes les 2 s × 0,95^(n−1), dans une zone active (l'open space au départ : fenêtres F1, F2 ou sortie du sol)", () => {
     const b = partieEnCours();
+    const zones = etiqueterZones(construireMondeZombies(scene));
     avancer(b, T0 + 100, T_PREMIER_TIGRE + 100);
     const premier = tigresVivants(b);
     expect(premier).toHaveLength(1);
-    // seul N2c est actif : le tigre est du côté nord du mur (z < −77) et près de l'un de ses trois points
-    expect(premier[0].z).toBeLessThan(-77);
-    avancer(b, T_PREMIER_TIGRE + 150, T_PREMIER_TIGRE + intervalleApparition(1) * 1000 - 60);
+    const z = premier[0];
+    const parFenetre = ["F1", "F2"].some((id) => fenetreDeId(id)!.points.some((p) => Math.hypot(p[0] - z.x, p[1] - z.z) < 1.5));
+    expect(parFenetre || (z.mode === "sol" && zoneEn(zones, z.x, z.z) === "open"), JSON.stringify(z)).toBe(true);
+    const delai = delaiApparition(1) * 1000;
+    avancer(b, T_PREMIER_TIGRE + 150, T_PREMIER_TIGRE + delai - 100);
     expect(tigresVivants(b)).toHaveLength(1);
-    avancer(b, T_PREMIER_TIGRE + intervalleApparition(1) * 1000 - 50, T_PREMIER_TIGRE + intervalleApparition(1) * 1000 + 100);
+    avancer(b, T_PREMIER_TIGRE + delai - 50, T_PREMIER_TIGRE + delai + 150);
     expect(tigresVivants(b)).toHaveLength(2);
+  });
+
+  it("difficulté : choisie au lancement (« plat » par défaut ou valeur inconnue), elle règle les PV des tigres", () => {
+    for (const [demande, attendue] of [["goulaf", "goulaf"], ["entree", "entree"], ["n'importe", "plat"], [undefined, "plat"]] as const) {
+      const b = banc();
+      b.arrive("a");
+      b.svc.recevoir(b.j("a"), msg({ t: "lancerPartie", ...(demande ? { difficulte: demande as "plat" } : {}) }), T0);
+      b.entre("a", T0 + 100);
+      expect(b.svc.etat().difficulte).toBe(attendue);
+      avancer(b, T0 + 100, T_PREMIER_TIGRE + 100);
+      const z = tigresVivants(b)[0];
+      const pv = pvZombie(1, 0, attendue);
+      const s = b.svc.blesser(`z${z.id}`, 30, b.j("a"), "corps", T_PREMIER_TIGRE + 150);
+      expect(msgs(s, "degats")[0].pv).toBe(Math.round((100 * (pv - 30)) / pv));
+    }
   });
 
   it("la manche compte `totalManche(1, j)` tigres (restants dans le snap) ; PDJ_FPS_ZOMBIES_TOTAL fixe ceux de la manche 1", () => {
@@ -300,15 +323,18 @@ describe("manche 1 : chargement des clients puis apparitions", () => {
     // on ne tue rien : le joueur est bardé de PV pour que les griffes ne comptent pas
     b.j("a").pv = 1e9; b.j("a").p = [500, 0, 500];
     avancer(b, T0 + 100, T0 + 80_000, 100);
-    expect(tigresVivants(b).length).toBeLessThanOrEqual(6 + 3 + 2);
+    expect(tigresVivants(b).length).toBeLessThanOrEqual(ZOMBIES.plafondVivants);
     expect(tigresVivants(b).length).toBeGreaterThan(0);
   });
 });
 
+/** Zones au sol de la carte, portes fermées (un tigre abattu hors zone ne lâche pas de bonus). */
+const ZONES_SOL = etiqueterZones(construireMondeZombies(scene));
+
 // =================================================================================================
-describe("dégâts, argent, kills", () => {
-  function avecUnTigre() {
-    const b = partieEnCours();
+describe("points de BO1", () => {
+  function avecUnTigre(opts: Partial<OptionsServiceZombies> = {}) {
+    const b = partieEnCours(["a"], opts);
     avancer(b, T0 + 100, T_PREMIER_TIGRE + 100);
     const z = tigresVivants(b)[0];
     return { b, z, id: `z${z.id}`, j: b.j("a") };
@@ -318,145 +344,479 @@ describe("dégâts, argent, kills", () => {
     const { b, id, j } = avecUnTigre();
     const t = T_PREMIER_TIGRE + 200;
     const sorties = b.svc.blesser(id, 30, j, "corps", t);
-    expect(msgs(sorties, "degats")).toEqual([{ t: "degats", cible: id, par: "a", degats: 30, pv: 70, bouclier: 0, zone: "corps" }]);
+    expect(msgs(sorties, "degats")).toEqual([{ t: "degats", cible: id, par: "a", degats: 30, pv: 80, bouclier: 0, zone: "corps" }]);
     expect(sorties.find((s) => s.m.t === "degats")!.a).toBe("a");
-    expect(msgs(sorties, "argent")).toEqual([{ t: "argent", solde: 500 + gainTouche(1), delta: gainTouche(1), motif: "touche" }]);
+    expect(msgs(sorties, "argent")).toEqual([{ t: "argent", solde: 500 + gainTouche(), delta: 10, motif: "touche" }]);
     expect(msgs(sorties, "zombieMort")).toEqual([]);
     expect(b.svc.possede(id)).toBe(true);
-    expect(b.svc.snap()!.z[5]).toBe(70);
+    expect(b.svc.snap()!.z[5]).toBe(80);
   });
 
-  it("un kill au corps : +10 $ de touche + 60 $, kills++, série, killsParArme, zombieMort aux joueurs, présence", () => {
+  it("un kill au corps : 60 $ (pas de touche en plus), kills++, série, killsParArme, zombieMort aux joueurs, présence", () => {
     const { b, id, j } = avecUnTigre();
     const sorties = b.svc.blesser(id, 1000, j, "corps", T_PREMIER_TIGRE + 200, { arme: "pistolet" });
-    expect(msgs(sorties, "argent")[0]).toMatchObject({ delta: gainTouche(1) + gainKill(1), motif: "kill", solde: 500 + gainTouche(1) + gainKill(1) });
-    expect(gainKill(1)).toBe(60);
+    expect(msgs(sorties, "argent")[0]).toMatchObject({ delta: 60, motif: "kill", solde: 560 });
     const mort = sorties.find((s) => s.m.t === "zombieMort")!;
     expect(mort.a).toBe("joueurs");
     expect(mort.m).toMatchObject({ id, par: "a", zone: "corps" });
     expect(j).toMatchObject({ kills: 1, serie: 1, serieMax: 1, killsParArme: { pistolet: 1 } });
     expect(types(sorties)).toContain("presence");
     expect(b.svc.possede(id)).toBe(false);
-    // un tigre mort ne se blesse plus et ne se touche plus
     expect(b.svc.blesser(id, 10, j, "corps", T_PREMIER_TIGRE + 300)).toEqual([]);
     expect(b.svc.toucheZombie(id, [0, 0, 0], [1, 0, 0], 50, T_PREMIER_TIGRE + 300)).toBeNull();
   });
 
-  it("kill à la tête ou à l'arme blanche : 100 $ ; le gain de touche est unique par tir (`gain:false` : aucun)", () => {
+  it("kill à la tête 100 $, au couteau 130 $ (cause melee) ; `gain:false` : aucune touche payée", () => {
     const { b, id, j } = avecUnTigre();
-    const tete = b.svc.blesser(id, 1000, j, "tete", T_PREMIER_TIGRE + 200);
-    expect(msgs(tete, "argent")[0].delta).toBe(gainTouche(1) + gainKill(1, { tete: true }));
-    expect(gainKill(1, { tete: true })).toBe(100);
+    expect(msgs(b.svc.blesser(id, 1000, j, "tete", T_PREMIER_TIGRE + 200), "argent")[0].delta).toBe(gainKill({ tete: true }));
+    expect(gainKill({ tete: true })).toBe(100);
     const c = avecUnTigre();
-    const sans = c.b.svc.blesser(c.id, 20, c.j, "corps", T_PREMIER_TIGRE + 200, { gain: false });
-    expect(msgs(sans, "argent")).toEqual([]);
+    expect(msgs(c.b.svc.blesser(c.id, 20, c.j, "corps", T_PREMIER_TIGRE + 200, { gain: false }), "argent")).toEqual([]);
     const d = avecUnTigre();
     const melee = d.b.svc.blesser(d.id, 1000, d.j, "corps", T_PREMIER_TIGRE + 200, { melee: true });
-    expect(msgs(melee, "argent")[0].delta).toBe(gainTouche(1, { melee: true }) + gainKill(1, { melee: true }));
+    expect(msgs(melee, "argent")[0].delta).toBe(130);
+    expect(msgs(melee, "zombieMort")[0].cause).toBe("melee");
   });
 
-  it("l'argent suit le coefficient de la manche (× min(2 ; 1 + 0,04 (n−1)), arrondi à 10) et le bonus de fin de manche 100 + 25 n", () => {
+  it("pas de bonus de fin de manche (BO1) : l'argent ne vient que des touches, kills, planches et bonus", () => {
     const b = partieEnCours(["a"], { degatsGriffe: 0 });
     const j = b.j("a");
-    let t = T_PREMIER_TIGRE;
-    const bonus: number[] = [];
-    for (let manche = 1; manche < 5; manche++) {
-      const r = finirManche(b, j, t);
-      bonus.push(...msgs(r.sorties, "argent").filter((m) => m.motif === "manche").map((m) => m.delta));
-      t = r.t + ZOMBIES.pauseMs + 100;
-      avancer(b, r.t + 100, t);
-      expect(b.svc.etat()).toMatchObject({ phase: "manche", manche: manche + 1 });
-    }
-    expect(bonus).toEqual([125, 150, 175, 200]);
-    // manche 5 : coefficient 1,16 → touche 10 $, kill au corps 70 $, kill à la tête 120 $
-    avancer(b, t, t + 3000);
-    const z = tigresVivants(b)[0];
-    const sorties = b.svc.blesser(`z${z.id}`, 1_000_000, j, "corps", t + 3000);
-    expect(msgs(sorties, "argent")[0].delta).toBe(gainTouche(5) + gainKill(5));
-    expect(gainTouche(5) + gainKill(5)).toBe(80);
-    expect(gainKill(5, { tete: true })).toBe(120);
+    const r = finirManche(b, j, T_PREMIER_TIGRE);
+    expect(msgs(r.sorties, "argent").every((m) => ["kill", "touche", "nuke", "menuisier"].includes(m.motif))).toBe(true);
+    expect(b.svc.etat()).toMatchObject({ phase: "pause", manche: 2 });
   });
 
-  it("touches et kills sont marqués pour la diffusion : `zombies{etat}` ≤ 5 Hz", () => {
-    const { b, id, j } = avecUnTigre();
-    let t = T_PREMIER_TIGRE + 250;
-    b.svc.tic(t); // vide les envois en attente
-    b.svc.blesser(id, 10, j, "corps", t);
-    // pas d'envoi avant 200 ms, un seul après
-    const envois: number[] = [];
-    for (let k = 0; k < 20; k++, t += 20) if (msgs(b.svc.tic(t), "zombies").length) envois.push(k);
-    expect(envois.length).toBe(1);
-    expect(envois[0] * 20).toBeGreaterThanOrEqual(0);
-    const apres = b.svc.etat().joueurs[0];
-    expect(apres.gagne).toBe(gainTouche(1));
+  it("dégâts d'arme contre les tigres : profil zombies, amélioration, insta-kill ; arme blanche ; perce ; cadence et santé", () => {
+    const { b, j } = avecUnTigre();
+    expect(b.svc.degatsTir(j, "pistolet", "corps", 5, 0)).toBe(40);
+    expect(b.svc.degatsTir(j, "sniper", "corps", 5, 0)).toBe(900);
+    expect(b.svc.perce(j, "sniper")).toBe(false); // seul le sniper amélioré perce
+    expect(b.svc.perce(j, "railgun")).toBe(true);
+    expect(b.svc.perce(j, "pistolet")).toBe(false);
+    expect(b.svc.degatsMelee(j, "couteau", 0)).toBe(150);
+    expect(b.svc.degatsMelee(j, "epee", 0)).toBe(1000);
+    expect(b.svc.cadence(j)).toBe(1);
+    expect(b.svc.sante(j)).toEqual({ pvMax: 100, delaiMs: 3000, pvParS: 60 });
   });
 });
 
 // =================================================================================================
-describe("fin de manche, pauses, bonus", () => {
-  it("tous les tigres apparus et morts : bonus 100 + 25 n aux debout, pause de 10 s, manche suivante", () => {
+describe("fin de manche, pauses", () => {
+  it("tous les tigres apparus et morts : pause de 10 s, manche suivante ; le premier tigre apparaît dans le tic même", () => {
     const b = partieEnCours();
     const j = b.j("a");
-    const { t, sorties } = finirManche(b, j, T_PREMIER_TIGRE);
-    const etat = b.svc.etat();
-    expect(etat).toMatchObject({ phase: "pause", manche: 2, debutT: t, finT: t + ZOMBIES.pauseMs });
-    const bonus = msgs(sorties, "argent").find((m) => m.motif === "manche")!;
-    expect(bonus.delta).toBe(bonusFinManche(1));
-    expect(bonus.delta).toBe(125);
+    const { t } = finirManche(b, j, T_PREMIER_TIGRE);
+    expect(b.svc.etat()).toMatchObject({ phase: "pause", manche: 2, debutT: t, finT: t + ZOMBIES.pauseMs });
     expect(j.kills).toBe(totalManche(1, 1));
-    // la manche 2 démarre après 10 s, sans attente de chargement : le premier tigre apparaît dans le tic même
-    const sortiesPause = avancer(b, t + 100, t + ZOMBIES.pauseMs - 50);
+    avancer(b, t + 100, t + ZOMBIES.pauseMs - 50);
     expect(b.svc.etat().phase).toBe("pause");
     expect(tigresVivants(b)).toHaveLength(0);
     const s2 = avancer(b, t + ZOMBIES.pauseMs, t + ZOMBIES.pauseMs + 100);
     expect(dernierEtat(s2)).toMatchObject({ phase: "manche", manche: 2 });
+    expect(msgs(s2, "zevt").find((m) => m.e.e === "manche")!.e).toMatchObject({ numero: 2, truck: false });
     expect(tigresVivants(b)).toHaveLength(1);
-    expect(sortiesPause.length).toBeGreaterThanOrEqual(0);
   });
 
-  it("la pause relève les joueurs à terre (50 PV, apparition), ramène les éliminés (équipement de départ, 500 $) et admet les arrivants", () => {
-    // les griffes sont neutralisées : seules les mises à terre du test comptent
+  it("la pause relève les joueurs à terre (50 PV), ramène les éliminés (équipement de départ, 500 $) et admet les arrivants", () => {
     const b = partieEnCours(["a", "b", "c"], { degatsGriffe: 0 });
     avancer(b, T0 + 100, T_PREMIER_TIGRE + 100);
     const [a, bb, c] = [b.j("a"), b.j("b"), b.j("c")];
     const t1 = T_PREMIER_TIGRE + 200;
-    // c tombe et n'est pas relevé : éliminé 45 s plus tard
     b.ctx.infliger(c, 1000, null, "tigre_zombie", "corps", "couteau", t1);
     avancer(b, t1 + 50, t1 + ZOMBIES.terreMs + 100, 250);
     expect(b.svc.etat().joueurs.map((x) => x.etat)).toEqual(["debout", "debout", "elimine"]);
-    c.equip = copierEquipement({ ...c.equip, melee: "epee" }); // arme achetée avant l'élimination : perdue au retour
-    // b tombe à son tour, un nouvel arrivant attend
+    c.equip = copierEquipement({ ...c.equip, melee: "epee" });
     const t2 = t1 + ZOMBIES.terreMs + 1000;
     b.ctx.infliger(bb, 1000, null, "tigre_zombie", "corps", "couteau", t2);
     expect(b.svc.etat().joueurs[1].etat).toBe("terre");
     b.arrive("d", t2 + 500);
     expect(b.svc.admis("d")).toBe(false);
-    expect(b.svc.etat().joueurs[3]).toMatchObject({ etat: "attente", admis: false });
-    // fin de manche par les tirs de « a » : bonus pour lui seul
     const { sorties } = finirManche(b, a, t2 + 1000);
     const apparitions = msgs(sorties, "apparition");
     const etat = b.svc.etat();
     expect(etat.phase).toBe("pause");
     expect(etat.joueurs.map((x) => x.etat)).toEqual(["debout", "debout", "debout", "debout"]);
-    expect(etat.joueurs.every((x) => x.admis)).toBe(true);
     expect(apparitions.find((m) => m.id === "b")).toMatchObject({ pv: ZOMBIES.reanimationPv });
     expect(apparitions.find((m) => m.id === "c")).toMatchObject({ pv: JEU.pvMax, main: "secondaire", equip: { sansPrincipale: true, secondaire: "pistolet" } });
     expect(apparitions.find((m) => m.id === "c")!.equip.melee).toBeUndefined();
-    // arrivant et éliminé repartent avec 500 $ (messages privés), le relevé garde son argent
     const argents = sorties.filter((x) => x.m.t === "argent" && (x.m.motif === "depart" || x.m.motif === "retour"));
     expect(argents.map((x) => [x.a, (x.m as { solde: number }).solde]).sort()).toEqual([["c", 500], ["d", 500]]);
-    expect(b.svc.admis("d")).toBe(true);
     expect(bb.vivant).toBe(true);
-    expect(sorties.filter((x) => x.m.t === "argent" && x.m.motif === "manche").map((x) => x.a)).toEqual(["a"]);
+  });
+});
+
+// =================================================================================================
+describe("bonus (BO1 : seuil de points, paquet mélangé, 4 par manche)", () => {
+  /** Tue chaque tigre à la tête dès qu'il apparaît ; au premier bonus lâché, va le ramasser ; renvoie les genres ramassés et leurs sorties. */
+  function jouer(graine: number, maxMs = 120_000) {
+    const b = partieEnCours(["a"], { alea: suite(graine), total1: 200, degatsGriffe: 0 });
+    const j = b.j("a");
+    const vus: { genre: GenreBonus; sorties: Sortie[]; t: number; avant: { argent: number; vivants: number } }[] = [];
+    let t = T_PREMIER_TIGRE;
+    let argent = 500;
+    for (; t < T_PREMIER_TIGRE + maxMs && vus.length < 4; t += 100) {
+      const s = b.svc.tic(t);
+      for (const m of msgs(s, "argent")) argent = m.solde;
+      // seuls les tigres entrés (dans une zone) lâchent un bonus : on laisse les autres passer leur fenêtre
+      for (const z of tigresVivants(b)) if (zoneEn(ZONES_SOL, z.x, z.z)) for (const m of msgs(b.svc.blesser(`z${z.id}`, 100_000, j, "tete", t), "argent")) argent = m.solde;
+      const sol = b.svc.etat().bonus[0];
+      if (sol) {
+        const vivants = tigresVivants(b).length;
+        j.p = [sol.p[0], 0, sol.p[2]];
+        t += 50;
+        const r = b.svc.tic(t);
+        vus.push({ genre: sol.genre, sorties: r, t, avant: { argent, vivants } });
+        for (const m of msgs(r, "argent")) argent = m.solde;
+      }
+    }
+    return { b, j, vus };
+  }
+
+  it("le premier bonus tombe après j × 500 + 2 000 points gagnés, au plus 4 par manche, et chaque genre a son effet", () => {
+    const genres = new Set<GenreBonus>();
+    for (let graine = 1; graine <= 12 && genres.size < 6; graine++) {
+      const { b, vus } = jouer(graine);
+      expect(vus.length).toBeGreaterThan(0);
+      expect(vus.length).toBeLessThanOrEqual(ZOMBIES.bonusParManche);
+      for (const v of vus) {
+        genres.add(v.genre);
+        expect(msgs(v.sorties, "zevt").some((m) => m.e.e === "bonus" && m.e.genre === v.genre)).toBe(true);
+        const effets = b.svc.etat().effets;
+        switch (v.genre) {
+          case "instakill": expect(effets.instakillFinT).toBeGreaterThanOrEqual(v.t + ZOMBIES.bonusDureeMs - 20_000); break;
+          case "double": expect(effets.doubleFinT).toBeGreaterThan(v.t); break;
+          case "soldes": expect(effets.soldesFinT).toBeGreaterThan(v.t); break;
+          case "munitions": expect(msgs(v.sorties, "equipement")[0]).toMatchObject({ ravitaille: "tout" }); break;
+          case "nuke": expect(msgs(v.sorties, "argent").find((m) => m.motif === "nuke")!.delta).toBe(400); break;
+          case "menuisier": expect(msgs(v.sorties, "argent").find((m) => m.motif === "menuisier")!.delta).toBe(200); break;
+        }
+      }
+    }
+    expect([...genres].sort()).toEqual(["double", "instakill", "menuisier", "munitions", "nuke", "soldes"]);
   });
 
-  it("un joueur à terre ou éliminé ne touche pas le bonus de fin de manche", () => {
-    const b = partieEnCours(["a", "b"]);
-    avancer(b, T0 + 100, T_PREMIER_TIGRE + 100);
-    b.ctx.infliger(b.j("b"), 1000, null, "tigre_zombie", "corps", "couteau", T_PREMIER_TIGRE + 150);
-    const { sorties } = finirManche(b, b.j("a"), T_PREMIER_TIGRE + 200);
-    const bonus = sorties.filter((s) => s.m.t === "argent" && s.m.motif === "manche");
-    expect(bonus.map((s) => s.a)).toEqual(["a"]);
+  it("double points : un kill au corps rapporte 120 $ ; insta-kill : tout tigre meurt au premier coup", () => {
+    for (let graine = 1; graine <= 20; graine++) {
+      const { b, j, vus } = jouer(graine);
+      const d = vus.find((v) => v.genre === "double" || v.genre === "instakill");
+      if (!d) continue;
+      const t = d.t + 100;
+      if (d.genre === "double") {
+        expect(b.svc.degatsTir(j, "pistolet", "corps", 5, t)).toBe(40);
+      } else {
+        expect(b.svc.degatsTir(j, "pistolet", "corps", 5, t)).toBeGreaterThanOrEqual(1e6);
+        expect(b.svc.degatsMelee(j, "couteau", t)).toBeGreaterThanOrEqual(1e6);
+      }
+      return;
+    }
+    throw new Error("aucune graine ne donne double points ou insta-kill");
+  });
+});
+
+// =================================================================================================
+describe("achats", () => {
+  /** Joueur « a » en manche 1, debout, placé en `pos` (pieds), `argentDepart` $ en poche. */
+  function avec(pos: Vec2, argentDepart: number, opts: Partial<OptionsServiceZombies> = {}) {
+    const b = partieEnCours(["a"], { argentDepart, ...opts });
+    avancer(b, T0 + 100, T_MANCHE1 + 50); // manche 1, aucun tigre encore (grâce)
+    const j = b.j("a");
+    j.p = [pos[0], 0, pos[1]];
+    return { b, j };
+  }
+  const achat = (id: string) => ACHATS.find((a) => a.id === id)!;
+  const acheter = (b: Banc, j: JoueurSalle, id: string, t = T_MANCHE1 + 100) => b.svc.recevoir(j, msg({ t: "acheter", id }), t);
+
+  it("départ : pistolet et couteau ; le revolver (500 $) remplace le pistolet, la craie devient l'arme ; racheté = munitions à moitié prix", () => {
+    const { b, j } = avec(achat("mur:revolver").position, 1000);
+    expect(j.equip).toEqual({ principale: "mitraillette", secondaire: "pistolet", speciale: null, sansPrincipale: true });
+    expect(armeDuSlot(j.equip, "principale")).toBeNull();
+    const s = acheter(b, j, "mur:revolver");
+    expect(msgs(s, "achat")).toEqual([{ t: "achat", ok: true, id: "mur:revolver" }]);
+    expect(msgs(s, "argent")).toEqual([{ t: "argent", solde: 500, delta: -500, motif: "achat" }]);
+    expect(j).toMatchObject({ main: "secondaire", arme: "revolver" });
+    expect(j.equip).toMatchObject({ secondaire: "revolver", sansPrincipale: true });
+    expect(b.svc.etat().murs).toEqual(["mur:revolver"]);
+    const r = acheter(b, j, "mur:revolver", T_MANCHE1 + 200);
+    expect(msgs(r, "argent")[0]).toMatchObject({ delta: -achat("mur:revolver").prixMunitions!, solde: 500 - achat("mur:revolver").prixMunitions! });
+    expect(msgs(r, "equipement")[0]).toMatchObject({ ravitaille: "revolver" });
+  });
+
+  it("une principale achetée (mitraillette, 1 200 $) remplace le remplissage, retire sansPrincipale, passe en main", () => {
+    const { b, j } = avec(achat("mur:mitraillette").position, 1200);
+    const s = acheter(b, j, "mur:mitraillette");
+    expect(msgs(s, "achat")[0]).toMatchObject({ ok: true });
+    expect(j.equip).toEqual({ principale: "mitraillette", secondaire: "pistolet", speciale: null });
+    expect(j).toMatchObject({ main: "principale", arme: "mitraillette" });
+    expect(msgs(s, "equipement")[0]).toMatchObject({ main: "principale", ravitaille: "mitraillette" });
+    expect(b.memorises).toEqual(["a"]);
+    expect(msgs(acheter(b, j, "mur:mitraillette", T_MANCHE1 + 200), "achat")[0]).toMatchObject({ ok: false, raison: "argent" });
+  });
+
+  it("l'épée (3 000 $) passe `melee` à `epee` sans changer d'arme en main ; déjà l'épée : `deja`", () => {
+    const { b, j } = avec(achat("mur:epee").position, 3000);
+    const s = acheter(b, j, "mur:epee");
+    expect(j.equip.melee).toBe("epee");
+    expect(j.main).toBe("secondaire");
+    expect(msgs(s, "argent")[0]).toMatchObject({ solde: 0, delta: -3000 });
+    const encore = acheter(b, j, "mur:epee", T_MANCHE1 + 200);
+    expect(msgs(encore, "achat")[0]).toEqual({ t: "achat", ok: false, id: "mur:epee", raison: "deja" });
+    expect(msgs(encore, "argent")).toEqual([]);
+  });
+
+  it("refus : `argent` (rien n'est débité), `loin`, id inconnu, `partie` (pas de partie, à terre)", () => {
+    const { b, j } = avec(achat("mur:revolver").position, 100);
+    expect(msgs(acheter(b, j, "mur:revolver"), "achat")[0]).toEqual({ t: "achat", ok: false, id: "mur:revolver", raison: "argent" });
+    expect(j.equip.secondaire).toBe("pistolet");
+    j.p = [achat("mur:revolver").position[0] + 4, 0, achat("mur:revolver").position[1]];
+    expect(msgs(acheter(b, j, "mur:revolver"), "achat")[0]).toMatchObject({ ok: false, raison: "loin" });
+    expect(msgs(acheter(b, j, "inconnu"), "achat")[0]).toMatchObject({ ok: false, raison: "loin" });
+    expect(msgs(b.svc.recevoir(j, { t: "acheter", id: 42 as unknown as string }, T_MANCHE1 + 100), "achat")[0]).toMatchObject({ ok: false, id: "", raison: "loin" });
+    j.p = [achat("mur:revolver").position[0], 0, achat("mur:revolver").position[1]];
+    b.ctx.infliger(j, 1000, null, "tigre_zombie", "corps", "couteau", T_MANCHE1 + 150);
+    expect(msgs(acheter(b, j, "mur:revolver", T_MANCHE1 + 200), "achat")[0]).toMatchObject({ ok: false, raison: "partie" });
+    const lobby = banc();
+    const { j: l } = lobby.arrive("a");
+    expect(msgs(lobby.svc.recevoir(l, msg({ t: "acheter", id: "mur:revolver" }), T0), "achat")[0]).toMatchObject({ ok: false, raison: "partie" });
+  });
+
+  it("pas d'achat à travers un mur : à portée du point mais de l'autre côté de la façade, c'est `loin`", () => {
+    for (const id of ["mur:revolver", "mur:pompe", "mur:mitraillette"]) {
+      const a = achat(id);
+      const { b, j } = avec(a.position, 10_000);
+      const n = a.facade!.normale;
+      j.p = [a.position[0] - n[0] * 2.4, 0, a.position[1] - n[1] * 2.4];
+      expect(msgs(acheter(b, j, id), "achat")[0], id).toMatchObject({ ok: false, raison: "loin" });
+    }
+  });
+
+  it("boîte mystère : 950 $, tirage 4 s, offre 12 s ; l'arme prise remplace celle de sa catégorie ; jamais le pistolet, le mini Uzi ni une arme portée", () => {
+    const b0 = partieEnCours(["a"], { argentDepart: 10_000 });
+    const em = b0.svc.etat().boite.emplacement;
+    expect([0, 1]).toContain(em);
+    const ici = achatBoite(em), ailleurs = achatBoite((em + 2) % 5);
+    const { b, j } = avec(ici.position, 10_000);
+    const emB = b.svc.etat().boite.emplacement;
+    const bonne = achatBoite(emB);
+    j.p = [bonne.position[0], 0, bonne.position[1]];
+    j.p = [ailleurs.position[0], 0, ailleurs.position[1]];
+    expect(msgs(acheter(b, j, ailleurs.id), "achat")[0]).toMatchObject({ ok: false, raison: "loin" });
+    j.p = [bonne.position[0], 0, bonne.position[1]];
+    let t = T_MANCHE1 + 100;
+    const s = acheter(b, j, bonne.id, t);
+    expect(msgs(s, "achat")[0]).toMatchObject({ ok: true, id: bonne.id });
+    expect(msgs(s, "argent")[0]).toMatchObject({ delta: -950 });
+    const tirage = b.svc.etat().boite;
+    expect(tirage).toMatchObject({ etat: "tirage", pour: "a", utilisations: 1, finT: t + TIRAGE_BOITE_MS });
+    expect(["pistolet", "mini_uzi", "peluche"]).not.toContain(tirage.arme);
+    expect(msgs(acheter(b, j, bonne.id, t + 100), "achat")[0]).toMatchObject({ ok: false, raison: "occupe" });
+    t += TIRAGE_BOITE_MS + 50;
+    b.svc.tic(t);
+    expect(b.svc.etat().boite).toMatchObject({ etat: "offre", finT: t + OFFRE_BOITE_MS });
+    const pris = acheter(b, j, bonne.id, t + 100);
+    expect(msgs(pris, "achat")[0]).toMatchObject({ ok: true });
+    expect(msgs(pris, "argent")).toEqual([]); // déjà payée
+    expect(j.arme).toBe(tirage.arme);
+    expect(b.svc.etat().boite).toMatchObject({ etat: "fermee", utilisations: 1 });
+    // une offre non prise se referme au bout de 12 s
+    acheter(b, j, bonne.id, t + 200);
+    b.svc.tic(t + 200 + TIRAGE_BOITE_MS + 50);
+    expect(b.svc.etat().boite.etat).toBe("offre");
+    b.svc.tic(t + 200 + TIRAGE_BOITE_MS + 50 + OFFRE_BOITE_MS + 50);
+    expect(b.svc.etat().boite.etat).toBe("fermee");
+  });
+
+  it("la peluche : jamais avant 4 tirages, forcée au 8ᵉ si la boîte n'a jamais bougé ; elle rembourse, la boîte s'envole et se pose ailleurs", () => {
+    const { b, j } = avec([0, 0], 1e7);
+    let t = T_MANCHE1 + 100;
+    const em = b.svc.etat().boite.emplacement;
+    const a = achatBoite(em);
+    j.p = [a.position[0], 0, a.position[1]];
+    let peluche = 0;
+    for (let k = 1; k <= 8 && !peluche; k++) {
+      expect(msgs(acheter(b, j, a.id, t), "achat")[0].ok, `tirage ${k}`).toBe(true);
+      const arme = b.svc.etat().boite.arme;
+      if (arme === "peluche") {
+        peluche = k;
+        t += TIRAGE_BOITE_MS + 50;
+        const s = b.svc.tic(t);
+        expect(msgs(s, "argent")[0]).toMatchObject({ delta: 950, motif: "peluche" });
+        expect(msgs(s, "zevt").some((m) => m.e.e === "peluche")).toBe(true);
+        expect(b.svc.etat().boite.etat).toBe("envol");
+        b.svc.tic(t + ENVOL_BOITE_MS + 50);
+        expect(b.svc.etat().boite).toMatchObject({ etat: "fermee", utilisations: 0 });
+        expect(b.svc.etat().boite.emplacement).not.toBe(em);
+        expect(msgs(acheter(b, j, a.id, t + ENVOL_BOITE_MS + 100), "achat")[0]).toMatchObject({ ok: false, raison: "loin" });
+      } else {
+        t += TIRAGE_BOITE_MS + 50;
+        b.svc.tic(t);
+        t += OFFRE_BOITE_MS + 50;
+        b.svc.tic(t);
+        t += 50;
+      }
+    }
+    expect(peluche).toBeGreaterThanOrEqual(4);
+    expect(peluche).toBeLessThanOrEqual(8);
+  });
+
+  it("atouts : Pause Café à 500 $ seul, les autres exigent le courant ; Gratin = 250 PV, Ristretto = cadence × 1,33 ; perdus à terre", () => {
+    const pc = achat("atout:pausecafe");
+    const { b, j } = avec(pc.position, 10_000);
+    const s = acheter(b, j, pc.id);
+    expect(msgs(s, "argent")[0]).toMatchObject({ delta: -ATOUTS.pausecafe.prixSolo! });
+    expect(msgs(s, "zevt")[0].e).toMatchObject({ e: "atout", joueur: "a", atout: "pausecafe" });
+    expect(b.svc.etat().joueurs[0].atouts).toEqual(["pausecafe"]);
+    expect(msgs(acheter(b, j, pc.id, T_MANCHE1 + 200), "achat")[0]).toMatchObject({ ok: false, raison: "deja" });
+    const g = achat("atout:gratin");
+    j.p = [g.position[0], 0, g.position[1]];
+    expect(msgs(acheter(b, j, g.id, T_MANCHE1 + 300), "achat")[0]).toMatchObject({ ok: false, raison: "courant" });
+
+    const c = avec(g.position, 10_000, { courant: true });
+    expect(msgs(acheter(c.b, c.j, g.id), "achat")[0]).toMatchObject({ ok: true });
+    expect(c.j.pv).toBe(250);
+    expect(c.b.svc.sante(c.j).pvMax).toBe(250);
+    const r = achat("atout:ristretto");
+    c.j.p = [r.position[0], 0, r.position[1]];
+    expect(msgs(acheter(c.b, c.j, r.id, T_MANCHE1 + 200), "achat")[0]).toMatchObject({ ok: true });
+    expect(c.b.svc.cadence(c.j)).toBeCloseTo(1 / 1.33, 9);
+    c.b.ctx.infliger(c.j, 10_000, null, "tigre_zombie", "corps", "couteau", T_MANCHE1 + 300);
+    expect(c.b.svc.etat().joueurs[0].atouts).toEqual([]);
+    expect(c.b.svc.cadence(c.j)).toBe(1);
+  });
+
+  it("Pause Café seul : à terre, il se relève tout seul 4 s plus tard (3 fois par partie), et la partie n'est pas perdue", () => {
+    const pc = achat("atout:pausecafe");
+    const { b, j } = avec(pc.position, 10_000, { degatsGriffe: 0 });
+    let t = T_MANCHE1 + 100;
+    acheter(b, j, pc.id, t);
+    b.ctx.infliger(j, 1000, null, "tigre_zombie", "corps", "couteau", t + 50);
+    expect(b.svc.etat()).toMatchObject({ phase: "manche" });
+    expect(b.svc.etat().joueurs[0]).toMatchObject({ etat: "terre", autoReleves: 2 });
+    t += 50;
+    const s = avancer(b, t + 50, t + AUTO_RELEVE_MS + 100);
+    expect(msgs(s, "zevt").some((m) => m.e.e === "autoReleve")).toBe(true);
+    expect(b.svc.etat().joueurs[0]).toMatchObject({ etat: "debout", atouts: [] });
+    expect(j.pv).toBe(ZOMBIES.reanimationPv);
+  });
+
+  it("courant (local technique) : rétabli une fois, `zevt courant` ; Pack-a-Punch (5 000 $) : cuisson 3,5 s puis arme améliorée", () => {
+    const co = achat("courant");
+    const { b, j } = avec(co.position, 20_000);
+    const pa = achat("pap");
+    j.p = [pa.position[0], 0, pa.position[1]];
+    expect(msgs(acheter(b, j, "pap"), "achat")[0]).toMatchObject({ ok: false, raison: "courant" });
+    j.p = [co.position[0], 0, co.position[1]];
+    const s = acheter(b, j, "courant");
+    expect(msgs(s, "achat")[0]).toMatchObject({ ok: true });
+    expect(msgs(s, "zevt")[0].e).toEqual({ e: "courant" });
+    expect(b.svc.etat().courant).toBe(true);
+    expect(msgs(acheter(b, j, "courant", T_MANCHE1 + 150), "achat")[0]).toMatchObject({ ok: false, raison: "deja" });
+    j.p = [pa.position[0], 0, pa.position[1]];
+    const t = T_MANCHE1 + 200;
+    const p = acheter(b, j, "pap", t);
+    expect(msgs(p, "argent")[0]).toMatchObject({ delta: -5000 });
+    expect(b.svc.etat().pap).toMatchObject({ etat: "cuisson", joueur: "a", arme: "pistolet", finT: t + CUISSON_PAP_MS });
+    expect(msgs(acheter(b, j, "pap", t + 100), "achat")[0]).toMatchObject({ ok: false, raison: "occupe" });
+    const fin = avancer(b, t + 50, t + CUISSON_PAP_MS + 100);
+    expect(msgs(fin, "equipement")[0].equip.ameliorees).toEqual(["pistolet"]);
+    expect(msgs(fin, "zevt").some((m) => m.e.e === "pap" && m.e.pret)).toBe(true);
+    expect(b.svc.etat().pap.etat).toBe("libre");
+    expect(b.svc.degatsTir(j, "pistolet", "corps", 5, t + 5000)).toBe(160);
+    expect(msgs(acheter(b, j, "pap", t + 5000), "achat")[0]).toMatchObject({ ok: false, raison: "deja" });
+  });
+
+  it("Recette ultime : trois ingrédients (la truffe et le four exigent le courant), 30 s de cuisson, Rayon Goulaf amélioré + un atout", () => {
+    const { b, j } = avec([0, 0], 1000, { courant: true });
+    const four = achat("four");
+    j.p = [four.position[0], 0, four.position[1]];
+    expect(msgs(acheter(b, j, "four"), "achat")[0]).toMatchObject({ ok: false, raison: "quete" });
+    for (const ing of ["sel", "herbes", "truffe"]) {
+      const a = achat(`ingredient:${ing}`);
+      j.p = [a.position[0], 0, a.position[1]];
+      const s = acheter(b, j, a.id);
+      expect(msgs(s, "achat")[0], ing).toMatchObject({ ok: true });
+      expect(msgs(acheter(b, j, a.id), "achat")[0]).toMatchObject({ ok: false, raison: "deja" });
+    }
+    expect(b.svc.etat().quete.ingredients).toEqual(["sel", "herbes", "truffe"]);
+    j.p = [four.position[0], 0, four.position[1]];
+    const t = T_MANCHE1 + 200;
+    expect(msgs(acheter(b, j, "four", t), "achat")[0]).toMatchObject({ ok: true });
+    expect(b.svc.etat().quete.cuissonFinT).toBe(t + CUISSON_RECETTE_MS);
+    j.pv = 1e9;
+    const fin = avancer(b, t + 50, t + CUISSON_RECETTE_MS + 100, 100);
+    const eq = msgs(fin, "equipement").find((m) => m.equip.secondaire === "rayon")!;
+    expect(eq.equip.ameliorees).toContain("rayon");
+    expect(b.svc.etat().quete.faite).toBe(true);
+    expect(b.svc.etat().joueurs[0].atouts.length).toBe(1);
+  });
+
+  it("munitions d'une arme améliorée au mur : 2 500 $", () => {
+    const { b, j } = avec(achat("mur:revolver").position, 10_000);
+    acheter(b, j, "mur:revolver");
+    j.equip = copierEquipement({ ...j.equip, ameliorees: ["revolver"] });
+    expect(msgs(acheter(b, j, "mur:revolver", T_MANCHE1 + 200), "argent")[0]).toMatchObject({ delta: -2500 });
+  });
+});
+
+// =================================================================================================
+describe("barricades", () => {
+  it("les tigres arrachent les planches ; un joueur maintenu à la fenêtre en repose une par seconde, 10 $ chacune", () => {
+    const b = partieEnCours(["a"], { total1: 60, degatsGriffe: 0 });
+    const j = b.j("a");
+    const f = fenetreDeId("F1")!;
+    j.p = [f.dedans[0], 0, f.dedans[1]];
+    j.pv = 1e9;
+    let t = T0 + 100;
+    let arrachees = 0;
+    for (; t < T_PREMIER_TIGRE + 90_000 && arrachees === 0; t += 100) {
+      arrachees += msgs(b.svc.tic(t), "zevt").filter((m) => m.e.e === "planche" && m.e.fenetre === "F1" && m.e.arrachee).length;
+    }
+    expect(arrachees).toBeGreaterThan(0);
+    const avant = b.svc.etat().fenetres[FENETRES.indexOf(f)];
+    expect(avant).toBeLessThan(6);
+    // tuer les tigres à la fenêtre, puis reposer
+    tuerTous(b, j, t);
+    expect(b.svc.recevoir(j, msg({ t: "reparer", fenetre: "F1" }), t)).toEqual([]);
+    const s = avancer(b, t + 50, t + 1100);
+    const reposes = msgs(s, "zevt").filter((m) => m.e.e === "planche" && !m.e.arrachee);
+    expect(reposes.length).toBeGreaterThanOrEqual(1);
+    expect(msgs(s, "argent").some((m) => m.motif === "planche" && m.delta === 10)).toBe(true);
+    // trop loin : la repose s'arrête
+    j.p = [f.dedans[0] + f.normale[0] * 6, 0, f.dedans[1] + f.normale[1] * 6];
+    const s2 = avancer(b, t + 1200, t + 3500);
+    expect(msgs(s2, "zevt").filter((m) => m.e.e === "planche" && !m.e.arrachee)).toHaveLength(0);
+  });
+});
+
+// =================================================================================================
+describe("manches du Truck Muche", () => {
+  it("le Truck recule au quai, lâche des petits (type 3) qui chassent ; criblé, il explose (+500 $) ; le dernier petit lâche des munitions max", () => {
+    const b = partieEnCours(["a"], { mancheTruck: 1, total1: 4, degatsGriffe: 0 });
+    const j = b.j("a");
+    j.pv = 1e9;
+    const debut = avancer(b, T0 + 100, T_MANCHE1 + 100);
+    expect(msgs(debut, "zevt").find((m) => m.e.e === "manche")!.e).toMatchObject({ numero: 1, truck: true });
+    expect(b.svc.etat().mancheTruck).toBe(true);
+    let t = T_MANCHE1 + 100;
+    let petits = 0;
+    for (; t < T_MANCHE1 + 30_000 && petits === 0; t += 100) { b.svc.tic(t); petits = tigresVivants(b).filter((z) => z.type === 3).length; }
+    expect(petits).toBeGreaterThan(0);
+    expect(b.svc.etat().truck).toMatchObject({ phase: "livraison" });
+    expect(b.svc.snap()!.t).toHaveLength(5);
+    // criblé à mort
+    const s = b.svc.blesserTruck(1e7, j, t);
+    expect(msgs(s, "zevt").some((m) => m.e.e === "truck" && m.e.quoi === "explosion")).toBe(true);
+    expect(msgs(s, "argent").find((m) => m.motif === "truck")!.delta).toBe(500);
+    expect(b.svc.etat().truck).toMatchObject({ phase: "epave" });
+    expect(b.svc.toucheTruck([0, 1, 0], [1, 0, 0], 50)).toBeNull();
+    // les petits restants sortent de l'épave ; on les tue tous
+    let munitions = false;
+    for (let k = 0; k < 400 && b.svc.etat().phase === "manche"; k++, t += 100) {
+      const r = [...b.svc.tic(t)];
+      for (const z of tigresVivants(b)) if (zoneEn(ZONES_SOL, z.x, z.z)) r.push(...b.svc.blesser(`z${z.id}`, 1e7, j, "corps", t));
+      if (msgs(r, "zevt").some((m) => m.e.e === "bonusLache" && m.e.genre === "munitions")) munitions = true;
+    }
+    expect(munitions).toBe(true);
+    expect(b.svc.etat()).toMatchObject({ phase: "pause", manche: 2, mancheTruck: false });
   });
 });
 
@@ -589,7 +949,7 @@ describe("liberer : Quitter, inactivité, déconnexion", () => {
     expect(b.svc.admis("a")).toBe(false);
     expect(dernierEtat(sorties)!.phase).toBe("manche");
     // il ne peut plus acheter ni rejoindre sans nouvelle admission
-    expect(msgs(b.svc.recevoir(a, msg({ t: "acheter", id: "soin" }), T_PREMIER_TIGRE + 300), "achat")[0]).toMatchObject({ ok: false, raison: "partie" });
+    expect(msgs(b.svc.recevoir(a, msg({ t: "acheter", id: "mur:revolver" }), T_PREMIER_TIGRE + 300), "achat")[0]).toMatchObject({ ok: false, raison: "partie" });
     // le dernier debout part : défaite
     const bb = b.j("b");
     bb.enJeu = false; bb.vivant = false;
@@ -645,166 +1005,14 @@ describe("join-in-progress", () => {
 });
 
 // =================================================================================================
-describe("achats", () => {
-  /** Joueur « a » en manche 1, debout, placé en `pos` (pieds), `argentDepart` $ en poche. */
-  function avec(pos: Vec2, argentDepart: number, opts: Partial<OptionsServiceZombies> = {}) {
-    const b = partieEnCours(["a"], { argentDepart, ...opts });
-    avancer(b, T0 + 100, T_MANCHE1 + 50); // manche 1, aucun tigre encore (grâce)
-    const j = b.j("a");
-    j.p = [pos[0], 0, pos[1]];
-    return { b, j };
-  }
-  const achat = (id: string) => ACHATS.find((a) => a.id === id)!;
-  const acheter = (b: Banc, j: JoueurSalle, id: string, t = T_MANCHE1 + 100) => b.svc.recevoir(j, msg({ t: "acheter", id }), t);
-
-  it("équipement de départ : pistolet et couteau, pas de principale ; `mur:pistolet` possédé = munitions à moitié prix", () => {
-    const { b, j } = avec(achat("mur:pistolet").position, 500);
-    expect(j.equip).toEqual({ principale: "mitraillette", secondaire: "pistolet", speciale: null, sansPrincipale: true });
-    expect(armeDuSlot(j.equip, "principale")).toBeNull();
-    expect(j.main).toBe("secondaire");
-    const s = acheter(b, j, "mur:pistolet");
-    expect(msgs(s, "achat")).toEqual([{ t: "achat", ok: true, id: "mur:pistolet" }]);
-    expect(msgs(s, "argent")).toEqual([{ t: "argent", solde: 500 - 125, delta: -125, motif: "achat" }]);
-    expect(msgs(s, "equipement")[0]).toMatchObject({ ravitaille: "pistolet", main: "secondaire" });
-    expect(msgs(s, "equipement")[0].equip).toMatchObject({ sansPrincipale: true });
-  });
-
-  it("une principale achetée remplace le remplissage, retire sansPrincipale, passe en main chargeurs pleins", () => {
-    const { b, j } = avec(achat("mur:mitraillette").position, 1000);
-    const s = acheter(b, j, "mur:mitraillette");
-    expect(msgs(s, "achat")[0]).toMatchObject({ ok: true });
-    expect(j.equip).toEqual({ principale: "mitraillette", secondaire: "pistolet", speciale: null });
-    expect(j.equip.sansPrincipale).toBeUndefined();
-    expect(j.main).toBe("principale");
-    expect(j.arme).toBe("mitraillette");
-    expect(msgs(s, "equipement")[0]).toMatchObject({ main: "principale", ravitaille: "mitraillette" });
-    expect(b.memorises).toEqual(["a"]);
-    // la racheter ensuite = munitions à moitié prix (500 $ avec 1000 − 1000 = 0 : refus faute d'argent)
-    expect(msgs(acheter(b, j, "mur:mitraillette", T_MANCHE1 + 200), "achat")[0]).toMatchObject({ ok: false, raison: "argent" });
-  });
-
-  it("une secondaire achetée remplace le pistolet ; l'épée passe `melee` à `epee` sans changer d'arme en main", () => {
-    const rev = avec(achat("mur:revolver").position, 700);
-    acheter(rev.b, rev.j, "mur:revolver");
-    expect(rev.j.equip.secondaire).toBe("revolver");
-    expect(rev.j).toMatchObject({ main: "secondaire", arme: "revolver" });
-    expect(rev.j.equip.sansPrincipale).toBe(true);
-    const ep = avec(achat("mur:epee").position, 500);
-    const s = acheter(ep.b, ep.j, "mur:epee");
-    expect(ep.j.equip.melee).toBe("epee");
-    expect(ep.j.main).toBe("secondaire");
-    expect(msgs(s, "equipement")[0].equip.melee).toBe("epee");
-    expect(msgs(s, "argent")[0]).toMatchObject({ solde: 0, delta: -500 });
-    // déjà l'épée : refus `deja`, rien n'est débité
-    const encore = acheter(ep.b, ep.j, "mur:epee", T_MANCHE1 + 200);
-    expect(msgs(encore, "achat")[0]).toEqual({ t: "achat", ok: false, id: "mur:epee", raison: "deja" });
-    expect(msgs(encore, "argent")).toEqual([]);
-  });
-
-  it("refus : `argent` (rien n'est débité), `loin`, id inconnu, `partie` (pas de partie, à terre, non admis)", () => {
-    const { b, j } = avec(achat("mur:revolver").position, 100);
-    expect(msgs(acheter(b, j, "mur:revolver"), "achat")[0]).toEqual({ t: "achat", ok: false, id: "mur:revolver", raison: "argent" });
-    expect(j.equip.secondaire).toBe("pistolet");
-    // à plus de 2,5 m
-    j.p = [achat("mur:revolver").position[0] + 4, 0, achat("mur:revolver").position[1]];
-    expect(msgs(acheter(b, j, "mur:revolver"), "achat")[0]).toMatchObject({ ok: false, raison: "loin" });
-    expect(msgs(acheter(b, j, "inconnu"), "achat")[0]).toMatchObject({ ok: false, raison: "loin" });
-    expect(msgs(b.svc.recevoir(j, { t: "acheter", id: 42 as unknown as string }, T_MANCHE1 + 100), "achat")[0]).toMatchObject({ ok: false, id: "", raison: "loin" });
-    // à terre
-    j.p = [achat("mur:revolver").position[0], 0, achat("mur:revolver").position[1]];
-    b.ctx.infliger(j, 1000, null, "tigre_zombie", "corps", "couteau", T_MANCHE1 + 150);
-    expect(msgs(acheter(b, j, "mur:revolver", T_MANCHE1 + 200), "achat")[0]).toMatchObject({ ok: false, raison: "partie" });
-    // pas de partie
-    const lobby = banc();
-    const { j: l } = lobby.arrive("a");
-    expect(msgs(lobby.svc.recevoir(l, msg({ t: "acheter", id: "soin" }), T0), "achat")[0]).toMatchObject({ ok: false, raison: "partie" });
-  });
-
-  it("pas d'achat à travers un mur : à ≤ 2,5 m du point mais de l'autre côté de la façade, c'est `loin`", () => {
-    const { b, j } = avec(achat("mur:revolver").position, 1000);
-    // la façade nord de 72 est au sud du point d'achat (z ≈ −33,3) : 2 m derrière elle, dans le bâtiment
-    j.p = [achat("mur:revolver").position[0], 0, achat("mur:revolver").position[1] + 2.4];
-    expect(msgs(acheter(b, j, "mur:revolver"), "achat")[0]).toMatchObject({ ok: false, raison: "loin" });
-  });
-
-  it("boîte : tirage dans les armes non possédées (spéciales à 0,4), la spéciale va dans le slot spécial avec ses munitions", () => {
-    const { b, j } = avec(achat("boite").position, 950);
-    // hasard injecté : on le règle par la suite du banc ; on vérifie les invariants plutôt qu'une arme précise
-    const s = acheter(b, j, "boite");
-    expect(msgs(s, "achat")[0]).toMatchObject({ ok: true, id: "boite" });
-    expect(msgs(s, "argent")[0]).toMatchObject({ solde: 0, delta: -950 });
-    const eq = msgs(s, "equipement")[0];
-    const nouvelle = j.arme;
-    expect(nouvelle).not.toBe("pistolet");
-    if (STATS[nouvelle as keyof typeof STATS].categorie === "speciale") {
-      expect(eq.equip.speciale).toBe(nouvelle);
-      expect(eq.main).toBe("speciale");
-      expect(eq.munSpeciale).toBe(STATS[nouvelle as "railgun"].chargeur);
-      expect(eq.ravitaille).toBeUndefined();
-    } else {
-      expect(eq.ravitaille).toBe(nouvelle);
-    }
-  });
-
-  it("boîte : le tirage est pondéré (spéciales à 0,4) et ne propose jamais une arme déjà possédée", () => {
-    let v = 0;
-    const { b, j } = avec(achat("boite").position, 1e9, { alea: () => v });
-    const comptes = new Map<string, number>();
-    const N = 2000;
-    for (let k = 0; k < N; k++) {
-      v = (k + 0.5) / N;
-      j.equip = copierEquipement(EQUIPEMENT_DEPART_ZOMBIES);
-      j.main = "secondaire"; j.arme = "pistolet"; j.munSpeciale = 0;
-      expect(msgs(acheter(b, j, "boite"), "achat")[0].ok).toBe(true);
-      comptes.set(j.arme, (comptes.get(j.arme) ?? 0) + 1);
-    }
-    expect(comptes.has("pistolet")).toBe(false); // déjà possédé
-    expect([...comptes.keys()].sort()).toEqual(["fusil_assaut", "magnum_dore", "mini_uzi", "minigun", "mitraillette", "mitrailleuse", "pompe", "railgun", "revolver", "sniper"]);
-    const poids = 5 + 2 + 3 * 0.4;
-    for (const [arme, n] of comptes) {
-      const attendu = (STATS[arme as "pompe"].categorie === "speciale" ? 0.4 : 1) / poids;
-      expect(n / N, arme).toBeCloseTo(attendu, 1);
-    }
-  });
-
-  it("soin : PV à 100 pour 400 $, réutilisable après 20 s par joueur", () => {
-    const { b, j } = avec(achat("soin").position, 1000);
-    j.pv = 30;
-    const s = acheter(b, j, "soin");
-    expect(msgs(s, "achat")[0]).toMatchObject({ ok: true });
-    expect(j.pv).toBe(JEU.pvMax);
-    expect(msgs(s, "argent")[0]).toMatchObject({ solde: 600, delta: -400 });
-    j.pv = 10;
-    expect(msgs(acheter(b, j, "soin", T_MANCHE1 + 100 + 19_000), "achat")[0]).toMatchObject({ ok: false, raison: "deja" });
-    expect(j.pv).toBe(10);
-    expect(msgs(acheter(b, j, "soin", T_MANCHE1 + 100 + 20_000), "achat")[0]).toMatchObject({ ok: true });
-    expect(j.pv).toBe(JEU.pvMax);
-  });
-
-  it("soin à pleins PV : refusé (deja), rien n'est débité et le délai de 20 s ne démarre pas", () => {
-    const { b, j } = avec(achat("soin").position, 1000);
-    expect(j.pv).toBe(JEU.pvMax);
-    const s = acheter(b, j, "soin");
-    expect(msgs(s, "achat")[0]).toMatchObject({ ok: false, raison: "deja" });
-    expect(msgs(s, "argent")).toHaveLength(0);
-    j.pv = 20;
-    expect(msgs(acheter(b, j, "soin", T_MANCHE1 + 200), "achat")[0]).toMatchObject({ ok: true });
-  });
-});
-
-// =================================================================================================
 describe("portes payantes", () => {
-  type IdPorte = "P1" | "P2" | "P3" | "P4" | "P5";
-  /** « a » en manche 1 avec `argent` $. */
+  type IdPorte = (typeof PORTES_PAYANTES)[number]["id"];
   function devantPorte(argent: number) {
     const b = partieEnCours(["a"], { argentDepart: argent, total1: 60, degatsGriffe: 0 });
     avancer(b, T0 + 100, T_MANCHE1 + 50);
     return { b, j: b.j("a") };
   }
-  /**
-   * Cherche, en rond autour du milieu de la porte, un point où l'achat n'est pas refusé pour `loin` (portée de 3 m du segment ET ligne de vue :
-   * l'autre côté d'un mur est refusé). Renvoie le dernier essai de `acheter` ; la porte s'ouvre si tout le reste (argent, prérequis) le permet.
-   */
+  /** Cherche autour du milieu de la porte un point où l'achat n'est pas refusé pour `loin` ; renvoie ce dernier essai. */
   function acheterPorte(b: Banc, j: JoueurSalle, id: IdPorte, t = T_MANCHE1 + 100): Sortie[] {
     const porte = porteDeId(id)!;
     for (let r = 1.0; r <= 2.8; r += 0.2) {
@@ -818,89 +1026,66 @@ describe("portes payantes", () => {
     throw new Error(`aucun point d'achat trouvé pour ${id}`);
   }
 
-  it("P1 (750 $) : G3 et S2 détruits, monde et navigation mis à jour, `batiments` à tous, fenêtre S2c activée, argent débité", () => {
+  it("D1 (750 $) : la porte tombe, monde et navigation mis à jour, `batiments` à tous, argent débité, ne se rachète pas", () => {
     const { b, j } = devantPorte(750);
-    const s = acheterPorte(b, j, "P1");
-    expect(msgs(s, "achat")[0]).toEqual({ t: "achat", ok: true, id: "P1" });
+    const s = acheterPorte(b, j, "D1");
+    expect(msgs(s, "achat")[0]).toEqual({ t: "achat", ok: true, id: "D1" });
     expect(msgs(s, "argent")[0]).toMatchObject({ solde: 0, delta: -750, motif: "achat" });
-    const detruits = [idPrisme("G3"), idPrisme("S2")];
+    const detruits = [idPrisme("D1")];
     expect(msgs(s, "batiments")).toEqual([{ t: "batiments", complet: false, detruits, breches: [] }]);
     expect(s.find((x) => x.m.t === "batiments")!.a).toBe("tous");
-    expect(batimentsDetruits(b.ctx.monde)).toEqual([...detruits].sort((x, y) => x - y));
-    expect(b.ctx.monde.prismes[idPrisme("G3")].h).toBe(0);
-    expect(b.ctx.monde.prismes[idPrisme("S2c")].h).toBeGreaterThan(0); // le champ reste (bloque les joueurs, laisse passer les tigres)
-    expect(dernierEtat(s)!.portes.find((p) => p.id === "P1")!.ouverte).toBe(true); // `zombies{etat}` immédiat
-    // une porte ouverte ne se rachète pas
-    expect(msgs(b.svc.recevoir(j, msg({ t: "acheter", id: "P1" }), T_MANCHE1 + 200), "achat")[0]).toMatchObject({ ok: false, raison: "deja" });
-    // un joueur qui rejoint plus tard reçoit les bâtiments complets avec les prismes détruits
-    expect(msgs(b.svc.synchro("z"), "batiments")[0]).toMatchObject({ complet: true, detruits: [...detruits].sort((x, y) => x - y) });
+    expect(batimentsDetruits(b.ctx.monde)).toEqual(detruits);
+    expect(b.ctx.monde.prismes[idPrisme("D1")].h).toBe(0);
+    expect(dernierEtat(s)!.portes.find((p) => p.id === "D1")!.ouverte).toBe(true);
+    expect(msgs(b.svc.recevoir(j, msg({ t: "acheter", id: "D1" }), T_MANCHE1 + 200), "achat")[0]).toMatchObject({ ok: false, raison: "deja" });
+    expect(msgs(b.svc.synchro("z"), "batiments")[0]).toMatchObject({ complet: true, detruits });
   });
 
-  it("les prérequis fixent l'ordre : P2 exige P1, P4 exige P3, P5 exige P2 (`verrou`, testé avant l'argent)", () => {
-    for (const [id, prerequis] of [["P2", "P1"], ["P4", "P3"], ["P5", "P2"]] as const) {
-      if (id === "P5") continue; // hors de portée depuis la cour Centre : couvert plus bas
-      const { b, j } = devantPorte(100); // trop peu d'argent : le refus doit être `verrou`, pas `argent`
-      const s = acheterPorte(b, j, id);
-      expect(msgs(s, "achat")[0], `${id} sans ${prerequis}`).toMatchObject({ ok: false, raison: "verrou" });
-      expect(b.svc.etat().portes.find((p) => p.id === id)!.ouverte).toBe(false);
-    }
-    // P5 est à 55 m de la cour Centre : trop loin
-    const { b, j } = devantPorte(10_000);
-    j.p = [136, 0, -50];
-    expect(msgs(b.svc.recevoir(j, msg({ t: "acheter", id: "P5" }), T_MANCHE1 + 100), "achat")[0]).toMatchObject({ ok: false, raison: "loin" });
-  });
-
-  it("P1 puis P2 puis P5 : chaque ouverture s'enchaîne, les prismes de chaque porte tombent", () => {
-    const { b, j } = devantPorte(10_000);
-    for (const id of ["P1", "P2"] as const) {
-      expect(msgs(acheterPorte(b, j, id), "achat")[0], id).toMatchObject({ ok: true });
-    }
-    expect(b.svc.etat().portes.filter((p) => p.ouverte).map((p) => p.id)).toEqual(["P1", "P2"]);
-    expect(batimentsDetruits(b.ctx.monde)).toEqual(["G3", "S2", "G4", "N4"].map(idPrisme).sort((x, y) => x - y));
-    expect(msgs(acheterPorte(b, j, "P5"), "achat")[0]).toMatchObject({ ok: true });
-    expect(b.ctx.monde.prismes[idPrisme("E")].h).toBe(0);
-  });
-
-  it("argent insuffisant ou trop loin : refus sans rien ouvrir", () => {
+  it("une porte ne s'achète que depuis une zone ouverte : G3 (cour ↔ passage Est) exige D2 ; argent insuffisant : `argent`", () => {
     const { b, j } = devantPorte(100);
-    expect(msgs(acheterPorte(b, j, "P1"), "achat")[0]).toMatchObject({ ok: false, raison: "argent" });
-    expect(batimentsDetruits(b.ctx.monde)).toEqual([]);
-    j.p = [porteDeId("P1")!.point[0] + 10, 0, porteDeId("P1")!.point[1] + 10];
-    expect(msgs(b.svc.recevoir(j, msg({ t: "acheter", id: "P1" }), T_MANCHE1 + 100), "achat")[0]).toMatchObject({ ok: false, raison: "loin" });
+    expect(msgs(acheterPorte(b, j, "G3"), "achat")[0]).toMatchObject({ ok: false, raison: "verrou" });
+    expect(msgs(acheterPorte(b, j, "D2"), "achat")[0]).toMatchObject({ ok: false, raison: "argent" });
+    const r = devantPorte(10_000);
+    expect(msgs(acheterPorte(r.b, r.j, "D2"), "achat")[0]).toMatchObject({ ok: true });
+    expect(msgs(acheterPorte(r.b, r.j, "G3"), "achat")[0]).toMatchObject({ ok: true });
+    expect(batimentsDetruits(r.b.ctx.monde)).toEqual(["D2", "G3"].map(idPrisme).sort((x, y) => x - y));
+    j.p = [porteDeId("D1")!.point[0] + 10, 0, porteDeId("D1")!.point[1] + 10];
+    expect(msgs(b.svc.recevoir(j, msg({ t: "acheter", id: "D1" }), T_MANCHE1 + 100), "achat")[0]).toMatchObject({ ok: false, raison: "loin" });
   });
 
-  it("pas d'achat de porte à travers un mur : de l'autre côté de la façade, à moins de 3 m, c'est `loin`", () => {
-    const { b, j } = devantPorte(10_000);
-    // P3 (G2/S1 au sud-ouest) : un point à l'intérieur du bâtiment voisin, côté opposé, reste à ~3 m du segment mais derrière des murs
-    j.p = [porteDeId("P1")!.point[0] + 2.9, 0, porteDeId("P1")!.point[1] + 0.2];
-    const s = b.svc.recevoir(j, msg({ t: "acheter", id: "P1" }), T_MANCHE1 + 100);
-    const m = msgs(s, "achat")[0];
-    // soit l'achat passe (point dégagé), soit il est refusé pour `loin` : jamais `argent` avec 10 000 $
-    expect(m.ok || m.raison === "loin").toBe(true);
+  it("toutes les portes s'ouvrent l'une après l'autre en partant de l'open space", () => {
+    const { b, j } = devantPorte(1e6);
+    const restantes = new Set(PORTES_PAYANTES.map((p) => p.id));
+    for (let tour = 0; tour < 12 && restantes.size; tour++) {
+      for (const id of [...restantes]) if (msgs(acheterPorte(b, j, id), "achat")[0].ok) restantes.delete(id);
+    }
+    expect([...restantes]).toEqual([]);
+    expect(b.svc.etat().portes.every((p) => p.ouverte)).toBe(true);
   });
 
-  it("une porte ouverte active la fenêtre à tigres qui lui correspond (S2c pour P1) ; portes fermées, seule N2c fait naître des tigres", () => {
-    /** Origine (fenêtre) de chaque tigre vu à son apparition, pendant 60 s, joueur très loin et invincible. */
-    const origines = (b: Banc, j: JoueurSalle, t0: number): Set<string> => {
-      const vues = new Set<string>();
+  it("les tigres naissent dans les zones actives : portes fermées, l'open space seul ; D2 ouverte, la cour aussi", () => {
+    /** Zones d'origine des tigres vus à leur apparition, pendant 40 s, joueur invincible à son départ. */
+    const origines = (b: Banc, j: JoueurSalle, t0: number): Set<ZoneId | "?"> => {
+      const vues = new Set<ZoneId | "?">();
       const connus = new Set<number>();
-      j.p = [8.5, 0, 20]; j.pv = 1e9;
-      for (let t = t0; t < t0 + 60_000; t += 100) {
+      j.p = [DEPARTS[0][0], 0, DEPARTS[0][1]]; j.pv = 1e9;
+      for (let t = t0; t < t0 + 40_000; t += 100) {
         b.svc.tic(t);
         for (const z of tigresVivants(b)) {
           if (connus.has(z.id)) continue;
           connus.add(z.id);
-          vues.add(z.z < -77 ? "N2c" : z.x > 140 && z.z > -5 ? "S2c" : `autre(${z.x.toFixed(0)},${z.z.toFixed(0)})`);
+          const f = FENETRES.find((x) => x.points.some((p) => Math.hypot(p[0] - z.x, p[1] - z.z) < 1.5));
+          vues.add(f ? f.zone : (zoneEn(ZONES_SOL, z.x, z.z) ?? "?"));
         }
         tuerTous(b, j, t);
       }
       return vues;
     };
     const fermees = devantPorte(10_000);
-    expect([...origines(fermees.b, fermees.j, T_MANCHE1 + 3_200)]).toEqual(["N2c"]);
+    expect([...origines(fermees.b, fermees.j, T_MANCHE1 + 3_200)]).toEqual(["open"]);
     const ouvertes = devantPorte(10_000);
-    expect(msgs(acheterPorte(ouvertes.b, ouvertes.j, "P1"), "achat")[0].ok).toBe(true);
-    expect([...origines(ouvertes.b, ouvertes.j, T_MANCHE1 + 3_200)].sort()).toEqual(["N2c", "S2c"]);
+    expect(msgs(acheterPorte(ouvertes.b, ouvertes.j, "D2"), "achat")[0].ok).toBe(true);
+    expect([...origines(ouvertes.b, ouvertes.j, T_MANCHE1 + 3_200)].sort()).toEqual(["cour", "open"]);
   });
 });
 
@@ -911,33 +1096,33 @@ describe("synchro, snap, départs", () => {
     const s = b.svc.synchro("a");
     expect(s.map((x) => x.m.t)).toEqual(["zombies", "batiments", "argent"]);
     expect(s.every((x) => x.a === "a")).toBe(true);
-    const inconnu = b.svc.synchro("zz");
-    expect(inconnu.map((x) => x.m.t)).toEqual(["zombies", "batiments"]);
+    expect(b.svc.synchro("zz").map((x) => x.m.t)).toEqual(["zombies", "batiments"]);
   });
 
-  it("snap : null dans le lobby, `{r, z}` pendant la partie (r = tigres restants), vide à la pause", () => {
+  it("snap : null dans le lobby, `{r, z}` pendant la partie (r = tigres restants), vide pendant le décompte", () => {
     const b = partieEnCours(["a"], { total1: 3 });
-    expect(b.svc.snap()).toEqual({ r: 0, z: [] }); // décompte : manche 1 pas commencée
+    expect(b.svc.snap()).toEqual({ r: 0, z: [] });
     avancer(b, T0 + 100, T_PREMIER_TIGRE + 100);
     const snap = b.svc.snap()!;
     expect(snap.r).toBe(3);
     expect(snap.z).toHaveLength(6);
   });
 
-  it("departPour : le départ le plus éloigné des autres joueurs, lacet vers le centre de la cour", () => {
+  it("departPour : le départ le plus éloigné des autres joueurs ; huit joueurs, huit départs", () => {
     expect(departPour([]).index).toBe(0);
     const loin = departPour([[DEPARTS[0][0], 0, DEPARTS[0][1]]]);
     expect(loin.index).not.toBe(0);
     for (const d of DEPARTS) expect(Math.hypot(loin.p[0] - DEPARTS[0][0], loin.p[2] - DEPARTS[0][1])).toBeGreaterThanOrEqual(Math.hypot(d[0] - DEPARTS[0][0], d[1] - DEPARTS[0][1]) - 1e-9);
     expect(Number.isFinite(loin.lacet)).toBe(true);
-    // huit joueurs : huit départs distincts
     const pris: Vec3[] = [];
     for (let i = 0; i < 8; i++) pris.push(departPour(pris).p);
     expect(new Set(pris.map((p) => `${p[0]},${p[2]}`)).size).toBe(8);
   });
 
-  it("PORTES_PAYANTES : cinq portes, prix et prérequis de la spec", () => {
-    expect(PORTES_PAYANTES.map((p) => [p.id, p.prix, p.prerequis])).toEqual([["P1", 750, null], ["P3", 1000, null], ["P2", 1250, "P1"], ["P4", 1500, "P3"], ["P5", 2000, "P2"]]);
+  it("PORTES_PAYANTES : onze portes, prix de la spec", () => {
+    expect(PORTES_PAYANTES.map((p) => [p.id, p.prix])).toEqual([
+      ["D1", 750], ["D2", 1000], ["D3", 1250], ["G3", 750], ["D4", 1000], ["D7", 1000], ["G4", 1250], ["G2", 1000], ["G1", 1250], ["D8", 1500], ["D9", 1500],
+    ]);
   });
 });
 

@@ -62,7 +62,7 @@ export interface HudEtat {
   /** multiplicateur de course de l'arme en main (couteau 1,3 ; sinon 1 ; arrondi à 0,01) */
   bonusVitesse: number;
   /** invite d'interaction affichée sous le viseur */
-  invite: "" | "elsa" | "monter" | "descendre" | "acheter" | "porte" | "boite" | "soin" | "reanimer";
+  invite: "" | "elsa" | "monter" | "descendre" | "acheter" | "porte" | "boite" | "soin" | "reanimer" | "atout" | "pap" | "courant" | "ingredient" | "four" | "reparer" | "note";
   /** "2/4" occupants pour "monter" ; distance « 12 m » pour "elsa" ; zombies : « Pompe — 900 $ », « Ouvrir la porte — 1 250 $ », « Réanimer Léa » (texte après « [E] ») */
   inviteDetail: string;
   vehicule: boolean;
@@ -185,6 +185,19 @@ export interface EtatZombiesHud {
   terreFinT: number;
   /** dernier `zombies{etat}` reçu (null avant le premier) */
   partie: EtatPartieZombies | null;
+  // ---- v7 ----
+  /** PV max (250 avec le Gratin Dauphinois) */
+  pvMax: number;
+  /** note de lore ouverte (id), null sinon */
+  note: number | null;
+  /** dernière annonce (bonus ramassé, courant, livraison…) : `n` change à chaque nouvelle */
+  annonce: { n: number; texte: string; genre: string } | null;
+  /** horloge serveur (ms) : minuteurs des bonus */
+  serveurT: number;
+  /** objectif courant (lore) */
+  objectif: string;
+  /** fenêtre dont je repose les planches (E maintenu), null sinon */
+  reparation: string | null;
 }
 
 /** Options de `lancerJeu` : le mode de la salle (arène par défaut, comportement historique). */

@@ -508,8 +508,8 @@ function pasLibre(s: EtatMouvement, front: boolean, dt: number, m: Monde, mult: 
       v[1] = MOUV.saut;
       saute = true;
       s.coyote = 0;
-    } else if (s.sautsAir > 0) {
-      // Double saut : relance verticale, et le cap suit l'entrée (l'élan est gardé).
+    } else if (s.sautsAir > 0 && !m.sansParkour) {
+      // Double saut (jamais en zombies : `sansParkour`) : relance verticale, et le cap suit l'entrée (l'élan est gardé).
       v[1] = MOUV.sautAir;
       s.sautsAir -= 1;
       if (w.mag > 1e-6) {
@@ -570,7 +570,8 @@ function pasLibre(s: EtatMouvement, front: boolean, dt: number, m: Monde, mult: 
     s.coyote = MOUV.coyoteS;
     return;
   }
-  essayerAccrocher(s, m, w, vx0, vz0, mult);
+  // (v7, zombies) pas de wall-run : on ne s'accroche jamais aux murs
+  if (!m.sansParkour) essayerAccrocher(s, m, w, vx0, vz0, mult);
 }
 
 /**

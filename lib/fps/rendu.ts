@@ -87,6 +87,8 @@ export interface ArmeEnMain {
   changer(arme: ArmeId): void;
   /** Lance l'animation de rechargement sur `dureeS` secondes. */
   recharger(dureeS: number): void;
+  /** (v7, zombies) arme passée au Pack-a-Punch : camouflage animé (arêtes qui changent de teinte) */
+  ameliorer(oui: boolean): void;
   maj(dt: number, ctx: ContexteArmeEnMain): void;
   /** Avancement du rechargement : 0 = rien, ]0,1[ = en cours. */
   readonly progresRecharge: number;
@@ -531,6 +533,24 @@ function creerModeleArme(id: ArmeId, m: Materiaux, devant: boolean): ModeleArme 
       };
       break;
     }
+    case "rayon": {
+      // (v7, zombies) pistolet à rayons rétro : corps cylindrique cerclé d'ailettes, émetteur en bulbe, crosse inclinée
+      piece(inner, geoCyl(0.03, 0.17, 10), m, 0, 0.025, -0.08);
+      for (const z of [-0.03, -0.07, -0.11]) piece(inner, geoCyl(0.045, 0.012, 10), m, 0, 0.025, z);
+      const bulbe = piece(inner, geoCyl(0.02, 0.05, 8), m, 0, 0.025, -0.2);
+      piece(inner, geoBoite(0.05, 0.012, 0.012), m, 0, 0.025, -0.24);
+      piece(inner, geoBoite(0.034, 0.1, 0.05), m, 0, -0.06, 0.02, -0.35);
+      piece(inner, geoBoite(0.014, 0.024, 0.06), m, 0, 0.065, -0.05);
+      piece(inner, geoBoite(0.018, 0.004, 0.045), m, 0, -0.016, -0.04);
+      prise.set(0, -0.045, 0.02);
+      garde.set(-0.02, -0.075, 0.03);
+      bouche.set(0, 0.025, -0.25);
+      porte.set(0.1, -0.25, -0.42);
+      echelleFlash = 1.2;
+      inclinaison = 0.35;
+      anim = (t) => { bulbe.scale.setScalar(1 + 0.4 * pulsation(t, 0.02, 0.15)); };
+      break;
+    }
     case "revolver":
     case "magnum_dore": {
       // Revolver à six coups ; le magnum doré est le même gabarit en plus grand, canon long ventilé et compensateur. Le barillet sort sur le côté au rechargement.
@@ -793,12 +813,24 @@ const PLACEMENT: Record<ArmeId, PlacementArme> = {
   railgun: { repos: [0.19, -0.21, -0.12], vise: [0, -0.09, -0.1], lacet: 0.04, reculZ: 0.1, reculRot: 0.22 },
   minigun: { repos: [0.2, -0.24, -0.14], vise: [0, -0.1, -0.1], lacet: 0.04, reculZ: 0.015, reculRot: 0.03 },
   magnum_dore: { repos: [0.17, -0.18, -0.36], vise: [0, -0.08, -0.3], lacet: 0.05, reculZ: 0.08, reculRot: 0.26 },
+  rayon: { repos: [0.16, -0.17, -0.34], vise: [0, -0.075, -0.28], lacet: 0.05, reculZ: 0.04, reculRot: 0.12 },
   couteau: { repos: [0.2, -0.2, -0.36], vise: [0.2, -0.2, -0.36], lacet: -0.05, reculZ: 0, reculRot: 0 },
   // Épée : tenue plus bas et plus au centre (deux mains), lame levée devant ; pas de visée.
   epee: { repos: [0.14, -0.25, -0.32], vise: [0.14, -0.25, -0.32], lacet: -0.08, reculZ: 0, reculRot: 0 },
 };
 
 const COULEUR_ARME_PAR_DEFAUT = 0xbfefff;
+
+/**
+ * (v7, zombies) Modèle d'arme posé dans le monde (mur acheté, boîte mystère, Pack-a-Punch) : arêtes de la couleur donnée, faces sombres,
+ * dessiné avec le reste de la scène. Échelle 1 (≈ taille réelle) ; à libérer avec `dispose`.
+ */
+export function creerModeleArmeMonde(id: ArmeId, couleur: CouleurEntree): { group: THREE.Group; dispose(): void } {
+  const m = creerMateriaux(new THREE.Color(couleur), false);
+  const modele = creerModeleArme(id, m, false);
+  ordonner(modele.group, false, 6);
+  return { group: modele.group, dispose() { modele.dispose(); modele.group.removeFromParent(); libererMateriaux(m); } };
+}
 
 export function creerArmeEnMain(idInitial: ArmeId, couleur: CouleurEntree = COULEUR_ARME_PAR_DEFAUT): ArmeEnMain {
   const col = new THREE.Color(couleur);
@@ -830,6 +862,11 @@ export function creerArmeEnMain(idInitial: ArmeId, couleur: CouleurEntree = COUL
   orienterBras(brasD, modele.prise, coudeD);
   orienterBras(brasG, modele.garde, coudeG);
 
+  // (v7) camouflage du Pack-a-Punch : teinte des arêtes et des faces qui tourne entre le magenta et l'ambre
+  let amelioree = false;
+  const couleurBase = col.clone();
+  const fondBase = (m.fond.color as THREE.Color).clone();
+  const camo = new THREE.Color();
   // Ressort amorti du recul.
   let recul = 0, reculV = 0, ads = 0, phase = 0, amp = 0, air = 0, tAcc = 0;
   const RAIDEUR = 260, AMORTISSEMENT = 21;
@@ -857,9 +894,18 @@ export function creerArmeEnMain(idInitial: ArmeId, couleur: CouleurEntree = COUL
       reculV = 0;
     },
     recharger(dureeS) { modele.recharger(dureeS); },
+    ameliorer(oui) {
+      amelioree = oui;
+      if (!oui) { (m.ligne as THREE.LineBasicMaterial).color.copy(couleurBase); m.fond.color.copy(fondBase); }
+    },
     maj(dt, ctx) {
       dt = borne(dt, 0, 0.1);
       tAcc += dt;
+      if (amelioree) {
+        camo.setHSL((0.86 + 0.12 * Math.sin(tAcc * 1.8)) % 1, 1, 0.62);
+        (m.ligne as THREE.LineBasicMaterial).color.copy(camo);
+        m.fond.color.copy(camo).multiplyScalar(0.22);
+      }
       modele.maj(dt);
       orienterBras(brasD, modele.prise, coudeD);
       orienterBras(brasG, modele.garde, coudeG);

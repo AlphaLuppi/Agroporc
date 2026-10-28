@@ -43,19 +43,21 @@ export function tuer(s: Sante, maintenant: number): void {
  * Régénère les PV (entiers) après REGEN.delaiMs sans dégât ; dtS borné à 0,25 ; vrai si `pv` a changé. Jamais sur un mort.
  * Seule la part du pas postérieure à la fin du délai compte : la régénération démarre à 5,000 s, pas au tic suivant.
  */
-export function regenerer(s: Sante, maintenant: number, dtS: number): boolean {
+export function regenerer(s: Sante, maintenant: number, dtS: number, regles?: { pvMax: number; delaiMs: number; pvParS: number }): boolean {
   if (s.pv <= 0) return false;
-  if (s.pv >= JEU.pvMax) { s.regenAcc = 0; return false; }
-  const apresDelaiS = (maintenant - s.dernierDegatT - REGEN.delaiMs) / 1000;
+  // (v7) règles de la salle zombies : PV max (Gratin), délai et vitesse de régénération
+  const pvMax = regles?.pvMax ?? JEU.pvMax, delaiMs = regles?.delaiMs ?? REGEN.delaiMs, pvParS = regles?.pvParS ?? REGEN.pvParS;
+  if (s.pv >= pvMax) { s.regenAcc = 0; return false; }
+  const apresDelaiS = (maintenant - s.dernierDegatT - delaiMs) / 1000;
   const dt = Math.min(Math.max(0, dtS), DT_MAX_S, apresDelaiS);
   if (!(dt > 0)) return false;
-  s.regenAcc += REGEN.pvParS * dt;
+  s.regenAcc += pvParS * dt;
   // 1e-9 : 20 × (1/60) × 3 ne doit pas rester à 0,999…
   const n = Math.floor(s.regenAcc + 1e-9);
   if (n < 1) return false;
   s.regenAcc -= n;
-  s.pv = Math.min(JEU.pvMax, s.pv + n);
-  if (s.pv >= JEU.pvMax) s.regenAcc = 0;
+  s.pv = Math.min(pvMax, s.pv + n);
+  if (s.pv >= pvMax) s.regenAcc = 0;
   return true;
 }
 /** Soin d'Elsa : pv = pvMax, bouclier = bouclierMax. */

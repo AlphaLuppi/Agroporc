@@ -9,8 +9,8 @@ const angle = (a: Vec3, b: Vec3) => Math.acos(Math.min(1, Math.max(-1, a[0] * b[
 const norme = (v: Vec3) => Math.hypot(v[0], v[1], v[2]);
 
 describe("STATS", () => {
-  it("le catalogue compte 11 armes à feu, une entrée chacune", () => {
-    expect(ARMES).toHaveLength(11);
+  it("le catalogue compte 12 armes à feu (dont le pistolet à rayons des zombies), une entrée chacune", () => {
+    expect(ARMES).toHaveLength(12);
     expect(Object.keys(STATS).sort()).toEqual([...ARMES].sort());
   });
 
@@ -347,13 +347,13 @@ describe("MELEE (couteau et épée)", () => {
 
   it("couteau inchangé : 100 / 100, portée 2,2 (+0,6), 0,5 s, ×1,3, cône 55°, 1 cible, coup de 0,40 s", () => {
     expect(MELEE.couteau).toMatchObject({
-      degats: 100, degatsZombie: 100, portee: 2.2, margePortee: 0.6, cadenceS: 0.5, vitesse: 1.3, cosCone: 0.574, nbCiblesMax: 1, dureeCoupS: 0.4,
+      degats: 100, degatsZombie: 150, portee: 2.2, margePortee: 0.6, cadenceS: 0.5, vitesse: 1.3, cosCone: 0.574, nbCiblesMax: 1, dureeCoupS: 0.4,
     });
   });
 
   it("épée conforme à la spec : 140 / 220, portée 2,6 (+0,7), 0,85 s, ×1,2, cône 70°, 3 cibles, coup de 0,55 s", () => {
     expect(MELEE.epee).toMatchObject({
-      degats: 140, degatsZombie: 220, portee: 2.6, margePortee: 0.7, cadenceS: 0.85, vitesse: 1.2, cosCone: 0.342, nbCiblesMax: 3, dureeCoupS: 0.55,
+      degats: 140, degatsZombie: 1000, portee: 2.6, margePortee: 0.7, cadenceS: 0.85, vitesse: 1.2, cosCone: 0.342, nbCiblesMax: 3, dureeCoupS: 0.55,
     });
     expect(MELEE.epee.cosCone).toBeCloseTo(Math.cos((70 * Math.PI) / 180), 2);
     // tue un joueur sans bouclier en un coup, mais pas avec bouclier plein

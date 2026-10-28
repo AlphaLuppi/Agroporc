@@ -416,6 +416,9 @@ function ajouterEquipementsToit(scene: THREE.Object3D, data: SceneData, etat?: E
   scene.add(mesh, aretes);
 }
 
+/** Types de pièces de la carte zombies v7 dessinés par le rendu des intérieurs (`lib/fps/rendu-interieurs.ts`), jamais par le décor. */
+const SANS_DECOR: ReadonlySet<string> = new Set(["fenetre", "coque", "cloison", "meuble", "creux"]);
+
 /** Bâtiments ordinaires (cyan), base (blanc), restaurants (ambre) et pièces de la carte zombies (ambre, par style). */
 export function ajouterBatiments(scene: THREE.Object3D, data: SceneData, opts: OptionsDecor = {}): void {
   const fantomes = opts.fantomes !== false;
@@ -427,7 +430,7 @@ export function ajouterBatiments(scene: THREE.Object3D, data: SceneData, opts: O
     return t === "porte" || t === "barricade" || t === "champ" ? t : undefined;
   };
   const groupe = (garder: (i: number) => boolean, arete: number, face: number, opacite: number, fantome: number, style?: StylePiece) => {
-    const indices = data.buildings.map((_, i) => i).filter(garder);
+    const indices = data.buildings.map((_, i) => i).filter((i) => !SANS_DECOR.has(data.buildings[i].type ?? "") && garder(i));
     if (style && !indices.length) return;
     const liste = indices.map((i) => data.buildings[i]);
     scene.add(buildingGroup(liste, arete, face, opacite, fantomes ? fantome : 0, {

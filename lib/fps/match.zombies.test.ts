@@ -177,9 +177,9 @@ describe("tirs sur les tigres", () => {
     expect(a.kills).toBe(1);
     expect(a.touches).toBe(degats.length);
     expect(a.killsParArme).toEqual({ pistolet: 1 });
-    // gain : +10 par tir qui touche, +60 au kill au corps ou +100 à la tête (manche 1)
+    // gain (BO1) : +10 par tir qui touche sans tuer, +60 au kill au corps ou +100 à la tête
     const delta = messages(toutes, "argent").reduce((n, m) => n + m.delta, 0);
-    expect(delta).toBe(degats.length * gainTouche(1) + gainKill(1, { tete: zoneMort === "tete" }));
+    expect(delta).toBe((degats.length - 1) * gainTouche() + gainKill({ tete: zoneMort === "tete" }));
     expect(types(toutes)).toContain("presence");
     expect(types(toutes)).not.toContain("mort");
   });
@@ -227,37 +227,33 @@ describe("tirs sur les tigres", () => {
     expect(a.kills).toBe(0);
   });
 
-  it("coup d'épée sur plusieurs tigres : jusqu'à 3 cibles, 220 dégâts chacune, le gain de touche n'est versé qu'une fois", () => {
-    // trois points d'apparition à 3 m du joueur, tous du même côté : les tigres se groupent devant lui
-    const fenetres = [{ id: "T", milieu: [131, -50] as [number, number], porte: null, points: [[133, -50], [133, -48.4], [133, -51.6]] as [[number, number], [number, number], [number, number]] }];
-    const s = partie(["a"], { total1: 4, donnees: { fenetres, departs: DEPARTS } });
+  it("coup d'épée sur plusieurs tigres : jusqu'à 3 cibles, 1 000 dégâts chacune (un coup tue), 130 $ par kill à l'arme blanche", () => {
+    // le joueur attend à son départ, griffes neutralisées : les tigres entrent et se groupent contre lui
+    const s = partie(["a"], { total1: 6, degatsGriffe: 0 });
     const a = j(s, "a");
-    a.p = [128, 0, -50];
-    const equip = { ...a.equip, melee: "epee" as const };
-    s.equiper(a, equip, "couteau", T0);
+    s.equiper(a, { ...a.equip, melee: "epee" as const }, "couteau", T0);
     expect(a).toMatchObject({ main: "couteau", arme: "epee" });
-    // les tigres arrivent un par un (toutes les 1,9 s après 4 s) : on attend les 3 premiers
-    const sorties = avancer(s, T0 + 50, T0 + 11_000);
-    const tigres = tigresDe(sorties.slice(-40));
-    expect(tigres.length).toBeGreaterThanOrEqual(3);
-    const cibles = tigres.slice(0, 4).map((z) => `z${z.id}`);
-    const cx = tigres.reduce((n, z) => n + z.x, 0) / tigres.length, cz = tigres.reduce((n, z) => n + z.z, 0) / tigres.length;
+    let t = T0 + 50;
+    let proches: { id: number; x: number; z: number }[] = [];
+    for (; t < T0 + 90_000 && proches.length < 3; t += 50) {
+      const sorties = avancer(s, t, t);
+      const tigres = tigresDe(sorties.slice(-40));
+      if (tigres.length) proches = tigres.filter((z) => Math.hypot(z.x - a.p[0], z.z - a.p[2]) < 2.6);
+    }
+    expect(proches.length).toBeGreaterThanOrEqual(2);
+    const cibles = [...proches.map((z) => `z${z.id}`), "z999"].slice(0, 4);
+    const cx = proches.reduce((n, z) => n + z.x, 0) / proches.length, cz = proches.reduce((n, z) => n + z.z, 0) / proches.length;
     const { o, d } = regarder(s, "a", [cx, 1.0, cz]);
-    const t = T0 + 11_200;
     for (const x of s.joueurs()) x.etatT = t;
     const resultat = s.recevoir("a", { t: "coup", o, d, cibles }, t);
     const degats = messages(resultat, "degats");
-    // au plus 3 cibles (même avec 4 déclarées), 220 dégâts ≥ 100 PV : chacune tombe
     expect(degats.length).toBeGreaterThanOrEqual(2);
     expect(degats.length).toBeLessThanOrEqual(3);
-    expect(degats.every((m) => m.degats === 220 && m.pv === 0 && m.cible.startsWith("z"))).toBe(true);
+    expect(degats.every((m) => m.degats === 1000 && m.pv === 0 && m.cible.startsWith("z"))).toBe(true);
     expect(messages(resultat, "zombieMort")).toHaveLength(degats.length);
-    expect(a.kills).toBe(degats.length);
     expect(a.killsParArme).toEqual({ epee: degats.length });
-    // un seul gain de touche pour le coup, un gain de kill par tigre (kill à l'arme blanche : 100 $)
     const gain = messages(resultat, "argent").reduce((n, m) => n + m.delta, 0);
-    expect(gain).toBe(gainTouche(1, { melee: true }) + degats.length * gainKill(1, { melee: true }));
-    // le coup est diffusé aux autres avec l'arme
+    expect(gain).toBe(degats.length * gainKill({ melee: true }));
     expect(resultat[0].m).toMatchObject({ t: "coup", id: "a", arme: "epee" });
   });
 

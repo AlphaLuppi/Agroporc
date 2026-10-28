@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  ARMES, ARMES_MELEE, ARMES_PRINCIPALES, ARMES_SECONDAIRES, ARMES_SPECIALES, ECHELLE_AVATAR, EQUIPEMENT_DEFAUT, JEU, OEIL_SIEGE, PAS_SNAP_ZOMBIE, PLAFONDS,
+  ARMES, ARMES_MELEE, ARMES_PRINCIPALES, ARMES_SECONDAIRES, ARMES_SECONDAIRES_ZOMBIES, ARMES_SPECIALES, ECHELLE_AVATAR, EQUIPEMENT_DEFAUT, JEU, OEIL_SIEGE, PAS_SNAP_ZOMBIE, PLAFONDS,
   SILHOUETTE, SILHOUETTE_ACCROUPIE, SLOTS, VERSION_PROTOCOLE, copierEquipement, decoderZombies, encoderZombies, estIdZombie, estMelee, idZombie, oeilDe,
   silhouetteDe, type ZombieSnap,
   type CauseMort, type MessageClient, type MessageServeur, type PassageAvion, type TigreLargueSnap,
@@ -8,10 +8,10 @@ import {
 import { STATS } from "./armes";
 
 describe("armes", () => {
-  it("ARMES : 11 armes sans doublon, listes de catégories disjointes", () => {
-    expect(ARMES).toHaveLength(11);
+  it("ARMES : 12 armes sans doublon (le pistolet à rayons des zombies compris), listes de catégories disjointes", () => {
+    expect(ARMES).toHaveLength(12);
     expect(new Set(ARMES).size).toBe(ARMES.length);
-    const toutes = [...ARMES_PRINCIPALES, ...ARMES_SECONDAIRES, ...ARMES_SPECIALES];
+    const toutes = [...ARMES_PRINCIPALES, ...ARMES_SECONDAIRES, ...ARMES_SECONDAIRES_ZOMBIES, ...ARMES_SPECIALES];
     expect(new Set(toutes).size).toBe(toutes.length);
     expect([...ARMES].sort()).toEqual([...toutes].sort());
     expect(ARMES).not.toContain("couteau");
@@ -92,7 +92,7 @@ describe("silhouette", () => {
 
 describe("constantes", () => {
   it("version 6 du protocole (événements de la v4, tigres largués de la v5, zombies et épée)", () => {
-    expect(VERSION_PROTOCOLE).toBe(6);
+    expect(VERSION_PROTOCOLE).toBe(7);
   });
 
   it("chaîne de plafonds de vitesse : sprint couteau ≤ plafond horizontal ≤ plafond déclaré", () => {
@@ -115,7 +115,7 @@ describe("constantes", () => {
 
 describe("protocole v6 (zombies)", () => {
   it("version 6", () => {
-    expect(VERSION_PROTOCOLE).toBe(6);
+    expect(VERSION_PROTOCOLE).toBe(7);
   });
 
   it("ARMES_MELEE : couteau et épée, estMelee ne reconnaît aucune arme à feu", () => {
@@ -128,7 +128,7 @@ describe("protocole v6 (zombies)", () => {
   });
 
   it("les 11 armes à feu sont inchangées (l'épée n'en est pas une)", () => {
-    expect(ARMES).toHaveLength(11);
+    expect(ARMES).toHaveLength(12);
     expect(ARMES).not.toContain("epee");
   });
 
@@ -159,9 +159,9 @@ describe("protocole v6 (zombies)", () => {
 
   it("encoderZombies / decoderZombies : aller-retour au centimètre, au milliradian et au pour cent", () => {
     const zs: ZombieSnap[] = [
-      { id: 3, x: 123.456, z: -78.904, cap: 1.2345, type: 0, griffe: false, apparition: false, pvPct: 100 },
-      { id: 17, x: -0.004, z: 0.006, cap: -3.1415, type: 1, griffe: true, apparition: false, pvPct: 62.4 },
-      { id: 99, x: 210, z: 24, cap: 0, type: 2, griffe: true, apparition: true, pvPct: 0 },
+      { id: 3, x: 123.456, z: -78.904, cap: 1.2345, type: 0, griffe: false, apparition: false, pvPct: 100, allure: 0, mode: "chasse" },
+      { id: 17, x: -0.004, z: 0.006, cap: -3.1415, type: 1, griffe: true, apparition: false, pvPct: 62.4, allure: 1, mode: "fenetre" },
+      { id: 99, x: 210, z: 24, cap: 0, type: 2, griffe: true, apparition: true, pvPct: 0, allure: 2, mode: "sol" },
     ];
     const snap = encoderZombies(5, zs);
     expect(snap.r).toBe(5);
@@ -184,7 +184,7 @@ describe("protocole v6 (zombies)", () => {
   });
 
   it("encoderZombies : drapeaux (type bits 0-1, griffe bit 2, apparition bit 3), PV bornés ; liste vide ; tableau tronqué ignoré", () => {
-    const [, , , , drapeaux, pv] = encoderZombies(1, [{ id: 1, x: 0, z: 0, cap: 0, type: 2, griffe: true, apparition: true, pvPct: 250 }]).z;
+    const [, , , , drapeaux, pv] = encoderZombies(1, [{ id: 1, x: 0, z: 0, cap: 0, type: 2, griffe: true, apparition: true, pvPct: 250, allure: 0, mode: "chasse" }]).z;
     expect(drapeaux).toBe(2 | 4 | 8);
     expect(pv).toBe(100);
     expect(encoderZombies(0, []).z).toEqual([]);

@@ -36,7 +36,8 @@ function Touche({ libelle }: { libelle: string }) {
 }
 
 function InvitesBrutes({ invite, inviteDetail, toucheInteragir, inviteRecharge, toucheRecharger, assez = true, reanime = false, refReanim }: PropsInvitesAction) {
-  if (invite === "acheter" || invite === "porte" || invite === "boite" || invite === "soin") {
+  if (invite === "acheter" || invite === "porte" || invite === "boite" || invite === "soin" || invite === "atout" || invite === "pap"
+    || invite === "courant" || invite === "ingredient" || invite === "four" || invite === "note") {
     const manque = manqueInvite(inviteDetail, assez);
     return (
       <p className={`${styles.plaque} ${styles.invite}`} data-assez={manque ? "non" : "oui"}>
@@ -46,7 +47,7 @@ function InvitesBrutes({ invite, inviteDetail, toucheInteragir, inviteRecharge, 
       </p>
     );
   }
-  if (invite === "reanimer") {
+  if (invite === "reanimer" || invite === "reparer") {
     return (
       <p className={`${styles.plaque} ${styles.invite}`} data-reanime={reanime ? "oui" : "non"}>
         <Touche libelle={toucheInteragir} /> {inviteDetail}

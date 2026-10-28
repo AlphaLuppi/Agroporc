@@ -1,5 +1,6 @@
 "use client";
 
+import type { Difficulte } from "@/lib/fps/zombies-vagues";
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from "react";
 import { connecterArene, urlArene, type ClientArene, type EtatConnexion } from "@/lib/fps/reseau";
 import { STATS } from "@/lib/fps/armes";
@@ -168,8 +169,8 @@ export function useArene(pseudo: string, jeuRef: MutableRefObject<JeuHandle | nu
     clientRef.current?.envoyer({ t: "mode", mode: m });
   }, []);
   /** Hôte du lobby des zombies : lance la partie (le serveur ignore le message d'un autre joueur). */
-  const lancerPartie = useCallback(() => {
-    clientRef.current?.envoyer({ t: "lancerPartie" });
+  const lancerPartie = useCallback((difficulte?: Difficulte) => {
+    clientRef.current?.envoyer(difficulte ? { t: "lancerPartie", difficulte } : { t: "lancerPartie" });
   }, []);
 
   useEffect(() => {

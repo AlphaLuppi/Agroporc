@@ -46,7 +46,11 @@ export interface GrilleMonde {
   tampon: number;
 }
 
-export interface Monde { prismes: Prisme[]; bornes: Boite; grille: GrilleMonde }
+export interface Monde {
+  prismes: Prisme[]; bornes: Boite; grille: GrilleMonde;
+  /** (v7, zombies) ni wall-run, ni double saut, ni saut de mur, ni escalade : le mouvement de Black Ops 1 */
+  sansParkour?: true;
+}
 
 export interface Contact { nx: number; nz: number; profondeur: number; prisme: number }
 
@@ -74,7 +78,7 @@ function boiteDe(pts: Vec2[]): Boite {
 export function construireMonde(data: SceneData): Monde {
   const prismes: Prisme[] = data.buildings.map((b) => {
     const p: Prisme = { anneau: b.r, trous: b.holes ?? [], h: b.h, hOrigine: b.h, boite: boiteDe(b.r), creux: null };
-    if (b.type === "champ") p.passeTigre = true;
+    if (b.type === "champ" || b.type === "fenetre") p.passeTigre = true;
     return p;
   });
   // le Truck Muche garé (v3 §2) est un obstacle comme un bâtiment : on ne le traverse pas, il arrête les balles, on peut monter dessus ;

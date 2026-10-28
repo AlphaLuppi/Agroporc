@@ -5,19 +5,19 @@ import type { SceneData } from "../agroparc3d/types";
 import { MELEE } from "./armes";
 import {
   CAPACITE_ZOMBIES, DISTANCE_AFFICHAGE_M, INVITE_VIDE, MondeZombies, Rugissements, TAMPON_ZOMBIES_MS, animerCetteImage, inviteZombies,
-  periodeAnimation, segmentsPortesFermees, tigreAffiche, trouverZombieTouche, trouverZombiesMelee, type EntreeInvite, type ZombieVue,
+  periodeAnimation, segmentsPortesFermees, tigreAffiche, trouverZombieTouche, trouverZombiesMelee, type EntreeInvite, type PartieInvite, type ZombieVue,
 } from "./jeu-zombies";
 import { FORME_TIGRE, pointLocal, toucheTigre } from "./monstres";
 import { encoderZombies, type Equipement, type Vec3, type ZombieSnap } from "./protocole";
 import { creerSimuZombies } from "./zombies";
-import { ACHATS, PORTES_PAYANTES, construireMondeZombies } from "./zombies-carte";
-import { ZOMBIES, echelleZombie } from "./zombies-vagues";
+import { ACHATS, FENETRES, PORTES_PAYANTES, construireMondeZombies } from "./zombies-carte";
+import { ZOMBIES, echelleZombie, pvZombie } from "./zombies-vagues";
 
 const scene = JSON.parse(readFileSync("public/agroparc/scene.json", "utf8")) as SceneData;
 const monde = construireMondeZombies(scene);
 
 const zs = (id: number, x: number, z: number, o: Partial<ZombieSnap> = {}): ZombieSnap => ({
-  id, x, z, cap: 0, type: 0, griffe: false, apparition: false, pvPct: 100, ...o,
+  id, x, z, cap: 0, type: 0, griffe: false, apparition: false, pvPct: 100, allure: 0, mode: "chasse", ...o,
 });
 function monter(...snaps: [number, number, ZombieSnap[]][]) {
   const m = new MondeZombies();
@@ -25,7 +25,7 @@ function monter(...snaps: [number, number, ZombieSnap[]][]) {
   return m;
 }
 const vue = (id: number, x: number, z: number, cap = 0, type: 0 | 1 | 2 = 0): ZombieVue => ({
-  id, x, z, cap, type, echelle: echelleZombie(type), griffe: false, apparition: false, pvPct: 100, vitesse: 0,
+  id, x, z, cap, type, echelle: echelleZombie(type), griffe: false, apparition: false, pvPct: 100, vitesse: 0, allure: 0, mode: "chasse",
 });
 
 describe("MondeZombies : interpolation", () => {
@@ -285,70 +285,107 @@ describe("inviteZombies", () => {
   const achat = (id: string) => ACHATS.find((a) => a.id === id)!;
 
   it("rien à portée : invite vide", () => {
-    expect(inviteZombies(entree([116.3, -83.9]))).toBe(INVITE_VIDE);
+    expect(inviteZombies(entree([128, -55]))).toBe(INVITE_VIDE);
     expect(INVITE_VIDE.invite).toBe("");
   });
 
   it("mur d'arme : nom et prix ; argent suffisant ou non", () => {
     const [x, z] = achat("mur:revolver").position;
-    const a = inviteZombies(entree([x, z], { argent: 500 }));
-    expect(a).toMatchObject({ invite: "acheter", id: "mur:revolver", prix: 650, assez: false, cible: null });
-    expect(a.detail).toMatch(/^Revolver — 650\s\$$/);
-    expect(inviteZombies(entree([x, z], { argent: 650 })).assez).toBe(true);
+    const a = inviteZombies(entree([x, z], { argent: 400 }));
+    expect(a).toMatchObject({ invite: "acheter", id: "mur:revolver", prix: 500, assez: false, cible: null });
+    expect(a.detail).toMatch(/^Revolver — 500\s\$$/);
+    expect(inviteZombies(entree([x, z], { argent: 500 })).assez).toBe(true);
   });
 
-  it("arme déjà possédée : recharge de munitions à moitié prix", () => {
-    const [x, z] = achat("mur:pistolet").position;
-    const r = inviteZombies(entree([x, z]));
-    expect(r).toMatchObject({ invite: "acheter", id: "mur:pistolet", prix: 125, assez: true });
-    expect(r.detail).toMatch(/^Munitions Pistolet — 125\s\$$/);
-    // une principale possédée aussi
+  it("arme déjà possédée : munitions à moitié prix, 2 500 $ si elle est gratinée ; sansPrincipale : plein tarif", () => {
+    const [x, z] = achat("mur:revolver").position;
+    const rev: Equipement = { ...equipDepart, secondaire: "revolver" };
+    const r = inviteZombies(entree([x, z], { equip: rev }));
+    expect(r).toMatchObject({ invite: "acheter", id: "mur:revolver", prix: 250, assez: true });
+    expect(r.detail).toMatch(/^Munitions Revolver — 250\s\$$/);
+    const gratine = inviteZombies(entree([x, z], { equip: { ...rev, ameliorees: ["revolver"] }, argent: 3000 }));
+    expect(gratine).toMatchObject({ prix: 2500, assez: true });
+    expect(gratine.detail).toContain("Revolver flambé");
     const [mx, mz] = achat("mur:mitraillette").position;
     const avec: Equipement = { principale: "mitraillette", secondaire: "pistolet", speciale: null };
-    expect(inviteZombies(entree([mx, mz], { equip: avec, portesOuvertes: ["P3", "P4"] })).prix).toBe(500);
-    // sansPrincipale : la mitraillette n'est pas possédée, plein tarif
-    expect(inviteZombies(entree([mx, mz], { portesOuvertes: ["P3", "P4"] })).prix).toBe(1000);
+    expect(inviteZombies(entree([mx, mz], { equip: avec })).prix).toBe(600);
+    expect(inviteZombies(entree([mx, mz])).prix).toBe(1200);
   });
 
   it("épée : en vente tant qu'on ne l'a pas, plus d'invite ensuite", () => {
     const [x, z] = achat("mur:epee").position;
-    expect(inviteZombies(entree([x, z]))).toMatchObject({ invite: "acheter", id: "mur:epee", prix: 500 });
+    expect(inviteZombies(entree([x, z]))).toMatchObject({ invite: "acheter", id: "mur:epee", prix: 3000, assez: false });
     expect(inviteZombies(entree([x, z], { equip: { ...equipDepart, melee: "epee" } }))).toBe(INVITE_VIDE);
   });
 
-  it("boîte mystère et soin (inutile à pleine santé, bloqué pendant l'attente)", () => {
-    const [bx, bz] = achat("boite").position;
-    expect(inviteZombies(entree([bx, bz], { argent: 2000 }))).toMatchObject({ invite: "boite", id: "boite", prix: 950, assez: true });
-    const [sx, sz] = achat("soin").position;
-    expect(inviteZombies(entree([sx, sz], { pv: 100 }))).toBe(INVITE_VIDE);
-    expect(inviteZombies(entree([sx, sz], { pv: 40 }))).toMatchObject({ invite: "soin", id: "soin", prix: 400, assez: true });
-    const attente = inviteZombies(entree([sx, sz], { pv: 40, soinDans: 12.2 }));
-    expect(attente).toMatchObject({ invite: "soin", assez: false });
-    expect(attente.detail).toContain("13 s");
+  const partieInvite = (o: Partial<PartieInvite> = {}): PartieInvite => ({
+    courant: false, boite: { emplacement: 0, etat: "fermee", finT: 0, utilisations: 0 }, pap: { etat: "libre" },
+    quete: { ingredients: [], cuissonFinT: 0, faite: false }, effets: { instakillFinT: 0, doubleFinT: 0, soldesFinT: 0 },
+    fenetres: FENETRES.map(() => 6), portes: PORTES_PAYANTES.map((p) => ({ id: p.id, ouverte: false })), ...o,
   });
 
-  it("porte : à 3 m de son segment, verrouillée sans le prérequis, plus d'invite une fois ouverte", () => {
-    const p1 = PORTES_PAYANTES.find((p) => p.id === "P1")!;
-    const r = inviteZombies(entree([p1.point[0] - 1.2, p1.point[1] + 0.6], { argent: 800 }));
-    expect(r).toMatchObject({ invite: "porte", id: "P1", prix: 750, assez: true });
-    expect(r.detail).toMatch(/^Ouvrir la porte — 750\s\$$/);
-    expect(inviteZombies(entree([p1.point[0] - 1.2, p1.point[1] + 0.6], { portesOuvertes: ["P1"] })).id).not.toBe("P1");
-    const p2 = PORTES_PAYANTES.find((p) => p.id === "P2")!;
-    const ferme = inviteZombies(entree([p2.point[0], p2.point[1]], { argent: 5000 }));
-    expect(ferme).toMatchObject({ invite: "porte", id: "P2", prix: 1250, assez: false });
-    expect(ferme.detail).toMatch(/verrouillée/i);
-    const ouvrable = inviteZombies(entree([p2.point[0], p2.point[1]], { argent: 5000, portesOuvertes: ["P1"] }));
-    expect(ouvrable.detail).toMatch(/^Ouvrir la porte/);
-    expect(ouvrable.assez).toBe(true);
+  it("boîte mystère : seulement à son emplacement, 10 $ en Happy hour, « Prendre » pour celui qui a payé, occupée sinon", () => {
+    const b1 = achat("boite:B1"), b2 = achat("boite:B2");
+    const ici = (o: Partial<EntreeInvite>) => inviteZombies(entree([b1.position[0], b1.position[1]], { argent: 2000, moi: "a", ...o }));
+    expect(ici({ partie: partieInvite() })).toMatchObject({ invite: "boite", id: "boite:B1", prix: 950, assez: true });
+    expect(inviteZombies(entree([b2.position[0], b2.position[1]], { partie: partieInvite() })).invite).not.toBe("boite");
+    expect(ici({ partie: partieInvite({ effets: { instakillFinT: 0, doubleFinT: 0, soldesFinT: 5000 } }), maintenant: 1000 }).prix).toBe(10);
+    const offre = partieInvite({ boite: { emplacement: 0, etat: "offre", finT: 9000, utilisations: 1, arme: "pompe", pour: "a" } });
+    expect(ici({ partie: offre })).toMatchObject({ invite: "boite", prix: 0, assez: true, detail: "Prendre : Fusil à pompe" });
+    expect(ici({ partie: offre, moi: "b" })).toMatchObject({ assez: false, bloque: "Occupée" });
+  });
+
+  it("atouts : Pause Café à 500 $ seul ; les autres « Courant coupé » sans courant ; aucune invite pour un atout déjà pris", () => {
+    const pc = achat("atout:pausecafe"), gr = achat("atout:gratin");
+    expect(inviteZombies(entree([pc.position[0], pc.position[1]], { solo: true, partie: partieInvite() }))).toMatchObject({ invite: "atout", prix: 500, assez: true });
+    expect(inviteZombies(entree([pc.position[0], pc.position[1]], { solo: false, argent: 2000, partie: partieInvite() }))).toMatchObject({ prix: 1500 });
+    expect(inviteZombies(entree([pc.position[0], pc.position[1]], { atouts: ["pausecafe"], partie: partieInvite() })).invite).not.toBe("atout");
+    expect(inviteZombies(entree([gr.position[0], gr.position[1]], { argent: 3000, partie: partieInvite() }))).toMatchObject({ invite: "atout", assez: false, bloque: "Courant coupé" });
+    expect(inviteZombies(entree([gr.position[0], gr.position[1]], { argent: 3000, partie: partieInvite({ courant: true }) }))).toMatchObject({ assez: true, prix: 2500 });
+  });
+
+  it("Pack-a-Punch : courant, arme à feu en main, pas déjà gratinée ; courant ; quête", () => {
+    const pap = achat("pap");
+    const ici = (o: Partial<EntreeInvite>) => inviteZombies(entree([pap.position[0], pap.position[1]], { argent: 6000, enMain: "pistolet", ...o }));
+    expect(ici({ partie: partieInvite() })).toMatchObject({ invite: "pap", bloque: "Courant coupé", assez: false });
+    const ok = ici({ partie: partieInvite({ courant: true }) });
+    expect(ok).toMatchObject({ invite: "pap", assez: true, prix: 5000 });
+    expect(ok.detail).toMatch(/^Gratiner : Pistolet — 5\s000\s\$$/);
+    expect(ici({ partie: partieInvite({ courant: true }), enMain: "couteau" }).bloque).toBe("Prenez une arme à feu");
+    expect(ici({ partie: partieInvite({ courant: true }), equip: { ...equipDepart, ameliorees: ["pistolet"] } }).bloque).toBe("Déjà gratinée");
+    const co = achat("courant");
+    expect(inviteZombies(entree([co.position[0], co.position[1]], { partie: partieInvite() }))).toMatchObject({ invite: "courant", assez: true });
+    expect(inviteZombies(entree([co.position[0], co.position[1]], { partie: partieInvite({ courant: true }) })).invite).not.toBe("courant");
+    const four = achat("four");
+    expect(inviteZombies(entree([four.position[0], four.position[1]], { partie: partieInvite({ courant: true }) }))).toMatchObject({ invite: "four", bloque: "Ingrédients 0 / 3" });
+  });
+
+  it("fenêtre à reposer : à 2,2 m de son côté intérieur, planches comptées", () => {
+    const f = FENETRES[0];
+    const fen = FENETRES.map((_, i) => (i === 0 ? 3 : 6));
+    const r = inviteZombies(entree([f.dedans[0], f.dedans[1]], { partie: partieInvite({ fenetres: fen }) }));
+    expect(r).toMatchObject({ invite: "reparer", id: f.id, prix: 0, assez: true });
+    expect(r.detail).toContain("3 / 6");
+  });
+
+  it("porte : à 3 m de son segment, verrouillée sans zone ouverte d'un côté, plus d'invite une fois ouverte", () => {
+    const d1 = PORTES_PAYANTES.find((p) => p.id === "D1")!;
+    const r = inviteZombies(entree([d1.point[0] - 1.2, d1.point[1]], { argent: 800 }));
+    expect(r).toMatchObject({ invite: "porte", id: "D1", prix: 750, assez: true });
+    expect(r.detail).toMatch(/^Ouvrir : Porte de la salle de pause — 750\s\$$/);
+    expect(inviteZombies(entree([d1.point[0] - 1.2, d1.point[1]], { portesOuvertes: ["D1"] })).id).not.toBe("D1");
+    const g3 = PORTES_PAYANTES.find((p) => p.id === "G3")!;
+    const ferme = inviteZombies(entree([g3.point[0], g3.point[1]], { argent: 5000 }));
+    expect(ferme).toMatchObject({ invite: "porte", id: "G3", assez: false, bloque: "Verrouillée" });
+    expect(inviteZombies(entree([g3.point[0], g3.point[1]], { argent: 5000, portesOuvertes: ["D2"] })).assez).toBe(true);
   });
 
   it("un coéquipier à terre à moins de 2,5 m passe avant les achats", () => {
-    const [x, z] = achat("mur:pistolet").position;
+    const [x, z] = achat("mur:revolver").position;
     const copain = { id: "j2", pseudo: "Léa", p: [x + 2, 0, z] as Vec3 };
     const r = inviteZombies(entree([x, z], { aTerre: [copain] }));
     expect(r).toMatchObject({ invite: "reanimer", cible: "j2", id: "", prix: 0, assez: true, detail: "Réanimer Léa" });
     expect(inviteZombies(entree([x, z], { aTerre: [{ ...copain, p: [x + 2.6, 0, z] }] })).invite).toBe("acheter");
-    // le plus proche des coéquipiers à terre
     const autre = { id: "j3", pseudo: "Max", p: [x + 1, 0, z] as Vec3 };
     expect(inviteZombies(entree([x, z], { aTerre: [copain, autre] })).cible).toBe("j3");
   });
@@ -356,12 +393,11 @@ describe("inviteZombies", () => {
 
 describe("portes fermées de la grande carte", () => {
   it("une porte ouverte disparaît ; chaque segment est celui de sa première pièce", () => {
-    expect(segmentsPortesFermees([]).map((s) => s.id).sort()).toEqual(["P1", "P2", "P3", "P4", "P5"]);
-    const sans = segmentsPortesFermees(new Set(["P1", "P3"]));
-    expect(sans.map((s) => s.id).sort()).toEqual(["P2", "P4", "P5"]);
-    for (const s of sans) {
-      expect(Math.hypot(s.q[0] - s.p[0], s.q[1] - s.p[1])).toBeGreaterThan(2);
-    }
+    expect(segmentsPortesFermees([]).map((s) => s.id).sort()).toEqual(PORTES_PAYANTES.map((p) => p.id).sort());
+    const sans = segmentsPortesFermees(new Set(["D1", "D2"]));
+    expect(sans.map((s) => s.id)).not.toContain("D1");
+    expect(sans).toHaveLength(PORTES_PAYANTES.length - 2);
+    for (const s of sans) expect(Math.hypot(s.q[0] - s.p[0], s.q[1] - s.p[1])).toBeGreaterThan(1.5);
   });
 });
 
@@ -370,7 +406,10 @@ describe("parité client / serveur", () => {
   function tigresDuServeur() {
     const simu = creerSimuZombies({ monde, alea: aleaGraine(3) });
     const pts: [number, number, number][] = [[128, -50, 0.4], [133, -46, 2.2], [123, -53, -1.1]];
-    pts.forEach(([x, z, cap], i) => simu.apparaitre((i % 3) as 0 | 1 | 2, [x, z], 4, 0, cap));
+    pts.forEach(([x, z, cap], i) => {
+      const type = (i % 3) as 0 | 1 | 2;
+      simu.apparaitre({ type, manche: 4, pv: pvZombie(4, type), allure: 1, vitesse: 6, degats: 50, rechargeGriffeS: 1 }, [x, z], { mode: "chasse" }, 0, cap);
+    });
     const mz = new MondeZombies();
     mz.alimenter(1000, simu.snap(3, 1000));
     mz.echantillon(1000);

@@ -8,6 +8,7 @@ import { MELEE, STATS } from "./armes";
 import { ARMES, SLOTS, estMelee, type ArmeId, type ArmeSpecialeId, type CauseMort, type EtatPartieZombies, type JoueurPublic, type PhaseZombies, type RaisonAchat, type Slot } from "./protocole";
 import type { EtatZombiesHud, HudLive } from "./jeu-types";
 import type { Stockage } from "./touches";
+import { PORTES_PAYANTES } from "./zombies-carte";
 
 /** Espace insécable (avant m, s, km/h, %). */
 export const NBSP = " ";
@@ -400,7 +401,8 @@ export function memeEtatZombiesHud(a: EtatZombiesHud | null, b: EtatZombiesHud |
   return a.argent === b.argent && a.manche === b.manche && a.restants === b.restants && a.vivants === b.vivants
     && a.gain?.n === b.gain?.n && a.refus?.n === b.refus?.n && a.achats === b.achats
     && a.aTerre === b.aTerre && a.elimine === b.elimine && a.terreFinT === b.terreFinT
-    && a.reanimation?.cible === b.reanimation?.cible && pas(a) === pas(b) && a.partie === b.partie;
+    && a.reanimation?.cible === b.reanimation?.cible && pas(a) === pas(b) && a.partie === b.partie
+    && a.pvMax === b.pvMax && a.note === b.note && a.annonce?.n === b.annonce?.n && a.objectif === b.objectif && a.reparation === b.reparation;
 }
 
 /** Record local des zombies : la manche la plus haute atteinte (et les tigres tués cette partie-là). */
@@ -441,9 +443,7 @@ export function majRecordZombies(stockage: Stockage | null | undefined, manche: 
 }
 
 /** Zone gagnée en ouvrant chaque porte payante (annonce « Porte ouverte : carrefour Est »). */
-export const ZONE_PORTE: Readonly<Record<string, string>> = {
-  P1: "carrefour Est", P2: "cour Est", P3: "carrefour Ouest", P4: "cour Ouest", P5: "niche Est",
-};
+export const ZONE_PORTE: Readonly<Record<string, string>> = Object.fromEntries(PORTES_PAYANTES.map((p) => [p.id, p.nom]));
 
 /**
  * Annonces du fil et de la région vive entre deux états successifs de la partie : début de manche, porte ouverte, joueur à terre,
@@ -455,7 +455,7 @@ export function annoncesZombies(avant: EtatPartieZombies | null, apres: EtatPart
   if (apres.phase === "manche" && (avant.phase !== "manche" || avant.manche !== apres.manche)) textes.push(`Manche ${apres.manche}`);
   for (const porte of apres.portes) {
     const etait = avant.portes.find((x) => x.id === porte.id);
-    if (porte.ouverte && etait && !etait.ouverte) textes.push(`Porte ouverte : ${ZONE_PORTE[porte.id] ?? porte.id}`);
+    if (porte.ouverte && etait && !etait.ouverte) textes.push(`Ouverture : ${ZONE_PORTE[porte.id] ?? porte.id}`);
   }
   for (const j of apres.joueurs) {
     const prec = avant.joueurs.find((x) => x.id === j.id);

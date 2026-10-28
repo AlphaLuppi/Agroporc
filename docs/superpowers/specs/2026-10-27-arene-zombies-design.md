@@ -1,5 +1,9 @@
 # Mode zombies (tigres), épée, bâtiments détaillés — design
 
+> **Refondu par `2026-10-28-zombies-bo1-design.md` (v7, zombies façon Black Ops 1 : carte « Service de midi », équilibrage, atouts, Pack-a-Punch,
+> boîte, planches, bonus, manches du Truck Muche, lore).** Ce document reste la référence pour les salles, le lobby et le protocole de base ;
+> la v7 prime là où ils divergent (carte « Cour des Restos », portes P1–P5, soin, bonus de fin de manche et courbes de manche ne sont plus en jeu).
+
 Date : 2026-10-27 · Branche : `feat/arene-zombies` · Protocole : `VERSION_PROTOCOLE = 5` (rebasé sur la v4 des événements ; un client en cache reçoit `erreur{version}`)
 
 ## Demande

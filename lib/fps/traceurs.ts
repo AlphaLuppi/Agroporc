@@ -35,6 +35,7 @@ export const TRACEURS: Record<ArmeFeuId, ParamsTraceur> = {
   railgun: { vitesse: 600, longueur: 25, epaisseurPx: 4, vieMinS: 0.25, persistanceS: 1.5, couleur: "#7fb2ff" },
   minigun: { vitesse: 240, longueur: 8, epaisseurPx: 3, vieMinS: 0.25, persistanceS: 0, couleur: "#ff9b6b" },
   magnum_dore: { vitesse: 280, longueur: 8, epaisseurPx: 3, vieMinS: 0.25, persistanceS: 0, couleur: "#ffd700" },
+  rayon: { vitesse: 90, longueur: 4, epaisseurPx: 6, vieMinS: 0.3, persistanceS: 0, couleur: "#5dff6a" },
 };
 
 export interface EtatTraceur {

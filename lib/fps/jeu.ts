@@ -35,8 +35,18 @@ import { C, construireDecor, creerEtatDestruction } from "../agroparc3d/decor";
 import { construireMonde, detruireBatiment, normaleImpact, poserBreche, releverBatiment, type Creux, type Monde } from "./collision";
 import { FOCUS_ZOMBIES, construireMondeZombies, donneesZombies } from "./zombies-carte";
 import { ZOMBIES } from "./zombies-vagues";
-import { MondeZombies, Rugissements, inviteZombies, segmentsPortesFermees, trouverZombieTouche, trouverZombiesMelee, INVITE_VIDE, type InviteZombies } from "./jeu-zombies";
-import { creerRenduZombies } from "./rendu-zombies";
+import {
+  MondeZombies, Rugissements, inviteZombies, segmentsPortesFermees, toucheTruckClient, trouverZombieTouche, trouverZombiesMelee, trouverZombiesTouches,
+  INVITE_VIDE, type InviteZombies,
+} from "./jeu-zombies";
+import { creerRenduZombies, type MortZombie } from "./rendu-zombies";
+import { creerRenduInterieurs } from "./rendu-interieurs";
+import { creerRenduObjetsZombies } from "./rendu-objets-zombies";
+import { creerModeleTruckMuche } from "./rendu-monde";
+import { objectifZombies } from "./zombies-lore";
+import { ACHATS, NOTES, achatDeId, fenetreDeId } from "./zombies-carte";
+import { NOMS_BONUS } from "./zombies-vagues";
+import { profilZombie, nomZombie } from "./armes";
 import { creerImpactsBalles } from "./rendu-impacts";
 import { creerDebris } from "./rendu-debris";
 import { creerTracesPneus, glissementLateral, rouesArriere } from "./rendu-traces";
@@ -175,7 +185,8 @@ const DEPART_ZOMBIES = { principale: "mitraillette", secondaire: "pistolet", spe
 export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, client: ClientArene, equip: EquipementJeu, cb: JeuCallbacks, opts: JeuOptions = {}): JeuHandle {
   const modeZ = opts.mode === "zombies";
   /** données de la scène du jeu : la scène brute, ou en zombies la copie aux pièces synthétiques (même fonction que le serveur) */
-  const data: SceneData = modeZ ? donneesZombies(sceneBrute).data : sceneBrute;
+  const donneesZ = modeZ ? donneesZombies(sceneBrute) : null;
+  const data: SceneData = donneesZ ? donneesZ.data : sceneBrute;
   let equipSuivant: EquipementJeu = equip.melee === "epee"
     ? { principale: equip.principale, secondaire: equip.secondaire, melee: "epee" }
     : { principale: equip.principale, secondaire: equip.secondaire };
@@ -244,6 +255,11 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   // ---------- mode zombies (v5) : tigres interpolés et dessinés, rugissements, état de la partie ----------
   const mz = new MondeZombies();
   const rz = modeZ ? creerRenduZombies(scene) : null;
+  // (v7) intérieurs des bâtiments creusés, objets de la carte (craie, distributeurs, boîte, planches, bonus…), Truck Muche des livraisons
+  const rInterieurs = donneesZ ? creerRenduInterieurs(scene, data, donneesZ.pieces) : null;
+  const rObjets = modeZ ? creerRenduObjetsZombies(scene) : null;
+  const truckZ = modeZ ? creerModeleTruckMuche() : null;
+  if (truckZ) { truckZ.group.visible = false; scene.add(truckZ.group); }
   const rugissements = new Rugissements();
   let imageNum = 0;
   const titan = new ControleurTitan();
@@ -280,7 +296,9 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   let dernierSonRegenT = -Infinity;
   /** équipement et munitions : `ControleurArmes` (dégainage, chargeurs par arme, recharge) */
   const armes = modeZ
-    ? new ControleurArmes({ ...DEPART_ZOMBIES }, "secondaire", { reserveChargeurs: ZOMBIES.ravitaillementChargeurs })
+    ? new ControleurArmes({ ...DEPART_ZOMBIES }, "secondaire", {
+      reserveChargeurs: ZOMBIES.ravitaillementChargeurs, reserveChargeursAmeliore: ZOMBIES.ravitaillementChargeursAmeliore, zombies: true,
+    })
     : new ControleurArmes({ principale: equip.principale, secondaire: equip.secondaire, speciale: null }, "principale");
   /** cadence locale par arme (le serveur garde la sienne) */
   const prochains = new Map<ArmeId, number>();
@@ -322,8 +340,20 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   /** E maintenu sur un coéquipier à terre : id du coéquipier et instant (horloge locale, s) du début */
   let reanimCible: string | null = null;
   let reanimDebutT = 0;
-  /** instant (horloge locale) où le soin sera de nouveau achetable */
-  let soinPretT = 0;
+  /** (v7) note de lore ouverte (id) ; annonce du HUD ; arme déjà gratinée une fois (objectif) ; fenêtre dont je repose les planches */
+  let noteZ: number | null = null;
+  let annonceZ: { n: number; texte: string; genre: string } | null = null;
+  let nAnnonceZ = 0;
+  let papUtilise = false;
+  let reparFenetre: string | null = null;
+  const annoncer = (texte: string, genre = "info", voix = false) => {
+    annonceZ = { n: ++nAnnonceZ, texte, genre };
+    if (voix) sons.annonce(texte);
+  };
+  const mesAtouts = (): readonly string[] => partieZ?.joueurs.find((x) => x.id === client.id)?.atouts ?? [];
+  /** PV max (le Gratin Dauphinois en zombies) et délai de régénération de la salle */
+  const pvMaxMoi = (): number => (modeZ && mesAtouts().includes("gratin") ? ZOMBIES.pvMaxGratin : JEU.pvMax);
+  const regenDelaiS = (): number => (modeZ ? ZOMBIES.regenDelaiMs : JEU.regenDelaiMs) / 1000;
   /** portes encore fermées (segments), recalculées à chaque état de partie reçu */
   let portesFermees: { id: string; p: [number, number]; q: [number, number] }[] = [];
   /** hauteur de l'œil au-dessus des pieds, lissée (accroupi : 1,30 m ; assis : OEIL_SIEGE) */
@@ -457,7 +487,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     const a = armeFeu();
     if (!a || !peutAgir() || enKillcam()) return;
     if (!armes.demarrerRecharge(ms())) return;
-    armeMain.recharger(STATS[a].rechargeS);
+    armeMain.recharger(STATS[a].rechargeS * (modeZ && mesAtouts().includes("expresso") ? 0.5 : 1));
     sons.recharge(a);
   }
 
@@ -593,18 +623,37 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       ? [o[0] + regard[0] * 0.8, o[1] + regard[1] * 0.8 - 0.08, o[2] + regard[2] * 0.8]
       : [_bouche.x, _bouche.y, _bouche.z];
     let impactsAffiches = 0;
+    // (v7, zombies) arme améliorée qui perce ; distance du premier impact du plomb central (souffle d'une arme explosive)
+    const amelioreeZ = modeZ && (armes.equipement().ameliorees?.includes(arme) ?? false);
+    const profilZ = modeZ ? profilZombie(arme, amelioreeZ) : null;
+    const perceZ = profilZ?.perce === true;
+    let impactExplosif: number | null = null;
     dirs.forEach((d, i) => {
       const imp = tracerEffets(o, d, Math.min(a.portee, PORTEE_EFFETS_M), liste, client.id ?? "");
       // un tigre largué devant le joueur, le mur ou la portée prend la balle (mes tigres alliés ne sont pas des cibles)
       const tg = tracerTigres(o, d, imp.distance, listeTigres);
       const limite = tg ? tg.distance : imp.distance;
+      // (v7, zombies) une balle qui perce compte pour tous les tigres alignés avant le mur ; le Truck Muche arrête la balle s'il est devant
+      if (modeZ && perceZ) {
+        const tous = trouverZombiesTouches(o, d, limite, mz.zombies(), monde, mz.nombre());
+        if (tous.length) {
+          const fin: Vec3 = [o[0] + d[0] * limite, o[1] + d[1] * limite, o[2] + d[2] * limite];
+          effets.traçante(depart, fin, arme);
+          for (const h of tous) touchesDecl.push({ cible: h.cible, zone: h.zone, plomb: i });
+          impactExplosif = impactExplosif ?? tous[0].distance;
+          return;
+        }
+      }
+      const truckTouche = modeZ ? toucheTruckClient(o, d, limite, mz.truck()) : null;
       // (v3) le tigre robot ou un titan devant le premier joueur, tigre largué ou mur touché ; (zombies) un tigre devant le premier mur
-      const monstre = toucheMonstre(o, d, limite) ?? toucheZombies(o, d, limite);
+      const monstre = toucheMonstre(o, d, truckTouche ? truckTouche.distance : limite) ?? toucheZombies(o, d, truckTouche ? truckTouche.distance : limite)
+        ?? (truckTouche ? { ...truckTouche, zone: "corps" as Zone } : null);
       if (monstre) {
         const fin: Vec3 = [o[0] + d[0] * monstre.distance, o[1] + d[1] * monstre.distance, o[2] + d[2] * monstre.distance];
         effets.traçante(depart, fin, arme);
         touchesDecl.push({ cible: monstre.cible, zone: monstre.zone, plomb: i });
         if (impactsAffiches < 5) { impactsAffiches++; effets.impact(fin, [-d[0], -d[1], -d[2]], estIdZombie(monstre.cible) ? "#ff8a1c" : "#ffb347"); }
+        if (i === 0) impactExplosif = monstre.distance;
         return;
       }
       // une voiture plus proche que le joueur (ou le mur) visé arrête la balle (v3 §4) ; l'occupant d'une voiture reste touchable à travers elle
@@ -628,6 +677,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       }
       const fin = imp.point;
       effets.traçante(depart, fin, arme);
+      if (i === 0 && impactExplosif === null && imp.distance < a.portee - 0.01) impactExplosif = imp.distance;
       if (imp.cible && imp.zone) {
         const e = etats.get(imp.cible);
         if (e && !e.protege) {
@@ -648,13 +698,22 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
 
     client.envoyer({ t: "tir", arme, o, d: dirs, touches: touchesDecl, ...(voituresDecl.length ? { voitures: voituresDecl } : {}) });
     if (voituresDecl.length) sons.tole();
+    // (v7) souffle d'une arme explosive (pistolet gratiné, pistolet à rayons) : boule de feu verte ou ambre au premier impact
+    if (profilZ?.explosion && impactExplosif !== null) {
+      const d0 = dirs[0];
+      const c: Vec3 = [o[0] + d0[0] * impactExplosif, Math.max(0.2, o[1] + d0[1] * impactExplosif), o[2] + d0[2] * impactExplosif];
+      feux.explosion(c);
+      sons.explosionMonstre(Math.min(1, profilZ.explosion.rayon / 6), positionSon(c));
+    }
 
     // estimation locale (le HUD l'ignore : seul `confirme`, reçu du serveur, compte, HUD §3.4) ; ni son ni marqueur ici
     for (const [id, c] of cumul) cb.evenement({ type: "touche", cible: id, zone: c.zone, degats: c.degats });
 
     // cadence (rattrape le retard d'une image, borné : onglet gelé = on repart de maintenant)
     const prevu = prochainDe(arme);
-    prochains.set(arme, t - prevu < RATTRAPAGE_CADENCE_S ? prevu + a.cadenceS : t + a.cadenceS);
+    // (v7, zombies) le Double Ristretto tire 1,33 fois plus vite
+    const cadenceS = a.cadenceS * (modeZ && mesAtouts().includes("ristretto") ? 1 / 1.33 : 1);
+    prochains.set(arme, t - prevu < RATTRAPAGE_CADENCE_S ? prevu + cadenceS : t + cadenceS);
     armes.tirEffectue();
     armeMain.tirer();
     sons.tir(arme);
@@ -722,12 +781,14 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     }
     return inviteZombies({
       pos: [moi.p[0], moi.p[2]], argent: argentZ, portesOuvertes: (partieZ?.portes ?? []).filter((x) => x.ouverte).map((x) => x.id),
-      equip: armes.equipement(), pv, aTerre, soinDans: Math.max(0, soinPretT - t),
+      equip: armes.equipement(), enMain: armes.armeEnMain(), pv, aTerre, partie: partieZ, atouts: mesAtouts() as never, moi: client.id ?? "",
+      solo: (partieZ?.joueurs.filter((x) => x.admis).length ?? 1) <= 1, maintenant: client.maintenantServeur(),
     });
   }
 
-  /** Arrête la relève en cours (touche relâchée, coéquipier relevé ou trop loin, je tombe) : le serveur est prévenu. */
+  /** Arrête la relève en cours (touche relâchée, coéquipier relevé ou trop loin, je tombe) : le serveur est prévenu. Arrête aussi la repose de planches. */
   function arreterReanimation() {
+    if (reparFenetre !== null) { reparFenetre = null; client.envoyer({ t: "reparer", fenetre: null }); }
     if (reanimCible === null) return;
     reanimCible = null;
     client.envoyer({ t: "reanimer", cible: null });
@@ -741,8 +802,18 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       reanimCible = inv.cible;
       reanimDebutT = t;
       client.envoyer({ t: "reanimer", cible: inv.cible });
-    } else if (inv.id) {
+    } else if (inv.invite === "reparer") {
+      // maintenir E : le serveur repose une planche par seconde tant qu'on reste devant la fenêtre
+      reparFenetre = inv.id;
+      client.envoyer({ t: "reparer", fenetre: inv.id });
+    } else if (inv.invite === "note") {
+      const id = Number(inv.id.slice(5));
+      noteZ = noteZ === id ? null : id;
+      sons.ramassage("soin");
+    } else if (inv.id && !inv.bloque) {
       client.envoyer({ t: "acheter", id: inv.id });
+    } else if (inv.bloque) {
+      sons.achat(false);
     }
   }
 
@@ -1035,8 +1106,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
         const s = m.j.find((x) => x.id === client.id);
         if (s && vivant) {
           // des PV qui remontent sans cadeau d'Elsa : la régénération tourne (le délai de 5 s est donc écoulé)
-          if (s.pv > pv && s.pv < JEU.pvMax) {
-            dernierDegatT = Math.min(dernierDegatT, t - JEU.regenDelaiMs / 1000);
+          if (s.pv > pv && s.pv < pvMaxMoi()) {
+            dernierDegatT = Math.min(dernierDegatT, t - regenDelaiS());
             if (t - dernierSonRegenT > 0.25) { dernierSonRegenT = t; sons.regen(); }
           }
           pv = s.pv;
@@ -1050,6 +1121,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
         break;
       case "equipement":
         armes.appliquerServeur(m, ms());
+        if (modeZ && m.ravitaille === "tout") annoncer("Munitions max !", "bonus");
         break;
       case "tir": {
         if (m.id === client.id) break;
@@ -1118,6 +1190,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
             if (c) effets.eclaboussure(c, estIdZombie(m.cible) ? "#ff8a1c" : couleurDe(m.cible));
             distants.get(m.cible)?.avatar.toucher();
           }
+          // (v7) un tigre zombie touché recule (la tête à la tête)
+          if (estIdZombie(m.cible) && m.pv > 0) rz?.touche(Number(m.cible.slice(1)), m.zone === "tete");
           // les coups de patte de mon tigre allié me sont crédités (`par` = moi) : ce ne sont pas des touches de mes armes
           if (m.par === client.id && !coupDeMonTigre(m.src, oeil(), tigresVus, client.id)) toucheConfirmee(m);
         }
@@ -1263,7 +1337,11 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
         }
         break;
       case "zombies": {
+        const avant = partieZ;
         partieZ = m.etat;
+        rInterieurs?.majCourant(m.etat.courant);
+        if (avant && avant.phase === "manche" && m.etat.phase === "pause") { sons.finManche(); }
+        if (m.etat.pap.etat === "cuisson" && m.etat.pap.joueur === client.id) papUtilise = true;
         portesFermees = segmentsPortesFermees(m.etat.portes.filter((x) => x.ouverte).map((x) => x.id));
         const me = m.etat.joueurs.find((x) => x.id === client.id);
         if (me) {
@@ -1272,9 +1350,55 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
           terreFinTZ = me.etat === "terre" ? me.terreFinT ?? 0 : 0;
           if ((aTerreZ || elimineZ) && vivant) tomber();
         }
-        // nouvelle manche : coup de tambour
-        if (m.etat.phase === "manche" && m.etat.manche !== mancheVue) { mancheVue = m.etat.manche; sons.manche(); }
-        if (m.etat.phase === "lobby") mancheVue = 0;
+        // nouvelle manche : coup de tambour (sirène pour une livraison du Truck Muche)
+        if (m.etat.phase === "manche" && m.etat.manche !== mancheVue) {
+          mancheVue = m.etat.manche;
+          if (m.etat.mancheTruck) { sons.mancheTruck(); annoncer("Livraison du Truck Muche !", "truck", true); } else sons.manche();
+        }
+        if (m.etat.phase === "lobby") { mancheVue = 0; papUtilise = false; noteZ = null; }
+        break;
+      }
+      case "zevt": {
+        const e = m.e;
+        switch (e.e) {
+          case "planche": {
+            rObjets?.planche(e.fenetre, e.arrachee);
+            const f = fenetreDeId(e.fenetre);
+            if (f) sons.planche(e.arrachee, positionSon([f.milieu[0], 1.5, f.milieu[1]]));
+            break;
+          }
+          case "bonusLache": sons.bonus(false, positionSon([e.p[0], 1, e.p[2]])); break;
+          case "bonus": {
+            sons.bonus(true, positionSon([e.p[0], 1, e.p[2]]));
+            if (e.genre !== "munitions") annoncer(`${NOMS_BONUS[e.genre]} !`, "bonus", true);
+            else sons.annonce("Munitions max !");
+            break;
+          }
+          case "nuke": feux.explosion([moi.p[0], 4, moi.p[2]]); secousse = 0.09; break;
+          case "courant": sons.courant(); annoncer("Courant rétabli : distributeurs et Micro-ondes en marche", "courant", true); break;
+          case "peluche": {
+            const a = achatDeId(`boite:B${e.de + 1}`);
+            sons.boite("peluche", a ? positionSon([a.position[0], 1, a.position[1]]) : undefined);
+            annoncer("La boîte s'envole…", "info");
+            break;
+          }
+          case "atout": if (e.joueur === client.id) sons.jingleAtout(e.atout); break;
+          case "pap": {
+            const a = ACHATS.find((x) => x.genre === "pap")!;
+            sons.microondes(e.pret, positionSon([a.position[0], 1.3, a.position[1]]));
+            if (e.pret && e.joueur === client.id) annoncer(`${nomZombie(e.arme, true)} servi !`, "pap");
+            break;
+          }
+          case "truck":
+            if (e.quoi === "explosion") { feux.explosion(e.p); sons.explosion(positionSon(e.p)); annoncer("Truck Muche explosé : +500 $", "truck"); }
+            else sons.klaxonCamion(positionSon(e.p));
+            break;
+          case "explosion": feux.explosion(e.p); sons.explosionMonstre(Math.min(1, e.rayon / 6), positionSon(e.p)); break;
+          case "ingredient": annoncer(`Ingrédient trouvé (${partieZ?.quete.ingredients.length ?? 0} / 3)`, "quete"); break;
+          case "cuisson": annoncer(e.fin ? "La Recette ultime est servie !" : "La Recette ultime cuit… tenez 30 s !", "quete", true); break;
+          case "manche": break;
+          case "autoReleve": if (e.joueur === client.id) annoncer("Pause Café : vous vous relevez", "info"); break;
+        }
         break;
       }
       case "argent":
@@ -1288,7 +1412,10 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
         if (m.ok) {
           achatsZ++;
           sons.achat(true);
-          if (m.id === "soin") soinPretT = t + ZOMBIES.soinRechargeS;
+          if (m.id.startsWith("boite:") && partieZ?.boite.etat === "fermee") {
+            const a = achatDeId(m.id);
+            sons.boite("tirage", a ? positionSon([a.position[0], 1, a.position[1]]) : undefined);
+          }
         } else {
           refusZ = { n: ++nRefusZ, id: m.id, raison: m.raison as RaisonAchat };
           sons.achat(false);
@@ -1302,6 +1429,9 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
         effets.eclaboussure([c[0], 1.4, c[2]], "#ffd9a0");
         sons.rugissementTigre(positionSon(c), true);
         if (m.par === client.id) sons.kill();
+        // (v7) le cadavre reste : mort de côté, en avant (tête), projeté (explosion, nuke)
+        const cause: MortZombie = m.cause === "explosion" || m.cause === "nuke" ? m.cause : m.zone === "tete" ? "tete" : m.cause === "melee" ? "melee" : "corps";
+        rz?.mort(Number(m.id.slice(1)), cause);
         break;
       }
       case "canon": {
@@ -1461,7 +1591,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   let dernierHud: HudEtat | null = null;
   let accHud = ECART_HUD_S;
   /** régénération en cours : PV manquants et délai sans dégâts écoulé */
-  const regenEnCours = () => vivant && pv < JEU.pvMax && t - dernierDegatT >= JEU.regenDelaiMs / 1000;
+  const regenEnCours = () => vivant && pv < pvMaxMoi() && t - dernierDegatT >= regenDelaiS();
   /** Grossissement affiché en lunette (« ×6 ») : rapport des tangentes du demi-champ normal et du demi-champ zoomé. */
   const zoomX = (zoom: number | null) => (zoom === null ? 0 : Math.round(Math.tan((FOV_H * Math.PI) / 360) / Math.tan((zoom * Math.PI) / 360)));
   /** Rayon du cercle de dispersion (part de la demi-hauteur de l'écran, au centième), 0 sans dispersion. */
@@ -1481,7 +1611,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     const af = armeFeu();
     const invZ = modeZ ? inviteZ() : INVITE_VIDE;
     const inv = modeZ
-      ? { invite: invZ.invite, detail: invZ.detail, vehicule: null }
+      ? { invite: invZ.invite, detail: invZ.bloque ? `${invZ.detail} · ${invZ.bloque}` : invZ.detail, vehicule: null }
       : peutAgir() && !enKillcam()
         ? mondeJeu.invite(moi.p, info ? info.siege : null, client.maintenantServeur())
         : { invite: "" as const, detail: "", vehicule: null };
@@ -1535,7 +1665,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       titan: pilote(),
       ...(modeZ ? {
         mode: "zombies" as const, argent: argentZ, manche: partieZ?.manche ?? 0, restants: mz.restants(), aTerre: aTerreZ, elimine: elimineZ,
-        invitePrix: invZ.prix, inviteAssez: invZ.assez, reanime: reanimCible !== null,
+        invitePrix: invZ.prix, inviteAssez: invZ.bloque ? true : invZ.assez, reanime: reanimCible !== null || reparFenetre !== null,
       } : {}),
     };
   }
@@ -1786,6 +1916,28 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       const inv = inviteZ();
       if (!actionActive("interagir") || inv.invite !== "reanimer" || inv.cible !== reanimCible) arreterReanimation();
     }
+    if (reparFenetre !== null) {
+      const inv = inviteZ();
+      if (!actionActive("interagir") || inv.invite !== "reparer" || inv.id !== reparFenetre) arreterReanimation();
+    }
+    // (v7) objets de la carte, intérieurs, Truck Muche des livraisons
+    rObjets?.maj(partieZ, t, client.maintenantServeur(), dt);
+    rInterieurs?.maj(t, dt);
+    const tr = mz.truck();
+    if (truckZ) {
+      truckZ.group.visible = tr !== null;
+      if (tr) {
+        truckZ.group.position.set(tr.x, 0, tr.z);
+        truckZ.group.rotation.y = tr.cap;
+        // l'épave fume et s'assombrit
+        truckZ.materiaux.ligne.color.set(tr.phase === 3 ? 0x5a3a20 : 0xffb35c);
+      }
+    }
+    // une note ouverte se referme si l'on s'en éloigne
+    if (noteZ !== null) {
+      const n = NOTES.find((x) => x.id === noteZ);
+      if (!n || Math.hypot(n.position[0] - moi.p[0], n.position[1] - moi.p[2]) > 3) noteZ = null;
+    }
   }
 
   /**
@@ -1966,6 +2118,11 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       if (a && peutAgir() && !enKillcam() && armes.munitions() <= 0 && !armes.rechargeEnCours() && t >= prochainDe(a)) demarrerRecharge();
     }
     armeMain.changer(enReplay ? (kc.info()?.arme ?? armes.armeEnMain()) : armes.armeEnMain());
+    {
+      // (v7) camouflage du Pack-a-Punch sur l'arme en main
+      const enMain = armes.armeEnMain();
+      armeMain.ameliorer(modeZ && !estMelee(enMain) && (armes.equipement().ameliorees?.includes(enMain) ?? false));
+    }
     if (embarquementFin > 0 && t >= embarquementFin) embarquementFin = 0;
 
     // --- mouvement ---
@@ -2098,7 +2255,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     live.recharge = armes.rechargeEnCours() ? Math.max(0.001, armes.rechargeProgression(ms())) : 0;
     live.vitesse = info && ve ? Math.abs(ve.v) : vh;
     live.vitesseKmh = info ? vehicule.vitesseKmh() : 0;
-    live.regenDelai = !vivant || pv >= JEU.pvMax ? 1 : borne((t - dernierDegatT) / (JEU.regenDelaiMs / 1000), 0, 1);
+    live.regenDelai = !vivant || pv >= pvMaxMoi() ? 1 : borne((t - dernierDegatT) / regenDelaiS(), 0, 1);
     live.reanimation = reanimCible !== null ? borne((t - reanimDebutT) / ZOMBIES.reanimationS, 0, 1) : 0;
     accHud += dt;
     if (accHud >= ECART_HUD_S) { accHud = 0; emettreHud(); }
@@ -2150,6 +2307,9 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
         argent: argentZ, manche: partieZ?.manche ?? 0, restants: mz.restants(), vivants: mz.vivants(), gain: gainZ, refus: refusZ, achats: achatsZ,
         reanimation: reanimCible !== null ? { cible: reanimCible, progression: borne((t - reanimDebutT) / ZOMBIES.reanimationS, 0, 1) } : null,
         aTerre: aTerreZ, elimine: elimineZ, terreFinT: terreFinTZ, partie: partieZ,
+        pvMax: pvMaxMoi(), note: noteZ, annonce: annonceZ, serveurT: client.maintenantServeur(),
+        objectif: partieZ ? objectifZombies(partieZ, papUtilise) : "",
+        reparation: reparFenetre,
       };
     },
     touches(cfg: ConfigTouches) { config = cfg; index = indexTouches(cfg); toutRelacher(); },
@@ -2187,6 +2347,9 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       feux.dispose();
       rm.dispose();
       rz?.dispose();
+      rInterieurs?.dispose();
+      rObjets?.dispose();
+      truckZ?.dispose();
       impactsBalles.dispose();
       tracesPneus.dispose();
       debris.dispose();

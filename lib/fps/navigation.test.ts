@@ -94,10 +94,10 @@ describe("carteNavigation : options et invalidation", () => {
     expect(carteNavigation(m, 2, { taille: 1.5 })).not.toBe(b);
   });
 
-  it("grille de la carte zombies : cases de 1,5 m, 138 × 90", () => {
+  it("grille de la carte zombies : cases de 1 m, 228 × 134", () => {
     const monde = construireMondeZombies(scene);
     const c = carteNavigation(monde, ZOMBIES.rayonNav, { taille: ZOMBIES.tailleCaseNav, ignorerPasseTigre: true });
-    expect([c.taille, c.nx, c.nz]).toEqual([1.5, 138, 90]);
+    expect([c.taille, c.nx, c.nz]).toEqual([1, 228, 134]);
   });
 
   it("invaliderNavigation après detruireBatiment : la grille est recalculée et le chemin s'ouvre", () => {
@@ -203,7 +203,7 @@ describe("champDistance (file à seaux de Dial) et descente", () => {
     expect(r).toBe(sortie);
     expect(champDistance(carte, [libres[0]], { sortie })).toEqual(champDistance(carte, [libres[0]]));
     // une source en plein mur (cour d'un bâtiment) : le champ existe quand même
-    const [bx, bz] = scene.buildings[70].c;
+    const [bx, bz] = scene.buildings[69].c; // (v7) le 70 est creusé (Cuisine)
     const k = idx(bx, bz);
     expect(carte.bloque[k]).toBe(1);
     const c = champDistance(carte, [[bx, bz]]);

@@ -115,6 +115,10 @@ const argentZombies = dureeEnv("PDJ_FPS_ZOMBIES_ARGENT");
 const totalZombies = dureeEnv("PDJ_FPS_ZOMBIES_TOTAL");
 const pauseZombies = dureeEnv("PDJ_FPS_ZOMBIES_PAUSE_MS");
 const griffeZombies = dureeEnv("PDJ_FPS_ZOMBIES_GRIFFE");
+/** (v7, essais) première manche du Truck Muche (0 = jamais), courant rétabli dès le départ */
+const truckZombies = process.env.PDJ_FPS_ZOMBIES_TRUCK !== undefined && Number.isFinite(Number(process.env.PDJ_FPS_ZOMBIES_TRUCK))
+  ? Math.max(0, Math.floor(Number(process.env.PDJ_FPS_ZOMBIES_TRUCK))) : undefined;
+const courantZombies = process.env.PDJ_FPS_ZOMBIES_COURANT === "1";
 const optionsZombies: OptionsSalle = {
   zombies: {
     donnees: donneesZombies(scene),
@@ -122,6 +126,8 @@ const optionsZombies: OptionsSalle = {
     ...(totalZombies !== undefined ? { total1: totalZombies } : {}),
     ...(pauseZombies !== undefined ? { pauseMs: pauseZombies } : {}),
     ...(griffeZombies !== undefined ? { degatsGriffe: griffeZombies } : {}),
+    ...(truckZombies !== undefined ? { mancheTruck: truckZombies } : {}),
+    ...(courantZombies ? { courant: true } : {}),
   },
 };
 const salleZombies = new Salle(construireMondeZombies(scene), DEPARTS.map((d) => [d[0], d[1]] as [number, number]), Math.random, Date.now(), optionsZombies);

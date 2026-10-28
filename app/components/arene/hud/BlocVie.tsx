@@ -26,14 +26,18 @@ export interface PropsBlocVie {
   /** le bouclier vient de se rompre : flash de la barre */
   rupture: boolean;
   refTraitRegen: RefObject<HTMLDivElement | null>;
+  /** (v7, zombies) PV max (250 avec le Gratin Dauphinois) et régénération par seconde */
+  pvMax?: number;
+  regenParS?: number;
 }
 
 const FANTOME_MS = 600;
 
 /** Part (0..100) de la jauge remplie. */
-const pourcent = (pv: number) => Math.max(0, Math.min(100, (pv / JEU.pvMax) * 100));
+const pourcentDe = (pv: number, max: number) => Math.max(0, Math.min(100, (pv / max) * 100));
 
-function BlocVieBrut({ pv, bouclier, regen, accroupi, glisse, mur, protegeRestant, rupture, refTraitRegen }: PropsBlocVie) {
+function BlocVieBrut({ pv, bouclier, regen, accroupi, glisse, mur, protegeRestant, rupture, refTraitRegen, pvMax = JEU.pvMax, regenParS = JEU.regenPvParS }: PropsBlocVie) {
+  const pourcent = (x: number) => pourcentDe(x, pvMax);
   const niveau = niveauPv(pv);
   // barre fantôme : suit tout de suite une hausse, attend 600 ms avant de rejoindre une baisse
   const [fantome, setFantome] = useState(pv);
@@ -70,12 +74,12 @@ function BlocVieBrut({ pv, bouclier, regen, accroupi, glisse, mur, protegeRestan
         <i className={styles.jaugeRemplie} style={{ width: `${pourcent(pv)}%` }} />
         <i className={styles.jaugeSegments} />
       </div>
-      <div className={styles.delaiRegen} data-actif={!regen && pv < JEU.pvMax ? "oui" : "non"} aria-hidden="true">
+      <div className={styles.delaiRegen} data-actif={!regen && pv < pvMax ? "oui" : "non"} aria-hidden="true">
         <i ref={refTraitRegen} />
       </div>
-      {regen && pv < JEU.pvMax && (
+      {regen && pv < pvMax && (
         <p className={styles.regen}>
-          <span className={styles.regenPlus} aria-hidden="true">+</span>RÉGÉNÉRATION +{JEU.regenPvParS}/s
+          <span className={styles.regenPlus} aria-hidden="true">+</span>RÉGÉNÉRATION +{regenParS}/s
         </p>
       )}
       {montrerBouclier && (

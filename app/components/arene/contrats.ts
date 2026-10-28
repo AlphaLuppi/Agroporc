@@ -90,7 +90,7 @@ export interface UseArene {
   /** demande à changer de salle (refusée : message dans `erreur`, `modeVoulu` revient à `mode`) */
   choisirMode(mode: ModeSalle): void;
   /** hôte du lobby des zombies : lance la partie */
-  lancerPartie(): void;
+  lancerPartie(difficulte?: import("@/lib/fps/zombies-vagues").Difficulte): void;
 }
 
 /** Props de `HudArene` (U2 l'implémente, U1/l'hôte les fournit). */
