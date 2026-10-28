@@ -12,9 +12,13 @@
  * cylindre. Pendant la course, la normale du mur sondé est recalculée à chaque pas et la vitesse
  * est ramenée sur sa tangente (avec un virage borné) : le joueur suit donc les murs légèrement
  * courbes et les angles émoussés d'un même bâtiment, et décroche dans les coins vifs.
+ *
+ * Zombies (`Monde.sansParkour`, `Monde.plafonds`) : ni escalade ni wall-run ni double saut, la tête ne passe jamais un plafond (le saut
+ * s'y arrête), et les corps des tigres (`obstacles`, capsules de `corps-tigres.ts`) arrêtent le joueur : il glisse le long, un tigre qui
+ * apparaît sur lui le repousse doucement (`capsulePoussee`) au lieu de le téléporter, et un joueur pris en étau se libère (`coinceS`).
  */
-import type { Contact, Monde } from "./collision";
-import { resoudre, solSous } from "./collision";
+import type { Capsule, Contact, ContactCapsule, Monde } from "./collision";
+import { distanceCapsule, plafondSur, resoudre, solSous } from "./collision";
 import type { CoteMur, Posture, Vec3 } from "./protocole";
 import { SILHOUETTE, SILHOUETTE_ACCROUPIE } from "./protocole";
 
@@ -59,6 +63,11 @@ export interface EtatMouvement {
   glisseRecharge: number;
   /** pour détecter le front montant de `accroupi` (la glissade ne part qu'à l'appui, pas à l'atterrissage touche tenue) */
   accroupiPrecedent: boolean;
+  /**
+   * (zombies) anti-coinçage contre les corps des tigres, tenu seulement quand `etape` reçoit des obstacles : `t` = temps passé pris en
+   * étau sans bouger de plus de `coinceDeplacementM` depuis (x, z), `fantome` = s restantes pendant lesquelles les tigres sont ignorés.
+   */
+  coince?: { t: number; x: number; z: number; fantome: number };
 }
 
 /** Toutes les constantes du contrôleur (exportées pour les tests et le réglage). */
@@ -150,7 +159,23 @@ export const MOUV = {
 
   /** lissage du roulis caméra (1/s) */
   inclinaisonVitesse: 10,
+
+  /**
+   * (zombies) plafonds : les pieds restent à `degagementTete` sous le plafond (œil 1,95 + 0,15 : plan proche de la caméra et balancement
+   * compris), cherché sur un disque de `rayonTete` autour de l'axe.
+   */
+  degagementTete: SILHOUETTE.oeil + 0.15,
+  rayonTete: SILHOUETTE.tete.rayon,
+  /** (zombies) vitesse (m/s) à laquelle un tigre qui chevauche déjà le joueur (apparu sur lui, poussé par la foule) le repousse */
+  capsulePoussee: 4,
+  /** (zombies) pris en étau par des tigres (aucune direction libre) pendant `coinceS` s sans bouger de `coinceDeplacementM` m : on passe à travers pendant `fantomeS` s */
+  coinceS: 0.5,
+  coinceDeplacementM: 0.2,
+  fantomeS: 0.6,
 } as const;
+
+/** `Contact.prisme` d'un contact avec le corps d'un tigre (ni bâtiment ni borne : pas d'escalade, pas de wall-run). */
+export const PRISME_CAPSULE = -2;
 
 const COS_RECOLLAGE = Math.cos((MOUV.murRecollageAngleDeg * Math.PI) / 180);
 const SIN_ANGLE_MUR = Math.sin((MOUV.murAngleMaxDeg * Math.PI) / 180);
@@ -203,6 +228,7 @@ function copier(e: EtatMouvement): EtatMouvement {
     glisse: e.glisse ? { ...e.glisse, dir: [e.glisse.dir[0], e.glisse.dir[1]] } : null,
     glisseRecharge: e.glisseRecharge,
     accroupiPrecedent: e.accroupiPrecedent,
+    ...(e.coince ? { coince: { ...e.coince } } : {}),
   };
 }
 
@@ -392,7 +418,7 @@ function verifierGlisse(s: EtatMouvement, vs: number): void {
 }
 
 /** Un pas de simulation (dt ≤ pasMaxS) : mur, sinon sol / air. Modifie `s` en place. */
-function pas(s: EtatMouvement, en: Entrees, front: boolean, frontAccroupi: boolean, dt: number, m: Monde, mult: number): void {
+function pas(s: EtatMouvement, en: Entrees, front: boolean, frontAccroupi: boolean, dt: number, m: Monde, mult: number, obs: readonly Capsule[] | undefined): void {
   if (s.coyote > 0) s.coyote = Math.max(0, s.coyote - dt);
   if (s.murRecent) {
     s.murRecent.t += dt;
@@ -402,8 +428,8 @@ function pas(s: EtatMouvement, en: Entrees, front: boolean, frontAccroupi: boole
   const glissait = !!s.glisse;
   const vitesseGlisse = preparerPosture(s, en, front, frontAccroupi, dt, mult);
   const w = souhait(en, mult, s.accroupi);
-  if (s.mur) pasMur(s, en, front, dt, m, mult, w);
-  else pasLibre(s, front, dt, m, mult, w);
+  if (s.mur) pasMur(s, en, front, dt, m, mult, w, obs);
+  else pasLibre(s, front, dt, m, mult, w, obs);
   if (s.glisse && vitesseGlisse !== null) verifierGlisse(s, vitesseGlisse);
   // fin de glissade (durée, saut, chute, mur de face) : recharge avant la suivante. Le pas qui ENTRE en glissade ne compte pas.
   if (glissait && !s.glisse) s.glisseRecharge = MOUV.glisseRechargeS;
@@ -420,7 +446,7 @@ function pas(s: EtatMouvement, en: Entrees, front: boolean, frontAccroupi: boole
 }
 
 /** Wall-run : suit la tangente du mur sondé, saute si demandé, s'arrête selon les règles de la spec. */
-function pasMur(s: EtatMouvement, en: Entrees, front: boolean, dt: number, m: Monde, mult: number, w: Souhait): void {
+function pasMur(s: EtatMouvement, en: Entrees, front: boolean, dt: number, m: Monde, mult: number, w: Souhait, obs: readonly Capsule[] | undefined): void {
   const mur = s.mur!;
   // Direction actuelle le long du mur (on retire la part qui plaque au mur).
   const vn = s.v[0] * mur.nx + s.v[2] * mur.nz;
@@ -436,12 +462,12 @@ function pasMur(s: EtatMouvement, en: Entrees, front: boolean, dt: number, m: Mo
     s.v[1] = MOUV.murSautVy;
     s.sautsAir = 1;
     terminerMur(s, false);
-    pasLibre(s, false, dt, m, mult, w);
+    pasLibre(s, false, dt, m, mult, w, obs);
     return;
   }
   if (w.avant <= 0.1 || mur.t >= MOUV.murDureeMax) {
     terminerMur(s, true);
-    pasLibre(s, false, dt, m, mult, w);
+    pasLibre(s, false, dt, m, mult, w, obs);
     return;
   }
 
@@ -495,8 +521,85 @@ function pasMur(s: EtatMouvement, en: Entrees, front: boolean, dt: number, m: Mo
   s.auSol = false;
 }
 
-/** Sol et air : accélération, sauts, gravité, déplacement, collisions, escalade, accroche d'un mur. */
-function pasLibre(s: EtatMouvement, front: boolean, dt: number, m: Monde, mult: number, w: Souhait): void {
+const contactCapsule: ContactCapsule = { d: 0, nx: 0, nz: 0 };
+
+/** Enfoncement admis dans la capsule `c` (rayon du joueur compris : `R`) : celui du début du pas, moins `capsulePoussee` × dt. */
+function enfoncementAdmis(c: Capsule, R: number, x0: number, z0: number, dt: number): number {
+  return Math.max(0, R - distanceCapsule(c, x0, z0, contactCapsule).d - MOUV.capsulePoussee * dt);
+}
+
+/**
+ * Vrai si le joueur en `p` est plus enfoncé dans un corps qu'au début du pas. Contrainte dure, plus large que `enfoncementAdmis` (la
+ * poussée douce n'est qu'un but) : coincé contre un mur par un tigre qui le chevauche, le joueur peut encore glisser le long du mur.
+ */
+function tropEnfonce(obs: readonly Capsule[], x0: number, z0: number, p: Vec3): boolean {
+  for (const c of obs) {
+    if (p[1] >= c.haut) continue;
+    const R = c.r + MOUV.rayon;
+    const avant = Math.max(0, R - distanceCapsule(c, x0, z0, contactCapsule).d);
+    if (R - distanceCapsule(c, p[0], p[2], contactCapsule).d > avant + TOLERANCE_CAPSULE_M) return true;
+  }
+  return false;
+}
+
+/**
+ * Repousse le cylindre du joueur (pieds en `p`, modifié en place) hors des capsules des tigres. Un joueur n'entre jamais plus dans un
+ * corps qu'il ne l'était au début du pas (en (x0, z0)) : il bute sur un tigre qu'il touche, et un tigre qui le chevauchait déjà (apparu sur
+ * lui, poussé par la foule, affiché en retard) ne le repousse qu'à `capsulePoussee` m/s, sans saut de position. Rend les contacts
+ * (`prisme` = `PRISME_CAPSULE`, normale vers le joueur) dans `contacts`. Les poussées peuvent se contredire (pas de place) : cf. `tropEnfonce`.
+ */
+function repousserCapsules(obs: readonly Capsule[], x0: number, z0: number, p: Vec3, dt: number, contacts: Contact[]): void {
+  for (let passe = 0; passe < PASSES_CAPSULES; passe++) {
+    let bouge = false;
+    for (const c of obs) {
+      if (p[1] >= c.haut) continue; // au-dessus du dos (un petit sauté) : rien
+      const R = c.r + MOUV.rayon;
+      const admis = enfoncementAdmis(c, R, x0, z0, dt);
+      const { d, nx, nz } = distanceCapsule(c, p[0], p[2], contactCapsule);
+      const pen = R - d;
+      if (pen <= 0) continue;
+      if (passe === 0) contacts.push({ nx, nz, profondeur: pen, prisme: PRISME_CAPSULE });
+      if (pen > admis + 1e-9) {
+        p[0] += nx * (pen - admis); p[2] += nz * (pen - admis);
+        bouge = true;
+      }
+    }
+    if (!bouge) return;
+  }
+}
+const PASSES_CAPSULES = 4;
+const TOLERANCE_CAPSULE_M = 2e-3;
+
+/**
+ * Pris en étau : au moins un corps de tigre parmi les contacts et aucune direction horizontale qui n'entre dans aucun d'eux (en 2D, si
+ * une direction libre existe, l'une des normales ou de leurs perpendiculaires en est une). Bloqué de face par deux tigres, on peut reculer.
+ */
+function enEtau(contacts: readonly Contact[]): boolean {
+  if (!contacts.some((c) => c.prisme === PRISME_CAPSULE)) return false;
+  const libre = (ux: number, uz: number) => contacts.every((c) => ux * c.nx + uz * c.nz >= -0.1);
+  for (const c of contacts) {
+    if (libre(c.nx, c.nz) || libre(-c.nz, c.nx) || libre(c.nz, -c.nx)) return false;
+  }
+  return true;
+}
+
+/** Anti-coinçage (zombies) : pris en étau `coinceS` s en voulant bouger, sans y arriver, le joueur traverse les tigres `fantomeS` s. */
+function majCoince(s: EtatMouvement, etau: boolean, veut: boolean, dt: number): void {
+  const c = (s.coince ??= { t: 0, x: s.p[0], z: s.p[2], fantome: 0 });
+  if (c.fantome > 0) { c.fantome = Math.max(0, c.fantome - dt); return; }
+  if (etau && veut) {
+    if (Math.hypot(s.p[0] - c.x, s.p[2] - c.z) > MOUV.coinceDeplacementM) { c.x = s.p[0]; c.z = s.p[2]; c.t = 0; }
+    c.t += dt;
+    if (c.t >= MOUV.coinceS - 1e-9) { c.fantome = MOUV.fantomeS; c.t = 0; }
+    return;
+  }
+  // les contacts clignotent d'un pas à l'autre (poussé dehors, puis de nouveau dedans) : le temps décroît au lieu de repartir de zéro
+  c.t = Math.max(0, c.t - dt);
+  if (c.t === 0) { c.x = s.p[0]; c.z = s.p[2]; }
+}
+
+/** Sol et air : accélération, sauts, gravité, déplacement, plafond, collisions (bâtiments puis tigres), escalade, accroche d'un mur. */
+function pasLibre(s: EtatMouvement, front: boolean, dt: number, m: Monde, mult: number, w: Souhait, obs: readonly Capsule[] | undefined): void {
   const v = s.v;
   let saute = false;
 
@@ -522,8 +625,8 @@ function pasLibre(s: EtatMouvement, front: boolean, dt: number, m: Monde, mult: 
   if (!s.auSol) v[1] = Math.max(-MOUV.chuteMax, v[1] - MOUV.gravite * dt);
 
   // Déplacement.
-  const yAvant = s.p[1];
-  const x = s.p[0] + v[0] * dt, z = s.p[2] + v[2] * dt;
+  const yAvant = s.p[1], x0 = s.p[0], z0 = s.p[2];
+  let x = x0 + v[0] * dt, z = z0 + v[2] * dt;
   let y = yAvant + v[1] * dt;
   const sol = solSous(m, x, z, yAvant, MOUV.toleranceMarche);
   let auSolApres = false;
@@ -534,15 +637,47 @@ function pasLibre(s: EtatMouvement, front: boolean, dt: number, m: Monde, mult: 
     y = sol; v[1] = 0; auSolApres = true;
   }
 
-  // Collisions : on garde la vitesse d'avant pour juger l'accroche, puis on annule ce qui entre.
+  // Plafond (zombies) : la tête ne le passe jamais, le saut s'y arrête. Sauter sous un linteau plus bas que le plafond d'où l'on vient :
+  // on bute contre lui (on n'avance pas tant qu'on est trop haut). Debout sur un meuble trop haut pour y tenir, on est remis plus bas
+  // que son dessus : `resoudre` l'en écarte, puis on tombe.
+  if (m.plafonds) {
+    const limite = plafondSur(m, x, z, MOUV.rayonTete) - MOUV.degagementTete;
+    if (y > limite) {
+      const limiteAvant = plafondSur(m, x0, z0, MOUV.rayonTete) - MOUV.degagementTete;
+      if (limiteAvant > limite + 1e-6 && yAvant > limite) {
+        x = x0; z = z0;
+        y = Math.min(y, Math.max(0, limiteAvant));
+      } else y = Math.max(0, limite);
+      if (v[1] > 0) v[1] = 0;
+    }
+  }
+
+  // Collisions : on garde la vitesse d'avant pour juger l'accroche, puis on annule ce qui entre. Les bâtiments d'abord, puis les corps des
+  // tigres, puis de nouveau les bâtiments (un mur reste infranchissable même si un tigre y pousse).
   const res = resoudre(m, [x, y, z], MOUV.rayon, MOUV.hauteur);
+  if (obs) {
+    const fantome = (s.coince?.fantome ?? 0) > 0;
+    if (!fantome && obs.length) {
+      const avant = res.contacts.length;
+      repousserCapsules(obs, x0, z0, res.p, dt, res.contacts);
+      if (res.contacts.length > avant) {
+        const murs = resoudre(m, res.p, MOUV.rayon, MOUV.hauteur);
+        res.p = murs.p;
+        for (const c of murs.contacts) res.contacts.push(c);
+        // pas de place (deux tigres, ou un tigre et un mur, à moins de la largeur du joueur) : on reste où l'on était à ce pas
+        if (tropEnfonce(obs, x0, z0, res.p)) { res.p[0] = x0; res.p[2] = z0; }
+      }
+    }
+    s.p = res.p;
+    majCoince(s, !fantome && enEtau(res.contacts), w.mag > 0.1, dt);
+  }
   s.p = res.p;
   s.auSol = auSolApres;
   const vx0 = v[0], vz0 = v[2];
 
-  // Escalade : en l'air, contre un mur dont le toit est à ≤ 1,3 m au-dessus des pieds, en poussant vers l'avant.
+  // Escalade : en l'air, contre un mur dont le toit est à ≤ 1,3 m au-dessus des pieds, en poussant vers l'avant (jamais en zombies).
   let monte: Contact | null = null;
-  if (!auSolApres && w.avant > 0.1) {
+  if (!auSolApres && w.avant > 0.1 && !m.sansParkour) {
     for (const c of res.contacts) {
       if (c.prisme < 0) continue;
       const dh = m.prismes[c.prisme].h - y;
@@ -576,9 +711,10 @@ function pasLibre(s: EtatMouvement, front: boolean, dt: number, m: Monde, mult: 
 
 /**
  * Avance le joueur de `dt` secondes (sous-découpé en pas ≤ 1/120 s). `vitesseArme` multiplie les
- * vitesses de déplacement (sniper : 0,9). Renvoie un nouvel état, `e` n'est pas modifié.
+ * vitesses de déplacement (sniper : 0,9). `obstacles` (zombies) : corps des tigres, fixes pendant l'appel (cf. `corps-tigres.ts`) ; leur
+ * présence tient aussi l'anti-coinçage (`coince`). Renvoie un nouvel état, `e` n'est pas modifié.
  */
-export function etape(e: EtatMouvement, entrees: Entrees, dt: number, monde: Monde, vitesseArme: number = 1): EtatMouvement {
+export function etape(e: EtatMouvement, entrees: Entrees, dt: number, monde: Monde, vitesseArme: number = 1, obstacles?: readonly Capsule[]): EtatMouvement {
   const s = copier(e);
   if (!(dt > 0)) return s;
   const total = Math.min(dt, MOUV.dtMaxS);
@@ -592,7 +728,7 @@ export function etape(e: EtatMouvement, entrees: Entrees, dt: number, monde: Mon
     const frontAccroupi = accroupi && !accroupiAvant;
     precedent = entrees.saut;
     accroupiAvant = accroupi;
-    pas(s, entrees, front, frontAccroupi, h, monde, vitesseArme);
+    pas(s, entrees, front, frontAccroupi, h, monde, vitesseArme, obstacles);
   }
   s.sautPrecedent = entrees.saut;
   s.accroupiPrecedent = accroupi;

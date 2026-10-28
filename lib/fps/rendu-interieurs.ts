@@ -11,10 +11,10 @@ import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { shapeFrom } from "../agroparc3d/decor";
 import type { SceneData, Vec2 } from "../agroparc3d/types";
-import { BATIMENTS_CREUX, HAUTEUR_PORTE_INTERIEURE, batimentDePiece, type GenreMeuble, type PieceSynth } from "./zombies-carte";
+import { BATIMENTS_CREUX, HAUTEUR_PLAFOND_ZOMBIES, HAUTEUR_PORTE_INTERIEURE, batimentDePiece, plafondZombies, type GenreMeuble, type PieceSynth } from "./zombies-carte";
 
-/** Hauteur du faux plafond (m) et des fenêtres (allège, linteau). */
-export const PLAFOND_M = 3.4;
+/** Hauteur du faux plafond (m, solide aussi pour la tête du joueur : `construireMondeZombies`) et des fenêtres (allège, linteau). */
+export const PLAFOND_M = HAUTEUR_PLAFOND_ZOMBIES;
 export const FENETRE_BAS_M = 0.9;
 export const FENETRE_HAUT_M = 2.3;
 
@@ -212,7 +212,7 @@ export function creerRenduInterieurs(scene: THREE.Scene, data: SceneData, pieces
     geoSols.push(sol);
     const plafond = new THREE.ShapeGeometry(forme);
     plafond.rotateX(-Math.PI / 2);
-    plafond.translate(0, Math.min(PLAFOND_M, bat.h - 0.3), 0);
+    plafond.translate(0, plafondZombies(bat.h), 0);
     geoPlafonds.push(plafond);
     const toit = new THREE.ShapeGeometry(forme);
     toit.rotateX(-Math.PI / 2);

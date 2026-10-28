@@ -34,6 +34,7 @@ import type { SceneData } from "../agroparc3d/types";
 import { C, construireDecor, creerEtatDestruction } from "../agroparc3d/decor";
 import { construireMonde, detruireBatiment, normaleImpact, poserBreche, releverBatiment, type Creux, type Monde } from "./collision";
 import { FOCUS_ZOMBIES, construireMondeZombies, donneesZombies } from "./zombies-carte";
+import { CorpsTigres } from "./corps-tigres";
 import { ZOMBIES } from "./zombies-vagues";
 import {
   MondeZombies, Rugissements, inviteZombies, segmentsPortesFermees, toucheTruckClient, trouverZombieTouche, trouverZombiesMelee, trouverZombiesTouches,
@@ -105,6 +106,8 @@ const SENS_RAD_PX = 0.0022;
 const FOV_H = 90;
 const FOV_H_VISEE = 78;
 const PORTEE_EFFETS_M = 400;
+/** (zombies) seuls les corps des tigres à moins de cette distance (m) sont des obstacles du mouvement (un pas de 0,25 s au plus vite) */
+const PORTEE_CORPS_TIGRES_M = 8;
 const ECART_HUD_S = 1 / 15;
 /** Tirs au plus par image (minigun à 25 tirs/s et 30 images/s : un coup par image plafonnerait la cadence, v2 §2.4). */
 const TIRS_PAR_IMAGE_MAX = 3;
@@ -254,6 +257,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   const rm = creerRenduMonstres(scene);
   // ---------- mode zombies (v5) : tigres interpolés et dessinés, rugissements, état de la partie ----------
   const mz = new MondeZombies();
+  /** (zombies) corps des tigres proches, obstacles du mouvement */
+  const corpsTigres = new CorpsTigres();
   const rz = modeZ ? creerRenduZombies(scene) : null;
   // (v7) intérieurs des bâtiments creusés, objets de la carte (craie, distributeurs, boîte, planches, bonus…), Truck Muche des livraisons
   const rInterieurs = donneesZ ? creerRenduInterieurs(scene, data, donneesZ.pieces) : null;
@@ -1972,7 +1977,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   function majZombies(dt: number) {
     if (!modeZ || !rz) return;
     imageNum++;
-    const n = mz.echantillon(client.maintenantServeur() - JEU.interpolationMs);
+    const n = mz.nombre(); // échantillonnés avant le mouvement
     const zs = mz.zombies();
     const regardX = -Math.sin(camLacet), regardZ = -Math.cos(camLacet);
     rz.maj(zs, n, camPos, regardX, regardZ, dt, imageNum, {
@@ -2201,6 +2206,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     if (embarquementFin > 0 && t >= embarquementFin) embarquementFin = 0;
 
     // --- mouvement ---
+    // (zombies) tigres interpolés AVANT le mouvement : le joueur bute sur les corps qu'il voit (même instant que le rendu et les tirs)
+    if (modeZ) mz.echantillon(client.maintenantServeur() - JEU.interpolationMs);
     const aVerrou = verrouille();
     const en = entrees();
     const actif = vivant && apparu && !enReplay && (aVerrou || forceActif);
@@ -2246,7 +2253,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     } else if (apparu) {
       const entreesUtiles: Entrees = actif ? en : { avant: 0, droite: 0, saut: false, sprint: false, accroupi: false, lacet };
       const mult = vitesseArme(arme) * (vise ? 0.8 : 1);
-      moi = etape(moi, entreesUtiles, dt, monde, mult);
+      const obstacles = modeZ ? corpsTigres.maj(mz.zombies(), mz.nombre(), moi.p[0], moi.p[2], PORTEE_CORPS_TIGRES_M) : undefined;
+      moi = etape(moi, entreesUtiles, dt, monde, mult, obstacles);
     }
     sautDemande = false;
 
