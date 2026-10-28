@@ -277,6 +277,11 @@ export interface JeuHandle {
     tigres(mesures?: boolean): Record<string, unknown>;
     /** lance le sort (comme la touche « invoquer »), false si aucune charge ou si le lancer est impossible */
     invoquer(): boolean;
+    /**
+     * (zombies, v8) joue la mort désarticulée du tigre `id` (numéro de `z<n>`) côté client seulement, comme si `zombieMort` arrivait avec ces
+     * champs (`src` par défaut : ma caméra) : le serveur le garde vivant, le rendu l'ignore jusqu'à la fin du cadavre. false si le tigre est inconnu
+     */
+    tuerZombie(id: number, o?: { arme?: ArmeId; ameliore?: boolean; zone?: Zone; cause?: "explosion" | "nuke" | "melee"; src?: Vec3 }): boolean;
     /** chat vocal : connexions, audibilité, joueurs entendus */
     voix(): Record<string, unknown>;
   };
