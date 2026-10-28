@@ -369,8 +369,11 @@ export interface Ragdoll {
   readonly n: number;
   /** positions (x, y, z) des particules dans le monde, à plat */
   readonly pos: Float64Array;
-  /** avance de `dt` secondes (rien s'il dort ou s'il est figé) */
-  pas(dt: number): void;
+  /**
+   * avance de `dt` secondes (rien s'il dort ou s'il est figé) ; rend le temps réellement simulé (moins que `dt` sous une image lente :
+   * au plus `RAGDOLL.sousPasMax` pas)
+   */
+  pas(dt: number): number;
   /** applique une impulsion (réveille le ragdoll) */
   impulsion(i: ImpulsionRagdoll): void;
   /** pose du squelette dans le repère du modèle de la mort (`RepereRagdoll`), à recopier par `Tigre.appliquer(pose, origineX)` */
@@ -633,7 +636,8 @@ export function creerRagdoll(
   const r: Ragdoll = {
     n, pos, repere,
     pas(dt) {
-      if (dort || fige || !(dt > 0)) return;
+      if (dort || fige || !(dt > 0)) return 0;
+      const age0 = age;
       reserve = Math.min(reserve + dt, RAGDOLL.pasS * RAGDOLL.sousPasMax);
       let pas = 0;
       while (pas < RAGDOLL.sousPasMax) {
@@ -647,6 +651,7 @@ export function creerRagdoll(
         if (calme >= RAGDOLL.dureeSommeilS || age >= RAGDOLL.vieMaxS) { dort = true; break; }
       }
       if (pas > 0) poseAJour = false;
+      return age - age0;
     },
     impulsion(im) {
       dort = false; calme = 0;

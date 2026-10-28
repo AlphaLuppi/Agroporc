@@ -34,7 +34,7 @@ import type { SceneData } from "../agroparc3d/types";
 import { C, construireDecor, creerEtatDestruction } from "../agroparc3d/decor";
 import { construireMonde, detruireBatiment, normaleImpact, poserBreche, releverBatiment, type Creux, type Monde } from "./collision";
 import { FOCUS_ZOMBIES, construireMondeZombies, donneesZombies } from "./zombies-carte";
-import { ZOMBIES } from "./zombies-vagues";
+import { ZOMBIES, echelleZombie, type TypeZombie } from "./zombies-vagues";
 import {
   MondeZombies, Rugissements, inviteZombies, segmentsPortesFermees, toucheTruckClient, trouverZombieTouche, trouverZombiesMelee, trouverZombiesTouches,
   INVITE_VIDE, type InviteZombies,
@@ -1097,12 +1097,14 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
    * (v8) Le cadavre d'un tigre zombie : un ragdoll lancé selon la façon dont il est mort (arme, zone, origine du coup du message ; repli sur
    * la position du tueur, ou sur ma caméra, quand le serveur ne la donne pas).
    */
-  function mortZombie(m: Extract<MessageServeur, { t: "zombieMort" }>) {
+  function mortZombie(m: Extract<MessageServeur, { t: "zombieMort" }>, essai?: { cap: number; type: TypeZombie }) {
     const id = Number(m.id.slice(1));
     const cause: MortZombie = m.cause === "explosion" || m.cause === "nuke" ? m.cause : m.zone === "tete" ? "tete" : m.cause === "melee" ? "melee" : "corps";
     const tueur = m.par === client.id ? null : etats.get(m.par);
     const repli: Vec3 = tueur ? [tueur.p[0], tueur.p[1] + SILHOUETTE.oeil, tueur.p[2]] : [camPos[0], camPos[1], camPos[2]];
-    rz?.mort(id, cause, impulsionMort({ cause, arme: m.arme, ameliore: m.ameliore, src: m.src, p: m.p, graine: id }, repli));
+    const impulsion = impulsionMort({ cause, arme: m.arme, ameliore: m.ameliore, src: m.src, p: m.p, graine: id }, repli);
+    if (essai) rz?.cadavreEssai({ x: m.p[0], z: m.p[2], cap: essai.cap, type: essai.type, echelle: echelleZombie(essai.type) }, cause, impulsion);
+    else rz?.mort(id, cause, impulsion);
   }
 
   function recevoir(m: MessageServeur) {
@@ -2557,12 +2559,13 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       invoquer() { forceActif = true; return invoquer(); },
       tuerZombie(id, o = {}) {
         // (zombies) mort jouée côté client seulement, comme à la réception de `zombieMort` : le serveur garde le tigre (captures du ragdoll)
-        const v = mz.parId(id);
-        if (!v || !rz) return false;
+        // `o.p` : un tigre d'essai qui court là (cap `o.cap`, type `o.type`), sans tigre du serveur
+        const v = o.p ? null : mz.parId(id);
+        if ((!v && !o.p) || !rz || (o.p && !rz.pret())) return false;
         mortZombie({
-          t: "zombieMort", id: `z${id}`, p: [v.x, 0, v.z], par: client.id ?? "", zone: o.zone ?? "corps", ...(o.cause ? { cause: o.cause } : {}),
+          t: "zombieMort", id: `z${id}`, p: v ? [v.x, 0, v.z] : o.p!, par: client.id ?? "", zone: o.zone ?? "corps", ...(o.cause ? { cause: o.cause } : {}),
           ...(o.arme ? { arme: o.arme } : {}), ...(o.ameliore ? { ameliore: true as const } : {}), src: o.src ?? [camPos[0], camPos[1], camPos[2]],
-        });
+        }, o.p ? { cap: o.cap ?? 0, type: o.type ?? 0 } : undefined);
         return true;
       },
     },
