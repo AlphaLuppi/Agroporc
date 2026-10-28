@@ -144,6 +144,9 @@ describe("souffle", () => {
     expect(evt).toMatchObject({ e: "grenade", id: g.id, genre: "frag", par: "a", rayon: GRENADES.frag.rayonM });
     const mort = messages(apres, "zombieMort").find((m) => m.id === `z${z.id}`);
     expect(mort).toMatchObject({ par: "a", cause: "explosion" });
+    // (v8, ragdoll) le centre du souffle part avec la mort : le cadavre est projeté depuis la grenade
+    expect(mort!.src).toBeDefined();
+    expect(Math.hypot(mort!.src![0] - evt!.p[0], mort!.src![2] - evt!.p[2])).toBeLessThan(0.02);
     expect(messages(apres, "argent").filter((m) => m.motif === "kill").map((m) => m.delta)).toContain(gainKill({}));
     expect(a.kills).toBeGreaterThanOrEqual(1);
     // le lanceur (à ~2 m du centre) perd quelques PV, jamais de quoi tomber

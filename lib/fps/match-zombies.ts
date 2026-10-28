@@ -1272,7 +1272,7 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
         const degats = degatsGrenade(l.genre, Math.max(0, d - 0.6));
         if (degats <= 0 || !souffleAtteint(ctx.monde, c, [z.p[0], 0.3, z.p[2]])) continue;
         const pvAvant = z.pv, pvMax = z.pvMax, type = z.type, id = z.id;
-        sorties.push(...service.blesser(idZombie(id), t < effets.instakillFinT ? INSTAKILL : degats, par, "corps", t, { gain: true, cause: "explosion" }));
+        sorties.push(...service.blesser(idZombie(id), t < effets.instakillFinT ? INSTAKILL : degats, par, "corps", t, { gain: true, cause: "explosion", src: c }));
         const apres = simu.zombie(id);
         if (apres && type === 0 && (pvAvant - apres.pv) >= RAMPANT_PART_PV * pvMax && apres.allure !== 3 && alea() < RAMPANT_PROBA) {
           simu.changerAllure(id, 3, ZOMBIES.vitesses[3]);
