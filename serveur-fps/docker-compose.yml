@@ -13,10 +13,21 @@ services:
       PORT: "8787"
       # origines autorisées pour le WebSocket, séparées par des virgules (vide = toutes)
       ORIGINES: "${ORIGINES:-}"
-    mem_limit: 256m
-    cpus: 0.3
+      # statistiques du Battle Royale, sur le volume nommé ci-dessous
+      PDJ_FPS_BR_STATS: /donnees/stats-br.json
+      # cinquante amis derrière l'IP d'un même bureau (le défaut du serveur reste 24)
+      PDJ_FPS_CONNEXIONS_IP: "60"
+    volumes:
+      - pdj-fps-donnees:/donnees
+    # trois salles dont un Battle Royale à 50 joueurs : on part à 0,6 vCPU et 384 Mo et on MESURE (/sante.ticMaxMs, docker stats)
+    mem_limit: 384m
+    cpus: 0.6
     networks:
       - dokploy-network
+
+# Ne jamais `docker compose down -v` : le volume porte les TOP 1 du Battle Royale.
+volumes:
+  pdj-fps-donnees:
 
 networks:
   dokploy-network:

@@ -15,18 +15,25 @@
  * Avec l'option `zombies` (v6), la salle est celle du mode « zombies tigres » : le service `match-zombies.ts` mène la partie (lobby, manches, argent,
  * achats, tigres), la salle n'y ajoute que l'admission à `rejoindre`, les tirs et coups sur les tigres, la mise à terre à la place de la mort
  * et l'absence de cycle de matchs ; le comportement de l'arène (sans cette option) est inchangé. Sans Elsa, voitures, événements ni tigres largués.
+ * Avec l'option `br` (v8, Battle Royale), le service `match-br.ts` mène la partie (lobby, avion, chute, butin, tempête, places, stats) ; la salle y
+ * ajoute l'admission à `rejoindre` (`rejoindreBr`), la mort définitive (ni réapparition ni cycle de matchs), la mêlée propre au BR, un snap à
+ * 10 Hz sans les joueurs à bord ni les morts anciens, une seule `presence` par tic et des fenêtres de compensation de latence plus larges.
  * Spec : docs/superpowers/specs/2026-10-22-arene-v2-design.md (§6.1, §13), 2026-10-23-arene-hud-design.md (§3.5),
- * 2026-10-24-arene-evenements-design.md, 2026-10-23-arene-tigres-design.md et 2026-10-27-arene-zombies-design.md
+ * 2026-10-24-arene-evenements-design.md, 2026-10-23-arene-tigres-design.md, 2026-10-27-arene-zombies-design.md et
+ * 2026-10-28-battle-royale-design.md
  */
 import { MELEE, STATS, degatsPlomb, gerbeRespectee } from "./armes";
 import { ecarterDesCircuits, type Circuit, type VoiturePnj } from "./circulation";
+import { BR, REGLES_SANTE_BR, degatsMeleeBr } from "./br-regles";
 import type { Monde } from "./collision";
+import { couleurJoueur } from "./couleurs";
 import type { IntervalleAvion } from "./avion";
 import type { IntervalleElsa } from "./elsa";
 import { armeDuSlot, depuisAlias, estPrincipale, estSecondaire, estSlot, normaliserEquipement } from "./equipement";
 import type {
-  ContexteSalle, JoueurSalle, ResumeZombies, ServiceElsa, ServiceEvenements, ServiceTigres, ServiceVehicules, ServiceZombies, Sortie,
+  ContexteSalle, JoueurSalle, ResumeBr, ResumeZombies, ServiceBr, ServiceElsa, ServiceEvenements, ServiceTigres, ServiceVehicules, ServiceZombies, Sortie,
 } from "./match-contexte";
+import { creerServiceBr, type OptionsServiceBr } from "./match-br";
 import { creerServiceElsa } from "./match-elsa";
 import { creerServiceEvenements, type OptionsServiceEvenements } from "./match-evenements";
 import { creerServiceTigres } from "./match-tigres";
@@ -183,6 +190,17 @@ export interface OptionsSalle {
    * Sans Elsa, voitures ni événements (ne pas les passer avec cette option).
    */
   zombies?: Omit<OptionsServiceZombies, "alea">;
+  /**
+   * Salle du mode Battle Royale (v8) : machine d'états, avion, chute, butin, tempête, places et stats (`match-br.ts`). Joueur contre joueur
+   * conservé (tout le monde est ennemi), mort définitive, mêlée propre au BR, aucune régénération. Sans Elsa, voitures, événements, tigres
+   * largués, bus C3, fumigène ni frappe aérienne (ne pas les passer avec cette option) ; incompatible avec `zombies`.
+   */
+  br?: Omit<OptionsServiceBr, "alea">;
+  /** Fabrique du service Battle Royale (injection : un faux service dans les tests) ; `creerServiceBr` par défaut. */
+  fabriqueBr?: (ctx: ContexteSalle, opts: OptionsServiceBr) => ServiceBr;
+  /** Fenêtres de compensation de latence (ms) : `REWIND_MAX_MS` / `HISTORIQUE_MS` par défaut, `BR.rewindMaxMs` / `BR.historiqueMs` en BR (snap à 10 Hz). */
+  rewindMaxMs?: number;
+  historiqueMs?: number;
 }
 
 /** Ce que la salle retient d'un joueur en plus de `JoueurSalle` : l'équipement de la PROCHAINE apparition et le slot d'avant. */
@@ -205,6 +223,15 @@ export class Salle implements ContexteSalle {
   private readonly tigres: ServiceTigres | null;
   private readonly evenements: ServiceEvenements | null;
   private readonly zombies: ServiceZombies | null;
+  /** (v8) Service Battle Royale ; null en arène et en zombies. */
+  private readonly br: ServiceBr | null;
+  /** Compensation de latence : jusqu'où un tir remonte le temps et combien d'historique de positions est gardé (ms). */
+  private readonly rewindMaxMs: number;
+  private readonly historiqueMs: number;
+  /** (v8, BR) `presence` à émettre : levée par `rejoindreBr`, les morts et les évictions, vidée par `tic` (une seule `presence` par tic). */
+  private presenceSale = false;
+  /** (v8, BR) instant de mort des joueurs morts (retrait du snap `BR.retraitMortSnapMs` plus tard) */
+  private readonly mortT = new Map<string, number>();
   /** Bus C3 express : arène seulement (null en zombies). */
   private readonly busC3: EtatBusC3 | null;
   private readonly frappesDisponibles = new Set<string>();
@@ -230,7 +257,9 @@ export class Salle implements ContexteSalle {
     maintenant: number,
     options: OptionsSalle = {},
   ) {
-    this.fin = options.zombies ? null : maintenant + JEU.dureeMatchMs;
+    this.fin = options.zombies || options.br ? null : maintenant + JEU.dureeMatchMs;
+    this.rewindMaxMs = options.rewindMaxMs ?? (options.br ? BR.rewindMaxMs : REWIND_MAX_MS);
+    this.historiqueMs = options.historiqueMs ?? (options.br ? BR.historiqueMs : HISTORIQUE_MS);
     this.prochainSnap = maintenant;
     this.dernierTicT = maintenant;
     this.zone = options.zoneApparition ?? null;
@@ -266,7 +295,8 @@ export class Salle implements ContexteSalle {
       })
       : null;
     this.zombies = options.zombies ? creerServiceZombies(this, { ...options.zombies, alea }) : null;
-    this.busC3 = options.zombies ? null : creerEtatBusC3(maintenant, this.alea);
+    this.br = options.br ? (options.fabriqueBr ?? creerServiceBr)(this, { ...options.br, alea }) : null;
+    this.busC3 = options.zombies || options.br ? null : creerEtatBusC3(maintenant, this.alea);
   }
 
   /** (v3) Pilote du titan tigre : invulnérable, ni arme ni voiture ni état à pied. */
@@ -280,7 +310,7 @@ export class Salle implements ContexteSalle {
 
   toucheJoueur(c: JoueurSalle, o: Vec3, d: Vec3, portee: number, maintenant: number): boolean {
     const vitesseCible = Math.hypot(c.v[0], c.v[1], c.v[2]);
-    return this.positionsCible(c, maintenant, REWIND_MAX_MS).some((pos) =>
+    return this.positionsCible(c, maintenant, this.rewindMaxMs).some((pos) =>
       toucheVraisemblable(this.monde, o, d, portee, { id: c.id, p: pos.p, vivant: true, accroupi: pos.accroupi }, vitesseCible));
   }
 
@@ -306,6 +336,8 @@ export class Salle implements ContexteSalle {
     const r = appliquerDegats(cible, degats, maintenant);
     if (r.absorbe + r.subi <= 0) return [];
     if (par && par !== cible) par.degats += r.absorbe + r.subi;
+    // (BR) un coup reçu interrompt l'usage d'un soin, sauf la tempête (sinon un bandage ne s'achèverait jamais hors zone)
+    this.br?.surDegats(cible, cause, maintenant);
     const sorties: Sortie[] = [{
       a: "tous",
       m: {
@@ -350,6 +382,7 @@ export class Salle implements ContexteSalle {
       cible.memoSante = null;
       return this.zombies.surMort(cible, maintenant);
     }
+    if (this.br) return this.mourirBr(cible, par, cause, zone, arme, maintenant);
     cible.vivant = false;
     cible.posture = "mort";
     cible.mur = 0;
@@ -390,6 +423,44 @@ export class Salle implements ContexteSalle {
     return sorties;
   }
 
+  /**
+   * (v8, Battle Royale) Mort définitive : ni réapparition, ni libération de siège, ni frappe, ni fin de match. Le kill n'est crédité (et le tueur
+   * soigné par le service) que si le tueur est valide (`tueurValide` : vivant, ou mort au même tic). Le butin est lâché par `surMort` AVANT
+   * l'effacement de l'arme spéciale. La `presence` est fusionnée : une seule par tic (`presenceSale`).
+   */
+  private mourirBr(cible: JoueurSalle, par: JoueurSalle | null, cause: CauseMort, zone: Zone, arme: ArmeId, maintenant: number): Sortie[] {
+    const br = this.br!;
+    cible.vivant = false;
+    cible.posture = "mort";
+    cible.mur = 0;
+    cible.accroupi = false;
+    cible.glisse = false;
+    cible.morts++;
+    cible.serie = 0;
+    cible.memoSante = null;
+    this.mortT.set(cible.id, maintenant);
+    const tueur = par && par !== cible ? par : null;
+    const valide = tueur !== null && br.tueurValide(tueur, maintenant);
+    const sorties: Sortie[] = [{
+      a: "tous",
+      m: {
+        t: "mort", cible: cible.id, par: tueur?.id ?? "", arme: cause === "arme" ? arme : "couteau", cause, zone, ts: maintenant,
+        delai: 0, ...(tueur ? { tueur: this.infoTueur(tueur, cible) } : {}),
+      },
+    }];
+    if (valide) {
+      tueur.kills++;
+      tueur.serie++;
+      tueur.serieMax = Math.max(tueur.serieMax, tueur.serie);
+      if (cause === "arme") tueur.killsParArme[arme] = (tueur.killsParArme[arme] ?? 0) + 1;
+    }
+    sorties.push(...br.surMort(cible, valide ? tueur : null, cause, maintenant));
+    cible.equip.speciale = null; // sur la COPIE du joueur (EQUIPEMENT_DEFAUT est figé), après le lâcher du butin
+    cible.munSpeciale = 0;
+    this.presenceSale = true;
+    return sorties;
+  }
+
   /** Photographie du tueur à l'instant de la mort (carte de la killcam, repli si le tueur a quitté). */
   private infoTueur(tueur: JoueurSalle, victime: JoueurSalle): InfoTueur {
     return {
@@ -403,7 +474,7 @@ export class Salle implements ContexteSalle {
    * (v5, zombies) Place le joueur en `p` : PV, équipement (copie propre), arme en main, protection d'apparition ; l'état de mouvement est remis
    * à zéro (le client repart de `seq` 0). Ne change ni `enJeu` ni les règles de réentrée de l'arène. Renvoie le message `apparition`.
    */
-  placerJoueur(j: JoueurSalle, p: Vec3, lacet: number, opts: { pv: number; equip: Equipement; main: Slot; munSpeciale?: number }, maintenant: number): Sortie[] {
+  placerJoueur(j: JoueurSalle, p: Vec3, lacet: number, opts: { pv: number; equip: Equipement; main: Slot; munSpeciale?: number; prive?: boolean }, maintenant: number): Sortie[] {
     j.p = [p[0], p[1], p[2]];
     j.v = [0, 0, 0];
     j.lacet = lacet;
@@ -415,7 +486,7 @@ export class Salle implements ContexteSalle {
     j.seq = -1;
     j.equip = copierEquipement(opts.equip);
     j.main = opts.main;
-    j.arme = armeDuSlot(j.equip, j.main) ?? j.equip.secondaire;
+    j.arme = armeDuSlot(j.equip, j.main) ?? armeDuSlot(j.equip, "couteau") ?? j.equip.secondaire;
     j.munSpeciale = j.equip.speciale ? opts.munSpeciale ?? 0 : 0;
     j.sortieJusqua = maintenant;
     j.cadenceArme = {};
@@ -430,10 +501,11 @@ export class Salle implements ContexteSalle {
     j.reapparitionT = null;
     j.etatT = maintenant;
     j.histo = [];
+    this.mortT.delete(j.id);
     const suivi = this.suivi.get(j.id);
     if (suivi) suivi.precedent = j.main === "principale" ? "secondaire" : "principale";
     return [{
-      a: "tous",
+      a: opts.prive ? j.id : "tous",
       m: {
         t: "apparition", id: j.id, p: j.p, lacet, arme: j.arme, pv: j.pv, bouclier: j.bouclier,
         equip: copierEquipement(j.equip), main: j.main, munSpeciale: j.munSpeciale,
@@ -474,10 +546,12 @@ export class Salle implements ContexteSalle {
   // ---------- lecture ----------
 
   infoMatch(): InfoMatch {
-    return { numero: this.numero, fin: this.fin, objectif: this.zombies ? 0 : JEU.objectifKills, phase: this.phase, prochain: this.prochain };
+    return { numero: this.numero, fin: this.fin, objectif: this.zombies || this.br ? 0 : JEU.objectifKills, phase: this.phase, prochain: this.prochain };
   }
   /** (v5) Résumé de la partie de zombies (message `salons`, `/sante`) ; null dans l'arène. */
   resumeZombies(): ResumeZombies | null { return this.zombies ? this.zombies.resume() : null; }
+  /** (v8) Résumé de la partie Battle Royale (message `salons`, `/sante`) ; null hors salle BR. */
+  resumeBr(): ResumeBr | null { return this.br ? this.br.resume() : null; }
   nombreJoueurs(): number { return this.table.size; }
   nombreEnJeu(): number { let n = 0; for (const j of this.table.values()) if (j.enJeu) n++; return n; }
   /** État interne d'un joueur (lecture seule : tests et supervision). */
@@ -521,12 +595,13 @@ export class Salle implements ContexteSalle {
     if (this.table.has(id)) return [];
     // la capacité de JEU (16) se contrôle à `rejoindre` : les spectateurs de la vue 3D ne doivent pas la saturer
     // (zombies : la salle entière, lobby compris, est limitée à `ZOMBIES.joueursMax`)
-    if (this.table.size >= (this.zombies ? ZOMBIES.joueursMax : JEU.connexionsMax)) {
+    // (BR : la salle entière, lobby compris, est limitée à `BR.joueursMax`)
+    if (this.table.size >= (this.zombies ? ZOMBIES.joueursMax : this.br ? BR.joueursMax : JEU.connexionsMax)) {
       return [{ a: id, m: { t: "erreur", code: "plein", message: "Le serveur de l'arène est saturé, réessayez plus tard." } }];
     }
     const pris = new Set([...this.table.values()].map((j) => j.pseudo.toLocaleLowerCase("fr")));
     const couleursPrises = new Set([...this.table.values()].map((j) => j.couleur));
-    const couleur = PALETTE.find((c) => !couleursPrises.has(c)) ?? PALETTE[this.table.size % PALETTE.length];
+    const couleur = PALETTE.find((c) => !couleursPrises.has(c)) ?? couleurAuDela(couleursPrises);
     const j: JoueurSalle = {
       id, pseudo: pseudoUnique(nettoyerPseudo(pseudo), pris), couleur, enJeu: false, kills: 0, morts: 0, ping: 0,
       p: [0, 0, 0], v: [0, 0, 0], lacet: 0, tangage: 0, posture: "sol", mur: 0,
@@ -547,6 +622,8 @@ export class Salle implements ContexteSalle {
       { a: "tous", sauf: id, m: { t: "presence", joueurs: this.joueursPublics() } },
       // zombies : le nouvel arrivant entre dans le lobby, tout le monde apprend la nouvelle liste
       ...(this.zombies ? this.zombies.arrivee(j, maintenant) : []),
+      // BR : idem, le nouvel arrivant entre dans le lobby (en attente si une partie est en cours)
+      ...(this.br ? this.br.arrivee(j, maintenant) : []),
     ];
   }
 
@@ -557,9 +634,12 @@ export class Salle implements ContexteSalle {
     const liberation = j.enJeu ? [...(this.vehicules ? this.vehicules.liberer(j, maintenant) : []), ...(this.evenements ? this.evenements.liberer(j, maintenant) : [])] : [];
     this.table.delete(id);
     this.suivi.delete(id);
+    this.mortT.delete(id);
     // zombies : le service compte les membres restants (hôte suivant, défaite si c'était le dernier debout) ; le joueur est déjà retiré
     const sortieZombies = this.zombies ? this.zombies.liberer(j, maintenant) : [];
-    return [...liberation, this.presence(), ...sortieZombies];
+    // BR : idem (éliminé s'il était en partie, hôte suivant, victoire éventuelle) ; `j` est l'objet déjà retiré de la table
+    const sortieBr = this.br ? this.br.liberer(j, maintenant) : [];
+    return [...liberation, this.presence(), ...sortieZombies, ...sortieBr];
   }
 
   // ---------- messages des clients ----------
@@ -569,12 +649,18 @@ export class Salle implements ContexteSalle {
     if (!j || !msg || typeof msg !== "object") return [];
     switch (msg.t) {
       case "pseudo": return this.renommer(j, msg.pseudo, maintenant);
-      case "rejoindre": return this.zombies ? this.rejoindreZombies(j, maintenant) : this.rejoindre(j, msg, maintenant);
+      case "rejoindre":
+        return this.zombies ? this.rejoindreZombies(j, maintenant) : this.br ? this.rejoindreBr(j, maintenant) : this.rejoindre(j, msg, maintenant);
       case "quitter": return this.quitter(j, maintenant);
-      case "arme": if (!this.zombies) this.choisir(j, { arme: msg.arme }); return [];
-      case "equiper": if (!this.zombies) this.choisir(j, msg); return [];
-      case "lancerPartie": case "acheter": case "reanimer":
+      case "arme": if (!this.zombies && !this.br) this.choisir(j, { arme: msg.arme }); return [];
+      case "equiper": if (!this.zombies && !this.br) this.choisir(j, msg); return [];
+      case "lancerPartie":
+        return this.zombies ? this.zombies.recevoir(j, msg, maintenant) : this.br ? this.br.recevoir(j, msg, maintenant) : [];
+      case "acheter": case "reanimer":
         return this.zombies ? this.zombies.recevoir(j, msg, maintenant) : [];
+      // (v8, BR) le service juge : saut de l'avion, entrées de la chute, ramassage, lâcher, soins, statistiques
+      case "sauter": case "chute": case "ramasser": case "lacher": case "utiliser": case "statsBr":
+        return this.br ? this.br.recevoir(j, msg, maintenant) : [];
       case "main": return this.changerMain(j, msg.slot, maintenant);
       case "etat": this.recevoirEtat(j, msg, maintenant); return [];
       case "tir": return this.recevoirTir(j, msg, maintenant);
@@ -609,8 +695,9 @@ export class Salle implements ContexteSalle {
       }
       case "vueScores": return this.vueScores(j, msg.ouvert, maintenant);
       case "invoquer": return j.enJeu && this.tigres ? this.tigres.recevoir(j, msg, maintenant) : [];
-      case "voixActif": return this.voixActif(j, msg.actif);
-      case "voix": return this.relayerVoix(j, msg.a, msg.s);
+      // chat vocal désactivé en BR (v1) : 50 joueurs feraient 1 225 échanges SDP
+      case "voixActif": return this.br ? [] : this.voixActif(j, msg.actif);
+      case "voix": return this.br ? [] : this.relayerVoix(j, msg.a, msg.s);
       case "ping": return estNombre(msg.t0) ? [{ a: id, m: { t: "pong", t0: msg.t0, maintenant } }] : [];
       default: return []; // "bonjour" : déjà traité par connecter
     }
@@ -717,6 +804,23 @@ export class Salle implements ContexteSalle {
     ];
   }
 
+  /**
+   * `rejoindre` en BR : refusé (`lobby`) tant que le joueur n'est pas admis à la partie (jusqu'à la fin du vol), `plein` au-delà de
+   * `BR.joueursMax` ; sinon le service le place dans l'avion et lui envoie l'état, le butin et l'inventaire. La `presence` n'est PAS renvoyée à
+   * toute la salle à chaque `rejoindre` (50 en rafale) : elle est levée et `tic` n'en émet qu'une.
+   */
+  private rejoindreBr(j: JoueurSalle, maintenant: number): Sortie[] {
+    if (j.enJeu) return [];
+    const br = this.br!;
+    if (!br.admis(j.id)) return [{ a: j.id, m: { t: "refus", action: "rejoindre", raison: "lobby" } }];
+    if (this.nombreEnJeu() >= BR.joueursMax) return [{ a: j.id, m: { t: "refus", action: "rejoindre", raison: "plein" } }];
+    j.enJeu = true;
+    j.memoSante = null;
+    j.reentreeT = -Infinity;
+    this.presenceSale = true;
+    return [...br.entreeJoueur(j, maintenant), ...br.synchro(j.id)];
+  }
+
   private quitter(j: JoueurSalle, maintenant: number): Sortie[] {
     if (!j.enJeu) return [];
     return [...this.retirerDeLArene(j, maintenant), this.presence()];
@@ -730,6 +834,10 @@ export class Salle implements ContexteSalle {
     if (this.zombies) {
       // zombies : pas de réentrée différée ni de mémo de santé ; le service repasse le joueur en attente (défaite s'il était le dernier debout)
       return [...this.retirerJoueur(j, maintenant), ...this.zombies.liberer(j, maintenant)];
+    }
+    if (this.br) {
+      // BR : pas de réentrée différée ni de mémo de santé ; le service élimine le joueur s'il était en partie (victoire éventuelle)
+      return [...this.retirerJoueur(j, maintenant), ...this.br.liberer(j, maintenant)];
     }
     j.memoSante = j.vivant ? memoriserSante(j, maintenant) : null;
     // un mort garde son délai de réapparition (sans le raccourcir en quittant) ; un vivant doit attendre le même délai avant de revenir
@@ -759,12 +867,15 @@ export class Salle implements ContexteSalle {
     j.main = slot;
     j.arme = arme;
     j.sortieJusqua = maintenant + JEU.degainageMs;
+    this.br?.surDegats(j, "arme", maintenant); // BR : changer d'arme interrompt l'usage d'un soin
     return [];
   }
 
   /** État prédit par le client : accepté s'il reste dans les bornes et dans la vitesse permise. */
   private recevoirEtat(j: JoueurSalle, e: Extract<MessageClient, { t: "etat" }>, maintenant: number): void {
     if (!j.enJeu || !j.vivant || this.pilote(j.id)) return;
+    // BR : à bord ou en chute, le serveur simule seul (les entrées arrivent par `chute`)
+    if (this.br?.enVol(j.id)) return;
     if (!estNombre(e.seq) || e.seq <= j.seq) return;
     if (this.vehicules?.occupation(j.id)) {
       // occupant : la voiture fait foi pour p / v / posture / mur (service des véhicules) ; seul le regard est retenu
@@ -801,7 +912,7 @@ export class Salle implements ContexteSalle {
     j.accroupi = j.posture === "sol" && e.accroupi === true;
     j.glisse = j.accroupi && e.glisse === true;
     j.histo.push({ t: maintenant, p: [e.p[0], e.p[1], e.p[2]], accroupi: j.accroupi });
-    while (j.histo.length > 1 && maintenant - j.histo[0].t > HISTORIQUE_MS) j.histo.shift();
+    while (j.histo.length > 1 && maintenant - j.histo[0].t > this.historiqueMs) j.histo.shift();
   }
 
   /**
@@ -831,7 +942,7 @@ export class Salle implements ContexteSalle {
    * voiture avec retard : 3 à 4 m d'écart à 24 m/s avec l'état le plus récent).
    */
   private oeilAcceptable(j: JoueurSalle, o: Vec3, maintenant: number): boolean {
-    const yeux = this.vehicules?.oeilsPossibles(j, maintenant, REWIND_MAX_MS) ?? null;
+    const yeux = this.vehicules?.oeilsPossibles(j, maintenant, this.rewindMaxMs) ?? null;
     if (yeux) return yeux.some((e) => Math.hypot(o[0] - e[0], o[1] - e[1], o[2] - e[2]) <= ECART_OEIL_M);
     const oeil: Vec3 = [j.p[0], j.p[1] + oeilDe({ accroupi: j.accroupi }), j.p[2]];
     const ecart = Math.hypot(o[0] - oeil[0], o[1] - oeil[1], o[2] - oeil[2]);
@@ -874,7 +985,7 @@ export class Salle implements ContexteSalle {
 
   /** Un tir : validé (arme en main, dégainage, cadence, plombs, œil, angle, portée, ligne de vue) puis dégâts calculés ici. */
   private recevoirTir(j: JoueurSalle, tir: Extract<MessageClient, { t: "tir" }>, maintenant: number): Sortie[] {
-    if (!j.enJeu || !j.vivant || this.phase !== "jeu" || this.pilote(j.id)) return [];
+    if (!j.enJeu || !j.vivant || this.phase !== "jeu" || this.pilote(j.id) || this.br?.enVol(j.id)) return [];
     if (j.main === "couteau" || j.arme === "couteau" || tir.arme !== j.arme) return [];
     if (!CONDUCTEUR_TIRE && this.vehicules?.estConducteur(j.id)) return [];
     if (!this.sortie(j, maintenant)) return [];
@@ -916,7 +1027,7 @@ export class Salle implements ContexteSalle {
       if (plombsVus.has(t.plomb) && !(perce && estIdZombie(t.cible))) continue;
       if (this.tigres?.estTigre(t.cible)) {
         // positions du tigre rejouées sur son historique serveur, mêmes règles que pour un joueur
-        const distance = this.tigres.validerTir(j, t.cible, tir.o, dirs[t.plomb], arme.portee, maintenant, REWIND_MAX_MS);
+        const distance = this.tigres.validerTir(j, t.cible, tir.o, dirs[t.plomb], arme.portee, maintenant, this.rewindMaxMs);
         if (distance === null) continue;
         plombsVus.add(t.plomb);
         const degats = degatsPlomb(armeTiree, t.zone, distance);
@@ -960,7 +1071,7 @@ export class Salle implements ContexteSalle {
       const c = this.table.get(t.cible);
       if (!c || c.id === j.id || !c.enJeu || !c.vivant || maintenant < c.protegeJusqua) continue;
       const vitesseCible = Math.hypot(c.v[0], c.v[1], c.v[2]);
-      const vue = this.positionsCible(c, maintenant, REWIND_MAX_MS).find((pos) =>
+      const vue = this.positionsCible(c, maintenant, this.rewindMaxMs).find((pos) =>
         toucheVraisemblable(this.monde, tir.o, dirs[t.plomb], arme.portee, { id: c.id, p: pos.p, vivant: true, accroupi: pos.accroupi }, vitesseCible));
       if (!vue) continue;
       plombsVus.add(t.plomb);
@@ -1016,8 +1127,9 @@ export class Salle implements ContexteSalle {
     j.equip.speciale = null;
     const precedent = this.suivi.get(j.id)?.precedent;
     // (zombies : sans arme principale, le repli est la secondaire)
+    // (BR : sans principale ni secondaire, le repli est l'arme blanche)
     const retour: Slot = precedent && precedent !== "speciale" && armeDuSlot(j.equip, precedent) !== null ? precedent
-      : armeDuSlot(j.equip, "principale") !== null ? "principale" : "secondaire";
+      : armeDuSlot(j.equip, "principale") !== null ? "principale" : armeDuSlot(j.equip, "secondaire") !== null ? "secondaire" : "couteau";
     j.main = retour;
     j.arme = armeDuSlot(j.equip, retour) ?? j.equip.principale;
     j.sortieJusqua = maintenant + JEU.degainageMs;
@@ -1031,10 +1143,12 @@ export class Salle implements ContexteSalle {
    * et touche jusqu'à trois cibles. En zombies seuls les tigres sont des cibles. Le coup est diffusé aux autres même dans le vide.
    */
   private recevoirCoup(j: JoueurSalle, coup: Extract<MessageClient, { t: "coup" }>, maintenant: number): Sortie[] {
-    if (!j.enJeu || !j.vivant || this.phase !== "jeu" || this.pilote(j.id)) return [];
+    if (!j.enJeu || !j.vivant || this.phase !== "jeu" || this.pilote(j.id) || this.br?.enVol(j.id)) return [];
     if (j.main !== "couteau" || !estMelee(j.arme)) return [];
     const arme: ArmeMeleeId = j.arme;
     const m = MELEE[arme];
+    // BR : dégâts de mêlée propres au mode (3 coups de couteau, 2 d'épée), le couteau de l'arène tuerait en un coup
+    const degatsCoup = this.br ? degatsMeleeBr(arme) : m.degats;
     if (!CONDUCTEUR_TIRE && this.vehicules?.estConducteur(j.id)) return [];
     if (!this.sortie(j, maintenant)) return [];
     if (!estVec3(coup.o) || !estVec3(coup.d)) return [];
@@ -1063,7 +1177,7 @@ export class Salle implements ContexteSalle {
       if (this.tigres?.estTigre(id)) {
         // tigre largué de l'arène : mêmes règles que pour un joueur (positions rejouées), portée et cône de l'arme en main
         if (this.tigres.validerCoup(j, id, coup.o, d, maintenant, REWIND_MELEE_MS, arme)) {
-          sorties.push(...this.tigres.blesser(id, m.degats, j, "corps", maintenant));
+          sorties.push(...this.tigres.blesser(id, degatsCoup, j, "corps", maintenant));
         }
         continue;
       }
@@ -1072,7 +1186,7 @@ export class Salle implements ContexteSalle {
       const vue = this.positionsCible(c, maintenant, REWIND_MELEE_MS).find((pos) =>
         coupVraisemblable(this.monde, coup.o, d, { id: c.id, p: pos.p, vivant: true, accroupi: pos.accroupi }, arme));
       if (!vue) continue;
-      for (const s of this.infliger(c, m.degats, j, "arme", "corps", arme, maintenant, coup.o)) {
+      for (const s of this.infliger(c, degatsCoup, j, "arme", "corps", arme, maintenant, coup.o)) {
         // une épée qui tue plusieurs joueurs : une seule présence (la dernière, qui a tous les scores), avant la fin de match éventuelle
         if (s.m.t === "presence") { presence = true; continue; }
         sorties.push(s);
@@ -1127,8 +1241,8 @@ export class Salle implements ContexteSalle {
     const dt = Math.max(0, (maintenant - this.dernierTicT) / 1000);
     this.dernierTicT = maintenant;
     const sorties: Sortie[] = [];
-    // zombies : pas de cycle de matchs (la partie est celle du service)
-    if (!this.zombies) {
+    // zombies et BR : pas de cycle de matchs (la partie est celle du service)
+    if (!this.zombies && !this.br) {
       if (this.phase === "entracte" && this.prochain !== null && maintenant >= this.prochain) {
         sorties.push(...this.demarrerMatch(maintenant));
       } else if (this.phase === "jeu" && this.fin !== null && maintenant >= this.fin) {
@@ -1136,13 +1250,14 @@ export class Salle implements ContexteSalle {
       }
     }
     // régénération : +20 PV/s après 5 s sans dégât (le bouclier ne se régénère pas)
-    // (v7, zombies : 60 PV/s après 3 s, jusqu'à 250 PV avec le Gratin)
-    for (const j of this.table.values()) if (j.enJeu && j.vivant) regenerer(j, maintenant, dt, this.zombies?.sante(j));
+    // (v7, zombies : 60 PV/s après 3 s, jusqu'à 250 PV avec le Gratin) (v8, BR : aucune régénération)
+    for (const j of this.table.values()) if (j.enJeu && j.vivant) regenerer(j, maintenant, dt, this.zombies?.sante(j) ?? (this.br ? REGLES_SANTE_BR : undefined));
     if (this.elsa) sorties.push(...this.elsa.tic(maintenant));
     if (this.vehicules) sorties.push(...this.vehicules.tic(maintenant));
     if (this.tigres) sorties.push(...this.tigres.tic(maintenant));
     if (this.evenements) sorties.push(...this.evenements.tic(maintenant));
     if (this.zombies) sorties.push(...this.zombies.tic(maintenant));
+    if (this.br) sorties.push(...this.br.tic(maintenant));
 
     // Bus C3 express (arène seulement)
     const bus = this.busC3;
@@ -1217,15 +1332,24 @@ export class Salle implements ContexteSalle {
     for (const j of this.table.values()) {
       if (j.enJeu && !j.vivant && j.reapparitionT !== null && maintenant >= j.reapparitionT) {
         sorties.push(this.placer(j, maintenant));
-      } else if (j.enJeu && j.vivant && maintenant - j.etatT > INACTIF_MS) {
+      } else if (j.enJeu && j.vivant && maintenant - j.etatT > (this.br ? BR.inactifMs : INACTIF_MS) && !this.br?.enVol(j.id)) {
         // plus aucun état accepté : onglet gelé ou connexion zombie. Sinon il resterait en cible immobile.
+        // (BR : seulement hors vol, le service rafraîchit `etatT` à bord et en chute ; le joueur est éliminé par `liberer`)
         sorties.push(...this.retirerDeLArene(j, maintenant));
         evince = true;
       }
     }
-    if (evince) sorties.push(this.presence());
+    if (evince) {
+      if (this.br) this.presenceSale = true;
+      else sorties.push(this.presence());
+    }
+    // BR : une seule `presence` fusionnée par tic (entrées en rafale, morts, évictions)
+    if (this.presenceSale) {
+      this.presenceSale = false;
+      sorties.push(this.presence());
+    }
     if (maintenant >= this.prochainSnap) {
-      const periode = 1000 / JEU.snapHz;
+      const periode = 1000 / (this.br ? BR.snapHz : JEU.snapHz);
       this.prochainSnap += periode;
       if (this.prochainSnap <= maintenant) this.prochainSnap = maintenant + periode;
       if (this.nombreEnJeu() > 0) sorties.push(...this.sortiesSnap(maintenant));
@@ -1262,7 +1386,7 @@ export class Salle implements ContexteSalle {
       },
     }];
     // zombies : le lobby n'a rien à voir de la partie (ni joueurs ni tigres)
-    if (!this.zombies && this.rangSnap++ % 2 === 0 && this.nombreJoueurs() > this.nombreEnJeu()) {
+    if (!this.zombies && !this.br && this.rangSnap++ % 2 === 0 && this.nombreJoueurs() > this.nombreEnJeu()) {
       sorties.push({ a: "spectateurs", m: { t: "snap", ts: maintenant, j } });
     }
     return sorties;
@@ -1273,7 +1397,14 @@ export class Salle implements ContexteSalle {
     const r: EtatJoueurSnap[] = [];
     for (const j of this.table.values()) {
       if (!j.enJeu) continue;
+      if (this.br) {
+        // BR : un joueur à bord n'est ni dessiné ni touchable ; un mort sort du snap `retraitMortSnapMs` après sa mort (il reste dans `presence`)
+        if (this.br.aBord(j.id)) continue;
+        const mort = this.mortT.get(j.id);
+        if (!j.vivant && mort !== undefined && maintenant - mort > BR.retraitMortSnapMs) continue;
+      }
       const occupation = this.vehicules?.occupation(j.id) ?? null;
+      const chute = this.br?.chute(j.id);
       r.push({
         id: j.id, p: cm(j.p), v: cm(j.v), lacet: mrad(j.lacet), tangage: mrad(j.tangage),
         posture: j.vivant ? j.posture : "mort", mur: j.mur, arme: j.arme, pv: j.pv,
@@ -1282,6 +1413,7 @@ export class Salle implements ContexteSalle {
         ...(j.accroupi && j.glisse && j.vivant ? { glisse: true } : {}),
         ...(occupation ? { vehicule: { id: occupation.vehicule, siege: occupation.siege } } : {}),
         ...(this.pilote(j.id) ? { titan: true } : {}),
+        ...(chute ? { chute } : {}),
         vivant: j.vivant,
         protege: j.vivant && maintenant < j.protegeJusqua,
       });
@@ -1411,6 +1543,17 @@ export class Salle implements ContexteSalle {
   presence(): Sortie {
     return { a: "tous", m: { t: "presence", joueurs: this.joueursPublics() } };
   }
+}
+
+/**
+ * Couleur d'un joueur quand les 16 de `PALETTE` sont prises (50 joueurs en BR) : le premier rang de `couleurJoueur` à partir de 16 dont la
+ * couleur est libre (une couleur rendue par un départ est réutilisée, jamais deux joueurs de la même couleur).
+ */
+function couleurAuDela(prises: ReadonlySet<string>): string {
+  let rang = PALETTE.length;
+  let couleur = couleurJoueur(rang);
+  while (prises.has(couleur) && rang < PALETTE.length + 1000) couleur = couleurJoueur(++rang);
+  return couleur;
 }
 
 /** Arme du plus grand nombre de kills du match (égalité : la première à avoir marqué) ; null sans kill à l'arme. */

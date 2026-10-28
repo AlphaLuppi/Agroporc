@@ -19,11 +19,16 @@ FROM node:22-alpine
 ENV NODE_ENV=production \
     PORT=8787 \
     SCENE_JSON=/app/scene.json \
-    CACHETTES_JSON=/app/cachettes.json
+    CACHETTES_JSON=/app/cachettes.json \
+    PDJ_FPS_BR_STATS=/donnees/stats-br.json
 WORKDIR /app
 COPY --from=build /depot/serveur-fps/dist/index.js ./index.js
 COPY public/agroparc/scene.json ./scene.json
 COPY public/agroparc/cachettes.json ./cachettes.json
+# Statistiques du Battle Royale (TOP 1 cumulés) : dossier à l'utilisateur node, monté sur le volume nommé `pdj-fps-donnees` par docker-compose
+# (jamais de `docker compose down -v`, il emporterait les stats)
+RUN mkdir -p /donnees && chown node:node /donnees
+VOLUME /donnees
 USER node
 EXPOSE 8787
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \

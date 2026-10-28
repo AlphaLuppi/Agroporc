@@ -1,10 +1,11 @@
 /**
- * Serveur temps réel de l'arène FPS (vue Palantir) : HTTP `GET /sante` + WebSocket sur le même port,
- * deux salles (v6) : l'arène « chacun pour soi » (avion et tigres largués compris) et les zombies tigres (coopératif par manches). Toute la
- * logique de jeu est dans lib/fps/match.ts et match-zombies.ts (purs) ; ce fichier ne fait que l'I/O : connexions, anti-flood, origines, ping,
- * boucle de tic à 60 Hz, routage du message `mode` (changement de salle) et résumé `salons`.
+ * Serveur temps réel de l'arène FPS (vue Palantir) : HTTP `GET /sante` et `GET /stats-br` + WebSocket sur le même port,
+ * trois salles : l'arène « chacun pour soi » (avion et tigres largués compris), les zombies tigres (coopératif par manches) et le Battle Royale
+ * (v8). Toute la logique de jeu est dans lib/fps/match.ts, match-zombies.ts et match-br.ts (purs) ; ce fichier ne fait que l'I/O : connexions,
+ * anti-flood, origines, ping, boucle de tic à 60 Hz, routage du message `mode` (changement de salle), résumé `salons` et persistance des stats BR.
  * Spec : docs/superpowers/specs/2026-10-22-agroparc-fps-design.md (v1), 2026-10-22-arene-v2-design.md (v2),
- * 2026-10-23-arene-tigres-design.md (v5 : avion, tigres largués, sort d'invocation), 2026-10-27-arene-zombies-design.md (v6)
+ * 2026-10-23-arene-tigres-design.md (v5 : avion, tigres largués, sort d'invocation), 2026-10-27-arene-zombies-design.md (v6),
+ * 2026-10-28-battle-royale-design.md (v8)
  */
 import { existsSync, readFileSync } from "node:fs";
 import { createServer } from "node:http";
@@ -12,15 +13,19 @@ import { resolve } from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
 import { lireCachettes, type FichierCachettes } from "../../lib/agroparc3d/cachettes";
 import type { SceneData } from "../../lib/agroparc3d/types";
+import { construireMondeBr } from "../../lib/fps/br-carte";
+import { BR } from "../../lib/fps/br-regles";
+import { classementStats } from "../../lib/fps/br-stats";
 import { construireCircuits, flotte } from "../../lib/fps/circulation";
 import { construireMonde, pointsApparition } from "../../lib/fps/collision";
 import { ipClient } from "../../lib/fps/ip-client";
 import { Salle, type OptionsSalle, type Sortie } from "../../lib/fps/match";
-import { VERSION_PROTOCOLE, type MessageClient, type MessageServeur } from "../../lib/fps/protocole";
-import { decisionMode, messageSalons } from "../../lib/fps/salons";
+import { MODES_SALLE, VERSIONS_ACCEPTEES, type MessageClient, type MessageServeur, type ModeSalle } from "../../lib/fps/protocole";
+import { decisionMode, messageSalons, modeDeSalle } from "../../lib/fps/salons";
 import { capDeCachette } from "../../lib/fps/tigre-arene";
 import { DEPARTS, construireMondeZombies, donneesZombies } from "../../lib/fps/zombies-carte";
 import { EMPLACEMENTS_VOITURES, ROND_POINT, ZONE_APPARITION, positionElsa, trouverRondPoint } from "../../lib/fps/zones";
+import { creerPersistanceBr } from "./stats-br";
 
 const PORT = Number(process.env.PORT) || 8787;
 const TIC_MS = 1000 / 60;
@@ -30,13 +35,25 @@ const MESSAGES_PAR_SECONDE_MAX = 90;
 const PING_MS = 5_000;
 /** Un client qui n'absorbe plus ce qu'on lui envoie est coupé (connexion saturée). */
 const TAMPON_MAX_OCTETS = 512 * 1024;
-/** Connexions simultanées par adresse IP (bureau derrière une même IP : large) ; la suivante est refusée (1013) sans toucher à la salle. */
-const CONNEXIONS_PAR_IP_MAX = 24;
-/** Connexions simultanées au total, inscrites ou non (la salle plafonne les inscrites à `JEU.connexionsMax`). */
-const CONNEXIONS_TOTAL_MAX = 96;
+/** Nombre strictement positif lu dans l'environnement (ms, comptes, échelles), undefined si absent ou invalide. */
+function nombreEnv(nom: string): number | undefined {
+  const n = Number(process.env[nom]);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+/**
+ * Connexions simultanées par adresse IP ; la suivante est refusée (1013) sans toucher à la salle. Défaut 24 (point d'accès public) ;
+ * `PDJ_FPS_CONNEXIONS_IP` le monte (la prod met 60 : cinquante amis derrière l'IP d'un même bureau pour le Battle Royale).
+ */
+const CONNEXIONS_PAR_IP_MAX = Math.floor(nombreEnv("PDJ_FPS_CONNEXIONS_IP") ?? 24);
+/**
+ * Connexions simultanées au total, inscrites ou non : 50 en Battle Royale + 64 en arène + 8 en zombies + une marge de poignées de main
+ * (`PDJ_FPS_CONNEXIONS_TOTAL` pour la changer).
+ */
+const CONNEXIONS_TOTAL_MAX = Math.floor(nombreEnv("PDJ_FPS_CONNEXIONS_TOTAL") ?? 160);
 /**
  * Un spectateur (inscrit hors arène) qui n'a envoyé aucun message utile (hors ping et tableau des scores) depuis ce délai est recyclé : socket
  * fermée (1001), le client légitime se reconnecte tout seul, un onglet oublié ou un script qui ne répond qu'aux ping libère sa place.
+ * Exception : un membre du lobby Battle Royale quand il compte au moins deux joueurs (ils attendent l'hôte, sans rien envoyer).
  */
 const SPECTATEUR_INACTIF_MS = 15 * 60_000;
 /** Origines autorisées (`ORIGINES`, séparées par des virgules ; `*` = n'importe quelle suite de caractères hors « / », pour les previews Vercel). */
@@ -61,11 +78,8 @@ const scene = JSON.parse(readFileSync(fichierScene, "utf8")) as SceneData;
 const monde = construireMonde(scene);
 const apparitions = pointsApparition(scene, monde);
 
-/** Entier positif lu dans l'environnement (ms), undefined si absent ou invalide. */
-function dureeEnv(nom: string): number | undefined {
-  const n = Number(process.env[nom]);
-  return Number.isFinite(n) && n > 0 ? n : undefined;
-}
+/** Durée (ms) ou compte strictement positif lu dans l'environnement, undefined si absent ou invalide. */
+const dureeEnv = nombreEnv;
 // Elsa : intervalle surchargeable pour des tests de bout en bout déterministes (offre en quelques secondes au lieu de 20 à 50 s)
 const elsaMin = dureeEnv("PDJ_FPS_ELSA_MIN_MS");
 const elsaMax = dureeEnv("PDJ_FPS_ELSA_MAX_MS");
@@ -132,6 +146,45 @@ const optionsZombies: OptionsSalle = {
 };
 const salleZombies = new Salle(construireMondeZombies(scene), DEPARTS.map((d) => [d[0], d[1]] as [number, number]), Math.random, Date.now(), optionsZombies);
 
+// Battle Royale (v8) : son propre monde MUTABLE (20 bâtiments creusés, brèches), jamais celui de l'arène (grille de collision à tampon non réentrant).
+// Ni Elsa, ni voitures, ni événements, ni avion des tigres : le service BR tire son butin, sa zone et son avion lui-même. Les essais
+// (`PDJ_FPS_BR_*`) raccourcissent décompte, vol et zone pour les tests de bout en bout.
+const fichierStatsBr = process.env.PDJ_FPS_BR_STATS || resolve(process.cwd(), "donnees/stats-br.json");
+const persistanceBr = creerPersistanceBr(fichierStatsBr);
+const minJoueursBr = dureeEnv("PDJ_FPS_BR_MIN_JOUEURS");
+const decompteBr = dureeEnv("PDJ_FPS_BR_DECOMPTE_MS");
+const volBr = dureeEnv("PDJ_FPS_BR_VOL_MS");
+const altitudeBr = dureeEnv("PDJ_FPS_BR_ALTITUDE");
+const echelleZoneBr = dureeEnv("PDJ_FPS_BR_ZONE_ECHELLE");
+const objetsBr = dureeEnv("PDJ_FPS_BR_OBJETS");
+const finBr = dureeEnv("PDJ_FPS_BR_FIN_MS");
+/** durée minimale (ms) pour qu'une partie compte dans les stats ; `BR.partieValideMinMs` (60 s) par défaut */
+const valideBr = dureeEnv("PDJ_FPS_BR_VALIDE_MS");
+const mondeBr = construireMondeBr(scene);
+const optionsBr: OptionsSalle = {
+  br: {
+    scene,
+    stats: persistanceBr,
+    ...(minJoueursBr !== undefined ? { joueursMin: Math.floor(minJoueursBr) } : {}),
+    ...(decompteBr !== undefined ? { decompteMaxMs: decompteBr } : {}),
+    ...(volBr !== undefined ? { dureeVolMs: volBr } : {}),
+    ...(altitudeBr !== undefined ? { altitude: altitudeBr } : {}),
+    ...(echelleZoneBr !== undefined ? { echelleZone: echelleZoneBr } : {}),
+    ...(objetsBr !== undefined ? { nbObjets: Math.floor(objetsBr) } : {}),
+    ...(finBr !== undefined ? { finAffichageMs: finBr } : {}),
+    ...(valideBr !== undefined ? { partieValideMinMs: valideBr } : {}),
+  },
+  // à 10 Hz de snaps et 150 ms d'interpolation, la cible vue par le tireur a plus de retard qu'en arène : fenêtre de rejeu élargie
+  rewindMaxMs: BR.rewindMaxMs,
+  historiqueMs: BR.historiqueMs,
+};
+// point de départ jamais utilisé (le service place les joueurs dans l'avion) : le centre des bornes du monde BR
+const DEPARTS_BR: [number, number][] = [[(mondeBr.bornes.x0 + mondeBr.bornes.x1) / 2, (mondeBr.bornes.z0 + mondeBr.bornes.z1) / 2]];
+const salleBr = new Salle(mondeBr, DEPARTS_BR, Math.random, Date.now(), optionsBr);
+
+/** Les trois salles par mode : `modeDeSalle` retrouve le mode d'un client par identité de sa salle. */
+const SALLES: Record<ModeSalle, Salle> = { arene: salleArene, zombies: salleZombies, br: salleBr };
+
 /** Ids courts (« j1 », « j2 »… en base 36) : un id figure dans chaque joueur de chaque snap, `randomUUID` pesait 36 octets par occurrence. */
 let compteurId = 0;
 const nouvelId = (): string => `j${(++compteurId).toString(36)}`;
@@ -189,10 +242,10 @@ function refuser(c: Client, code: Extract<MessageServeur, { t: "erreur" }>["code
   c.ws.close(1008, code);
 }
 
-/** Résumé des deux salles (choix du mode, compteurs). */
+/** Résumé des trois salles (choix du mode, compteurs). */
 function salons(): MessageServeur {
   const z = salleZombies.resumeZombies() ?? { phase: "lobby" as const, joueurs: salleZombies.nombreJoueurs(), manche: 0 };
-  return messageSalons({ joueurs: salleArene.nombreJoueurs(), enJeu: salleArene.nombreEnJeu() }, z);
+  return messageSalons({ joueurs: salleArene.nombreJoueurs(), enJeu: salleArene.nombreEnJeu() }, z, salleBr.resumeBr());
 }
 let dernierSalons = "";
 
@@ -211,13 +264,13 @@ function diffuserSalons(vers?: Client): void {
  */
 function changerMode(c: Client, mode: unknown, maintenant: number): void {
   const decision = decisionMode({
-    mode, salleActuelle: c.salle === salleZombies ? "zombies" : "arene", enJeu: c.salle.inspecter(c.id)?.enJeu ?? false,
-    joueursCible: (mode === "zombies" ? salleZombies : salleArene).nombreJoueurs(),
+    mode, salleActuelle: modeDeSalle(c.salle, SALLES), enJeu: c.salle.inspecter(c.id)?.enJeu ?? false,
+    joueursCible: (MODES_SALLE as readonly unknown[]).includes(mode) ? SALLES[mode as ModeSalle].nombreJoueurs() : 0,
   });
   if (!decision) return;
   if (decision.action === "echo") { envoyer(c, JSON.stringify({ t: "mode", mode: decision.mode } satisfies MessageServeur)); return; }
   if (decision.action === "refus") { envoyer(c, JSON.stringify({ t: "refus", action: "mode", raison: decision.raison } satisfies MessageServeur)); return; }
-  const cible = decision.mode === "zombies" ? salleZombies : salleArene;
+  const cible = SALLES[decision.mode];
   const pseudo = c.salle.inspecter(c.id)?.pseudo ?? "";
   const ancienne = c.salle;
   const depart = ancienne.deconnecter(c.id, maintenant);
@@ -235,7 +288,7 @@ function traiter(c: Client, brut: string): void {
   const maintenant = Date.now();
   if (!c.inscrit) {
     if (m.t !== "bonjour") return;
-    if (m.v !== VERSION_PROTOCOLE) return refuser(c, "version", "Version du protocole incompatible : rechargez la page.");
+    if (!VERSIONS_ACCEPTEES.includes(m.v)) return refuser(c, "version", "Version du protocole incompatible : rechargez la page.");
     const sorties = c.salle.connecter(c.id, typeof m.pseudo === "string" ? m.pseudo : "", maintenant);
     c.inscrit = !sorties.some((s) => s.a === c.id && s.m.t === "erreur");
     diffuser(c.salle, sorties);
@@ -251,15 +304,51 @@ function traiter(c: Client, brut: string): void {
   diffuser(c.salle, c.salle.recevoir(c.id, m, maintenant));
 }
 
+/** Un tic (les trois salles et leurs diffusions) plus long que ça est « lent » : le CPU du conteneur est plafonné et les trois salles partagent la boucle. */
+const TIC_LENT_MS = 8;
+/** `/sante.ticMaxMs` et `alerte` couvrent la dernière minute (deux fenêtres de 60 s glissées l'une sur l'autre). */
+const FENETRE_TIC_MS = 60_000;
+const mesuresTic = { depuis: Date.now(), maxFenetre: 0, maxPrecedente: 0, lents: 0, dernierLentT: 0 };
+
+/** Enregistre la durée d'un tic ; fait glisser la fenêtre d'une minute. */
+function noterTic(dureeMs: number, maintenant: number): void {
+  if (maintenant - mesuresTic.depuis >= FENETRE_TIC_MS) {
+    mesuresTic.maxPrecedente = maintenant - mesuresTic.depuis >= 2 * FENETRE_TIC_MS ? 0 : mesuresTic.maxFenetre;
+    mesuresTic.maxFenetre = 0;
+    mesuresTic.depuis = maintenant;
+  }
+  mesuresTic.maxFenetre = Math.max(mesuresTic.maxFenetre, dureeMs);
+  if (dureeMs > TIC_LENT_MS) { mesuresTic.lents++; mesuresTic.dernierLentT = maintenant; }
+}
+
 const http = createServer((req, res) => {
-  if (req.method === "GET" && req.url?.split("?")[0] === "/sante") {
+  const chemin = req.url?.split("?")[0];
+  if (req.method === "GET" && chemin === "/sante") {
     const z = salleZombies.resumeZombies();
+    const b = salleBr.resumeBr();
+    const maintenant = Date.now();
     const corps = JSON.stringify({
       ok: true, joueurs: salleArene.nombreJoueurs(), enJeu: salleArene.nombreEnJeu(), match: salleArene.infoMatch().numero,
       zombies: { joueurs: salleZombies.nombreJoueurs(), enJeu: salleZombies.nombreEnJeu(), phase: z?.phase ?? "lobby", manche: z?.manche ?? 0 },
+      br: { joueurs: salleBr.nombreJoueurs(), enJeu: salleBr.nombreEnJeu(), phase: b?.phase ?? "lobby", vivants: b?.vivants ?? 0 },
+      ticMaxMs: Math.round(Math.max(mesuresTic.maxFenetre, mesuresTic.maxPrecedente) * 100) / 100,
+      ticsLents: mesuresTic.lents,
+      ...(maintenant - mesuresTic.dernierLentT < FENETRE_TIC_MS && mesuresTic.dernierLentT > 0 ? { alerte: true } : {}),
     });
     res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
     res.end(corps);
+    return;
+  }
+  // palmarès du Battle Royale (top 50) : pour les curieux et les tests ; CORS seulement pour les origines autorisées
+  if (req.method === "GET" && chemin === "/stats-br") {
+    const origine = req.headers.origin;
+    const entetes: Record<string, string> = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" };
+    if (origine && (ORIGINES.length === 0 || ORIGINES.some((o) => o.test(origine)))) {
+      entetes["access-control-allow-origin"] = origine;
+      entetes.vary = "origin";
+    }
+    res.writeHead(200, entetes);
+    res.end(JSON.stringify({ lignes: classementStats(persistanceBr.lire(), 50) }));
     return;
   }
   res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
@@ -308,12 +397,19 @@ wss.on("connection", (ws, req) => {
   ws.on("error", () => ws.terminate());
 });
 
+/** Membre du lobby du Battle Royale qui attend l'hôte avec au moins un autre joueur : jamais recyclé pour inactivité. */
+function attendDansLobbyBr(c: Client): boolean {
+  if (c.salle !== salleBr) return false;
+  const r = salleBr.resumeBr();
+  return !!r && r.phase === "lobby" && r.joueurs >= 2;
+}
+
 // Connexions mortes : un client qui n'a pas répondu au ping précédent est fermé.
 const timerPing = setInterval(() => {
   const maintenant = Date.now();
   for (const c of clients.values()) {
     if (!c.vivant) { c.ws.terminate(); continue; }
-    if (c.inscrit && maintenant - c.utileT > SPECTATEUR_INACTIF_MS && !c.salle.inspecter(c.id)?.enJeu) { c.ws.close(1001, "inactif"); continue; }
+    if (c.inscrit && maintenant - c.utileT > SPECTATEUR_INACTIF_MS && !c.salle.inspecter(c.id)?.enJeu && !attendDansLobbyBr(c)) { c.ws.close(1001, "inactif"); continue; }
     c.vivant = false;
     c.pingEnvoyeA = Date.now();
     c.ws.ping();
@@ -321,11 +417,16 @@ const timerPing = setInterval(() => {
 }, PING_MS);
 
 const timerTic = setInterval(() => {
+  const debut = performance.now();
   try { diffuser(salleArene, salleArene.tic(Date.now())); } catch (e) { console.error("tic:", e); }
-  // la salle des zombies vide ne coûte rien
+  // les salles des zombies et du Battle Royale vides ne coûtent rien (le service BR traite une salle vidée dans `liberer`)
   if (salleZombies.nombreJoueurs() > 0) {
     try { diffuser(salleZombies, salleZombies.tic(Date.now())); } catch (e) { console.error("tic zombies:", e); }
   }
+  if (salleBr.nombreJoueurs() > 0) {
+    try { diffuser(salleBr, salleBr.tic(Date.now())); } catch (e) { console.error("tic br:", e); }
+  }
+  noterTic(performance.now() - debut, Date.now());
 }, TIC_MS);
 
 // Résumé des salles : à tous, une fois par seconde s'il a changé (le choix du mode affiche les compteurs en direct)
@@ -334,7 +435,7 @@ const timerSalons = setInterval(() => {
 }, 1000);
 
 http.listen(PORT, "0.0.0.0", () => {
-  console.log(`Arène FPS : ws://0.0.0.0:${PORT} (scène ${fichierScene}, ${apparitions.length} points d'apparition, ${cachettes.length} cachettes, origines : ${ORIGINES.join(", ") || "toutes"})`);
+  console.log(`Arène FPS : ws://0.0.0.0:${PORT} (scène ${fichierScene}, ${apparitions.length} points d'apparition, ${cachettes.length} cachettes, origines : ${ORIGINES.join(", ") || "toutes"}, stats BR : ${fichierStatsBr}, ${CONNEXIONS_PAR_IP_MAX} connexions par IP, ${CONNEXIONS_TOTAL_MAX} au total)`);
 });
 
 function arreter(): void {
@@ -343,6 +444,9 @@ function arreter(): void {
   clearInterval(timerSalons);
   for (const c of clients.values()) c.ws.close(1001, "arrêt du serveur");
   wss.close();
+  // seul endroit où les stats s'écrivent en synchrone : l'écriture asynchrone en cours n'aurait pas le temps de finir ; ce qu'un départ en
+  // cours de partie enregistre encore ensuite est écrit sur-le-champ
+  persistanceBr.arreter();
   http.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 2000).unref();
 }
