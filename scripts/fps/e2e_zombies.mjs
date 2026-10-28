@@ -66,6 +66,8 @@ const ACHAT_UZI = [131.1, -24.3];
 const ACHAT_D1 = [127.3, -21.9];
 /** Bob attend dehors, hors de toute zone (aucun tigre n'y naît ni n'y vient), à 55 m de l'open space et 26 m de la fenêtre la plus proche. */
 const ZONE_BOB_DEHORS = [68, 10];
+/** Alice attend dehors elle aussi pendant que Bob sert d'appât (ni zone, ni fenêtre à moins de 20 m). */
+const ZONE_ALICE_DEHORS = [60, 14];
 /** Fenêtres de l'open space : point d'arrivée des tigres dehors, poste de tir 3 m à l'intérieur (dedans + normale × 3). */
 const FENETRES_OPEN = [
   { id: "F1", dehors: [109.05, -20.59], poste: [110.66, -26.27] },
@@ -595,15 +597,14 @@ try {
     const depuis = Date.now();
     let tg = await tigresProches(A);
     verifier(tg.length >= 1, "plus aucun tigre : la manche est finie, pas d'appât pour la relève");
-    // Alice au point de la cour le plus loin des tigres
-    const loin = SPOTS.slice().sort((x, y) => dist([tg[0].x, tg[0].z], y) - dist([tg[0].x, tg[0].z], x))[0];
-    await aller(A, B, loin);
-    // Bob saute à 5 m du tigre le plus proche, côté Alice (sur leur chemin) : il devient la cible la plus proche
+    // Alice sort de l'open space (dehors, hors de toute zone : aucun tigre n'y va) ; Bob saute à 3 m du tigre le plus proche, il devient
+    // la seule cible des tigres
+    await aller(A, B, ZONE_ALICE_DEHORS);
     tg = await tigresProches(A);
     const t = tg[0];
-    const posA = plat((await A.jeu()).p);
-    const n = dist([t.x, t.z], posA) || 1;
-    const posB = [t.x + ((posA[0] - t.x) / n) * 5, t.z + ((posA[1] - t.z) / n) * 5];
+    const vers = DEPARTS[2];
+    const n = dist([t.x, t.z], vers) || 1;
+    const posB = [t.x + ((vers[0] - t.x) / n) * 3, t.z + ((vers[1] - t.z) / n) * 3];
     await aller(B, A, posB, 4);
     // Bob est couché par les tigres
     await jusqua(async () => (await B.moiPartie())?.etat === "terre", { ms: 25_000, pas: 200, quoi: async () => `Bob à terre (${B.resume(depuis)} ; tigres ${JSON.stringify((await tigresProches(A)).map((x) => [x.id, +x.x.toFixed(0), +x.z.toFixed(0)]))} ; Bob ${JSON.stringify((await B.jeu())?.p.map((x) => +x.toFixed(0)))})` });
@@ -612,10 +613,9 @@ try {
     await B.page.locator("section[aria-label='À terre']").waitFor({ state: "visible", timeout: 8000 }).catch(() => { throw new Error("l'écran « À terre » ne s'affiche pas chez Bob"); });
     await B.capture("06-a-terre-B-1280");
     const posBobMort = plat((await B.jeu()).p);
-    // Alice sort le couteau puis attend que les tigres soient à 8 m d'elle, avant de sauter à côté de Bob
+    // Alice sort le couteau (dehors, à l'abri) puis saute à côté de Bob
     await A.appui("Digit3", 100);
     await jusqua(async () => (await A.jeu()).slot === "couteau", { quoi: "couteau en main avant la relève" });
-    await jusqua(async () => { const x = await tigresProches(A); return x.length && x[0].d < 8; }, { ms: 40_000, pas: 100, quoi: "les tigres viennent vers Alice" });
     await aller(A, B, [posBobMort[0] + 1.2, posBobMort[1]], 1.5);
     trace("Alice près de Bob", `tigres à ${(await tigresProches(A)).map((x) => x.d.toFixed(0))} m`);
     // E maintenu : pendant ces 3 s la garde à l'épée tourne déjà (les tigres reviennent)
