@@ -66,6 +66,11 @@ const ACHAT_UZI = [131.1, -24.3];
 const ACHAT_D1 = [127.3, -21.9];
 /** Bob attend dehors, hors de toute zone (aucun tigre n'y naît ni n'y vient), à 55 m de l'open space et 26 m de la fenêtre la plus proche. */
 const ZONE_BOB_DEHORS = [68, 10];
+/** Fenêtres de l'open space : point d'arrivée des tigres dehors, poste de tir 3 m à l'intérieur (dedans + normale × 3). */
+const FENETRES_OPEN = [
+  { id: "F1", dehors: [109.05, -20.59], poste: [110.66, -26.27] },
+  { id: "F2", dehors: [119.63, -17.58], poste: [121.24, -23.26] },
+];
 
 // ---------------------------------------------------------------------------------------------------------------- utilitaires
 
@@ -542,6 +547,8 @@ try {
     let tire = 0;
     const fin = Date.now() + 80_000;
     let tue = null;
+    // comme dans BO1 : on tire les tigres pendant qu'ils arrachent les planches (immobiles derrière la fenêtre, les balles passent) ;
+    // un tigre déjà entré est tiré tant qu'il est à plus de 4,5 m, sinon Alice fuit
     while (Date.now() < fin && !tue) {
       const s = await A.jeu();
       verifier(s && s.vivant, `Alice à terre pendant le tir : ${A.resume(depuis)}`);
@@ -549,11 +556,20 @@ try {
       if (tue) break;
       const tg = await tigresProches(A);
       if (!tg.length) { await dormir(200); continue; }
-      if ((await menace()) < 9) { await fuir(); continue; }
+      const entres = tg.filter((t) => t.mode === "chasse" || t.mode === "saut");
+      if (entres.length && entres[0].d < 4.5) { await fuir(); continue; }
+      const aLaFenetre = tg.find((t) => t.mode === "fenetre");
+      let cible = entres[0] ?? tg[0];
+      if (aLaFenetre && !(entres.length && entres[0].d < 12)) {
+        // se poster face à la fenêtre du tigre, 3 m à l'intérieur
+        const f = FENETRES_OPEN.slice().sort((x, y) => dist(x.dehors, [aLaFenetre.x, aLaFenetre.z]) - dist(y.dehors, [aLaFenetre.x, aLaFenetre.z]))[0];
+        if (dist(plat(s.p), f.poste) > 1.5) { trace(`poste devant ${f.id}`); await aller(A, B, f.poste, 1.5); continue; }
+        cible = aLaFenetre;
+      }
       if (s.slot !== "secondaire") { await A.appui("Digit2", 80); await dormir(700); continue; }
       if (s.munitions === 0) { await A.appui("KeyR", 80); await dormir(1700); continue; }
-      trace(`tir sur ${tg[0].id} à ${tg[0].d.toFixed(0)} m, tigres ${JSON.stringify(tg.map((t) => +t.d.toFixed(0)))}`);
-      await viserTigre(A, tg[0]);
+      trace(`tir sur ${cible.id} (${cible.mode}) à ${cible.d.toFixed(0)} m, tigres ${JSON.stringify(tg.map((t) => [+t.d.toFixed(0), t.mode]))}`);
+      await viserTigre(A, cible);
       await A.appui("Souris0", 60);
       tire++;
       await dormir(170);
