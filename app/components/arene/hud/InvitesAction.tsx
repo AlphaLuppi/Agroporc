@@ -12,6 +12,8 @@ import styles from "../HudArene.module.css";
  * Zombies (v5) : « [E] Pompe — 900 $ », « [E] Ouvrir la porte — 1 250 $ », « [E] Boîte mystère — 950 $ », « [E] Soin — 400 $ » avec, quand l'argent
  * manque, la raison écrite (« Argent insuffisant »), et « [E] Réanimer Léa » avec la mention « maintenir » puis une barre de progression
  * (`--reanim`, écrite hors React) pendant que la touche est tenue.
+ * Battle Royale (v8) : « [E] Ramasser Fusil d'assaut (rare) » (`ramasser`, le détail dit aussi « aucune arme compatible » quand l'objet serait refusé :
+ * la plaque passe alors en danger, comme un achat sans argent, mais le motif est dans le détail).
  * Spec : docs/superpowers/specs/2026-10-23-arene-hud-design.md (§5.1, §5.4, §5.8)
  */
 export interface PropsInvitesAction {
@@ -23,7 +25,7 @@ export interface PropsInvitesAction {
   /** chargeur critique ou vide hors rechargement */
   inviteRecharge: boolean;
   toucheRecharger: string;
-  /** (zombies) argent suffisant pour l'achat proposé (absent = oui) */
+  /** (zombies) argent suffisant pour l'achat proposé ; (BR) objet ramassable (absent = oui) */
   assez?: boolean;
   /** (zombies) je maintiens la touche sur un coéquipier à terre */
   reanime?: boolean;
@@ -43,6 +45,14 @@ function InvitesBrutes({ invite, inviteDetail, toucheInteragir, inviteRecharge, 
       <p className={`${styles.plaque} ${styles.invite}`} data-assez={manque ? "non" : "oui"}>
         <Touche libelle={toucheInteragir} /> {inviteDetail}
         {manque && <span className={styles.inviteManque}> · {manque}</span>}
+        {!toucheInteragir && <span className={styles.inviteSansTouche}> (touche non assignée)</span>}
+      </p>
+    );
+  }
+  if (invite === "ramasser") {
+    return (
+      <p className={`${styles.plaque} ${styles.invite}`} data-assez={assez ? "oui" : "non"}>
+        <Touche libelle={toucheInteragir} /> {inviteDetail}
         {!toucheInteragir && <span className={styles.inviteSansTouche}> (touche non assignée)</span>}
       </p>
     );

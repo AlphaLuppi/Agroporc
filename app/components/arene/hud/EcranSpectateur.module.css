@@ -1,0 +1,51 @@
+/* Mort définitive du Battle Royale : carte d'élimination (killcam) et bandeau du spectateur. Tokens --ag-* hérités, aucune couleur en dur. */
+.carte {
+  --k: var(--u, 1px);
+  box-sizing: border-box; width: min(calc(480 * var(--k)), 92vw); max-width: 100%; padding: calc(16 * var(--k)) calc(24 * var(--k)) calc(18 * var(--k));
+  display: flex; flex-direction: column; gap: calc(8 * var(--k)); text-align: center; pointer-events: none;
+  background: var(--ag-hud-fond-fort); border: 1px solid var(--ag-cadre);
+  font-family: var(--ag-mono), ui-monospace, monospace; font-size: max(11px, calc(14 * var(--k))); color: var(--ag-ink); text-shadow: none;
+  animation: entrer 0.25s ease-out both;
+}
+@keyframes entrer { from { opacity: 0; transform: translateY(calc(12 * var(--k))); } to { opacity: 1; transform: translateY(0); } }
+.titre {
+  margin: 0; display: flex; flex-direction: column; align-items: center; gap: calc(6 * var(--k));
+  font: 700 max(11px, calc(30 * var(--k)))/1.1 var(--ag-display), var(--ag-mono), monospace; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ag-danger);
+}
+.titre small { font: 600 max(11px, calc(12 * var(--k)))/1 var(--ag-display), var(--ag-mono), monospace; letter-spacing: 0.18em; color: var(--ag-ink-dim); }
+.tueur { display: inline-flex; align-items: center; justify-content: center; gap: calc(10 * var(--k)); max-width: 100%; color: var(--ag-ink); }
+.pastille { flex: none; display: inline-block; width: calc(12 * var(--k)); height: calc(12 * var(--k)); min-width: 7px; min-height: 7px; box-sizing: border-box; border: 1px solid var(--ag-white); }
+.pseudo { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.detail { margin: 0; font-variant-numeric: tabular-nums; color: var(--ag-ink); }
+.place { margin: 0; font: 600 max(11px, calc(16 * var(--k)))/1.2 var(--ag-display), var(--ag-mono), monospace; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ag-amber); font-variant-numeric: tabular-nums; }
+
+/* bandeau du spectateur : bas centre, au-dessus des blocs de coin */
+.spectateur {
+  --k: var(--u, 1px);
+  position: absolute; z-index: 6; left: 50%; bottom: calc(32 * var(--k)); transform: translateX(-50%); width: min(calc(620 * var(--k)), 92vw);
+  pointer-events: none;
+  font-family: var(--ag-mono), ui-monospace, monospace; font-size: max(11px, calc(14 * var(--k))); color: var(--ag-ink); text-shadow: none;
+}
+.bandeau {
+  box-sizing: border-box; padding: calc(12 * var(--k)) calc(20 * var(--k)); display: flex; flex-direction: column; align-items: center; gap: calc(6 * var(--k)); text-align: center;
+  background: var(--ag-hud-fond-fort); border: 1px solid var(--ag-cadre);
+}
+.titreBandeau { margin: 0; font: 700 max(12px, calc(24 * var(--k)))/1.1 var(--ag-display), var(--ag-mono), monospace; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ag-danger); font-variant-numeric: tabular-nums; }
+.cause { margin: 0; color: var(--ag-ink-dim); }
+.suivi { margin: 0; display: inline-flex; align-items: center; gap: calc(8 * var(--k)); color: var(--ag-ink); }
+.suivi b { font-weight: 600; }
+.suivi .pastille { background: var(--couleur); }
+.boutons { display: flex; flex-wrap: wrap; justify-content: center; gap: calc(10 * var(--k)); margin-top: calc(4 * var(--k)); pointer-events: auto; }
+.bouton, .quitter {
+  min-height: 40px; min-width: calc(120 * var(--k)); padding: 0 calc(16 * var(--k)); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: calc(8 * var(--k));
+  font: 700 max(11px, calc(12 * var(--k)))/1 var(--ag-display), var(--ag-mono), monospace; letter-spacing: 0.12em; text-transform: uppercase;
+  background: var(--ag-hud-fond); color: var(--ag-ink); border: 1px solid var(--ag-cadre);
+}
+.bouton:hover, .bouton:focus-visible, .quitter:hover, .quitter:focus-visible { border-color: var(--ag-ink); }
+.bouton:focus-visible, .quitter:focus-visible { outline: 2px solid var(--ag-white); outline-offset: 2px; }
+.quitter { color: var(--ag-danger); }
+.bouton kbd { font: inherit; font-size: max(11px, calc(11 * var(--k))); padding: 0 calc(5 * var(--k)); border: 1px solid var(--ag-cadre); color: var(--ag-cyan); }
+.aide { margin: 0; color: var(--ag-ink-dim); font-size: max(11px, calc(12 * var(--k))); }
+.aide kbd { font: inherit; padding: 0 calc(5 * var(--k)); border: 1px solid var(--ag-cadre); color: var(--ag-cyan); }
+@media (prefers-reduced-motion: reduce) { .carte { animation: none; } }
+:global([data-effets="reduits"]) .carte { animation: none; }

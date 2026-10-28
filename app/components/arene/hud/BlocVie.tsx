@@ -26,7 +26,7 @@ export interface PropsBlocVie {
   /** le bouclier vient de se rompre : flash de la barre */
   rupture: boolean;
   refTraitRegen: RefObject<HTMLDivElement | null>;
-  /** (v7, zombies) PV max (250 avec le Gratin Dauphinois) et régénération par seconde */
+  /** (v7, zombies) PV max (250 avec le Gratin Dauphinois) et régénération par seconde ; 0 (Battle Royale) masque le délai et la ligne de régénération */
   pvMax?: number;
   regenParS?: number;
 }
@@ -74,10 +74,12 @@ function BlocVieBrut({ pv, bouclier, regen, accroupi, glisse, mur, protegeRestan
         <i className={styles.jaugeRemplie} style={{ width: `${pourcent(pv)}%` }} />
         <i className={styles.jaugeSegments} />
       </div>
-      <div className={styles.delaiRegen} data-actif={!regen && pv < pvMax ? "oui" : "non"} aria-hidden="true">
-        <i ref={refTraitRegen} />
-      </div>
-      {regen && pv < pvMax && (
+      {regenParS > 0 && (
+        <div className={styles.delaiRegen} data-actif={!regen && pv < pvMax ? "oui" : "non"} aria-hidden="true">
+          <i ref={refTraitRegen} />
+        </div>
+      )}
+      {regenParS > 0 && regen && pv < pvMax && (
         <p className={styles.regen}>
           <span className={styles.regenPlus} aria-hidden="true">+</span>RÉGÉNÉRATION +{regenParS}/s
         </p>

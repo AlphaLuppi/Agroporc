@@ -6,18 +6,26 @@
  */
 import { JEU, copierEquipement, estMelee, type ArmeFeuId, type ArmeId, type Equipement, type MessageServeur, type Slot } from "./protocole";
 import { STATS, chargeurZombie } from "./armes";
-import { armeDuSlot, estArmeFeu, estSlot, meleeDe, slotVoisin, type LigneSlot } from "./equipement";
+import { armeDuSlot, estArmeFeu, estSlot, meleeDe, slotDeLArme, slotVoisin, type LigneSlot } from "./equipement";
+import { BR } from "./br-regles";
 
 /** Slot en main quand l'appelant n'en donne pas : on entre dans l'arène avec la principale (v2 : `mainSuivante` = principale). */
 const MAIN_INITIALE: Slot = "principale";
-/** Slots de repli, dans l'ordre : le premier qui porte une arme (la principale peut manquer, zombies v5). */
+/**
+ * Slots de repli, dans l'ordre : le premier qui porte une arme (la principale peut manquer, zombies v5 ; la secondaire aussi, Battle Royale v8 :
+ * `armeDuSlot` rend null pour `sansPrincipale` / `sansSecondaire`, il ne reste alors que l'arme blanche).
+ */
 const SLOTS_REPLI: readonly Slot[] = ["principale", "secondaire", "couteau"];
 
 /**
  * Options du contrôleur : `reserveChargeurs` = chargeurs de réserve par arme (zombies, v5) ; absent = réserve infinie (arène).
  * `zombies` (v7) : chargeurs du profil zombies (Pack-a-Punch compris, `chargeurZombie`), `reserveChargeursAmeliore` chargeurs pour une arme améliorée.
  */
-export interface OptionsArmes { reserveChargeurs?: number; zombies?: boolean; reserveChargeursAmeliore?: number }
+export interface OptionsArmes {
+  reserveChargeurs?: number; zombies?: boolean; reserveChargeursAmeliore?: number;
+  /** (BR, v8) plafond de la réserve d'une arme après `ajouterReserve`, en chargeurs (`BR.reserveChargeursMax` par défaut) */
+  reserveChargeursMax?: number;
+}
 
 export class ControleurArmes {
   private equip: Equipement;
@@ -41,6 +49,8 @@ export class ControleurArmes {
   /** (v7) profil zombies et réserve d'une arme améliorée */
   private readonly zombies: boolean;
   private readonly reserveAmeliore: number | null;
+  /** (BR) plafond de la réserve en chargeurs */
+  private readonly reserveMax: number;
   /** (v7) multiplicateur de la durée de recharge (Expresso Serré : 0,5) */
   private multRecharge = 1;
 
@@ -48,6 +58,7 @@ export class ControleurArmes {
     this.reserveChargeurs = opts.reserveChargeurs !== undefined && opts.reserveChargeurs >= 0 ? Math.floor(opts.reserveChargeurs) : null;
     this.zombies = opts.zombies === true;
     this.reserveAmeliore = opts.reserveChargeursAmeliore !== undefined ? Math.floor(opts.reserveChargeursAmeliore) : this.reserveChargeurs;
+    this.reserveMax = opts.reserveChargeursMax !== undefined && opts.reserveChargeursMax >= 0 ? Math.floor(opts.reserveChargeursMax) : BR.reserveChargeursMax;
     this.equip = copierEquipement(equip);
     this.main = this.slotUtilisable(main) ? main : this.slotRepli();
     this.precedent = this.autrePrincipale(this.main);
@@ -93,6 +104,23 @@ export class ControleurArmes {
   /** Réserve (balles) d'une arme à feu : −1 si elle est infinie (arène, ou arme sans réserve comme le couteau). */
   reserveDe(arme: ArmeFeuId): number {
     return this.reserveChargeurs === null ? -1 : (this.reserve[arme] ?? 0);
+  }
+
+  /**
+   * (BR, v8) Message `equipement.ajoutMunitions` : `chargeurs` chargeurs de plus dans la RÉSERVE de `arme` (le chargeur n'est pas rempli),
+   * plafonnée à `reserveChargeursMax` chargeurs ; une réserve déjà au-dessus du plafond n'est jamais rognée. Sans effet si la réserve est infinie,
+   * si l'arme n'est pas portée en principale ou secondaire, ou si elle n'a pas de réserve (spéciale). Renvoie les balles ajoutées.
+   */
+  ajouterReserve(arme: ArmeFeuId, chargeurs: number): number {
+    if (this.reserveChargeurs === null || !(chargeurs > 0) || STATS[arme].sansRecharge) return 0;
+    const slot = slotDeLArme(this.equip, arme);
+    if (slot !== "principale" && slot !== "secondaire") return 0;
+    const cap = this.cap(arme);
+    const actuelle = this.reserve[arme] ?? 0;
+    const neuve = Math.min(this.reserveMax * cap, actuelle + Math.floor(chargeurs) * cap);
+    if (neuve <= actuelle) return 0;
+    this.reserve[arme] = neuve;
+    return neuve - actuelle;
   }
 
   /** Réserve de l'arme en main (−1 : infinie, ou arme blanche). */
@@ -229,6 +257,7 @@ export class ControleurArmes {
     this.dernierT = t;
     const apparition = m.t === "apparition";
     const ancien = this.main;
+    const armeAvant = this.armeEnMain();
     this.equip = copierEquipement(m.equip);
     this.main = estSlot(m.main) && this.slotUtilisable(m.main) ? m.main : this.slotRepli();
     if (apparition) {
@@ -240,6 +269,10 @@ export class ControleurArmes {
       this.precedent = this.autrePrincipale(this.main);
     } else if (this.main !== ancien) {
       this.precedent = ancien;
+      this.annulerRecharge();
+      this.debuterSortie(t);
+    } else if (this.armeEnMain() !== armeAvant) {
+      // même slot, autre arme (échange de butin, BR) : la recharge de l'ancienne ne vaut plus, la nouvelle se dégaine
       this.annulerRecharge();
       this.debuterSortie(t);
     }

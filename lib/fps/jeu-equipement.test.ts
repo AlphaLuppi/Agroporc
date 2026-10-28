@@ -476,3 +476,129 @@ describe("ControleurArmes : réserve limitée (zombies)", () => {
     expect(c.reserveDe("fusil_assaut")).toBe(5 * STATS.fusil_assaut.chargeur);
   });
 });
+
+// ---------- Battle Royale (v8) : départ sans arme à feu, boîtes de munitions ----------
+
+describe("ControleurArmes : départ du Battle Royale (ni principale ni secondaire)", () => {
+  const depart = (): Equipement => ({ principale: "mitraillette", secondaire: "pistolet", speciale: null, sansPrincipale: true, sansSecondaire: true });
+  const br = (main: "couteau" | "principale" | "secondaire" = "couteau") => new ControleurArmes(depart(), main, { reserveChargeurs: 2 });
+
+  it("le couteau en main, aucune ligne d'arme à feu, jamais de tir ni de recharge", () => {
+    const c = br();
+    expect(c.slotActif()).toBe("couteau");
+    expect(c.armeEnMain()).toBe("couteau");
+    expect(c.lignes()).toEqual([{ slot: "couteau", arme: "couteau", munitions: 0, chargeur: 0 }]);
+    expect(serialiserSlots(c.lignes())).toBe("couteau:couteau:0:0");
+    expect(c.peutTirer(1000)).toBe(false);
+    expect(c.demarrerRecharge(1000)).toBe(false);
+    // les armes de remplissage n'ont ni chargeur ni réserve
+    expect(c.munitionsDe("mitraillette")).toBe(0);
+    expect(c.munitionsDe("pistolet")).toBe(0);
+    expect(c.reserveDe("pistolet")).toBe(0);
+  });
+
+  it("un slot vide demandé en main retombe sur l'arme blanche (repli), molette et dernière arme n'ont nulle part où aller", () => {
+    for (const main of ["principale", "secondaire"] as const) expect(br(main).slotActif()).toBe("couteau");
+    expect(new ControleurArmes(depart(), undefined, { reserveChargeurs: 2 }).slotActif()).toBe("couteau");
+    const c = br();
+    expect(c.molette(1, 0)).toBe(false);
+    expect(c.molette(-1, 0)).toBe(false);
+    expect(c.rapide(0)).toBe(false);
+    expect(c.equiper("principale", 0)).toBe(false);
+    expect(c.equiper("secondaire", 0)).toBe(false);
+    expect(c.equiper("speciale", 0)).toBe(false);
+  });
+
+  it("ramasser une secondaire (message equipement) : chargeur plein, réserve de départ de 2 chargeurs, en main", () => {
+    const c = br();
+    c.appliquerServeur({ t: "equipement", equip: { principale: "mitraillette", secondaire: "revolver", speciale: null, sansPrincipale: true }, main: "secondaire", munSpeciale: 0 }, 5000);
+    expect(c.slotActif()).toBe("secondaire");
+    expect(c.armeEnMain()).toBe("revolver");
+    expect(c.munitions()).toBe(STATS.revolver.chargeur);
+    expect(c.reserveDe("revolver")).toBe(2 * STATS.revolver.chargeur);
+    expect(c.lignes().map((l) => l.slot)).toEqual(["secondaire", "couteau"]);
+    // le couteau est le slot d'avant : « dernière arme » y retourne
+    expect(c.slotPrecedent()).toBe("couteau");
+    expect(c.rapide(6000)).toBe(true);
+    expect(c.slotActif()).toBe("couteau");
+  });
+
+  it("échange dans le même slot (autre secondaire) : chargeur plein, recharge de l'ancienne annulée, dégainage", () => {
+    const c = br("couteau");
+    const eq = (secondaire: "pistolet" | "revolver"): Extract<Parameters<ControleurArmes["appliquerServeur"]>[0], { t: "equipement" }> => ({
+      t: "equipement", equip: { principale: "mitraillette", secondaire, speciale: null, sansPrincipale: true }, main: "secondaire", munSpeciale: 0,
+    });
+    c.appliquerServeur(eq("pistolet"), 0);
+    let t = 1000;
+    t = tirer(c, 5, t);
+    expect(c.demarrerRecharge(t)).toBe(true);
+    c.appliquerServeur(eq("revolver"), t + 10);
+    expect(c.armeEnMain()).toBe("revolver");
+    expect(c.rechargeEnCours()).toBe(false);
+    expect(c.degainage(t + 11)).toBe(true);
+    expect(c.munitions()).toBe(STATS.revolver.chargeur);
+    // l'ancienne arme est oubliée
+    expect(c.munitionsDe("pistolet")).toBe(0);
+  });
+
+  it("lâcher la dernière arme à feu en main : retour au couteau", () => {
+    const c = br();
+    c.appliquerServeur({ t: "equipement", equip: { principale: "mitraillette", secondaire: "pistolet", speciale: null, sansPrincipale: true }, main: "secondaire", munSpeciale: 0 }, 0);
+    c.appliquerServeur({ t: "equipement", equip: { principale: "mitraillette", secondaire: "pistolet", speciale: null, sansPrincipale: true, sansSecondaire: true }, main: "couteau", munSpeciale: 0 }, 100);
+    expect(c.slotActif()).toBe("couteau");
+    expect(c.lignes().map((l) => l.slot)).toEqual(["couteau"]);
+    expect(c.munitionsDe("pistolet")).toBe(0);
+  });
+});
+
+describe("ControleurArmes.ajouterReserve (boîtes de munitions du Battle Royale)", () => {
+  const avecPistolet = (opts = {}): ControleurArmes => new ControleurArmes(
+    { principale: "mitraillette", secondaire: "pistolet", speciale: null, sansPrincipale: true }, "secondaire", { reserveChargeurs: 2, ...opts });
+  const CAP = STATS.pistolet.chargeur;
+
+  it("ajoute des chargeurs entiers à la réserve sans toucher au chargeur", () => {
+    const c = avecPistolet();
+    tirer(c, 4, 1000);
+    expect(c.ajouterReserve("pistolet", 2)).toBe(2 * CAP);
+    expect(c.reserveDe("pistolet")).toBe(4 * CAP);
+    expect(c.munitions()).toBe(CAP - 4);
+  });
+
+  it("plafonne à 6 chargeurs et ne rogne jamais une réserve déjà au-dessus", () => {
+    const c = avecPistolet();
+    expect(c.ajouterReserve("pistolet", 3)).toBe(3 * CAP);
+    expect(c.ajouterReserve("pistolet", 2)).toBe(CAP); // 5 + 2 -> plafonné à 6
+    expect(c.reserveDe("pistolet")).toBe(6 * CAP);
+    expect(c.ajouterReserve("pistolet", 1)).toBe(0);
+    expect(c.reserveDe("pistolet")).toBe(6 * CAP);
+    // plafond réglable ; une réserve de départ au-dessus du plafond est conservée
+    const bas = avecPistolet({ reserveChargeursMax: 1 });
+    expect(bas.ajouterReserve("pistolet", 1)).toBe(0);
+    expect(bas.reserveDe("pistolet")).toBe(2 * CAP);
+  });
+
+  it("sans effet : arme non portée, slot vide, spéciale, réserve infinie, quantité nulle", () => {
+    const c = avecPistolet();
+    expect(c.ajouterReserve("revolver", 2)).toBe(0);
+    expect(c.ajouterReserve("mitraillette", 2)).toBe(0); // remplissage de la principale vide
+    expect(c.reserveDe("revolver")).toBe(0);
+    expect(c.ajouterReserve("pistolet", 0)).toBe(0);
+    expect(c.ajouterReserve("pistolet", -2)).toBe(0);
+    const arene = new ControleurArmes(equip());
+    expect(arene.ajouterReserve("pistolet", 2)).toBe(0);
+    expect(arene.reserveDe("pistolet")).toBe(-1);
+    const sp = new ControleurArmes(avecSpeciale(), "principale", { reserveChargeurs: 2 });
+    expect(sp.ajouterReserve("railgun", 2)).toBe(0);
+  });
+
+  it("la recharge puise ensuite dans la réserve augmentée", () => {
+    const c = avecPistolet();
+    let t = tirer(c, CAP, 1000);
+    c.ajouterReserve("pistolet", 1);
+    expect(c.demarrerRecharge(t)).toBe(true);
+    t += STATS.pistolet.rechargeS * 1000 + 1;
+    expect(c.majRecharge(t)).toBe(true);
+    expect(c.munitions()).toBe(CAP);
+    expect(c.reserveDe("pistolet")).toBe(2 * CAP);
+  });
+});

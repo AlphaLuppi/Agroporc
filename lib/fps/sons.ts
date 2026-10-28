@@ -18,6 +18,29 @@ import { ZOMBIES } from "./zombies-vagues";
 /** Voix de tigres en même temps au plus (zombies) : au-delà, un nouveau rugissement est ignoré. */
 export const VOIX_TIGRES_MAX = 4;
 
+/**
+ * (Battle Royale) Vent de la chute libre : vitesse (m/s) à partir de laquelle on l'entend, et à laquelle il est à son maximum (piqué à
+ * 55 m/s, `CHUTE_BR.libre`). Sous voile (6,5 m/s) il ne reste rien : le silence du parachute fait partie de la descente.
+ */
+export const VENT_CHUTE = { vitesseMin: 12, vitesseMax: 55, gainMin: 0.04, gainMax: 0.5, filtreMin: 500, filtreMax: 4200 } as const;
+
+/** Intensité du vent de chute, de 0 (en dessous de `vitesseMin`, silence) à 1 (piqué), croissante et lissée ; une valeur invalide donne 0. */
+export function intensiteVentChute(vitesse: number): number {
+  if (!Number.isFinite(vitesse)) return 0;
+  const u = (Math.abs(vitesse) - VENT_CHUTE.vitesseMin) / (VENT_CHUTE.vitesseMax - VENT_CHUTE.vitesseMin);
+  const k = Math.min(Math.max(u, 0), 1);
+  return k * k * (3 - 2 * k);
+}
+
+/** Gain et fréquence du passe-bande du vent de chute pour une intensité de 0 à 1 : plus fort et plus aigu à mesure qu'on accélère. */
+export const reglageVentChute = (intensite: number): { gain: number; filtre: number } => {
+  const k = Math.min(Math.max(Number.isFinite(intensite) ? intensite : 0, 0), 1);
+  return {
+    gain: VENT_CHUTE.gainMin + (VENT_CHUTE.gainMax - VENT_CHUTE.gainMin) * k,
+    filtre: VENT_CHUTE.filtreMin + (VENT_CHUTE.filtreMax - VENT_CHUTE.filtreMin) * k,
+  };
+};
+
 export interface PositionSon {
   /** distance au tireur (m) */
   distance: number;
@@ -130,6 +153,27 @@ export interface Sons {
   sireneFrappe(position?: PositionSon): void;
   /** Déploiement et sifflement d'un fumigène. */
   fumigene(position?: PositionSon): void;
+  // ---- v8 (Battle Royale) ----
+  /**
+   * Vent de la chute libre : bruit filtré en boucle dont le volume et la hauteur suivent la vitesse (m/s, norme de la vitesse du parachutiste,
+   * voir `intensiteVentChute`). À rappeler à chaque image pendant la chute ; `null`, une vitesse invalide ou trop faible (parachute ouvert)
+   * l'éteint.
+   */
+  ventChute(vitesse: number | null): void;
+  /** Ouverture du parachute : claquement de la toile qui se gonfle, puis souffle qui retombe. */
+  voile(): void;
+  /**
+   * Avertissement de zone : `true` lance (en boucle) la pulsation grave « hors zone » de la tempête, `false` l'éteint. Idempotent, à appeler
+   * à chaque image avec l'état courant.
+   */
+  avertissementZone(horsZone: boolean): void;
+  /** La zone commence à se resserrer : grondement qui monte, puis tonalité d'alerte. */
+  zoneSeResserre(): void;
+  /**
+   * Usage d'un soin : `debut` (déchirement du sparadrap pour le bandage, bouchon qui saute et gorgées pour la potion) ou `fin` (le soin
+   * s'applique : carillon doux pour le bandage, accord cristallin pour le bouclier).
+   */
+  usageSoin(objet: "bandage" | "potion", etape: "debut" | "fin"): void;
   dispose(): void;
 }
 
@@ -339,6 +383,10 @@ export function creerSons(): Sons {
   let crissement: { src: AudioBufferSourceNode; gain: GainNode; filtre: BiquadFilterNode } | null = null;
   /** fins (horloge audio, s) des rugissements de tigres en cours */
   let voixTigres: number[] = [];
+  /** vent de la chute libre (bruit en boucle, passe-bande) */
+  let ventVoix: { src: AudioBufferSourceNode; gain: GainNode; filtre: BiquadFilterNode } | null = null;
+  /** pulsation « hors zone » : tonalité grave modulée par un LFO, et grondement de bruit */
+  let zoneVoix: { osc: OscillatorNode; lfo: OscillatorNode; gain: GainNode; grondement: AudioBufferSourceNode } | null = null;
 
   const ouvrir = () => {
     if (ctx || fini || typeof window === "undefined") return;
@@ -1121,6 +1169,121 @@ export function creerSons(): Sons {
       ton(out, t, { dur: 0.12, type: "sine", f0: 280, f1: 90, gain: 0.5 });
       bruit(out, t + 0.05, { dur: 1.5, type: "highpass", f0: 2400, f1: 1800, gain: 0.45, att: 0.08 });
     },
+    ventChute(vitesse) {
+      const k = vitesse === null ? 0 : intensiteVentChute(vitesse);
+      if (k <= 0) {
+        if (!ventVoix) return;
+        const v = ventVoix;
+        ventVoix = null;
+        eteindre(v.gain, [v.src], 0.2);
+        return;
+      }
+      if (!ventVoix && !prete()) return;
+      const c = ctx;
+      if (!c) return;
+      if (!ventVoix) {
+        const src = c.createBufferSource();
+        src.buffer = bruitBuf;
+        src.loop = true;
+        const filtre = c.createBiquadFilter();
+        filtre.type = "bandpass";
+        filtre.Q.value = 0.5;
+        const g = c.createGain();
+        g.gain.value = 0.0001;
+        src.connect(filtre);
+        filtre.connect(g);
+        g.connect(master!);
+        src.start(c.currentTime, Math.random() * 0.9);
+        ventVoix = { src, gain: g, filtre };
+      }
+      const now = c.currentTime;
+      const r = reglageVentChute(k);
+      ventVoix.filtre.frequency.setTargetAtTime(r.filtre, now, 0.15);
+      ventVoix.gain.gain.setTargetAtTime(r.gain, now, 0.12);
+    },
+    voile() {
+      if (!prete()) return;
+      const t = ctx!.currentTime + 0.001;
+      // la toile claque en se gonflant (choc sourd + éclat de tissu), puis le souffle du vent retombe
+      ton(master!, t, { dur: 0.35, type: "sine", f0: 120, f1: 38, gain: 0.8 });
+      bruit(master!, t, { dur: 0.12, type: "bandpass", f0: 1800, f1: 700, q: 0.9, gain: 0.9 });
+      bruit(master!, t + 0.05, { dur: 0.9, type: "lowpass", f0: 2200, f1: 260, gain: 0.5, att: 0.05 });
+    },
+    avertissementZone(horsZone) {
+      if (!horsZone) {
+        if (!zoneVoix || !ctx) return;
+        const z = zoneVoix;
+        zoneVoix = null;
+        eteindre(z.gain, [z.osc, z.lfo, z.grondement], 0.1);
+        return;
+      }
+      if (zoneVoix || !prete()) return;
+      const c = ctx!;
+      const t = c.currentTime;
+      // tonalité grave d'alarme qui bat 2,4 fois par seconde, sur un grondement de tempête
+      const g = c.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.linearRampToValueAtTime(0.1, t + 0.2);
+      const osc = c.createOscillator();
+      osc.type = "sawtooth";
+      osc.frequency.value = 96;
+      const lfo = c.createOscillator();
+      lfo.type = "sine";
+      lfo.frequency.value = 2.4;
+      const profondeur = c.createGain();
+      profondeur.gain.value = 0.09;
+      lfo.connect(profondeur);
+      profondeur.connect(g.gain);
+      const filtre = c.createBiquadFilter();
+      filtre.type = "lowpass";
+      filtre.frequency.value = 520;
+      osc.connect(filtre);
+      const grondement = c.createBufferSource();
+      grondement.buffer = bruitBuf;
+      grondement.loop = true;
+      const bas = c.createBiquadFilter();
+      bas.type = "lowpass";
+      bas.frequency.value = 180;
+      grondement.connect(bas);
+      filtre.connect(g);
+      bas.connect(g);
+      g.connect(master!);
+      osc.start(t);
+      lfo.start(t);
+      grondement.start(t, Math.random() * 0.9);
+      zoneVoix = { osc, lfo, gain: g, grondement };
+    },
+    zoneSeResserre() {
+      if (!prete()) return;
+      const t = ctx!.currentTime + 0.001;
+      bruit(master!, t, { dur: 2.4, type: "lowpass", f0: 90, f1: 260, gain: 0.8, att: 0.9 });
+      ton(master!, t, { dur: 2.2, type: "sine", f0: 48, f1: 92, gain: 0.7, att: 0.8 });
+      ton(master!, t + 1.4, { dur: 0.7, type: "sawtooth", f0: 330, f1: 300, gain: 0.18, att: 0.05 });
+      ton(master!, t + 1.4, { dur: 0.7, type: "square", f0: 415, f1: 390, gain: 0.1, att: 0.05 });
+    },
+    usageSoin(objet, etape) {
+      if (!prete()) return;
+      const t = ctx!.currentTime + 0.001;
+      if (etape === "debut") {
+        if (objet === "bandage") {
+          // sparadrap arraché : frottement rêche qui s'arrête net
+          bruit(master!, t, { dur: 0.28, type: "highpass", f0: 2600, f1: 5200, gain: 0.5, att: 0.02 });
+          bruit(master!, t + 0.02, { dur: 0.22, type: "bandpass", f0: 1500, q: 1.4, gain: 0.25 });
+        } else {
+          // bouchon qui saute, puis deux gorgées
+          ton(master!, t, { dur: 0.07, type: "sine", f0: 520, f1: 260, gain: 0.45 });
+          bruit(master!, t, { dur: 0.04, type: "bandpass", f0: 2200, q: 2, gain: 0.3 });
+          for (const d of [0.3, 0.62]) ton(master!, t + d, { dur: 0.16, type: "sine", f0: 300, f1: 520, gain: 0.16, att: 0.02 });
+        }
+        return;
+      }
+      if (objet === "bandage") {
+        [523, 659].forEach((f, i) => ton(master!, t + i * 0.08, { dur: 0.4, type: "sine", f0: f, gain: 0.2 }));
+        return;
+      }
+      [659, 880, 1175].forEach((f, i) => ton(master!, t + i * 0.06, { dur: 0.55, type: "sine", f0: f, gain: 0.17 }));
+      ton(master!, t + 0.1, { dur: 0.6, type: "triangle", f0: 2349, gain: 0.05 });
+    },
     dispose() {
       fini = true;
       if (typeof window !== "undefined" && "speechSynthesis" in window) { try { window.speechSynthesis.cancel(); } catch { /* rien */ } }
@@ -1144,6 +1307,16 @@ export function creerSons(): Sons {
       if (crissement) {
         try { crissement.src.stop(); } catch { /* déjà arrêté */ }
         crissement = null;
+      }
+      if (ventVoix) {
+        try { ventVoix.src.stop(); } catch { /* déjà arrêté */ }
+        ventVoix = null;
+      }
+      if (zoneVoix) {
+        for (const o of [zoneVoix.osc, zoneVoix.lfo, zoneVoix.grondement]) {
+          try { o.stop(); } catch { /* déjà arrêté */ }
+        }
+        zoneVoix = null;
       }
       if (souffle) {
         try { souffle.src.stop(); souffle.lfo.stop(); } catch { /* déjà arrêtés */ }

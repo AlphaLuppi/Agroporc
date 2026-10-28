@@ -10,6 +10,7 @@ import { aideChoixEquipement, armeSuivanteDuGroupe, groupePrincipale, groupeSeco
 import type { PropsHudArene } from "./contrats";
 import AideCommandes, { toucheDe } from "./hud/AideCommandes";
 import AnnoncesElsa from "./hud/AnnoncesElsa";
+import BarreBR from "./hud/BarreBR";
 import BandeauEvenement from "./hud/BandeauEvenement";
 import BandeauManche from "./hud/BandeauManche";
 import CockpitTitan from "./hud/CockpitTitan";
@@ -17,12 +18,16 @@ import BarreMatch from "./hud/BarreMatch";
 import BarreVague from "./hud/BarreVague";
 import BlocArgent from "./hud/BlocArgent";
 import BlocArmes from "./hud/BlocArmes";
+import BlocInventaire from "./hud/BlocInventaire";
+import BlocVol from "./hud/BlocVol";
+import BlocZone from "./hud/BlocZone";
 import BlocVehicule from "./hud/BlocVehicule";
 import BlocVie from "./hud/BlocVie";
 import CoinHud from "./hud/CoinHud";
 import EcranMort from "./hud/EcranMort";
 import FilEliminations from "./hud/FilEliminations";
 import FinDeMatch from "./hud/FinDeMatch";
+import FinDePartieBR, { TableauPartieBr } from "./hud/FinDePartieBR";
 import FinDePartieZombies from "./hud/FinDePartieZombies";
 import GrandeCarte from "./hud/GrandeCarte";
 import IconeSort from "./hud/IconeSort";
@@ -38,6 +43,8 @@ import ToastCentre from "./hud/ToastCentre";
 import Viseur from "./hud/Viseur";
 import ZoneVive, { useFileVive } from "./hud/ZoneVive";
 import { useEphemere, useEtatZombies, useProgressionReanimation } from "./hud/useEtatZombies";
+import { useEtatBR, useProgressionUsage } from "./hud/useEtatBR";
+import type { EntreesSpectateurBr } from "./hud/EcranMort";
 import { AnnonceZombies, AtoutsZombies, BonusActifs, IntroZombies, MancheCraie, NoteZombies, ObjectifZombies } from "./hud/PanneauZombies";
 import { useHudLive } from "./hud/useHudLive";
 import { useMessagesVifs } from "./hud/useMessagesVifs";
@@ -63,8 +70,17 @@ function lireAideVue(): boolean {
  * Zombies (`hud.mode === "zombies"`, v5) : `BarreVague` remplace `BarreMatch`, `BlocArgent` s'empile au-dessus de la vie, `InvitesAction` couvre achats et
  * relèves, `BandeauManche` annonce chaque manche, `EcranMort` devient « À terre » puis « Éliminé » (pas de killcam), `TableauZombies` remplace le tableau
  * de l'arène et `FinDePartieZombies` remplace `FinDeMatch`. L'état de la partie est lu toutes les 150 ms (`JeuHandle.zombies()`), jamais à 60 Hz.
+ * Battle Royale (`hud.mode === "br"`, v8) : `BarreBR` (en vie, éliminations, palier) remplace `BarreMatch`, `BlocZone` écrit la tempête et l'alerte « HORS ZONE »,
+ * `BlocVol` guide le saut et le parachute (ni viseur ni arme en vol), `BlocInventaire` les soins, `EcranMort` devient la mort définitive puis `EcranSpectateur`
+ * (mini-carte, grande carte et scores restent), `FinDePartieBR` remplace `FinDeMatch` ; pas d'entracte, de frappe aérienne, d'Elsa ni de chat vocal. L'état
+ * de la partie est lu toutes les 150 ms (`JeuHandle.br()`), jamais à 60 Hz.
  */
-export default function HudArene(p: PropsHudArene) {
+export type PropsHudAreneBr = PropsHudArene & {
+  /** (BR) boutons Précédent / Suivant de l'écran du spectateur (absent : les touches suffisent) */
+  surSpectateur?(sens: "precedent" | "suivant"): void;
+};
+
+export default function HudArene(p: PropsHudAreneBr) {
   const { hud, monId, joueurs, match, derniereMort } = p;
   const disposition = useDisposition();
   const [aideVue, setAideVue] = useState(lireAideVue);
@@ -117,12 +133,24 @@ export default function HudArene(p: PropsHudArene) {
   const mesAtoutsZ = partieZ?.joueurs.find((j) => j.id === monId)?.atouts ?? [];
   const refReanim = useRef<HTMLSpanElement | null>(null);
   useProgressionReanimation(p.live, refReanim, zombies && !!hud?.reanime);
+  // ---- Battle Royale : état de la partie lu à intervalle (zone, vol, soins, spectateur) ----
+  const br = hud?.mode === "br";
+  const ebr = useEtatBR(p.etatBr, br);
+  const partieBr = p.br ?? ebr?.partie ?? null;
+  const phaseVol = hud?.phaseVol ?? ebr?.phaseVol ?? "";
+  const enVol = br && (phaseVol === "avion" || phaseVol === "libre" || phaseVol === "voile" || phaseVol === "attenteAtterri");
+  /** mort définitive après la killcam (ou sans killcam : tempête, abandon) */
+  const spectateur = br && !!hud?.mort && hud.killcamPhase === "";
+  const finBr = br && partieBr?.phase === "fin";
+  const refUsage = useRef<HTMLDivElement | null>(null);
+  useProgressionUsage(p.live, refUsage, br && !!hud?.usageSoin);
   const { toast, surPalier, afficher } = useMessagesVifs({
     hud, derniereMort, annonces: p.annonces, bonus: p.bonus, match,
     toucheSpeciale: toucheDe(p.touches, "armeSpeciale", disposition), pousser: vive.pousser, refusAchat,
   });
   const synthese = useMemo(() => syntheseMatch(joueurs, monId, match?.objectif ?? JEU.objectifKills), [joueurs, monId, match?.objectif]);
-  const frappeDisponible = synthese.serie >= 5 || !!hud?.frappeDisponible;
+  // pas de frappe aérienne en Battle Royale (la série de la présence ne compte pas)
+  const frappeDisponible = !br && (synthese.serie >= 5 || !!hud?.frappeDisponible);
 
   useToucheAppui(verrouille && frappeDisponible, p.touches.frappeAerienne, () => {
     setCarteForcee((prev) => !prev);
@@ -142,7 +170,7 @@ export default function HudArene(p: PropsHudArene) {
   // principale / secondaire passent à l'arme suivante de leur catégorie (l'équipement est celui de la prochaine apparition).
   const equipRef = useRef({ equipement: p.equipement, sur: p.surEquipement });
   equipRef.current = { equipement: p.equipement, sur: p.surEquipement };
-  const choixEquipementActif = verrouille && !!hud && !zombies && (hud.mort || match?.phase === "entracte");
+  const choixEquipementActif = verrouille && !!hud && !zombies && !br && (hud.mort || match?.phase === "entracte");
   useToucheAppui(choixEquipementActif, p.touches.armePrincipale, () => {
     const { equipement, sur } = equipRef.current;
     sur(armeSuivanteDuGroupe(groupePrincipale(), equipement.principale), equipement.secondaire);
@@ -166,13 +194,15 @@ export default function HudArene(p: PropsHudArene) {
   if (!hud) return null;
 
   const t = (a: Action) => toucheDe(p.touches, a, disposition);
-  const entracte = !zombies && match?.phase === "entracte";
+  const entracte = !zombies && !br && match?.phase === "entracte";
   const aideEquipement = aideChoixEquipement(t("armePrincipale"), t("armeSecondaire"));
   /** zombies : partie perdue, le bilan occupe l'écran (la souris est rendue, le menu pause ne s'y superpose pas) */
   const finZ = zombies && partieZ?.phase === "fin";
-  const pause = !hud.verrouille && !finZ;
+  const pause = !hud.verrouille && !finZ && !finBr;
   const premiereFois = pause && !dejaVerrouille.current;
-  const combat = !hud.mort && !entracte && !finZ;
+  const combat = !hud.mort && !entracte && !finZ && !finBr;
+  /** blocs de lecture d'une partie en cours : joueur vivant ou spectateur */
+  const vue = combat || spectateur;
   const couteau = estMelee(hud.arme);
   const conduite = hud.vehicule && hud.tireInterdit;
   const inviteRecharge = combat && !hud.titan && !couteau && !hud.tireInterdit && !hud.recharge && ["critique", "vide"].includes(niveauMunitions(hud.munitions, hud.chargeur));
@@ -181,9 +211,18 @@ export default function HudArene(p: PropsHudArene) {
   const effetsReduits = p.reglagesHud.interface.effets === "reduits";
   const degats = p.evenements.filter((e): e is Extract<typeof e, { type: "degat" }> => e.type === "degat");
 
+  /** mort définitive du Battle Royale : place, joueur suivi et commandes du spectateur (touches réelles) */
+  const entreesSpectateur: EntreesSpectateurBr | undefined = br ? {
+    place: ebr?.place ?? null, total: partieBr?.total ?? 0, suiviId: ebr?.suivi ?? null, joueurs,
+    toucheSuivant: t("spectateurSuivant"), touchePrecedent: t("spectateurPrecedent"),
+    surSuivant: p.surSpectateur ? () => p.surSpectateur?.("suivant") : undefined,
+    surPrecedent: p.surSpectateur ? () => p.surSpectateur?.("precedent") : undefined,
+    surQuitter: p.surQuitter,
+  } : undefined;
+
   const miniMap = coinMap === "off" ? null : (
-    <div className={styles.miniMapCadre} hidden={hud.mort}>
-      <MiniMap scene={p.scene ?? null} radar={radar} reglages={reglMap} masque={hud.mort} toucheCarte={t("carte") || "M"} effetsReduits={effetsReduits} />
+    <div className={styles.miniMapCadre} hidden={hud.mort && !spectateur}>
+      <MiniMap scene={p.scene ?? null} radar={radar} reglages={reglMap} masque={hud.mort && !spectateur} toucheCarte={t("carte") || "M"} effetsReduits={effetsReduits} />
     </div>
   );
 
@@ -206,11 +245,11 @@ export default function HudArene(p: PropsHudArene) {
 
       {combat && (
         <>
-          {hud.lunette
+          {enVol ? null : hud.lunette
             ? <Lunette zoomX={hud.zoomX} distanceVisee={hud.distanceVisee} niveau={hud.zoomNiveau} niveaux={hud.zoomNiveaux} toucheZoom={t("zoomLunette")} />
             : <Viseur protege={hud.protege} conduite={conduite} couteau={couteau} recharge={hud.recharge} refAnneau={refAnneau} ecart={hud.ecartViseur} />}
           <RetoursTouche chiffres={chiffres} marqueur={marqueur} kill={kill} />
-          {!zombies && (
+          {!zombies && !br && (
             <>
               <BarreMatch
                 rang={synthese.rang} exAequo={synthese.exAequo} mesKills={synthese.mesKills} serie={synthese.serie}
@@ -229,13 +268,13 @@ export default function HudArene(p: PropsHudArene) {
           />
           {toast && <ToastCentre texte={toast} />}
           <div className={styles.milieu}>
-            {hud.voix && <BlocVoix etat={hud.voix} parlants={hud.voixParlants} mode={p.voix.mode} toucheParler={t("parler")} />}
+            {hud.voix && !br && <BlocVoix etat={hud.voix} parlants={hud.voixParlants} mode={p.voix.mode} toucheParler={t("parler")} />}
             {hud.vehicule ? (
               <BlocVehicule
                 siege={hud.siege} vehiculeId={hud.vehiculeId} sieges={p.sieges} joueurs={joueurs} monId={monId}
                 toucheInteragir={t("interagir")} toucheSiege={t("siege")} refKmh={refKmh}
               />
-            ) : !hud.titan ? (
+            ) : !hud.titan && !enVol ? (
               <p className={styles.course}>COURSE <span ref={refVitesse} /></p>
             ) : null}
             {!pause && !hud.titan && <p className={styles.aideBas} aria-hidden="true">{t("scores")} : scores · {t("carte")} : carte</p>}
@@ -257,6 +296,23 @@ export default function HudArene(p: PropsHudArene) {
       {zombies && !finZ && !pause && introZ && <IntroZombies />}
       {zombies && !finZ && !pause && ez?.note != null && <NoteZombies id={ez.note} touche={t("interagir")} />}
 
+      {/* Battle Royale : en vie, éliminations, palier, tempête (aussi pour le spectateur), vol et soins */}
+      {br && !finBr && partieBr && (partieBr.phase === "decompte" || partieBr.phase === "vol" || partieBr.phase === "jeu") && (
+        <BarreBR
+          phase={partieBr.phase} vivants={partieBr.vivants} total={partieBr.total} kills={synthese.mesKills}
+          palier={partieBr.zone?.palier ?? 0} nbPaliers={partieBr.zone?.nbPaliers ?? 0}
+        />
+      )}
+      {br && !finBr && vue && (ebr?.zone ?? partieBr?.zone) && (
+        <BlocZone
+          zone={ebr?.zone ?? partieBr?.zone ?? null} maintenantServeur={maintenantServeur}
+          distanceBord={ebr?.distanceBord ?? 0} capCentre={ebr?.capCentre ?? 0} horsZone={!!hud.horsZone && !spectateur}
+        />
+      )}
+      {combat && enVol && (
+        <BlocVol phaseVol={phaseVol} altitude={hud.altitude ?? 0} vitesseChute={hud.vitesseChute ?? 0} toucheSaut={t("saut")} />
+      )}
+
       {/* cockpit du titan (v3) : sous tout le reste du HUD */}
       {combat && hud.titan && p.monstres && <CockpitTitan monstres={p.monstres} maintenantServeur={maintenantServeur} />}
       {/* événements (v3) : visibles aussi pendant la mort (le Truck vient de vous écraser : on veut savoir combien de temps il roule encore) */}
@@ -264,7 +320,7 @@ export default function HudArene(p: PropsHudArene) {
 
       <CoinHud coin="hg" coinMinimap={coinMap} miniMap={miniMap} />
       <CoinHud coin="hd" coinMinimap={coinMap} miniMap={miniMap}>
-        {combat && <FilEliminations fil={p.fil} annonces={p.annonces} />}
+        {vue && <FilEliminations fil={p.fil} annonces={p.annonces} />}
       </CoinHud>
       <CoinHud coin="bg" coinMinimap={coinMap} miniMap={miniMap}>
         {zombies && !finZ && <MancheCraie manche={partieZ?.manche ?? 0} truck={!!partieZ?.mancheTruck} />}
@@ -280,16 +336,22 @@ export default function HudArene(p: PropsHudArene) {
           </div>
         )}
         {combat && hud.sort && !hud.titan && <IconeSort touche={t("invoquer")} />}
-        {combat && !hud.titan && (
+        {combat && br && !enVol && (
+          <BlocInventaire
+            bandage={hud.bandages ?? ebr?.bandage ?? 0} potion={hud.potions ?? ebr?.potion ?? 0} usage={hud.usageSoin ?? ""}
+            toucheBandage={t("soigner")} touchePotion={t("potion")} toucheLacher={t("lacher")} refUsage={refUsage}
+          />
+        )}
+        {vue && !hud.titan && (
           <BlocVie
             pv={hud.pv} bouclier={hud.bouclier} regen={hud.regen} accroupi={hud.accroupi} glisse={hud.glisse} mur={hud.mur}
             protegeRestant={hud.protegeRestant} rupture={rupture} refTraitRegen={refRegen}
-            {...(zombies ? { pvMax: ez?.pvMax ?? 100, regenParS: 60 } : {})}
+            {...(zombies ? { pvMax: ez?.pvMax ?? 100, regenParS: 60 } : br ? { pvMax: 100, regenParS: 0 } : {})}
           />
         )}
       </CoinHud>
       <CoinHud coin="bd" coinMinimap={coinMap} miniMap={miniMap}>
-        {combat && !hud.titan && (
+        {vue && !hud.titan && !enVol && (
           <BlocArmes
             arme={hud.arme} slot={hud.slot} slots={hud.slots} munitions={hud.munitions} chargeur={hud.chargeur} reserve={hud.reserve}
             recharge={hud.recharge} degainage={hud.degainage} tireInterdit={hud.tireInterdit} bonusVitesse={hud.bonusVitesse}
@@ -300,14 +362,15 @@ export default function HudArene(p: PropsHudArene) {
       </CoinHud>
 
       {!hud.connecte && <p className={`${styles.plaque} ${styles.reseau}`} role="status">Connexion perdue, reconnexion…</p>}
-      {!aideVue && hud.verrouille && !hud.mort && <AideCommandes touches={p.touches} disposition={disposition} mode={zombies ? "zombies" : "arene"} />}
+      {!aideVue && hud.verrouille && !hud.mort && <AideCommandes touches={p.touches} disposition={disposition} mode={zombies ? "zombies" : br ? "br" : "arene"} />}
 
       {/* mort : rejeu puis carte du tueur (EcranMort), sous le menu pause ; zombies : « À terre » puis « Éliminé » */}
-      {hud.mort && !pause && !entracte && !finZ && (
+      {hud.mort && !pause && !entracte && !finZ && !finBr && (
         <EcranMort
           hud={hud} derniereMort={derniereMort} killcamInfo={p.killcamInfo} degatsAuTueur={p.degatsAuTueur}
           touches={p.touches} equipement={p.equipement} surEquipement={p.surEquipement} surPasserKillcam={p.surPasserKillcam}
           joueurs={joueurs} aideEquipement={aideEquipement} terreFinT={ez?.terreFinT} maintenantServeur={maintenantServeur}
+          br={entreesSpectateur}
         />
       )}
 
@@ -319,6 +382,14 @@ export default function HudArene(p: PropsHudArene) {
         />
       )}
 
+      {/* Battle Royale : partie terminée (TOP 1, classement, palmarès, Rejouer / Quitter) */}
+      {finBr && partieBr && (
+        <FinDePartieBR
+          partie={partieBr} monId={monId} statsBr={p.statsBr} maintenantServeur={maintenantServeur}
+          surRejouer={p.surRejouer ?? p.surQuitter} surQuitter={p.surQuitterVue ?? p.surQuitter}
+        />
+      )}
+
       {/* entracte (podium) ; Tab ouvre le tableau complet par-dessus */}
       {entracte && !tab && (
         <FinDeMatch
@@ -326,8 +397,10 @@ export default function HudArene(p: PropsHudArene) {
           maintenantServeur={maintenantServeur} equipement={p.equipement} surEquipement={p.surEquipement} aideEquipement={aideEquipement}
         />
       )}
-      {tab && !finZ && (zombies && partieZ ? (
+      {tab && !finZ && !finBr && (zombies && partieZ ? (
         <TableauZombies partie={partieZ} monId={monId} />
+      ) : br ? (
+        <TableauPartieBr joueurs={joueurs} monId={monId} vivants={partieBr?.vivants ?? 0} total={partieBr?.total ?? 0} />
       ) : (
         <TableauScores
           joueurs={joueurs} stats={p.stats} classement={entracte ? p.classement : null} monId={monId} match={match}
@@ -337,7 +410,7 @@ export default function HudArene(p: PropsHudArene) {
       <GrandeCarte
         scene={p.scene ?? null}
         radar={radar}
-        visible={(carteMaintenue || carteForcee) && !hud.mort && !pause}
+        visible={(carteMaintenue || carteForcee) && (!hud.mort || spectateur) && !pause}
         toucheCarte={t("carte") || "M"}
         effetsReduits={effetsReduits}
         frappeDisponible={frappeDisponible}
@@ -355,7 +428,7 @@ export default function HudArene(p: PropsHudArene) {
           accroupiBascule={p.accroupiBascule} surAccroupiBascule={p.surAccroupiBascule} actionsSansTouche={p.actionsSansTouche}
           voix={p.voix} surVoix={p.surVoix} voixErreur={p.voixErreur} toucheParler={t("parler")}
           touches={p.touches} surTouches={p.surTouches} reglagesHud={p.reglagesHud} surReglagesHud={p.surReglagesHud}
-          mode={zombies ? "zombies" : "arene"}
+          mode={zombies ? "zombies" : br ? "br" : "arene"} elimine={spectateur}
         />
       )}
     </div>

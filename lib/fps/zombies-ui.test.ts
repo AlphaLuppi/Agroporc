@@ -242,9 +242,9 @@ describe("bilan par joueur", () => {
 });
 
 describe("modèle du lobby des zombies", () => {
-  it("deux cartes de mode, l'arène d'abord", () => {
-    expect(CARTES_MODE.map((c) => c.mode)).toEqual(["arene", "zombies"]);
-    expect(CARTES_MODE.map((c) => c.titre)).toEqual(["Arène", "Zombies tigres"]);
+  it("trois cartes de mode, l'arène d'abord", () => {
+    expect(CARTES_MODE.map((c) => c.mode)).toEqual(["arene", "zombies", "br"]);
+    expect(CARTES_MODE.map((c) => c.titre)).toEqual(["Arène", "Zombies tigres", "Battle Royale"]);
   });
 
   it("compteurs : tiret sans message, effectifs, manche, salle pleine", () => {
@@ -304,10 +304,10 @@ describe("modèle du lobby des zombies", () => {
 describe("ChoixMode", () => {
   const rendre = (plus: Record<string, unknown> = {}) => renderToStaticMarkup(createElement(ChoixMode, { mode: "arene", salons, surChoisir: () => {}, ...plus } as never));
 
-  it("deux radios natives dans un groupe, la carte demandée cochée", () => {
+  it("trois radios natives dans un groupe, la carte demandée cochée", () => {
     const html = rendre({ mode: "zombies" });
     expect(html).toContain('role="radiogroup"');
-    expect(html.match(/type="radio"/g)).toHaveLength(2);
+    expect(html.match(/type="radio"/g)).toHaveLength(3);
     expect(html.match(/checked=""/g)).toHaveLength(1);
     expect(html).toMatch(/value="zombies"[^>]*checked=""|checked=""[^>]*value="zombies"/);
     expect(html).toContain("Mode de jeu");
@@ -322,9 +322,34 @@ describe("ChoixMode", () => {
     expect(rendre({ salons: null })).toContain("—");
   });
 
+  it("Battle Royale : troisième carte avec son compteur, radio cochable, tiret sans `br` dans salons", () => {
+    const avecBr: Salons = { ...salons, br: { phase: "lobby", joueurs: 7, vivants: 0 } };
+    const html = rendre({ mode: "br", salons: avecBr });
+    expect(html).toContain("Battle Royale");
+    expect(html).toContain("Lobby · 7/50");
+    expect(html).toContain("un seul survivant");
+    expect(html).toMatch(/value="br"[^>]*checked=""|checked=""[^>]*value="br"/);
+    expect(html.match(/checked=""/g)).toHaveLength(1);
+    // serveur plus ancien : `salons` sans `br` -> le compteur BR est un tiret, jamais celui des zombies
+    const ancien = rendre({ salons });
+    expect(ancien).not.toContain("Partie en cours");
+    expect(ancien).toMatch(/Battle Royale<\/span><span[^>]*>—<\/span>/);
+  });
+
+  it("Battle Royale en cours : la carte annonce les joueurs en vie", () => {
+    const html = rendre({ salons: { ...salons, br: { phase: "jeu", joueurs: 30, vivants: 12, palier: 3 } } });
+    expect(html).toContain("Partie en cours · 12 en vie");
+  });
+
   it("hors connexion : le groupe est désactivé", () => {
     expect(rendre({ desactive: true })).toMatch(/<fieldset[^>]*disabled/);
     expect(rendre()).not.toMatch(/<fieldset[^>]*disabled/);
+  });
+
+  it("écran tactile : le Battle Royale est désactivé comme les zombies", () => {
+    const html = rendre({ indisponibles: ["zombies", "br"] });
+    expect(html).toMatch(/<input[^>]*value="br"[^>]*disabled|<input[^>]*disabled[^>]*value="br"/);
+    expect(html.match(new RegExp(TEXTE_MODE_INDISPONIBLE, "g"))).toHaveLength(2);
   });
 
   it("écran tactile : la radio des zombies est désactivée et le dit, l'arène reste choisissable", () => {

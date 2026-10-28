@@ -1,6 +1,6 @@
 /**
  * Marqueurs dynamiques de la mini-map et de la grande carte (canvas 2D, partagés) : moi + cône de vue, joueurs vus, tirs entendus,
- * Elsa et son cadeau, voitures PNJ et conduisibles. Aucune allocation par image (une sortie de projection réutilisée).
+ * Elsa et son cadeau, voitures PNJ et conduisibles, tempête du Battle Royale. Aucune allocation par image (une sortie de projection réutilisée).
  * Spec : docs/superpowers/specs/2026-10-23-arene-hud-design.md (§4.3)
  */
 import { CONE_VUE, chevronBord } from "@/lib/fps/minimap";
@@ -387,10 +387,48 @@ function dessinerFrappeZone(ctx: CanvasRenderingContext2D, f: RadarFrame, p: Par
   ctx.restore();
 }
 
+/**
+ * Tempête du Battle Royale (v8) : l'extérieur du cercle courant est voilé de danger (règle pair-impair sur le canvas entier), le cercle courant
+ * est cerclé de danger, le prochain cercle suit en tirets blancs. Les cercles ne tournent pas : seuls leurs centres passent par `proj`.
+ * Dessinée avant les joueurs et le marqueur « moi », qui restent lisibles dans la tempête.
+ */
+function dessinerZoneBr(ctx: CanvasRenderingContext2D, f: RadarFrame, p: ParamsMarqueurs): void {
+  const z = f.zoneBr;
+  if (!z) return;
+  const { u, pxParM, palette } = p;
+  p.proj(z.x, z.z, sortie);
+  const cx = sortie.x, cy = sortie.y, r = Math.max(0, z.r) * pxParM;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, 0, p.largeur, p.hauteur);
+  if (r > 0) { ctx.moveTo(cx + r, cy); ctx.arc(cx, cy, r, 0, Math.PI * 2); }
+  ctx.fillStyle = avecAlpha(palette.danger, 0.22);
+  ctx.fill("evenodd");
+  if (r > 0) {
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.strokeStyle = palette.danger;
+    ctx.lineWidth = Math.max(2, 2 * u);
+    ctx.stroke();
+  }
+  p.proj(z.prochainX, z.prochainZ, sortie);
+  const rp = Math.max(0, z.prochainR) * pxParM;
+  if (rp > 0) {
+    ctx.beginPath();
+    ctx.arc(sortie.x, sortie.y, rp, 0, Math.PI * 2);
+    ctx.strokeStyle = palette.blanc;
+    ctx.lineWidth = Math.max(1, u);
+    ctx.setLineDash([4 * u, 3 * u]);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 /** Dessine tous les marqueurs dynamiques du `RadarFrame` (ordre : PNJ, voitures, échos, Elsa, portes fermées, tigres, joueurs, moi). */
 export function dessinerMarqueurs(ctx: CanvasRenderingContext2D, f: RadarFrame, p: ParamsMarqueurs): void {
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
+  dessinerZoneBr(ctx, f, p);
   dessinerFumigenes(ctx, f, p);
   dessinerFrappeZone(ctx, f, p);
   dessinerBusC3(ctx, f, p);

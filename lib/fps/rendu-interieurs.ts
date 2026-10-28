@@ -5,6 +5,7 @@
  * lumineuses à `PLAFOND_M`, toit à la hauteur du bâtiment, mobilier par genre. Éclairage : secours rouge qui pulse tant que le courant est
  * coupé, lumière chaude une fois le disjoncteur réarmé (`majCourant`). Les portes payantes restent au décor (elles s'effondrent avec lui).
  * Aucun test vitest (three) : la géométrie vient de `zombies-carte.ts` (testée), les régressions se voient aux captures.
+ * Le Battle Royale (`br-carte.ts`) réutilise ce rendu pour ses 20 bâtiments creusés, toit ouvert (`OptionsInterieurs`).
  * Spec : docs/superpowers/specs/2026-10-28-zombies-bo1-design.md (« Carte « Service de midi » »)
  */
 import * as THREE from "three";
@@ -25,6 +26,17 @@ const C_DESSUS = new THREE.Color(0x0a0d12);
 const C_ARETES = 0x9be9ff;
 const C_SECOURS = new THREE.Color(0xff2a1a);
 const C_LUMIERE = new THREE.Color(0xffe3b0);
+
+/**
+ * Réglages du rendu des intérieurs. `batiments` : index des bâtiments creusés à dessiner (défaut : `BATIMENTS_CREUX`, les quatre de la carte
+ * zombies). `sansPlafond` : toit ouvert (carte du Battle Royale), ni faux plafond ni toit, on voit le ciel en fil de fer.
+ */
+export interface OptionsInterieurs {
+  sansPlafond?: boolean;
+  batiments?: readonly number[];
+  /** Éclairage chaud dès la création (carte sans disjoncteur) au lieu du secours rouge qui pulse ; `majCourant` reste utilisable. */
+  courant?: boolean;
+}
 
 export interface RenduInterieurs {
   /** courant rétabli : passage progressif (≈ 1,5 s) du secours rouge à la lumière */
@@ -130,7 +142,9 @@ function meuble(p: PieceSynth, pos: number[], col: number[], led: number[]): voi
   }
 }
 
-export function creerRenduInterieurs(scene: THREE.Scene, data: SceneData, pieces: readonly PieceSynth[]): RenduInterieurs {
+export function creerRenduInterieurs(scene: THREE.Scene, data: SceneData, pieces: readonly PieceSynth[], options: OptionsInterieurs = {}): RenduInterieurs {
+  const batiments: readonly number[] = options.batiments ?? BATIMENTS_CREUX;
+  const sansPlafond = options.sansPlafond === true;
   const racine = new THREE.Group();
   racine.name = "interieurs";
   scene.add(racine);
@@ -140,7 +154,7 @@ export function creerRenduInterieurs(scene: THREE.Scene, data: SceneData, pieces
   const pos: number[] = [], col: number[] = [];
   const posM: number[] = [], colM: number[] = [], leds: number[] = [];
   const centres = new Map<number, Vec2>();
-  for (const b of BATIMENTS_CREUX) centres.set(b, data.buildings[b].c);
+  for (const b of batiments) centres.set(b, data.buildings[b].c);
   for (const p of pieces) {
     if (p.batiment === undefined) continue;
     const h = data.buildings[p.batiment]?.h ?? p.h;
@@ -152,8 +166,8 @@ export function creerRenduInterieurs(scene: THREE.Scene, data: SceneData, pieces
   }
   const geoMurs = geometrie(pos, col);
   const matMurs = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 2 });
-  const uLumiere = { value: 0 };
-  const uSecours = { value: 1 };
+  const uLumiere = { value: options.courant ? 1 : 0 };
+  const uSecours = { value: options.courant ? 0 : 1 };
   // plinthe et cimaise sur l'enduit, lueur du plafond qui descend sur les murs (rouge de secours ou chaude)
   matMurs.onBeforeCompile = (sh) => {
     sh.uniforms.uLumiere = uLumiere;
@@ -201,15 +215,16 @@ export function creerRenduInterieurs(scene: THREE.Scene, data: SceneData, pieces
   }
 
   // ---- sols, plafonds, toits ----
-  const uSol = { value: 0 };
+  const uSol = { value: options.courant ? 1 : 0 };
   const geoSols: THREE.BufferGeometry[] = [], geoPlafonds: THREE.BufferGeometry[] = [], geoToits: THREE.BufferGeometry[] = [];
-  for (const b of BATIMENTS_CREUX) {
+  for (const b of batiments) {
     const bat = data.buildings[b];
     const forme = shapeFrom(bat.r, bat.holes);
     const sol = new THREE.ShapeGeometry(forme);
     sol.rotateX(-Math.PI / 2);
     sol.translate(0, 0.012, 0);
     geoSols.push(sol);
+    if (sansPlafond) continue;
     const plafond = new THREE.ShapeGeometry(forme);
     plafond.rotateX(-Math.PI / 2);
     plafond.translate(0, Math.min(PLAFOND_M, bat.h - 0.3), 0);
@@ -219,7 +234,13 @@ export function creerRenduInterieurs(scene: THREE.Scene, data: SceneData, pieces
     toit.translate(0, bat.h, 0);
     geoToits.push(toit);
   }
-  const fusion = (l: THREE.BufferGeometry[]) => { const g = mergeGeometries(l, false)!; for (const x of l) x.dispose(); aDisposer.push(g); return g; };
+  const fusion = (l: THREE.BufferGeometry[]) => {
+    if (!l.length) return null;
+    const g = mergeGeometries(l, false)!;
+    for (const x of l) x.dispose();
+    aDisposer.push(g);
+    return g;
+  };
   const gSol = fusion(geoSols), gPlafond = fusion(geoPlafonds), gToit = fusion(geoToits);
 
   const matSol = new THREE.MeshBasicMaterial({ color: 0x0d1116, side: THREE.DoubleSide });
@@ -238,7 +259,8 @@ export function creerRenduInterieurs(scene: THREE.Scene, data: SceneData, pieces
       `);
   };
   matSol.customProgramCacheKey = () => "pdj-interieurs-sol";
-  racine.add(new THREE.Mesh(gSol, matSol));
+  if (gSol) racine.add(new THREE.Mesh(gSol, matSol));
+  aDisposer.push(matSol);
 
   // faux plafond : dalles de 0,6 m, une dalle lumineuse sur cinq ; lumière de secours rouge qui pulse tant que le courant est coupé
   const uPulse = { value: 0 };
@@ -263,17 +285,22 @@ export function creerRenduInterieurs(scene: THREE.Scene, data: SceneData, pieces
       `);
   };
   matPlafond.customProgramCacheKey = () => "pdj-interieurs-plafond";
-  racine.add(new THREE.Mesh(gPlafond, matPlafond));
+  aDisposer.push(matPlafond);
+  if (gPlafond) racine.add(new THREE.Mesh(gPlafond, matPlafond));
 
+  // toit à la hauteur du bâtiment (absent du Battle Royale : toit ouvert)
   const matToit = new THREE.MeshBasicMaterial({ color: C_FACADE, side: THREE.DoubleSide });
-  racine.add(new THREE.Mesh(gToit, matToit));
-  const aretesToit = new THREE.LineSegments(new THREE.EdgesGeometry(gToit, 20), new THREE.LineBasicMaterial({ color: C_ARETES, transparent: true, opacity: 0.55 }));
-  racine.add(aretesToit);
-  aDisposer.push(matSol, matPlafond, matToit, aretesToit.geometry, aretesToit.material as THREE.Material);
+  aDisposer.push(matToit);
+  if (gToit) {
+    racine.add(new THREE.Mesh(gToit, matToit));
+    const aretesToit = new THREE.LineSegments(new THREE.EdgesGeometry(gToit, 20), new THREE.LineBasicMaterial({ color: C_ARETES, transparent: true, opacity: 0.55 }));
+    racine.add(aretesToit);
+    aDisposer.push(aretesToit.geometry, aretesToit.material as THREE.Material);
+  }
 
   // ---- éclairage ----
-  let courant = false;
-  let lumiere = 0;
+  let courant = options.courant === true;
+  let lumiere = courant ? 1 : 0;
   return {
     majCourant(on) { courant = on; },
     maj(t, dt) {

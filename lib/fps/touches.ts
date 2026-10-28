@@ -15,7 +15,8 @@ export type Action =
   | "accroupi" | "interagir" | "siege"
   | "carte" | "minimapCoin" | "passer"
   | "zoomLunette" | "parler" | "invoquer"
-  | "fumigene" | "frappeAerienne";
+  | "fumigene" | "frappeAerienne"
+  | "soigner" | "potion" | "lacher" | "spectateurSuivant" | "spectateurPrecedent";
 
 /**
  * Les 10 actions de la v1 qui restent (`arme1..arme4` ont disparu). Leurs touches enregistrées sont relues AVANT celles des
@@ -27,26 +28,31 @@ export const ACTIONS_V1: readonly Action[] = [
 
 /**
  * Actions apparues avec la v2 (équipement, accroupi, véhicules), le HUD (grande carte, coin de la mini-map), la v3 (niveau de zoom
- * de la lunette, appuyer pour parler au chat vocal) puis les tigres largués (sort d'invocation).
+ * de la lunette, appuyer pour parler au chat vocal), les tigres largués (sort d'invocation) puis le Battle Royale (v8 : bandage, potion de
+ * bouclier, lâcher une arme, changer de joueur suivi une fois mort).
  */
 export const ACTIONS_NOUVELLES: readonly Action[] = [
   "armePrincipale", "armeSecondaire", "couteau", "armeSpeciale", "armePrecedente", "couteauRapide",
   "accroupi", "interagir", "siege", "carte", "minimapCoin", "passer", "zoomLunette", "parler", "invoquer",
   "fumigene", "frappeAerienne",
+  "soigner", "potion", "lacher", "spectateurSuivant", "spectateurPrecedent",
 ];
 
 /**
- * Actions du contexte « mort » (killcam). Elles ne se disputent une touche qu'entre elles : Espace est à la fois « Sauter » (en vie) et
- * « Passer le rejeu » (mort), sans conflit puisque les deux ne sont jamais actives ensemble.
+ * Actions du contexte « mort » (killcam, puis spectateur du Battle Royale). Elles ne se disputent une touche qu'entre elles : Espace est à la
+ * fois « Sauter » (en vie) et « Passer le rejeu » (mort), les flèches sont à la fois « Aller à gauche / droite » (en vie) et « Joueur
+ * précédent / suivant » (mort), sans conflit puisque les deux ne sont jamais actives ensemble.
  */
-export const ACTIONS_MORT: readonly Action[] = ["passer"];
+export const ACTIONS_MORT: readonly Action[] = ["passer", "spectateurSuivant", "spectateurPrecedent"];
 const contexteDe = (a: Action): "mort" | "vie" => (ACTIONS_MORT.includes(a) ? "mort" : "vie");
 
 /** Ordre de priorité du dédoublonnage : les actions v1, puis les nouvelles. */
 export const ACTIONS: readonly Action[] = [...ACTIONS_V1, ...ACTIONS_NOUVELLES];
 
 /** Actions qui peuvent rester sans touche sans que ce soit un problème (pas d'avertissement dans le menu pause). */
-export const ACTIONS_FACULTATIVES: readonly Action[] = ["minimapCoin", "passer", "zoomLunette", "parler", "fumigene", "frappeAerienne"];
+export const ACTIONS_FACULTATIVES: readonly Action[] = [
+  "minimapCoin", "passer", "zoomLunette", "parler", "fumigene", "frappeAerienne", "soigner", "potion", "lacher", "spectateurSuivant", "spectateurPrecedent",
+];
 
 export const LIBELLES_ACTIONS: Record<Action, string> = {
   avant: "Avancer",
@@ -76,6 +82,11 @@ export const LIBELLES_ACTIONS: Record<Action, string> = {
   invoquer: "Invoquer le tigre (sort gagné)",
   fumigene: "Lancer un fumigène",
   frappeAerienne: "Cibler la frappe aérienne (série de 5)",
+  soigner: "Battle Royale : utiliser un bandage",
+  potion: "Battle Royale : boire une potion de bouclier",
+  lacher: "Battle Royale : lâcher l'arme en main",
+  spectateurSuivant: "Spectateur : joueur suivant",
+  spectateurPrecedent: "Spectateur : joueur précédent",
 };
 
 /** Regroupement du menu pause : chaque action y figure une seule fois. */
@@ -84,6 +95,7 @@ export const GROUPES_ACTIONS: { titre: string; actions: Action[] }[] = [
   { titre: "Combat", actions: ["tir", "visee", "recharger", "zoomLunette", "invoquer", "fumigene", "frappeAerienne"] },
   { titre: "Équipement", actions: ["armePrincipale", "armeSecondaire", "couteau", "armeSpeciale", "armePrecedente", "couteauRapide"] },
   { titre: "Véhicule", actions: ["interagir", "siege"] },
+  { titre: "Battle Royale", actions: ["soigner", "potion", "lacher", "spectateurSuivant", "spectateurPrecedent"] },
   { titre: "Divers", actions: ["scores", "carte", "minimapCoin", "passer", "parler"] },
 ];
 
@@ -127,6 +139,12 @@ export function touchesParDefaut(): ConfigTouches {
     invoquer: ["KeyG", null],
     fumigene: ["KeyB", null],
     frappeAerienne: ["KeyK", null],
+    // Battle Royale (v8) : H, J et U sont libres ; les flèches du spectateur ne gênent pas « gauche » / « droite » (contexte mort)
+    soigner: ["KeyH", null],
+    potion: ["KeyJ", null],
+    lacher: ["KeyU", null],
+    spectateurSuivant: ["ArrowRight", null],
+    spectateurPrecedent: ["ArrowLeft", null],
   };
 }
 
