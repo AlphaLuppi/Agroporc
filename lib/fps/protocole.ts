@@ -21,9 +21,10 @@ import type { Difficulte, GenreBonus } from "./zombies-vagues";
  * largués (snap `tigres`, messages `avion`, `tigre`, `sort`, client `invoquer`, cause de mort "tigre"). v6 : mode « zombies tigres » (deux salles,
  * choix du mode, argent, achats, relève, snap `zombies`), épée (mêlée à plusieurs cibles), cause de mort "tigre_zombie". v7 : zombies façon
  * Black Ops 1 (états de partie étendus, `zevt`, `reparer`, difficulté, armes améliorées `Equipement.ameliorees`, drapeaux d'allure et de mode
- * des tigres, Truck Muche dans le snap). Client et serveur se déploient ensemble.
+ * des tigres, Truck Muche dans le snap). v8 : carte « Service de midi » redécoupée (aménagements ajoutés aux pièces : index des prismes de
+ * `batiments{detruits}` et positions d'achats partagés), messages inchangés. Client et serveur se déploient ensemble.
  */
-export const VERSION_PROTOCOLE = 7;
+export const VERSION_PROTOCOLE = 8;
 
 export type Vec3 = [number, number, number];
 
