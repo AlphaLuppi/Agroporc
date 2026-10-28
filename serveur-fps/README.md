@@ -108,7 +108,7 @@ s'y reconnecterait), un `next dev` pointé dessus (`NEXT_PUBLIC_FPS_WS_URL`) et 
 * `node scripts/fps/e2e_arene_v2.mjs` : `PDJ_FPS_ELSA_MIN_MS=6000` / `PDJ_FPS_ELSA_MAX_MS=7000`, avion des tigres et événements repoussés d'une heure ; entrée en arène, vue mutuelle, armes, kill confirmé par le serveur,
   killcam, couteau, épée (un troisième navigateur), glissade, conduite et tir d'un passager, Elsa, mini-carte et tableau des scores.
 * `node scripts/fps/e2e_arene_tigres.mjs` : avion toutes les 4 à 5 s, événements neutralisés ; avion, tigre sauvage et sort d'invocation.
-* `node scripts/fps/e2e_zombies.mjs` : `PDJ_FPS_ZOMBIES_ARGENT=3000`, `_TOTAL=3`, `_PAUSE_MS=10000`, `_GRIFFE=20`, `_TRUCK=0` ; choix du mode, lobby, lancement par l'hôte, tigres, kill au pistolet,
+* `node scripts/fps/e2e_zombies.mjs` : `PDJ_FPS_ZOMBIES_ARGENT=3000`, `_TOTAL=3`, `_PAUSE_MS=10000`, `_GRIFFE=10`, `_TRUCK=0` ; choix du mode, lobby, lancement par l'hôte, tigres, kill au pistolet,
   achats (fusil à pompe, porte D1, mini Uzi), joueur à terre relevé, coups de couteau, fin de manche sans bonus, partie perdue, bilan, retour au lobby.
 
 ## Déploiement (VPS, Docker + Traefik)

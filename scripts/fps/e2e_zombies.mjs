@@ -23,7 +23,7 @@
  *             à faire coïncider avec NEXT_PUBLIC_FPS_WS_URL d'un Next déjà lancé), E2E_PAGE (page qui monte le code « myrtille », défaut une 404 : aucune
  *             lecture de la base), E2E_HEADED=1, E2E_GARDER=1 (laisse les serveurs lancés par le script), E2E_JUSQUA=5 (s'arrête après l'étape 5),
  *             E2E_SEULES=1,3 (ne joue que ces étapes ; la 1 et la 2 sont toujours jouées, elles font entrer les joueurs), E2E_DEBUG=1 (trace des gestes),
- *             E2E_GRIFFE (dégâts de griffe, défaut 20 : cinq griffes couchent un joueur de 100 PV, ce qui laisse au joueur qui frappe à l'épée le temps
+ *             E2E_GRIFFE (dégâts de griffe, défaut 10 : dix griffes couchent un joueur de 100 PV, ce qui laisse au joueur qui frappe à l'épée le temps
  *             de plusieurs coups malgré le rendu logiciel ; 100 = une seule griffe), E2E_TOTAL (tigres de la manche 1, défaut 3), E2E_PAUSE (décompte et pauses, défaut 10 000 ms).
  * Code de sortie : 0 si toutes les étapes passent, 1 sinon.
  *
@@ -48,7 +48,7 @@ import { fileURLToPath } from "node:url";
 const RACINE = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const SORTIE = process.env.E2E_OUT ?? join(tmpdir(), "pdj-e2e-zombies");
 const PAGE = process.env.E2E_PAGE ?? "/arene-e2e-introuvable";
-const GRIFFE = process.env.E2E_GRIFFE ?? "20";
+const GRIFFE = process.env.E2E_GRIFFE ?? "10";
 const ARGENT = process.env.E2E_ARGENT ?? "3000";
 /** Tigres de la manche 1 (3 : un tué au pistolet, un à l'épée, le dernier sert d'appât à la relève). */
 const TOTAL = process.env.E2E_TOTAL ?? "3";
