@@ -50,12 +50,14 @@ import { creerRenduInterieurs } from "./rendu-interieurs";
 import { creerRenduObjetsZombies } from "./rendu-objets-zombies";
 import { creerModeleTruckMuche } from "./rendu-monde";
 import { objectifZombies } from "./zombies-lore";
-import { ACHATS, NOTES, PACK_A_PUNCH, achatDeId, fenetreDeId, fenetrePlusProche } from "./zombies-carte";
+import { ACHATS, NOTES, PACK_A_PUNCH, PORTES_PAYANTES, achatDeId, fenetreDeId, fenetrePlusProche, idPrisme, pieceDe } from "./zombies-carte";
 import { boiteA } from "./zombies-boites";
 import { NOMS_BONUS } from "./zombies-vagues";
 import { profilZombie, nomZombie } from "./armes";
 import { creerImpactsBalles } from "./rendu-impacts";
 import { creerDebris } from "./rendu-debris";
+import { creerRenduPortesZombies } from "./rendu-portes-zombies";
+import { planOuverture, type PiecePorte } from "./ouverture-portes";
 import { creerTracesPneus, glissementLateral, rouesArriere } from "./rendu-traces";
 import { construireCircuits, flotte } from "./circulation";
 import { coteMurDe, etape, etatInitial, hauteurOeil, postureDe, type Entrees, type EtatMouvement } from "./mouvement";
@@ -224,6 +226,10 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   const ouvertures = new Map<number, { t0: number; de: Creux; vers: Creux }>();
   let sonBrecheT = -Infinity;
   const debris = creerDebris(scene, C.cyan);
+  // (v8, zombies) portes payantes : index du prisme → pièce de la porte (son ouverture est animée façon BO1, pas effondrée)
+  const piecesPortes = new Map<number, PiecePorte>();
+  const portesZ = modeZ ? creerRenduPortesZombies(scene, C.amber, 0x8a5a1c) : null;
+  if (modeZ) for (const porte of PORTES_PAYANTES) for (const id of porte.prismes) piecesPortes.set(idPrisme(id), pieceDe(id));
   /** demi-diagonale de la boîte d'une emprise (m) */
   const emprise = (r: readonly (readonly [number, number])[]) => {
     let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
@@ -1427,7 +1433,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
             if (x && !ruines.has(id)) { poserBreche(monde, id, { x: x[1], z: x[2], r: x[3] }); destruction.breche(id, x[1], x[2], x[3]); }
             else destruction.breche(id, 0, 0, 0);
           }
-          if (!m.detruits.length && !m.breches.length) { impactsBalles.vider(); tracesPneus.vider(); debris.vider(); }
+          if (!m.detruits.length && !m.breches.length) { impactsBalles.vider(); tracesPneus.vider(); debris.vider(); portesZ?.vider(); }
           break;
         }
         // changements : effondrement complet ou brèche qui s'ouvre, animés, avec débris
@@ -1437,6 +1443,17 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
           detruireBatiment(monde, id);
           ouvertures.delete(id);
           if (enReplay) { destruction.poser(id, 1); continue; }
+          // (v8, zombies) une porte achetée s'ouvre façon BO1 : elle se soulève et s'efface, un peu de poussière et quelques éclats
+          // légers qui disparaissent, sans explosion ni pluie de blocs
+          const piece = piecesPortes.get(id);
+          if (piece && portesZ) {
+            destruction.poser(id, 1);
+            const plan = planOuverture(piece, Math.random);
+            portesZ.ouvrir(plan);
+            debris.lancer(plan.eclats);
+            sons.ouverturePorte(positionSon([plan.centre[0], 1, plan.centre[2]]));
+            continue;
+          }
           effondrements.set(id, t);
           const b = data.buildings[id];
           const r = emprise(b.r);
@@ -2101,6 +2118,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       if (k >= 1) ouvertures.delete(id);
     }
     debris.maj(dt);
+    portesZ?.maj(dt);
     impactsBalles.maj(dt);
     const tg = monstresImage.tigre;
     if (tg && !enReplay) {
@@ -2583,6 +2601,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       impactsBalles.dispose();
       tracesPneus.dispose();
       debris.dispose();
+      portesZ?.dispose();
       destruction.dispose();
       porteArme.remove(armeMain.group);
       camera.remove(porteArme);
