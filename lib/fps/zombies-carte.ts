@@ -33,6 +33,13 @@ export const PROLONGEMENT_PIECE = 0.3;
 /** Hauteur de dessin d'une pièce extérieure (m) ; une porte intérieure fait la hauteur d'une porte. */
 export const HAUTEUR_PIECE = 6;
 export const HAUTEUR_PORTE_INTERIEURE = 2.6;
+/**
+ * Faux plafond des bâtiments creusés (m) : dessiné par rendu-interieurs.ts, solide pour la tête du joueur (`plafondZombies`,
+ * `construireMondeZombies`) et pour les grenades (`plafondBatimentsCreux` de grenades.ts). Une seule source pour les trois.
+ */
+export const HAUTEUR_PLAFOND_ZOMBIES = 3.4;
+/** Alias de `HAUTEUR_PLAFOND_ZOMBIES` (nom du lot des grenades). */
+export const PLAFOND_INTERIEUR_M = HAUTEUR_PLAFOND_ZOMBIES;
 /** Largeur (m) d'une ouverture de porte et d'une fenêtre dans une coque ou une cloison. */
 export const LARGEUR_PORTE = 2.6;
 export const LARGEUR_FENETRE = 1.8;
@@ -920,8 +927,6 @@ export function donneesZombies(scene: SceneData): DonneesZombies {
 /** Types dont le prisme garde sa vraie hauteur (le mobilier : on tire par-dessus) ; les bâtiments creusés n'ont pas de prisme utile (h = 0). */
 const HAUTEUR_REELLE: ReadonlySet<string> = new Set(["meuble"]);
 
-/** Faux plafond des bâtiments creusés (m), dessiné par `rendu-interieurs.ts` et solide pour la tête du joueur (`plafondZombies`). */
-export const HAUTEUR_PLAFOND_ZOMBIES = 3.4;
 
 /** Dessous du faux plafond d'un bâtiment creusé de hauteur `h` (m) : `HAUTEUR_PLAFOND_ZOMBIES`, ou 0,3 m sous un toit plus bas. */
 export const plafondZombies = (h: number): number => Math.min(HAUTEUR_PLAFOND_ZOMBIES, h - 0.3);

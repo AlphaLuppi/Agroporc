@@ -12,6 +12,7 @@ import type {
   Slot, SnapZombies, TigreLargueSnap, Vec3, VehiculeSnap, Zone,
 } from "./protocole";
 import type { ObstacleVoiture, Tigre } from "./tigre-arene";
+import type { ExplosionGrenade } from "./grenades";
 
 /**
  * Un message à émettre. `a` : "tous" (tous les inscrits), "joueurs" (en arène), "spectateurs" (inscrits hors arène) ou l'id d'un client ;
@@ -302,7 +303,10 @@ export interface ServiceZombies {
    * au sol ; dégâts dégressifs sur les tigres proches, rampants possibles, `zevt{explosion}` aux autres joueurs.
    */
   explosionTir(j: JoueurSalle, arme: ArmeFeuId, o: Vec3, d: Vec3, distanceTouche: number | null, portee: number, maintenant: number): Sortie[];
-  /** `lancerPartie`, `acheter`, `reanimer` ; les autres types renvoient [] */
+  /**
+   * `lancerPartie`, `acheter`, `reanimer`, `reparer`, `lancerGrenade` (v8 : œil et direction déjà validés par la salle) ; les autres types
+   * renvoient []
+   */
   recevoir(j: JoueurSalle, m: MessageClient, maintenant: number): Sortie[];
   /** le joueur vient de tomber à 0 PV (`Salle.mourir`) : à terre, défaite éventuelle, `zombies{etat}` immédiat + `presence` */
   surMort(j: JoueurSalle, maintenant: number): Sortie[];
@@ -316,4 +320,12 @@ export interface ServiceZombies {
   aTerre(id: string): boolean;
   etat(): EtatPartieZombies;
   resume(): ResumeZombies;
+  // ---- v8 ----
+  /**
+   * Écoute les explosions de grenades (événement PUR : où, par qui, quel genre, quand), après leur souffle ; les sorties renvoyées partent avec
+   * celles du tic. Renvoie la fonction qui retire l'écouteur. Sert aux quêtes et secrets (une grenade qui fait sauter quelque chose).
+   */
+  ecouterExplosions(f: (e: ExplosionGrenade) => Sortie[] | void): () => void;
+  /** grenades en vol ou posées (tests et supervision) */
+  grenadesEnVol(): number;
 }

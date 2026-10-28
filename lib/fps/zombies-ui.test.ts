@@ -274,7 +274,8 @@ describe("modèle du lobby des zombies", () => {
     const z = commandesLobbyZombies(touchesParDefaut());
     expect(z.find((c) => c.libelle.startsWith("Acheter"))?.touches).toBe("E");
     expect(z.some((c) => /voiture/i.test(c.libelle))).toBe(false);
-    expect(z.length).toBe(commandes(touchesParDefaut(), null).length - 4);
+    expect(z.length).toBe(commandes(touchesParDefaut(), null).length - 3);
+    expect(z.at(-1)).toEqual({ touches: "G", libelle: "Grenade (maintenir : cuire la mèche)" });
   });
 
   it("aide en partie : la touche d'action zombies", () => {
@@ -704,6 +705,25 @@ describe("BlocArmes sans arme principale (départ des zombies)", () => {
     const html = rendre({ slots: "secondaire:pistolet:12:12:60|couteau:epee:0:0" });
     expect(html).toContain("ÉPÉE");
     expect(html).toContain("VITESSE +20 %");
+  });
+
+  it("(v8) grenades : pastilles sur 4 sous le rack, remontoirs s'il en reste, mèche qui court pendant la cuisson ; rien en arène", () => {
+    expect(rendre()).not.toContain("GRENADES");
+    const html = rendre({ grenades: 2, remontoirs: 0, cuisson: null, toucheGrenade: "G", toucheRemontoir: "B" });
+    expect(html).toContain('aria-label="Grenades"');
+    expect(html).toContain("[G]");
+    expect(html).toContain("●●○○");
+    expect(html).toContain("2 sur 4");
+    expect(html).not.toContain("REMONTOIR");
+    const avec = rendre({ grenades: 0, remontoirs: 3, toucheGrenade: "G", toucheRemontoir: "B" });
+    expect(avec).toContain("○○○○");
+    expect(avec).toContain('data-niveau="vide"');
+    expect(avec).toContain("REMONTOIR");
+    expect(avec).toContain("×3");
+    expect(avec).toContain("[B]");
+    const cuit = rendre({ grenades: 1, cuisson: 0.5, toucheGrenade: "G" });
+    expect(cuit).toContain("MÈCHE");
+    expect(cuit).toContain("1,8 s");
   });
 
   it("après l'achat d'une principale, la ligne apparaît", () => {

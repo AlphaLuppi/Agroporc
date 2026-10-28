@@ -5,6 +5,9 @@
  * occupées et voisines), barricades (arrachées par les tigres, reposées par les joueurs), bonus (seuil de BO1, tigre doré, paquet mélangé),
  * atouts, Pack-a-Punch, boîte mystère qui déménage (peluche), manches du Truck Muche (les chiens de BO1), courant, Recette ultime, joueurs
  * à terre, relève, auto-relève de la Pause Café, élimination, bilan. Les tigres eux-mêmes sont simulés par `zombies.ts`.
+ * (v8) Grenades de BO1 (`grenades.ts`) : 2 par manche (4 au plus), lancers validés, trajectoires calculées une fois, souffle à l'échéance
+ * (points de BO1, rampants, Truck, lanceur légèrement blessé), tigre à remontoir de la boîte (leurre qui attire les tigres 8 s), écouteurs
+ * d'explosion (`ecouterExplosions`) pour les quêtes.
  *
  * Choix de conception :
  * - l'argent, les atouts, l'état (debout / à terre / éliminé / en attente), l'admission et les relèves de chaque joueur vivent dans une `Map`
@@ -24,10 +27,14 @@ import type {
   ArmeFeuId, ArmeId, ArmeSpecialeId, AtoutId, BonusSol, EffetsZombies, EtatBoite, EtatPap, EtatPartieZombies, Equipement, EvenementZombies,
   JoueurZombies, MessageClient, PhaseZombies, QueteZombies, RaisonAchat, Slot, TruckZombies, Vec3, Zone,
 } from "./protocole";
-import { creerSimuZombies, type ArriveeZombie, type SpecZombie } from "./zombies";
+import { creerSimuZombies, type ArriveeZombie, type Leurre, type SpecZombie } from "./zombies";
+import {
+  GRENADES, INVENTAIRE_GRENADES, degatsGrenade, degatsLanceur, grenadesDebutManche, plafondBatimentsCreux, positionLancer, preparerLancer,
+  souffleAtteint, validerLancer, vitesseLancer, type ExplosionGrenade, type Lancer,
+} from "./grenades";
 import {
   ACHATS, ATOUTS, ATOUTS_LISTE, DEPARTS, EMPLACEMENTS_DEPART_BOITE, FENETRES, INGREDIENTS_LISTE, NB_EMPLACEMENTS_BOITE, PORTES_PAYANTES,
-  PRIX_BOITE, PRIX_BOITE_SOLDES, PRIX_MUNITIONS_AMELIOREE, QUAIS, TRUCK, achatDeId, rayonTruck, distancePorte, estAtout, etiqueterZones, fenetreDeId, fenetresDesZones,
+  PLAFOND_INTERIEUR_M, PRIX_BOITE, PRIX_BOITE_SOLDES, PRIX_MUNITIONS_AMELIOREE, QUAIS, TRUCK, achatDeId, rayonTruck, distancePorte, estAtout, etiqueterZones, fenetreDeId, fenetresDesZones,
   idPrisme, lacetDepart, pieceDe, porteDeId, sortiesDuSol, zoneEn, zonesActives, zonesOuvertes,
   type Achat, type CarteZones, type DonneesZombies, type Fenetre, type IngredientId, type PorteId, type ZoneId,
 } from "./zombies-carte";
@@ -93,6 +100,8 @@ export interface OptionsServiceZombies {
   mancheTruck?: number;
   /** courant rétabli dès le départ (essais), `PDJ_FPS_ZOMBIES_COURANT` */
   courant?: boolean;
+  /** (v8) tigres à remontoir en poche au départ (essais), `PDJ_FPS_ZOMBIES_REMONTOIRS` */
+  remontoirsDepart?: number;
 }
 
 type EtatMembre = JoueurZombies["etat"];
@@ -115,7 +124,14 @@ interface Membre {
   planchesManche: number;
   /** repose de planches en cours : fenêtre, prochaine planche */
   reparation: { fenetre: string; prochainT: number } | null;
+  /** (v8) grenades à fragmentation et tigres à remontoir en poche, dernier lancer (cadence) */
+  grenades: number;
+  remontoirs: number;
+  dernierLancerT?: number;
 }
+
+/** (v8) Grenade en vol (ou posée) : lancer complet, lanceur. */
+interface GrenadeServeur { id: number; par: string; lancer: Lancer }
 
 /** Relève en cours : `cible` maintenue par le relanceur depuis `debutT`. */
 interface Releve { cible: string; debutT: number }
@@ -210,6 +226,11 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
   let seuilBonus = 0;
   let lacherBonus = false;
   const effets: EffetsZombies = { instakillFinT: 0, doubleFinT: 0, soldesFinT: 0 };
+  // grenades (v8) : en vol ou posées, écouteurs d'explosion ; le faux plafond des bâtiments creusés ne change jamais
+  let grenades: GrenadeServeur[] = [];
+  let grenadeId = 1;
+  const ecouteursExplosion = new Set<(e: ExplosionGrenade) => Sortie[] | void>();
+  const plafond = plafondBatimentsCreux(ctx.monde, PLAFOND_INTERIEUR_M);
   const quete: QueteZombies = { ingredients: [], cuissonFinT: 0, faite: false };
   // diffusion de zombies{etat}
   let immediat = false;
@@ -225,7 +246,7 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     if (!m) {
       m = {
         etat: "attente", admis: false, argent: 0, gagne: 0, reanimations: 0, admisT: 0, atouts: new Set(), autoReleves: AUTO_RELEVES_MAX,
-        autoReleveT: null, planchesManche: 0, reparation: null,
+        autoReleveT: null, planchesManche: 0, reparation: null, grenades: 0, remontoirs: 0,
       };
       membres.set(id, m);
     }
@@ -251,6 +272,7 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
         id: j.id, pseudo: j.pseudo, couleur: j.couleur, etat: m.etat, admis: m.admis, kills: j.kills, gagne: m.gagne, reanimations: m.reanimations,
         ...(m.etat === "terre" && m.terreFinT !== undefined ? { terreFinT: m.terreFinT } : {}),
         atouts: ATOUTS_LISTE.filter((a) => m.atouts.has(a)), autoReleves: m.autoReleves,
+        ...(m.grenades ? { grenades: m.grenades } : {}), ...(m.remontoirs ? { remontoirs: m.remontoirs } : {}),
       };
     });
     return {
@@ -349,6 +371,7 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
   function remettreMembre(m: Membre): void {
     m.etat = "attente"; m.admis = false; m.argent = 0; m.gagne = 0; m.reanimations = 0; m.terreFinT = undefined;
     m.atouts.clear(); m.autoReleves = AUTO_RELEVES_MAX; m.autoReleveT = null; m.planchesManche = 0; m.reparation = null;
+    m.grenades = 0; m.remontoirs = 0; m.dernierLancerT = undefined;
   }
 
   /** Objets de la carte remis comme au départ (nouvelle partie, retour au lobby). */
@@ -376,6 +399,7 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     }
     releves.clear();
     simu.reinitialiser();
+    grenades = [];
     file = []; indexFile = 0; debutApparitionT = null;
     refermerPortes();
     remettreCarte();
@@ -391,6 +415,7 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     bilan = { manche: Math.max(0, phase === "pause" ? manche - 1 : manche), dureeMs: Math.max(0, t - partieDebutT) };
     phase = "fin"; debutT = t; finT = t + ZOMBIES.finAffichageMs;
     simu.reinitialiser();
+    grenades = [];
     file = []; indexFile = 0; debutApparitionT = null; truck = null;
     releves.clear();
     immediat = true;
@@ -436,7 +461,7 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       if (m.etat === "terre") {
         sorties.push(...relever(j, t));
       } else if (m.etat === "elimine") {
-        m.etat = "debout"; m.terreFinT = undefined; m.argent = argentDepart; m.admisT = t; m.atouts.clear();
+        m.etat = "debout"; m.terreFinT = undefined; m.argent = argentDepart; m.admisT = t; m.atouts.clear(); m.grenades = 0; m.remontoirs = 0;
         sorties.push(...remettreEnJeu(j, t, ZOMBIES.pvMax), sortieArgent(j, 0, "retour"));
       } else if (m.etat === "attente" && !m.admis) {
         m.etat = "debout"; m.admis = true; m.admisT = t; m.argent = argentDepart; m.gagne = 0; m.reanimations = 0; m.atouts.clear();
@@ -465,6 +490,7 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       const m = membre(o.id);
       remettreMembre(m);
       m.etat = "debout"; m.admis = true; m.admisT = t; m.argent = argentDepart;
+      m.remontoirs = Math.max(0, Math.min(INVENTAIRE_GRENADES.remontoirMax, Math.floor(opts.remontoirsDepart ?? 0)));
       remettreAZero(o);
       sorties.push(sortieArgent(o, 0, "depart"));
     }
@@ -481,7 +507,11 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     const nJoueurs = nbAdmis();
     bonusManche = 0;
     dernierSprinte = false;
-    for (const m of membres.values()) m.planchesManche = 0;
+    for (const m of membres.values()) {
+      m.planchesManche = 0;
+      // BO1 `award_grenades_for_survivors` : +2 grenades à fragmentation, 4 au plus (les joueurs à terre aussi, comme dans BO1)
+      if (m.admis) m.grenades = grenadesDebutManche(m.grenades);
+    }
     if (mancheTruck) {
       numeroTruck++;
       prochaineMancheTruck = mancheTruckSuivante(manche, alea());
@@ -687,6 +717,10 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     for (const j of ctx.joueurs()) {
       if (!j.enJeu || !membre(j.id).admis) continue;
       if (j.equip.speciale) j.munSpeciale = munSpecialeDe(j.equip);
+      // (v8) les grenades aussi : 4 à fragmentation, et les remontoirs de qui en porte encore
+      const m = membre(j.id);
+      m.grenades = INVENTAIRE_GRENADES.fragMax;
+      if (m.remontoirs > 0) m.remontoirs = INVENTAIRE_GRENADES.remontoirMax;
       sorties.push(...ctx.equiper(j, copierEquipement(j.equip), j.main, t, "tout"));
     }
     return sorties;
@@ -771,7 +805,7 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     // (v8) la griffe attend l'aller-retour du joueur visé avant d'être jugée une seconde fois (en sa faveur, cf. GRIFFE_DELAI_MAX_MS)
     const cibles = membresSalle.filter((j) => peutJouer(j) && membre(j.id).etat === "debout").map((j) => ({ id: j.id, p: j.p, vivant: true, delaiMs: j.ping }));
     evenementsTic = [];
-    const evenements = simu.tic(t, dt, cibles);
+    const evenements = simu.tic(t, dt, cibles, leurres(t));
     sorties.push(...evenementsTic);
     evenementsTic = [];
     for (const e of evenements) {
@@ -1103,18 +1137,24 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     if (boite.etat === "offre") {
       // prendre l'arme offerte (seul celui qui a payé)
       if (boite.pour !== j.id) return refus(j, achat.id, "occupe");
-      const arme = boite.arme as ArmeFeuId;
+      const offerte = boite.arme;
       boite = { emplacement: boite.emplacement, etat: "fermee", finT: 0, utilisations: boite.utilisations };
       immediat = true;
-      return [{ a: j.id, m: { t: "achat", ok: true, id: achat.id } }, ...equiperNouvelle(j, arme, t)];
+      if (offerte === "remontoir") {
+        // (v8) trois tigres à remontoir (la Monkey Bomb de BO1), à côté des armes
+        m.remontoirs = INVENTAIRE_GRENADES.remontoirBoite;
+        return [{ a: j.id, m: { t: "achat", ok: true, id: achat.id } }];
+      }
+      return [{ a: j.id, m: { t: "achat", ok: true, id: achat.id } }, ...equiperNouvelle(j, offerte as ArmeFeuId, t)];
     }
     if (boite.etat !== "fermee") return refus(j, achat.id, "occupe");
     const prix = t < effets.soldesFinT ? PRIX_BOITE_SOLDES : PRIX_BOITE;
     if (m.argent < prix) return refus(j, achat.id, "argent");
-    const candidates = armesBoite(j.equip);
+    // (v8) le tigre à remontoir sort de la boîte comme une arme, si le joueur n'en a plus
+    const candidates: (ArmeFeuId | "remontoir")[] = [...armesBoite(j.equip), ...(m.remontoirs > 0 ? [] : ["remontoir" as const])];
     if (!candidates.length) return refus(j, achat.id, "deja");
     const utilisations = boite.utilisations + 1;
-    const arme: ArmeFeuId | "peluche" = peluche(utilisations) ? "peluche" : candidates[Math.min(candidates.length - 1, Math.floor(alea() * candidates.length))];
+    const arme: ArmeFeuId | "peluche" | "remontoir" = peluche(utilisations) ? "peluche" : candidates[Math.min(candidates.length - 1, Math.floor(alea() * candidates.length))];
     prixPaye = prix;
     boite = { emplacement: boite.emplacement, etat: "tirage", arme, pour: j.id, finT: t + TIRAGE_BOITE_MS, utilisations };
     immediat = true;
@@ -1173,6 +1213,103 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
   }
 
   // ---------------------------------------------------------------------------------------------
+  // grenades (v8)
+  // ---------------------------------------------------------------------------------------------
+
+  /** Message `grenade` d'un lancer (à tous les joueurs en partie, ou à un seul pour la synchro). */
+  const sortieGrenade = (g: GrenadeServeur, a: string): Sortie => ({
+    a, m: { t: "grenade", id: g.id, par: g.par, genre: g.lancer.genre, o: g.lancer.o, v: g.lancer.v, t0: g.lancer.t0, explosionT: g.lancer.explosionT },
+  });
+
+  /** Tigres à remontoir posés : les leurres de la simulation. */
+  function leurres(t: number): Leurre[] {
+    const r: Leurre[] = [];
+    for (const g of grenades) {
+      const prof = GRENADES[g.lancer.genre];
+      if (prof.attractionM > 0 && t >= g.lancer.poseT && t < g.lancer.explosionT) r.push({ id: g.id, p: positionLancer(g.lancer, t), rayon: prof.attractionM });
+    }
+    return r;
+  }
+
+  /**
+   * Lancer d'une grenade (œil et direction déjà validés par la salle, `d` normalisée) : joueur debout en partie, stock et cadence
+   * (`validerLancer`) ; la trajectoire est calculée une fois ici, `grenade` part à tous les joueurs (le lanceur compris).
+   */
+  function lancerGrenade(j: JoueurSalle, msg: Extract<MessageClient, { t: "lancerGrenade" }>, t: number): Sortie[] {
+    const m = membre(j.id);
+    if ((phase !== "manche" && phase !== "pause") || !m.admis || m.etat !== "debout" || !peutJouer(j)) return [];
+    const stock = msg.genre === "remontoir" ? m.remontoirs : msg.genre === "frag" ? m.grenades : 0;
+    const v = validerLancer(msg.genre, stock, m.dernierLancerT, t, msg.cuissonMs);
+    if (!v.ok) return [];
+    if (v.genre === "frag") m.grenades--; else m.remontoirs--;
+    m.dernierLancerT = t;
+    const o: Vec3 = [msg.o[0], msg.o[1], msg.o[2]];
+    const lancer = preparerLancer(ctx.monde, v.genre, o, vitesseLancer(v.genre, msg.d), t, v.cuissonMs, { plafond });
+    const g: GrenadeServeur = { id: grenadeId++, par: j.id, lancer };
+    grenades.push(g);
+    immediat = true; // le compteur du HUD suit tout de suite
+    return emettre(t, [sortieGrenade(g, "joueurs")]);
+  }
+
+  /**
+   * Souffle d'une grenade à son échéance : `zevt{grenade}` à tous, tigres à portée ET en vue du centre blessés (dégâts dégressifs, +10 $ par
+   * tigre touché, 60 / 100 $ par kill comme BO1, rampants possibles), Truck Muche, lanceur légèrement blessé (jamais les coéquipiers), puis
+   * les écouteurs d'explosion.
+   */
+  function exploser(g: GrenadeServeur, t: number, sorties: Sortie[]): void {
+    const l = g.lancer;
+    const prof = GRENADES[l.genre];
+    const c = positionLancer(l, l.explosionT);
+    sorties.push(zev({ e: "grenade", id: g.id, genre: l.genre, p: c, rayon: prof.rayonM, par: g.par }));
+    const par = ctx.joueur(g.par);
+    if (par && membre(par.id).admis) {
+      for (const z of [...simu.liste()]) {
+        const yz = (0.8 * z.echelle) / 2.7;
+        const d = Math.hypot(z.p[0] - c[0], yz - c[1], z.p[2] - c[2]);
+        const degats = degatsGrenade(l.genre, Math.max(0, d - 0.6));
+        if (degats <= 0 || !souffleAtteint(ctx.monde, c, [z.p[0], 0.3, z.p[2]])) continue;
+        const pvAvant = z.pv, pvMax = z.pvMax, type = z.type, id = z.id;
+        sorties.push(...service.blesser(idZombie(id), t < effets.instakillFinT ? INSTAKILL : degats, par, "corps", t, { gain: true, cause: "explosion" }));
+        const apres = simu.zombie(id);
+        if (apres && type === 0 && (pvAvant - apres.pv) >= RAMPANT_PART_PV * pvMax && apres.allure !== 3 && alea() < RAMPANT_PROBA) {
+          simu.changerAllure(id, 3, ZOMBIES.vitesses[3]);
+        }
+      }
+      if (truck && truck.phase !== "epave") {
+        const dTruck = Math.max(0, Math.hypot(truck.p[0] - c[0], truck.p[1] - c[2]) - TRUCK.demiLongueur);
+        const degats = degatsGrenade(l.genre, dTruck);
+        if (degats > 0) sorties.push(...blesserTruck(degats, par, t));
+      }
+      // BO1 : sa propre grenade blesse un peu (jamais assez pour tomber depuis la pleine santé)
+      if (peutJouer(par) && membre(par.id).etat === "debout" && t >= par.protegeJusqua) {
+        const torse: Vec3 = [par.p[0], par.p[1] + 1, par.p[2]];
+        const blessure = degatsLanceur(l.genre, Math.hypot(torse[0] - c[0], torse[1] - c[1], torse[2] - c[2]));
+        if (blessure > 0 && souffleAtteint(ctx.monde, c, [par.p[0], par.p[1] + 0.3, par.p[2]])) {
+          sorties.push(...ctx.infliger(par, blessure, null, "explosion", "corps", "couteau", t, c));
+        }
+      }
+    }
+    const e: ExplosionGrenade = { id: g.id, genre: l.genre, p: c, par: g.par, t };
+    for (const f of ecouteursExplosion) {
+      const r = f(e);
+      if (r) sorties.push(...r);
+    }
+  }
+
+  /** Grenades arrivées à échéance (manche et pause). */
+  function ticGrenades(t: number, sorties: Sortie[]): void {
+    if (!grenades.length) return;
+    const restent: GrenadeServeur[] = [];
+    const parties: GrenadeServeur[] = [];
+    for (const g of grenades) (t >= g.lancer.explosionT ? parties : restent).push(g);
+    grenades = restent;
+    for (const g of parties) {
+      exploser(g, t, sorties);
+      if (phase !== "manche" && phase !== "pause") break; // le souffle a pu coucher le dernier joueur debout
+    }
+  }
+
+  // ---------------------------------------------------------------------------------------------
   // service
   // ---------------------------------------------------------------------------------------------
 
@@ -1183,7 +1320,7 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     return [Math.round(truck.p[0] * 100), Math.round(truck.p[1] * 100), Math.round(truck.cap * 1000), ph, Math.round((100 * truck.pv) / truck.pvMax)];
   };
 
-  return {
+  const service: ServiceZombies = {
     tic(t) {
       const sorties: Sortie[] = [];
       const dt = Math.min(DT_MAX_S, Math.max(0, (t - dernierT) / 1000));
@@ -1198,6 +1335,7 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
         return emettre(t, sorties, true);
       }
       if (phase === "pause" && t >= finT) debuterManche(t, sorties);
+      ticGrenades(t, sorties);
       if (phase === "manche") ticManche(t, dt, sorties);
       else if (phase === "pause") ticCommun(t, sorties);
       return emettre(t, sorties, true);
@@ -1214,6 +1352,7 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       ];
       const m = membres.get(idDest);
       if (m?.admis) sorties.push({ a: idDest, m: { t: "argent", solde: m.argent, delta: 0, motif: "synchro" } });
+      for (const g of grenades) sorties.push(sortieGrenade(g, idDest));
       return sorties;
     },
 
@@ -1350,6 +1489,8 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
           if (m.reparation?.fenetre !== f.id) m.reparation = { fenetre: f.id, prochainT: t + ZOMBIES.reposeS * 1000 };
           return [];
         }
+        case "lancerGrenade":
+          return lancerGrenade(j, msg, t);
         default:
           return [];
       }
@@ -1407,7 +1548,17 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     resume(): ResumeZombies {
       return { phase, joueurs: ctx.joueurs().length, manche };
     },
+
+    ecouterExplosions(f) {
+      ecouteursExplosion.add(f);
+      return () => { ecouteursExplosion.delete(f); };
+    },
+
+    grenadesEnVol() {
+      return grenades.length;
+    },
   };
+  return service;
 }
 
 /** Liste des achats (réexport pour les essais). */

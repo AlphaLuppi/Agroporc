@@ -28,6 +28,13 @@ export interface JoueurZombie { id: string; p: Vec3; vivant: boolean; delaiMs?: 
  * demi-latence à revenir : un joueur qui a esquivé sur son écran n'est pas touché. Borné à 200 ms (un fort ping ne rend pas invulnérable).
  */
 export const GRIFFE_DELAI_MAX_MS = 200;
+/**
+ * (v8) Leurre : un tigre à remontoir posé (la Monkey Bomb de BO1). Tout tigre à moins de `rayon` m le préfère aux joueurs : il y court (le
+ * champ de distance part des leurres tant qu'il y en a), ne griffe plus personne et l'entoure, jusqu'à ce que le service le retire.
+ */
+export interface Leurre { id: number; p: Vec3; rayon: number }
+/** Distance (m) à laquelle un tigre attiré s'arrête autour du leurre. */
+export const DISTANCE_LEURRE_M = 1.6;
 
 export type EvenementZombie =
   | { t: "griffeArmee"; tigre: number; joueur: string }
@@ -163,6 +170,9 @@ export function creerSimuZombies(opts: OptionsSimuZombies) {
   let carteChangee = true;
   let calculsChamp = 0;
   let signature: number[] = [];
+  /** leurres du tic en cours et signature de ceux qui ont servi au dernier champ */
+  let leurresActifs: readonly Leurre[] = [];
+  let signatureLeurres = "";
   const sourcesBuf: [number, number][] = [];
   const casesBuf: [number, number][] = [];
 
@@ -187,13 +197,17 @@ export function creerSimuZombies(opts: OptionsSimuZombies) {
 
   function majChamps(t: number): void {
     if (t < prochainChampT) return;
-    let besoin = carteChangee || signature.length !== debout.length;
-    if (!besoin) for (let k = 0; k < debout.length; k++) if (signature[k] !== caseJoueur(debout[k].p[0], debout[k].p[2])) { besoin = true; break; }
+    // tant qu'un leurre est posé, le champ part des leurres (les tigres attirés y courent) au lieu des joueurs
+    const sigLeurres = leurresActifs.map((l) => `${l.id}:${caseJoueur(l.p[0], l.p[2])}`).join(",");
+    let besoin = carteChangee || sigLeurres !== signatureLeurres || (!leurresActifs.length && signature.length !== debout.length);
+    if (!besoin && !leurresActifs.length) for (let k = 0; k < debout.length; k++) if (signature[k] !== caseJoueur(debout[k].p[0], debout[k].p[2])) { besoin = true; break; }
     if (!besoin) for (const z of zombies) if (!z.champOk && z.mode === "chasse") { besoin = true; break; }
     if (!besoin) return;
     sourcesBuf.length = 0;
     signature = [];
-    for (const j of debout) { sourcesBuf.push([j.p[0], j.p[2]]); signature.push(caseJoueur(j.p[0], j.p[2])); }
+    signatureLeurres = sigLeurres;
+    if (leurresActifs.length) for (const l of leurresActifs) sourcesBuf.push([l.p[0], l.p[2]]);
+    else for (const j of debout) { sourcesBuf.push([j.p[0], j.p[2]]); signature.push(caseJoueur(j.p[0], j.p[2])); }
     for (const g of [0, 1] as const) {
       casesBuf.length = 0;
       for (const z of zombies) if (grilleDe(z) === g && z.mode === "chasse") casesBuf.push([z.p[0], z.p[2]]);
@@ -292,9 +306,10 @@ export function creerSimuZombies(opts: OptionsSimuZombies) {
   }
 
   // ---- tic ----
-  function tic(t: number, dt: number, joueurs: readonly JoueurZombie[]): EvenementZombie[] {
+  function tic(t: number, dt: number, joueurs: readonly JoueurZombie[], leurres: readonly Leurre[] = []): EvenementZombie[] {
     const evenements: EvenementZombie[] = [];
     horloge = t;
+    leurresActifs = leurres;
     if (!(dt > 0) || !zombies.length) return evenements;
     debout.length = 0;
     for (const j of joueurs) if (j.vivant) debout.push(j);
@@ -308,6 +323,12 @@ export function creerSimuZombies(opts: OptionsSimuZombies) {
       for (const j of debout) {
         const d = Math.hypot(j.p[0] - z.p[0], j.p[2] - z.p[2]);
         if (d < dMin) { dMin = d; cible = j; }
+      }
+      // (v8) un leurre à portée passe avant les joueurs
+      let leurre: Leurre | null = null, dLeurre = Infinity;
+      for (const l of leurres) {
+        const d = Math.hypot(l.p[0] - z.p[0], l.p[2] - z.p[2]);
+        if (d <= l.rayon && d < dLeurre) { dLeurre = d; leurre = l; }
       }
       let tx = cible.p[0], tz = cible.p[2];
       let marche = true;
@@ -332,7 +353,8 @@ export function creerSimuZombies(opts: OptionsSimuZombies) {
           marche = false;
           tx = f.dedans[0]; tz = f.dedans[1];
           // une griffe à travers la fenêtre si un joueur est collé de l'autre côté ; sinon il arrache
-          if (griffer(z, t, cible, evenements, ZOMBIES.allongeFenetreM)) break;
+          if (leurre && z.armeFin > 0) { z.armeFin = 0; z.cibleGriffe = null; }
+          if (!leurre && griffer(z, t, cible, evenements, ZOMBIES.allongeFenetreM)) break;
           if (barricades.planches(f.id) <= 0) {
             changerMode(z, "saut", t);
             evenements.push({ t: "saut", tigre: z.id, fenetre: f.id });
@@ -354,14 +376,22 @@ export function creerSimuZombies(opts: OptionsSimuZombies) {
           break;
         }
         case "chasse": {
-          if (griffer(z, t, cible, evenements)) { marche = false; break; }
+          // attiré par un leurre : il y court, ne griffe personne et s'arrête autour (BO1 : les zombies dansent autour du singe)
+          const vise = leurre ? leurre.p : cible.p;
+          const idVise = leurre ? `leurre:${leurre.id}` : cible.id;
+          const dVise = leurre ? dLeurre : dMin;
+          if (leurre) {
+            tx = vise[0]; tz = vise[2];
+            if (z.armeFin > 0) { z.armeFin = 0; z.cibleGriffe = null; }
+            if (dLeurre <= DISTANCE_LEURRE_M) { marche = false; z.progresT = t; z.meilleureDistance = dLeurre; break; }
+          } else if (griffer(z, t, cible, evenements)) { marche = false; break; }
           // vision directe (contrôlée toutes les 150 ms, plus tôt si le joueur le plus proche change) ou descente du champ
           let direct = false;
-          if (dMin <= ZOMBIES.visionDirecteM) {
-            if (z.vuJoueur !== cible.id || t - z.vuT >= ZOMBIES.periodeVisionMs) {
-              z.vuJoueur = cible.id;
+          if (dVise <= ZOMBIES.visionDirecteM) {
+            if (z.vuJoueur !== idVise || t - z.vuT >= ZOMBIES.periodeVisionMs) {
+              z.vuJoueur = idVise;
               z.vuT = t;
-              z.voit = visible(monde, [z.p[0], 1, z.p[2]], [cible.p[0], 1, cible.p[2]]);
+              z.voit = visible(monde, [z.p[0], 1, z.p[2]], [vise[0], 1, vise[2]]);
             }
             direct = z.voit;
           } else z.voit = false;
@@ -371,7 +401,7 @@ export function creerSimuZombies(opts: OptionsSimuZombies) {
             if (pas) { tx = pas[0]; tz = pas[1]; }
           }
           // failsafe (BO1 `zombie_use_failsafe`) : un tigre qui ne se rapproche plus, loin de tout joueur
-          if (dMin < z.meilleureDistance - FAILSAFE_PROGRES_M || dMin < FAILSAFE_DISTANCE_M) { z.meilleureDistance = Math.min(z.meilleureDistance, dMin); z.progresT = t; }
+          if (dVise < z.meilleureDistance - FAILSAFE_PROGRES_M || dVise < FAILSAFE_DISTANCE_M) { z.meilleureDistance = Math.min(z.meilleureDistance, dVise); z.progresT = t; }
           else if (t - z.progresT >= FAILSAFE_MS) { evenements.push({ t: "bloque", tigre: z.id }); z.progresT = t; }
           break;
         }

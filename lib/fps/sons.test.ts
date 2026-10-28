@@ -239,6 +239,21 @@ describe("sons : tigres et avion", () => {
   });
 });
 
+describe("sons des grenades (v8)", () => {
+  it("lancer, rebond, explosion, bip de cuisson et cymbales du remontoir produisent du son, proches comme lointains", () => {
+    const sons = creerSons();
+    const loin = { distance: 30, pan: 0.5 };
+    for (const jouer of [
+      () => sons.grenadeLancer(), () => sons.grenadeLancer(loin), () => sons.grenadeRebond(8), () => sons.grenadeRebond(2, loin),
+      () => sons.grenadeExplosion(), () => sons.grenadeExplosion(loin), () => sons.grenadeBip(), () => sons.remontoir(loin),
+    ]) {
+      const avant = journal.demarres;
+      jouer();
+      expect(journal.demarres).toBeGreaterThan(avant);
+    }
+  });
+});
+
 describe("sons : sans WebAudio", () => {
   it("tous les appels sont sans effet", () => {
     vi.stubGlobal("window", { addEventListener() {}, removeEventListener() {} });

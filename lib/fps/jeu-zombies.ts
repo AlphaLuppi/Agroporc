@@ -11,6 +11,7 @@ import { visible, type Monde } from "./collision";
 import { MELEE, STATS, nomZombie } from "./armes";
 import { meleeDe } from "./equipement";
 import { formatArgent } from "./hud-modele";
+import { NOM_REMONTOIRS } from "./grenades";
 import { FORME_TIGRE, enrouler, pointLocal, toucheTigre } from "./monstres";
 import {
   CIBLE_LIVRAISON, decoderZombies, estMelee, idZombie, type ArmeFeuId, type ArmeId, type ArmeMeleeId, type AtoutId, type EtatPartieZombies, type Equipement,
@@ -438,7 +439,7 @@ function descriptionAchat(a: Achat, e: EntreeInvite): Description | null {
       if (p && p.boite.emplacement !== a.emplacement) return null;
       if (p && p.boite.etat === "offre") {
         if (p.boite.pour !== e.moi || !p.boite.arme || p.boite.arme === "peluche") return { invite: "boite", detail: "Boîte mystère", prix: 0, id: a.id, bloque: "Occupée" };
-        return { invite: "boite", detail: `Prendre : ${STATS[p.boite.arme].nom}`, prix: 0, id: a.id };
+        return { invite: "boite", detail: `Prendre : ${p.boite.arme === "remontoir" ? NOM_REMONTOIRS : STATS[p.boite.arme].nom}`, prix: 0, id: a.id };
       }
       if (p && p.boite.etat !== "fermee") return { invite: "boite", detail: "Boîte mystère", prix: 0, id: a.id, bloque: "Occupée" };
       const prix = p && t < p.effets.soldesFinT ? PRIX_BOITE_SOLDES : a.prix;

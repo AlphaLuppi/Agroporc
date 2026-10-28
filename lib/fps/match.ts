@@ -628,6 +628,12 @@ export class Salle implements ContexteSalle {
       case "equiper": if (!this.zombies) this.choisir(j, msg); return [];
       case "lancerPartie": case "acheter": case "reanimer":
         return this.zombies ? this.zombies.recevoir(j, msg, maintenant) : [];
+      case "lancerGrenade": {
+        // (v8, zombies) l'œil et la direction sont validés comme ceux d'un tir ; le service juge le stock et la cadence
+        if (!this.zombies || !j.enJeu || !j.vivant || !estVec3(msg.o) || !estVec3(msg.d)) return [];
+        const dirs = this.validerVisee(j, msg.o, [msg.d], maintenant);
+        return dirs ? this.zombies.recevoir(j, { ...msg, d: dirs[0] }, maintenant) : [];
+      }
       case "main": return this.changerMain(j, msg.slot, maintenant);
       case "etat": this.recevoirEtat(j, msg, maintenant); return [];
       case "tir": return this.recevoirTir(j, msg, maintenant);

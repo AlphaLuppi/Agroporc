@@ -122,7 +122,8 @@ export default function HudArene(p: PropsHudArene) {
     toucheSpeciale: toucheDe(p.touches, "armeSpeciale", disposition), pousser: vive.pousser, refusAchat,
   });
   const synthese = useMemo(() => syntheseMatch(joueurs, monId, match?.objectif ?? JEU.objectifKills), [joueurs, monId, match?.objectif]);
-  const frappeDisponible = synthese.serie >= 5 || !!hud?.frappeDisponible;
+  // la frappe aérienne n'existe que dans l'arène (en zombies, une grenade enchaîne vite 5 kills sans rien débloquer)
+  const frappeDisponible = !zombies && (synthese.serie >= 5 || !!hud?.frappeDisponible);
 
   useToucheAppui(verrouille && frappeDisponible, p.touches.frappeAerienne, () => {
     setCarteForcee((prev) => !prev);
@@ -295,6 +296,7 @@ export default function HudArene(p: PropsHudArene) {
             recharge={hud.recharge} degainage={hud.degainage} tireInterdit={hud.tireInterdit} bonusVitesse={hud.bonusVitesse}
             toucheP={t("armePrincipale")} toucheS={t("armeSecondaire")} toucheC={t("couteau")} toucheSp={t("armeSpeciale")}
             refBarre={refBarre} refTemps={refTemps}
+            {...(zombies ? { grenades: ez?.grenades ?? 0, remontoirs: ez?.remontoirs ?? 0, cuisson: ez?.cuisson ?? null, toucheGrenade: t("grenade"), toucheRemontoir: t("remontoir") } : {})}
           />
         )}
       </CoinHud>

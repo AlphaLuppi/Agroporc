@@ -22,9 +22,10 @@ import type { Difficulte, GenreBonus } from "./zombies-vagues";
  * choix du mode, argent, achats, relève, snap `zombies`), épée (mêlée à plusieurs cibles), cause de mort "tigre_zombie". v7 : zombies façon
  * Black Ops 1 (états de partie étendus, `zevt`, `reparer`, difficulté, armes améliorées `Equipement.ameliorees`, drapeaux d'allure et de mode
  * des tigres, Truck Muche dans le snap). v8 : réseau sans téléportation (`apparition.garder` à la relève, reprise d'une partie de zombies
- * après une micro-coupure : `bienvenue.jeton` / `bienvenue.reprise`, `bonjour.reprise`) et carte « Service de midi » redécoupée
- * (aménagements ajoutés aux pièces : index des prismes de `batiments{detruits}` et positions d'achats partagés). Client et serveur se
- * déploient ensemble.
+ * après une micro-coupure : `bienvenue.jeton` / `bienvenue.reprise`, `bonjour.reprise`), carte « Service de midi » redécoupée
+ * (aménagements ajoutés aux pièces : index des prismes de `batiments{detruits}` et positions d'achats partagés) et grenades balistiques
+ * des zombies (client `lancerGrenade`, serveur `grenade`, `zevt{grenade}`, stocks `JoueurZombies.grenades` / `remontoirs`, tigre à
+ * remontoir de la boîte). Client et serveur se déploient ensemble.
  */
 export const VERSION_PROTOCOLE = 8;
 
@@ -147,9 +148,17 @@ export const estIdZombie = (s: unknown): s is string => typeof s === "string" &&
 export type PhaseZombies = "lobby" | "pause" | "manche" | "fin";
 /** (v7) Atouts des distributeurs (cf. `ATOUTS` de zombies-carte.ts). */
 export type AtoutId = "gratin" | "expresso" | "ristretto" | "pausecafe";
-/** (v7) Boîte mystère : fermée, armes qui défilent (`tirage`), arme offerte au joueur `pour` (`offre`), envolée vers un autre emplacement. */
+/**
+ * (v8) Genre d'une grenade : à fragmentation (mèche de 3,5 s, cuisson possible) ou « tigre à remontoir » (la Monkey Bomb de BO1 : attire les
+ * tigres puis saute). Cf. `GRENADES` de lib/fps/grenades.ts.
+ */
+export type GenreGrenade = "frag" | "remontoir";
+/**
+ * (v7) Boîte mystère : fermée, armes qui défilent (`tirage`), arme offerte au joueur `pour` (`offre`), envolée vers un autre emplacement.
+ * (v8) `arme` peut être "remontoir" : trois tigres à remontoir (grenade spéciale) au lieu d'une arme.
+ */
 export interface EtatBoite {
-  emplacement: number; etat: "fermee" | "tirage" | "offre" | "envol"; arme?: ArmeFeuId | "peluche"; pour?: string;
+  emplacement: number; etat: "fermee" | "tirage" | "offre" | "envol"; arme?: ArmeFeuId | "peluche" | "remontoir"; pour?: string;
   /** fin de l'étape en cours (horodatage serveur ms), 0 si la boîte est fermée */
   finT: number;
   /** utilisations depuis le dernier déménagement */
@@ -175,6 +184,9 @@ export interface JoueurZombies {
   /** (v7) atouts bus, auto-relèves de la Pause Café restantes (solo) */
   atouts: AtoutId[];
   autoReleves: number;
+  /** (v8) grenades à fragmentation et tigres à remontoir en poche ; absents = 0 */
+  grenades?: number;
+  remontoirs?: number;
 }
 export interface EtatPartieZombies {
   phase: PhaseZombies; manche: number; hote: string; capacite: number; debutT: number;
@@ -211,6 +223,8 @@ export type EvenementZombies =
   | { e: "pap"; joueur: string; arme: ArmeFeuId; pret: boolean }
   | { e: "truck"; quoi: "klaxon" | "porte" | "explosion"; p: Vec3 }
   | { e: "explosion"; p: Vec3; rayon: number; par: string }
+  /** (v8) grenade `id` (message `grenade`) qui saute en `p` (à tous, lanceur compris : le serveur fait foi) */
+  | { e: "grenade"; id: number; genre: GenreGrenade; p: Vec3; rayon: number; par: string }
   | { e: "ingredient"; id: string; par: string }
   | { e: "cuisson"; fin: boolean }
   | { e: "manche"; numero: number; truck: boolean }
@@ -536,6 +550,11 @@ export type MessageClient =
   | { t: "lancerFrappe"; cible: Vec3 }
   /** Lancer une grenade fumigène. */
   | { t: "lancerFumigene"; p: Vec3; v: Vec3 }
+  /**
+   * (v8, zombies) Lancer une grenade depuis l'œil `o` dans la direction de visée `d` (normalisée) ; `cuissonMs` = temps pendant lequel la
+   * touche a été maintenue goupille tirée (frag seulement, borné à la mèche). Refusé en silence (stock vide, cadence, à terre).
+   */
+  | { t: "lancerGrenade"; genre: GenreGrenade; o: Vec3; d: Vec3; cuissonMs?: number }
   /** Monter sur le toit du bus C3 s'il est proche. */
   | { t: "monterBus" }
   | { t: "ping"; t0: number };
@@ -663,6 +682,11 @@ export type MessageServeur =
   | { t: "zombieMort"; id: string; p: Vec3; par: string; zone: Zone; cause?: "explosion" | "nuke" | "melee" }
   /** (v7) Effet ponctuel de la partie de zombies (aux membres de la salle). */
   | { t: "zevt"; e: EvenementZombies }
+  /**
+   * (v8) Une grenade part (aux joueurs en partie, lanceur compris) : origine, vitesse et instants serveur (lancer, explosion). La trajectoire
+   * est déterministe (`preparerLancer` de lib/fps/grenades.ts sur le même monde) : le client la recalcule et la dessine.
+   */
+  | { t: "grenade"; id: number; par: string; genre: GenreGrenade; o: Vec3; v: Vec3; t0: number; explosionT: number }
   /** Frappe aérienne : disponible (série de 5 kills), lancée (coordonnées ciblées), perdue. */
   | { t: "frappe"; evenement: "disponible" | "lancee" | "perdue"; joueur: string; cible?: Vec3; serie?: number }
   /** Fumigène activé en un point. */
