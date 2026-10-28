@@ -75,13 +75,63 @@ export interface Arme {
 /** Souffle d'une arme explosive (zombies) : `degats` au centre, la moitié au bord du rayon `rayon` (m), rien au-delà. */
 export interface Explosion { degats: number; rayon: number }
 /**
- * Profil d'une arme sur les tigres zombies (v7, BO1) : dégâts d'un plomb au corps, multiplicateur de tête (non cumulé avec ×1,5),
- * chargeur (munitions totales pour une spéciale), souffle éventuel à l'impact, balle qui traverse tous les tigres alignés (`perce`).
+ * (v8) Viseur affiché en visée (zombies) : mire métallique (`fer`, le viseur ordinaire), point rouge, holographique, lunette (champ réduit,
+ * plusieurs niveaux), lunette thermique (les tigres ressortent en blanc incandescent sur un décor éteint).
  */
-export interface ProfilZombie { degats: number; multTete: number; chargeur: number; explosion?: Explosion; perce?: true }
+export type Viseur = "fer" | "point_rouge" | "holo" | "lunette" | "thermique";
+/** (v8) Munitions incendiaires : le tigre touché brûle `dureeS` s (renouvelé à chaque touche, jamais cumulé) et perd `dps` PV par seconde. */
+export interface Brulure { dps: number; dureeS: number }
+/**
+ * (v8) Arc électrique (la Wunderwaffe DG-2 de BO1) : depuis le premier tigre touché, l'arc saute sur `sauts` tigres de plus au plus, chacun
+ * à moins de `rayon` m du précédent et en vue de lui ; chaque tigre de la chaîne (le premier compris) prend `degats` en plus du tir.
+ */
+export interface ArcElectrique { sauts: number; rayon: number; degats: number }
+/**
+ * (v8) Tir qui part en projectile balistique (moteur de `grenades.ts`) au lieu d'une balle instantanée : vitesse de départ (m/s), gravité
+ * (m/s²), rayon de l'objet (m), durée de vol au plus (ms), délai entre l'impact et l'explosion (ms : le carreau se plante puis saute) et,
+ * pour un carreau leurre, rayon (m) dans lequel il attire les tigres jusqu'à l'explosion. Dégâts : `degats` au tigre touché de plein fouet,
+ * puis le souffle `explosion`.
+ */
+export interface ProjectileArme { vitesse: number; gravite: number; rayonObjet: number; vieMs: number; delaiMs: number; attractionM?: number }
+/**
+ * (v8) Souffle en cône de la Soufflerie (le Thundergun de BO1 : cylindre de 180 u., projection jusqu'à 480 u., renversement jusqu'à 1 200 u.) :
+ * un cône tronqué le long de la visée, de `rayonDebut` à l'œil à `rayonFin` à `portee` (m). En deçà de `porteeMortelle`, le tigre est projeté
+ * (tué) ; au-delà, il perd la part `partLoin` de ses PV max.
+ */
+export interface SouffleCone { portee: number; porteeMortelle: number; rayonDebut: number; rayonFin: number; partLoin: number }
+/** (v8) Gel : un tigre touché qui survit court à `facteur` × sa vitesse pendant `dureeS` s. */
+export interface Gel { dureeS: number; facteur: number }
+/**
+ * Profil d'une arme sur les tigres zombies (v7, BO1) : dégâts d'un plomb au corps, multiplicateur de tête (non cumulé avec ×1,5),
+ * chargeur (munitions totales pour une spéciale ; PAR ARME pour une paire akimbo), souffle éventuel à l'impact, balle qui traverse tous
+ * les tigres alignés (`perce`).
+ * (v8) Effets NON scalaires, surtout pour le Pack-a-Punch (le profil `ameliore`), lus par `statsTir` (client ET serveur) et appliqués par le
+ * service zombies : brûlure, arc électrique, ricochets (rebonds sur les murs et le sol), projectile, souffle en cône, gel, paire d'armes
+ * (`akimbo` : deux armes, deux chargeurs, clic gauche = main droite, clic droit = main gauche), viseur et niveaux de lunette, cadence
+ * (`cadenceS` PAR ARME) et tir automatique propres.
+ */
+export interface ProfilZombie {
+  degats: number; multTete: number; chargeur: number; explosion?: Explosion; perce?: true;
+  brulure?: Brulure;
+  arc?: ArcElectrique;
+  /** rebonds de la balle sur les murs, les toits et le sol (1 ou 2) */
+  ricochets?: number;
+  projectile?: ProjectileArme;
+  souffle?: SouffleCone;
+  gel?: Gel;
+  akimbo?: true;
+  viseur?: Viseur;
+  /** niveaux de la lunette (champ horizontal en °, du plus large au plus serré) ; le premier est celui de départ */
+  zooms?: readonly number[];
+  cadenceS?: number;
+  auto?: boolean;
+}
 export interface ArmeZombie extends ProfilZombie {
-  /** version Pack-a-Punch : nom de plat et profil */
-  ameliore: ProfilZombie & { nom: string };
+  /**
+   * Version Pack-a-Punch : nom de plat, nom court du rack (≤ 10 caractères, `BlocArmes`) et profil ; elle change VRAIMENT l'arme (un effet
+   * non scalaire au moins, vérifié par `signatureAmelioration`).
+   */
+  ameliore: ProfilZombie & { nom: string; nomCourt: string };
 }
 
 /** Sans objet depuis la v2 §13.1 (plus de dispersion) ; conservée pour les lots qui l'importent encore. */
@@ -146,7 +196,11 @@ export const STATS: Record<ArmeFeuId, Arme> = {
     recul: { tangage: 0.022, lacet: 0.006 },
     portee: 120, chute: { debut: 25, fin: 70, min: 0.7 },
     vitesse: 1, zoom: null,
-    zombie: { degats: 40, multTete: 2, chargeur: 12, ameliore: { nom: "Pistolet gratiné", degats: 160, multTete: 2, chargeur: 16, explosion: { degats: 400, rayon: 2.5 } } },
+    zombie: { degats: 40, multTete: 2, chargeur: 12, ameliore: {
+      // BO1 : M1911 → Mustang & Sally (deux pistolets à grenades, 0,2 s, 6 coups chacun, impact 1 000)
+      nom: "Moutarde & Sally", nomCourt: "Moutarde", degats: 1000, multTete: 1, chargeur: 6, akimbo: true, cadenceS: 0.2,
+      projectile: { vitesse: 55, gravite: 3, rayonObjet: 0.05, vieMs: 2500, delaiMs: 0 }, explosion: { degats: 500, rayon: 3.5 },
+    } },
   },
   mitraillette: {
     id: "mitraillette", nom: "Mitraillette", nomCourt: "Mitraill.", categorie: "principale",
@@ -157,7 +211,7 @@ export const STATS: Record<ArmeFeuId, Arme> = {
     recul: { tangage: 0.012, lacet: 0.008 },
     portee: 90, chute: { debut: 15, fin: 50, min: 0.55 },
     vitesse: 1, zoom: null,
-    zombie: { degats: 95, multTete: 2, chargeur: 32, ameliore: { nom: "Mitraillette grand-mère", degats: 190, multTete: 2, chargeur: 50 } },
+    zombie: { degats: 95, multTete: 2, chargeur: 32, ameliore: { nom: "Mitraillette grand-mère", nomCourt: "Grand-mère", degats: 190, multTete: 2, chargeur: 50, viseur: "holo", arc: { sauts: 2, rayon: 4, degats: 250 } } },
   },
   pompe: {
     // 20 par plomb : 5 plombs sur 9 (la majorité) au corps à bout portant font 100 = un mort.
@@ -170,7 +224,7 @@ export const STATS: Record<ArmeFeuId, Arme> = {
     recul: { tangage: 0.09, lacet: 0.01 },
     portee: 45, chute: { debut: 8, fin: 30, min: 0.25 },
     vitesse: 1, zoom: null,
-    zombie: { degats: 70, multTete: 1.5, chargeur: 6, ameliore: { nom: "Pompe royale", degats: 140, multTete: 1.5, chargeur: 10 } },
+    zombie: { degats: 70, multTete: 1.5, chargeur: 6, ameliore: { nom: "Pompe royale", nomCourt: "P. royale", degats: 140, multTete: 1.5, chargeur: 10, viseur: "point_rouge", explosion: { degats: 350, rayon: 2.2 } } },
   },
   sniper: {
     id: "sniper", nom: "Sniper", nomCourt: "Sniper", categorie: "principale",
@@ -183,7 +237,7 @@ export const STATS: Record<ArmeFeuId, Arme> = {
     // ×3, ×6 (défaut, l'ancien 18°) et ×12 : 2·atan(tan 45° / k)
     vitesse: 0.9, zoom: 18.92, zooms: [36.87, 18.92, 9.53],
     hanche: { base: 0.045, mouvement: 0.035, air: 0.06 },
-    zombie: { degats: 900, multTete: 3, chargeur: 5, ameliore: { nom: "Sniper en croûte", degats: 2200, multTete: 3, chargeur: 8, perce: true } },
+    zombie: { degats: 900, multTete: 3, chargeur: 5, ameliore: { nom: "Sniper en croûte", nomCourt: "En croûte", degats: 2200, multTete: 3, chargeur: 8, perce: true, viseur: "thermique", zooms: [36.87, 18.92, 9.53] } },
   },
   fusil_assaut: {
     id: "fusil_assaut", nom: "Fusil d'assaut", nomCourt: "Fusil", categorie: "principale",
@@ -194,7 +248,11 @@ export const STATS: Record<ArmeFeuId, Arme> = {
     recul: { tangage: 0.014, lacet: 0.007 },
     portee: 140, chute: { debut: 30, fin: 90, min: 0.6 },
     vitesse: 0.97, zoom: null,
-    zombie: { degats: 110, multTete: 2, chargeur: 30, ameliore: { nom: "Fusil bourguignon", degats: 190, multTete: 2, chargeur: 45 } },
+    zombie: { degats: 110, multTete: 2, chargeur: 30, ameliore: {
+      // lunette ×2 / ×3 (l'ACOG de BO1) et balles explosives
+      nom: "Fusil bourguignon", nomCourt: "Bourgogne", degats: 190, multTete: 2, chargeur: 45, viseur: "lunette", zooms: [53.13, 36.87],
+      explosion: { degats: 250, rayon: 1.8 },
+    } },
   },
   mitrailleuse: {
     id: "mitrailleuse", nom: "Mitrailleuse", nomCourt: "M. lourde", categorie: "principale",
@@ -205,7 +263,7 @@ export const STATS: Record<ArmeFeuId, Arme> = {
     recul: { tangage: 0.011, lacet: 0.010 },
     portee: 110, chute: { debut: 20, fin: 60, min: 0.5 },
     vitesse: 0.88, zoom: null,
-    zombie: { degats: 130, multTete: 2, chargeur: 60, ameliore: { nom: "Mitrailleuse tartiflette", degats: 200, multTete: 2, chargeur: 100 } },
+    zombie: { degats: 130, multTete: 2, chargeur: 60, ameliore: { nom: "Mitrailleuse tartiflette", nomCourt: "Tartiflet.", degats: 210, multTete: 2, chargeur: 125, viseur: "holo", brulure: { dps: 250, dureeS: 4 } } },
   },
   revolver: {
     id: "revolver", nom: "Revolver", nomCourt: "Revolver", categorie: "secondaire",
@@ -216,7 +274,10 @@ export const STATS: Record<ArmeFeuId, Arme> = {
     recul: { tangage: 0.05, lacet: 0.008 },
     portee: 130, chute: { debut: 30, fin: 80, min: 0.7 },
     vitesse: 1, zoom: null,
-    zombie: { degats: 240, multTete: 2.5, chargeur: 6, ameliore: { nom: "Revolver flambé", degats: 560, multTete: 2.5, chargeur: 8 } },
+    zombie: { degats: 240, multTete: 2.5, chargeur: 6, ameliore: {
+      // BO1 : Python → Cobra (12 coups, tête ×3) ; ici flambé : munitions incendiaires
+      nom: "Cobra flambé", nomCourt: "Cobra", degats: 560, multTete: 3, chargeur: 12, viseur: "point_rouge", brulure: { dps: 200, dureeS: 4 },
+    } },
   },
   mini_uzi: {
     id: "mini_uzi", nom: "Mini Uzi", nomCourt: "Mini uzi", categorie: "secondaire",
@@ -227,7 +288,7 @@ export const STATS: Record<ArmeFeuId, Arme> = {
     recul: { tangage: 0.010, lacet: 0.012 },
     portee: 45, chute: { debut: 8, fin: 30, min: 0.4 },
     vitesse: 1.05, zoom: null,
-    zombie: { degats: 55, multTete: 2, chargeur: 25, ameliore: { nom: "Mini Uzi à la plancha", degats: 110, multTete: 2, chargeur: 40 } },
+    zombie: { degats: 55, multTete: 2, chargeur: 25, ameliore: { nom: "Mini Uzi à la plancha", nomCourt: "Plancha", degats: 110, multTete: 2, chargeur: 40, cadenceS: 0.05, viseur: "point_rouge", ricochets: 2 } },
   },
   rayon: {
     // (v7) zombies seulement : sort de la boîte ou de la quête ; tir droit, explosion à l'impact (BO1 : le Ray Gun)
@@ -240,7 +301,150 @@ export const STATS: Record<ArmeFeuId, Arme> = {
     portee: 140, chute: { debut: 140, fin: 140, min: 1 },
     vitesse: 1, zoom: null,
     zombiesSeulement: true,
-    zombie: { degats: 1000, multTete: 1.5, chargeur: 20, explosion: { degats: 1500, rayon: 1.6 }, ameliore: { nom: "Rayon Goulaf", degats: 1800, multTete: 1.5, chargeur: 40, explosion: { degats: 2800, rayon: 2 } } },
+    zombie: { degats: 1000, multTete: 1.5, chargeur: 20, explosion: { degats: 1500, rayon: 1.6 }, ameliore: {
+      // BO1 : Porter's X2 (chargeur ×2) ; ici l'impact libère en plus un arc qui saute sur trois tigres
+      nom: "Rayon Goulaf", nomCourt: "R. Goulaf", degats: 1800, multTete: 1.5, chargeur: 40, explosion: { degats: 2800, rayon: 2 },
+      arc: { sauts: 3, rayon: 5, degats: 1500 },
+    } },
+  },
+  // ---- (v8) armes du mode zombies seulement : BO1 renommé, au mur ou dans la boîte ----
+  baguette: {
+    // l'Olympia de BO1 (double canon, deux coups) ; gratinée : l'Hadès, munitions incendiaires
+    id: "baguette", nom: "Coupe-baguette", nomCourt: "Baguette", categorie: "principale",
+    description: "Fusil à canon scié double : deux coups dévastateurs à bout portant, puis on recharge.",
+    degats: 22, multTete: 1.5, plombs: 8, gerbe: 0.075,
+    cadenceS: 0.3, auto: false, chargeur: 2, rechargeS: 2.2, sansRecharge: false,
+    dispersion: { base: 0.09, mouvement: 0.012, air: 0.02, parTir: 0, max: 0.12, retourS: 0.5, viseur: 0.08 },
+    recul: { tangage: 0.11, lacet: 0.012 },
+    portee: 35, chute: { debut: 6, fin: 22, min: 0.2 },
+    vitesse: 1, zoom: null,
+    zombiesSeulement: true,
+    zombie: { degats: 160, multTete: 1.5, chargeur: 2, ameliore: {
+      nom: "Baguette flambée", nomCourt: "Flambée", degats: 320, multTete: 1.5, chargeur: 4,
+      brulure: { dps: 300, dureeS: 5 }, explosion: { degats: 200, rayon: 1.5 },
+    } },
+  },
+  agrafeuse: {
+    // le FAL de BO1 (semi-automatique de précision) ; gratinée : balles qui ricochent, viseur holographique
+    id: "agrafeuse", nom: "Agrafeuse", nomCourt: "Agrafeuse", categorie: "principale",
+    description: "Fusil semi-automatique : une balle lourde par clic, précise et qui fait mal à la tête.",
+    degats: 34, multTete: 2.2, plombs: 1, gerbe: 0,
+    cadenceS: 0.14, auto: false, chargeur: 20, rechargeS: 2.3, sansRecharge: false,
+    dispersion: { base: 0.004, mouvement: 0.02, air: 0.04, parTir: 0.012, max: 0.06, retourS: 0.4, viseur: 0.001 },
+    recul: { tangage: 0.03, lacet: 0.006 },
+    portee: 160, chute: { debut: 40, fin: 110, min: 0.7 },
+    vitesse: 0.97, zoom: null,
+    zombiesSeulement: true,
+    zombie: { degats: 220, multTete: 3, chargeur: 20, ameliore: {
+      nom: "Agrafeuse professionnelle", nomCourt: "Agraf. pro", degats: 400, multTete: 3, chargeur: 30, viseur: "holo", ricochets: 2,
+    } },
+  },
+  photocopieuse: {
+    // la PPSh de BO1 (tambour de 71 coups, cadence folle) ; gratinée : arcs électriques, point rouge
+    id: "photocopieuse", nom: "Photocopieuse", nomCourt: "Photocop.", categorie: "principale",
+    description: "Mitraillette à tambour : 71 coups à une cadence de photocopieuse en surchauffe.",
+    degats: 14, multTete: 1.5, plombs: 1, gerbe: 0,
+    cadenceS: 0.055, auto: true, chargeur: 71, rechargeS: 3.0, sansRecharge: false,
+    dispersion: { base: 0.016, mouvement: 0.03, air: 0.055, parTir: 0.006, max: 0.1, retourS: 0.45, viseur: 0.01 },
+    recul: { tangage: 0.009, lacet: 0.011 },
+    portee: 80, chute: { debut: 15, fin: 45, min: 0.5 },
+    vitesse: 1, zoom: null,
+    zombiesSeulement: true,
+    zombie: { degats: 110, multTete: 2, chargeur: 71, ameliore: {
+      nom: "Photocopieuse couleur", nomCourt: "Couleur", degats: 200, multTete: 2, chargeur: 115, viseur: "point_rouge",
+      arc: { sauts: 2, rayon: 4, degats: 300 },
+    } },
+  },
+  essoreuse: {
+    // le SPAS-12 de BO1 (pompe semi-automatique) ; gratinée : le SPAZ-24, tout automatique, plombs explosifs
+    id: "essoreuse", nom: "Essoreuse", nomCourt: "Essoreuse", categorie: "principale",
+    description: "Fusil à pompe semi-automatique : huit coups enchaînés aussi vite qu'on clique.",
+    degats: 16, multTete: 1.5, plombs: 8, gerbe: 0.06,
+    cadenceS: 0.28, auto: false, chargeur: 8, rechargeS: 3.2, sansRecharge: false,
+    dispersion: { base: 0.08, mouvement: 0.012, air: 0.02, parTir: 0, max: 0.11, retourS: 0.5, viseur: 0.07 },
+    recul: { tangage: 0.07, lacet: 0.012 },
+    portee: 40, chute: { debut: 8, fin: 28, min: 0.25 },
+    vitesse: 0.97, zoom: null,
+    zombiesSeulement: true,
+    zombie: { degats: 90, multTete: 1.5, chargeur: 8, ameliore: {
+      nom: "Essoreuse turbo", nomCourt: "Turbo", degats: 160, multTete: 1.5, chargeur: 12, auto: true, cadenceS: 0.22,
+      explosion: { degats: 300, rayon: 2 },
+    } },
+  },
+  brochette: {
+    // l'arbalète explosive de BO1 : le carreau se plante puis saute ; gratiné : le « monkey bolt », il attire les tigres avant de sauter
+    id: "brochette", nom: "Brochette", nomCourt: "Brochette", categorie: "principale",
+    description: "Arbalète : le pique-brochette se plante dans un tigre ou un mur et explose une seconde et demie plus tard.",
+    degats: 60, multTete: 1.5, plombs: 1, gerbe: 0,
+    cadenceS: 1.0, auto: false, chargeur: 1, rechargeS: 2.2, sansRecharge: false,
+    dispersion: { base: 0.004, mouvement: 0.02, air: 0.04, parTir: 0.012, max: 0.06, retourS: 0.5, viseur: 0.001 },
+    recul: { tangage: 0.05, lacet: 0.006 },
+    portee: 150, chute: { debut: 150, fin: 150, min: 1 },
+    vitesse: 0.95, zoom: null,
+    zombiesSeulement: true,
+    zombie: {
+      degats: 750, multTete: 1, chargeur: 1, explosion: { degats: 1500, rayon: 3.5 },
+      projectile: { vitesse: 70, gravite: 4, rayonObjet: 0.04, vieMs: 2500, delaiMs: 1500 },
+      ameliore: {
+        nom: "Brochette du chef", nomCourt: "Br. chef", degats: 2250, multTete: 1, chargeur: 2, explosion: { degats: 4000, rayon: 4.5 },
+        // BO1 : point d'intérêt de 1 536 u. (≈ 39 m), le tigre touché danse jusqu'à l'explosion
+        projectile: { vitesse: 75, gravite: 4, rayonObjet: 0.04, vieMs: 2500, delaiMs: 3000, attractionM: 30 },
+      },
+    },
+  },
+  soufflerie: {
+    // le Thundergun de BO1 : souffle en cône qui projette tout ce qui est près et renverse le reste
+    id: "soufflerie", nom: "Soufflerie", nomCourt: "Soufflerie", categorie: "principale",
+    description: "Sortie de la boîte : un souffle d'air qui balaie les tigres devant soi. Deux coups par recharge.",
+    degats: 80, multTete: 1, plombs: 1, gerbe: 0,
+    cadenceS: 1.0, auto: false, chargeur: 2, rechargeS: 3.0, sansRecharge: false,
+    dispersion: { base: 0.01, mouvement: 0.02, air: 0.03, parTir: 0.01, max: 0.05, retourS: 0.5, viseur: 0.005 },
+    recul: { tangage: 0.12, lacet: 0.01 },
+    portee: 24, chute: { debut: 24, fin: 24, min: 1 },
+    vitesse: 0.95, zoom: null,
+    zombiesSeulement: true,
+    zombie: {
+      // 480 u. ≈ 12 m de projection, 1 200 u. ≈ 30 m de renversement (réduit à 24 m : la carte est intérieure)
+      degats: 0, multTete: 1, chargeur: 2, souffle: { portee: 24, porteeMortelle: 12, rayonDebut: 1, rayonFin: 4.5, partLoin: 0.5 },
+      ameliore: {
+        nom: "Soufflerie XXL", nomCourt: "Souf. XXL", degats: 0, multTete: 1, chargeur: 4,
+        souffle: { portee: 30, porteeMortelle: 16, rayonDebut: 1.2, rayonFin: 6, partLoin: 0.6 }, gel: { dureeS: 4, facteur: 0.35 },
+      },
+    },
+  },
+  grille_pain: {
+    // la Wunderwaffe DG-2 de BO1 : un arc qui foudroie et saute de tigre en tigre ; gratiné (DG-3 JZ) : plus de sauts, et ils grillent
+    id: "grille_pain", nom: "Grille-pain", nomCourt: "Grill-pain", categorie: "principale",
+    description: "Sorti de la boîte : un éclair qui saute de tigre en tigre, jusqu'à dix d'un coup. Trois charges.",
+    degats: 90, multTete: 1, plombs: 1, gerbe: 0,
+    cadenceS: 1.2, auto: false, chargeur: 3, rechargeS: 3.0, sansRecharge: false,
+    dispersion: { base: 0.004, mouvement: 0.02, air: 0.04, parTir: 0.012, max: 0.06, retourS: 0.5, viseur: 0.001 },
+    recul: { tangage: 0.08, lacet: 0.01 },
+    portee: 70, chute: { debut: 70, fin: 70, min: 1 },
+    vitesse: 0.95, zoom: null,
+    zombiesSeulement: true,
+    zombie: {
+      degats: 12000, multTete: 1, chargeur: 3, arc: { sauts: 9, rayon: 7, degats: 12000 },
+      ameliore: {
+        nom: "Grille-pain 4 tranches", nomCourt: "4 tranches", degats: 20000, multTete: 1, chargeur: 6,
+        arc: { sauts: 23, rayon: 9, degats: 20000 }, brulure: { dps: 1500, dureeS: 4 },
+      },
+    },
+  },
+  perforeuse: {
+    // le CZ75 de BO1 (pistolet semi-automatique lourd) ; gratinée : la paire akimbo tout automatique
+    id: "perforeuse", nom: "Perforeuse", nomCourt: "Perforeuse", categorie: "secondaire",
+    description: "Pistolet lourd semi-automatique : quinze coups secs, idéal pour finir à la tête.",
+    degats: 30, multTete: 2, plombs: 1, gerbe: 0,
+    cadenceS: 0.11, auto: false, chargeur: 15, rechargeS: 1.5, sansRecharge: false,
+    dispersion: { base: 0.004, mouvement: 0.018, air: 0.035, parTir: 0.012, max: 0.06, retourS: 0.3, viseur: 0.0015 },
+    recul: { tangage: 0.026, lacet: 0.007 },
+    portee: 110, chute: { debut: 25, fin: 70, min: 0.7 },
+    vitesse: 1, zoom: null,
+    zombiesSeulement: true,
+    zombie: { degats: 150, multTete: 2.5, chargeur: 15, ameliore: {
+      nom: "Perforeuses jumelles", nomCourt: "Jumelles", degats: 300, multTete: 2.5, chargeur: 20, akimbo: true, auto: true, cadenceS: 0.11,
+    } },
   },
   railgun: {
     id: "railgun", nom: "Railgun", nomCourt: "Railgun", categorie: "speciale",
@@ -251,7 +455,7 @@ export const STATS: Record<ArmeFeuId, Arme> = {
     recul: { tangage: 0.06, lacet: 0.004 },
     portee: 500, chute: { debut: 500, fin: 500, min: 1 },
     vitesse: 0.9, zoom: null,
-    zombie: { degats: 3000, multTete: 1.5, chargeur: 12, perce: true, ameliore: { nom: "Railgun thermidor", degats: 6000, multTete: 1.5, chargeur: 20, perce: true } },
+    zombie: { degats: 3000, multTete: 1.5, chargeur: 12, perce: true, ameliore: { nom: "Railgun thermidor", nomCourt: "Thermidor", degats: 6000, multTete: 1.5, chargeur: 20, perce: true, viseur: "thermique", zooms: [36.87], arc: { sauts: 4, rayon: 6, degats: 3000 } } },
   },
   minigun: {
     id: "minigun", nom: "Minigun", nomCourt: "Minigun", categorie: "speciale",
@@ -262,7 +466,7 @@ export const STATS: Record<ArmeFeuId, Arme> = {
     recul: { tangage: 0.006, lacet: 0.012 },
     portee: 100, chute: { debut: 20, fin: 70, min: 0.5 },
     vitesse: 0.75, zoom: null,
-    zombie: { degats: 70, multTete: 1.4, chargeur: 150, ameliore: { nom: "Minigun carbonara", degats: 130, multTete: 1.4, chargeur: 250 } },
+    zombie: { degats: 70, multTete: 1.4, chargeur: 150, ameliore: { nom: "Minigun carbonara", nomCourt: "Carbonara", degats: 130, multTete: 1.4, chargeur: 250, ricochets: 1, brulure: { dps: 150, dureeS: 3 } } },
   },
   magnum_dore: {
     id: "magnum_dore", nom: "Magnum doré", nomCourt: "Magnum", categorie: "speciale",
@@ -273,7 +477,7 @@ export const STATS: Record<ArmeFeuId, Arme> = {
     recul: { tangage: 0.07, lacet: 0.01 },
     portee: 160, chute: { debut: 40, fin: 100, min: 0.8 },
     vitesse: 1, zoom: null,
-    zombie: { degats: 800, multTete: 3, chargeur: 8, ameliore: { nom: "Magnum à l'or fin", degats: 1600, multTete: 3, chargeur: 14 } },
+    zombie: { degats: 800, multTete: 3, chargeur: 8, ameliore: { nom: "Magnum à l'or fin", nomCourt: "Or fin", degats: 1600, multTete: 3, chargeur: 14, perce: true, viseur: "point_rouge" } },
   },
   lance_grenades: {
     id: "lance_grenades", nom: "Lance-grenades", nomCourt: "L-grenade", categorie: "unique",
@@ -285,7 +489,7 @@ export const STATS: Record<ArmeFeuId, Arme> = {
     portee: 160, chute: { debut: 60, fin: 140, min: 0.8 },
     vitesse: 0.95, zoom: null,
     // pas dans la boîte des zombies (arène seulement) ; valeurs de remplissage
-    zombie: { degats: 300, multTete: 1, chargeur: 6, explosion: { degats: 600, rayon: 3 }, ameliore: { nom: "Lance-gratins", degats: 600, multTete: 1, chargeur: 10, explosion: { degats: 1200, rayon: 3.5 } } },
+    zombie: { degats: 300, multTete: 1, chargeur: 6, explosion: { degats: 600, rayon: 3 }, ameliore: { nom: "Lance-gratins", nomCourt: "L-gratins", degats: 600, multTete: 1, chargeur: 10, explosion: { degats: 1200, rayon: 3.5 } } },
   },
   bazooka: {
     id: "bazooka", nom: "Bazooka", nomCourt: "Bazooka", categorie: "unique",
@@ -297,7 +501,7 @@ export const STATS: Record<ArmeFeuId, Arme> = {
     portee: 350, chute: { debut: 350, fin: 350, min: 1 },
     vitesse: 0.85, zoom: null,
     // pas dans la boîte des zombies (arène seulement) ; valeurs de remplissage
-    zombie: { degats: 1500, multTete: 1, chargeur: 3, explosion: { degats: 1500, rayon: 4 }, ameliore: { nom: "Bazooka au four", degats: 3000, multTete: 1, chargeur: 5, explosion: { degats: 3000, rayon: 4.5 } } },
+    zombie: { degats: 1500, multTete: 1, chargeur: 3, explosion: { degats: 1500, rayon: 4 }, ameliore: { nom: "Bazooka au four", nomCourt: "Au four", degats: 3000, multTete: 1, chargeur: 5, explosion: { degats: 3000, rayon: 4.5 } } },
   },
   fumigene: {
     id: "fumigene", nom: "Fumigène", nomCourt: "Fumigène", categorie: "unique",
@@ -309,7 +513,7 @@ export const STATS: Record<ArmeFeuId, Arme> = {
     portee: 80, chute: { debut: 40, fin: 80, min: 0.5 },
     vitesse: 1.05, zoom: null,
     // pas dans la boîte des zombies (arène seulement) ; valeurs de remplissage
-    zombie: { degats: 15, multTete: 1, chargeur: 3, ameliore: { nom: "Fumigène fumé", degats: 30, multTete: 1, chargeur: 5 } },
+    zombie: { degats: 15, multTete: 1, chargeur: 3, ameliore: { nom: "Fumigène fumé", nomCourt: "Fumé", degats: 30, multTete: 1, chargeur: 5 } },
   },
 };
 
@@ -327,6 +531,86 @@ export function degatsZombie(arme: ArmeFeuId, zone: Zone, distance: number, amel
 export function chargeurZombie(arme: ArmeFeuId, ameliore = false): number { return profilZombie(arme, ameliore).chargeur; }
 /** (v7) Nom affiché en zombies : le nom de plat une fois améliorée. */
 export function nomZombie(arme: ArmeFeuId, ameliore = false): string { return ameliore ? STATS[arme].zombie.ameliore.nom : STATS[arme].nom; }
+/** (v8) Nom court du rack (≤ 10 caractères) : celui de l'arme améliorée une fois passée au Micro-ondes. */
+export function nomCourtZombie(arme: ArmeFeuId, ameliore = false): string { return ameliore ? STATS[arme].zombie.ameliore.nomCourt : STATS[arme].nomCourt; }
+/** (v8) Nom affiché de l'arme en main : arme blanche, arme à feu, ou nom de plat si elle est dans `ameliorees`. */
+export function nomAffiche(id: ArmeId, ameliorees?: readonly string[]): string {
+  if (estMelee(id)) return MELEE[id].nom;
+  return nomZombie(id, ameliorees?.includes(id) ?? false);
+}
+
+/**
+ * (v8) Ce qu'il faut pour tirer avec l'arme (client ET serveur doivent lire la même chose, sinon les tirs sont refusés) : cadence PAR ARME
+ * (une paire akimbo tire deux fois plus, une main après l'autre), automatique ou non, viseur, niveaux de lunette et index de départ, paire
+ * d'armes, projectile, souffle, ricochets. Dans l'arène (`zombies` faux), c'est `STATS` tel quel ; en zombies, le profil (amélioré ou non)
+ * peut tout changer.
+ */
+export interface StatsTir {
+  cadenceS: number;
+  auto: boolean;
+  viseur: Viseur;
+  zooms: readonly number[];
+  zoomDefaut: number;
+  akimbo: boolean;
+  projectile: boolean;
+  souffle: boolean;
+  ricochets: number;
+}
+export function statsTir(arme: ArmeFeuId, o: { zombies?: boolean; ameliore?: boolean } = {}): StatsTir {
+  const a = STATS[arme];
+  if (!o.zombies) {
+    const zooms = niveauxZoom(arme);
+    return {
+      cadenceS: a.cadenceS, auto: a.auto, viseur: zooms.length ? "lunette" : "fer", zooms, zoomDefaut: niveauZoomDefaut(arme),
+      akimbo: false, projectile: false, souffle: false, ricochets: 0,
+    };
+  }
+  const p = profilZombie(arme, o.ameliore === true);
+  const zooms = p.zooms ?? niveauxZoom(arme);
+  const viseur: Viseur = p.viseur ?? (zooms.length ? "lunette" : "fer");
+  return {
+    cadenceS: p.cadenceS ?? a.cadenceS,
+    auto: p.auto ?? a.auto,
+    viseur,
+    zooms,
+    zoomDefaut: p.zooms ? 0 : niveauZoomDefaut(arme),
+    akimbo: p.akimbo === true,
+    projectile: p.projectile !== undefined,
+    souffle: p.souffle !== undefined,
+    ricochets: Math.max(0, Math.min(3, Math.floor(p.ricochets ?? 0))),
+  };
+}
+/** (v8) Le viseur est une lunette (champ réduit, réticule plein écran, `Lunette.tsx`) : lunette ordinaire ou thermique. */
+export const viseurLunette = (v: Viseur): boolean => v === "lunette" || v === "thermique";
+
+/** (v8) Effets non scalaires d'un profil zombies (ce qui change VRAIMENT l'arme, au-delà des dégâts et du chargeur). */
+export type EffetArme =
+  | "akimbo" | "projectile" | "explosive" | "incendiaire" | "electrique" | "ricochet" | "perce" | "souffle" | "gel" | "leurre" | "auto"
+  | `viseur:${Viseur}`;
+function effetsProfil(arme: ArmeFeuId, p: ProfilZombie): Set<EffetArme> {
+  const e = new Set<EffetArme>();
+  if (p.akimbo) e.add("akimbo");
+  if (p.projectile) e.add("projectile");
+  if (p.projectile?.attractionM) e.add("leurre");
+  if (p.explosion) e.add("explosive");
+  if (p.brulure) e.add("incendiaire");
+  if (p.arc) e.add("electrique");
+  if ((p.ricochets ?? 0) > 0) e.add("ricochet");
+  if (p.perce) e.add("perce");
+  if (p.souffle) e.add("souffle");
+  if (p.gel) e.add("gel");
+  if (p.auto ?? STATS[arme].auto) e.add("auto");
+  e.add(`viseur:${p.viseur ?? (niveauxZoom(arme).length ? "lunette" : "fer")}`);
+  return e;
+}
+/**
+ * (v8) Signature du Pack-a-Punch : effets non scalaires que l'arme améliorée a et que l'arme de base n'a pas, triés. Jamais vide pour une
+ * arme qui peut passer au Micro-ondes, et distincte d'une arme à l'autre (chaque arme gratinée a sa personnalité, vérifié par un test).
+ */
+export function signatureAmelioration(arme: ArmeFeuId): EffetArme[] {
+  const base = effetsProfil(arme, STATS[arme].zombie);
+  return [...effetsProfil(arme, STATS[arme].zombie.ameliore)].filter((x) => !base.has(x)).sort();
+}
 /** (v7) Dégâts d'un souffle à `distance` (m) du centre : 100 % au centre, 50 % au bord, 0 au-delà (entier). */
 export function degatsExplosion(e: Explosion, distance: number): number {
   if (!(distance <= e.rayon)) return 0;

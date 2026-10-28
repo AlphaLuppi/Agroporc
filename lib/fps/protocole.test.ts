@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  ARMES, ARMES_MELEE, ARMES_PRINCIPALES, ARMES_SECONDAIRES, ARMES_SECONDAIRES_ZOMBIES, ARMES_SPECIALES, ARMES_UNIQUES, ECHELLE_AVATAR, EQUIPEMENT_DEFAUT, JEU, OEIL_SIEGE, PAS_SNAP_ZOMBIE, PLAFONDS,
+  ARMES, ARMES_MELEE, ARMES_PRINCIPALES, ARMES_PRINCIPALES_ZOMBIES, ARMES_SECONDAIRES, ARMES_SECONDAIRES_ZOMBIES, ARMES_SPECIALES, ARMES_UNIQUES, ECHELLE_AVATAR, EQUIPEMENT_DEFAUT, JEU, OEIL_SIEGE, PAS_SNAP_ZOMBIE, PLAFONDS,
   SILHOUETTE, SILHOUETTE_ACCROUPIE, SLOTS, VERSION_PROTOCOLE, copierEquipement, decoderZombies, encoderZombies, estIdZombie, estMelee, idZombie, oeilDe,
   silhouetteDe, type ZombieSnap,
   type CauseMort, type MessageClient, type MessageServeur, type PassageAvion, type TigreLargueSnap,
@@ -8,10 +8,10 @@ import {
 import { STATS } from "./armes";
 
 describe("armes", () => {
-  it("ARMES : 15 armes sans doublon (le pistolet à rayons des zombies et les armes uniques du bus C3 compris), listes de catégories disjointes", () => {
-    expect(ARMES).toHaveLength(15);
+  it("ARMES : 23 armes sans doublon (les 9 armes des zombies et les armes uniques du bus C3 compris), listes de catégories disjointes", () => {
+    expect(ARMES).toHaveLength(23);
     expect(new Set(ARMES).size).toBe(ARMES.length);
-    const toutes = [...ARMES_PRINCIPALES, ...ARMES_SECONDAIRES, ...ARMES_SECONDAIRES_ZOMBIES, ...ARMES_SPECIALES, ...ARMES_UNIQUES];
+    const toutes = [...ARMES_PRINCIPALES, ...ARMES_PRINCIPALES_ZOMBIES, ...ARMES_SECONDAIRES, ...ARMES_SECONDAIRES_ZOMBIES, ...ARMES_SPECIALES, ...ARMES_UNIQUES];
     expect(new Set(toutes).size).toBe(toutes.length);
     expect([...ARMES].sort()).toEqual([...toutes].sort());
     expect(ARMES).not.toContain("couteau");
@@ -128,7 +128,7 @@ describe("protocole v6 (zombies)", () => {
   });
 
   it("les armes à feu (uniques du bus C3 comprises) (l'épée n'en est pas une)", () => {
-    expect(ARMES).toHaveLength(15);
+    expect(ARMES).toHaveLength(23);
     expect(ARMES).not.toContain("epee");
   });
 

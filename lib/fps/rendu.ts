@@ -177,6 +177,9 @@ const geoBoite = (w: number, h: number, d: number, oy = 0) =>
 const geoCyl = (r: number, len: number, seg = 8) =>
   enCache(`c${r},${len},${seg}`, () => { const g = new THREE.CylinderGeometry(r, r, len, seg, 1, false); g.rotateX(Math.PI / 2); return g; });
 const geoIco = (r: number, detail = 1) => enCache(`i${r},${detail}`, () => new THREE.IcosahedronGeometry(r, detail));
+/** Tronc de cône d'axe z (tuyères) : rayon `rArriere` côté +z, `rAvant` côté −z, centré. */
+const geoCone = (rArriere: number, rAvant: number, len: number, seg = 10) =>
+  enCache(`k${rArriere},${rAvant},${len},${seg}`, () => { const g = new THREE.CylinderGeometry(rArriere, rAvant, len, seg, 1, true); g.rotateX(Math.PI / 2); return g; });
 
 /** Arêtes en lignes de 2 px (`LineMaterial`) pour les avatars, en lignes de 1 px (`LineBasicMaterial`) pour l'arme en main. */
 type MateriauLigne = THREE.LineBasicMaterial | LineMaterial;
@@ -733,6 +736,233 @@ function creerModeleArme(id: ArmeId, m: Materiaux, devant: boolean): ModeleArme 
       inclinaison = 0.1;
       break;
     }
+    // ---- (v8) armes du mode zombies seulement ----
+    case "baguette": {
+      // Coupe-baguette : canon scié DOUBLE (deux tubes côte à côte), bascule qui s'ouvre au rechargement, poignée pistolet, crosse sciée.
+      const canons = new THREE.Group();
+      canons.position.set(0, 0.02, -0.07);
+      inner.add(canons);
+      for (const x of [-0.016, 0.016]) piece(canons, geoCyl(0.015, 0.4), m, x, 0, -0.2);
+      piece(canons, geoBoite(0.05, 0.012, 0.36), m, 0, -0.018, -0.2);
+      piece(canons, geoBoite(0.006, 0.01, 0.01), m, 0, 0.02, -0.38);
+      piece(inner, geoBoite(0.05, 0.06, 0.12), m, 0, -0.005, 0);
+      piece(inner, geoBoite(0.03, 0.09, 0.04), m, 0, -0.07, 0.07, -0.25);
+      piece(inner, geoBoite(0.04, 0.07, 0.1), m, 0, -0.02, 0.15, -0.15);
+      piece(inner, geoBoite(0.018, 0.004, 0.05), m, 0, -0.04, 0.02);
+      const chiens = piece(inner, geoBoite(0.04, 0.02, 0.012), m, 0, 0.04, 0.05, 0.3);
+      prise.set(0, -0.07, 0.07);
+      garde.set(0, -0.025, -0.2);
+      bouche.set(0, 0.02, -0.47);
+      porte.set(0.12, -0.21, -0.25);
+      echelleFlash = 1.8;
+      inclinaison = 0.25;
+      anim = (t, p) => {
+        // le double canon bascule vers le bas pour les deux cartouches, puis se referme d'un coup sec
+        canons.rotation.x = -0.55 * (rampe(p, 0.06, 0.2) - rampe(p, 0.8, 0.9));
+        chiens.rotation.x = 0.3 + 0.4 * pulsation(t, 0.02, 0.12);
+      };
+      break;
+    }
+    case "agrafeuse": {
+      // Agrafeuse : fusil semi-automatique au carter en forme d'agrafeuse de bureau, mâchoire supérieure articulée (elle « agrafe » à chaque tir),
+      // canon long, chargeur droit, crosse.
+      piece(inner, geoBoite(0.05, 0.05, 0.36), m, 0, 0, -0.12);
+      const machoire = new THREE.Group();
+      machoire.position.set(0, 0.03, 0.06);
+      inner.add(machoire);
+      piece(machoire, geoBoite(0.056, 0.028, 0.34), m, 0, 0.014, -0.17);
+      piece(machoire, geoBoite(0.04, 0.012, 0.03), m, 0, 0.034, -0.32);
+      piece(inner, geoCyl(0.011, 0.3), m, 0, 0.005, -0.45);
+      piece(inner, geoCyl(0.017, 0.04, 6), m, 0, 0.005, -0.61);
+      piece(inner, geoBoite(0.034, 0.1, 0.04), m, 0, -0.08, 0.02, -0.2);
+      piece(inner, geoBoite(0.018, 0.004, 0.05), m, 0, -0.035, -0.03);
+      const chargeur = piece(inner, geoBoite(0.03, 0.12, 0.05), m, 0, -0.1, -0.13, 0.08);
+      piece(inner, geoBoite(0.042, 0.08, 0.24), m, 0, -0.01, 0.2, -0.06);
+      prise.set(0, -0.085, 0.02);
+      garde.set(0, -0.03, -0.3);
+      bouche.set(0, 0.005, -0.63);
+      porte.set(0.12, -0.21, -0.2);
+      echelleFlash = 1.0;
+      inclinaison = 0.4;
+      const yC = chargeur.position.y;
+      anim = (t, p) => {
+        machoire.rotation.x = -0.12 * pulsation(t, 0.02, 0.08) + 0.35 * (rampe(p, 0.08, 0.2) - rampe(p, 0.82, 0.94));
+        chargeur.position.y = yC - 0.14 * (rampe(p, 0.1, 0.3) - rampe(p, 0.6, 0.78));
+        chargeur.visible = !(p > 0.32 && p < 0.58);
+      };
+      break;
+    }
+    case "photocopieuse": {
+      // Photocopieuse : mitraillette à TAMBOUR (gros disque sous l'arme, qui tourne à chaque tir), manchon de canon ajouré, crosse de bois.
+      piece(inner, geoBoite(0.05, 0.07, 0.3), m, 0, 0, -0.12);
+      piece(inner, geoCyl(0.024, 0.2, 8), m, 0, 0.01, -0.36);
+      for (const z of [-0.3, -0.36, -0.42]) piece(inner, geoBoite(0.05, 0.006, 0.012), m, 0, 0.036, z);
+      piece(inner, geoCyl(0.009, 0.06), m, 0, 0.01, -0.49);
+      const tambour = new THREE.Group();
+      tambour.position.set(0, -0.085, -0.12);
+      inner.add(tambour);
+      // disque d'axe x (le tambour tourne autour de x, comme sur la PPSh)
+      piece(tambour, geoCyl(0.075, 0.045, 14), m, 0, 0, 0, 0, Math.PI / 2, 0);
+      piece(tambour, geoBoite(0.05, 0.012, 0.012), m, 0, 0, 0);
+      piece(inner, geoBoite(0.034, 0.09, 0.04), m, 0, -0.07, 0.03, -0.2);
+      piece(inner, geoBoite(0.04, 0.08, 0.26), m, 0, -0.03, 0.22, -0.1);
+      prise.set(0, -0.08, 0.03);
+      garde.set(0, -0.03, -0.32);
+      bouche.set(0, 0.01, -0.52);
+      porte.set(0.12, -0.22, -0.2);
+      echelleFlash = 0.85;
+      inclinaison = 0.45;
+      const yT = tambour.position.y;
+      anim = (_t, p) => {
+        tambour.position.y = yT - 0.15 * (rampe(p, 0.1, 0.3) - rampe(p, 0.6, 0.8));
+        tambour.visible = !(p > 0.32 && p < 0.58);
+      };
+      surTir = () => { tambour.rotation.x -= (Math.PI * 2) / 71; };
+      break;
+    }
+    case "essoreuse": {
+      // Essoreuse : pompe semi-automatique dont le magasin est un TAMBOUR de machine à laver (anneau hublot à l'avant qui tourne d'un cran à
+      // chaque tir), long canon, crosse pleine.
+      piece(inner, geoBoite(0.05, 0.075, 0.2), m, 0, 0, -0.06);
+      piece(inner, geoCyl(0.014, 0.55), m, 0, 0.022, -0.42);
+      const hublot = new THREE.Group();
+      hublot.position.set(0, -0.02, -0.25);
+      inner.add(hublot);
+      piece(hublot, geoCyl(0.06, 0.08, 8), m);
+      piece(hublot, geoCyl(0.04, 0.09, 8), m);
+      for (let i = 0; i < 4; i++) piece(hublot, geoBoite(0.006, 0.08, 0.07), m, 0, 0, 0, 0, 0, (i * Math.PI) / 4);
+      piece(inner, geoBoite(0.006, 0.012, 0.01), m, 0, 0.04, -0.68);
+      piece(inner, geoBoite(0.03, 0.08, 0.035), m, 0, -0.07, 0.05, -0.15);
+      piece(inner, geoBoite(0.042, 0.09, 0.28), m, 0, -0.02, 0.2, -0.1);
+      prise.set(0, -0.07, 0.05);
+      garde.set(0, -0.06, -0.25);
+      bouche.set(0, 0.022, -0.7);
+      porte.set(0.12, -0.2, -0.14);
+      echelleFlash = 1.5;
+      inclinaison = 0.6;
+      let rot = 0, cible = 0;
+      surTir = () => { cible += Math.PI / 4; };
+      anim = (_t, p, dt) => {
+        rot += (cible - rot) * (1 - Math.exp(-dt * 18));
+        // au rechargement, le tambour essore : il tourne vite
+        hublot.rotation.z = rot + (p > 0.1 && p < 0.85 ? p * 40 : 0);
+      };
+      break;
+    }
+    case "brochette": {
+      // Brochette : arbalète. Fût et crosse, arc en deux branches inclinées, corde, pique à brochette posé sur le rail (il disparaît au tir,
+      // revient au rechargement), lunette rudimentaire.
+      piece(inner, geoBoite(0.04, 0.05, 0.42), m, 0, 0, -0.12);
+      piece(inner, geoBoite(0.034, 0.1, 0.04), m, 0, -0.07, 0.04, -0.2);
+      piece(inner, geoBoite(0.04, 0.08, 0.22), m, 0, -0.01, 0.2, -0.08);
+      for (const sx of [-1, 1]) piece(inner, geoBoite(0.24, 0.016, 0.02), m, sx * 0.12, 0.01, -0.32, 0, sx * -0.35, 0);
+      const corde = piece(inner, geoBoite(0.42, 0.003, 0.003), m, 0, 0.01, -0.22);
+      const pique = new THREE.Group();
+      inner.add(pique);
+      piece(pique, geoCyl(0.004, 0.42, 5), m, 0, 0.032, -0.25);
+      for (const z of [-0.18, -0.26, -0.34]) piece(pique, geoBoite(0.018, 0.018, 0.022), m, 0, 0.032, z); // morceaux embrochés
+      piece(inner, geoCyl(0.014, 0.12), m, 0, 0.07, -0.08);
+      prise.set(0, -0.08, 0.04);
+      garde.set(0, -0.03, -0.24);
+      bouche.set(0, 0.032, -0.48);
+      porte.set(0.12, -0.21, -0.2);
+      echelleFlash = 0.4;
+      inclinaison = 0.35;
+      const zC = corde.position.z;
+      anim = (t, p) => {
+        const arme = p > 0 ? rampe(p, 0.55, 0.9) : t > 0.2 ? 1 : 0;
+        pique.visible = arme > 0.5;
+        corde.position.z = zC + 0.1 * arme;
+      };
+      break;
+    }
+    case "soufflerie": {
+      // Soufflerie : gros souffleur de feuilles d'atelier. Cuve d'air sur le dessus, corps cylindrique, turbine à pales qui tourne (elle
+      // s'emballe au tir), large tuyère évasée à l'avant, poignée et garde.
+      piece(inner, geoCyl(0.06, 0.32, 12), m, 0, 0.01, -0.12);
+      piece(inner, geoCone(0.06, 0.13, 0.22, 12), m, 0, 0.01, -0.39);
+      piece(inner, geoCyl(0.135, 0.02, 14), m, 0, 0.01, -0.5);
+      const turbine = new THREE.Group();
+      turbine.position.set(0, 0.01, -0.46);
+      inner.add(turbine);
+      for (let i = 0; i < 5; i++) piece(turbine, geoBoite(0.012, 0.11, 0.008), m, 0, 0, 0, 0.25, 0, (i * Math.PI * 2) / 5);
+      piece(inner, geoCyl(0.04, 0.26, 10), m, 0, 0.1, -0.08);
+      for (const z of [0.02, -0.18]) piece(inner, geoBoite(0.014, 0.04, 0.014), m, 0, 0.065, z);
+      piece(inner, geoBoite(0.034, 0.11, 0.045), m, 0, -0.085, 0.02, -0.2);
+      piece(inner, geoBoite(0.03, 0.07, 0.035), m, 0, -0.07, -0.25);
+      prise.set(0, -0.09, 0.02);
+      garde.set(0, -0.08, -0.25);
+      bouche.set(0, 0.01, -0.52);
+      porte.set(0.13, -0.2, -0.2);
+      echelleFlash = 0;
+      inclinaison = 0.35;
+      let vit = 3;
+      surTir = () => { vit = 60; };
+      anim = (_t, _p, dt) => {
+        turbine.rotation.z += vit * dt;
+        vit = 3 + (vit - 3) * Math.exp(-dt * 1.5);
+      };
+      break;
+    }
+    case "grille_pain": {
+      // Grille-pain : un grille-pain de cuisine monté sur une poignée, deux fentes sur le dessus (deux tartines qui sautent au tir), bobines
+      // de cuivre en anneaux autour d'un émetteur à l'avant, molette du thermostat sur le côté.
+      piece(inner, geoBoite(0.12, 0.12, 0.2), m, 0, 0.03, -0.1);
+      for (const x of [-0.028, 0.028]) piece(inner, geoBoite(0.018, 0.004, 0.16), m, x, 0.092, -0.1);
+      const tartines = new THREE.Group();
+      inner.add(tartines);
+      for (const x of [-0.028, 0.028]) piece(tartines, geoBoite(0.012, 0.08, 0.13), m, x, 0.07, -0.1);
+      piece(inner, geoCyl(0.016, 0.16), m, 0, 0.03, -0.27);
+      const bobines = new THREE.Group();
+      inner.add(bobines);
+      for (const z of [-0.23, -0.28, -0.33]) piece(bobines, geoCyl(0.04, 0.015, 10), m, 0, 0.03, z);
+      piece(inner, geoIco(0.022, 0), m, 0, 0.03, -0.37);
+      piece(inner, geoCyl(0.02, 0.012, 8), m, 0.068, 0.03, -0.06, 0, Math.PI / 2, 0);
+      piece(inner, geoBoite(0.034, 0.1, 0.045), m, 0, -0.08, 0.0, -0.25);
+      prise.set(0, -0.08, 0.0);
+      garde.set(0, -0.03, -0.16);
+      bouche.set(0, 0.03, -0.39);
+      porte.set(0.12, -0.22, -0.3);
+      echelleFlash = 1.4;
+      inclinaison = 0.3;
+      anim = (t, p) => {
+        tartines.position.y = 0.06 * pulsation(t, 0.05, 0.4) + 0.04 * (rampe(p, 0.1, 0.3) - rampe(p, 0.7, 0.9));
+        const g = 1 + 0.4 * pulsation(t, 0.02, 0.3);
+        bobines.scale.set(g, g, 1);
+      };
+      break;
+    }
+    case "perforeuse": {
+      // Perforeuse : pistolet-perceuse. Corps de perceuse, mandrin à l'avant, MÈCHE qui tourne au tir, poignée pistolet, batterie sous la
+      // poignée (le « chargeur », qui sort au rechargement).
+      piece(inner, geoBoite(0.045, 0.06, 0.16), m, 0, 0.02, -0.06);
+      piece(inner, geoCyl(0.024, 0.04, 8), m, 0, 0.02, -0.16);
+      const meche = new THREE.Group();
+      meche.position.set(0, 0.02, -0.2);
+      inner.add(meche);
+      piece(meche, geoCyl(0.006, 0.08, 4), m, 0, 0, -0.03);
+      piece(meche, geoBoite(0.014, 0.003, 0.06), m, 0, 0, -0.03);
+      piece(inner, geoBoite(0.032, 0.09, 0.04), m, 0, -0.06, 0.0, -0.2);
+      const batterie = piece(inner, geoBoite(0.05, 0.035, 0.06), m, 0, -0.12, 0.01);
+      piece(inner, geoBoite(0.016, 0.004, 0.04), m, 0, -0.014, -0.04);
+      piece(inner, geoBoite(0.006, 0.012, 0.01), m, 0, 0.056, -0.12);
+      prise.set(0, -0.05, 0.0);
+      garde.set(-0.02, -0.08, 0.01);
+      bouche.set(0, 0.02, -0.27);
+      porte.set(0.1, -0.25, -0.42);
+      echelleFlash = 0.9;
+      inclinaison = 0.35;
+      const yB = batterie.position.y;
+      let vit = 0;
+      surTir = () => { vit = Math.min(vit + 25, 60); };
+      anim = (_t, p, dt) => {
+        meche.rotation.z += vit * dt;
+        vit *= Math.exp(-dt * 4);
+        batterie.position.y = yB - 0.12 * (rampe(p, 0.1, 0.28) - rampe(p, 0.55, 0.72));
+        batterie.visible = !(p > 0.3 && p < 0.52);
+      };
+      break;
+    }
     case "couteau": {
       // Couteau de combat : lame verticale (tranchant vers le bas), garde, manche et pommeau ; la lame est relevée de 0,25 rad. Pas de flash ni de recul.
       const lame = new THREE.Group();
@@ -856,6 +1086,15 @@ const PLACEMENT: Record<ArmeId, PlacementArme> = {
   lance_grenades: { repos: [0.18, -0.20, -0.22], vise: [0, -0.08, -0.18], lacet: 0.04, reculZ: 0.08, reculRot: 0.16 },
   bazooka: { repos: [0.22, -0.18, -0.05], vise: [0.08, -0.06, -0.05], lacet: 0.03, reculZ: 0.12, reculRot: 0.18 },
   fumigene: { repos: [0.18, -0.18, -0.32], vise: [0, -0.08, -0.28], lacet: 0.05, reculZ: 0.03, reculRot: 0.08 },
+  // (v8) armes du mode zombies seulement
+  baguette: { repos: [0.17, -0.2, -0.22], vise: [0, -0.065, -0.2], lacet: 0.05, reculZ: 0.11, reculRot: 0.26 },
+  agrafeuse: { repos: [0.17, -0.19, -0.24], vise: [0, -0.085, -0.2], lacet: 0.04, reculZ: 0.04, reculRot: 0.09 },
+  photocopieuse: PLACEMENT_MITRAILLETTE,
+  essoreuse: { repos: [0.17, -0.2, -0.17], vise: [0, -0.06, -0.15], lacet: 0.05, reculZ: 0.07, reculRot: 0.15 },
+  brochette: { repos: [0.17, -0.19, -0.24], vise: [0, -0.1, -0.2], lacet: 0.04, reculZ: 0.05, reculRot: 0.1 },
+  soufflerie: { repos: [0.19, -0.21, -0.2], vise: [0.06, -0.12, -0.18], lacet: 0.04, reculZ: 0.12, reculRot: 0.22 },
+  grille_pain: { repos: [0.17, -0.19, -0.3], vise: [0, -0.1, -0.26], lacet: 0.05, reculZ: 0.07, reculRot: 0.18 },
+  perforeuse: PLACEMENT_PISTOLET,
   couteau: { repos: [0.2, -0.2, -0.36], vise: [0.2, -0.2, -0.36], lacet: -0.05, reculZ: 0, reculRot: 0 },
   // Épée : tenue plus bas et plus au centre (deux mains), lame levée devant ; pas de visée.
   epee: { repos: [0.14, -0.25, -0.32], vise: [0.14, -0.25, -0.32], lacet: -0.08, reculZ: 0, reculRot: 0 },

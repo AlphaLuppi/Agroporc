@@ -36,15 +36,20 @@ export type Vec3 = [number, number, number];
 
 /** Armes à feu par catégorie. Ajouter une arme = ajouter son id ici + une entrée STATS (lib/fps/armes.ts). */
 export const ARMES_PRINCIPALES = ["mitraillette", "pompe", "sniper", "fusil_assaut", "mitrailleuse"] as const;
+/**
+ * (v8) Armes principales du mode zombies seulement (BO1 renommé : Olympia, FAL, PPSh, SPAS, arbalète, Thundergun, Wunderwaffe) : jamais
+ * proposées au lobby de l'arène ni acceptées de son équipement.
+ */
+export const ARMES_PRINCIPALES_ZOMBIES = ["baguette", "agrafeuse", "photocopieuse", "essoreuse", "brochette", "soufflerie", "grille_pain"] as const;
 export const ARMES_SECONDAIRES = ["pistolet", "revolver", "mini_uzi"] as const;
-/** Armes secondaires du mode zombies seulement (v7) : jamais proposées au lobby de l'arène ni acceptées de son équipement. */
-export const ARMES_SECONDAIRES_ZOMBIES = ["rayon"] as const;
+/** Armes secondaires du mode zombies seulement (v7 : le pistolet à rayons ; v8 : la Perforeuse, le CZ75 de BO1). */
+export const ARMES_SECONDAIRES_ZOMBIES = ["rayon", "perforeuse"] as const;
 /** Armes spéciales : offertes par Elsa, munitions limitées, perdues à la mort. */
 export const ARMES_SPECIALES = ["railgun", "minigun", "magnum_dore"] as const;
 /** Armes uniques : larguées par le bus C3 (lance-grenades, bazooka, fumigène). */
 export const ARMES_UNIQUES = ["lance_grenades", "bazooka", "fumigene"] as const;
 
-export type ArmePrincipaleId = (typeof ARMES_PRINCIPALES)[number];
+export type ArmePrincipaleId = (typeof ARMES_PRINCIPALES)[number] | (typeof ARMES_PRINCIPALES_ZOMBIES)[number];
 export type ArmeSecondaireId = (typeof ARMES_SECONDAIRES)[number] | (typeof ARMES_SECONDAIRES_ZOMBIES)[number];
 export type ArmeSpecialeId = (typeof ARMES_SPECIALES)[number];
 export type ArmeUniqueId = (typeof ARMES_UNIQUES)[number];
@@ -58,7 +63,9 @@ export const estMelee = (x: unknown): x is ArmeMeleeId => (ARMES_MELEE as readon
 export type ArmeId = ArmeFeuId | ArmeMeleeId;
 
 /** Toutes les armes à feu (principales, secondaires, spéciales puis uniques). */
-export const ARMES: readonly ArmeFeuId[] = [...ARMES_PRINCIPALES, ...ARMES_SECONDAIRES, ...ARMES_SECONDAIRES_ZOMBIES, ...ARMES_SPECIALES, ...ARMES_UNIQUES];
+export const ARMES: readonly ArmeFeuId[] = [
+  ...ARMES_PRINCIPALES, ...ARMES_PRINCIPALES_ZOMBIES, ...ARMES_SECONDAIRES, ...ARMES_SECONDAIRES_ZOMBIES, ...ARMES_SPECIALES, ...ARMES_UNIQUES,
+];
 
 /** Emplacement d'équipement. `couteau` est toujours disponible, `speciale` seulement si portée. */
 export type Slot = "principale" | "secondaire" | "couteau" | "speciale";

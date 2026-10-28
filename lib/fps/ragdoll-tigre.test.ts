@@ -199,7 +199,10 @@ describe("ragdoll du tigre zombie", () => {
     expect(armeProjette("rayon", false)).toBe(true);
     expect(armeProjette("pistolet", true)).toBe(true);
     expect(armeProjette("pistolet", false)).toBe(false);
-    expect(armeProjette("pompe", true)).toBe(false);
+    // (v8) la Pompe royale explose : seule une arme gratinée SANS souffle ne projette pas
+    expect(armeProjette("pompe", true)).toBe(true);
+    expect(armeProjette("mitraillette", true)).toBe(false);
+    expect(armeProjette("soufflerie", false)).toBe(true);
     expect(armeProjette("epee", true)).toBe(false);
     const base: InfoMort = { cause: "corps", p: [0, 0, 0], graine: 1 };
     const cam: Vec3 = [-4, 1.6, 0];

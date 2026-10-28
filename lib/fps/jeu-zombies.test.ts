@@ -305,7 +305,7 @@ describe("inviteZombies", () => {
     expect(r.detail).toMatch(/^Munitions Revolver — 250\s\$$/);
     const gratine = inviteZombies(entree([x, z], { equip: { ...rev, ameliorees: ["revolver"] }, argent: 3000 }));
     expect(gratine).toMatchObject({ prix: 2500, assez: true });
-    expect(gratine.detail).toContain("Revolver flambé");
+    expect(gratine.detail).toContain("Cobra flambé");
     const [mx, mz] = achat("mur:mitraillette").position;
     const avec: Equipement = { principale: "mitraillette", secondaire: "pistolet", speciale: null };
     expect(inviteZombies(entree([mx, mz], { equip: avec })).prix).toBe(600);

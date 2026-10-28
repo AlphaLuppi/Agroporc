@@ -134,14 +134,20 @@ export interface InfoMort {
 const FORCE_BALLE: Partial<Record<ArmeId, number>> = {
   pistolet: 2.2, mini_uzi: 2.2, mitraillette: 2.4, fusil_assaut: 3, mitrailleuse: 3.4, minigun: 3.4,
   revolver: 4.5, magnum_dore: 5, sniper: 6, railgun: 9, fumigene: 1.5,
+  // (v8) armes des zombies
+  perforeuse: 3, photocopieuse: 2.4, agrafeuse: 4.5, baguette: 5.5, essoreuse: 4.5, grille_pain: 6,
 };
 
-/** L'arme projette le tigre contre les murs : le Pistolet à rayons, et toute arme améliorée qui explose (pistolet gratiné, lance-gratins…). */
+/**
+ * L'arme projette le tigre contre les murs : le Pistolet à rayons, la Soufflerie (v8), et toute arme qui explose, de base (la Brochette) ou
+ * améliorée (Moutarde & Sally, Pompe royale, lance-gratins…).
+ */
 export function armeProjette(arme: ArmeId | undefined, ameliore: boolean | undefined): boolean {
   if (!arme) return false;
-  if (arme === "rayon") return true;
+  if (arme === "rayon" || arme === "soufflerie") return true;
   if (arme === "couteau" || arme === "epee") return false;
-  return !!ameliore && !!STATS[arme].zombie.ameliore.explosion;
+  const z = STATS[arme].zombie;
+  return !!(ameliore ? z.ameliore : z).explosion;
 }
 
 /** Impulsion de la mort `info` (pure, testée) ; `repliSrc` = la caméra du joueur local quand le serveur n'a pas dit d'où venait le coup. */
@@ -154,7 +160,8 @@ export function impulsionMort(info: InfoMort, repliSrc: Vec3): ImpulsionRagdoll 
   let hx = p[0] - src[0], hz = p[2] - src[2];
   const hl = Math.hypot(hx, hz);
   if (hl > 1e-6) { hx /= hl; hz /= hl; } else { hx = 1; hz = 0; }
-  const forteProjection = info.arme === "rayon" ? (info.ameliore ? 19 : 15) : info.arme === "bazooka" ? 18 : 15;
+  const forteProjection = info.arme === "rayon" ? (info.ameliore ? 19 : 15) : info.arme === "bazooka" ? 18
+    : info.arme === "soufflerie" ? (info.ameliore ? 24 : 21) : 15;
 
   if (info.cause === "nuke") return { mode: "verticale", o: [p[0], 0, p[2]], vitesse: 2.2, montee: 3.6, rayon: 0, global: 1, vrille: 2.5 * sens };
   if (info.cause === "explosion") {

@@ -9,8 +9,8 @@ const angle = (a: Vec3, b: Vec3) => Math.acos(Math.min(1, Math.max(-1, a[0] * b[
 const norme = (v: Vec3) => Math.hypot(v[0], v[1], v[2]);
 
 describe("STATS", () => {
-  it("le catalogue compte 15 armes à feu (dont le pistolet à rayons des zombies et les armes uniques du bus C3), une entrée chacune", () => {
-    expect(ARMES).toHaveLength(15);
+  it("le catalogue compte 23 armes à feu (dont les 9 armes des zombies et les armes uniques du bus C3), une entrée chacune", () => {
+    expect(ARMES).toHaveLength(23);
     expect(Object.keys(STATS).sort()).toEqual([...ARMES].sort());
   });
 

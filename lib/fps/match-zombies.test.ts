@@ -741,7 +741,7 @@ describe("achats", () => {
     expect(msgs(fin, "equipement")[0].equip.ameliorees).toEqual(["pistolet"]);
     expect(msgs(fin, "zevt").some((m) => m.e.e === "pap" && m.e.pret)).toBe(true);
     expect(b.svc.etat().pap.etat).toBe("libre");
-    expect(b.svc.degatsTir(j, "pistolet", "corps", 5, t + 5000)).toBe(160);
+    expect(b.svc.degatsTir(j, "pistolet", "corps", 5, t + 5000)).toBe(1000); // (v8) Moutarde & Sally : impact de 1 000 (BO1)
     expect(msgs(acheter(b, j, "pap", t + 5000), "achat")[0]).toMatchObject({ ok: false, raison: "deja" });
   });
 

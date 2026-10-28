@@ -4,6 +4,7 @@ import {
   lireEquipement, lireSlots, meleeDe, normaliserEquipement, serialiserSlots, slotDeLArme, slotVoisin, type LigneSlot,
 } from "./equipement";
 import { ARMES, EQUIPEMENT_DEFAUT, copierEquipement, type Equipement } from "./protocole";
+import { STATS } from "./armes";
 
 function memoire(init: Record<string, string> = {}) {
   const donnees = { ...init };
@@ -20,7 +21,8 @@ describe("garde-fous de types", () => {
   it("chaque arme est dans une seule catégorie", () => {
     for (const a of ARMES) {
       // (v7) le pistolet à rayons, secondaire des zombies seulement, n'est dans aucune liste de l'arène
-      if (a === "rayon") { expect(estSecondaire(a)).toBe(false); continue; }
+      // (v8) les armes des zombies (Brochette, Soufflerie, Perforeuse…) non plus
+      if (STATS[a].zombiesSeulement) { expect(estPrincipale(a) || estSecondaire(a)).toBe(false); continue; }
       const n = [estPrincipale(a), estSecondaire(a), estSpeciale(a), estUnique(a)].filter(Boolean).length;
       expect(n, a).toBe(1);
       expect(estArmeFeu(a)).toBe(true);
