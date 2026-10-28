@@ -797,8 +797,11 @@ export function achatDeId(id: string): Achat | null {
 export const achatBoite = (emplacement: number): Achat => ACHATS.find((a) => a.genre === "boite" && a.emplacement === emplacement)!;
 export const achatAtout = (id: AtoutId): Achat => ACHATS.find((a) => a.genre === "atout" && a.atout === id)!;
 
-/** Ce qui est actif pour le filtrage des invites : boîte présente, portes ouvertes, ingrédients déjà pris, courant. */
-export interface EtatCarte { ouvertes?: Iterable<string>; boite?: number | null; ingredientsPris?: Iterable<string>; courant?: boolean }
+/**
+ * Ce qui est actif pour le filtrage des invites : emplacement(s) des boîtes présentes (la principale, plus celles du Happy hour), portes
+ * ouvertes, ingrédients déjà pris, courant.
+ */
+export interface EtatCarte { ouvertes?: Iterable<string>; boite?: number | readonly number[] | null; ingredientsPris?: Iterable<string>; courant?: boolean }
 
 /**
  * Achats à portée de `pos` : les achats fixes à moins de leur rayon et les portes à moins de leur portée du SEGMENT de leur pièce. Les
@@ -809,9 +812,10 @@ export function achatsProches(pos: Vec2, e: EtatCarte | ReadonlySet<string> | re
   const etat: EtatCarte = e instanceof Set || Array.isArray(e) ? { ouvertes: e as Iterable<string> } : (e as EtatCarte);
   const o = new Set(etat.ouvertes ?? []);
   const pris = new Set(etat.ingredientsPris ?? []);
+  const boites = etat.boite === undefined ? null : new Set(typeof etat.boite === "number" ? [etat.boite] : etat.boite ?? []);
   const res: { a: Achat; d: number }[] = [];
   for (const a of ACHATS) {
-    if (a.genre === "boite" && etat.boite !== undefined && etat.boite !== a.emplacement) continue;
+    if (a.genre === "boite" && boites && !boites.has(a.emplacement!)) continue;
     if (a.genre === "ingredient" && (pris.has(a.ingredient!) || (a.ingredient === "truffe" && !etat.courant))) continue;
     const d = Math.hypot(pos[0] - a.position[0], pos[1] - a.position[1]);
     if (d <= a.rayon) res.push({ a, d });

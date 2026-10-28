@@ -28,13 +28,14 @@ import type {
   JoueurZombies, MessageClient, PhaseZombies, QueteZombies, RaisonAchat, Slot, TruckZombies, Vec3, Zone,
 } from "./protocole";
 import { creerSimuZombies, type ArriveeZombie, type Leurre, type SpecZombie } from "./zombies";
+import { boiteA, boitesSoldesRestantes, destinationsEnvol, ouvrirSoldes, pelucheTiree, prixBoite, soldesActives, soldesPermises } from "./zombies-boites";
 import {
   GRENADES, INVENTAIRE_GRENADES, degatsGrenade, degatsLanceur, grenadesDebutManche, plafondBatimentsCreux, positionLancer, preparerLancer,
   souffleAtteint, validerLancer, vitesseLancer, type ExplosionGrenade, type Lancer,
 } from "./grenades";
 import {
   ACHATS, ATOUTS, ATOUTS_LISTE, DEPARTS, EMPLACEMENTS_DEPART_BOITE, FENETRES, INGREDIENTS_LISTE, NB_EMPLACEMENTS_BOITE, PORTES_PAYANTES,
-  PLAFOND_INTERIEUR_M, PRIX_BOITE, PRIX_BOITE_SOLDES, PRIX_MUNITIONS_AMELIOREE, QUAIS, TRUCK, achatDeId, rayonTruck, distancePorte, estAtout, etiqueterZones, fenetreDeId, fenetresDesZones,
+  PLAFOND_INTERIEUR_M, PRIX_MUNITIONS_AMELIOREE, QUAIS, TRUCK, achatDeId, rayonTruck, distancePorte, estAtout, etiqueterZones, fenetreDeId, fenetresDesZones,
   idPrisme, lacetDepart, pieceDe, porteDeId, sortiesDuSol, zoneEn, zonesActives, zonesOuvertes,
   type Achat, type CarteZones, type DonneesZombies, type Fenetre, type IngredientId, type PorteId, type ZoneId,
 } from "./zombies-carte";
@@ -220,8 +221,11 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
   let courant = false;
   const murs = new Set<string>();
   let boite: EtatBoite = { emplacement: 0, etat: "fermee", finT: 0, utilisations: 0 };
+  /** (v8) boîtes temporaires du Happy hour (`zombies-boites.ts`) : une par emplacement libre, retirées une fois refermées après la fin */
+  let boitesSoldes: EtatBoite[] = [];
   let demenagements = 0;
-  let prixPaye = PRIX_BOITE;
+  /** prix payé du tirage en cours, par emplacement (remboursé par la peluche) */
+  const prixPayes = new Map<number, number>();
   let pap: EtatPap = { etat: "libre" };
   let bonus: BonusSol[] = [];
   let bonusId = 1;
@@ -285,7 +289,7 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       phase, manche, hote: hote(), capacite: ZOMBIES.joueursMax, debutT, finT, joueurs,
       portes: PORTES_PAYANTES.map((p) => ({ id: p.id, ouverte: ouvertes.has(p.id) })),
       ...(bilan ? { bilan } : {}),
-      difficulte, courant, boite: { ...boite }, pap: { ...pap }, fenetres: FENETRES.map((f) => planches.get(f.id) ?? 0),
+      difficulte, courant, boite: { ...boite }, ...(boitesSoldes.length ? { boitesSoldes: boitesSoldes.map((b) => ({ ...b })) } : {}), pap: { ...pap }, fenetres: FENETRES.map((f) => planches.get(f.id) ?? 0),
       bonus: bonus.map((b) => ({ ...b, p: [b.p[0], b.p[1], b.p[2]] as Vec3 })), effets: { ...effets },
       quete: { ingredients: [...quete.ingredients], cuissonFinT: quete.cuissonFinT, faite: quete.faite },
       mancheTruck, truck: truck ? { phase: truck.phase, quai: truck.quai, finT: truck.finT } : null, murs: [...murs],
@@ -386,6 +390,8 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     courant = opts.courant === true;
     murs.clear();
     boite = { emplacement: EMPLACEMENTS_DEPART_BOITE[Math.min(EMPLACEMENTS_DEPART_BOITE.length - 1, Math.floor(alea() * EMPLACEMENTS_DEPART_BOITE.length))], etat: "fermee", finT: 0, utilisations: 0 };
+    boitesSoldes = [];
+    prixPayes.clear();
     demenagements = 0;
     pap = { etat: "libre" };
     bonus = []; paquet = []; bonusManche = 0; scoreTotal = 0; increment = ZOMBIES.incrementBonus; lacherBonus = false;
@@ -691,9 +697,19 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
   // bonus
   // ---------------------------------------------------------------------------------------------
 
+  /**
+   * Prochain bonus du paquet mélangé ; BO1 `get_valid_powerup` : le Happy hour est écarté (pour un autre du paquet) tant que la boîte n'a
+   * jamais déménagé ou qu'un Happy hour est en cours.
+   */
   function tirerBonus(): GenreBonus {
-    if (!paquet.length) paquet = opts.bonus?.length ? [...opts.bonus] : paquetBonus(alea);
-    return paquet.shift()!;
+    const permis = (g: GenreBonus) => g !== "soldes" || soldesPermises(demenagements, effets.soldesFinT, dernierT);
+    for (let essai = 0; essai < 2; essai++) {
+      if (!paquet.length) paquet = opts.bonus?.length ? [...opts.bonus] : paquetBonus(alea);
+      const k = paquet.findIndex(permis);
+      if (k >= 0) return paquet.splice(k, 1)[0];
+      paquet = [];
+    }
+    return "munitions";
   }
 
   function lacher(genre: GenreBonus, p: Vec3, t: number, sorties: Sortie[]): void {
@@ -738,7 +754,11 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       case "munitions": sorties.push(...munitionsMax(t)); break;
       case "instakill": effets.instakillFinT = t + ZOMBIES.bonusDureeMs; break;
       case "double": effets.doubleFinT = t + ZOMBIES.bonusDureeMs; break;
-      case "soldes": effets.soldesFinT = t + ZOMBIES.bonusDureeMs; break;
+      case "soldes":
+        // BO1 `start_fire_sale` : 30 s (relancé par un second), une boîte temporaire à chaque emplacement libre, toutes à 10 $
+        effets.soldesFinT = t + ZOMBIES.bonusDureeMs;
+        boitesSoldes = ouvrirSoldes(boite, boitesSoldes, NB_EMPLACEMENTS_BOITE);
+        break;
       case "nuke": {
         sorties.push(zev({ e: "nuke", p: b.p }));
         // BO1 : la nuke tue tout ce qui est vivant (le Truck excepté) sans rapporter de points, puis +400 à chacun
@@ -930,40 +950,45 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     return ARMES.filter((a) => !HORS_BOITE.has(a) && STATS[a].categorie !== "unique" && !possede(eq, a));
   }
 
-  /** La peluche de BO1 (`treasure_chest_think`) : jamais avant 4 utilisations ; 15 % de 4 à 7 ; 8ᵉ forcée sans déménagement ; ensuite 30 % puis 50 %. */
-  function peluche(utilisations: number): boolean {
-    if (utilisations < 4) return false;
-    const r = alea() * 100;
-    if (demenagements === 0) {
-      if (utilisations >= 8) return true;
-      return r < 15;
-    }
-    if (utilisations < 8) return r < 15;
-    if (utilisations < 13) return r < 30;
-    return r < 50;
+  /** Remplace la boîte de l'emplacement `em` (la principale ou une temporaire du Happy hour). */
+  function ecrireBoite(em: number, b: EtatBoite): void {
+    if (em === boite.emplacement) boite = b;
+    else boitesSoldes = boitesSoldes.map((x) => (x.emplacement === em ? b : x));
   }
 
-  function ticBoite(t: number, sorties: Sortie[]): void {
-    if (boite.etat === "fermee" || t < boite.finT) return;
-    if (boite.etat === "tirage") {
-      if (boite.arme === "peluche") {
+  /** Étape suivante d'une boîte arrivée au bout de la sienne : tirage → offre (ou envol de la peluche), offre → fermée, envol → ailleurs. */
+  function avancerBoite(b: EtatBoite, principale: boolean, t: number, sorties: Sortie[]): void {
+    if (b.etat === "fermee" || t < b.finT) return;
+    if (b.etat === "tirage") {
+      if (b.arme === "peluche" && principale) {
         // la peluche rembourse et la boîte s'envole
-        const j = boite.pour ? ctx.joueur(boite.pour) : undefined;
-        if (j && membre(j.id).admis) { const m = membre(j.id); m.argent += prixPaye; sorties.push(sortieArgent(j, prixPaye, "peluche")); }
-        boite = { ...boite, etat: "envol", finT: t + ENVOL_BOITE_MS };
-        sorties.push(zev({ e: "peluche", de: boite.emplacement }));
+        const j = b.pour ? ctx.joueur(b.pour) : undefined;
+        const prix = prixPayes.get(b.emplacement) ?? 0;
+        if (j && membre(j.id).admis && prix > 0) { const m = membre(j.id); m.argent += prix; sorties.push(sortieArgent(j, prix, "peluche")); }
+        boite = { ...b, etat: "envol", finT: t + ENVOL_BOITE_MS };
+        sorties.push(zev({ e: "peluche", de: b.emplacement }));
       } else {
-        boite = { ...boite, etat: "offre", finT: t + OFFRE_BOITE_MS };
+        ecrireBoite(b.emplacement, { ...b, etat: "offre", finT: t + OFFRE_BOITE_MS });
       }
-    } else if (boite.etat === "offre") {
-      boite = { emplacement: boite.emplacement, etat: "fermee", finT: 0, utilisations: boite.utilisations };
-    } else if (boite.etat === "envol") {
-      const autres = Array.from({ length: NB_EMPLACEMENTS_BOITE }, (_, i) => i).filter((i) => i !== boite.emplacement);
+    } else if (b.etat === "offre") {
+      ecrireBoite(b.emplacement, { emplacement: b.emplacement, etat: "fermee", finT: 0, utilisations: b.utilisations });
+    } else if (b.etat === "envol" && principale) {
+      // une boîte temporaire refermée cède sa place ; jamais sur une temporaire en cours de tirage ou d'offre
+      const autres = destinationsEnvol(b.emplacement, boitesSoldes, NB_EMPLACEMENTS_BOITE);
       const vers = autres[Math.min(autres.length - 1, Math.floor(alea() * autres.length))];
       demenagements++;
+      boitesSoldes = boitesSoldes.filter((x) => x.emplacement !== vers);
       boite = { emplacement: vers, etat: "fermee", finT: 0, utilisations: 0 };
     }
     immediat = true;
+  }
+
+  function ticBoite(t: number, sorties: Sortie[]): void {
+    avancerBoite(boite, true, t, sorties);
+    for (const b of [...boitesSoldes]) avancerBoite(b, false, t, sorties);
+    // fin du Happy hour : les boîtes temporaires refermées disparaissent (celle qu'on utilise finit son tirage d'abord)
+    const restantes = boitesSoldesRestantes(boitesSoldes, soldesActives(effets.soldesFinT, t));
+    if (restantes.length !== boitesSoldes.length) { boitesSoldes = restantes; immediat = true; }
   }
 
   function ticPap(t: number, sorties: Sortie[]): void {
@@ -1140,12 +1165,15 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
   }
 
   function acheterBoite(j: JoueurSalle, achat: Achat, m: Membre, t: number): Sortie[] {
-    if (achat.emplacement !== boite.emplacement) return refus(j, achat.id, "loin");
-    if (boite.etat === "offre") {
+    // la boîte principale, ou (Happy hour) une boîte temporaire de cet emplacement
+    const b = achat.emplacement !== undefined ? boiteA({ boite, boitesSoldes }, achat.emplacement) : null;
+    if (!b) return refus(j, achat.id, "loin");
+    const principale = b === boite;
+    if (b.etat === "offre") {
       // prendre l'arme offerte (seul celui qui a payé)
-      if (boite.pour !== j.id) return refus(j, achat.id, "occupe");
-      const offerte = boite.arme;
-      boite = { emplacement: boite.emplacement, etat: "fermee", finT: 0, utilisations: boite.utilisations };
+      if (b.pour !== j.id) return refus(j, achat.id, "occupe");
+      const offerte = b.arme;
+      ecrireBoite(b.emplacement, { emplacement: b.emplacement, etat: "fermee", finT: 0, utilisations: b.utilisations });
       immediat = true;
       if (offerte === "remontoir") {
         // (v8) trois tigres à remontoir (la Monkey Bomb de BO1), à côté des armes
@@ -1154,16 +1182,19 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       }
       return [{ a: j.id, m: { t: "achat", ok: true, id: achat.id } }, ...equiperNouvelle(j, offerte as ArmeFeuId, t)];
     }
-    if (boite.etat !== "fermee") return refus(j, achat.id, "occupe");
-    const prix = t < effets.soldesFinT ? PRIX_BOITE_SOLDES : PRIX_BOITE;
+    if (b.etat !== "fermee") return refus(j, achat.id, "occupe");
+    const soldes = soldesActives(effets.soldesFinT, t);
+    const prix = prixBoite(effets.soldesFinT, t);
     if (m.argent < prix) return refus(j, achat.id, "argent");
     // (v8) le tigre à remontoir sort de la boîte comme une arme, si le joueur n'en a plus
     const candidates: (ArmeFeuId | "remontoir")[] = [...armesBoite(j.equip), ...(m.remontoirs > 0 ? [] : ["remontoir" as const])];
     if (!candidates.length) return refus(j, achat.id, "deja");
-    const utilisations = boite.utilisations + 1;
-    const arme: ArmeFeuId | "peluche" | "remontoir" = peluche(utilisations) ? "peluche" : candidates[Math.min(candidates.length - 1, Math.floor(alea() * candidates.length))];
-    prixPaye = prix;
-    boite = { emplacement: boite.emplacement, etat: "tirage", arme, pour: j.id, finT: t + TIRAGE_BOITE_MS, utilisations };
+    // Happy hour (et boîtes temporaires) : aucune peluche, et ces tirages ne comptent pas pour elle
+    const utilisations = b.utilisations + (soldes || !principale ? 0 : 1);
+    const peluche = principale && !soldes && utilisations >= 4 && pelucheTiree(utilisations, demenagements, alea() * 100, soldes);
+    const arme: ArmeFeuId | "peluche" | "remontoir" = peluche ? "peluche" : candidates[Math.min(candidates.length - 1, Math.floor(alea() * candidates.length))];
+    prixPayes.set(b.emplacement, prix);
+    ecrireBoite(b.emplacement, { emplacement: b.emplacement, etat: "tirage", arme, pour: j.id, finT: t + TIRAGE_BOITE_MS, utilisations });
     immediat = true;
     return payer(j, m, achat, prix);
   }

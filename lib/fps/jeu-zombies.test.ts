@@ -335,6 +335,18 @@ describe("inviteZombies", () => {
     expect(ici({ partie: offre, moi: "b" })).toMatchObject({ assez: false, bloque: "Occupée" });
   });
 
+  it("(v8) Happy hour : la boîte temporaire d'un autre emplacement s'achète à 10 $, prise ou occupée comme la principale", () => {
+    const b2 = achat("boite:B2");
+    const la = (o: Partial<EntreeInvite>) => inviteZombies(entree([b2.position[0], b2.position[1]], { argent: 50, moi: "a", maintenant: 1000, ...o }));
+    const soldes = { instakillFinT: 0, doubleFinT: 0, soldesFinT: 5000 };
+    const temporaire = { emplacement: 1, etat: "fermee" as const, finT: 0, utilisations: 0 };
+    expect(la({ partie: partieInvite({ effets: soldes, boitesSoldes: [temporaire] }) })).toMatchObject({ invite: "boite", id: "boite:B2", prix: 10, assez: true });
+    const occupee = { ...temporaire, etat: "tirage" as const, arme: "pompe" as const, pour: "b", finT: 3000 };
+    expect(la({ partie: partieInvite({ effets: soldes, boitesSoldes: [occupee] }) })).toMatchObject({ invite: "boite", bloque: "Occupée" });
+    // Happy hour fini, la temporaire ne s'est pas encore refermée : 950 $ (elle disparaîtra une fois refermée)
+    expect(la({ partie: partieInvite({ boitesSoldes: [temporaire] }), argent: 2000 })).toMatchObject({ prix: 950 });
+  });
+
   it("atouts : Pause Café à 500 $ seul ; les autres « Courant coupé » sans courant ; aucune invite pour un atout déjà pris", () => {
     const pc = achat("atout:pausecafe"), gr = achat("atout:gratin");
     expect(inviteZombies(entree([pc.position[0], pc.position[1]], { solo: true, partie: partieInvite() }))).toMatchObject({ invite: "atout", prix: 500, assez: true });

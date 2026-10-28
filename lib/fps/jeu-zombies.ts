@@ -18,10 +18,11 @@ import {
   type SnapZombies, type Vec3, type Zone,
 } from "./protocole";
 import {
-  ATOUTS, FENETRES, NOTES, PIECES_SYNTH, PORTES_PAYANTES, PRIX_BOITE_SOLDES, PRIX_MUNITIONS_AMELIOREE, achatsProches, porteDeId, rayonTruck,
+  ATOUTS, FENETRES, NOTES, PIECES_SYNTH, PORTES_PAYANTES, PRIX_MUNITIONS_AMELIOREE, achatsProches, porteDeId, rayonTruck,
   zonesOuvertes, type Achat,
 } from "./zombies-carte";
 import { ZOMBIES, echelleZombie, type Allure, type TypeZombie } from "./zombies-vagues";
+import { boiteA, boitesPresentes, prixBoite } from "./zombies-boites";
 import type { ModeZombie } from "./protocole";
 
 // ---------------------------------------------------------------------------------------------
@@ -400,7 +401,7 @@ export const INVITE_VIDE: InviteZombies = Object.freeze({ invite: "", detail: ""
 export interface CoequipierATerre { id: string; pseudo: string; p: Vec3 }
 
 /** Ce que l'invite lit de la partie (sous-ensemble de `EtatPartieZombies`). */
-export type PartieInvite = Pick<EtatPartieZombies, "courant" | "boite" | "pap" | "quete" | "effets" | "fenetres" | "portes">;
+export type PartieInvite = Pick<EtatPartieZombies, "courant" | "boite" | "boitesSoldes" | "pap" | "quete" | "effets" | "fenetres" | "portes">;
 
 export interface EntreeInvite {
   /** position (x, z) du joueur */
@@ -444,13 +445,15 @@ function descriptionAchat(a: Achat, e: EntreeInvite): Description | null {
       return d;
     }
     case "boite": {
-      if (p && p.boite.emplacement !== a.emplacement) return null;
-      if (p && p.boite.etat === "offre") {
-        if (p.boite.pour !== e.moi || !p.boite.arme || p.boite.arme === "peluche") return { invite: "boite", detail: "Boîte mystère", prix: 0, id: a.id, bloque: "Occupée" };
-        return { invite: "boite", detail: `Prendre : ${p.boite.arme === "remontoir" ? NOM_REMONTOIRS : STATS[p.boite.arme].nom}`, prix: 0, id: a.id };
+      // la boîte principale ou (Happy hour) une boîte temporaire de cet emplacement
+      const b = p ? boiteA(p, a.emplacement!) : null;
+      if (p && !b) return null;
+      if (b && b.etat === "offre") {
+        if (b.pour !== e.moi || !b.arme || b.arme === "peluche") return { invite: "boite", detail: "Boîte mystère", prix: 0, id: a.id, bloque: "Occupée" };
+        return { invite: "boite", detail: `Prendre : ${b.arme === "remontoir" ? NOM_REMONTOIRS : STATS[b.arme].nom}`, prix: 0, id: a.id };
       }
-      if (p && p.boite.etat !== "fermee") return { invite: "boite", detail: "Boîte mystère", prix: 0, id: a.id, bloque: "Occupée" };
-      const prix = p && t < p.effets.soldesFinT ? PRIX_BOITE_SOLDES : a.prix;
+      if (b && b.etat !== "fermee") return { invite: "boite", detail: "Boîte mystère", prix: 0, id: a.id, bloque: "Occupée" };
+      const prix = p ? prixBoite(p.effets.soldesFinT, t) : a.prix;
       return { invite: "boite", detail: `Boîte mystère — ${formatArgent(prix)}`, prix, id: a.id };
     }
     case "atout": {
@@ -521,7 +524,7 @@ export function inviteZombies(e: EntreeInvite): InviteZombies {
   const p = e.partie ?? null;
   for (const a of achatsProches([e.pos[0], e.pos[1]], {
     ouvertes: e.portesOuvertes instanceof Set ? [...e.portesOuvertes] : e.portesOuvertes,
-    ...(p ? { boite: p.boite.emplacement, ingredientsPris: p.quete.ingredients, courant: p.courant } : {}),
+    ...(p ? { boite: boitesPresentes(p).map((b) => b.emplacement), ingredientsPris: p.quete.ingredients, courant: p.courant } : {}),
   })) {
     const d = descriptionAchat(a, e);
     if (!d) continue;

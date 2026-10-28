@@ -51,6 +51,7 @@ import { creerRenduObjetsZombies } from "./rendu-objets-zombies";
 import { creerModeleTruckMuche } from "./rendu-monde";
 import { objectifZombies } from "./zombies-lore";
 import { ACHATS, NOTES, achatDeId, fenetreDeId, fenetrePlusProche } from "./zombies-carte";
+import { boiteA } from "./zombies-boites";
 import { NOMS_BONUS } from "./zombies-vagues";
 import { profilZombie, nomZombie } from "./armes";
 import { creerImpactsBalles } from "./rendu-impacts";
@@ -1576,9 +1577,11 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
         if (m.ok) {
           achatsZ++;
           sons.achat(true);
-          if (m.id.startsWith("boite:") && partieZ?.boite.etat === "fermee") {
+          if (m.id.startsWith("boite:")) {
+            // un tirage commence (la boîte de cet emplacement était fermée) : boîte à musique
             const a = achatDeId(m.id);
-            sons.boite("tirage", a ? positionSon([a.position[0], 1, a.position[1]]) : undefined);
+            const b = a?.emplacement !== undefined && partieZ ? boiteA(partieZ, a.emplacement) : null;
+            if (b?.etat === "fermee") sons.boite("tirage", a ? positionSon([a.position[0], 1, a.position[1]]) : undefined);
           }
         } else {
           refusZ = { n: ++nRefusZ, id: m.id, raison: m.raison as RaisonAchat };

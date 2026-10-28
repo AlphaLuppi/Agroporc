@@ -495,7 +495,7 @@ describe("bonus (BO1 : seuil de points, paquet mélangé, 4 par manche)", () => 
 
   it("le premier bonus tombe après j × 500 + 2 000 points gagnés, au plus 4 par manche, et chaque genre a son effet", () => {
     const genres = new Set<GenreBonus>();
-    for (let graine = 1; graine <= 12 && genres.size < 6; graine++) {
+    for (let graine = 1; graine <= 12 && genres.size < 5; graine++) {
       const { b, vus } = jouer(graine);
       expect(vus.length).toBeGreaterThan(0);
       expect(vus.length).toBeLessThanOrEqual(ZOMBIES.bonusParManche);
@@ -513,7 +513,8 @@ describe("bonus (BO1 : seuil de points, paquet mélangé, 4 par manche)", () => 
         }
       }
     }
-    expect([...genres].sort()).toEqual(["double", "instakill", "menuisier", "munitions", "nuke", "soldes"]);
+    // (v8) le Happy hour n'est offert qu'après un déménagement de la boîte (BO1) : jamais ici, la boîte ne sert pas (cf. « Happy hour »)
+    expect([...genres].sort()).toEqual(["double", "instakill", "menuisier", "munitions", "nuke"]);
   });
 
   it("double points : un kill au corps rapporte 120 $ ; insta-kill : tout tigre meurt au premier coup", () => {
@@ -775,6 +776,87 @@ describe("achats", () => {
     acheter(b, j, "mur:revolver");
     j.equip = copierEquipement({ ...j.equip, ameliorees: ["revolver"] });
     expect(msgs(acheter(b, j, "mur:revolver", T_MANCHE1 + 200), "argent")[0]).toMatchObject({ delta: -2500 });
+  });
+});
+
+// =================================================================================================
+describe("(v8) Happy hour (le Fire Sale de BO1)", () => {
+  const acheter = (b: Banc, j: JoueurSalle, id: string, t: number) => b.svc.recevoir(j, msg({ t: "acheter", id }), t);
+  const devant = (j: JoueurSalle, em: number) => { const a = achatBoite(em); j.p = [a.position[0], 0, a.position[1]]; };
+
+  /** Tire à la boîte principale jusqu'à la peluche (8 tirages au plus), puis attend la fin de l'envol : la boîte a déménagé une fois. */
+  function deplacerBoite(b: Banc, j: JoueurSalle, t: number): number {
+    for (let k = 0; k < 8; k++) {
+      devant(j, b.svc.etat().boite.emplacement);
+      expect(msgs(acheter(b, j, achatBoite(b.svc.etat().boite.emplacement).id, t), "achat")[0].ok).toBe(true);
+      const peluche = b.svc.etat().boite.arme === "peluche";
+      t += TIRAGE_BOITE_MS + 50; b.svc.tic(t);
+      if (peluche) { t += ENVOL_BOITE_MS + 50; b.svc.tic(t); return t + 50; }
+      t += OFFRE_BOITE_MS + 50; b.svc.tic(t); t += 50;
+    }
+    throw new Error("pas de peluche en 8 tirages");
+  }
+  /** Tue les tigres entrés jusqu'au premier bonus lâché, va le ramasser ; renvoie le genre et l'instant. */
+  function ramasserBonus(b: Banc, j: JoueurSalle, t0: number): { genre: GenreBonus; t: number; sorties: Sortie[] } {
+    for (let t = t0; t < t0 + 240_000; t += 100) {
+      b.svc.tic(t);
+      for (const z of tigresVivants(b)) if (zoneEn(ZONES_SOL, z.x, z.z)) b.svc.blesser(`z${z.id}`, 100_000, j, "tete", t);
+      const sol = b.svc.etat().bonus[0];
+      if (sol) { j.p = [sol.p[0], 0, sol.p[2]]; return { genre: sol.genre, t: t + 50, sorties: b.svc.tic(t + 50) }; }
+    }
+    throw new Error("aucun bonus");
+  }
+
+  it("jamais offert tant que la boîte n'a pas déménagé (un autre bonus le remplace)", () => {
+    const b = partieEnCours(["a"], { total1: 200, degatsGriffe: 0, bonus: ["soldes"] });
+    const j = b.j("a");
+    j.pv = 1e9;
+    const r = ramasserBonus(b, j, T_PREMIER_TIGRE);
+    expect(r.genre).not.toBe("soldes");
+    expect(b.svc.etat().boitesSoldes).toBeUndefined();
+  });
+
+  it("30 s : une boîte à chaque emplacement, toutes à 10 $, aucune peluche ni déménagement ; à la fin les temporaires disparaissent, sauf celle en cours", () => {
+    const b = partieEnCours(["a"], { total1: 200, degatsGriffe: 0, bonus: ["soldes"], argentDepart: 1e7 });
+    const j = b.j("a");
+    j.pv = 1e9;
+    let t = deplacerBoite(b, j, T_PREMIER_TIGRE);
+    const r = ramasserBonus(b, j, t);
+    expect(r.genre).toBe("soldes");
+    t = r.t;
+    const etat = dernierEtat(r.sorties)!;
+    expect(etat.effets.soldesFinT).toBe(t + ZOMBIES.bonusDureeMs);
+    const principale = etat.boite;
+    expect(etat.boitesSoldes!.map((x) => x.emplacement).sort()).toEqual([0, 1, 2, 3, 4].filter((i) => i !== principale.emplacement));
+    // chaque boîte (la principale comprise) tire à 10 $, jamais la peluche ; les tirages ne comptent pas pour la peluche
+    const finSoldes = etat.effets.soldesFinT;
+    for (let em = 0; em < 5; em++) {
+      devant(j, em);
+      const s = acheter(b, j, achatBoite(em).id, t);
+      expect(msgs(s, "argent")[0], `emplacement ${em}`).toMatchObject({ delta: -10 });
+      const bx = [b.svc.etat().boite, ...(b.svc.etat().boitesSoldes ?? [])].find((x) => x.emplacement === em)!;
+      expect(bx.etat).toBe("tirage");
+      expect(bx.arme).not.toBe("peluche");
+    }
+    // les offres se referment sans être prises
+    t += TIRAGE_BOITE_MS + 50; b.svc.tic(t);
+    t += OFFRE_BOITE_MS + 50; b.svc.tic(t);
+    expect(t).toBeLessThan(finSoldes);
+    expect(b.svc.etat().boite).toMatchObject({ emplacement: principale.emplacement, utilisations: principale.utilisations });
+    // un tirage lancé juste avant la fin : sa boîte temporaire reste jusqu'à ce qu'elle se referme
+    const derniere = b.svc.etat().boitesSoldes![0].emplacement;
+    devant(j, derniere);
+    t = finSoldes - 500;
+    b.svc.tic(t);
+    expect(msgs(acheter(b, j, achatBoite(derniere).id, t), "argent")[0]).toMatchObject({ delta: -10 });
+    t = finSoldes + 100;
+    b.svc.tic(t);
+    expect(b.svc.etat().boitesSoldes!.map((x) => x.emplacement)).toEqual([derniere]);
+    // après le Happy hour, 950 $ à la principale ; la temporaire disparaît une fois l'offre refermée
+    devant(j, principale.emplacement);
+    expect(msgs(acheter(b, j, achatBoite(principale.emplacement).id, t), "argent")[0]).toMatchObject({ delta: -950 });
+    avancer(b, t + 50, t + TIRAGE_BOITE_MS + OFFRE_BOITE_MS + 200, 100);
+    expect(b.svc.etat().boitesSoldes).toBeUndefined();
   });
 });
 
