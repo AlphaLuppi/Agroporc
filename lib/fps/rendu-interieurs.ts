@@ -11,10 +11,10 @@ import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { shapeFrom } from "../agroparc3d/decor";
 import type { SceneData, Vec2 } from "../agroparc3d/types";
-import { BATIMENTS_CREUX, HAUTEUR_PORTE_INTERIEURE, batimentDePiece, type GenreMeuble, type PieceSynth } from "./zombies-carte";
+import { BATIMENTS_CREUX, HAUTEUR_PORTE_INTERIEURE, PLAFOND_INTERIEUR_M, batimentDePiece, type GenreMeuble, type PieceSynth } from "./zombies-carte";
 
 /** Hauteur du faux plafond (m) et des fenêtres (allège, linteau). */
-export const PLAFOND_M = 3.4;
+export const PLAFOND_M = PLAFOND_INTERIEUR_M;
 export const FENETRE_BAS_M = 0.9;
 export const FENETRE_HAUT_M = 2.3;
 

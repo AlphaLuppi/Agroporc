@@ -33,6 +33,8 @@ export const PROLONGEMENT_PIECE = 0.3;
 /** Hauteur de dessin d'une pièce extérieure (m) ; une porte intérieure fait la hauteur d'une porte. */
 export const HAUTEUR_PIECE = 6;
 export const HAUTEUR_PORTE_INTERIEURE = 2.6;
+/** Faux plafond des bâtiments creusés (m) : dessiné par rendu-interieurs.ts, arrête les grenades (`plafondBatimentsCreux` de grenades.ts). */
+export const PLAFOND_INTERIEUR_M = 3.4;
 /** Largeur (m) d'une ouverture de porte et d'une fenêtre dans une coque ou une cloison. */
 export const LARGEUR_PORTE = 2.6;
 export const LARGEUR_FENETRE = 1.8;

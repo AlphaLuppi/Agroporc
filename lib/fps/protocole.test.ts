@@ -91,8 +91,8 @@ describe("silhouette", () => {
 });
 
 describe("constantes", () => {
-  it("version 6 du protocole (événements de la v4, tigres largués de la v5, zombies et épée)", () => {
-    expect(VERSION_PROTOCOLE).toBe(7);
+  it("version 8 du protocole (événements de la v4, tigres largués de la v5, zombies et épée, grenades de la v8)", () => {
+    expect(VERSION_PROTOCOLE).toBe(8);
   });
 
   it("chaîne de plafonds de vitesse : sprint couteau ≤ plafond horizontal ≤ plafond déclaré", () => {
@@ -114,8 +114,8 @@ describe("constantes", () => {
 });
 
 describe("protocole v6 (zombies)", () => {
-  it("version 6", () => {
-    expect(VERSION_PROTOCOLE).toBe(7);
+  it("version 8 (grenades des zombies)", () => {
+    expect(VERSION_PROTOCOLE).toBe(8);
   });
 
   it("ARMES_MELEE : couteau et épée, estMelee ne reconnaît aucune arme à feu", () => {
