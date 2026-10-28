@@ -275,8 +275,9 @@ livré fait foi là où il diffère du texte ci-dessus.
   conception ») ; le test de bout en bout s'en sert pour garder un joueur à l'abri hors de sa relève.
 - **Arène** : `e2e_arene_v2.mjs` repousse d'une heure les événements (Truck fou, tigre robot), qui tuaient les joueurs en pleine étape, joue d'abord le choix du mode « Arène » et ajoute l'étape 6c
   (épée : un troisième navigateur frappe deux joueurs d'un seul coup `coup{cibles}`). Le couteau envoie lui aussi `cibles: [id]`.
-- **Limites supplémentaires** (revues de T3 et T6, non exercées par le test) : le soin à pleins PV est débité (400 $ sans effet, pas de refus `deja`) ; un joueur à terre ou éliminé n'est jamais retiré
+- **Limites supplémentaires** (revues de T3 et T6, non exercées par le test) : un joueur à terre ou éliminé n'est jamais retiré
   pour inactivité (la règle des 20 s ne vise que les vivants), il reste `enJeu` jusqu'à la pause comme dans l'arène ; un joueur **admis qui ne rejoint jamais** (onglet gelé après l'admission) compte parmi
   les debout et peut retarder la défaite et la fin de manche (l'interface ne produit plus ce cas) ; `retirerJoueur` ne remet pas `pv` ni `etatT` à zéro (sans conséquence : `rejoindre` repasse toujours par `placerJoueur`).
+- **Revue de T8** : le soin à pleins PV est désormais refusé (`achat{ok:false, raison:"deja"}`, rien n'est débité, le délai de 20 s ne démarre pas) ; le texte du refus `deja` est générique (« Déjà acquis, ouvert ou inutile »), il valait « Déjà ouvert » même pour l'épée ou la boîte.
 - **Redéploiement** : `VERSION_PROTOCOLE = 5` impose de déployer le front (Vercel) et le serveur (`vps:/opt/pdj-fps`, `docker compose up -d --build`) ENSEMBLE ; tant qu'un seul des deux est à jour, l'arène reçoit
   `erreur{version}`. Le Dockerfile n'a besoin d'aucune copie en plus.

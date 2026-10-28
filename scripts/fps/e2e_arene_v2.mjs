@@ -52,7 +52,6 @@ const ELSA = [-122.7, 37.42];
 
 const dormir = (ms) => new Promise((r) => setTimeout(r, ms));
 const distXZ = (p, c) => Math.hypot(p[0] - c[0], p[2] - c[1]);
-const plat3 = (p) => [p[0], p[1], p[2]];
 
 /** Un port libre choisi par le système. */
 function portLibre() {

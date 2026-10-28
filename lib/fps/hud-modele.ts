@@ -373,7 +373,7 @@ export function texteRefusAchat(raison: RaisonAchat): string {
   switch (raison) {
     case "argent": return "Argent insuffisant";
     case "loin": return "Trop loin";
-    case "deja": return "Déjà ouvert";
+    case "deja": return "Déjà acquis, ouvert ou inutile";
     case "verrou": return "Porte verrouillée : ouvrez d'abord la précédente";
     default: return "Achat impossible pour le moment";
   }

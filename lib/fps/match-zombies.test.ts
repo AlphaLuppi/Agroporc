@@ -780,6 +780,16 @@ describe("achats", () => {
     expect(msgs(acheter(b, j, "soin", T_MANCHE1 + 100 + 20_000), "achat")[0]).toMatchObject({ ok: true });
     expect(j.pv).toBe(JEU.pvMax);
   });
+
+  it("soin à pleins PV : refusé (deja), rien n'est débité et le délai de 20 s ne démarre pas", () => {
+    const { b, j } = avec(achat("soin").position, 1000);
+    expect(j.pv).toBe(JEU.pvMax);
+    const s = acheter(b, j, "soin");
+    expect(msgs(s, "achat")[0]).toMatchObject({ ok: false, raison: "deja" });
+    expect(msgs(s, "argent")).toHaveLength(0);
+    j.pv = 20;
+    expect(msgs(acheter(b, j, "soin", T_MANCHE1 + 200), "achat")[0]).toMatchObject({ ok: true });
+  });
 });
 
 // =================================================================================================

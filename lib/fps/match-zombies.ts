@@ -562,7 +562,8 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
   }
 
   function acheterSoin(j: JoueurSalle, achat: Achat, m: Membre, t: number): Sortie[] {
-    if (t < m.soinPretT) return refus(j, achat.id, "deja");
+    // déjà en pleine forme ou soin pas prêt : rien n'est débité
+    if (t < m.soinPretT || j.pv >= JEU.pvMax) return refus(j, achat.id, "deja");
     if (m.argent < achat.prix) return refus(j, achat.id, "argent");
     const sorties = payer(j, m, achat, achat.prix);
     m.soinPretT = t + ZOMBIES.soinRechargeS * 1000;

@@ -55,7 +55,7 @@ Les ajouts de la v5 : `mode`, `lancerPartie`, `acheter{id}`, `reanimer{cible}`, 
 avec `melee?` ; en retour `salons`, `mode`, `zombies{etat}`, `argent`, `achat`, `zombieMort`, `snap.zombies`, `equipement.ravitaille`, `batiments` (portes achetées) et `coup{id, o, d, arme}`
 pour les autres joueurs. Détail dans `lib/fps/protocole.ts`. Le résumé ci-dessous date de la v2 :
 
-
+### Résumé v2
 
 Contrat complet et commenté : `lib/fps/protocole.ts` (ne change qu'avec le client, `lib/fps/reseau.ts`). Premier message obligatoire :
 `bonjour{v, pseudo}` ; une version différente de `VERSION_PROTOCOLE` reçoit `erreur{version}` (« rechargez la page ») et la socket est fermée.
