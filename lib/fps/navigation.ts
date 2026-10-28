@@ -4,7 +4,7 @@
  * le long du chemin. Les grilles sont calculées une fois par monde et par rayon (cache), à la première demande.
  * Spec : docs/superpowers/specs/2026-10-24-arene-evenements-design.md
  */
-import { lancerRayon, resoudre, type Monde } from "./collision";
+import { lancerRayon, resoudre, type Boite, type Monde } from "./collision";
 import type { Vec3 } from "./protocole";
 
 export interface CarteNav { taille: number; x0: number; z0: number; nx: number; nz: number; bloque: Uint8Array }
@@ -12,7 +12,17 @@ export interface CarteNav { taille: number; x0: number; z0: number; nx: number; 
 /** Au plus ce nombre de cases (la taille d'une case grandit sur une très grande carte, comme celle des tests). */
 const CASES_MAX = 90_000;
 const TAILLE_MIN_M = 3;
-const cache = new WeakMap<Monde, Map<string, CarteNav>>();
+/** Grille en cache et ce qui l'a produite (rayon du disque, champs ignorés) : de quoi la recalculer case par case. */
+interface EntreeNav { carte: CarteNav; rayon: number; ignorer: boolean }
+const cache = new WeakMap<Monde, Map<string, EntreeNav>>();
+/** Marge (m) ajoutée au rayon autour d'une boîte modifiée : les cases plus lointaines ne peuvent pas changer. */
+const MARGE_MAJ_M = 0.5;
+
+/** La case (i, j) est bloquée : un disque de `rayon` centré sur elle touche un bâtiment ou sort des bornes. */
+function caseBloquee(monde: Monde, c: CarteNav, i: number, j: number, rayon: number, ignorer: boolean): 0 | 1 {
+  const x = c.x0 + (i + 0.5) * c.taille, z = c.z0 + (j + 0.5) * c.taille;
+  return resoudre(monde, [x, 0, z], rayon, 8, ignorer).contacts.length ? 1 : 0;
+}
 
 /** Options de `carteNavigation` : `taille` = taille minimale d'une case (m, 3 par défaut), `ignorerPasseTigre` = les « champs » de la carte zombies ne bloquent pas. */
 export interface OptionsNav { taille?: number; ignorerPasseTigre?: boolean }
@@ -24,26 +34,65 @@ export function carteNavigation(monde: Monde, rayon: number, opts: OptionsNav = 
   const ignorer = opts.ignorerPasseTigre === true;
   const cle = `${rayon}|${tailleMin}|${ignorer ? 1 : 0}`;
   const deja = parCle.get(cle);
-  if (deja) return deja;
+  if (deja) return deja.carte;
   const b = monde.bornes;
   const largeur = b.x1 - b.x0, profondeur = b.z1 - b.z0;
   const taille = Math.max(tailleMin, Math.sqrt((largeur * profondeur) / CASES_MAX));
   const nx = Math.max(1, Math.ceil(largeur / taille)), nz = Math.max(1, Math.ceil(profondeur / taille));
   const bloque = new Uint8Array(nx * nz);
-  for (let j = 0; j < nz; j++) {
-    for (let i = 0; i < nx; i++) {
-      const x = b.x0 + (i + 0.5) * taille, z = b.z0 + (j + 0.5) * taille;
-      if (resoudre(monde, [x, 0, z], rayon, 8, ignorer).contacts.length) bloque[i + j * nx] = 1;
-    }
-  }
-  const carte = { taille, x0: b.x0, z0: b.z0, nx, nz, bloque };
-  parCle.set(cle, carte);
+  const carte: CarteNav = { taille, x0: b.x0, z0: b.z0, nx, nz, bloque };
+  for (let j = 0; j < nz; j++) for (let i = 0; i < nx; i++) bloque[i + j * nx] = caseBloquee(monde, carte, i, j, rayon, ignorer);
+  parCle.set(cle, { carte, rayon, ignorer });
   return carte;
 }
 
 /** Oublie les grilles du monde (un bâtiment a été détruit ou relevé : porte achetée, nouvelle partie) ; la prochaine demande les recalcule. */
 export function invaliderNavigation(monde: Monde): void {
   cache.delete(monde);
+}
+
+/**
+ * Mise à jour INCRÉMENTALE des grilles en cache du monde après la destruction (ou le relevé) des bâtiments dont on donne les `boites` : seules
+ * les cases dont le disque peut toucher l'une d'elles sont recalculées, SUR PLACE (les `CarteNav` déjà distribuées restent valables). Le
+ * résultat est identique à un recalcul complet (même prédicat, case par case) : une porte de la carte zombies coûte moins de 5 ms au lieu de
+ * 40 à 80 ms pour les deux grilles (qui gelaient le processus entier, arène comprise).
+ */
+export function majNavigation(monde: Monde, boites: readonly Boite[]): void {
+  const parCle = cache.get(monde);
+  if (!parCle || !boites.length) return;
+  for (const { carte: c, rayon, ignorer } of parCle.values()) {
+    const marge = rayon + MARGE_MAJ_M;
+    for (const bo of boites) {
+      // cases dont le centre est à moins de `marge` de la boîte
+      const i0 = Math.max(0, Math.floor((bo.x0 - marge - c.x0) / c.taille - 0.5)), i1 = Math.min(c.nx - 1, Math.ceil((bo.x1 + marge - c.x0) / c.taille - 0.5));
+      const j0 = Math.max(0, Math.floor((bo.z0 - marge - c.z0) / c.taille - 0.5)), j1 = Math.min(c.nz - 1, Math.ceil((bo.z1 + marge - c.z0) / c.taille - 0.5));
+      for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) c.bloque[i + j * c.nx] = caseBloquee(monde, c, i, j, rayon, ignorer);
+    }
+  }
+}
+
+/** Photographie des grilles en cache du monde (copie des cases bloquées par clé), à restaurer par `restaurerNavigation`. */
+export type InstantaneNav = ReadonlyMap<string, Uint8Array>;
+
+/** Copie des grilles en cache du monde, par exemple toutes portes fermées à la création de la salle des zombies. */
+export function instantaneNavigation(monde: Monde): InstantaneNav {
+  const r = new Map<string, Uint8Array>();
+  for (const [cle, e] of cache.get(monde) ?? []) r.set(cle, e.carte.bloque.slice());
+  return r;
+}
+
+/**
+ * Remet SUR PLACE les grilles en cache du monde dans l'état photographié (le monde doit être revenu à cet état : portes refermées). Une grille
+ * absente de la photographie ou de taille différente est oubliée (recalculée à la prochaine demande).
+ */
+export function restaurerNavigation(monde: Monde, inst: InstantaneNav): void {
+  const parCle = cache.get(monde);
+  if (!parCle) return;
+  for (const [cle, e] of [...parCle]) {
+    const copie = inst.get(cle);
+    if (copie && copie.length === e.carte.bloque.length) e.carte.bloque.set(copie);
+    else parCle.delete(cle);
+  }
 }
 
 const caseDe = (c: CarteNav, x: number, z: number): [number, number] => [

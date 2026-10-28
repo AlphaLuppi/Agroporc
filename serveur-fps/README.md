@@ -127,7 +127,7 @@ ORIGINES=https://<domaine-du-site> docker compose up -d --build
 `erreur{version}` (« rechargez la page ») et la socket est fermée, donc l'arène entière est indisponible. Ne redéployer le VPS qu'au moment où le front de la même version part en production.
 `ORIGINES` doit inclure le site et le joker des previews Vercel. Le Dockerfile n'a besoin d'aucune copie en plus pour les zombies (les imports restent dans `lib/fps` et `lib/agroparc3d`).
 
-`docker-compose.yml` : conteneur `pdj-fps` (les deux salles) sur le réseau externe `dokploy-network`, 256 Mo, 0,3 vCPU
+`docker-compose.yml` : conteneur `pdj-fps` (les deux salles) sur le réseau externe `dokploy-network`, 384 Mo, 1 vCPU
 (`lib/fps/match.charge.test.ts` : 16 joueurs, 6 voitures conduisibles, 12 PNJ et Elsa, un tic coûte ≈ 0,05 ms de CPU et un snap pèse ≈ 3,5 Ko,
 `lib/fps/match.charge-tigres.test.ts` : la même salle avec un tigre sauvage en attaque et quatre tigres alliés, tic du même ordre et snap ≈ 3,8 Ko ;
 `match.zombies.charge.test.ts` : 8 joueurs et 24 tigres, un tic ≤ 2 ms en moyenne et un snap ≤ 4,2 Ko),

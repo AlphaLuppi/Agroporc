@@ -516,11 +516,17 @@ export function creerSimuZombies(opts: OptionsSimuZombies) {
       }));
       return encoderZombies(restants, liste, truck);
     },
-    /** Après une porte ouverte : le monde a changé (appeler `invaliderNavigation(monde)` avant), les grilles et les champs sont recalculés. */
+    /**
+     * Après une porte ouverte ou refermée : le monde a changé et ses grilles aussi (`majNavigation` / `restaurerNavigation`, sur place, ou
+     * `invaliderNavigation` qui les fait recalculer ici) ; les champs de distance sont recalculés au prochain tic.
+     */
     rafraichirCarte(): void {
       cartes = [chargerChasse(), chargerLibre()];
-      champs[0] = new Int32Array(cartes[0].nx * cartes[0].nz).fill(DIST_INF);
-      champs[1] = new Int32Array(cartes[1].nx * cartes[1].nz).fill(DIST_INF);
+      for (const g of [0, 1] as const) {
+        const n = cartes[g].nx * cartes[g].nz;
+        if (champs[g].length !== n) champs[g] = new Int32Array(n);
+        champs[g].fill(DIST_INF);
+      }
       carteChangee = true;
       prochainChampT = 0;
       for (const z of zombies) z.champOk = false;

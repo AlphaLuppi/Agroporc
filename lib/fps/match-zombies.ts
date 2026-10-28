@@ -18,7 +18,7 @@ import { batimentsDetruits, detruireBatiment, lancerRayon, releverBatiments, vis
 import { ARMES, CIBLE_LIVRAISON, copierEquipement, estIdZombie, estMelee, idZombie } from "./protocole";
 import { armeDuSlot, meleeDe } from "./equipement";
 import type { ContexteSalle, JoueurSalle, ResumeZombies, ServiceZombies, Sortie } from "./match-contexte";
-import { invaliderNavigation } from "./navigation";
+import { instantaneNavigation, majNavigation, restaurerNavigation } from "./navigation";
 import { capVers } from "./monstres";
 import type {
   ArmeFeuId, ArmeId, ArmeSpecialeId, AtoutId, BonusSol, EffetsZombies, EtatBoite, EtatPap, EtatPartieZombies, Equipement, EvenementZombies,
@@ -160,6 +160,9 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       },
     },
   });
+  // grilles de navigation des tigres toutes portes fermées (calculées par `creerSimuZombies`) : remises telles quelles au retour au lobby
+  // et à chaque nouvelle partie, au lieu d'un recalcul complet de 40 à 80 ms qui gelait tout le serveur
+  const navigationFermee = instantaneNavigation(ctx.monde);
   // étiquettes des zones au sol et sorties du sol : calculées une fois, toutes portes fermées (le monde est neuf à la création)
   const carteZones: CarteZones = etiqueterZones(ctx.monde);
   const sorties = sortiesDuSol(carteZones);
@@ -321,13 +324,13 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     return { a: "tous", m: { t: "batiments", complet: true, detruits: batimentsDetruits(ctx.monde), breches: [] } };
   }
 
-  /** Remet les portes en place (nouvelle partie, retour au lobby) : prismes relevés, navigation recalculée si une porte avait été ouverte. */
+  /** Remet les portes en place (nouvelle partie, retour au lobby) : prismes relevés, grilles « portes fermées » restaurées si une porte était ouverte. */
   function refermerPortes(): void {
     const avait = ouvertes.size > 0;
     ouvertes.clear();
     releverBatiments(ctx.monde);
     if (avait) {
-      invaliderNavigation(ctx.monde);
+      restaurerNavigation(ctx.monde, navigationFermee);
       simu.rafraichirCarte();
     }
   }
@@ -1029,7 +1032,8 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       if (detruireBatiment(ctx.monde, index)) detruits.push(index);
     }
     ouvertes.add(porte.id);
-    invaliderNavigation(ctx.monde);
+    // seules les cases autour des pièces de la porte changent (< 5 ms au lieu de 40 à 80 ms pour les deux grilles)
+    majNavigation(ctx.monde, detruits.map((i) => ctx.monde.prismes[i].boite));
     simu.rafraichirCarte();
     sorties.push({ a: "tous", m: { t: "batiments", complet: false, detruits, breches: [] } });
     immediat = true;

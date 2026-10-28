@@ -8,7 +8,7 @@ import { ZOMBIES } from "./zombies-vagues";
 
 /**
  * Charge du mode zombies : 8 joueurs, 24 tigres vivants (plafond), tic à 60 Hz pendant 10 s simulées. Mesure le temps CPU d'un tic (le serveur en
- * lance 60 par seconde sur 0,3 vCPU) et la taille d'un snap sérialisé. À lancer SEUL pour la mesure nominale (1 ms) : sous vitesse parallèle de toute
+ * lance 60 par seconde sur 1 vCPU) et la taille d'un snap sérialisé. À lancer SEUL pour la mesure nominale (1 ms) : sous vitesse parallèle de toute
  * la machine, le budget de 2 ms laisse la marge (comme `match.charge.test.ts`, qui dépasse déjà son budget quand vitest tourne en parallèle).
  */
 

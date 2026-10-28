@@ -110,7 +110,8 @@ const options: OptionsSalle = {
 const salleArene = new Salle(monde, apparitions, Math.random, Date.now(), options);
 
 // Zombies (v5) : son propre monde MUTABLE (portes qui s'ouvrent), sans Elsa, circulation, voitures ni événements. La grille de navigation des
-// tigres est précalculée à la création du service (17 à 40 ms), puis recalculée une fois par porte achetée.
+// tigres est précalculée à la création du service (17 à 40 ms), puis mise à jour autour de chaque porte achetée (< 1 ms) et restaurée telle
+// quelle au retour au lobby.
 const argentZombies = dureeEnv("PDJ_FPS_ZOMBIES_ARGENT");
 const totalZombies = dureeEnv("PDJ_FPS_ZOMBIES_TOTAL");
 const pauseZombies = dureeEnv("PDJ_FPS_ZOMBIES_PAUSE_MS");
