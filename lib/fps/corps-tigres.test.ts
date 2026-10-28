@@ -240,7 +240,8 @@ describe("mouvement contre les corps des tigres", () => {
 });
 
 describe("serveur : les tigres ne chevauchent pas les joueurs debout", () => {
-  const COUR: [number, number] = [128, -55];
+  // Ouest de la Cour Centre, à plus de 8,5 m de tout obstacle (v8 : l'olivier OL1 occupe le centre de la cour).
+  const COUR: [number, number] = [114, -51];
   const spec = (type: TypeZombie = 0): SpecZombie => ({
     type, manche: 5, pv: pvZombie(5, type), allure: 1, vitesse: vitesseAllure(1, 0.5, type), degats: degatsGriffe(type), rechargeGriffeS: rechargeGriffe(type),
   });
