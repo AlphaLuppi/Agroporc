@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import scene from "../../public/agroparc/scene.json";
 import type { SceneData } from "../agroparc3d/types";
-import { detruireBatiment, resoudre, visible } from "./collision";
+import { detruireBatiment, lancerRayon, resoudre, visible } from "./collision";
 import { carteNavigation, champDistance, DIST_INF } from "./navigation";
 import {
-  ACHATS, ANGLE_BATIMENTS, ATOUTS, BATIMENTS_CREUX, BORNES_ZOMBIES, CREUSAGES, DEPARTS, FENETRES, INDEX_PREMIERE_PIECE, NOTES, OLIVIER, OLIVIERS,
+  ACHATS, ANGLE_BATIMENTS, ATOUTS, BATIMENTS_CREUX, BOITE, BORNES_ZOMBIES, CREUSAGES, DEPARTS, FENETRES, INDEX_PREMIERE_PIECE, NOTES, OLIVIER, OLIVIERS,
   ORIGINES, PIECES_AMENAGEMENT, PIECES_SYNTH, PORTES_PAYANTES, QUAIS, TRUCK, ZONES, achatsProches, construireMondeZombies, donneesZombies, etiqueterZones,
   fenetreDeId, idPrisme, local, piecesSynth, rayonTruck, sortiesDuSol, voisines, zoneEn, zonesActives, zonesOuvertes, type CarteZones, type ZoneId,
 } from "./zombies-carte";
@@ -402,5 +402,40 @@ describe("aménagements (v8) : deux grandes cours à olivier, le reste resserré
       });
     });
     expect(fautes).toEqual([]);
+  });
+
+  it("boîte mystère : chaque caisse est dans un coin, dos au mur, son grand côté le long du mur, face ouverte vers la pièce", () => {
+    const y = 0.3;
+    const boites = ACHATS.filter((x) => x.genre === "boite");
+    expect(boites).toHaveLength(5);
+    for (const a of boites) {
+      const f = a.facade!;
+      const l = Math.hypot(f.q[0] - f.p[0], f.q[1] - f.p[1]);
+      const u: V2 = [(f.q[0] - f.p[0]) / l, (f.q[1] - f.p[1]) / l];
+      const n = f.normale;
+      // la normale est unitaire et perpendiculaire au mur (aux arrondis au centimètre de la façade près)
+      expect(Math.hypot(n[0], n[1])).toBeCloseTo(1, 6);
+      expect(Math.abs(n[0] * u[0] + n[1] * u[1])).toBeLessThan(2e-3);
+      const c: V2 = [f.p[0] + (f.q[0] - f.p[0]) * f.t + n[0] * BOITE.recul, f.p[1] + (f.q[1] - f.p[1]) * f.t + n[1] * BOITE.recul];
+      const rayon = (o: V2, d: V2, max = 20) => lancerRayon(monde, [o[0], y, o[1]], [d[0], 0, d[1]], max);
+      // dos au mur : le mur est à `recul` derrière le centre ET derrière les deux bouts (grand côté parallèle au mur, jamais de travers)
+      for (const k of [-1, 0, 1]) {
+        const o: V2 = [c[0] + u[0] * k * (BOITE.longueur / 2 - 0.1), c[1] + u[1] * k * (BOITE.longueur / 2 - 0.1)];
+        expect(Math.abs(rayon(o, [-n[0], -n[1]]) - BOITE.recul), `${a.id} dos (${k})`).toBeLessThan(0.08);
+      }
+      // coin : un mur perpendiculaire à `jeuCoin` d'un des bouts, sur toute la profondeur de la caisse
+      const cotes = ([1, -1] as const).map((s) => Math.max(...[-1, 1].map((k) => {
+        const o: V2 = [c[0] + n[0] * k * (BOITE.profondeur / 2 - 0.05), c[1] + n[1] * k * (BOITE.profondeur / 2 - 0.05)];
+        return rayon(o, [u[0] * s, u[1] * s]);
+      })));
+      expect(Math.min(...cotes) - BOITE.longueur / 2, `${a.id} coin`).toBeLessThan(BOITE.jeuCoin + 0.1);
+      // emprise libre (la caisse ne mord ni un mur ni un meuble), face ouverte : rien devant sur 1,6 m
+      for (const su of [-1, 1]) for (const sn of [-1, 1]) {
+        const x = c[0] + u[0] * su * (BOITE.longueur / 2 - 0.03) + n[0] * sn * (BOITE.profondeur / 2 - 0.03);
+        const z = c[1] + u[1] * su * (BOITE.longueur / 2 - 0.03) + n[1] * sn * (BOITE.profondeur / 2 - 0.03);
+        expect(resoudre(monde, [x, 0, z], 0.01, 1).contacts.length, `${a.id} emprise`).toBe(0);
+      }
+      expect(rayon(c, n, 1.6), `${a.id} devant`).toBe(Infinity);
+    }
   });
 });

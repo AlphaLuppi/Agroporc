@@ -696,13 +696,42 @@ export const PRIX_MUNITIONS_AMELIOREE = 2500;
 export const PRIX_BOITE = 950;
 export const PRIX_BOITE_SOLDES = 10;
 
-/** Emplacements de la boîte mystère (B1 à B5) : position du joueur et façade (la caisse est posée contre le mur). */
+/**
+ * Caisse de la boîte mystère (m) : `longueur` le long du mur, `profondeur`, `recul` de son centre à la façade (le rendu la pose à
+ * façade(t) + normale × recul, son grand côté le long de p → q, sa face ouverte vers la normale), `jeuCoin` entre son bout et le mur
+ * perpendiculaire du coin.
+ */
+export const BOITE = { longueur: 1.6, profondeur: 0.75, recul: 0.5, jeuCoin: 0.15 } as const;
+/**
+ * Fraction t d'un mur de longueur `l` qui cale la caisse dans le coin du bout `bout` (0 : p, 1 : q) : son bout à `jeuCoin` de la face du mur
+ * perpendiculaire, elle-même à `retrait` m en deçà du bout du segment (0,4 m pour une coque : épaisseur du mur voisin).
+ */
+function tCoin(l: number, bout: 0 | 1, retrait = 0): number {
+  const k = (retrait + BOITE.jeuCoin + BOITE.longueur / 2) / l;
+  return bout === 0 ? k : 1 - k;
+}
+const longueurLocale = (de: Vec2, a: Vec2): number => Math.hypot(a[0] - de[0], a[1] - de[1]);
+const RETRAIT_COQUE = 2 * DEMI_EPAISSEUR_COQUE;
+const LONGUEUR_MUR_SUD_EST = Math.hypot(MUR_SUD_EST[1][0] - MUR_SUD_EST[0][0], MUR_SUD_EST[1][1] - MUR_SUD_EST[0][1]);
+
+/**
+ * Emplacements de la boîte mystère (B1 à B5) : position du joueur et façade. Chaque caisse est dans un COIN (v8) : dos à un mur (la façade),
+ * un bout à `jeuCoin` d'un mur perpendiculaire, face ouverte vers la pièce ; vérifié par un test (rayons vers le mur du fond et le mur du coin).
+ */
 const EMPLACEMENTS_BOITE: readonly { zone: ZoneId; pos: { position: Vec2; facade: Facade } }[] = [
-  { zone: "pause", pos: surMurLocal(72, [30.9, -0.1], [23.3, -0.1], 0.4, [26, -5]) },
-  { zone: "cour", pos: surMur([108, -67.3], [103.1, -50.2], 0.55, [120, -58]) },
-  { zone: "est", pos: surMur([178.6, -17.0], [167.5, -20.1], 0.5, [175, -30]) },
-  { zone: "ouest", pos: surMur([96.2, -85.5], [70.1, -92.9], 0.25, [85, -75]) },
-  { zone: "labo", pos: surMurLocal(74, [4.7, -9.7], [4.6, -14.6], 0.5, [10, -12]) },
+  // Salle de pause : coin nord-est, contre le mur nord, à côté de la porte de service D3
+  { zone: "pause", pos: surMurLocal(72, [30.9, -0.1], [23.3, -0.1], tCoin(longueurLocale([30.9, -0.1], [23.3, -0.1]), 0, RETRAIT_COQUE), [26, -5]) },
+  // Cour Centre : coin nord-ouest, contre la façade du bâtiment 69, au pied du décrochement (près de la barricade N2c)
+  { zone: "cour", pos: surMur([124.1, -77.5], [149.1, -70.4], tCoin(Math.hypot(25, 7.1), 0), [130, -60]) },
+  // Cour Est : contre la façade sud, calée contre le conteneur de livraison
+  {
+    zone: "est",
+    pos: surMur(MUR_SUD_EST[0], MUR_SUD_EST[1], FRACTION_CONTENEUR_EST + (AMENAGEMENTS.conteneur.w / 2 + BOITE.jeuCoin + BOITE.longueur / 2) / LONGUEUR_MUR_SUD_EST, [175, -30]),
+  },
+  // Cour Ouest (parking) : coin nord-ouest, contre le mur nord
+  { zone: "ouest", pos: surMur([96.2, -85.5], [70.1, -92.9], tCoin(Math.hypot(26.1, 7.4), 1), [85, -75]) },
+  // Labo : coin sud-ouest, contre le petit mur du fond
+  { zone: "labo", pos: surMurLocal(74, [4.7, -9.7], [4.6, -14.6], tCoin(longueurLocale([4.7, -9.7], [4.6, -14.6]), 1, RETRAIT_COQUE), [10, -12]) },
 ];
 export const NB_EMPLACEMENTS_BOITE = EMPLACEMENTS_BOITE.length;
 /** Emplacements possibles au départ (BO1 : la boîte commence près du départ) : Salle de pause ou Cour Centre. */
