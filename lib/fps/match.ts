@@ -7,21 +7,29 @@
  * d'apparition et le cycle des matchs (jeu → entracte → jeu). Chaque méthode renvoie les messages à émettre : le
  * serveur Node (`serveur-fps/`) ne fait que les router.
  *
- * Elsa, les véhicules / la circulation PNJ et les événements (v3 : Truck Muche fou, tigre robot, titan tigre) sont des services
- * (`match-elsa.ts`, `match-vehicules.ts`, `match-evenements.ts`) qui ne voient la salle que par `ContexteSalle` (`match-contexte.ts`), implémenté ici.
- * Avec l'option `zombies` (v5), la salle est celle du mode « zombies tigres » : le service `match-zombies.ts` mène la partie (lobby, manches, argent,
+ * Elsa, les véhicules / la circulation PNJ, les événements (v4 : Truck Muche fou, tigre robot géant, titan tigre) et les tigres
+ * largués (avion, tigre sauvage, sort d'invocation) sont des services (`match-elsa.ts`, `match-vehicules.ts`, `match-evenements.ts`,
+ * `match-tigres.ts`) qui ne voient la salle que par `ContexteSalle` (`match-contexte.ts`), implémenté ici. Un tir ou un coup d'arme blanche
+ * dont la cible est un tigre largué est validé par le service des tigres, un tir sur `CIBLE_TIGRE` ou `CIBLE_TITAN` par celui des
+ * événements.
+ * Avec l'option `zombies` (v6), la salle est celle du mode « zombies tigres » : le service `match-zombies.ts` mène la partie (lobby, manches, argent,
  * achats, tigres), la salle n'y ajoute que l'admission à `rejoindre`, les tirs et coups sur les tigres, la mise à terre à la place de la mort
- * et l'absence de cycle de matchs ; le comportement de l'arène (sans cette option) est inchangé.
- * Spec : docs/superpowers/specs/2026-10-22-arene-v2-design.md (§6.1, §13) et 2026-10-23-arene-hud-design.md (§3.5)
+ * et l'absence de cycle de matchs ; le comportement de l'arène (sans cette option) est inchangé. Sans Elsa, voitures, événements ni tigres largués.
+ * Spec : docs/superpowers/specs/2026-10-22-arene-v2-design.md (§6.1, §13), 2026-10-23-arene-hud-design.md (§3.5),
+ * 2026-10-24-arene-evenements-design.md, 2026-10-23-arene-tigres-design.md et 2026-10-27-arene-zombies-design.md
  */
 import { MELEE, STATS, degatsPlomb, gerbeRespectee } from "./armes";
 import { ecarterDesCircuits, type Circuit, type VoiturePnj } from "./circulation";
 import type { Monde } from "./collision";
+import type { IntervalleAvion } from "./avion";
 import type { IntervalleElsa } from "./elsa";
 import { armeDuSlot, depuisAlias, estPrincipale, estSecondaire, estSlot, normaliserEquipement } from "./equipement";
-import type { ContexteSalle, JoueurSalle, ResumeZombies, ServiceElsa, ServiceEvenements, ServiceVehicules, ServiceZombies, Sortie } from "./match-contexte";
+import type {
+  ContexteSalle, JoueurSalle, ResumeZombies, ServiceElsa, ServiceEvenements, ServiceTigres, ServiceVehicules, ServiceZombies, Sortie,
+} from "./match-contexte";
 import { creerServiceElsa } from "./match-elsa";
 import { creerServiceEvenements, type OptionsServiceEvenements } from "./match-evenements";
+import { creerServiceTigres } from "./match-tigres";
 import { creerServiceVehicules } from "./match-vehicules";
 import { EQUIPEMENT_DEPART_ZOMBIES, MAIN_DEPART_ZOMBIES, creerServiceZombies, departPour, type OptionsServiceZombies } from "./match-zombies";
 import { REWIND_MELEE_MS, coupVraisemblable } from "./melee";
@@ -31,8 +39,9 @@ import {
   type JoueurPublic, type LigneClassement, type LigneStats, type MessageClient, type SignalVoix, type Slot, type Vec3, type Zone,
 } from "./protocole";
 import { appliquerDegats, memoriserSante, regenerer, reinitialiserSante, restaurerSante, tuer as tuerSante } from "./sante";
+import type { CachetteTigre } from "./tigre-arene";
 import { toucheVraisemblable } from "./tir";
-import { choisirPointZone, lacetVers, filtrerApparitions, type ZoneApparition } from "./zones";
+import { ROND_POINT, ZONE_APPARITION, choisirPointZone, lacetVers, filtrerApparitions, type ZoneApparition } from "./zones";
 import { ZOMBIES } from "./zombies-vagues";
 import type { Vec2 } from "../agroparc3d/types";
 
@@ -158,6 +167,11 @@ export interface OptionsSalle {
   circulation?: { circuits: Circuit[]; voitures: VoiturePnj[] };
   /** voitures conduisibles (§2.12) : emplacements de départ */
   vehicules?: readonly { p: Vec2; cap: number }[];
+  /**
+   * Avion et tigres (v3) : cachettes (public/agroparc/cachettes.json, cap en convention lacet), dont seules celles de l'anneau de
+   * `zoneApparition` (sinon `ZONE_APPARITION` autour du rond-point) servent, et intervalle des passages surchargeable.
+   */
+  tigres?: { cachettes: readonly CachetteTigre[]; intervalle?: IntervalleAvion };
   /** événements (v3) : Truck Muche fou, tigre robot géant, titan tigre */
   evenements?: Omit<OptionsServiceEvenements, "maintenant">;
   /**
@@ -185,6 +199,7 @@ export class Salle implements ContexteSalle {
   private readonly zone: ZoneApparition | null;
   private readonly elsa: ServiceElsa | null;
   private readonly vehicules: ServiceVehicules | null;
+  private readonly tigres: ServiceTigres | null;
   private readonly evenements: ServiceEvenements | null;
   private readonly zombies: ServiceZombies | null;
   private numero = 1;
@@ -223,7 +238,21 @@ export class Salle implements ContexteSalle {
     this.vehicules = options.vehicules || options.circulation
       ? creerServiceVehicules(this, { vehicules: options.vehicules, circulation: options.circulation, maintenant })
       : null;
-    this.evenements = options.evenements ? creerServiceEvenements(this, { ...options.evenements, maintenant }) : null;
+    // les tigres largués ne ciblent ni ne frappent un occupant de véhicule ni le pilote du titan, et voient les voitures (obstacles, chocs)
+    const anneau = this.zone ?? { centre: ROND_POINT.centre, ...ZONE_APPARITION };
+    this.tigres = options.tigres
+      ? creerServiceTigres(this, {
+        cachettes: options.tigres.cachettes, anneau, intervalle: options.tigres.intervalle, maintenant,
+        aPied: (j) => !this.vehicules?.occupation(j.id) && !this.pilote(j.id), voitures: (t) => this.vehicules?.voitures?.(t) ?? [],
+        evenementTigre: () => this.evenements?.tigreGeantEnCours() ?? false,
+      })
+      : null;
+    // le tigre géant n'est pas annoncé pendant le survol de l'avion ni tant qu'un tigre sauvage largué vit (spec des tigres, Cohabitation)
+    this.evenements = options.evenements
+      ? creerServiceEvenements(this, {
+        ...options.evenements, maintenant, ...(this.tigres ? { tigrePermis: () => !this.tigres?.avionOuSauvage() } : {}),
+      })
+      : null;
     this.zombies = options.zombies ? creerServiceZombies(this, { ...options.zombies, alea }) : null;
   }
 
@@ -533,6 +562,7 @@ export class Salle implements ContexteSalle {
       case "pilotage": case "canon":
         return j.enJeu && this.evenements ? this.evenements.recevoir(j, msg, maintenant) : [];
       case "vueScores": return this.vueScores(j, msg.ouvert, maintenant);
+      case "invoquer": return j.enJeu && this.tigres ? this.tigres.recevoir(j, msg, maintenant) : [];
       case "voixActif": return this.voixActif(j, msg.actif);
       case "voix": return this.relayerVoix(j, msg.a, msg.s);
       case "ping": return estNombre(msg.t0) ? [{ a: id, m: { t: "pong", t0: msg.t0, maintenant } }] : [];
@@ -617,6 +647,7 @@ export class Salle implements ContexteSalle {
     // l'état d'Elsa et des sièges n'est pas dans `bienvenue` : le jeu est lancé après lui, il ne les a pas vus
     if (this.elsa) sorties.push(...this.elsa.synchro(j.id));
     if (this.vehicules) sorties.push(...this.vehicules.synchro(j.id));
+    if (this.tigres) sorties.push(...this.tigres.synchro(j.id));
     if (this.evenements) sorties.push(...this.evenements.synchro(j.id));
     return sorties;
   }
@@ -821,13 +852,26 @@ export class Salle implements ContexteSalle {
     const touches = Array.isArray(tir.touches) ? tir.touches : [];
     const plombsVus = new Set<number>();
     const cumul = new Map<string, { degats: number; zone: Zone }>();
+    /** touches sur des tigres, cumulées par tigre comme pour les joueurs (hors statistiques du tableau des scores) */
+    const cumulTigres = new Map<string, { degats: number; zone: Zone }>();
     /** (v3) dégâts sur le tigre robot / le titan, zone et distance revérifiées sur la forme du monstre */
     const cumulMonstres = new Map<string, { degats: number; zone: Zone }>();
-    /** (zombies) dégâts cumulés par tigre sur ce tir (les plombs du pompe s'additionnent) */
-    const cumulTigres = new Map<string, { degats: number; zone: Zone }>();
+    /** (zombies) dégâts cumulés par tigre zombie sur ce tir (les plombs du pompe s'additionnent) */
+    const cumulZombies = new Map<string, { degats: number; zone: Zone }>();
     for (const t of touches) {
       if (!t || typeof t.cible !== "string" || !estZone(t.zone) || !Number.isInteger(t.plomb)) continue;
       if (t.plomb < 0 || t.plomb >= dirs.length || plombsVus.has(t.plomb)) continue;
+      if (this.tigres?.estTigre(t.cible)) {
+        // positions du tigre rejouées sur son historique serveur, mêmes règles que pour un joueur
+        const distance = this.tigres.validerTir(j, t.cible, tir.o, dirs[t.plomb], arme.portee, maintenant, REWIND_MAX_MS);
+        if (distance === null) continue;
+        plombsVus.add(t.plomb);
+        const degats = degatsPlomb(armeTiree, t.zone, distance);
+        const cu = cumulTigres.get(t.cible);
+        if (cu) { cu.degats += degats; if (t.zone === "tete") cu.zone = "tete"; }
+        else cumulTigres.set(t.cible, { degats, zone: t.zone });
+        continue;
+      }
       if (t.cible === CIBLE_TIGRE || t.cible === CIBLE_TITAN) {
         const vu = this.evenements?.toucheMonstre(t.cible, tir.o, dirs[t.plomb], arme.portee) ?? null;
         if (!vu) continue;
@@ -845,9 +889,9 @@ export class Salle implements ContexteSalle {
         if (!vu) continue;
         plombsVus.add(t.plomb);
         const dg = degatsPlomb(armeTiree, vu.zone, vu.distance);
-        const cu = cumulTigres.get(t.cible);
+        const cu = cumulZombies.get(t.cible);
         if (cu) { cu.degats += dg; if (vu.zone === "tete") cu.zone = "tete"; }
-        else cumulTigres.set(t.cible, { degats: dg, zone: vu.zone });
+        else cumulZombies.set(t.cible, { degats: dg, zone: vu.zone });
         continue;
       }
       const c = this.table.get(t.cible);
@@ -867,14 +911,14 @@ export class Salle implements ContexteSalle {
     // plombs arrêtés par une voiture (v3 §4) : dégâts de carrosserie, explosion éventuelle
     if (this.vehicules) sorties.push(...this.vehicules.tirVoitures(j, tir.o, dirs, tir.voitures, armeTiree, plombsVus, maintenant));
 
-    if (cumul.size > 0 || cumulMonstres.size > 0 || cumulTigres.size > 0) {
+    if (cumul.size > 0 || cumulMonstres.size > 0 || cumulZombies.size > 0) {
       j.touches++;
-      if ([...cumul.values(), ...cumulMonstres.values(), ...cumulTigres.values()].some((cu) => cu.zone === "tete")) j.tetes++;
+      if ([...cumul.values(), ...cumulMonstres.values(), ...cumulZombies.values()].some((cu) => cu.zone === "tete")) j.tetes++;
     }
     for (const [cibleId, { degats, zone }] of cumulMonstres) sorties.push(...this.evenements!.blesserMonstre(cibleId, degats, j, zone, maintenant));
     // le gain d'une touche (+10 $) est unique par tir, quel que soit le nombre de tigres ou de plombs
     let premier = true;
-    for (const [cibleId, { degats, zone }] of cumulTigres) {
+    for (const [cibleId, { degats, zone }] of cumulZombies) {
       sorties.push(...this.zombies!.blesser(cibleId, degats, j, zone, maintenant, { arme: armeTiree, gain: premier }));
       premier = false;
     }
@@ -890,6 +934,9 @@ export class Salle implements ContexteSalle {
       // la fin de match éventuelle suit la présence, comme avec un seul mort
       const i = sorties.findIndex((s) => s.m.t === "match");
       sorties.splice(i < 0 ? sorties.length : i, 0, this.presence());
+    }
+    if (this.tigres && this.phase === "jeu") {
+      for (const [id, { degats, zone }] of cumulTigres) sorties.push(...this.tigres.blesser(id, degats, j, zone, maintenant));
     }
     return sorties;
   }
@@ -943,6 +990,13 @@ export class Salle implements ContexteSalle {
         if (!vu) continue;
         sorties.push(...this.zombies.blesser(id, m.degatsZombie, j, "corps", maintenant, { melee: true, arme, gain: premierTigre }));
         premierTigre = false;
+        continue;
+      }
+      if (this.tigres?.estTigre(id)) {
+        // tigre largué de l'arène : mêmes règles que pour un joueur (positions rejouées), portée et cône de l'arme en main
+        if (this.tigres.validerCoup(j, id, coup.o, d, maintenant, REWIND_MELEE_MS, arme)) {
+          sorties.push(...this.tigres.blesser(id, m.degats, j, "corps", maintenant));
+        }
         continue;
       }
       const c = this.table.get(id);
@@ -1017,6 +1071,7 @@ export class Salle implements ContexteSalle {
     for (const j of this.table.values()) if (j.enJeu && j.vivant) regenerer(j, maintenant, dt);
     if (this.elsa) sorties.push(...this.elsa.tic(maintenant));
     if (this.vehicules) sorties.push(...this.vehicules.tic(maintenant));
+    if (this.tigres) sorties.push(...this.tigres.tic(maintenant));
     if (this.evenements) sorties.push(...this.evenements.tic(maintenant));
     if (this.zombies) sorties.push(...this.zombies.tic(maintenant));
     let evince = false;
@@ -1041,17 +1096,21 @@ export class Salle implements ContexteSalle {
   }
 
   /**
-   * Instantané : aux joueurs en arène à 20 Hz avec les véhicules ; aux spectateurs de la vue Palantir (inscrits hors arène) un sur deux
+   * Instantané : aux joueurs en arène à 20 Hz avec les véhicules et les tigres, aux spectateurs de la vue Palantir (inscrits hors arène) un sur deux
    * (10 Hz), sans véhicules, et seulement s'il y en a.
    */
   private sortiesSnap(maintenant: number): Sortie[] {
     const j = this.snap(maintenant);
     const vehicules = this.vehicules?.snap() ?? [];
+    const tigres = this.tigres?.snap() ?? [];
     const monstres = this.evenements?.snap() ?? null;
     const zombies = this.zombies?.snap() ?? null;
     const sorties: Sortie[] = [{
       a: "joueurs",
-      m: { t: "snap", ts: maintenant, j, ...(vehicules.length ? { vehicules } : {}), ...(monstres ? { monstres } : {}), ...(zombies ? { zombies } : {}) },
+      m: {
+        t: "snap", ts: maintenant, j, ...(vehicules.length ? { vehicules } : {}), ...(tigres.length ? { tigres } : {}),
+        ...(monstres ? { monstres } : {}), ...(zombies ? { zombies } : {}),
+      },
     }];
     // zombies : le lobby n'a rien à voir de la partie (ni joueurs ni tigres)
     if (!this.zombies && this.rangSnap++ % 2 === 0 && this.nombreJoueurs() > this.nombreEnJeu()) {
@@ -1099,6 +1158,7 @@ export class Salle implements ContexteSalle {
     const sorties: Sortie[] = [];
     this.elsa?.reinitialiser(maintenant);
     if (this.vehicules) sorties.push(...this.vehicules.reinitialiser(maintenant));
+    if (this.tigres) sorties.push(...this.tigres.reinitialiser(maintenant));
     if (this.evenements) sorties.push(...this.evenements.reinitialiser(maintenant));
     for (const j of this.table.values()) {
       j.kills = 0;

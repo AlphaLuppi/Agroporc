@@ -14,7 +14,7 @@ export type Action =
   | "armePrincipale" | "armeSecondaire" | "couteau" | "armeSpeciale" | "armePrecedente" | "couteauRapide"
   | "accroupi" | "interagir" | "siege"
   | "carte" | "minimapCoin" | "passer"
-  | "zoomLunette" | "parler";
+  | "zoomLunette" | "parler" | "invoquer";
 
 /**
  * Les 10 actions de la v1 qui restent (`arme1..arme4` ont disparu). Leurs touches enregistrées sont relues AVANT celles des
@@ -25,12 +25,12 @@ export const ACTIONS_V1: readonly Action[] = [
 ];
 
 /**
- * Actions apparues avec la v2 (équipement, accroupi, véhicules), le HUD (grande carte, coin de la mini-map) puis la v3 (niveau de zoom
- * de la lunette, appuyer pour parler au chat vocal).
+ * Actions apparues avec la v2 (équipement, accroupi, véhicules), le HUD (grande carte, coin de la mini-map), la v3 (niveau de zoom
+ * de la lunette, appuyer pour parler au chat vocal) puis les tigres largués (sort d'invocation).
  */
 export const ACTIONS_NOUVELLES: readonly Action[] = [
   "armePrincipale", "armeSecondaire", "couteau", "armeSpeciale", "armePrecedente", "couteauRapide",
-  "accroupi", "interagir", "siege", "carte", "minimapCoin", "passer", "zoomLunette", "parler",
+  "accroupi", "interagir", "siege", "carte", "minimapCoin", "passer", "zoomLunette", "parler", "invoquer",
 ];
 
 /**
@@ -71,12 +71,13 @@ export const LIBELLES_ACTIONS: Record<Action, string> = {
   passer: "Passer le rejeu (mort)",
   zoomLunette: "Lunette : niveau de zoom suivant (molette en lunette)",
   parler: "Chat vocal : appuyer pour parler",
+  invoquer: "Invoquer le tigre (sort gagné)",
 };
 
 /** Regroupement du menu pause : chaque action y figure une seule fois. */
 export const GROUPES_ACTIONS: { titre: string; actions: Action[] }[] = [
   { titre: "Déplacement", actions: ["avant", "arriere", "gauche", "droite", "saut", "sprint", "accroupi"] },
-  { titre: "Combat", actions: ["tir", "visee", "recharger", "zoomLunette"] },
+  { titre: "Combat", actions: ["tir", "visee", "recharger", "zoomLunette", "invoquer"] },
   { titre: "Équipement", actions: ["armePrincipale", "armeSecondaire", "couteau", "armeSpeciale", "armePrecedente", "couteauRapide"] },
   { titre: "Véhicule", actions: ["interagir", "siege"] },
   { titre: "Divers", actions: ["scores", "carte", "minimapCoin", "passer", "parler"] },
@@ -118,6 +119,8 @@ export function touchesParDefaut(): ConfigTouches {
     // clic milieu : la molette, elle, change d'arme hors lunette et de zoom en lunette
     zoomLunette: ["Souris1", "KeyX"],
     parler: ["KeyT", null],
+    // G et non T : T appuie pour parler au chat vocal (v3 de l'arène)
+    invoquer: ["KeyG", null],
   };
 }
 

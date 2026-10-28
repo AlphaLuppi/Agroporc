@@ -8,9 +8,10 @@
 import type { Monde } from "./collision";
 import type { MemoSante } from "./sante";
 import type {
-  ArmeFeuId, ArmeId, CauseMort, CoteMur, Equipement, EtatPartieZombies, GenreVoiture, MessageClient, MessageServeur, MonstresSnap, PhaseZombies, Posture, Siege,
-  Slot, SnapZombies, Vec3, VehiculeSnap, Zone,
+  ArmeFeuId, ArmeId, ArmeMeleeId, CauseMort, CoteMur, Equipement, EtatPartieZombies, GenreVoiture, MessageClient, MessageServeur, MonstresSnap, PhaseZombies, Posture, Siege,
+  Slot, SnapZombies, TigreLargueSnap, Vec3, VehiculeSnap, Zone,
 } from "./protocole";
+import type { ObstacleVoiture, Tigre } from "./tigre-arene";
 
 /**
  * Un message à émettre. `a` : "tous" (tous les inscrits), "joueurs" (en arène), "spectateurs" (inscrits hors arène) ou l'id d'un client ;
@@ -166,6 +167,8 @@ export interface ServiceEvenements {
   /** `pilotage` / `canon` du pilote ; les autres types renvoient [] */
   recevoir(j: JoueurSalle, m: MessageClient, maintenant: number): Sortie[];
   estPilote(id: string): boolean;
+  /** l'événement du tigre géant est annoncé ou en cours (l'avion des tigres largués ne passe pas) */
+  tigreGeantEnCours(): boolean;
   /** le joueur quitte l'arène (ou se déconnecte) : s'il pilote, le titan s'éteint */
   liberer(j: JoueurSalle, maintenant: number): Sortie[];
 }
@@ -209,6 +212,39 @@ export interface ServiceVehicules {
     j: JoueurSalle, o: Vec3, dirs: readonly Vec3[], declarations: readonly { genre: GenreVoiture; id: number; plomb: number }[] | undefined,
     arme: ArmeFeuId, plombsPris: ReadonlySet<number>, maintenant: number,
   ): Sortie[];
+  /** voitures conduisibles (vitesse mesurée, conducteur) et PNJ à l'instant donné : obstacles et chocs des tigres */
+  voitures(maintenant: number): ObstacleVoiture[];
+}
+
+/** Avion, tigres et sort d'invocation (v3, `match-tigres.ts` : `creerServiceTigres(ctx, opts)`). */
+export interface ServiceTigres {
+  /** avion et largage, tigres (coups par `ctx.infliger`, chocs de voitures, départs), charges perdues, messages `avion`, `tigre`, `sort` */
+  tic(maintenant: number): Sortie[];
+  /** `invoquer` (les autres types renvoient []) : tigre allié à 2 m du lanceur, `sort{lance}` et `tigre{apparu}` */
+  recevoir(j: JoueurSalle, m: MessageClient, maintenant: number): Sortie[];
+  estTigre(id: string): boolean;
+  /** un avion survole l'arène ou un tigre sauvage largué est en vie (le tigre géant attend, cf. `OptionsServiceEvenements.tigrePermis`) */
+  avionOuSauvage(): boolean;
+  /**
+   * Touche de tir déclarée sur le tigre `id`, validée sur ses positions rejouées sur `fenetreMs`. Renvoie la distance de l'œil au centre
+   * de la silhouette (chute de dégâts) ou null. Le lanceur ne peut pas toucher son propre tigre.
+   */
+  validerTir(tireur: JoueurSalle, id: string, o: Vec3, d: Vec3, portee: number, maintenant: number, fenetreMs: number): number | null;
+  /** Coup de couteau déclaré sur le tigre `id`, validé sur ses positions rejouées sur `fenetreMs`. */
+  validerCoup(tireur: JoueurSalle, id: string, o: Vec3, d: Vec3, maintenant: number, fenetreMs: number, arme?: ArmeMeleeId): boolean;
+  /** Dégâts d'arme sur un tigre : `tigre{touche}`, puis à la mort `tigre{mort}` et, pour un sauvage, `sort{gagne}` à `par`. */
+  blesser(id: string, degats: number, par: JoueurSalle, zone: Zone, maintenant: number): Sortie[];
+  /** nouveau match : tigres partis, charges perdues, avion ré-armé */
+  reinitialiser(maintenant: number): Sortie[];
+  /** `avion{evenement:"etat"}` adressé à `idDest` (réponse à `rejoindre`) */
+  synchro(idDest: string): Sortie[];
+  snap(): TigreLargueSnap[];
+  /** le joueur a-t-il une charge du sort ? (tests et supervision) */
+  charge(id: string): boolean;
+  /** donne une charge du sort à un joueur vivant en arène qui n'en a pas (tests de charge et supervision) : `sort{gagne}` */
+  accorderCharge(id: string): Sortie[];
+  /** état interne d'un tigre (tests et supervision) */
+  tigre(id: string): Readonly<Tigre> | undefined;
 }
 
 /** Résumé d'une salle zombies (message `salons`). */

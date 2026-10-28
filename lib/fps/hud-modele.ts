@@ -128,10 +128,14 @@ export function formatRang(n: number): string {
   return n === 1 ? "1er" : `${FR0.format(n)}e`;
 }
 
-/** Libellé d'une ligne du fil : nom court de l'arme (« Fusil »), ou la cause en toutes lettres pour une voiture. */
+/**
+ * Libellé d'une ligne du fil : nom court de l'arme (« Fusil »), ou la cause en toutes lettres pour une voiture. Coup de tigre : « Tigre »
+ * pour un tigre allié (le kill est crédité à son lanceur, `par`), « Tué par le tigre » pour le tigre sauvage (`par` vide).
+ */
 export function libelleFil(arme: ArmeId, cause: CauseMort, par: string): string {
   if (cause === "ecrase_pnj") return "Écrasé par la circulation";
   if (cause === "ecrase_vehicule") return par ? `Renversé par ${par}` : "Renversé";
+  if (cause === "tigre") return par ? "Tigre" : "Tué par le tigre";
   if (cause === "explosion") return par ? `Explosé par ${par}` : "Explosion de voiture";
   if (cause === "truck_fou") return "Écrasé par le Truck Muche fou";
   if (cause === "tigre_robot") return "Déchiqueté par le tigre robot";

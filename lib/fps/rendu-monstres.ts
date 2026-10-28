@@ -246,6 +246,8 @@ function creerTigreRobot(parent: THREE.Object3D, m: ModeleTigre, couleur: number
   const vus = new Map<object, THREE.BufferGeometry>();
   const maillages: THREE.SkinnedMesh[] = [];
   tigre.groupe.traverse((o) => { if ((o as THREE.SkinnedMesh).isSkinnedMesh) maillages.push(o as THREE.SkinnedMesh); });
+  // squelettes du clone (texture des os créée par le renderer) : libérés avec le reste, le modèle partagé n'est jamais libéré
+  for (const sk of new Set(maillages.map((mesh) => mesh.skeleton))) aDisposer.push(sk);
   for (const mesh of maillages) {
     const orig = mesh.material as THREE.MeshBasicMaterial;
     if (orig.map && !metal.map) { metal.map = orig.map.clone(); metal.map.needsUpdate = true; aDisposer.push(metal.map); }

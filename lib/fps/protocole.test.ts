@@ -3,6 +3,7 @@ import {
   ARMES, ARMES_MELEE, ARMES_PRINCIPALES, ARMES_SECONDAIRES, ARMES_SPECIALES, ECHELLE_AVATAR, EQUIPEMENT_DEFAUT, JEU, OEIL_SIEGE, PAS_SNAP_ZOMBIE, PLAFONDS,
   SILHOUETTE, SILHOUETTE_ACCROUPIE, SLOTS, VERSION_PROTOCOLE, copierEquipement, decoderZombies, encoderZombies, estIdZombie, estMelee, idZombie, oeilDe,
   silhouetteDe, type ZombieSnap,
+  type CauseMort, type MessageClient, type MessageServeur, type PassageAvion, type TigreLargueSnap,
 } from "./protocole";
 import { STATS } from "./armes";
 
@@ -90,8 +91,8 @@ describe("silhouette", () => {
 });
 
 describe("constantes", () => {
-  it("version 5 du protocole", () => {
-    expect(VERSION_PROTOCOLE).toBe(5);
+  it("version 6 du protocole (événements de la v4, tigres largués de la v5, zombies et épée)", () => {
+    expect(VERSION_PROTOCOLE).toBe(6);
   });
 
   it("chaîne de plafonds de vitesse : sprint couteau ≤ plafond horizontal ≤ plafond déclaré", () => {
@@ -112,9 +113,9 @@ describe("constantes", () => {
   });
 });
 
-describe("protocole v5", () => {
-  it("version 5", () => {
-    expect(VERSION_PROTOCOLE).toBe(5);
+describe("protocole v6 (zombies)", () => {
+  it("version 6", () => {
+    expect(VERSION_PROTOCOLE).toBe(6);
   });
 
   it("ARMES_MELEE : couteau et épée, estMelee ne reconnaît aucune arme à feu", () => {
@@ -189,5 +190,48 @@ describe("protocole v5", () => {
     expect(encoderZombies(0, []).z).toEqual([]);
     expect(decoderZombies({ r: 0, z: [] })).toEqual([]);
     expect(decoderZombies({ r: 2, z: [1, 100, 200, 300, 0, 50, 2, 1, 1] })).toHaveLength(1);
+  });
+
+  it("ids : « z<n> » (tigres zombies) ne collisionne pas avec « t<n> » (tigres largués) ni « j<n> »", () => {
+    expect(estIdZombie("t1")).toBe(false);
+    expect(estIdZombie(idZombie(1))).toBe(true);
+  });
+});
+
+describe("messages v5 (tigres largués à côté des événements)", () => {
+  // littéraux typés : la compilation vérifie la forme, le test vérifie qu'ils passent tels quels en JSON
+  const passage: PassageAvion = { id: 1, depart: [-300, 10], arrivee: [350, -40], altitude: 120, vitesse: 60, debutT: 1000, finT: 11_850, largageT: 6000 };
+  const tigre: TigreLargueSnap = { id: "t1", genre: "sauvage", p: [60, 0, 0], cap: 0.5, etat: "attaque", pose: "course", pv: 2478, action: "ramasse", actionT: 5000 };
+  const allie: TigreLargueSnap = { id: "t2", genre: "allie", lanceur: "j1", p: [1, 0, 2], cap: 0, etat: "suivi", pose: "debout", pv: 500 };
+  const serveur: MessageServeur[] = [
+    { t: "snap", ts: 1, j: [], tigres: [tigre, allie] },
+    { t: "avion", evenement: "passage", avion: passage },
+    { t: "avion", evenement: "largage", avion: passage, tigre: "t1" },
+    { t: "avion", evenement: "etat", avion: null },
+    { t: "tigre", evenement: "apparu", id: "t2", genre: "allie", lanceur: "j1", p: [1, 0, 2] },
+    { t: "tigre", evenement: "touche", id: "t1", genre: "sauvage", p: [60, 0, 0], par: "j2", degats: 22, pv: 2478, zone: "corps" },
+    { t: "tigre", evenement: "mort", id: "t1", genre: "sauvage", p: [60, 0, 0], par: "j2" },
+    { t: "sort", evenement: "gagne", joueur: "j2" },
+    { t: "sort", evenement: "lance", joueur: "j2", tigre: "t3" },
+    { t: "sort", evenement: "perdu", joueur: "j2", raison: "mort" },
+    { t: "mort", cible: "j3", par: "j1", arme: "couteau", cause: "tigre", zone: "corps", ts: 1, delai: 4000 },
+  ];
+  const client: MessageClient = { t: "invoquer" };
+
+  it("chaque message survit à JSON tel quel", () => {
+    for (const m of [...serveur, client]) expect(JSON.parse(JSON.stringify(m))).toEqual(m);
+  });
+
+  it("les causes de mort des deux côtés coexistent : « tigre » (tigres largués) et « tigre_robot » (tigre géant) sont distinctes", () => {
+    const causes: CauseMort[] = ["arme", "ecrase_pnj", "ecrase_vehicule", "tigre", "explosion", "truck_fou", "tigre_robot", "titan", "tigre_zombie"];
+    expect(new Set(causes).size).toBe(9);
+  });
+
+  it("un snap porte à la fois les tigres largués (`tigres`) et les monstres des événements (`monstres`)", () => {
+    const snap: MessageServeur = {
+      t: "snap", ts: 1, j: [], tigres: [tigre, allie],
+      monstres: { tigre: { p: [80, 0, 0], cap: 0, v: 8, pv: 5500, pvMax: 5500, rage: true }, titan: { pilote: "j4", p: [0, 0, 0], cap: 0, v: 0, pv: 2500, pvMax: 2500 } },
+    };
+    expect(JSON.parse(JSON.stringify(snap))).toEqual(snap);
   });
 });

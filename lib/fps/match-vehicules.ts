@@ -7,12 +7,14 @@
  */
 import type { Vec2 } from "../agroparc3d/types";
 import { degatsPlomb, STATS } from "./armes";
-import { ecrasements, etatVoiture, type Circuit, type VoiturePnj } from "./circulation";
+import { VOITURE, ecrasements, etatVoiture, type Circuit, type VoiturePnj } from "./circulation";
 import { visible, lancerRayon } from "./collision";
 import { CARROSSERIE, Carrosseries, degatsSouffle, degatsVoisine, rayonVoiture, type RefVoiture } from "./epaves";
 import { Garage } from "./garage";
 import type { ContexteSalle, JoueurSalle, ServiceVehicules, Sortie } from "./match-contexte";
 import { SIEGES_PAR_VEHICULE, SILHOUETTE, type ArmeFeuId, type MessageClient, type Siege, type Vec3 } from "./protocole";
+import type { ObstacleVoiture } from "./tigre-arene";
+import { VEH } from "./vehicule";
 
 /** Durée (ms) de l'historique des occupants (même valeur que `HISTORIQUE_MS` de match.ts, qui importe ce module). */
 const HISTORIQUE_OCCUPANT_MS = 400;
@@ -301,6 +303,20 @@ export function creerServiceVehicules(ctx: ContexteSalle, opts: OptionsServiceVe
 
     estConducteur(id) {
       return garage.occupation(id)?.siege === 0;
+    },
+
+    voitures(maintenant) {
+      const r: ObstacleVoiture[] = garage.vehicules.map((v) => ({
+        p: v.p, cap: v.cap, demiLongueur: VEH.longueur / 2, demiLargeur: VEH.largeur / 2,
+        vitesse: v.sieges[0] !== null ? garage.vitesseMesuree(v.id, maintenant) : 0, conducteur: v.sieges[0],
+      }));
+      if (circulation) {
+        for (const v of circulation.voitures) {
+          const e = etatVoiture(circulation.circuits[v.circuit], v, maintenant);
+          r.push({ p: e.p, cap: e.cap, demiLongueur: VOITURE.longueur / 2, demiLargeur: VOITURE.largeur / 2, vitesse: e.v, conducteur: null });
+        }
+      }
+      return r;
     },
 
     tirVoitures(j, o, dirs, declarations, arme, plombsPris, maintenant) {

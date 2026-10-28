@@ -4,7 +4,9 @@
  * d'autoplay des navigateurs) ; avant cela, et si WebAudio manque, tous les appels sont sans effet.
  *
  * Les tirs lointains passent `position` : le gain baisse avec la distance, les aigus s'éteignent et
- * `pan` (−1 gauche … 1 droite, calculé par jeu.ts d'après l'angle du tireur) place le son.
+ * `pan` (−1 gauche … 1 droite, calculé par jeu.ts d'après l'angle du tireur) place le son. Les tigres largués (rugissement, coup de
+ * patte, plainte) et l'avion qui les largue sont placés de la même façon (spec 2026-10-23-arene-tigres-design.md, Rendu). Le tigre
+ * géant des événements a ses propres sons (`alerte`, `laser`, `pasLourd`, `explosionMonstre`), jamais ceux des tigres largués.
  *
  * Seule exception au « tout synthétisé » : le moteur de la voiture conduite est un VRAI enregistrement (`/arene/moteur.wav`, boucle de
  * ralenti CC0, cf. public/arene/CREDITS.txt) joué en boucle, dont la vitesse de lecture (donc le régime) suit celle de la voiture (v3 §3).
@@ -58,6 +60,17 @@ export interface Sons {
   choc(force: number): void;
   /** Coup de klaxon (facultatif, réservé au conducteur). */
   klaxon(): void;
+  /** Rugissement d'un tigre (alerte, bond annoncé). `position` : où il est par rapport à moi. */
+  rugissement(position?: PositionSon): void;
+  /** Coup de patte d'un tigre (griffes qui fendent l'air, choc sourd). */
+  patte(position?: PositionSon): void;
+  /** Plainte d'un tigre qui meurt. */
+  plainte(position?: PositionSon): void;
+  /**
+   * Moteur de l'avion qui largue les tigres : bourdonnement grave en boucle, atténué et panoramiqué d'après `position`, à rappeler à chaque
+   * image pendant le survol. `null` l'éteint (fin du survol, killcam, sortie de l'arène).
+   */
+  avion(position: PositionSon | null): void;
   /** Cran de la molette de zoom de la lunette. */
   zoom(): void;
   /** Ma balle a frappé la tôle d'une voiture (v3 §4). */
@@ -254,6 +267,8 @@ export function creerSons(): Sons {
   let souffle: { src: AudioBufferSourceNode; gain: GainNode; lfo: OscillatorNode } | null = null;
   /** frottement de la glissade (bruit en boucle filtré) */
   let frottement: { src: AudioBufferSourceNode; gain: GainNode; filtre: BiquadFilterNode } | null = null;
+  /** moteur de l'avion : deux oscillateurs désaccordés (battement des hélices) et un souffle, filtrés et panoramiqués par image */
+  let avionVoix: { oscs: OscillatorNode[]; souffle: AudioBufferSourceNode; gain: GainNode; filtre: BiquadFilterNode; pan: StereoPannerNode | null } | null = null;
   /**
    * moteur de la voiture conduite : l'enregistrement en boucle (`echantillon`, vitesse de lecture = régime) ou, à défaut, un oscillateur
    * triangle grave + un grain de bruit (`oscs`), le tout sous un passe-bas qui s'ouvre avec la vitesse
@@ -692,6 +707,98 @@ export function creerSons(): Sons {
       ton(master!, t, { dur: 0.32, type: "square", f0: 415, gain: 0.07, att: 0.01 });
       ton(master!, t, { dur: 0.32, type: "square", f0: 523, gain: 0.07, att: 0.01 });
     },
+    rugissement(position) {
+      if (!prete()) return;
+      const out = sortie(position);
+      const t = ctx!.currentTime + 0.001;
+      const v = 0.9 + Math.random() * 0.2;
+      // Grondement qui enfle puis retombe : dents de scie graves glissées, souffle rauque filtré, râle de gorge.
+      ton(out, t, { dur: 1.1, type: "sawtooth", f0: 95 * v, f1: 62 * v, gain: 0.55, att: 0.18 });
+      ton(out, t + 0.05, { dur: 0.95, type: "sawtooth", f0: 142 * v, f1: 80 * v, gain: 0.3, att: 0.2 });
+      bruit(out, t, { dur: 1.1, type: "bandpass", f0: 520 * v, f1: 260, q: 1.4, gain: 0.55, att: 0.15 });
+      bruit(out, t + 0.1, { dur: 0.7, type: "lowpass", f0: 900, f1: 180, gain: 0.35, att: 0.1 });
+    },
+    patte(position) {
+      if (!prete()) return;
+      const out = sortie(position);
+      const t = ctx!.currentTime + 0.001;
+      const v = 0.92 + Math.random() * 0.16;
+      // Griffes qui fendent l'air, puis choc sourd et feulement bref.
+      bruit(out, t, { dur: 0.16, type: "bandpass", f0: 1800 * v, f1: 3600, q: 1.3, gain: 0.45, att: 0.04 });
+      bruit(out, t + 0.12, { dur: 0.16, type: "lowpass", f0: 1100, f1: 180, gain: 0.85 });
+      ton(out, t + 0.12, { dur: 0.18, type: "sine", f0: 120 * v, f1: 48, gain: 0.7 });
+      bruit(out, t + 0.05, { dur: 0.25, type: "bandpass", f0: 700 * v, f1: 420, q: 1.1, gain: 0.25, att: 0.03 });
+    },
+    plainte(position) {
+      if (!prete()) return;
+      const out = sortie(position);
+      const t = ctx!.currentTime + 0.001;
+      const v = 0.95 + Math.random() * 0.1;
+      // Gémissement qui descend et s'éteint, souffle qui s'épuise.
+      ton(out, t, { dur: 1.4, type: "sawtooth", f0: 210 * v, f1: 70, gain: 0.32, att: 0.08 });
+      ton(out, t + 0.03, { dur: 1.2, type: "triangle", f0: 320 * v, f1: 110, gain: 0.18, att: 0.1 });
+      bruit(out, t + 0.2, { dur: 1.3, type: "bandpass", f0: 600, f1: 200, q: 0.9, gain: 0.25, att: 0.2 });
+    },
+    avion(position) {
+      if (position === null) {
+        if (!avionVoix) return;
+        const a = avionVoix;
+        avionVoix = null;
+        eteindre(a.gain, [...a.oscs, a.souffle], 0.25);
+        return;
+      }
+      if (!avionVoix && !prete()) return;
+      const c = ctx;
+      if (!c) return;
+      if (!avionVoix) {
+        const g = c.createGain();
+        g.gain.value = 0.0001;
+        const filtre = c.createBiquadFilter();
+        filtre.type = "lowpass";
+        filtre.Q.value = 0.8;
+        // deux hélices légèrement désaccordées : le battement donne le vrombissement d'un avion à moteurs
+        const o1 = c.createOscillator();
+        o1.type = "sawtooth";
+        o1.frequency.value = 72;
+        const o2 = c.createOscillator();
+        o2.type = "sawtooth";
+        o2.frequency.value = 75.5;
+        const og = c.createGain();
+        og.gain.value = 0.6;
+        o1.connect(filtre);
+        o2.connect(og);
+        og.connect(filtre);
+        const souffle = c.createBufferSource();
+        souffle.buffer = bruitBuf;
+        souffle.loop = true;
+        const sf = c.createBiquadFilter();
+        sf.type = "lowpass";
+        sf.frequency.value = 500;
+        const sg = c.createGain();
+        sg.gain.value = 0.5;
+        souffle.connect(sf);
+        sf.connect(sg);
+        sg.connect(filtre);
+        filtre.connect(g);
+        let pan: StereoPannerNode | null = null;
+        if (typeof c.createStereoPanner === "function") {
+          pan = c.createStereoPanner();
+          g.connect(pan);
+          pan.connect(master!);
+        } else g.connect(master!);
+        o1.start();
+        o2.start();
+        souffle.start(c.currentTime, Math.random() * 0.9);
+        avionVoix = { oscs: [o1, o2], souffle, gain: g, filtre, pan };
+      }
+      const a = avionVoix;
+      const now = c.currentTime;
+      // l'avion vole à 120 m : on l'entend de loin, mais il reste un fond sous les tirs
+      const d = Math.max(position.distance, 1);
+      a.gain.gain.setTargetAtTime(Math.max(0.02, 0.3 / (1 + d / 120)), now, 0.15);
+      a.filtre.frequency.setTargetAtTime(Math.max(260, 2400 / (1 + d / 90)), now, 0.15);
+      a.pan?.pan.setTargetAtTime(Math.max(-1, Math.min(1, position.pan)), now, 0.1);
+    },
     alerte(genre) {
       if (!prete()) return;
       const t = ctx!.currentTime + 0.001;
@@ -845,6 +952,12 @@ export function creerSons(): Sons {
           try { o.stop(); } catch { /* déjà arrêté */ }
         }
         moteurVoix = null;
+      }
+      if (avionVoix) {
+        for (const o of [...avionVoix.oscs, avionVoix.souffle]) {
+          try { o.stop(); } catch { /* déjà arrêté */ }
+        }
+        avionVoix = null;
       }
       if (crissement) {
         try { crissement.src.stop(); } catch { /* déjà arrêté */ }

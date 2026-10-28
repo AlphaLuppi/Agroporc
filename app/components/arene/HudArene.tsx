@@ -25,6 +25,7 @@ import FilEliminations from "./hud/FilEliminations";
 import FinDeMatch from "./hud/FinDeMatch";
 import FinDePartieZombies from "./hud/FinDePartieZombies";
 import GrandeCarte from "./hud/GrandeCarte";
+import IconeSort from "./hud/IconeSort";
 import InvitesAction from "./hud/InvitesAction";
 import Lunette from "./hud/Lunette";
 import BlocVoix from "./hud/BlocVoix";
@@ -254,6 +255,7 @@ export default function HudArene(p: PropsHudArene) {
             argent={ez?.argent ?? hud.argent ?? 0} gain={gainTexte} cleGain={ez?.gain?.n ?? 0} gainPositif={(ez?.gain?.delta ?? 0) > 0} refus={refusTexte}
           />
         )}
+        {combat && hud.sort && !hud.titan && <IconeSort touche={t("invoquer")} />}
         {combat && !hud.titan && (
           <BlocVie
             pv={hud.pv} bouclier={hud.bouclier} regen={hud.regen} accroupi={hud.accroupi} glisse={hud.glisse} mur={hud.mur}

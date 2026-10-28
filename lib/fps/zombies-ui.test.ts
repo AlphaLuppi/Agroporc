@@ -55,7 +55,7 @@ const HUD: HudEtat = {
   munitions: 12, chargeur: 12, reserve: 60, recharge: false, degainage: false, vise: false, lunette: false, zoomX: 0, zoomNiveau: -1, zoomNiveaux: 0, ecartViseur: 0,
   distanceVisee: -1, mur: false, mort: false, reapparitionDans: 0, protege: false, protegeRestant: 0, verrouille: true, connecte: true, entracte: false, accroupi: false,
   glisse: false, regen: false, bonusVitesse: 1, invite: "", inviteDetail: "", vehicule: false, vehiculeId: -1, siege: -1, tireInterdit: false, embarquement: false,
-  killcam: -1, killcamPhase: "", voix: "", voixParlants: "", titan: false, mode: "zombies", argent: 500, manche: 3, restants: 12, aTerre: false, elimine: false,
+  killcam: -1, killcamPhase: "", sort: false, voix: "", voixParlants: "", titan: false, mode: "zombies", argent: 500, manche: 3, restants: 12, aTerre: false, elimine: false,
   invitePrix: 0, inviteAssez: true, reanime: false,
 };
 const hud = (plus: Partial<HudEtat> = {}): HudEtat => ({ ...HUD, ...plus });

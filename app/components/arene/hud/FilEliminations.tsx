@@ -7,8 +7,8 @@ import styles from "../HudArene.module.css";
 
 /**
  * Fil d'éliminations (haut-droite, §5.1) : 6 lignes de 6 s au plus. Une ligne d'arme : pastille + pseudo en `--ag-ink` (la couleur du
- * serveur n'est jamais du texte), arme en nom court (« ◎ » pour la tête), pastille + pseudo ; une mort par voiture ou circulation
- * s'écrit en toutes lettres. Mes lignes : fond ambre et barre de 3u. Les annonces d'Elsa et d'information s'intercalent par ordre d'arrivée
+ * serveur n'est jamais du texte), arme en nom court (« ◎ » pour la tête), pastille + pseudo. Une mort par voiture, circulation ou tigre
+ * sauvage s'écrit en toutes lettres, le kill d'un tigre allié comme celui d'une arme (« Tigre »). Mes lignes : fond ambre et barre de 3u. Les annonces d'Elsa et d'information s'intercalent par ordre d'arrivée
  * (les ids viennent du même compteur). `aria-live="off"` : la région vive annonce l'essentiel.
  */
 export interface PropsFilEliminations {
@@ -31,7 +31,8 @@ function FilBrut({ fil, annonces }: PropsFilEliminations) {
           return <li key={`a${l.id}`} className={styles.filAnnonce} data-genre={l.a.genre}>{l.a.texte}</li>;
         }
         const e = l.e;
-        const parArme = e.cause === "arme";
+        // le kill d'un tigre allié s'écrit comme celui d'une arme : lanceur, « Tigre », victime
+        const parArme = e.cause === "arme" || (e.cause === "tigre" && !!e.par);
         return (
           <li key={`k${l.id}`} className={`${styles.filLigne} ${e.moi ? styles.filMoi : ""}`}>
             {parArme ? (

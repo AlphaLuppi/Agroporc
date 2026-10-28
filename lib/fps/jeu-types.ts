@@ -77,6 +77,8 @@ export interface HudEtat {
   /** −1 hors killcam, sinon progression 0..1 (arrondie à 0,02) */
   killcam: number;
   killcamPhase: "" | "rejeu" | "carte";
+  /** une charge du sort d'invocation est disponible (tigre sauvage abattu, v3) : icône du sort au HUD */
+  sort: boolean;
   /** chat vocal (v3 §5) : "" coupé, "pret" activé micro fermé, "emet" le micro émet */
   voix: "" | "pret" | "emet";
   /** pseudos des joueurs qu'on entend parler en ce moment, séparés par « · » ("" = personne) */
@@ -234,7 +236,7 @@ export interface JeuHandle {
     etat(): Record<string, unknown>;
     teleporter(p: Vec3): void;
     regarder(lacet: number, tangage: number): void;
-    /** Vise le centre de la cible et tire ; false si le tir n'est pas possible. */
+    /** Vise le centre de la cible (le corps d'un joueur, la tête d'un tigre) et tire, false si le tir n'est pas possible. */
     tirerVers(id: string): boolean;
     /** Appuie ou relâche une touche (code KeyboardEvent ou `Souris0`…) sans clavier. */
     touche(code: string, appuyee: boolean): void;
@@ -245,6 +247,13 @@ export interface JeuHandle {
     /** état de la killcam, des voitures PNJ et d'Elsa pour les captures */
     killcam(): Record<string, unknown> | null;
     monde(): Record<string, unknown>;
+    /**
+     * tigres interpolés (id, genre, lanceur, position, état, PV, silhouette de touche), avion en cours, charge du sort, GLB chargé. `mesures` :
+     * ajoute les mesures du tigre dessiné (boîte, tête, museau, croupe), calcul coûteux réservé aux vérifications ponctuelles
+     */
+    tigres(mesures?: boolean): Record<string, unknown>;
+    /** lance le sort (comme la touche « invoquer »), false si aucune charge ou si le lancer est impossible */
+    invoquer(): boolean;
     /** chat vocal : connexions, audibilité, joueurs entendus */
     voix(): Record<string, unknown>;
   };

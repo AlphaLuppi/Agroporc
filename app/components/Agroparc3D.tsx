@@ -115,7 +115,7 @@ const HUD_REPOS: HudEtat = {
   vise: false, lunette: false, zoomX: 0, zoomNiveau: -1, zoomNiveaux: 0, ecartViseur: 0, distanceVisee: -1, mur: false, mort: false, reapparitionDans: 0, protege: false,
   protegeRestant: 0, verrouille: true, connecte: true, entracte: false, accroupi: false, glisse: false, regen: false,
   bonusVitesse: 1, invite: "", inviteDetail: "", vehicule: false, vehiculeId: -1, siege: -1, tireInterdit: false,
-  embarquement: false, killcam: -1, killcamPhase: "", voix: "", voixParlants: "", titan: false,
+  embarquement: false, killcam: -1, killcamPhase: "", sort: false, voix: "", voixParlants: "", titan: false,
   // mode zombies (champs optionnels de HudEtat) : valeurs neutres, `forcerHud({ mode: "zombies", argent: 1250… })` les surcharge
   mode: "arene", argent: 0, manche: 0, restants: 0, aTerre: false, elimine: false, invitePrix: 0, inviteAssez: true, reanime: false,
 };
@@ -567,8 +567,8 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
     return () => { delete window.__palantir; };
   }, [ready, scene]);
 
-  // Crochet de développement de l'arène : état, entrer, téléporter, forcer un tir, changer de slot, monter en voiture, killcam, monde
-  // (tests bout à bout et captures).
+  // Crochet de développement de l'arène : état, entrer, téléporter, forcer un tir (joueur ou tigre), changer de slot, monter en voiture,
+  // killcam, monde, tigres et avion, lancer le sort (tests bout à bout et captures).
   const dev = useRef({ arene, hud, enArene, equipement });
   dev.current = { arene, hud, enArene, equipement };
   useEffect(() => {
@@ -615,6 +615,8 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
       monter: (id) => jeuRef.current?.debug.monter(id),
       killcam: () => jeuRef.current?.debug.killcam() ?? null,
       monde: () => jeuRef.current?.debug.monde() ?? null,
+      tigres: (mesures) => jeuRef.current?.debug.tigres(mesures) ?? null,
+      invoquer: () => jeuRef.current?.debug.invoquer() ?? false,
       forcerHud: (partiel) => setHudForce(partiel ? { ...partiel } : null),
       voix: (mode) => {
         const j = jeuRef.current;
@@ -1010,7 +1012,7 @@ declare global {
       quitter(): void;
       teleporter(p: Vec3): void;
       regarder(lacet: number, tangage: number): void;
-      /** Vise le centre du joueur `id` et tire sans dispersion. */
+      /** Vise le centre du joueur ou du tigre `id` et tire sans dispersion. */
       tirerVers(id: string): boolean;
       /** Appuie (true) ou relâche (false) une touche par son `KeyboardEvent.code`, sans pointer lock. */
       touche(code: string, appuyee: boolean): void;
@@ -1022,6 +1024,10 @@ declare global {
       killcam(): Record<string, unknown> | null;
       /** État du monde dynamique : voitures PNJ, voitures conduisibles, Elsa. */
       monde(): Record<string, unknown> | null;
+      /** Tigres interpolés (silhouette de touche comprise), avion en cours, charge du sort, GLB chargé. `mesures` : tigre dessiné mesuré. */
+      tigres(mesures?: boolean): Record<string, unknown> | null;
+      /** Lance le sort d'invocation comme la touche « invoquer » (false sans charge). */
+      invoquer(): boolean;
       /** Superpose un état partiel au HUD (base : repos si le jeu n'émet rien) ; `null` rend la main au jeu. */
       forcerHud(partiel: Partial<HudEtat> | null): void;
       /** Active le chat vocal dans ce mode (null : le coupe), comme la case du menu pause. */

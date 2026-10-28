@@ -315,6 +315,21 @@ export function useArene(pseudo: string, jeuRef: MutableRefObject<JeuHandle | nu
         case "sieges":
           setSieges(m.vehicules);
           break;
+        case "avion":
+          if (m.evenement === "largage" && m.tigre) annoncer("Un tigre a été largué !", "tigre");
+          break;
+        case "tigre":
+          // le fil des éliminations dit qui a abattu le tigre sauvage (le kill d'un joueur par un tigre arrive par `mort`)
+          if (m.evenement === "mort" && m.genre === "sauvage" && m.par) {
+            const j = joueursRef.current.find((x) => x.id === m.par);
+            annoncer(`${m.par === monIdRef.current ? "Vous avez" : `${j?.pseudo ?? "Un agent"} a`} abattu le tigre`, "tigre");
+          }
+          break;
+        case "sort":
+          if (m.joueur !== monIdRef.current) break;
+          if (m.evenement === "gagne") annoncer("Sort d'invocation gagné", "tigre");
+          else if (m.evenement === "perdu" && m.raison === "mort") annoncer("Sort d'invocation perdu", "info");
+          break;
         case "scores": {
           const carte = new Map(m.lignes.map((l) => [l.id, l]));
           statsRef.current = carte;
