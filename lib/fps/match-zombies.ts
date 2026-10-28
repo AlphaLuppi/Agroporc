@@ -401,14 +401,17 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     return ctx.placerJoueur(j, d.p, d.lacet, { pv, equip: copierEquipement(EQUIPEMENT_DEPART_ZOMBIES), main: MAIN_DEPART_ZOMBIES }, t);
   }
 
-  /** Relève d'un joueur à terre à sa position (PV 50, équipement conservé sans la spéciale, apparition). */
+  /**
+   * Relève d'un joueur à terre là où il est (PV 50, équipement conservé sans la spéciale) : `apparition{garder}`, sans téléportation (sa
+   * position serveur a suivi son corps à terre, le client garde la sienne).
+   */
   function relever(j: JoueurSalle, t: number): Sortie[] {
     const m = membre(j.id);
     m.etat = "debout";
     m.terreFinT = undefined;
     m.autoReleveT = null;
     const equip = copierEquipement({ ...j.equip, speciale: null });
-    const sorties = ctx.placerJoueur(j, [j.p[0], j.p[1], j.p[2]], j.lacet, { pv: ZOMBIES.reanimationPv, equip, main: mainValide(equip, j.main) }, t);
+    const sorties = ctx.placerJoueur(j, j.p, j.lacet, { pv: ZOMBIES.reanimationPv, equip, main: mainValide(equip, j.main), garder: true }, t);
     for (const [par, r] of releves) if (r.cible === j.id) releves.delete(par);
     releves.delete(j.id);
     immediat = true;

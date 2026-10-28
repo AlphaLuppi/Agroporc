@@ -1,7 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EtatJoueurSnap, MessageServeur } from "./protocole";
 import { KILLCAM } from "./killcam";
-import { HorlogeServeur, Interpolateur, connecterArene, lerpAngle, urlArene, type SocketLike } from "./reseau";
+import { HorlogeServeur, Interpolateur, connecterArene, gardePosition, lerpAngle, urlArene, type SocketLike } from "./reseau";
+
+describe("gardePosition (v8, relève sans téléportation)", () => {
+  it("garde la position du client à moins de 3 m de celle du serveur, se replace au-delà ou pour une vraie apparition", () => {
+    expect(gardePosition({ p: [10, 0, 5], garder: true }, [11.5, 0, 6])).toBe(true);
+    expect(gardePosition({ p: [10, 0, 5], garder: true }, [14, 0, 5])).toBe(false);
+    expect(gardePosition({ p: [10, 0, 5] }, [10, 0, 5])).toBe(false);
+  });
+});
 
 function joueur(id: string, x: number, extra: Partial<EtatJoueurSnap> = {}): EtatJoueurSnap {
   return {

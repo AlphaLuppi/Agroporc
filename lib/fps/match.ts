@@ -423,17 +423,25 @@ export class Salle implements ContexteSalle {
   /**
    * (v5, zombies) Place le joueur en `p` : PV, équipement (copie propre), arme en main, protection d'apparition ; l'état de mouvement est remis
    * à zéro (le client repart de `seq` 0). Ne change ni `enJeu` ni les règles de réentrée de l'arène. Renvoie le message `apparition`.
+   * `garder` (v8, relève) : PAS de téléportation : la position et le regard suivis par les états du client restent, ainsi que `seq` et le
+   * budget de distance (les états en vol restent jugés contre la même référence) ; le message porte `garder`.
    */
-  placerJoueur(j: JoueurSalle, p: Vec3, lacet: number, opts: { pv: number; equip: Equipement; main: Slot; munSpeciale?: number }, maintenant: number): Sortie[] {
-    j.p = [p[0], p[1], p[2]];
+  placerJoueur(
+    j: JoueurSalle, p: Vec3, lacet: number, opts: { pv: number; equip: Equipement; main: Slot; munSpeciale?: number; garder?: boolean }, maintenant: number,
+  ): Sortie[] {
+    const garder = opts.garder === true;
+    if (!garder) {
+      j.p = [p[0], p[1], p[2]];
+      j.lacet = lacet;
+      j.tangage = 0;
+      j.seq = -1;
+      this.reinitialiserBudget(j, maintenant);
+    }
     j.v = [0, 0, 0];
-    j.lacet = lacet;
-    j.tangage = 0;
     j.posture = "sol";
     j.mur = 0;
     j.accroupi = false;
     j.glisse = false;
-    j.seq = -1;
     j.equip = copierEquipement(opts.equip);
     j.main = opts.main;
     j.arme = armeDuSlot(j.equip, j.main) ?? j.equip.secondaire;
@@ -453,12 +461,11 @@ export class Salle implements ContexteSalle {
     j.histo = [];
     const suivi = this.suivi.get(j.id);
     if (suivi) suivi.precedent = j.main === "principale" ? "secondaire" : "principale";
-    this.reinitialiserBudget(j, maintenant);
     return [{
       a: "tous",
       m: {
-        t: "apparition", id: j.id, p: j.p, lacet, arme: j.arme, pv: j.pv, bouclier: j.bouclier,
-        equip: copierEquipement(j.equip), main: j.main, munSpeciale: j.munSpeciale,
+        t: "apparition", id: j.id, p: [j.p[0], j.p[1], j.p[2]], lacet: j.lacet, arme: j.arme, pv: j.pv, bouclier: j.bouclier,
+        equip: copierEquipement(j.equip), main: j.main, munSpeciale: j.munSpeciale, ...(garder ? { garder: true as const } : {}),
       },
     }];
   }

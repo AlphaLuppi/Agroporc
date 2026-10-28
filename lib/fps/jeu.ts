@@ -62,7 +62,7 @@ import {
 import type { EquipementJeu, EtatZombiesHud, HudEtat, HudLive, JeuCallbacks, JeuHandle, JeuOptions } from "./jeu-types";
 import { ajouterEcho, ajouterPorte, creerRadarFrame, definirElsa, ajouterVoiture, ajouterVoiturePnj, purgerEchos, viderRadarFrame, type RadarFrame } from "./radar";
 import { SuiviRadar, type JoueurRadarEntree } from "./jeu-radar";
-import { Interpolateur, type ClientArene } from "./reseau";
+import { Interpolateur, gardePosition, type ClientArene } from "./reseau";
 import { codeSouris, indexTouches, lireTouches, stockageNavigateur, type Action, type ConfigTouches } from "./touches";
 import {
   creerArmeEnMain, creerAvatar, creerEffets, creerPostTraitement, type ArmeEnMain, type AvatarJoueur,
@@ -1034,9 +1034,12 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     terminerKillcam();
     quitterVehicule();
     titan.sortir();
-    moi = etatInitial(m.p);
-    lacet = m.lacet;
-    tangage = 0;
+    // (v8) relève ou reprise : on reste où l'on est, regard compris (le serveur a suivi nos états) ; sinon téléportation
+    if (!gardePosition(m, moi.p)) {
+      moi = etatInitial(m.p);
+      lacet = m.lacet;
+      tangage = 0;
+    }
     kick = 0;
     secousse = 0;
     reculAcc = 0;

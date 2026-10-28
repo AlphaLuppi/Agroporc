@@ -456,3 +456,36 @@ describe("réseau : budget de distance, acceptation partielle", () => {
     expect(j(s, "a").p[0]).toBeLessThan(nouveau[0]);
   });
 });
+
+describe("réseau : relève sans téléportation", () => {
+  it("à terre, le corps suit les états du client ; la relève envoie `apparition{garder}` à cette position, sans toucher ni `p` ni `seq`", () => {
+    const s = partie(["a", "b"]);
+    const t = T0 + 2000;
+    avancer(s, T0 + 50, t - 50);
+    const b = j(s, "b");
+    const chute = [...b.p] as Vec3;
+    s.infliger(b, 1000, null, "tigre_zombie", "corps", "couteau", t);
+    // le client de « b » glisse encore de 0,6 m puis s'immobilise (états à terre suivis)
+    const corps: Vec3 = [chute[0] + 0.6, 0, chute[2]];
+    s.recevoir("b", { t: "etat", seq: 40, p: corps, v: [0, 0, 0], lacet: 1.2, tangage: 0, posture: "sol", mur: 0 }, t + 100);
+    expect(b.p).toEqual(corps);
+    // « a » le relève (E maintenu 3 s à moins de 2,5 m)
+    j(s, "a").p = [corps[0] + 1, 0, corps[2]];
+    s.recevoir("a", { t: "reanimer", cible: "b" }, t + 200);
+    const sorties = avancer(s, t + 250, t + 200 + ZOMBIES.reanimationS * 1000 + 100);
+    const app = messages(sorties, "apparition").find((m) => m.id === "b")!;
+    expect(app).toMatchObject({ garder: true, p: corps, pv: ZOMBIES.reanimationPv });
+    expect(b).toMatchObject({ vivant: true, seq: 40, p: corps });
+    // l'état suivant du client (seq 41) est accepté contre la même référence
+    s.recevoir("b", { t: "etat", seq: 41, p: [corps[0] + 0.2, 0, corps[2]], v: [0, 0, 0], lacet: 1.2, tangage: 0, posture: "sol", mur: 0 }, t + 3400);
+    expect(b.p[0]).toBeCloseTo(corps[0] + 0.2, 6);
+  });
+
+  it("une vraie apparition (retour d'un éliminé, entrée) téléporte toujours : pas de `garder`", () => {
+    const s = salleZ({ pauseMs: 1000 });
+    s.connecter("a", "Alice", T0);
+    s.recevoir("a", { t: "lancerPartie" }, T0);
+    const app = messages(s.recevoir("a", { t: "rejoindre" }, T0), "apparition")[0];
+    expect(app.garder).toBeUndefined();
+  });
+});

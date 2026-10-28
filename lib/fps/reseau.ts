@@ -7,7 +7,7 @@
  */
 
 import type { EtatJoueurSnap, MessageClient, MessageServeur, Vec3 } from "./protocole";
-import { VERSION_PROTOCOLE } from "./protocole";
+import { ECART_GARDE_M, VERSION_PROTOCOLE } from "./protocole";
 
 export type EtatConnexion = "connexion" | "ouvert" | "ferme" | "erreur";
 
@@ -235,6 +235,17 @@ export function connecterArene(
       return horloge.maintenant(horlogeLocale());
     },
   };
+}
+
+// ---------- apparition ----------
+
+/**
+ * (v8) Le joueur local garde-t-il sa position à cette apparition ? Oui pour une relève ou une reprise (`garder`) quand sa position est à
+ * moins de `ECART_GARDE_M` de celle du serveur (qui suit ses états) ; sinon (vraie apparition, ou écart anormal) il se téléporte à `p`.
+ */
+export function gardePosition(m: { p: Vec3; garder?: true }, actuelle: Vec3): boolean {
+  if (m.garder !== true) return false;
+  return Math.hypot(actuelle[0] - m.p[0], actuelle[1] - m.p[1], actuelle[2] - m.p[2]) <= ECART_GARDE_M;
 }
 
 // ---------- interpolation ----------
