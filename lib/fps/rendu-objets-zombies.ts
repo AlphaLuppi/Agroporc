@@ -9,7 +9,7 @@
 import * as THREE from "three";
 import { STATS } from "./armes";
 import type { ArmeFeuId, EtatPartieZombies, Vec3 } from "./protocole";
-import { creerModeleArmeMonde } from "./rendu";
+import { creerModeleArmeMonde, sansHalo } from "./rendu";
 import {
   ACHATS, ATOUTS, FENETRES, NOTES, PRIX_BOITE, achatBoite, pieceDe, type Achat, type ArmeAchat, type AtoutId, type Facade, type Fenetre,
 } from "./zombies-carte";
@@ -268,8 +268,10 @@ export function creerRenduObjetsZombies(scene: THREE.Scene): RenduObjetsZombies 
     const m = materiaux(couleur.getHex(), 0.18);
     jetables.push(m.fond, m.ligne);
     boiteFil(g, m, 1.1, 2.1, 0.8, 0, 1.05, 0, jetables);
-    const face = panneau(g, textureAtout(a.atout), 1.0, 2.0, 0, 1.05, 0.41, jetables);
-    const halo = panneau(g, null, 2.2, 2.6, 0, 1.2, 0.45, jetables, { color: couleur, opacity: 0.12, blending: THREE.AdditiveBlending, depthWrite: false });
+    // façade opaque et hors du halo du bloom (sinon le texte blanc bave et se lit mal) ; la lueur colorée passe DERRIÈRE la façade
+    const face = panneau(g, textureAtout(a.atout), 1.0, 2.0, 0, 1.05, 0.41, jetables, { transparent: false });
+    sansHalo(face.material as THREE.Material);
+    const halo = panneau(g, null, 2.2, 2.6, 0, 1.2, 0.395, jetables, { color: couleur, opacity: 0.12, blending: THREE.AdditiveBlending, depthWrite: false });
     distributeurs.push({ id: a.atout, face, halo });
     racine.add(g);
   }

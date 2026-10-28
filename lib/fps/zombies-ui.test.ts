@@ -641,6 +641,10 @@ describe("FinDePartieZombies", () => {
     expect(html).toContain("Record : manche 9");
     expect(html).toContain('data-battu="non"');
     expect(html).not.toContain("NOUVEAU RECORD");
+    // aucun record encore (partie sans tigre abattu) : pas de « Record : manche 0 »
+    const sans = rendre({ recordAvant: { manche: 0, kills: 0 }, partie: partie({ phase: "fin", manche: 1, bilan: { manche: 1, dureeMs: 60_000 }, joueurs: [joueur("j1", "Lea", { admis: true, etat: "elimine" })] }) });
+    expect(sans).not.toContain("manche 0");
+    expect(sans).toContain("Pas encore de record");
   });
 
   it("compte à rebours du retour automatique, Rejouer (lobby) et Quitter", () => {

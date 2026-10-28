@@ -67,7 +67,9 @@ export default function FinDePartieZombies({ partie, monId, maintenantServeur, s
           <h2 className={styles.titre}>Partie perdue</h2>
           <p className={styles.manche}>Manche atteinte : <b>{manche}</b></p>
           <p className={styles.record} data-battu={battu ? "oui" : "non"}>
-            {battu ? <>NOUVEAU RECORD <span aria-hidden="true">·</span> manche {record.manche}</> : <>Record : manche {record.manche}</>}
+            {battu ? <>NOUVEAU RECORD <span aria-hidden="true">·</span> manche {record.manche}</>
+              : record.manche > 0 ? <>Record : manche {record.manche}</>
+              : <>Pas encore de record : abattez au moins un tigre</>}
           </p>
           {dureeMs > 0 && <p className={styles.duree}>Durée de la partie : {formatDureePartie(dureeMs)}</p>}
         </header>
