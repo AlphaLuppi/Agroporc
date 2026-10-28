@@ -25,8 +25,10 @@ import type { Difficulte, GenreBonus } from "./zombies-vagues";
  * après une micro-coupure : `bienvenue.jeton` / `bienvenue.reprise`, `bonjour.reprise`), carte « Service de midi » redécoupée
  * (aménagements ajoutés aux pièces : index des prismes de `batiments{detruits}` et positions d'achats partagés) et grenades balistiques
  * des zombies (client `lancerGrenade`, serveur `grenade`, `zevt{grenade}`, stocks `JoueurZombies.grenades` / `remontoirs`, tigre à
- * remontoir de la boîte) ; `zombieMort` dit aussi comment le tigre est mort (`arme`, `ameliore`, `src` : ragdoll côté client). Client et
- * serveur se déploient ensemble.
+ * remontoir de la boîte) ; `zombieMort` dit aussi comment le tigre est mort (`arme`, `ameliore`, `src` : ragdoll côté client). Lot des armes :
+ * huit armes des zombies (`ARMES_PRINCIPALES_ZOMBIES`, la Perforeuse), Pack-a-Punch à effets (`tir.main` d'une paire akimbo,
+ * `tir.touches[].seg` des ricochets, message `projectile`, `zevt{projectile, arc, souffle}`, drapeaux « en feu » et « gelé » des tigres,
+ * causes de mort `feu`, `electrique`, `souffle`). Client et serveur se déploient ensemble.
  */
 export const VERSION_PROTOCOLE = 8;
 
@@ -233,6 +235,12 @@ export type EvenementZombies =
   | { e: "explosion"; p: Vec3; rayon: number; par: string }
   /** (v8) grenade `id` (message `grenade`) qui saute en `p` (à tous, lanceur compris : le serveur fait foi) */
   | { e: "grenade"; id: number; genre: GenreGrenade; p: Vec3; rayon: number; par: string }
+  /** (v8) projectile d'arme `id` (message `projectile`) qui explose en `p` (à tous, tireur compris) */
+  | { e: "projectile"; id: number; p: Vec3; rayon: number; par: string }
+  /** (v8) arc électrique : points successifs (dos des tigres de la chaîne), à tous, tireur compris */
+  | { e: "arc"; p: Vec3[]; par: string }
+  /** (v8) souffle de la Soufflerie tiré de `o` vers `d` sur `portee` m (aux autres : le tireur l'a déjà vu) */
+  | { e: "souffle"; o: Vec3; d: Vec3; portee: number; par: string }
   | { e: "ingredient"; id: string; par: string }
   | { e: "cuisson"; fin: boolean }
   | { e: "manche"; numero: number; truck: boolean }
@@ -246,7 +254,8 @@ export interface SnapZombies {
   r: number;
   /**
    * [id, xCm, zCm, capMrad, drapeaux, pvPct] par tigre ; drapeaux : bits 0–1 type (0 tigre, 1 doré, 2 chef, 3 petit), bit 2 griffe armée,
-   * bit 3 apparition, bits 4–5 allure (marche, course, sprint, rampant), bits 6–7 mode (chasse, sol, fenêtre, saut)
+   * bit 3 apparition, bits 4–5 allure (marche, course, sprint, rampant), bits 6–7 mode (chasse, sol, fenêtre, saut), (v8) bit 8 en feu,
+   * bit 9 gelé
    */
   z: number[];
   /** (v7) Truck Muche d'une manche de livraison : [xCm, zCm, capMrad, phase (0 arrivée, 1 livraison, 2 départ, 3 épave), pvPct] */
@@ -261,6 +270,9 @@ export interface ZombieSnap {
   id: number; x: number; z: number; cap: number;
   type: 0 | 1 | 2 | 3; griffe: boolean; apparition: boolean; pvPct: number;
   allure: 0 | 1 | 2 | 3; mode: Exclude<ModeZombie, "approche">;
+  /** (v8) en feu (munitions incendiaires), gelé (Soufflerie XXL) ; absents = non */
+  brule?: true;
+  gele?: true;
 }
 /** Encode des tigres en entiers : position au centimètre, cap au milliradian, PV au pour cent ; `truck` tel quel. */
 export function encoderZombies(restants: number, zombies: readonly ZombieSnap[], truck?: number[]): SnapZombies {
@@ -271,7 +283,8 @@ export function encoderZombies(restants: number, zombies: readonly ZombieSnap[],
     z[k++] = Math.round(m.x * 100);
     z[k++] = Math.round(m.z * 100);
     z[k++] = Math.round(m.cap * 1000);
-    z[k++] = (m.type & 3) | (m.griffe ? 4 : 0) | (m.apparition ? 8 : 0) | ((m.allure & 3) << 4) | (Math.max(0, MODES_SNAP.indexOf(m.mode)) << 6);
+    z[k++] = (m.type & 3) | (m.griffe ? 4 : 0) | (m.apparition ? 8 : 0) | ((m.allure & 3) << 4) | (Math.max(0, MODES_SNAP.indexOf(m.mode)) << 6)
+      | (m.brule ? 256 : 0) | (m.gele ? 512 : 0);
     z[k++] = Math.max(0, Math.min(100, Math.round(m.pvPct)));
   }
   return truck ? { r: restants, z, t: truck } : { r: restants, z };
@@ -287,6 +300,7 @@ export function decoderZombies(s: SnapZombies): ZombieSnap[] {
       id: s.z[b], x: s.z[b + 1] / 100, z: s.z[b + 2] / 100, cap: s.z[b + 3] / 1000,
       type: (d & 3) as 0 | 1 | 2 | 3, griffe: (d & 4) !== 0, apparition: (d & 8) !== 0, pvPct: s.z[b + 5],
       allure: ((d >> 4) & 3) as 0 | 1 | 2 | 3, mode: MODES_SNAP[(d >> 6) & 3] as ZombieSnap["mode"],
+      ...(d & 256 ? { brule: true as const } : {}), ...(d & 512 ? { gele: true as const } : {}),
     });
   }
   return res;
@@ -516,9 +530,16 @@ export type MessageClient =
    * `touches` = plombs qui ont touché un joueur selon le client (index dans `d`).
    */
   | {
-      t: "tir"; arme: ArmeFeuId; o: Vec3; d: Vec3[]; touches: { cible: string; zone: Zone; plomb: number }[];
+      t: "tir"; arme: ArmeFeuId; o: Vec3; d: Vec3[];
+      /**
+       * (v8) `seg` : tronçon de la balle qui ricoche (0 = le tir lui-même, absent = 0), rejoué par le serveur (`segmentsRicochet` de
+       * effets-armes.ts) avant de valider la touche
+       */
+      touches: { cible: string; zone: Zone; plomb: number; seg?: number }[];
       /** plombs arrêtés par une voiture selon le client (v3 §4) ; absent = aucun */
       voitures?: { genre: GenreVoiture; id: number; plomb: number }[];
+      /** (v8, zombies) arme de la main GAUCHE d'une paire akimbo (clic droit) ; absent = main droite. Cadence propre à chaque main. */
+      main?: "g";
     }
   /** Coup d'arme blanche. `cibles` = ids de joueurs ET de tigres `z<n>` touchés selon le client (vide = coup dans le vide ; au plus `nbCiblesMax` de l'arme). */
   | { t: "coup"; o: Vec3; d: Vec3; cibles: string[] }
@@ -595,7 +616,7 @@ export type MessageServeur =
   /** Équipement du destinataire (ramassage d'une spéciale, munitions épuisées). Privé. */
   | { t: "equipement"; equip: Equipement; main: Slot; munSpeciale: number; ravitaille?: ArmeFeuId | "tout" }
   /** Tir d'un autre joueur, pour les traçantes et le son (pas renvoyé au tireur). */
-  | { t: "tir"; id: string; arme: ArmeFeuId; o: Vec3; d: Vec3[] }
+  | { t: "tir"; id: string; arme: ArmeFeuId; o: Vec3; d: Vec3[]; main?: "g" }
   /** Coup d'arme blanche d'un autre joueur (animation et son). */
   | { t: "coup"; id: string; o: Vec3; d: Vec3; arme: ArmeMeleeId }
   /**
@@ -691,7 +712,22 @@ export type MessageServeur =
    * tué, `ameliore` si elle est passée au Pack-a-Punch, `src` = d'où vient le coup (bouche du canon, centre du souffle, œil du joueur en
    * mêlée ; absent pour la nuke) : le client en tire l'impulsion de sa mort désarticulée (`lib/fps/ragdoll-tigre.ts`).
    */
-  | { t: "zombieMort"; id: string; p: Vec3; par: string; zone: Zone; cause?: "explosion" | "nuke" | "melee"; arme?: ArmeId; ameliore?: true; src?: Vec3 }
+  | {
+      t: "zombieMort"; id: string; p: Vec3; par: string; zone: Zone;
+      /** (v8) `feu` (brûlure), `electrique` (arc), `souffle` (Soufflerie : projeté loin de `src`) */
+      cause?: "explosion" | "nuke" | "melee" | "feu" | "electrique" | "souffle"; arme?: ArmeId; ameliore?: true; src?: Vec3;
+    }
+  /**
+   * (v8, zombies) Un projectile d'arme part (Moutarde & Sally, Brochette), aux joueurs en partie, tireur compris : arme, origine, vitesse,
+   * instants serveur du tir, de l'impact (contact ou fin du vol : il reste planté là) et de l'explosion ; `cible` = tigre touché de plein
+   * fouet. Trajectoire déterministe (`trajectoireProjectile` de effets-armes.ts) ; l'explosion arrive par `zevt{projectile}`.
+   */
+  | {
+      t: "projectile"; id: number; par: string; arme: ArmeFeuId; ameliore?: true; o: Vec3; v: Vec3; t0: number; impactT: number; explosionT: number;
+      /** point d'arrêt (contact ou fin du vol) */
+      impact: Vec3;
+      cible?: string;
+    }
   /** (v7) Effet ponctuel de la partie de zombies (aux membres de la salle). */
   | { t: "zevt"; e: EvenementZombies }
   /**

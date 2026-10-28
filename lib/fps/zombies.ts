@@ -603,11 +603,21 @@ export function creerSimuZombies(opts: OptionsSimuZombies) {
     zombie(id: number): Zombie | undefined { return chercher(id); },
     nbVivants(): number { return zombies.length; },
     /** Snap compact : `{ r, z }` avec `z` plat de stride 6 (`encoderZombies`) ; `restants` = tigres à tuer, pas encore apparus compris. */
-    snap(restants = zombies.length, t = horloge, truck?: SnapZombies["t"]): SnapZombies {
-      const liste: ZombieSnap[] = zombies.map((z) => ({
-        id: z.id, x: z.p[0], z: z.p[2], cap: z.cap, type: z.type, griffe: z.armeFin > 0, apparition: t - z.apparuT < ZOMBIES.apparitionMs,
-        pvPct: pvPct(z), allure: z.allure, mode: z.mode === "approche" ? "fenetre" : z.mode,
-      }));
+    snap(
+      restants = zombies.length, t = horloge, truck?: SnapZombies["t"],
+      /** (v8) effets portés par le service (en feu, gelé) */
+      marques?: (id: number) => { brule?: boolean; gele?: boolean } | undefined,
+    ): SnapZombies {
+      const liste: ZombieSnap[] = zombies.map((z) => {
+        const s: ZombieSnap = {
+          id: z.id, x: z.p[0], z: z.p[2], cap: z.cap, type: z.type, griffe: z.armeFin > 0, apparition: t - z.apparuT < ZOMBIES.apparitionMs,
+          pvPct: pvPct(z), allure: z.allure, mode: z.mode === "approche" ? "fenetre" : z.mode,
+        };
+        const m = marques?.(z.id);
+        if (m?.brule) s.brule = true;
+        if (m?.gele) s.gele = true;
+        return s;
+      });
       return encoderZombies(restants, liste, truck);
     },
     /**
