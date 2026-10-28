@@ -273,6 +273,31 @@ export function resoudre(m: Monde, p: Vec3, rayon: number, _hauteur: number, ign
 }
 
 /**
+ * Obstacle mobile (zombies : le corps d'un tigre, `corps-tigres.ts`) : capsule horizontale d'axe (ax, az) → (bx, bz) au sol, de rayon `r`,
+ * de y = 0 à `haut`. Le monde ne la connaît pas : le contrôleur du joueur la reçoit à chaque image (`etape(…, obstacles)`).
+ */
+export interface Capsule { ax: number; az: number; bx: number; bz: number; r: number; haut: number }
+
+/** Distance horizontale d'un point à l'axe d'une capsule, normale unitaire (de l'axe vers le point). */
+export interface ContactCapsule { d: number; nx: number; nz: number }
+
+/**
+ * Distance horizontale de (x, z) à l'axe de la capsule et normale sortante, rangées dans `sortie` (réutilisé). Point pile sur l'axe :
+ * normale perpendiculaire à l'axe (à gauche), ou +x pour une capsule réduite à un disque.
+ */
+export function distanceCapsule(c: Capsule, x: number, z: number, sortie: ContactCapsule): ContactCapsule {
+  const ux = c.bx - c.ax, uz = c.bz - c.az, l2 = ux * ux + uz * uz;
+  const t = l2 > EPSILON ? Math.max(0, Math.min(1, ((x - c.ax) * ux + (z - c.az) * uz) / l2)) : 0;
+  const dx = x - (c.ax + ux * t), dz = z - (c.az + uz * t);
+  const d = Math.hypot(dx, dz);
+  sortie.d = d;
+  if (d > EPSILON) { sortie.nx = dx / d; sortie.nz = dz / d; }
+  else if (l2 > EPSILON) { const l = Math.sqrt(l2); sortie.nx = -uz / l; sortie.nz = ux / l; }
+  else { sortie.nx = 1; sortie.nz = 0; }
+  return sortie;
+}
+
+/**
  * Plus petit t ≥ 0 (≤ max) où le rayon o + t·d (d normalisé) entre dans le prisme : mur (arête
  * d'un anneau ou d'une cour, à une hauteur dans [0, h]) ou toit par au-dessus ; 0 si l'origine est
  * dans le plein. Infinity sinon.

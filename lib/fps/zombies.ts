@@ -2,13 +2,14 @@
  * Tigres zombies (PUR : ni horloge ni hasard global, le hasard est injecté ; aucune dépendance à `Salle`). `creerSimuZombies` simule un
  * groupe de tigres façon Black Ops 1 : sortie du sol (dans une cour), approche d'une fenêtre puis arrachage des planches et saut, chasse par
  * champ de distance sur la grille de navigation (les fenêtres y sont des murs : un tigre entré ne ressort pas), griffe à travers les fenêtres,
- * séparation entre tigres, tigres bloqués signalés (le service les fait réapparaître), formes de touche avec rejeu de latence (tirs et mêlée),
+ * séparation entre tigres, corps écartés des joueurs debout (`corps-tigres.ts`), tigres bloqués signalés (le service les fait réapparaître), formes de touche avec rejeu de latence (tirs et mêlée),
  * blessures et snap compact (`encoderZombies`). Les petits du Truck Muche franchissent les fenêtres d'un bond (leur propre grille).
  *
  * Repère de protocole.ts : avant d'un cap = (−sin cap, −cos cap). Le temps `t` est en ms (horloge du serveur), `dt` en secondes.
  * Spec : docs/superpowers/specs/2026-10-28-zombies-bo1-design.md (« Barricades à planches », « Équilibrage »)
  */
-import { resoudre, visible, type Monde } from "./collision";
+import { distanceCapsule, resoudre, visible, type Capsule, type ContactCapsule, type Monde } from "./collision";
+import { capsuleTigre, type CorpsTigre } from "./corps-tigres";
 import { DIST_INF, carteNavigation, champDistance, descente, type CarteNav } from "./navigation";
 import { FORME_TIGRE, capVers, enrouler, pointLocal, toucheTigre } from "./monstres";
 import { SILHOUETTE, encoderZombies, type ModeZombie, type SnapZombies, type Vec3, type ZombieSnap, type Zone } from "./protocole";
@@ -102,7 +103,8 @@ export interface TouchZombie { distance: number; zone: Zone }
 const HISTO_MAX = 32;
 const SEUIL_CAP_HISTO = 0.35;
 const NB_BUCKETS = 1024;
-const RAYON_JOUEUR = SILHOUETTE.corps.rayon;
+/** cylindre de mouvement du joueur (m), celui contre lequel le client arrête le corps des tigres */
+const RAYON_JOUEUR = SILHOUETTE.rayon;
 /** failsafe : un tigre en chasse qui ne s'est pas rapproché de 2 m en 30 s, à plus de 25 m de tout joueur, est signalé bloqué */
 const FAILSAFE_MS = 30_000;
 const FAILSAFE_DISTANCE_M = 25;
@@ -110,6 +112,9 @@ const FAILSAFE_DISTANCE_M = 25;
 const FAILSAFE_PROGRES_M = 2;
 
 const avant = (cap: number): [number, number] => [-Math.sin(cap), -Math.cos(cap)];
+const corpsTmp: CorpsTigre = { x: 0, z: 0, cap: 0, echelle: 1 };
+const capsuleTmp: Capsule = { ax: 0, az: 0, bx: 0, bz: 0, r: 0, haut: 0 };
+const contactTmp: ContactCapsule = { d: 0, nx: 0, nz: 0 };
 
 /** Portée (m, depuis le centre du tigre) du bout du balayage de la patte, rayon de contact compris. */
 export function porteePatte(echelle: number, allonge = 0): number {
@@ -366,8 +371,35 @@ export function creerSimuZombies(opts: OptionsSimuZombies) {
     }
 
     separer();
+    ecarterDesJoueurs();
     for (const z of zombies) noterHisto(z, t);
     return evenements;
+  }
+
+  /**
+   * Un tigre en chasse ne chevauche pas un joueur debout (la foule poussée par `separer` enfoncerait le premier dans le joueur) : son corps
+   * (`capsuleTigre`, le même que celui qui arrête le joueur chez le client) est écarté du cylindre du joueur, le tigre seul bouge, puis il
+   * est recalé sur les murs. Un tigre arrêté à portée de patte ne touche pas le joueur : rien ne change en approche normale.
+   */
+  function ecarterDesJoueurs(): void {
+    for (const z of zombies) {
+      if (z.mode !== "chasse") continue;
+      let bouge = false;
+      for (const j of debout) {
+        if (Math.abs(j.p[0] - z.p[0]) > 4 || Math.abs(j.p[2] - z.p[2]) > 4) continue;
+        corpsTmp.x = z.p[0]; corpsTmp.z = z.p[2]; corpsTmp.cap = z.cap; corpsTmp.echelle = z.echelle;
+        const c = capsuleTigre(corpsTmp, capsuleTmp);
+        const { d, nx, nz } = distanceCapsule(c, j.p[0], j.p[2], contactTmp);
+        const pen = c.r + RAYON_JOUEUR - d;
+        if (pen <= 0) continue;
+        z.p[0] -= nx * pen; z.p[2] -= nz * pen;
+        bouge = true;
+      }
+      if (bouge) {
+        const r = resoudre(monde, [z.p[0], 0, z.p[2]], ZOMBIES.rayonTigre, ZOMBIES.hauteurTigre, ignoreFenetres(z));
+        z.p[0] = r.p[0]; z.p[2] = r.p[2];
+      }
+    }
   }
 
   /** Écarte les tigres qui se chevauchent (< 1,4 m), par grille de hachage ; un tigre poussé est de nouveau recalé sur les murs. */
