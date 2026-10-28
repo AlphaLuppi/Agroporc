@@ -32,11 +32,14 @@ import { ZOMBIES } from "./zombies-vagues";
 // ---------- fabriques ----------
 
 const joueur = (id: string, pseudo: string, plus: Partial<JoueurZombies> = {}): JoueurZombies => ({
-  id, pseudo, couleur: "#aabbcc", etat: "attente", admis: false, kills: 0, gagne: 0, reanimations: 0, ...plus,
+  id, pseudo, couleur: "#aabbcc", etat: "attente", admis: false, kills: 0, gagne: 0, reanimations: 0, atouts: [], autoReleves: 3, ...plus,
 });
 const partie = (plus: Partial<EtatPartieZombies> = {}): EtatPartieZombies => ({
   phase: "lobby", manche: 0, hote: "j1", capacite: 8, debutT: 0, finT: 0,
-  joueurs: [joueur("j1", "Lea"), joueur("j2", "Marc")], portes: [{ id: "P1", ouverte: false }, { id: "P2", ouverte: false }], ...plus,
+  joueurs: [joueur("j1", "Lea"), joueur("j2", "Marc")], portes: [{ id: "D1", ouverte: false }, { id: "D2", ouverte: false }],
+  difficulte: "plat", courant: false, boite: { emplacement: 0, etat: "fermee", finT: 0, utilisations: 0 }, pap: { etat: "libre" }, fenetres: [],
+  bonus: [], effets: { instakillFinT: 0, doubleFinT: 0, soldesFinT: 0 }, quete: { ingredients: [], cuissonFinT: 0, faite: false },
+  mancheTruck: false, truck: null, murs: [], ...plus,
 });
 const salons: Salons = { arene: { joueurs: 5, enJeu: 3 }, zombies: { phase: "lobby", joueurs: 2, manche: 0 } };
 
@@ -117,6 +120,7 @@ describe("formatArgent et libellés", () => {
 describe("état du HUD des zombies", () => {
   const base: EtatZombiesHud = {
     argent: 500, manche: 2, restants: 8, vivants: 4, gain: null, refus: null, achats: 0, reanimation: null, aTerre: false, elimine: false, terreFinT: 0, partie: null,
+    pvMax: 100, note: null, annonce: null, serveurT: 0, objectif: "", reparation: null,
   };
 
   it("même état : pas de rendu ; un champ affiché qui change : rendu", () => {
@@ -184,11 +188,11 @@ describe("annonces entre deux états de la partie", () => {
     expect(annoncesZombies(manche, partie({ phase: "manche", manche: 2 }), "j1")).toEqual([]);
   });
 
-  it("porte ouverte, avec la zone gagnée", () => {
+  it("porte ouverte, avec son nom", () => {
     const avant = partie({ phase: "manche", manche: 2 });
-    const apres = partie({ phase: "manche", manche: 2, portes: [{ id: "P1", ouverte: true }, { id: "P2", ouverte: false }] });
-    expect(annoncesZombies(avant, apres, "j1")).toEqual([`Porte ouverte : ${ZONE_PORTE.P1}`]);
-    expect(ZONE_PORTE.P1).toBe("carrefour Est");
+    const apres = partie({ phase: "manche", manche: 2, portes: [{ id: "D1", ouverte: true }, { id: "D2", ouverte: false }] });
+    expect(annoncesZombies(avant, apres, "j1")).toEqual([`Ouverture : ${ZONE_PORTE.D1}`]);
+    expect(ZONE_PORTE.D1).toBe("Porte de la salle de pause");
   });
 
   it("à terre, relevé, éliminé, retour : moi et les autres", () => {
@@ -637,6 +641,10 @@ describe("FinDePartieZombies", () => {
     expect(html).toContain("Record : manche 9");
     expect(html).toContain('data-battu="non"');
     expect(html).not.toContain("NOUVEAU RECORD");
+    // aucun record encore (partie sans tigre abattu) : pas de « Record : manche 0 »
+    const sans = rendre({ recordAvant: { manche: 0, kills: 0 }, partie: partie({ phase: "fin", manche: 1, bilan: { manche: 1, dureeMs: 60_000 }, joueurs: [joueur("j1", "Lea", { admis: true, etat: "elimine" })] }) });
+    expect(sans).not.toContain("manche 0");
+    expect(sans).toContain("Pas encore de record");
   });
 
   it("compte à rebours du retour automatique, Rejouer (lobby) et Quitter", () => {

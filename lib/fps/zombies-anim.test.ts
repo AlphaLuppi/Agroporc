@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Vector3 } from "three";
-import { griffe } from "../tigre3d/gestes/griffe";
+import { CONTACT_GRIFFE, griffe } from "../tigre3d/gestes/griffe";
 import { squelette } from "../tigre3d/squelette";
 import { creerAnimZombie, vitesseModele, VITESSE_MODELE_MAX } from "./zombies-anim";
 import { ZOMBIES } from "./zombies-vagues";
@@ -56,15 +56,21 @@ describe("animation d'un tigre zombie", () => {
     expect(a.vitesseModele()).toBe(VITESSE_MODELE_MAX);
   });
 
-  it("la griffe se joue UNE fois par front montant du drapeau, 0,55 s, et la patte avant droite bouge", () => {
+  it("le contact de la patte du geste est l'instant où le serveur touche ; l'armement dure assez pour esquiver (≥ 0,4 s)", () => {
+    expect(CONTACT_GRIFFE).toBe(ZOMBIES.griffeArmeS);
+    expect(CONTACT_GRIFFE).toBeGreaterThanOrEqual(0.4);
+    expect(griffe.duree).toBeGreaterThan(CONTACT_GRIFFE);
+  });
+
+  it("la griffe se joue UNE fois par front montant du drapeau, sur toute sa durée, et la patte avant droite bouge", () => {
     const a = creerAnimZombie(3);
     jouer(a, 1, 0);
     let lancees = 0;
     let duree = 0;
     const avant = pointesPattes(a);
     let ecartMax = 0;
-    // drapeau tenu 0,4 s (comme le serveur) : un seul lancement
-    for (let i = 0; i < Math.round(0.4 * 60); i++) {
+    // drapeau tenu pendant l'armement (comme le serveur) : un seul lancement
+    for (let i = 0; i < Math.round(ZOMBIES.griffeArmeS * 60); i++) {
       if (a.maj(DT, 0, E, true)) lancees++;
       if (a.geste()) duree += DT;
       ecartMax = Math.max(ecartMax, distance(avant, pointesPattes(a)));
@@ -75,8 +81,8 @@ describe("animation d'un tigre zombie", () => {
       ecartMax = Math.max(ecartMax, distance(avant, pointesPattes(a)));
     }
     expect(lancees).toBe(1);
-    expect(duree).toBeGreaterThan(0.5);
-    expect(duree).toBeLessThan(0.6);
+    expect(duree).toBeGreaterThan(griffe.duree - 0.05);
+    expect(duree).toBeLessThan(griffe.duree + 0.05);
     expect(ecartMax).toBeGreaterThan(0.3);
     expect(a.geste()).toBeNull();
     // un second front montant relance la griffe
@@ -91,15 +97,15 @@ describe("animation d'un tigre zombie", () => {
     const main = () => a.corps().monde.p[sq.i.mainD].clone();
     const mainG = () => a.corps().monde.p[sq.i.mainG].clone();
     const repos = main(), reposG = mainG();
-    // griffe armée (le corps marche le long de +x) : au bout de 0,2 s la patte est levée, vers 0,4 s elle est devant (+x) et bas
+    // griffe armée (le corps marche le long de +x) : pendant l'armement la patte est levée, au contact elle est devant (+x) et bas
     a.maj(DT, 0, E, true);
     let haut = 0, hautG = 0;
     let zFrappe = -Infinity, yFrappe = Infinity;
-    for (let i = 1; i <= Math.round(0.55 * 60); i++) {
-      a.maj(DT, 0, E, true);
+    for (let i = 1; i <= Math.round(griffe.duree * 60); i++) {
+      a.maj(DT, 0, E, i / 60 < ZOMBIES.griffeArmeS);
       haut = Math.max(haut, main().y - repos.y);
       hautG = Math.max(hautG, mainG().y - reposG.y);
-      if (i / 60 > 0.38 && i / 60 < 0.46) { zFrappe = Math.max(zFrappe, main().x - repos.x); yFrappe = Math.min(yFrappe, main().y - repos.y); }
+      if (Math.abs(i / 60 - CONTACT_GRIFFE) < 0.05) { zFrappe = Math.max(zFrappe, main().x - repos.x); yFrappe = Math.min(yFrappe, main().y - repos.y); }
     }
     expect(haut).toBeGreaterThan(0.15);
     expect(hautG).toBeLessThan(0.03);

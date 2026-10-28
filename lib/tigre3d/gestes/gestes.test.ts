@@ -7,7 +7,7 @@ import { creerAnimateur } from "../animateur";
 import { GROUPES, type Groupe } from "../os";
 import { squelette } from "../squelette";
 import { POIDS_REACTIONS, TEXTES, tirerReaction, type Reaction } from "../../tigre-reactions";
-import { griffe } from "./griffe";
+import { CONTACT_GRIFFE, griffe } from "./griffe";
 import type { ContexteGeste, PoseGeste } from "./types";
 
 const ctx = (o: Partial<ContexteGeste> = {}): ContexteGeste => ({
@@ -76,14 +76,15 @@ describe("outils des gestes", () => {
 });
 
 describe("griffe (tigre zombie)", () => {
-  it("est enregistrée hors du thème Tigre (poids nul : ni réaction, ni tirage), dure 0,55 s et ne retient pas le tigre", () => {
+  it("est enregistrée hors du thème Tigre (poids nul : ni réaction, ni tirage), dure 0,9 s (contact à 0,55 s) et ne retient pas le tigre", () => {
     expect(GESTES_ARENE.griffe).toBe(griffe);
     // jamais une réaction du thème : absente du tirage, du registre des réactions, sans bulle
     expect(POIDS_REACTIONS.some(([n]) => (n as string) === "griffe")).toBe(false);
     expect((GESTES as Record<string, unknown>).griffe).toBeUndefined();
     for (let a = 0; a < 1; a += 0.01) expect(tirerReaction(a) as string).not.toBe("griffe");
     expect(griffe.evenements ?? []).toEqual([]);
-    expect(griffe.duree).toBeCloseTo(0.55, 6);
+    expect(griffe.duree).toBeCloseTo(0.9, 6);
+    expect(CONTACT_GRIFFE).toBeCloseTo(0.55, 6);
     expect(griffe.immobile).toBe(false);
   });
 
@@ -93,9 +94,9 @@ describe("griffe (tigre zombie)", () => {
       return { y: c.monde.p[c.sq.i.mainD].y, z: c.monde.p[c.sq.i.mainD].z };
     };
     const r = repos("mainD");
-    const arme = main(0.22);
-    const frappe = main(0.4);
-    const fin = main(0.55);
+    const arme = main(0.4);
+    const frappe = main(CONTACT_GRIFFE);
+    const fin = main(0.9);
     expect(arme.y).toBeGreaterThan(r[1] + 0.2);
     expect(arme.z).toBeLessThan(r[2] + 0.02);
     expect(frappe.z).toBeGreaterThan(arme.z + 0.15);

@@ -1,5 +1,6 @@
 "use client";
 
+import type { Difficulte } from "@/lib/fps/zombies-vagues";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Chakra_Petch, IBM_Plex_Mono } from "next/font/google";
 import type { Carte, PdjEntry, Plat } from "@/lib/db";
@@ -348,11 +349,11 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
     setAreneOuverte((o) => !o);
   };
   /** Hôte du lobby des zombies : lance la partie (le nom tapé part avant). */
-  const lancerZombies = () => {
+  const lancerZombies = (difficulte?: Difficulte) => {
     const nom = pseudoSaisi.trim() || "Agent";
     setPseudoConnecte(nom);
     arene.clientRef.current?.renommer(nom);
-    arene.lancerPartie();
+    arene.lancerPartie(difficulte);
   };
   // Le serveur dit « non admis » (ou lobby) : la sortie est actée, le jeu pourra se remonter à la prochaine admission.
   const moiZ = arene.zombies?.joueurs.find((j) => j.id === arene.monId) ?? null;

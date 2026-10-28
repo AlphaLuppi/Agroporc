@@ -626,3 +626,71 @@
 .invite[data-assez="non"] { border-color: var(--ag-danger); }
 .reanimBarre { --reanim: 0; display: inline-block; position: relative; width: calc(140 * var(--u)); min-width: 80px; height: calc(8 * var(--u)); min-height: 5px; background: var(--ag-line-strong); }
 .reanimBarre i { position: absolute; left: 0; top: 0; bottom: 0; width: calc(var(--reanim) * 100%); background: var(--ag-ok); }
+
+/* ---------- zombies (v7) : manche à la craie, atouts, bonus à durée, objectif, annonces, notes, introduction ---------- */
+.mancheCraie { align-self: flex-start; padding: 0 calc(4 * var(--u)); color: var(--ag-danger); filter: drop-shadow(0 0 calc(6 * var(--u)) color-mix(in srgb, var(--ag-danger) 55%, transparent)); }
+.mancheCraie[data-truck="oui"] { color: var(--ag-amber); filter: drop-shadow(0 0 calc(8 * var(--u)) color-mix(in srgb, var(--ag-amber) 60%, transparent)); }
+.craieBatons { width: calc(84 * var(--u)); min-width: 56px; height: auto; display: block; }
+.craieBatons path { fill: none; stroke: currentColor; stroke-width: 6; stroke-linecap: round; stroke-dasharray: 2 0.6; }
+.craieChiffre {
+  display: block; font: 700 max(30px, calc(78 * var(--u)))/0.95 var(--ag-display), var(--ag-mono), monospace; letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums; color: currentColor; transform: skewX(-6deg);
+  text-shadow: calc(1 * var(--u)) calc(1 * var(--u)) 0 color-mix(in srgb, currentColor 45%, transparent), calc(-1 * var(--u)) 0 0 color-mix(in srgb, currentColor 35%, transparent);
+}
+
+.atouts { list-style: none; margin: 0; padding: 0; display: flex; gap: calc(8 * var(--u)); align-self: flex-start; flex-wrap: wrap; }
+.atouts li {
+  display: flex; align-items: center; gap: calc(6 * var(--u)); padding: calc(3 * var(--u)) calc(8 * var(--u)) calc(3 * var(--u)) calc(3 * var(--u));
+  background: var(--ag-hud-fond); border: 1px solid var(--atout); font-size: max(11px, calc(11 * var(--u))); letter-spacing: 0.08em; color: var(--ag-ink);
+}
+.atouts i {
+  display: grid; place-items: center; width: calc(26 * var(--u)); height: calc(26 * var(--u)); min-width: 18px; min-height: 18px; border-radius: 50%;
+  background: var(--atout); color: var(--ag-ground); font: 800 max(11px, calc(14 * var(--u)))/1 var(--ag-display), var(--ag-mono), monospace; font-style: normal; text-shadow: none;
+}
+
+.bonusActifs {
+  position: absolute; z-index: 5; bottom: calc(150 * var(--u)); left: 50%; transform: translateX(-50%); list-style: none; margin: 0; padding: 0;
+  display: flex; gap: calc(12 * var(--u));
+}
+.bonusActifs li {
+  padding: calc(6 * var(--u)) calc(12 * var(--u)); background: var(--ag-hud-fond); border: 2px solid var(--ag-ok); color: var(--ag-ok);
+  font: 600 max(11px, calc(14 * var(--u)))/1 var(--ag-display), var(--ag-mono), monospace; letter-spacing: 0.1em; font-variant-numeric: tabular-nums;
+}
+.bonusActifs li span { color: var(--ag-ink); }
+.bonusActifs li[data-fin="oui"] { animation: sPuls 0.5s steps(2) infinite; }
+
+.objectifZ {
+  position: absolute; z-index: 5; top: calc(var(--marge) + 86 * var(--u)); left: 50%; transform: translateX(-50%); margin: 0; max-width: 70vw;
+  padding: calc(4 * var(--u)) calc(12 * var(--u)); background: var(--ag-hud-fond); border: 1px solid var(--ag-cadre); text-align: center;
+  font-size: max(11px, calc(13 * var(--u))); letter-spacing: 0.06em; color: var(--ag-ink);
+}
+.objectifZ span { color: var(--ag-amber); font-weight: 700; letter-spacing: 0.16em; margin-right: calc(6 * var(--u)); }
+
+.annonceZ {
+  position: absolute; z-index: 7; top: 34%; left: 50%; transform: translateX(-50%); margin: 0; max-width: 80vw; padding: calc(10 * var(--u)) calc(20 * var(--u));
+  background: var(--ag-hud-fond-fort); border: 2px solid var(--ag-ok); text-align: center;
+  font: 700 max(14px, calc(26 * var(--u)))/1.2 var(--ag-display), var(--ag-mono), monospace; letter-spacing: 0.08em; color: var(--ag-white);
+  animation: mancheEntree 0.25s ease-out, mancheSortie 0.5s ease-in 2.6s forwards;
+}
+.annonceZ[data-genre="truck"] { border-color: var(--ag-amber); color: var(--ag-amber); }
+.annonceZ[data-genre="courant"] { border-color: var(--ag-tete); color: var(--ag-tete); }
+.annonceZ[data-genre="pap"] { border-color: var(--ag-shield); }
+
+.noteZ {
+  position: absolute; z-index: 8; top: 50%; left: 50%; transform: translate(-50%, -50%); width: min(88vw, calc(560 * var(--u)));
+  padding: calc(20 * var(--u)) calc(24 * var(--u)); background: var(--ag-hud-fond-fort); border: 1px solid var(--ag-cadre); color: var(--ag-ink); text-align: left;
+}
+.noteZ h3 { margin: 0 0 calc(10 * var(--u)); font: 700 max(13px, calc(18 * var(--u)))/1.2 var(--ag-display), var(--ag-mono), monospace; letter-spacing: 0.08em; color: var(--ag-amber); }
+.noteTexte { margin: 0; font-size: max(12px, calc(15 * var(--u))); line-height: 1.5; }
+.noteAuteur { margin: calc(10 * var(--u)) 0 0; font-style: italic; color: var(--ag-ink-dim); font-size: max(11px, calc(13 * var(--u))); }
+.noteFermer { margin: calc(12 * var(--u)) 0 0; font-size: max(11px, calc(11 * var(--u))); letter-spacing: 0.12em; color: var(--ag-ink-dim); }
+
+.introZ {
+  position: absolute; z-index: 7; bottom: 22%; left: 8%; max-width: 60vw; text-align: left;
+  animation: introEntree 1.2s ease-out, mancheSortie 1s ease-in 6.5s forwards;
+}
+.introLieu { margin: 0; font: 700 max(14px, calc(22 * var(--u)))/1.2 var(--ag-display), var(--ag-mono), monospace; letter-spacing: 0.22em; color: var(--ag-white); }
+.introHeure { margin: calc(4 * var(--u)) 0 0; font: 700 max(20px, calc(48 * var(--u)))/1 var(--ag-display), var(--ag-mono), monospace; letter-spacing: 0.08em; color: var(--ag-danger); }
+.introTexte { margin: calc(8 * var(--u)) 0 0; font-size: max(12px, calc(16 * var(--u))); letter-spacing: 0.04em; color: var(--ag-ink); }
+@keyframes introEntree { from { opacity: 0; transform: translateX(calc(-30 * var(--u))); } to { opacity: 1; transform: translateX(0); } }
+@media (prefers-reduced-motion: reduce) { .annonceZ, .introZ, .bonusActifs li[data-fin="oui"] { animation: none; } }

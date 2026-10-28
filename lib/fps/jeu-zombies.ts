@@ -1,19 +1,27 @@
 /**
  * Mode zombies côté client (PUR, testé, ni three ni DOM) : tampon des `snap.zombies` interpolé à l'instant du rendu (appariement par id,
  * apparition et disparition, tableaux préalloués), touches des tirs et de la mêlée sur les tigres, sélection du niveau de détail,
- * rugissements espacés et invite d'interaction (achat, porte, boîte, soin, relève).
- * Spec : docs/superpowers/specs/2026-10-27-arene-zombies-design.md (« Rendu et performances côté client »)
+ * rugissements espacés et invite d'interaction (achat, porte, boîte, atout, Pack-a-Punch, disjoncteur, recette, planches, note, relève).
+ * v7 : allure et mode des tigres, Truck Muche interpolé, balles qui percent.
+ * Spec : docs/superpowers/specs/2026-10-27-arene-zombies-design.md (« Rendu et performances côté client »), 2026-10-28-zombies-bo1-design.md
  *
  * Aucune horloge ni hasard global : les instants et le hasard sont passés en paramètre.
  */
 import { visible, type Monde } from "./collision";
-import { MELEE, STATS } from "./armes";
+import { MELEE, STATS, nomZombie } from "./armes";
 import { meleeDe } from "./equipement";
 import { formatArgent } from "./hud-modele";
 import { FORME_TIGRE, enrouler, pointLocal, toucheTigre } from "./monstres";
-import { decoderZombies, idZombie, type ArmeFeuId, type ArmeMeleeId, type Equipement, type SnapZombies, type Vec3, type Zone } from "./protocole";
-import { PIECES_SYNTH, PORTES_PAYANTES, achatsProches, porteDeId, type Achat } from "./zombies-carte";
-import { ZOMBIES, echelleZombie, type TypeZombie } from "./zombies-vagues";
+import {
+  CIBLE_LIVRAISON, decoderZombies, estMelee, idZombie, type ArmeFeuId, type ArmeId, type ArmeMeleeId, type AtoutId, type EtatPartieZombies, type Equipement,
+  type SnapZombies, type Vec3, type Zone,
+} from "./protocole";
+import {
+  ATOUTS, FENETRES, NOTES, PIECES_SYNTH, PORTES_PAYANTES, PRIX_BOITE_SOLDES, PRIX_MUNITIONS_AMELIOREE, achatsProches, porteDeId, rayonTruck,
+  zonesOuvertes, type Achat,
+} from "./zombies-carte";
+import { ZOMBIES, echelleZombie, type Allure, type TypeZombie } from "./zombies-vagues";
+import type { ModeZombie } from "./protocole";
 
 // ---------------------------------------------------------------------------------------------
 // Constantes
@@ -53,7 +61,14 @@ export interface ZombieVue {
   pvPct: number;
   /** vitesse mesurée entre les deux snaps encadrants (m/s), 0 s'il n'est que dans l'un des deux */
   vitesse: number;
+  /** (v7) allure (marche, course, sprint, rampant) et mode (chasse, sortie du sol, fenêtre, saut) */
+  allure: Allure;
+  mode: Exclude<ModeZombie, "approche">;
 }
+
+/** (v7) Truck Muche d'une manche de livraison, interpolé : position, cap, étape (0 arrivée, 1 livraison, 2 départ, 3 épave), PV en %. */
+export interface TruckVue { x: number; z: number; cap: number; phase: number; pvPct: number }
+const MODES: readonly ZombieVue["mode"][] = ["chasse", "sol", "fenetre", "saut"];
 
 class Instantane {
   ts = 0;
@@ -64,8 +79,10 @@ class Instantane {
   readonly z = new Float64Array(CAPACITE_ZOMBIES);
   readonly cap = new Float64Array(CAPACITE_ZOMBIES);
   readonly type = new Uint8Array(CAPACITE_ZOMBIES);
-  readonly drapeaux = new Uint8Array(CAPACITE_ZOMBIES);
+  readonly drapeaux = new Uint16Array(CAPACITE_ZOMBIES);
   readonly pv = new Uint8Array(CAPACITE_ZOMBIES);
+  /** Truck Muche : [xCm, zCm, capMrad, phase, pvPct] ou null */
+  truck: number[] | null = null;
 
   trouver(id: number): number {
     for (let i = 0; i < this.n; i++) if (this.ids[i] === id) return i;
@@ -82,8 +99,11 @@ export class MondeZombies {
   private compte = 0;
   private readonly vues: ZombieVue[] = Array.from({ length: CAPACITE_ZOMBIES }, () => ({
     id: 0, x: 0, z: 0, cap: 0, type: 0 as TypeZombie, echelle: echelleZombie(0), griffe: false, apparition: false, pvPct: 100, vitesse: 0,
+    allure: 0 as Allure, mode: "chasse" as ZombieVue["mode"],
   }));
   private nVues = 0;
+  private readonly truckVue: TruckVue = { x: 0, z: 0, cap: 0, phase: 0, pvPct: 100 };
+  private truckPresent = false;
 
   private e(k: number): Instantane {
     return this.anneau[(this.debut + k) % ANNEAU];
@@ -105,13 +125,14 @@ export class MondeZombies {
     cible.ts = ts;
     cible.n = 0;
     cible.restants = snap ? snap.r : 0;
+    cible.truck = snap?.t && snap.t.length >= 5 ? snap.t.slice(0, 5) : null;
     if (snap) {
       const liste = decoderZombies(snap);
       const n = Math.min(liste.length, CAPACITE_ZOMBIES);
       for (let i = 0; i < n; i++) {
         const m = liste[i];
         cible.ids[i] = m.id; cible.x[i] = m.x; cible.z[i] = m.z; cible.cap[i] = m.cap; cible.type[i] = m.type;
-        cible.drapeaux[i] = (m.griffe ? 4 : 0) | (m.apparition ? 8 : 0);
+        cible.drapeaux[i] = (m.griffe ? 4 : 0) | (m.apparition ? 8 : 0) | (m.allure << 4) | (Math.max(0, MODES.indexOf(m.mode)) << 6);
         cible.pv[i] = m.pvPct;
       }
       cible.n = n;
@@ -138,6 +159,16 @@ export class MondeZombies {
     }
     const proche = k < 0.5 ? A : B;
     const autre = proche === A ? B : A;
+    // Truck Muche : interpolé entre les deux snaps qui l'ont, sinon tenu
+    this.truckPresent = proche.truck !== null;
+    if (proche.truck) {
+      const a = A.truck ?? proche.truck, b = B.truck ?? proche.truck;
+      this.truckVue.x = (a[0] + (b[0] - a[0]) * k) / 100;
+      this.truckVue.z = (a[1] + (b[1] - a[1]) * k) / 100;
+      this.truckVue.cap = lerpAngle(a[2] / 1000, b[2] / 1000, k);
+      this.truckVue.phase = proche.truck[3];
+      this.truckVue.pvPct = proche.truck[4];
+    }
     // la fenêtre d'un pas du tampon, pour les vitesses
     const dtS = Math.max(0.001, Math.abs(B.ts - A.ts) / 1000);
     for (let i = 0; i < proche.n; i++) {
@@ -148,6 +179,8 @@ export class MondeZombies {
       v.echelle = echelleZombie(v.type);
       v.griffe = (proche.drapeaux[i] & 4) !== 0;
       v.apparition = (proche.drapeaux[i] & 8) !== 0;
+      v.allure = ((proche.drapeaux[i] >> 4) & 3) as Allure;
+      v.mode = MODES[(proche.drapeaux[i] >> 6) & 3];
       v.pvPct = proche.pv[i];
       if (j < 0) {
         v.x = proche.x[i]; v.z = proche.z[i]; v.cap = proche.cap[i]; v.vitesse = 0;
@@ -178,6 +211,11 @@ export class MondeZombies {
     return null;
   }
 
+  /** (v7) Truck Muche de la dernière interpolation, null s'il n'y en a pas (objet réutilisé). */
+  truck(): TruckVue | null {
+    return this.truckPresent ? this.truckVue : null;
+  }
+
   /** Tigres restants à tuer annoncés par le dernier snap (pas encore apparus compris), 0 sans snap. */
   restants(): number {
     return this.compte ? this.e(this.compte - 1).restants : 0;
@@ -192,6 +230,7 @@ export class MondeZombies {
     this.debut = 0;
     this.compte = 0;
     this.nVues = 0;
+    this.truckPresent = false;
   }
 }
 
@@ -224,6 +263,27 @@ export function trouverZombieTouche(
     if (h && (!meilleur || h.distance < meilleur.distance)) meilleur = { cible: idZombie(z.id), zone: h.zone, distance: h.distance };
   }
   return meilleur;
+}
+
+/**
+ * (v7) Tous les tigres que traverse une balle qui perce (railgun, sniper amélioré), du plus proche au plus lointain, avant `limite`.
+ */
+export function trouverZombiesTouches(
+  o: Vec3, d: Vec3, limite: number, zombies: readonly ZombieVue[], monde: Monde | null, n: number = zombies.length,
+): ToucheZombie[] {
+  const res: ToucheZombie[] = [];
+  for (let i = 0; i < n; i++) {
+    const h = trouverZombieTouche(o, d, limite, zombies.slice(i, i + 1), monde, 1);
+    if (h) res.push(h);
+  }
+  return res.sort((a, b) => a.distance - b.distance);
+}
+
+/** (v7) Le Truck Muche touché par le rayon avant `limite` : cible réservée et distance, ou null. */
+export function toucheTruckClient(o: Vec3, d: Vec3, limite: number, truck: TruckVue | null): { cible: string; distance: number } | null {
+  if (!truck || truck.phase === 3) return null;
+  const dist = rayonTruck(o, d, [truck.x, truck.z], truck.cap, limite);
+  return dist === null ? null : { cible: CIBLE_LIVRAISON, distance: dist };
 }
 
 /**
@@ -309,24 +369,29 @@ export class Rugissements {
 // Invite d'interaction
 // ---------------------------------------------------------------------------------------------
 
-export type GenreInvite = "" | "acheter" | "porte" | "boite" | "soin" | "reanimer";
+export type GenreInvite = "" | "acheter" | "porte" | "boite" | "atout" | "pap" | "courant" | "ingredient" | "four" | "reanimer" | "reparer" | "note";
 
 export interface InviteZombies {
   invite: GenreInvite;
-  /** texte après « [E] » : « Pompe — 900 $ », « Ouvrir la porte — 1 250 $ », « Réanimer Léa » */
+  /** texte après « [E] » : « Pompe — 900 $ », « Ouvrir : Labo R&D — 1 500 $ », « Réanimer Léa », « Reposer les planches » */
   detail: string;
-  /** prix en $ (0 pour une relève) et argent suffisant */
+  /** prix en $ (0 pour une relève) et argent suffisant (et achat possible) */
   prix: number;
   assez: boolean;
-  /** id du catalogue à envoyer à `acheter` ("" pour une relève) */
+  /** id du catalogue à envoyer à `acheter` ("" pour une relève ; id de fenêtre pour `reparer` ; `note:<n>` pour une note) */
   id: string;
   /** coéquipier à relever (`reanimer`), null sinon */
   cible: string | null;
+  /** raison écrite d'un achat impossible (« Courant coupé », « Occupé »…), absente sinon */
+  bloque?: string;
 }
 
 export const INVITE_VIDE: InviteZombies = Object.freeze({ invite: "", detail: "", prix: 0, assez: true, id: "", cible: null });
 
 export interface CoequipierATerre { id: string; pseudo: string; p: Vec3 }
+
+/** Ce que l'invite lit de la partie (sous-ensemble de `EtatPartieZombies`). */
+export type PartieInvite = Pick<EtatPartieZombies, "courant" | "boite" | "pap" | "quete" | "effets" | "fenetres" | "portes">;
 
 export interface EntreeInvite {
   /** position (x, z) du joueur */
@@ -334,32 +399,84 @@ export interface EntreeInvite {
   argent: number;
   portesOuvertes: ReadonlySet<string> | readonly string[];
   equip: Equipement;
+  /** arme en main (Pack-a-Punch) */
+  enMain?: ArmeId;
   pv: number;
   /** coéquipiers à terre (état `terre` de la partie), positions interpolées */
   aTerre: readonly CoequipierATerre[];
-  /** secondes avant que le soin soit de nouveau achetable (0 = prêt) */
-  soinDans?: number;
+  /** (v7) état de la partie, mes atouts, mon id, partie en solo, horloge serveur (ms) */
+  partie?: PartieInvite | null;
+  atouts?: readonly AtoutId[];
+  moi?: string;
+  solo?: boolean;
+  maintenant?: number;
 }
 
 function possede(eq: Equipement, a: ArmeFeuId): boolean {
   return (!eq.sansPrincipale && eq.principale === a) || eq.secondaire === a || eq.speciale === a;
 }
 
-/** Libellé, prix et genre d'un achat pour ce joueur ; null s'il n'y a rien à acheter (épée déjà possédée, soin inutile). */
-function descriptionAchat(a: Achat, e: EntreeInvite): (Omit<InviteZombies, "assez" | "cible"> & { verrou?: boolean }) | null {
+const NOMS_INGREDIENTS: Readonly<Record<string, string>> = { sel: "Sel de Guérande", herbes: "Herbes du Trèfle", truffe: "Truffe noire" };
+
+type Description = Omit<InviteZombies, "assez" | "cible"> & { bloque?: string };
+
+/** Libellé, prix et genre d'un achat pour ce joueur ; null s'il n'y a rien à acheter (épée déjà possédée…). */
+function descriptionAchat(a: Achat, e: EntreeInvite): Description | null {
+  const p = e.partie ?? null;
+  const t = e.maintenant ?? 0;
+  const ameliorees = new Set(e.equip.ameliorees ?? []);
   switch (a.genre) {
     case "porte": {
       const porte = a.porte ? porteDeId(a.porte) : null;
-      const ouvertes = e.portesOuvertes instanceof Set ? e.portesOuvertes : new Set(e.portesOuvertes);
-      if (porte?.prerequis && !ouvertes.has(porte.prerequis)) return { invite: "porte", detail: `Porte verrouillée — ${formatArgent(a.prix)}`, prix: a.prix, id: a.id, verrou: true };
-      return { invite: "porte", detail: `Ouvrir la porte — ${formatArgent(a.prix)}`, prix: a.prix, id: a.id };
+      if (!porte) return null;
+      const accessibles = zonesOuvertes(e.portesOuvertes instanceof Set ? e.portesOuvertes : new Set(e.portesOuvertes));
+      const d: Description = { invite: "porte", detail: `Ouvrir : ${porte.nom} — ${formatArgent(a.prix)}`, prix: a.prix, id: a.id };
+      if (!accessibles.has(porte.zones[0]) && !accessibles.has(porte.zones[1])) return { ...d, bloque: "Verrouillée" };
+      return d;
     }
-    case "boite":
-      return { invite: "boite", detail: `Boîte mystère — ${formatArgent(a.prix)}`, prix: a.prix, id: a.id };
-    case "soin": {
-      if (e.pv >= 100) return null;
-      if ((e.soinDans ?? 0) > 0) return { invite: "soin", detail: `Soin — prêt dans ${Math.ceil(e.soinDans!)} s`, prix: a.prix, id: a.id };
-      return { invite: "soin", detail: `Soin — ${formatArgent(a.prix)}`, prix: a.prix, id: a.id };
+    case "boite": {
+      if (p && p.boite.emplacement !== a.emplacement) return null;
+      if (p && p.boite.etat === "offre") {
+        if (p.boite.pour !== e.moi || !p.boite.arme || p.boite.arme === "peluche") return { invite: "boite", detail: "Boîte mystère", prix: 0, id: a.id, bloque: "Occupée" };
+        return { invite: "boite", detail: `Prendre : ${STATS[p.boite.arme].nom}`, prix: 0, id: a.id };
+      }
+      if (p && p.boite.etat !== "fermee") return { invite: "boite", detail: "Boîte mystère", prix: 0, id: a.id, bloque: "Occupée" };
+      const prix = p && t < p.effets.soldesFinT ? PRIX_BOITE_SOLDES : a.prix;
+      return { invite: "boite", detail: `Boîte mystère — ${formatArgent(prix)}`, prix, id: a.id };
+    }
+    case "atout": {
+      const at = a.atout!;
+      const info = ATOUTS[at];
+      if (e.atouts?.includes(at)) return null;
+      const prix = at === "pausecafe" && e.solo ? info.prixSolo ?? info.prix : info.prix;
+      const d: Description = { invite: "atout", detail: `${info.nom} — ${formatArgent(prix)}`, prix, id: a.id };
+      if (at !== "pausecafe" && p && !p.courant) return { ...d, bloque: "Courant coupé" };
+      return d;
+    }
+    case "pap": {
+      const arme = e.enMain;
+      const d: Description = { invite: "pap", detail: `Micro-ondes Gratinator — ${formatArgent(a.prix)}`, prix: a.prix, id: a.id };
+      if (p && !p.courant) return { ...d, bloque: "Courant coupé" };
+      if (p && p.pap.etat !== "libre") return { ...d, bloque: "En cuisson" };
+      if (!arme || estMelee(arme)) return { ...d, bloque: "Prenez une arme à feu" };
+      if (ameliorees.has(arme)) return { ...d, bloque: "Déjà gratinée" };
+      return { ...d, detail: `Gratiner : ${STATS[arme].nom} — ${formatArgent(a.prix)}` };
+    }
+    case "courant":
+      if (p?.courant) return null;
+      return { invite: "courant", detail: "Rétablir le courant", prix: 0, id: a.id };
+    case "ingredient": {
+      if (p && p.quete.ingredients.includes(a.ingredient!)) return null;
+      if (a.ingredient === "truffe" && p && !p.courant) return null;
+      return { invite: "ingredient", detail: `Ramasser : ${NOMS_INGREDIENTS[a.ingredient!] ?? a.ingredient}`, prix: 0, id: a.id };
+    }
+    case "four": {
+      if (!p || p.quete.faite) return null;
+      const d: Description = { invite: "four", detail: "Cuisiner la Recette ultime", prix: 0, id: a.id };
+      if (p.quete.cuissonFinT) return { ...d, bloque: "En cuisson" };
+      if (!p.courant) return { ...d, bloque: "Courant coupé" };
+      if (p.quete.ingredients.length < 3) return { ...d, bloque: `Ingrédients ${p.quete.ingredients.length} / 3` };
+      return d;
     }
     case "mur": {
       const arme = a.arme!;
@@ -369,7 +486,9 @@ function descriptionAchat(a: Achat, e: EntreeInvite): (Omit<InviteZombies, "asse
       }
       if (possede(e.equip, arme)) {
         if (a.prixMunitions === undefined) return null;
-        return { invite: "acheter", detail: `Munitions ${STATS[arme].nom} — ${formatArgent(a.prixMunitions)}`, prix: a.prixMunitions, id: a.id };
+        const am = ameliorees.has(arme);
+        const prix = am ? PRIX_MUNITIONS_AMELIOREE : a.prixMunitions;
+        return { invite: "acheter", detail: `Munitions ${nomZombie(arme, am)} — ${formatArgent(prix)}`, prix, id: a.id };
       }
       return { invite: "acheter", detail: `${STATS[arme].nom} — ${formatArgent(a.prix)}`, prix: a.prix, id: a.id };
     }
@@ -377,9 +496,9 @@ function descriptionAchat(a: Achat, e: EntreeInvite): (Omit<InviteZombies, "asse
 }
 
 /**
- * Invite sous le viseur : un coéquipier à terre à ≤ 2,5 m passe avant tout (la relève se maintient), sinon l'achat le plus proche à portée (murs
- * à 2,5 m, portes à 3 m de leur segment, portes déjà ouvertes écartées). Le prix et l'argent disent si l'achat est possible ; le serveur
- * reste seul juge (ligne de vue, prérequis, partie en cours).
+ * Invite sous le viseur : un coéquipier à terre à ≤ 2,5 m passe avant tout (la relève se maintient), puis le plus proche des achats à portée
+ * (murs, objets à 2,5 m, portes à 3 m de leur segment, portes déjà ouvertes écartées), des fenêtres à reposer (≤ 2,2 m du côté intérieur) et
+ * des notes (≤ 1,8 m). Le prix et l'argent disent si l'achat est possible ; le serveur reste seul juge (ligne de vue, partie en cours).
  */
 export function inviteZombies(e: EntreeInvite): InviteZombies {
   let proche: CoequipierATerre | null = null;
@@ -389,14 +508,35 @@ export function inviteZombies(e: EntreeInvite): InviteZombies {
     if (d <= dMin) { dMin = d; proche = c; }
   }
   if (proche) return { invite: "reanimer", detail: `Réanimer ${proche.pseudo}`, prix: 0, assez: true, id: "", cible: proche.id };
-  for (const a of achatsProches([e.pos[0], e.pos[1]], e.portesOuvertes)) {
+  const candidats: { d: number; inv: InviteZombies }[] = [];
+  const p = e.partie ?? null;
+  for (const a of achatsProches([e.pos[0], e.pos[1]], {
+    ouvertes: e.portesOuvertes instanceof Set ? [...e.portesOuvertes] : e.portesOuvertes,
+    ...(p ? { boite: p.boite.emplacement, ingredientsPris: p.quete.ingredients, courant: p.courant } : {}),
+  })) {
     const d = descriptionAchat(a, e);
     if (!d) continue;
-    const { verrou, ...reste } = d;
-    // une porte verrouillée (prérequis fermé) ou un soin pas encore prêt ne s'achètent pas, même avec l'argent
-    return { ...reste, assez: e.argent >= d.prix && !verrou && !((e.soinDans ?? 0) > 0 && d.invite === "soin"), cible: null };
+    const { bloque, ...reste } = d;
+    const dist = a.genre === "porte" ? 0.5 : Math.hypot(a.position[0] - e.pos[0], a.position[1] - e.pos[1]);
+    candidats.push({ d: dist, inv: { ...reste, assez: e.argent >= d.prix && !bloque, cible: null, ...(bloque ? { bloque } : {}) } });
+    break;
   }
-  return INVITE_VIDE;
+  if (p) {
+    FENETRES.forEach((f, i) => {
+      const n = p.fenetres[i] ?? ZOMBIES.planches;
+      if (n >= ZOMBIES.planches) return;
+      const d = Math.hypot(f.dedans[0] - e.pos[0], f.dedans[1] - e.pos[1]);
+      if (d > ZOMBIES.reposePortee) return;
+      candidats.push({ d, inv: { invite: "reparer", detail: `Reposer les planches (${n} / ${ZOMBIES.planches})`, prix: 0, assez: true, id: f.id, cible: null } });
+    });
+  }
+  for (const n of NOTES) {
+    const d = Math.hypot(n.position[0] - e.pos[0], n.position[1] - e.pos[1]);
+    if (d <= 1.8) candidats.push({ d: d + 0.3, inv: { invite: "note", detail: "Lire la note", prix: 0, assez: true, id: `note:${n.id}`, cible: null } });
+  }
+  if (!candidats.length) return INVITE_VIDE;
+  candidats.sort((x, y) => x.d - y.d);
+  return candidats[0].inv;
 }
 
 /**

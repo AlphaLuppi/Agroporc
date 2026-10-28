@@ -19,6 +19,8 @@ const base = (): Equipement => ({ principale: "fusil_assaut", secondaire: "revol
 describe("garde-fous de types", () => {
   it("chaque arme est dans une seule catégorie", () => {
     for (const a of ARMES) {
+      // (v7) le pistolet à rayons, secondaire des zombies seulement, n'est dans aucune liste de l'arène
+      if (a === "rayon") { expect(estSecondaire(a)).toBe(false); continue; }
       const n = [estPrincipale(a), estSecondaire(a), estSpeciale(a)].filter(Boolean).length;
       expect(n, a).toBe(1);
       expect(estArmeFeu(a)).toBe(true);

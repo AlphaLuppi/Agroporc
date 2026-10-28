@@ -37,7 +37,9 @@ Le site (`npm run dev` à la racine) s'y connecte tout seul en dev (`ws://localh
 | `PDJ_FPS_ZOMBIES_ARGENT` | 500 | argent de départ ($) du mode zombies (essais) |
 | `PDJ_FPS_ZOMBIES_TOTAL` | selon la manche et les joueurs | nombre de tigres de la manche 1 (essais) |
 | `PDJ_FPS_ZOMBIES_PAUSE_MS` | 8 000 (décompte) / 10 000 (pauses) | durée du décompte de départ et des pauses entre manches ; le bilan de fin reste de 25 s |
-| `PDJ_FPS_ZOMBIES_GRIFFE` | selon la manche | dégâts de griffe imposés (ex. 100 : un seul coup met à terre ; le test de bout en bout utilise 20) |
+| `PDJ_FPS_ZOMBIES_GRIFFE` | 50 (selon la difficulté et le type) | dégâts de griffe imposés (ex. 100 : un seul coup met à terre ; le test de bout en bout utilise 20) |
+| `PDJ_FPS_ZOMBIES_TRUCK` | 5, 6 ou 7 au hasard | première manche du Truck Muche (essais) ; 0 = jamais |
+| `PDJ_FPS_ZOMBIES_COURANT` | (absent) | `1` : courant rétabli dès le départ (essais : atouts et Pack-a-Punch utilisables tout de suite) |
 
 `GET /sante` renvoie `{ ok, joueurs, enJeu, match, zombies: { joueurs, enJeu, phase, manche } }` (connectés, joueurs en arène, numéro du match, puis la salle des zombies tigres : deuxième salle du même serveur, 8 membres au plus lobby compris, une seule partie à la fois). Limites : messages ≤ 4 Ko, ≤ 90 messages/s par
 client (sinon `erreur flood` et fermeture), ping WebSocket toutes les 5 s (connexion morte fermée au bout de 10 s : un joueur parti ne reste pas en cible),
@@ -55,7 +57,14 @@ choisie à la reconnexion : l'interface renvoie `mode{zombies}` dès le `bienven
 zombies, dont le tic est sauté tant qu'elle est vide. Une partie de zombies : lobby (l'hôte, premier arrivé, lance) → décompte → manches séparées de pauses → bilan de 25 s → lobby ;
 un arrivant en cours de partie reste en attente et entre à la pause suivante. Les ids des tigres zombies sont `z<n>` (jamais ceux des tigres largués `t<n>` de l'arène, qui n'existent pas dans cette salle).
 
-## Protocole v6 (résumé)
+## Protocole v7 (résumé)
+
+La v7 refond le mode zombies façon Black Ops 1 (spec `docs/superpowers/specs/2026-10-28-zombies-bo1-design.md`) : `lancerPartie{difficulte?}`, `reparer{fenetre}`
+(reposer les planches), `equipement.ravitaille` accepte `"tout"` (munitions max), `Equipement.ameliorees` (armes passées au Pack-a-Punch), arme secondaire
+`rayon` (zombies seulement), snap `zombies` avec l'allure et le mode de chaque tigre (bits 4 à 7 des drapeaux) et `t` (le Truck Muche), `zombies{etat}` enrichi
+(difficulté, courant, boîte, Pack-a-Punch, planches des fenêtres, bonus au sol, effets, quête, Truck, murs achetés, atouts des joueurs), effets ponctuels `zevt`,
+`zombieMort.cause`, cible de tir `livraison` (le Truck). Variables d'essai en plus : `PDJ_FPS_ZOMBIES_TRUCK` (première manche du Truck, 0 = jamais) et
+`PDJ_FPS_ZOMBIES_COURANT=1` (courant rétabli au départ).
 
 Les ajouts de la v6 : `mode`, `lancerPartie`, `acheter{id}`, `reanimer{cible}`, `coup{o, d, cibles}` (ids de joueurs, de tigres largués `t<n>` ET de tigres zombies `z<n>` ; l'épée en frappe 3 au plus), `rejoindre` / `equiper`
 avec `melee?` ; en retour `salons`, `mode`, `zombies{etat}`, `argent`, `achat`, `zombieMort`, `snap.zombies`, `equipement.ravitaille`, `batiments` (portes achetées), cause de mort `tigre_zombie` et `coup{id, o, d, arme}`
@@ -99,8 +108,8 @@ s'y reconnecterait), un `next dev` pointé dessus (`NEXT_PUBLIC_FPS_WS_URL`) et 
 * `node scripts/fps/e2e_arene_v2.mjs` : `PDJ_FPS_ELSA_MIN_MS=6000` / `PDJ_FPS_ELSA_MAX_MS=7000`, avion des tigres et événements repoussés d'une heure ; entrée en arène, vue mutuelle, armes, kill confirmé par le serveur,
   killcam, couteau, épée (un troisième navigateur), glissade, conduite et tir d'un passager, Elsa, mini-carte et tableau des scores.
 * `node scripts/fps/e2e_arene_tigres.mjs` : avion toutes les 4 à 5 s, événements neutralisés ; avion, tigre sauvage et sort d'invocation.
-* `node scripts/fps/e2e_zombies.mjs` : `PDJ_FPS_ZOMBIES_ARGENT=2000`, `_TOTAL=3`, `_PAUSE_MS=10000`, `_GRIFFE=20` ; choix du mode, lobby, lancement par l'hôte, tigres, kill au pistolet,
-  achats (épée, mini Uzi, porte), joueur à terre relevé, coups d'épée, partie perdue, bilan, retour au lobby.
+* `node scripts/fps/e2e_zombies.mjs` : `PDJ_FPS_ZOMBIES_ARGENT=3000`, `_TOTAL=3`, `_PAUSE_MS=20000`, `_GRIFFE=5`, `_TRUCK=0` ; choix du mode, lobby, lancement par l'hôte, tigres, kill au pistolet,
+  achats (fusil à pompe, porte D1, mini Uzi), joueur à terre relevé, coups de couteau, fin de manche sans bonus, partie perdue, bilan, retour au lobby.
 
 ## Déploiement (VPS, Docker + Traefik)
 
@@ -114,7 +123,7 @@ ORIGINES=https://<domaine-du-site> docker compose up -d --build
 ```
 
 **Chaque version remplace la précédente sur le même hôte** (`wss://pdj-fps.toam.tech`) : client et serveur se déploient ENSEMBLE (fusion de la PR, déploiement Vercel du site, puis
-`docker compose up -d --build` sur le VPS, dossier `/opt/pdj-fps`) ; **la v6 (mode zombies, épée, par-dessus les tigres largués de la v5) change le protocole** : tant que l'un des deux côtés n'est pas à jour, l'autre reçoit
+`docker compose up -d --build` sur le VPS, dossier `/opt/pdj-fps`) ; **la v7 (zombies façon Black Ops 1, par-dessus la v6 du mode zombies et de l'épée) change le protocole** : tant que l'un des deux côtés n'est pas à jour, l'autre reçoit
 `erreur{version}` (« rechargez la page ») et la socket est fermée, donc l'arène entière est indisponible. Ne redéployer le VPS qu'au moment où le front de la même version part en production.
 `ORIGINES` doit inclure le site et le joker des previews Vercel. Le Dockerfile n'a besoin d'aucune copie en plus pour les zombies (les imports restent dans `lib/fps` et `lib/agroparc3d`).
 

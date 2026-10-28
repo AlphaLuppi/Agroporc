@@ -332,6 +332,35 @@ function geometrieTruck(): THREE.BufferGeometry {
   return fusion;
 }
 
+/**
+ * (v7, zombies) Le Truck Muche seul (manches de livraison) : la même géométrie que le Truck garé de l'arène, enseigne comprise ; avant = −z
+ * de son repère, origine au sol au centre. À libérer avec `dispose`.
+ */
+export function creerModeleTruckMuche(): { group: THREE.Group; materiaux: { ligne: THREE.LineBasicMaterial; fond: THREE.MeshBasicMaterial }; dispose(): void } {
+  const group = new THREE.Group();
+  const geo = enPiece(geometrieTruck());
+  const m = creerMateriaux(new THREE.Color(COULEUR_TRUCK));
+  group.add(new THREE.Mesh(geo.geo, m.fond), new THREE.LineSegments(geo.aretes, m.ligne));
+  const tex = textureEnseigne();
+  let enseigne: THREE.Mesh | null = null;
+  if (tex) {
+    enseigne = new THREE.Mesh(new THREE.PlaneGeometry(3.4, 0.5), new THREE.MeshBasicMaterial({ map: tex, transparent: true, side: THREE.DoubleSide }));
+    enseigne.position.set(TRUCK.largeur / 2 - 0.2, TRUCK.hauteur + 0.35, TRUCK.fenetreZ);
+    enseigne.rotation.y = Math.PI / 2;
+    group.add(enseigne);
+  }
+  return {
+    group, materiaux: m,
+    dispose() {
+      libererPiece(geo);
+      m.ligne.dispose(); m.fond.dispose();
+      if (enseigne) { enseigne.geometry.dispose(); (enseigne.material as THREE.Material).dispose(); }
+      tex?.dispose();
+      group.removeFromParent();
+    },
+  };
+}
+
 /** Texture de l'enseigne « LE TRUCK MUCHE » (null hors navigateur). */
 function textureEnseigne(): THREE.CanvasTexture | null {
   if (typeof document === "undefined") return null;

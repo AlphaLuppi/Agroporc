@@ -13,6 +13,7 @@
  * Tant qu'il n'est pas chargé (ou s'il ne se charge pas), un moteur synthétisé doux le remplace.
  */
 import type { ArmeFeuId, ArmeMeleeId } from "./protocole";
+import { ZOMBIES } from "./zombies-vagues";
 
 /** Voix de tigres en même temps au plus (zombies) : au-delà, un nouveau rugissement est ignoré. */
 export const VOIX_TIGRES_MAX = 4;
@@ -96,7 +97,7 @@ export interface Sons {
    * `mort` : cri plus court qui s'éteint (un tigre vient de tomber). Renvoie vrai si la voix a été jouée.
    */
   rugissementTigre(position?: PositionSon, mort?: boolean): boolean;
-  /** (zombies) Griffe d'un tigre : fouet de patte et choc sourd, spatialisé. */
+  /** (zombies) Coup de patte d'un tigre, joué au début de l'armement : feulement, puis griffes qui fendent l'air et choc au contact, spatialisé. */
   griffe(position?: PositionSon): void;
   /** (zombies) Achat accepté (caisse enregistreuse) ou refusé (buzz grave). */
   achat(ok: boolean): void;
@@ -104,6 +105,25 @@ export interface Sons {
   piece(): void;
   /** (zombies) Nouvelle manche : coup de tambour grave et cuivres qui montent. */
   manche(): void;
+  // ---- v7 (zombies façon Black Ops 1) ----
+  /** Fin de manche : accord grave qui retombe (la manche est gagnée, le calme revient). */
+  finManche(): void;
+  /** Manche de livraison du Truck Muche : sirène et accord menaçant. */
+  mancheTruck(): void;
+  /** Planche arrachée (craquement de bois) ou reposée (coups de marteau). */
+  planche(arrachee: boolean, position?: PositionSon): void;
+  /** Jingle d'un distributeur d'atout (quatre notes propres à chacun) et gorgée. */
+  jingleAtout(atout: "gratin" | "expresso" | "ristretto" | "pausecafe"): void;
+  /** Boîte mystère : boîte à musique (tirage) ou rire de la peluche. */
+  boite(genre: "tirage" | "peluche", position?: PositionSon): void;
+  /** Bonus ramassé (accord brillant) ; un bonus qui tombe (scintillement). */
+  bonus(ramasse: boolean, position?: PositionSon): void;
+  /** Courant rétabli : clac du disjoncteur, montée des néons. */
+  courant(): void;
+  /** Micro-ondes : bourdonnement pendant la cuisson, « ding » quand c'est prêt. */
+  microondes(pret: boolean, position?: PositionSon): void;
+  /** Annonce parlée (synthèse vocale du navigateur, en français, voix grave) : « Munitions max ! »… Sans voix disponible : rien. */
+  annonce(texte: string): void;
   dispose(): void;
 }
 
@@ -160,6 +180,7 @@ const CLICS_RECHARGE: Record<ArmeFeuId, Clic[]> = {
   pistolet: CLICS_PISTOLET, mitraillette: CLICS_MITRAILLETTE, pompe: CLICS_POMPE, sniper: CLICS_SNIPER,
   fusil_assaut: CLICS_FUSIL_ASSAUT, mitrailleuse: CLICS_MITRAILLEUSE, revolver: CLICS_REVOLVER, mini_uzi: CLICS_MINI_UZI,
   railgun: [], minigun: [], magnum_dore: [],
+  rayon: [{ t: 0.4, f: 900, g: 0.4 }, { t: 1.4, f: 1600, g: 0.35 }, { t: 2.4, f: 2200, g: 0.45 }],
 };
 
 /** Enregistrement du moteur (boucle de ralenti CC0) et réglages de sa lecture. */
@@ -256,6 +277,13 @@ const PROFILS_TIR: Record<ArmeFeuId, ProfilTir> = {
     b.ton(out, t, { dur: 0.3, type: "sine", f0: 88 * v, f1: 32, gain: 1 });
     b.ton(out, t + 0.02, { dur: 0.45, type: "triangle", f0: 2300, f1: 1900, gain: 0.12 });
     b.ton(out, t + 0.02, { dur: 0.3, type: "sine", f0: 3450, f1: 3300, gain: 0.05 });
+  },
+  /** (v7) Pistolet à rayons : « piou » de science-fiction qui descend, souffle électrique et petit grave. */
+  rayon(b, out, t, v) {
+    b.ton(out, t, { dur: 0.22, type: "square", f0: 1900 * v, f1: 240, gain: 0.22 });
+    b.ton(out, t, { dur: 0.18, type: "sine", f0: 1250 * v, f1: 160, gain: 0.35 });
+    b.bruit(out, t, { dur: 0.1, type: "bandpass", f0: 3500, f1: 1200, q: 1.2, gain: 0.25 });
+    b.ton(out, t + 0.02, { dur: 0.12, type: "sine", f0: 110 * v, f1: 50, gain: 0.4 });
   },
 };
 
@@ -903,10 +931,14 @@ export function creerSons(): Sons {
       if (!prete()) return;
       const out = sortie(position);
       const t = ctx!.currentTime + 0.001;
-      // fouet de patte (bruit passe-bande qui monte) puis claquement sourd de la frappe
-      bruit(out, t, { dur: 0.22, type: "bandpass", f0: 600, f1: 2600, q: 1.1, gain: 0.45, att: 0.1 });
-      bruit(out, t + 0.16, { dur: 0.14, type: "lowpass", f0: 1200, f1: 180, gain: 0.5 });
-      ton(out, t + 0.16, { dur: 0.18, type: "sine", f0: 110, f1: 45, gain: 0.45 });
+      // le coup s'annonce : feulement grave pendant l'armement (le tigre se cabre), puis la patte fend l'air et claque à l'instant du contact
+      // (`ZOMBIES.griffeArmeS`, le même que le serveur) : on l'entend venir, on a le temps de s'écarter
+      const c = ZOMBIES.griffeArmeS;
+      ton(out, t, { dur: c * 0.85, type: "sawtooth", f0: 95, f1: 70, gain: 0.22, att: 0.12 });
+      bruit(out, t, { dur: c * 0.85, type: "bandpass", f0: 420, f1: 300, q: 1.6, gain: 0.28, att: 0.15 });
+      bruit(out, t + c - 0.13, { dur: 0.16, type: "bandpass", f0: 700, f1: 3000, q: 1.1, gain: 0.5, att: 0.1 });
+      bruit(out, t + c, { dur: 0.14, type: "lowpass", f0: 1200, f1: 180, gain: 0.5 });
+      ton(out, t + c, { dur: 0.18, type: "sine", f0: 110, f1: 45, gain: 0.45 });
     },
     achat(ok) {
       if (!prete()) return;
@@ -940,8 +972,115 @@ export function creerSons(): Sons {
         ton(master!, t + 0.3 + i * 0.16, { dur: 0.6, type: "square", f0: f * 2, gain: 0.025, att: 0.04 });
       });
     },
+    finManche() {
+      if (!prete()) return;
+      const t = ctx!.currentTime + 0.001;
+      [330, 262, 196, 147].forEach((f, i) => {
+        ton(master!, t + i * 0.22, { dur: 0.9, type: "sawtooth", f0: f, gain: 0.06, att: 0.05 });
+        ton(master!, t + i * 0.22, { dur: 0.9, type: "sine", f0: f / 2, gain: 0.12, att: 0.05 });
+      });
+      ton(master!, t + 0.9, { dur: 1.6, type: "sine", f0: 65, f1: 50, gain: 0.5 });
+    },
+    mancheTruck() {
+      if (!prete()) return;
+      const t = ctx!.currentTime + 0.001;
+      // sirène qui monte et redescend deux fois, puis un accord diminué
+      for (let k = 0; k < 2; k++) ton(master!, t + k * 0.9, { dur: 0.85, type: "sawtooth", f0: 420, f1: 880, gain: 0.07, att: 0.05 });
+      [155, 185, 220].forEach((f) => ton(master!, t + 1.9, { dur: 1.4, type: "sawtooth", f0: f, gain: 0.06, att: 0.08 }));
+      ton(master!, t + 1.9, { dur: 1.2, type: "sine", f0: 70, f1: 40, gain: 0.6 });
+    },
+    planche(arrachee, position) {
+      if (!prete()) return;
+      const out = sortie(position);
+      const t = ctx!.currentTime + 0.001;
+      if (arrachee) {
+        bruit(out, t, { dur: 0.25, type: "bandpass", f0: 900, f1: 300, q: 1.4, gain: 0.8 });
+        bruit(out, t + 0.03, { dur: 0.12, type: "highpass", f0: 2500, gain: 0.35 });
+        ton(out, t, { dur: 0.2, type: "triangle", f0: 180, f1: 70, gain: 0.3 });
+      } else {
+        for (let k = 0; k < 3; k++) {
+          bruit(out, t + k * 0.12, { dur: 0.05, type: "bandpass", f0: 1400, q: 2, gain: 0.6 });
+          ton(out, t + k * 0.12, { dur: 0.06, type: "sine", f0: 240, f1: 120, gain: 0.35 });
+        }
+      }
+    },
+    jingleAtout(atout) {
+      if (!prete()) return;
+      const t = ctx!.currentTime + 0.001;
+      const airs: Record<string, number[]> = {
+        gratin: [196, 247, 294, 392], expresso: [523, 659, 784, 1047], ristretto: [330, 330, 415, 494], pausecafe: [392, 330, 392, 523],
+      };
+      (airs[atout] ?? airs.gratin).forEach((f, i) => {
+        ton(master!, t + i * 0.13, { dur: 0.22, type: "square", f0: f, gain: 0.05, att: 0.01 });
+        ton(master!, t + i * 0.13, { dur: 0.22, type: "triangle", f0: f * 2, gain: 0.04, att: 0.01 });
+      });
+      // gorgée et « ahhh »
+      bruit(master!, t + 0.7, { dur: 0.35, type: "lowpass", f0: 600, f1: 200, gain: 0.25 });
+      ton(master!, t + 1.05, { dur: 0.45, type: "sine", f0: 220, f1: 160, gain: 0.12, att: 0.05 });
+    },
+    boite(genre, position) {
+      if (!prete()) return;
+      const out = sortie(position);
+      const t = ctx!.currentTime + 0.001;
+      if (genre === "tirage") {
+        // boîte à musique : arpège cristallin qui ralentit
+        const notes = [1047, 1319, 1568, 2093, 1568, 1319, 1175, 1568, 1976, 1568, 1319, 1047];
+        let dt = 0;
+        notes.forEach((f, i) => {
+          ton(out, t + dt, { dur: 0.35, type: "sine", f0: f, gain: 0.08, att: 0.003 });
+          ton(out, t + dt, { dur: 0.2, type: "triangle", f0: f * 2, gain: 0.02, att: 0.003 });
+          dt += 0.18 + i * 0.022;
+        });
+      } else {
+        // rire de la peluche : « ha ha ha » nasal qui descend
+        for (let k = 0; k < 5; k++) {
+          ton(out, t + k * 0.17, { dur: 0.12, type: "sawtooth", f0: 330 - k * 25, f1: 260 - k * 25, gain: 0.08, att: 0.01 });
+          bruit(out, t + k * 0.17, { dur: 0.1, type: "bandpass", f0: 1100, q: 3, gain: 0.12 });
+        }
+      }
+    },
+    bonus(ramasse, position) {
+      if (!prete()) return;
+      const out = sortie(position);
+      const t = ctx!.currentTime + 0.001;
+      if (ramasse) {
+        [523, 784, 1047, 1568].forEach((f, i) => ton(out, t + i * 0.05, { dur: 0.5, type: "triangle", f0: f, gain: 0.08, att: 0.01 }));
+      } else {
+        for (let k = 0; k < 6; k++) ton(out, t + k * 0.06, { dur: 0.12, type: "sine", f0: 1800 + k * 250, gain: 0.04, att: 0.005 });
+      }
+    },
+    courant() {
+      if (!prete()) return;
+      const t = ctx!.currentTime + 0.001;
+      bruit(master!, t, { dur: 0.15, type: "lowpass", f0: 1200, f1: 200, gain: 0.9 });
+      ton(master!, t, { dur: 0.2, type: "square", f0: 90, f1: 60, gain: 0.25 });
+      ton(master!, t + 0.25, { dur: 2.2, type: "sawtooth", f0: 50, f1: 120, gain: 0.08, att: 0.3 });
+      ton(master!, t + 0.25, { dur: 2.2, type: "sine", f0: 100, f1: 240, gain: 0.06, att: 0.3 });
+    },
+    microondes(pret, position) {
+      if (!prete()) return;
+      const out = sortie(position);
+      const t = ctx!.currentTime + 0.001;
+      if (pret) ton(out, t, { dur: 1.2, type: "sine", f0: 1760, gain: 0.12, att: 0.003 });
+      else ton(out, t, { dur: 3.4, type: "sawtooth", f0: 118, f1: 122, gain: 0.05, att: 0.2 });
+    },
+    annonce(texte) {
+      if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+      try {
+        const u = new SpeechSynthesisUtterance(texte);
+        u.lang = "fr-FR";
+        u.pitch = 0.45;
+        u.rate = 0.92;
+        u.volume = 0.9;
+        const voix = window.speechSynthesis.getVoices().find((v) => v.lang.startsWith("fr"));
+        if (voix) u.voice = voix;
+        window.speechSynthesis.cancel();
+        window.speechSynthesis.speak(u);
+      } catch { /* synthèse indisponible : silence */ }
+    },
     dispose() {
       fini = true;
+      if (typeof window !== "undefined" && "speechSynthesis" in window) { try { window.speechSynthesis.cancel(); } catch { /* rien */ } }
       if (typeof window !== "undefined") for (const g of GESTES) window.removeEventListener(g, reveiller, { capture: true });
       if (frottement) {
         try { frottement.src.stop(); } catch { /* déjà arrêté */ }

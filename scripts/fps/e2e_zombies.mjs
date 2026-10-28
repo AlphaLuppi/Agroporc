@@ -1,18 +1,19 @@
 #!/usr/bin/env node
 /**
  * Test de bout en bout du mode zombies (tigres) de l'arène FPS (vue Palantir) : DEUX navigateurs Chromium headless contre un `serveur-fps` local
- * (variables d'essai : argent 2 000 $, 3 tigres à la manche 1, pauses de 10 s, griffe de 20) et un `next dev` local, pilotés par `window.__arene`.
+ * (variables d'essai : argent 3 000 $, 3 tigres à la manche 1, décompte et pauses de 20 s, griffe de 5, jamais de manche du Truck Muche) et un `next dev`
+ * local, pilotés par `window.__arene`. Carte « Service de midi » (v7) : départ dans l'open space du Pôle R&D.
  *
  * Scénario (chaque étape imprime OK / ÉCHEC, des captures sont prises en route) :
  *  1. vue 3D (code « myrtille »), choix du mode « Zombies tigres » par les deux joueurs, lobby : liste des joueurs, badge « hôte », bouton « Lancer la partie »
  *     actif pour l'hôte seulement
  *  2. le second ne peut pas lancer (même par le crochet), l'hôte lance : les deux entrent en jeu (équipement de départ : pistolet + couteau)
- *  3. achat d'une arme au mur (l'épée, 500 $) avant l'arrivée des tigres : débit confirmé par le serveur
+ *  3. achat d'une arme au mur (le fusil à pompe de l'open space, 500 $) avant l'arrivée des tigres : débit confirmé par le serveur
  *  4. HUD de manche et d'argent, des tigres dans le snap des deux joueurs
  *  5. un tigre abattu au pistolet : touches confirmées par le serveur, argent crédité (touches puis kill)
  *  6. un joueur à terre (griffes), relevé par l'autre en maintenant E (3 s) : écran « À terre », aucun message `mort`, compteur de relèves
- *  7. coup d'épée sur les tigres (cibles « z<n> », dégâts de mêlée), fin de la manche 1 : bonus, pause
- *  8. pendant la pause : achat du mini Uzi (il remplace le pistolet) puis d'une porte (P1) : message `batiments` reçu par les deux, porte ouverte
+ *  7. coups de couteau sur les tigres (cibles « z<n> », 150 dégâts : un coup tue à la manche 1), fin de la manche 1 sans bonus (BO1), pause
+ *  8. pendant la pause : achat de la porte D1 (salle de pause) : message `batiments` reçu par les deux, puis du mini Uzi derrière (il remplace le pistolet)
  *  9. manche 2 : partie perdue quand les deux sont à terre, bilan affiché, « Rejouer » ramène au lobby, la salle repasse au lobby
  * 10. aucune erreur JavaScript ni `erreur` du serveur, aucune WebSocket coupée en partie
  *
@@ -22,13 +23,14 @@
  *             à faire coïncider avec NEXT_PUBLIC_FPS_WS_URL d'un Next déjà lancé), E2E_PAGE (page qui monte le code « myrtille », défaut une 404 : aucune
  *             lecture de la base), E2E_HEADED=1, E2E_GARDER=1 (laisse les serveurs lancés par le script), E2E_JUSQUA=5 (s'arrête après l'étape 5),
  *             E2E_SEULES=1,3 (ne joue que ces étapes ; la 1 et la 2 sont toujours jouées, elles font entrer les joueurs), E2E_DEBUG=1 (trace des gestes),
- *             E2E_GRIFFE (dégâts de griffe, défaut 20 : cinq griffes couchent un joueur de 100 PV, ce qui laisse au joueur qui frappe à l'épée le temps
- *             de plusieurs coups malgré le rendu logiciel ; 100 = une seule griffe), E2E_TOTAL (tigres de la manche 1, défaut 3), E2E_PAUSE (décompte et pauses, défaut 10 000 ms).
+ *             E2E_GRIFFE (dégâts de griffe, défaut 5 : vingt griffes couchent un joueur de 100 PV, ce qui laisse au joueur qui frappe à l'épée le temps
+ *             de plusieurs coups malgré le rendu logiciel ; 100 = une seule griffe), E2E_TOTAL (tigres de la manche 1, défaut 3), E2E_PAUSE (décompte et pauses, défaut 20 000 ms).
  * Code de sortie : 0 si toutes les étapes passent, 1 sinon.
  *
- * Stratégie : les tigres (4,2 m/s à la manche 1) sont plus lents que les joueurs, que le script déplace par téléportation. Alice fuit au point de la cour
- * le plus éloigné dès qu'ils approchent à moins de 14 m ; Bob attend dans la cour Ouest, fermée par des portes (les tigres, qui suivent le chemin le
- * plus court vers un joueur debout, ne l'y trouvent pas : le serveur ne contrôle que les bornes et la vitesse) et sert d'appât à l'étape 6.
+ * Stratégie : les tigres de la manche 1 marchent (3 m/s) et doivent d'abord arracher les six planches d'une fenêtre ; le script déplace les joueurs par
+ * téléportation. Alice fuit au point de l'open space le plus éloigné dès qu'ils approchent à moins de 9 m ; Bob attend dehors, hors de toute zone de
+ * jeu (les tigres n'apparaissent que dans les zones occupées et leurs voisines, et un tigre entré ne ressort pas par une fenêtre : le serveur ne contrôle
+ * que les bornes et la vitesse) et sert d'appât à l'étape 6.
  *
  * À savoir : `teleporter` ne change que la position CLIENT et le serveur refuse tout saut plus grand que sa vitesse permise (le script déplace par
  * sauts de 40 m au plus, chacun attendu chez l'autre joueur : un saut de 40 m prend ~2 s) ; les fenêtres sont réduites en combat (rendu logiciel
@@ -46,27 +48,31 @@ import { fileURLToPath } from "node:url";
 const RACINE = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const SORTIE = process.env.E2E_OUT ?? join(tmpdir(), "pdj-e2e-zombies");
 const PAGE = process.env.E2E_PAGE ?? "/arene-e2e-introuvable";
-const GRIFFE = process.env.E2E_GRIFFE ?? "20";
+const GRIFFE = process.env.E2E_GRIFFE ?? "5";
+const ARGENT = process.env.E2E_ARGENT ?? "3000";
 /** Tigres de la manche 1 (3 : un tué au pistolet, un à l'épée, le dernier sert d'appât à la relève). */
 const TOTAL = process.env.E2E_TOTAL ?? "3";
 /** Décompte de départ et pauses entre manches (ms) : assez longs pour acheter le mini Uzi et une porte entre deux manches. */
-const PAUSE = process.env.E2E_PAUSE ?? "10000";
+const PAUSE = process.env.E2E_PAUSE ?? "20000";
 
-// Repères de la carte « Cour des Restos » (lib/fps/zombies-carte.ts, mètres)
-/** Points de départ des joueurs dans la cour Centre : libres, à 2,5 m au moins des murs. */
-const DEPARTS = [[126.5, -53], [142.5, -30.5], [109.5, -35.5], [107.5, -56], [147, -67.5], [120, -45], [135, -38], [130, -62]];
-const CENTRE_COUR = [128, -50];
-const ACHAT_EPEE = [147.6, -62.1];
-const ACHAT_UZI = [136.3, -72.8];
-/** Porte P1 (G3 : (148.1, −37.3) → (145.1, −26.5)) : point à 2 m du côté de la cour Centre. */
-const ACHAT_P1 = (() => {
-  const p = [148.1, -37.3], q = [145.1, -26.5];
-  const l = Math.hypot(q[0] - p[0], q[1] - p[1]);
-  let n = [-(q[1] - p[1]) / l, (q[0] - p[0]) / l];
-  const m = [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2];
-  if ((CENTRE_COUR[0] - m[0]) * n[0] + (CENTRE_COUR[1] - m[1]) * n[1] < 0) n = [-n[0], -n[1]];
-  return [m[0] + n[0] * 2, m[1] + n[1] * 2];
-})();
+// Repères de la carte « Service de midi » (lib/fps/zombies-carte.ts, mètres)
+/** Points de départ des joueurs : l'open space du Pôle R&D (bâtiment 72). */
+const DEPARTS = [[107.35, -27.36], [112.64, -25.84], [117.92, -24.33], [123.69, -22.67], [113.52, -29.65], [119.81, -31.27], [125.79, -18.74], [105.82, -23.84]];
+const CENTRE_COUR = [116, -25];
+/** Fusil à pompe (open space), mini Uzi (salle de pause, derrière D1). */
+const ACHAT_POMPE = [106.4, -27.8];
+const ACHAT_UZI = [131.1, -24.3];
+/** Porte D1 (open space → salle de pause) : point d'achat côté open space. */
+const ACHAT_D1 = [127.3, -21.9];
+/** Bob attend dehors, hors de toute zone (aucun tigre n'y naît ni n'y vient), à 55 m de l'open space et 26 m de la fenêtre la plus proche. */
+const ZONE_BOB_DEHORS = [68, 10];
+/** Alice attend dehors elle aussi pendant que Bob sert d'appât (ni zone, ni fenêtre à moins de 20 m). */
+const ZONE_ALICE_DEHORS = [60, 14];
+/** Fenêtres de l'open space : point d'arrivée des tigres dehors, poste de tir 3 m à l'intérieur (dedans + normale × 3). */
+const FENETRES_OPEN = [
+  { id: "F1", dehors: [109.05, -20.59], poste: [110.66, -26.27] },
+  { id: "F2", dehors: [119.63, -17.58], poste: [121.24, -23.26] },
+];
 
 // ---------------------------------------------------------------------------------------------------------------- utilitaires
 
@@ -281,7 +287,8 @@ try {
       cwd: join(RACINE, "serveur-fps"),
       env: {
         ...process.env, PORT: String(portWs), SCENE_JSON: join(RACINE, "public/agroparc/scene.json"),
-        PDJ_FPS_ZOMBIES_ARGENT: "2000", PDJ_FPS_ZOMBIES_TOTAL: TOTAL, PDJ_FPS_ZOMBIES_PAUSE_MS: PAUSE, PDJ_FPS_ZOMBIES_GRIFFE: GRIFFE,
+        PDJ_FPS_ZOMBIES_ARGENT: ARGENT, PDJ_FPS_ZOMBIES_TOTAL: TOTAL, PDJ_FPS_ZOMBIES_PAUSE_MS: PAUSE, PDJ_FPS_ZOMBIES_GRIFFE: GRIFFE,
+        PDJ_FPS_ZOMBIES_TRUCK: "0",
       },
     });
     await attendreHttp(`http://localhost:${portWs}/sante`, 20_000, "serveur-fps").catch((e) => { throw new Error(`${e.message}\n${srv.journal.join("")}`); });
@@ -384,11 +391,11 @@ try {
    * Bob attend dans la cour Ouest, fermée par des portes tant qu'on n'a pas acheté P3 / P4 : les tigres, qui suivent le chemin le plus court vers
    * le joueur debout le plus proche, ne l'y trouvent pas (le serveur ne contrôle que les bornes et la vitesse, pas les murs). Alice est seule à fuir.
    */
-  const ZONE_BOB = [80, -60];
+  const ZONE_BOB = ZONE_BOB_DEHORS;
   /** Saut de Bob vers la cour Ouest, en cours après la relève (attendu à la fin de la manche). */
   let bobParti = Promise.resolve();
-  /** Points sûrs d'Alice : les huit départs de la cour Centre (le premier, au sud-est, est le plus loin de l'entrée des tigres). */
-  const SPOTS = [[135, -38], ...DEPARTS.filter((d) => d[0] !== 135)];
+  /** Points sûrs d'Alice : les huit départs de l'open space. */
+  const SPOTS = DEPARTS;
   /** Distance (m) du tigre le plus proche d'Alice ; 999 sans tigre. */
   async function menace() {
     const s = await A.jeu().catch(() => null);
@@ -396,8 +403,8 @@ try {
     const tg = await tigresProches(A, plat(s.p));
     return tg.length ? tg[0].d : 999;
   }
-  /** Alice saute au point sûr le plus éloigné des tigres (et à plus de `loinDe` m de là où elle est) : les tigres vont à 4,2 m/s. */
-  async function fuir({ loinDe = 12 } = {}) {
+  /** Alice saute au point sûr le plus éloigné des tigres (et à plus de `loinDe` m de là où elle est) : les tigres marchent à 3 m/s. */
+  async function fuir({ loinDe = 6 } = {}) {
     const tg = await tigresProches(A, CENTRE_COUR);
     const moi = plat((await A.jeu()).p);
     let meilleur = null;
@@ -438,7 +445,7 @@ try {
   async function acheter(id, pos) {
     for (let essai = 0; ; essai++) {
       const tg = await tigresProches(A, pos);
-      if (!tg.length || tg[0].d > 22) break;
+      if (!tg.length || tg[0].d > 12) break;
       if (essai >= 6) throw new Error(`les tigres restent trop près de l'achat ${id} (${tg[0].d.toFixed(0)} m)`);
       await fuir();
       await dormir(500);
@@ -472,29 +479,28 @@ try {
     verifier(p.joueurs.every((x) => x.admis && x.etat === "debout"), `joueurs non admis : ${JSON.stringify(p.joueurs)}`);
     for (const j of joueurs) {
       const s = await j.jeu();
-      verifier(dist(plat(s.p), CENTRE_COUR) < 45, `${j.nom} apparu loin de la cour Centre : ${s.p.map((x) => x.toFixed(0))}`);
+      verifier(dist(plat(s.p), CENTRE_COUR) < 15, `${j.nom} apparu loin de l'open space : ${s.p.map((x) => x.toFixed(0))}`);
     }
-    return `phase ${p.phase}, manche ${p.manche}, A à ${dist(plat((await A.jeu()).p), CENTRE_COUR).toFixed(0)} m du centre de la cour`;
+    return `phase ${p.phase}, manche ${p.manche}, A à ${dist(plat((await A.jeu()).p), CENTRE_COUR).toFixed(0)} m du centre de l'open space`;
   });
   if (!enJeu) throw new Error("la partie ne démarre pas : scénario interrompu");
 
   // ------------------------------------------------------------------ 3. première arme au mur, avant l'arrivée des tigres
   // Les apparitions attendent que tous soient en jeu, puis 3 s de grâce, et le trajet depuis l'entrée dure plus de 8 s : on met ce temps à profit.
-  await etape("3. achat d'une arme au mur (l'épée, 500 $) avant l'arrivée des tigres : débit confirmé par le serveur", async () => {
-    // Bob file tout de suite dans la cour Ouest (hors d'atteinte des tigres) ; Alice achète l'épée (le point d'achat est à ~33 m de l'entrée)
+  await etape("3. achat d'une arme au mur (le fusil à pompe, 500 $) avant l'arrivée des tigres : débit confirmé par le serveur", async () => {
+    // Bob file tout de suite dehors, hors de toute zone (hors d'atteinte des tigres) ; Alice achète le fusil à pompe dessiné à la craie
     const bobParti = aller(B, A, ZONE_BOB);
     const avant = (await A.jeu()).argent;
-    verifier(avant === 2000, `argent de départ ${avant} au lieu de 2000`);
+    verifier(avant === Number(ARGENT), `argent de départ ${avant} au lieu de ${ARGENT}`);
     verifier((await A.jeu()).slot !== "principale", "le joueur a une arme principale au départ");
-    const prix = await acheter("mur:epee", ACHAT_EPEE);
-    verifier(prix === 500, `épée à ${prix} $`);
+    const prix = await acheter("mur:pompe", ACHAT_POMPE);
+    verifier(prix === 500, `fusil à pompe à ${prix} $`);
     await bobParti;
     const slots = (await A.jeu()).slots;
-    verifier(JSON.stringify(slots).includes("epee"), `l'épée n'est pas dans les slots : ${JSON.stringify(slots)}`);
+    verifier(JSON.stringify(slots).includes("pompe"), `le fusil à pompe n'est pas dans les slots : ${JSON.stringify(slots)}`);
     const apres = (await A.jeu()).argent;
     verifier(apres === avant - 500, `argent ${avant} → ${apres}`);
-    // une seconde demande sur le même mur : l'épée n'a pas de munitions, le serveur refuse sans débiter (« deja »)
-    await A.capture("03-epee-achetee-A-1280");
+    await A.capture("03-pompe-achetee-A-1280");
     return `${avant} → ${apres} $, slots ${JSON.stringify(slots).slice(0, 110)}`;
   });
 
@@ -529,12 +535,22 @@ try {
     const depuis = Date.now();
     const argentAvant = (await A.jeu()).argent;
     for (const j of joueurs) await j.reduire(true);
-    await aller(A, B, SPOTS[0]);
-    await A.appui("Digit2", 100);
-    await jusqua(async () => (await A.jeu()).slot === "secondaire", { quoi: "pistolet en main" });
+    // l'open space est petit : Alice fuit les tigres pendant qu'elle sort le pistolet (un tigre sorti du sol peut déjà être à 8 m)
+    if ((await menace()) < 9) await fuir();
+    await jusqua(async () => {
+      const s = await A.jeu();
+      verifier(s && s.vivant, `Alice à terre avant le tir : ${A.resume(depuis)}`);
+      if (s.slot === "secondaire") return true;
+      if ((await menace()) < 9) await fuir();
+      await A.appui("Digit2", 100);
+      await dormir(600);
+      return false;
+    }, { ms: 30_000, pas: 50, quoi: "pistolet en main" });
     let tire = 0;
     const fin = Date.now() + 80_000;
     let tue = null;
+    // comme dans BO1 : on tire les tigres pendant qu'ils arrachent les planches (immobiles derrière la fenêtre, les balles passent) ;
+    // un tigre déjà entré est tiré tant qu'il est à plus de 4,5 m, sinon Alice fuit
     while (Date.now() < fin && !tue) {
       const s = await A.jeu();
       verifier(s && s.vivant, `Alice à terre pendant le tir : ${A.resume(depuis)}`);
@@ -542,11 +558,20 @@ try {
       if (tue) break;
       const tg = await tigresProches(A);
       if (!tg.length) { await dormir(200); continue; }
-      if ((await menace()) < 14) { await fuir(); continue; }
+      const entres = tg.filter((t) => t.mode === "chasse" || t.mode === "saut");
+      if (entres.length && entres[0].d < 4.5) { await fuir(); continue; }
+      const aLaFenetre = tg.find((t) => t.mode === "fenetre");
+      let cible = entres[0] ?? tg[0];
+      if (aLaFenetre && !(entres.length && entres[0].d < 12)) {
+        // se poster face à la fenêtre du tigre, 3 m à l'intérieur
+        const f = FENETRES_OPEN.slice().sort((x, y) => dist(x.dehors, [aLaFenetre.x, aLaFenetre.z]) - dist(y.dehors, [aLaFenetre.x, aLaFenetre.z]))[0];
+        if (dist(plat(s.p), f.poste) > 1.5) { trace(`poste devant ${f.id}`); await aller(A, B, f.poste, 1.5); continue; }
+        cible = aLaFenetre;
+      }
       if (s.slot !== "secondaire") { await A.appui("Digit2", 80); await dormir(700); continue; }
       if (s.munitions === 0) { await A.appui("KeyR", 80); await dormir(1700); continue; }
-      trace(`tir sur ${tg[0].id} à ${tg[0].d.toFixed(0)} m, tigres ${JSON.stringify(tg.map((t) => +t.d.toFixed(0)))}`);
-      await viserTigre(A, tg[0]);
+      trace(`tir sur ${cible.id} (${cible.mode}) à ${cible.d.toFixed(0)} m, tigres ${JSON.stringify(tg.map((t) => [+t.d.toFixed(0), t.mode]))}`);
+      await viserTigre(A, cible);
       await A.appui("Souris0", 60);
       tire++;
       await dormir(170);
@@ -554,7 +579,7 @@ try {
     await fuir(); // les deux autres tigres arrivent
     verifier(tue, `aucun tigre abattu au pistolet en 80 s (${tire} tirs ; ${A.resume(depuis)} ; tigres ${JSON.stringify((await tigresProches(A)).map((t) => [t.id, +t.x.toFixed(0), +t.z.toFixed(0)]))})`);
     const touches = A.msgs("degats", depuis).filter((m) => typeof m.cible === "string" && m.cible.startsWith("z") && m.par === idA);
-    verifier(touches.length >= 2 && touches.reduce((n, m) => n + m.degats, 0) >= 100, `touches confirmées sur des tigres insuffisantes pour un kill (100 PV) : ${JSON.stringify(touches)}`);
+    verifier(touches.length >= 2 && touches.reduce((n, m) => n + m.degats, 0) >= 150, `touches confirmées sur des tigres insuffisantes pour un kill (150 PV) : ${JSON.stringify(touches)}`);
     verifier(touches.every((m) => m.degats > 0 && m.pv >= 0), `dégâts de tigre incohérents : ${JSON.stringify(touches.slice(0, 3))}`);
     const gains = A.msgs("argent", depuis).filter((m) => m.delta > 0);
     verifier(gains.some((m) => m.motif === "touche") && gains.some((m) => m.motif === "kill"), `gains inattendus : ${JSON.stringify(gains)}`);
@@ -572,15 +597,14 @@ try {
     const depuis = Date.now();
     let tg = await tigresProches(A);
     verifier(tg.length >= 1, "plus aucun tigre : la manche est finie, pas d'appât pour la relève");
-    // Alice au point de la cour le plus loin des tigres
-    const loin = SPOTS.slice().sort((x, y) => dist([tg[0].x, tg[0].z], y) - dist([tg[0].x, tg[0].z], x))[0];
-    await aller(A, B, loin);
-    // Bob saute à 5 m du tigre le plus proche, côté Alice (sur leur chemin) : il devient la cible la plus proche
+    // Alice sort de l'open space (dehors, hors de toute zone : aucun tigre n'y va) ; Bob saute à 3 m du tigre le plus proche, il devient
+    // la seule cible des tigres
+    await aller(A, B, ZONE_ALICE_DEHORS);
     tg = await tigresProches(A);
     const t = tg[0];
-    const posA = plat((await A.jeu()).p);
-    const n = dist([t.x, t.z], posA) || 1;
-    const posB = [t.x + ((posA[0] - t.x) / n) * 5, t.z + ((posA[1] - t.z) / n) * 5];
+    const vers = DEPARTS[2];
+    const n = dist([t.x, t.z], vers) || 1;
+    const posB = [t.x + ((vers[0] - t.x) / n) * 3, t.z + ((vers[1] - t.z) / n) * 3];
     await aller(B, A, posB, 4);
     // Bob est couché par les tigres
     await jusqua(async () => (await B.moiPartie())?.etat === "terre", { ms: 25_000, pas: 200, quoi: async () => `Bob à terre (${B.resume(depuis)} ; tigres ${JSON.stringify((await tigresProches(A)).map((x) => [x.id, +x.x.toFixed(0), +x.z.toFixed(0)]))} ; Bob ${JSON.stringify((await B.jeu())?.p.map((x) => +x.toFixed(0)))})` });
@@ -589,10 +613,9 @@ try {
     await B.page.locator("section[aria-label='À terre']").waitFor({ state: "visible", timeout: 8000 }).catch(() => { throw new Error("l'écran « À terre » ne s'affiche pas chez Bob"); });
     await B.capture("06-a-terre-B-1280");
     const posBobMort = plat((await B.jeu()).p);
-    // Alice sort l'épée (dégaînage ~0,8 s) puis attend que les tigres soient à 12 m d'elle, avant de sauter à côté de Bob
+    // Alice sort le couteau (dehors, à l'abri) puis saute à côté de Bob
     await A.appui("Digit3", 100);
-    await jusqua(async () => (await A.jeu()).slot === "couteau", { quoi: "épée en main avant la relève" });
-    await jusqua(async () => { const x = await tigresProches(A); return x.length && x[0].d < 12; }, { ms: 40_000, pas: 100, quoi: "les tigres viennent vers Alice" });
+    await jusqua(async () => (await A.jeu()).slot === "couteau", { quoi: "couteau en main avant la relève" });
     await aller(A, B, [posBobMort[0] + 1.2, posBobMort[1]], 1.5);
     trace("Alice près de Bob", `tigres à ${(await tigresProches(A)).map((x) => x.d.toFixed(0))} m`);
     // E maintenu : pendant ces 3 s la garde à l'épée tourne déjà (les tigres reviennent)
@@ -617,10 +640,10 @@ try {
   });
 
   // ------------------------------------------------------------------ 7. coup d'épée
-  await etape("7. coup d'épée sur les tigres : cibles « z<n> » envoyées, dégâts de mêlée confirmés, kills, fin de manche (bonus) puis pause", async () => {
+  await etape("7. coups de couteau sur les tigres : cibles « z<n> » envoyées, dégâts de mêlée confirmés, kills, fin de manche (sans bonus) puis pause", async () => {
     const idA = await A.id();
     const depuis = Date.now() - 6000; // les premiers coups ont pu partir pendant la relève
-    await jusqua(async () => { const s = await A.jeu(); return s.slot === "couteau" && s.arme === "epee"; }, { quoi: async () => `épée en main (slot ${(await A.jeu()).slot}, arme ${(await A.jeu()).arme})` });
+    await jusqua(async () => { const s = await A.jeu(); return s.slot === "couteau" && s.arme === "couteau"; }, { quoi: async () => `couteau en main (slot ${(await A.jeu()).slot}, arme ${(await A.jeu()).arme})` });
     // La garde à l'épée tourne depuis la relève (étape 6) : on la poursuit jusqu'à la fin de la manche
     const fin = Date.now() + 90_000;
     let n = 0, dernierNCoups = 0;
@@ -644,43 +667,42 @@ try {
     const coupTigre = coups.find((c) => c.cibles.some((x) => /^z\d+$/.test(x)));
     verifier(coupTigre, `aucun message coup avec une cible de tigre : ${JSON.stringify(coups.slice(0, 3))}`);
     const degats = A.msgs("degats", depuis).filter((m) => typeof m.cible === "string" && m.cible.startsWith("z"));
-    verifier(degats.some((m) => m.degats >= 200), `dégâts d'épée (220) non confirmés : ${JSON.stringify(degats.slice(0, 3))}`);
+    verifier(degats.some((m) => m.degats >= 150), `dégâts de couteau (150) non confirmés : ${JSON.stringify(degats.slice(0, 3))}`);
     const kills = A.msgs("zombieMort", depuis).filter((m) => m.par === idA);
-    verifier(kills.length >= 1, "aucun tigre tué à l'épée");
+    verifier(kills.length >= 1, "aucun tigre tué au couteau");
     const gains = A.msgs("argent", depuis).filter((m) => m.delta > 0);
-    verifier(gains.some((m) => m.motif === "kill" && m.delta >= 100), `gain de kill à l'épée (100 $ au moins) absent : ${JSON.stringify(gains)}`);
-    const bonus = gains.find((m) => m.motif === "manche");
-    verifier(bonus && bonus.delta === 125, `bonus de fin de manche attendu (125 $) : ${JSON.stringify(gains)}`);
+    verifier(gains.some((m) => m.motif === "kill" && m.delta === 130), `gain de kill au couteau (130 $) absent : ${JSON.stringify(gains)}`);
+    verifier(!gains.some((m) => m.motif === "manche"), `bonus de fin de manche inattendu (BO1 n'en donne pas) : ${JSON.stringify(gains)}`);
     verifier((await B.partie()).phase === "pause", "Bob ne voit pas la pause");
-    await A.capture("07-epee-A-1280");
+    await A.capture("07-couteau-A-1280");
     return `${coups.length} coup(s), cibles ${JSON.stringify(coupTigre.cibles)}, dégâts ${degats.map((m) => m.degats).join("+")}, ${kills.length} kill(s), gains ${gains.map((m) => `${m.motif} +${m.delta}`).join(", ")} ; pause avant la manche 2`;
   });
 
   // ------------------------------------------------------------------ 8. mini Uzi puis porte (pendant la pause)
-  await etape("8. achat du mini Uzi (il remplace le pistolet) puis d'une porte (P1) pendant la pause : message `batiments` reçu par les deux, porte ouverte", async () => {
+  await etape("8. pendant la pause : porte D1 (750 $) : message `batiments` reçu par les deux, porte ouverte ; puis le mini Uzi derrière (il remplace le pistolet)", async () => {
     await bobParti;
     const argentAvant = (await A.jeu()).argent;
-    const prixUzi = await acheter("mur:mini_uzi", ACHAT_UZI);
-    verifier(prixUzi === 500, `mini Uzi à ${prixUzi} $`);
-    const slots = JSON.stringify((await A.jeu()).slots);
-    verifier(/mini_uzi/.test(slots) && !/pistolet/.test(slots), `le mini Uzi devrait remplacer le pistolet : ${slots}`);
     const depuis = Date.now();
-    const prixPorte = await acheter("P1", ACHAT_P1);
-    verifier(prixPorte === 750, `porte P1 à ${prixPorte} $`);
+    const prixPorte = await acheter("D1", ACHAT_D1);
+    verifier(prixPorte === 750, `porte D1 à ${prixPorte} $`);
     for (const j of joueurs) {
       const m = await jusqua(async () => j.msgs("batiments", depuis).find((x) => !x.complet && x.detruits?.length), { ms: 6000, quoi: `message batiments{detruits} reçu par ${j.nom}` });
       verifier(m.detruits.length >= 1, `batiments sans bâtiment détruit : ${JSON.stringify(m)}`);
     }
     const detruits = A.msgs("batiments", depuis).find((x) => !x.complet).detruits;
-    const porte = await jusqua(async () => { const p = (await B.partie())?.portes?.find((x) => x.id === "P1"); return p?.ouverte ? p : false; }, { ms: 6000, quoi: "porte P1 ouverte dans l'état de la partie chez Bob" });
+    const porte = await jusqua(async () => { const p = (await B.partie())?.portes?.find((x) => x.id === "D1"); return p?.ouverte ? p : false; }, { ms: 6000, quoi: "porte D1 ouverte dans l'état de la partie chez Bob" });
+    const prixUzi = await acheter("mur:mini_uzi", ACHAT_UZI);
+    verifier(prixUzi === 1000, `mini Uzi à ${prixUzi} $`);
+    const slots = JSON.stringify((await A.jeu()).slots);
+    verifier(/mini_uzi/.test(slots) && !/pistolet/.test(slots), `le mini Uzi devrait remplacer le pistolet : ${slots}`);
     const argentApres = (await A.jeu()).argent;
     await A.capture("08-porte-ouverte-A-1280");
-    return `mini Uzi ${prixUzi} $ + porte P1 ${prixPorte} $ (${argentAvant} → ${argentApres} $), prismes détruits ${JSON.stringify(detruits)}, P1 ${JSON.stringify(porte)}`;
+    return `porte D1 ${prixPorte} $ + mini Uzi ${prixUzi} $ (${argentAvant} → ${argentApres} $), prismes détruits ${JSON.stringify(detruits)}, D1 ${JSON.stringify(porte)}`;
   });
 
   // ------------------------------------------------------------------ 9. partie perdue, retour au lobby
   await etape("9. partie perdue quand les deux sont à terre : bilan affiché, « Rejouer » ramène au lobby", async () => {
-    // Alice et Bob s'immobilisent ensemble au sud-est : les tigres de la manche 2 arrivent et les couchent
+    // Alice et Bob s'immobilisent ensemble dans l'open space : les tigres de la manche 2 arrivent et les couchent
     await Promise.all([aller(A, B, SPOTS[0]), aller(B, A, [SPOTS[0][0] + 3, SPOTS[0][1] + 3])]);
     await jusqua(async () => (await A.partie())?.phase === "fin", { ms: 120_000, pas: 250, quoi: async () => `partie perdue (phase ${(await A.partie())?.phase} ; joueurs ${JSON.stringify((await A.partie())?.joueurs?.map((x) => [x.pseudo, x.etat]))} ; tigres ${JSON.stringify((await tigresProches(A)).map((x) => +x.d.toFixed(0)))})` });
     for (const j of joueurs) await j.reduire(false); // fenêtres à leur taille normale pour le bilan

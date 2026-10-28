@@ -1,24 +1,39 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { aleaGraine } from "../agroparc3d/cachettes";
 import type { SceneData } from "../agroparc3d/types";
 import { construireMonde, detruireBatiment, lancerRayon, resoudre } from "./collision";
 import { FORME_TIGRE, pointLocal } from "./monstres";
-import { invaliderNavigation } from "./navigation";
+import { carteNavigation, invaliderNavigation } from "./navigation";
 import { PAS_SNAP_ZOMBIE, decoderZombies, type Vec3 } from "./protocole";
-import { creerSimuZombies, type EvenementZombie, type JoueurZombie } from "./zombies";
-import { DEPARTS, FENETRES, construireMondeZombies, idPrisme, porteDeId } from "./zombies-carte";
-import { ZOMBIES, degatsGriffe, pvZombie } from "./zombies-vagues";
+import { creerSimuZombies, porteePatte, touchePatte, type ArriveeZombie, type Barricades, type EvenementZombie, type JoueurZombie, type SpecZombie } from "./zombies";
+import { DEPARTS, construireMondeZombies, fenetreDeId, idPrisme } from "./zombies-carte";
+import { ZOMBIES, degatsGriffe, echelleZombie, pvZombie, rechargeGriffe, vitesseAllure, type Allure, type TypeZombie } from "./zombies-vagues";
 
 const scene = JSON.parse(readFileSync("public/agroparc/scene.json", "utf8")) as SceneData;
 const DT = 1 / 60;
+const CHASSE: ArriveeZombie = { mode: "chasse" };
 
 const moitie = () => 0.5;
+/** Spec d'un tigre de la manche `n` (allure imposée, hasard de vitesse à 0,5). */
+function spec(n: number, type: TypeZombie = 0, allure: Allure = 0): SpecZombie {
+  return { type, manche: n, pv: pvZombie(n, type), allure, vitesse: vitesseAllure(allure, 0.5, type), degats: degatsGriffe(type), rechargeGriffeS: rechargeGriffe(type) };
+}
+/** Barricades d'essai : `planches` par fenêtre (6 par défaut), arrachages comptés. */
+function barricades(depart: number = ZOMBIES.planches): Barricades & { etat: Map<string, number>; arrachees: string[] } {
+  const etat = new Map<string, number>();
+  const arrachees: string[] = [];
+  return {
+    etat, arrachees,
+    planches: (f) => etat.get(f) ?? depart,
+    arracher: (f) => { etat.set(f, Math.max(0, (etat.get(f) ?? depart) - 1)); arrachees.push(f); },
+  };
+}
 function neuf(extra: Partial<Parameters<typeof creerSimuZombies>[0]> = {}) {
   const monde = construireMondeZombies(scene);
   return { monde, simu: creerSimuZombies({ monde, alea: moitie, ...extra }) };
 }
 const joueur = (id: string, x: number, z: number, vivant = true): JoueurZombie => ({ id, p: [x, 0, z], vivant });
+const dist = (a: Vec3, b: Vec3) => Math.hypot(a[0] - b[0], a[2] - b[2]);
 
 /** Fait tourner la simulation `secondes` à 60 Hz ; `chaque` est appelé à chaque tic avec t (ms). */
 function courir(simu: ReturnType<typeof creerSimuZombies>, t0: number, secondes: number, joueurs: JoueurZombie[], chaque?: (t: number) => void): { t: number; evenements: (EvenementZombie & { t0: number })[] } {
@@ -32,97 +47,202 @@ function courir(simu: ReturnType<typeof creerSimuZombies>, t0: number, secondes:
   return { t, evenements };
 }
 
+// Cour Centre : dehors, au sud de l'open space ; le joueur y est hors de portée de toute fenêtre
+const COUR: [number, number] = [128, -55];
+
 describe("apparition et état", () => {
-  it("numérote les tigres, tire PV / vitesse / échelle de la manche, plafond de 24", () => {
+  it("numérote les tigres, garde la spec (PV, allure, vitesse, griffe), échelle du type, plafond de 24", () => {
     const { simu } = neuf();
-    const a = simu.apparaitre(0, [116.3, -83.9], 3, 0)!;
-    const b = simu.apparaitre(1, [118, -89.7], 5, 0)!;
-    const c = simu.apparaitre(2, [119.6, -95.5], 10, 0)!;
-    expect([a, b, c]).toEqual([1, 2, 3]);
-    expect(simu.zombie(a)).toMatchObject({ pv: pvZombie(3, 0), pvMax: 200, vitesse: 5.5, echelle: 2.7, type: 0, manche: 3 });
-    expect(simu.zombie(b)).toMatchObject({ pv: pvZombie(5, 1), vitesse: 7 * 1.2, echelle: 2.7 });
-    expect(simu.zombie(c)).toMatchObject({ pv: pvZombie(10, 2), vitesse: 8.6 * 0.8, echelle: 3.4 });
-    expect(simu.zombie(a)!.p).toEqual([116.3, 0, -83.9]);
-    for (let k = 3; k < ZOMBIES.plafondVivants; k++) expect(simu.apparaitre(0, [118, -89.7], 1, 0)).not.toBeNull();
+    const a = simu.apparaitre(spec(3), COUR, CHASSE, 0)!;
+    const b = simu.apparaitre(spec(5, 1, 1), [130, -58], CHASSE, 0)!;
+    const c = simu.apparaitre(spec(10, 2, 1), [124, -58], { mode: "sol" }, 0)!;
+    const d = simu.apparaitre(spec(10, 3, 2), [132, -52], CHASSE, 0)!;
+    expect([a, b, c, d]).toEqual([1, 2, 3, 4]);
+    expect(simu.zombie(a)).toMatchObject({ pv: 350, pvMax: 350, vitesse: 3.0, echelle: 2.7, type: 0, manche: 3, allure: 0, mode: "chasse", degats: 50 });
+    expect(simu.zombie(b)).toMatchObject({ pv: pvZombie(5, 1), vitesse: 6.2, echelle: echelleZombie(1), allure: 1 });
+    expect(simu.zombie(c)).toMatchObject({ pv: pvZombie(10, 2), echelle: 3.4, mode: "sol", degats: 80 });
+    expect(simu.zombie(d)).toMatchObject({ vitesse: 10, echelle: 1.5, degats: 30, rechargeGriffeS: 0.8 });
+    expect(simu.zombie(a)!.p).toEqual([128, 0, -55]);
+    for (let k = 4; k < ZOMBIES.plafondVivants; k++) expect(simu.apparaitre(spec(1), COUR, CHASSE, 0)).not.toBeNull();
     expect(simu.nbVivants()).toBe(24);
-    expect(simu.apparaitre(0, [118, -89.7], 1, 0)).toBeNull();
+    expect(simu.apparaitre(spec(1), COUR, CHASSE, 0)).toBeNull();
     simu.reinitialiser();
     expect(simu.nbVivants()).toBe(0);
-    expect(simu.apparaitre(0, [118, -89.7], 1, 0)).toBe(1); // numérotation repartie de 1
+    expect(simu.apparaitre(spec(1), COUR, CHASSE, 0)).toBe(1); // numérotation repartie de 1
   });
 
-  it("la vitesse utilise le hasard injecté (± 8 %)", () => {
-    const bas = neuf({ alea: () => 0 }), haut = neuf({ alea: () => 0.9999 });
-    const vb = bas.simu.zombie(bas.simu.apparaitre(0, [118, -89.7], 5, 0)!)!.vitesse;
-    const vh = haut.simu.zombie(haut.simu.apparaitre(0, [118, -89.7], 5, 0)!)!.vitesse;
-    expect(vb).toBeCloseTo(7 * 0.92, 6);
-    expect(vh).toBeCloseTo(7 * 1.08, 2);
+  it("changerAllure : le dernier tigre sprinte, le rampant ralentit", () => {
+    const { simu } = neuf();
+    const id = simu.apparaitre(spec(4), COUR, CHASSE, 0)!;
+    simu.changerAllure(id, 2, 8.4);
+    expect(simu.zombie(id)).toMatchObject({ allure: 2, vitesse: 8.4 });
+    simu.changerAllure(id, 3, 1.4);
+    expect(simu.zombie(id)).toMatchObject({ allure: 3, vitesse: 1.4 });
+    simu.changerAllure(999, 2, 8); // inconnu : sans effet
+    expect(simu.retirer(id)).toBe(true);
+    expect(simu.retirer(id)).toBe(false);
+  });
+});
+
+describe("sortie du sol", () => {
+  it("immobile pendant la sortie (1,6 s), puis en chasse ; pas de griffe avant la fin de l'apparition", () => {
+    const { simu } = neuf();
+    const j = joueur("j1", COUR[0] + 1.5, COUR[1]);
+    const id = simu.apparaitre(spec(1), COUR, { mode: "sol" }, 0)!;
+    const z = simu.zombie(id)!;
+    const r = courir(simu, 0, 1.5, [j]);
+    expect(z.mode).toBe("sol");
+    expect([z.p[0], z.p[2]]).toEqual(COUR);
+    expect(r.evenements).toEqual([]);
+    const r2 = courir(simu, r.t, 1.5, [j]);
+    expect(z.mode).toBe("chasse");
+    expect(r2.evenements.some((e) => e.t === "griffeArmee")).toBe(true);
+  });
+});
+
+describe("fenêtres barricadées", () => {
+  it("approche de la fenêtre N2c, arrache les 6 planches au rythme de son allure, saute, puis chasse dans la cour", () => {
+    const b = barricades();
+    const { monde, simu } = neuf({ barricades: b });
+    const f = fenetreDeId("N2c")!;
+    const j = joueur("j1", ...COUR);
+    const id = simu.apparaitre(spec(1), f.points[0], { mode: "fenetre", fenetre: f }, 0)!;
+    const z = simu.zombie(id)!;
+    const modes: string[] = [];
+    const { evenements } = courir(simu, 0, 30, [j], () => {
+      if (modes[modes.length - 1] !== z.mode) modes.push(z.mode);
+      if (z.mode !== "saut") expect(resoudre(monde, [z.p[0], 0, z.p[2]], 0.55, 2, false).contacts, `${z.mode} p = ${z.p}`).toHaveLength(0);
+    });
+    expect(modes).toEqual(["approche", "fenetre", "saut", "chasse"]);
+    const planches = evenements.filter((e) => e.t === "planche");
+    expect(planches).toHaveLength(6);
+    expect(b.arrachees).toEqual(Array(6).fill("N2c"));
+    // une planche toutes les 1,4 s pour un marcheur
+    for (let k = 1; k < planches.length; k++) expect(planches[k].t0 - planches[k - 1].t0).toBeCloseTo(ZOMBIES.arrachageS[0] * 1000, -2);
+    const saut = evenements.find((e) => e.t === "saut")!;
+    expect(saut).toMatchObject({ tigre: id, fenetre: "N2c" });
+    expect(saut.t0 - planches[5].t0).toBeLessThan(100);
+    // entré, il rejoint le joueur
+    expect(dist(z.p, j.p)).toBeLessThan(2.5);
+    expect((z.p[0] - f.milieu[0]) * f.normale[0] + (z.p[2] - f.milieu[1]) * f.normale[1]).toBeGreaterThan(0);
+  });
+
+  it("fenêtre sans planche : il saute dès l'arrivée ; un sprinteur arrache plus vite (0,9 s)", () => {
+    const b = barricades(0);
+    const { simu } = neuf({ barricades: b });
+    const f = fenetreDeId("N2c")!;
+    const id = simu.apparaitre(spec(1), f.dehors, { mode: "fenetre", fenetre: f }, 0)!;
+    const r = courir(simu, 0, 0.5, [joueur("j1", ...COUR)]);
+    expect(r.evenements.find((e) => e.t === "saut")).toMatchObject({ tigre: id });
+    expect(r.evenements.some((e) => e.t === "planche")).toBe(false);
+
+    const b2 = barricades(2);
+    const s2 = neuf({ barricades: b2 });
+    s2.simu.apparaitre(spec(8, 0, 2), f.dehors, { mode: "fenetre", fenetre: f }, 0);
+    const r2 = courir(s2.simu, 0, 3, [joueur("j1", ...COUR)]);
+    const pl = r2.evenements.filter((e) => e.t === "planche");
+    expect(pl).toHaveLength(2);
+    expect(pl[1].t0 - pl[0].t0).toBeCloseTo(ZOMBIES.arrachageS[2] * 1000, -2);
+  });
+
+  it("un joueur collé derrière la fenêtre se fait griffer à travers, et le tigre cesse d'arracher pendant ce temps", () => {
+    const b = barricades();
+    const { simu } = neuf({ barricades: b });
+    const f = fenetreDeId("N2c")!;
+    const j = joueur("j1", f.milieu[0] + f.normale[0] * 0.7, f.milieu[1] + f.normale[1] * 0.7);
+    simu.apparaitre(spec(1), f.dehors, { mode: "fenetre", fenetre: f }, 0);
+    const { evenements } = courir(simu, 0, 4, [j]);
+    expect(evenements.some((e) => e.t === "griffe")).toBe(true);
+    expect(b.etat.get("N2c") ?? 6).toBeGreaterThan(3);
+  });
+
+  it("entré, un tigre en chasse ne ressort pas par une fenêtre ; un petit du Truck, lui, la franchit d'un bond", () => {
+    const f = fenetreDeId("N2c")!;
+    const dehors = f.points[1];
+    const j = joueur("j1", dehors[0], dehors[1]);
+    const dedans: [number, number] = [f.dedans[0] - f.normale[0] * -3, f.dedans[1] - f.normale[1] * -3];
+    const { simu } = neuf();
+    const id = simu.apparaitre(spec(1), dedans, CHASSE, 0)!;
+    courir(simu, 0, 12, [j]);
+    const z = simu.zombie(id)!;
+    expect((z.p[0] - f.milieu[0]) * f.normale[0] + (z.p[2] - f.milieu[1]) * f.normale[1]).toBeGreaterThan(0);
+    const s2 = neuf();
+    const p = s2.simu.apparaitre(spec(5, 3, 2), dedans, CHASSE, 0)!;
+    courir(s2.simu, 0, 6, [j]);
+    expect(dist(s2.simu.zombie(p)!.p, j.p)).toBeLessThan(2.5);
   });
 });
 
 describe("marche", () => {
-  it("part de N2c, ne traverse aucun mur et rejoint le joueur (vitesse conforme, griffe à l'arrivée)", () => {
+  it("rejoint le joueur dans la cour sans traverser de mur ni dépasser sa vitesse", () => {
     const { monde, simu } = neuf();
-    const id = simu.apparaitre(0, [116.3, -83.9], 1, 0)!;
-    const j = joueur("j1", ...(DEPARTS[0] as [number, number]));
+    const id = simu.apparaitre(spec(1, 0, 1), [118, -70], CHASSE, 0)!;
+    const j = joueur("j1", 140, -50);
     const z = simu.zombie(id)!;
     let vmax = 0, dernier: Vec3 = [...z.p];
-    const { evenements } = courir(simu, 0, 30, [j], () => {
-      expect(resoudre(monde, [z.p[0], 0, z.p[2]], 0.55, 2, true).contacts, `p = ${z.p}`).toHaveLength(0);
-      vmax = Math.max(vmax, Math.hypot(z.p[0] - dernier[0], z.p[2] - dernier[2]) / DT);
+    const { evenements } = courir(simu, 0, 15, [j], () => {
+      expect(resoudre(monde, [z.p[0], 0, z.p[2]], 0.55, 2, false).contacts, `p = ${z.p}`).toHaveLength(0);
+      vmax = Math.max(vmax, dist(z.p, dernier) / DT);
       dernier = [...z.p];
     });
-    expect(Math.hypot(z.p[0] - j.p[0], z.p[2] - j.p[2])).toBeLessThan(2.5);
-    expect(vmax).toBeLessThan(4.2 * 1.05); // jamais plus vite que sa vitesse de manche 1
+    expect(dist(z.p, j.p)).toBeLessThan(2.5);
+    expect(vmax).toBeLessThan(6.2 * 1.05);
     expect(evenements.some((e) => e.t === "griffeArmee")).toBe(true);
   });
 
-  it("bloqué par une barricade fermée, passe quand elle est détruite (grille recalculée)", () => {
+  it("une porte fermée coupe la cour de l'open space ; une fois ouverte (grille recalculée), le tigre passe", () => {
     const { monde, simu } = neuf();
-    const f = FENETRES.find((x) => x.id === "S2c")!;
-    const j = joueur("j1", ...(DEPARTS[1] as [number, number])); // cour Centre
-    const id = simu.apparaitre(0, f.points[1], 1, 0)!;
+    const j = joueur("j1", ...(DEPARTS[2] as [number, number])); // open space
+    const id = simu.apparaitre(spec(1, 0, 1), COUR, CHASSE, 0)!;
     const z = simu.zombie(id)!;
-    const dist = () => Math.hypot(z.p[0] - j.p[0], z.p[2] - j.p[2]);
-    const r1 = courir(simu, 0, 25, [j]);
-    expect(dist()).toBeGreaterThan(15); // resté dehors, collé au long mur du bâtiment 72
-    // P1 achetée : G3 et S2 détruits, serveur : invalidation puis rafraîchissement
-    for (const pr of porteDeId("P1")!.prismes) detruireBatiment(monde, idPrisme(pr));
+    const r1 = courir(simu, 0, 15, [j]);
+    expect(dist(z.p, j.p)).toBeGreaterThan(6);
+    detruireBatiment(monde, idPrisme("D2"));
     invaliderNavigation(monde);
     simu.rafraichirCarte();
-    courir(simu, r1.t, 45, [j]);
-    expect(dist()).toBeLessThan(2.5);
+    courir(simu, r1.t, 20, [j]);
+    expect(dist(z.p, j.p)).toBeLessThan(2.5);
+  });
+
+  it("failsafe : un tigre qui ne se rapproche plus, à plus de 25 m de tout joueur, est signalé bloqué après 30 s", () => {
+    const { simu } = neuf();
+    const id = simu.apparaitre(spec(1), [76, -68], CHASSE, 0)!; // cour Ouest, fermée
+    // il longe le mur vers le joueur pendant ~12 s, puis ne progresse plus : signalé 30 s plus tard
+    const { evenements } = courir(simu, 0, 45, [joueur("j1", ...(DEPARTS[2] as [number, number]))]);
+    const b = evenements.filter((e) => e.t === "bloque");
+    expect(b).toHaveLength(1);
+    expect(b[0]).toMatchObject({ tigre: id });
+    expect(b[0].t0).toBeGreaterThanOrEqual(30_000 + 10_000);
   });
 
   it("ne bouge pas sans joueur debout ; ignore les joueurs à terre", () => {
     const { simu } = neuf();
-    const id = simu.apparaitre(0, [116.3, -83.9], 1, 0)!;
+    const id = simu.apparaitre(spec(1), COUR, CHASSE, 0)!;
     const z = simu.zombie(id)!;
     const p0: Vec3 = [...z.p];
     courir(simu, 0, 2, []);
-    courir(simu, 2000, 2, [joueur("j1", 126.5, -53, false)]);
+    courir(simu, 2000, 2, [joueur("j1", 135, -53, false)]);
     expect(z.p).toEqual(p0);
-    expect(courir(simu, 4000, 1, [joueur("j1", 126.5, -53, false)]).evenements).toEqual([]);
+    expect(courir(simu, 4000, 1, [joueur("j1", 135, -53, false)]).evenements).toEqual([]);
   });
 
-  it("séparation : des tigres lancés du même point s'écartent d'au moins ~1,3 m", () => {
+  it("séparation : des tigres lancés du même point s'écartent d'au moins ~1,2 m et avancent vers le joueur", () => {
     const { simu } = neuf();
-    const j = joueur("j1", 109.5, -35.5);
-    for (let k = 0; k < 8; k++) simu.apparaitre(0, [146 + (k % 3) * 0.1, -52 + Math.floor(k / 3) * 0.1], 1, 0);
+    const j = joueur("j1", 140, -50);
+    for (let k = 0; k < 8; k++) simu.apparaitre(spec(1, 0, 1), [124 + (k % 3) * 0.1, -60 + Math.floor(k / 3) * 0.1], CHASSE, 0);
     courir(simu, 0, 2, [j]);
     const l = simu.liste();
     let mini = Infinity;
-    for (let a = 0; a < l.length; a++) for (let b = a + 1; b < l.length; b++) mini = Math.min(mini, Math.hypot(l[a].p[0] - l[b].p[0], l[a].p[2] - l[b].p[2]));
+    for (let a = 0; a < l.length; a++) for (let b = a + 1; b < l.length; b++) mini = Math.min(mini, dist(l[a].p, l[b].p));
     expect(mini).toBeGreaterThan(1.2);
-    // et ils avancent vers le joueur
-    for (const z of l) expect(Math.hypot(z.p[0] - j.p[0], z.p[2] - j.p[2])).toBeLessThan(Math.hypot(146 - j.p[0], -52 - j.p[2]) + 0.5);
+    for (const z of l) expect(dist(z.p, j.p)).toBeLessThan(Math.hypot(124 - j.p[0], -60 - j.p[2]) + 0.5);
   });
 
   it("rotation limitée à 6 rad/s", () => {
     const { simu } = neuf();
-    const id = simu.apparaitre(0, [130, -50], 1, 0, 0)!;
+    const id = simu.apparaitre(spec(1), [126, -64], CHASSE, 0, 0)!;
     const z = simu.zombie(id)!;
-    const j = joueur("j1", 130, -30); // plein sud : cap voulu π
+    const j = joueur("j1", 126, -50); // plein sud : cap voulu π
     simu.tic(DT * 1000, DT, [j]); // 1ʳᵉ image : se tourne tout de suite (apparition)
     z.cap = 0;
     let t = DT * 1000;
@@ -139,89 +259,83 @@ describe("marche", () => {
 
 describe("champ de distance", () => {
   it("recalculé seulement si les cases des joueurs debout changent (et au plus toutes les 400 ms)", () => {
-    const { simu } = neuf();
-    simu.apparaitre(0, [116.3, -83.9], 1, 0);
-    const j = joueur("j1", 127.2, -52.4); // au milieu d'une case de 1,5 m
+    const { monde, simu } = neuf();
+    const c = carteNavigation(monde, ZOMBIES.rayonNav, { taille: ZOMBIES.tailleCaseNav });
+    simu.apparaitre(spec(1), [118, -70], CHASSE, 0);
+    // au milieu d'une case
+    const cx = c.x0 + (Math.floor((140 - c.x0) / c.taille) + 0.5) * c.taille, cz = c.z0 + (Math.floor((-50 - c.z0) / c.taille) + 0.5) * c.taille;
+    const j = joueur("j1", cx, cz);
     const r = courir(simu, 0, 3, [j]);
     expect(simu.diagnostic().calculsChamp).toBe(1); // une fois, joueur immobile
-    // un déplacement dans la même case ne recalcule pas, un changement de case oui (400 ms plus tard au plus)
-    j.p = [127.6, 0, -52.0];
+    j.p = [cx + 0.2, 0, cz - 0.2];
     const r2 = courir(simu, r.t, 1, [j]);
     expect(simu.diagnostic().calculsChamp).toBe(1);
-    j.p = [140, 0, -53];
+    j.p = [cx + 5, 0, cz];
     courir(simu, r2.t, 1, [j]);
     expect(simu.diagnostic().calculsChamp).toBe(2);
     // un joueur qui se déplace sans cesse : au plus un calcul par 400 ms
     const avant = simu.diagnostic().calculsChamp;
-    let x = 100;
-    courir(simu, r2.t + 1000, 2, [j], () => { x += 0.1; j.p = [x, 0, -53]; });
+    let x = 130;
+    courir(simu, r2.t + 1000, 2, [j], () => { x += 0.1; j.p = [x, 0, -50]; });
     expect(simu.diagnostic().calculsChamp - avant).toBeLessThanOrEqual(5);
     expect(simu.diagnostic().calculsChamp - avant).toBeGreaterThanOrEqual(2);
   });
 
-  it("un tigre qui apparaît entre deux calculs est couvert au calcul suivant", () => {
+  it("un tigre qui passe en chasse entre deux calculs est couvert au calcul suivant", () => {
     const { simu } = neuf();
-    const j = joueur("j1", 126.5, -53);
-    simu.apparaitre(0, [116.3, -83.9], 1, 0);
+    const j = joueur("j1", 140, -50);
+    simu.apparaitre(spec(1), [118, -70], CHASSE, 0);
     const r = courir(simu, 0, 1, [j]);
     const avant = simu.diagnostic().calculsChamp;
-    simu.apparaitre(0, [118, -89.7], 1, r.t);
+    simu.apparaitre(spec(1), [120, -72], CHASSE, r.t);
     courir(simu, r.t, 0.6, [j]);
     expect(simu.diagnostic().calculsChamp).toBeGreaterThan(avant);
   });
 });
 
 describe("griffe", () => {
-  it("arme 0,4 s puis donne les dégâts de la manche, recharge 1,0 s, puis recommence", () => {
+  it("arme 0,4 s puis donne les dégâts, recharge 1,0 s, puis recommence", () => {
     const { simu } = neuf();
-    const id = simu.apparaitre(0, [127.5, -53], 3, 0)!; // 1 m du joueur
-    const j = joueur("j1", 126.5, -53);
+    const id = simu.apparaitre(spec(3), [COUR[0] + 1, COUR[1]], CHASSE, 0)!; // 1 m du joueur
+    const j = joueur("j1", ...COUR);
     const { evenements } = courir(simu, 0, 4, [j]);
     const armees = evenements.filter((e) => e.t === "griffeArmee");
     const donnees = evenements.filter((e) => e.t === "griffe") as Extract<(typeof evenements)[number], { t: "griffe" }>[];
     expect(armees.length).toBeGreaterThanOrEqual(2);
     expect(armees[0]).toMatchObject({ tigre: id, joueur: "j1" });
-    // pas avant la fin de l'apparition (800 ms), puis 0,4 s d'armement
     expect(armees[0].t0).toBeGreaterThanOrEqual(ZOMBIES.apparitionMs - 20);
-    expect(donnees[0]).toMatchObject({ tigre: id, joueur: "j1", degats: degatsGriffe(3) });
+    expect(donnees[0]).toMatchObject({ tigre: id, joueur: "j1", degats: 50 });
     expect(donnees[0].t0 - armees[0].t0).toBeGreaterThanOrEqual(ZOMBIES.griffeArmeS * 1000 - 20);
     expect(donnees[0].t0 - armees[0].t0).toBeLessThan(ZOMBIES.griffeArmeS * 1000 + 60);
-    // recharge : 1,0 s entre la griffe donnée et l'armement suivante
     expect(armees[1].t0 - donnees[0].t0).toBeGreaterThanOrEqual(ZOMBIES.griffeRechargeS * 1000 - 20);
     expect(armees[1].t0 - donnees[0].t0).toBeLessThan(ZOMBIES.griffeRechargeS * 1000 + 60);
-    // le tigre s'est arrêté à portée, tourné vers le joueur
-    const z = simu.zombie(id)!;
-    expect(Math.hypot(z.p[0] - j.p[0], z.p[2] - j.p[2])).toBeLessThan(2.2);
+    expect(dist(simu.zombie(id)!.p, j.p)).toBeLessThan(2.2);
   });
 
-  it("dégâts imposés (essais) et drapeau « griffe armée » du snap", () => {
-    const { simu } = neuf({ degatsGriffe: 100 });
-    simu.apparaitre(0, [127.5, -53], 3, 0);
-    const j = joueur("j1", 126.5, -53);
+  it("dégâts de la spec (chef 80) et drapeau « griffe armée » du snap", () => {
+    const { simu } = neuf();
+    simu.apparaitre(spec(10, 2, 1), [COUR[0] + 1.5, COUR[1]], CHASSE, 0);
+    const j = joueur("j1", ...COUR);
     let drapeau = false;
-    const r = courir(simu, 0, 2, [j], () => {
-      const d = decoderZombies(simu.snap());
-      if (d[0].griffe) drapeau = true;
-    });
+    const r = courir(simu, 0, 2, [j], () => { if (decoderZombies(simu.snap())[0].griffe) drapeau = true; });
     expect(drapeau).toBe(true);
-    expect((r.evenements.find((e) => e.t === "griffe") as { degats: number }).degats).toBe(100);
+    expect((r.evenements.find((e) => e.t === "griffe") as { degats: number }).degats).toBe(80);
   });
 
   it("un tigre loin ne frappe pas ; un joueur qui s'écarte pendant l'armement n'est pas touché", () => {
     const { simu } = neuf();
-    simu.apparaitre(0, [140, -53], 1, 0); // 13,5 m
-    expect(courir(simu, 0, 1, [joueur("j1", 126.5, -53)]).evenements).toEqual([]);
-    // le joueur fuit dès que la griffe est armée (la suivante n'arrive qu'après la recharge)
+    simu.apparaitre(spec(1), [COUR[0] + 13, COUR[1]], CHASSE, 0);
+    expect(courir(simu, 0, 1, [joueur("j1", ...COUR)]).evenements).toEqual([]);
     const s2 = neuf();
-    s2.simu.apparaitre(0, [127.5, -53], 1, 0);
-    const j = joueur("j1", 126.5, -53);
+    s2.simu.apparaitre(spec(1), [COUR[0] + 1, COUR[1]], CHASSE, 0);
+    const j = joueur("j1", ...COUR);
     let armee = false;
     const { evenements } = courir(s2.simu, 0, 1.7, [j], () => {
-      if (!armee && s2.simu.liste()[0].armeFin > 0) { armee = true; j.p = [126.5 - 6, 0, -53]; }
+      if (!armee && s2.simu.liste()[0].armeFin > 0) { armee = true; j.p = [COUR[0] - 6, 0, COUR[1]]; }
     });
     expect(armee).toBe(true);
     expect(evenements.filter((e) => e.t === "griffe")).toEqual([]);
-    expect(s2.simu.liste()[0].armeFin).toBe(0); // l'armement a bien pris fin sans frapper
+    expect(s2.simu.liste()[0].armeFin).toBe(0);
   });
 
   it("un mur fin entre le tigre et le joueur arrête la griffe (pas de ligne de vue)", () => {
@@ -229,30 +343,82 @@ describe("griffe", () => {
     const ancre = (x: number, z: number) => ({ h: 5, r: [[x, z], [x + 1, z], [x + 1, z + 1]] as [number, number][], c: [x, z] as [number, number] });
     const monde = construireMonde({ ...scene, buildings: [ancre(-30, -30), ancre(30, 30), mur], pois: [] } as SceneData);
     const simu = creerSimuZombies({ monde, alea: moitie });
-    simu.apparaitre(0, [-0.9, 0], 1, 0);
-    const j = joueur("j1", 0.9, 0); // 1,8 m en ligne droite, 1,4 m de surface : à portée sans le mur
-    const { evenements } = courir(simu, 0, 3, [j]);
-    expect(evenements).toEqual([]);
-    // sans le mur, la même scène donne une griffe
+    simu.apparaitre(spec(1), [-0.9, 0], CHASSE, 0);
+    const j = joueur("j1", 0.9, 0);
+    expect(courir(simu, 0, 3, [j]).evenements.filter((e) => e.t !== "bloque")).toEqual([]);
     const libre = construireMonde({ ...scene, buildings: [ancre(-30, -30), ancre(30, 30)], pois: [] } as SceneData);
     const s2 = creerSimuZombies({ monde: libre, alea: moitie });
-    s2.apparaitre(0, [-0.9, 0], 1, 0);
+    s2.apparaitre(spec(1), [-0.9, 0], CHASSE, 0);
     expect(courir(s2, 0, 3, [j]).evenements.some((e) => e.t === "griffe")).toBe(true);
+  });
+
+  it("touchePatte : le balayage de la patte est un segment de l'axe du tigre, à l'échelle du type", () => {
+    const z = { p: [0, 0, 0] as Vec3, cap: 0, echelle: 2.7 }; // avant = −z
+    const r = ZOMBIES.griffeRayonM + ZOMBIES.griffeRayonPatte * 2.7;
+    expect(touchePatte(z, [0, 0, -1.2])).toBe(true);
+    expect(touchePatte(z, [r - 0.05, 0, -1.0])).toBe(true);
+    expect(touchePatte(z, [r + 0.05, 0, -1.0])).toBe(false); // un pas de côté
+    expect(touchePatte(z, [0, 0, -(0.5 * 2.7 + r + 0.05)])).toBe(false); // un pas en arrière
+    expect(touchePatte(z, [0, 0, 1.5])).toBe(false); // dans le dos
+    expect(touchePatte(z, [0, 0, -(0.5 * 2.7 + r + 0.5)], 1)).toBe(true); // à la fenêtre, la patte passe entre les planches
+    expect(porteePatte(2.7)).toBeCloseTo(0.5 * 2.7 + r, 9);
+    // le chef frappe plus loin, le petit moins
+    expect(porteePatte(3.4)).toBeGreaterThan(porteePatte(2.7));
+    expect(porteePatte(1.5)).toBeLessThan(porteePatte(2.7));
+  });
+
+  it("esquive : immobile devant le tigre on est touché ; un pas de côté ou en arrière pendant l'armement, la patte frappe dans le vide", () => {
+    const essai = (bouge: ((j: JoueurZombie, z: { p: Vec3; cap: number }) => void) | null) => {
+      const { simu } = neuf();
+      simu.apparaitre(spec(1), [COUR[0] + 1.4, COUR[1]], CHASSE, 0);
+      const j = joueur("j1", ...COUR);
+      let arme = false;
+      const { evenements } = courir(simu, 0, 1.6, [j], () => {
+        const z = simu.liste()[0];
+        if (!arme && z.armeFin > 0) { arme = true; bouge?.(j, z); }
+      });
+      expect(arme).toBe(true);
+      return evenements.filter((e) => e.t === "griffe").length;
+    };
+    expect(essai(null)).toBe(1);
+    // pas de côté de 1,3 m (perpendiculaire à l'axe du tigre)
+    expect(essai((j, z) => { const [fx, fz] = [-Math.sin(z.cap), -Math.cos(z.cap)]; j.p = [j.p[0] - fz * 1.3, 0, j.p[2] + fx * 1.3]; })).toBe(0);
+    // pas en arrière de 1,2 m
+    expect(essai((j, z) => { const [fx, fz] = [-Math.sin(z.cap), -Math.cos(z.cap)]; j.p = [j.p[0] + fx * 1.2, 0, j.p[2] + fz * 1.2]; })).toBe(0);
+  });
+
+  it("pendant l'armement le tigre ne tourne qu'à 0,6 rad/s : on peut le contourner", () => {
+    const { simu } = neuf();
+    const id = simu.apparaitre(spec(1), [COUR[0] + 1.4, COUR[1]], CHASSE, 0)!;
+    const z = simu.zombie(id)!;
+    const j = joueur("j1", ...COUR);
+    let prec: number | null = null;
+    let armees = 0;
+    courir(simu, 0, 1.5, [j], () => {
+      if (z.armeFin > 0) {
+        armees++;
+        // le joueur tourne autour du tigre
+        const a = Math.atan2(j.p[2] - z.p[2], j.p[0] - z.p[0]) + 0.08;
+        j.p = [z.p[0] + Math.cos(a) * 1.3, 0, z.p[2] + Math.sin(a) * 1.3];
+        if (prec !== null) expect(Math.abs(Math.atan2(Math.sin(z.cap - prec), Math.cos(z.cap - prec)))).toBeLessThanOrEqual(ZOMBIES.griffeRotationMax * DT + 1e-9);
+        prec = z.cap;
+      } else prec = null;
+    });
+    expect(armees).toBeGreaterThan(5);
   });
 
   it("griffe les joueurs debout seulement, le plus proche", () => {
     const { simu } = neuf();
-    simu.apparaitre(0, [127.5, -53], 1, 0);
-    const { evenements } = courir(simu, 0, 1.5, [joueur("a", 126.5, -53, false), joueur("b", 135, -53), joueur("c", 126.9, -52.5)]);
-    const e = evenements.find((x) => x.t === "griffeArmee")!;
-    expect(e.joueur).toBe("c");
+    simu.apparaitre(spec(1), [COUR[0] + 1, COUR[1]], CHASSE, 0);
+    const { evenements } = courir(simu, 0, 1.5, [joueur("a", ...COUR, false), joueur("b", COUR[0] + 9, COUR[1]), joueur("c", COUR[0] + 0.4, COUR[1] + 0.5)]);
+    expect(evenements.find((x) => x.t === "griffeArmee")!.joueur).toBe("c");
   });
 });
 
 describe("toucheZombie", () => {
   const tigreFixe = () => {
     const s = neuf();
-    const id = s.simu.apparaitre(0, [130, -62], 1, 0, 0)!;
+    const id = s.simu.apparaitre(spec(1), [130, -62], CHASSE, 0, 0)!;
     return { ...s, id, z: s.simu.zombie(id)! };
   };
   const tete = (z: { p: Vec3; cap: number; echelle: number }) => pointLocal([z.p[0], 0, z.p[2]], z.cap, z.echelle, 0, 0.47, 0.37);
@@ -269,64 +435,67 @@ describe("toucheZombie", () => {
     expect(hit.zone).toBe("corps");
     expect(hit.distance).toBeGreaterThan(10);
     expect(hit.distance).toBeLessThan(12);
-    // 3 m à côté : rate ; portée trop courte : rate ; id inconnu : null
     expect(simu.toucheZombie(id, oC, vers(oC, [c[0], c[1], c[2] + 4]), 50, 0)).toBeNull();
     expect(simu.toucheZombie(id, oC, vers(oC, c), 5, 0)).toBeNull();
     expect(simu.toucheZombie(999, oC, vers(oC, c), 50, 0)).toBeNull();
-    // l'échelle compte : la brute (3,4) est plus grosse, un rayon qui rase la patte la touche
+    // le chef (3,4) est plus gros que le tigre (2,7), le petit (1,5) plus petit
     const g = neuf();
-    const gid = g.simu.apparaitre(2, [130, -62], 10, 0, 0)!;
-    const gz = g.simu.zombie(gid)!;
-    const gc = corps(gz);
+    const gid = g.simu.apparaitre(spec(10, 2), [130, -62], CHASSE, 0, 0)!;
+    const gc = corps(g.simu.zombie(gid)!);
     expect(g.simu.toucheZombie(gid, [gc[0] - 12, gc[1], gc[2]], vers([gc[0] - 12, gc[1], gc[2]], gc), 50, 0)).not.toBeNull();
+    const p = neuf();
+    const pid = p.simu.apparaitre(spec(10, 3, 2), [130, -62], CHASSE, 0, 0)!;
+    const pc = corps(p.simu.zombie(pid)!);
+    const o: Vec3 = [pc[0] - 10, pc[1], pc[2]];
+    expect(p.simu.toucheZombie(pid, o, vers(o, pc), 50, 0)).not.toBeNull();
+    expect(p.simu.toucheZombie(pid, o, vers(o, [pc[0], pc[1] + 1.2, pc[2]]), 50, 0)).toBeNull();
   });
 
-  it("le tigre le plus gros reçoit les touches que le petit laisse passer (marge 0,25 m comprise)", () => {
+  it("marge de 0,25 m comprise", () => {
     const { simu, id, z } = tigreFixe();
     const c = corps(z);
     const o: Vec3 = [c[0] - 10, c[1], c[2]];
-    // à 0,12 × 2,7 + 0,25 = 0,57 m de l'axe de la sphère : touche ; à 0,7 m : rate
     expect(simu.toucheZombie(id, o, vers(o, [c[0], c[1], c[2] + 0.5]), 50, 0)).not.toBeNull();
     expect(simu.toucheZombie(id, o, vers(o, [c[0], c[1] + 0.9, c[2]]), 50, 0)).toBeNull();
   });
 
-  it("rayon bloqué par un bâtiment fermé, pas par un champ", () => {
+  it("rayon arrêté par une porte fermée, pas par une fenêtre", () => {
     const { simu, monde } = neuf();
-    // tigre dans la cour, tireur de l'autre côté du bâtiment 70 (mur ouest de la cour Centre)
-    const id = simu.apparaitre(0, [144, -49.4], 1, 0, 0)!;
-    const z = simu.zombie(id)!;
-    const c = corps(z);
-    const o: Vec3 = [c[0] + 30, c[1], c[2] - 8];
+    // tigre dans la cour, tireur dans l'open space : la porte D2 (fermée) est entre eux
+    const d2 = fenetreDeId("N2c")!; // (repère de la cour)
+    void d2;
+    const id = simu.apparaitre(spec(1), [120, -38], CHASSE, 0, 0)!;
+    const c = corps(simu.zombie(id)!);
+    const o: Vec3 = [120.2, c[1], -28];
     const d = vers(o, c);
     expect(lancerRayon(monde, o, d, 60)).toBeLessThan(Math.hypot(c[0] - o[0], c[2] - o[2]));
     expect(simu.toucheZombie(id, o, d, 80, 0)).toBeNull();
-    // à travers N2c (champ) : le tigre à la fenêtre est touché
+    // à travers N2c (fenêtre) : le tigre de l'autre côté est touché
+    const f = fenetreDeId("N2c")!;
     const s2 = neuf();
-    const n2 = s2.simu.apparaitre(0, [114.65, -78.15], 1, 0, 0)!;
+    const n2 = s2.simu.apparaitre(spec(1), f.dehors, CHASSE, 0, 0)!;
     const cz = corps(s2.simu.zombie(n2)!);
-    const o2: Vec3 = [cz[0] + 1, cz[1], cz[2] + 12];
+    const o2: Vec3 = [f.dedans[0] + f.normale[0] * 8, cz[1], f.dedans[1] + f.normale[1] * 8];
     expect(s2.simu.toucheZombie(n2, o2, vers(o2, cz), 40, 0)).not.toBeNull();
   });
 
   it("rejeu de latence : la position d'il y a ≤ 300 ms est touchable, celle d'il y a plus longtemps non", () => {
     const { simu } = neuf();
-    const id = simu.apparaitre(0, [130, -62], 1, 0, 0)!;
+    const id = simu.apparaitre(spec(1, 0, 1), [128, -60], CHASSE, 0, 0)!;
     const z = simu.zombie(id)!;
-    const j = joueur("j1", 130, -30); // plein sud : le tigre avance en ligne droite
+    const j = joueur("j1", 128, -40); // plein sud : le tigre avance en ligne droite
     simu.tic(DT * 1000, DT, [j]);
     const ancienne = { p: [...z.p] as Vec3, cap: z.cap, echelle: z.echelle };
     const f = [-Math.sin(ancienne.cap), -Math.cos(ancienne.cap)];
-    // tireur 10 m derrière l'ancienne croupe, dans l'axe du tigre, à hauteur du ventre ; portée ajustée à l'ancienne pose
     const croupe = pointLocal([ancienne.p[0], 0, ancienne.p[2]], ancienne.cap, ancienne.echelle, 0, 0.33, -0.21);
     const o: Vec3 = [croupe[0] - f[0] * 10, croupe[1], croupe[2] - f[1] * 10];
     const d: Vec3 = [f[0], 0, f[1]];
-    const portee = 10 - 0.21 * 2.7 * 0 - 0.297 - 0.25 + 0.15; // distance d'entrée dans la croupe d'alors, plus 15 cm
-    const r1 = courir(simu, DT * 1000, 0.25, [j]); // 250 ms : ≈ 1 m plus loin
-    expect(Math.hypot(z.p[0] - ancienne.p[0], z.p[2] - ancienne.p[2])).toBeGreaterThan(0.9);
+    const portee = 10 - 0.297 - 0.25 + 0.15;
+    const r1 = courir(simu, DT * 1000, 0.25, [j]); // 250 ms : ≈ 1,5 m plus loin
+    expect(dist(z.p, ancienne.p)).toBeGreaterThan(0.9);
     const hit = simu.toucheZombie(id, o, d, portee, r1.t);
     expect(hit).not.toBeNull();
     expect(hit!.distance).toBeLessThanOrEqual(portee);
-    // la même portée avec la pose actuelle seule (hors fenêtre de rejeu) rate : 0,8 s plus tard
     const r2 = courir(simu, r1.t, 0.8, [j]);
     expect(simu.toucheZombie(id, o, d, portee, r2.t)).toBeNull();
   });
@@ -339,71 +508,55 @@ describe("toucheMelee", () => {
 
   it("distance de surface, cône, portée, id inconnu", () => {
     const { simu } = neuf();
-    const id = simu.apparaitre(0, [130, -62], 1, 0, 0)!;
+    const id = simu.apparaitre(spec(1), [130, -62], CHASSE, 0, 0)!;
     const z = simu.zombie(id)!;
     const c = cote(z, -0.03);
-    // 2 m du centre du ventre (sphère de 0,32 m) : surface à 1,7 m
     const o: Vec3 = [c[0] - 2, c[1], c[2]];
     const hit = simu.toucheMelee(id, o, mis(o, c), 2.2, COS_COUTEAU, 0)!;
     expect(hit.distance).toBeCloseTo(2 - 0.12 * 2.7, 2);
-    // hors de portée
     const loin: Vec3 = [c[0] - 6, c[1], c[2]];
     expect(simu.toucheMelee(id, loin, mis(loin, c), 2.6, COS_EPEE, 0)).toBeNull();
-    // dans le dos du joueur : hors cône
     expect(simu.toucheMelee(id, o, [-1, 0, 0], 2.6, COS_EPEE, 0)).toBeNull();
-    // 60° de côté : hors du cône du couteau (55°), dans celui de l'épée (70°) — pour une cible dont le rayon ne rattrape pas l'angle
     const o2: Vec3 = [c[0] - 3, c[1], c[2]];
     const angle = (68 * Math.PI) / 180;
     const d2: Vec3 = [Math.cos(angle), 0, -Math.sin(angle)];
-    const couteau = simu.toucheMelee(id, o2, d2, 4, COS_COUTEAU, 0);
-    const epee = simu.toucheMelee(id, o2, d2, 4, COS_EPEE, 0);
-    expect(epee).not.toBeNull();
-    expect(couteau === null || couteau.distance >= 0).toBe(true);
+    expect(simu.toucheMelee(id, o2, d2, 4, COS_EPEE, 0)).not.toBeNull();
     expect(simu.toucheMelee(999, o, mis(o, c), 2.6, COS_EPEE, 0)).toBeNull();
   });
 
   it("l'épée touche plusieurs tigres côte à côte, chacun avec sa distance", () => {
     const { simu } = neuf();
-    const ids = [-1.4, 0, 1.4].map((dx) => simu.apparaitre(0, [130 + dx, -62], 1, 0, 0)!);
-    const o: Vec3 = [130, 1.0, -62 + 3.2]; // devant eux (ils regardent −z : le museau est à −z)
+    const ids = [-1.4, 0, 1.4].map((dx) => simu.apparaitre(spec(1), [130 + dx, -62], CHASSE, 0, 0)!);
+    const o: Vec3 = [130, 1.0, -62 + 3.2];
     const res = ids.map((id) => simu.toucheMelee(id, o, [0, 0, -1], 3.4, COS_EPEE, 0));
     expect(res.every((r) => r !== null)).toBe(true);
-    // le tigre du milieu est le plus proche... ou du moins aucun n'est à plus de 3,4 m
     for (const r of res) expect(r!.distance).toBeLessThanOrEqual(3.4);
   });
 
-  it("ligne de vue : un bâtiment entre le joueur et le tigre arrête le coup", () => {
-    const { simu, monde } = neuf();
-    const id = simu.apparaitre(0, [144, -49.4], 1, 0, 0)!;
-    const z = simu.zombie(id)!;
-    const c = cote(z, -0.03);
-    // de l'autre côté du mur ouest de la cour (bâtiment 70), à moins de 2,6 m de surface
-    const o: Vec3 = [c[0] + 1.5, c[1], c[2]];
-    const touche = simu.toucheMelee(id, o, mis(o, c), 2.6, COS_EPEE, 0);
-    expect(touche === null || touche.distance <= 2.6).toBe(true);
-    // un coup tout contre le mur, de l'autre côté de la façade, ne passe pas : on cherche un point où le rayon est bien coupé
-    let essai: Vec3 | null = null;
-    for (let dx = 1.2; dx < 3; dx += 0.1) {
-      const q: Vec3 = [c[0] + dx, c[1], c[2] + 0.01];
-      if (lancerRayon(monde, q, mis(q, c), Math.hypot(c[0] - q[0], c[2] - q[2])) < Infinity) { essai = q; break; }
-    }
-    if (essai) expect(simu.toucheMelee(id, essai, mis(essai, c), 6, COS_EPEE, 0)).toBeNull();
+  it("ligne de vue : un mur entre le joueur et le tigre arrête le coup", () => {
+    const mur = { h: 10, r: [[-0.15, -30], [0.15, -30], [0.15, 30], [-0.15, 30]] as [number, number][], c: [0, 0] as [number, number] };
+    const ancre = (x: number, z: number) => ({ h: 5, r: [[x, z], [x + 1, z], [x + 1, z + 1]] as [number, number][], c: [x, z] as [number, number] });
+    const monde = construireMonde({ ...scene, buildings: [ancre(-30, -30), ancre(30, 30), mur], pois: [] } as SceneData);
+    const simu = creerSimuZombies({ monde, alea: moitie });
+    const id = simu.apparaitre(spec(1), [-1.2, 0], CHASSE, 0, Math.PI / 2)!;
+    const c = cote(simu.zombie(id)!, -0.03);
+    const o: Vec3 = [0.8, 1, 0];
+    expect(simu.toucheMelee(id, o, mis(o, c), 6, COS_EPEE, 0)).toBeNull();
   });
 
   it("rejeu de 200 ms", () => {
     const { simu } = neuf();
-    const id = simu.apparaitre(0, [130, -62], 1, 0, 0)!;
+    const id = simu.apparaitre(spec(1, 0, 1), [126, -70], CHASSE, 0, 0)!;
     const z = simu.zombie(id)!;
-    const j = joueur("j1", 130, -30);
+    const j = joueur("j1", 126, -40);
     simu.tic(DT * 1000, DT, [j]);
     const f = [-Math.sin(z.cap), -Math.cos(z.cap)];
     const centre0: Vec3 = [z.p[0], 0, z.p[2]];
-    // coup porté par derrière, dans l'axe : la croupe d'alors est à 1,0 m de surface, celle d'après à plus de 1,3 m
     const croupe = pointLocal(centre0, z.cap, z.echelle, 0, 0.33, -0.21);
     const o: Vec3 = [croupe[0] - f[0] * (0.297 + 1.0), croupe[1], croupe[2] - f[1] * (0.297 + 1.0)];
     const d: Vec3 = [f[0], 0, f[1]];
     const r = courir(simu, DT * 1000, 0.15, [j]);
-    expect(Math.hypot(z.p[0] - centre0[0], z.p[2] - centre0[2])).toBeGreaterThan(0.5);
+    expect(dist(z.p, centre0)).toBeGreaterThan(0.5);
     const hit = simu.toucheMelee(id, o, d, 1.3, COS_COUTEAU, r.t);
     expect(hit).not.toBeNull();
     expect(hit!.distance).toBeCloseTo(1.0, 1);
@@ -415,59 +568,56 @@ describe("toucheMelee", () => {
 describe("blesser et snap", () => {
   it("blesser : PV, pourcentage, mort (le tigre disparaît), tigre inconnu", () => {
     const { simu } = neuf();
-    const id = simu.apparaitre(0, [130, -62], 1, 0)!; // 100 PV
-    expect(simu.blesser(id, 25, 0)).toEqual({ mort: false, pvPct: 75 });
-    expect(simu.zombie(id)!.pv).toBe(75);
-    expect(simu.blesser(id, 74.6, 0).pvPct).toBe(1); // vivant : au moins 1 %
+    const id = simu.apparaitre(spec(1), [130, -62], CHASSE, 0)!; // 150 PV
+    expect(simu.blesser(id, 30, 0)).toEqual({ mort: false, pvPct: 80, type: 0 });
+    expect(simu.zombie(id)!.pv).toBe(120);
+    expect(simu.blesser(id, 119.4, 0).pvPct).toBe(1); // vivant : au moins 1 %
     const fin = simu.blesser(id, 10, 0);
     expect(fin).toMatchObject({ mort: true, pvPct: 0, type: 0 });
     expect(fin.p).toEqual([130, 0, -62]);
     expect(simu.zombie(id)).toBeUndefined();
     expect(simu.nbVivants()).toBe(0);
     expect(simu.blesser(id, 10, 0)).toEqual({ mort: false, pvPct: 0 });
-    expect(simu.blesser(77, -50, 0)).toEqual({ mort: false, pvPct: 0 });
   });
 
   it("des dégâts négatifs ne soignent pas", () => {
     const { simu } = neuf();
-    const id = simu.apparaitre(0, [130, -62], 1, 0)!;
+    const id = simu.apparaitre(spec(1), [130, -62], CHASSE, 0)!;
     simu.blesser(id, -50, 0);
-    expect(simu.zombie(id)!.pv).toBe(100);
+    expect(simu.zombie(id)!.pv).toBe(150);
   });
 
-  it("snap : stride 6, restants, positions au centimètre, type, PV, apparition puis griffe", () => {
+  it("snap : stride 6, restants, positions au centimètre, type, PV, allure, mode, apparition, Truck", () => {
     const { simu } = neuf();
-    const a = simu.apparaitre(0, [130.123, -62.456], 1, 1000, 0.5)!;
-    const b = simu.apparaitre(2, [118, -89.7], 10, 1000)!;
+    const f = fenetreDeId("N2c")!;
+    const a = simu.apparaitre(spec(1), [130.123, -62.456], CHASSE, 1000, 0.5)!;
+    const b = simu.apparaitre(spec(10, 2, 1), f.points[0], { mode: "fenetre", fenetre: f }, 1000)!;
+    const c = simu.apparaitre(spec(6, 3, 2), [124, -60], { mode: "sol" }, 1000)!;
     simu.blesser(b, pvZombie(10, 2) / 2, 1000);
     const s = simu.snap(7, 1100);
     expect(s.r).toBe(7);
-    expect(s.z).toHaveLength(2 * PAS_SNAP_ZOMBIE);
+    expect(s.t).toBeUndefined();
+    expect(s.z).toHaveLength(3 * PAS_SNAP_ZOMBIE);
     expect(s.z.every(Number.isInteger)).toBe(true);
     const d = decoderZombies(s);
-    expect(d[0]).toMatchObject({ id: a, type: 0, griffe: false, apparition: true, pvPct: 100 });
+    expect(d[0]).toMatchObject({ id: a, type: 0, griffe: false, apparition: true, pvPct: 100, allure: 0, mode: "chasse" });
     expect(d[0].x).toBeCloseTo(130.12, 2);
     expect(d[0].z).toBeCloseTo(-62.46, 2);
     expect(d[0].cap).toBeCloseTo(0.5, 3);
-    expect(d[1]).toMatchObject({ id: b, type: 2, pvPct: 50 });
-    expect(s.z[4] & 3).toBe(0);
-    expect(s.z[PAS_SNAP_ZOMBIE + 4] & 3).toBe(2);
-    expect(s.z[4] & 8).toBe(8);
-    // plus en apparition au bout de 800 ms
+    expect(d[1]).toMatchObject({ id: b, type: 2, pvPct: 50, allure: 1, mode: "fenetre" });
+    expect(d[2]).toMatchObject({ id: c, type: 3, allure: 2, mode: "sol" });
     expect(decoderZombies(simu.snap(2, 1000 + ZOMBIES.apparitionMs + 10))[0].apparition).toBe(false);
-    // par défaut : tigres vivants restants, instant du dernier tic
-    expect(simu.snap().r).toBe(2);
+    expect(simu.snap().r).toBe(3);
+    expect(simu.snap(0, 1100, [1, 2, 3]).t).toEqual([1, 2, 3]);
   });
 });
 
 describe("performance", () => {
-  it("24 tigres, 8 joueurs : moins de 2 ms par tic en moyenne (budget nominal 1 ms)", () => {
+  it("24 tigres, 8 joueurs : moins de 2 ms par tic en moyenne", () => {
     const { simu } = neuf();
-    const joueurs = DEPARTS.map((d, k) => joueur(`j${k}`, d[0], d[1]));
-    const points = FENETRES[0].points;
-    for (let k = 0; k < 24; k++) simu.apparaitre(k % 3 === 2 ? 1 : 0, points[k % 3], 5, 0);
-    const r0 = courir(simu, 0, 3, joueurs); // échauffement
-    // meilleure moyenne de trois lots de 200 tics : insensible à une machine chargée qui gonfle un lot isolé
+    const joueurs = [0, 1, 2, 3, 4, 5, 6, 7].map((k) => joueur(`j${k}`, 132 + (k % 4) * 3, -48 - Math.floor(k / 4) * 3));
+    for (let k = 0; k < 24; k++) simu.apparaitre(spec(5, k % 3 === 2 ? 1 : 0, 1), [118 + (k % 6) * 2, -66 - Math.floor(k / 6) * 2], CHASSE, 0);
+    const r0 = courir(simu, 0, 3, joueurs);
     const n = 200;
     let t = r0.t;
     let moyenne = Infinity;
@@ -477,12 +627,11 @@ describe("performance", () => {
       moyenne = Math.min(moyenne, (performance.now() - t0) / n);
     }
     expect(moyenne).toBeLessThan(2);
-    // et avec des joueurs qui changent de case sans arrêt (champ recalculé au maximum, 2,5 fois par seconde)
     let x = 0;
     let moyenne2 = Infinity;
     for (let lot = 0; lot < 3; lot++) {
       const t1 = performance.now();
-      t = courir(simu, t, n / 60, joueurs, () => { x += 0.15; joueurs[0].p = [110 + (x % 30), 0, -50]; joueurs[1].p = [140 - (x % 30), 0, -40]; }).t;
+      t = courir(simu, t, n / 60, joueurs, () => { x += 0.15; joueurs[0].p = [120 + (x % 25), 0, -50]; joueurs[1].p = [145 - (x % 25), 0, -56]; }).t;
       moyenne2 = Math.min(moyenne2, (performance.now() - t1) / n);
     }
     expect(moyenne2).toBeLessThan(2);

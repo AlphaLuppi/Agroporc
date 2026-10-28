@@ -1,6 +1,7 @@
 "use client";
 
-import { useId, type CSSProperties, type ReactNode } from "react";
+import { useId, useState, type CSSProperties, type ReactNode } from "react";
+import { DIFFICULTES, DIFFICULTES_LISTE, estDifficulte, type Difficulte } from "@/lib/fps/zombies-vagues";
 import type { EtatConnexion } from "@/lib/fps/reseau";
 import type { EtatPartieZombies } from "@/lib/fps/protocole";
 import type { ConfigTouches } from "@/lib/fps/touches";
@@ -30,8 +31,8 @@ export interface PropsLobbyZombies {
   touches: ConfigTouches;
   reglagesHud?: ReglagesHud;
   surReglagesHud?(r: ReglagesHud): void;
-  /** l'hôte lance la partie */
-  surLancer(): void;
+  /** l'hôte lance la partie (v7 : à la difficulté choisie) */
+  surLancer(difficulte?: Difficulte): void;
   surFermer(): void;
   erreur: string | null;
   tactile: boolean;
@@ -59,6 +60,15 @@ export default function LobbyZombies({
   const monPseudo = partie?.joueurs.find((j) => j.id === monId)?.pseudo ?? null;
   const peutLancer = sit.peutLancer && !tactile && !nomTropCourt;
   const joueurs = partie?.joueurs ?? [];
+  // (v7) difficulté choisie par l'hôte, mémorisée pour la partie suivante
+  const [difficulte, setDifficulte] = useState<Difficulte>(() => {
+    try { const v = localStorage.getItem("pdj-fps-zombies-difficulte"); return estDifficulte(v) ? v : "plat"; } catch { return "plat"; }
+  });
+  const choisirDifficulte = (d: Difficulte) => {
+    setDifficulte(d);
+    try { localStorage.setItem("pdj-fps-zombies-difficulte", d); } catch { /* stockage indisponible */ }
+  };
+  const lancer = () => surLancer(difficulte);
 
   return (
     <aside className={styles.arene} aria-label="Zombies">
@@ -92,7 +102,7 @@ export default function LobbyZombies({
           autoFocus={pseudoParDefaut}
           aria-describedby={`${idPseudo}-aide`}
           onChange={(e) => surPseudo(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter" && peutLancer) surLancer(); }}
+          onKeyDown={(e) => { if (e.key === "Enter" && peutLancer) lancer(); }}
         />
         <p id={`${idPseudo}-aide`} className={styles.aidePseudo}>
           {nomTropCourt
@@ -114,6 +124,18 @@ export default function LobbyZombies({
           </li>
         ))}
       </ul>
+
+      {sit.peutLancer && (
+        <fieldset className={styles.champ}>
+          <legend>Difficulté</legend>
+          {DIFFICULTES_LISTE.map((d) => (
+            <label key={d} className={styles.aidePseudo}>
+              <input type="radio" name={`${idPseudo}-difficulte`} value={d} checked={difficulte === d} onChange={() => choisirDifficulte(d)} />{" "}
+              <b>{DIFFICULTES[d].nom}</b> : {DIFFICULTES[d].description}
+            </label>
+          ))}
+        </fieldset>
+      )}
 
       <section className={styles.tir} aria-labelledby={`${idPseudo}-regles`}>
         <h3 id={`${idPseudo}-regles`}>{TITRE_REGLES_ZOMBIES}</h3>
@@ -138,7 +160,7 @@ export default function LobbyZombies({
           </dl>
           <p className={styles.astuce}>Toutes les touches se changent en partie : Échap puis « Touches ».</p>
           <div className={styles.pied}>
-            <button type="button" className={styles.entrer} disabled={!peutLancer} onClick={surLancer}>
+            <button type="button" className={styles.entrer} disabled={!peutLancer} onClick={lancer}>
               Lancer la partie
             </button>
           </div>

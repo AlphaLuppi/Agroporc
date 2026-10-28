@@ -34,7 +34,7 @@ import { creerServiceVehicules } from "./match-vehicules";
 import { EQUIPEMENT_DEPART_ZOMBIES, MAIN_DEPART_ZOMBIES, creerServiceZombies, departPour, type OptionsServiceZombies } from "./match-zombies";
 import { REWIND_MELEE_MS, coupVraisemblable } from "./melee";
 import {
-  CIBLE_TIGRE, CIBLE_TITAN, EQUIPEMENT_DEFAUT, JEU, PLAFONDS, SLOT_DEFAUT, copierEquipement, estIdZombie, estMelee, oeilDe, silhouetteDe,
+  CIBLE_LIVRAISON, CIBLE_TIGRE, CIBLE_TITAN, EQUIPEMENT_DEFAUT, JEU, PLAFONDS, SLOT_DEFAUT, copierEquipement, estIdZombie, estMelee, oeilDe, silhouetteDe,
   type ArmeFeuId, type ArmeId, type ArmeMeleeId, type CauseMort, type EtatJoueurSnap, type Equipement, type InfoMatch, type InfoTueur,
   type JoueurPublic, type LigneClassement, type LigneStats, type MessageClient, type SignalVoix, type Slot, type Vec3, type Zone,
 } from "./protocole";
@@ -436,7 +436,7 @@ export class Salle implements ContexteSalle {
   }
 
   /** (v5, zombies) Équipement EN COURS (achat, boîte) et arme en main ; le dégainage ne recommence que si l'arme en main change. */
-  equiper(j: JoueurSalle, equip: Equipement, main: Slot, maintenant: number, ravitaille?: ArmeFeuId): Sortie[] {
+  equiper(j: JoueurSalle, equip: Equipement, main: Slot, maintenant: number, ravitaille?: ArmeFeuId | "tout"): Sortie[] {
     const arme = armeDuSlot(equip, main) ?? armeDuSlot(equip, "secondaire") ?? j.arme;
     const change = arme !== j.arme || main !== j.main;
     j.equip = copierEquipement(equip);
@@ -841,7 +841,8 @@ export class Salle implements ContexteSalle {
     if (!dirs) return [];
     // gerbe FIXE (§13.1) : les plombs d'un tir à plusieurs plombs sont ceux de `directionsTir` autour de l'axe, à 0,02 rad près
     if (!gerbeRespectee(armeTiree, dirs)) return [];
-    if (!this.cadenceOk(j, armeTiree, arme.cadenceS, arme.auto, maintenant)) return [];
+    // (v7, zombies) le Double Ristretto raccourcit l'intervalle entre deux tirs
+    if (!this.cadenceOk(j, armeTiree, arme.cadenceS * (this.zombies?.cadence(j) ?? 1), arme.auto, maintenant)) return [];
     j.protegeJusqua = 0; // tirer annule la protection d'apparition
     j.tirs++;
 
@@ -858,9 +859,15 @@ export class Salle implements ContexteSalle {
     const cumulMonstres = new Map<string, { degats: number; zone: Zone }>();
     /** (zombies) dégâts cumulés par tigre zombie sur ce tir (les plombs du pompe s'additionnent) */
     const cumulZombies = new Map<string, { degats: number; zone: Zone }>();
+    /** (v7, zombies) une arme qui perce compte un même plomb sur plusieurs tigres ; dégâts sur le Truck, distance du premier tigre touché (souffle) */
+    const perce = this.zombies?.perce(j, armeTiree) ?? false;
+    let degatsTruck = 0;
+    let premiereTouche: number | null = null;
+    const vusZombies = new Set<string>();
     for (const t of touches) {
       if (!t || typeof t.cible !== "string" || !estZone(t.zone) || !Number.isInteger(t.plomb)) continue;
-      if (t.plomb < 0 || t.plomb >= dirs.length || plombsVus.has(t.plomb)) continue;
+      if (t.plomb < 0 || t.plomb >= dirs.length) continue;
+      if (plombsVus.has(t.plomb) && !(perce && estIdZombie(t.cible))) continue;
       if (this.tigres?.estTigre(t.cible)) {
         // positions du tigre rejouées sur son historique serveur, mêmes règles que pour un joueur
         const distance = this.tigres.validerTir(j, t.cible, tir.o, dirs[t.plomb], arme.portee, maintenant, REWIND_MAX_MS);
@@ -883,12 +890,22 @@ export class Salle implements ContexteSalle {
         continue;
       }
       if (this.zombies) {
+        // (v7) le Truck Muche d'une manche de livraison
+        if (t.cible === CIBLE_LIVRAISON) {
+          const dist = this.zombies.toucheTruck(tir.o, dirs[t.plomb], arme.portee);
+          if (dist === null) continue;
+          plombsVus.add(t.plomb);
+          degatsTruck += this.zombies.degatsTir(j, armeTiree, "corps", dist, maintenant);
+          continue;
+        }
         // zombies : seuls les tigres sont des cibles (pas de tir allié), touche revérifiée sur leur forme avec rejeu de latence
-        if (!estIdZombie(t.cible)) continue;
+        if (!estIdZombie(t.cible) || vusZombies.has(`${t.cible}|${t.plomb}`)) continue;
         const vu = this.zombies.toucheZombie(t.cible, tir.o, dirs[t.plomb], arme.portee, maintenant);
         if (!vu) continue;
         plombsVus.add(t.plomb);
-        const dg = degatsPlomb(armeTiree, vu.zone, vu.distance);
+        vusZombies.add(`${t.cible}|${t.plomb}`);
+        if (t.plomb === 0 && (premiereTouche === null || vu.distance < premiereTouche)) premiereTouche = vu.distance;
+        const dg = this.zombies.degatsTir(j, armeTiree, vu.zone, vu.distance, maintenant);
         const cu = cumulZombies.get(t.cible);
         if (cu) { cu.degats += dg; if (vu.zone === "tete") cu.zone = "tete"; }
         else cumulZombies.set(t.cible, { degats: dg, zone: vu.zone });
@@ -921,6 +938,11 @@ export class Salle implements ContexteSalle {
     for (const [cibleId, { degats, zone }] of cumulZombies) {
       sorties.push(...this.zombies!.blesser(cibleId, degats, j, zone, maintenant, { arme: armeTiree, gain: premier }));
       premier = false;
+    }
+    if (this.zombies) {
+      if (degatsTruck > 0) sorties.push(...this.zombies.blesserTruck(degatsTruck, j, maintenant));
+      // (v7) arme explosive : souffle au premier tigre touché, sinon au premier mur ou au sol
+      sorties.push(...this.zombies.explosionTir(j, armeTiree, tir.o, dirs[0], premiereTouche, arme.portee, maintenant));
     }
     let presence = false;
     for (const [cibleId, { degats, zone }] of cumul) {
@@ -988,7 +1010,7 @@ export class Salle implements ContexteSalle {
         if (!estIdZombie(id)) continue; // pas de coup allié
         const vu = this.zombies.toucheMelee(id, coup.o, d, m.portee + m.margePortee, m.cosCone, maintenant);
         if (!vu) continue;
-        sorties.push(...this.zombies.blesser(id, m.degatsZombie, j, "corps", maintenant, { melee: true, arme, gain: premierTigre }));
+        sorties.push(...this.zombies.blesser(id, this.zombies.degatsMelee(j, arme, maintenant), j, "corps", maintenant, { melee: true, arme, gain: premierTigre }));
         premierTigre = false;
         continue;
       }
@@ -1068,7 +1090,8 @@ export class Salle implements ContexteSalle {
       }
     }
     // régénération : +20 PV/s après 5 s sans dégât (le bouclier ne se régénère pas)
-    for (const j of this.table.values()) if (j.enJeu && j.vivant) regenerer(j, maintenant, dt);
+    // (v7, zombies : 60 PV/s après 3 s, jusqu'à 250 PV avec le Gratin)
+    for (const j of this.table.values()) if (j.enJeu && j.vivant) regenerer(j, maintenant, dt, this.zombies?.sante(j));
     if (this.elsa) sorties.push(...this.elsa.tic(maintenant));
     if (this.vehicules) sorties.push(...this.vehicules.tic(maintenant));
     if (this.tigres) sorties.push(...this.tigres.tic(maintenant));

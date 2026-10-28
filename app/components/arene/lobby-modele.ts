@@ -166,11 +166,13 @@ export const TEXTE_ZOMBIES = `Coopératif : des tigres arrivent par manches de p
 /** Règles condensées du lobby des zombies (valeurs tirées de `ZOMBIES`). */
 export const TITRE_REGLES_ZOMBIES = "Règles";
 export const REGLES_ZOMBIES: string[] = [
-  "Chaque touche rapporte 10 $, chaque tigre abattu 60 $ (100 $ à la tête ou à l'arme blanche).",
-  "Achetez des armes aux murs et ouvrez les portes payantes pour agrandir la zone de jeu.",
-  `À terre : un coéquipier vous relève en maintenant la touche d'action ${ZOMBIES.reanimationS} s à moins de ${formatDecimal(ZOMBIES.reanimationPortee)} m. Sans relève, vous êtes éliminé au bout de ${Math.round(ZOMBIES.terreMs / 1000)} s et revenez à la pause suivante.`,
-  `Munitions limitées : ${ZOMBIES.ravitaillementChargeurs} chargeurs par arme, rechargés à moitié prix aux murs.`,
-  "Pas de tir allié. Les tigres sont plus lents que vous au sprint : on peut les semer.",
+  "Règles de Black Ops 1 : 10 $ par touche, 60 $ par tigre abattu (100 $ à la tête, 130 $ à l'arme blanche), 500 $ au départ.",
+  "Vous démarrez dans l'open space : achetez des armes dessinées à la craie, ouvrez les portes, reposez les planches des fenêtres (10 $ la planche).",
+  "Rétablissez le courant au Local technique : distributeurs d'atouts (Gratin Dauphinois, Expresso, Double Ristretto) et Micro-ondes Gratinator (Pack-a-Punch, 5 000 $).",
+  "Boîte mystère : 950 $, elle déménage quand sort la peluche. Tigres dorés : ils portent un bonus (Munitions max, Insta-kill, Double points…).",
+  `À terre : un coéquipier vous relève en maintenant la touche d'action ${ZOMBIES.reanimationS} s à moins de ${formatDecimal(ZOMBIES.reanimationPortee)} m (1,5 s avec la Pause Café), sinon éliminé au bout de ${Math.round(ZOMBIES.terreMs / 1000)} s. Seul, la Pause Café vous relève 3 fois.`,
+  `Munitions limitées : ${ZOMBIES.ravitaillementChargeurs} chargeurs par arme (${ZOMBIES.ravitaillementChargeursAmeliore} une fois gratinée), rechargés à moitié prix aux murs.`,
+  "Toutes les 4 à 6 manches, le Truck Muche livre des petits tigres. Lisez les notes : elles mènent à la Recette ultime.",
 ];
 
 /** Phrase affichée quand une partie est déjà lancée. */

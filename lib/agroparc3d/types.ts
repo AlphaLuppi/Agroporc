@@ -21,7 +21,12 @@ export interface Building {
   type?: BatimentType;
 }
 
-export type BatimentType = "porte" | "barricade" | "champ" | "mur";
+/**
+ * v7 (carte « Service de midi ») : `fenetre` = fenêtre ou passage barricadé de planches (passe-tigres comme un champ), `coque` = mur d'un
+ * bâtiment creusé, `cloison` = mur intérieur, `meuble` = mobilier bas (collision à sa vraie hauteur), `creux` = bâtiment creusé (ni collision
+ * ni décor : ses murs sont des `coque`). Ces cinq types sont dessinés par le rendu des intérieurs, pas par le décor.
+ */
+export type BatimentType = "porte" | "barricade" | "champ" | "mur" | "fenetre" | "coque" | "cloison" | "meuble" | "creux";
 
 /** M : voie principale, R : résidentielle, S : desserte/service, F : piéton */
 export type RoadClass = "M" | "R" | "S" | "F";

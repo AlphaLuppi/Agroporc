@@ -55,7 +55,8 @@ export const INFOS_ARMES = Object.fromEntries(ARMES.map((id) => [id, calculer(id
 
 /** Armes d'une catégorie, dans l'ordre du catalogue (principales : mitraillette, pompe, sniper…). */
 export function armesParCategorie(cat: CategorieArme): InfoArme[] {
-  return ARMES.filter((id) => STATS[id].categorie === cat).map((id) => INFOS_ARMES[id]);
+  // (v7) le pistolet à rayons n'existe qu'en zombies : jamais proposé au lobby de l'arène
+  return ARMES.filter((id) => STATS[id].categorie === cat && !STATS[id].zombiesSeulement).map((id) => INFOS_ARMES[id]);
 }
 
 export const LIBELLES_BARRES: { cle: keyof InfoArme["barres"]; nom: string }[] = [
