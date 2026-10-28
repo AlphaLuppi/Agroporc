@@ -15,8 +15,18 @@ import { SILHOUETTE, encoderZombies, type ModeZombie, type SnapZombies, type Vec
 import type { Fenetre } from "./zombies-carte";
 import { ZOMBIES, echelleZombie, type Allure, type TypeZombie } from "./zombies-vagues";
 
-/** Joueur vu par la simulation : id, pieds, debout (vivant). Un joueur à terre ou éliminé n'est pas une cible. */
-export interface JoueurZombie { id: string; p: Vec3; vivant: boolean }
+/**
+ * Joueur vu par la simulation : id, pieds, debout (vivant). Un joueur à terre ou éliminé n'est pas une cible. `delaiMs` : aller-retour réseau
+ * du joueur (ms), dont la griffe attend le retour avant d'être jugée (borné à `GRIFFE_DELAI_MAX_MS`, 0 par défaut).
+ */
+export interface JoueurZombie { id: string; p: Vec3; vivant: boolean; delaiMs?: number }
+
+/**
+ * La griffe est jugée en faveur du joueur : à la fin de l'armement, il doit être dans le balayage sur sa position serveur ET sur celle qu'il
+ * envoie un aller-retour plus tard. Le client voit le coup arriver avec une demi-latence de retard (snap) et sa position met une autre
+ * demi-latence à revenir : un joueur qui a esquivé sur son écran n'est pas touché. Borné à 200 ms (un fort ping ne rend pas invulnérable).
+ */
+export const GRIFFE_DELAI_MAX_MS = 200;
 
 export type EvenementZombie =
   | { t: "griffeArmee"; tigre: number; joueur: string }
@@ -58,6 +68,8 @@ export interface Zombie {
   /** fin (ms) de l'armement de la griffe, 0 si elle n'est pas armée */
   armeFin: number;
   cibleGriffe: string | null;
+  /** fin de l'armement passée et joueur dans le balayage : instant (ms) du second jugement, sur sa position revenue ; 0 sinon */
+  resolutionT: number;
   prochaineGriffeT: number;
   /** vision directe : dernier contrôle (ms), joueur contrôlé, résultat */
   vuT: number;
@@ -232,21 +244,34 @@ export function creerSimuZombies(opts: OptionsSimuZombies) {
     if (mode === "chasse") { z.champOk = false; z.progresT = t; z.meilleureDistance = Infinity; }
   }
 
+  /** Fin du coup de patte (touché ou esquivé) : recharge comptée depuis la fin de l'armement (le jugement différé ne ralentit pas la cadence). */
+  function finirGriffe(z: Zombie): void {
+    z.prochaineGriffeT = z.armeFin + z.rechargeGriffeS * 1000;
+    z.armeFin = 0;
+    z.cibleGriffe = null;
+    z.resolutionT = 0;
+  }
+
   /**
    * Coup de patte (armement visible puis frappe) sur le joueur debout le plus proche s'il est à portée de patte et visible ; vrai si le
-   * tigre est occupé à griffer. Le coup ne touche qu'au contact : à `armeFin`, le joueur visé doit être sur le balayage de la patte.
+   * tigre est occupé à griffer. Le coup ne touche qu'au contact : à `armeFin`, le joueur visé doit être sur le balayage de la patte, et de
+   * nouveau un aller-retour plus tard (`GRIFFE_DELAI_MAX_MS`) : le tigre reste figé dans son coup pendant ce temps.
    */
   function griffer(z: Zombie, t: number, cible: JoueurZombie, evenements: EvenementZombie[], allonge = 0): boolean {
     if (z.armeFin > 0) {
-      if (t >= z.armeFin) {
-        const vise = z.cibleGriffe !== null ? debout.find((j) => j.id === z.cibleGriffe) : undefined;
-        if (vise && touchePatte(z, vise.p, allonge) && visible(monde, [z.p[0], 1, z.p[2]], [vise.p[0], 1, vise.p[2]])) {
-          evenements.push({ t: "griffe", tigre: z.id, joueur: vise.id, degats: z.degats });
-        }
-        z.armeFin = 0;
-        z.cibleGriffe = null;
-        z.prochaineGriffeT = t + z.rechargeGriffeS * 1000;
+      if (t < z.armeFin) return true;
+      const vise = z.cibleGriffe !== null ? debout.find((j) => j.id === z.cibleGriffe) : undefined;
+      const dansLeCoup = (): boolean =>
+        !!vise && touchePatte(z, vise.p, allonge) && visible(monde, [z.p[0], 1, z.p[2]], [vise.p[0], 1, vise.p[2]]);
+      if (z.resolutionT === 0) {
+        // premier jugement, sur la position serveur à la fin de l'armement
+        if (!dansLeCoup()) { finirGriffe(z); return true; }
+        z.resolutionT = z.armeFin + Math.max(0, Math.min(GRIFFE_DELAI_MAX_MS, vise!.delaiMs ?? 0));
       }
+      if (t < z.resolutionT) return true;
+      // second jugement, sur la position que le joueur a envoyée en voyant le coup
+      if (dansLeCoup()) evenements.push({ t: "griffe", tigre: z.id, joueur: vise!.id, degats: z.degats });
+      finirGriffe(z);
       return true;
     }
     const d = Math.hypot(cible.p[0] - z.p[0], cible.p[2] - z.p[2]);
@@ -478,7 +503,7 @@ export function creerSimuZombies(opts: OptionsSimuZombies) {
         id: prochainId++, type: spec.type, manche: spec.manche, p: [point[0], 0, point[1]], cap, pv: spec.pv, pvMax: spec.pv,
         allure: spec.allure, vitesse: spec.vitesse, echelle: echelleZombie(spec.type), degats: spec.degats, rechargeGriffeS: spec.rechargeGriffeS,
         mode: arrivee.mode === "fenetre" ? "approche" : arrivee.mode, modeT: t, fenetre: arrivee.mode === "fenetre" ? arrivee.fenetre : null, arracheT: 0,
-        apparuT: t, armeFin: 0, cibleGriffe: null, prochaineGriffeT: 0, vuT: t - (prochainId * 37) % ZOMBIES.periodeVisionMs,
+        apparuT: t, armeFin: 0, cibleGriffe: null, resolutionT: 0, prochaineGriffeT: 0, vuT: t - (prochainId * 37) % ZOMBIES.periodeVisionMs,
         vuJoueur: null, voit: false, champOk: false, neuf: true, meilleureDistance: Infinity, progresT: t,
         histo: new Float64Array(HISTO_MAX * 4), histoN: 0, histoTete: 0,
       };

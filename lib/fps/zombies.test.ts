@@ -5,7 +5,7 @@ import { construireMonde, detruireBatiment, lancerRayon, resoudre } from "./coll
 import { FORME_TIGRE, pointLocal } from "./monstres";
 import { carteNavigation, invaliderNavigation } from "./navigation";
 import { PAS_SNAP_ZOMBIE, decoderZombies, type Vec3 } from "./protocole";
-import { creerSimuZombies, porteePatte, touchePatte, type ArriveeZombie, type Barricades, type EvenementZombie, type JoueurZombie, type SpecZombie } from "./zombies";
+import { GRIFFE_DELAI_MAX_MS, creerSimuZombies, porteePatte, touchePatte, type ArriveeZombie, type Barricades, type EvenementZombie, type JoueurZombie, type SpecZombie } from "./zombies";
 import { DEPARTS, construireMondeZombies, fenetreDeId, idPrisme } from "./zombies-carte";
 import { ZOMBIES, degatsGriffe, echelleZombie, pvZombie, rechargeGriffe, vitesseAllure, type Allure, type TypeZombie } from "./zombies-vagues";
 
@@ -385,6 +385,38 @@ describe("griffe", () => {
     expect(essai((j, z) => { const [fx, fz] = [-Math.sin(z.cap), -Math.cos(z.cap)]; j.p = [j.p[0] - fz * 1.3, 0, j.p[2] + fx * 1.3]; })).toBe(0);
     // pas en arrière de 1,2 m
     expect(essai((j, z) => { const [fx, fz] = [-Math.sin(z.cap), -Math.cos(z.cap)]; j.p = [j.p[0] + fx * 1.2, 0, j.p[2] + fz * 1.2]; })).toBe(0);
+  });
+
+  it("griffe jugée en faveur du joueur : un aller-retour plus tard, il doit encore être dans le balayage (délai borné à 200 ms)", () => {
+    /** `delaiMs` du joueur ; `bouge` appelé `apresMs` après la fin de l'armement. Renvoie les griffes et l'instant de la première. */
+    const essai = (delaiMs: number, apresMs: number | null) => {
+      const { simu } = neuf();
+      simu.apparaitre(spec(1), [COUR[0] + 1.4, COUR[1]], CHASSE, 0);
+      const j: JoueurZombie = { ...joueur("j1", ...COUR), delaiMs };
+      let finArmement = 0, bouge = false;
+      const { evenements } = courir(simu, 0, 1.8, [j], (t) => {
+        const z = simu.liste()[0];
+        if (!finArmement && z.armeFin > 0) finArmement = z.armeFin;
+        if (finArmement && apresMs !== null && !bouge && t >= finArmement + apresMs) {
+          bouge = true;
+          const [fx, fz] = [-Math.sin(z.cap), -Math.cos(z.cap)];
+          j.p = [j.p[0] - fz * 1.3, 0, j.p[2] + fx * 1.3]; // pas de côté
+        }
+      });
+      const griffes = evenements.filter((e) => e.t === "griffe");
+      return { n: griffes.length, retard: griffes.length ? griffes[0].t0 - finArmement : null };
+    };
+    // immobile : touché, mais seulement un aller-retour après la fin de l'armement (borné à 200 ms)
+    expect(essai(120, null).n).toBe(1);
+    expect(essai(120, null).retard).toBeGreaterThanOrEqual(120);
+    expect(essai(120, null).retard).toBeLessThan(120 + 40);
+    expect(essai(900, null).retard).toBeLessThan(GRIFFE_DELAI_MAX_MS + 40);
+    // l'esquive vue par le client arrive au serveur après la fin de l'armement : elle compte encore
+    expect(essai(150, 60).n).toBe(0);
+    // trop tard : le second jugement est passé
+    expect(essai(150, 400).n).toBe(1);
+    // sans latence, le jugement reste immédiat
+    expect(essai(0, null).retard).toBeLessThan(20);
   });
 
   it("pendant l'armement le tigre ne tourne qu'à 0,6 rad/s : on peut le contourner", () => {
