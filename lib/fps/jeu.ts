@@ -52,7 +52,10 @@ import { creerModeleTruckMuche } from "./rendu-monde";
 import { objectifZombies } from "./zombies-lore";
 import { ACHATS, NOTES, achatDeId, fenetreDeId } from "./zombies-carte";
 import { NOMS_BONUS } from "./zombies-vagues";
-import { profilZombie, nomZombie } from "./armes";
+import { profilZombie, nomZombie, statsTir, viseurLunette, type StatsTir, type Viseur } from "./armes";
+import { segmentsRicochet } from "./effets-armes";
+import { creerControleurProjectiles } from "./jeu-projectiles";
+import { creerRenduEffetsArmes } from "./rendu-effets-armes";
 import { creerImpactsBalles } from "./rendu-impacts";
 import { creerDebris } from "./rendu-debris";
 import { creerTracesPneus, glissementLateral, rouesArriere } from "./rendu-traces";
@@ -110,6 +113,8 @@ export const CLE_SENSIBILITE = "pdj-fps-sensibilite";
 const SENS_RAD_PX = 0.0022;
 const FOV_H = 90;
 const FOV_H_VISEE = 78;
+/** (v8) visée à travers un point rouge ou un viseur holographique : un peu plus serrée que la mire métallique */
+const FOV_H_VISEE_OPTIQUE = 70;
 const PORTEE_EFFETS_M = 400;
 /** (zombies) seuls les corps des tigres à moins de cette distance (m) sont des obstacles du mouvement (un pas de 0,25 s au plus vite) */
 const PORTEE_CORPS_TIGRES_M = 8;
@@ -278,6 +283,11 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   // (v8) grenades : la main du joueur (cuisson), les grenades prédites et diffusées (trajectoires du serveur), leur rendu
   const grenades = modeZ ? creerControleurGrenades(monde, plafondBatimentsCreux(monde, PLAFOND_INTERIEUR_M)) : null;
   const rGrenades = modeZ ? creerRenduGrenades(scene) : null;
+  // (v8) armes : projectiles d'arme (prédits et diffusés), arcs, bourrasques, givre ; flammes des tigres en feu (sources de `feux`)
+  const projectilesZ = modeZ ? creerControleurProjectiles(monde, plafondBatimentsCreux(monde, PLAFOND_INTERIEUR_M)) : null;
+  const rEffetsArmes = modeZ ? creerRenduEffetsArmes(scene) : null;
+  const sourcesFeuxZ: SourceFeu[] = [];
+  const positionsGivre: Vec3[] = [];
   /** dernier instant serveur dont les rebonds ont été joués ; dernier claquement de cymbales (s, horloge locale) */
   let rebondsVusT = 0;
   let cymbalesT = 0;
@@ -322,7 +332,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     })
     : new ControleurArmes({ principale: equip.principale, secondaire: equip.secondaire, speciale: null }, "principale");
   /** cadence locale par arme (le serveur garde la sienne) */
-  const prochains = new Map<ArmeId, number>();
+  /** prochain tir permis par arme (la main gauche d'une paire akimbo a sa clé `arme:g`) */
+  const prochains = new Map<ArmeId | `${ArmeId}:g`, number>();
   let delaiApparitionT = 0;
   /** instant du dernier tir et son arme (le recul ne retombe qu'un moment après) */
   let dernierTirT = -Infinity;
@@ -419,6 +430,9 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   let viseMaintenu = false;
   let tirPresse = -Infinity;
   let tirConsomme = true;
+  /** (v8) clic droit d'une paire akimbo = détente de la main gauche (mémorisée comme le clic gauche) */
+  let visePresse = -Infinity;
+  let viseConsomme = true;
   let sautDemande = false;
   /** (v3) Maj pressée : dash du titan */
   let dashDemande = false;
@@ -487,22 +501,26 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   };
   const prochainDe = (a: ArmeId) => Math.max(prochains.get(a) ?? 0, delaiApparitionT);
 
-  /** Lunette réellement active : visée tenue, arme à lunette sortie, pas en rechargement ni en killcam. */
+  /** (v8) L'arme telle qu'elle tire : cadence, automatique, viseur, lunette, paire akimbo, projectile, souffle, ricochets (Pack-a-Punch compris). */
+  const statsMoi = (a: ArmeFeuId): StatsTir => statsTir(a, { zombies: modeZ, ameliore: armes.amelioree(a) });
+  /** (v8) Paire akimbo en main : pas de visée, le clic droit tire de la main gauche. */
+  const akimboEnMain = (): boolean => { const a = armeFeu(); return !!a && armes.akimbo(a); };
+  /** Lunette réellement active : visée tenue, arme à lunette sortie (sniper, ou arme améliorée à lunette), pas en rechargement ni en killcam. */
   function lunetteActive(): boolean {
     const a = armeFeu();
-    return !!a && STATS[a].zoom !== null && viseMaintenu && peutAgir() && !armes.rechargeEnCours() && !enKillcam();
+    return !!a && viseurLunette(statsMoi(a).viseur) && viseMaintenu && peutAgir() && !armes.rechargeEnCours() && !enKillcam();
   }
-  const indexZoom = (a: ArmeFeuId) => niveauZoom.get(a) ?? niveauZoomDefaut(a);
+  const indexZoom = (a: ArmeFeuId) => niveauZoom.get(a) ?? statsMoi(a).zoomDefaut;
   /** Champ horizontal (°) de la lunette de l'arme au niveau choisi. */
   function fovLunette(a: ArmeFeuId): number {
-    const n = niveauxZoom(a);
+    const n = statsMoi(a).zooms;
     return n.length ? n[Math.min(n.length - 1, indexZoom(a))] : FOV_H;
   }
   /** Change le niveau de zoom de l'arme en main : `sens` +1 = plus serré ; `boucle` revient au plus large après le plus serré (touche). */
   function changerZoom(sens: 1 | -1, boucle: boolean) {
     const a = armeFeu();
     if (!a) return;
-    const n = niveauxZoom(a).length;
+    const n = statsMoi(a).zooms.length;
     if (n < 2) return;
     const i = indexZoom(a);
     const j = boucle ? (i + sens + n) % n : Math.min(n - 1, Math.max(0, i + sens));
@@ -620,24 +638,30 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     return true;
   }
 
-  function tirer(_force = false): boolean {
+  function tirer(_force = false, main: "d" | "g" = "d"): boolean {
     if (pilote()) return tirerCanon();
     if (!peutAgir() || entracte || enKillcam() || tireInterdit()) return false;
     if (armes.degainage(ms())) return false;
     const arme = armes.armeEnMain();
-    if (estMelee(arme)) return coupMelee(arme);
+    if (estMelee(arme)) return main === "g" ? false : coupMelee(arme);
     const a = STATS[arme];
+    // (v8) l'arme telle qu'elle tire (Pack-a-Punch compris) ; la main gauche n'existe que pour une paire akimbo
+    const st = statsMoi(arme);
+    const gauche = main === "g" && st.akimbo;
+    if (main === "g" && !gauche) return false;
+    const cle = gauche ? (`${arme}:g` as const) : arme;
     if (armes.rechargeEnCours()) return false;
     if (armes.munitions() <= 0) { demarrerRecharge(); return false; }
-    if (t < prochainDe(arme)) return false;
+    if (armes.munitionsMain(gauche ? "g" : "d") <= 0) return false;
+    if (t < Math.max(prochains.get(cle) ?? 0, delaiApparitionT)) return false;
     const o = oeil();
     const regard = directionVisee(lacet, tangage, kick);
-    const vise = viseMaintenu;
-    const lunette = vise && a.zoom !== null;
+    const vise = viseMaintenu && !st.akimbo;
+    const lunette = vise && viseurLunette(st.viseur);
     // sniper sans lunette : cône aléatoire (v3 §1) ; toutes les autres armes, et le sniper en lunette, tirent pile dans l'axe
     const ecart = dispersionTir(arme, { lunette, vitesseH: vitesseH(), auSol: moi.auSol });
     const dirs = directionsTir(arme, ecart > 0 ? devier(regard, ecart, Math.random(), Math.random()) : regard);
-    const touchesDecl: { cible: string; zone: Zone; plomb: number }[] = [];
+    const touchesDecl: { cible: string; zone: Zone; plomb: number; seg?: number }[] = [];
     const voituresDecl: { genre: "pnj" | "vehicule"; id: number; plomb: number }[] = [];
     const cumul = new Map<string, { degats: number; zone: Zone }>();
     const liste = cibles();
@@ -646,7 +670,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     const vehiculesVus = [...vehiculesAffichees().values()];
     const maVoiture = vehicule.actif()?.vehicule ?? null;
 
-    armeMain.positionBouche(_bouche);
+    armeMain.positionBouche(_bouche, gauche ? "g" : undefined);
     const depart: Vec3 = lunette
       ? [o[0] + regard[0] * 0.8, o[1] + regard[1] * 0.8 - 0.08, o[2] + regard[2] * 0.8]
       : [_bouche.x, _bouche.y, _bouche.z];
@@ -656,6 +680,18 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     const profilZ = modeZ ? profilZombie(arme, amelioreeZ) : null;
     const perceZ = profilZ?.perce === true;
     let impactExplosif: number | null = null;
+    // (v8) projectile (Moutarde & Sally, Brochette) ou souffle (Soufflerie) : le serveur résout tout le tir, aucune touche n'est déclarée ;
+    // le projectile est prédit tout de suite (même trajectoire que le serveur), la bourrasque dessinée
+    if (st.projectile || st.souffle) {
+      client.envoyer({ t: "tir", arme, o, d: [dirs[0]], touches: [], ...(gauche ? { main: "g" as const } : {}) });
+      // même origine que le serveur (l'œil) : la trajectoire prédite est celle qu'il calculera
+      if (st.projectile) projectilesZ?.predire(arme, amelioreeZ, o, dirs[0], client.maintenantServeur(), client.id ?? "");
+      else {
+        rEffetsArmes?.souffle(depart, dirs[0], profilZ?.souffle?.portee ?? a.portee);
+        secousse = Math.max(secousse, 0.05);
+      }
+      return apresTir(arme, a, st, gauche, vise);
+    }
     dirs.forEach((d, i) => {
       const imp = tracerEffets(o, d, Math.min(a.portee, PORTEE_EFFETS_M), liste, client.id ?? "");
       // un tigre largué devant le joueur, le mur ou la portée prend la balle (mes tigres alliés ne sont pas des cibles)
@@ -706,6 +742,26 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       const fin = imp.point;
       effets.traçante(depart, fin, arme);
       if (i === 0 && impactExplosif === null && imp.distance < a.portee - 0.01) impactExplosif = imp.distance;
+      // (v8) balle qui ricoche (Uzi plancha, Agrafeuse pro, Minigun carbonara) : mêmes tronçons que le serveur, le premier tigre touché sur un
+      // tronçon est déclaré avec l'index du tronçon ; chaque rebond fait son étincelle
+      if (modeZ && st.ricochets > 0 && !imp.cible && imp.distance < a.portee - 0.01) {
+        const troncons = segmentsRicochet(monde, o, d, a.portee, st.ricochets);
+        for (let k = 1; k < troncons.length; k++) {
+          const tr = troncons[k];
+          if (impactsAffiches < 8) { impactsAffiches++; effets.impact(tr.o, tr.d, "#ffd27a"); }
+          const z = toucheZombies(tr.o, tr.d, Math.min(tr.longueur, PORTEE_EFFETS_M));
+          const bout: Vec3 = z
+            ? [tr.o[0] + tr.d[0] * z.distance, tr.o[1] + tr.d[1] * z.distance, tr.o[2] + tr.d[2] * z.distance]
+            : [tr.o[0] + tr.d[0] * tr.longueur, tr.o[1] + tr.d[1] * tr.longueur, tr.o[2] + tr.d[2] * tr.longueur];
+          effets.traçante(tr.o, bout, arme);
+          if (z) {
+            touchesDecl.push({ cible: z.cible, zone: z.zone, plomb: i, seg: k });
+            effets.impact(bout, [-tr.d[0], -tr.d[1], -tr.d[2]], "#ff8a1c");
+            break;
+          }
+        }
+        return;
+      }
       if (imp.cible && imp.zone) {
         const e = etats.get(imp.cible);
         if (e && !e.protege) {
@@ -724,7 +780,9 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       }
     });
 
-    client.envoyer({ t: "tir", arme, o, d: dirs, touches: touchesDecl, ...(voituresDecl.length ? { voitures: voituresDecl } : {}) });
+    client.envoyer({
+      t: "tir", arme, o, d: dirs, touches: touchesDecl, ...(voituresDecl.length ? { voitures: voituresDecl } : {}), ...(gauche ? { main: "g" as const } : {}),
+    });
     if (voituresDecl.length) sons.tole();
     // (v7) souffle d'une arme explosive (pistolet gratiné, pistolet à rayons) : boule de feu verte ou ambre au premier impact
     if (profilZ?.explosion && impactExplosif !== null) {
@@ -736,14 +794,19 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
 
     // estimation locale (le HUD l'ignore : seul `confirme`, reçu du serveur, compte, HUD §3.4) ; ni son ni marqueur ici
     for (const [id, c] of cumul) cb.evenement({ type: "touche", cible: id, zone: c.zone, degats: c.degats });
+    return apresTir(arme, a, st, gauche, vise);
+  }
 
+  /** Fin commune d'un tir parti : cadence (de la main qui a tiré), munition, flash, son, recul. */
+  function apresTir(arme: ArmeFeuId, a: (typeof STATS)[ArmeFeuId], st: StatsTir, gauche: boolean, vise: boolean): boolean {
     // cadence (rattrape le retard d'une image, borné : onglet gelé = on repart de maintenant)
-    const prevu = prochainDe(arme);
-    // (v7, zombies) le Double Ristretto tire 1,33 fois plus vite
-    const cadenceS = a.cadenceS * (modeZ && mesAtouts().includes("ristretto") ? 1 / 1.33 : 1);
-    prochains.set(arme, t - prevu < RATTRAPAGE_CADENCE_S ? prevu + cadenceS : t + cadenceS);
-    armes.tirEffectue();
-    armeMain.tirer();
+    const cle = gauche ? (`${arme}:g` as const) : arme;
+    const prevu = Math.max(prochains.get(cle) ?? 0, delaiApparitionT);
+    // (v7, zombies) le Double Ristretto tire 1,33 fois plus vite ; (v8) cadence de l'arme améliorée
+    const cadenceS = st.cadenceS * (modeZ && mesAtouts().includes("ristretto") ? 1 / 1.33 : 1);
+    prochains.set(cle, t - prevu < RATTRAPAGE_CADENCE_S ? prevu + cadenceS : t + cadenceS);
+    armes.tirEffectue(gauche ? "g" : "d");
+    armeMain.tirer(gauche ? "g" : undefined);
     sons.tir(arme);
     const k = vise ? 0.6 : 1;
     const monte = a.recul.tangage * k * (0.8 + 0.4 * Math.random());
@@ -1180,7 +1243,9 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
    */
   function mortZombie(m: Extract<MessageServeur, { t: "zombieMort" }>, essai?: { cap: number; type: TypeZombie }) {
     const id = Number(m.id.slice(1));
-    const cause: MortZombie = m.cause === "explosion" || m.cause === "nuke" ? m.cause : m.zone === "tete" ? "tete" : m.cause === "melee" ? "melee" : "corps";
+    // (v8) la Soufflerie projette comme une explosion (loin du tireur) ; le feu et l'arc tuent au corps
+    const cause: MortZombie = m.cause === "explosion" || m.cause === "nuke" ? m.cause : m.cause === "souffle" ? "explosion"
+      : m.zone === "tete" ? "tete" : m.cause === "melee" ? "melee" : "corps";
     const tueur = m.par === client.id ? null : etats.get(m.par);
     const repli: Vec3 = tueur ? [tueur.p[0], tueur.p[1] + SILHOUETTE.oeil, tueur.p[2]] : [camPos[0], camPos[1], camPos[2]];
     const impulsion = impulsionMort({ cause, arme: m.arme, ameliore: m.ameliore, src: m.src, p: m.p, graine: id }, repli);
@@ -1257,6 +1322,15 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
         const a = STATS[m.arme];
         const liste = cibles();
         const avatar = distants.get(m.id)?.avatar;
+        // (v8) arbalète, Soufflerie : le projectile (`projectile`) ou la bourrasque (`zevt{souffle}`) se dessinent à part, pas de traçante
+        const stD = statsTir(m.arme, { zombies: modeZ });
+        if (stD.projectile || stD.souffle) {
+          avatar?.tirer();
+          const cam0 = oeil();
+          const dx0 = m.o[0] - cam0[0], dz0 = m.o[2] - cam0[2];
+          if (stD.projectile) sons.tir(m.arme, { distance: Math.hypot(dx0, m.o[1] - cam0[1], dz0), pan: panSon(lacet, dx0, dz0) });
+          break;
+        }
         const depart: Vec3 = avatar ? avatar.positionBouche() : m.o;
         const vus = [...vehiculesAffichees().values()];
         const tsV = client.maintenantServeur();
@@ -1487,7 +1561,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
             sons.rireTruck(undefined, 3.2);
           } else sons.manche();
         }
-        if (m.etat.phase === "lobby") { mancheVue = 0; papUtilise = false; noteZ = null; grenades?.vider(); }
+        if (m.etat.phase === "lobby") { mancheVue = 0; papUtilise = false; noteZ = null; grenades?.vider(); projectilesZ?.vider(); }
         break;
       }
       case "zevt": {
@@ -1527,6 +1601,19 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
             else sons.klaxonCamion(positionSon(e.p));
             break;
           case "explosion": feux.explosion(e.p); sonSouffle(e.rayon, e.p); break;
+          // (v8) armes : projectile qui saute, arc électrique, bourrasque d'un autre joueur
+          case "projectile":
+            projectilesZ?.exploser(e.id);
+            if (e.rayon > 0) { feux.explosion(e.p); sonSouffle(e.rayon, e.p); }
+            break;
+          case "arc":
+            rEffetsArmes?.arc(e.p);
+            if (e.par !== client.id && e.p.length) sons.tir("grille_pain", positionSon(e.p[0]));
+            break;
+          case "souffle":
+            rEffetsArmes?.souffle(e.o, e.d, e.portee);
+            sons.tir("soufflerie", positionSon(e.o));
+            break;
           case "grenade": {
             grenades?.exploser(e.id);
             feux.explosion(e.p);
@@ -1593,6 +1680,11 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       case "fumigene":
         sons.fumigene();
         break;
+      case "projectile": {
+        // (v8) un projectile d'arme part : celui du serveur remplace ma prédiction ; celui d'un autre se dessine (son tir s'est déjà entendu)
+        projectilesZ?.recevoir(m, client.id ?? "");
+        break;
+      }
       case "grenade": {
         // (v8) une grenade part : sa trajectoire (celle du serveur) remplace ma prédiction, celle d'un autre s'entend
         if (!grenades) break;
@@ -1619,7 +1711,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
         case "sprint": dashDemande = true; break;
         case "recharger": demarrerRecharge(); break;
         case "tir": if (vivant) { tirMaintenu = true; tirPresse = t; tirConsomme = false; } break;
-        case "visee": viseMaintenu = !estMelee(armes.armeEnMain()); break; // pas de visée avec une arme blanche
+        case "visee": viseMaintenu = !estMelee(armes.armeEnMain()); visePresse = t; viseConsomme = false; break; // pas de visée avec une arme blanche
         case "accroupi": if (accroupiBascule) accroupiBascTenu = !accroupiBascTenu; break;
         case "armePrincipale": case "armeSecondaire": case "couteau": case "armeSpeciale": {
           const s = SLOT_DE_L_ACTION[a];
@@ -1803,7 +1895,10 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       lunette,
       zoomX: lunette && af ? zoomX(fovLunette(af)) : 0,
       zoomNiveau: lunette && af ? indexZoom(af) : -1,
-      zoomNiveaux: lunette && af ? niveauxZoom(af).length : 0,
+      zoomNiveaux: lunette && af ? statsMoi(af).zooms.length : 0,
+      viseur: af ? statsMoi(af).viseur : "fer",
+      ameliorees: armes.ameliorees(),
+      munitionsG: af && armes.akimbo(af) ? armes.munitionsMain("g") : -1,
       ecartViseur: ecartViseur(),
       distanceVisee: lunette ? distanceVisee : -1,
       mur: !!moi.mur && vivant,
@@ -2011,7 +2106,20 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   /** Voitures PNJ, voitures conduisibles, épaves, feux et Elsa (rendu three), à l'horloge serveur ou, en rejeu, à l'instant rejoué. */
   function majMondeDynamique(dt: number) {
     // zombies : ni voitures ni Elsa, mais les explosions (grenades, Truck, armes explosives) passent par les feux
-    if (modeZ) { feux.maj(dt, SANS_FEUX); return; }
+    if (modeZ) {
+      // (v8) tigres en feu : des flammes sur leur dos (sources de feu), le givre des tigres gelés
+      sourcesFeuxZ.length = 0;
+      positionsGivre.length = 0;
+      const zs = mz.zombies(), n = mz.nombre();
+      for (let i = 0; i < n; i++) {
+        const z = zs[i];
+        if (z.brule && sourcesFeuxZ.length < 12) sourcesFeuxZ.push({ p: [z.x, 0.45 * z.echelle / 2.7 + 0.2, z.z], niveau: "feu" });
+        if (z.gele) positionsGivre.push([z.x, 0, z.z]);
+      }
+      feux.maj(dt, sourcesFeuxZ.length ? sourcesFeuxZ : SANS_FEUX);
+      rEffetsArmes?.majGivre(positionsGivre, t);
+      return;
+    }
     const tsServeur = client.maintenantServeur();
     const tsPnj = enReplay && tempsRejeuCache !== null ? tempsRejeuCache : tsServeur;
     const pnj = mondeJeu.etatsPnj(tsPnj);
@@ -2116,6 +2224,13 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     rObjets?.maj(partieZ, t, client.maintenantServeur(), dt);
     rInterieurs?.maj(t, dt);
     majGrenades();
+    if (projectilesZ && rEffetsArmes) {
+      rEffetsArmes.majProjectiles(projectilesZ.affiches(client.maintenantServeur(), (id) => {
+        const v = mz.parId(id);
+        return v ? [v.x, 0, v.z] : null;
+      }), t);
+      rEffetsArmes.maj(dt);
+    }
     const tr = mz.truck();
     if (truckZ) {
       truckZ.group.visible = tr !== null;
@@ -2217,7 +2332,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   /** Place la caméra : survol avant la première apparition, première personne, rejeu du tueur ou caméra de mort. */
   function placerCamera(dt: number, vise: boolean, lunetteAct: boolean, vh: number) {
     const a = armeFeu();
-    const cibleFov = lunetteAct && a ? fovLunette(a) : vise ? FOV_H_VISEE : FOV_H;
+    const vsr = a ? statsMoi(a).viseur : "fer";
+    const cibleFov = lunetteAct && a ? fovLunette(a) : vise ? (vsr === "point_rouge" || vsr === "holo" ? FOV_H_VISEE_OPTIQUE : FOV_H_VISEE) : FOV_H;
     fovH += (cibleFov - fovH) * lissage(14, dt);
     appliquerFov();
     kick *= Math.exp(-11 * dt);
@@ -2317,7 +2433,10 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     {
       // (v7) camouflage du Pack-a-Punch sur l'arme en main
       const enMain = armes.armeEnMain();
-      armeMain.ameliorer(modeZ && !estMelee(enMain) && (armes.equipement().ameliorees?.includes(enMain) ?? false));
+      armeMain.ameliorer(armes.amelioree(enMain));
+      // (v8) paire akimbo et organe de visée de l'arme améliorée
+      const stEnMain = estMelee(enMain) ? null : statsMoi(enMain);
+      armeMain.regler({ paire: !!stEnMain?.akimbo, viseur: stEnMain?.viseur ?? "fer" });
     }
     if (embarquementFin > 0 && t >= embarquementFin) embarquementFin = 0;
 
@@ -2332,7 +2451,11 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     const info = vehicule.actif();
     // Le fusil à lunette ne vise pas pendant le rechargement : l'arme reste visible et le champ normal
     // (sinon, clic droit tenu, l'arme disparaissait sans lunette ni animation de rechargement).
-    const vise = viseMaintenu && peutAgir() && !!a && !(a.zoom !== null && armes.rechargeEnCours()) && !enKillcam() && !pilote();
+    // (v8) l'arme telle qu'elle tire ; une paire akimbo ne vise pas (le clic droit est la détente gauche)
+    const stMain = a ? statsMoi(arme as ArmeFeuId) : null;
+    const paire = !!stMain?.akimbo;
+    const aLunette = !!stMain && viseurLunette(stMain.viseur);
+    const vise = viseMaintenu && peutAgir() && !!a && !paire && !(aLunette && armes.rechargeEnCours()) && !enKillcam() && !pilote();
     if (pilote()) {
       // titan : simulé en local, le joueur est à ses pieds (l'œil est à OEIL_TITAN)
       const avantDash = titan.etat()?.dash ?? 0, avantSol = titan.etat()?.auSol ?? true;
@@ -2377,7 +2500,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     // --- tir (boucle bornée : les armes rapides tirent plus d'une fois par image) ---
     if (actif) {
       // le canon du titan tire en continu tant que le bouton est tenu
-      const auto = pilote() || a === null ? true : a.auto;
+      const auto = pilote() || a === null ? true : (stMain?.auto ?? a.auto);
       // arme blanche : maintenue elle enchaîne les coups, mais un clic bref (ou donné juste avant la fin de la cadence, 0,85 s à l'épée)
       // est mémorisé 0,12 s comme pour une arme semi-automatique, sinon il se perd entre deux images
       const tampon = !pilote() && a === null;
@@ -2387,6 +2510,15 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
         n++;
         if (tampon) tirConsomme = true;
         if (!auto) { tirConsomme = true; break; }
+      }
+      // (v8) main gauche d'une paire akimbo : le clic droit, même règle (maintenu en automatique, mémorisé 0,12 s sinon)
+      if (paire && !pilote()) {
+        const veutG = auto ? viseMaintenu || (!viseConsomme && visePresse > t - 0.12) : !viseConsomme && visePresse > t - 0.12;
+        let g = 0;
+        while (veutG && g < TIRS_PAR_IMAGE_MAX && tirer(false, "g")) {
+          g++;
+          if (!auto) { viseConsomme = true; break; }
+        }
       }
     }
     // Le recul ne retombe qu'un instant après le dernier tir : pendant une rafale il s'accumule ; ensuite la vue
@@ -2422,8 +2554,10 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     }
 
     // --- caméra (avant les pseudos et le radar, qui s'évaluent depuis elle) ---
-    const lunetteAct = vise && !!a && a.zoom !== null && !armes.rechargeEnCours();
+    const lunetteAct = vise && aLunette && !armes.rechargeEnCours();
     placerCamera(dt, vise, lunetteAct, vh);
+    // (v8) lunette thermique : les tigres ressortent en blanc incandescent
+    rz?.thermique(lunetteAct && stMain?.viseur === "thermique");
 
     // --- télémétrie de la lunette : la distance de ce qui est sous le réticule (un rayon par image, seulement en lunette) ---
     if (lunetteAct && a) {
@@ -2554,6 +2688,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       rObjets?.dispose();
       rGrenades?.dispose();
       grenades?.vider();
+      rEffetsArmes?.dispose();
+      projectilesZ?.vider();
       truckZ?.dispose();
       impactsBalles.dispose();
       tracesPneus.dispose();

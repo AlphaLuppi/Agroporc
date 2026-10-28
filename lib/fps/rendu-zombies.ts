@@ -76,6 +76,11 @@ export interface RenduZombies {
   /** ragdolls en cours de simulation (essais) */
   ragdollsActifs(): number;
   /**
+   * (v8) Lunette thermique (Sniper en croûte, Railgun thermidor) : les tigres deviennent blanc incandescent (sans texture, au-dessus du seuil
+   * du halo) tant qu'elle est active ; leurs vraies teintes reviennent à la sortie de la lunette.
+   */
+  thermique(oui: boolean): void;
+  /**
    * (essais) un tigre qui courait en (x, z) meurt aussitôt (`mort`) : cadavre d'un emplacement libre, sans tigre du serveur. false si le
    * modèle n'est pas prêt
    */
@@ -144,6 +149,8 @@ export function creerRenduZombies(scene: THREE.Scene, collisions: CollisionsRagd
   let detruit = false;
   let matPrives: THREE.MeshBasicMaterial[] = [];
   let nAffiches = 0;
+  /** (v8) lunette thermique active : tigres incandescents */
+  let thermiqueActif = false;
   /** horloge locale (s) du rendu des tigres */
   let tempsLocal = 0;
   /** numéro de l'image du `maj` précédent */
@@ -497,6 +504,18 @@ export function creerRenduZombies(scene: THREE.Scene, collisions: CollisionsRagd
       }
       e.ragdoll = r;
     },
+    thermique(oui) {
+      if (oui === thermiqueActif) return;
+      thermiqueActif = oui;
+      const chaud = new THREE.Color(0xfff2d6);
+      matPrives.forEach((mat, i) => {
+        if (oui) { mat.userData.carte = mat.map; mat.map = null; mat.color.copy(chaud); }
+        else { mat.map = (mat.userData.carte as THREE.Texture | null | undefined) ?? mat.map; mat.color.setHex(TEINTES_ZOMBIES[i]); }
+        mat.needsUpdate = true;
+      });
+      matBoites.forEach((mat, i) => mat.color.copy(oui ? chaud : new THREE.Color(TEINTES_ZOMBIES[i])));
+    },
+
     ragdollsActifs() {
       return nRagdollsActifs;
     },

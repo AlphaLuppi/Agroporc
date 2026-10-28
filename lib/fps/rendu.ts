@@ -29,7 +29,7 @@ import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { LineSegments2 } from "three/examples/jsm/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/examples/jsm/lines/LineSegmentsGeometry.js";
 import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
-import { MELEE } from "./armes";
+import { MELEE, type Viseur } from "./armes";
 import { ECHELLE_AVATAR, estMelee, silhouetteDe, type ArmeFeuId, type ArmeId, type ArmeMeleeId, type EtatJoueurSnap, type Vec3 } from "./protocole";
 import { LARGEUR_MIN_M, TRACEURS, dureeVie, etatTraceur, instantImpact, largeurMonde, type ParamsTraceur } from "./traceurs";
 import { hauteurPlaquePx } from "./visibilite";
@@ -80,20 +80,23 @@ export interface ContexteArmeEnMain {
 export interface ArmeEnMain {
   /** Enfant de la caméra (cf. en-tête). */
   group: THREE.Group;
-  tirer(): void;
+  /** Tir (flash, recul) ; `g` = l'arme gauche d'une paire akimbo. */
+  tirer(main?: "g"): void;
   /** Coup de couteau : fente de l'arme (sans flash ni recul). */
   coup(): void;
   /** Remplace l'arme en main (modèle, placement, bras) ; ne fait rien si c'est déjà elle. */
   changer(arme: ArmeId): void;
   /** Lance l'animation de rechargement sur `dureeS` secondes. */
   recharger(dureeS: number): void;
-  /** (v7, zombies) arme passée au Pack-a-Punch : camouflage animé (arêtes qui changent de teinte) */
+  /** (v7, zombies) arme passée au Pack-a-Punch : camouflage animé (arêtes qui changent de teinte ; v8 : zébrures qui ondulent sur les faces) */
   ameliorer(oui: boolean): void;
+  /** (v8, zombies) paire akimbo (seconde arme à gauche) et organe de visée posé sur l'arme ; sans effet s'ils n'ont pas changé */
+  regler(o: { paire: boolean; viseur: Viseur }): void;
   maj(dt: number, ctx: ContexteArmeEnMain): void;
   /** Avancement du rechargement : 0 = rien, ]0,1[ = en cours. */
   readonly progresRecharge: number;
-  /** Bouche du canon en coordonnées monde (pour une traçante partant de l'arme) ; pointe de la lame pour le couteau. */
-  positionBouche(out: THREE.Vector3): THREE.Vector3;
+  /** Bouche du canon en coordonnées monde (pour une traçante partant de l'arme) ; pointe de la lame pour le couteau ; `g` = arme gauche. */
+  positionBouche(out: THREE.Vector3, main?: "g"): THREE.Vector3;
   dispose(): void;
 }
 
@@ -1131,23 +1134,82 @@ export function creerArmeEnMain(idInitial: ArmeId, couleur: CouleurEntree = COUL
   }
   let modele = creerModeleArme(id, m, true);
   group.add(modele.group);
+  /** (v8, zombies) seconde arme d'une paire akimbo (main gauche), posée en miroir du côté gauche de l'écran */
+  let modeleG: ModeleArme | null = null;
+  let paire = false;
+  /** (v8) organe de visée posé sur l'arme (point rouge, holographique, lunette), selon le viseur de l'arme améliorée */
+  let viseur: Viseur = "fer";
+  let pieceViseur: THREE.Group | null = null;
+  let masqueEnVisee = id === "sniper";
   ordonner(group, true, 1000);
 
   const coudeD = new THREE.Vector3(0.2, -0.34, 0.5), coudeG = new THREE.Vector3(-0.25, -0.3, 0.5);
+  const coudeGPaire = new THREE.Vector3(-0.2, -0.34, 0.5);
   const _dir = new THREE.Vector3();
+  const _main = new THREE.Vector3();
   const orienterBras = (b: THREE.Group, main: THREE.Vector3, coude: THREE.Vector3) => {
     b.position.copy(main);
     _dir.copy(coude).sub(main).normalize();
     b.quaternion.setFromUnitVectors(BAS, _dir);
   };
+  /** Bras gauche : sur la garde de l'arme, ou sur la poignée de l'arme gauche d'une paire. */
+  const orienterBrasG = () => {
+    if (modeleG) orienterBras(brasG, _main.copy(modeleG.prise).add(modeleG.group.position), coudeGPaire);
+    else orienterBras(brasG, modele.garde, coudeG);
+  };
   orienterBras(brasD, modele.prise, coudeD);
-  orienterBras(brasG, modele.garde, coudeG);
+  orienterBrasG();
 
-  // (v7) camouflage du Pack-a-Punch : teinte des arêtes et des faces qui tourne entre le magenta et l'ambre
+  /** Écart (m, repère du groupe) entre l'arme droite et l'arme gauche d'une paire : le miroir de la position de repos. */
+  const ecartPaire = () => -2 * pl.repos[0];
+  function poserPaire(): void {
+    if (modeleG) { modeleG.dispose(); modeleG = null; }
+    if (paire && !estMelee(id)) {
+      modeleG = creerModeleArme(id, m, true);
+      modeleG.group.position.set(ecartPaire(), 0, 0);
+      // le groupe est tourné vers l'intérieur (lacet de repos) : l'arme gauche l'est dans l'autre sens
+      modeleG.group.rotation.y = -2 * pl.lacet;
+      group.add(modeleG.group);
+    }
+    ordonner(group, true, 1000);
+    orienterBrasG();
+  }
+
+  /** Pièce de visée sur le dessus de l'arme (au-dessus de sa boîte englobante, entre la poignée et la bouche). */
+  function poserViseur(): void {
+    if (pieceViseur) { pieceViseur.removeFromParent(); pieceViseur = null; }
+    if (viseur === "fer" || estMelee(id) || id === "sniper") { ordonner(group, true, 1000); return; }
+    const boite = new THREE.Box3().setFromObject(modele.group);
+    const y = boite.max.y - modele.group.position.y + 0.004;
+    const z = (modele.prise.z + modele.bouche.z) / 2;
+    const g = new THREE.Group();
+    g.position.set(0, y, z);
+    if (viseur === "point_rouge") {
+      piece(g, geoBoite(0.03, 0.03, 0.035), m, 0, 0.015, 0);
+      piece(g, geoBoite(0.02, 0.02, 0.004), m, 0, 0.018, -0.018);
+    } else if (viseur === "holo") {
+      piece(g, geoBoite(0.04, 0.012, 0.06), m, 0, 0.006, 0);
+      piece(g, geoBoite(0.004, 0.035, 0.004), m, 0.018, 0.03, -0.025);
+      piece(g, geoBoite(0.004, 0.035, 0.004), m, -0.018, 0.03, -0.025);
+      piece(g, geoBoite(0.04, 0.004, 0.004), m, 0, 0.047, -0.025);
+    } else {
+      // lunette (et lunette thermique) : tube et deux colliers
+      piece(g, geoCyl(0.022, 0.18), m, 0, 0.035, 0);
+      piece(g, geoCyl(0.028, 0.03), m, 0, 0.035, -0.09);
+      for (const dz of [-0.04, 0.04]) piece(g, geoBoite(0.012, 0.03, 0.012), m, 0, 0.012, dz);
+    }
+    modele.group.add(g);
+    pieceViseur = g;
+    ordonner(group, true, 1000);
+  }
+
+  // (v7) camouflage du Pack-a-Punch. (v8) plus marqué : les faces reçoivent une texture de zébrures magenta, turquoise et ambre qui ondule
+  // (décalage animé), les arêtes passent du magenta à l'ambre
   let amelioree = false;
   const couleurBase = col.clone();
   const fondBase = (m.fond.color as THREE.Color).clone();
   const camo = new THREE.Color();
+  let texCamo: THREE.CanvasTexture | null = null;
   // Ressort amorti du recul.
   let recul = 0, reculV = 0, ads = 0, phase = 0, amp = 0, air = 0, tAcc = 0;
   const RAIDEUR = 260, AMORTISSEMENT = 21;
@@ -1156,8 +1218,9 @@ export function creerArmeEnMain(idInitial: ArmeId, couleur: CouleurEntree = COUL
   return {
     group,
     get progresRecharge() { return modele.progres; },
-    tirer() {
-      modele.tirer();
+    tirer(main) {
+      if (main === "g" && modeleG) modeleG.tirer();
+      else modele.tirer();
       recul = Math.min(recul + 0.6, 1.3);
     },
     coup() { modele.coup(); },
@@ -1168,30 +1231,51 @@ export function creerArmeEnMain(idInitial: ArmeId, couleur: CouleurEntree = COUL
       pl = PLACEMENT[id];
       modele = creerModeleArme(id, m, true);
       group.add(modele.group);
-      ordonner(group, true, 1000);
+      masqueEnVisee = id === "sniper";
+      poserPaire();
+      poserViseur();
       orienterBras(brasD, modele.prise, coudeD);
-      orienterBras(brasG, modele.garde, coudeG);
+      orienterBrasG();
       recul = 0;
       reculV = 0;
     },
-    recharger(dureeS) { modele.recharger(dureeS); },
+    recharger(dureeS) { modele.recharger(dureeS); modeleG?.recharger(dureeS); },
     ameliorer(oui) {
+      if (oui === amelioree) return;
       amelioree = oui;
-      if (!oui) { (m.ligne as THREE.LineBasicMaterial).color.copy(couleurBase); m.fond.color.copy(fondBase); }
+      if (oui) {
+        texCamo ??= textureCamo();
+        if (texCamo) { m.fond.map = texCamo; m.fond.needsUpdate = true; }
+      } else {
+        (m.ligne as THREE.LineBasicMaterial).color.copy(couleurBase);
+        m.fond.color.copy(fondBase);
+        if (m.fond.map) { m.fond.map = null; m.fond.needsUpdate = true; }
+      }
+    },
+    regler(o) {
+      const p = o.paire && !estMelee(id);
+      if (p !== paire) { paire = p; poserPaire(); }
+      if (o.viseur !== viseur) { viseur = o.viseur; poserViseur(); }
+      masqueEnVisee = id === "sniper" || o.viseur === "lunette" || o.viseur === "thermique";
     },
     maj(dt, ctx) {
       dt = borne(dt, 0, 0.1);
       tAcc += dt;
       if (amelioree) {
-        camo.setHSL((0.86 + 0.12 * Math.sin(tAcc * 1.8)) % 1, 1, 0.62);
+        camo.setHSL((0.86 + 0.14 * Math.sin(tAcc * 1.8)) % 1, 1, 0.64);
         (m.ligne as THREE.LineBasicMaterial).color.copy(camo);
-        m.fond.color.copy(camo).multiplyScalar(0.22);
+        if (texCamo) {
+          // les zébrures défilent le long de l'arme et ondulent
+          texCamo.offset.set((tAcc * 0.35) % 1, 0.2 * Math.sin(tAcc * 1.4));
+          m.fond.color.setRGB(0.62, 0.62, 0.62);
+        } else m.fond.color.copy(camo).multiplyScalar(0.3);
       }
       modele.maj(dt);
+      modeleG?.maj(dt);
       orienterBras(brasD, modele.prise, coudeD);
-      orienterBras(brasG, modele.garde, coudeG);
+      orienterBrasG();
 
-      ads += ((ctx.vise ? 1 : 0) - ads) * (1 - Math.exp(-dt * (id === "sniper" ? 14 : 12)));
+      ads += ((ctx.vise ? 1 : 0) - ads) * (1 - Math.exp(-dt * (masqueEnVisee ? 14 : 12)));
       const vit = ctx.auSol ? ctx.vitesseH : 0;
       if (vit > 0.5) phase += dt * (6 + vit * 0.9);
       amp += (borne(vit / 9) * (1 - 0.85 * ads) - amp) * (1 - Math.exp(-dt * 8));
@@ -1215,21 +1299,55 @@ export function creerArmeEnMain(idInitial: ArmeId, couleur: CouleurEntree = COUL
         melange(pl.repos[2], pl.vise[2], ads) + recul * pl.reculZ,
       );
       group.rotation.set(recul * pl.reculRot + 0.15 * plongee, pl.lacet * (1 - ads), Math.sin(phase) * 0.015 * amp - 0.25 * plongee);
-      // La lunette du sniper remplit l'écran (HUD) : l'arme s'efface quand on vise.
-      group.visible = id !== "sniper" || ads < 0.85;
+      // Une lunette remplit l'écran (HUD) : l'arme s'efface quand on vise (le sniper, et une arme améliorée à lunette).
+      group.visible = !masqueEnVisee || ads < 0.85;
     },
-    positionBouche(out) {
+    positionBouche(out, main) {
       group.updateWorldMatrix(true, true);
-      _bouche.copy(modele.bouche);
-      modele.group.localToWorld(_bouche);
+      const mo = main === "g" && modeleG ? modeleG : modele;
+      _bouche.copy(mo.bouche);
+      mo.group.localToWorld(_bouche);
       return out.copy(_bouche);
     },
     dispose() {
       modele.dispose();
+      modeleG?.dispose();
       group.removeFromParent();
+      texCamo?.dispose();
       libererMateriaux(m);
     },
   };
+}
+
+/**
+ * (v8) Texture du camouflage du Pack-a-Punch : zébrures obliques magenta, turquoise et ambre sur fond violet sombre, répétées (le décalage
+ * animé les fait onduler sur l'arme). Null hors navigateur.
+ */
+function textureCamo(): THREE.CanvasTexture | null {
+  if (typeof document === "undefined") return null;
+  const cv = document.createElement("canvas");
+  cv.width = cv.height = 64;
+  const c = cv.getContext("2d");
+  if (!c) return null;
+  c.fillStyle = "#2a0838";
+  c.fillRect(0, 0, 64, 64);
+  const bandes = ["#ff2bd6", "#22e3d2", "#ffb000", "#ff2bd6"];
+  for (let i = -2; i < 6; i++) {
+    c.fillStyle = bandes[(i + 8) % bandes.length];
+    c.beginPath();
+    const x = i * 16;
+    // bande ondulée : deux bords sinusoïdaux
+    c.moveTo(x, 0);
+    for (let y = 0; y <= 64; y += 8) c.lineTo(x + 6 + 4 * Math.sin(y / 10), y);
+    for (let y = 64; y >= 0; y -= 8) c.lineTo(x + 4 * Math.sin(y / 10 + 1), y);
+    c.closePath();
+    c.fill();
+  }
+  const t = new THREE.CanvasTexture(cv);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(3, 3);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
 }
 
 // ---------------------------------------------------------------------------------------------

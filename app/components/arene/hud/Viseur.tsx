@@ -8,6 +8,8 @@ import styles from "../HudArene.module.css";
  * le joueur est protégé. Conducteur : `( + )` gris et libellé « CONDUITE : TIR IMPOSSIBLE ». Couteau : petit chevron de portée.
  * Sniper sans lunette (v3 §1) : cercle de dispersion de rayon `ecart` (part de la demi-hauteur de l'écran), les traits s'écartent sur lui.
  * Rechargement : anneau de progression autour du viseur (`--recharge` écrite en rAF sur cet élément par `useHudLive`, hors React).
+ * (v8, zombies) En visée avec une arme améliorée à viseur optique : point rouge (point lumineux et halo) ou viseur holographique (cercle
+ * cyan, graduations, point) à la place des quatre traits.
  * Décoratif (`aria-hidden`), sauf le libellé de conduite, qui est une information.
  * Spec : docs/superpowers/specs/2026-10-23-arene-hud-design.md (§5.1, §5.4, §6.3)
  */
@@ -21,9 +23,11 @@ export interface PropsViseur {
   refAnneau: RefObject<HTMLDivElement | null>;
   /** rayon du cercle de dispersion (part de la demi-hauteur de l'écran), 0 = viseur statique */
   ecart?: number;
+  /** (v8) viseur optique affiché (en visée seulement), absent = les quatre traits */
+  optique?: "point_rouge" | "holo" | null;
 }
 
-function ViseurBrut({ protege, conduite, couteau, recharge, refAnneau, ecart = 0 }: PropsViseur) {
+function ViseurBrut({ protege, conduite, couteau, recharge, refAnneau, ecart = 0, optique = null }: PropsViseur) {
   if (conduite) {
     return (
       <div className={styles.viseurConduite}>
@@ -40,7 +44,13 @@ function ViseurBrut({ protege, conduite, couteau, recharge, refAnneau, ecart = 0
       style={ecart > 0 ? ({ "--ecart": `${ecart * 50}vh` } as CSSProperties) : undefined}
     >
       {ecart > 0 && !couteau && <span className={styles.cercleDispersion} />}
-      {couteau ? (
+      {optique && !couteau ? (
+        <span className={styles.viseurOptique} data-optique={optique}>
+          {optique === "point_rouge"
+            ? <><span className={styles.anneauRouge} /><span className={styles.pointRouge} /></>
+            : <><span className={styles.holo} /><span className={styles.holoPoint} /></>}
+        </span>
+      ) : couteau ? (
         <i className={styles.chevronPortee} />
       ) : (
         <>

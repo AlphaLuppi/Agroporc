@@ -65,6 +65,9 @@ export interface ZombieVue {
   /** (v7) allure (marche, course, sprint, rampant) et mode (chasse, sortie du sol, fenêtre, saut) */
   allure: Allure;
   mode: Exclude<ModeZombie, "approche">;
+  /** (v8) en feu (munitions incendiaires : flammes sur le dos), gelé (Soufflerie XXL : givre, ralenti) */
+  brule?: boolean;
+  gele?: boolean;
 }
 
 /** (v7) Truck Muche d'une manche de livraison, interpolé : position, cap, étape (0 arrivée, 1 livraison, 2 départ, 3 épave), PV en %. */
@@ -100,7 +103,7 @@ export class MondeZombies {
   private compte = 0;
   private readonly vues: ZombieVue[] = Array.from({ length: CAPACITE_ZOMBIES }, () => ({
     id: 0, x: 0, z: 0, cap: 0, type: 0 as TypeZombie, echelle: echelleZombie(0), griffe: false, apparition: false, pvPct: 100, vitesse: 0,
-    allure: 0 as Allure, mode: "chasse" as ZombieVue["mode"],
+    allure: 0 as Allure, mode: "chasse" as ZombieVue["mode"], brule: false, gele: false,
   }));
   private nVues = 0;
   private readonly truckVue: TruckVue = { x: 0, z: 0, cap: 0, phase: 0, pvPct: 100 };
@@ -133,7 +136,8 @@ export class MondeZombies {
       for (let i = 0; i < n; i++) {
         const m = liste[i];
         cible.ids[i] = m.id; cible.x[i] = m.x; cible.z[i] = m.z; cible.cap[i] = m.cap; cible.type[i] = m.type;
-        cible.drapeaux[i] = (m.griffe ? 4 : 0) | (m.apparition ? 8 : 0) | (m.allure << 4) | (Math.max(0, MODES.indexOf(m.mode)) << 6);
+        cible.drapeaux[i] = (m.griffe ? 4 : 0) | (m.apparition ? 8 : 0) | (m.allure << 4) | (Math.max(0, MODES.indexOf(m.mode)) << 6)
+          | (m.brule ? 256 : 0) | (m.gele ? 512 : 0);
         cible.pv[i] = m.pvPct;
       }
       cible.n = n;
@@ -182,6 +186,8 @@ export class MondeZombies {
       v.apparition = (proche.drapeaux[i] & 8) !== 0;
       v.allure = ((proche.drapeaux[i] >> 4) & 3) as Allure;
       v.mode = MODES[(proche.drapeaux[i] >> 6) & 3];
+      v.brule = (proche.drapeaux[i] & 256) !== 0;
+      v.gele = (proche.drapeaux[i] & 512) !== 0;
       v.pvPct = proche.pv[i];
       if (j < 0) {
         v.x = proche.x[i]; v.z = proche.z[i]; v.cap = proche.cap[i]; v.vitesse = 0;

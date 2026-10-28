@@ -65,6 +65,36 @@
 .tDroite { left: calc(6 * var(--u)); }
 .point { width: max(2px, calc(2 * var(--u))); height: max(2px, calc(2 * var(--u))); left: max(-1px, calc(-1 * var(--u))); top: max(-1px, calc(-1 * var(--u))); }
 .viseurProtege i { background: var(--ag-cyan); }
+/* (v8, zombies) arme améliorée au Micro-ondes : nom en magenta gratiné, icône, liseré qui ondule (magenta → ambre) */
+.armeNom[data-ameliore] { color: var(--ag-gratin); display: flex; align-items: center; justify-content: flex-end; gap: calc(6 * var(--u)); }
+.iconeGratin { width: calc(24 * var(--u)); height: calc(16 * var(--u)); min-width: 18px; min-height: 12px; color: var(--ag-gratin); flex: none; }
+.slot[data-ameliore] { box-shadow: inset 3px 0 0 var(--ag-gratin); background-image: linear-gradient(90deg, color-mix(in srgb, var(--ag-gratin) 22%, transparent), transparent 60%, color-mix(in srgb, var(--ag-amber) 18%, transparent)); background-size: 200% 100%; animation: ondeGratin 2.4s linear infinite; }
+.slot[data-ameliore] .slotNom { color: var(--ag-gratin); }
+.paireAkimbo { margin: 0; text-align: right; color: var(--ag-ink-dim); font: 500 max(11px, calc(14 * var(--u)))/1.2 var(--ag-mono), monospace; font-variant-numeric: tabular-nums; }
+@keyframes ondeGratin { from { background-position: 0% 0; } to { background-position: 200% 0; } }
+@media (prefers-reduced-motion: reduce) { .slot[data-ameliore] { animation: none; } }
+/* (v8, zombies) viseurs des armes améliorées, affichés en visée : point rouge (point et halo), holographique (cercle, point, graduations) */
+.viseurOptique { position: absolute; left: 50%; top: 50%; width: 0; height: 0; }
+.pointRouge {
+  position: absolute; width: max(5px, calc(6 * var(--u))); height: max(5px, calc(6 * var(--u))); border-radius: 50%;
+  left: max(-2.5px, calc(-3 * var(--u))); top: max(-2.5px, calc(-3 * var(--u)));
+  background: var(--ag-danger); box-shadow: 0 0 calc(6 * var(--u)) var(--ag-danger), 0 0 2px var(--ag-ground);
+}
+.anneauRouge {
+  position: absolute; width: calc(46 * var(--u)); height: calc(46 * var(--u)); left: calc(-23 * var(--u)); top: calc(-23 * var(--u)); border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--ag-danger) 35%, transparent);
+}
+.holo {
+  position: absolute; width: calc(64 * var(--u)); height: calc(64 * var(--u)); left: calc(-32 * var(--u)); top: calc(-32 * var(--u)); border-radius: 50%;
+  border: max(2px, calc(2 * var(--u))) solid var(--ag-cyan); box-shadow: 0 0 calc(8 * var(--u)) color-mix(in srgb, var(--ag-cyan) 60%, transparent);
+}
+.holo::before, .holo::after { content: ""; position: absolute; background: var(--ag-cyan); }
+.holo::before { left: 50%; top: calc(-8 * var(--u)); width: max(2px, calc(2 * var(--u))); height: calc(12 * var(--u)); transform: translateX(-50%); }
+.holo::after { left: 50%; bottom: calc(-8 * var(--u)); width: max(2px, calc(2 * var(--u))); height: calc(12 * var(--u)); transform: translateX(-50%); }
+.holoPoint {
+  position: absolute; width: max(3px, calc(4 * var(--u))); height: max(3px, calc(4 * var(--u))); border-radius: 50%;
+  left: max(-1.5px, calc(-2 * var(--u))); top: max(-1.5px, calc(-2 * var(--u))); background: var(--ag-cyan);
+}
 /* sniper sans lunette (v3 §1) : cercle de dispersion de rayon `--ecart`, les traits s'appuient dessus */
 .cercleDispersion {
   position: absolute; left: calc(-1 * var(--ecart)); top: calc(-1 * var(--ecart)); width: calc(2 * var(--ecart)); height: calc(2 * var(--ecart));
@@ -95,6 +125,10 @@
 
 /* ---------- lunette (§5.3) : cache noir en cercle de 39 vmin, blocs de coin sur noir plein ---------- */
 .lunette { position: absolute; inset: 0; background: radial-gradient(circle at 50% 50%, transparent 0, transparent 39vmin, var(--ag-ground) 39.4vmin); }
+/* (v8) lunette thermique : décor éteint (gris bleuté, contrasté) dans le cercle, les tigres incandescents ressortent ; graduations ambre */
+.lunetteThermique { backdrop-filter: grayscale(1) brightness(0.75) contrast(2.4) sepia(0.6); -webkit-backdrop-filter: grayscale(1) brightness(0.75) contrast(2.4) sepia(0.6); }
+.lunetteThermique .lunetteH, .lunetteThermique .lunetteV { background: var(--ag-amber); }
+.lunetteMode { padding: calc(2 * var(--u)) calc(8 * var(--u)); background: var(--ag-hud-fond); color: var(--ag-amber); font: 600 max(11px, calc(13 * var(--u)))/1.1 var(--ag-mono), monospace; letter-spacing: 0.12em; }
 .lunetteH, .lunetteV { position: absolute; background: var(--ag-ground); }
 .lunetteH { left: 50%; top: calc(50% - 0.5px); width: min(78vmin, 100vw); height: 1px; transform: translateX(-50%); }
 .lunetteV { top: 50%; left: calc(50% - 0.5px); height: min(78vmin, 100vh); width: 1px; transform: translateY(-50%); }
