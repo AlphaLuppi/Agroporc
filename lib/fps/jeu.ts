@@ -36,9 +36,10 @@ import { construireMonde, detruireBatiment, normaleImpact, poserBreche, releverB
 import { FOCUS_ZOMBIES, construireMondeZombies, donneesZombies } from "./zombies-carte";
 import { ZOMBIES } from "./zombies-vagues";
 import {
-  MondeZombies, Rugissements, inviteZombies, segmentsPortesFermees, toucheTruckClient, trouverZombieTouche, trouverZombiesMelee, trouverZombiesTouches,
+  MondeZombies, Rugissements, inviteZombies, segmentsPortesFermees, sonGriffe, toucheTruckClient, trouverZombieTouche, trouverZombiesMelee, trouverZombiesTouches,
   INVITE_VIDE, type InviteZombies,
 } from "./jeu-zombies";
+import { sonExplosion, voixDuBonus, type IdVoix } from "./sons-echantillons";
 import { creerRenduZombies, type MortZombie } from "./rendu-zombies";
 import { creerRenduInterieurs } from "./rendu-interieurs";
 import { creerRenduObjetsZombies } from "./rendu-objets-zombies";
@@ -234,6 +235,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   const effets = creerEffets(scene);
   const post = creerPostTraitement(renderer, scene, camera);
   const sons = creerSons();
+  // (zombies) effets échantillonnés et annonces : téléchargés dès l'entrée, décodés au premier geste (pas d'attente au premier chef)
+  if (modeZ) sons.prechargerZombies();
   const interp = new Interpolateur();
   /** chat vocal de proximité (v3 §5) : activé par l'hôte (menu pause), volumes réglés à chaque image d'après les positions */
   const voix = creerChatVocal((m) => client.envoyer(m));
@@ -346,9 +349,16 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   let nAnnonceZ = 0;
   let papUtilise = false;
   let reparFenetre: string | null = null;
-  const annoncer = (texte: string, genre = "info", voix = false) => {
+  /** Annonce du HUD, et dite par l'annonceur si `voix` est donnée (au plus tôt `auPlusTotS` s plus tard, après une fanfare par exemple). */
+  const annoncer = (texte: string, genre = "info", voix?: IdVoix, auPlusTotS = 0) => {
     annonceZ = { n: ++nAnnonceZ, texte, genre };
-    if (voix) sons.annonce(texte);
+    if (voix) sons.voix(voix, auPlusTotS);
+  };
+  /** Souffle d'un tir explosif en zombies : vraie explosion de grenade, ou pouf synthétisé pour les petits rayons (pistolet à rayons). */
+  const sonSouffle = (rayon: number, p: Vec3) => {
+    const s = sonExplosion(rayon);
+    if (s.genre === "grenade") sons.explosionGrenade(positionSon(p), s.force);
+    else sons.explosionMonstre(s.force, positionSon(p));
   };
   const mesAtouts = (): readonly string[] => partieZ?.joueurs.find((x) => x.id === client.id)?.atouts ?? [];
   /** PV max (le Gratin Dauphinois en zombies) et délai de régénération de la salle */
@@ -703,7 +713,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       const d0 = dirs[0];
       const c: Vec3 = [o[0] + d0[0] * impactExplosif, Math.max(0.2, o[1] + d0[1] * impactExplosif), o[2] + d0[2] * impactExplosif];
       feux.explosion(c);
-      sons.explosionMonstre(Math.min(1, profilZ.explosion.rayon / 6), positionSon(c));
+      sonSouffle(profilZ.explosion.rayon, c);
     }
 
     // estimation locale (le HUD l'ignore : seul `confirme`, reçu du serveur, compte, HUD §3.4) ; ni son ni marqueur ici
@@ -1369,6 +1379,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
         partieZ = m.etat;
         rInterieurs?.majCourant(m.etat.courant);
         if (avant && avant.phase === "manche" && m.etat.phase === "pause") { sons.finManche(); }
+        if (avant && avant.phase !== "fin" && m.etat.phase === "fin") sons.voix("partie_perdue", 1.2);
         if (m.etat.pap.etat === "cuisson" && m.etat.pap.joueur === client.id) papUtilise = true;
         portesFermees = segmentsPortesFermees(m.etat.portes.filter((x) => x.ouverte).map((x) => x.id));
         const me = m.etat.joueurs.find((x) => x.id === client.id);
@@ -1381,7 +1392,13 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
         // nouvelle manche : coup de tambour (sirène pour une livraison du Truck Muche)
         if (m.etat.phase === "manche" && m.etat.manche !== mancheVue) {
           mancheVue = m.etat.manche;
-          if (m.etat.mancheTruck) { sons.mancheTruck(); annoncer("Livraison du Truck Muche !", "truck", true); } else sons.manche();
+          // livraison (les manches des chiens de BO1) : coup de tonnerre, sirène, annonce, puis le Truck Muche rit
+          if (m.etat.mancheTruck) {
+            sons.tonnerre();
+            sons.mancheTruck();
+            annoncer("Livraison du Truck Muche !", "truck", "truck", 0.7);
+            sons.rireTruck(undefined, 3.2);
+          } else sons.manche();
         }
         if (m.etat.phase === "lobby") { mancheVue = 0; papUtilise = false; noteZ = null; }
         break;
@@ -1398,12 +1415,13 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
           case "bonusLache": sons.bonus(false, positionSon([e.p[0], 1, e.p[2]])); break;
           case "bonus": {
             sons.bonus(true, positionSon([e.p[0], 1, e.p[2]]));
-            if (e.genre !== "munitions") annoncer(`${NOMS_BONUS[e.genre]} !`, "bonus", true);
-            else sons.annonce("Munitions max !");
+            // l'annonceur parle sur la fin de la fanfare ; « Munitions max » s'affiche à la réception de l'équipement ravitaillé
+            if (e.genre !== "munitions") annoncer(`${NOMS_BONUS[e.genre]} !`, "bonus", voixDuBonus(e.genre), 0.35);
+            else sons.voix("munitions", 0.35);
             break;
           }
           case "nuke": feux.explosion([moi.p[0], 4, moi.p[2]]); secousse = 0.09; break;
-          case "courant": sons.courant(); annoncer("Courant rétabli : distributeurs et Micro-ondes en marche", "courant", true); break;
+          case "courant": sons.courant(); annoncer("Courant rétabli : distributeurs et Micro-ondes en marche", "courant", "courant", 0.6); break;
           case "peluche": {
             const a = achatDeId(`boite:B${e.de + 1}`);
             sons.boite("peluche", a ? positionSon([a.position[0], 1, a.position[1]]) : undefined);
@@ -1421,9 +1439,11 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
             if (e.quoi === "explosion") { feux.explosion(e.p); sons.explosion(positionSon(e.p)); annoncer("Truck Muche explosé : +500 $", "truck"); }
             else sons.klaxonCamion(positionSon(e.p));
             break;
-          case "explosion": feux.explosion(e.p); sons.explosionMonstre(Math.min(1, e.rayon / 6), positionSon(e.p)); break;
+          case "explosion": feux.explosion(e.p); sonSouffle(e.rayon, e.p); break;
           case "ingredient": annoncer(`Ingrédient trouvé (${partieZ?.quete.ingredients.length ?? 0} / 3)`, "quete"); break;
-          case "cuisson": annoncer(e.fin ? "La Recette ultime est servie !" : "La Recette ultime cuit… tenez 30 s !", "quete", true); break;
+          case "cuisson":
+            annoncer(e.fin ? "La Recette ultime est servie !" : "La Recette ultime cuit… tenez 30 s !", "quete", e.fin ? "recette_servie" : "recette_cuit");
+            break;
           case "manche": break;
           case "autoReleve": if (e.joueur === client.id) annoncer("Pause Café : vous vous relevez", "info"); break;
         }
@@ -1966,12 +1986,16 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     const zs = mz.zombies();
     const regardX = -Math.sin(camLacet), regardZ = -Math.cos(camLacet);
     rz.maj(zs, n, camPos, regardX, regardZ, dt, imageNum, {
-      surGriffe: (v) => sons.griffe(positionSon([v.x, 1, v.z])),
+      // le chef (gros tigre rouge) a son propre coup de patte, calé sur le contact ; les autres gardent la griffe synthétisée
+      surGriffe: (v) => (sonGriffe(v.type) === "chef" ? sons.griffeChef(positionSon([v.x, 1, v.z])) : sons.griffe(positionSon([v.x, 1, v.z]))),
+      // coups de patte dans les planches (simulés ici) : seul le chef s'entend, les autres ne font que le craquement du bois du serveur
+      surArrachage: (v) => { if (sonGriffe(v.type) === "chef") sons.griffeChef(positionSon([v.x, 1.4, v.z])); },
     });
     const id = rugissements.maj(dt, zs, n, camPos, Math.random);
     if (id !== null) {
       const v = mz.parId(id);
-      if (v) sons.rugissementTigre(positionSon([v.x, 1, v.z]));
+      if (v && sonGriffe(v.type) === "chef") sons.grognementChef(positionSon([v.x, 1, v.z]));
+      else if (v) sons.rugissementTigre(positionSon([v.x, 1, v.z]));
     }
     // la relève que je maintiens s'arrête si le coéquipier est relevé, trop loin ou si j'ai lâché E
     if (reanimCible !== null) {

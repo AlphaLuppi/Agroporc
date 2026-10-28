@@ -39,6 +39,11 @@ const BOITE = { l: 1.1, h: 0.55, w: 0.3 } as const;
 export interface RappelsZombies {
   /** Un tigre vient d'armer sa griffe (front montant du drapeau du snap) : le jeu y joue le son. */
   surGriffe(v: ZombieVue): void;
+  /**
+   * Un tigre affiché à la fenêtre arme un coup de patte dans les planches (simulé ici, le serveur n'envoie que la planche arrachée) :
+   * le contact tombe `ZOMBIES.griffeArmeS` plus tard, comme pour `surGriffe`.
+   */
+  surArrachage?(v: ZombieVue): void;
 }
 
 export interface RenduZombies {
@@ -79,8 +84,9 @@ interface Emplacement {
   mortCause: MortZombie | null;
   /** dernière pose connue (le cadavre se fige là) */
   x: number; z: number; cap: number; echelle: number;
-  /** prochain coup de patte sur les planches (s, horloge locale) */
+  /** prochain coup de patte sur les planches (s, horloge locale) ; son de ce coup déjà demandé */
   arracheT: number;
+  arracheSonne: boolean;
 }
 
 export function creerRenduZombies(scene: THREE.Scene): RenduZombies {
@@ -164,6 +170,7 @@ export function creerRenduZombies(scene: THREE.Scene): RenduZombies {
     const e: Emplacement = {
       tigre, groupe, anim: creerAnimZombie(emplacements.length + 1), maillages, id: 0, type: 0, dtAcc: 0, vuImage: -1, griffePrec: false,
       mode: "chasse", modeT: 0, recul: 0, reculSens: 1, mortT: -1, mortCause: null, x: 0, z: 0, cap: 0, echelle: 1, arracheT: 0,
+      arracheSonne: false,
     };
     emplacements.push(e);
     return e;
@@ -352,8 +359,10 @@ export function creerRenduZombies(scene: THREE.Scene): RenduZombies {
         // à la fenêtre et immobile : il arrache les planches à coups de patte
         let griffe = v.griffe;
         if (v.mode === "fenetre" && v.vitesse < 0.3) {
-          if (tempsLocal >= e.arracheT) e.arracheT = tempsLocal + 1.1;
-          griffe = griffe || tempsLocal > e.arracheT - 0.55;
+          if (tempsLocal >= e.arracheT) { e.arracheT = tempsLocal + 1.1; e.arracheSonne = false; }
+          const arme = tempsLocal > e.arracheT - ZOMBIES.griffeArmeS;
+          if (arme && !e.arracheSonne) { e.arracheSonne = true; rappels?.surArrachage?.(v); }
+          griffe = griffe || arme;
         }
         if (animerCetteImage(d, image, v.id)) {
           e.anim.maj(e.dtAcc, v.mode === "sol" ? 0 : v.vitesse * (v.allure === 3 ? 0.6 : 1), v.echelle, griffe, JEU.interpolationMs / 1000);

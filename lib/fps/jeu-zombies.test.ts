@@ -5,7 +5,7 @@ import type { SceneData } from "../agroparc3d/types";
 import { MELEE } from "./armes";
 import {
   CAPACITE_ZOMBIES, DISTANCE_AFFICHAGE_M, INVITE_VIDE, MondeZombies, Rugissements, TAMPON_ZOMBIES_MS, animerCetteImage, inviteZombies,
-  periodeAnimation, segmentsPortesFermees, tigreAffiche, trouverZombieTouche, trouverZombiesMelee, type EntreeInvite, type PartieInvite, type ZombieVue,
+  periodeAnimation, segmentsPortesFermees, sonGriffe, tigreAffiche, trouverZombieTouche, trouverZombiesMelee, type EntreeInvite, type PartieInvite, type ZombieVue,
 } from "./jeu-zombies";
 import { FORME_TIGRE, pointLocal, toucheTigre } from "./monstres";
 import { encoderZombies, type Equipement, type Vec3, type ZombieSnap } from "./protocole";
@@ -464,5 +464,14 @@ describe("parité client / serveur", () => {
       }
     }
     expect(declares).toBeGreaterThan(30);
+  });
+});
+
+describe("sonGriffe : chaque type de tigre a son coup de patte", () => {
+  it("le chef (gros tigre rouge, type 2) a le sien, le petit du Truck (3) mord, tigre et doré griffent", () => {
+    expect(sonGriffe(2)).toBe("chef");
+    expect(sonGriffe(3)).toBe("petit");
+    expect(sonGriffe(0)).toBe("tigre");
+    expect(sonGriffe(1)).toBe("tigre");
   });
 });
