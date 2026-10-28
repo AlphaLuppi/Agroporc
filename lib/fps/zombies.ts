@@ -271,6 +271,13 @@ export function creerSimuZombies(opts: OptionsSimuZombies) {
     z.resolutionT = 0;
   }
 
+  /** Coup de patte abandonné (tigre attiré par un leurre) : ni dégâts ni recharge, jugement différé remis à zéro. */
+  function annulerGriffe(z: Zombie): void {
+    z.armeFin = 0;
+    z.cibleGriffe = null;
+    z.resolutionT = 0;
+  }
+
   /**
    * Coup de patte (armement visible puis frappe) sur le joueur debout le plus proche s'il est à portée de patte et visible ; vrai si le
    * tigre est occupé à griffer. Le coup ne touche qu'au contact : à `armeFin`, le joueur visé doit être sur le balayage de la patte, et de
@@ -353,7 +360,7 @@ export function creerSimuZombies(opts: OptionsSimuZombies) {
           marche = false;
           tx = f.dedans[0]; tz = f.dedans[1];
           // une griffe à travers la fenêtre si un joueur est collé de l'autre côté ; sinon il arrache
-          if (leurre && z.armeFin > 0) { z.armeFin = 0; z.cibleGriffe = null; }
+          if (leurre && z.armeFin > 0) annulerGriffe(z);
           if (!leurre && griffer(z, t, cible, evenements, ZOMBIES.allongeFenetreM)) break;
           if (barricades.planches(f.id) <= 0) {
             changerMode(z, "saut", t);
@@ -382,7 +389,7 @@ export function creerSimuZombies(opts: OptionsSimuZombies) {
           const dVise = leurre ? dLeurre : dMin;
           if (leurre) {
             tx = vise[0]; tz = vise[2];
-            if (z.armeFin > 0) { z.armeFin = 0; z.cibleGriffe = null; }
+            if (z.armeFin > 0) annulerGriffe(z);
             if (dLeurre <= DISTANCE_LEURRE_M) { marche = false; z.progresT = t; z.meilleureDistance = dLeurre; break; }
           } else if (griffer(z, t, cible, evenements)) { marche = false; break; }
           // vision directe (contrôlée toutes les 150 ms, plus tôt si le joueur le plus proche change) ou descente du champ

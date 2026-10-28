@@ -702,6 +702,35 @@ describe("leurres (tigre à remontoir, v8)", () => {
     expect(apres.evenements.some((e) => e.t === "griffeArmee")).toBe(true);
   });
 
+  it("un coup de patte abandonné pour un leurre pendant son jugement différé ne fausse pas le délai du coup suivant", () => {
+    const { simu } = neuf();
+    simu.apparaitre(spec(1), [COUR[0] + 1.4, COUR[1]], CHASSE, 0);
+    const j: JoueurZombie = { ...joueur("j1", ...COUR), delaiMs: 150 };
+    // leurre posé aux pieds du joueur : le tigre, déjà à 1,4 m, reste sur place, tourné vers le joueur
+    const leurre: Leurre = { id: 1, p: [COUR[0], 0.15, COUR[1]], rayon: 40 };
+    const armements: number[] = [];
+    const griffes: number[] = [];
+    let premier = 0, t = 0;
+    for (let k = 0; k < 8 * 60; k++) {
+      t += DT * 1000;
+      // le leurre est posé 20 ms après la fin du premier armement (pendant le jugement différé) et saute 0,8 s plus tard
+      const leurres = premier && t >= premier + 20 && t < premier + 820 ? [leurre] : [];
+      for (const e of simu.tic(t, DT, [j], leurres)) if (e.t === "griffe") griffes.push(t);
+      const z = simu.liste()[0];
+      if (z.armeFin > 0 && armements[armements.length - 1] !== z.armeFin) armements.push(z.armeFin);
+      if (!premier && armements.length) premier = armements[0];
+    }
+    expect(armements.length).toBeGreaterThanOrEqual(2);
+    // le premier coup a été abandonné ; chaque coup suivant est jugé un aller-retour après la fin de son armement
+    expect(griffes.length).toBeGreaterThanOrEqual(1);
+    expect(griffes[0]).toBeGreaterThan(armements[1]);
+    for (const g of griffes) {
+      const a = armements.filter((x) => x <= g).pop()!;
+      expect(g - a).toBeGreaterThanOrEqual(150);
+      expect(g - a).toBeLessThan(150 + 40);
+    }
+  });
+
   it("hors de portée du leurre, le tigre chasse toujours les joueurs", () => {
     const { simu } = neuf();
     const id = simu.apparaitre(spec(1, 0, 1), COUR, CHASSE, 0)!;
