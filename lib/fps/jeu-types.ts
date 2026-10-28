@@ -198,6 +198,12 @@ export interface EtatZombiesHud {
   annonce: { n: number; texte: string; genre: string } | null;
   /** horloge serveur (ms) : minuteurs des bonus */
   serveurT: number;
+  // ---- v8 ----
+  /** grenades à fragmentation et tigres à remontoir en poche (lancers pas encore confirmés déduits) ; absents = 0 */
+  grenades?: number;
+  remontoirs?: number;
+  /** grenade en cuisson : part de la mèche écoulée 0..1, null sinon */
+  cuisson?: number | null;
   /** objectif courant (lore) */
   objectif: string;
   /** fenêtre dont je repose les planches (E maintenu), null sinon */

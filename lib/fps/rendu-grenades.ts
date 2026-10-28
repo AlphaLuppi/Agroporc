@@ -8,6 +8,7 @@ import * as THREE from "three";
 import type { GrenadeAffichee } from "./jeu-grenades";
 import { TRAINEE_POINTS } from "./jeu-grenades";
 import type { GenreGrenade } from "./protocole";
+import { sansHalo } from "./rendu";
 
 /** Modèles en réserve par genre : au-delà, les grenades suivantes ne sont pas dessinées. */
 export const RESERVE_GRENADES = 12;
@@ -34,6 +35,7 @@ export function creerModeleFrag(): ModeleGrenade {
     const m = new THREE.Mesh(geo, sombre); m.rotation.x = Math.PI / 2; m.position.y = y; g.add(m);
   }
   const mats = [olive, sombre, metal];
+  for (const m of mats) sansHalo(m);
   return { group: g, dispose() { g.removeFromParent(); for (const x of geos) x.dispose(); for (const x of mats) x.dispose(); } };
 }
 
@@ -78,6 +80,8 @@ export function creerModeleRemontoir(): ModeleGrenade {
   cle.add(tige, boucleA, boucleB);
   g.add(cle);
   const mats = [orange, noir, blanc, or];
+  // un jouet, pas une source de lumière : hors du halo du bloom (sinon un aplat jaune en vol)
+  for (const m of mats) sansHalo(m);
   return { group: g, dispose() { g.removeFromParent(); for (const x of geos) x.dispose(); for (const x of mats) x.dispose(); } };
 }
 

@@ -130,6 +130,17 @@ export interface Sons {
   sireneFrappe(position?: PositionSon): void;
   /** Déploiement et sifflement d'un fumigène. */
   fumigene(position?: PositionSon): void;
+  // ---- v8 (grenades des zombies) : points d'entrée stables, synthétisés pour l'instant (des échantillons pourront les remplacer) ----
+  /** Grenade lancée : cuillère qui saute et souffle du bras (la mienne), ou froissement lointain (celle d'un autre, `position`). */
+  grenadeLancer(position?: PositionSon): void;
+  /** Rebond d'une grenade sur le carrelage ou un mur ; `force` = vitesse du choc (m/s). */
+  grenadeRebond(force: number, position?: PositionSon): void;
+  /** Explosion d'une grenade : détonation sèche, souffle, éclats qui retombent. */
+  grenadeExplosion(position?: PositionSon): void;
+  /** Bip de cuisson (goupille tirée, la mèche court) : un clic métallique par demi-seconde. */
+  grenadeBip(): void;
+  /** Tigre à remontoir posé : coup de cymbales et cliquetis du ressort (à rejouer à chaque claquement). */
+  remontoir(position?: PositionSon): void;
   dispose(): void;
 }
 
@@ -1120,6 +1131,52 @@ export function creerSons(): Sons {
       const t = ctx!.currentTime + 0.001;
       ton(out, t, { dur: 0.12, type: "sine", f0: 280, f1: 90, gain: 0.5 });
       bruit(out, t + 0.05, { dur: 1.5, type: "highpass", f0: 2400, f1: 1800, gain: 0.45, att: 0.08 });
+    },
+    grenadeLancer(position) {
+      if (!prete()) return;
+      const out = sortie(position);
+      const t = ctx!.currentTime + 0.001;
+      // cuillère qui saute (tintement), puis souffle du bras
+      ton(out, t, { dur: 0.05, type: "triangle", f0: 2900, f1: 2300, gain: 0.18 });
+      ton(out, t + 0.04, { dur: 0.04, type: "triangle", f0: 3400, f1: 3100, gain: 0.1 });
+      bruit(out, t + 0.06, { dur: 0.22, type: "bandpass", f0: 700, f1: 1600, q: 0.8, gain: 0.32, att: 0.05 });
+    },
+    grenadeRebond(force, position) {
+      if (!prete()) return;
+      const out = sortie(position);
+      const t = ctx!.currentTime + 0.001;
+      const g = Math.max(0.05, Math.min(1, force / 12));
+      // métal sur le carrelage : clac bref et tintement creux
+      bruit(out, t, { dur: 0.03, type: "bandpass", f0: 2600, q: 2.5, gain: 0.45 * g });
+      ton(out, t, { dur: 0.09, type: "square", f0: 620 + 180 * g, f1: 520, gain: 0.06 * g });
+    },
+    grenadeExplosion(position) {
+      if (!prete()) return;
+      const out = sortie(position);
+      const t = ctx!.currentTime + 0.001;
+      // plus sèche qu'une voiture : claquement, grave court, souffle, éclats
+      bruit(out, t, { dur: 0.05, type: "highpass", f0: 3200, gain: 0.9 });
+      ton(out, t, { dur: 0.55, type: "sine", f0: 110, f1: 30, gain: 1 });
+      bruit(out, t, { dur: 0.75, type: "lowpass", f0: 4200, f1: 160, gain: 1 });
+      for (let i = 0; i < 6; i++) {
+        bruit(out, t + 0.12 + i * 0.07 + Math.random() * 0.05, { dur: 0.04, type: "bandpass", f0: 3000 + Math.random() * 2500, q: 3, gain: 0.12 });
+      }
+      bruit(out, t + 0.25, { dur: 0.9, type: "lowpass", f0: 700, f1: 150, gain: 0.25 }); // écho dans les bureaux
+    },
+    grenadeBip() {
+      if (!prete()) return;
+      const out = sortie();
+      const t = ctx!.currentTime + 0.001;
+      ton(out, t, { dur: 0.03, type: "square", f0: 1900, gain: 0.05 });
+    },
+    remontoir(position) {
+      if (!prete()) return;
+      const out = sortie(position);
+      const t = ctx!.currentTime + 0.001;
+      // cymbales (bruit aigu qui s'éteint) et cliquetis du ressort
+      bruit(out, t, { dur: 0.35, type: "highpass", f0: 5200, f1: 7000, gain: 0.28 });
+      bruit(out, t, { dur: 0.12, type: "bandpass", f0: 3800, q: 1.5, gain: 0.2 });
+      for (let i = 0; i < 3; i++) ton(out, t + 0.05 + i * 0.045, { dur: 0.02, type: "square", f0: 2400, gain: 0.03 });
     },
     dispose() {
       fini = true;

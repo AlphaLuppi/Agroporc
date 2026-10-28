@@ -33,7 +33,10 @@ import * as THREE from "three";
 import type { SceneData } from "../agroparc3d/types";
 import { C, construireDecor, creerEtatDestruction } from "../agroparc3d/decor";
 import { construireMonde, detruireBatiment, normaleImpact, poserBreche, releverBatiment, type Creux, type Monde } from "./collision";
-import { FOCUS_ZOMBIES, construireMondeZombies, donneesZombies } from "./zombies-carte";
+import { FOCUS_ZOMBIES, PLAFOND_INTERIEUR_M, construireMondeZombies, donneesZombies } from "./zombies-carte";
+import { plafondBatimentsCreux } from "./grenades";
+import { creerControleurGrenades, type LancerDemande } from "./jeu-grenades";
+import { creerRenduGrenades } from "./rendu-grenades";
 import { ZOMBIES } from "./zombies-vagues";
 import {
   MondeZombies, Rugissements, inviteZombies, segmentsPortesFermees, toucheTruckClient, trouverZombieTouche, trouverZombiesMelee, trouverZombiesTouches,
@@ -132,6 +135,8 @@ const SECOUSSE_MONSTRE_M = 40;
 const DUREE_EFFONDREMENT_S = 1.1;
 /** Durée (s) de l'ouverture animée d'une brèche. */
 const DUREE_BRECHE_S = 0.5;
+/** Aucune source de feu permanente en zombies (pas de voitures) : seules les explosions passent par `feux`. */
+const SANS_FEUX: readonly SourceFeu[] = [];
 const KLAXON_TRUCK_S = { min: 2.2, max: 3.6 } as const;
 
 function lireSensibilite(): number {
@@ -260,6 +265,12 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   const rObjets = modeZ ? creerRenduObjetsZombies(scene) : null;
   const truckZ = modeZ ? creerModeleTruckMuche() : null;
   if (truckZ) { truckZ.group.visible = false; scene.add(truckZ.group); }
+  // (v8) grenades : la main du joueur (cuisson), les grenades prédites et diffusées (trajectoires du serveur), leur rendu
+  const grenades = modeZ ? creerControleurGrenades(monde, plafondBatimentsCreux(monde, PLAFOND_INTERIEUR_M)) : null;
+  const rGrenades = modeZ ? creerRenduGrenades(scene) : null;
+  /** dernier instant serveur dont les rebonds ont été joués ; dernier claquement de cymbales (s, horloge locale) */
+  let rebondsVusT = 0;
+  let cymbalesT = 0;
   const rugissements = new Rugissements();
   let imageNum = 0;
   const titan = new ControleurTitan();
@@ -879,6 +890,51 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     sons.fumigene();
   }
 
+  // ---------- grenades (v8, zombies) ----------
+  /** Ce qu'il me reste (dernier `zombies{etat}`, moins mes lancers pas encore confirmés). */
+  function stockGrenades(genre: "frag" | "remontoir"): number {
+    const z = partieZ?.joueurs.find((x) => x.id === client.id);
+    const n = genre === "frag" ? z?.grenades ?? 0 : z?.remontoirs ?? 0;
+    return Math.max(0, n - (grenades?.enAttente(genre) ?? 0));
+  }
+  const peutLancerGrenade = () => modeZ && peutAgir() && !aTerreZ && !elimineZ && !enKillcam();
+  /** Lancer parti : message au serveur (œil, visée, cuisson), prédiction locale dessinée tout de suite, son. */
+  function envoyerGrenade(d: LancerDemande) {
+    if (!grenades) return;
+    const o = oeil();
+    const dir = directionVisee(lacet, tangage, 0);
+    const oc: Vec3 = [o[0], o[1], o[2]];
+    client.envoyer({ t: "lancerGrenade", genre: d.genre, o: oc, d: [dir[0], dir[1], dir[2]], cuissonMs: d.cuissonMs });
+    grenades.predire(d.genre, oc, dir, client.maintenantServeur(), d.cuissonMs, client.id ?? "");
+    sons.grenadeLancer();
+  }
+  function presserGrenade(genre: "frag" | "remontoir") {
+    if (!grenades || !peutLancerGrenade()) return;
+    const d = grenades.presser(genre, t * 1000, stockGrenades(genre));
+    if (d) envoyerGrenade(d);
+  }
+  function relacherGrenade(genre: "frag" | "remontoir") {
+    const d = grenades?.relacher(genre, t * 1000);
+    if (d && peutLancerGrenade()) envoyerGrenade(d);
+  }
+  /** À chaque image : bips et lancer forcé de la cuisson, grenades dessinées, rebonds et cymbales entendus. */
+  function majGrenades() {
+    if (!grenades || !rGrenades) return;
+    if (!peutLancerGrenade()) grenades.annuler(); // à terre ou mort en pleine cuisson : la grenade reste dans la poche
+    const c = grenades.majCuisson(t * 1000);
+    if (c.bip) sons.grenadeBip();
+    if (c.lancer && peutLancerGrenade()) envoyerGrenade(c.lancer);
+    const ts = client.maintenantServeur();
+    const liste = grenades.affichees(ts);
+    rGrenades.maj(liste, t);
+    for (const r of grenades.rebonds(rebondsVusT, ts)) sons.grenadeRebond(r.force, positionSon(r.p));
+    rebondsVusT = ts;
+    if (t - cymbalesT > 0.32) {
+      const pose = liste.find((g) => g.genre === "remontoir" && g.posee);
+      if (pose) { cymbalesT = t; sons.remontoir(positionSon(pose.p)); }
+    }
+  }
+
   function monterBus() {
     if (!peutAgir() || enKillcam() || entracte || vehicule.actif() || pilote()) return;
     client.envoyer({ t: "monterBus" });
@@ -1383,7 +1439,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
           mancheVue = m.etat.manche;
           if (m.etat.mancheTruck) { sons.mancheTruck(); annoncer("Livraison du Truck Muche !", "truck", true); } else sons.manche();
         }
-        if (m.etat.phase === "lobby") { mancheVue = 0; papUtilise = false; noteZ = null; }
+        if (m.etat.phase === "lobby") { mancheVue = 0; papUtilise = false; noteZ = null; grenades?.vider(); }
         break;
       }
       case "zevt": {
@@ -1422,6 +1478,14 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
             else sons.klaxonCamion(positionSon(e.p));
             break;
           case "explosion": feux.explosion(e.p); sons.explosionMonstre(Math.min(1, e.rayon / 6), positionSon(e.p)); break;
+          case "grenade": {
+            grenades?.exploser(e.id);
+            feux.explosion(e.p);
+            sons.grenadeExplosion(positionSon(e.p));
+            const d = Math.hypot(e.p[0] - moi.p[0], e.p[1] - moi.p[1], e.p[2] - moi.p[2]);
+            if (d < e.rayon * 2) secousse = Math.max(secousse, 0.07 * (1 - d / (e.rayon * 2)));
+            break;
+          }
           case "ingredient": annoncer(`Ingrédient trouvé (${partieZ?.quete.ingredients.length ?? 0} / 3)`, "quete"); break;
           case "cuisson": annoncer(e.fin ? "La Recette ultime est servie !" : "La Recette ultime cuit… tenez 30 s !", "quete", true); break;
           case "manche": break;
@@ -1480,6 +1544,13 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       case "fumigene":
         sons.fumigene();
         break;
+      case "grenade": {
+        // (v8) une grenade part : sa trajectoire (celle du serveur) remplace ma prédiction, celle d'un autre s'entend
+        if (!grenades) break;
+        grenades.recevoir(m, client.id ?? "");
+        if (m.par !== client.id) sons.grenadeLancer(positionSon(m.o));
+        break;
+      }
       case "ramassageArme":
         if (m.id === client.id) sons.ramassage("arme");
         break;
@@ -1511,9 +1582,12 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
         case "interagir": interagir(); break;
         case "siege": changerSiege(); break;
         case "passer": if (kc.actif() && kc.phase() === "rejeu") kc.passer(); break;
-        case "invoquer": invoquer(); break;
-        case "fumigene": lancerFumigene(); break;
+        case "invoquer": if (!modeZ) invoquer(); break;
+        case "fumigene": if (!modeZ) lancerFumigene(); break;
         case "frappeAerienne": break;
+        // (v8) zombies : G tire la goupille (maintenir : cuire), B lance le tigre à remontoir
+        case "grenade": if (modeZ) presserGrenade("frag"); break;
+        case "remontoir": if (modeZ) presserGrenade("remontoir"); break;
         case "zoomLunette": if (lunetteActive()) changerZoom(1, true); break;
         case "parler": voix.parler(true); break;
         default: break;
@@ -1528,6 +1602,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       else if (a === "visee") viseMaintenu = actionActive("visee");
       else if (a === "parler") voix.parler(actionActive("parler"));
       else if (a === "interagir" && !actionActive("interagir")) arreterReanimation();
+      else if (a === "grenade" && !actionActive("grenade")) relacherGrenade("frag");
     }
   };
   const surKeyDown = (e: KeyboardEvent) => {
@@ -1551,6 +1626,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     viseMaintenu = false;
     voix.parler(false);
     arreterReanimation();
+    grenades?.annuler();
   };
   const surMouseDown = (e: MouseEvent) => {
     if (!verrouille()) { demanderVerrou(); return; }
@@ -1885,7 +1961,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   }
   /** Voitures PNJ, voitures conduisibles, épaves, feux et Elsa (rendu three), à l'horloge serveur ou, en rejeu, à l'instant rejoué. */
   function majMondeDynamique(dt: number) {
-    if (modeZ) return;
+    // zombies : ni voitures ni Elsa, mais les explosions (grenades, Truck, armes explosives) passent par les feux
+    if (modeZ) { feux.maj(dt, SANS_FEUX); return; }
     const tsServeur = client.maintenantServeur();
     const tsPnj = enReplay && tempsRejeuCache !== null ? tempsRejeuCache : tsServeur;
     const pnj = mondeJeu.etatsPnj(tsPnj);
@@ -1985,6 +2062,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     // (v7) objets de la carte, intérieurs, Truck Muche des livraisons
     rObjets?.maj(partieZ, t, client.maintenantServeur(), dt);
     rInterieurs?.maj(t, dt);
+    majGrenades();
     const tr = mz.truck();
     if (truckZ) {
       truckZ.group.visible = tr !== null;
@@ -2372,6 +2450,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
         pvMax: pvMaxMoi(), note: noteZ, annonce: annonceZ, serveurT: client.maintenantServeur(),
         objectif: partieZ ? objectifZombies(partieZ, papUtilise) : "",
         reparation: reparFenetre,
+        grenades: stockGrenades("frag"), remontoirs: stockGrenades("remontoir"), cuisson: grenades?.cuisson(t * 1000) ?? null,
       };
     },
     lancerFrappe(cible) { lancerFrappe(cible); },
@@ -2414,6 +2493,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       rz?.dispose();
       rInterieurs?.dispose();
       rObjets?.dispose();
+      rGrenades?.dispose();
+      grenades?.vider();
       truckZ?.dispose();
       impactsBalles.dispose();
       tracesPneus.dispose();
@@ -2449,6 +2530,11 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
           mode: modeZ ? "zombies" : "arene", argent: argentZ, manche: partieZ?.manche ?? 0, restants: mz.restants(), aTerre: aTerreZ, elimine: elimineZ,
           zombies: modeZ ? mz.zombies().slice(0, mz.nombre()).map((v) => ({ id: v.id, x: v.x, z: v.z, type: v.type, griffe: v.griffe, mode: v.mode, cap: v.cap })) : [],
           rugissements: rz ? { pret: rz.pret(), affiches: rz.affiches() } : null,
+          // (v8) grenades en poche et en vol
+          grenades: grenades ? {
+            frag: stockGrenades("frag"), remontoirs: stockGrenades("remontoir"), cuisson: grenades.cuisson(t * 1000),
+            vol: grenades.affichees(client.maintenantServeur()).map((g) => ({ id: g.id, genre: g.genre, p: g.p, posee: g.posee })),
+          } : null,
           distants: [...etats.entries()].filter(([id]) => id !== client.id).map(([id, e]) => ({
             id, p: e.p, vivant: e.vivant, protege: e.protege, arme: e.arme, accroupi: !!e.accroupi, glisse: !!e.glisse, vehicule: e.vehicule ?? null,
             pseudoAlpha: visib.alpha(id),

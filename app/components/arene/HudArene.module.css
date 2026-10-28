@@ -316,6 +316,8 @@
 .slotNom em { font-style: normal; margin-left: calc(6 * var(--u)); color: var(--ag-amber); font-size: max(11px, calc(11 * var(--u))); letter-spacing: 0.12em; }
 .slotMun { font-variant-numeric: tabular-nums; color: var(--ag-ink); white-space: nowrap; }
 .slot[data-niveau="bas"] .slotMun { color: var(--ag-amber); }
+/* (v8) grenades des zombies : pastilles pleines / vides */
+.pastilles { letter-spacing: 0.18em; }
 .slot[data-niveau="critique"] .slotMun, .slot[data-niveau="vide"] .slotMun { color: var(--ag-danger); }
 .slot[data-degainage="oui"]::before {
   content: ""; position: absolute; inset: 0; background: color-mix(in srgb, var(--ag-amber) 30%, transparent); transform-origin: left center; animation: degainage 0.35s linear forwards;
