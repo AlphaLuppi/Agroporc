@@ -618,6 +618,8 @@ try {
     await jusqua(async () => (await A.jeu()).slot === "couteau", { quoi: "couteau en main avant la relève" });
     await aller(A, B, [posBobMort[0] + 1.2, posBobMort[1]], 1.5);
     trace("Alice près de Bob", `tigres à ${(await tigresProches(A)).map((x) => x.d.toFixed(0))} m`);
+    // (v8) position du corps juste avant la relève : la relève ne doit pas téléporter Bob (`apparition{garder}`)
+    const posBobAvantReleve = plat((await B.jeu()).p);
     // E maintenu : pendant ces 3 s la garde à l'épée tourne déjà (les tigres reviennent)
     const t0 = Date.now();
     await A.touche("KeyE", true);
@@ -627,8 +629,11 @@ try {
       await A.touche("KeyE", false);
     }
     const duree = Date.now() - t0;
+    await jusqua(async () => (await B.jeu())?.vivant, { ms: 5000, quoi: "Bob de nouveau vivant côté client" });
+    const sautReleve = dist(plat((await B.jeu()).p), posBobAvantReleve);
     // Bob file se mettre à l'abri dans la cour Ouest (fermée, les tigres n'y accèdent pas) ; pas d'attente ici : les tigres reviennent sur Alice
     bobParti = aller(B, A, ZONE_BOB).catch(() => null);
+    verifier(sautReleve <= 0.5, `relève : Bob a été déplacé de ${sautReleve.toFixed(2)} m (aucune téléportation attendue)`);
     verifier(duree >= 2500, `relève en ${duree} ms (3 s attendues)`);
     verifier(A.envoyesDe("reanimer", depuis).some((m) => m.cible === idB), `aucun message reanimer vers Bob : ${JSON.stringify(A.envoyesDe("reanimer", depuis))}`);
     const ma = await A.moiPartie();

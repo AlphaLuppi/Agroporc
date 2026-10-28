@@ -285,10 +285,12 @@ describe("mise à terre, inactivité, départs", () => {
     expect(types(apres)).not.toContain("apparition");
     expect(types(apres)).not.toContain("mort");
     expect(j(s, "b").vivant).toBe(false);
-    // à terre : états refusés, ni tir ni coup
+    // à terre : le corps est suivi (le client le fait encore glisser ou retomber), posture « mort » imposée ; ni tir ni coup
     const posAvant = [...j(s, "b").p];
     s.recevoir("b", { t: "etat", seq: 5, p: [posAvant[0] + 1, 0, posAvant[2]], v: [0, 0, 0], lacet: 0, tangage: 0, posture: "sol", mur: 0 }, t + 10_000);
-    expect(j(s, "b").p).toEqual(posAvant);
+    expect(j(s, "b").p).toEqual([posAvant[0] + 1, 0, posAvant[2]]);
+    expect(j(s, "b")).toMatchObject({ posture: "mort", vivant: false });
+    expect(j(s, "b").histo.at(-1)?.p).not.toEqual([posAvant[0] + 1, 0, posAvant[2]]);
     expect(types(s.recevoir("b", { t: "tir", arme: "pistolet", o: [0, 0, 0], d: [[0, 0, -1]], touches: [] }, t + 10_100))).toEqual([]);
   });
 
@@ -318,7 +320,7 @@ describe("mise à terre, inactivité, départs", () => {
     expect(dernierEtat(s.recevoir("b", { t: "quitter" }, T0 + 1200))!.phase).toBe("fin");
   });
 
-  it("inactivité de 20 s : le joueur est retiré de la partie (attente) ; défaite s'il était le dernier debout", () => {
+  it("(v8) inactivité de 20 s (onglet caché, coupure en reprise) : le joueur reste dans la partie, immobile (pas d'éviction en zombies)", () => {
     const s = partie(["a", "b"]);
     // « a » envoie des états, « b » se tait
     let seq = 0;
@@ -327,11 +329,28 @@ describe("mise à terre, inactivité, départs", () => {
       s.recevoir("a", { t: "etat", seq: ++seq, p: j(s, "a").p, v: [0, 0, 0], lacet: 0, tangage: 0, posture: "sol", mur: 0 }, t);
       sorties.push(...s.tic(t));
     }
-    expect(j(s, "b").enJeu).toBe(false);
-    expect(dernierEtat(sorties.slice(-60))).toBeDefined();
-    expect(messages(sorties, "zombies").some((m) => m.etat.joueurs.find((x) => x.id === "b")?.etat === "attente")).toBe(true);
+    expect(j(s, "b").enJeu).toBe(true);
+    expect(messages(sorties, "zombies").some((m) => m.etat.joueurs.find((x) => x.id === "b")?.etat === "attente")).toBe(false);
     expect(j(s, "a").enJeu).toBe(true);
     expect(s.resumeZombies()!.phase).not.toBe("fin");
+  });
+
+  it("(v8) reprendre : `bienvenue{reprise}` au même id, état de la partie, argent et `apparition{garder}` sans rien déplacer", () => {
+    const s = partie(["a", "b"], { argentDepart: 800 });
+    avancer(s, T0 + 50, T0 + 1500);
+    const a = j(s, "a");
+    const avant = { p: [...a.p], seq: a.seq, pv: a.pv };
+    const sorties = s.reprendre("a", T0 + 1600);
+    expect(sorties.every((x) => x.a === "a")).toBe(true);
+    expect(types(sorties)).toEqual(["bienvenue", "zombies", "batiments", "argent", "apparition"]);
+    expect(messages(sorties, "bienvenue")[0]).toMatchObject({ id: "a", reprise: true });
+    expect(messages(sorties, "argent")[0]).toMatchObject({ solde: 800, delta: 0 });
+    expect(messages(sorties, "apparition")[0]).toMatchObject({ garder: true, p: avant.p, pv: avant.pv });
+    expect({ p: a.p, seq: a.seq, pv: a.pv }).toEqual(avant);
+    // à terre : pas d'apparition (l'état de la partie le dit)
+    s.infliger(a, 1000, null, "tigre_zombie", "corps", "couteau", T0 + 1700);
+    expect(types(s.reprendre("a", T0 + 1800))).not.toContain("apparition");
+    expect(s.reprendre("inconnu", T0 + 1800)).toEqual([]);
   });
 
   it("déconnexion : la liste et l'hôte sont à jour, la partie continue pour les autres", () => {
@@ -391,5 +410,99 @@ describe("snaps", () => {
     expect(messages(sorties, "snap").every((m) => m.zombies === undefined)).toBe(true);
     expect(s.resumeZombies()).toBeNull();
     expect(s.infoMatch()).toMatchObject({ objectif: JEU.objectifKills, fin: T0 + JEU.dureeMatchMs });
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+describe("réseau : budget de distance, acceptation partielle", () => {
+  /** Unité de direction vers le centre des bornes (place pour courir sans sortir de la carte). */
+  function versCentre(s: Salle, p: Vec3): [number, number] {
+    const b = s.monde.bornes;
+    const dx = (b.x0 + b.x1) / 2 - p[0], dz = (b.z0 + b.z1) / 2 - p[2], l = Math.hypot(dx, dz) || 1;
+    return [dx / l, dz / l];
+  }
+  const etatA = (seq: number, p: Vec3): MessageClient => ({ t: "etat", seq, p, v: [0, 0, 0], lacet: 0, tangage: 0, posture: "sol", mur: 0 });
+
+  it("paquets regroupés : 20 états à 10 images/s et 18 m/s par paquets de 6, tous acceptés en entier", () => {
+    const s = partie(["a"]);
+    const depart = [...j(s, "a").p] as Vec3;
+    const [ux, uz] = versCentre(s, depart);
+    const t0 = T0 + 2000;
+    let entiers = 0;
+    for (let k = 0; k < 20; k += 6) {
+      const t = t0 + (k + 6) * 100;
+      for (let q = k; q < Math.min(20, k + 6); q++) {
+        const d = 1.8 * (q + 1);
+        const p: Vec3 = [depart[0] + ux * d, 0, depart[2] + uz * d];
+        s.recevoir("a", etatA(q + 1, p), t);
+        if (Math.hypot(j(s, "a").p[0] - p[0], j(s, "a").p[2] - p[2]) < 1e-9) entiers++;
+      }
+    }
+    expect(entiers).toBe(20);
+  });
+
+  it("après une coupure de 3 s (37 m courus), la position serveur avance aussitôt de son budget puis rattrape le client, sans jamais rester figée", () => {
+    const s = partie(["a"]);
+    const depart = [...j(s, "a").p] as Vec3;
+    const [ux, uz] = versCentre(s, depart);
+    const t0 = T0 + 2000;
+    s.recevoir("a", etatA(1, depart), t0);
+    // 3 s sans aucun état reçu, le client a couru 37 m : le premier état après la coupure est accepté en partie
+    const loin: Vec3 = [depart[0] + ux * 37, 0, depart[2] + uz * 37];
+    s.recevoir("a", etatA(2, loin), t0 + 3000);
+    const d1 = Math.hypot(j(s, "a").p[0] - depart[0], j(s, "a").p[2] - depart[2]);
+    expect(d1).toBeGreaterThan(19);
+    expect(d1).toBeLessThan(37);
+    // il reste immobile ensuite : la position serveur le rejoint en moins d'une seconde
+    let seq = 2;
+    for (let t = t0 + 3033; t <= t0 + 4000; t += 33) s.recevoir("a", etatA(++seq, loin), t);
+    expect(Math.hypot(j(s, "a").p[0] - loin[0], j(s, "a").p[2] - loin[2])).toBeLessThan(1e-6);
+  });
+
+  it("après une apparition (téléportation), un état encore en vol depuis l'ancienne position n'est pas accepté, même en partie", () => {
+    const s = partie(["a", "b"]);
+    const ancien = [...j(s, "a").p] as Vec3;
+    s.placerJoueur(j(s, "a"), [ancien[0] + 30, 0, ancien[2]], 0, { pv: 100, equip: j(s, "a").equip, main: "secondaire" }, T0 + 3000);
+    const nouveau = [...j(s, "a").p];
+    s.recevoir("a", etatA(50, ancien), T0 + 3500);
+    expect(j(s, "a").p).toEqual(nouveau);
+    // le client a appliqué l'apparition : ses états sont acceptés, et de nouveau en partie ensuite
+    s.recevoir("a", etatA(51, [nouveau[0] + 0.3, 0, nouveau[2]]), T0 + 3600);
+    expect(j(s, "a").p[0]).toBeCloseTo(nouveau[0] + 0.3, 6);
+    s.recevoir("a", etatA(52, [nouveau[0] - 40, 0, nouveau[2]]), T0 + 3650);
+    expect(j(s, "a").p[0]).toBeLessThan(nouveau[0]);
+  });
+});
+
+describe("réseau : relève sans téléportation", () => {
+  it("à terre, le corps suit les états du client ; la relève envoie `apparition{garder}` à cette position, sans toucher ni `p` ni `seq`", () => {
+    const s = partie(["a", "b"]);
+    const t = T0 + 2000;
+    avancer(s, T0 + 50, t - 50);
+    const b = j(s, "b");
+    const chute = [...b.p] as Vec3;
+    s.infliger(b, 1000, null, "tigre_zombie", "corps", "couteau", t);
+    // le client de « b » glisse encore de 0,6 m puis s'immobilise (états à terre suivis)
+    const corps: Vec3 = [chute[0] + 0.6, 0, chute[2]];
+    s.recevoir("b", { t: "etat", seq: 40, p: corps, v: [0, 0, 0], lacet: 1.2, tangage: 0, posture: "sol", mur: 0 }, t + 100);
+    expect(b.p).toEqual(corps);
+    // « a » le relève (E maintenu 3 s à moins de 2,5 m)
+    j(s, "a").p = [corps[0] + 1, 0, corps[2]];
+    s.recevoir("a", { t: "reanimer", cible: "b" }, t + 200);
+    const sorties = avancer(s, t + 250, t + 200 + ZOMBIES.reanimationS * 1000 + 100);
+    const app = messages(sorties, "apparition").find((m) => m.id === "b")!;
+    expect(app).toMatchObject({ garder: true, p: corps, pv: ZOMBIES.reanimationPv });
+    expect(b).toMatchObject({ vivant: true, seq: 40, p: corps });
+    // l'état suivant du client (seq 41) est accepté contre la même référence
+    s.recevoir("b", { t: "etat", seq: 41, p: [corps[0] + 0.2, 0, corps[2]], v: [0, 0, 0], lacet: 1.2, tangage: 0, posture: "sol", mur: 0 }, t + 3400);
+    expect(b.p[0]).toBeCloseTo(corps[0] + 0.2, 6);
+  });
+
+  it("une vraie apparition (retour d'un éliminé, entrée) téléporte toujours : pas de `garder`", () => {
+    const s = salleZ({ pauseMs: 1000 });
+    s.connecter("a", "Alice", T0);
+    s.recevoir("a", { t: "lancerPartie" }, T0);
+    const app = messages(s.recevoir("a", { t: "rejoindre" }, T0), "apparition")[0];
+    expect(app.garder).toBeUndefined();
   });
 });

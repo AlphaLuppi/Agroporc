@@ -25,7 +25,7 @@
  * chute à distance : une dizaine de tirs, peu importe la lenteur des allers-retours avec la page) et tirent à la tête (`tirerVers` vise la
  * tête d'un tigre). B s'arrête sous 700 PV pour que A porte le dernier coup. Un joueur tué par le tigre réapparaît et reprend. Sous 30 % le tigre s'enfuit vers
  * une autre cachette : les joueurs le suivent. Après sa mort, un autre avion peut passer pendant les étapes 5 et 6 : seuls les coups crédités
- * à A comptent. Le reste (pose par étapes de 40 m, rendu logiciel lent, port 8787 jamais utilisé) est expliqué dans e2e_arene_v2.mjs.
+ * à A comptent. Le reste (pose par étapes de 9 m, rendu logiciel lent, port 8787 jamais utilisé) est expliqué dans e2e_arene_v2.mjs.
  */
 import { spawn, spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
@@ -228,16 +228,16 @@ function trouverPiste(longueur = 26) {
 }
 
 /**
- * Pose `j` en `pos` : `teleporter` ne change que la position CLIENT, et le serveur n'accepte un état que s'il reste dans la vitesse permise
- * depuis le dernier état accepté (`VITESSE_MAX_H_M_S × dt + 1`, dt plafonné à 5 s, il grandit tant que les états sont refusés). Un saut est donc
- * découpé en étapes de 40 m (posées loin des routes : une voiture PNJ tue), chacune attendue chez `autre` (qui voit `j` là où le serveur l'a accepté).
+ * Pose `j` en `pos` : `teleporter` ne change que la position CLIENT, et le serveur n'accepte un état que s'il reste dans la limite
+ * de son budget de distance (v8 : `VITESSE_MAX_H_M_S` × temps écoulé, plafonné à `BUDGET_ARENE_S` = 0,5 s, + 1 m : 10,5 m). Un saut est donc
+ * découpé en étapes de 9 m (posées loin des routes : une voiture PNJ tue), chacune attendue chez `autre` (qui voit `j` là où le serveur l'a accepté).
  * Le serveur ne connaît que ces étapes (pas le trajet entre elles) : avec `eviter` (cf. `pointLibre`), aucune n'est posée près de `eviter.c`.
  */
 async function poser(j, autre, pos, tolerance = 2.5, eviter = null) {
   const idJ = await j.id();
   let vu = null;
-  const PAS = 40;
-  for (let etape = 0; etape < 12; etape++) {
+  const PAS = 9;
+  for (let etape = 0; etape < 60; etape++) {
     const moi = (await j.jeu()).p;
     const reste = Math.hypot(pos[0] - moi[0], pos[2] - moi[2]);
     const k = reste > PAS ? PAS / reste : 1;

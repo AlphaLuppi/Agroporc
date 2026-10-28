@@ -30,7 +30,7 @@
  * Code de sortie : 0 si toutes les étapes passent, 1 sinon.
  *
  * À savoir : `teleporter` ne change que la position CLIENT et le serveur refuse tout saut plus grand que sa vitesse permise (le script déplace par étapes
- * de 40 m, `poser`) ; les voitures PNJ tuent à pied (l'étape touchée est rejouée) ; le rendu logiciel tourne à 2–10 images/s (killcam plus longue que
+ * de 9 m, `poser`) ; les voitures PNJ tuent à pied (l'étape touchée est rejouée) ; le rendu logiciel tourne à 2–10 images/s (killcam plus longue que
  * nominale, une capture dure plusieurs secondes) ; le verrouillage du pointeur, absent en headless, est émulé ; le serveur n'utilise jamais le port 8787
  * (un onglet de développement ouvert sur le site s'y reconnecterait et entrerait dans la partie) ; un `next dev` à froid recharge les pages ouvertes.
  */
@@ -215,15 +215,15 @@ function trouverPiste(longueur = 26) {
 }
 
 /**
- * Pose `j` en `pos` : `teleporter` ne change que la position CLIENT, et le serveur n'accepte un état que s'il reste dans la vitesse permise
- * depuis le dernier état accepté (`VITESSE_MAX_H_M_S × dt + 1`, dt plafonné à 5 s, il grandit tant que les états sont refusés). Un saut est donc
- * découpé en étapes de 40 m (posées loin des routes : une voiture PNJ tue), chacune attendue chez `autre` (qui voit `j` là où le serveur l'a accepté).
+ * Pose `j` en `pos` : `teleporter` ne change que la position CLIENT, et le serveur n'accepte un état que s'il reste dans la limite
+ * de son budget de distance (v8 : `VITESSE_MAX_H_M_S` × temps écoulé, plafonné à `BUDGET_ARENE_S` = 0,5 s, + 1 m : 10,5 m). Un saut est donc
+ * découpé en étapes de 9 m (posées loin des routes : une voiture PNJ tue), chacune attendue chez `autre` (qui voit `j` là où le serveur l'a accepté).
  */
 async function poser(j, autre, pos, tolerance = 2.5) {
   const idJ = await j.id();
   let vu = null;
-  const PAS = 40;
-  for (let etape = 0; etape < 12; etape++) {
+  const PAS = 9;
+  for (let etape = 0; etape < 60; etape++) {
     const moi = (await j.jeu()).p;
     const reste = Math.hypot(pos[0] - moi[0], pos[2] - moi[2]);
     const k = reste > PAS ? PAS / reste : 1;

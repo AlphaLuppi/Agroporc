@@ -220,9 +220,11 @@ describe("états reçus", () => {
     expect(j(s, "a").p).toEqual(avant);
     s.recevoir("a", etat(2, [avant[0], 30, avant[2]]), T0 + 200); // chute verticale irréaliste
     expect(j(s, "a").p).toEqual(avant);
-    // 14 m/s × 1 s + 1 m = 15 m : on peut avoir vraiment couru jusque-là depuis la dernière position acceptée
+    // budget de distance plafonné à 0,5 s : 19 m/s × 0,5 s + 1 m = 10,5 m, même après une seconde de silence (14 m refusés)
     s.recevoir("a", etat(3, [avant[0] + 14, 0, avant[2]]), T0 + 1000);
-    expect(j(s, "a").p[0]).toBeCloseTo(avant[0] + 14, 6);
+    expect(j(s, "a").p).toEqual(avant);
+    s.recevoir("a", etat(4, [avant[0] + 10, 0, avant[2]]), T0 + 1000);
+    expect(j(s, "a").p[0]).toBeCloseTo(avant[0] + 10, 6);
   });
   it("hors bornes, non fini, séquence ancienne, posture mort et spectateur ignorés ou corrigés", () => {
     const s = salleEnJeu(["pistolet"]);

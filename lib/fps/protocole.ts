@@ -21,9 +21,10 @@ import type { Difficulte, GenreBonus } from "./zombies-vagues";
  * largués (snap `tigres`, messages `avion`, `tigre`, `sort`, client `invoquer`, cause de mort "tigre"). v6 : mode « zombies tigres » (deux salles,
  * choix du mode, argent, achats, relève, snap `zombies`), épée (mêlée à plusieurs cibles), cause de mort "tigre_zombie". v7 : zombies façon
  * Black Ops 1 (états de partie étendus, `zevt`, `reparer`, difficulté, armes améliorées `Equipement.ameliorees`, drapeaux d'allure et de mode
- * des tigres, Truck Muche dans le snap). Client et serveur se déploient ensemble.
+ * des tigres, Truck Muche dans le snap). v8 : réseau sans téléportation (`apparition.garder` à la relève, reprise d'une partie de zombies
+après une micro-coupure : `bienvenue.jeton` / `bienvenue.reprise`, `bonjour.reprise`). Client et serveur se déploient ensemble.
  */
-export const VERSION_PROTOCOLE = 7;
+export const VERSION_PROTOCOLE = 8;
 
 export type Vec3 = [number, number, number];
 
@@ -458,8 +459,11 @@ export interface LigneStats {
 // ---------- client → serveur ----------
 
 export type MessageClient =
-  /** Premier message obligatoire : présence dans la vue Palantir (spectateur). */
-  | { t: "bonjour"; v: number; pseudo: string }
+  /**
+   * Premier message obligatoire : présence dans la vue Palantir (spectateur). `reprise` (v8) : identifiant et jeton de la session coupée
+   * (`bienvenue.jeton`) ; dans les `REPRISE_MS` qui suivent la coupure, le serveur rattache le client à sa partie de zombies, même identifiant.
+   */
+  | { t: "bonjour"; v: number; pseudo: string; reprise?: { id: string; jeton: string } }
   /**
    * Entrer dans l'arène. `principale`/`secondaire` = équipement (v2). `arme` = ALIAS v1 : l'arme est rangée dans
    * son slot par catégorie et devient l'arme en main (une spéciale est ignorée).
@@ -537,7 +541,11 @@ export type MessageClient =
 // ---------- serveur → client ----------
 
 export type MessageServeur =
-  | { t: "bienvenue"; id: string; couleur: string; joueurs: JoueurPublic[]; match: InfoMatch; maintenant: number }
+  /**
+   * Inscription. `jeton` (v8) : secret de reprise de la session (à renvoyer dans `bonjour.reprise` après une coupure) ; `reprise` (v8) : la
+   * session coupée a été reprise (même `id`, même salle, partie de zombies en cours conservée) au lieu d'une nouvelle inscription dans l'arène.
+   */
+  | { t: "bienvenue"; id: string; couleur: string; joueurs: JoueurPublic[]; match: InfoMatch; maintenant: number; jeton?: string; reprise?: true }
   /** Liste complète des connectés, renvoyée à chaque changement (arrivée, départ, score, entrée/sortie d'arène). */
   | { t: "presence"; joueurs: JoueurPublic[] }
   /**
@@ -546,13 +554,14 @@ export type MessageServeur =
    */
   | { t: "snap"; ts: number; j: EtatJoueurSnap[]; vehicules?: VehiculeSnap[]; tigres?: TigreLargueSnap[]; monstres?: MonstresSnap; zombies?: SnapZombies }
   /**
-   * Apparition (ou réapparition) d'un joueur : le client concerné SE TÉLÉPORTE à `p`. `arme` = arme en main.
+   * Apparition (ou réapparition) d'un joueur : le client concerné SE TÉLÉPORTE à `p`. `arme` = arme en main. `garder` (v8, zombies : relève,
+   * reprise après une coupure) : le client garde SA position et son regard (à moins de `ECART_GARDE_M` de `p`), santé et armes sont remises.
    * Après `rejoindre`, le serveur envoie dans l'ordre : `apparition`, `presence` (à tous), puis au seul joueur `elsa{evenement:"etat"}` et `sieges`
    * (le jeu est lancé après `bienvenue` : il n'a rien vu de l'état d'Elsa ni des sièges).
    */
   | {
       t: "apparition"; id: string; p: Vec3; lacet: number; arme: ArmeId; pv: number; bouclier: number;
-      equip: Equipement; main: Slot; munSpeciale: number;
+      equip: Equipement; main: Slot; munSpeciale: number; garder?: true;
     }
   /** Équipement du destinataire (ramassage d'une spéciale, munitions épuisées). Privé. */
   | { t: "equipement"; equip: Equipement; main: Slot; munSpeciale: number; ravitaille?: ArmeFeuId | "tout" }
@@ -704,6 +713,12 @@ export const PLAFONDS = {
   vitesseVerticaleMax: 45,
   vitesseVehiculeMax: 28,
 } as const;
+
+/**
+ * (v8) `apparition.garder` : le client garde sa position si elle est à moins de cet écart (m) de celle du serveur, qui suit ses états (budget
+ * de distance) ; au-delà (client qui ment, état perdu), il se replace sur celle du serveur.
+ */
+export const ECART_GARDE_M = 3;
 
 /** Les avatars sont dessinés et touchés à cette échelle (autour des pieds). Le cylindre de collision ne change pas. */
 export const ECHELLE_AVATAR = 1.25;

@@ -62,7 +62,7 @@ import {
 import type { EquipementJeu, EtatZombiesHud, HudEtat, HudLive, JeuCallbacks, JeuHandle, JeuOptions } from "./jeu-types";
 import { ajouterEcho, ajouterPorte, creerRadarFrame, definirElsa, ajouterVoiture, ajouterVoiturePnj, purgerEchos, viderRadarFrame, type RadarFrame } from "./radar";
 import { SuiviRadar, type JoueurRadarEntree } from "./jeu-radar";
-import { Interpolateur, type ClientArene } from "./reseau";
+import { Interpolateur, gardePosition, type ClientArene } from "./reseau";
 import { codeSouris, indexTouches, lireTouches, stockageNavigateur, type Action, type ConfigTouches } from "./touches";
 import {
   creerArmeEnMain, creerAvatar, creerEffets, creerPostTraitement, type ArmeEnMain, type AvatarJoueur,
@@ -1027,6 +1027,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   }
 
   function apparaitre(m: Extract<MessageServeur, { t: "apparition" }>) {
+    const deboutLocal = apparu && vivant;
     aTerreZ = false;
     elimineZ = false;
     terreFinTZ = 0;
@@ -1034,9 +1035,12 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     terminerKillcam();
     quitterVehicule();
     titan.sortir();
-    moi = etatInitial(m.p);
-    lacet = m.lacet;
-    tangage = 0;
+    // (v8) relève ou reprise : on reste où l'on est, regard compris (le serveur a suivi nos états) ; sinon téléportation
+    if (!gardePosition(m, moi.p, deboutLocal)) {
+      moi = etatInitial(m.p);
+      lacet = m.lacet;
+      tangage = 0;
+    }
     kick = 0;
     secousse = 0;
     reculAcc = 0;
@@ -1083,6 +1087,12 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     sons.derapage(0);
     sons.mur(false);
     arreterReanimation();
+    if (modeZ) {
+      // à terre : on s'effondre sur place (plus d'élan qui ferait glisser le corps d'un mètre au sprint) ; la chute verticale continue
+      moi.v[0] = 0;
+      moi.v[2] = 0;
+      moi.glisse = null;
+    }
   }
 
   /** `degats` dont je suis l'auteur : retour de touche CONFIRMÉ par le serveur (zone et dégâts du serveur, §13.2.1). */
@@ -1111,7 +1121,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
           // le serveur a retiré la charge du sort à la sortie de l'arène, son annonce peut ne jamais nous parvenir
           mondeTigres.perdreCharge();
           if (modeZ) {
-            // zombies : retiré par le serveur (partie finie, inactivité) : pas de réentrée, l'hôte ramène au lobby
+            // zombies : retiré par le serveur (partie finie, retour au lobby ; plus d'éviction pour inactivité depuis la v8) : pas de réentrée, l'hôte ramène au lobby
             cb.sortir();
             break;
           }
@@ -2028,7 +2038,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       const premier = idConnu === null;
       idConnu = client.id;
       if (premier) return;
-      // zombies : le serveur a oublié la salle choisie (on repart dans l'arène) : la partie en cours est perdue pour nous
+      // zombies : nouvel id = reprise refusée (coupure de plus de 20 s, cf. `bonjour.reprise`) : on repart dans l'arène, la partie est perdue pour nous
       if (modeZ) { apparu = false; vivant = false; arreterReanimation(); cb.sortir(); return; }
       apparu = false;
       vivant = false;
@@ -2049,9 +2059,12 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     }
   }
 
-  /** Message d'état du joueur (à pied, ou passager d'une voiture) ; le conducteur envoie `conduite`. */
+  /**
+   * Message d'état du joueur (à pied, ou passager d'une voiture) ; le conducteur envoie `conduite`. En zombies, le corps à terre continue
+   * d'envoyer sa position (le serveur la suit) : la relève garde ainsi la position du client, sans téléportation.
+   */
   function envoyerEtat() {
-    if (!apparu || !vivant) return;
+    if (!apparu || (!vivant && !(modeZ && aTerreZ && !elimineZ))) return;
     const vue = tangageDeVue(tangage, kick);
     if (pilote()) {
       const m = titan.message(lacet, vue);

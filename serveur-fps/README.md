@@ -41,10 +41,11 @@ Le site (`npm run dev` à la racine) s'y connecte tout seul en dev (`ws://localh
 | `PDJ_FPS_ZOMBIES_TRUCK` | 5, 6 ou 7 au hasard | première manche du Truck Muche (essais) ; 0 = jamais |
 | `PDJ_FPS_ZOMBIES_COURANT` | (absent) | `1` : courant rétabli dès le départ (essais : atouts et Pack-a-Punch utilisables tout de suite) |
 
-`GET /sante` renvoie `{ ok, joueurs, enJeu, match, zombies: { joueurs, enJeu, phase, manche } }` (connectés, joueurs en arène, numéro du match, puis la salle des zombies tigres : deuxième salle du même serveur, 8 membres au plus lobby compris, une seule partie à la fois). Limites : messages ≤ 4 Ko, ≤ 90 messages/s par
-client (sinon `erreur flood` et fermeture), ping WebSocket toutes les 5 s (connexion morte fermée au bout de 10 s : un joueur parti ne reste pas en cible),
+`GET /sante` renvoie `{ ok, joueurs, enJeu, match, zombies: { joueurs, enJeu, phase, manche, enSuspens } }` (connectés, joueurs en arène, numéro du match, puis la salle des zombies tigres : deuxième salle du même serveur, 8 membres au plus lobby compris, une seule partie à la fois ; `enSuspens` = sessions coupées qui attendent leur reprise). Limites : messages ≤ 16 Ko ; anti-flood
+à deux seaux (`lib/fps/anti-flood.ts`) : flux `etat` / `conduite` / `pilotage` / `ping` à 45/s (rafale 90), autres messages à 90/s (rafale 270), l'excédent est JETÉ sans fermer la socket, seule une fenêtre de plus de 600 messages bruts en une seconde vaut `erreur flood` et fermeture ; ping WebSocket toutes les 5 s (connexion morte fermée au bout de 10 s : un joueur parti ne reste pas en cible),
 « bonjour » attendu dans les 10 s. Capacité : 16 joueurs EN ARÈNE (les spectateurs de la vue 3D n'occupent aucune place ; `rejoindre` au-delà répond `refus plein`, la socket reste ouverte), 64 connexions inscrites au plus, 96 connexions au total et 24 par IP (dernier élément de `x-forwarded-for`, fermeture 1013 au-delà), un spectateur muet depuis 15 min est recyclé (le client se reconnecte seul). Un joueur vivant sans état accepté depuis 20 s (onglet gelé) est retiré de l'arène
-(le client redemande à entrer). Les tirs sont validés contre les positions de la cible des 300 dernières ms
+(le client redemande à entrer) ; pas dans la salle des zombies (v8), où un membre dont la connexion se ferme est gardé 20 s (`REPRISE_MS`) : le client qui revient
+avec l'id et le jeton de son dernier `bienvenue` (`bonjour.reprise`) retrouve sa partie au même id (`bienvenue{reprise}`, sans téléportation). Les tirs sont validés contre les positions de la cible des 300 dernières ms
 (compensation de latence, `positionsCible` dans `lib/fps/match.ts`).
 
 ## Deux salles, salons
@@ -127,7 +128,7 @@ ORIGINES=https://<domaine-du-site> docker compose up -d --build
 `erreur{version}` (« rechargez la page ») et la socket est fermée, donc l'arène entière est indisponible. Ne redéployer le VPS qu'au moment où le front de la même version part en production.
 `ORIGINES` doit inclure le site et le joker des previews Vercel. Le Dockerfile n'a besoin d'aucune copie en plus pour les zombies (les imports restent dans `lib/fps` et `lib/agroparc3d`).
 
-`docker-compose.yml` : conteneur `pdj-fps` (les deux salles) sur le réseau externe `dokploy-network`, 256 Mo, 0,3 vCPU
+`docker-compose.yml` : conteneur `pdj-fps` (les deux salles) sur le réseau externe `dokploy-network`, 384 Mo, 1 vCPU
 (`lib/fps/match.charge.test.ts` : 16 joueurs, 6 voitures conduisibles, 12 PNJ et Elsa, un tic coûte ≈ 0,05 ms de CPU et un snap pèse ≈ 3,5 Ko,
 `lib/fps/match.charge-tigres.test.ts` : la même salle avec un tigre sauvage en attaque et quatre tigres alliés, tic du même ordre et snap ≈ 3,8 Ko ;
 `match.zombies.charge.test.ts` : 8 joueurs et 24 tigres, un tic ≤ 2 ms en moyenne et un snap ≤ 4,2 Ko),

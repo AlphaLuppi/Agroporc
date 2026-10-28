@@ -18,7 +18,7 @@ import { batimentsDetruits, detruireBatiment, lancerRayon, releverBatiments, vis
 import { ARMES, CIBLE_LIVRAISON, copierEquipement, estIdZombie, estMelee, idZombie } from "./protocole";
 import { armeDuSlot, meleeDe } from "./equipement";
 import type { ContexteSalle, JoueurSalle, ResumeZombies, ServiceZombies, Sortie } from "./match-contexte";
-import { invaliderNavigation } from "./navigation";
+import { instantaneNavigation, majNavigation, restaurerNavigation } from "./navigation";
 import { capVers } from "./monstres";
 import type {
   ArmeFeuId, ArmeId, ArmeSpecialeId, AtoutId, BonusSol, EffetsZombies, EtatBoite, EtatPap, EtatPartieZombies, Equipement, EvenementZombies,
@@ -71,6 +71,8 @@ const PART_FENETRES = 0.6;
 /** Rampant : un souffle non mortel qui ôte au moins cette part des PV a cette probabilité de couper les pattes arrière. */
 const RAMPANT_PART_PV = 0.25;
 const RAMPANT_PROBA = 0.35;
+/** Plus grande marge de latence ajoutée à une portée (m). */
+const MARGE_LATENCE_MAX_M = 1.5;
 /** Dégâts « tue à coup sûr » de l'insta-kill. */
 const INSTAKILL = 10_000_000;
 
@@ -160,6 +162,9 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       },
     },
   });
+  // grilles de navigation des tigres toutes portes fermées (calculées par `creerSimuZombies`) : remises telles quelles au retour au lobby
+  // et à chaque nouvelle partie, au lieu d'un recalcul complet de 40 à 80 ms qui gelait tout le serveur
+  const navigationFermee = instantaneNavigation(ctx.monde);
   // étiquettes des zones au sol et sorties du sol : calculées une fois, toutes portes fermées (le monde est neuf à la création)
   const carteZones: CarteZones = etiqueterZones(ctx.monde);
   const sorties = sortiesDuSol(carteZones);
@@ -229,7 +234,12 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
   const hote = (): string => ctx.joueurs()[0]?.id ?? "";
   const restants = (): number => (mancheTruck ? (truck?.aLacher ?? 0) : file.length - indexFile) + simu.nbVivants();
   const peutJouer = (j: JoueurSalle): boolean => j.enJeu && j.vivant;
-  const nbAdmis = (): number => Math.max(1, ctx.joueurs().filter((j) => membre(j.id).admis).length);
+  /**
+   * (v8) Marge (m) des portées jugées sur la position serveur (relève, planches, achats) : ce que le joueur parcourt pendant la demi-latence
+   * (sa position serveur a ce retard sur celle de son écran), au plus `MARGE_LATENCE_MAX_M`.
+   */
+  const margeLatence = (j: JoueurSalle): number => Math.min(MARGE_LATENCE_MAX_M, (Math.hypot(j.v[0], j.v[2]) * Math.min(j.ping, 300)) / 2000);
+  const nbAdmis =(): number => Math.max(1, ctx.joueurs().filter((j) => membre(j.id).admis).length);
   const solo = (): boolean => nbAdmis() === 1;
   const doublePoints = (t: number): boolean => t < effets.doubleFinT;
   const zev = (e: EvenementZombies): Sortie => ({ a: "joueurs", m: { t: "zevt", e } });
@@ -321,13 +331,13 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     return { a: "tous", m: { t: "batiments", complet: true, detruits: batimentsDetruits(ctx.monde), breches: [] } };
   }
 
-  /** Remet les portes en place (nouvelle partie, retour au lobby) : prismes relevés, navigation recalculée si une porte avait été ouverte. */
+  /** Remet les portes en place (nouvelle partie, retour au lobby) : prismes relevés, grilles « portes fermées » restaurées si une porte était ouverte. */
   function refermerPortes(): void {
     const avait = ouvertes.size > 0;
     ouvertes.clear();
     releverBatiments(ctx.monde);
     if (avait) {
-      invaliderNavigation(ctx.monde);
+      restaurerNavigation(ctx.monde, navigationFermee);
       simu.rafraichirCarte();
     }
   }
@@ -398,14 +408,17 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     return ctx.placerJoueur(j, d.p, d.lacet, { pv, equip: copierEquipement(EQUIPEMENT_DEPART_ZOMBIES), main: MAIN_DEPART_ZOMBIES }, t);
   }
 
-  /** Relève d'un joueur à terre à sa position (PV 50, équipement conservé sans la spéciale, apparition). */
+  /**
+   * Relève d'un joueur à terre là où il est (PV 50, équipement conservé sans la spéciale) : `apparition{garder}`, sans téléportation (sa
+   * position serveur a suivi son corps à terre, le client garde la sienne).
+   */
   function relever(j: JoueurSalle, t: number): Sortie[] {
     const m = membre(j.id);
     m.etat = "debout";
     m.terreFinT = undefined;
     m.autoReleveT = null;
     const equip = copierEquipement({ ...j.equip, speciale: null });
-    const sorties = ctx.placerJoueur(j, [j.p[0], j.p[1], j.p[2]], j.lacet, { pv: ZOMBIES.reanimationPv, equip, main: mainValide(equip, j.main) }, t);
+    const sorties = ctx.placerJoueur(j, j.p, j.lacet, { pv: ZOMBIES.reanimationPv, equip, main: mainValide(equip, j.main), garder: true }, t);
     for (const [par, r] of releves) if (r.cible === j.id) releves.delete(par);
     releves.delete(j.id);
     immediat = true;
@@ -755,7 +768,8 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     }
 
     // simulation des tigres : cibles = joueurs en jeu et debout
-    const cibles = membresSalle.filter((j) => peutJouer(j) && membre(j.id).etat === "debout").map((j) => ({ id: j.id, p: j.p, vivant: true }));
+    // (v8) la griffe attend l'aller-retour du joueur visé avant d'être jugée une seconde fois (en sa faveur, cf. GRIFFE_DELAI_MAX_MS)
+    const cibles = membresSalle.filter((j) => peutJouer(j) && membre(j.id).etat === "debout").map((j) => ({ id: j.id, p: j.p, vivant: true, delaiMs: j.ping }));
     evenementsTic = [];
     const evenements = simu.tic(t, dt, cibles);
     sorties.push(...evenementsTic);
@@ -806,7 +820,7 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     for (const [parId, r] of [...releves]) {
       const par = ctx.joueur(parId), cible = ctx.joueur(r.cible);
       if (!par || !cible || !peutJouer(par) || membre(parId).etat !== "debout" || membre(r.cible).etat !== "terre"
-        || Math.hypot(par.p[0] - cible.p[0], par.p[2] - cible.p[2]) > ZOMBIES.reanimationAnnulePortee) {
+        || Math.hypot(par.p[0] - cible.p[0], par.p[2] - cible.p[2]) > ZOMBIES.reanimationAnnulePortee + margeLatence(par)) {
         releves.delete(parId);
         continue;
       }
@@ -852,7 +866,7 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       const f = fenetreDeId(r.fenetre);
       const n = planches.get(r.fenetre) ?? 0;
       if (!f || !peutJouer(j) || m.etat !== "debout" || n >= ZOMBIES.planches
-        || Math.hypot(j.p[0] - f.dedans[0], j.p[2] - f.dedans[1]) > ZOMBIES.reposePortee + 0.6) {
+        || Math.hypot(j.p[0] - f.dedans[0], j.p[2] - f.dedans[1]) > ZOMBIES.reposePortee + 0.6 + margeLatence(j)) {
         m.reparation = null;
         continue;
       }
@@ -992,13 +1006,13 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     const porte = achat.genre === "porte" && achat.porte ? porteDeId(achat.porte) : null;
     // portée (2,5 m ; 3 m du segment d'une porte) puis ligne de vue
     if (porte) {
-      if (distancePorte(porte, pos) > porte.portee) return refus(j, idTexte, "loin");
+      if (distancePorte(porte, pos) > porte.portee + margeLatence(j)) return refus(j, idTexte, "loin");
       if (ouvertes.has(porte.id)) return refus(j, idTexte, "deja");
       if (!aVue(j, pointPorte(porte.prismes[0], j))) return refus(j, idTexte, "loin");
       const accessibles = zonesOuvertes(ouvertes);
       if (!accessibles.has(porte.zones[0]) && !accessibles.has(porte.zones[1])) return refus(j, idTexte, "verrou");
     } else {
-      if (Math.hypot(pos[0] - achat.position[0], pos[1] - achat.position[1]) > achat.rayon) return refus(j, idTexte, "loin");
+      if (Math.hypot(pos[0] - achat.position[0], pos[1] - achat.position[1]) > achat.rayon + margeLatence(j)) return refus(j, idTexte, "loin");
       if (!aVue(j, achat.position)) return refus(j, idTexte, "loin");
     }
     switch (achat.genre) {
@@ -1029,7 +1043,8 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       if (detruireBatiment(ctx.monde, index)) detruits.push(index);
     }
     ouvertes.add(porte.id);
-    invaliderNavigation(ctx.monde);
+    // seules les cases autour des pièces de la porte changent (< 5 ms au lieu de 40 à 80 ms pour les deux grilles)
+    majNavigation(ctx.monde, detruits.map((i) => ctx.monde.prismes[i].boite));
     simu.rafraichirCarte();
     sorties.push({ a: "tous", m: { t: "batiments", complet: false, detruits, breches: [] } });
     immediat = true;
@@ -1321,7 +1336,7 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
           if ((phase !== "manche" && phase !== "pause") || !peutJouer(j) || m.etat !== "debout" || msg.cible === j.id) return [];
           const cible = ctx.joueur(msg.cible);
           if (!cible || membre(cible.id).etat !== "terre") return [];
-          if (Math.hypot(j.p[0] - cible.p[0], j.p[2] - cible.p[2]) > ZOMBIES.reanimationPortee) return [];
+          if (Math.hypot(j.p[0] - cible.p[0], j.p[2] - cible.p[2]) > ZOMBIES.reanimationPortee + margeLatence(j)) return [];
           if (releves.get(j.id)?.cible !== cible.id) releves.set(j.id, { cible: cible.id, debutT: t });
           return [];
         }
@@ -1331,7 +1346,7 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
           if ((phase !== "manche" && phase !== "pause") || !peutJouer(j) || m.etat !== "debout") return [];
           const f: Fenetre | null = fenetreDeId(msg.fenetre);
           if (!f || (planches.get(f.id) ?? 0) >= ZOMBIES.planches) return [];
-          if (Math.hypot(j.p[0] - f.dedans[0], j.p[2] - f.dedans[1]) > ZOMBIES.reposePortee) return [];
+          if (Math.hypot(j.p[0] - f.dedans[0], j.p[2] - f.dedans[1]) > ZOMBIES.reposePortee + margeLatence(j)) return [];
           if (m.reparation?.fenetre !== f.id) m.reparation = { fenetre: f.id, prochainT: t + ZOMBIES.reposeS * 1000 };
           return [];
         }
@@ -1377,6 +1392,10 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       membre(j.id);
       immediat = true;
       return emettre(t, []);
+    },
+
+    aTerre(id) {
+      return membres.get(id)?.etat === "terre";
     },
 
     enCours() {

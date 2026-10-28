@@ -134,9 +134,12 @@ export interface ContexteSalle {
   /**
    * Place le joueur en `p` (pieds) tourné vers `lacet` : PV, équipement (copie propre), arme en main, protection d'apparition de 1,5 s, état
    * remis à zéro (vivant, seq, historique) ; renvoie le message `apparition`. `munSpeciale` (facultatif) : munitions de la spéciale portée.
-   * Ne touche ni à `enJeu` ni aux règles de réentrée de l'arène.
+   * Ne touche ni à `enJeu` ni aux règles de réentrée de l'arène. `garder` (v8, relève) : ni téléportation ni remise à zéro du mouvement (`p`,
+   * `lacet`, `seq`, budget de distance gardés) ; le message porte `garder` et le client reste où il est.
    */
-  placerJoueur(j: JoueurSalle, p: Vec3, lacet: number, opts: { pv: number; equip: Equipement; main: Slot; munSpeciale?: number }, maintenant: number): Sortie[];
+  placerJoueur(
+    j: JoueurSalle, p: Vec3, lacet: number, opts: { pv: number; equip: Equipement; main: Slot; munSpeciale?: number; garder?: boolean }, maintenant: number,
+  ): Sortie[];
   /** sortie d'arène sans règle de réentrée ni mémo de santé (`enJeu` à faux, plus vivant, spéciale perdue) ; renvoie la libération des sièges */
   retirerJoueur(j: JoueurSalle, maintenant: number): Sortie[];
   /** message `presence` de la salle (scores, entrées / sorties d'arène) */
@@ -309,6 +312,8 @@ export interface ServiceZombies {
   arrivee(j: JoueurSalle, maintenant: number): Sortie[];
   /** partie en cours (pause ou manche) */
   enCours(): boolean;
+  /** le joueur est à terre (attend une relève) : ses états suivent encore son corps (`Salle.recevoirEtat`) */
+  aTerre(id: string): boolean;
   etat(): EtatPartieZombies;
   resume(): ResumeZombies;
 }
