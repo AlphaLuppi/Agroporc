@@ -5,7 +5,7 @@ import { construireMonde, detruireBatiment, lancerRayon, resoudre } from "./coll
 import { FORME_TIGRE, pointLocal } from "./monstres";
 import { carteNavigation, invaliderNavigation } from "./navigation";
 import { PAS_SNAP_ZOMBIE, decoderZombies, type Vec3 } from "./protocole";
-import { creerSimuZombies, porteePatte, touchePatte, type ArriveeZombie, type Barricades, type EvenementZombie, type JoueurZombie, type SpecZombie } from "./zombies";
+import { DISTANCE_LEURRE_M, creerSimuZombies, porteePatte, touchePatte, type ArriveeZombie, type Barricades, type EvenementZombie, type JoueurZombie, type Leurre, type SpecZombie } from "./zombies";
 import { DEPARTS, construireMondeZombies, fenetreDeId, idPrisme } from "./zombies-carte";
 import { ZOMBIES, degatsGriffe, echelleZombie, pvZombie, rechargeGriffe, vitesseAllure, type Allure, type TypeZombie } from "./zombies-vagues";
 
@@ -642,5 +642,41 @@ describe("formes", () => {
   it("la forme du tigre est celle de monstres.ts (8 sphères dont une tête)", () => {
     expect(FORME_TIGRE.filter((s) => s.zone === "tete")).toHaveLength(1);
     expect(FORME_TIGRE).toHaveLength(8);
+  });
+});
+
+describe("leurres (tigre à remontoir, v8)", () => {
+  /** Fait tourner la simulation avec des leurres ; renvoie les événements. */
+  function courirLeurres(simu: ReturnType<typeof creerSimuZombies>, t0: number, secondes: number, joueurs: JoueurZombie[], leurres: Leurre[]) {
+    const evenements: EvenementZombie[] = [];
+    let t = t0;
+    for (let k = 0; k < Math.round(secondes * 60); k++) {
+      t += DT * 1000;
+      evenements.push(...simu.tic(t, DT, joueurs, leurres));
+    }
+    return { t, evenements };
+  }
+
+  it("un tigre à portée court au leurre plutôt qu'au joueur collé à lui, ne griffe pas, et l'entoure", () => {
+    const { simu } = neuf();
+    const id = simu.apparaitre(spec(1, 0, 1), COUR, CHASSE, 0)!;
+    const moi = joueur("a", COUR[0] + 1, COUR[1]);
+    const leurre: Leurre = { id: 1, p: [COUR[0] - 6, 0.15, COUR[1]], rayon: 40 };
+    const { t, evenements } = courirLeurres(simu, 1_000, 5, [moi], [leurre]);
+    expect(evenements.filter((e) => e.t === "griffeArmee" || e.t === "griffe")).toEqual([]);
+    expect(dist(simu.zombie(id)!.p, leurre.p)).toBeLessThanOrEqual(DISTANCE_LEURRE_M + 0.6);
+    // le leurre saute : le tigre revient au joueur et le griffe
+    const apres = courirLeurres(simu, t, 6, [moi], []);
+    expect(apres.evenements.some((e) => e.t === "griffeArmee")).toBe(true);
+  });
+
+  it("hors de portée du leurre, le tigre chasse toujours les joueurs", () => {
+    const { simu } = neuf();
+    const id = simu.apparaitre(spec(1, 0, 1), COUR, CHASSE, 0)!;
+    const moi = joueur("a", COUR[0] + 2, COUR[1]);
+    const leurre: Leurre = { id: 1, p: [COUR[0] - 6, 0.15, COUR[1]], rayon: 3 };
+    const { evenements } = courirLeurres(simu, 1_000, 4, [moi], [leurre]);
+    expect(evenements.some((e) => e.t === "griffeArmee")).toBe(true);
+    expect(dist(simu.zombie(id)!.p, moi.p)).toBeLessThan(dist(simu.zombie(id)!.p, leurre.p));
   });
 });
