@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ARMES } from "./protocole";
 import { STATS } from "./armes";
 import { VOIX_TIGRES_MAX, creerSons } from "./sons";
+import { ECART_ANNONCES_S, ECHANTILLONS, URLS_ZOMBIES, VOIX_ANNONCES } from "./sons-echantillons";
+import { ZOMBIES } from "./zombies-vagues";
 
 /** Faux contexte audio : compte les sources démarrées / arrêtées et les nœuds créés, sans produire de son. */
 class FauxParam {
@@ -12,7 +14,7 @@ class FauxParam {
   cancelScheduledValues() { return this; }
   setTargetAtTime() { return this; }
 }
-const journal = { demarres: 0, arretes: 0, noeuds: 0, fermes: 0 };
+const journal = { demarres: 0, arretes: 0, noeuds: 0, fermes: 0, departs: [] as { t: number; decalage: number; buffer: unknown }[] };
 class FauxNoeud {
   type = "";
   buffer: unknown = null;
@@ -21,11 +23,12 @@ class FauxNoeud {
   gain = new FauxParam();
   Q = new FauxParam();
   pan = new FauxParam();
+  playbackRate = new FauxParam();
   threshold = new FauxParam();
   ratio = new FauxParam();
   constructor() { journal.noeuds++; }
   connect() { return this; }
-  start() { journal.demarres++; }
+  start(t = 0, decalage = 0) { journal.demarres++; journal.departs.push({ t, decalage, buffer: this.buffer }); }
   stop() { journal.arretes++; }
 }
 class FauxAudioContext {
@@ -48,6 +51,7 @@ class FauxAudioContext {
 
 beforeEach(() => {
   journal.demarres = journal.arretes = journal.noeuds = journal.fermes = 0;
+  journal.departs = [];
   vi.stubGlobal("window", { AudioContext: FauxAudioContext, addEventListener() {}, removeEventListener() {} });
   vi.stubGlobal("navigator", { userActivation: { hasBeenActive: true } });
 });
@@ -323,3 +327,157 @@ describe("sons du mode zombies", () => {
     sons.dispose();
   });
 });
+
+/** Faux son décodé : `duree` s à 1 kHz, une crête à `pic` s. */
+function fauxBuffer(duree: number, pic: number) {
+  const d = new Float32Array(Math.round(duree * 1000));
+  d[Math.round(pic * 1000)] = 1;
+  return { duration: duree, sampleRate: 1000, getChannelData: () => d, url: "" };
+}
+/** fetch qui sert chaque URL connue (et compte les demandes), et decodeAudioData qui rend le faux son de cette URL. */
+function servirEchantillons(sons: Record<string, { duree: number; pic: number }>) {
+  const demandes: string[] = [];
+  vi.stubGlobal("fetch", (url: string) => {
+    demandes.push(url);
+    if (!sons[url]) return Promise.resolve({ ok: false, status: 404 });
+    const octets = new ArrayBuffer(8) as ArrayBuffer & { url?: string };
+    octets.url = url;
+    return Promise.resolve({ ok: true, arrayBuffer: () => Promise.resolve(octets) });
+  });
+  (FauxAudioContext.prototype as unknown as { decodeAudioData: unknown }).decodeAudioData = (b: ArrayBuffer & { url: string }) => {
+    const f = fauxBuffer(sons[b.url].duree, sons[b.url].pic);
+    f.url = b.url;
+    return Promise.resolve(f);
+  };
+  return demandes;
+}
+const attendre = () => new Promise((r) => setTimeout(r, 0));
+
+describe("sons : échantillons du mode zombies", () => {
+  afterEach(() => { delete (FauxAudioContext.prototype as unknown as { decodeAudioData?: unknown }).decodeAudioData; });
+
+  it("sans fichier (404, réseau), chaque son nommé joue son repli synthétisé, sans planter", async () => {
+    servirEchantillons({});
+    const sons = creerSons();
+    sons.prechargerZombies();
+    await attendre();
+    const appels: [string, () => unknown][] = [
+      ["tonnerre", () => sons.tonnerre()], ["rireTruck", () => sons.rireTruck(undefined, 1)], ["explosionGrenade", () => sons.explosionGrenade({ distance: 10, pan: 0 })],
+      ["rebondGrenade", () => sons.rebondGrenade(undefined, 0.3)], ["microOndesCuisson", () => sons.microOndesCuisson()], ["microOndesBip", () => sons.microOndesBip()],
+      ["griffeChef", () => sons.griffeChef({ distance: 3, pan: 0.2 })], ["grognementChef", () => sons.grognementChef()], ["fanfareBonus", () => sons.fanfareBonus()],
+      ["microondes", () => sons.microondes(true)], ["bonus", () => sons.bonus(true)],
+    ];
+    for (const [nom, f] of appels) {
+      const avant = journal.demarres;
+      f();
+      expect(journal.demarres, nom).toBeGreaterThan(avant);
+    }
+    expect(sons.echantillon("tonnerre")).toBe(false);
+    sons.dispose();
+  });
+
+  it("préchargement : tous les fichiers sont demandés une seule fois, avant même le premier son", () => {
+    const demandes = servirEchantillons({});
+    const sons = creerSons();
+    sons.prechargerZombies();
+    sons.prechargerZombies();
+    expect([...demandes].sort()).toEqual([...URLS_ZOMBIES].sort());
+    sons.dispose();
+  });
+
+  it("le coup de patte du chef est calé : le pic du fichier tombe au contact (griffeArmeS)", async () => {
+    const url = ECHANTILLONS.griffeChef.url;
+    servirEchantillons({ [url]: { duree: 1.2, pic: 0.2 } });
+    const sons = creerSons();
+    sons.prechargerZombies();
+    await attendre(); await attendre();
+    journal.departs = [];
+    sons.griffeChef();
+    const d = journal.departs.filter((x) => (x.buffer as { url?: string } | null)?.url === url);
+    expect(d).toHaveLength(1);
+    expect(d[0].t + 0.2 - d[0].decalage).toBeCloseTo(ZOMBIES.griffeArmeS, 2);
+    // un pic plus tardif que le contact : on saute le début du fichier
+    sons.dispose();
+    servirEchantillons({ [url]: { duree: 1.2, pic: 0.9 } });
+    const s2 = creerSons();
+    s2.prechargerZombies();
+    await attendre(); await attendre();
+    journal.departs = [];
+    s2.griffeChef();
+    const d2 = journal.departs.filter((x) => (x.buffer as { url?: string } | null)?.url === url);
+    expect(d2[0].decalage).toBeCloseTo(0.9 - ZOMBIES.griffeArmeS, 2);
+    expect(d2[0].t).toBeLessThan(0.01);
+    s2.dispose();
+  });
+
+  it("limite de voix : au-delà de `voixMax` lectures du même son, la suivante est ignorée (pas de repli)", async () => {
+    const url = ECHANTILLONS.rebondGrenade.url;
+    servirEchantillons({ [url]: { duree: 0.3, pic: 0 } });
+    const sons = creerSons();
+    sons.prechargerZombies();
+    await attendre(); await attendre();
+    const avant = journal.demarres;
+    for (let i = 0; i < ECHANTILLONS.rebondGrenade.voixMax + 3; i++) sons.rebondGrenade();
+    expect(journal.demarres - avant).toBe(ECHANTILLONS.rebondGrenade.voixMax);
+    sons.dispose();
+  });
+
+  it("annonces échantillonnées : enchaînées sans se couper, file bornée", async () => {
+    servirEchantillons({ [VOIX_ANNONCES.munitions.url]: { duree: 1, pic: 0 }, [VOIX_ANNONCES.double.url]: { duree: 0.8, pic: 0 } });
+    const parle = vi.fn();
+    vi.stubGlobal("SpeechSynthesisUtterance", class { constructor(public text: string) {} });
+    (globalThis.window as unknown as Record<string, unknown>).speechSynthesis = { speak: parle, cancel: vi.fn(), getVoices: () => [] };
+    const sons = creerSons();
+    sons.prechargerZombies();
+    await attendre(); await attendre();
+    journal.departs = [];
+    sons.voix("munitions");
+    sons.voix("double");
+    sons.voix("double");
+    sons.voix("double"); // une qui parle, deux en attente : la file est pleine, celle-ci est abandonnée
+    const t = journal.departs.map((d) => d.t);
+    expect(t).toHaveLength(3);
+    expect(t[0]).toBeCloseTo(0);
+    expect(t[1]).toBeCloseTo(1 + ECART_ANNONCES_S);
+    expect(t[2]).toBeCloseTo(1 + 0.8 + 2 * ECART_ANNONCES_S);
+    expect(parle).not.toHaveBeenCalled();
+    sons.dispose();
+    // seule, une annonce attend la fin de la fanfare
+    const s2 = creerSons();
+    s2.prechargerZombies();
+    await attendre(); await attendre();
+    journal.departs = [];
+    s2.voix("munitions", 0.35);
+    expect(journal.departs.map((d) => d.t)).toEqual([0.35]);
+    s2.dispose();
+  });
+
+  it("repli de la voix du navigateur : attend la liste des voix, prend une voix française, ne coupe jamais l'annonce en cours", async () => {
+    vi.useFakeTimers();
+    servirEchantillons({});
+    const dits: { text: string; voice?: unknown }[] = [];
+    const cancel = vi.fn();
+    let voix: { lang: string; localService: boolean; name: string }[] = [];
+    const ecouteurs: (() => void)[] = [];
+    vi.stubGlobal("SpeechSynthesisUtterance", class { voice?: unknown; constructor(public text: string) {} });
+    (globalThis.window as unknown as Record<string, unknown>).speechSynthesis = {
+      speak: (u: { text: string; voice?: unknown }) => dits.push(u), cancel, getVoices: () => voix,
+      addEventListener: (_: string, f: () => void) => ecouteurs.push(f), removeEventListener() {},
+    };
+    const sons = creerSons();
+    sons.voix("instakill");
+    vi.advanceTimersByTime(300);
+    expect(dits).toHaveLength(0); // la liste des voix n'est pas encore là
+    voix = [{ lang: "en-US", localService: true, name: "Alex" }, { lang: "fr-CA", localService: true, name: "Amélie" }, { lang: "fr-FR", localService: true, name: "Thomas" }];
+    for (const f of ecouteurs) f();
+    expect(dits.map((u) => u.text)).toEqual([VOIX_ANNONCES.instakill.texte]);
+    expect((dits[0].voice as { name: string }).name).toBe("Thomas");
+    sons.voix("double");
+    vi.advanceTimersByTime(300);
+    expect(dits).toHaveLength(2);
+    expect(cancel).not.toHaveBeenCalled();
+    sons.dispose();
+    vi.useRealTimers();
+  });
+});
+

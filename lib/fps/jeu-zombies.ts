@@ -366,6 +366,14 @@ export class Rugissements {
   }
 }
 
+/** Genre du son d'un coup de patte (et du rugissement) : le chef a le sien, le petit du Truck mord, les autres griffent. */
+export type SonGriffe = "tigre" | "chef" | "petit";
+
+/** Son du coup de patte d'un tigre de type `type` : chef (2, le gros tigre rouge à toque, retour 16), petit (3), sinon tigre (0, doré 1). */
+export function sonGriffe(type: TypeZombie): SonGriffe {
+  return type === 2 ? "chef" : type === 3 ? "petit" : "tigre";
+}
+
 // ---------------------------------------------------------------------------------------------
 // Invite d'interaction
 // ---------------------------------------------------------------------------------------------

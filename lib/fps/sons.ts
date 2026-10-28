@@ -8,11 +8,18 @@
  * patte, plainte) et l'avion qui les largue sont placés de la même façon (spec 2026-10-23-arene-tigres-design.md, Rendu). Le tigre
  * géant des événements a ses propres sons (`alerte`, `laser`, `pasLourd`, `explosionMonstre`), jamais ceux des tigres largués.
  *
- * Seule exception au « tout synthétisé » : le moteur de la voiture conduite est un VRAI enregistrement (`/arene/moteur.wav`, boucle de
- * ralenti CC0, cf. public/arene/CREDITS.txt) joué en boucle, dont la vitesse de lecture (donc le régime) suit celle de la voiture (v3 §3).
- * Tant qu'il n'est pas chargé (ou s'il ne se charge pas), un moteur synthétisé doux le remplace.
+ * Exceptions au « tout synthétisé » : le moteur de la voiture conduite est un VRAI enregistrement (`/arene/moteur.wav`, boucle de
+ * ralenti CC0, cf. public/arene/CREDITS.txt) joué en boucle, dont la vitesse de lecture (donc le régime) suit celle de la voiture (v3 §3) ;
+ * et le mode zombies a ses échantillons (tonnerre, rire du Truck, grenades, micro-ondes, tigre chef, fanfare, annonces parlées), dont le
+ * registre et la logique pure (calage du pic, limite de voix, file des annonces) sont dans `sons-echantillons.ts`. Un chargeur commun
+ * (`telecharger` : fetch → decodeAudioData, cache par URL, échec silencieux) les sert ; ils passent par la même sortie spatialisée que les
+ * sons synthétisés. Tant qu'un fichier n'est pas chargé (ou s'il manque), un son synthétisé le remplace : le jeu n'est jamais muet.
  */
 import type { ArmeFeuId, ArmeMeleeId } from "./protocole";
+import {
+  ECHANTILLONS, ECHANTILLONS_SIMULTANES_MAX, FileAnnonces, URLS_ZOMBIES, VOIX_ANNONCES, ANNONCES_EN_ATTENTE_MAX, departCale, instantPic, voixLibre,
+  type IdEchantillon, type IdVoix,
+} from "./sons-echantillons";
 import { ZOMBIES } from "./zombies-vagues";
 
 /** Voix de tigres en même temps au plus (zombies) : au-delà, un nouveau rugissement est ignoré. */
@@ -116,21 +123,56 @@ export interface Sons {
   jingleAtout(atout: "gratin" | "expresso" | "ristretto" | "pausecafe"): void;
   /** Boîte mystère : boîte à musique (tirage) ou rire de la peluche. */
   boite(genre: "tirage" | "peluche", position?: PositionSon): void;
-  /** Bonus ramassé (accord brillant) ; un bonus qui tombe (scintillement). */
+  /** Bonus ramassé (fanfare, cf. `fanfareBonus`) ; un bonus qui tombe (scintillement). */
   bonus(ramasse: boolean, position?: PositionSon): void;
   /** Courant rétabli : clac du disjoncteur, montée des néons. */
   courant(): void;
-  /** Micro-ondes : bourdonnement pendant la cuisson, « ding » quand c'est prêt. */
+  /** Micro-ondes : porte et bourdonnement pendant la cuisson (`microOndesCuisson`), trois bips quand c'est prêt (`microOndesBip`). */
   microondes(pret: boolean, position?: PositionSon): void;
-  /** Annonce parlée (synthèse vocale du navigateur, en français, voix grave) : « Munitions max ! »… Sans voix disponible : rien. */
+  /**
+   * Annonce parlée par la synthèse vocale du navigateur (repli des annonces échantillonnées) : attend la liste des voix, choisit une voix
+   * française, ne coupe pas l'annonce en cours (file du navigateur, au plus `ANNONCES_EN_ATTENTE_MAX` en attente), précédée d'un jingle.
+   */
   annonce(texte: string): void;
+  // ---- échantillons du mode zombies (registre : sons-echantillons.ts) ; chacun a un repli synthétisé ----
+  /** Lance le téléchargement de tous les fichiers du mode zombies (décodés dès que le contexte audio existe). */
+  prechargerZombies(): void;
+  /**
+   * Joue l'échantillon `id` dans `retardS` s, spatialisé par `position`. Rend vrai s'il est pris en charge (joué, ou ignoré car toutes
+   * ses voix sont prises) et faux s'il n'est pas chargé : à l'appelant de jouer un repli.
+   */
+  echantillon(id: IdEchantillon, position?: PositionSon, retardS?: number): boolean;
+  /** Annonce parlée de l'annonceur (file : jamais coupée, enchaînée), au plus tôt dans `auPlusTotS` s ; repli : `annonce(texte)`. */
+  voix(id: IdVoix, auPlusTotS?: number): void;
+  /** Coup de tonnerre (éclair de la manche du Truck Muche). */
+  tonnerre(position?: PositionSon): void;
+  /** Rire maléfique du Truck Muche enragé, dans `retardS` s. */
+  rireTruck(position?: PositionSon, retardS?: number): void;
+  /** Explosion d'une grenade (ou d'un tir explosif) ; `force` 0..1. */
+  explosionGrenade(position?: PositionSon, force?: number): void;
+  /** Rebond d'une grenade sur le sol ou un mur ; `force` 0..1 (vitesse de l'impact). */
+  rebondGrenade(position?: PositionSon, force?: number): void;
+  /** Micro-ondes Gratinator : la porte claque et la cuisson bourdonne (3,4 s). */
+  microOndesCuisson(position?: PositionSon): void;
+  /** Micro-ondes Gratinator : trois bips à 1 kHz, c'est prêt. */
+  microOndesBip(position?: PositionSon): void;
+  /**
+   * Coup de patte du tigre chef (son fourni par le joueur, retour 16), joué au début de l'armement : son pic (cherché dans le fichier)
+   * tombe au contact, `ZOMBIES.griffeArmeS` plus tard, comme le claquement de `griffe`, qui sert de repli.
+   */
+  griffeChef(position?: PositionSon): void;
+  /** Rugissement du tigre chef ; repli et limite de voix : ceux de `rugissementTigre`. Rend vrai si une voix a été jouée. */
+  grognementChef(position?: PositionSon): boolean;
+  /** Fanfare d'un bonus ramassé (avant son annonce). */
+  fanfareBonus(position?: PositionSon): void;
   /** Klaxon deux tons du bus C3. */
   klaxonBus(position?: PositionSon): void;
   /** Sirène d'alerte de frappe aérienne. */
   sireneFrappe(position?: PositionSon): void;
   /** Déploiement et sifflement d'un fumigène. */
   fumigene(position?: PositionSon): void;
-  // ---- v8 (grenades des zombies) : points d'entrée stables, synthétisés pour l'instant (des échantillons pourront les remplacer) ----
+  // ---- v8 (grenades des zombies) : points d'entrée stables ; rebond et explosion lisent les échantillons de `explosionGrenade` /
+  // `rebondGrenade` (synthèse en repli), le reste est synthétisé ----
   /** Grenade lancée : cuillère qui saute et souffle du bras (la mienne), ou froissement lointain (celle d'un autre, `position`). */
   grenadeLancer(position?: PositionSon): void;
   /** Rebond d'une grenade sur le carrelage ou un mur ; `force` = vitesse du choc (m/s). */
@@ -351,6 +393,136 @@ export function creerSons(): Sons {
   /** fins (horloge audio, s) des rugissements de tigres en cours */
   let voixTigres: number[] = [];
 
+  /**
+   * Échantillons (mode zombies) : par URL, les octets en vol (le téléchargement part dès `prechargerZombies`, avant même le contexte
+   * audio), puis le son décodé et l'instant de son pic. Un échec (réseau, 404, format) est définitif et silencieux : le repli synthétisé
+   * reste. Cache propre à cette instance (le navigateur garde les fichiers dans son cache HTTP d'une partie à l'autre).
+   */
+  interface Chargement { octets: Promise<ArrayBuffer> | null; buf: AudioBuffer | null; pic: number; echec: boolean; decodage: boolean }
+  const chargements = new Map<string, Chargement>();
+  const decoder = (c: Chargement) => {
+    if (!ctx || fini || c.buf || c.echec || c.decodage || !c.octets) return;
+    const cx = ctx;
+    if (typeof cx.decodeAudioData !== "function") { c.echec = true; return; }
+    c.decodage = true;
+    c.octets
+      .then((b) => cx.decodeAudioData(b))
+      .then((buf) => {
+        if (fini) return;
+        c.buf = buf;
+        c.pic = instantPic(buf.getChannelData(0), buf.sampleRate);
+      })
+      .catch(() => { c.echec = true; });
+  };
+  const telecharger = (url: string): Chargement => {
+    let c = chargements.get(url);
+    if (c) { decoder(c); return c; }
+    c = { octets: null, buf: null, pic: 0, echec: false, decodage: false };
+    chargements.set(url, c);
+    if (typeof fetch !== "function") { c.echec = true; return c; }
+    const ch = c;
+    try {
+      ch.octets = fetch(url).then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(String(r.status)))));
+      ch.octets.catch(() => { ch.echec = true; });
+    } catch {
+      ch.echec = true;
+    }
+    decoder(ch);
+    return ch;
+  };
+  /** fins (horloge audio) des lectures en cours, par URL et toutes ensemble */
+  const finsEchantillons = new Map<string, number[]>();
+  let finsTous: number[] = [];
+  /**
+   * Lit le son de `url` : « absent » s'il n'est pas (encore) chargé, « plein » si ses voix (`voixMax`) ou toutes les voix
+   * (`ECHANTILLONS_SIMULTANES_MAX`) sont prises, sinon l'instant (horloge audio) où il se tait.
+   */
+  const lire = (
+    url: string, gain: number, voixMax: number, position?: PositionSon, o: { retard?: number; decalage?: number; vitesse?: number } = {},
+  ): number | "absent" | "plein" => {
+    const c = telecharger(url);
+    if (!c.buf || !ctx || !master) return "absent";
+    const maintenant = ctx.currentTime;
+    const v1 = voixLibre(finsEchantillons.get(url) ?? [], maintenant, voixMax);
+    const v2 = voixLibre(finsTous, maintenant, ECHANTILLONS_SIMULTANES_MAX);
+    finsEchantillons.set(url, v1.fins);
+    finsTous = v2.fins;
+    if (!v1.libre || !v2.libre) return "plein";
+    const vitesse = o.vitesse ?? 1;
+    const decalage = Math.min(Math.max(0, o.decalage ?? 0), c.buf.duration);
+    const t = maintenant + 0.001 + Math.max(0, o.retard ?? 0);
+    const src = ctx.createBufferSource();
+    src.buffer = c.buf;
+    if (vitesse !== 1) src.playbackRate?.setValueAtTime(vitesse, t);
+    const g = ctx.createGain();
+    g.gain.value = gain;
+    src.connect(g);
+    g.connect(sortie(position));
+    src.start(t, decalage);
+    const fin = t + (c.buf.duration - decalage) / vitesse;
+    v1.fins.push(fin);
+    finsTous.push(fin);
+    return fin;
+  };
+  const jouerEchantillon = (id: IdEchantillon, position?: PositionSon, o?: { retard?: number; decalage?: number; vitesse?: number }) => {
+    const d = ECHANTILLONS[id];
+    return lire(d.url, d.gain, d.voixMax, position, o);
+  };
+  /** Pic (s) du son `id` s'il est chargé. */
+  const picDe = (id: IdEchantillon): number | null => {
+    const c = chargements.get(ECHANTILLONS[id].url);
+    return c?.buf ? c.pic : null;
+  };
+  /** File des annonces parlées échantillonnées (horloge audio). */
+  const fileAnnonces = new FileAnnonces();
+
+  /** Synthèse vocale du navigateur (repli) : voix française choisie une fois la liste arrivée, annonces en file (jamais `cancel`). */
+  let voixNavigateur: SpeechSynthesisVoice | null | undefined;
+  let attenteVoix = false;
+  let parolesEnFile = 0;
+  const choisirVoixNavigateur = (): SpeechSynthesisVoice | null | undefined => {
+    const toutes = window.speechSynthesis.getVoices();
+    if (!toutes.length) return undefined;
+    const fr = toutes.filter((v) => v.lang.toLowerCase().replace("_", "-").startsWith("fr"));
+    // une voix de France plutôt que du Canada ; une voix locale (hors ligne, sans délai) plutôt qu'une voix réseau
+    return fr.find((v) => /^fr-fr/i.test(v.lang.replace("_", "-")) && v.localService) ?? fr.find((v) => /^fr-fr/i.test(v.lang.replace("_", "-"))) ?? fr[0] ?? null;
+  };
+  const parler = (texte: string) => {
+    if (fini || typeof window === "undefined" || !("speechSynthesis" in window)) return;
+    const ss = window.speechSynthesis;
+    if (parolesEnFile > ANNONCES_EN_ATTENTE_MAX) return; // celle qui parle + 2 en attente au plus
+    const dire = () => {
+      if (fini) return;
+      try {
+        const u = new SpeechSynthesisUtterance(texte);
+        u.lang = "fr-FR";
+        u.pitch = 0.75;
+        u.rate = 1.0;
+        u.volume = 0.9;
+        if (voixNavigateur) u.voice = voixNavigateur;
+        parolesEnFile++;
+        u.onend = u.onerror = () => { parolesEnFile = Math.max(0, parolesEnFile - 1); };
+        ss.speak(u);
+      } catch { /* synthèse indisponible : silence */ }
+    };
+    if (voixNavigateur === undefined) voixNavigateur = choisirVoixNavigateur();
+    if (voixNavigateur !== undefined) { dire(); return; }
+    // liste des voix pas encore arrivée (Chrome la remplit après coup) : on attend `voiceschanged`, 800 ms au plus
+    if (attenteVoix) { setTimeout(dire, 850); return; }
+    attenteVoix = true;
+    let fait = false;
+    const suite = () => {
+      if (fait) return;
+      fait = true;
+      attenteVoix = false;
+      try { ss.removeEventListener("voiceschanged", suite); } catch { /* ancien navigateur */ }
+      voixNavigateur = choisirVoixNavigateur() ?? null;
+      dire();
+    };
+    try { ss.addEventListener("voiceschanged", suite); } catch { /* ancien navigateur */ }
+    setTimeout(suite, 800);
+  };
+
   const ouvrir = () => {
     if (ctx || fini || typeof window === "undefined") return;
     const AC: typeof AudioContext | undefined = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
@@ -372,6 +544,8 @@ export function creerSons(): Sons {
     bruitBuf = ctx.createBuffer(1, n, ctx.sampleRate);
     const d = bruitBuf.getChannelData(0);
     for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
+    // les échantillons téléchargés avant le premier geste se décodent maintenant
+    for (const c of chargements.values()) decoder(c);
   };
 
   /** Premier geste (clic, touche) : crée le contexte ou le sort de sa veille. */
@@ -467,7 +641,7 @@ export function creerSons(): Sons {
     }
   };
 
-  return {
+  const api: Sons = {
     tir(arme, position) {
       if (!prete()) return;
       const out = sortie(position);
@@ -1071,14 +1245,12 @@ export function creerSons(): Sons {
       }
     },
     bonus(ramasse, position) {
+      // ramassé : la fanfare (échantillon, repli synthétisé) ; qui tombe : scintillement
+      if (ramasse) { api.fanfareBonus(position); return; }
       if (!prete()) return;
       const out = sortie(position);
       const t = ctx!.currentTime + 0.001;
-      if (ramasse) {
-        [523, 784, 1047, 1568].forEach((f, i) => ton(out, t + i * 0.05, { dur: 0.5, type: "triangle", f0: f, gain: 0.08, att: 0.01 }));
-      } else {
-        for (let k = 0; k < 6; k++) ton(out, t + k * 0.06, { dur: 0.12, type: "sine", f0: 1800 + k * 250, gain: 0.04, att: 0.005 });
-      }
+      for (let k = 0; k < 6; k++) ton(out, t + k * 0.06, { dur: 0.12, type: "sine", f0: 1800 + k * 250, gain: 0.04, att: 0.005 });
     },
     courant() {
       if (!prete()) return;
@@ -1089,25 +1261,131 @@ export function creerSons(): Sons {
       ton(master!, t + 0.25, { dur: 2.2, type: "sine", f0: 100, f1: 240, gain: 0.06, att: 0.3 });
     },
     microondes(pret, position) {
-      if (!prete()) return;
+      if (pret) api.microOndesBip(position);
+      else api.microOndesCuisson(position);
+    },
+    microOndesCuisson(position) {
+      if (!prete() || jouerEchantillon("microOndesCuisson", position) !== "absent") return;
+      // repli : la porte claque (choc sourd), puis le magnétron bourdonne et le ventilateur souffle
       const out = sortie(position);
       const t = ctx!.currentTime + 0.001;
-      if (pret) ton(out, t, { dur: 1.2, type: "sine", f0: 1760, gain: 0.12, att: 0.003 });
-      else ton(out, t, { dur: 3.4, type: "sawtooth", f0: 118, f1: 122, gain: 0.05, att: 0.2 });
+      bruit(out, t, { dur: 0.12, type: "lowpass", f0: 1100, f1: 200, gain: 0.7 });
+      ton(out, t, { dur: 0.12, type: "sine", f0: 90, f1: 60, gain: 0.5 });
+      ton(out, t + 0.12, { dur: 3.3, type: "sawtooth", f0: 120, f1: 121, gain: 0.04, att: 0.25 });
+      ton(out, t + 0.12, { dur: 3.3, type: "sine", f0: 240, gain: 0.05, att: 0.25 });
+      bruit(out, t + 0.12, { dur: 1.9, type: "bandpass", f0: 700, q: 0.5, gain: 0.06, att: 0.4 });
+    },
+    microOndesBip(position) {
+      if (!prete() || jouerEchantillon("microOndesBip", position) !== "absent") return;
+      // repli : les trois bips piézo à 1 kHz d'un vrai micro-ondes
+      const out = sortie(position);
+      const t = ctx!.currentTime + 0.001;
+      for (let k = 0; k < 3; k++) {
+        ton(out, t + k * 0.3, { dur: 0.17, type: "square", f0: 1000, gain: 0.05, att: 0.004 });
+        ton(out, t + k * 0.3, { dur: 0.17, type: "sine", f0: 1000, gain: 0.08, att: 0.004 });
+      }
     },
     annonce(texte) {
-      if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
-      try {
-        const u = new SpeechSynthesisUtterance(texte);
-        u.lang = "fr-FR";
-        u.pitch = 0.45;
-        u.rate = 0.92;
-        u.volume = 0.9;
-        const voix = window.speechSynthesis.getVoices().find((v) => v.lang.startsWith("fr"));
-        if (voix) u.voice = voix;
-        window.speechSynthesis.cancel();
-        window.speechSynthesis.speak(u);
-      } catch { /* synthèse indisponible : silence */ }
+      if (fini || typeof window === "undefined" || !("speechSynthesis" in window)) return;
+      // petit jingle (deux notes montantes), puis la voix du navigateur
+      if (prete()) {
+        const t = ctx!.currentTime + 0.001;
+        ton(master!, t, { dur: 0.16, type: "triangle", f0: 659, gain: 0.08, att: 0.005 });
+        ton(master!, t + 0.12, { dur: 0.28, type: "triangle", f0: 988, gain: 0.08, att: 0.005 });
+      }
+      setTimeout(() => parler(texte), 280);
+    },
+    prechargerZombies() {
+      if (fini) return;
+      // le contexte existe déjà si l'utilisateur a cliqué (lobby) : le décodage suit le téléchargement ; sinon `ouvrir` s'en chargera
+      prete();
+      for (const url of URLS_ZOMBIES) telecharger(url);
+    },
+    echantillon(id, position, retardS = 0) {
+      if (!prete()) return true; // pas de contexte : silence, rien à remplacer
+      return jouerEchantillon(id, position, { retard: retardS }) !== "absent";
+    },
+    voix(id, auPlusTotS = 0) {
+      if (fini) return;
+      const d = VOIX_ANNONCES[id];
+      const c = telecharger(d.url);
+      // fichier absent ou pas encore décodé, ou pas de contexte audio : la voix du navigateur prend le relais
+      if (!c.buf || !prete()) { api.annonce(d.texte); return; }
+      const maintenant = ctx!.currentTime;
+      const debut = fileAnnonces.planifier(maintenant, c.buf.duration, maintenant + Math.max(0, auPlusTotS));
+      if (debut === null) return; // file pleine : l'annonce est abandonnée plutôt que d'en couper une
+      // l'annonceur passe au-dessus de tout (gain fort, non spatialisé), hors limite de voix des effets
+      const src = ctx!.createBufferSource();
+      src.buffer = c.buf;
+      const g = ctx!.createGain();
+      g.gain.value = 1.1;
+      src.connect(g);
+      g.connect(master!);
+      src.start(debut);
+    },
+    tonnerre(position) {
+      if (!prete() || jouerEchantillon("tonnerre", position) !== "absent") return;
+      // repli : craquement sec puis grondement qui roule
+      const out = sortie(position);
+      const t = ctx!.currentTime + 0.001;
+      bruit(out, t, { dur: 0.25, type: "highpass", f0: 1500, f1: 500, gain: 0.7 });
+      bruit(out, t + 0.05, { dur: 3.5, type: "lowpass", f0: 700, f1: 60, gain: 0.9, att: 0.15 });
+      ton(out, t + 0.05, { dur: 3, type: "sine", f0: 45, f1: 28, gain: 0.5, att: 0.3 });
+    },
+    rireTruck(position, retardS = 0) {
+      if (!prete() || jouerEchantillon("rireTruck", position, { retard: retardS }) !== "absent") return;
+      // repli : « HA HA HA » grave et nasal qui descend
+      const out = sortie(position);
+      const t = ctx!.currentTime + 0.001 + Math.max(0, retardS);
+      for (let k = 0; k < 6; k++) {
+        ton(out, t + k * 0.2, { dur: 0.15, type: "sawtooth", f0: 180 - k * 12, f1: 140 - k * 12, gain: 0.12, att: 0.01 });
+        bruit(out, t + k * 0.2, { dur: 0.12, type: "bandpass", f0: 800, q: 3, gain: 0.15 });
+      }
+    },
+    explosionGrenade(position, force = 1) {
+      if (!prete()) return;
+      const k = Math.min(Math.max(force, 0), 1);
+      const d = ECHANTILLONS.explosionGrenade;
+      if (lire(d.url, d.gain * (0.55 + 0.45 * k), d.voixMax, position, { vitesse: 1.08 - 0.12 * k }) !== "absent") return;
+      api.explosionMonstre(0.4 + 0.5 * k, position);
+    },
+    rebondGrenade(position, force = 1) {
+      if (!prete()) return;
+      const k = Math.min(Math.max(force, 0), 1);
+      const d = ECHANTILLONS.rebondGrenade;
+      if (lire(d.url, d.gain * (0.35 + 0.65 * k), d.voixMax, position, { vitesse: 0.9 + Math.random() * 0.2 }) !== "absent") return;
+      // repli : « tonk » métallique bref
+      const out = sortie(position);
+      const t = ctx!.currentTime + 0.001;
+      ton(out, t, { dur: 0.1, type: "triangle", f0: 1300, f1: 900, gain: 0.08 * (0.4 + k) });
+      bruit(out, t, { dur: 0.05, type: "bandpass", f0: 2200, q: 1.5, gain: 0.15 * (0.4 + k) });
+    },
+    griffeChef(position) {
+      if (!prete()) return;
+      const pic = picDe("griffeChef");
+      if (pic !== null) {
+        // le pic du fichier tombe au contact du serveur (même calage que le claquement synthétisé de `griffe`)
+        const { retard, decalage } = departCale(pic, ZOMBIES.griffeArmeS);
+        if (jouerEchantillon("griffeChef", position, { retard, decalage }) !== "absent") return;
+      } else telecharger(ECHANTILLONS.griffeChef.url);
+      api.griffe(position);
+    },
+    grognementChef(position) {
+      if (!prete()) return false;
+      const t = ctx!.currentTime + 0.001;
+      voixTigres = voixTigres.filter((fin) => fin > t);
+      if (voixTigres.length >= VOIX_TIGRES_MAX) return false;
+      const r = jouerEchantillon("grognementChef", position, { vitesse: 0.92 + Math.random() * 0.16 });
+      if (r === "absent") return api.rugissementTigre(position);
+      if (r === "plein") return false;
+      voixTigres.push(r);
+      return true;
+    },
+    fanfareBonus(position) {
+      if (!prete() || jouerEchantillon("fanfareBonus", position) !== "absent") return;
+      const out = sortie(position);
+      const t = ctx!.currentTime + 0.001;
+      [523, 784, 1047, 1568].forEach((f, i) => ton(out, t + i * 0.05, { dur: 0.5, type: "triangle", f0: f, gain: 0.08, att: 0.01 }));
     },
     klaxonBus(position) {
       if (!prete()) return;
@@ -1143,15 +1421,21 @@ export function creerSons(): Sons {
     },
     grenadeRebond(force, position) {
       if (!prete()) return;
+      const g = Math.max(0.05, Math.min(1, force / 12));
+      // échantillon du lot audio (Kenney, CC0) d'abord, synthèse en repli
+      const d = ECHANTILLONS.rebondGrenade;
+      if (lire(d.url, d.gain * (0.35 + 0.65 * g), d.voixMax, position, { vitesse: 0.9 + Math.random() * 0.2 }) !== "absent") return;
       const out = sortie(position);
       const t = ctx!.currentTime + 0.001;
-      const g = Math.max(0.05, Math.min(1, force / 12));
       // métal sur le carrelage : clac bref et tintement creux
       bruit(out, t, { dur: 0.03, type: "bandpass", f0: 2600, q: 2.5, gain: 0.45 * g });
       ton(out, t, { dur: 0.09, type: "square", f0: 620 + 180 * g, f1: 520, gain: 0.06 * g });
     },
     grenadeExplosion(position) {
       if (!prete()) return;
+      // échantillon du lot audio (Kenney, CC0) à pleine force d'abord, synthèse en repli
+      const d = ECHANTILLONS.explosionGrenade;
+      if (lire(d.url, d.gain, d.voixMax, position, { vitesse: 0.96 }) !== "absent") return;
       const out = sortie(position);
       const t = ctx!.currentTime + 0.001;
       // plus sèche qu'une voiture : claquement, grave court, souffle, éclats
@@ -1180,6 +1464,8 @@ export function creerSons(): Sons {
     },
     dispose() {
       fini = true;
+      fileAnnonces.vider();
+      chargements.clear();
       if (typeof window !== "undefined" && "speechSynthesis" in window) { try { window.speechSynthesis.cancel(); } catch { /* rien */ } }
       if (typeof window !== "undefined") for (const g of GESTES) window.removeEventListener(g, reveiller, { capture: true });
       if (frottement) {
@@ -1212,4 +1498,5 @@ export function creerSons(): Sons {
       bruitBuf = null;
     },
   };
+  return api;
 }

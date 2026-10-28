@@ -1,3 +1,33 @@
 moteur.wav — « Racing car engine sound loops » (loop_0), domasx2, OpenGameArt
 https://opengameart.org/content/racing-car-engine-sound-loops
 Licence : CC0 1.0 (domaine public). Rééchantillonné en 22 050 Hz mono, sans autre modification.
+
+---------------------------------------------------------------------------------------------------------------------
+Sons du mode zombies (public/arene/sons/), registre dans lib/fps/sons-echantillons.ts.
+Tous convertis en MP3 mono, silence coupé, crête à −1 dBFS par scripts/fps/importer_son.sh, appelé par
+scripts/fps/generer_sons.sh (effets) et scripts/fps/generer_voix.sh (annonces). Aucun son de Black Ops.
+
+sons/tonnerre.mp3 — extrait de 5 s (16,6 s → 21,6 s) de « thunder_big.flac », AudioAugust,
+  enregistré par Johannes « Hanni » Schneider pour le projet Inexor — https://github.com/inexorgame/audioaugust
+  Licence : CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Modifié : extrait, mono, normalisé.
+
+sons/rire-truck.mp3 — « VOXLaff_EvilLaugh_OS_01 », descendu d'une quarte, écho ajouté.
+sons/fanfare-bonus.mp3 — « UIMisc_Powerup_OS_01 ».
+sons/grognement-chef.mp3 — « CREAHmn_GiantEffort_OS_01 », descendu, coupé à 1,8 s.
+sons/griffe-chef.mp3 — « CREAHmn_OgreEffort_OS_01 », ralenti et descendu. PROVISOIRE : à remplacer par le son fourni par le
+  joueur (scripts/fps/importer_son.sh <son.mp4> public/arene/sons/griffe-chef.mp3), avec ici son origine et sa licence.
+  Ces quatre sons : "Oculus Audio Pack 01" by Oculus VR, LLC (https://developers.meta.com/vr/downloads/package/oculus-audio-pack-1/),
+  licensed under CC BY 4.0. Files renamed to the UCS naming convention; OGG previews transcoded from the original WAVs.
+  Copie : https://github.com/facebookincubator/Meta-open-sound (corpora/oculus-audio-pack). Modifiés comme indiqué, mono, normalisés.
+
+sons/explosion-grenade.mp3 — « explosionCrunch_004 » mêlé à « lowFrequency_explosion_001 » (Sci-fi Sounds)
+sons/rebond-grenade.mp3 — « impactMetal_light_000 » (Impact Sounds)
+  Kenney Vleugels (https://kenney.nl), licence CC0 1.0 (domaine public). Copie : https://github.com/Cy4nWare/sfx-api
+
+sons/microondes-cuisson.mp3, sons/microondes-bip.mp3 — synthétisés par scripts/fps/generer_sons.sh (ffmpeg), sans source.
+  Domaine public (CC0 1.0).
+
+sons/voix/*.mp3 — annonces synthétisées hors ligne par scripts/fps/generer_voix.sh : espeak-ng (GPL-3, https://github.com/espeak-ng/espeak-ng ;
+  le son produit n'est pas couvert par la GPL) avec la voix diphone MBROLA « fr1 » (© 1996-2008 Faculté polytechnique de Mons,
+  équipe MBROLA, https://github.com/mbrola/mbrola-voices : utilisation et distribution gratuites, la base ne peut être ni vendue
+  ni intégrée à un produit vendu), puis voix descendue, compressée et réverbérée par ffmpeg.
