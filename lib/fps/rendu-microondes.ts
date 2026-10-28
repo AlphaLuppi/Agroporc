@@ -22,7 +22,7 @@ const CX = (CAV.x0 + CAV.x1) / 2, CZ = (CAV.z0 + CAV.z1) / 2;
 /** Porte : charnière à gauche, largeur, hauteur ; angle d'ouverture complète (rad, vers le joueur). */
 const PORTE = { x: -L / 2, l: 1.24, h: 0.8, angle: 1.75 };
 /** Longueur maximale (m) de l'arme posée : elle tourne sur le plateau sans traverser les parois. */
-const ARME_MAX_M = 0.74;
+const ARME_MAX_M = 0.8;
 /** Avancée de l'arme hors du plateau quand elle sort (m, vers la porte). */
 const SORTIE_M = 0.62;
 /** Couleurs : arme crue (éclairée de l'intérieur), arme gratinée, lumière de cuisson. */
@@ -142,7 +142,7 @@ export function creerRenduMicroondes(g: THREE.Group, m: Materiaux): RenduMicroon
   const support = new THREE.Group();
   support.position.set(CX, CAV.y0, CZ);
   g.add(support);
-  const verre = new THREE.MeshBasicMaterial({ color: 0x9fb8c8, transparent: true, opacity: 0.35, depthWrite: false });
+  const verre = new THREE.MeshBasicMaterial({ color: 0x5f7684, transparent: true, opacity: 0.28, depthWrite: false });
   jetables.push(verre);
   const geoPlateau = new THREE.CylinderGeometry(0.34, 0.34, 0.014, 40);
   const aretesPlateau = new THREE.EdgesGeometry(geoPlateau, 30);
@@ -259,9 +259,10 @@ export function creerRenduMicroondes(g: THREE.Group, m: Materiaux): RenduMicroon
       // lumière intérieure : la tapisserie et la lueur passent à l'orange, qui pulse pendant la cuisson
       const pulse = im.plateau ? 0.82 + 0.18 * Math.sin(t * 9) : 1;
       const k = im.lumiere * pulse;
-      interieur.color.setRGB(0.08 + 0.55 * k, 0.09 + 0.3 * k, 0.11 + 0.08 * k);
-      lueurMat.opacity = 0.35 * k;
-      lampeMat.opacity = courant ? 0.15 + 0.5 * k : 0;
+      // (sous le seuil du halo : l'arme doit rester lisible sur le fond éclairé)
+      interieur.color.setRGB(0.07 + 0.3 * k, 0.08 + 0.13 * k, 0.1 + 0.02 * k);
+      lueurMat.opacity = 0.12 * k;
+      lampeMat.opacity = courant ? 0.12 + 0.3 * k : 0;
       void lueur;
       // étincelles : quelques points qui crépitent autour de l'arme
       if (im.etincelles) {

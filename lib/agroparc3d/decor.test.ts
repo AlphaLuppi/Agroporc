@@ -174,8 +174,9 @@ describe("ajouterBatiments : détail vrai (arène)", () => {
     const inst = dessinables(avec).find((x) => (x as THREE.InstancedMesh).isInstancedMesh) as THREE.InstancedMesh;
     const sh = compiler(inst.material as THREE.Material);
     expect(sh.vertexShader).toContain("modelMatrix * instanceMatrix");
-    expect(sh.vertexShader).toContain("mvPosition = instanceMatrix * mvPosition;\nmvPosition.y *= mix(");
-    expect(sh.vertexShader).not.toContain("transformed.y *= mix(");
+    // (v8) un équipement d'un bâtiment effacé passe sous le sol avec lui
+    expect(sh.vertexShader).toContain("mvPosition = instanceMatrix * mvPosition;\nmvPosition.y = etatB.r > 1.5 ? -0.05 : mvPosition.y * mix(");
+    expect(sh.vertexShader).not.toContain("transformed.y = etatB.r");
   });
 
   it("chaque variante de nuanceur a sa clé de programme (aucune collision)", () => {
@@ -185,7 +186,7 @@ describe("ajouterBatiments : détail vrai (arène)", () => {
     for (const o of [...dessinables(racine), inst]) {
       const m = (o as THREE.Mesh).material as THREE.Material;
       const c = m.customProgramCacheKey?.() ?? "";
-      if (c.startsWith("batiment-effondrable-3")) cles.add(c);
+      if (c.startsWith("batiment-effondrable-4")) cles.add(c);
     }
     // faces détaillées, arêtes (= faces de la porte : même code), barricade, champ, équipements (autre largeur de texture : autre clé)
     expect(cles.size).toBe(6);
@@ -244,5 +245,18 @@ describe("buildingGroup", () => {
     const sh = compiler(mesh.material as THREE.Material);
     expect(sh.vertexShader).toContain("attribute float aBat;");
     expect(sh.fragmentShader).not.toContain("uDetruits");
+  });
+});
+
+describe("(v8) bâtiment effacé (porte ouverte des zombies)", () => {
+  it("`effacer` marque le texel d'une valeur réservée (> 1,5 : sous le sol, sans gravats) ; `poser(id, 0)` le relève", () => {
+    const e = creerEtatDestruction(3);
+    const data = e.texture.image.data as unknown as Float32Array;
+    e.poser(1, 1);
+    expect(data[4]).toBe(1);
+    e.effacer(2);
+    expect(data[8]).toBeGreaterThan(1.5);
+    e.poser(2, 0);
+    expect(data[8]).toBe(0);
   });
 });

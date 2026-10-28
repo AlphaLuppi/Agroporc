@@ -519,8 +519,10 @@ export function creerRenduObjetsZombies(scene: THREE.Scene): RenduObjetsZombies 
       for (const m of rb.modeles.values()) m.group.visible = false;
       rb.faisceau.visible = b.etat !== "envol";
       // Happy hour : faisceaux dorés à chaque emplacement
-      rb.matFaisceau.color.set(soldes || !principale ? 0xffc23d : 0x8fd0ff);
-      rb.matFaisceau.opacity = (soldes ? 0.2 : 0.12) + 0.05 * Math.sin(t * (soldes ? 5 : 2) + rb.em);
+      // (doré, plus pâle que le bleu : l'additif doré sature vite sous le halo)
+      const dore = soldes || !principale;
+      rb.matFaisceau.color.set(dore ? 0xe0a040 : 0x8fd0ff);
+      rb.matFaisceau.opacity = dore ? 0.06 + 0.025 * Math.sin(t * 5 + rb.em) : 0.12 + 0.05 * Math.sin(t * 2);
       rb.defile.rotation.y = 0;
       if (b.etat === "tirage") {
         // armes qui défilent en montant, de plus en plus lentement

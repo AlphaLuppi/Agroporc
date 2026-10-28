@@ -1427,7 +1427,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
             if (!pr) continue;
             effondrements.delete(id);
             ouvertures.delete(id);
-            if (ruines.has(id)) { detruireBatiment(monde, id); destruction.poser(id, 1); }
+            // (v8, zombies) une porte ouverte est effacée, sans tas de gravats
+            if (ruines.has(id)) { detruireBatiment(monde, id); if (piecesPortes.has(id)) destruction.effacer(id); else destruction.poser(id, 1); }
             else if ((pr.h === 0 && pr.hOrigine > 0) || pr.creux) { releverBatiment(monde, id); destruction.poser(id, 0); }
             const x = br.get(id);
             if (x && !ruines.has(id)) { poserBreche(monde, id, { x: x[1], z: x[2], r: x[3] }); destruction.breche(id, x[1], x[2], x[3]); }
@@ -1447,7 +1448,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
           // légers qui disparaissent, sans explosion ni pluie de blocs
           const piece = piecesPortes.get(id);
           if (piece && portesZ) {
-            destruction.poser(id, 1);
+            destruction.effacer(id);
             const plan = planOuverture(piece, Math.random);
             portesZ.ouvrir(plan);
             debris.lancer(plan.eclats);
@@ -2633,6 +2634,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
           mode: modeZ ? "zombies" : "arene", argent: argentZ, manche: partieZ?.manche ?? 0, restants: mz.restants(), aTerre: aTerreZ, elimine: elimineZ,
           zombies: modeZ ? mz.zombies().slice(0, mz.nombre()).map((v) => ({ id: v.id, x: v.x, z: v.z, type: v.type, griffe: v.griffe, mode: v.mode, cap: v.cap })) : [],
           rugissements: rz ? { pret: rz.pret(), affiches: rz.affiches(), ragdolls: rz.ragdollsActifs() } : null,
+          // (v8) dernier état de la partie de zombies et horloge serveur (captures : `simuler` en part)
+          partie: modeZ ? partieZ : null, tServeur: client.maintenantServeur(),
           // (v8) grenades en poche et en vol
           grenades: grenades ? {
             frag: stockGrenades("frag"), remontoirs: stockGrenades("remontoir"), cuisson: grenades.cuisson(t * 1000),
