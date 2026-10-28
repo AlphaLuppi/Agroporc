@@ -789,21 +789,32 @@ export function donneesZombies(scene: SceneData): DonneesZombies {
 /** Types dont le prisme garde sa vraie hauteur (le mobilier : on tire par-dessus) ; les bâtiments creusés n'ont pas de prisme utile (h = 0). */
 const HAUTEUR_REELLE: ReadonlySet<string> = new Set(["meuble"]);
 
+/** Faux plafond des bâtiments creusés (m), dessiné par `rendu-interieurs.ts` et solide pour la tête du joueur (`plafondZombies`). */
+export const HAUTEUR_PLAFOND_ZOMBIES = 3.4;
+
+/** Dessous du faux plafond d'un bâtiment creusé de hauteur `h` (m) : `HAUTEUR_PLAFOND_ZOMBIES`, ou 0,3 m sous un toit plus bas. */
+export const plafondZombies = (h: number): number => Math.min(HAUTEUR_PLAFOND_ZOMBIES, h - 0.3);
+
 /**
  * Monde de collision de la carte zombies : bornes réduites, bâtiments creusés sans hauteur (ni collision ni rayon, jamais relevés), murs
- * hauts (`h = hOrigine = 40`) pour tout le reste sauf le mobilier, pas de wall-run ni de double saut (`sansParkour`).
+ * hauts (`h = hOrigine = 40`) pour tout le reste sauf le mobilier, pas de wall-run, de double saut ni d'escalade (`sansParkour`).
+ * Plafonds (`Prisme.plafond`, `Monde.plafonds`) : l'emprise d'un bâtiment creusé a son faux plafond (`plafondZombies`), une porte
+ * intérieure son linteau (`HAUTEUR_PORTE_INTERIEURE`, gardé quand la porte est achetée) ; la tête du joueur ne les passe pas.
  */
 export function construireMondeZombies(scene: SceneData): Monde {
-  const donnees = donneesZombies(scene).data;
+  const { data: donnees, pieces } = donneesZombies(scene);
   const monde = construireMonde(donnees);
   monde.bornes = { ...BORNES_ZOMBIES };
   monde.prismes.forEach((p, i) => {
     const t = donnees.buildings[i]?.type;
-    if (t === "creux") { p.h = 0; p.hOrigine = 0; return; }
+    if (t === "creux") { p.plafond = plafondZombies(donnees.buildings[i].h); p.h = 0; p.hOrigine = 0; return; }
+    // linteau d'une porte intérieure (dessiné de 2,6 m au toit par `rendu-interieurs.ts`)
+    if (t === "porte" && i >= INDEX_PREMIERE_PIECE && pieces[i - INDEX_PREMIERE_PIECE]?.batiment !== undefined) p.plafond = HAUTEUR_PORTE_INTERIEURE;
     if (t && HAUTEUR_REELLE.has(t)) return;
     p.h = HAUTEUR_MURS_ZOMBIES; p.hOrigine = HAUTEUR_MURS_ZOMBIES;
   });
   monde.sansParkour = true;
+  monde.plafonds = true;
   return monde;
 }
 

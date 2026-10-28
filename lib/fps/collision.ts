@@ -29,6 +29,11 @@ export interface Prisme {
    * passer les tigres (`resoudre(…, ignorerPasseTigre)`), les balles (`lancerRayon`) et les regards (`visible`).
    */
   passeTigre?: true;
+  /**
+   * (zombies) dessous (m) d'un plafond solide au-dessus de l'emprise : faux plafond d'un bâtiment creusé, linteau d'une porte intérieure.
+   * La tête du joueur ne monte pas au-dessus (`plafondSur`). Indépendant de `h` : il reste quand le prisme est détruit (porte achetée).
+   */
+  plafond?: number;
 }
 /** Brèche d'un bâtiment : cercle (m) au sol. */
 export interface Creux { x: number; z: number; r: number }
@@ -50,6 +55,8 @@ export interface Monde {
   prismes: Prisme[]; bornes: Boite; grille: GrilleMonde;
   /** (v7, zombies) ni wall-run, ni double saut, ni saut de mur, ni escalade : le mouvement de Black Ops 1 */
   sansParkour?: true;
+  /** (zombies) au moins un prisme a un `plafond` : sans lui, `plafondSur` ne coûte rien (arène, vue aérienne) */
+  plafonds?: true;
 }
 
 export interface Contact { nx: number; nz: number; profondeur: number; prisme: number }
@@ -162,6 +169,28 @@ function plusProcheAnneau(anneau: Vec2[], x: number, z: number): void {
     const d = Math.hypot(x - qx, z - qz);
     if (d < proche.d) { proche.d = d; proche.qx = qx; proche.qz = qz; proche.ax = ax; proche.az = az; proche.bx = bx; proche.bz = bz; }
   }
+}
+
+const tamponPlafond: number[] = [];
+
+/**
+ * Dessous du plafond le plus bas au-dessus du disque (x, z, r) : plus petit `plafond` des prismes dont l'emprise contient le centre ou en
+ * passe à moins de `r` (linteau fin d'une porte), Infinity s'il n'y en a aucun.
+ */
+export function plafondSur(m: Monde, x: number, z: number, r: number): number {
+  if (!m.plafonds) return Infinity;
+  let bas = Infinity;
+  for (const id of candidats(m, x - r, z - r, x + r, z + r, tamponPlafond)) {
+    const p = m.prismes[id];
+    if (p.plafond === undefined || p.plafond >= bas) continue;
+    const b = p.boite;
+    if (x < b.x0 - r || x > b.x1 + r || z < b.z0 - r || z > b.z1 + r) continue;
+    if (dansEmprise(p, x, z)) { bas = p.plafond; continue; }
+    proche.d = Infinity;
+    plusProcheAnneau(p.anneau, x, z);
+    if (proche.d < r) bas = p.plafond;
+  }
+  return bas;
 }
 
 /** Correction calculée pour un prisme (réutilisée entre les appels). */

@@ -13,11 +13,12 @@
  * est ramenée sur sa tangente (avec un virage borné) : le joueur suit donc les murs légèrement
  * courbes et les angles émoussés d'un même bâtiment, et décroche dans les coins vifs.
  *
- * Zombies : les corps des tigres (`obstacles`, capsules de `corps-tigres.ts`) arrêtent le joueur : il glisse le long, un tigre qui
+ * Zombies (`Monde.sansParkour`, `Monde.plafonds`) : ni escalade ni wall-run ni double saut, la tête ne passe jamais un plafond (le saut
+ * s'y arrête), et les corps des tigres (`obstacles`, capsules de `corps-tigres.ts`) arrêtent le joueur : il glisse le long, un tigre qui
  * apparaît sur lui le repousse doucement (`capsulePoussee`) au lieu de le téléporter, et un joueur pris en étau se libère (`coinceS`).
  */
 import type { Capsule, Contact, ContactCapsule, Monde } from "./collision";
-import { distanceCapsule, resoudre, solSous } from "./collision";
+import { distanceCapsule, plafondSur, resoudre, solSous } from "./collision";
 import type { CoteMur, Posture, Vec3 } from "./protocole";
 import { SILHOUETTE, SILHOUETTE_ACCROUPIE } from "./protocole";
 
@@ -159,6 +160,12 @@ export const MOUV = {
   /** lissage du roulis caméra (1/s) */
   inclinaisonVitesse: 10,
 
+  /**
+   * (zombies) plafonds : les pieds restent à `degagementTete` sous le plafond (œil 1,95 + 0,15 : plan proche de la caméra et balancement
+   * compris), cherché sur un disque de `rayonTete` autour de l'axe.
+   */
+  degagementTete: SILHOUETTE.oeil + 0.15,
+  rayonTete: SILHOUETTE.tete.rayon,
   /** (zombies) vitesse (m/s) à laquelle un tigre qui chevauche déjà le joueur (apparu sur lui, poussé par la foule) le repousse */
   capsulePoussee: 4,
   /** (zombies) pris en étau par des tigres (aucune direction libre) pendant `coinceS` s sans bouger de `coinceDeplacementM` m : on passe à travers pendant `fantomeS` s */
@@ -591,7 +598,7 @@ function majCoince(s: EtatMouvement, etau: boolean, veut: boolean, dt: number): 
   if (c.t === 0) { c.x = s.p[0]; c.z = s.p[2]; }
 }
 
-/** Sol et air : accélération, sauts, gravité, déplacement, collisions (bâtiments puis tigres), escalade, accroche d'un mur. */
+/** Sol et air : accélération, sauts, gravité, déplacement, plafond, collisions (bâtiments puis tigres), escalade, accroche d'un mur. */
 function pasLibre(s: EtatMouvement, front: boolean, dt: number, m: Monde, mult: number, w: Souhait, obs: readonly Capsule[] | undefined): void {
   const v = s.v;
   let saute = false;
@@ -619,7 +626,7 @@ function pasLibre(s: EtatMouvement, front: boolean, dt: number, m: Monde, mult: 
 
   // Déplacement.
   const yAvant = s.p[1], x0 = s.p[0], z0 = s.p[2];
-  const x = x0 + v[0] * dt, z = z0 + v[2] * dt;
+  let x = x0 + v[0] * dt, z = z0 + v[2] * dt;
   let y = yAvant + v[1] * dt;
   const sol = solSous(m, x, z, yAvant, MOUV.toleranceMarche);
   let auSolApres = false;
@@ -628,6 +635,21 @@ function pasLibre(s: EtatMouvement, front: boolean, dt: number, m: Monde, mult: 
     else { y = yAvant; s.coyote = MOUV.coyoteS; }
   } else if (v[1] <= 0 && y <= sol) {
     y = sol; v[1] = 0; auSolApres = true;
+  }
+
+  // Plafond (zombies) : la tête ne le passe jamais, le saut s'y arrête. Sauter sous un linteau plus bas que le plafond d'où l'on vient :
+  // on bute contre lui (on n'avance pas tant qu'on est trop haut). Debout sur un meuble trop haut pour y tenir, on est remis plus bas
+  // que son dessus : `resoudre` l'en écarte, puis on tombe.
+  if (m.plafonds) {
+    const limite = plafondSur(m, x, z, MOUV.rayonTete) - MOUV.degagementTete;
+    if (y > limite) {
+      const limiteAvant = plafondSur(m, x0, z0, MOUV.rayonTete) - MOUV.degagementTete;
+      if (limiteAvant > limite + 1e-6 && yAvant > limite) {
+        x = x0; z = z0;
+        y = Math.min(y, Math.max(0, limiteAvant));
+      } else y = Math.max(0, limite);
+      if (v[1] > 0) v[1] = 0;
+    }
   }
 
   // Collisions : on garde la vitesse d'avant pour juger l'accroche, puis on annule ce qui entre. Les bâtiments d'abord, puis les corps des
@@ -653,9 +675,9 @@ function pasLibre(s: EtatMouvement, front: boolean, dt: number, m: Monde, mult: 
   s.auSol = auSolApres;
   const vx0 = v[0], vz0 = v[2];
 
-  // Escalade : en l'air, contre un mur dont le toit est à ≤ 1,3 m au-dessus des pieds, en poussant vers l'avant.
+  // Escalade : en l'air, contre un mur dont le toit est à ≤ 1,3 m au-dessus des pieds, en poussant vers l'avant (jamais en zombies).
   let monte: Contact | null = null;
-  if (!auSolApres && w.avant > 0.1) {
+  if (!auSolApres && w.avant > 0.1 && !m.sansParkour) {
     for (const c of res.contacts) {
       if (c.prisme < 0) continue;
       const dh = m.prismes[c.prisme].h - y;
