@@ -119,6 +119,8 @@ const griffeZombies = dureeEnv("PDJ_FPS_ZOMBIES_GRIFFE");
 const truckZombies = process.env.PDJ_FPS_ZOMBIES_TRUCK !== undefined && Number.isFinite(Number(process.env.PDJ_FPS_ZOMBIES_TRUCK))
   ? Math.max(0, Math.floor(Number(process.env.PDJ_FPS_ZOMBIES_TRUCK))) : undefined;
 const courantZombies = process.env.PDJ_FPS_ZOMBIES_COURANT === "1";
+/** (v8, essais) tigres à remontoir en poche au départ */
+const remontoirsZombies = dureeEnv("PDJ_FPS_ZOMBIES_REMONTOIRS");
 const optionsZombies: OptionsSalle = {
   zombies: {
     donnees: donneesZombies(scene),
@@ -128,6 +130,7 @@ const optionsZombies: OptionsSalle = {
     ...(griffeZombies !== undefined ? { degatsGriffe: griffeZombies } : {}),
     ...(truckZombies !== undefined ? { mancheTruck: truckZombies } : {}),
     ...(courantZombies ? { courant: true } : {}),
+    ...(remontoirsZombies !== undefined ? { remontoirsDepart: remontoirsZombies } : {}),
   },
 };
 const salleZombies = new Salle(construireMondeZombies(scene), DEPARTS.map((d) => [d[0], d[1]] as [number, number]), Math.random, Date.now(), optionsZombies);

@@ -10,6 +10,7 @@ import * as THREE from "three";
 import { STATS } from "./armes";
 import type { ArmeFeuId, EtatPartieZombies, Vec3 } from "./protocole";
 import { creerModeleArmeMonde, sansHalo } from "./rendu";
+import { creerModeleRemontoir } from "./rendu-grenades";
 import {
   ACHATS, ATOUTS, FENETRES, NOTES, PRIX_BOITE, achatBoite, pieceDe, type Achat, type ArmeAchat, type AtoutId, type Facade, type Fenetre,
 } from "./zombies-carte";
@@ -362,10 +363,11 @@ export function creerRenduObjetsZombies(scene: THREE.Scene): RenduObjetsZombies 
   defile.position.y = 0.7;
   gBoite.add(defile);
   const modelesBoite = new Map<string, { group: THREE.Group; dispose(): void }>();
-  const modeleBoite = (a: ArmeFeuId | "peluche") => {
+  const modeleBoite = (a: ArmeFeuId | "peluche" | "remontoir") => {
     let m = modelesBoite.get(a);
     if (!m) {
-      m = a === "peluche" ? peluche(jetables) : creerModeleArmeMonde(a, 0xcfe8ff);
+      // (v8) le tigre à remontoir sort de la boîte comme une arme
+      m = a === "peluche" ? peluche(jetables) : a === "remontoir" ? creerModeleRemontoir() : creerModeleArmeMonde(a, 0xcfe8ff);
       m.group.scale.setScalar(a === "peluche" ? 1 : 2);
       m.group.visible = false;
       defile.add(m.group);
