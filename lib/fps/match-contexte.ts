@@ -309,6 +309,8 @@ export interface ServiceZombies {
   arrivee(j: JoueurSalle, maintenant: number): Sortie[];
   /** partie en cours (pause ou manche) */
   enCours(): boolean;
+  /** le joueur est à terre (attend une relève) : ses états suivent encore son corps (`Salle.recevoirEtat`) */
+  aTerre(id: string): boolean;
   etat(): EtatPartieZombies;
   resume(): ResumeZombies;
 }

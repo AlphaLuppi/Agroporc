@@ -285,10 +285,12 @@ describe("mise à terre, inactivité, départs", () => {
     expect(types(apres)).not.toContain("apparition");
     expect(types(apres)).not.toContain("mort");
     expect(j(s, "b").vivant).toBe(false);
-    // à terre : états refusés, ni tir ni coup
+    // à terre : le corps est suivi (le client le fait encore glisser ou retomber), posture « mort » imposée ; ni tir ni coup
     const posAvant = [...j(s, "b").p];
     s.recevoir("b", { t: "etat", seq: 5, p: [posAvant[0] + 1, 0, posAvant[2]], v: [0, 0, 0], lacet: 0, tangage: 0, posture: "sol", mur: 0 }, t + 10_000);
-    expect(j(s, "b").p).toEqual(posAvant);
+    expect(j(s, "b").p).toEqual([posAvant[0] + 1, 0, posAvant[2]]);
+    expect(j(s, "b")).toMatchObject({ posture: "mort", vivant: false });
+    expect(j(s, "b").histo.at(-1)?.p).not.toEqual([posAvant[0] + 1, 0, posAvant[2]]);
     expect(types(s.recevoir("b", { t: "tir", arme: "pistolet", o: [0, 0, 0], d: [[0, 0, -1]], touches: [] }, t + 10_100))).toEqual([]);
   });
 
@@ -391,5 +393,66 @@ describe("snaps", () => {
     expect(messages(sorties, "snap").every((m) => m.zombies === undefined)).toBe(true);
     expect(s.resumeZombies()).toBeNull();
     expect(s.infoMatch()).toMatchObject({ objectif: JEU.objectifKills, fin: T0 + JEU.dureeMatchMs });
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+describe("réseau : budget de distance, acceptation partielle", () => {
+  /** Unité de direction vers le centre des bornes (place pour courir sans sortir de la carte). */
+  function versCentre(s: Salle, p: Vec3): [number, number] {
+    const b = s.monde.bornes;
+    const dx = (b.x0 + b.x1) / 2 - p[0], dz = (b.z0 + b.z1) / 2 - p[2], l = Math.hypot(dx, dz) || 1;
+    return [dx / l, dz / l];
+  }
+  const etatA = (seq: number, p: Vec3): MessageClient => ({ t: "etat", seq, p, v: [0, 0, 0], lacet: 0, tangage: 0, posture: "sol", mur: 0 });
+
+  it("paquets regroupés : 20 états à 10 images/s et 18 m/s par paquets de 6, tous acceptés en entier", () => {
+    const s = partie(["a"]);
+    const depart = [...j(s, "a").p] as Vec3;
+    const [ux, uz] = versCentre(s, depart);
+    const t0 = T0 + 2000;
+    let entiers = 0;
+    for (let k = 0; k < 20; k += 6) {
+      const t = t0 + (k + 6) * 100;
+      for (let q = k; q < Math.min(20, k + 6); q++) {
+        const d = 1.8 * (q + 1);
+        const p: Vec3 = [depart[0] + ux * d, 0, depart[2] + uz * d];
+        s.recevoir("a", etatA(q + 1, p), t);
+        if (Math.hypot(j(s, "a").p[0] - p[0], j(s, "a").p[2] - p[2]) < 1e-9) entiers++;
+      }
+    }
+    expect(entiers).toBe(20);
+  });
+
+  it("après une coupure de 3 s (37 m courus), la position serveur avance aussitôt de son budget puis rattrape le client, sans jamais rester figée", () => {
+    const s = partie(["a"]);
+    const depart = [...j(s, "a").p] as Vec3;
+    const [ux, uz] = versCentre(s, depart);
+    const t0 = T0 + 2000;
+    s.recevoir("a", etatA(1, depart), t0);
+    // 3 s sans aucun état reçu, le client a couru 37 m : le premier état après la coupure est accepté en partie
+    const loin: Vec3 = [depart[0] + ux * 37, 0, depart[2] + uz * 37];
+    s.recevoir("a", etatA(2, loin), t0 + 3000);
+    const d1 = Math.hypot(j(s, "a").p[0] - depart[0], j(s, "a").p[2] - depart[2]);
+    expect(d1).toBeGreaterThan(19);
+    expect(d1).toBeLessThan(37);
+    // il reste immobile ensuite : la position serveur le rejoint en moins d'une seconde
+    let seq = 2;
+    for (let t = t0 + 3033; t <= t0 + 4000; t += 33) s.recevoir("a", etatA(++seq, loin), t);
+    expect(Math.hypot(j(s, "a").p[0] - loin[0], j(s, "a").p[2] - loin[2])).toBeLessThan(1e-6);
+  });
+
+  it("après une apparition (téléportation), un état encore en vol depuis l'ancienne position n'est pas accepté, même en partie", () => {
+    const s = partie(["a", "b"]);
+    const ancien = [...j(s, "a").p] as Vec3;
+    s.placerJoueur(j(s, "a"), [ancien[0] + 30, 0, ancien[2]], 0, { pv: 100, equip: j(s, "a").equip, main: "secondaire" }, T0 + 3000);
+    const nouveau = [...j(s, "a").p];
+    s.recevoir("a", etatA(50, ancien), T0 + 3500);
+    expect(j(s, "a").p).toEqual(nouveau);
+    // le client a appliqué l'apparition : ses états sont acceptés, et de nouveau en partie ensuite
+    s.recevoir("a", etatA(51, [nouveau[0] + 0.3, 0, nouveau[2]]), T0 + 3600);
+    expect(j(s, "a").p[0]).toBeCloseTo(nouveau[0] + 0.3, 6);
+    s.recevoir("a", etatA(52, [nouveau[0] - 40, 0, nouveau[2]]), T0 + 3650);
+    expect(j(s, "a").p[0]).toBeLessThan(nouveau[0]);
   });
 });

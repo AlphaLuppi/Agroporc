@@ -174,3 +174,63 @@ describe("cadence et gigue réseau", () => {
     expect(tirABlanc(s, "pistolet", t + 10)).toBe(false);
   });
 });
+
+describe("budget de distance des états (arène)", () => {
+  // la vraie carte : la petite sort des bornes au bout de 20 m de course
+  const mondeGrand = construireMonde(scene);
+  function duel() {
+    const s = new Salle(mondeGrand, POINTS, () => 0, T0);
+    for (const id of ["a", "b"]) {
+      s.connecter(id, `Joueur${id}`, T0);
+      s.recevoir(id, { t: "rejoindre", arme: "pistolet" }, T0);
+    }
+    j(s, "a").p = [-10, 0, 20];
+    j(s, "b").p = [10, 0, 20];
+    return { s, t: T0 + JEU.protectionMs + 100 };
+  }
+  /** Course en ligne droite vers +x à `v` m/s : un état par image à `ips` images/s, livrés par paquets de `paquet` (perte TCP). Renvoie les acceptés. */
+  function courir(s: Salle, id: string, v: number, ips: number, n: number, paquet: number, t0: number, seq0 = 0): { acceptes: number; x: number; t: number } {
+    const depart = [...j(s, id).p];
+    let acceptes = 0, x = depart[0], t = t0;
+    for (let k = 0; k < n; k += paquet) {
+      t = t0 + Math.round(((k + paquet) * 1000) / ips); // le paquet arrive quand son dernier état est parti
+      for (let q = k; q < Math.min(n, k + paquet); q++) {
+        x = depart[0] + (v * (q + 1)) / ips;
+        s.recevoir(id, etat(seq0 + q + 1, [x, 0, depart[2]], [v, 0, 0]), t);
+        if (j(s, id).p[0] === x) acceptes++;
+      }
+    }
+    return { acceptes, x, t };
+  }
+
+  it("paquets regroupés : 20 états à 10 images/s et 12,5 m/s par paquets de 6, tous acceptés (l'ancienne règle en refusait 17)", () => {
+    const { s, t } = duel();
+    const r = courir(s, "b", 12.5, 10, 20, 6, t);
+    expect(r.acceptes).toBe(20);
+    expect(j(s, "b").p[0]).toBeCloseTo(r.x, 6);
+  });
+
+  it("un joueur à 18 m/s (le plafond du client) en continu à 30 Hz n'est jamais refusé", () => {
+    const { s, t } = duel();
+    expect(courir(s, "b", 18, 30, 150, 1, t).acceptes).toBe(150);
+  });
+
+  it("un tricheur à 25 m/s soutenu reste refusé : au bout de 2 s la position serveur décroche, au bout de 4 s de plus de 10 m", () => {
+    const { s, t } = duel();
+    const deux = courir(s, "b", 25, 30, 60, 1, t);
+    expect(deux.x - j(s, "b").p[0]).toBeGreaterThan(0.5);
+    expect(deux.acceptes).toBeLessThan(60);
+    const quatre = courir(s, "b", 25, 30, 60, 1, deux.t, 60);
+    // la course continue depuis la position serveur : 2 s de plus à 25 m/s
+    expect(quatre.x - j(s, "b").p[0]).toBeGreaterThan(5);
+    // vitesse moyenne acceptée bornée par 19 m/s (+ le plafond du budget et la marge)
+    const parcouru = j(s, "b").p[0] - 10;
+    expect(parcouru).toBeLessThanOrEqual(19 * 4 + 19 * 0.5 + 1 + 1e-6);
+  });
+
+  it("une téléportation reste refusée quelle que soit l'attente (le budget est plafonné)", () => {
+    const { s, t } = duel();
+    s.recevoir("b", etat(1, [40, 0, 20]), t + 60_000);
+    expect(j(s, "b").p).toEqual([10, 0, 20]);
+  });
+});

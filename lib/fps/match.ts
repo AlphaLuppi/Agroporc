@@ -64,8 +64,20 @@ export const PSEUDO_DEFAUT = "Agent";
 export const VITESSE_MAX_H_M_S = PLAFONDS.vitesseHorizontaleMax;
 /** Vitesse verticale maximale (m/s) : une chute depuis un toit dépasse la vitesse horizontale. */
 export const VITESSE_MAX_V_M_S = 45;
-/** Plus grand écart de temps (s) crédité à un état : borne la distance acceptée après un silence. */
+/** (avant le budget de distance) Plus grand écart de temps (s) crédité à un état ; gardé pour les appelants, le budget le remplace. */
 export const DT_MAX_S = 5;
+/**
+ * Budget de distance des états (seau à jetons, horizontal et vertical) : chaque état reçu crédite `vitesse max × temps serveur écoulé`, plafonné
+ * à `vitesse max × BUDGET_*_S` ; un état est accepté si son déplacement tient dans le budget + la marge, qu'il consomme. Les paquets regroupés
+ * (perte TCP, client à 10 images/s) passent donc tous, et la vitesse MOYENNE reste bornée (l'ancienne vérification instantanée tolérait
+ * +1 m par état : 30 m/s de plus à 30 Hz, mais refusait toute rafale). Arène : le plafond court garde l'anti-triche de vitesse strict (un
+ * tricheur ne gagne au plus que 0,5 s d'avance) ; zombies (coopératif) : une seconde de rafale, et un dépassement est accepté en partie.
+ */
+export const BUDGET_ARENE_S = 0.5;
+export const BUDGET_ZOMBIES_S = 1;
+/** Marge (m) d'un état au-delà du budget (horizontale, verticale) : une fois, le budget peut descendre jusqu'à −marge. */
+export const MARGE_ETAT_H_M = 1;
+export const MARGE_ETAT_V_M = 1.5;
 /** Les pieds peuvent dépasser les bornes de l'arène de cette marge (m). */
 export const MARGE_HORS_BORNES_M = 0.5;
 /** Cadence tolérée : fraction de la cadence nominale de l'arme. */
@@ -190,6 +202,15 @@ interface SuiviJoueur {
   prochain: Equipement;
   /** slot tenu avant le changement en cours (retour d'une spéciale épuisée) */
   precedent: Slot;
+  /** budget de distance des états (m, horizontal et vertical) et instant de son dernier crédit (cf. `BUDGET_ARENE_S`) */
+  budgetH: number;
+  budgetV: number;
+  budgetT: number;
+  /**
+   * (zombies) un dépassement du budget peut être accepté en partie : faux après une téléportation (apparition) jusqu'au premier état accepté en
+   * entier, pour qu'un état encore en vol depuis l'ancienne position ne tire pas le joueur en arrière
+   */
+  partiel: boolean;
 }
 
 /** Position d'une cible à valider : un point de son historique et sa posture à cet instant. */
@@ -432,6 +453,7 @@ export class Salle implements ContexteSalle {
     j.histo = [];
     const suivi = this.suivi.get(j.id);
     if (suivi) suivi.precedent = j.main === "principale" ? "secondaire" : "principale";
+    this.reinitialiserBudget(j, maintenant);
     return [{
       a: "tous",
       m: {
@@ -541,7 +563,7 @@ export class Salle implements ContexteSalle {
       scoresOuvert: false, scoresDemandeT: -Infinity, scoresEnvoyeT: -Infinity,
     };
     this.table.set(id, j);
-    this.suivi.set(id, { prochain: copierEquipement(EQUIPEMENT_DEFAUT), precedent: "principale" });
+    this.suivi.set(id, { prochain: copierEquipement(EQUIPEMENT_DEFAUT), precedent: "principale", budgetH: 0, budgetV: 0, budgetT: maintenant, partiel: false });
     return [
       { a: id, m: { t: "bienvenue", id, couleur, joueurs: this.joueursPublics(), match: this.infoMatch(), maintenant } },
       { a: "tous", sauf: id, m: { t: "presence", joueurs: this.joueursPublics() } },
@@ -762,9 +784,25 @@ export class Salle implements ContexteSalle {
     return [];
   }
 
-  /** État prédit par le client : accepté s'il reste dans les bornes et dans la vitesse permise. */
+  /** Budget de distance remis à zéro (téléportation : apparition, réapparition) ; plus d'acceptation partielle jusqu'au prochain état entier. */
+  private reinitialiserBudget(j: JoueurSalle, maintenant: number): void {
+    const suivi = this.suivi.get(j.id);
+    if (!suivi) return;
+    suivi.budgetH = 0;
+    suivi.budgetV = 0;
+    suivi.budgetT = maintenant;
+    suivi.partiel = false;
+  }
+
+  /**
+   * État prédit par le client : accepté s'il reste dans les bornes et dans le budget de distance (`BUDGET_ARENE_S`). Le mouvement est
+   * autoritaire côté client : le serveur ne corrige jamais le joueur, il ne fait que borner ce qu'il accepte. En zombies, un dépassement du
+   * budget est accepté en partie (la position serveur avance de ce que le budget permet, sans jamais rester figée loin derrière le client),
+   * et le corps d'un joueur à terre est suivi (posture « mort », sans historique).
+   */
   private recevoirEtat(j: JoueurSalle, e: Extract<MessageClient, { t: "etat" }>, maintenant: number): void {
-    if (!j.enJeu || !j.vivant || this.pilote(j.id)) return;
+    const aTerre = !j.vivant && j.enJeu && !!this.zombies?.aTerre(j.id);
+    if (!j.enJeu || (!j.vivant && !aTerre) || this.pilote(j.id)) return;
     if (!estNombre(e.seq) || e.seq <= j.seq) return;
     if (this.vehicules?.occupation(j.id)) {
       // occupant : la voiture fait foi pour p / v / posture / mur (service des véhicules) ; seul le regard est retenu
@@ -780,15 +818,32 @@ export class Salle implements ContexteSalle {
     if (e.p[0] < b.x0 - MARGE_HORS_BORNES_M || e.p[0] > b.x1 + MARGE_HORS_BORNES_M) return;
     if (e.p[2] < b.z0 - MARGE_HORS_BORNES_M || e.p[2] > b.z1 + MARGE_HORS_BORNES_M) return;
     if (e.p[1] < -10 || e.p[1] > 400) return;
-    // La référence (position, temps) ne bouge qu'à l'acceptation : après un refus, le temps écoulé
-    // grandit et l'écart permis avec lui, comme pour un joueur réellement parti plus loin.
-    const dt = Math.min(DT_MAX_S, Math.max(0, (maintenant - j.etatT) / 1000));
+    // Budget de distance : crédité du temps serveur écoulé depuis le dernier état REÇU (refusé compris), plafonné. Après un refus, la
+    // référence (dernière position acceptée) ne bouge pas et le budget continue de grandir : un joueur réellement parti plus loin est
+    // rattrapé dès que le budget couvre l'écart.
+    const suivi = this.suivi.get(j.id)!;
+    const plafondS = this.zombies ? BUDGET_ZOMBIES_S : BUDGET_ARENE_S;
+    const dtB = Math.max(0, (maintenant - suivi.budgetT) / 1000);
+    suivi.budgetT = maintenant;
+    suivi.budgetH = Math.min(VITESSE_MAX_H_M_S * plafondS, suivi.budgetH + VITESSE_MAX_H_M_S * dtB);
+    suivi.budgetV = Math.min(VITESSE_MAX_V_M_S * plafondS, suivi.budgetV + VITESSE_MAX_V_M_S * dtB);
+    const permisH = Math.max(0, suivi.budgetH + MARGE_ETAT_H_M), permisV = Math.max(0, suivi.budgetV + MARGE_ETAT_V_M);
     const dh = Math.hypot(e.p[0] - j.p[0], e.p[2] - j.p[2]);
-    if (dh > VITESSE_MAX_H_M_S * dt + 1) return;
-    if (Math.abs(e.p[1] - j.p[1]) > VITESSE_MAX_V_M_S * dt + 1.5) return;
+    const dy = Math.abs(e.p[1] - j.p[1]);
+    let p: Vec3 = [e.p[0], e.p[1], e.p[2]];
+    const entier = dh <= permisH && dy <= permisV;
+    if (!entier) {
+      // arène : refusé (anti-triche de vitesse) ; zombies : la position avance de ce que le budget permet, vers celle du client
+      if (!this.zombies || !suivi.partiel) return;
+      const kh = dh > permisH ? permisH / dh : 1, kv = dy > permisV ? permisV / dy : 1;
+      p = [j.p[0] + (e.p[0] - j.p[0]) * kh, j.p[1] + (e.p[1] - j.p[1]) * kv, j.p[2] + (e.p[2] - j.p[2]) * kh];
+    }
+    suivi.budgetH -= Math.hypot(p[0] - j.p[0], p[2] - j.p[2]);
+    suivi.budgetV -= Math.abs(p[1] - j.p[1]);
+    if (entier) suivi.partiel = true;
     j.seq = e.seq;
     j.etatT = maintenant;
-    j.p = [e.p[0], e.p[1], e.p[2]];
+    j.p = p;
     // vitesse bornée comme la position : un `v` gonflé agrandirait sa propre hitbox et sa tolérance d'œil
     const vh = Math.hypot(e.v[0], e.v[2]);
     const k = vh > VITESSE_DECLAREE_MAX_H_M_S ? VITESSE_DECLAREE_MAX_H_M_S / vh : 1;
@@ -800,7 +855,15 @@ export class Salle implements ContexteSalle {
     // accroupi seulement au sol (pas en l'air, pas en wall-run) ; se relever est toujours permis
     j.accroupi = j.posture === "sol" && e.accroupi === true;
     j.glisse = j.accroupi && e.glisse === true;
-    j.histo.push({ t: maintenant, p: [e.p[0], e.p[1], e.p[2]], accroupi: j.accroupi });
+    if (aTerre) {
+      // corps à terre : il glisse ou retombe encore un instant chez le client, la position suit ; ni posture debout ni cible rejouée
+      j.posture = "mort";
+      j.mur = 0;
+      j.accroupi = false;
+      j.glisse = false;
+      return;
+    }
+    j.histo.push({ t: maintenant, p: [p[0], p[1], p[2]], accroupi: j.accroupi });
     while (j.histo.length > 1 && maintenant - j.histo[0].t > HISTORIQUE_MS) j.histo.shift();
   }
 
@@ -1378,6 +1441,7 @@ export class Salle implements ContexteSalle {
     j.etatT = maintenant;
     j.histo = [];
     if (suivi) suivi.precedent = j.main === "principale" ? "secondaire" : "principale";
+    this.reinitialiserBudget(j, maintenant);
     return {
       a: "tous",
       m: {

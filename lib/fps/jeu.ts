@@ -1083,6 +1083,12 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     sons.derapage(0);
     sons.mur(false);
     arreterReanimation();
+    if (modeZ) {
+      // à terre : on s'effondre sur place (plus d'élan qui ferait glisser le corps d'un mètre au sprint) ; la chute verticale continue
+      moi.v[0] = 0;
+      moi.v[2] = 0;
+      moi.glisse = null;
+    }
   }
 
   /** `degats` dont je suis l'auteur : retour de touche CONFIRMÉ par le serveur (zone et dégâts du serveur, §13.2.1). */
@@ -2049,9 +2055,12 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     }
   }
 
-  /** Message d'état du joueur (à pied, ou passager d'une voiture) ; le conducteur envoie `conduite`. */
+  /**
+   * Message d'état du joueur (à pied, ou passager d'une voiture) ; le conducteur envoie `conduite`. En zombies, le corps à terre continue
+   * d'envoyer sa position (le serveur la suit) : la relève garde ainsi la position du client, sans téléportation.
+   */
   function envoyerEtat() {
-    if (!apparu || !vivant) return;
+    if (!apparu || (!vivant && !(modeZ && aTerreZ && !elimineZ))) return;
     const vue = tangageDeVue(tangage, kick);
     if (pilote()) {
       const m = titan.message(lacet, vue);

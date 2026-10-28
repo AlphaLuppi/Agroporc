@@ -1383,6 +1383,10 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       return emettre(t, []);
     },
 
+    aTerre(id) {
+      return membres.get(id)?.etat === "terre";
+    },
+
     enCours() {
       return phase === "pause" || phase === "manche";
     },
