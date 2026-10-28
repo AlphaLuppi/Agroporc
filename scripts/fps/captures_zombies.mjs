@@ -39,6 +39,14 @@ const VUES = JSON.parse(process.env.VUES ?? "null") ?? [
   ["11-local-courant", [207, -40], [214, 1.4, -45.8]],
   ["12-labo-pap", [94, -36], [99, 1.2, -30.4]],
   ["13-fenetre-N2c-dedans", [117, -68], [114.65, 1.3, -78.15]],
+  // v8 : les deux cours à olivier (anneau d'entraînement), le parking serré de la Cour Ouest, les boîtes dans leur coin
+  ["14-olivier-cour-centre", [117, -47], [125.5, 2.6, -54.5]],
+  ["15-cour-centre-anneau", [140, -40], [118, 1.5, -64]],
+  ["16-olivier-cour-est", [170, -29], [180.5, 2.6, -36.5]],
+  ["17-cour-est-livraison-B3", [182, -30], [172.5, 1, -19.5]],
+  ["18-parking-rue", [60.7, -53.6], [85, 1.2, -47.6]],
+  ["19-parking-allees", [74.4, -61.2], [81.5, 1.2, -86]],
+  ["20-boite-B2-coin", [131, -68], [125.6, 0.6, -76.4]],
 ];
 
 mkdirSync(SORTIE, { recursive: true });
