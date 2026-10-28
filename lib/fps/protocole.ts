@@ -21,9 +21,10 @@ import type { Difficulte, GenreBonus } from "./zombies-vagues";
  * largués (snap `tigres`, messages `avion`, `tigre`, `sort`, client `invoquer`, cause de mort "tigre"). v6 : mode « zombies tigres » (deux salles,
  * choix du mode, argent, achats, relève, snap `zombies`), épée (mêlée à plusieurs cibles), cause de mort "tigre_zombie". v7 : zombies façon
  * Black Ops 1 (états de partie étendus, `zevt`, `reparer`, difficulté, armes améliorées `Equipement.ameliorees`, drapeaux d'allure et de mode
- * des tigres, Truck Muche dans le snap). Client et serveur se déploient ensemble.
+ * des tigres, Truck Muche dans le snap). v8 : `zombieMort` dit comment le tigre est mort (`arme`, `ameliore`, `src` : ragdoll côté client).
+ * Client et serveur se déploient ensemble.
  */
-export const VERSION_PROTOCOLE = 7;
+export const VERSION_PROTOCOLE = 8;
 
 export type Vec3 = [number, number, number];
 
@@ -648,8 +649,12 @@ export type MessageServeur =
   | { t: "argent"; solde: number; delta: number; motif: string }
   /** Réponse à `acheter`. Privé. */
   | { t: "achat"; ok: boolean; id: string; raison?: RaisonAchat }
-  /** Un tigre zombie est mort en `p`, tué par `par` (effets et sons ; jamais dans le fil des éliminations). */
-  | { t: "zombieMort"; id: string; p: Vec3; par: string; zone: Zone; cause?: "explosion" | "nuke" | "melee" }
+  /**
+   * Un tigre zombie est mort en `p`, tué par `par` (effets et sons ; jamais dans le fil des éliminations). (v8, optionnels) `arme` qui l'a
+   * tué, `ameliore` si elle est passée au Pack-a-Punch, `src` = d'où vient le coup (bouche du canon, centre du souffle, œil du joueur en
+   * mêlée ; absent pour la nuke) : le client en tire l'impulsion de sa mort désarticulée (`lib/fps/ragdoll-tigre.ts`).
+   */
+  | { t: "zombieMort"; id: string; p: Vec3; par: string; zone: Zone; cause?: "explosion" | "nuke" | "melee"; arme?: ArmeId; ameliore?: true; src?: Vec3 }
   /** (v7) Effet ponctuel de la partie de zombies (aux membres de la salle). */
   | { t: "zevt"; e: EvenementZombies }
   /** Frappe aérienne : disponible (série de 5 kills), lancée (coordonnées ciblées), perdue. */

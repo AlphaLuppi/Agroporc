@@ -982,7 +982,7 @@ export class Salle implements ContexteSalle {
     // le gain d'une touche (+10 $) est unique par tir, quel que soit le nombre de tigres ou de plombs
     let premier = true;
     for (const [cibleId, { degats, zone }] of cumulZombies) {
-      sorties.push(...this.zombies!.blesser(cibleId, degats, j, zone, maintenant, { arme: armeTiree, gain: premier }));
+      sorties.push(...this.zombies!.blesser(cibleId, degats, j, zone, maintenant, { arme: armeTiree, gain: premier, src: tir.o }));
       premier = false;
     }
     if (this.zombies) {
@@ -1056,7 +1056,7 @@ export class Salle implements ContexteSalle {
         if (!estIdZombie(id)) continue; // pas de coup allié
         const vu = this.zombies.toucheMelee(id, coup.o, d, m.portee + m.margePortee, m.cosCone, maintenant);
         if (!vu) continue;
-        sorties.push(...this.zombies.blesser(id, this.zombies.degatsMelee(j, arme, maintenant), j, "corps", maintenant, { melee: true, arme, gain: premierTigre }));
+        sorties.push(...this.zombies.blesser(id, this.zombies.degatsMelee(j, arme, maintenant), j, "corps", maintenant, { melee: true, arme, gain: premierTigre, src: coup.o }));
         premierTigre = false;
         continue;
       }

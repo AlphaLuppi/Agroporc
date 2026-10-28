@@ -378,6 +378,27 @@ describe("points de BO1", () => {
     expect(msgs(melee, "zombieMort")[0].cause).toBe("melee");
   });
 
+  it("(v8) zombieMort dit comment : arme, amélioration au Pack-a-Punch, origine du coup arrondie au cm ; rien de plus sans ces options", () => {
+    const { b, id, j } = avecUnTigre();
+    j.equip = { ...j.equip, ameliorees: ["pistolet"] };
+    const mort = msgs(b.svc.blesser(id, 99_999, j, "tete", T_PREMIER_TIGRE + 200, { arme: "pistolet", src: [1.234, 1.6, -2.006] }), "zombieMort")[0];
+    expect(mort).toMatchObject({ arme: "pistolet", ameliore: true, src: [1.23, 1.6, -2.01], zone: "tete" });
+    const c = avecUnTigre();
+    const nu = msgs(c.b.svc.blesser(c.id, 99_999, c.j, "corps", T_PREMIER_TIGRE + 200), "zombieMort")[0];
+    expect(Object.keys(nu).sort()).toEqual(["id", "p", "par", "t", "zone"]);
+  });
+
+  it("(v8) souffle du Pistolet à rayons : zombieMort en explosion, arme « rayon », origine = centre du souffle", () => {
+    const { b, z, id, j } = avecUnTigre();
+    const t = T_PREMIER_TIGRE + 200;
+    const o: Vec3 = [z.x - 3, 0.8, z.z];
+    const sorties = b.svc.explosionTir(j, "rayon", o, [1, 0, 0], 3, 50, t);
+    const mort = msgs(sorties, "zombieMort").find((m) => m.id === id)!;
+    expect(mort).toMatchObject({ cause: "explosion", arme: "rayon" });
+    expect(mort.src![0]).toBeCloseTo(z.x, 1);
+    expect(mort.src![2]).toBeCloseTo(z.z, 1);
+  });
+
   it("pas de bonus de fin de manche (BO1) : l'argent ne vient que des touches, kills, planches et bonus", () => {
     const b = partieEnCours(["a"], { degatsGriffe: 0 });
     const j = b.j("a");
@@ -805,6 +826,8 @@ describe("manches du Truck Muche", () => {
     // criblé à mort
     const s = b.svc.blesserTruck(1e7, j, t);
     expect(msgs(s, "zevt").some((m) => m.e.e === "truck" && m.e.quoi === "explosion")).toBe(true);
+    // (v8) les petits soufflés par l'explosion savent d'où elle vient
+    expect(msgs(s, "zombieMort").every((m) => m.cause === "explosion" && m.src !== undefined)).toBe(true);
     expect(msgs(s, "argent").find((m) => m.motif === "truck")!.delta).toBe(500);
     expect(b.svc.etat().truck).toMatchObject({ phase: "epave" });
     expect(b.svc.toucheTruck([0, 1, 0], [1, 0, 0], 50)).toBeNull();
