@@ -591,6 +591,30 @@ export class Salle implements ContexteSalle {
     return [...liberation, this.presence(), ...sortieZombies];
   }
 
+  /**
+   * (v8) Reprise d'une session coupée (le serveur a gardé le joueur, cf. `REPRISE_MS` de serveur-fps) : le client revient avec le même id.
+   * Rien ne bouge dans la salle ; renvoie au seul client `bienvenue{reprise}`, l'état de la partie de zombies (argent, portes) et, s'il est en
+   * jeu et debout, une `apparition{garder}` qui resynchronise santé et armes sans le déplacer (à terre, l'état de la partie suffit).
+   */
+  reprendre(id: string, maintenant: number): Sortie[] {
+    const j = this.table.get(id);
+    if (!j) return [];
+    const sorties: Sortie[] = [
+      { a: id, m: { t: "bienvenue", id, couleur: j.couleur, joueurs: this.joueursPublics(), match: this.infoMatch(), maintenant, reprise: true } },
+    ];
+    if (this.zombies) sorties.push(...this.zombies.synchro(id));
+    if (j.enJeu && j.vivant) {
+      sorties.push({
+        a: id,
+        m: {
+          t: "apparition", id, p: [j.p[0], j.p[1], j.p[2]], lacet: j.lacet, arme: j.arme, pv: j.pv, bouclier: j.bouclier,
+          equip: copierEquipement(j.equip), main: j.main, munSpeciale: j.munSpeciale, garder: true,
+        },
+      });
+    }
+    return sorties;
+  }
+
   // ---------- messages des clients ----------
 
   recevoir(id: string, msg: MessageClient, maintenant: number): Sortie[] {
@@ -1287,7 +1311,9 @@ export class Salle implements ContexteSalle {
     for (const j of this.table.values()) {
       if (j.enJeu && !j.vivant && j.reapparitionT !== null && maintenant >= j.reapparitionT) {
         sorties.push(this.placer(j, maintenant));
-      } else if (j.enJeu && j.vivant && maintenant - j.etatT > INACTIF_MS) {
+      } else if (!this.zombies && j.enJeu && j.vivant && maintenant - j.etatT > INACTIF_MS) {
+        // (v8) pas en zombies : un onglet caché ou une coupure (reprise de 20 s, cf. serveur-fps) ne fait pas perdre la partie ; immobile,
+        // le joueur finit à terre sous les griffes comme dans BO1, et une connexion vraiment morte est fermée par le ping du serveur
         // plus aucun état accepté : onglet gelé ou connexion zombie. Sinon il resterait en cible immobile.
         sorties.push(...this.retirerDeLArene(j, maintenant));
         evince = true;

@@ -108,6 +108,8 @@ export function connecterArene(
   const horloge = new HorlogeServeur();
   let socket: SocketLike | null = null;
   let id: string | null = null;
+  /** (v8) dernière session (id + jeton de `bienvenue`) : la reconnexion demande à la reprendre (`bonjour.reprise`) */
+  let session: { id: string; jeton: string } | null = null;
   let file: string[] = [];
   let tentatives = 0;
   let minuteurReconnexion: ReturnType<typeof setTimeout> | null = null;
@@ -155,8 +157,8 @@ export function connecterArene(
     s.onopen = () => {
       if (s !== socket) return;
       tentatives = 0;
-      // le « bonjour » ouvre toujours la session, puis la file accumulée pendant la coupure
-      s.send(JSON.stringify({ t: "bonjour", v: VERSION_PROTOCOLE, pseudo } satisfies MessageClient));
+      // le « bonjour » ouvre toujours la session (en demandant à reprendre la précédente, v8), puis la file accumulée pendant la coupure
+      s.send(JSON.stringify({ t: "bonjour", v: VERSION_PROTOCOLE, pseudo, ...(session ? { reprise: session } : {}) } satisfies MessageClient));
       const attente = file;
       file = [];
       for (const texte of attente) s.send(texte);
@@ -179,6 +181,9 @@ export function connecterArene(
       if (!m || typeof m !== "object" || typeof m.t !== "string") return;
       if (m.t === "bienvenue") {
         id = m.id;
+        // un changement de salle renvoie un `bienvenue` sans jeton : la session (et son jeton) reste celle de la connexion
+        if (m.jeton) session = { id: m.id, jeton: m.jeton };
+        else if (session && session.id !== m.id) session = null;
         horloge.amorcer(m.maintenant, horlogeLocale());
       } else if (m.t === "pong") {
         horloge.ajouter(m.t0, m.maintenant, horlogeLocale());
@@ -240,11 +245,14 @@ export function connecterArene(
 // ---------- apparition ----------
 
 /**
- * (v8) Le joueur local garde-t-il sa position à cette apparition ? Oui pour une relève ou une reprise (`garder`) quand sa position est à
- * moins de `ECART_GARDE_M` de celle du serveur (qui suit ses états) ; sinon (vraie apparition, ou écart anormal) il se téléporte à `p`.
+ * (v8) Le joueur local garde-t-il sa position à cette apparition ? Jamais pour une vraie apparition. Pour une apparition `garder` : toujours
+ * s'il est debout chez lui (reprise après une coupure : il a continué de bouger, la position serveur le rattrape par le budget de distance),
+ * et pour une relève (à terre chez lui) s'il est à moins de `ECART_GARDE_M` de la position serveur, qui a suivi son corps ; au-delà (écart
+ * anormal, états perdus), il se replace sur celle du serveur.
  */
-export function gardePosition(m: { p: Vec3; garder?: true }, actuelle: Vec3): boolean {
+export function gardePosition(m: { p: Vec3; garder?: true }, actuelle: Vec3, deboutLocal = false): boolean {
   if (m.garder !== true) return false;
+  if (deboutLocal) return true;
   return Math.hypot(actuelle[0] - m.p[0], actuelle[1] - m.p[1], actuelle[2] - m.p[2]) <= ECART_GARDE_M;
 }
 

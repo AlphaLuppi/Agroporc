@@ -1027,6 +1027,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   }
 
   function apparaitre(m: Extract<MessageServeur, { t: "apparition" }>) {
+    const deboutLocal = apparu && vivant;
     aTerreZ = false;
     elimineZ = false;
     terreFinTZ = 0;
@@ -1035,7 +1036,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     quitterVehicule();
     titan.sortir();
     // (v8) relève ou reprise : on reste où l'on est, regard compris (le serveur a suivi nos états) ; sinon téléportation
-    if (!gardePosition(m, moi.p)) {
+    if (!gardePosition(m, moi.p, deboutLocal)) {
       moi = etatInitial(m.p);
       lacet = m.lacet;
       tangage = 0;

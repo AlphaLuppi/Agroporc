@@ -8,6 +8,9 @@ describe("gardePosition (v8, relève sans téléportation)", () => {
     expect(gardePosition({ p: [10, 0, 5], garder: true }, [11.5, 0, 6])).toBe(true);
     expect(gardePosition({ p: [10, 0, 5], garder: true }, [14, 0, 5])).toBe(false);
     expect(gardePosition({ p: [10, 0, 5] }, [10, 0, 5])).toBe(false);
+    // reprise après une coupure, debout : on reste où l'on est, même loin (la position serveur rattrape)
+    expect(gardePosition({ p: [10, 0, 5], garder: true }, [30, 0, 5], true)).toBe(true);
+    expect(gardePosition({ p: [10, 0, 5] }, [30, 0, 5], true)).toBe(false);
   });
 });
 
@@ -255,6 +258,30 @@ describe("connecterArene", () => {
     socket().recevoir({ t: "bienvenue", id: "j7", couleur: "#fff", joueurs: [], maintenant: 100_000 + 7000, match: { numero: 1, fin: null, objectif: 25, phase: "jeu", prochain: null } });
     expect(client.id).toBe("j7");
     expect(client.maintenantServeur()).toBe(107_000);
+    client.fermer();
+  });
+
+  it("(v8) reconnexion : le bonjour demande à reprendre la session (id + jeton du dernier bienvenue), et la reprise garde l'id", () => {
+    const { client, socket } = demarrer();
+    const match = { numero: 1, fin: null, objectif: 0, phase: "jeu" as const, prochain: null };
+    socket().ouvrir();
+    expect(JSON.parse(socket().envoyes[0]).reprise).toBeUndefined();
+    socket().recevoir({ t: "bienvenue", id: "j7", couleur: "#fff", joueurs: [], maintenant: 0, match, jeton: "secret" });
+    // changement de salle : nouveau bienvenue sans jeton, même id, la session reste
+    socket().recevoir({ t: "bienvenue", id: "j7", couleur: "#fff", joueurs: [], maintenant: 0, match });
+    socket().couper();
+    vi.advanceTimersByTime(1000);
+    socket().ouvrir();
+    expect(JSON.parse(socket().envoyes[0])).toMatchObject({ t: "bonjour", reprise: { id: "j7", jeton: "secret" } });
+    socket().recevoir({ t: "bienvenue", id: "j7", couleur: "#fff", joueurs: [], maintenant: 0, match, jeton: "neuf", reprise: true });
+    expect(client.id).toBe("j7");
+    // reprise refusée (délai dépassé) : nouvelle inscription, nouvel id, la reconnexion suivante reprend celle-ci
+    socket().couper();
+    vi.advanceTimersByTime(1000);
+    socket().ouvrir();
+    expect(JSON.parse(socket().envoyes[0]).reprise).toEqual({ id: "j7", jeton: "neuf" });
+    socket().recevoir({ t: "bienvenue", id: "j9", couleur: "#fff", joueurs: [], maintenant: 0, match, jeton: "autre" });
+    expect(client.id).toBe("j9");
     client.fermer();
   });
 

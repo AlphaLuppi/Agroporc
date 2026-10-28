@@ -320,7 +320,7 @@ describe("mise à terre, inactivité, départs", () => {
     expect(dernierEtat(s.recevoir("b", { t: "quitter" }, T0 + 1200))!.phase).toBe("fin");
   });
 
-  it("inactivité de 20 s : le joueur est retiré de la partie (attente) ; défaite s'il était le dernier debout", () => {
+  it("(v8) inactivité de 20 s (onglet caché, coupure en reprise) : le joueur reste dans la partie, immobile (pas d'éviction en zombies)", () => {
     const s = partie(["a", "b"]);
     // « a » envoie des états, « b » se tait
     let seq = 0;
@@ -329,11 +329,28 @@ describe("mise à terre, inactivité, départs", () => {
       s.recevoir("a", { t: "etat", seq: ++seq, p: j(s, "a").p, v: [0, 0, 0], lacet: 0, tangage: 0, posture: "sol", mur: 0 }, t);
       sorties.push(...s.tic(t));
     }
-    expect(j(s, "b").enJeu).toBe(false);
-    expect(dernierEtat(sorties.slice(-60))).toBeDefined();
-    expect(messages(sorties, "zombies").some((m) => m.etat.joueurs.find((x) => x.id === "b")?.etat === "attente")).toBe(true);
+    expect(j(s, "b").enJeu).toBe(true);
+    expect(messages(sorties, "zombies").some((m) => m.etat.joueurs.find((x) => x.id === "b")?.etat === "attente")).toBe(false);
     expect(j(s, "a").enJeu).toBe(true);
     expect(s.resumeZombies()!.phase).not.toBe("fin");
+  });
+
+  it("(v8) reprendre : `bienvenue{reprise}` au même id, état de la partie, argent et `apparition{garder}` sans rien déplacer", () => {
+    const s = partie(["a", "b"], { argentDepart: 800 });
+    avancer(s, T0 + 50, T0 + 1500);
+    const a = j(s, "a");
+    const avant = { p: [...a.p], seq: a.seq, pv: a.pv };
+    const sorties = s.reprendre("a", T0 + 1600);
+    expect(sorties.every((x) => x.a === "a")).toBe(true);
+    expect(types(sorties)).toEqual(["bienvenue", "zombies", "batiments", "argent", "apparition"]);
+    expect(messages(sorties, "bienvenue")[0]).toMatchObject({ id: "a", reprise: true });
+    expect(messages(sorties, "argent")[0]).toMatchObject({ solde: 800, delta: 0 });
+    expect(messages(sorties, "apparition")[0]).toMatchObject({ garder: true, p: avant.p, pv: avant.pv });
+    expect({ p: a.p, seq: a.seq, pv: a.pv }).toEqual(avant);
+    // à terre : pas d'apparition (l'état de la partie le dit)
+    s.infliger(a, 1000, null, "tigre_zombie", "corps", "couteau", T0 + 1700);
+    expect(types(s.reprendre("a", T0 + 1800))).not.toContain("apparition");
+    expect(s.reprendre("inconnu", T0 + 1800)).toEqual([]);
   });
 
   it("déconnexion : la liste et l'hôte sont à jour, la partie continue pour les autres", () => {

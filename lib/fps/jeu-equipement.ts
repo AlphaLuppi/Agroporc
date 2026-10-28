@@ -223,11 +223,12 @@ export class ControleurArmes {
 
   /**
    * `apparition` (équipement complet, chargeurs pleins, recharge et dégainage effacés) ou `equipement` (spéciale ramassée ou
-   * épuisée : les chargeurs des armes déjà portées sont gardés, la recharge continue si l'arme en main n'a pas changé).
+   * épuisée : les chargeurs des armes déjà portées sont gardés, la recharge continue si l'arme en main n'a pas changé). Une apparition
+   * `garder` (v8 : relève, reprise après coupure) n'est pas une nouvelle vie : les chargeurs sont gardés comme pour `equipement` (BO1).
    */
   appliquerServeur(m: Extract<MessageServeur, { t: "apparition" | "equipement" }>, t: number): void {
     this.dernierT = t;
-    const apparition = m.t === "apparition";
+    const apparition = m.t === "apparition" && m.garder !== true;
     const ancien = this.main;
     this.equip = copierEquipement(m.equip);
     this.main = estSlot(m.main) && this.slotUtilisable(m.main) ? m.main : this.slotRepli();
