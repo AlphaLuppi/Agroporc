@@ -10,6 +10,7 @@
  *  4. A tue B au fusil d'assaut : touches confirmées par le serveur (`degats`), PV qui baissent, `mort` avec le kill
  *  5. killcam de B (habillage du rejeu à la vue du tueur), réapparition près du rond-point
  *  6. coup de couteau mortel ; « Passer » (Espace) saute le rejeu, carte du tueur ; 6b. réapparition
+ *  6c. épée (v5) : un troisième navigateur entre avec l'épée ; un seul coup tue en une fois les deux joueurs placés dans son arc, message `coup{cibles}`
  *  7. accroupi, puis glissade (sprint + accroupi) sur une piste dégagée
  *  8. voiture conduisible : montée, conduite de quelques mètres, passager qui tire sur le conducteur ; sortie, sièges libérés
  *  9. Elsa (intervalle court passé au serveur) : offre annoncée à tous, HUD, ramassage
@@ -51,6 +52,7 @@ const ELSA = [-122.7, 37.42];
 
 const dormir = (ms) => new Promise((r) => setTimeout(r, ms));
 const distXZ = (p, c) => Math.hypot(p[0] - c[0], p[2] - c[1]);
+const plat3 = (p) => [p[0], p[1], p[2]];
 
 /** Un port libre choisi par le système. */
 function portLibre() {
@@ -312,7 +314,11 @@ try {
     if (build.status !== 0) throw new Error(`build de serveur-fps en échec :\n${build.stdout}${build.stderr}`);
     const srv = lancer("serveur-fps", process.execPath, ["dist/index.js"], {
       cwd: join(RACINE, "serveur-fps"),
-      env: { ...process.env, PORT: String(portWs), PDJ_FPS_ELSA_MIN_MS: "6000", PDJ_FPS_ELSA_MAX_MS: "7000", SCENE_JSON: join(RACINE, "public/agroparc/scene.json") },
+      env: {
+        ...process.env, PORT: String(portWs), PDJ_FPS_ELSA_MIN_MS: "6000", PDJ_FPS_ELSA_MAX_MS: "7000", SCENE_JSON: join(RACINE, "public/agroparc/scene.json"),
+        // les événements (Truck fou, tigre robot géant) ne sont pas l'objet de ce test et tuent les joueurs en pleine étape : repoussés d'une heure
+        PDJ_FPS_EVT_MIN_MS: process.env.E2E_EVT_MIN_MS ?? "3600000", PDJ_FPS_EVT_MAX_MS: process.env.E2E_EVT_MAX_MS ?? "3700000",
+      },
     });
     await attendreHttp(`http://localhost:${portWs}/sante`, 20_000, "serveur-fps").catch((e) => { throw new Error(`${e.message}\n${srv.journal.join("")}`); });
   }
@@ -325,7 +331,7 @@ try {
       cwd: RACINE,
       env: { ...process.env, NEXT_PUBLIC_FPS_WS_URL: urlWs, NEXT_TELEMETRY_DISABLED: "1" },
     });
-    await attendreHttp(`${urlNext}${PAGE}`, 120_000, "next dev").catch((e) => { throw new Error(`${e.message}\n${nx.journal.join("").slice(-1500)}`); });
+    await attendreHttp(`${urlNext}${PAGE}`, 240_000, "next dev").catch((e) => { throw new Error(`${e.message}\n${nx.journal.join("").slice(-1500)}`); });
   }
   console.log(`Serveur ${urlWs} · site ${urlNext}${PAGE} · captures ${SORTIE}\n`);
 
@@ -338,10 +344,9 @@ try {
       "--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream",
     ],
   });
-  const joueurs = [];
-  for (const nom of ["Alice", "Bob"]) {
-    // E2E_1280=1 : tout en 1280×720 (rendu logiciel plus rapide, captures plus fiables)
-    const ctx = await navigateur.newContext({ viewport: process.env.E2E_1280 ? { width: 1280, height: 720 } : { width: 1920, height: 1080 } });
+  /** Un navigateur de plus (contexte propre : stockage local vide, pointeur verrouillé émulé, mêmes touches). */
+  async function nouveauJoueur(nom, viewport) {
+    const ctx = await navigateur.newContext({ viewport });
     // « N » = coin suivant de la mini-carte (aucune touche par défaut) ; les autres actions reprennent leurs touches par défaut
     await ctx.addInitScript(() => {
       try { localStorage.setItem("pdj-fps-touches", JSON.stringify({ minimapCoin: ["KeyN", null] })); } catch { /* stockage indisponible */ }
@@ -351,35 +356,45 @@ try {
       Element.prototype.requestPointerLock = function () { verrou = this; queueMicrotask(() => document.dispatchEvent(new Event("pointerlockchange"))); return Promise.resolve(); };
       Document.prototype.exitPointerLock = function () { verrou = null; document.dispatchEvent(new Event("pointerlockchange")); };
     });
-    const page = await ctx.newPage();
-    joueurs.push(new Joueur(nom, page));
+    return new Joueur(nom, await ctx.newPage());
   }
+  const joueurs = [];
+  // E2E_1280=1 : tout en 1280×720 (rendu logiciel plus rapide, captures plus fiables)
+  for (const nom of ["Alice", "Bob"]) joueurs.push(await nouveauJoueur(nom, process.env.E2E_1280 ? { width: 1280, height: 720 } : { width: 1920, height: 1080 }));
   const [A, B] = joueurs;
+  /** Le crochet `window.__arene` et le panneau d'entrée de l'arène sont là (le mode par défaut est l'arène : le choix du mode précède son lobby). */
+  const lobbyOuvert = (j) => j.ev(() => !!window.__arene && !!document.querySelector("aside[aria-label='Arène']")).catch(() => false);
+  /** Ouvre la vue 3D (code « myrtille »), le panneau « Arène » et tape le nom du joueur. */
+  async function ouvrirLobby(j) {
+    await j.page.goto(`${urlNext}${PAGE}`, { waitUntil: "domcontentloaded", timeout: 120_000 });
+    await dormir(2500); // hydratation
+    await j.page.keyboard.type("myrtille", { delay: 60 });
+    const bouton = j.page.getByRole("button", { name: /^Arène/ }).first();
+    if (!(await bouton.waitFor({ state: "visible", timeout: 60_000 }).then(() => true, () => false))) return;
+    await bouton.evaluate((e) => e.click()).catch(() => null);
+    const champ = j.page.getByLabel("Nom de joueur");
+    if (await champ.waitFor({ state: "visible", timeout: 30_000 }).then(() => true, () => false)) await champ.fill(j.nom).catch(() => null);
+  }
 
   // ------------------------------------------------------------------ 1. lobby et entrée
   const demarre = await etape("1. ouverture de la vue 3D (code « myrtille ») et du lobby, entrée des deux joueurs", async () => {
     // Un `next dev` à froid compile à la première visite puis recharge TOUTES les pages ouvertes : on rouvre le lobby de chaque joueur dont la page
     // a été rechargée, jusqu'à ce que les deux tiennent (le code est tapé UNE fois par essai : le retaper refermerait la vue)
-    const ouvert = (j) => j.ev(() => !!window.__arene && !!document.querySelector("aside[aria-label='Arène']")).catch(() => false);
-    async function ouvrir(j) {
-      await j.page.goto(`${urlNext}${PAGE}`, { waitUntil: "domcontentloaded", timeout: 120_000 });
-      await dormir(2500); // hydratation
-      await j.page.keyboard.type("myrtille", { delay: 60 });
-      const bouton = j.page.getByRole("button", { name: /^Arène/ }).first();
-      if (!(await bouton.waitFor({ state: "visible", timeout: 60_000 }).then(() => true, () => false))) return;
-      await bouton.evaluate((e) => e.click()).catch(() => null);
-      const champ = j.page.getByLabel("Nom de joueur");
-      if (await champ.waitFor({ state: "visible", timeout: 30_000 }).then(() => true, () => false)) await champ.fill(j.nom).catch(() => null);
-    }
     let stable = 0;
     for (let tour = 1; tour <= 8 && stable < 2; tour++) {
       let tous = true;
-      for (const j of joueurs) if (!(await ouvert(j))) { tous = false; await ouvrir(j); }
+      for (const j of joueurs) if (!(await lobbyOuvert(j))) { tous = false; await ouvrirLobby(j); }
       if (tous) { stable++; await dormir(2500); } else stable = 0;
     }
     verifier(stable >= 2, "la vue Palantir et le lobby ne restent pas ouverts chez les deux joueurs");
     await jusqua(async () => (await A.etat().catch(() => null))?.connexion === "ouvert" && (await B.etat().catch(() => null))?.connexion === "ouvert", { ms: 60_000, quoi: async () => `connexion WebSocket des deux joueurs (A ${JSON.stringify((await A.etat().catch(() => ({})))?.connexion)}, B ${JSON.stringify((await B.etat().catch(() => ({})))?.connexion)} ; erreurs ${[...A.erreurs, ...B.erreurs].slice(0, 4).join(" | ")} ; URL du serveur ${urlWs})` });
     await dormir(800);
+    // le panneau s'ouvre sur le choix du mode (v5) : « Arène » est coché par défaut, son lobby s'affiche dessous (on le sélectionne s'il ne l'était pas)
+    for (const j of joueurs) {
+      const radio = j.page.locator("input[type=radio][name$='-mode'][value=arene]");
+      if (!(await radio.isChecked())) await radio.evaluate((e) => e.click());
+      await j.page.locator("aside[aria-label='Arène']").waitFor({ state: "visible", timeout: 8000 });
+    }
     await A.capture("01-lobby-1920");
     for (const j of joueurs) await j.ev(() => window.__arene.entrer({ principale: "fusil_assaut", secondaire: "pistolet" }));
     for (const j of joueurs) await jusqua(async () => { const s = await j.jeu(); return s && s.apparu && s.vivant; }, { ms: 30_000, quoi: `apparition de ${j.nom}` });
@@ -521,6 +536,9 @@ try {
     }
     const mort = await jusqua(async () => A.msgs("mort", depuis).find((m) => m.cible === victimeId), { ms: 3000, quoi: async () => `mort de B au couteau (${A.resume(depuis)} ; ${B.resume(depuis)} ; A ${JSON.stringify(await A.jeu().then((x) => ({ p: x.p, arme: x.arme, deg: x.degainage, vivant: x.vivant })))} ; B ${JSON.stringify(await B.jeu().then((x) => ({ p: x.p, vivant: x.vivant, protege: x.protege, pv: x.pv, bouclier: x.bouclier })))})` });
     verifier(mort.arme === "couteau" || mort.cause === "couteau", `mort pas au couteau : ${JSON.stringify(mort)}`);
+    // v5 : le coup envoyé porte les cibles touchées (`coup{o, d, cibles}`), ici Bob seul
+    const coup = A.envoyes.filter((r) => r.t === "coup" && r.a >= depuis).map((r) => r.m).find((m) => Array.isArray(m.cibles) && m.cibles.includes(victimeId));
+    verifier(coup && coup.cibles.length === 1, `aucun message coup{cibles: [Bob]} envoyé par Alice : ${JSON.stringify(A.envoyes.filter((r) => r.t === "coup").slice(-3).map((r) => r.m))}`);
     // « Passer » est pressé par l'observateur dès l'apparition du rejeu : la carte du tueur doit suivre aussitôt
     await jusqua(async () => B.ev(() => !!window.__e2eKillcam.carte), { ms: 5000, pas: 40, quoi: "carte du tueur après « Passer » chez B" });
     await B.capture("06-killcam-carte-B-1280");
@@ -535,6 +553,54 @@ try {
     await jusqua(async () => { const s = await B.jeu(); return s.vivant && s.apparu && !s.killcam; }, { ms: 40_000, quoi: "réapparition de B" });
     await B.page.setViewportSize({ width: 1920, height: 1080 });
     await dormir(1800);
+  });
+
+  // ------------------------------------------------------------------ 6c. épée (v5)
+  await etape("6c. épée : un coup tue en une fois, un balayage frappe deux joueurs (troisième navigateur)", async () => {
+    // Chloé, troisième navigateur très petit (rendu plus léger), entre avec l'épée (choix du lobby, `rejoindre{melee}`) ; Alice et Bob se placent dans son arc
+    const C = await nouveauJoueur("Chloé", { width: 480, height: 270 });
+    // trois rendus logiciels simultanés : les fenêtres d'Alice et de Bob sont réduites le temps de l'étape (le serveur évince qui n'envoie plus d'état)
+    for (const j of [A, B]) await j.page.setViewportSize({ width: 480, height: 270 });
+    try {
+      await jusqua(async () => { await ouvrirLobby(C); return lobbyOuvert(C); }, { ms: 120_000, pas: 500, quoi: "lobby de Chloé" });
+      await jusqua(async () => (await C.etat().catch(() => null))?.connexion === "ouvert", { ms: 30_000, quoi: "connexion de Chloé" });
+      await C.ev(() => window.__arene.entrer({ principale: "fusil_assaut", secondaire: "pistolet", melee: "epee" }));
+      await jusqua(async () => { const s = await C.jeu(); return s && s.apparu && s.vivant; }, { ms: 120_000, quoi: async () => { const e = await C.etat(); return `apparition de Chloé (connexion ${e.connexion}, enArene ${e.enArene}, jeu ${e.jeu ? JSON.stringify({ apparu: e.jeu.apparu, vivant: e.jeu.vivant }) : "absent"} ; erreurs ${C.erreurs.slice(0, 3).join(" | ")} ; ${C.resume()})`; } });
+      for (const j of [A, B]) await jusqua(async () => { const s = await j.jeu(); return s && s.vivant && s.apparu && !s.killcam; }, { ms: 40_000, quoi: `${j.nom} vivant` });
+      const idA = await A.id(), idB = await B.id(), idC = await C.id();
+      // terrain dégagé (ni route ni bâtiment à proximité : les voitures PNJ tuent, un mur couperait le coup)
+      const [bx, bz] = pointLibre(ROND_POINT[0] + 30, ROND_POINT[1] + 30);
+      await poser(C, A, [bx, 0, bz]);
+      await C.ev(() => window.__arene.regarder(-Math.PI / 2, 0)); // face à +x
+      await C.appui("Digit3");
+      await jusqua(async () => { const s = await C.jeu(); return s.slot === "couteau" && s.arme === "epee"; }, { quoi: async () => `épée en main chez Chloé (slot ${(await C.jeu()).slot}, arme ${(await C.jeu()).arme})` });
+      await dormir(900); // dégaînage
+      // les deux cibles à ~1,9 m de Chloé, de part et d'autre de son axe de visée
+      await poser(A, C, [bx + 1.8, 0, bz + 0.6], 1.5);
+      await poser(B, C, [bx + 1.8, 0, bz - 0.6], 1.5);
+      await dormir(1800); // protection d'apparition éventuelle
+      const depuis = Date.now();
+      // un coup, qui enchaîne au besoin (cadence de l'épée : 0,85 s), tant que les deux n'ont pas été touchés
+      const morts = () => C.msgs("mort", depuis).filter((m) => m.cible === idA || m.cible === idB);
+      for (let i = 0; i < 6 && morts().length < 2; i++) {
+        await C.ev((id) => window.__arene.tirerVers(id), idA);
+        await dormir(1100);
+      }
+      verifier(morts().length === 2, `le balayage n'a pas tué les deux cibles : ${JSON.stringify(C.msgs("mort", depuis))} (${C.resume(depuis)})`);
+      verifier(morts().every((m) => m.par === idC && (m.arme === "epee" || m.cause === "epee")), `morts pas à l'épée : ${JSON.stringify(morts())}`);
+      const coups = C.envoyes.filter((r) => r.t === "coup" && r.a >= depuis).map((r) => r.m);
+      const balayage = coups.find((m) => m.cibles.includes(idA) && m.cibles.includes(idB));
+      verifier(balayage, `aucun coup unique n'a visé les deux cibles : ${JSON.stringify(coups)}`);
+      // l'épée tue en un coup (140 > 100 PV) et le même coup a frappé les deux : les morts sont simultanées
+      const tA = C.recus.find((r) => r.t === "mort" && r.m.cible === idA && r.a >= depuis).a, tB = C.recus.find((r) => r.t === "mort" && r.m.cible === idB && r.a >= depuis).a;
+      verifier(Math.abs(tA - tB) < 800, `les deux morts ne sont pas simultanées (${Math.abs(tA - tB)} ms d'écart)`);
+      await C.capture("06c-epee-balayage-C");
+      for (const j of [A, B]) await jusqua(async () => { const s = await j.jeu(); return s && s.vivant && s.apparu && !s.killcam; }, { ms: 60_000, quoi: `réapparition de ${j.nom}` });
+      return `un coup (${JSON.stringify(balayage.cibles)}) : ${morts().map((m) => `${m.cible} ${m.arme ?? m.cause} (${m.zone})`).join(", ")}`;
+    } finally {
+      await C.page.context().close().catch(() => null);
+      for (const j of [A, B]) await j.page.setViewportSize(process.env.E2E_1280 ? { width: 1280, height: 720 } : { width: 1920, height: 1080 });
+    }
   });
 
   // ------------------------------------------------------------------ 7. accroupi et glissade
