@@ -13,6 +13,7 @@
  * Tant qu'il n'est pas chargé (ou s'il ne se charge pas), un moteur synthétisé doux le remplace.
  */
 import type { ArmeFeuId, ArmeMeleeId } from "./protocole";
+import { ZOMBIES } from "./zombies-vagues";
 
 /** Voix de tigres en même temps au plus (zombies) : au-delà, un nouveau rugissement est ignoré. */
 export const VOIX_TIGRES_MAX = 4;
@@ -96,7 +97,7 @@ export interface Sons {
    * `mort` : cri plus court qui s'éteint (un tigre vient de tomber). Renvoie vrai si la voix a été jouée.
    */
   rugissementTigre(position?: PositionSon, mort?: boolean): boolean;
-  /** (zombies) Griffe d'un tigre : fouet de patte et choc sourd, spatialisé. */
+  /** (zombies) Coup de patte d'un tigre, joué au début de l'armement : feulement, puis griffes qui fendent l'air et choc au contact, spatialisé. */
   griffe(position?: PositionSon): void;
   /** (zombies) Achat accepté (caisse enregistreuse) ou refusé (buzz grave). */
   achat(ok: boolean): void;
@@ -930,10 +931,14 @@ export function creerSons(): Sons {
       if (!prete()) return;
       const out = sortie(position);
       const t = ctx!.currentTime + 0.001;
-      // fouet de patte (bruit passe-bande qui monte) puis claquement sourd de la frappe
-      bruit(out, t, { dur: 0.22, type: "bandpass", f0: 600, f1: 2600, q: 1.1, gain: 0.45, att: 0.1 });
-      bruit(out, t + 0.16, { dur: 0.14, type: "lowpass", f0: 1200, f1: 180, gain: 0.5 });
-      ton(out, t + 0.16, { dur: 0.18, type: "sine", f0: 110, f1: 45, gain: 0.45 });
+      // le coup s'annonce : feulement grave pendant l'armement (le tigre se cabre), puis la patte fend l'air et claque à l'instant du contact
+      // (`ZOMBIES.griffeArmeS`, le même que le serveur) : on l'entend venir, on a le temps de s'écarter
+      const c = ZOMBIES.griffeArmeS;
+      ton(out, t, { dur: c * 0.85, type: "sawtooth", f0: 95, f1: 70, gain: 0.22, att: 0.12 });
+      bruit(out, t, { dur: c * 0.85, type: "bandpass", f0: 420, f1: 300, q: 1.6, gain: 0.28, att: 0.15 });
+      bruit(out, t + c - 0.13, { dur: 0.16, type: "bandpass", f0: 700, f1: 3000, q: 1.1, gain: 0.5, att: 0.1 });
+      bruit(out, t + c, { dur: 0.14, type: "lowpass", f0: 1200, f1: 180, gain: 0.5 });
+      ton(out, t + c, { dur: 0.18, type: "sine", f0: 110, f1: 45, gain: 0.45 });
     },
     achat(ok) {
       if (!prete()) return;

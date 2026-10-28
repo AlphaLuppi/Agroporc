@@ -111,6 +111,24 @@ const FAILSAFE_PROGRES_M = 2;
 
 const avant = (cap: number): [number, number] => [-Math.sin(cap), -Math.cos(cap)];
 
+/** Portée (m, depuis le centre du tigre) du bout du balayage de la patte, rayon de contact compris. */
+export function porteePatte(echelle: number, allonge = 0): number {
+  return ZOMBIES.griffePatteA[1] * echelle + allonge + ZOMBIES.griffeRayonM + ZOMBIES.griffeRayonPatte * echelle;
+}
+
+/**
+ * Contact de la patte (PUR) : le balayage de la patte est le segment de l'axe du tigre (cap `cap`, avant = (−sin, −cos)) de
+ * `griffePatteA[0]` à `griffePatteA[1]` × échelle (+ `allonge` à la fenêtre) ; vrai si le joueur (pieds en `p`) en est à moins de
+ * `griffeRayonM` + `griffeRayonPatte` × échelle. Un joueur qui a reculé hors de portée ou s'est écarté de l'axe est esquivé.
+ */
+export function touchePatte(z: { p: Vec3; cap: number; echelle: number }, p: Vec3, allonge = 0): boolean {
+  const [fx, fz] = avant(z.cap);
+  const dx = p[0] - z.p[0], dz = p[2] - z.p[2];
+  const a0 = ZOMBIES.griffePatteA[0] * z.echelle, a1 = ZOMBIES.griffePatteA[1] * z.echelle + allonge;
+  const s = Math.max(a0, Math.min(a1, dx * fx + dz * fz));
+  return Math.hypot(dx - fx * s, dz - fz * s) <= ZOMBIES.griffeRayonM + ZOMBIES.griffeRayonPatte * z.echelle;
+}
+
 export function creerSimuZombies(opts: OptionsSimuZombies) {
   const { monde, alea } = opts;
   const barricades: Barricades = opts.barricades ?? { planches: () => 0, arracher: () => {} };
@@ -214,12 +232,15 @@ export function creerSimuZombies(opts: OptionsSimuZombies) {
     if (mode === "chasse") { z.champOk = false; z.progresT = t; z.meilleureDistance = Infinity; }
   }
 
-  /** Griffe (armement puis coup) sur le joueur debout le plus proche s'il est à portée et visible ; vrai si le tigre est occupé à griffer. */
-  function griffer(z: Zombie, t: number, cible: JoueurZombie, surface: number, evenements: EvenementZombie[], allonge = 0): boolean {
+  /**
+   * Coup de patte (armement visible puis frappe) sur le joueur debout le plus proche s'il est à portée de patte et visible ; vrai si le
+   * tigre est occupé à griffer. Le coup ne touche qu'au contact : à `armeFin`, le joueur visé doit être sur le balayage de la patte.
+   */
+  function griffer(z: Zombie, t: number, cible: JoueurZombie, evenements: EvenementZombie[], allonge = 0): boolean {
     if (z.armeFin > 0) {
       if (t >= z.armeFin) {
         const vise = z.cibleGriffe !== null ? debout.find((j) => j.id === z.cibleGriffe) : undefined;
-        if (vise && Math.hypot(vise.p[0] - z.p[0], vise.p[2] - z.p[2]) - RAYON_JOUEUR <= ZOMBIES.griffeMaxPortee + allonge) {
+        if (vise && touchePatte(z, vise.p, allonge) && visible(monde, [z.p[0], 1, z.p[2]], [vise.p[0], 1, vise.p[2]])) {
           evenements.push({ t: "griffe", tigre: z.id, joueur: vise.id, degats: z.degats });
         }
         z.armeFin = 0;
@@ -228,7 +249,8 @@ export function creerSimuZombies(opts: OptionsSimuZombies) {
       }
       return true;
     }
-    if (surface <= ZOMBIES.griffePortee + allonge && visible(monde, [z.p[0], 1, z.p[2]], [cible.p[0], 1, cible.p[2]])) {
+    const d = Math.hypot(cible.p[0] - z.p[0], cible.p[2] - z.p[2]);
+    if (d <= porteePatte(z.echelle, allonge) - ZOMBIES.griffeMargeDepartM && visible(monde, [z.p[0], 1, z.p[2]], [cible.p[0], 1, cible.p[2]])) {
       if (t >= z.prochaineGriffeT && t - z.apparuT >= ZOMBIES.apparitionMs) {
         z.armeFin = t + ZOMBIES.griffeArmeS * 1000;
         z.cibleGriffe = cible.id;
@@ -257,7 +279,6 @@ export function creerSimuZombies(opts: OptionsSimuZombies) {
         const d = Math.hypot(j.p[0] - z.p[0], j.p[2] - z.p[2]);
         if (d < dMin) { dMin = d; cible = j; }
       }
-      const surface = dMin - RAYON_JOUEUR;
       let tx = cible.p[0], tz = cible.p[2];
       let marche = true;
 
@@ -281,7 +302,7 @@ export function creerSimuZombies(opts: OptionsSimuZombies) {
           marche = false;
           tx = f.dedans[0]; tz = f.dedans[1];
           // une griffe à travers la fenêtre si un joueur est collé de l'autre côté ; sinon il arrache
-          if (griffer(z, t, cible, surface, evenements, ZOMBIES.allongeFenetreM)) break;
+          if (griffer(z, t, cible, evenements, ZOMBIES.allongeFenetreM)) break;
           if (barricades.planches(f.id) <= 0) {
             changerMode(z, "saut", t);
             evenements.push({ t: "saut", tigre: z.id, fenetre: f.id });
@@ -303,7 +324,7 @@ export function creerSimuZombies(opts: OptionsSimuZombies) {
           break;
         }
         case "chasse": {
-          if (griffer(z, t, cible, surface, evenements)) { marche = false; break; }
+          if (griffer(z, t, cible, evenements)) { marche = false; break; }
           // vision directe (contrôlée toutes les 150 ms, plus tôt si le joueur le plus proche change) ou descente du champ
           let direct = false;
           if (dMin <= ZOMBIES.visionDirecteM) {
@@ -330,7 +351,11 @@ export function creerSimuZombies(opts: OptionsSimuZombies) {
       const voulu = capVers(z.p[0], z.p[2], tx, tz);
       let ecart = enrouler(voulu - z.cap);
       if (z.neuf) { z.cap = voulu; ecart = 0; z.neuf = false; z.histoN = 0; z.histoTete = 0; } // la pose d'apparition (cap fictif) n'est pas rejouée
-      else z.cap = enrouler(z.cap + Math.max(-rot, Math.min(rot, ecart)));
+      else {
+        // pendant l'armement d'un coup de patte, le tigre suit sa cible lentement : on peut le contourner
+        const r = z.armeFin > 0 ? ZOMBIES.griffeRotationMax * dt : rot;
+        z.cap = enrouler(z.cap + Math.max(-r, Math.min(r, ecart)));
+      }
 
       if (marche) {
         const v = z.vitesse * Math.max(0.25, Math.cos(ecart));

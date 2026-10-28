@@ -18,7 +18,7 @@
 import * as THREE from "three";
 import { chargerModele, creerTigre, type ModeleTigre, type Tigre } from "../tigre3d/modele";
 import { animerCetteImage, tigreAffiche, type ZombieVue } from "./jeu-zombies";
-import type { Vec3 } from "./protocole";
+import { JEU, type Vec3 } from "./protocole";
 import { creerAnimZombie, type AnimZombie } from "./zombies-anim";
 import { ZOMBIES } from "./zombies-vagues";
 
@@ -113,6 +113,8 @@ export function creerRenduZombies(scene: THREE.Scene): RenduZombies {
   let nAffiches = 0;
   /** horloge locale (s) du rendu des tigres */
   let tempsLocal = 0;
+  /** numéro de l'image du `maj` précédent */
+  let imagePrec = -1;
   const geosPrivees = new Map<THREE.BufferGeometry, THREE.BufferGeometry>();
 
   chargerModele().then((m) => {
@@ -287,9 +289,10 @@ export function creerRenduZombies(scene: THREE.Scene): RenduZombies {
         for (let k = 0; k < CREATIONS_PAR_IMAGE && emplacements.length < TAILLE_POOL; k++) creerEmplacement(modele);
       }
       const prets = modele !== null && emplacements.length > 0;
-      // rend les emplacements des tigres disparus
+      // rend les emplacements des tigres absents de l'image précédente (ceux qu'elle a vus gardent leur emplacement, donc leur animation :
+      // comparer à l'image courante les rendait tous à chaque image, et chaque tigre repartait de la pose de repos)
       for (const [id, e] of parId) {
-        if (e.vuImage === image) continue;
+        if (e.vuImage === imagePrec || e.vuImage === image) continue;
         parId.delete(id);
         // un tigre mort garde son emplacement (cadavre) ; les autres disparus le rendent
         if (e.mortCause === null) { e.id = 0; e.groupe.visible = false; }
@@ -353,7 +356,7 @@ export function creerRenduZombies(scene: THREE.Scene): RenduZombies {
           griffe = griffe || tempsLocal > e.arracheT - 0.55;
         }
         if (animerCetteImage(d, image, v.id)) {
-          e.anim.maj(e.dtAcc, v.mode === "sol" ? 0 : v.vitesse * (v.allure === 3 ? 0.6 : 1), v.echelle, griffe);
+          e.anim.maj(e.dtAcc, v.mode === "sol" ? 0 : v.vitesse * (v.allure === 3 ? 0.6 : 1), v.echelle, griffe, JEU.interpolationMs / 1000);
           e.dtAcc = 0;
           e.tigre.appliquer(e.anim.pose(), e.anim.x());
         }
@@ -371,6 +374,7 @@ export function creerRenduZombies(scene: THREE.Scene): RenduZombies {
           }
         }
       }
+      imagePrec = image;
     },
     pret() {
       return modele !== null && emplacements.length >= TAILLE_POOL;

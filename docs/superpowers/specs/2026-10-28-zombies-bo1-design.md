@@ -107,6 +107,24 @@ Tirage uniforme parmi les armes non possédées de la boîte. **Peluche de tigre
 8ᵉ forcée si la boîte n'a jamais bougé ; après un déménagement : 30 % de 8 à 12, 50 % au-delà. La peluche rembourse 950 $, la boîte s'envole (4 s) et
 réapparaît à un autre emplacement, compteur remis à 0.
 
+## Coup de patte : on le voit venir, on l'esquive
+
+Comme les attaques des zombies de BO1, le coup de patte d'un tigre est **lisible et esquivable** : il ne touche qu'au contact de la patte.
+
+- **Départ** : le tigre lance son coup quand le joueur debout le plus proche est à portée de patte (`porteePatte(échelle)` moins 0,25 m) et en
+  vue. Le drapeau « griffe armée » du snap passe à 1, et le client joue le geste `griffe` et le son `griffe`.
+- **Armement (0,55 s, `ZOMBIES.griffeArmeS`)** : le tigre se cabre, avant relevé, tête en arrière, oreilles plaquées, et lève la patte avant
+  droite ; on entend un feulement grave. Il ne marche plus et ne suit sa cible qu'à 0,6 rad/s (`griffeRotationMax`, ≈ 19° sur l'armement).
+- **Contact (à 0,55 s)** : la patte claque, épaule plongée, corps jeté en avant, avec un « clac » au même instant. Le serveur ne teste la touche
+  QU'À CET INSTANT : le joueur visé doit être sur le balayage de la patte, c'est-à-dire le segment de l'axe du tigre de 0,18 à 0,5 × échelle
+  depuis son centre (+ 1 m à la fenêtre, la patte passe entre les planches), à moins de 0,4 m + 0,06 × échelle, et en vue (`touchePatte`, PUR).
+  Un pas en arrière d'environ 1 m ou un pas de côté d'environ 1,3 m pendant l'armement : la patte frappe dans le vide.
+- **Recharge** : 1 s après le contact (0,8 s pour la morsure du petit du Truck), puis le tigre recommence.
+- **Synchronisation** : `CONTACT_GRIFFE` du geste (`lib/tigre3d/gestes/griffe.ts`) vaut `ZOMBIES.griffeArmeS` (vérifié par
+  `zombies-anim.test.ts`). Le client affiche les tigres avec `JEU.interpolationMs` de retard : il démarre donc le geste d'autant plus loin, pour
+  que la patte claque à l'écran quand le serveur touche.
+- Le chef (échelle 3,4) frappe plus loin, le petit (1,5) plus court. Les dégâts suivent la difficulté et le type (cf. « Équilibrage »).
+
 ## Barricades à planches
 
 Chaque fenêtre a 6 planches. Un tigre qui arrive à une fenêtre arrache une planche toutes les 1,4 s (course 1,1 s, sprint 0,9 s) et peut griffer à

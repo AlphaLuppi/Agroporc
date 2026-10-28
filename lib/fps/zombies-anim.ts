@@ -9,7 +9,7 @@
  * Spec : docs/superpowers/specs/2026-10-27-arene-zombies-design.md (« Animation »)
  */
 import { avancerCorps, creerCorps, GROUPES, type Corps, type Couche } from "../tigre3d/corps";
-import { griffe } from "../tigre3d/gestes/griffe";
+import { CONTACT_GRIFFE, griffe } from "../tigre3d/gestes/griffe";
 import type { ContexteGeste, Geste } from "../tigre3d/gestes/types";
 import { clipNomme } from "../tigre3d/clips";
 import type { Groupe } from "../tigre3d/os";
@@ -26,7 +26,7 @@ export interface AnimZombie {
    * Avance de `dt` secondes avec la vitesse mesurée `vitesse` (m/s de l'arène), l'échelle du modèle `echelle` et le drapeau de griffe armée.
    * Renvoie vrai à l'image où la griffe vient d'être lancée (front montant du drapeau : le rendu y joue le son).
    */
-  maj(dt: number, vitesse: number, echelle: number, griffeArmee: boolean): boolean;
+  maj(dt: number, vitesse: number, echelle: number, griffeArmee: boolean, avance?: number): boolean;
   pose(): PoseTigre;
   /** x du corps (repère du sol du modèle) à ramener à l'origine du groupe (`Tigre.appliquer`). */
   x(): number;
@@ -56,13 +56,15 @@ export function creerAnimZombie(graine = 1): AnimZombie {
   let vModele = 0;
 
   return {
-    maj(dt, vitesse, echelle, griffeArmee) {
+    maj(dt, vitesse, echelle, griffeArmee, avance = 0) {
       if (!(dt > 0)) return false;
       t += dt;
       ctx.temps = t;
       const lancee = griffeArmee && !drapeauAvant;
       drapeauAvant = griffeArmee;
-      if (lancee) { gesteActif = true; tGeste = 0; }
+      // `avance` : retard (s) de l'affichage des tigres sur le serveur (interpolation) ; le geste part d'autant plus loin pour que la patte
+      // claque à l'écran quand le serveur touche (jamais au-delà de la moitié de l'armement : il reste lisible)
+      if (lancee) { gesteActif = true; tGeste = Math.max(0, Math.min(avance, CONTACT_GRIFFE / 2)); }
       if (gesteActif) {
         tGeste += dt;
         if (tGeste >= griffe.duree) gesteActif = false;

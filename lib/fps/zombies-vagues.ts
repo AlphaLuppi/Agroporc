@@ -74,12 +74,25 @@ export const ZOMBIES = {
   morsurePetit: 30,
   morsureRechargeS: 0.8,
   plafondPetits: 8,
-  // ---- griffe ----
-  /** le tigre arme sa griffe à moins de `griffePortee` m de la surface d'un joueur debout, la donne si le joueur est encore à `griffeMaxPortee` m */
-  griffePortee: 1.7,
-  griffeMaxPortee: 2.3,
-  griffeArmeS: 0.4,
-  /** à la fenêtre, le tigre passe la patte entre les planches : portée de griffe allongée d'autant (m), le mur le tient à 1,7 m du bord */
+  // ---- griffe (coup de patte qu'on voit venir et qu'on esquive, comme les attaques des zombies de BO1) ----
+  /**
+   * Instant (s) du contact après le début du coup : le tigre se cabre et lève la patte pendant cet armement (le geste `griffe` du client
+   * claque à ce même instant), puis la patte frappe. Le serveur ne touche qu'à cet instant, là où est la patte : reculer ou s'écarter
+   * pendant l'armement esquive.
+   */
+  griffeArmeS: 0.55,
+  /** pendant l'armement, le tigre suit sa cible à cette vitesse de rotation au plus (rad/s, ≈ 19° sur l'armement) : un pas de côté l'esquive */
+  griffeRotationMax: 0.6,
+  /**
+   * La patte balaie l'axe du tigre de `griffePatteA[0]` à `griffePatteA[1]` (unités du modèle, × l'échelle du tigre, depuis son centre) ;
+   * le coup touche un joueur dont l'axe passe à moins de `griffeRayonM` m + `griffeRayonPatte` × échelle de ce segment.
+   */
+  griffePatteA: [0.18, 0.5] as readonly number[],
+  griffeRayonM: 0.4,
+  griffeRayonPatte: 0.06,
+  /** le tigre lance son coup quand le joueur est à moins de la portée de la patte moins cette marge (m) : immobile, il est touché */
+  griffeMargeDepartM: 0.25,
+  /** à la fenêtre, le tigre passe la patte entre les planches : portée allongée d'autant (m), le mur le tient à 1,7 m du bord */
   allongeFenetreM: 1.0,
   griffeRechargeS: 1.0,
   /** dégâts de griffe (difficulté « plat du jour ») et du tigre chef */

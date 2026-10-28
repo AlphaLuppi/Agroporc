@@ -5,7 +5,7 @@ import { construireMonde, detruireBatiment, lancerRayon, resoudre } from "./coll
 import { FORME_TIGRE, pointLocal } from "./monstres";
 import { carteNavigation, invaliderNavigation } from "./navigation";
 import { PAS_SNAP_ZOMBIE, decoderZombies, type Vec3 } from "./protocole";
-import { creerSimuZombies, type ArriveeZombie, type Barricades, type EvenementZombie, type JoueurZombie, type SpecZombie } from "./zombies";
+import { creerSimuZombies, porteePatte, touchePatte, type ArriveeZombie, type Barricades, type EvenementZombie, type JoueurZombie, type SpecZombie } from "./zombies";
 import { DEPARTS, construireMondeZombies, fenetreDeId, idPrisme } from "./zombies-carte";
 import { ZOMBIES, degatsGriffe, echelleZombie, pvZombie, rechargeGriffe, vitesseAllure, type Allure, type TypeZombie } from "./zombies-vagues";
 
@@ -149,7 +149,7 @@ describe("fenêtres barricadées", () => {
     const b = barricades();
     const { simu } = neuf({ barricades: b });
     const f = fenetreDeId("N2c")!;
-    const j = joueur("j1", f.milieu[0] + f.normale[0] * 1.2, f.milieu[1] + f.normale[1] * 1.2);
+    const j = joueur("j1", f.milieu[0] + f.normale[0] * 0.7, f.milieu[1] + f.normale[1] * 0.7);
     simu.apparaitre(spec(1), f.dehors, { mode: "fenetre", fenetre: f }, 0);
     const { evenements } = courir(simu, 0, 4, [j]);
     expect(evenements.some((e) => e.t === "griffe")).toBe(true);
@@ -350,6 +350,61 @@ describe("griffe", () => {
     const s2 = creerSimuZombies({ monde: libre, alea: moitie });
     s2.apparaitre(spec(1), [-0.9, 0], CHASSE, 0);
     expect(courir(s2, 0, 3, [j]).evenements.some((e) => e.t === "griffe")).toBe(true);
+  });
+
+  it("touchePatte : le balayage de la patte est un segment de l'axe du tigre, à l'échelle du type", () => {
+    const z = { p: [0, 0, 0] as Vec3, cap: 0, echelle: 2.7 }; // avant = −z
+    const r = ZOMBIES.griffeRayonM + ZOMBIES.griffeRayonPatte * 2.7;
+    expect(touchePatte(z, [0, 0, -1.2])).toBe(true);
+    expect(touchePatte(z, [r - 0.05, 0, -1.0])).toBe(true);
+    expect(touchePatte(z, [r + 0.05, 0, -1.0])).toBe(false); // un pas de côté
+    expect(touchePatte(z, [0, 0, -(0.5 * 2.7 + r + 0.05)])).toBe(false); // un pas en arrière
+    expect(touchePatte(z, [0, 0, 1.5])).toBe(false); // dans le dos
+    expect(touchePatte(z, [0, 0, -(0.5 * 2.7 + r + 0.5)], 1)).toBe(true); // à la fenêtre, la patte passe entre les planches
+    expect(porteePatte(2.7)).toBeCloseTo(0.5 * 2.7 + r, 9);
+    // le chef frappe plus loin, le petit moins
+    expect(porteePatte(3.4)).toBeGreaterThan(porteePatte(2.7));
+    expect(porteePatte(1.5)).toBeLessThan(porteePatte(2.7));
+  });
+
+  it("esquive : immobile devant le tigre on est touché ; un pas de côté ou en arrière pendant l'armement, la patte frappe dans le vide", () => {
+    const essai = (bouge: ((j: JoueurZombie, z: { p: Vec3; cap: number }) => void) | null) => {
+      const { simu } = neuf();
+      simu.apparaitre(spec(1), [COUR[0] + 1.4, COUR[1]], CHASSE, 0);
+      const j = joueur("j1", ...COUR);
+      let arme = false;
+      const { evenements } = courir(simu, 0, 1.6, [j], () => {
+        const z = simu.liste()[0];
+        if (!arme && z.armeFin > 0) { arme = true; bouge?.(j, z); }
+      });
+      expect(arme).toBe(true);
+      return evenements.filter((e) => e.t === "griffe").length;
+    };
+    expect(essai(null)).toBe(1);
+    // pas de côté de 1,3 m (perpendiculaire à l'axe du tigre)
+    expect(essai((j, z) => { const [fx, fz] = [-Math.sin(z.cap), -Math.cos(z.cap)]; j.p = [j.p[0] - fz * 1.3, 0, j.p[2] + fx * 1.3]; })).toBe(0);
+    // pas en arrière de 1,2 m
+    expect(essai((j, z) => { const [fx, fz] = [-Math.sin(z.cap), -Math.cos(z.cap)]; j.p = [j.p[0] + fx * 1.2, 0, j.p[2] + fz * 1.2]; })).toBe(0);
+  });
+
+  it("pendant l'armement le tigre ne tourne qu'à 0,6 rad/s : on peut le contourner", () => {
+    const { simu } = neuf();
+    const id = simu.apparaitre(spec(1), [COUR[0] + 1.4, COUR[1]], CHASSE, 0)!;
+    const z = simu.zombie(id)!;
+    const j = joueur("j1", ...COUR);
+    let prec: number | null = null;
+    let armees = 0;
+    courir(simu, 0, 1.5, [j], () => {
+      if (z.armeFin > 0) {
+        armees++;
+        // le joueur tourne autour du tigre
+        const a = Math.atan2(j.p[2] - z.p[2], j.p[0] - z.p[0]) + 0.08;
+        j.p = [z.p[0] + Math.cos(a) * 1.3, 0, z.p[2] + Math.sin(a) * 1.3];
+        if (prec !== null) expect(Math.abs(Math.atan2(Math.sin(z.cap - prec), Math.cos(z.cap - prec)))).toBeLessThanOrEqual(ZOMBIES.griffeRotationMax * DT + 1e-9);
+        prec = z.cap;
+      } else prec = null;
+    });
+    expect(armees).toBeGreaterThan(5);
   });
 
   it("griffe les joueurs debout seulement, le plus proche", () => {
