@@ -36,8 +36,11 @@ import { REWIND_MELEE_MS, coupVraisemblable } from "./melee";
 import {
   CIBLE_LIVRAISON, CIBLE_TIGRE, CIBLE_TITAN, EQUIPEMENT_DEFAUT, JEU, PLAFONDS, SLOT_DEFAUT, copierEquipement, estIdZombie, estMelee, oeilDe, silhouetteDe,
   type ArmeFeuId, type ArmeId, type ArmeMeleeId, type CauseMort, type EtatJoueurSnap, type Equipement, type InfoMatch, type InfoTueur,
-  type JoueurPublic, type LigneClassement, type LigneStats, type MessageClient, type SignalVoix, type Slot, type Vec3, type Zone,
+  type JoueurPublic, type LigneClassement, type LigneStats, type MessageClient, type MonstresSnap, type SignalVoix, type Slot, type Vec3, type Zone,
 } from "./protocole";
+import { BUS_C3, avancerBusC3, busEnSnap, armesEnSnap, ecraseParBus, estSurLeToit, ramasserArmeC3, peutMonterSurBus, creerEtatBusC3, type EtatBusC3 } from "./bus-c3";
+import { creerFrappe, degatsImpactFrappe, verifierImpactsFrappe, type FrappeEnCours } from "./frappe-aerienne";
+import { creerNuageFumee, nuagesEnSnap, type NuageFumee } from "./fumigene";
 import { appliquerDegats, memoriserSante, regenerer, reinitialiserSante, restaurerSante, tuer as tuerSante } from "./sante";
 import type { CachetteTigre } from "./tigre-arene";
 import { toucheVraisemblable } from "./tir";
@@ -202,6 +205,15 @@ export class Salle implements ContexteSalle {
   private readonly tigres: ServiceTigres | null;
   private readonly evenements: ServiceEvenements | null;
   private readonly zombies: ServiceZombies | null;
+  /** Bus C3 express : arène seulement (null en zombies). */
+  private readonly busC3: EtatBusC3 | null;
+  private readonly frappesDisponibles = new Set<string>();
+  private frappesEnCours: FrappeEnCours[] = [];
+  private nuagesFumee: NuageFumee[] = [];
+  private compteurFrappes = 0;
+  private compteurFumigenes = 0;
+  /** Dernier fumigène lancé par joueur (anti-rafale). */
+  private readonly dernierFumigene = new Map<string, number>();
   private numero = 1;
   private phase: "jeu" | "entracte" = "jeu";
   private fin: number | null;
@@ -254,6 +266,7 @@ export class Salle implements ContexteSalle {
       })
       : null;
     this.zombies = options.zombies ? creerServiceZombies(this, { ...options.zombies, alea }) : null;
+    this.busC3 = options.zombies ? null : creerEtatBusC3(maintenant, this.alea);
   }
 
   /** (v3) Pilote du titan tigre : invulnérable, ni arme ni voiture ni état à pied. */
@@ -344,6 +357,7 @@ export class Salle implements ContexteSalle {
     cible.glisse = false;
     cible.morts++;
     cible.serie = 0;
+    this.frappesDisponibles.delete(cible.id);
     cible.reapparitionT = maintenant + JEU.delaiReapparitionMs;
     cible.equip.speciale = null; // sur la COPIE du joueur (EQUIPEMENT_DEFAUT est figé)
     cible.munSpeciale = 0;
@@ -362,6 +376,14 @@ export class Salle implements ContexteSalle {
       tueur.serie++;
       tueur.serieMax = Math.max(tueur.serieMax, tueur.serie);
       if (cause === "arme") tueur.killsParArme[arme] = (tueur.killsParArme[arme] ?? 0) + 1;
+      // une frappe par tranche de 5 kills d'affilée (5, 10, 15…), arène seulement
+      if (this.busC3 && tueur.serie % 5 === 0 && !this.frappesDisponibles.has(tueur.id)) {
+        this.frappesDisponibles.add(tueur.id);
+        sorties.push({
+          a: tueur.id,
+          m: { t: "frappe", evenement: "disponible", joueur: tueur.id, serie: tueur.serie },
+        });
+      }
     }
     sorties.push(this.presence());
     if (tueur && tueur.kills >= JEU.objectifKills) sorties.push(...this.terminer(maintenant));
@@ -561,6 +583,30 @@ export class Salle implements ContexteSalle {
         return j.enJeu && this.vehicules && !this.pilote(j.id) ? this.vehicules.recevoir(j, msg, maintenant) : [];
       case "pilotage": case "canon":
         return j.enJeu && this.evenements ? this.evenements.recevoir(j, msg, maintenant) : [];
+      case "lancerFrappe": {
+        if (!j.enJeu || !j.vivant || !this.frappesDisponibles.has(j.id) || !estVec3(msg.cible)) return [];
+        this.frappesDisponibles.delete(j.id);
+        const f = creerFrappe(`frappe_${++this.compteurFrappes}`, j.id, msg.cible, maintenant, this.alea);
+        this.frappesEnCours.push(f);
+        return [{ a: "joueurs", m: { t: "frappe", evenement: "lancee", joueur: j.id, cible: msg.cible } }];
+      }
+      case "lancerFumigene": {
+        if (!this.busC3 || !j.enJeu || !j.vivant || !estVec3(msg.p)) return [];
+        // anti-rafale : un fumigène toutes les 15 s, lâché près du lanceur
+        const dernier = this.dernierFumigene.get(j.id);
+        if (dernier !== undefined && maintenant - dernier < 15_000) return [];
+        if (Math.hypot(msg.p[0] - j.p[0], msg.p[1] - j.p[1], msg.p[2] - j.p[2]) > 5) return [];
+        this.dernierFumigene.set(j.id, maintenant);
+        const nuage = creerNuageFumee(`fum_${++this.compteurFumigenes}`, msg.p, maintenant);
+        this.nuagesFumee.push(nuage);
+        return [{ a: "joueurs", m: { t: "fumigene", id: nuage.id, p: nuage.p, debutT: nuage.debutT, finT: nuage.finT } }];
+      }
+      case "monterBus": {
+        if (!this.busC3 || !j.enJeu || !j.vivant || !peutMonterSurBus(j.p, this.busC3.p)) return [];
+        this.busC3.passagers.add(j.id);
+        j.p[1] = BUS_C3.toitY;
+        return [];
+      }
       case "vueScores": return this.vueScores(j, msg.ouvert, maintenant);
       case "invoquer": return j.enJeu && this.tigres ? this.tigres.recevoir(j, msg, maintenant) : [];
       case "voixActif": return this.voixActif(j, msg.actif);
@@ -1097,6 +1143,76 @@ export class Salle implements ContexteSalle {
     if (this.tigres) sorties.push(...this.tigres.tic(maintenant));
     if (this.evenements) sorties.push(...this.evenements.tic(maintenant));
     if (this.zombies) sorties.push(...this.zombies.tic(maintenant));
+
+    // Bus C3 express (arène seulement)
+    const bus = this.busC3;
+    const evtsBus = bus ? avancerBusC3(bus, maintenant, this.alea) : [];
+    for (const eb of evtsBus) {
+      if (eb.type === "annonce") {
+        sorties.push({ a: "joueurs", m: { t: "busC3", evenement: "annonce" } });
+      } else if (eb.type === "debutCourse") {
+        sorties.push({ a: "joueurs", m: { t: "busC3", evenement: "passage", p: eb.p, cap: eb.cap, v: eb.v } });
+      } else if (eb.type === "finCourse") {
+        sorties.push({ a: "joueurs", m: { t: "busC3", evenement: "fin" } });
+      }
+    }
+
+    if (bus && bus.phase === "course") {
+      for (const j of this.table.values()) {
+        if (!j.enJeu || !j.vivant) continue;
+        if (estSurLeToit(j.p, bus.p, bus.cap)) {
+          bus.passagers.add(j.id);
+          j.v[0] = Math.sin(bus.cap) * bus.v;
+          j.v[2] = -Math.cos(bus.cap) * bus.v;
+          continue;
+        } else {
+          bus.passagers.delete(j.id);
+        }
+
+        const estDansVehicule = !!this.vehicules?.occupation(j.id);
+        if (!estDansVehicule && ecraseParBus(j.p, bus.p, bus.cap)) {
+          sorties.push(...this.tuer(j, null, "bus_c3", maintenant));
+        }
+      }
+    }
+
+    // Ramassage d'armes uniques larguées par le bus C3
+    for (const j of bus ? this.table.values() : []) {
+      if (!j.enJeu || !j.vivant) continue;
+      const ramasse = ramasserArmeC3(bus!, j.p);
+      if (ramasse) {
+        j.equip.speciale = ramasse.arme;
+        j.munSpeciale = ramasse.arme === "lance_grenades" ? 6 : ramasse.arme === "bazooka" ? 3 : 3;
+        this.memoriserPrecedent(j);
+        j.main = "speciale";
+        j.arme = ramasse.arme;
+        sorties.push(
+          { a: j.id, m: { t: "equipement", equip: copierEquipement(j.equip), main: "speciale", munSpeciale: j.munSpeciale } },
+          { a: "joueurs", m: { t: "ramassageArme", id: ramasse.id, par: j.pseudo, arme: ramasse.arme } }
+        );
+      }
+    }
+
+    // Frappes aériennes en cours
+    for (const f of this.frappesEnCours) {
+      const impacts = verifierImpactsFrappe(f, maintenant);
+      for (const imp of impacts) {
+        sorties.push({ a: "joueurs", m: { t: "explosionMonstre", p: imp.p, rayon: imp.rayonM } });
+        const tireur = this.joueur(f.joueur) ?? null;
+        for (const j of this.table.values()) {
+          if (!j.enJeu || !j.vivant || j.id === f.joueur) continue;
+          const d = Math.hypot(j.p[0] - imp.p[0], j.p[2] - imp.p[2]);
+          if (d <= imp.rayonM) {
+            const deg = degatsImpactFrappe(d);
+            sorties.push(...this.infliger(j, deg, tireur, "frappe_aerienne", "corps", "bazooka", maintenant, imp.p));
+          }
+        }
+      }
+    }
+    this.frappesEnCours = this.frappesEnCours.filter((f) => maintenant < f.finT);
+
+    // Nuages de fumée expirés
+    this.nuagesFumee = this.nuagesFumee.filter((n) => maintenant < n.finT);
     let evince = false;
     for (const j of this.table.values()) {
       if (j.enJeu && !j.vivant && j.reapparitionT !== null && maintenant >= j.reapparitionT) {
@@ -1126,8 +1242,18 @@ export class Salle implements ContexteSalle {
     const j = this.snap(maintenant);
     const vehicules = this.vehicules?.snap() ?? [];
     const tigres = this.tigres?.snap() ?? [];
-    const monstres = this.evenements?.snap() ?? null;
+    const monstresBase = this.evenements?.snap() ?? null;
     const zombies = this.zombies?.snap() ?? null;
+    const bus = this.busC3;
+    const monstres: MonstresSnap | null = bus
+      ? {
+        ...(monstresBase ?? {}),
+        bus: busEnSnap(bus),
+        armesLachees: armesEnSnap(bus),
+        fumigenes: nuagesEnSnap(this.nuagesFumee),
+        frappes: this.frappesEnCours.map((f) => ({ id: f.id, cible: f.cible, joueur: f.joueur, t0: f.t0, finT: f.finT })),
+      }
+      : monstresBase;
     const sorties: Sortie[] = [{
       a: "joueurs",
       m: {
@@ -1183,6 +1309,10 @@ export class Salle implements ContexteSalle {
     if (this.vehicules) sorties.push(...this.vehicules.reinitialiser(maintenant));
     if (this.tigres) sorties.push(...this.tigres.reinitialiser(maintenant));
     if (this.evenements) sorties.push(...this.evenements.reinitialiser(maintenant));
+    this.frappesDisponibles.clear();
+    this.frappesEnCours = [];
+    this.nuagesFumee = [];
+    this.dernierFumigene.clear();
     for (const j of this.table.values()) {
       j.kills = 0;
       j.morts = 0;

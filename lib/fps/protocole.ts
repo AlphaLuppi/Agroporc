@@ -36,12 +36,15 @@ export const ARMES_SECONDAIRES = ["pistolet", "revolver", "mini_uzi"] as const;
 export const ARMES_SECONDAIRES_ZOMBIES = ["rayon"] as const;
 /** Armes spéciales : offertes par Elsa, munitions limitées, perdues à la mort. */
 export const ARMES_SPECIALES = ["railgun", "minigun", "magnum_dore"] as const;
+/** Armes uniques : larguées par le bus C3 (lance-grenades, bazooka, fumigène). */
+export const ARMES_UNIQUES = ["lance_grenades", "bazooka", "fumigene"] as const;
 
 export type ArmePrincipaleId = (typeof ARMES_PRINCIPALES)[number];
 export type ArmeSecondaireId = (typeof ARMES_SECONDAIRES)[number] | (typeof ARMES_SECONDAIRES_ZOMBIES)[number];
 export type ArmeSpecialeId = (typeof ARMES_SPECIALES)[number];
+export type ArmeUniqueId = (typeof ARMES_UNIQUES)[number];
 /** Toute arme à feu (a une entrée dans STATS). */
-export type ArmeFeuId = ArmePrincipaleId | ArmeSecondaireId | ArmeSpecialeId;
+export type ArmeFeuId = ArmePrincipaleId | ArmeSecondaireId | ArmeSpecialeId | ArmeUniqueId;
 /** Armes de mêlée (slot `couteau`) : le couteau (défaut) ou l'épée (voir `MELEE` dans armes.ts). */
 export const ARMES_MELEE = ["couteau", "epee"] as const;
 export type ArmeMeleeId = (typeof ARMES_MELEE)[number];
@@ -49,8 +52,8 @@ export const estMelee = (x: unknown): x is ArmeMeleeId => (ARMES_MELEE as readon
 /** Arme en main : une arme à feu ou une arme de mêlée. */
 export type ArmeId = ArmeFeuId | ArmeMeleeId;
 
-/** Toutes les armes à feu (principales, secondaires puis spéciales). */
-export const ARMES: readonly ArmeFeuId[] = [...ARMES_PRINCIPALES, ...ARMES_SECONDAIRES, ...ARMES_SECONDAIRES_ZOMBIES, ...ARMES_SPECIALES];
+/** Toutes les armes à feu (principales, secondaires, spéciales puis uniques). */
+export const ARMES: readonly ArmeFeuId[] = [...ARMES_PRINCIPALES, ...ARMES_SECONDAIRES, ...ARMES_SECONDAIRES_ZOMBIES, ...ARMES_SPECIALES, ...ARMES_UNIQUES];
 
 /** Emplacement d'équipement. `couteau` est toujours disponible, `speciale` seulement si portée. */
 export type Slot = "principale" | "secondaire" | "couteau" | "speciale";
@@ -60,7 +63,7 @@ export const SLOTS: readonly Slot[] = ["principale", "secondaire", "couteau", "s
 export interface Equipement {
   principale: ArmePrincipaleId;
   secondaire: ArmeSecondaireId;
-  speciale: ArmeSpecialeId | null;
+  speciale: ArmeSpecialeId | ArmeUniqueId | null;
   /** arme blanche du slot `couteau` ; absent = couteau (v5) */
   melee?: ArmeMeleeId;
   /**
@@ -76,7 +79,7 @@ export interface Equipement {
  * FIGÉ : jamais affecté tel quel à un joueur (Elsa et `infliger` écrivent dans `speciale`) ; utiliser `copierEquipement`.
  */
 export const EQUIPEMENT_DEFAUT: Readonly<Equipement> = Object.freeze({
-  principale: "mitraillette" as ArmePrincipaleId, secondaire: "pistolet" as ArmeSecondaireId, speciale: null as ArmeSpecialeId | null,
+  principale: "mitraillette" as ArmePrincipaleId, secondaire: "pistolet" as ArmeSecondaireId, speciale: null as ArmeSpecialeId | ArmeUniqueId | null,
 });
 export const SLOT_DEFAUT: Slot = "secondaire";
 /** Copie modifiable d'un équipement (une par joueur). `melee` et `sansPrincipale` ne sont recopiés que s'ils sont définis (jamais de clé `undefined`). */
@@ -106,7 +109,7 @@ export const SIEGES_PAR_VEHICULE = 4;
  * (`par` = "") ou allié (`par` = le lanceur, crédité du kill). "tigre_robot" : le tigre géant des événements, jamais un tigre largué.
  * "tigre_zombie" : coup d'un tigre zombie du mode zombies.
  */
-export type CauseMort = "arme" | "ecrase_pnj" | "ecrase_vehicule" | "tigre" | "explosion" | "truck_fou" | "tigre_robot" | "titan" | "tigre_zombie";
+export type CauseMort = "arme" | "ecrase_pnj" | "ecrase_vehicule" | "tigre" | "explosion" | "truck_fou" | "tigre_robot" | "titan" | "tigre_zombie" | "bus_c3" | "frappe_aerienne";
 
 /** Voiture de la circulation (`pnj`, indice dans `flotte`) ou voiture conduisible (`vehicule`, id du garage). */
 export type GenreVoiture = "pnj" | "vehicule";
@@ -331,8 +334,25 @@ export interface TigreSnap {
 }
 /** Titan tigre piloté (v3). */
 export interface TitanSnap { pilote: string; p: Vec3; cap: number; v: number; pv: number; pvMax: number }
-/** Monstres présents (snap des joueurs en arène). */
-export interface MonstresSnap { truck?: TruckSnap; tigre?: TigreSnap; titan?: TitanSnap }
+/** Bus C3 express : position, cap, vitesse, actif, passagers sur le toit. */
+export interface BusSnap { p: Vec3; cap: number; v: number; actif: boolean; passagers?: string[] }
+/** Arme unique larguée par le bus C3 sur la chaussée. */
+export interface ArmeLacheeSnap { id: string; arme: ArmeUniqueId; p: Vec3 }
+/** Zone de fumée active. */
+export interface FumigeneSnap { id: string; p: Vec3; debutT: number; finT: number }
+/** Frappe aérienne en cours. */
+export interface FrappeSnap { id: string; cible: Vec3; joueur: string; t0: number; finT: number }
+
+/** Monstres et éléments dynamiques présents (snap des joueurs en arène). */
+export interface MonstresSnap {
+  truck?: TruckSnap;
+  tigre?: TigreSnap;
+  titan?: TitanSnap;
+  bus?: BusSnap;
+  armesLachees?: ArmeLacheeSnap[];
+  fumigenes?: FumigeneSnap[];
+  frappes?: FrappeSnap[];
+}
 
 /** Cadeau d'Elsa. `arme` seulement pour le genre "arme". */
 export interface OffreElsa { id: number; genre: "soin" | "arme"; arme?: ArmeSpecialeId; finT: number }
@@ -506,6 +526,12 @@ export type MessageClient =
   | { t: "voixActif"; actif: boolean }
   /** Signal WebRTC pour le joueur `a` (relayé seulement si les deux ont la voix activée). */
   | { t: "voix"; a: string; s: SignalVoix }
+  /** Lancer une frappe aérienne ciblée (au bout de 5 kills d'affilée). */
+  | { t: "lancerFrappe"; cible: Vec3 }
+  /** Lancer une grenade fumigène. */
+  | { t: "lancerFumigene"; p: Vec3; v: Vec3 }
+  /** Monter sur le toit du bus C3 s'il est proche. */
+  | { t: "monterBus" }
   | { t: "ping"; t0: number };
 
 // ---------- serveur → client ----------
@@ -626,6 +652,14 @@ export type MessageServeur =
   | { t: "zombieMort"; id: string; p: Vec3; par: string; zone: Zone; cause?: "explosion" | "nuke" | "melee" }
   /** (v7) Effet ponctuel de la partie de zombies (aux membres de la salle). */
   | { t: "zevt"; e: EvenementZombies }
+  /** Frappe aérienne : disponible (série de 5 kills), lancée (coordonnées ciblées), perdue. */
+  | { t: "frappe"; evenement: "disponible" | "lancee" | "perdue"; joueur: string; cible?: Vec3; serie?: number }
+  /** Fumigène activé en un point. */
+  | { t: "fumigene"; id: string; p: Vec3; debutT: number; finT: number }
+  /** Bus C3 express : annonce d'arrivée, passage, départ. */
+  | { t: "busC3"; evenement: "annonce" | "passage" | "fin"; p?: Vec3; cap?: number; v?: number }
+  /** Ramassage d'une arme unique tombée du bus C3. */
+  | { t: "ramassageArme"; id: string; par: string; arme: ArmeUniqueId }
   | { t: "pong"; t0: number; maintenant: number }
   | { t: "erreur"; code: "plein" | "version" | "pseudo" | "flood"; message: string };
 

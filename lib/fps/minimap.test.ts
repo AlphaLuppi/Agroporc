@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { SceneData } from "../agroparc3d/types";
 import {
-  ANCRE_NORD, ANCRE_REGARD, BISEAU_U, Cadence, TAILLE_CARTE_U, ZONE_CARTE, estSceneZombies, arrondi, capEcran, capEcranObjet, chevronBord, estDansCarte, matriceCouche,
+  ANCRE_NORD, ANCRE_REGARD, BISEAU_U, Cadence, TAILLE_CARTE_U, ZONE_CARTE, estSceneZombies, arrondi, capEcran, capEcranObjet, chevronBord, depuisZone, estDansCarte, matriceCouche,
   nomCourtPoi, nomZone, polygoneCadre, positionNord, projeter, rayonAuto, tailleEffective, versCarte, versZone, type VueCarte,
 } from "./minimap";
 import { ROND_POINT, ZONE_APPARITION, positionElsa } from "./zones";
@@ -220,6 +220,14 @@ describe("versZone (grande carte)", () => {
     expect(versZone(z, 400, 200, 100, 50)).toEqual({ x: 400, y: 200 });
     expect(versZone(z, 400, 200, 0, 0)).toEqual({ x: 200, y: 100 });
     expect(versZone(z, 400, 200, 0, -25).y).toBeLessThan(100);
+  });
+  it("depuisZone inverse versZone", () => {
+    const z = { x0: -100, z0: -50, x1: 100, z1: 50 };
+    const monde = { x: 42, z: -10 };
+    const p = versZone(z, 400, 200, monde.x, monde.z);
+    const retour = depuisZone(z, 400, 200, p.x, p.y);
+    expect(retour.x).toBeCloseTo(monde.x, 6);
+    expect(retour.z).toBeCloseTo(monde.z, 6);
   });
 });
 

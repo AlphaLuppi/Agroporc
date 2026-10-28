@@ -160,6 +160,10 @@ export interface PropsHudArene {
   surRejouer?(): void;
   /** (v5) « Quitter » de la fin de partie : sort ET referme le panneau (absent : comme `surQuitter`, retour au lobby) */
   surQuitterVue?(): void;
+  /** Déclenchement d'une frappe aérienne (série de 5 kills) */
+  surLancerFrappe?(cible: [number, number, number]): void;
+  /** Lancer d'un fumigène */
+  surLancerFumigene?(): void;
 }
 
 /** Props de `ChoixEquipement` (écrit par U1, utilisé par U1 : lobby, et par U2 : écran de mort, killcam, pause). */

@@ -13,12 +13,12 @@ import { chargerModele, creerTigre as creerTigre3D, type ModeleTigre, type Tigre
 import { squelette } from "../tigre3d/squelette";
 import type { LaserAnnonce } from "./jeu-monstres";
 import { ECHELLE_TIGRE, TITAN, TRUCK_FOU } from "./monstres";
-import type { TigreSnap, TitanSnap, TruckSnap, Vec3 } from "./protocole";
+import type { ArmeLacheeSnap, BusSnap, FrappeSnap, FumigeneSnap, MonstresSnap, TigreSnap, TitanSnap, TruckSnap, Vec3 } from "./protocole";
 import { creerAnimTigreGeant, type AnimTigreGeant } from "./tigre-geant";
 
 export interface RenduMonstres {
-  /** Pose les monstres interpolés ; `tS` = horloge locale (s), `tsServeur` = horloge serveur (ms) pour les lasers ; `piloteMoi` cache mon titan. */
-  maj(m: { truck?: TruckSnap; tigre?: TigreSnap; titan?: TitanSnap }, lasers: readonly LaserAnnonce[], tS: number, tsServeur: number, dt: number, couleurTitan: string, piloteMoi: boolean): void;
+  /** Pose les monstres et éléments dynamiques interpolés ; `tS` = horloge locale (s), `tsServeur` = horloge serveur (ms) pour les lasers ; `piloteMoi` cache mon titan. */
+  maj(m: MonstresSnap, lasers: readonly LaserAnnonce[], tS: number, tsServeur: number, dt: number, couleurTitan: string, piloteMoi: boolean): void;
   explosion(p: Vec3, rayon: number): void;
   dispose(): void;
 }
@@ -434,6 +434,156 @@ function creerExplosions(parent: THREE.Object3D, aDisposer: { dispose(): void }[
 }
 
 // ---------------------------------------------------------------------------------------------
+// Bus C3, armes uniques, fumigènes et frappes aériennes
+// ---------------------------------------------------------------------------------------------
+
+const COULEUR_BUS_PRINCIPALE = 0x00e5ff; // Cyan Chrono'hop
+const COULEUR_BUS_ACCENT = 0xb8f13a;     // Lime Chrono'hop
+
+function creerBusC3(parent: THREE.Object3D, aDisposer: { dispose(): void }[]) {
+  const group = new THREE.Group();
+  group.visible = false;
+  parent.add(group);
+  const m = materiaux(COULEUR_BUS_PRINCIPALE, aDisposer);
+  const mAccent = materiaux(COULEUR_BUS_ACCENT, aDisposer);
+
+  const L = 12.0, l = 3.0, H = 3.2;
+  // Caisse principale du bus (arrière et milieu)
+  boite(group, m, l, H - 0.7, L, 0, 0.7 + (H - 0.7) / 2, 0, aDisposer);
+  // Bandeau supérieur de ligne (lime)
+  boite(group, mAccent, l + 0.05, 0.35, L, 0, H + 0.1, 0, aDisposer);
+  // Pare-brise et cabine avant (-z)
+  boite(group, m, l - 0.1, 1.8, 1.2, 0, 1.8, -L / 2 + 0.6, aDisposer);
+  // Rétroviseurs
+  boite(group, mAccent, 0.15, 0.45, 0.25, -l / 2 - 0.15, 2.2, -L / 2 + 0.8, aDisposer);
+  boite(group, mAccent, 0.15, 0.45, 0.25, l / 2 + 0.15, 2.2, -L / 2 + 0.8, aDisposer);
+  // 6 Roues (3 essieux)
+  for (const sx of [-1, 1]) {
+    for (const z of [-L * 0.35, L * 0.15, L * 0.38]) {
+      boite(group, m, 0.35, 0.95, 0.95, sx * (l / 2 - 0.1), 0.48, z, aDisposer);
+    }
+  }
+  // Phares avant puissants (lumières xeno)
+  lumiere(group, 0xffffff, 0.6, 0.3, 0.1, -1.0, 1.1, -L / 2 - 0.02, aDisposer);
+  lumiere(group, 0xffffff, 0.6, 0.3, 0.1, 1.0, 1.1, -L / 2 - 0.02, aDisposer);
+  // Feux arrière rouges
+  lumiere(group, 0xff2030, 0.5, 0.3, 0.1, -1.1, 1.2, L / 2 + 0.02, aDisposer);
+  lumiere(group, 0xff2030, 0.5, 0.3, 0.1, 1.1, 1.2, L / 2 + 0.02, aDisposer);
+  // Girouette avant lumineuse "C3"
+  lumiere(group, 0xffea00, 1.8, 0.4, 0.1, 0, H - 0.2, -L / 2 - 0.02, aDisposer);
+
+  return {
+    group,
+    maj(s: BusSnap | undefined) {
+      if (!s || !s.actif) { group.visible = false; return; }
+      group.visible = true;
+      group.position.set(s.p[0], s.p[1], s.p[2]);
+      group.rotation.y = s.cap;
+    },
+  };
+}
+
+function creerArmesLachees(parent: THREE.Object3D, aDisposer: { dispose(): void }[]) {
+  const group = new THREE.Group();
+  parent.add(group);
+
+  return {
+    maj(armes: readonly ArmeLacheeSnap[] | undefined, tS: number) {
+      group.clear();
+      if (!armes || !armes.length) return;
+      for (const a of armes) {
+        const itemGrp = new THREE.Group();
+        const bob = Math.sin(tS * 3 + a.p[0]) * 0.12;
+        itemGrp.position.set(a.p[0], a.p[1] + 0.4 + bob, a.p[2]);
+        itemGrp.rotation.y = tS * 2;
+
+        const col = a.arme === "bazooka" ? 0xff4d4d : a.arme === "lance_grenades" ? 0xff9234 : 0x00e5ff;
+        const m = materiaux(col, aDisposer);
+        boite(itemGrp, m, 1.0, 0.45, 0.45, 0, 0, 0, aDisposer);
+        lumiere(itemGrp, col, 0.8, 0.25, 0.25, 0, 0, 0, aDisposer);
+        group.add(itemGrp);
+      }
+    },
+  };
+}
+
+function creerFumigenesRendu(parent: THREE.Object3D, aDisposer: { dispose(): void }[]) {
+  const group = new THREE.Group();
+  parent.add(group);
+
+  return {
+    maj(fums: readonly FumigeneSnap[] | undefined, tsServeur: number, tS: number) {
+      group.clear();
+      if (!fums || !fums.length) return;
+      for (const f of fums) {
+        if (tsServeur < f.debutT || tsServeur >= f.finT) continue;
+        const ageS = (tsServeur - f.debutT) / 1000;
+        const restantS = (f.finT - tsServeur) / 1000;
+        const rMax = 12.0;
+        const r = ageS < 2.5 ? rMax * (ageS / 2.5) : restantS < 3.5 ? rMax * (restantS / 3.5) : rMax;
+        const opacite = Math.max(0.1, Math.min(0.85, ageS < 0.8 ? ageS / 0.8 : restantS < 3.5 ? restantS / 3.5 : 0.85));
+
+        const geo = new THREE.SphereGeometry(r, 12, 8);
+        aDisposer.push(geo);
+        const mat = new THREE.MeshBasicMaterial({
+          color: 0xc8cdd8,
+          transparent: true,
+          opacity: opacite * 0.4,
+          wireframe: true,
+          depthWrite: false,
+        });
+        aDisposer.push(mat);
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.position.set(f.p[0], f.p[1] + r * 0.45, f.p[2]);
+        mesh.rotation.y = tS * 0.3;
+        group.add(mesh);
+      }
+    },
+  };
+}
+
+function creerFrappesRendu(parent: THREE.Object3D, aDisposer: { dispose(): void }[]) {
+  const group = new THREE.Group();
+  parent.add(group);
+
+  return {
+    maj(frappes: readonly FrappeSnap[] | undefined, tsServeur: number, tS: number) {
+      group.clear();
+      if (!frappes || !frappes.length) return;
+      for (const f of frappes) {
+        if (tsServeur < f.t0 || tsServeur >= f.finT) continue;
+        const geoAnneau = new THREE.RingGeometry(16.5, 18.0, 32);
+        geoAnneau.rotateX(-Math.PI / 2);
+        aDisposer.push(geoAnneau);
+        const matAnneau = new THREE.MeshBasicMaterial({
+          color: 0xff1744,
+          side: THREE.DoubleSide,
+          transparent: true,
+          opacity: 0.85 + Math.sin(tS * 10) * 0.15,
+        });
+        aDisposer.push(matAnneau);
+        const ring = new THREE.Mesh(geoAnneau, matAnneau);
+        ring.position.set(f.cible[0], 0.15, f.cible[2]);
+        group.add(ring);
+
+        const geoFaisceau = new THREE.CylinderGeometry(0.15, 0.15, 150, 8);
+        geoFaisceau.translate(0, 75, 0);
+        aDisposer.push(geoFaisceau);
+        const matFaisceau = new THREE.MeshBasicMaterial({
+          color: 0xff1744,
+          transparent: true,
+          opacity: 0.7,
+        });
+        aDisposer.push(matFaisceau);
+        const beam = new THREE.Mesh(geoFaisceau, matFaisceau);
+        beam.position.set(f.cible[0], 0, f.cible[2]);
+        group.add(beam);
+      }
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------------------------
 // Fabrique
 // ---------------------------------------------------------------------------------------------
 
@@ -447,14 +597,21 @@ export function creerRenduMonstres(scene: THREE.Scene): RenduMonstres {
   const titan = creerTigre(racine, "#9be9ff", aDisposer);
   const laser = creerLaser(racine, aDisposer);
   const explosions = creerExplosions(racine, aDisposer);
+  const bus = creerBusC3(racine, aDisposer);
+  const armesLachees = creerArmesLachees(racine, aDisposer);
+  const fumigenesRendu = creerFumigenesRendu(racine, aDisposer);
+  const frappesRendu = creerFrappesRendu(racine, aDisposer);
   let couleurTitan = "";
   return {
     maj(m, lasers, tS, tsServeur, dt, couleur, piloteMoi) {
       truck.maj(m.truck, tS);
+      bus.maj(m.bus);
+      armesLachees.maj(m.armesLachees, tS);
+      fumigenesRendu.maj(m.fumigenes, tsServeur, tS);
+      frappesRendu.maj(m.frappes, tsServeur, tS);
       const proche = lasers.length ? Math.max(...lasers.map((l) => (l.tirT > tsServeur ? 1 - Math.min(1, (l.tirT - tsServeur) / 1400) : 0))) : 0;
       tigre.maj(m.tigre, ECHELLE_TIGRE, tS, dt, proche);
       if (couleur !== couleurTitan) { couleurTitan = couleur; titan.couleur(couleur); }
-      // le pilote ne voit pas son propre titan (vue depuis la tête)
       titan.maj(piloteMoi ? undefined : m.titan, TITAN.echelle, tS, dt, 0);
       laser.maj(lasers, tsServeur);
       explosions.maj(dt);

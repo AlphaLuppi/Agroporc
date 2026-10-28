@@ -17,7 +17,7 @@
  */
 import { estMelee, type ArmeFeuId, type ArmeId, type ArmeMeleeId, type Vec3, type Zone } from "./protocole";
 
-export type CategorieArme = "principale" | "secondaire" | "speciale";
+export type CategorieArme = "principale" | "secondaire" | "speciale" | "unique";
 
 export interface Arme {
   id: ArmeFeuId;
@@ -274,6 +274,42 @@ export const STATS: Record<ArmeFeuId, Arme> = {
     portee: 160, chute: { debut: 40, fin: 100, min: 0.8 },
     vitesse: 1, zoom: null,
     zombie: { degats: 800, multTete: 3, chargeur: 8, ameliore: { nom: "Magnum à l'or fin", degats: 1600, multTete: 3, chargeur: 14 } },
+  },
+  lance_grenades: {
+    id: "lance_grenades", nom: "Lance-grenades", nomCourt: "L-grenade", categorie: "unique",
+    description: "Arme unique larguée par le bus C3 : grenades explosives infligeant 110 dégâts à l'impact.",
+    degats: 110, multTete: 1.3, plombs: 1, gerbe: 0,
+    cadenceS: 0.65, auto: false, chargeur: 6, rechargeS: 0, sansRecharge: true,
+    dispersion: { base: 0.005, mouvement: 0.02, air: 0.04, parTir: 0.015, max: 0.06, retourS: 0.5, viseur: 0.003 },
+    recul: { tangage: 0.06, lacet: 0.01 },
+    portee: 160, chute: { debut: 60, fin: 140, min: 0.8 },
+    vitesse: 0.95, zoom: null,
+    // pas dans la boîte des zombies (arène seulement) ; valeurs de remplissage
+    zombie: { degats: 300, multTete: 1, chargeur: 6, explosion: { degats: 600, rayon: 3 }, ameliore: { nom: "Lance-gratins", degats: 600, multTete: 1, chargeur: 10, explosion: { degats: 1200, rayon: 3.5 } } },
+  },
+  bazooka: {
+    id: "bazooka", nom: "Bazooka", nomCourt: "Bazooka", categorie: "unique",
+    description: "Arme lourde unique larguée par le bus C3 : roquette dévastatrice tuant en un coup direct.",
+    degats: 160, multTete: 1.5, plombs: 1, gerbe: 0,
+    cadenceS: 1.4, auto: false, chargeur: 3, rechargeS: 0, sansRecharge: true,
+    dispersion: { base: 0.002, mouvement: 0.015, air: 0.03, parTir: 0.02, max: 0.05, retourS: 0.6, viseur: 0.001 },
+    recul: { tangage: 0.09, lacet: 0.012 },
+    portee: 350, chute: { debut: 350, fin: 350, min: 1 },
+    vitesse: 0.85, zoom: null,
+    // pas dans la boîte des zombies (arène seulement) ; valeurs de remplissage
+    zombie: { degats: 1500, multTete: 1, chargeur: 3, explosion: { degats: 1500, rayon: 4 }, ameliore: { nom: "Bazooka au four", degats: 3000, multTete: 1, chargeur: 5, explosion: { degats: 3000, rayon: 4.5 } } },
+  },
+  fumigene: {
+    id: "fumigene", nom: "Fumigène", nomCourt: "Fumigène", categorie: "unique",
+    description: "Grenade fumigène : déploie un écran de fumée opaque masquant les déplacements.",
+    degats: 15, multTete: 1, plombs: 1, gerbe: 0,
+    cadenceS: 1.0, auto: false, chargeur: 3, rechargeS: 0, sansRecharge: true,
+    dispersion: { base: 0.01, mouvement: 0.02, air: 0.03, parTir: 0.01, max: 0.05, retourS: 0.4, viseur: 0.005 },
+    recul: { tangage: 0.03, lacet: 0.005 },
+    portee: 80, chute: { debut: 40, fin: 80, min: 0.5 },
+    vitesse: 1.05, zoom: null,
+    // pas dans la boîte des zombies (arène seulement) ; valeurs de remplissage
+    zombie: { degats: 15, multTete: 1, chargeur: 3, ameliore: { nom: "Fumigène fumé", degats: 30, multTete: 1, chargeur: 5 } },
   },
 };
 

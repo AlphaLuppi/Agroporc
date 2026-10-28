@@ -872,7 +872,7 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
 
   /** Armes que la boîte peut donner à `eq` (BO1 : jamais l'arme de départ ni une arme déjà portée). */
   function armesBoite(eq: Equipement): ArmeFeuId[] {
-    return ARMES.filter((a) => !HORS_BOITE.has(a) && !possede(eq, a));
+    return ARMES.filter((a) => !HORS_BOITE.has(a) && STATS[a].categorie !== "unique" && !possede(eq, a));
   }
 
   /** La peluche de BO1 (`treasure_chest_think`) : jamais avant 4 utilisations ; 15 % de 4 à 7 ; 8ᵉ forcée sans déménagement ; ensuite 30 % puis 50 %. */
@@ -1065,11 +1065,11 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     const categorie = STATS[arme].categorie;
     ctx.memoriserPrecedent(j);
     delete j.cadenceArme[arme];
-    const remplacee = categorie === "speciale" ? equip.speciale : categorie === "principale" ? (equip.sansPrincipale ? null : equip.principale) : equip.secondaire;
+    const remplacee = categorie === "speciale" || categorie === "unique" ? equip.speciale : categorie === "principale" ? (equip.sansPrincipale ? null : equip.principale) : equip.secondaire;
     let ameliorees = (equip.ameliorees ?? []).filter((a) => a !== remplacee && a !== arme);
     if (amelioree) ameliorees = [...ameliorees, arme];
     if (ameliorees.length) equip.ameliorees = ameliorees; else delete equip.ameliorees;
-    if (categorie === "speciale") {
+    if (categorie === "speciale" || categorie === "unique") {
       equip.speciale = arme as ArmeSpecialeId;
       j.munSpeciale = chargeurZombie(arme, amelioree);
       return ctx.equiper(j, equip, "speciale", t);

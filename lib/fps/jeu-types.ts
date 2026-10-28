@@ -85,6 +85,10 @@ export interface HudEtat {
   voixParlants: string;
   /** (v3) je pilote le titan tigre (bloc d'armes remplacé par le bandeau du titan) */
   titan: boolean;
+  /** Le joueur local est immergé dans un nuage de fumigène */
+  dansFumee?: boolean;
+  /** Une frappe aérienne est disponible (série de 5 kills) */
+  frappeDisponible?: boolean;
 
   // ---- MODE ZOMBIES (v5) : tous optionnels, absents en arène (les littéraux `HudEtat` existants restent valides) ----
   /** mode de la salle : "arene" ou "zombies" */
@@ -243,6 +247,12 @@ export interface JeuHandle {
   monstres(): EtatMonstresHud;
   /** (v5) État du mode zombies (argent, gains, refus, relève) ; objet neuf à chaque appel, valeurs neutres en arène. */
   zombies(): EtatZombiesHud;
+  /** Déclenche une frappe aérienne sur le point au sol spécifié. */
+  lancerFrappe?(cible: Vec3): void;
+  /** Lance un fumigène devant le joueur. */
+  lancerFumigene?(): void;
+  /** Monte sur le Bus C3 s'il est à portée. */
+  monterBus?(): void;
   dispose(): void;
   /** Crochet de test (window.__arene en développement). */
   debug: {

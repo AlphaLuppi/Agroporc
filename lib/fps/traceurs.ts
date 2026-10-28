@@ -36,6 +36,9 @@ export const TRACEURS: Record<ArmeFeuId, ParamsTraceur> = {
   minigun: { vitesse: 240, longueur: 8, epaisseurPx: 3, vieMinS: 0.25, persistanceS: 0, couleur: "#ff9b6b" },
   magnum_dore: { vitesse: 280, longueur: 8, epaisseurPx: 3, vieMinS: 0.25, persistanceS: 0, couleur: "#ffd700" },
   rayon: { vitesse: 90, longueur: 4, epaisseurPx: 6, vieMinS: 0.3, persistanceS: 0, couleur: "#5dff6a" },
+  lance_grenades: { vitesse: 180, longueur: 6, epaisseurPx: 4, vieMinS: 0.25, persistanceS: 0, couleur: "#ff9234" },
+  bazooka: { vitesse: 260, longueur: 14, epaisseurPx: 5, vieMinS: 0.25, persistanceS: 0, couleur: "#ff4d4d" },
+  fumigene: { vitesse: 140, longueur: 5, epaisseurPx: 4, vieMinS: 0.25, persistanceS: 0, couleur: "#d0d4dc" },
 };
 
 export interface EtatTraceur {

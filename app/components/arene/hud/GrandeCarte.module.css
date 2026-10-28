@@ -1,5 +1,6 @@
 /* Grande carte : plaque centrée, 600 unités de large (bornée par la fenêtre), ratio de la zone jouable en --ratio. */
 .voile { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; }
+.voile[data-ciblage="oui"] { pointer-events: auto; }
 .panneau {
   display: flex; flex-direction: column; gap: calc(6 * var(--u, 1px));
   width: min(calc(600 * var(--u, 1px)), 92vw, calc(76vh * var(--ratio, 1.33)));
@@ -7,11 +8,18 @@
 }
 .cadre { position: relative; width: 100%; aspect-ratio: var(--ratio, 1.33); }
 .canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.canvas[data-ciblage="oui"] { cursor: crosshair; pointer-events: auto; }
 .legende {
   margin: 0; color: var(--ag-ink-dim); text-shadow: none;
   font-family: var(--ag-display), var(--ag-mono), monospace; font-weight: 600; letter-spacing: 0.08em;
   font-size: max(11px, calc(11 * var(--u, 1px))); line-height: 1.3;
 }
+.legendeAlerte {
+  color: var(--ag-danger);
+  font-weight: 700;
+  animation: pulse 1s infinite alternate;
+}
+@keyframes pulse { from { opacity: 0.8; } to { opacity: 1; } }
 .touche {
   font: inherit; padding: 0 calc(4 * var(--u, 1px)); border: 1px solid var(--ag-cadre); color: var(--ag-cyan); background: transparent;
 }

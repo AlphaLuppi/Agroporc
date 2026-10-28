@@ -172,6 +172,14 @@ export function versZone(zone: ZoneJouable, largeurPx: number, hauteurPx: number
   };
 }
 
+/** Transformation inverse de versZone : convertit un point écran (px) en coordonnées monde (x, z). */
+export function depuisZone(zone: ZoneJouable, largeurPx: number, hauteurPx: number, px: number, py: number): { x: number; z: number } {
+  return {
+    x: zone.x0 + (px / Math.max(1e-6, largeurPx)) * (zone.x1 - zone.x0),
+    z: zone.z0 + (py / Math.max(1e-6, hauteurPx)) * (zone.z1 - zone.z0),
+  };
+}
+
 /**
  * Matrice 2D (a, b, c, d, e, f de `setTransform`) qui place la couche statique : un pixel (u, v) de la couche est le point monde
  * (x0 + u/échelle, z0 + v/échelle), projeté exactement comme `versCarte`.

@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useRef, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import type { SceneData } from "@/lib/agroparc3d/types";
-import { ZONE_CARTE, capEcranObjet, nomCourtPoi, versZone } from "@/lib/fps/minimap";
+import { ZONE_CARTE, capEcranObjet, depuisZone, nomCourtPoi, versZone } from "@/lib/fps/minimap";
 import { dessinerCouche, dimensionsCouche, paletteDepuisElement, type DimensionsCouche, type PaletteCarte } from "@/lib/fps/minimap-couche";
 import type { RadarFrame } from "@/lib/fps/radar";
 import { dessinerEtiquette, dessinerMarqueurs, type ParamsMarqueurs, type PointEcran } from "./dessinCarte";
@@ -24,6 +24,9 @@ export interface PropsGrandeCarte {
   toucheCarte?: string;
   /** réglage « Effets : réduits » (anneaux fixes) */
   effetsReduits?: boolean;
+  /** Frappe aérienne disponible (série de 5 kills) : permet de cliquer sur la carte */
+  frappeDisponible?: boolean;
+  surLancerFrappe?: (cible: [number, number, number]) => void;
 }
 
 /** Largeur de la carte en unités HUD (§4.4) et pas de la grille (m). */
@@ -31,7 +34,15 @@ const LARGEUR_U = 600;
 const GRILLE_M = 100;
 const PX_PAR_M_COUCHE = 1;
 
-export default function GrandeCarte({ scene, radar, visible, toucheCarte = "M", effetsReduits = false }: PropsGrandeCarte) {
+export default function GrandeCarte({
+  scene,
+  radar,
+  visible,
+  toucheCarte = "M",
+  effetsReduits = false,
+  frappeDisponible = false,
+  surLancerFrappe,
+}: PropsGrandeCarte) {
   const cadreRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const coucheRef = useRef<{ canvas: HTMLCanvasElement; dim: DimensionsCouche } | null>(null);
@@ -40,6 +51,10 @@ export default function GrandeCarte({ scene, radar, visible, toucheCarte = "M", 
   const reduits = effetsReduits || mouvementReduit;
   const radarRef = useRef(radar);
   const reduitsRef = useRef(reduits);
+  const [curseur, setCurseur] = useState<{ x: number; y: number } | null>(null);
+  const curseurRef = useRef(curseur);
+  curseurRef.current = curseur;
+
   useEffect(() => { radarRef.current = radar; reduitsRef.current = reduits; });
 
   const zone = scene ? ZONE_CARTE(scene) : null;
@@ -123,23 +138,89 @@ export default function GrandeCarte({ scene, radar, visible, toucheCarte = "M", 
         dessinerEtiquette(ctx, params, nomCourtPoi(poi), pt.x, pt.y + 9 * u);
       }
       dessinerMarqueurs(ctx, f, params);
+
+      // Réticule de ciblage pour la frappe aérienne sous le curseur
+      const cur = curseurRef.current;
+      if (frappeDisponible && cur) {
+        const rPx = 18 * params.pxParM; // rayon de zone 18m
+        const clignote = Math.floor(now / 250) % 2 === 0;
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(cur.x, cur.y, rPx, 0, 2 * Math.PI);
+        ctx.fillStyle = clignote ? "rgba(255, 59, 48, 0.2)" : "rgba(255, 149, 0, 0.2)";
+        ctx.fill();
+        ctx.strokeStyle = clignote ? "#ff3b30" : "#ff9500";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        // Réticule croisé
+        ctx.beginPath();
+        ctx.moveTo(cur.x - rPx - 8, cur.y);
+        ctx.lineTo(cur.x + rPx + 8, cur.y);
+        ctx.moveTo(cur.x, cur.y - rPx - 8);
+        ctx.lineTo(cur.x, cur.y + rPx + 8);
+        ctx.stroke();
+
+        ctx.font = `bold ${Math.max(11, Math.round(11 * u))}px ${police}`;
+        ctx.fillStyle = "#ffffff";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "bottom";
+        ctx.fillText("FRAPPE AÉRIENNE (18m)", cur.x, cur.y - rPx - 6);
+        ctx.restore();
+      }
+
       ctx.strokeStyle = palette.cadre;
       ctx.lineWidth = 2;
       ctx.strokeRect(1, 1, W - 2, H - 2);
     };
     raf = requestAnimationFrame(boucle);
     return () => { cancelAnimationFrame(raf); ro?.disconnect(); };
-  }, [visible, scene]);
+  }, [visible, scene, frappeDisponible]);
 
   if (!visible || !scene) return null;
   const style = { "--ratio": ratio } as CSSProperties;
+
+  const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!frappeDisponible || !canvasRef.current) return;
+    const rect = canvasRef.current.getBoundingClientRect();
+    setCurseur({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+  };
+
+  const handlePointerLeave = () => {
+    setCurseur(null);
+  };
+
+  const handleClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!frappeDisponible || !surLancerFrappe || !canvasRef.current || !zone) return;
+    const rect = canvasRef.current.getBoundingClientRect();
+    const cx = e.clientX - rect.left;
+    const cy = e.clientY - rect.top;
+    const cibleMonde = depuisZone(zone, rect.width, rect.height, cx, cy);
+    surLancerFrappe([cibleMonde.x, 0, cibleMonde.z]);
+    setCurseur(null);
+  };
+
   return (
-    <div className={styles.voile} role="region" aria-label="Grande carte">
+    <div className={styles.voile} data-ciblage={frappeDisponible ? "oui" : undefined} role="region" aria-label="Grande carte">
       <div className={styles.panneau} style={style}>
         <div className={styles.cadre} ref={cadreRef}>
-          <canvas ref={canvasRef} className={styles.canvas} role="img" aria-label="Grande carte de la zone de jeu, nord en haut" />
+          <canvas
+            ref={canvasRef}
+            className={styles.canvas}
+            data-ciblage={frappeDisponible ? "oui" : undefined}
+            role="img"
+            aria-label="Grande carte de la zone de jeu, nord en haut"
+            onPointerMove={handlePointerMove}
+            onPointerLeave={handlePointerLeave}
+            onClick={handleClick}
+          />
         </div>
-        <p className={styles.legende}>Nord en haut · grille de {GRILLE_M} m · relâcher <kbd className={styles.touche}>{toucheCarte}</kbd> pour fermer</p>
+        <p className={styles.legende}>
+          {frappeDisponible && (
+            <span className={styles.legendeAlerte}>⚡ FRAPPE AÉRIENNE DISPONIBLE : Cliquez sur la carte pour cibler l&apos;attaque ! · </span>
+          )}
+          Nord en haut · grille de {GRILLE_M} m · relâcher <kbd className={styles.touche}>{toucheCarte}</kbd> pour fermer
+        </p>
       </div>
     </div>
   );

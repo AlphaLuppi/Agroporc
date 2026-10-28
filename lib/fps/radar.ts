@@ -43,6 +43,12 @@ export interface RadarFrame {
   portes: Float32Array; nPortes: number;
   /** vrai en mode zombies : la carte est restreinte aux bornes de la zone de jeu (`ZONE_CARTE(scene, "zombies")`) */
   modeZombies: boolean;
+  /** Bus C3 express */
+  bus?: { x: number; z: number; cap: number; actif: boolean } | null;
+  /** Zones de fumée actives */
+  fumigenes?: { x: number; z: number; r: number }[];
+  /** Zone de frappe aérienne en cours */
+  frappeZone?: { x: number; z: number; r: number } | null;
 }
 
 /** Capacités des tableaux préalloués d'un `RadarFrame`. */

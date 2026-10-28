@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  CLE_EQUIPEMENT, armeDuSlot, depuisAlias, ecrireEquipement, estArmeFeu, estPrincipale, estSecondaire, estSlot, estSpeciale,
+  CLE_EQUIPEMENT, armeDuSlot, depuisAlias, ecrireEquipement, estArmeFeu, estPrincipale, estSecondaire, estSlot, estSpeciale, estUnique,
   lireEquipement, lireSlots, meleeDe, normaliserEquipement, serialiserSlots, slotDeLArme, slotVoisin, type LigneSlot,
 } from "./equipement";
 import { ARMES, EQUIPEMENT_DEFAUT, copierEquipement, type Equipement } from "./protocole";
@@ -21,7 +21,7 @@ describe("garde-fous de types", () => {
     for (const a of ARMES) {
       // (v7) le pistolet à rayons, secondaire des zombies seulement, n'est dans aucune liste de l'arène
       if (a === "rayon") { expect(estSecondaire(a)).toBe(false); continue; }
-      const n = [estPrincipale(a), estSecondaire(a), estSpeciale(a)].filter(Boolean).length;
+      const n = [estPrincipale(a), estSecondaire(a), estSpeciale(a), estUnique(a)].filter(Boolean).length;
       expect(n, a).toBe(1);
       expect(estArmeFeu(a)).toBe(true);
     }

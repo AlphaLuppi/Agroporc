@@ -694,6 +694,45 @@ function creerModeleArme(id: ArmeId, m: Materiaux, devant: boolean): ModeleArme 
       inclinaison = 0;
       break;
     }
+    case "lance_grenades": {
+      piece(inner, geoCyl(0.042, 0.38), m, 0, 0.02, -0.22);
+      piece(inner, geoCyl(0.065, 0.16), m, 0, 0, -0.04);
+      piece(inner, geoBoite(0.035, 0.11, 0.05), m, 0, -0.08, 0.08, -0.2);
+      piece(inner, geoBoite(0.03, 0.08, 0.035), m, 0, -0.07, -0.25);
+      prise.set(0, -0.06, 0.08);
+      garde.set(0, -0.06, -0.25);
+      bouche.set(0, 0.02, -0.42);
+      porte.set(0.12, -0.22, -0.38);
+      echelleFlash = 1.6;
+      inclinaison = 0.35;
+      break;
+    }
+    case "bazooka": {
+      piece(inner, geoCyl(0.06, 0.95), m, 0, 0.05, -0.15);
+      piece(inner, geoCyl(0.075, 0.08), m, 0, 0.05, -0.63);
+      piece(inner, geoCyl(0.08, 0.12), m, 0, 0.05, 0.34);
+      piece(inner, geoBoite(0.035, 0.12, 0.05), m, 0, -0.05, -0.12, -0.15);
+      piece(inner, geoBoite(0.04, 0.06, 0.08), m, -0.06, 0.11, -0.25);
+      prise.set(0, -0.05, -0.12);
+      garde.set(0, 0.02, -0.35);
+      bouche.set(0, 0.05, -0.65);
+      porte.set(0.18, -0.15, -0.2);
+      echelleFlash = 2.2;
+      inclinaison = 0.2;
+      break;
+    }
+    case "fumigene": {
+      piece(inner, geoCyl(0.032, 0.14), m, 0, 0, -0.1);
+      piece(inner, geoBoite(0.015, 0.03, 0.04), m, 0, 0.08, -0.1);
+      piece(inner, geoCyl(0.012, 0.02), m, 0.02, 0.07, -0.1);
+      prise.set(0, -0.02, -0.08);
+      garde.set(-0.2, -0.2, 0.3);
+      bouche.set(0, 0, -0.2);
+      porte.set(0.1, -0.2, -0.28);
+      echelleFlash = 0.5;
+      inclinaison = 0.1;
+      break;
+    }
     case "couteau": {
       // Couteau de combat : lame verticale (tranchant vers le bas), garde, manche et pommeau ; la lame est relevée de 0,25 rad. Pas de flash ni de recul.
       const lame = new THREE.Group();
@@ -814,6 +853,9 @@ const PLACEMENT: Record<ArmeId, PlacementArme> = {
   minigun: { repos: [0.2, -0.24, -0.14], vise: [0, -0.1, -0.1], lacet: 0.04, reculZ: 0.015, reculRot: 0.03 },
   magnum_dore: { repos: [0.17, -0.18, -0.36], vise: [0, -0.08, -0.3], lacet: 0.05, reculZ: 0.08, reculRot: 0.26 },
   rayon: { repos: [0.16, -0.17, -0.34], vise: [0, -0.075, -0.28], lacet: 0.05, reculZ: 0.04, reculRot: 0.12 },
+  lance_grenades: { repos: [0.18, -0.20, -0.22], vise: [0, -0.08, -0.18], lacet: 0.04, reculZ: 0.08, reculRot: 0.16 },
+  bazooka: { repos: [0.22, -0.18, -0.05], vise: [0.08, -0.06, -0.05], lacet: 0.03, reculZ: 0.12, reculRot: 0.18 },
+  fumigene: { repos: [0.18, -0.18, -0.32], vise: [0, -0.08, -0.28], lacet: 0.05, reculZ: 0.03, reculRot: 0.08 },
   couteau: { repos: [0.2, -0.2, -0.36], vise: [0.2, -0.2, -0.36], lacet: -0.05, reculZ: 0, reculRot: 0 },
   // Épée : tenue plus bas et plus au centre (deux mains), lame levée devant ; pas de visée.
   epee: { repos: [0.14, -0.25, -0.32], vise: [0.14, -0.25, -0.32], lacet: -0.08, reculZ: 0, reculRot: 0 },

@@ -124,6 +124,12 @@ export interface Sons {
   microondes(pret: boolean, position?: PositionSon): void;
   /** Annonce parlée (synthèse vocale du navigateur, en français, voix grave) : « Munitions max ! »… Sans voix disponible : rien. */
   annonce(texte: string): void;
+  /** Klaxon deux tons du bus C3. */
+  klaxonBus(position?: PositionSon): void;
+  /** Sirène d'alerte de frappe aérienne. */
+  sireneFrappe(position?: PositionSon): void;
+  /** Déploiement et sifflement d'un fumigène. */
+  fumigene(position?: PositionSon): void;
   dispose(): void;
 }
 
@@ -181,6 +187,7 @@ const CLICS_RECHARGE: Record<ArmeFeuId, Clic[]> = {
   fusil_assaut: CLICS_FUSIL_ASSAUT, mitrailleuse: CLICS_MITRAILLEUSE, revolver: CLICS_REVOLVER, mini_uzi: CLICS_MINI_UZI,
   railgun: [], minigun: [], magnum_dore: [],
   rayon: [{ t: 0.4, f: 900, g: 0.4 }, { t: 1.4, f: 1600, g: 0.35 }, { t: 2.4, f: 2200, g: 0.45 }],
+  lance_grenades: [], bazooka: [], fumigene: [],
 };
 
 /** Enregistrement du moteur (boucle de ralenti CC0) et réglages de sa lecture. */
@@ -284,6 +291,19 @@ const PROFILS_TIR: Record<ArmeFeuId, ProfilTir> = {
     b.ton(out, t, { dur: 0.18, type: "sine", f0: 1250 * v, f1: 160, gain: 0.35 });
     b.bruit(out, t, { dur: 0.1, type: "bandpass", f0: 3500, f1: 1200, q: 1.2, gain: 0.25 });
     b.ton(out, t + 0.02, { dur: 0.12, type: "sine", f0: 110 * v, f1: 50, gain: 0.4 });
+  },
+  lance_grenades(b, out, t, v) {
+    b.bruit(out, t, { dur: 0.22, type: "lowpass", f0: 1800 * v, f1: 300, gain: 0.95 });
+    b.ton(out, t, { dur: 0.25, type: "sine", f0: 110 * v, f1: 45, gain: 0.9 });
+  },
+  bazooka(b, out, t, v) {
+    b.bruit(out, t, { dur: 0.45, type: "lowpass", f0: 3200 * v, f1: 250, gain: 1 });
+    b.bruit(out, t, { dur: 0.15, type: "bandpass", f0: 1200, q: 0.7, gain: 0.8 });
+    b.ton(out, t, { dur: 0.4, type: "sine", f0: 75 * v, f1: 25, gain: 1 });
+  },
+  fumigene(b, out, t, v) {
+    b.bruit(out, t, { dur: 0.18, type: "bandpass", f0: 3500 * v, f1: 1500, q: 1.2, gain: 0.7 });
+    b.ton(out, t, { dur: 0.15, type: "sine", f0: 220 * v, f1: 90, gain: 0.5 });
   },
 };
 
@@ -1077,6 +1097,29 @@ export function creerSons(): Sons {
         window.speechSynthesis.cancel();
         window.speechSynthesis.speak(u);
       } catch { /* synthèse indisponible : silence */ }
+    },
+    klaxonBus(position) {
+      if (!prete()) return;
+      const out = sortie(position);
+      const t = ctx!.currentTime + 0.001;
+      for (const offset of [0, 0.2]) {
+        ton(out, t + offset, { dur: 0.16, type: "sawtooth", f0: 310, f1: 305, gain: 0.4, att: 0.02 });
+        ton(out, t + offset, { dur: 0.16, type: "square", f0: 392, f1: 385, gain: 0.25, att: 0.02 });
+      }
+    },
+    sireneFrappe(position) {
+      if (!prete()) return;
+      const out = sortie(position);
+      const t = ctx!.currentTime + 0.001;
+      ton(out, t, { dur: 1.6, type: "sawtooth", f0: 440, f1: 880, gain: 0.35, att: 0.1 });
+      ton(out, t + 1.6, { dur: 1.6, type: "sawtooth", f0: 880, f1: 440, gain: 0.35, att: 0.1 });
+    },
+    fumigene(position) {
+      if (!prete()) return;
+      const out = sortie(position);
+      const t = ctx!.currentTime + 0.001;
+      ton(out, t, { dur: 0.12, type: "sine", f0: 280, f1: 90, gain: 0.5 });
+      bruit(out, t + 0.05, { dur: 1.5, type: "highpass", f0: 2400, f1: 1800, gain: 0.45, att: 0.08 });
     },
     dispose() {
       fini = true;

@@ -2,15 +2,15 @@ import { describe, expect, it } from "vitest";
 import {
   COUTEAU, MELEE, STATS, apresTir, degatsPlomb, devier, directionsTir, dispersionCourante, dispersionTir, niveauZoomDefaut, niveauxZoom, gerbeRespectee, TOLERANCE_GERBE_RAD, multiplicateurChute, nomArme, refroidir, vitesseArme,
 } from "./armes";
-import { ARMES, ARMES_MELEE, ARMES_PRINCIPALES, ARMES_SECONDAIRES, ARMES_SPECIALES, JEU, PLAFONDS, type Vec3 } from "./protocole";
+import { ARMES, ARMES_MELEE, ARMES_PRINCIPALES, ARMES_SECONDAIRES, ARMES_SPECIALES, ARMES_UNIQUES, JEU, PLAFONDS, type Vec3 } from "./protocole";
 import { MOUV } from "./mouvement";
 
 const angle = (a: Vec3, b: Vec3) => Math.acos(Math.min(1, Math.max(-1, a[0] * b[0] + a[1] * b[1] + a[2] * b[2])));
 const norme = (v: Vec3) => Math.hypot(v[0], v[1], v[2]);
 
 describe("STATS", () => {
-  it("le catalogue compte 12 armes à feu (dont le pistolet à rayons des zombies), une entrée chacune", () => {
-    expect(ARMES).toHaveLength(12);
+  it("le catalogue compte 15 armes à feu (dont le pistolet à rayons des zombies et les armes uniques du bus C3), une entrée chacune", () => {
+    expect(ARMES).toHaveLength(15);
     expect(Object.keys(STATS).sort()).toEqual([...ARMES].sort());
   });
 
@@ -37,6 +37,7 @@ describe("STATS", () => {
     for (const id of ARMES_PRINCIPALES) expect(STATS[id].categorie).toBe("principale");
     for (const id of ARMES_SECONDAIRES) expect(STATS[id].categorie).toBe("secondaire");
     for (const id of ARMES_SPECIALES) expect(STATS[id].categorie).toBe("speciale");
+    for (const id of ARMES_UNIQUES) expect(STATS[id].categorie).toBe("unique");
     expect(STATS.pistolet.categorie).toBe("secondaire");
   });
 
@@ -46,7 +47,7 @@ describe("STATS", () => {
     expect(new Set(courts).size).toBe(courts.length);
     for (const id of ARMES) {
       const a = STATS[id];
-      expect(a.sansRecharge).toBe(a.categorie === "speciale");
+      expect(a.sansRecharge).toBe(a.categorie === "speciale" || a.categorie === "unique");
       if (a.sansRecharge) expect(a.rechargeS).toBe(0);
       else expect(a.rechargeS).toBeGreaterThan(0);
     }
