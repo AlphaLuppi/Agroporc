@@ -1121,7 +1121,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
           // le serveur a retiré la charge du sort à la sortie de l'arène, son annonce peut ne jamais nous parvenir
           mondeTigres.perdreCharge();
           if (modeZ) {
-            // zombies : retiré par le serveur (partie finie, inactivité) : pas de réentrée, l'hôte ramène au lobby
+            // zombies : retiré par le serveur (partie finie, retour au lobby ; plus d'éviction pour inactivité depuis la v8) : pas de réentrée, l'hôte ramène au lobby
             cb.sortir();
             break;
           }
@@ -2038,7 +2038,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       const premier = idConnu === null;
       idConnu = client.id;
       if (premier) return;
-      // zombies : le serveur a oublié la salle choisie (on repart dans l'arène) : la partie en cours est perdue pour nous
+      // zombies : nouvel id = reprise refusée (coupure de plus de 20 s, cf. `bonjour.reprise`) : on repart dans l'arène, la partie est perdue pour nous
       if (modeZ) { apparu = false; vivant = false; arreterReanimation(); cb.sortir(); return; }
       apparu = false;
       vivant = false;
