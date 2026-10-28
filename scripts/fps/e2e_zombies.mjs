@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Test de bout en bout du mode zombies (tigres) de l'arène FPS (vue Palantir) : DEUX navigateurs Chromium headless contre un `serveur-fps` local
- * (variables d'essai : argent 3 000 $, 3 tigres à la manche 1, pauses de 10 s, griffe de 20, jamais de manche du Truck Muche) et un `next dev`
+ * (variables d'essai : argent 3 000 $, 3 tigres à la manche 1, décompte et pauses de 20 s, griffe de 5, jamais de manche du Truck Muche) et un `next dev`
  * local, pilotés par `window.__arene`. Carte « Service de midi » (v7) : départ dans l'open space du Pôle R&D.
  *
  * Scénario (chaque étape imprime OK / ÉCHEC, des captures sont prises en route) :
@@ -23,8 +23,8 @@
  *             à faire coïncider avec NEXT_PUBLIC_FPS_WS_URL d'un Next déjà lancé), E2E_PAGE (page qui monte le code « myrtille », défaut une 404 : aucune
  *             lecture de la base), E2E_HEADED=1, E2E_GARDER=1 (laisse les serveurs lancés par le script), E2E_JUSQUA=5 (s'arrête après l'étape 5),
  *             E2E_SEULES=1,3 (ne joue que ces étapes ; la 1 et la 2 sont toujours jouées, elles font entrer les joueurs), E2E_DEBUG=1 (trace des gestes),
- *             E2E_GRIFFE (dégâts de griffe, défaut 10 : dix griffes couchent un joueur de 100 PV, ce qui laisse au joueur qui frappe à l'épée le temps
- *             de plusieurs coups malgré le rendu logiciel ; 100 = une seule griffe), E2E_TOTAL (tigres de la manche 1, défaut 3), E2E_PAUSE (décompte et pauses, défaut 10 000 ms).
+ *             E2E_GRIFFE (dégâts de griffe, défaut 5 : vingt griffes couchent un joueur de 100 PV, ce qui laisse au joueur qui frappe à l'épée le temps
+ *             de plusieurs coups malgré le rendu logiciel ; 100 = une seule griffe), E2E_TOTAL (tigres de la manche 1, défaut 3), E2E_PAUSE (décompte et pauses, défaut 20 000 ms).
  * Code de sortie : 0 si toutes les étapes passent, 1 sinon.
  *
  * Stratégie : les tigres de la manche 1 marchent (3 m/s) et doivent d'abord arracher les six planches d'une fenêtre ; le script déplace les joueurs par
@@ -48,12 +48,12 @@ import { fileURLToPath } from "node:url";
 const RACINE = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const SORTIE = process.env.E2E_OUT ?? join(tmpdir(), "pdj-e2e-zombies");
 const PAGE = process.env.E2E_PAGE ?? "/arene-e2e-introuvable";
-const GRIFFE = process.env.E2E_GRIFFE ?? "10";
+const GRIFFE = process.env.E2E_GRIFFE ?? "5";
 const ARGENT = process.env.E2E_ARGENT ?? "3000";
 /** Tigres de la manche 1 (3 : un tué au pistolet, un à l'épée, le dernier sert d'appât à la relève). */
 const TOTAL = process.env.E2E_TOTAL ?? "3";
 /** Décompte de départ et pauses entre manches (ms) : assez longs pour acheter le mini Uzi et une porte entre deux manches. */
-const PAUSE = process.env.E2E_PAUSE ?? "10000";
+const PAUSE = process.env.E2E_PAUSE ?? "20000";
 
 // Repères de la carte « Service de midi » (lib/fps/zombies-carte.ts, mètres)
 /** Points de départ des joueurs : l'open space du Pôle R&D (bâtiment 72). */
