@@ -21,6 +21,10 @@
  *  - Tab (tableau des scores, `vueScores`), M (grande carte) et le menu pause sont dans l'UI React ; Échap libère simplement la souris ;
  *  - les valeurs continues du HUD sont dans `JeuHandle.live` (60 Hz, hors React) et la mini-map lit `JeuHandle.radar()`.
  *
+ * Mode zombies (v5, `opts.mode`) : même boucle, autres règles : monde de la carte « Cour des Restos », tigres interpolés (`jeu-zombies.ts`) et
+ * dessinés (`rendu-zombies.ts`), tirs et coups d'épée sur les tigres (`z<n>`), achats et relèves à la touche E, joueurs ni cibles ni obstacles,
+ * ni voitures ni Elsa ni killcam ; le joueur à terre garde la caméra au sol.
+ *
  * Les types du contrat avec l'hôte (HudEtat, JeuEvenement, JeuCallbacks, JeuHandle…) sont dans `jeu-types.ts` et réexportés ici.
  * Spec : docs/superpowers/specs/2026-10-22-agroparc-fps-design.md, 2026-10-22-arene-v2-design.md (§6.2, §13),
  * 2026-10-23-arene-hud-design.md (§3), 2026-10-23-arene-tigres-design.md (Rendu, Sort d'invocation, Réseau)
@@ -29,20 +33,24 @@ import * as THREE from "three";
 import type { SceneData } from "../agroparc3d/types";
 import { C, construireDecor, creerEtatDestruction } from "../agroparc3d/decor";
 import { construireMonde, detruireBatiment, normaleImpact, poserBreche, releverBatiment, type Creux, type Monde } from "./collision";
+import { FOCUS_ZOMBIES, construireMondeZombies, donneesZombies } from "./zombies-carte";
+import { ZOMBIES } from "./zombies-vagues";
+import { MondeZombies, Rugissements, inviteZombies, segmentsPortesFermees, trouverZombieTouche, trouverZombiesMelee, INVITE_VIDE, type InviteZombies } from "./jeu-zombies";
+import { creerRenduZombies } from "./rendu-zombies";
 import { creerImpactsBalles } from "./rendu-impacts";
 import { creerDebris } from "./rendu-debris";
 import { creerTracesPneus, glissementLateral, rouesArriere } from "./rendu-traces";
 import { construireCircuits, flotte } from "./circulation";
 import { coteMurDe, etape, etatInitial, hauteurOeil, postureDe, type Entrees, type EtatMouvement } from "./mouvement";
-import { COUTEAU, STATS, degatsPlomb, delaiRecul, devier, directionsTir, dispersionTir, niveauZoomDefaut, niveauxZoom, retourRecul, vitesseArme } from "./armes";
+import { MELEE, STATS, degatsPlomb, delaiRecul, devier, directionsTir, dispersionTir, niveauZoomDefaut, niveauxZoom, retourRecul, vitesseArme } from "./armes";
 import { tracer, type Cible } from "./tir";
-import { trouverCibleCouteau } from "./melee";
+import { trouverCiblesMelee } from "./melee";
 import {
-  CIBLE_TIGRE, CIBLE_TITAN, JEU, OEIL_SIEGE, OEIL_TITAN, SILHOUETTE, oeilDe,
-  type ArmeFeuId, type ArmeId, type EtatJoueurSnap, type JoueurPublic, type MessageServeur, type Siege, type Slot, type Vec3, type VehiculeSnap, type Zone,
+  CIBLE_TIGRE, CIBLE_TITAN, JEU, OEIL_SIEGE, OEIL_TITAN, SILHOUETTE, estIdZombie, estMelee, oeilDe,
+  type ArmeFeuId, type ArmeId, type ArmeMeleeId, type EtatJoueurSnap, type EtatPartieZombies, type JoueurPublic, type MessageServeur, type RaisonAchat, type Siege, type Slot, type Vec3, type VehiculeSnap, type Zone,
 } from "./protocole";
-import type { EquipementJeu, HudEtat, HudLive, JeuCallbacks, JeuHandle } from "./jeu-types";
-import { ajouterEcho, creerRadarFrame, definirElsa, ajouterVoiture, ajouterVoiturePnj, purgerEchos, viderRadarFrame, type RadarFrame } from "./radar";
+import type { EquipementJeu, EtatZombiesHud, HudEtat, HudLive, JeuCallbacks, JeuHandle, JeuOptions } from "./jeu-types";
+import { ajouterEcho, ajouterPorte, creerRadarFrame, definirElsa, ajouterVoiture, ajouterVoiturePnj, purgerEchos, viderRadarFrame, type RadarFrame } from "./radar";
 import { SuiviRadar, type JoueurRadarEntree } from "./jeu-radar";
 import { Interpolateur, type ClientArene } from "./reseau";
 import { codeSouris, indexTouches, lireTouches, stockageNavigateur, type Action, type ConfigTouches } from "./touches";
@@ -75,7 +83,7 @@ import { creerRenduMonstres } from "./rendu-monstres";
 // Contrat avec l'hôte
 // ---------------------------------------------------------------------------------------------
 
-export type { EquipementJeu, EtatMonstresHud, HudEtat, HudLive, JeuCallbacks, JeuEvenement, JeuHandle } from "./jeu-types";
+export type { EquipementJeu, EtatMonstresHud, EtatZombiesHud, HudEtat, HudLive, JeuCallbacks, JeuEvenement, JeuHandle, JeuOptions } from "./jeu-types";
 
 // ---------------------------------------------------------------------------------------------
 // Réglages
@@ -147,12 +155,31 @@ const SLOT_DE_L_ACTION: Partial<Record<Action, Slot>> = {
 // Jeu
 // ---------------------------------------------------------------------------------------------
 
+/** Monde dynamique du mode zombies : aucune voiture, aucun Truck, aucune Elsa. */
+function mondeDynamiqueVide(): MondeDynamique {
+  return {
+    majVoituresPnj() {}, majEpaves() {}, majVoituresJoueurs() {}, majElsa() {},
+    elsaTete: () => [0, -1000, 0], afficherPseudoElsa() {}, dispose() {},
+  };
+}
+
+/** Équipement de départ de la salle zombies (celui du serveur, `EQUIPEMENT_DEPART_ZOMBIES`) : pistolet et couteau, pas d'arme principale. */
+const DEPART_ZOMBIES = { principale: "mitraillette", secondaire: "pistolet", speciale: null, sansPrincipale: true } as const;
+
 /**
  * `equip` : l'équipement choisi (lobby, écran de mort, pause) ; on entre avec l'arme principale en main.
+ * `opts.mode` : "arene" (défaut, comportement historique) ou "zombies" (v5) : monde de la carte « Cour des Restos » (mêmes données que le
+ * serveur), tigres zombies interpolés et dessinés, aucun truck / voiture / PNJ / Elsa / circulation, pas de killcam ni de réentrée, joueurs
+ * ni cibles ni obstacles pour les tirs et la mêlée (pas de tir allié), achats et relèves à la touche E.
  */
-export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: ClientArene, equip: EquipementJeu, cb: JeuCallbacks): JeuHandle {
-  let equipSuivant: EquipementJeu = { principale: equip.principale, secondaire: equip.secondaire };
-  const monde: Monde = construireMonde(data);
+export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, client: ClientArene, equip: EquipementJeu, cb: JeuCallbacks, opts: JeuOptions = {}): JeuHandle {
+  const modeZ = opts.mode === "zombies";
+  /** données de la scène du jeu : la scène brute, ou en zombies la copie aux pièces synthétiques (même fonction que le serveur) */
+  const data: SceneData = modeZ ? donneesZombies(sceneBrute).data : sceneBrute;
+  let equipSuivant: EquipementJeu = equip.melee === "epee"
+    ? { principale: equip.principale, secondaire: equip.secondaire, melee: "epee" }
+    : { principale: equip.principale, secondaire: equip.secondaire };
+  const monde: Monde = modeZ ? construireMondeZombies(sceneBrute) : construireMonde(data);
   const reduit = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   // ---------- rendu ----------
@@ -203,7 +230,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
   // ---------- monde dynamique (voitures PNJ et conduisibles, Elsa) ----------
   const nbPnj = flotte(construireCircuits()).length;
   const mondeJeu = new MondeJeu(data, monde);
-  const dyn: MondeDynamique = creerMondeDynamique(scene, { nbPnj, nbVehicules: EMPLACEMENTS_VOITURES.length, truck: placeTruck(data) });
+  // zombies : ni Truck, ni voitures, ni PNJ, ni Elsa (le monde dynamique est une coquille vide qui ne dessine rien)
+  const dyn: MondeDynamique = modeZ ? mondeDynamiqueVide() : creerMondeDynamique(scene, { nbPnj, nbVehicules: EMPLACEMENTS_VOITURES.length, truck: placeTruck(data) });
   /** fumées, flammes et explosions des voitures (v3 §4) */
   const feux = creerFeux(scene);
   const visib = new VisibilitePseudos(monde);
@@ -213,6 +241,11 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
   // ---------- événements (v3) : Truck Muche fou, tigre robot, titan tigre ----------
   const jm = new MondeMonstres();
   const rm = creerRenduMonstres(scene);
+  // ---------- mode zombies (v5) : tigres interpolés et dessinés, rugissements, état de la partie ----------
+  const mz = new MondeZombies();
+  const rz = modeZ ? creerRenduZombies(scene) : null;
+  const rugissements = new Rugissements();
+  let imageNum = 0;
   const titan = new ControleurTitan();
   /** monstres interpolés de l'image (cibles des tirs, rendu) */
   let monstresImage: ReturnType<MondeMonstres["a"]> = {};
@@ -246,13 +279,15 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
   let dernierDegatT = -Infinity;
   let dernierSonRegenT = -Infinity;
   /** équipement et munitions : `ControleurArmes` (dégainage, chargeurs par arme, recharge) */
-  const armes = new ControleurArmes({ principale: equip.principale, secondaire: equip.secondaire, speciale: null }, "principale");
+  const armes = modeZ
+    ? new ControleurArmes({ ...DEPART_ZOMBIES }, "secondaire", { reserveChargeurs: ZOMBIES.ravitaillementChargeurs })
+    : new ControleurArmes({ principale: equip.principale, secondaire: equip.secondaire, speciale: null }, "principale");
   /** cadence locale par arme (le serveur garde la sienne) */
   const prochains = new Map<ArmeId, number>();
   let delaiApparitionT = 0;
   /** instant du dernier tir et son arme (le recul ne retombe qu'un moment après) */
   let dernierTirT = -Infinity;
-  let dernierTirArme: ArmeFeuId = equip.principale;
+  let dernierTirArme: ArmeFeuId = modeZ ? "pistolet" : equip.principale;
   /** recul de tangage (rad) ajouté par les tirs et pas encore revenu ni compensé à la souris */
   let reculAcc = 0;
   /** recul visuel (rad) : s'ajoute au tangage de la vue ET du tir, retombe vite (v2 §13.2.4) */
@@ -271,6 +306,26 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
   let disposed = false;
   /** retiré de l'arène par le serveur (inactivité) et pas encore rentré */
   let evince = false;
+  // ---- état du mode zombies ----
+  let argentZ = 0;
+  let mancheVue = 0;
+  let partieZ: EtatPartieZombies | null = null;
+  let aTerreZ = false;
+  let elimineZ = false;
+  let terreFinTZ = 0;
+  let gainZ: EtatZombiesHud["gain"] = null;
+  let nGainZ = 0;
+  let sonPieceT = -Infinity;
+  let refusZ: EtatZombiesHud["refus"] = null;
+  let nRefusZ = 0;
+  let achatsZ = 0;
+  /** E maintenu sur un coéquipier à terre : id du coéquipier et instant (horloge locale, s) du début */
+  let reanimCible: string | null = null;
+  let reanimDebutT = 0;
+  /** instant (horloge locale) où le soin sera de nouveau achetable */
+  let soinPretT = 0;
+  /** portes encore fermées (segments), recalculées à chaque état de partie reçu */
+  let portesFermees: { id: string; p: [number, number]; q: [number, number] }[] = [];
   /** hauteur de l'œil au-dessus des pieds, lissée (accroupi : 1,30 m ; assis : OEIL_SIEGE) */
   let hauteurOeilLissee: number = SILHOUETTE.oeil;
   /** accroupi : true = bascule, false = maintenir (réglage de l'hôte) */
@@ -370,7 +425,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
   /** Arme à feu en main (null pour le couteau). */
   const armeFeu = (): ArmeFeuId | null => {
     const a = armes.armeEnMain();
-    return a === "couteau" ? null : a;
+    return estMelee(a) ? null : a;
   };
   const prochainDe = (a: ArmeId) => Math.max(prochains.get(a) ?? 0, delaiApparitionT);
 
@@ -408,6 +463,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
 
   function cibles(): Cible[] {
     const r: Cible[] = [];
+    // zombies : pas de tir allié, les joueurs ne sont ni cibles ni obstacles pour les balles et la mêlée
+    if (modeZ) return r;
     for (const [id, e] of etats) {
       if (id === client.id || e.titan) continue;
       r.push({ id, p: e.p, vivant: e.vivant, accroupi: !!e.accroupi || !!e.vehicule });
@@ -429,18 +486,34 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
 
   const _bouche = new THREE.Vector3();
 
-  /** Coup de couteau : `coup` au serveur (jamais `tir`), cadence de 0,5 s, pas de recul ni de traçante. Un tigre plus proche que le joueur visé est la cible. */
-  function coupCouteau(): boolean {
+  /**
+   * Cibles d'un coup d'arme blanche : les joueurs (positions interpolées, aucun en zombies), le tigre largué le plus proche à portée (arène) et,
+   * en zombies, les tigres (`z<n>`, formes de touche du serveur), le tout trié par distance et coupé à `nbCiblesMax`.
+   */
+  function ciblesDuCoup(o: Vec3, d: Vec3, arme: ArmeMeleeId): { cible: string; distance: number }[] {
+    const joueurs = trouverCiblesMelee(monde, o, d, cibles(), client.id ?? "", arme);
+    if (modeZ) {
+      const tigres = trouverZombiesMelee(o, d, mz.zombies(), arme, monde, mz.nombre());
+      return [...joueurs, ...tigres].sort((a, b) => a.distance - b.distance).slice(0, MELEE[arme].nbCiblesMax);
+    }
+    const largue = trouverTigreCouteau(monde, o, d, mondeTigres.cibles(tigresVus, client.id), arme);
+    if (!largue) return joueurs;
+    return [...joueurs, { cible: largue.id, distance: largue.distance }].sort((a, b) => a.distance - b.distance).slice(0, MELEE[arme].nbCiblesMax);
+  }
+
+  /**
+   * Coup d'arme blanche (couteau ou épée) : `coup` au serveur (jamais `tir`), cadence propre de l'arme (le tir maintenu les enchaîne), pas
+   * de recul ni de traçante. Les cibles sont celles de l'arc de l'arme (portée, cône, ligne de vue) : jusqu'à `nbCiblesMax` pour l'épée.
+   */
+  function coupMelee(arme: ArmeMeleeId): boolean {
     if (t < prochainDe("couteau")) return false;
     const o = oeil();
     const d = directionVisee(lacet, tangage, kick);
-    const res = trouverCibleCouteau(monde, o, d, cibles(), client.id ?? "");
-    const tigre = trouverTigreCouteau(monde, o, d, mondeTigres.cibles(tigresVus, client.id));
-    const cible = tigre && (!res || tigre.distance < res.distance) ? tigre.id : res ? res.cible : null;
-    client.envoyer({ t: "coup", o, d, cible });
-    prochains.set("couteau", t + COUTEAU.cadenceS);
+    const res = ciblesDuCoup(o, d, arme);
+    client.envoyer({ t: "coup", o, d, cibles: res.map((r) => r.cible) });
+    prochains.set("couteau", t + MELEE[arme].cadenceS);
     armeMain.coup();
-    sons.coup(false);
+    sons.coup(false, undefined, arme);
     return true;
   }
 
@@ -462,6 +535,11 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
       if (h) r = { cible: CIBLE_TITAN, ...h };
     }
     return r;
+  }
+
+  /** (zombies) Tigre touché par le rayon avant `limite` (premier mur) : même forme que `toucheMonstre`, pour N tigres. */
+  function toucheZombies(o: Vec3, d: Vec3, limite: number): { cible: string; zone: Zone; distance: number } | null {
+    return modeZ ? trouverZombieTouche(o, d, limite, mz.zombies(), monde, mz.nombre()) : null;
   }
 
   /** (v3) Canon du titan : rayon unique, cadence propre, déclaré au serveur (`canon`), qui le revalide. */
@@ -489,7 +567,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
     if (!peutAgir() || entracte || enKillcam() || tireInterdit()) return false;
     if (armes.degainage(ms())) return false;
     const arme = armes.armeEnMain();
-    if (arme === "couteau") return coupCouteau();
+    if (estMelee(arme)) return coupMelee(arme);
     const a = STATS[arme];
     if (armes.rechargeEnCours()) return false;
     if (armes.munitions() <= 0) { demarrerRecharge(); return false; }
@@ -520,13 +598,13 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
       // un tigre largué devant le joueur, le mur ou la portée prend la balle (mes tigres alliés ne sont pas des cibles)
       const tg = tracerTigres(o, d, imp.distance, listeTigres);
       const limite = tg ? tg.distance : imp.distance;
-      // (v3) le tigre robot ou un titan devant le premier joueur, tigre largué ou mur touché
-      const monstre = toucheMonstre(o, d, limite);
+      // (v3) le tigre robot ou un titan devant le premier joueur, tigre largué ou mur touché ; (zombies) un tigre devant le premier mur
+      const monstre = toucheMonstre(o, d, limite) ?? toucheZombies(o, d, limite);
       if (monstre) {
         const fin: Vec3 = [o[0] + d[0] * monstre.distance, o[1] + d[1] * monstre.distance, o[2] + d[2] * monstre.distance];
         effets.traçante(depart, fin, arme);
         touchesDecl.push({ cible: monstre.cible, zone: monstre.zone, plomb: i });
-        if (impactsAffiches < 5) { impactsAffiches++; effets.impact(fin, [-d[0], -d[1], -d[2]], "#ffb347"); }
+        if (impactsAffiches < 5) { impactsAffiches++; effets.impact(fin, [-d[0], -d[1], -d[2]], estIdZombie(monstre.cible) ? "#ff8a1c" : "#ffb347"); }
         return;
       }
       // une voiture plus proche que le joueur (ou le mur) visé arrête la balle (v3 §4) ; l'occupant d'une voiture reste touchable à travers elle
@@ -598,7 +676,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
   function apresChangementArme(ok: boolean) {
     if (!ok) return;
     client.envoyer({ t: "main", slot: armes.slotActif() });
-    viseMaintenu = viseMaintenu && armes.armeEnMain() !== "couteau";
+    viseMaintenu = viseMaintenu && !estMelee(armes.armeEnMain());
   }
   const peutChangerArme = () => peutAgir() && !enKillcam() && !pilote();
   function changerSlot(slot: Slot) {
@@ -612,13 +690,19 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
 
   function reentrer() {
     evince = false;
-    client.envoyer({ t: "rejoindre", principale: equipSuivant.principale, secondaire: equipSuivant.secondaire });
+    client.envoyer({ t: "rejoindre", ...choixEquipement() });
   }
 
-  /** Équipement de la prochaine apparition (immédiat si mort). */
-  function equiper(principale: EquipementJeu["principale"], secondaire: EquipementJeu["secondaire"]) {
-    equipSuivant = { principale, secondaire };
-    client.envoyer({ t: "equiper", principale, secondaire });
+  /** Équipement de la prochaine apparition (immédiat si mort). `melee` omis = l'arme blanche déjà choisie. */
+  function equiper(principale: EquipementJeu["principale"], secondaire: EquipementJeu["secondaire"], melee: ArmeMeleeId | undefined = equipSuivant.melee) {
+    equipSuivant = melee === "epee" ? { principale, secondaire, melee } : { principale, secondaire };
+    client.envoyer({ t: "equiper", ...choixEquipement() });
+  }
+
+  /** Champs d'équipement de `rejoindre` / `equiper` (l'arme blanche n'est envoyée que pour l'épée : absent = couteau). */
+  function choixEquipement(): { principale: EquipementJeu["principale"]; secondaire: EquipementJeu["secondaire"]; melee?: ArmeMeleeId } {
+    const { principale, secondaire, melee } = equipSuivant;
+    return melee === "epee" ? { principale, secondaire, melee } : { principale, secondaire };
   }
 
   // ---------- véhicules ----------
@@ -626,8 +710,45 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
     embarquementFin = t + EMBARQUEMENT_MAX_S;
   }
 
+  // ---------- zombies : achats et relève (E) ----------
+  /** Invite courante (zombies) : relève d'un coéquipier à terre à ≤ 2,5 m, sinon l'achat le plus proche. Vide hors zombies / à terre. */
+  function inviteZ(): InviteZombies {
+    if (!modeZ || !peutAgir()) return INVITE_VIDE;
+    const aTerre: { id: string; pseudo: string; p: Vec3 }[] = [];
+    for (const j of partieZ?.joueurs ?? []) {
+      if (j.etat !== "terre" || j.id === client.id) continue;
+      const e = etats.get(j.id);
+      if (e) aTerre.push({ id: j.id, pseudo: j.pseudo, p: e.p });
+    }
+    return inviteZombies({
+      pos: [moi.p[0], moi.p[2]], argent: argentZ, portesOuvertes: (partieZ?.portes ?? []).filter((x) => x.ouverte).map((x) => x.id),
+      equip: armes.equipement(), pv, aTerre, soinDans: Math.max(0, soinPretT - t),
+    });
+  }
+
+  /** Arrête la relève en cours (touche relâchée, coéquipier relevé ou trop loin, je tombe) : le serveur est prévenu. */
+  function arreterReanimation() {
+    if (reanimCible === null) return;
+    reanimCible = null;
+    client.envoyer({ t: "reanimer", cible: null });
+  }
+
+  /** E en zombies : relève (à maintenir) d'un coéquipier à terre, sinon achat de l'invite courante (le serveur reste juge). */
+  function interagirZombies() {
+    if (!peutAgir()) return;
+    const inv = inviteZ();
+    if (inv.invite === "reanimer" && inv.cible) {
+      reanimCible = inv.cible;
+      reanimDebutT = t;
+      client.envoyer({ t: "reanimer", cible: inv.cible });
+    } else if (inv.id) {
+      client.envoyer({ t: "acheter", id: inv.id });
+    }
+  }
+
   /** E : monter dans la voiture à portée, ou en descendre. Le serveur attribue le siège ; on attend sa réponse (≤ 1 s). */
   function interagir() {
+    if (modeZ) { interagirZombies(); return; }
     if (!peutAgir() || enKillcam() || embarquementFin > 0 || pilote()) return;
     if (vehicule.actif()) {
       client.envoyer({ t: "descendre" });
@@ -787,6 +908,10 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
   }
 
   function posTouche(id: string, zone: Zone): Vec3 | null {
+    if (estIdZombie(id)) {
+      const v = mz.parId(Number(id.slice(1)));
+      return v ? [v.x, (zone === "tete" ? 0.5 : 0.33) * v.echelle, v.z] : null;
+    }
     const e = etats.get(id);
     if (!e) return null;
     const s = e.accroupi || e.vehicule ? { tete: 1.3 - 0.1, centre: 0.8 } : { tete: SILHOUETTE.tete.y - 0.1, centre: SILHOUETTE.centreY };
@@ -803,6 +928,10 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
   }
 
   function apparaitre(m: Extract<MessageServeur, { t: "apparition" }>) {
+    aTerreZ = false;
+    elimineZ = false;
+    terreFinTZ = 0;
+    reanimCible = null;
     terminerKillcam();
     quitterVehicule();
     titan.sortir();
@@ -835,6 +964,28 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
     tirMaintenu = false;
   }
 
+  /**
+   * Je tombe (mort en arène, à terre ou éliminé en zombies) : plus de visée ni de tir, éjecté du véhicule, sons de boucle coupés. Le reste
+   * (killcam, événement « mort ») appartient à la mort de l'arène, le HUD des zombies lit `aTerre` / `elimine`.
+   */
+  function tomber() {
+    vivant = false;
+    pv = 0;
+    bouclier = 0;
+    mortT = 0;
+    mortSigne = Math.random() < 0.5 ? -1 : 1;
+    viseMaintenu = false;
+    tirMaintenu = false;
+    accroupiBascTenu = false;
+    // l'occupant d'un véhicule en est éjecté à sa mort
+    vehicule.sortir();
+    embarquementFin = 0;
+    sons.moteur(null);
+    sons.derapage(0);
+    sons.mur(false);
+    arreterReanimation();
+  }
+
   /** `degats` dont je suis l'auteur : retour de touche CONFIRMÉ par le serveur (zone et dégâts du serveur, §13.2.1). */
   function toucheConfirmee(m: Extract<MessageServeur, { t: "degats" }>) {
     sons.touche(m.zone === "tete");
@@ -856,10 +1007,16 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
         if (apparu && moiInfo && !moiInfo.enJeu) {
           apparu = false;
           vivant = false;
-          evince = true;
           quitterVehicule();
+          arreterReanimation();
           // le serveur a retiré la charge du sort à la sortie de l'arène, son annonce peut ne jamais nous parvenir
           mondeTigres.perdreCharge();
+          if (modeZ) {
+            // zombies : retiré par le serveur (partie finie, inactivité) : pas de réentrée, l'hôte ramène au lobby
+            cb.sortir();
+            break;
+          }
+          evince = true;
           // onglet caché : on attend son retour, sinon on réapparaîtrait en cible immobile toutes les 20 s
           if (!document.hidden) reentrer();
         }
@@ -874,6 +1031,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
         mondeJeu.alimenterVehicules(m.ts, m.vehicules);
         mondeTigres.alimenter(m.ts, m.tigres);
         jm.alimenter(m.ts, m.monstres);
+        if (modeZ) mz.alimenter(m.ts, m.zombies);
         const s = m.j.find((x) => x.id === client.id);
         if (s && vivant) {
           // des PV qui remontent sans cadeau d'Elsa : la régénération tourne (le délai de 5 s est donc écoulé)
@@ -931,7 +1089,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
         distants.get(m.id)?.avatar.coup();
         const cam = oeil();
         const dx = m.o[0] - cam[0], dz = m.o[2] - cam[2];
-        sons.coup(false, { distance: Math.hypot(dx, m.o[1] - cam[1], dz), pan: panSon(lacet, dx, dz) });
+        sons.coup(false, { distance: Math.hypot(dx, m.o[1] - cam[1], dz), pan: panSon(lacet, dx, dz) }, m.arme);
         break;
       }
       case "degats": {
@@ -951,10 +1109,13 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
             }
             cb.evenement({ type: "degat", par: m.par, degats: m.degats, angle: ang });
           }
+          // zombies : à 0 PV on tombe tout de suite (l'état « à terre » ou « éliminé » du serveur le confirme ensuite)
+          if (modeZ && m.pv <= 0 && vivant) { aTerreZ = true; tomber(); }
         } else {
           if (!enReplay) {
             const c = posTouche(m.cible, m.zone);
-            if (c) effets.eclaboussure(c, couleurDe(m.cible));
+            // un tigre touché saigne orange, un joueur dans sa couleur
+            if (c) effets.eclaboussure(c, estIdZombie(m.cible) ? "#ff8a1c" : couleurDe(m.cible));
             distants.get(m.cible)?.avatar.toucher();
           }
           // les coups de patte de mon tigre allié me sont crédités (`par` = moi) : ce ne sont pas des touches de mes armes
@@ -964,21 +1125,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
       }
       case "mort": {
         if (m.cible === client.id) {
-          vivant = false;
-          pv = 0;
-          bouclier = 0;
-          mortT = 0;
-          mortSigne = Math.random() < 0.5 ? -1 : 1;
           reapparitionFin = t + m.delai / 1000;
-          viseMaintenu = false;
-          tirMaintenu = false;
-          accroupiBascTenu = false;
-          // l'occupant d'un véhicule en est éjecté à sa mort
-          vehicule.sortir();
-          embarquementFin = 0;
-          sons.moteur(null);
-          sons.derapage(0);
-          sons.mur(false);
+          tomber();
           kc.surMort(m, client.id);
           cb.evenement({ type: "mort", par: m.par, arme: m.arme, cause: m.cause, zone: m.zone, delai: m.delai, ts: m.ts, tueur: m.tueur });
         } else if (m.par === client.id) {
@@ -1114,6 +1262,48 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
           else if (vivant) entrerTitan(m.p, m.cap);
         }
         break;
+      case "zombies": {
+        partieZ = m.etat;
+        portesFermees = segmentsPortesFermees(m.etat.portes.filter((x) => x.ouverte).map((x) => x.id));
+        const me = m.etat.joueurs.find((x) => x.id === client.id);
+        if (me) {
+          elimineZ = me.etat === "elimine";
+          aTerreZ = me.etat === "terre";
+          terreFinTZ = me.etat === "terre" ? me.terreFinT ?? 0 : 0;
+          if ((aTerreZ || elimineZ) && vivant) tomber();
+        }
+        // nouvelle manche : coup de tambour
+        if (m.etat.phase === "manche" && m.etat.manche !== mancheVue) { mancheVue = m.etat.manche; sons.manche(); }
+        if (m.etat.phase === "lobby") mancheVue = 0;
+        break;
+      }
+      case "argent":
+        argentZ = m.solde;
+        if (m.delta !== 0) {
+          gainZ = { n: ++nGainZ, delta: m.delta, motif: m.motif };
+          if (m.delta > 0 && t - sonPieceT > 0.08) { sonPieceT = t; sons.piece(); }
+        }
+        break;
+      case "achat":
+        if (m.ok) {
+          achatsZ++;
+          sons.achat(true);
+          if (m.id === "soin") soinPretT = t + ZOMBIES.soinRechargeS;
+        } else {
+          refusZ = { n: ++nRefusZ, id: m.id, raison: m.raison as RaisonAchat };
+          sons.achat(false);
+        }
+        break;
+      case "zombieMort": {
+        if (enReplay) break;
+        // un tigre tombe : gerbe orange et cri qui s'effondre ; mon ding si c'est moi qui l'ai abattu (jamais dans le fil des éliminations)
+        const c: Vec3 = [m.p[0], 0.8, m.p[2]];
+        effets.eclaboussure(c, "#ff8a1c");
+        effets.eclaboussure([c[0], 1.4, c[2]], "#ffd9a0");
+        sons.rugissementTigre(positionSon(c), true);
+        if (m.par === client.id) sons.kill();
+        break;
+      }
       case "canon": {
         if (m.id === client.id || enReplay) break;
         const imp = tracerEffets(m.o, m.d, TITAN.canon.portee, cibles(), m.id);
@@ -1138,7 +1328,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
         case "sprint": dashDemande = true; break;
         case "recharger": demarrerRecharge(); break;
         case "tir": if (vivant) { tirMaintenu = true; tirPresse = t; tirConsomme = false; } break;
-        case "visee": viseMaintenu = true; break;
+        case "visee": viseMaintenu = !estMelee(armes.armeEnMain()); break; // pas de visée avec une arme blanche
         case "accroupi": if (accroupiBascule) accroupiBascTenu = !accroupiBascTenu; break;
         case "armePrincipale": case "armeSecondaire": case "couteau": case "armeSpeciale": {
           const s = SLOT_DE_L_ACTION[a];
@@ -1164,6 +1354,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
       if (a === "tir") tirMaintenu = tirMaintenu && actionActive("tir");
       else if (a === "visee") viseMaintenu = actionActive("visee");
       else if (a === "parler") voix.parler(actionActive("parler"));
+      else if (a === "interagir" && !actionActive("interagir")) arreterReanimation();
     }
   };
   const surKeyDown = (e: KeyboardEvent) => {
@@ -1186,6 +1377,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
     tirMaintenu = false;
     viseMaintenu = false;
     voix.parler(false);
+    arreterReanimation();
   };
   const surMouseDown = (e: MouseEvent) => {
     if (!verrouille()) { demanderVerrou(); return; }
@@ -1225,7 +1417,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
   const surContexte = (e: Event) => e.preventDefault();
   const surVisibilite = () => {
     if (document.hidden) toutRelacher();
-    else if (evince) reentrer();
+    else if (evince && !modeZ) reentrer();
   };
   const surContexteWebGLPerdu = (e: Event) => {
     e.preventDefault();
@@ -1264,7 +1456,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
 
   // ---------- HUD ----------
   /** Valeurs continues du HUD : objet stable, mis à jour à chaque image (lu en rAF par `useHudLive`, aucun rendu React). */
-  const live: HudLive = { recharge: 0, vitesse: 0, vitesseKmh: 0, regenDelai: 1 };
+  const live: HudLive = { recharge: 0, vitesse: 0, vitesseKmh: 0, regenDelai: 1, reanimation: 0 };
   const radarFrame: RadarFrame = creerRadarFrame();
   let dernierHud: HudEtat | null = null;
   let accHud = ECART_HUD_S;
@@ -1283,13 +1475,16 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
 
   function etatHud(): HudEtat {
     const arme = armes.armeEnMain();
-    const a = arme === "couteau" ? null : STATS[arme];
+    const a = estMelee(arme) ? null : STATS[arme];
     const info = vehicule.actif();
     const lunette = lunetteActive();
     const af = armeFeu();
-    const inv = peutAgir() && !enKillcam()
-      ? mondeJeu.invite(moi.p, info ? info.siege : null, client.maintenantServeur())
-      : { invite: "" as const, detail: "", vehicule: null };
+    const invZ = modeZ ? inviteZ() : INVITE_VIDE;
+    const inv = modeZ
+      ? { invite: invZ.invite, detail: invZ.detail, vehicule: null }
+      : peutAgir() && !enKillcam()
+        ? mondeJeu.invite(moi.p, info ? info.siege : null, client.maintenantServeur())
+        : { invite: "" as const, detail: "", vehicule: null };
     const kcActif = kc.actif();
     const phase = kcActif ? kc.phase() : "";
     const progression = kcActif ? kc.progression() : -1;
@@ -1299,11 +1494,11 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
       arme,
       slot: armes.slotActif(),
       slots: serialiserSlots(armes.lignes()),
-      equipSuivant: `${equipSuivant.principale}|${equipSuivant.secondaire}`,
-      munitions: arme === "couteau" ? 0 : Math.max(0, armes.munitions()),
+      equipSuivant: `${equipSuivant.principale}|${equipSuivant.secondaire}${equipSuivant.melee === "epee" ? "|epee" : ""}`,
+      munitions: estMelee(arme) ? 0 : Math.max(0, armes.munitions()),
       chargeur: armes.chargeur(),
-      // spéciale d'Elsa (munitions totales, retirée à 0) : aucune réserve ; les autres armes ont une réserve illimitée
-      reserve: a?.sansRecharge ? 0 : -1,
+      // spéciale d'Elsa (munitions totales, retirée à 0) : aucune réserve ; les autres armes ont une réserve illimitée (limitée en zombies)
+      reserve: a?.sansRecharge ? 0 : armes.reserveEnMain(),
       recharge: armes.rechargeEnCours(),
       degainage: armes.degainage(ms()),
       vise: viseMaintenu && peutAgir(),
@@ -1324,7 +1519,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
       accroupi: vivant && moi.accroupi && !info,
       glisse: vivant && !!moi.glisse && !info,
       regen: regenEnCours(),
-      bonusVitesse: arme === "couteau" ? COUTEAU.vitesse : 1,
+      bonusVitesse: estMelee(arme) ? MELEE[arme].vitesse : 1,
       invite: inv.invite,
       inviteDetail: inv.detail,
       vehicule: !!info,
@@ -1338,6 +1533,10 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
       killcamPhase: phase === "rejeu" || phase === "carte" ? phase : "",
       sort: vivant && mondeTigres.aCharge(),
       titan: pilote(),
+      ...(modeZ ? {
+        mode: "zombies" as const, argent: argentZ, manche: partieZ?.manche ?? 0, restants: mz.restants(), aTerre: aTerreZ, elimine: elimineZ,
+        invitePrix: invZ.prix, inviteAssez: invZ.assez, reanime: reanimCible !== null,
+      } : {}),
     };
   }
   function emettreHud(force = false) {
@@ -1377,6 +1576,14 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
         });
       }
       suiviRadar.maj(radarFrame, t, dt, camPos, directionVisee(camLacet, camTangage, 0), listeRadar);
+    }
+    radarFrame.modeZombies = modeZ;
+    if (modeZ) {
+      // tigres VUS (pas de wallhack) et portes encore fermées ; ni PNJ, ni voitures, ni Elsa
+      suiviRadar.majZombies(radarFrame, t, dt, camPos, directionVisee(camLacet, camTangage, 0), mz.zombies(), mz.nombre());
+      for (const p of portesFermees) ajouterPorte(radarFrame, p.p[0], p.p[1], p.q[0], p.q[1]);
+      purgerEchos(radarFrame, dt);
+      return;
     }
     // voitures PNJ (calculées à l'horloge serveur) et conduisibles
     const tsServeur = client.maintenantServeur();
@@ -1456,8 +1663,10 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
       if (id === client.id || e.titan) continue;
       listeVisible.push({ id, p: e.p, accroupi: !!e.accroupi || !!e.vehicule, vivant: e.vivant });
     }
-    const te = dyn.elsaTete();
-    listeVisible.push({ id: "elsa", p: [te[0], te[1] - SILHOUETTE.tete.y, te[2]], vivant: true });
+    if (!modeZ) {
+      const te = dyn.elsaTete();
+      listeVisible.push({ id: "elsa", p: [te[0], te[1] - SILHOUETTE.tete.y, te[2]], vivant: true });
+    }
     const regard = directionVisee(camLacet, camTangage, 0);
     visib.maj(t, dt, camPos, regard, listeVisible);
     for (const [id, d] of distants) {
@@ -1484,6 +1693,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
   }
   /** Voitures PNJ, voitures conduisibles, épaves, feux et Elsa (rendu three), à l'horloge serveur ou, en rejeu, à l'instant rejoué. */
   function majMondeDynamique(dt: number) {
+    if (modeZ) return;
     const tsServeur = client.maintenantServeur();
     const tsPnj = enReplay && tempsRejeuCache !== null ? tempsRejeuCache : tsServeur;
     const pnj = mondeJeu.etatsPnj(tsPnj);
@@ -1556,6 +1766,28 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
     }
   }
 
+  /** (zombies) Tigres interpolés à l'instant du rendu, dessinés (culling, LOD), griffes et rugissements entendus. */
+  function majZombies(dt: number) {
+    if (!modeZ || !rz) return;
+    imageNum++;
+    const n = mz.echantillon(client.maintenantServeur() - JEU.interpolationMs);
+    const zs = mz.zombies();
+    const regardX = -Math.sin(camLacet), regardZ = -Math.cos(camLacet);
+    rz.maj(zs, n, camPos, regardX, regardZ, dt, imageNum, {
+      surGriffe: (v) => sons.griffe(positionSon([v.x, 1, v.z])),
+    });
+    const id = rugissements.maj(dt, zs, n, camPos, Math.random);
+    if (id !== null) {
+      const v = mz.parId(id);
+      if (v) sons.rugissementTigre(positionSon([v.x, 1, v.z]));
+    }
+    // la relève que je maintiens s'arrête si le coéquipier est relevé, trop loin ou si j'ai lâché E
+    if (reanimCible !== null) {
+      const inv = inviteZ();
+      if (!actionActive("interagir") || inv.invite !== "reanimer" || inv.cible !== reanimCible) arreterReanimation();
+    }
+  }
+
   /**
    * Tigres (interpolés comme les joueurs) et avion (à l'horloge serveur, sa trajectoire est connue d'avance) : rendu, sons des actions et
    * moteur de l'avion. Pendant le rejeu de la killcam, rien du présent ne se superpose au passé : tigres, avion et leurs sons sont coupés.
@@ -1582,6 +1814,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
       const premier = idConnu === null;
       idConnu = client.id;
       if (premier) return;
+      // zombies : le serveur a oublié la salle choisie (on repart dans l'arène) : la partie en cours est perdue pour nous
+      if (modeZ) { apparu = false; vivant = false; arreterReanimation(); cb.sortir(); return; }
       apparu = false;
       vivant = false;
       interp.vider();
@@ -1595,7 +1829,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
       mondeTigres.reinitialiser();
       visib.vider();
       suiviRadar.vider();
-      client.envoyer({ t: "rejoindre", principale: equipSuivant.principale, secondaire: equipSuivant.secondaire });
+      client.envoyer({ t: "rejoindre", ...choixEquipement() });
     } else if (client.id !== null) {
       idConnu = client.id;
     }
@@ -1654,10 +1888,11 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
       return;
     }
     if (!apparu) {
-      // en attente de la première apparition : survol de l'arène, centré sur le rond-point
-      camera.position.set(cx, 70, cz + 90);
+      // en attente de la première apparition : survol de l'arène, centré sur le rond-point (zombies : sur la cour de départ)
+      const fx = modeZ ? FOCUS_ZOMBIES[0] : cx, fz = modeZ ? FOCUS_ZOMBIES[1] : cz;
+      camera.position.set(fx, 70, fz + 90);
       camera.rotation.set(-0.5, 0, 0);
-      camPos[0] = cx; camPos[1] = 70; camPos[2] = cz + 90;
+      camPos[0] = fx; camPos[1] = 70; camPos[2] = fz + 90;
       camLacet = 0;
       camTangage = -0.5;
     } else if (vivant) {
@@ -1738,7 +1973,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
     const en = entrees();
     const actif = vivant && apparu && !enReplay && (aVerrou || forceActif);
     const arme = armes.armeEnMain();
-    const a = arme === "couteau" ? null : STATS[arme];
+    const a = estMelee(arme) ? null : STATS[arme];
     const info = vehicule.actif();
     // Le fusil à lunette ne vise pas pendant le rechargement : l'arme reste visible et le champ normal
     // (sinon, clic droit tenu, l'arme disparaissait sans lunette ni animation de rechargement).
@@ -1787,10 +2022,14 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
     if (actif) {
       // le canon du titan tire en continu tant que le bouton est tenu
       const auto = pilote() || a === null ? true : a.auto;
-      const veutTirer = auto ? tirMaintenu : !tirConsomme && tirPresse > t - 0.12;
+      // arme blanche : maintenue elle enchaîne les coups, mais un clic bref (ou donné juste avant la fin de la cadence, 0,85 s à l'épée)
+      // est mémorisé 0,12 s comme pour une arme semi-automatique, sinon il se perd entre deux images
+      const tampon = !pilote() && a === null;
+      const veutTirer = auto ? tirMaintenu || (tampon && !tirConsomme && tirPresse > t - 0.12) : !tirConsomme && tirPresse > t - 0.12;
       let n = 0;
       while (veutTirer && n < TIRS_PAR_IMAGE_MAX && tirer()) {
         n++;
+        if (tampon) tirConsomme = true;
         if (!auto) { tirConsomme = true; break; }
       }
     }
@@ -1846,6 +2085,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
     majTigres(dt);
     majVoix();
     majMonstres(dt);
+    majZombies(dt);
     effets.maj(dt);
 
     porteArme.visible = apparu && (vivant || enReplay) && !(info && tireInterdit()) && !pilote();
@@ -1859,12 +2099,13 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
     live.vitesse = info && ve ? Math.abs(ve.v) : vh;
     live.vitesseKmh = info ? vehicule.vitesseKmh() : 0;
     live.regenDelai = !vivant || pv >= JEU.pvMax ? 1 : borne((t - dernierDegatT) / (JEU.regenDelaiMs / 1000), 0, 1);
+    live.reanimation = reanimCible !== null ? borne((t - reanimDebutT) / ZOMBIES.reanimationS, 0, 1) : 0;
     accHud += dt;
     if (accHud >= ECART_HUD_S) { accHud = 0; emettreHud(); }
   }
   raf = requestAnimationFrame(frame);
 
-  client.envoyer({ t: "rejoindre", principale: equipSuivant.principale, secondaire: equipSuivant.secondaire });
+  client.envoyer({ t: "rejoindre", ...choixEquipement() });
   emettreHud(true);
 
   // ---------- poignée ----------
@@ -1904,6 +2145,13 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
         } : null,
       };
     },
+    zombies() {
+      return {
+        argent: argentZ, manche: partieZ?.manche ?? 0, restants: mz.restants(), vivants: mz.vivants(), gain: gainZ, refus: refusZ, achats: achatsZ,
+        reanimation: reanimCible !== null ? { cible: reanimCible, progression: borne((t - reanimDebutT) / ZOMBIES.reanimationS, 0, 1) } : null,
+        aTerre: aTerreZ, elimine: elimineZ, terreFinT: terreFinTZ, partie: partieZ,
+      };
+    },
     touches(cfg: ConfigTouches) { config = cfg; index = indexTouches(cfg); toutRelacher(); },
     dispose() {
       if (disposed) return;
@@ -1933,10 +2181,12 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
       visib.vider();
       suiviRadar.vider();
       for (const id of [...distants.keys()]) retirerAvatar(id);
+      reanimCible = null; // `quitter` est déjà parti : rien à annoncer au serveur
       dyn.dispose();
       renduTigres.dispose();
       feux.dispose();
       rm.dispose();
+      rz?.dispose();
       impactsBalles.dispose();
       tracesPneus.dispose();
       debris.dispose();
@@ -1968,6 +2218,9 @@ export function lancerJeu(canvas: HTMLCanvasElement, data: SceneData, client: Cl
           killcam: kc.actif() ? { phase: kc.phase(), progression: kc.progression() } : null,
           p: [...moi.p], v: [...moi.v], auSol: moi.auSol, posture: postureDe(moi), mur: coteMurDe(moi),
           lacet, tangage, verrouille: verrouille(), entracte, fov: fovV, oeil: oeil(),
+          mode: modeZ ? "zombies" : "arene", argent: argentZ, manche: partieZ?.manche ?? 0, restants: mz.restants(), aTerre: aTerreZ, elimine: elimineZ,
+          zombies: modeZ ? mz.zombies().slice(0, mz.nombre()).map((v) => ({ id: v.id, x: v.x, z: v.z, type: v.type, griffe: v.griffe })) : [],
+          rugissements: rz ? { pret: rz.pret(), affiches: rz.affiches() } : null,
           distants: [...etats.entries()].filter(([id]) => id !== client.id).map(([id, e]) => ({
             id, p: e.p, vivant: e.vivant, protege: e.protege, arme: e.arme, accroupi: !!e.accroupi, glisse: !!e.glisse, vehicule: e.vehicule ?? null,
             pseudoAlpha: visib.alpha(id),

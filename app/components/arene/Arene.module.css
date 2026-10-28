@@ -39,6 +39,31 @@
 .kd { min-width: 4ch; text-align: right; color: var(--ag-ink-dim); font-variant-numeric: tabular-nums; }
 .vide { color: var(--ag-ink-dim); }
 
+/* ---------- choix du mode (v5) ---------- */
+.modes { border: 0; margin: 4px 0 12px; padding: 0; min-width: 0; }
+.modes legend { padding: 0; margin-bottom: 6px; font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ag-ink-dim); }
+.modesGrille { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.carteMode {
+  position: relative; display: flex; flex-direction: column; gap: 4px; padding: 10px; cursor: pointer; min-width: 0;
+  border: 1px solid var(--ag-line-strong); background: var(--ag-hud-fond);
+}
+.carteMode:hover { border-color: var(--ag-ink-dim); }
+.carteMode input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+.carteMode:has(input:focus-visible) { outline: 2px solid var(--ag-white); outline-offset: 2px; }
+.carteMode:has(input:disabled) { cursor: default; }
+.carteModeChoisie { border-color: var(--ag-amber); background: color-mix(in srgb, var(--ag-amber) 12%, var(--ag-ground)); box-shadow: inset 0 0 0 1px var(--ag-amber); }
+.carteModeNom { font-family: var(--ag-display), var(--ag-mono), monospace; font-weight: 600; font-size: 13px; color: var(--ag-white); letter-spacing: 0.04em; text-transform: uppercase; overflow-wrap: anywhere; }
+.carteModeChoisie .carteModeNom { color: var(--ag-amber); }
+.carteModeFermee .carteModeNom, .carteModeFermee .carteModeCompteur { color: var(--ag-ink-dim); }
+.carteModeFermee:hover { border-color: var(--ag-line-strong); }
+/* l'état choisi ne tient pas qu'à la couleur : coche décorative (l'état coché de la radio est annoncé par le navigateur) */
+.carteModeChoisie .carteModeNom::after { content: " ✓"; content: " ✓" / ""; }
+.carteModeCompteur { font-size: 11px; color: var(--ag-ink); font-variant-numeric: tabular-nums; }
+.carteModeDesc { font-size: 11px; line-height: 1.4; color: var(--ag-ink-dim); }
+
+.badgeHote { padding: 0 5px; border: 1px solid var(--ag-cyan); color: var(--ag-cyan); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; line-height: 1.4; }
+.enCours { color: var(--ag-amber); }
+
 .champ { display: flex; flex-direction: column; gap: 4px; margin-top: 14px; }
 .champ label { font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ag-ink-dim); }
 .champ input {
@@ -74,6 +99,7 @@
 .tactile { padding: 10px; border: 1px dashed var(--ag-line-strong); color: var(--ag-ink); font-size: 12px; margin-top: 16px; }
 
 @media (max-width: 640px) {
+  .modesGrille { grid-template-columns: 1fr; }
   .arene { top: auto; bottom: 20px; right: 24px; left: 24px; width: auto; max-height: min(70vh, calc(100vh - 100px)); }
   .fermer { min-height: 40px; padding-inline: 14px; }
 }

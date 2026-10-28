@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
-  ARMES, ARMES_PRINCIPALES, ARMES_SECONDAIRES, ARMES_SPECIALES, ECHELLE_AVATAR, EQUIPEMENT_DEFAUT, JEU, OEIL_SIEGE, PLAFONDS,
-  SILHOUETTE, SILHOUETTE_ACCROUPIE, SLOTS, VERSION_PROTOCOLE, copierEquipement, oeilDe, silhouetteDe,
+  ARMES, ARMES_MELEE, ARMES_PRINCIPALES, ARMES_SECONDAIRES, ARMES_SPECIALES, ECHELLE_AVATAR, EQUIPEMENT_DEFAUT, JEU, OEIL_SIEGE, PAS_SNAP_ZOMBIE, PLAFONDS,
+  SILHOUETTE, SILHOUETTE_ACCROUPIE, SLOTS, VERSION_PROTOCOLE, copierEquipement, decoderZombies, encoderZombies, estIdZombie, estMelee, idZombie, oeilDe,
+  silhouetteDe, type ZombieSnap,
   type CauseMort, type MessageClient, type MessageServeur, type PassageAvion, type TigreLargueSnap,
 } from "./protocole";
 import { STATS } from "./armes";
@@ -90,8 +91,8 @@ describe("silhouette", () => {
 });
 
 describe("constantes", () => {
-  it("version 5 du protocole (événements de la v4 et tigres largués, avion, sort d'invocation)", () => {
-    expect(VERSION_PROTOCOLE).toBe(5);
+  it("version 6 du protocole (événements de la v4, tigres largués de la v5, zombies et épée)", () => {
+    expect(VERSION_PROTOCOLE).toBe(6);
   });
 
   it("chaîne de plafonds de vitesse : sprint couteau ≤ plafond horizontal ≤ plafond déclaré", () => {
@@ -109,6 +110,91 @@ describe("constantes", () => {
     expect(JEU.memoSanteMs).toBe(60_000);
     expect(JEU.etatPassagerHz).toBeLessThan(JEU.etatHz);
     expect(JEU.protectionMs).toBeLessThan(JEU.delaiReapparitionMs);
+  });
+});
+
+describe("protocole v6 (zombies)", () => {
+  it("version 6", () => {
+    expect(VERSION_PROTOCOLE).toBe(6);
+  });
+
+  it("ARMES_MELEE : couteau et épée, estMelee ne reconnaît aucune arme à feu", () => {
+    expect([...ARMES_MELEE]).toEqual(["couteau", "epee"]);
+    expect(estMelee("epee")).toBe(true);
+    expect(estMelee("couteau")).toBe(true);
+    for (const a of ARMES) expect(estMelee(a)).toBe(false);
+    expect(estMelee("hache")).toBe(false);
+    expect(estMelee(null)).toBe(false);
+  });
+
+  it("les 11 armes à feu sont inchangées (l'épée n'en est pas une)", () => {
+    expect(ARMES).toHaveLength(11);
+    expect(ARMES).not.toContain("epee");
+  });
+
+  it("idZombie / estIdZombie : « z » + numéro, jamais un id de joueur", () => {
+    expect(idZombie(0)).toBe("z0");
+    expect(idZombie(42)).toBe("z42");
+    expect(estIdZombie("z7")).toBe(true);
+    expect(estIdZombie(idZombie(123))).toBe(true);
+    for (const faux of ["j7", "j1", "z", "z-1", "z1.5", "zz1", "Z1", "z1 ", " z1", "tigre", "titan", "", 7, null, undefined]) {
+      expect(estIdZombie(faux)).toBe(false);
+    }
+  });
+
+  it("copierEquipement : sans clé undefined, recopie melee et sansPrincipale quand ils sont définis", () => {
+    const simple = copierEquipement(EQUIPEMENT_DEFAUT);
+    expect(Object.keys(simple).sort()).toEqual(["principale", "secondaire", "speciale"]);
+    expect(simple).toEqual({ principale: "mitraillette", secondaire: "pistolet", speciale: null });
+    const complet = copierEquipement({ principale: "pompe", secondaire: "revolver", speciale: "railgun", melee: "epee", sansPrincipale: true });
+    expect(complet).toEqual({ principale: "pompe", secondaire: "revolver", speciale: "railgun", melee: "epee", sansPrincipale: true });
+    const avecUndefined = copierEquipement({ principale: "pompe", secondaire: "pistolet", speciale: null, melee: undefined });
+    expect(Object.keys(avecUndefined)).not.toContain("melee");
+    expect(Object.keys(avecUndefined)).not.toContain("sansPrincipale");
+  });
+
+  it("EQUIPEMENT_DEFAUT n'a pas de melee", () => {
+    expect("melee" in EQUIPEMENT_DEFAUT).toBe(false);
+  });
+
+  it("encoderZombies / decoderZombies : aller-retour au centimètre, au milliradian et au pour cent", () => {
+    const zs: ZombieSnap[] = [
+      { id: 3, x: 123.456, z: -78.904, cap: 1.2345, type: 0, griffe: false, apparition: false, pvPct: 100 },
+      { id: 17, x: -0.004, z: 0.006, cap: -3.1415, type: 1, griffe: true, apparition: false, pvPct: 62.4 },
+      { id: 99, x: 210, z: 24, cap: 0, type: 2, griffe: true, apparition: true, pvPct: 0 },
+    ];
+    const snap = encoderZombies(5, zs);
+    expect(snap.r).toBe(5);
+    expect(snap.z).toHaveLength(zs.length * PAS_SNAP_ZOMBIE);
+    expect(PAS_SNAP_ZOMBIE).toBe(6);
+    expect(snap.z.every((n) => Number.isInteger(n))).toBe(true);
+    const retour = decoderZombies(snap);
+    expect(retour).toHaveLength(3);
+    retour.forEach((m, i) => {
+      const o = zs[i];
+      expect(m.id).toBe(o.id);
+      expect(Math.abs(m.x - o.x)).toBeLessThanOrEqual(0.0051);
+      expect(Math.abs(m.z - o.z)).toBeLessThanOrEqual(0.0051);
+      expect(Math.abs(m.cap - o.cap)).toBeLessThanOrEqual(0.00051);
+      expect(m.type).toBe(o.type);
+      expect(m.griffe).toBe(o.griffe);
+      expect(m.apparition).toBe(o.apparition);
+      expect(Math.abs(m.pvPct - o.pvPct)).toBeLessThanOrEqual(0.5);
+    });
+  });
+
+  it("encoderZombies : drapeaux (type bits 0-1, griffe bit 2, apparition bit 3), PV bornés ; liste vide ; tableau tronqué ignoré", () => {
+    const [, , , , drapeaux, pv] = encoderZombies(1, [{ id: 1, x: 0, z: 0, cap: 0, type: 2, griffe: true, apparition: true, pvPct: 250 }]).z;
+    expect(drapeaux).toBe(2 | 4 | 8);
+    expect(pv).toBe(100);
+    expect(encoderZombies(0, []).z).toEqual([]);
+    expect(decoderZombies({ r: 0, z: [] })).toEqual([]);
+    expect(decoderZombies({ r: 2, z: [1, 100, 200, 300, 0, 50, 2, 1, 1] })).toHaveLength(1);
+  });
+
+  it("ids : « z<n> » (tigres zombies) ne collisionne pas avec « t<n> » (tigres largués) ni « j<n> »", () => {
+    expect(estIdZombie("t1")).toBe(false);
+    expect(estIdZombie(idZombie(1))).toBe(true);
   });
 });
 
@@ -137,8 +223,8 @@ describe("messages v5 (tigres largués à côté des événements)", () => {
   });
 
   it("les causes de mort des deux côtés coexistent : « tigre » (tigres largués) et « tigre_robot » (tigre géant) sont distinctes", () => {
-    const causes: CauseMort[] = ["arme", "ecrase_pnj", "ecrase_vehicule", "tigre", "explosion", "truck_fou", "tigre_robot", "titan"];
-    expect(new Set(causes).size).toBe(8);
+    const causes: CauseMort[] = ["arme", "ecrase_pnj", "ecrase_vehicule", "tigre", "explosion", "truck_fou", "tigre_robot", "titan", "tigre_zombie"];
+    expect(new Set(causes).size).toBe(9);
   });
 
   it("un snap porte à la fois les tigres largués (`tigres`) et les monstres des événements (`monstres`)", () => {

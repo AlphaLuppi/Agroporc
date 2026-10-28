@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
-  COUTEAU, STATS, apresTir, degatsPlomb, devier, directionsTir, dispersionCourante, dispersionTir, niveauZoomDefaut, niveauxZoom, gerbeRespectee, TOLERANCE_GERBE_RAD, multiplicateurChute, nomArme, refroidir, vitesseArme,
+  COUTEAU, MELEE, STATS, apresTir, degatsPlomb, devier, directionsTir, dispersionCourante, dispersionTir, niveauZoomDefaut, niveauxZoom, gerbeRespectee, TOLERANCE_GERBE_RAD, multiplicateurChute, nomArme, refroidir, vitesseArme,
 } from "./armes";
-import { ARMES, ARMES_PRINCIPALES, ARMES_SECONDAIRES, ARMES_SPECIALES, JEU, type Vec3 } from "./protocole";
+import { ARMES, ARMES_MELEE, ARMES_PRINCIPALES, ARMES_SECONDAIRES, ARMES_SPECIALES, JEU, PLAFONDS, type Vec3 } from "./protocole";
+import { MOUV } from "./mouvement";
 
 const angle = (a: Vec3, b: Vec3) => Math.acos(Math.min(1, Math.max(-1, a[0] * b[0] + a[1] * b[1] + a[2] * b[2])));
 const norme = (v: Vec3) => Math.hypot(v[0], v[1], v[2]);
@@ -334,5 +335,54 @@ describe("sniper sans lunette (v3 §1)", () => {
     expect(niveauxZoom("sniper")[niveauZoomDefaut("sniper")]).toBe(STATS.sniper.zoom);
     expect(niveauxZoom("pistolet")).toEqual([]);
     expect(niveauZoomDefaut("pistolet")).toBe(0);
+  });
+});
+
+describe("MELEE (couteau et épée)", () => {
+  it("une entrée par arme de mêlée, COUTEAU = MELEE.couteau", () => {
+    expect(Object.keys(MELEE).sort()).toEqual([...ARMES_MELEE].sort());
+    expect(COUTEAU).toBe(MELEE.couteau);
+    for (const id of ARMES_MELEE) expect(MELEE[id].id).toBe(id);
+  });
+
+  it("couteau inchangé : 100 / 100, portée 2,2 (+0,6), 0,5 s, ×1,3, cône 55°, 1 cible, coup de 0,40 s", () => {
+    expect(MELEE.couteau).toMatchObject({
+      degats: 100, degatsZombie: 100, portee: 2.2, margePortee: 0.6, cadenceS: 0.5, vitesse: 1.3, cosCone: 0.574, nbCiblesMax: 1, dureeCoupS: 0.4,
+    });
+  });
+
+  it("épée conforme à la spec : 140 / 220, portée 2,6 (+0,7), 0,85 s, ×1,2, cône 70°, 3 cibles, coup de 0,55 s", () => {
+    expect(MELEE.epee).toMatchObject({
+      degats: 140, degatsZombie: 220, portee: 2.6, margePortee: 0.7, cadenceS: 0.85, vitesse: 1.2, cosCone: 0.342, nbCiblesMax: 3, dureeCoupS: 0.55,
+    });
+    expect(MELEE.epee.cosCone).toBeCloseTo(Math.cos((70 * Math.PI) / 180), 2);
+    // tue un joueur sans bouclier en un coup, mais pas avec bouclier plein
+    expect(MELEE.epee.degats).toBeGreaterThanOrEqual(JEU.pvMax);
+    expect(MELEE.epee.degats).toBeLessThan(JEU.pvMax + JEU.bouclierMax);
+  });
+
+  it("l'épée est plus lente et plus longue que le couteau", () => {
+    expect(MELEE.epee.cadenceS).toBeGreaterThan(MELEE.couteau.cadenceS);
+    expect(MELEE.epee.vitesse).toBeLessThan(MELEE.couteau.vitesse);
+    expect(MELEE.epee.portee).toBeGreaterThan(MELEE.couteau.portee);
+  });
+
+  it("noms courts de 10 caractères au plus ; textes renseignés", () => {
+    for (const id of ARMES_MELEE) {
+      expect(MELEE[id].nomCourt.length).toBeLessThanOrEqual(10);
+      expect(MELEE[id].nom.length).toBeGreaterThan(0);
+      expect(MELEE[id].description.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("invariant de vitesse : le sprint avec l'épée (12,5 × 1,2 = 15 m/s) reste sous le plafond horizontal accepté par le serveur", () => {
+    for (const id of ARMES_MELEE) expect(MOUV.sprint * MELEE[id].vitesse).toBeLessThanOrEqual(PLAFONDS.vitesseHorizontaleMax);
+    expect(MOUV.sprint * MELEE.epee.vitesse).toBeCloseTo(15, 6);
+  });
+
+  it("vitesseArme et nomArme couvrent l'épée", () => {
+    expect(vitesseArme("epee")).toBe(1.2);
+    expect(nomArme("epee")).toBe("Épée");
+    expect(vitesseArme("couteau")).toBe(1.3);
   });
 });

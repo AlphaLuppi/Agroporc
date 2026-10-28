@@ -90,6 +90,26 @@ describe("BlocArmes", () => {
   });
 });
 
+describe("BlocArmes : épée", () => {
+  const SLOTS_EPEE = "principale:fusil_assaut:23:30|secondaire:pistolet:12:12|couteau:epee:0:0";
+
+  it("le slot 3 porte le nom de l'épée et sa vitesse de course (+20 %)", () => {
+    const html = armes({ slots: SLOTS_EPEE });
+    expect(html).toContain("ÉPÉE");
+    expect(html).not.toContain("COUTEAU");
+    expect(html).toContain("VITESSE +20 %");
+    expect(html).toContain("(Arme blanche)");
+  });
+
+  it("épée en main : nom de l'arme, puce de vitesse, pas de chiffres", () => {
+    const html = armes({ arme: "epee", slot: "couteau", slots: SLOTS_EPEE, munitions: 0, chargeur: 0, bonusVitesse: 1.2 });
+    expect(html).toContain("Épée");
+    expect(html).toContain("VITESSE +20 %");
+    expect(html).not.toContain("RÉSERVE");
+    expect(html.match(/aria-current="true"/g)).toHaveLength(1);
+  });
+});
+
 describe("Chargeur", () => {
   const rendre = (p: Record<string, unknown>) =>
     renderToStaticMarkup(createElement(Chargeur, { munitions: 23, chargeur: 30, reserve: -1, recharge: false, rechargeS: 2.2, couteau: false, bonusVitesse: 1, refBarre: refDiv, refTemps: refSpan, ...p } as never));

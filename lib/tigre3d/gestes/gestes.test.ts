@@ -1,12 +1,13 @@
 import { describe, it, expect } from "vitest";
 import { Quaternion, Euler, Vector3 } from "three";
-import { GESTES } from "./index";
+import { GESTES, GESTES_ARENE } from "./index";
 import { solVersCorps, extremiteMonde, patteAuSol, deltasDepuisClip, assis, echelon, aller, repos } from "./outils";
 import { creerCorps, avancerCorps, type Couche } from "../corps";
 import { creerAnimateur } from "../animateur";
 import { GROUPES, type Groupe } from "../os";
 import { squelette } from "../squelette";
-import { POIDS_REACTIONS, TEXTES, type Reaction } from "../../tigre-reactions";
+import { POIDS_REACTIONS, TEXTES, tirerReaction, type Reaction } from "../../tigre-reactions";
+import { griffe } from "./griffe";
 import type { ContexteGeste, PoseGeste } from "./types";
 
 const ctx = (o: Partial<ContexteGeste> = {}): ContexteGeste => ({
@@ -71,6 +72,37 @@ describe("outils des gestes", () => {
     expect(max).toBeLessThan(1.2);
     expect(echelon(3, 0)).toBeCloseTo(1, 4);
     expect(aller(5, 0, 1)).toBeCloseTo(0, 4);
+  });
+});
+
+describe("griffe (tigre zombie)", () => {
+  it("est enregistrée hors du thème Tigre (poids nul : ni réaction, ni tirage), dure 0,55 s et ne retient pas le tigre", () => {
+    expect(GESTES_ARENE.griffe).toBe(griffe);
+    // jamais une réaction du thème : absente du tirage, du registre des réactions, sans bulle
+    expect(POIDS_REACTIONS.some(([n]) => (n as string) === "griffe")).toBe(false);
+    expect((GESTES as Record<string, unknown>).griffe).toBeUndefined();
+    for (let a = 0; a < 1; a += 0.01) expect(tirerReaction(a) as string).not.toBe("griffe");
+    expect(griffe.evenements ?? []).toEqual([]);
+    expect(griffe.duree).toBeCloseTo(0.55, 6);
+    expect(griffe.immobile).toBe(false);
+  });
+
+  it("la patte avant droite se lève et part en arrière, puis claque vers l'avant et vers le bas, puis revient", () => {
+    const main = (t: number) => {
+      const c = tenir(griffe.echantillonner(t, ctx()), 0.8);
+      return { y: c.monde.p[c.sq.i.mainD].y, z: c.monde.p[c.sq.i.mainD].z };
+    };
+    const r = repos("mainD");
+    const arme = main(0.22);
+    const frappe = main(0.4);
+    const fin = main(0.55);
+    expect(arme.y).toBeGreaterThan(r[1] + 0.2);
+    expect(arme.z).toBeLessThan(r[2] + 0.02);
+    expect(frappe.z).toBeGreaterThan(arme.z + 0.15);
+    expect(frappe.y).toBeLessThan(arme.y - 0.2);
+    expect(Math.abs(fin.y - r[1])).toBeLessThan(0.06);
+    // l'autre patte avant n'est pas touchée par le geste
+    expect(Object.keys(griffe.echantillonner(0.3, ctx()).pattes ?? {})).toEqual(["avD"]);
   });
 });
 

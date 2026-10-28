@@ -6,10 +6,10 @@
  *
  * Aucune horloge ni aléa ici : toutes les dates sont passées en paramètre (horloge serveur, ms).
  */
-import { COUTEAU } from "./armes";
+import { MELEE } from "./armes";
 import { positionAvion } from "./avion";
 import type { Monde } from "./collision";
-import type { MessageServeur, PassageAvion, TigreLargueSnap, Vec3, Zone } from "./protocole";
+import type { ArmeMeleeId, MessageServeur, PassageAvion, TigreLargueSnap, Vec3, Zone } from "./protocole";
 import { lerpAngle } from "./reseau";
 import { TIGRE, coupTigreVraisemblable, distanceSurfaceTigre, tracerTigre, type PositionTigre } from "./tigre-arene";
 
@@ -236,12 +236,13 @@ export function tracerTigres(o: Vec3, d: Vec3, limite: number, cibles: readonly 
  * Coup de couteau : tigre le plus proche dont la surface est à la portée du couteau (sans la marge du serveur), dans le cône de frappe et en
  * vue (mêmes règles que la validation serveur `coupTigreVraisemblable`). Null sinon.
  */
-export function trouverTigreCouteau(monde: Monde, o: Vec3, d: Vec3, cibles: readonly (PositionTigre & { id: string })[]): { id: string; distance: number } | null {
+export function trouverTigreCouteau(monde: Monde, o: Vec3, d: Vec3, cibles: readonly (PositionTigre & { id: string })[], arme: ArmeMeleeId = "couteau"): { id: string; distance: number } | null {
+  const m = MELEE[arme];
   let meilleur: { id: string; distance: number } | null = null;
   for (const c of cibles) {
     const distance = distanceSurfaceTigre(o, c).distance;
-    if (distance > COUTEAU.portee || (meilleur && distance >= meilleur.distance)) continue;
-    if (!coupTigreVraisemblable(monde, o, d, c)) continue;
+    if (distance > m.portee || (meilleur && distance >= meilleur.distance)) continue;
+    if (!coupTigreVraisemblable(monde, o, d, c, arme)) continue;
     meilleur = { id: c.id, distance };
   }
   return meilleur;

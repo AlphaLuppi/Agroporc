@@ -1,15 +1,15 @@
 "use client";
 
 import { memo, type RefObject } from "react";
-import { COUTEAU, STATS, nomArme } from "@/lib/fps/armes";
+import { MELEE, STATS, nomArme } from "@/lib/fps/armes";
 import { formatNombre, niveauMunitions, parseSlots } from "@/lib/fps/hud-modele";
-import type { ArmeId, Slot } from "@/lib/fps/protocole";
+import { estMelee, type ArmeId, type Slot } from "@/lib/fps/protocole";
 import Chargeur, { libelleBonusVitesse } from "./Chargeur";
 import styles from "../HudArene.module.css";
 
 /**
  * Bloc armes (bas-droite, §5.1) : nom de l'arme en main, munitions fixes (`Chargeur`), rack de slots `> [1] FUSIL 23/30`, `[2] PISTOLET 12/12`,
- * `[3] COUTEAU VITESSE +30 %`, `[4] RAILGUN 4` (étiquette « SPÉCIALE », présent seulement s'il est porté). Les noms courts restent complets en
+ * `[3] COUTEAU VITESSE +30 %` (ou `[3] ÉPÉE VITESSE +20 %`), `[4] RAILGUN 4` (étiquette « SPÉCIALE », présent seulement s'il est porté). Les noms courts restent complets en
  * permanence ; l'actif porte un cadre ambre et `aria-current="true"` ; pendant le dégainage (350 ms) la ligne du slot se remplit.
  * Conducteur : bloc lisible mais en `--ag-ink-dim`, avec la ligne « TIR IMPOSSIBLE ». Scalaires uniquement.
  */
@@ -35,12 +35,12 @@ export interface PropsBlocArmes {
   refTemps: RefObject<HTMLSpanElement | null>;
 }
 
-const LIBELLE_SLOT: Record<Slot, string> = { principale: "Principale", secondaire: "Secondaire", couteau: "Couteau", speciale: "Spéciale" };
+const LIBELLE_SLOT: Record<Slot, string> = { principale: "Principale", secondaire: "Secondaire", couteau: "Arme blanche", speciale: "Spéciale" };
 
 function BlocArmesBrut(p: PropsBlocArmes) {
   const slots = parseSlots(p.slots);
   const touches: Record<Slot, string> = { principale: p.toucheP, secondaire: p.toucheS, couteau: p.toucheC, speciale: p.toucheSp };
-  const couteau = p.arme === "couteau";
+  const couteau = estMelee(p.arme);
   return (
     <section className={`${styles.plaque} ${styles.armes}`} data-indisponible={p.tireInterdit ? "oui" : "non"} aria-label="Armes et munitions">
       <p className={styles.armeNom}>{nomArme(p.arme)}</p>
@@ -51,9 +51,9 @@ function BlocArmesBrut(p: PropsBlocArmes) {
         munitions={p.munitions}
         chargeur={p.chargeur}
         reserve={p.reserve}
-        sansRecharge={p.arme !== "couteau" && STATS[p.arme].sansRecharge}
+        sansRecharge={!estMelee(p.arme) && STATS[p.arme].sansRecharge}
         recharge={p.recharge}
-        rechargeS={p.arme === "couteau" ? 0 : STATS[p.arme].rechargeS}
+        rechargeS={estMelee(p.arme) ? 0 : STATS[p.arme].rechargeS}
         couteau={couteau}
         bonusVitesse={p.bonusVitesse}
         refBarre={p.refBarre}
@@ -62,7 +62,7 @@ function BlocArmesBrut(p: PropsBlocArmes) {
       <ul className={styles.rack} aria-label="Équipement">
         {slots.map((s) => {
           const actif = s.slot === p.slot;
-          const nomCourt = s.arme === "couteau" ? COUTEAU.nomCourt : STATS[s.arme].nomCourt;
+          const nomCourt = estMelee(s.arme) ? MELEE[s.arme].nomCourt : STATS[s.arme].nomCourt;
           const niveau = s.slot === "couteau" ? "normal" : niveauMunitions(s.munitions, s.chargeur);
           return (
             <li
@@ -80,7 +80,7 @@ function BlocArmesBrut(p: PropsBlocArmes) {
               </span>
               <span className={styles.slotMun}>
                 {s.slot === "couteau"
-                  ? `VITESSE ${libelleBonusVitesse(COUTEAU.vitesse)}`
+                  ? `VITESSE ${libelleBonusVitesse(estMelee(s.arme) ? MELEE[s.arme].vitesse : 1)}`
                   : s.slot === "speciale"
                     ? formatNombre(s.munitions)
                     : `${formatNombre(s.munitions)}/${formatNombre(s.chargeur)}`}

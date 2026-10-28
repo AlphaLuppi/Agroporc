@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   FILE_VIVE_MAX, INTERVALLE_VIF_MS, NBSP, PIPS, PRIORITE_VIVE, SEUILS_MUNITIONS, SEUILS_PV,
-  cacheLiveVide, delaiVif, etapeRupture, ecrireLive, fileViveVide, formatKills, formatMetres, formatNombre, formatPourcent, formatRang, formatSecondes,
+  cacheLiveVide, delaiVif, etapeRupture, ecrireLive, fileViveVide, formatArgent, formatKills, formatMetres, formatNombre, formatPourcent, formatRang, formatSecondes,
   formatVitesse, libelleFil, libellePvBas, niveauMunitions, niveauPv, palierFranchi, parseSlots, pips, prendreVif, pousserVif,
   syntheseMatch, texteBonus, texteOffreElsa, type ElementEcrivable, type MessageVif,
 } from "./hud-modele";
@@ -12,6 +12,18 @@ describe("hud-modele : seuils de la spec", () => {
     expect(SEUILS_MUNITIONS).toEqual({ basFraction: 0.25, basBalles: 3, critiqueFraction: 0.1 });
     expect(SEUILS_PV).toEqual({ moyen: 50, bas: 25, libelleBas: 30 });
     expect(PIPS.parBalleMax).toBe(30);
+  });
+});
+
+describe("parseSlots : épée", () => {
+  it("le slot couteau peut porter l'épée (0 / 0, jamais d'alerte de munitions)", () => {
+    const s = parseSlots("principale:fusil_assaut:23:30|secondaire:pistolet:12:12|couteau:epee:0:0");
+    expect(s).toEqual([
+      { slot: "principale", arme: "fusil_assaut", munitions: 23, chargeur: 30, reserve: -1 },
+      { slot: "secondaire", arme: "pistolet", munitions: 12, chargeur: 12, reserve: -1 },
+      { slot: "couteau", arme: "epee", munitions: 0, chargeur: 0, reserve: -1 },
+    ]);
+    expect(niveauMunitions(0, 0)).toBe("normal");
   });
 });
 
@@ -127,6 +139,7 @@ describe("formats français", () => {
     expect(libelleFil("fusil_assaut", "arme", "Lea")).toBe("Fusil");
     expect(libelleFil("mitrailleuse", "arme", "Lea")).toBe("M. lourde");
     expect(libelleFil("couteau", "arme", "Lea")).toBe("Couteau");
+    expect(libelleFil("epee", "arme", "Lea")).toBe("Épée");
     expect(libelleFil("couteau", "ecrase_pnj", "")).toBe("Écrasé par la circulation");
     expect(libelleFil("couteau", "ecrase_vehicule", "Lea")).toBe("Renversé par Lea");
   });
@@ -331,5 +344,27 @@ describe("hud-modele : rupture du bouclier", () => {
     // bouclier brisé, puis mort moins de 400 ms plus tard : le rendu suivant est « inactif » et doit tout remettre à faux
     expect(etapeRupture(0, 0, false)).toBe("annuler");
     expect(etapeRupture(40, 0, false)).toBe("annuler");
+  });
+});
+
+describe("zombies : slots sans arme principale, argent", () => {
+  it("parseSlots lit un équipement sans principale (pistolet + couteau) et avec réserve finie", () => {
+    const s = parseSlots("secondaire:pistolet:12:12:48|couteau:epee:0:0:-1");
+    expect(s.map((x) => x.slot)).toEqual(["secondaire", "couteau"]);
+    expect(s[0]).toMatchObject({ arme: "pistolet", munitions: 12, chargeur: 12, reserve: 48 });
+    expect(s[1]).toMatchObject({ arme: "epee", reserve: -1 });
+    // sans la réserve (4 champs) : infinie
+    expect(parseSlots("secondaire:pistolet:3:12|couteau:couteau:0:0").map((x) => x.reserve)).toEqual([-1, -1]);
+  });
+
+  it("formatArgent : « 1 250 $ » avec espaces insécables", () => {
+    expect(formatArgent(1250)).toMatch(/^1[\u202f\u00a0 ]250\u00a0\$$/);
+    expect(formatArgent(500)).toBe(`500${NBSP}$`);
+    expect(formatArgent(0)).toBe(`0${NBSP}$`);
+    expect(formatArgent(124.6)).toBe(`125${NBSP}$`);
+  });
+
+  it("le fil des éliminations nomme la griffe d'un tigre", () => {
+    expect(libelleFil("couteau", "tigre_zombie", "")).toBe("Griffé par un tigre");
   });
 });

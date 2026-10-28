@@ -4,9 +4,10 @@
  * Tolère 4 champs par slot (`slot:arme:munitions:chargeur`) ou 5 (réserve finie en plus, −1 = infinie).
  * Spec : docs/superpowers/specs/2026-10-23-arene-hud-design.md (§3.2, §5.1, §7.2, §12)
  */
-import { COUTEAU, STATS } from "./armes";
-import { ARMES, SLOTS, type ArmeId, type ArmeSpecialeId, type CauseMort, type JoueurPublic, type Slot } from "./protocole";
-import type { HudLive } from "./jeu-types";
+import { MELEE, STATS } from "./armes";
+import { ARMES, SLOTS, estMelee, type ArmeId, type ArmeSpecialeId, type CauseMort, type EtatPartieZombies, type JoueurPublic, type PhaseZombies, type RaisonAchat, type Slot } from "./protocole";
+import type { EtatZombiesHud, HudLive } from "./jeu-types";
+import type { Stockage } from "./touches";
 
 /** Espace insécable (avant m, s, km/h, %). */
 export const NBSP = " ";
@@ -40,7 +41,7 @@ export function parseSlots(s: string): SlotHud[] {
     const slot = c[0] as Slot;
     const arme = c[1];
     if (!SLOTS.includes(slot)) continue;
-    if (arme !== "couteau" && !(ARMES as readonly string[]).includes(arme)) continue;
+    if (!estMelee(arme) && !(ARMES as readonly string[]).includes(arme)) continue;
     const munitions = entier(c[2]);
     const chargeur = entier(c[3]);
     const reserve = c.length === 5 ? entier(c[4]) : -1;
@@ -101,6 +102,15 @@ export function formatSecondes(s: number): string {
   const v = Math.round(Math.max(0, s) * 10) / 10;
   return Number.isInteger(v) ? `${FR0.format(v)}${NBSP}s` : `${FR1.format(v)}${NBSP}s`;
 }
+const FR_MAX1 = new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 1 });
+/** Nombre à une décimale au plus, virgule française : « 2,5 », « 3 ». */
+export function formatDecimal(n: number): string {
+  return FR_MAX1.format(n);
+}
+/** Argent des zombies : « 1 250 $ » (espaces insécables). */
+export function formatArgent(n: number): string {
+  return `${FR0.format(Math.round(n))}${NBSP}$`;
+}
 /** Pourcentage d'une fraction 0..1 : « 44 % ». */
 export function formatPourcent(x: number): string {
   return `${FR0.format(Math.round(x * 100))}${NBSP}%`;
@@ -130,7 +140,8 @@ export function libelleFil(arme: ArmeId, cause: CauseMort, par: string): string 
   if (cause === "truck_fou") return "Écrasé par le Truck Muche fou";
   if (cause === "tigre_robot") return "Déchiqueté par le tigre robot";
   if (cause === "titan") return par ? `Titan tigre de ${par}` : "Titan tigre";
-  return arme === "couteau" ? COUTEAU.nomCourt : STATS[arme].nomCourt;
+  if (cause === "tigre_zombie") return "Griffé par un tigre";
+  return estMelee(arme) ? MELEE[arme].nomCourt : STATS[arme].nomCourt;
 }
 
 /** Texte du contenu d'une offre d'Elsa (bandeau et annonce). */
@@ -309,4 +320,152 @@ export function ecrireLive(live: HudLive, c: CiblesLive, cache: CacheLive): void
 export function etapeRupture(precedent: number, bouclier: number, actif: boolean): "demarrer" | "annuler" | "rien" {
   if (!actif) return "annuler";
   return precedent > 0 && bouclier === 0 ? "demarrer" : "rien";
+}
+
+// ---------- mode zombies (v5) ----------
+
+/** « 12 TIGRES », « 1 TIGRE », « AUCUN TIGRE » : tigres restants à tuer (pas encore apparus compris). */
+export function libelleTigres(n: number): string {
+  const v = Math.max(0, Math.round(n));
+  if (v === 0) return "AUCUN TIGRE";
+  return `${FR0.format(v)}${NBSP}TIGRE${v > 1 ? "S" : ""}`;
+}
+
+/** Secondes (entières, arrondies au-dessus) avant un horodatage serveur ; 0 une fois passé. */
+export function secondesAvant(finT: number, maintenantMs: number): number {
+  return Math.max(0, Math.ceil((finT - maintenantMs) / 1000));
+}
+
+export interface LibelleVague {
+  /** « MANCHE 7 » */
+  titre: string;
+  /** « 12 TIGRES », « PAUSE · MANCHE 8 DANS 7 s », « BILAN » */
+  detail: string;
+  /** vrai pendant la pause (décompte) */
+  pause: boolean;
+}
+
+/**
+ * Texte de la barre de vague. Pendant une pause `manche` est déjà le numéro de la manche À VENIR (le serveur l'incrémente à l'entrée en
+ * pause) : « MANCHE 8 » avec « PAUSE · DÉPART DANS 7 s ». Phase `lobby` : tiret.
+ */
+export function libelleVague(phase: PhaseZombies, manche: number, restants: number, secondesPause: number): LibelleVague {
+  const m = Math.max(0, Math.round(manche));
+  if (phase === "pause") {
+    return { titre: `MANCHE ${m}`, detail: `PAUSE · DÉPART DANS ${formatSecondes(secondesPause)}`, pause: true };
+  }
+  if (phase === "fin") return { titre: m > 0 ? `MANCHE ${m}` : "FIN DE PARTIE", detail: "PARTIE PERDUE", pause: false };
+  if (phase === "lobby") return { titre: "ZOMBIES", detail: "EN ATTENTE", pause: false };
+  return { titre: `MANCHE ${m}`, detail: libelleTigres(restants), pause: false };
+}
+
+/** Motifs d'`argent{motif}` du serveur, lisibles. */
+const MOTIFS_ARGENT: Record<string, string> = {
+  touche: "touche", kill: "kill", tete: "tête", melee: "mêlée", manche: "fin de manche", achat: "achat", depart: "départ", retour: "retour", synchro: "",
+};
+
+/** « +60 $ · kill », « −950 $ · achat » ; le signe moins est un vrai « − » (U+2212). Vide pour un delta nul. */
+export function libelleGain(delta: number, motif: string): string {
+  if (delta === 0) return "";
+  const signe = delta > 0 ? "+" : "\u2212";
+  const nom = MOTIFS_ARGENT[motif] ?? "";
+  return `${signe}${formatArgent(Math.abs(delta))}${nom ? ` · ${nom}` : ""}`;
+}
+
+/** Texte écrit d'un achat refusé (jamais la couleur seule). */
+export function texteRefusAchat(raison: RaisonAchat): string {
+  switch (raison) {
+    case "argent": return "Argent insuffisant";
+    case "loin": return "Trop loin";
+    case "deja": return "Déjà acquis, ouvert ou inutile";
+    case "verrou": return "Porte verrouillée : ouvrez d'abord la précédente";
+    default: return "Achat impossible pour le moment";
+  }
+}
+
+/**
+ * Précision à ajouter à l'invite d'un achat : « Argent insuffisant » quand l'argent manque, rien quand le détail dit déjà pourquoi
+ * (porte verrouillée, soin pas prêt) ou quand l'achat est possible.
+ */
+export function manqueInvite(detail: string, assez: boolean): string {
+  if (assez || /verrouill|prêt dans/i.test(detail)) return "";
+  return "Argent insuffisant";
+}
+
+/** Égalité des champs affichés de `EtatZombiesHud` : le HUD ne se rend que si l'un d'eux change (la réanimation par pas de 5 %). */
+export function memeEtatZombiesHud(a: EtatZombiesHud | null, b: EtatZombiesHud | null): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  const pas = (x: EtatZombiesHud) => (x.reanimation ? Math.round(x.reanimation.progression * 20) : -1);
+  return a.argent === b.argent && a.manche === b.manche && a.restants === b.restants && a.vivants === b.vivants
+    && a.gain?.n === b.gain?.n && a.refus?.n === b.refus?.n && a.achats === b.achats
+    && a.aTerre === b.aTerre && a.elimine === b.elimine && a.terreFinT === b.terreFinT
+    && a.reanimation?.cible === b.reanimation?.cible && pas(a) === pas(b) && a.partie === b.partie;
+}
+
+/** Record local des zombies : la manche la plus haute atteinte (et les tigres tués cette partie-là). */
+export const CLE_RECORD_ZOMBIES = "pdj-fps-zombies-record";
+export interface RecordZombies { manche: number; kills: number }
+export const RECORD_ZOMBIES_VIDE: RecordZombies = Object.freeze({ manche: 0, kills: 0 });
+
+const entierPositif = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.floor(v) : 0);
+
+/** Lit le record ; stockage absent, illisible ou mal formé : record vide. */
+export function lireRecordZombies(stockage?: Stockage | null): RecordZombies {
+  try {
+    const brut = stockage?.getItem(CLE_RECORD_ZOMBIES);
+    if (!brut) return RECORD_ZOMBIES_VIDE;
+    const o = JSON.parse(brut) as { manche?: unknown; kills?: unknown } | null;
+    return { manche: entierPositif(o?.manche), kills: entierPositif(o?.kills) };
+  } catch {
+    return RECORD_ZOMBIES_VIDE;
+  }
+}
+
+/** Évalue une partie contre le record (pur) : `battu` si la manche atteinte le dépasse (à manche égale, plus de tigres tués) ; zéro tigre tué : jamais. */
+export function evaluerRecordZombies(ancien: RecordZombies, manche: number, kills: number): { record: RecordZombies; battu: boolean } {
+  const m = entierPositif(manche);
+  const k = entierPositif(kills);
+  // une partie sans aucun tigre abattu n'est jamais un record (sinon « NOUVEAU RECORD » dès la première partie perdue en manche 1)
+  const battu = k > 0 && (m > ancien.manche || (m === ancien.manche && m > 0 && k > ancien.kills));
+  return { record: battu ? { manche: m, kills: k } : ancien, battu };
+}
+
+/** Enregistre le record s'il est battu ; renvoie le résultat de l'évaluation. Un stockage qui refuse l'écriture est ignoré. */
+export function majRecordZombies(stockage: Stockage | null | undefined, manche: number, kills: number): { record: RecordZombies; battu: boolean } {
+  const r = evaluerRecordZombies(lireRecordZombies(stockage), manche, kills);
+  if (r.battu) {
+    try { stockage?.setItem(CLE_RECORD_ZOMBIES, JSON.stringify(r.record)); } catch { /* stockage indisponible : record non retenu */ }
+  }
+  return r;
+}
+
+/** Zone gagnée en ouvrant chaque porte payante (annonce « Porte ouverte : carrefour Est »). */
+export const ZONE_PORTE: Readonly<Record<string, string>> = {
+  P1: "carrefour Est", P2: "cour Est", P3: "carrefour Ouest", P4: "cour Ouest", P5: "niche Est",
+};
+
+/**
+ * Annonces du fil et de la région vive entre deux états successifs de la partie : début de manche, porte ouverte, joueur à terre,
+ * relevé, éliminé, retour en jeu, partie perdue. Aucune annonce au premier état reçu (`avant` null).
+ */
+export function annoncesZombies(avant: EtatPartieZombies | null, apres: EtatPartieZombies, monId: string | null): string[] {
+  if (!avant) return [];
+  const textes: string[] = [];
+  if (apres.phase === "manche" && (avant.phase !== "manche" || avant.manche !== apres.manche)) textes.push(`Manche ${apres.manche}`);
+  for (const porte of apres.portes) {
+    const etait = avant.portes.find((x) => x.id === porte.id);
+    if (porte.ouverte && etait && !etait.ouverte) textes.push(`Porte ouverte : ${ZONE_PORTE[porte.id] ?? porte.id}`);
+  }
+  for (const j of apres.joueurs) {
+    const prec = avant.joueurs.find((x) => x.id === j.id);
+    if (!prec || prec.etat === j.etat) continue;
+    const moi = j.id === monId;
+    if (j.etat === "terre") textes.push(moi ? "Vous êtes à terre : un coéquipier peut vous relever" : `${j.pseudo} est à terre`);
+    else if (j.etat === "elimine") textes.push(moi ? "Vous êtes éliminé : retour à la prochaine pause" : `${j.pseudo} est éliminé`);
+    else if (j.etat === "debout" && prec.etat === "terre") textes.push(moi ? "Vous avez été relevé" : `${j.pseudo} a été relevé`);
+    else if (j.etat === "debout" && prec.etat === "elimine") textes.push(moi ? "Vous revenez en jeu" : `${j.pseudo} revient en jeu`);
+  }
+  if (apres.phase === "fin" && avant.phase !== "fin") textes.push(`Partie perdue : manche ${apres.bilan?.manche ?? apres.manche}`);
+  return textes;
 }

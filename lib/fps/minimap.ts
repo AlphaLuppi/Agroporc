@@ -9,6 +9,7 @@
 import type { SceneData } from "../agroparc3d/types";
 import { restoParNom } from "../restaurants";
 import { ROND_POINT, positionElsa } from "./zones";
+import { BORNES_ZOMBIES, INDEX_PREMIERE_PIECE } from "./zombies-carte";
 import type { CoinMinimap, OrientationMinimap, RayonMinimap, TailleMinimap } from "./reglages-hud";
 
 /** Ancre du joueur (fraction de la hauteur) : 58 % en mode regard (voir plus loin devant), 50 % en mode nord. */
@@ -122,12 +123,23 @@ export function tailleEffective(taille: TailleMinimap, hauteurFenetrePx: number)
 }
 
 export interface ZoneJouable { x0: number; z0: number; x1: number; z1: number }
+
+/**
+ * La scène est celle du mode zombies (`donneesZombies(scene).data` : les 20 pièces synthétiques sont ajoutées à la fin de `buildings`) :
+ * `ZONE_CARTE` s'y restreint tout seul aux bornes de la zone de jeu, sans que l'appelant ait à passer le mode.
+ */
+export function estSceneZombies(scene: SceneData): boolean {
+  // la première pièce synthétique porte un `type` (jamais dans scene.json) : un jour où scene.json grossirait ne bascule pas l'arène en zombies
+  return scene.buildings.length > INDEX_PREMIERE_PIECE && scene.buildings[INDEX_PREMIERE_PIECE].type !== undefined;
+}
 /**
  * Zone jouable de la carte : boîte englobante des bâtiments + marge de 60 m, élargie (sans marge) aux parkings, aux POI et à Elsa quand ils
  * dépassent (les parkings les plus éloignés sortent de la boîte à marge : z jusqu'à 379 m contre 301 m). Contient donc toujours les
  * apparitions (anneau de 140 m autour du rond-point), Elsa et les parkings.
  */
-export function ZONE_CARTE(scene: SceneData): ZoneJouable {
+export function ZONE_CARTE(scene: SceneData, mode: "arene" | "zombies" = estSceneZombies(scene) ? "zombies" : "arene"): ZoneJouable {
+  // mode zombies : la carte se limite aux bornes de la zone de jeu (aucun parking, POI ni Elsa hors d'elles)
+  if (mode === "zombies") return { x0: BORNES_ZOMBIES.x0, z0: BORNES_ZOMBIES.z0, x1: BORNES_ZOMBIES.x1, z1: BORNES_ZOMBIES.z1 };
   let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity;
   for (const b of scene.buildings) {
     for (const [x, z] of b.r) {

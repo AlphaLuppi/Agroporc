@@ -251,6 +251,53 @@ function dessinerJoueurs(ctx: CanvasRenderingContext2D, f: RadarFrame, p: Params
   ctx.globalAlpha = 1;
 }
 
+/** Tigres zombies VUS : points rouges (contour clair), d'autant plus nets que le fondu de visibilité est haut. */
+function dessinerZombies(ctx: CanvasRenderingContext2D, f: RadarFrame, p: ParamsMarqueurs): void {
+  const { u, palette } = p;
+  ctx.lineWidth = Math.max(1, u);
+  for (let i = 0; i < f.nZombies; i++) {
+    p.proj(f.zombies[i * 3], f.zombies[i * 3 + 1], sortie);
+    if (!dedans(p, sortie.x, sortie.y, 0)) continue;
+    ctx.globalAlpha = Math.max(0.2, Math.min(1, f.zombies[i * 3 + 2]));
+    ctx.fillStyle = palette.danger;
+    ctx.strokeStyle = palette.blanc;
+    ctx.beginPath();
+    ctx.arc(sortie.x, sortie.y, 3 * u, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+}
+
+/** Portes payantes encore fermées : trait ambre barré de petits traits (une porte ouverte disparaît de la carte). */
+function dessinerPortes(ctx: CanvasRenderingContext2D, f: RadarFrame, p: ParamsMarqueurs): void {
+  const { u, palette } = p;
+  const a: PointEcran = { x: 0, y: 0 }, b: PointEcran = { x: 0, y: 0 };
+  ctx.strokeStyle = palette.ambre;
+  ctx.lineCap = "butt";
+  for (let i = 0; i < f.nPortes; i++) {
+    p.proj(f.portes[i * 4], f.portes[i * 4 + 1], a);
+    p.proj(f.portes[i * 4 + 2], f.portes[i * 4 + 3], b);
+    if (!dedans(p, a.x, a.y, -40 * u) && !dedans(p, b.x, b.y, -40 * u)) continue;
+    const dx = b.x - a.x, dy = b.y - a.y, l = Math.hypot(dx, dy) || 1;
+    const nx = -dy / l, ny = dx / l;
+    ctx.lineWidth = Math.max(2, 2.5 * u);
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+    // barres : une tous les 3u de long, perpendiculaires
+    ctx.lineWidth = Math.max(1, u);
+    ctx.beginPath();
+    const pas = Math.max(3 * u, 4);
+    for (let d = pas / 2; d < l; d += pas) {
+      const x = a.x + (dx / l) * d, y = a.y + (dy / l) * d;
+      ctx.moveTo(x - nx * 2.5 * u, y - ny * 2.5 * u); ctx.lineTo(x + nx * 2.5 * u, y + ny * 2.5 * u);
+    }
+    ctx.stroke();
+  }
+  ctx.lineCap = "round";
+}
+
 function dessinerMoi(ctx: CanvasRenderingContext2D, f: RadarFrame, p: ParamsMarqueurs): void {
   const { u, palette } = p;
   const { x, y } = p.moi;
@@ -282,7 +329,7 @@ function dessinerMoi(ctx: CanvasRenderingContext2D, f: RadarFrame, p: ParamsMarq
   ctx.restore();
 }
 
-/** Dessine tous les marqueurs dynamiques du `RadarFrame` (ordre : PNJ, voitures, échos, Elsa, joueurs, moi). */
+/** Dessine tous les marqueurs dynamiques du `RadarFrame` (ordre : PNJ, voitures, échos, Elsa, portes fermées, tigres, joueurs, moi). */
 export function dessinerMarqueurs(ctx: CanvasRenderingContext2D, f: RadarFrame, p: ParamsMarqueurs): void {
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
@@ -290,6 +337,8 @@ export function dessinerMarqueurs(ctx: CanvasRenderingContext2D, f: RadarFrame, 
   dessinerVoitures(ctx, f, p);
   dessinerEchos(ctx, f, p);
   dessinerElsa(ctx, f, p);
+  dessinerPortes(ctx, f, p);
+  dessinerZombies(ctx, f, p);
   dessinerJoueurs(ctx, f, p);
   dessinerMoi(ctx, f, p);
 }

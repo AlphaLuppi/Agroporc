@@ -106,6 +106,9 @@ function banc(avecCirculation = false) {
     tuer: (cible, par, cause) => { cible.vivant = false; morts.push({ cible: cible.id, par: par?.id ?? null, cause }); return []; },
     libererVehicule: () => [],
     toucheJoueur: () => false,
+    // v5 (zombies) : non utilisés par ce service
+    joueurs: () => [...joueurs.values()], placerJoueur: () => [], retirerJoueur: () => [], equiper: () => [],
+    presence: () => ({ a: "tous", m: { t: "presence", joueurs: [] } }),
   };
   const circuits = construireCircuits();
   const svc = creerServiceVehicules(ctx, {

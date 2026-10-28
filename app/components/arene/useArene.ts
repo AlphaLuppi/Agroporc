@@ -4,11 +4,12 @@ import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 
 import { connecterArene, urlArene, type ClientArene, type EtatConnexion } from "@/lib/fps/reseau";
 import { STATS } from "@/lib/fps/armes";
 import {
-  JEU, type ArmeSpecialeId, type EtatElsaMsg, type EtatJoueurSnap, type InfoMatch, type InfoTueur, type InfoVehicule, type JoueurPublic,
-  type LigneClassement, type LigneStats, type MessageServeur,
+  JEU, type ArmeSpecialeId, type EtatElsaMsg, type EtatJoueurSnap, type EtatPartieZombies, type InfoMatch, type InfoTueur, type InfoVehicule, type JoueurPublic,
+  type LigneClassement, type LigneStats, type MessageServeur, type ModeSalle,
 } from "@/lib/fps/protocole";
+import { annoncesZombies } from "@/lib/fps/hud-modele";
 import type { JeuEvenement, JeuHandle } from "@/lib/fps/jeu";
-import type { Annonce, Bonus, DerniereMort, EntreeFil, EvenementHud, UseArene } from "./contrats";
+import type { Annonce, Bonus, DerniereMort, EntreeFil, EvenementHud, GainArgent, Salons, UseArene } from "./contrats";
 
 // Les types de contrat sont dans contrats.ts (partagés avec l'hôte et le HUD) ; réexportés pour les appelants existants.
 export type { DerniereMort, EntreeFil, EvenementHud, UseArene } from "./contrats";
@@ -35,9 +36,10 @@ function contenuOffre(genre: "soin" | "arme", arme?: ArmeSpecialeId): string {
 /** `rejoindre` refusé : 16 agents sont déjà en arène (les spectateurs de la vue 3D ne comptent pas). */
 export const TEXTE_ARENE_PLEINE = `L'arène est pleine (${JEU.joueursMax} agents en jeu), réessayez dans un instant.`;
 
-/** Texte du refus d'un `monter` / `siege` / `rejoindre` par le serveur. */
-function texteRefus(action: "monter" | "siege" | "rejoindre", raison: "loin" | "plein" | "deja" | "inconnu" | "mort"): string {
-  if (action === "rejoindre") return TEXTE_ARENE_PLEINE;
+/** Texte du refus d'un `monter` / `siege` / `rejoindre` / `mode` par le serveur. */
+function texteRefus(action: "monter" | "siege" | "rejoindre" | "mode", raison: "loin" | "plein" | "deja" | "inconnu" | "mort" | "lobby"): string {
+  if (action === "rejoindre") return raison === "lobby" ? "Partie de zombies : attendez le lancement par l'hôte." : TEXTE_ARENE_PLEINE;
+  if (action === "mode") return raison === "lobby" ? "Impossible de changer de mode en pleine partie." : "La partie de zombies est pleine.";
   switch (raison) {
     case "loin": return "Voiture trop loin";
     case "plein": return action === "siege" ? "Place occupée" : "Voiture pleine";
@@ -69,6 +71,20 @@ export function useArene(pseudo: string, jeuRef: MutableRefObject<JeuHandle | nu
   const [killcamInfo, setKillcamInfo] = useState<InfoTueur | null>(null);
   const [stats, setStats] = useState<Map<string, LigneStats>>(STATS_VIDES);
   const [degatsAuTueur, setDegatsAuTueur] = useState(0);
+  // ---- v5 : modes de jeu ----
+  const [mode, setMode] = useState<ModeSalle>("arene");
+  const [modeVoulu, setModeVoulu] = useState<ModeSalle>("arene");
+  const [salons, setSalons] = useState<Salons | null>(null);
+  const [zombies, setZombies] = useState<EtatPartieZombies | null>(null);
+  const [argent, setArgent] = useState(0);
+  const [gainArgent, setGainArgent] = useState<GainArgent | null>(null);
+  /** salle confirmée par le serveur et salle demandée (relue par les rappels du réseau) */
+  const modeRef = useRef<ModeSalle>("arene");
+  const modeVouluRef = useRef<ModeSalle>("arene");
+  const zombiesRef = useRef<EtatPartieZombies | null>(null);
+  const nGain = useRef(0);
+  /** la connexion a été perdue depuis le dernier « bienvenue » : le serveur a oublié la salle choisie, on la redemande */
+  const connexionPerdue = useRef(false);
   const clientRef = useRef<ClientArene | null>(null);
   const snapRef = useRef<EtatJoueurSnap[]>([]);
   const snapTRef = useRef(0);
@@ -143,6 +159,19 @@ export function useArene(pseudo: string, jeuRef: MutableRefObject<JeuHandle | nu
     }
   }, [apres, annoncer]);
 
+  /** Demande à changer de salle ; la carte cochée suit tout de suite (`modeVoulu`), le serveur confirme par `mode` ou refuse par `refus`. */
+  const choisirMode = useCallback((m: ModeSalle) => {
+    if (modeVouluRef.current === m) return;
+    modeVouluRef.current = m;
+    setModeVoulu(m);
+    setErreur(null);
+    clientRef.current?.envoyer({ t: "mode", mode: m });
+  }, []);
+  /** Hôte du lobby des zombies : lance la partie (le serveur ignore le message d'un autre joueur). */
+  const lancerPartie = useCallback(() => {
+    clientRef.current?.envoyer({ t: "lancerPartie" });
+  }, []);
+
   useEffect(() => {
     const surMessage = (m: MessageServeur) => {
       switch (m.t) {
@@ -154,6 +183,61 @@ export function useArene(pseudo: string, jeuRef: MutableRefObject<JeuHandle | nu
           setJoueurs(m.joueurs);
           setMatch(m.match);
           setErreur(null);
+          if (connexionPerdue.current) {
+            // reconnexion : le serveur nous a remis dans l'arène ; on redemande les zombies si l'interface y était (le mode mémorisé du
+            // navigateur, lui, ne fait que présélectionner la carte du choix du mode : il n'envoie rien)
+            connexionPerdue.current = false;
+            modeRef.current = "arene";
+            setMode("arene");
+            zombiesRef.current = null;
+            setZombies(null);
+            setArgent(0);
+            setGainArgent(null);
+            if (modeVouluRef.current === "zombies") clientRef.current?.envoyer({ t: "mode", mode: "zombies" });
+          }
+          break;
+        case "mode":
+          // simple écho (déjà dans cette salle, ex. demande rejouée après une reconnexion) : le serveur n'enverra ni « bienvenue » ni état,
+          // tout effacer ici laisserait le lobby sans état jusqu'au prochain changement
+          if (m.mode === modeRef.current) {
+            modeVouluRef.current = m.mode;
+            setModeVoulu(m.mode);
+            break;
+          }
+          // changement de salle confirmé : l'état de l'ancienne salle ne vaut plus rien (le « bienvenue » et l'état de la nouvelle suivent)
+          modeRef.current = m.mode;
+          modeVouluRef.current = m.mode;
+          setMode(m.mode);
+          setModeVoulu(m.mode);
+          zombiesRef.current = null;
+          setZombies(null);
+          setArgent(0);
+          setGainArgent(null);
+          statsRef.current = STATS_VIDES;
+          setStats(STATS_VIDES);
+          setClassement(null);
+          setErreur(null);
+          break;
+        case "salons":
+          setSalons({ arene: m.arene, zombies: m.zombies });
+          break;
+        case "zombies": {
+          for (const texte of annoncesZombies(zombiesRef.current, m.etat, monIdRef.current)) annoncer(texte, "info");
+          zombiesRef.current = m.etat;
+          setZombies(m.etat);
+          break;
+        }
+        case "argent":
+          setArgent(m.solde);
+          if (m.delta !== 0) setGainArgent({ n: ++nGain.current, delta: m.delta, motif: m.motif });
+          break;
+        case "refus":
+          // changement de salle refusé (partie pleine, déjà en jeu) : la carte cochée revient, le message s'affiche dans le panneau
+          if (m.action === "mode") {
+            modeVouluRef.current = modeRef.current;
+            setModeVoulu(modeRef.current);
+            setErreur(texteRefus("mode", m.raison));
+          }
           break;
         case "presence":
           joueursRef.current = m.joueurs;
@@ -265,11 +349,13 @@ export function useArene(pseudo: string, jeuRef: MutableRefObject<JeuHandle | nu
       if (e === "ferme" || e === "erreur") {
         monIdRef.current = null;
         setMonId(null);
+        connexionPerdue.current = true;
       }
       // le serveur oublie l'état « tableau ouvert » d'une connexion perdue
       if (e !== "ouvert") scoresOuvert.current = false;
     };
     setEtat("connexion");
+    connexionPerdue.current = false;
     const client = connecterArene(urlArene(), pseudoRef.current, surMessage, surEtat);
     clientRef.current = client;
     return () => {
@@ -295,5 +381,6 @@ export function useArene(pseudo: string, jeuRef: MutableRefObject<JeuHandle | nu
     etat, monId, joueurs, match, classement, fil, evenements, derniereMort, erreur, clientRef, snapRef, snapTRef, joueursRef, matchRef, pousserEvenement,
     elsa, annonces, sieges, bonus, killcamInfo,
     stats, statsRef, demanderScores, degatsAuTueur,
+    mode, modeVoulu, salons, zombies, argent, gainArgent, choisirMode, lancerPartie,
   };
 }

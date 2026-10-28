@@ -1,28 +1,24 @@
 "use client";
 
 import { useId } from "react";
-import type { ArmePrincipaleId, ArmeSecondaireId } from "@/lib/fps/protocole";
-import { LIBELLES_BARRES } from "./armesInfo";
-import { groupePrincipale, groupeSecondaire, largeurBarre, noteSur10, type GroupeArmes } from "./lobby-modele";
+import { choixApresChangement, groupeMelee, groupePrincipale, groupeSecondaire, largeurBarre, noteSur10, type GroupeArmes } from "./lobby-modele";
 import type { PropsChoixEquipement } from "./contrats";
 import styles from "./ChoixEquipement.module.css";
 
 /**
- * Choix de l'équipement (arme principale + arme secondaire), dérivé de `STATS` / `INFOS_ARMES` : variante « lobby » (deux `<fieldset>`
+ * Choix de l'équipement (arme principale, arme secondaire, arme blanche), dérivé de `STATS` / `INFOS_ARMES` / `MELEE` : variante « lobby » (trois `<fieldset>`
  * de cartes détaillées, radios natives navigables aux flèches, barres de stats `role="img"` « X sur 10 ») et variante « compact »
  * (boutons `aria-pressed` de l'écran de mort, de la killcam, de la pause et de l'entracte). Les armes spéciales (Elsa) n'y figurent pas.
  * Spec : docs/superpowers/specs/2026-10-22-arene-v2-design.md (§2.3, §2.4, §5.17, §6)
  */
-export default function ChoixEquipement({ principale, secondaire, surChanger, variante, idGroupe }: PropsChoixEquipement) {
+export default function ChoixEquipement({ principale, secondaire, melee = "couteau", surChanger, variante, idGroupe }: PropsChoixEquipement) {
   const id = useId();
   const groupes = [
     { g: groupePrincipale() as GroupeArmes<string>, choisie: principale as string },
     { g: groupeSecondaire() as GroupeArmes<string>, choisie: secondaire as string },
+    { g: groupeMelee() as GroupeArmes<string>, choisie: melee as string },
   ];
-  const changer = (cle: "principale" | "secondaire", arme: string) => {
-    if (cle === "principale") surChanger(arme as ArmePrincipaleId, secondaire);
-    else surChanger(principale, arme as ArmeSecondaireId);
-  };
+  const changer = (cle: GroupeArmes<string>["cle"], arme: string) => surChanger(...choixApresChangement({ principale, secondaire, melee }, cle, arme));
 
   if (variante === "compact") {
     return (
@@ -76,7 +72,7 @@ export default function ChoixEquipement({ principale, secondaire, surChanger, va
                   <span id={`${idCarte}-nom`} className={styles.carteNom}>{info.nom}</span>
                   <span id={`${idCarte}-desc`} className={styles.carteDesc}>{info.description}</span>
                   <span className={styles.barres}>
-                    {LIBELLES_BARRES.map((b) => (
+                    {g.barres.map((b) => (
                       <span key={b.cle} className={styles.barre} role="img" aria-label={`${b.nom} ${noteSur10(info.barres[b.cle])} sur 10`}>
                         <span>{b.nom}</span>
                         <i><i style={{ width: `${largeurBarre(info.barres[b.cle])}%` }} /></i>

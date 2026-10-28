@@ -130,7 +130,7 @@ function tirer(s: Salle, tireur: string, cible: string, t: number, opts: { haute
 function coup(s: Salle, tireur: string, cible: string | null, t: number, point?: Vec3): Sortie[] {
   const c = cible ? j(s, cible) : null;
   const { o, d } = regarder(s, tireur, point ?? [c!.p[0], c!.p[1] + SILHOUETTE.centreY, c!.p[2]]);
-  return s.recevoir(tireur, { t: "coup", o, d, cible }, t);
+  return s.recevoir(tireur, { t: "coup", o, d, cibles: cible ? [cible] : [] }, t);
 }
 /** Deux joueurs face à face à 20 m (pistolet en main), protection écoulée. */
 function duel(options?: OptionsSalle, a: Partial<Extract<MessageClient, { t: "rejoindre" }>> = { arme: "pistolet" }, b: Partial<Extract<MessageClient, { t: "rejoindre" }>> = { arme: "pistolet" }) {
@@ -366,6 +366,23 @@ describe("couteau", () => {
     expect(j(s, "b").pv).toBe(JEU.pvMax);
   });
 
+  it("`cibles` absent ou mal formé (ancien format `cible`, client truqué) : coup dans le vide, sans exception ni dégât", () => {
+    const formes: unknown[] = [undefined, null, "b", 42, { 0: "b" }, [null], [42], [{ id: "b" }]];
+    formes.forEach((cibles, i) => {
+      const { s, t } = duelCouteau();
+      const { o, d } = regarder(s, "a", [-8.5, 1, 20]);
+      const msg = { t: "coup", o, d, cibles } as unknown as MessageClient;
+      const sorties = s.recevoir("a", msg, t + i);
+      expect(sorties).toHaveLength(1);
+      expect(sorties[0].m).toMatchObject({ t: "coup", id: "a", arme: "couteau" });
+      expect(j(s, "b").pv).toBe(JEU.pvMax);
+    });
+    const { s, t } = duelCouteau();
+    const { o, d } = regarder(s, "a", [-8.5, 1, 20]);
+    expect(s.recevoir("a", { t: "coup", o, d, cible: "b" } as unknown as MessageClient, t)).toHaveLength(1);
+    expect(j(s, "b").pv).toBe(JEU.pvMax);
+  });
+
   it("cadence : un deuxième coup trop tôt est refusé, refusé aussi pendant le dégainage et sans couteau en main", () => {
     const { s, t } = duelCouteau();
     j(s, "b").bouclier = 100; // pour survivre au premier coup
@@ -409,7 +426,7 @@ describe("couteau", () => {
     const { s, t } = duelCouteau();
     const a = j(s, "a");
     const { o, d } = regarder(s, "a", [-8.5, 1, 20]);
-    const base = { t: "coup" as const, cible: "b" };
+    const base = { t: "coup" as const, cibles: ["b"] };
     expect(s.recevoir("a", { ...base, o: [o[0] + 10, o[1], o[2]], d }, t)).toEqual([]);
     expect(s.recevoir("a", { ...base, o, d: [d[0] * 3, d[1] * 3, d[2] * 3] }, t)).toEqual([]);
     const dos: Vec3 = [-d[0], -d[1], -d[2]];
@@ -437,6 +454,139 @@ describe("couteau", () => {
     const { s, t } = duelCouteau();
     coup(s, "a", "b", t);
     expect(j(s, "a")).toMatchObject({ tirs: 0, touches: 0, degats: 100, kills: 1, serie: 1, killsParArme: { couteau: 1 } });
+  });
+});
+
+// ---------- épée (v5) ----------
+
+describe("épée", () => {
+  const EPEE = { principale: "mitraillette", secondaire: "pistolet", melee: "epee" } as const;
+  /** Joueur « a » avec l'épée en main et sortie, face à des cibles à 1,5 m (b) ; t après le dégainage. */
+  function duelEpee(extra: Partial<Extract<MessageClient, { t: "rejoindre" }>>[] = [{ ...EPEE }]) {
+    const s = salleEnJeu([{ ...EPEE }, ...extra]);
+    placer(s, "a", [-10, 0, 20]);
+    extra.forEach((_, i) => placer(s, String.fromCharCode(98 + i), [-8.5, 0, 20]));
+    s.recevoir("a", { t: "main", slot: "couteau" }, T1);
+    return { s, t: T1 + JEU.degainageMs + 20 };
+  }
+  const rejoindreVide: Partial<Extract<MessageClient, { t: "rejoindre" }>> = { arme: "pistolet" };
+
+  it("l'équipement `melee: epee` met l'épée dans le slot couteau (arme en main `epee`), diffusée comme `coup` avec son arme", () => {
+    const { s, t } = duelEpee([rejoindreVide]);
+    expect(j(s, "a").equip.melee).toBe("epee");
+    expect(j(s, "a")).toMatchObject({ main: "couteau", arme: "epee" });
+    expect(j(s, "b").equip.melee).toBeUndefined(); // sans choix : couteau
+    const sorties = coup(s, "a", "b", t);
+    expect(sorties[0]).toMatchObject({ a: "tous", sauf: "a", m: { t: "coup", id: "a", arme: "epee" } });
+  });
+
+  it("tue en un coup (140 dégâts, 100 PV), kill et arme `epee` au tableau, mort avec l'arme `epee`", () => {
+    const { s, t } = duelEpee([rejoindreVide]);
+    const sorties = coup(s, "a", "b", t);
+    const [deg] = messages(sorties, "degats");
+    expect(deg).toMatchObject({ cible: "b", par: "a", degats: 140, pv: 0, zone: "corps" });
+    expect(messages(sorties, "mort")[0]).toMatchObject({ cible: "b", par: "a", arme: "epee", cause: "arme" });
+    expect(j(s, "a")).toMatchObject({ kills: 1, serie: 1, killsParArme: { epee: 1 }, degats: 100, tirs: 0, touches: 0 });
+  });
+
+  it("avec 100 de bouclier la cible survit au premier coup (140 < 200) et tombe au second", () => {
+    const { s, t } = duelEpee([rejoindreVide]);
+    j(s, "b").bouclier = 100;
+    const [premier] = messages(coup(s, "a", "b", t), "degats");
+    expect(premier).toMatchObject({ pv: 60, bouclier: 0, absorbe: 100 });
+    expect(messages(coup(s, "a", "b", t + 800), "mort")).toHaveLength(1);
+  });
+
+  it("cadence 0,85 s (85 % toléré, un demi-intervalle de crédit) : plus lente que le couteau", () => {
+    const { s, t } = duelEpee([rejoindreVide]);
+    j(s, "b").bouclier = 200;
+    expect(coup(s, "a", "b", t).length).toBeGreaterThan(0);
+    expect(coup(s, "a", "b", t + 200)).toEqual([]); // le couteau accepterait déjà un coup à +480
+    expect(coup(s, "a", "b", t + 350)).toEqual([]);
+    expect(coup(s, "a", "b", t + 365).length).toBeGreaterThan(0); // le crédit de rafale (0,36 s) n'est consommé qu'une fois
+    expect(coup(s, "a", "b", t + 700)).toEqual([]);
+    expect(coup(s, "a", "b", t + 1000)).toEqual([]);
+    expect(coup(s, "a", "b", t + 1100).length).toBeGreaterThan(0);
+    expect(j(s, "a").cadenceArme.epee).toBeDefined();
+    expect(j(s, "a").cadenceArme.couteau).toBeUndefined();
+  });
+
+  it("portée 2,6 m de la surface (+ 0,7 m de marge pour le serveur) : une cible à 3,5 m de l'axe est touchée, à 4 m non ; le couteau ne l'atteint pas", () => {
+    const { s, t } = duelEpee([rejoindreVide]);
+    placer(s, "b", [-10 + 4.0, 0, 20]); // ≈ 3,5 m de la surface
+    const loin = coup(s, "a", "b", t);
+    expect(messages(loin, "coup")).toHaveLength(1);
+    expect(messages(loin, "degats")).toEqual([]);
+    placer(s, "b", [-10 + 3.5, 0, 20]); // ≈ 3,0 m de la surface : dans la marge
+    expect(messages(coup(s, "a", "b", t + 1000), "degats")).toHaveLength(1);
+    // le même écart avec le couteau est hors de sa portée (2,2 + 0,6 m)
+    const c = duel();
+    placer(c.s, "b", [-10 + 3.5, 0, 20]);
+    c.s.recevoir("a", { t: "main", slot: "couteau" }, c.t);
+    expect(messages(coup(c.s, "a", "b", c.t + 400), "degats")).toEqual([]);
+  });
+
+  it("jusqu'à 3 cibles par coup : un 4e joueur déclaré est épargné, les doublons ne comptent qu'une fois", () => {
+    const { s, t } = duelEpee([rejoindreVide, rejoindreVide, rejoindreVide, rejoindreVide]);
+    placer(s, "b", [-8.5, 0, 19]); placer(s, "c", [-8.5, 0, 20]); placer(s, "d", [-8.5, 0, 21]); placer(s, "e", [-8.0, 0, 20]);
+    const { o, d } = regarder(s, "a", [-8.5, 1, 20]);
+    const sorties = s.recevoir("a", { t: "coup", o, d, cibles: ["b", "c", "d", "e"] }, t);
+    expect(messages(sorties, "degats").map((m) => m.cible).sort()).toEqual(["b", "c", "d"]);
+    expect(messages(sorties, "mort")).toHaveLength(3);
+    expect(messages(sorties, "presence")).toHaveLength(1); // une seule présence pour trois morts, comme un tir de pompe
+    expect(j(s, "e").pv).toBe(JEU.pvMax);
+    expect(j(s, "a")).toMatchObject({ kills: 3, serie: 3, killsParArme: { epee: 3 } });
+    // doublons : « b, b, b, c » = deux cibles distinctes
+    const autre = duelEpee([rejoindreVide, rejoindreVide, rejoindreVide]);
+    placer(autre.s, "c", [-8.5, 0, 21]); placer(autre.s, "d", [-8.5, 0, 19]);
+    j(autre.s, "b").bouclier = 100;
+    const v = regarder(autre.s, "a", [-8.5, 1, 20]);
+    const dbl = autre.s.recevoir("a", { t: "coup", o: v.o, d: v.d, cibles: ["b", "b", "b", "c"] }, autre.t);
+    expect(messages(dbl, "degats").map((m) => m.cible).sort()).toEqual(["b", "c"]);
+    expect(j(autre.s, "d").pv).toBe(JEU.pvMax);
+  });
+
+  it("le premier mort d'une salve qui atteint l'objectif met fin au match : présence avant `match`, les autres cibles ne sont plus frappées", () => {
+    const { s, t } = duelEpee([rejoindreVide, rejoindreVide, rejoindreVide]);
+    placer(s, "b", [-8.5, 0, 19]); placer(s, "c", [-8.5, 0, 20]); placer(s, "d", [-8.5, 0, 21]);
+    j(s, "a").kills = JEU.objectifKills - 1;
+    const { o, d } = regarder(s, "a", [-8.5, 1, 20]);
+    const sorties = s.recevoir("a", { t: "coup", o, d, cibles: ["b", "c", "d"] }, t);
+    expect(messages(sorties, "mort")).toHaveLength(1);
+    expect(j(s, "c").pv).toBe(JEU.pvMax);
+    expect(j(s, "d").pv).toBe(JEU.pvMax);
+    const ts = sorties.map((x) => x.m.t);
+    expect(ts.filter((x) => x === "presence")).toHaveLength(1);
+    expect(ts.indexOf("presence")).toBeLessThan(ts.indexOf("match"));
+  });
+
+  it("une cible hors du cône de 140° n'est pas touchée (dos tourné), même à portée", () => {
+    const { s, t } = duelEpee([rejoindreVide, rejoindreVide]);
+    placer(s, "b", [-8.5, 0, 20]); // devant
+    placer(s, "c", [-11.5, 0, 20]); // derrière
+    const { o, d } = regarder(s, "a", [-8.5, 1, 20]);
+    const sorties = s.recevoir("a", { t: "coup", o, d, cibles: ["b", "c"] }, t);
+    expect(messages(sorties, "degats").map((m) => m.cible)).toEqual(["b"]);
+  });
+
+  it("anti-triche comme au couteau : œil loin, direction non normalisée, visée de travers, cible mal formée refusés ; pas d'épée en main : refusé", () => {
+    const { s, t } = duelEpee([rejoindreVide]);
+    const { o, d } = regarder(s, "a", [-8.5, 1, 20]);
+    const base = { t: "coup" as const, cibles: ["b"] };
+    expect(s.recevoir("a", { ...base, o: [o[0] + 10, o[1], o[2]], d }, t)).toEqual([]);
+    expect(s.recevoir("a", { ...base, o, d: [d[0] * 3, d[1] * 3, d[2] * 3] }, t)).toEqual([]);
+    expect(s.recevoir("a", { ...base, o, d: [-d[0], -d[1], -d[2]] }, t)).toEqual([]);
+    expect(s.recevoir("a", { ...base, o: [Number.NaN, 0, 0], d }, t)).toEqual([]);
+    expect(j(s, "b").pv).toBe(JEU.pvMax);
+    expect(s.recevoir("a", { t: "coup", o, d, cibles: [42, null, { id: "b" }] as unknown as string[] }, t + 10).length).toBe(1);
+    expect(j(s, "b").pv).toBe(JEU.pvMax);
+    // arme à feu en main : pas de coup
+    s.recevoir("a", { t: "main", slot: "secondaire" }, t + 100);
+    expect(s.recevoir("a", { ...base, o, d }, t + 1500)).toEqual([]);
+  });
+
+  it("vitesse : sprint de l'épée (12,5 × 1,2) sous le plafond de vitesse que le serveur accepte", () => {
+    expect(12.5 * 1.2).toBeLessThanOrEqual(19);
   });
 });
 
@@ -856,7 +1006,7 @@ describe("services Elsa et véhicules", () => {
     const s = nouvelleSalle({ elsa: { x: 0, z: 0 }, vehicules: [{ p: [0, 0], cap: 0 }] });
     const [bienvenue] = messages(s.connecter("a", "Alice", T0), "bienvenue");
     expect(Object.keys(bienvenue).sort()).toEqual(["couleur", "id", "joueurs", "maintenant", "match", "t"]);
-    expect(VERSION_PROTOCOLE).toBe(5);
+    expect(VERSION_PROTOCOLE).toBe(6);
   });
 });
 

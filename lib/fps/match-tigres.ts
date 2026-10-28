@@ -251,10 +251,10 @@ export function creerServiceTigres(ctx: ContexteSalle, opts: OptionsServiceTigre
       return pos ? distanceTigre(o, pos) : null;
     },
 
-    validerCoup(tireur, id, o, d, maintenant, fenetreMs) {
+    validerCoup(tireur, id, o, d, maintenant, fenetreMs, arme) {
       const t = tigres.get(id);
       if (!t || t.lanceur === tireur.id) return false;
-      return positions(t, maintenant, fenetreMs).some((p) => coupTigreVraisemblable(ctx.monde, o, d, p));
+      return positions(t, maintenant, fenetreMs).some((p) => coupTigreVraisemblable(ctx.monde, o, d, p, arme));
     },
 
     blesser(id, degats, par, zone: Zone, maintenant) {

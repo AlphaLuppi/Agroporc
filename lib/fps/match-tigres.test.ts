@@ -33,6 +33,8 @@ function creerContexte(alea: () => number = () => 0.5) {
     enPhaseJeu: () => etat.phaseJeu,
     joueur: (id) => joueurs.get(id),
     joueursEnJeu: () => [...joueurs.values()].filter((j) => j.enJeu),
+    joueurs: () => [...joueurs.values()], placerJoueur: () => [], retirerJoueur: () => [], equiper: () => [],
+    presence: () => ({ a: "tous", m: { t: "presence", joueurs: [] } }),
     memoriserPrecedent: () => {},
     // comme la salle : PV retirés, mort à 0
     infliger: (cible, degats, par, cause, _zone, _arme, t) => {

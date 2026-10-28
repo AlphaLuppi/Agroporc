@@ -50,6 +50,10 @@
 .barre { height: calc(6 * var(--k)); background: var(--ag-line-strong); }
 .barre i { display: block; height: 100%; background: var(--ag-amber); }
 
+/* zombies : barre de saignement (temps avant l'élimination d'un joueur à terre) */
+.barreSaignement { height: calc(8 * var(--k)); background: var(--ag-line-strong); }
+.barreSaignement i { display: block; height: 100%; background: var(--ag-danger); transition: width 0.25s linear; }
+
 @media (max-height: 800px) {
   .carte { gap: calc(6 * var(--k)); padding: calc(12 * var(--k)) calc(20 * var(--k)); }
 }

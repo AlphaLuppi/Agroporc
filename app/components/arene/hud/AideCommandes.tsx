@@ -1,6 +1,7 @@
 "use client";
 
 import { libelleTouche, type Action, type ConfigTouches } from "@/lib/fps/touches";
+import type { ModeSalle } from "@/lib/fps/protocole";
 import styles from "../HudArene.module.css";
 
 /**
@@ -11,6 +12,8 @@ import styles from "../HudArene.module.css";
 export interface PropsAideCommandes {
   touches: ConfigTouches;
   disposition: ReadonlyMap<string, string> | null;
+  /** mode de la salle : en zombies la touche d'action achète, ouvre et réanime (absent = arène) */
+  mode?: ModeSalle;
 }
 
 /** Touche principale d'une action (sinon la seconde), « » si aucune : pour les aides à l'écran. */
@@ -20,7 +23,7 @@ export function toucheDe(cfg: ConfigTouches, a: Action, d?: ReadonlyMap<string, 
   return code === null ? "" : libelleTouche(code, d);
 }
 
-export function commandes(cfg: ConfigTouches, d: ReadonlyMap<string, string> | null): [string, string][] {
+export function commandes(cfg: ConfigTouches, d: ReadonlyMap<string, string> | null, mode: ModeSalle = "arene"): [string, string][] {
   const t = (a: Action) => toucheDe(cfg, a, d);
   return [
     [[t("avant"), t("gauche"), t("arriere"), t("droite")].filter(Boolean).join(" "), "Se déplacer"],
@@ -31,18 +34,21 @@ export function commandes(cfg: ConfigTouches, d: ReadonlyMap<string, string> | n
     [t("sprint"), "Sprinter"],
     [t("accroupi"), "S'accroupir (en sprint : glissade)"],
     [t("recharger"), "Recharger"],
-    [[t("armePrincipale"), t("armeSecondaire"), t("couteau"), t("armeSpeciale")].filter(Boolean).join(" "), "Changer d'arme"],
-    [t("interagir"), "Monter / descendre d'une voiture"],
+    [[t("armePrincipale"), t("armeSecondaire"), t("couteau"), t("armeSpeciale")].filter(Boolean).join(" "), "Changer d'arme (la 3e touche : couteau ou épée)"],
+    [t("couteauRapide"), "Arme blanche rapide (rappuyer : retour)"],
+    mode === "zombies"
+      ? [t("interagir"), "Acheter, ouvrir une porte, réanimer un coéquipier (maintenir)"]
+      : [t("interagir"), "Monter / descendre d'une voiture"],
     [t("scores"), "Scores (maintenir)"],
     [t("carte"), "Grande carte (maintenir)"],
   ];
 }
 
-export default function AideCommandes({ touches, disposition }: PropsAideCommandes) {
+export default function AideCommandes({ touches, disposition, mode }: PropsAideCommandes) {
   return (
     <div className={`${styles.plaque} ${styles.aide}`}>
       <div className={styles.aideListe}>
-        {commandes(touches, disposition).filter(([k]) => k).map(([k, v]) => (<p key={v}><kbd>{k}</kbd> {v}</p>))}
+        {commandes(touches, disposition, mode).filter(([k]) => k).map(([k, v]) => (<p key={v}><kbd>{k}</kbd> {v}</p>))}
       </div>
       <p className={styles.aideMinimap}>Mini-carte : Échap &gt; Interface pour la déplacer</p>
     </div>

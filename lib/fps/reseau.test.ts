@@ -354,7 +354,7 @@ describe("connecterArene : messages périssables", () => {
     const client = connecterArene("ws://x", "Bob", (m) => messages.push(m), () => {}, { creerSocket: (u) => new FauxSocket(u) });
     const socket = () => FauxSocket.tous[FauxSocket.tous.length - 1];
     for (let i = 0; i < 100; i++) {
-      client.envoyer({ t: "coup", o: [0, 0, 0], d: [0, 0, -1], cible: null });
+      client.envoyer({ t: "coup", o: [0, 0, 0], d: [0, 0, -1], cibles: [] });
       client.envoyer({ t: "conduite", seq: i, vehicule: 1, p: [0, 0, 0], cap: 0, v: 0, lacet: 0, tangage: 0 });
     }
     client.envoyer({ t: "descendre" });
@@ -368,7 +368,7 @@ describe("connecterArene : messages périssables", () => {
     const client = connecterArene("ws://x", "Bob", () => {}, () => {}, { creerSocket: (u) => new FauxSocket(u) });
     const s = FauxSocket.tous[FauxSocket.tous.length - 1];
     s.ouvrir();
-    client.envoyer({ t: "coup", o: [0, 0, 0], d: [0, 0, -1], cible: "j2" });
+    client.envoyer({ t: "coup", o: [0, 0, 0], d: [0, 0, -1], cibles: ["j2"] });
     client.envoyer({ t: "conduite", seq: 1, vehicule: 1, p: [0, 0, 0], cap: 0, v: 0, lacet: 0, tangage: 0 });
     expect(s.types().slice(-2)).toEqual(["coup", "conduite"]);
     client.fermer();

@@ -22,7 +22,14 @@ export interface Boite { x0: number; z0: number; x1: number; z1: number }
  * `h` = hauteur courante (0 une fois détruit : gravats plats, ni mur ni toit) ; `hOrigine` = hauteur de `scene.json` ; `creux` = brèche
  * (cylindre vertical arraché par le tigre ou le titan, null s'il est intact) : vide dans l'emprise, son bord est une paroi. `fixe` : jamais détruit (le Truck Muche garé).
  */
-export interface Prisme { anneau: Vec2[]; trous: Vec2[][]; h: number; hOrigine: number; boite: Boite; creux: Creux | null; fixe?: boolean }
+export interface Prisme {
+  anneau: Vec2[]; trous: Vec2[][]; h: number; hOrigine: number; boite: Boite; creux: Creux | null; fixe?: boolean;
+  /**
+   * « Champ » passe-tigres de la carte zombies (`Building.type === "champ"`) : bloque les joueurs (`resoudre` sans option) mais laisse
+   * passer les tigres (`resoudre(…, ignorerPasseTigre)`), les balles (`lancerRayon`) et les regards (`visible`).
+   */
+  passeTigre?: true;
+}
 /** Brèche d'un bâtiment : cercle (m) au sol. */
 export interface Creux { x: number; z: number; r: number }
 
@@ -65,7 +72,11 @@ function boiteDe(pts: Vec2[]): Boite {
 }
 
 export function construireMonde(data: SceneData): Monde {
-  const prismes: Prisme[] = data.buildings.map((b) => ({ anneau: b.r, trous: b.holes ?? [], h: b.h, hOrigine: b.h, boite: boiteDe(b.r), creux: null }));
+  const prismes: Prisme[] = data.buildings.map((b) => {
+    const p: Prisme = { anneau: b.r, trous: b.holes ?? [], h: b.h, hOrigine: b.h, boite: boiteDe(b.r), creux: null };
+    if (b.type === "champ") p.passeTigre = true;
+    return p;
+  });
   // le Truck Muche garé (v3 §2) est un obstacle comme un bâtiment : on ne le traverse pas, il arrête les balles, on peut monter dessus ;
   // il n'est pas destructible (`fixe`)
   const truck = obstacleTruck(data);
@@ -221,8 +232,9 @@ const tamponResolution: number[] = [];
  * `bornes`. Renvoie la position corrigée (y inchangé) et les contacts de murs (normale
  * horizontale unitaire sortante, profondeur = enfoncement avant correction). Les bornes de
  * l'arène renvoient aussi un contact (prisme = -1, normale vers l'intérieur de l'arène).
+ * `ignorerPasseTigre` : les prismes « champ » (`passeTigre`) ne bloquent pas (marche des tigres zombies) ; les joueurs l'omettent.
  */
-export function resoudre(m: Monde, p: Vec3, rayon: number, _hauteur: number): { p: Vec3; contacts: Contact[] } {
+export function resoudre(m: Monde, p: Vec3, rayon: number, _hauteur: number, ignorerPasseTigre = false): { p: Vec3; contacts: Contact[] } {
   let x = p[0];
   const y = p[1];
   let z = p[2];
@@ -240,6 +252,7 @@ export function resoudre(m: Monde, p: Vec3, rayon: number, _hauteur: number): { 
     for (const id of liste) {
       const pr = m.prismes[id];
       if (y >= pr.h - MARGE_TOIT_M) continue;
+      if (ignorerPasseTigre && pr.passeTigre) continue;
       if (!pousser(pr, x, z, rayon)) continue;
       x = correction.x; z = correction.z;
       noter({ nx: correction.nx, nz: correction.nz, profondeur: correction.profondeur, prisme: id });
@@ -305,7 +318,7 @@ function rayonPrisme(p: Prisme, ox: number, oy: number, oz: number, dx: number, 
   return meilleur;
 }
 
-/** Distance du premier bâtiment touché par le rayon (o, d normalisé) jusqu'à `max`, ou Infinity. */
+/** Distance du premier bâtiment touché par le rayon (o, d normalisé) jusqu'à `max`, ou Infinity (les champs `passeTigre` sont transparents). */
 export function lancerRayon(m: Monde, o: Vec3, d: Vec3, max: number): number {
   if (!(max >= 0)) return Infinity;
   const g = m.grille;
@@ -342,6 +355,7 @@ export function lancerRayon(m: Monde, o: Vec3, d: Vec3, max: number): number {
     for (const id of g.cases[i + j * g.nx]) {
       if (g.marques[id] === tampon) continue;
       g.marques[id] = tampon;
+      if (m.prismes[id].passeTigre) continue; // champ passe-tigres : transparent aux balles et aux regards
       const t = rayonPrisme(m.prismes[id], ox, oy, oz, dx, dy, dz, max);
       if (t < meilleur) meilleur = t;
     }
@@ -353,7 +367,7 @@ export function lancerRayon(m: Monde, o: Vec3, d: Vec3, max: number): number {
   return meilleur <= max ? meilleur : Infinity;
 }
 
-/** Vrai si le segment a→b ne traverse aucun bâtiment. */
+/** Vrai si le segment a→b ne traverse aucun bâtiment (les champs `passeTigre` sont transparents). */
 export function visible(m: Monde, a: Vec3, b: Vec3): boolean {
   const dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2];
   const l = Math.hypot(dx, dy, dz);

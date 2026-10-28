@@ -1,10 +1,10 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { Building, SceneData } from "../agroparc3d/types";
-import { COUTEAU } from "./armes";
+import { COUTEAU, MELEE } from "./armes";
 import { construireMonde } from "./collision";
 import { REWIND_MAX_MS } from "./match";
-import { coupVraisemblable, distanceSurface, REWIND_MELEE_MS, trouverCibleCouteau, type CibleMelee } from "./melee";
+import { coupVraisemblable, dansCone, distanceSurface, REWIND_MELEE_MS, trouverCibleCouteau, trouverCiblesMelee, type CibleMelee } from "./melee";
 import { SILHOUETTE, SILHOUETTE_ACCROUPIE, type Vec3 } from "./protocole";
 
 const scene = JSON.parse(readFileSync("public/agroparc/scene.json", "utf8")) as SceneData;
@@ -111,32 +111,32 @@ describe("trouverCibleCouteau (client)", () => {
 
 describe("coupVraisemblable (serveur)", () => {
   it("2,2 m accepté, 2,7 m accepté (marge de 0,6 m), 2,9 m refusé", () => {
-    expect(coupVraisemblable(libre, o, X, cible("b", 2.2), 0)).toBe(true);
-    expect(coupVraisemblable(libre, o, X, cible("b", 2.7), 0)).toBe(true);
-    expect(coupVraisemblable(libre, o, X, cible("b", 2.9), 0)).toBe(false);
+    expect(coupVraisemblable(libre, o, X, cible("b", 2.2))).toBe(true);
+    expect(coupVraisemblable(libre, o, X, cible("b", 2.7))).toBe(true);
+    expect(coupVraisemblable(libre, o, X, cible("b", 2.9))).toBe(false);
     expect(COUTEAU.margePortee).toBe(0.6);
   });
 
   it("la vitesse de la cible n'élargit pas la portée (le rejeu de 200 ms s'en charge)", () => {
-    expect(coupVraisemblable(libre, o, X, cible("b", 2.9), 16)).toBe(false);
+    expect(coupVraisemblable(libre, o, X, cible("b", 2.9))).toBe(false);
   });
 
   it("derrière un mur : refusé", () => {
     const oMur: Vec3 = [9, 1.5, 0];
     const derriere: CibleMelee = { id: "b", p: [9 + R + 1.6 + 0.5, 0, 0], vivant: true };
-    expect(coupVraisemblable(avecMur, oMur, X, derriere, 0)).toBe(false);
-    expect(coupVraisemblable(libre, oMur, X, derriere, 0)).toBe(true);
+    expect(coupVraisemblable(avecMur, oMur, X, derriere)).toBe(false);
+    expect(coupVraisemblable(libre, oMur, X, derriere)).toBe(true);
   });
 
   it("hors cône : refusé", () => {
     const c = cible("b", 1.5);
-    expect(coupVraisemblable(libre, o, [0, 0, 1], c, 0)).toBe(false);
-    expect(coupVraisemblable(libre, o, [-1, 0, 0], c, 0)).toBe(false);
-    expect(coupVraisemblable(libre, o, [Math.cos(0.5), 0, Math.sin(0.5)], c, 0)).toBe(true);
+    expect(coupVraisemblable(libre, o, [0, 0, 1], c)).toBe(false);
+    expect(coupVraisemblable(libre, o, [-1, 0, 0], c)).toBe(false);
+    expect(coupVraisemblable(libre, o, [Math.cos(0.5), 0, Math.sin(0.5)], c)).toBe(true);
   });
 
   it("cible morte : refusée", () => {
-    expect(coupVraisemblable(libre, o, X, { ...cible("b", 1), vivant: false }, 0)).toBe(false);
+    expect(coupVraisemblable(libre, o, X, { ...cible("b", 1), vivant: false })).toBe(false);
   });
 
   it("accroupie : mesurée sur sa capsule basse", () => {
@@ -148,8 +148,103 @@ describe("coupVraisemblable (serveur)", () => {
     expect(dA).toBeGreaterThan(dD);
     expect(dA).toBeCloseTo(Math.hypot(2.7 + R, SILHOUETTE.oeil - SILHOUETTE_ACCROUPIE.corps.y1) - R, 9);
     // à 2,7 m horizontaux, l'accroupie passe à ≈ 2,84 m (> 2,8) : refusée là où la debout (≈ 2,71 m) est acceptée
-    expect(coupVraisemblable(libre, oeil, X, debout, 0)).toBe(true);
-    expect(coupVraisemblable(libre, oeil, X, acc, 0)).toBe(false);
-    expect(coupVraisemblable(libre, oeil, X, cible("b", 2.0, 0, true), 0)).toBe(true);
+    expect(coupVraisemblable(libre, oeil, X, debout)).toBe(true);
+    expect(coupVraisemblable(libre, oeil, X, acc)).toBe(false);
+    expect(coupVraisemblable(libre, oeil, X, cible("b", 2.0, 0, true))).toBe(true);
+  });
+});
+
+describe("épée (arme blanche à plusieurs cibles)", () => {
+  const dir = (deg: number): Vec3 => [Math.cos((deg * Math.PI) / 180), 0, Math.sin((deg * Math.PI) / 180)];
+
+  it("portée 2,6 mesurée de la SURFACE de la cible (le couteau s'arrête à 2,2)", () => {
+    expect(MELEE.epee.portee).toBe(2.6);
+    const r = trouverCiblesMelee(libre, o, X, [cible("b", 2.6)], "a", "epee");
+    expect(r).toHaveLength(1);
+    expect(r[0].cible).toBe("b");
+    expect(r[0].distance).toBeCloseTo(2.6, 9);
+    expect(trouverCiblesMelee(libre, o, X, [cible("b", 2.7)], "a", "epee")).toEqual([]);
+    // à 2,4 m de surface : l'épée touche, le couteau non
+    expect(trouverCiblesMelee(libre, o, X, [cible("b", 2.4)], "a", "epee")).toHaveLength(1);
+    expect(trouverCiblesMelee(libre, o, X, [cible("b", 2.4)], "a", "couteau")).toEqual([]);
+    expect(trouverCiblesMelee(libre, o, X, [cible("b", 2.4)], "a")).toEqual([]);
+  });
+
+  it("cône de 70° : 75° et 80° acceptés à l'épée, refusé au couteau ; dos refusé ; au contact, toute direction", () => {
+    const c = cible("b", 1.5);
+    expect(trouverCiblesMelee(libre, o, dir(75), [c], "a", "epee")).toHaveLength(1);
+    expect(trouverCiblesMelee(libre, o, dir(75), [c], "a", "couteau")).toHaveLength(0);
+    expect(trouverCiblesMelee(libre, o, dir(-75), [c], "a", "epee")).toHaveLength(1);
+    expect(trouverCiblesMelee(libre, o, dir(80), [c], "a", "epee")).toHaveLength(1);
+    expect(trouverCiblesMelee(libre, o, dir(80), [c], "a", "couteau")).toHaveLength(0);
+    expect(trouverCiblesMelee(libre, o, dir(95), [c], "a", "epee")).toEqual([]);
+    expect(trouverCiblesMelee(libre, o, dir(180), [c], "a", "epee")).toEqual([]);
+    const contact: CibleMelee = { id: "b", p: [0.2, 0, 0], vivant: true };
+    expect(trouverCiblesMelee(libre, o, [-1, 0, 0], [contact], "a", "epee")).toHaveLength(1);
+  });
+
+  it("dansCone : le cosinus du demi-angle est un paramètre", () => {
+    const c = cible("b", 1.5);
+    expect(dansCone(o, dir(75), c, MELEE.couteau.cosCone)).toBe(false);
+    expect(dansCone(o, dir(75), c, MELEE.epee.cosCone)).toBe(true);
+  });
+
+  it("jusqu'à 3 cibles, triées de la plus proche à la plus lointaine", () => {
+    const cibles = [cible("loin", 2.5), cible("pres", 0.8), cible("milieu", 1.6), cible("quatrieme", 2.2)];
+    const r = trouverCiblesMelee(libre, o, X, cibles, "a", "epee");
+    expect(r.map((x) => x.cible)).toEqual(["pres", "milieu", "quatrieme"]);
+    expect(r[0].distance).toBeLessThan(r[1].distance);
+    expect(r[1].distance).toBeLessThan(r[2].distance);
+    // moins de cibles que le maximum : toutes
+    expect(trouverCiblesMelee(libre, o, X, [cible("b", 1), cible("c", 2)], "a", "epee").map((x) => x.cible)).toEqual(["b", "c"]);
+    // le couteau n'en prend qu'une : la plus proche
+    expect(trouverCiblesMelee(libre, o, X, cibles, "a", "couteau").map((x) => x.cible)).toEqual(["pres"]);
+  });
+
+  it("ignore le tireur, les morts et les cibles hors portée ou hors cône au milieu des autres", () => {
+    const moi = cible("a", 0.5);
+    const mort: CibleMelee = { ...cible("mort", 1), vivant: false };
+    const dos: CibleMelee = { id: "dos", p: [-3, 0, 0], vivant: true };
+    const ok = cible("ok", 2);
+    expect(trouverCiblesMelee(libre, o, X, [moi, mort, dos, cible("loin", 4), ok], "a", "epee").map((x) => x.cible)).toEqual(["ok"]);
+    expect(trouverCiblesMelee(libre, o, X, [], "a", "epee")).toEqual([]);
+  });
+
+  it("ligne de vue : un mur arrête le coup d'épée, seule la cible dégagée est prise", () => {
+    const oMur: Vec3 = [9, 1.5, 0];
+    // derrière le mur (x = 10 à 10,5), à 1,5 m de surface
+    const derriere: CibleMelee = { id: "derriere", p: [10.5 + 0.5 + R, 0, 0], vivant: true };
+    // du même côté que l'œil, dans le cône
+    const devant: CibleMelee = { id: "devant", p: [9 + 0.3, 0, 6], vivant: true };
+    expect(trouverCiblesMelee(avecMur, oMur, X, [derriere], "a", "epee")).toEqual([]);
+    expect(trouverCiblesMelee(libre, oMur, X, [derriere], "a", "epee").map((x) => x.cible)).toEqual(["derriere"]);
+    expect(trouverCiblesMelee(avecMur, oMur, X, [derriere, devant], "a", "epee").map((x) => x.cible)).not.toContain("derriere");
+  });
+
+  it("trouverCibleCouteau délègue au couteau : même résultat que trouverCiblesMelee(…, 'couteau')[0]", () => {
+    const cibles = [cible("loin", 2.0), cible("pres", 1.0), cible("trop", 2.4)];
+    expect(trouverCibleCouteau(libre, o, X, cibles, "a")).toEqual(trouverCiblesMelee(libre, o, X, cibles, "a", "couteau")[0]);
+    expect(trouverCibleCouteau(libre, o, X, cibles, "a")?.cible).toBe("pres");
+    expect(trouverCibleCouteau(libre, o, X, [cible("trop", 2.4)], "a")).toBeNull();
+  });
+
+  it("serveur : coupVraisemblable accepte 2,6 + 0,7 de marge à l'épée (3,3), pas au-delà ; le couteau s'arrête à 2,8", () => {
+    expect(coupVraisemblable(libre, o, X, cible("b", 3.2), "epee")).toBe(true);
+    expect(coupVraisemblable(libre, o, X, cible("b", 3.3), "epee")).toBe(true);
+    expect(coupVraisemblable(libre, o, X, cible("b", 3.4), "epee")).toBe(false);
+    expect(coupVraisemblable(libre, o, X, cible("b", 3.2), "couteau")).toBe(false);
+    expect(coupVraisemblable(libre, o, X, cible("b", 3.2))).toBe(false);
+    expect(coupVraisemblable(libre, o, X, cible("b", 2.8), "couteau")).toBe(true);
+  });
+
+  it("serveur : cône de 70° et ligne de vue pour l'épée, cible morte refusée", () => {
+    expect(coupVraisemblable(libre, o, dir(75), cible("b", 1.5), "epee")).toBe(true);
+    expect(coupVraisemblable(libre, o, dir(75), cible("b", 1.5), "couteau")).toBe(false);
+    expect(coupVraisemblable(libre, o, dir(150), cible("b", 1.5), "epee")).toBe(false);
+    const oMur: Vec3 = [9, 1.5, 0];
+    const derriere: CibleMelee = { id: "b", p: [10.5 + 0.3 + R, 0, 0], vivant: true };
+    expect(coupVraisemblable(avecMur, oMur, X, derriere, "epee")).toBe(false);
+    expect(coupVraisemblable(libre, oMur, X, derriere, "epee")).toBe(true);
+    expect(coupVraisemblable(libre, o, X, { ...cible("b", 1), vivant: false }, "epee")).toBe(false);
   });
 });

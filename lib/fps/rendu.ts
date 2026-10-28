@@ -29,7 +29,8 @@ import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { LineSegments2 } from "three/examples/jsm/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/examples/jsm/lines/LineSegmentsGeometry.js";
 import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
-import { ECHELLE_AVATAR, silhouetteDe, type ArmeFeuId, type ArmeId, type EtatJoueurSnap, type Vec3 } from "./protocole";
+import { MELEE } from "./armes";
+import { ECHELLE_AVATAR, estMelee, silhouetteDe, type ArmeFeuId, type ArmeId, type ArmeMeleeId, type EtatJoueurSnap, type Vec3 } from "./protocole";
 import { LARGEUR_MIN_M, TRACEURS, dureeVie, etatTraceur, instantImpact, largeurMonde, type ParamsTraceur } from "./traceurs";
 import { hauteurPlaquePx } from "./visibilite";
 
@@ -53,7 +54,7 @@ export interface AvatarJoueur {
   maj(etat: EtatJoueurSnap, dt: number): void;
   /** Le joueur vient de tirer : flash de bouche et recul de l'arme. */
   tirer(): void;
-  /** Le joueur vient de donner un coup (couteau) : fente de l'arme et du bras. */
+  /** Le joueur vient de donner un coup (couteau ou épée) : fente de l'arme et du bras. */
   coup(): void;
   /** Le joueur vient d'être touché : bref éclat blanc. */
   toucher(): void;
@@ -271,8 +272,10 @@ interface ModeleArme {
   /** position de l'arme dans le repère du buste d'un avatar */
   porte: THREE.Vector3;
   progres: number;
-  /** avancement du coup en cours (0 à 1), 0 si aucun : l'avatar en déduit la fente du bras */
+  /** avancement du coup en cours (0 à 1), 0 si aucun : l'avatar en déduit la fente des bras */
   coupU: number;
+  /** arme tenue à deux mains (épée) : la main libre suit la fente du coup au lieu de pendre */
+  deuxMains: boolean;
   tirer(): void;
   coup(): void;
   recharger(dureeS: number): void;
@@ -298,8 +301,26 @@ function geoFlash(): THREE.BufferGeometry {
   return g;
 }
 
-/** Durée (s) du coup de couteau. */
-const DUREE_COUP_S = 0.4;
+/**
+ * Animation de coup d'une arme blanche. Chaque amplitude est `[armé, frappé]` : à l'armement (début, maintenu jusqu'à 0,25) la valeur
+ * est `armé`, au sommet de la frappe (0,55) elle est `-frappé`, retour à 0 vers la fin (`armé × arme − frappé × frappe`).
+ * `alterne` : le sens du balayage s'inverse à chaque coup (taille horizontale gauche-droite puis droite-gauche, rotY et rotZ et posX).
+ */
+interface AnimCoup {
+  dureeS: number;
+  rotX: [number, number];
+  rotY: [number, number];
+  rotZ: [number, number];
+  posX: [number, number];
+  posZ: [number, number];
+  alterne: boolean;
+}
+/** Une entrée par arme blanche (`Record` exhaustif). Le couteau garde son geste d'origine (armé en l'air, balayé de droite à gauche). */
+const COUPS: Record<ArmeMeleeId, AnimCoup> = {
+  couteau: { dureeS: MELEE.couteau.dureeCoupS, rotX: [0.4, 0.5], rotY: [0, 0], rotZ: [0.7, 1.1], posX: [0.06, 0.12], posZ: [0.06, 0.18], alterne: false },
+  // Épée : taille à deux mains, lame armée sur le côté puis balayée à l'horizontale d'un côté à l'autre (yaw), un peu couchée.
+  epee: { dureeS: MELEE.epee.dureeCoupS, rotX: [0.25, 0.3], rotY: [-0.9, -1.1], rotZ: [0.45, 0.6], posX: [0, 0], posZ: [0.05, 0.14], alterne: true },
+};
 
 /**
  * Modèle d'une arme : un `case` par arme, qui pose les pièces, les points de prise (`prise`, `garde`), la bouche et la position portée par un avatar,
@@ -631,6 +652,28 @@ function creerModeleArme(id: ArmeId, m: Materiaux, devant: boolean): ModeleArme 
       };
       break;
     }
+    case "epee": {
+      // Épée à deux mains, origine du repère = main droite (pommeau), la lame part vers −z : manche de 0,2 m (z de −0,13 à +0,07), pommeau,
+      // garde en croix à z = −0,14, lame de ≈ 0,55 m (garde comprise) avec arête centrale et pointe en biseau. Relevée de 0,5 rad. Pas de flash ni de recul.
+      const INCL = 0.5, co = Math.cos(INCL), si = Math.sin(INCL);
+      const lame = new THREE.Group();
+      lame.rotation.x = INCL;
+      inner.add(lame);
+      piece(lame, geoBoite(0.044, 0.01, 0.52), m, 0, 0, -0.4); // lame plate (le plat regarde en haut)
+      piece(lame, geoBoite(0.012, 0.022, 0.52), m, 0, 0, -0.4); // arête centrale
+      piece(lame, geoBoite(0.03, 0.01, 0.03), m, 0, 0, -0.675, 0, 0.785); // pointe en biseau (losange)
+      piece(lame, geoBoite(0.2, 0.026, 0.026), m, 0, 0, -0.14); // garde en croix
+      piece(lame, geoBoite(0.026, 0.026, 0.2), m, 0, 0, -0.03); // manche
+      piece(lame, geoBoite(0.034, 0.034, 0.03), m, 0, 0, 0.085); // pommeau
+      // Points de prise exprimés dans le repère de `inner` (la lame est penchée de INCL autour de x : y' = −z·sin, z' = z·cos).
+      prise.set(0, -0.02 * si, 0.02 * co);
+      garde.set(0, 0.08 * si, -0.08 * co); // 2e main, 10 cm au-dessus de la première
+      bouche.set(0, 0.69 * si, -0.69 * co); // pointe de la lame
+      porte.set(0.1, -0.24, -0.3);
+      echelleFlash = 0;
+      inclinaison = 0;
+      break;
+    }
     case "couteau": {
       // Couteau de combat : lame verticale (tranchant vers le bas), garde, manche et pommeau ; la lame est relevée de 0,25 rad. Pas de flash ni de recul.
       const lame = new THREE.Group();
@@ -662,11 +705,15 @@ function creerModeleArme(id: ArmeId, m: Materiaux, devant: boolean): ModeleArme 
   inner.add(flash);
 
   let tTir = 99, tRech = -1, dureeRech = 1, flashT = 0, tCoup = -1;
+  /** Animation de coup de l'arme (le couteau pour une arme à feu : ne sert que si `coup()` est appelé dessus) et sens du balayage (alterné à chaque coup). */
+  const animCoup = COUPS[estMelee(id) ? id : "couteau"];
+  let sensCoup = -1;
 
   const modele: ModeleArme = {
     group, prise, garde, bouche, porte,
     progres: 0,
     coupU: 0,
+    deuxMains: id === "epee",
     tirer() {
       tTir = 0;
       surTir();
@@ -676,7 +723,7 @@ function creerModeleArme(id: ArmeId, m: Materiaux, devant: boolean): ModeleArme 
       flash.rotation.z = Math.random() * Math.PI * 2;
       flash.scale.setScalar(echelleFlash * (0.75 + Math.random() * 0.5));
     },
-    coup() { tCoup = 0; },
+    coup() { tCoup = 0; sensCoup = -sensCoup; },
     recharger(dureeS) {
       dureeRech = Math.max(dureeS, 0.3);
       tRech = 0;
@@ -691,18 +738,22 @@ function creerModeleArme(id: ArmeId, m: Materiaux, devant: boolean): ModeleArme 
       inner.rotation.z = -inclinaison * inc;
       inner.rotation.x = -0.5 * inclinaison * inc;
       inner.position.set(0, 0, 0);
-      // Coup : armé en arrière et en l'air (0 à 0,25), balayé de droite à gauche vers l'avant (0,25 à 0,55), ramené (0,6 à 1).
+      // Coup : armé (0 à 0,25), balayé vers l'avant (0,25 à 0,55), ramené (0,6 à 1). Amplitudes et durée : table `COUPS` (couteau d'origine, épée).
+      inner.rotation.y = 0;
       if (tCoup >= 0) {
         tCoup += dt;
-        const u = tCoup / DUREE_COUP_S;
+        const u = tCoup / animCoup.dureeS;
         if (u >= 1) { tCoup = -1; modele.coupU = 0; }
         else {
           modele.coupU = u;
           const s1 = rampe(u, 0, 0.25), s2 = rampe(u, 0.25, 0.55), s3 = rampe(u, 0.6, 1);
           const arme = s1 - s2, frappe = s2 - s3;
-          inner.rotation.z += 0.7 * arme - 1.1 * frappe;
-          inner.rotation.x += 0.4 * arme - 0.5 * frappe;
-          inner.position.set(0.06 * arme - 0.12 * frappe, 0, 0.06 * arme - 0.18 * frappe);
+          const { rotX, rotY, rotZ, posX, posZ } = animCoup;
+          const sens = animCoup.alterne ? sensCoup : 1;
+          inner.rotation.y += sens * (rotY[0] * arme - rotY[1] * frappe);
+          inner.rotation.z += sens * (rotZ[0] * arme - rotZ[1] * frappe);
+          inner.rotation.x += rotX[0] * arme - rotX[1] * frappe;
+          inner.position.set(sens * (posX[0] * arme - posX[1] * frappe), 0, posZ[0] * arme - posZ[1] * frappe);
         }
       }
       anim(tTir, p, dt);
@@ -743,6 +794,8 @@ const PLACEMENT: Record<ArmeId, PlacementArme> = {
   minigun: { repos: [0.2, -0.24, -0.14], vise: [0, -0.1, -0.1], lacet: 0.04, reculZ: 0.015, reculRot: 0.03 },
   magnum_dore: { repos: [0.17, -0.18, -0.36], vise: [0, -0.08, -0.3], lacet: 0.05, reculZ: 0.08, reculRot: 0.26 },
   couteau: { repos: [0.2, -0.2, -0.36], vise: [0.2, -0.2, -0.36], lacet: -0.05, reculZ: 0, reculRot: 0 },
+  // Épée : tenue plus bas et plus au centre (deux mains), lame levée devant ; pas de visée.
+  epee: { repos: [0.14, -0.25, -0.32], vise: [0.14, -0.25, -0.32], lacet: -0.08, reculZ: 0, reculRot: 0 },
 };
 
 const COULEUR_ARME_PAR_DEFAUT = 0xbfefff;
@@ -1039,7 +1092,7 @@ export function creerAvatar(couleur: CouleurEntree, pseudo: string): AvatarJoueu
   };
 
   const _d = new THREE.Vector3(), _p = new THREE.Vector3(), _u = new THREE.Vector3(), _e = new THREE.Vector3(), _f = new THREE.Vector3(), _c = new THREE.Vector3();
-  const _bw = new THREE.Vector3();
+  const _bw = new THREE.Vector3(), _c2 = new THREE.Vector3();
   const qHaut = new THREE.Quaternion(), qBas = new THREE.Quaternion();
   /** Cinématique inverse à deux os : l'épaule `b` attrape `cible` (repère du buste), coude vers le bas et l'extérieur. */
   const attraper = (b: Bras, cote: number, cible: THREE.Vector3) => {
@@ -1170,7 +1223,9 @@ export function creerAvatar(couleur: CouleurEntree, pseudo: string): AvatarJoueu
           const fente = Math.sin(Math.PI * Math.min(armeCourante.coupU * 1.15, 1));
           if (fente > 0) _c.z -= 0.2 * fente; // le bras part avec le coup
           attraper(bD, 1, _c);
-          attraper(bG, -1, _c.copy(armeCourante.porte).add(armeCourante.garde));
+          _c2.copy(armeCourante.porte).add(armeCourante.garde);
+          if (fente > 0 && armeCourante.deuxMains) _c2.z -= 0.2 * fente;
+          attraper(bG, -1, _c2);
         } else {
           attraper(bD, 1, MAIN_VOLANT_D);
           attraper(bG, -1, MAIN_VOLANT_G);

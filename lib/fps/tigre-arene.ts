@@ -8,9 +8,9 @@
  * Spec : docs/superpowers/specs/2026-10-23-arene-tigres-design.md (Tigre sauvage, Sort d'invocation, Réseau)
  */
 import { dedans, distSegment } from "../agroparc3d/cachettes";
-import { COUTEAU } from "./armes";
+import { MELEE } from "./armes";
 import { lancerRayon, resoudre, solSous, visible, type Monde, type Prisme } from "./collision";
-import type { ActionTigre, EtatTigre, GenreTigre, PoseTigre, Vec3, Zone } from "./protocole";
+import type { ActionTigre, ArmeMeleeId, EtatTigre, GenreTigre, PoseTigre, Vec3, Zone } from "./protocole";
 import { LATENCE_TOLEREE_S, MARGE_PORTEE_M, TOLERANCE_RAYON_M } from "./tir";
 
 /** Constantes du tigre sauvage (toutes ajustables, valeurs de la spec). */
@@ -1129,14 +1129,15 @@ export function distanceSurfaceTigre(o: Vec3, pos: PositionTigre): { distance: n
  * Validation serveur d'un coup de couteau sur un tigre, mêmes règles que `coupVraisemblable` (melee.ts) : surface à portée + marge au
  * plus, point visé dans le cône de frappe (55°, élargi du rayon de la silhouette), un point de l'axe visible.
  */
-export function coupTigreVraisemblable(monde: Monde, o: Vec3, d: Vec3, pos: PositionTigre): boolean {
+export function coupTigreVraisemblable(monde: Monde, o: Vec3, d: Vec3, pos: PositionTigre, arme: ArmeMeleeId = "couteau"): boolean {
+  const m = MELEE[arme];
   const s = distanceSurfaceTigre(o, pos);
-  if (s.distance > COUTEAU.portee + COUTEAU.margePortee) return false;
+  if (s.distance > m.portee + m.margePortee) return false;
   const v = moins(s.point, o);
   const l = Math.hypot(v[0], v[1], v[2]);
   if (l > s.rayon) {
     const cos = Math.max(-1, Math.min(1, scal(v, d) / l));
-    if (Math.acos(cos) > Math.acos(COUTEAU.cosCone) + Math.asin(Math.min(1, s.rayon / l))) return false;
+    if (Math.acos(cos) > Math.acos(m.cosCone) + Math.asin(Math.min(1, s.rayon / l))) return false;
   }
   return visiblePoint(monde, o, pos);
 }

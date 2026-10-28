@@ -1,5 +1,5 @@
-import { STATS, nomArme, type CategorieArme } from "@/lib/fps/armes";
-import { ARMES, type ArmeFeuId, type ArmeId, type CauseMort } from "@/lib/fps/protocole";
+import { MELEE, STATS, nomArme, type CategorieArme } from "@/lib/fps/armes";
+import { ARMES, ARMES_MELEE, type ArmeFeuId, type ArmeId, type ArmeMeleeId, type CauseMort } from "@/lib/fps/protocole";
 
 /**
  * Texte et barres de stats des armes pour les cartes du lobby, l'écran de mort et le HUD. TOUT est dérivé de `STATS`
@@ -65,6 +65,53 @@ export const LIBELLES_BARRES: { cle: keyof InfoArme["barres"]; nom: string }[] =
   { cle: "controle", nom: "Contrôle" },
 ];
 
+/** Carte d'une arme blanche (couteau, épée) du lobby : mêmes champs d'affichage qu'une arme à feu, barres propres (cf. `LIBELLES_BARRES_MELEE`). */
+export interface InfoArmeBlanche {
+  id: ArmeMeleeId;
+  nom: string;
+  nomCourt: string;
+  categorie: "blanche";
+  description: string;
+  /** 0..1 relatif au maximum des armes blanches ; `controle` porte ici la vitesse de course */
+  barres: InfoArme["barres"];
+}
+
+/** Maxima des armes blanches (barres normalisées dessus, comme pour les armes à feu). */
+const MAX_MELEE = {
+  degats: Math.max(...ARMES_MELEE.map((id) => MELEE[id].degats)),
+  cadence: Math.max(...ARMES_MELEE.map((id) => 1 / MELEE[id].cadenceS)),
+  portee: Math.max(...ARMES_MELEE.map((id) => MELEE[id].portee)),
+  bonusCourse: Math.max(...ARMES_MELEE.map((id) => MELEE[id].vitesse - 1)),
+};
+
+function calculerMelee(id: ArmeMeleeId): InfoArmeBlanche {
+  const a = MELEE[id];
+  return {
+    id, nom: a.nom, nomCourt: a.nomCourt, categorie: "blanche", description: a.description,
+    barres: {
+      degats: borne(a.degats / MAX_MELEE.degats),
+      cadence: borne(1 / a.cadenceS / MAX_MELEE.cadence),
+      portee: borne(a.portee / MAX_MELEE.portee),
+      controle: borne((a.vitesse - 1) / MAX_MELEE.bonusCourse),
+    },
+  };
+}
+
+export const INFOS_MELEE = Object.fromEntries(ARMES_MELEE.map((id) => [id, calculerMelee(id)])) as Record<ArmeMeleeId, InfoArmeBlanche>;
+
+/** Les armes blanches, dans l'ordre du catalogue (couteau puis épée). */
+export function armesBlanches(): InfoArmeBlanche[] {
+  return ARMES_MELEE.map((id) => INFOS_MELEE[id]);
+}
+
+/** Barres des armes blanches : la quatrième est la vitesse de course (le « contrôle » n'a pas de sens sans recul). */
+export const LIBELLES_BARRES_MELEE: { cle: keyof InfoArme["barres"]; nom: string }[] = [
+  { cle: "degats", nom: "Dégâts" },
+  { cle: "cadence", nom: "Cadence" },
+  { cle: "portee", nom: "Portée" },
+  { cle: "controle", nom: "Course" },
+];
+
 /**
  * Libellé d'une élimination : le nom de l'arme (« Pistolet », « Couteau ») pour la cause "arme", sinon la cause en toutes
  * lettres (« Écrasé par la circulation », « Renversé par <pseudo> », « Tigre de <pseudo> », « Tué par le tigre »). `par` = pseudo du
@@ -78,5 +125,6 @@ export function libelleCause(arme: ArmeId, cause: CauseMort, par: string): strin
   if (cause === "truck_fou") return "Écrasé par le Truck Muche fou";
   if (cause === "tigre_robot") return "Déchiqueté par le tigre robot";
   if (cause === "titan") return par ? `Titan tigre de ${par}` : "Titan tigre";
+  if (cause === "tigre_zombie") return "Griffé par un tigre";
   return nomArme(arme);
 }

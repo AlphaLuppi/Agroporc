@@ -2,10 +2,10 @@ import type { MutableRefObject } from "react";
 import type { SceneData } from "@/lib/agroparc3d/types";
 import type { ClientArene, EtatConnexion } from "@/lib/fps/reseau";
 import type {
-  ArmeId, ArmePrincipaleId, ArmeSecondaireId, ArmeSpecialeId, CauseMort, EtatElsaMsg, EtatJoueurSnap, InfoMatch, InfoTueur, InfoVehicule,
-  JoueurPublic, LigneClassement, LigneStats, Zone,
+  ArmeId, ArmeMeleeId, ArmePrincipaleId, ArmeSecondaireId, ArmeSpecialeId, CauseMort, EtatElsaMsg, EtatJoueurSnap, EtatPartieZombies, InfoMatch, InfoTueur,
+  InfoVehicule, JoueurPublic, LigneClassement, LigneStats, MessageServeur, ModeSalle, Zone,
 } from "@/lib/fps/protocole";
-import type { EtatMonstresHud, HudEtat, HudLive, JeuEvenement } from "@/lib/fps/jeu-types";
+import type { EtatMonstresHud, EtatZombiesHud, HudEtat, HudLive, JeuEvenement } from "@/lib/fps/jeu-types";
 import type { RadarFrame } from "@/lib/fps/radar";
 import type { ReglagesHud } from "@/lib/fps/reglages-hud";
 import type { Action, ConfigTouches } from "@/lib/fps/touches";
@@ -17,7 +17,8 @@ import type { ReglagesVoix } from "@/lib/fps/voix";
  * Spec : docs/superpowers/specs/2026-10-22-arene-v2-design.md (§5.17) et 2026-10-23-arene-hud-design.md (§3.6)
  */
 
-export interface EquipementChoisi { principale: ArmePrincipaleId; secondaire: ArmeSecondaireId }
+/** `melee` absent = couteau (rétrocompatible : les littéraux sans arme blanche restent valides). */
+export interface EquipementChoisi { principale: ArmePrincipaleId; secondaire: ArmeSecondaireId; melee?: ArmeMeleeId }
 
 /** Ligne du fil des kills. `arme` n'a de sens que pour cause "arme" : afficher `libelleCause(arme, cause, par)`, jamais `INFOS_ARMES[arme]` seul. */
 export interface EntreeFil {
@@ -42,6 +43,12 @@ export interface Bonus { id: number; genre: "soin" | "arme"; arme?: ArmeSpeciale
  * @deprecated la spec HUD (§3.1) le remplace par `JeuHandle.radar()` (`RadarFrame.elsa`) ; conservé pour la compilation de l'hôte.
  */
 export interface RepereElsa { elsaAngle: number; elsaDistance: number }
+
+/** Résumé des deux salles (message `salons`, sans son type) : compteurs du choix du mode. */
+export type Salons = Omit<Extract<MessageServeur, { t: "salons" }>, "t">;
+
+/** Gain d'argent le plus récent (zombies) : `n` augmente à chaque message `argent`, pour animer à chaque changement. */
+export interface GainArgent { n: number; delta: number; motif: string }
 
 /** Retour de `useArene(pseudo, jeuRef)` (ex-interface `UseArene`, étendue). */
 export interface UseArene {
@@ -68,6 +75,22 @@ export interface UseArene {
   demanderScores(ouvert: boolean): void;
   /** dégâts que j'ai infligés au tueur (cumul des `confirme` sur lui pendant ma vie), remis à 0 sur `apparition` : carte du tueur */
   degatsAuTueur: number;
+  // ---- v5 : modes de jeu ----
+  /** mode de la salle où je suis (confirmé par le serveur) */
+  mode: ModeSalle;
+  /** mode demandé (carte cochée du choix du mode) : égal à `mode` hors changement en cours ou refusé */
+  modeVoulu: ModeSalle;
+  /** résumé des deux salles (null avant le premier message) */
+  salons: Salons | null;
+  /** dernier état de la partie de zombies reçu, null hors de la salle zombies ou avant le premier */
+  zombies: EtatPartieZombies | null;
+  /** argent des zombies (dernier solde reçu) et dernier gain, pour l'animation */
+  argent: number;
+  gainArgent: GainArgent | null;
+  /** demande à changer de salle (refusée : message dans `erreur`, `modeVoulu` revient à `mode`) */
+  choisirMode(mode: ModeSalle): void;
+  /** hôte du lobby des zombies : lance la partie */
+  lancerPartie(): void;
 }
 
 /** Props de `HudArene` (U2 l'implémente, U1/l'hôte les fournit). */
@@ -94,7 +117,8 @@ export interface PropsHudArene {
   // ---- v2 ----
   /** équipement de la prochaine apparition (remplace `surChoisirArme`) */
   equipement: EquipementChoisi;
-  surEquipement(principale: ArmePrincipaleId, secondaire: ArmeSecondaireId): void;
+  /** `melee` omis = l'arme blanche déjà choisie (les raccourcis clavier de l'écran de mort ne changent que les armes à feu) */
+  surEquipement(principale: ArmePrincipaleId, secondaire: ArmeSecondaireId, melee?: ArmeMeleeId): void;
   elsa: EtatElsaMsg | null;
   annonces: Annonce[];
   sieges: InfoVehicule[];
@@ -130,12 +154,20 @@ export interface PropsHudArene {
   scene?: SceneData | null;
   /** (v3) `JeuHandle.monstres()` : événement en cours, PV du tigre robot et du titan (bandeau), null hors partie */
   monstres?(): EtatMonstresHud | null;
+  /** (v5) `JeuHandle.zombies()` : état du mode zombies lu à intervalle par le HUD ; absent = HUD de l'arène */
+  zombies?(): EtatZombiesHud | null;
+  /** (v5) « Rejouer » de la fin de partie : retour au lobby de la salle (le jeu est démonté) */
+  surRejouer?(): void;
+  /** (v5) « Quitter » de la fin de partie : sort ET referme le panneau (absent : comme `surQuitter`, retour au lobby) */
+  surQuitterVue?(): void;
 }
 
 /** Props de `ChoixEquipement` (écrit par U1, utilisé par U1 : lobby, et par U2 : écran de mort, killcam, pause). */
 export interface PropsChoixEquipement {
   principale: ArmePrincipaleId; secondaire: ArmeSecondaireId;
-  surChanger(principale: ArmePrincipaleId, secondaire: ArmeSecondaireId): void;
+  /** arme blanche choisie (absent = couteau) */
+  melee?: ArmeMeleeId;
+  surChanger(principale: ArmePrincipaleId, secondaire: ArmeSecondaireId, melee?: ArmeMeleeId): void;
   /** "lobby" = cartes détaillées avec barres ; "compact" = boutons (écran de mort, killcam, pause) */
   variante: "lobby" | "compact";
   /** préfixe d'id (deux instances à l'écran : noms de groupes radio distincts) */

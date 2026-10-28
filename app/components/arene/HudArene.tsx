@@ -1,9 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { JEU } from "@/lib/fps/protocole";
+import { JEU, estMelee } from "@/lib/fps/protocole";
 import type { Action } from "@/lib/fps/touches";
-import { niveauMunitions, syntheseMatch } from "@/lib/fps/hud-modele";
+import { libelleGain, niveauMunitions, syntheseMatch, texteRefusAchat } from "@/lib/fps/hud-modele";
 import { LIBELLES_COINS, coinSuivant } from "@/lib/fps/reglages-hud";
 import { useDisposition } from "./ReglageTouches";
 import { aideChoixEquipement, armeSuivanteDuGroupe, groupePrincipale, groupeSecondaire } from "./lobby-modele";
@@ -11,8 +11,11 @@ import type { PropsHudArene } from "./contrats";
 import AideCommandes, { toucheDe } from "./hud/AideCommandes";
 import AnnoncesElsa from "./hud/AnnoncesElsa";
 import BandeauEvenement from "./hud/BandeauEvenement";
+import BandeauManche from "./hud/BandeauManche";
 import CockpitTitan from "./hud/CockpitTitan";
 import BarreMatch from "./hud/BarreMatch";
+import BarreVague from "./hud/BarreVague";
+import BlocArgent from "./hud/BlocArgent";
 import BlocArmes from "./hud/BlocArmes";
 import BlocVehicule from "./hud/BlocVehicule";
 import BlocVie from "./hud/BlocVie";
@@ -20,6 +23,7 @@ import CoinHud from "./hud/CoinHud";
 import EcranMort from "./hud/EcranMort";
 import FilEliminations from "./hud/FilEliminations";
 import FinDeMatch from "./hud/FinDeMatch";
+import FinDePartieZombies from "./hud/FinDePartieZombies";
 import GrandeCarte from "./hud/GrandeCarte";
 import IconeSort from "./hud/IconeSort";
 import InvitesAction from "./hud/InvitesAction";
@@ -29,9 +33,11 @@ import MenuPause from "./hud/MenuPause";
 import MiniMap from "./hud/MiniMap";
 import RetoursTouche from "./hud/RetoursTouche";
 import TableauScores from "./hud/TableauScores";
+import TableauZombies from "./hud/TableauZombies";
 import ToastCentre from "./hud/ToastCentre";
 import Viseur from "./hud/Viseur";
 import ZoneVive, { useFileVive } from "./hud/ZoneVive";
+import { useEphemere, useEtatZombies, useProgressionReanimation } from "./hud/useEtatZombies";
 import { useHudLive } from "./hud/useHudLive";
 import { useMessagesVifs } from "./hud/useMessagesVifs";
 import { useRetoursTouche } from "./hud/useRetoursTouche";
@@ -53,6 +59,9 @@ function lireAideVue(): boolean {
  * Quatre zones fixes : match en haut au centre, vie en bas à gauche, armes en bas à droite, éliminations en haut à droite ; la mini-map
  * s'empile dans le coin choisi sans jamais déplacer les chiffres vitaux. Pendant la mort (rejeu, carte du tueur) et l'entracte le HUD de combat
  * n'est pas rendu (retiré de l'arbre d'accessibilité) ; la mini-map reste en entracte.
+ * Zombies (`hud.mode === "zombies"`, v5) : `BarreVague` remplace `BarreMatch`, `BlocArgent` s'empile au-dessus de la vie, `InvitesAction` couvre achats et
+ * relèves, `BandeauManche` annonce chaque manche, `EcranMort` devient « À terre » puis « Éliminé » (pas de killcam), `TableauZombies` remplace le tableau
+ * de l'arène et `FinDePartieZombies` remplace `FinDeMatch`. L'état de la partie est lu toutes les 150 ms (`JeuHandle.zombies()`), jamais à 60 Hz.
  */
 export default function HudArene(p: PropsHudArene) {
   const { hud, monId, joueurs, match, derniereMort } = p;
@@ -91,9 +100,20 @@ export default function HudArene(p: PropsHudArene) {
   const { chiffres, marqueur, kill } = useRetoursTouche(p.evenements);
   const rupture = useRupture(hud?.bouclier ?? 0, !hud?.mort);
   const vive = useFileVive();
+  // ---- zombies : état de la partie lu à intervalle, gains, refus d'achat et annonce de manche éphémères ----
+  const zombies = hud?.mode === "zombies";
+  const ez = useEtatZombies(p.zombies, zombies);
+  const partieZ = ez?.partie ?? null;
+  const gainTexte = useEphemere(ez?.gain?.n ?? 0, ez?.gain ? libelleGain(ez.gain.delta, ez.gain.motif) : null, 1600);
+  const refusTexte = useEphemere(ez?.refus?.n ?? 0, ez?.refus ? texteRefusAchat(ez.refus.raison) : null, 2600);
+  const refusAchat = useMemo(() => (ez?.refus ? { n: ez.refus.n, texte: texteRefusAchat(ez.refus.raison) } : null), [ez?.refus?.n, ez?.refus?.raison]); // eslint-disable-line react-hooks/exhaustive-deps
+  const mancheEnCours = partieZ?.phase === "manche" ? partieZ.manche : 0;
+  const bandeauManche = useEphemere(mancheEnCours > 0 ? mancheEnCours : null, ez ? { manche: mancheEnCours, restants: ez.restants } : null, 4200);
+  const refReanim = useRef<HTMLSpanElement | null>(null);
+  useProgressionReanimation(p.live, refReanim, zombies && !!hud?.reanime);
   const { toast, surPalier, afficher } = useMessagesVifs({
     hud, derniereMort, annonces: p.annonces, bonus: p.bonus, match,
-    toucheSpeciale: toucheDe(p.touches, "armeSpeciale", disposition), pousser: vive.pousser,
+    toucheSpeciale: toucheDe(p.touches, "armeSpeciale", disposition), pousser: vive.pousser, refusAchat,
   });
   // Coin suivant de la mini-carte (action « minimapCoin ») : réglage enregistré par l'hôte + toast « Mini-carte : bas-gauche »
   const reglagesRef = useRef(p.reglagesHud);
@@ -110,7 +130,7 @@ export default function HudArene(p: PropsHudArene) {
   // principale / secondaire passent à l'arme suivante de leur catégorie (l'équipement est celui de la prochaine apparition).
   const equipRef = useRef({ equipement: p.equipement, sur: p.surEquipement });
   equipRef.current = { equipement: p.equipement, sur: p.surEquipement };
-  const choixEquipementActif = verrouille && !!hud && (hud.mort || match?.phase === "entracte");
+  const choixEquipementActif = verrouille && !!hud && !zombies && (hud.mort || match?.phase === "entracte");
   useToucheAppui(choixEquipementActif, p.touches.armePrincipale, () => {
     const { equipement, sur } = equipRef.current;
     sur(armeSuivanteDuGroupe(groupePrincipale(), equipement.principale), equipement.secondaire);
@@ -135,12 +155,14 @@ export default function HudArene(p: PropsHudArene) {
   if (!hud) return null;
 
   const t = (a: Action) => toucheDe(p.touches, a, disposition);
-  const entracte = match?.phase === "entracte";
+  const entracte = !zombies && match?.phase === "entracte";
   const aideEquipement = aideChoixEquipement(t("armePrincipale"), t("armeSecondaire"));
-  const pause = !hud.verrouille;
+  /** zombies : partie perdue, le bilan occupe l'écran (la souris est rendue, le menu pause ne s'y superpose pas) */
+  const finZ = zombies && partieZ?.phase === "fin";
+  const pause = !hud.verrouille && !finZ;
   const premiereFois = pause && !dejaVerrouille.current;
-  const combat = !hud.mort && !entracte;
-  const couteau = hud.arme === "couteau";
+  const combat = !hud.mort && !entracte && !finZ;
+  const couteau = estMelee(hud.arme);
   const conduite = hud.vehicule && hud.tireInterdit;
   const inviteRecharge = combat && !hud.titan && !couteau && !hud.tireInterdit && !hud.recharge && ["critique", "vide"].includes(niveauMunitions(hud.munitions, hud.chargeur));
   const reglMap = p.reglagesHud.minimap;
@@ -176,17 +198,22 @@ export default function HudArene(p: PropsHudArene) {
             ? <Lunette zoomX={hud.zoomX} distanceVisee={hud.distanceVisee} niveau={hud.zoomNiveau} niveaux={hud.zoomNiveaux} toucheZoom={t("zoomLunette")} />
             : <Viseur protege={hud.protege} conduite={conduite} couteau={couteau} recharge={hud.recharge} refAnneau={refAnneau} ecart={hud.ecartViseur} />}
           <RetoursTouche chiffres={chiffres} marqueur={marqueur} kill={kill} />
-          <BarreMatch
-            rang={synthese.rang} exAequo={synthese.exAequo} mesKills={synthese.mesKills} serie={synthese.serie}
-            leaderPseudo={synthese.leader?.pseudo ?? ""} leaderCouleur={synthese.leader?.couleur ?? ""} leaderKills={synthese.leader?.kills ?? 0}
-            jeMene={synthese.jeMene} egalite={synthese.egalite} ecart={synthese.ecart} pointDeMatch={synthese.pointDeMatch}
-            objectif={match?.objectif ?? JEU.objectifKills} progressionLeader={synthese.progressionLeader} maProgression={synthese.maProgression}
-            fin={match?.fin ?? null} maintenantServeur={maintenantServeur} surPalier={surPalier}
-          />
-          <AnnoncesElsa elsa={p.elsa} maintenantServeur={maintenantServeur} radar={radar} />
+          {!zombies && (
+            <>
+              <BarreMatch
+                rang={synthese.rang} exAequo={synthese.exAequo} mesKills={synthese.mesKills} serie={synthese.serie}
+                leaderPseudo={synthese.leader?.pseudo ?? ""} leaderCouleur={synthese.leader?.couleur ?? ""} leaderKills={synthese.leader?.kills ?? 0}
+                jeMene={synthese.jeMene} egalite={synthese.egalite} ecart={synthese.ecart} pointDeMatch={synthese.pointDeMatch}
+                objectif={match?.objectif ?? JEU.objectifKills} progressionLeader={synthese.progressionLeader} maProgression={synthese.maProgression}
+                fin={match?.fin ?? null} maintenantServeur={maintenantServeur} surPalier={surPalier}
+              />
+              <AnnoncesElsa elsa={p.elsa} maintenantServeur={maintenantServeur} radar={radar} />
+            </>
+          )}
           <InvitesAction
             invite={hud.invite} inviteDetail={hud.inviteDetail} toucheInteragir={t("interagir")}
             inviteRecharge={inviteRecharge} toucheRecharger={t("recharger")}
+            assez={hud.inviteAssez} reanime={hud.reanime} refReanim={refReanim}
           />
           {toast && <ToastCentre texte={toast} />}
           <div className={styles.milieu}>
@@ -204,6 +231,15 @@ export default function HudArene(p: PropsHudArene) {
         </>
       )}
 
+      {/* zombies : vague et annonce de manche, visibles aussi à terre (la barre ne dépend pas de la vie) */}
+      {zombies && !finZ && (
+        <BarreVague
+          phase={partieZ?.phase ?? (hud.manche ? "manche" : "lobby")} manche={partieZ?.manche ?? hud.manche ?? 0} restants={ez?.restants ?? hud.restants ?? 0}
+          finT={partieZ?.finT ?? 0} maintenantServeur={maintenantServeur}
+        />
+      )}
+      {zombies && !finZ && !pause && bandeauManche && <BandeauManche manche={bandeauManche.manche} restants={bandeauManche.restants} />}
+
       {/* cockpit du titan (v3) : sous tout le reste du HUD */}
       {combat && hud.titan && p.monstres && <CockpitTitan monstres={p.monstres} maintenantServeur={maintenantServeur} />}
       {/* événements (v3) : visibles aussi pendant la mort (le Truck vient de vous écraser : on veut savoir combien de temps il roule encore) */}
@@ -214,6 +250,11 @@ export default function HudArene(p: PropsHudArene) {
         {combat && <FilEliminations fil={p.fil} annonces={p.annonces} />}
       </CoinHud>
       <CoinHud coin="bg" coinMinimap={coinMap} miniMap={miniMap}>
+        {zombies && !finZ && (
+          <BlocArgent
+            argent={ez?.argent ?? hud.argent ?? 0} gain={gainTexte} cleGain={ez?.gain?.n ?? 0} gainPositif={(ez?.gain?.delta ?? 0) > 0} refus={refusTexte}
+          />
+        )}
         {combat && hud.sort && !hud.titan && <IconeSort touche={t("invoquer")} />}
         {combat && !hud.titan && (
           <BlocVie
@@ -234,14 +275,22 @@ export default function HudArene(p: PropsHudArene) {
       </CoinHud>
 
       {!hud.connecte && <p className={`${styles.plaque} ${styles.reseau}`} role="status">Connexion perdue, reconnexion…</p>}
-      {!aideVue && hud.verrouille && !hud.mort && <AideCommandes touches={p.touches} disposition={disposition} />}
+      {!aideVue && hud.verrouille && !hud.mort && <AideCommandes touches={p.touches} disposition={disposition} mode={zombies ? "zombies" : "arene"} />}
 
-      {/* mort : rejeu puis carte du tueur (EcranMort), sous le menu pause */}
-      {hud.mort && !pause && !entracte && (
+      {/* mort : rejeu puis carte du tueur (EcranMort), sous le menu pause ; zombies : « À terre » puis « Éliminé » */}
+      {hud.mort && !pause && !entracte && !finZ && (
         <EcranMort
           hud={hud} derniereMort={derniereMort} killcamInfo={p.killcamInfo} degatsAuTueur={p.degatsAuTueur}
           touches={p.touches} equipement={p.equipement} surEquipement={p.surEquipement} surPasserKillcam={p.surPasserKillcam}
-          joueurs={joueurs} aideEquipement={aideEquipement}
+          joueurs={joueurs} aideEquipement={aideEquipement} terreFinT={ez?.terreFinT} maintenantServeur={maintenantServeur}
+        />
+      )}
+
+      {/* zombies : partie perdue (bilan, record, Rejouer / Quitter) */}
+      {finZ && partieZ && (
+        <FinDePartieZombies
+          partie={partieZ} monId={monId} maintenantServeur={maintenantServeur}
+          surRejouer={p.surRejouer ?? p.surQuitter} surQuitter={p.surQuitterVue ?? p.surQuitter}
         />
       )}
 
@@ -252,12 +301,14 @@ export default function HudArene(p: PropsHudArene) {
           maintenantServeur={maintenantServeur} equipement={p.equipement} surEquipement={p.surEquipement} aideEquipement={aideEquipement}
         />
       )}
-      {tab && (
+      {tab && !finZ && (zombies && partieZ ? (
+        <TableauZombies partie={partieZ} monId={monId} />
+      ) : (
         <TableauScores
           joueurs={joueurs} stats={p.stats} classement={entracte ? p.classement : null} monId={monId} match={match}
           maintenantServeur={maintenantServeur}
         />
-      )}
+      ))}
       <GrandeCarte scene={p.scene ?? null} radar={radar} visible={carteMaintenue && !hud.mort && !pause} toucheCarte={t("carte") || "M"} effetsReduits={effetsReduits} />
 
       {pause && (
@@ -268,6 +319,7 @@ export default function HudArene(p: PropsHudArene) {
           accroupiBascule={p.accroupiBascule} surAccroupiBascule={p.surAccroupiBascule} actionsSansTouche={p.actionsSansTouche}
           voix={p.voix} surVoix={p.surVoix} voixErreur={p.voixErreur} toucheParler={t("parler")}
           touches={p.touches} surTouches={p.surTouches} reglagesHud={p.reglagesHud} surReglagesHud={p.surReglagesHud}
+          mode={zombies ? "zombies" : "arene"}
         />
       )}
     </div>

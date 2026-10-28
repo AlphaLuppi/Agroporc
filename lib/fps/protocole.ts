@@ -9,16 +9,18 @@
  * 2026-10-23-arene-hud-design.md (HUD : `absorbe`, `LigneStats`, `vueScores` / `scores`, `serie`),
  * 2026-10-23-arene-v3-design.md (v3 : voitures qui explosent, chat vocal de proximité),
  * 2026-10-24-arene-evenements-design.md (v4 : Truck Muche fou, tigre robot géant, titan tigre),
- * 2026-10-23-arene-tigres-design.md (v5 : avion, tigres largués, sort d'invocation)
+ * 2026-10-23-arene-tigres-design.md (v5 : avion, tigres largués, sort d'invocation),
+ * 2026-10-27-arene-zombies-design.md (v6 : mode zombies, épée, deux salles, à côté des tigres largués)
  */
 
 /**
  * v2 : équipement, couteau, bouclier, accroupi, Elsa, véhicules, killcam. v3 : voitures touchées et explosions (`tir.voitures`, `voitures`,
- * `explosion`), chat vocal (`voixActif`, `voix`). v4 : événements (Truck Muche fou, tigre robot géant) et titan tigre piloté. v5 : fusion
- * avec les tigres largués (snap `tigres`, messages `avion`, `tigre`, `sort`, client `invoquer`, cause de mort "tigre"). Client et serveur
+ * `explosion`), chat vocal (`voixActif`, `voix`). v4 : événements (Truck Muche fou, tigre robot géant) et titan tigre piloté. v5 : tigres
+ * largués (snap `tigres`, messages `avion`, `tigre`, `sort`, client `invoquer`, cause de mort "tigre"). v6 : mode « zombies tigres » (deux salles,
+ * choix du mode, argent, achats, relève, snap `zombies`), épée (mêlée à plusieurs cibles), cause de mort "tigre_zombie". Client et serveur
  * se déploient ensemble.
  */
-export const VERSION_PROTOCOLE = 5;
+export const VERSION_PROTOCOLE = 6;
 
 export type Vec3 = [number, number, number];
 
@@ -35,8 +37,12 @@ export type ArmeSecondaireId = (typeof ARMES_SECONDAIRES)[number];
 export type ArmeSpecialeId = (typeof ARMES_SPECIALES)[number];
 /** Toute arme à feu (a une entrée dans STATS). */
 export type ArmeFeuId = ArmePrincipaleId | ArmeSecondaireId | ArmeSpecialeId;
-/** Arme en main : une arme à feu ou le couteau (mêlée, voir COUTEAU dans armes.ts). */
-export type ArmeId = ArmeFeuId | "couteau";
+/** Armes de mêlée (slot `couteau`) : le couteau (défaut) ou l'épée (voir `MELEE` dans armes.ts). */
+export const ARMES_MELEE = ["couteau", "epee"] as const;
+export type ArmeMeleeId = (typeof ARMES_MELEE)[number];
+export const estMelee = (x: unknown): x is ArmeMeleeId => (ARMES_MELEE as readonly unknown[]).includes(x);
+/** Arme en main : une arme à feu ou une arme de mêlée. */
+export type ArmeId = ArmeFeuId | ArmeMeleeId;
 
 /** Toutes les armes à feu (principales, secondaires puis spéciales). */
 export const ARMES: readonly ArmeFeuId[] = [...ARMES_PRINCIPALES, ...ARMES_SECONDAIRES, ...ARMES_SPECIALES];
@@ -45,11 +51,18 @@ export const ARMES: readonly ArmeFeuId[] = [...ARMES_PRINCIPALES, ...ARMES_SECON
 export type Slot = "principale" | "secondaire" | "couteau" | "speciale";
 export const SLOTS: readonly Slot[] = ["principale", "secondaire", "couteau", "speciale"];
 
-/** Équipement d'un joueur (le couteau est implicite). */
+/** Équipement d'un joueur (une arme blanche est toujours portée : le couteau tant que `melee` est absent). */
 export interface Equipement {
   principale: ArmePrincipaleId;
   secondaire: ArmeSecondaireId;
   speciale: ArmeSpecialeId | null;
+  /** arme blanche du slot `couteau` ; absent = couteau (v5) */
+  melee?: ArmeMeleeId;
+  /**
+   * Pas d'arme principale (zombies, v5) : `principale` garde une valeur de remplissage mais le slot est vide
+   * (`armeDuSlot` / `slotDeLArme` de equipement.ts renvoient null). Absent = a une principale.
+   */
+  sansPrincipale?: true;
 }
 /**
  * Équipement et slot quand le joueur n'a rien choisi (compatibilité des tests v1 : pistolet en main).
@@ -59,9 +72,12 @@ export const EQUIPEMENT_DEFAUT: Readonly<Equipement> = Object.freeze({
   principale: "mitraillette" as ArmePrincipaleId, secondaire: "pistolet" as ArmeSecondaireId, speciale: null as ArmeSpecialeId | null,
 });
 export const SLOT_DEFAUT: Slot = "secondaire";
-/** Copie modifiable d'un équipement (une par joueur). */
+/** Copie modifiable d'un équipement (une par joueur). `melee` et `sansPrincipale` ne sont recopiés que s'ils sont définis (jamais de clé `undefined`). */
 export function copierEquipement(e: Readonly<Equipement>): Equipement {
-  return { principale: e.principale, secondaire: e.secondaire, speciale: e.speciale };
+  const copie: Equipement = { principale: e.principale, secondaire: e.secondaire, speciale: e.speciale };
+  if (e.melee !== undefined) copie.melee = e.melee;
+  if (e.sansPrincipale) copie.sansPrincipale = true;
+  return copie;
 }
 
 /** Zone touchée : la tête multiplie les dégâts (cf. lib/fps/armes.ts). */
@@ -80,8 +96,9 @@ export const SIEGES_PAR_VEHICULE = 4;
 /**
  * Comment un joueur est mort. `arme` d'un message `mort` n'a de sens que pour la cause "arme". "tigre" : coup d'un tigre largué, sauvage
  * (`par` = "") ou allié (`par` = le lanceur, crédité du kill). "tigre_robot" : le tigre géant des événements, jamais un tigre largué.
+ * "tigre_zombie" : coup d'un tigre zombie du mode zombies.
  */
-export type CauseMort = "arme" | "ecrase_pnj" | "ecrase_vehicule" | "tigre" | "explosion" | "truck_fou" | "tigre_robot" | "titan";
+export type CauseMort = "arme" | "ecrase_pnj" | "ecrase_vehicule" | "tigre" | "explosion" | "truck_fou" | "tigre_robot" | "titan" | "tigre_zombie";
 
 /** Voiture de la circulation (`pnj`, indice dans `flotte`) ou voiture conduisible (`vehicule`, id du garage). */
 export type GenreVoiture = "pnj" | "vehicule";
@@ -100,6 +117,78 @@ export type TypeEvenement = "truck" | "tigre";
 /** Cibles réservées des tirs (champ `cible` de `tir.touches` et de `canon.touches`) : le boss et le titan (jamais un id de joueur). */
 export const CIBLE_TIGRE = "tigre";
 export const CIBLE_TITAN = "titan";
+
+// ---------- mode zombies (v5) ----------
+
+/** Mode de jeu d'une salle : l'arène (chacun pour soi) ou les zombies tigres (coopératif par manches). */
+export type ModeSalle = "arene" | "zombies";
+export const MODES_SALLE: readonly ModeSalle[] = ["arene", "zombies"];
+
+/** Id d'un tigre zombie dans les messages (`tir.touches[].cible`, `degats.cible`, `coup.cibles`, `zombieMort.id`) : "z" + numéro, jamais un id joueur "j<n>". */
+export const idZombie = (n: number): string => `z${n}`;
+export const estIdZombie = (s: unknown): s is string => typeof s === "string" && /^z\d+$/.test(s);
+
+export type PhaseZombies = "lobby" | "pause" | "manche" | "fin";
+export interface JoueurZombies {
+  id: string; pseudo: string; couleur: string;
+  /** attente = dans le lobby (pas encore admis), debout, à terre (relevable), éliminé (spectateur jusqu'à la pause) */
+  etat: "attente" | "debout" | "terre" | "elimine";
+  admis: boolean; kills: number; gagne: number; reanimations: number;
+  /** horodatage serveur (ms) où un joueur à terre est éliminé s'il n'est pas relevé */
+  terreFinT?: number;
+}
+export interface EtatPartieZombies {
+  phase: PhaseZombies; manche: number; hote: string; capacite: number; debutT: number;
+  /** fin de la pause / du bilan (horodatage serveur ms) */
+  finT: number;
+  joueurs: JoueurZombies[]; portes: { id: string; ouverte: boolean }[];
+  bilan?: { manche: number; dureeMs: number };
+}
+/** Raisons d'un achat refusé (`achat{ok:false}`). */
+export type RaisonAchat = "argent" | "loin" | "deja" | "verrou" | "partie";
+
+/** Tigre zombie dans un snap : `z` est un tableau plat de stride `PAS_SNAP_ZOMBIE`. */
+export interface SnapZombies {
+  /** tigres restants à tuer (pas encore apparus + vivants) */
+  r: number;
+  /** [id, xCm, zCm, capMrad, drapeaux, pvPct] par tigre ; drapeaux : bits 0–1 type (0 rôdeur, 1 sprinteur, 2 brute), bit 2 griffe armée, bit 3 apparition */
+  z: number[];
+}
+export const PAS_SNAP_ZOMBIE = 6;
+/** Tigre zombie décodé (positions en mètres, cap en radians, `pvPct` 0..100). */
+export interface ZombieSnap {
+  id: number; x: number; z: number; cap: number;
+  type: 0 | 1 | 2; griffe: boolean; apparition: boolean; pvPct: number;
+}
+/** Encode des tigres en entiers : position au centimètre, cap au milliradian, PV au pour cent. */
+export function encoderZombies(restants: number, zombies: readonly ZombieSnap[]): SnapZombies {
+  const z: number[] = new Array(zombies.length * PAS_SNAP_ZOMBIE);
+  let k = 0;
+  for (const m of zombies) {
+    z[k++] = m.id;
+    z[k++] = Math.round(m.x * 100);
+    z[k++] = Math.round(m.z * 100);
+    z[k++] = Math.round(m.cap * 1000);
+    z[k++] = (m.type & 3) | (m.griffe ? 4 : 0) | (m.apparition ? 8 : 0);
+    z[k++] = Math.max(0, Math.min(100, Math.round(m.pvPct)));
+  }
+  return { r: restants, z };
+}
+/** Décode `SnapZombies` (tolère un tableau tronqué : les tigres incomplets sont ignorés). */
+export function decoderZombies(s: SnapZombies): ZombieSnap[] {
+  const res: ZombieSnap[] = [];
+  const n = Math.floor(s.z.length / PAS_SNAP_ZOMBIE);
+  for (let i = 0; i < n; i++) {
+    const b = i * PAS_SNAP_ZOMBIE;
+    const d = s.z[b + 4];
+    const type = d & 3;
+    res.push({
+      id: s.z[b], x: s.z[b + 1] / 100, z: s.z[b + 2] / 100, cap: s.z[b + 3] / 1000,
+      type: (type === 3 ? 2 : type) as 0 | 1 | 2, griffe: (d & 4) !== 0, apparition: (d & 8) !== 0, pvPct: s.z[b + 5],
+    });
+  }
+  return res;
+}
 
 // ---------- données publiques ----------
 
@@ -281,7 +370,7 @@ export type MessageClient =
    * Entrer dans l'arène. `principale`/`secondaire` = équipement (v2). `arme` = ALIAS v1 : l'arme est rangée dans
    * son slot par catégorie et devient l'arme en main (une spéciale est ignorée).
    */
-  | { t: "rejoindre"; principale?: ArmePrincipaleId; secondaire?: ArmeSecondaireId; arme?: ArmeFeuId }
+  | { t: "rejoindre"; principale?: ArmePrincipaleId; secondaire?: ArmeSecondaireId; melee?: ArmeMeleeId; arme?: ArmeFeuId }
   /** Changer de pseudo (lobby ou en pleine partie) : le serveur le nettoie, le dédoublonne et renvoie la présence. */
   | { t: "pseudo"; pseudo: string }
   /** Sortir de l'arène (redevient spectateur). */
@@ -289,7 +378,7 @@ export type MessageClient =
   /** ALIAS v1 : arme pour la prochaine apparition (immédiate si mort). Préférer `equiper`. */
   | { t: "arme"; arme: ArmeFeuId }
   /** Équipement de la prochaine apparition (immédiat si mort). */
-  | { t: "equiper"; principale: ArmePrincipaleId; secondaire: ArmeSecondaireId }
+  | { t: "equiper"; principale: ArmePrincipaleId; secondaire: ArmeSecondaireId; melee?: ArmeMeleeId }
   /** Changer d'arme en main (en vie). Refusé si le slot est vide. */
   | { t: "main"; slot: Slot }
   /** État prédit localement, ≈ 30 Hz. `seq` croissant. Dans un véhicule : seuls lacet/tangage comptent (passager). */
@@ -309,8 +398,16 @@ export type MessageClient =
       /** plombs arrêtés par une voiture selon le client (v3 §4) ; absent = aucun */
       voitures?: { genre: GenreVoiture; id: number; plomb: number }[];
     }
-  /** Coup de couteau. `cible` = joueur touché selon le client (null = coup dans le vide). */
-  | { t: "coup"; o: Vec3; d: Vec3; cible: string | null }
+  /** Coup d'arme blanche. `cibles` = ids de joueurs ET de tigres `z<n>` touchés selon le client (vide = coup dans le vide ; au plus `nbCiblesMax` de l'arme). */
+  | { t: "coup"; o: Vec3; d: Vec3; cibles: string[] }
+  /** Choisir le mode (v5) : change de salle, refusé (`refus{mode}`) en pleine partie ou si la salle zombies est pleine. */
+  | { t: "mode"; mode: ModeSalle }
+  /** Lancer la partie de zombies (hôte du lobby seulement). */
+  | { t: "lancerPartie" }
+  /** Acheter (zombies) : `id` du catalogue (`mur:<arme>`, `boite`, `soin`, `P1`…`P5`), à ≤ 2,5 m (3 m d'une porte) de l'achat. */
+  | { t: "acheter"; id: string }
+  /** Maintenir E près d'un coéquipier à terre (zombies) ; `null` = relâché. */
+  | { t: "reanimer"; cible: string | null }
   /** Monter dans un véhicule ; `siege` facultatif (sinon le plus bas libre). */
   | { t: "monter"; vehicule: number; siege?: Siege }
   | { t: "descendre" }
@@ -340,9 +437,9 @@ export type MessageServeur =
   | { t: "presence"; joueurs: JoueurPublic[] }
   /**
    * Instantané des joueurs en jeu, `ts` = horodatage serveur ms. `vehicules` = véhicules conduisibles. `tigres` = tigres largués présents
-   * (absent = aucun). `monstres` = Truck Muche fou, tigre géant et titan des événements.
+   * (absent = aucun). `monstres` = Truck Muche fou, tigre géant et titan des événements. `zombies` = tigres zombies (salle zombies seulement).
    */
-  | { t: "snap"; ts: number; j: EtatJoueurSnap[]; vehicules?: VehiculeSnap[]; tigres?: TigreLargueSnap[]; monstres?: MonstresSnap }
+  | { t: "snap"; ts: number; j: EtatJoueurSnap[]; vehicules?: VehiculeSnap[]; tigres?: TigreLargueSnap[]; monstres?: MonstresSnap; zombies?: SnapZombies }
   /**
    * Apparition (ou réapparition) d'un joueur : le client concerné SE TÉLÉPORTE à `p`. `arme` = arme en main.
    * Après `rejoindre`, le serveur envoie dans l'ordre : `apparition`, `presence` (à tous), puis au seul joueur `elsa{evenement:"etat"}` et `sieges`
@@ -353,11 +450,11 @@ export type MessageServeur =
       equip: Equipement; main: Slot; munSpeciale: number;
     }
   /** Équipement du destinataire (ramassage d'une spéciale, munitions épuisées). Privé. */
-  | { t: "equipement"; equip: Equipement; main: Slot; munSpeciale: number }
+  | { t: "equipement"; equip: Equipement; main: Slot; munSpeciale: number; ravitaille?: ArmeFeuId }
   /** Tir d'un autre joueur, pour les traçantes et le son (pas renvoyé au tireur). */
   | { t: "tir"; id: string; arme: ArmeFeuId; o: Vec3; d: Vec3[] }
-  /** Coup de couteau d'un autre joueur (animation et son). */
-  | { t: "coup"; id: string; o: Vec3; d: Vec3 }
+  /** Coup d'arme blanche d'un autre joueur (animation et son). */
+  | { t: "coup"; id: string; o: Vec3; d: Vec3; arme: ArmeMeleeId }
   /**
    * `bouclier` = bouclier restant de la cible ; `src` = position de la source (angle du marqueur de dégât) ;
    * `absorbe` = part des `degats` prise par le bouclier (HUD §3.4, absent = 0 : un client plus ancien l'ignore).
@@ -381,10 +478,11 @@ export type MessageServeur =
   /** Réponse à `monter` / `siege` acceptés : siège attribué et état de la voiture à rejoindre. Privé. */
   | { t: "embarque"; vehicule: number; siege: Siege; p: Vec3; cap: number }
   /**
-   * Réponse à `monter` / `siege` / `rejoindre` refusés (jamais `erreur` : le serveur ferme la socket sur tout message `erreur`).
-   * `rejoindre` n'est refusé que pour `plein` (16 agents déjà en arène). Privé.
+   * Réponse à `monter` / `siege` / `rejoindre` / `mode` refusés (jamais `erreur` : le serveur ferme la socket sur tout message `erreur`).
+   * `rejoindre` n'est refusé que pour `plein` (16 agents déjà en arène) ou `lobby` (zombies : joueur non admis) ; `mode` pour `plein`
+   * (salle zombies pleine) ou `lobby` (déjà en jeu). Privé.
    */
-  | { t: "refus"; action: "monter" | "siege" | "rejoindre"; raison: "loin" | "plein" | "deja" | "inconnu" | "mort" }
+  | { t: "refus"; action: "monter" | "siege" | "rejoindre" | "mode"; raison: "loin" | "plein" | "deja" | "inconnu" | "mort" | "lobby" }
   /** Le destinataire n'est plus dans un véhicule : il se téléporte à `p` (sortie, expulsion). Privé. */
   | { t: "descente"; p: Vec3; lacet: number; raison: "volontaire" | "expulse" }
   /**
@@ -435,6 +533,18 @@ export type MessageServeur =
   | { t: "titan"; phase: "debut" | "fin" | "etat"; pilote: string; p: Vec3; cap: number; finT: number; raison?: "detruit" | "temps" | "depart"; par?: string }
   /** Tir du canon du titan (pour les traçantes et le son des autres ; pas renvoyé au pilote). */
   | { t: "canon"; id: string; o: Vec3; d: Vec3 }
+  /** Résumé des deux salles (v5), diffusé à TOUS les clients à la connexion puis au changement (≤ 1 Hz) : compteurs du choix du mode. */
+  | { t: "salons"; arene: { joueurs: number; enJeu: number }; zombies: { phase: PhaseZombies; joueurs: number; manche: number } }
+  /** Confirmation du changement de salle (écho de `mode`), suivie du `bienvenue` de la nouvelle salle. */
+  | { t: "mode"; mode: ModeSalle }
+  /** État de la partie de zombies (aux membres de la salle zombies, à chaque changement, ≤ 5 Hz). */
+  | { t: "zombies"; etat: EtatPartieZombies }
+  /** Argent du destinataire (zombies) : solde, variation et motif (« touche », « kill », « manche », « achat »…). Privé. */
+  | { t: "argent"; solde: number; delta: number; motif: string }
+  /** Réponse à `acheter`. Privé. */
+  | { t: "achat"; ok: boolean; id: string; raison?: RaisonAchat }
+  /** Un tigre zombie est mort en `p`, tué par `par` (effets et sons ; jamais dans le fil des éliminations). */
+  | { t: "zombieMort"; id: string; p: Vec3; par: string; zone: Zone }
   | { t: "pong"; t0: number; maintenant: number }
   | { t: "erreur"; code: "plein" | "version" | "pseudo" | "flood"; message: string };
 

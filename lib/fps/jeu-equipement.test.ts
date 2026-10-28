@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ControleurArmes } from "./jeu-equipement";
 import { STATS } from "./armes";
 import { JEU, type Equipement } from "./protocole";
+import { serialiserSlots } from "./equipement";
 
 const equip = (): Equipement => ({ principale: "fusil_assaut", secondaire: "pistolet", speciale: null });
 const avecSpeciale = (): Equipement => ({ principale: "fusil_assaut", secondaire: "pistolet", speciale: "railgun" });
@@ -147,6 +148,50 @@ describe("changement d'arme", () => {
   });
 });
 
+describe("ControleurArmes : épée", () => {
+  const avecEpee = (): Equipement => ({ principale: "fusil_assaut", secondaire: "pistolet", melee: "epee", speciale: null });
+
+  it("le slot 3 (couteau) porte l'épée : touche 3 et arme blanche rapide la sortent", () => {
+    const c = new ControleurArmes(avecEpee());
+    expect(c.equiper("couteau", 0)).toBe(true);
+    expect(c.slotActif()).toBe("couteau");
+    expect(c.armeEnMain()).toBe("epee");
+    const d = new ControleurArmes(avecEpee(), "secondaire");
+    expect(d.couteauRapide(0)).toBe(true);
+    expect(d.armeEnMain()).toBe("epee");
+    expect(d.couteauRapide(1000)).toBe(true);
+    expect(d.armeEnMain()).toBe("pistolet");
+  });
+
+  it("sans arme blanche choisie, le slot 3 reste le couteau", () => {
+    const c = new ControleurArmes(equip());
+    c.equiper("couteau", 0);
+    expect(c.armeEnMain()).toBe("couteau");
+  });
+
+  it("l'épée ne tire pas, n'a pas de chargeur et ne se recharge pas", () => {
+    const c = new ControleurArmes(avecEpee());
+    c.equiper("couteau", 0);
+    expect(c.peutTirer(10_000)).toBe(false);
+    expect(c.munitions()).toBe(Infinity);
+    expect(c.chargeur()).toBe(0);
+    expect(c.demarrerRecharge(10_000)).toBe(false);
+  });
+
+  it("lignes : le slot couteau montre l'épée avec 0 / 0 ; la sérialisation HUD la garde", () => {
+    const l = new ControleurArmes(avecEpee()).lignes();
+    expect(l).toContainEqual({ slot: "couteau", arme: "epee", munitions: 0, chargeur: 0 });
+    expect(serialiserSlots(l)).toContain("couteau:epee:0:0");
+  });
+
+  it("l'équipement reçu du serveur remplace le couteau par l'épée (apparition suivante)", () => {
+    const c = new ControleurArmes(equip());
+    c.appliquerServeur({ t: "apparition", equip: avecEpee(), main: "principale", munSpeciale: 0 } as never, 0);
+    c.equiper("couteau", 0);
+    expect(c.armeEnMain()).toBe("epee");
+  });
+});
+
 describe("tir et recharge", () => {
   it("peutTirer faux sans munitions ou en recharge", () => {
     const c = new ControleurArmes(equip(), "secondaire");
@@ -288,5 +333,146 @@ describe("lignes", () => {
       { slot: "couteau", arme: "couteau", munitions: 0, chargeur: 0 },
       { slot: "speciale", arme: "railgun", munitions: STATS.railgun.chargeur, chargeur: STATS.railgun.chargeur },
     ]);
+  });
+});
+
+// ---------- zombies (v5) : équipement sans principale, réserve limitée, ravitaillement ----------
+
+describe("ControleurArmes : équipement sans arme principale (zombies)", () => {
+  const sans = (): Equipement => ({ principale: "mitraillette", secondaire: "pistolet", speciale: null, sansPrincipale: true });
+
+  it("main initiale = premier slot utilisable (jamais la principale vide), lignes() sans principale", () => {
+    const c = new ControleurArmes(sans());
+    expect(c.slotActif()).toBe("secondaire");
+    expect(c.armeEnMain()).toBe("pistolet");
+    expect(c.lignes().map((l) => l.slot)).toEqual(["secondaire", "couteau"]);
+    expect(serialiserSlots(c.lignes())).toBe("secondaire:pistolet:12:12|couteau:couteau:0:0");
+    // même en demandant explicitement la principale
+    expect(new ControleurArmes(sans(), "principale").slotActif()).toBe("secondaire");
+    // la mitraillette de remplissage n'a ni chargeur ni réserve
+    expect(c.munitionsDe("mitraillette")).toBe(0);
+  });
+
+  it("molette et dernière arme sautent le slot vide", () => {
+    const c = new ControleurArmes(sans(), "secondaire");
+    expect(c.molette(1, 0)).toBe(true);
+    expect(c.slotActif()).toBe("couteau");
+    expect(c.molette(1, 1000)).toBe(true);
+    expect(c.slotActif()).toBe("secondaire");
+    expect(c.equiper("principale", 2000)).toBe(false);
+  });
+
+  it("acheter une principale (message equipement) la fait apparaître, chargeur plein, en main", () => {
+    const c = new ControleurArmes(sans(), "secondaire", { reserveChargeurs: 5 });
+    c.appliquerServeur({
+      t: "equipement", equip: { principale: "pompe", secondaire: "pistolet", speciale: null }, main: "principale", munSpeciale: 0,
+    }, 5000);
+    expect(c.slotActif()).toBe("principale");
+    expect(c.armeEnMain()).toBe("pompe");
+    expect(c.munitions()).toBe(STATS.pompe.chargeur);
+    expect(c.reserveDe("pompe")).toBe(5 * STATS.pompe.chargeur);
+    expect(c.lignes().map((l) => l.slot)).toEqual(["principale", "secondaire", "couteau"]);
+  });
+});
+
+describe("ControleurArmes : réserve limitée (zombies)", () => {
+  const depart = (): Equipement => ({ principale: "mitraillette", secondaire: "pistolet", speciale: null, sansPrincipale: true });
+  const zombies = () => new ControleurArmes(depart(), "secondaire", { reserveChargeurs: 5 });
+
+  it("l'arène a une réserve infinie (−1), les zombies 5 chargeurs par arme", () => {
+    const arene = new ControleurArmes(equip());
+    expect(arene.reserveLimitee()).toBe(false);
+    expect(arene.reserveDe("fusil_assaut")).toBe(-1);
+    expect(arene.reserveEnMain()).toBe(-1);
+    const c = zombies();
+    expect(c.reserveLimitee()).toBe(true);
+    expect(c.reserveDe("pistolet")).toBe(5 * STATS.pistolet.chargeur);
+    expect(c.reserveEnMain()).toBe(60);
+    // l'arme blanche n'a pas de réserve à afficher
+    c.equiper("couteau", 0);
+    expect(c.reserveEnMain()).toBe(-1);
+  });
+
+  it("une recharge puise dans la réserve : seulement ce qui manque, puis la recharge est refusée à sec", () => {
+    const c = zombies();
+    let t = tirer(c, 5, 0);
+    expect(c.munitions()).toBe(7);
+    expect(c.demarrerRecharge(t)).toBe(true);
+    t += STATS.pistolet.rechargeS * 1000 + 1;
+    expect(c.majRecharge(t)).toBe(true);
+    expect(c.munitions()).toBe(12);
+    expect(c.reserveDe("pistolet")).toBe(55);
+    // on vide toute la réserve : 11 chargeurs en tout, la 12e recharge n'a plus rien à donner
+    for (let k = 0; k < 4; k++) {
+      t = tirer(c, 12, t);
+      expect(c.demarrerRecharge(t)).toBe(true);
+      t += STATS.pistolet.rechargeS * 1000 + 1;
+      c.majRecharge(t);
+    }
+    expect(c.reserveDe("pistolet")).toBe(7);
+    t = tirer(c, 12, t);
+    expect(c.demarrerRecharge(t)).toBe(true);
+    t += STATS.pistolet.rechargeS * 1000 + 1;
+    c.majRecharge(t);
+    // 7 balles seulement dans le chargeur, plus rien en réserve
+    expect(c.munitions()).toBe(7);
+    expect(c.reserveDe("pistolet")).toBe(0);
+    t = tirer(c, 7, t);
+    expect(c.munitions()).toBe(0);
+    expect(c.demarrerRecharge(t)).toBe(false);
+    expect(c.rechargeEnCours()).toBe(false);
+  });
+
+  it("ravitaille : chargeur ET réserve de l'arme sont remplis, les autres armes gardent leur état", () => {
+    const c = zombies();
+    c.appliquerServeur({
+      t: "equipement", equip: { principale: "pompe", secondaire: "pistolet", speciale: null }, main: "secondaire", munSpeciale: 0,
+    }, 0);
+    let t = DEG + 1;
+    t = tirer(c, 8, t);
+    c.equiper("principale", t);
+    t += DEG + 1;
+    t = tirer(c, 2, t);
+    expect(c.munitionsDe("pompe")).toBe(STATS.pompe.chargeur - 2);
+    // vide la réserve du pistolet pour voir le ravitaillement la remplir
+    c.equiper("secondaire", t);
+    t += DEG + 1;
+    expect(c.demarrerRecharge(t)).toBe(true);
+    t += STATS.pistolet.rechargeS * 1000 + 1;
+    c.majRecharge(t);
+    const reserveAvant = c.reserveDe("pistolet");
+    expect(reserveAvant).toBeLessThan(60);
+    c.appliquerServeur({
+      t: "equipement", equip: { principale: "pompe", secondaire: "pistolet", speciale: null }, main: "secondaire", munSpeciale: 0, ravitaille: "pistolet",
+    }, t);
+    expect(c.munitionsDe("pistolet")).toBe(STATS.pistolet.chargeur);
+    expect(c.reserveDe("pistolet")).toBe(60);
+    expect(c.munitionsDe("pompe")).toBe(STATS.pompe.chargeur - 2);
+    expect(c.reserveDe("pompe")).toBe(5 * STATS.pompe.chargeur);
+    // une arme non portée n'est pas ravitaillée
+    c.appliquerServeur({
+      t: "equipement", equip: { principale: "pompe", secondaire: "pistolet", speciale: null }, main: "secondaire", munSpeciale: 0, ravitaille: "sniper",
+    }, t + 10);
+    expect(c.munitionsDe("sniper")).toBe(0);
+  });
+
+  it("apparition (relève, retour après élimination) : chargeurs et réserves de nouveau pleins", () => {
+    const c = zombies();
+    let t = tirer(c, 12, 0);
+    c.demarrerRecharge(t);
+    t += STATS.pistolet.rechargeS * 1000 + 1;
+    c.majRecharge(t);
+    expect(c.reserveDe("pistolet")).toBe(48);
+    c.appliquerServeur({
+      t: "apparition", id: "j1", p: [0, 0, 0], lacet: 0, arme: "pistolet", pv: 50, bouclier: 0, equip: depart(), main: "secondaire", munSpeciale: 0,
+    }, t);
+    expect(c.munitionsDe("pistolet")).toBe(12);
+    expect(c.reserveDe("pistolet")).toBe(60);
+  });
+
+  it("une spéciale n'a pas de réserve", () => {
+    const c = new ControleurArmes(avecSpeciale(), "principale", { reserveChargeurs: 5 });
+    expect(c.reserveDe("railgun")).toBe(0);
+    expect(c.reserveDe("fusil_assaut")).toBe(5 * STATS.fusil_assaut.chargeur);
   });
 });

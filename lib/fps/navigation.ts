@@ -12,27 +12,38 @@ export interface CarteNav { taille: number; x0: number; z0: number; nx: number; 
 /** Au plus ce nombre de cases (la taille d'une case grandit sur une très grande carte, comme celle des tests). */
 const CASES_MAX = 90_000;
 const TAILLE_MIN_M = 3;
-const cache = new WeakMap<Monde, Map<number, CarteNav>>();
+const cache = new WeakMap<Monde, Map<string, CarteNav>>();
 
-export function carteNavigation(monde: Monde, rayon: number): CarteNav {
-  let parRayon = cache.get(monde);
-  if (!parRayon) { parRayon = new Map(); cache.set(monde, parRayon); }
-  const deja = parRayon.get(rayon);
+/** Options de `carteNavigation` : `taille` = taille minimale d'une case (m, 3 par défaut), `ignorerPasseTigre` = les « champs » de la carte zombies ne bloquent pas. */
+export interface OptionsNav { taille?: number; ignorerPasseTigre?: boolean }
+
+export function carteNavigation(monde: Monde, rayon: number, opts: OptionsNav = {}): CarteNav {
+  let parCle = cache.get(monde);
+  if (!parCle) { parCle = new Map(); cache.set(monde, parCle); }
+  const tailleMin = opts.taille ?? TAILLE_MIN_M;
+  const ignorer = opts.ignorerPasseTigre === true;
+  const cle = `${rayon}|${tailleMin}|${ignorer ? 1 : 0}`;
+  const deja = parCle.get(cle);
   if (deja) return deja;
   const b = monde.bornes;
   const largeur = b.x1 - b.x0, profondeur = b.z1 - b.z0;
-  const taille = Math.max(TAILLE_MIN_M, Math.sqrt((largeur * profondeur) / CASES_MAX));
+  const taille = Math.max(tailleMin, Math.sqrt((largeur * profondeur) / CASES_MAX));
   const nx = Math.max(1, Math.ceil(largeur / taille)), nz = Math.max(1, Math.ceil(profondeur / taille));
   const bloque = new Uint8Array(nx * nz);
   for (let j = 0; j < nz; j++) {
     for (let i = 0; i < nx; i++) {
       const x = b.x0 + (i + 0.5) * taille, z = b.z0 + (j + 0.5) * taille;
-      if (resoudre(monde, [x, 0, z], rayon, 8).contacts.length) bloque[i + j * nx] = 1;
+      if (resoudre(monde, [x, 0, z], rayon, 8, ignorer).contacts.length) bloque[i + j * nx] = 1;
     }
   }
   const carte = { taille, x0: b.x0, z0: b.z0, nx, nz, bloque };
-  parRayon.set(rayon, carte);
+  parCle.set(cle, carte);
   return carte;
+}
+
+/** Oublie les grilles du monde (un bâtiment a été détruit ou relevé : porte achetée, nouvelle partie) ; la prochaine demande les recalcule. */
+export function invaliderNavigation(monde: Monde): void {
+  cache.delete(monde);
 }
 
 const caseDe = (c: CarteNav, x: number, z: number): [number, number] => [
@@ -178,4 +189,139 @@ export function pointDeVisee(monde: Monde, p: Vec3, ch: readonly [number, number
   }
   if (!choisi) choisi = ch.find((q) => Math.hypot(q[0] - p[0], q[1] - p[2]) >= pasMin) ?? ch[ch.length - 1];
   return [choisi[0], 0, choisi[1]];
+}
+
+
+// ---------------------------------------------------------------------------------------------
+// Champ de distance (poursuite des tigres zombies)
+// ---------------------------------------------------------------------------------------------
+
+/** Distance d'une case jamais atteinte (bloquée, hors de portée, ou au-delà de l'arrêt anticipé). */
+export const DIST_INF = 0x3fffffff;
+/** Poids entiers du champ : 10 par case orthogonale, 14 en diagonale (≈ 10 √2). Une unité = 0,1 case. */
+export const POIDS_ORTHO = 10;
+export const POIDS_DIAG = 14;
+const NB_SEAUX = 16; // > poids max (14) : le seau (d mod 16) ne reçoit jamais un voisin de la distance courante
+
+const DI = new Int8Array([1, -1, 0, 0, 1, 1, -1, -1]);
+const DJ = new Int8Array([0, 0, 1, -1, 1, -1, 1, -1]);
+const DW = new Int32Array([10, 10, 10, 10, 14, 14, 14, 14]);
+
+const seaux: number[][] = Array.from({ length: NB_SEAUX }, () => []);
+let marquesCibles = new Uint8Array(0);
+
+export interface OptionsChamp {
+  /** Cases (m) à régler : le parcours s'arrête quand elles le sont toutes et que la distance dépasse la plus lointaine + `marge`. Les cases plus lointaines restent à `DIST_INF`. */
+  cases?: readonly (readonly [number, number])[];
+  /** Marge (unités de distance, 10 = une case orthogonale) ajoutée à la plus lointaine des `cases` avant l'arrêt. */
+  marge?: number;
+  /** Tableau de sortie réutilisé (taille nx × nz) ; sinon un nouveau est créé. */
+  sortie?: Int32Array;
+}
+
+/**
+ * Champ de distance multi-sources (file à seaux de Dial) : pour chaque case, la longueur du plus court chemin (8 voisins, jamais de coin
+ * coupé, poids entiers 10 / 14) jusqu'à la source la plus proche ; `DIST_INF` si inaccessible. Les sources dans une case bloquée sont
+ * ramenées à la case libre la plus proche. Identique à un Dijkstra, mais ≈ 1 ms sur la grille de 138 × 90 cases contre 8 à 30 ms pour un
+ * tas binaire. Sans allocation en dehors du tableau de sortie.
+ */
+export function champDistance(c: CarteNav, sources: readonly (readonly [number, number])[], opts: OptionsChamp = {}): Int32Array {
+  const n = c.nx * c.nz;
+  const dist = opts.sortie && opts.sortie.length === n ? opts.sortie : new Int32Array(n);
+  dist.fill(DIST_INF);
+  const nx = c.nx, nz = c.nz, bloque = c.bloque;
+  for (const s of seaux) s.length = 0;
+  let restant = 0; // entrées en attente dans les seaux (certaines périmées)
+  for (const [x, z] of sources) {
+    const [i0, j0] = caseDe(c, x, z);
+    const l = libreProche(c, i0, j0);
+    if (!l) continue;
+    const k = l[0] + l[1] * nx;
+    if (dist[k] === 0) continue;
+    dist[k] = 0;
+    seaux[0].push(k);
+    restant++;
+  }
+  // arrêt anticipé : cases à régler
+  let aRegler = 0;
+  let arret = Infinity;
+  const marge = opts.marge ?? 0;
+  if (opts.cases && opts.cases.length) {
+    if (marquesCibles.length < n) marquesCibles = new Uint8Array(n);
+    for (const [x, z] of opts.cases) {
+      const [i0, j0] = caseDe(c, x, z);
+      const l = libreProche(c, i0, j0, 3);
+      if (!l) continue;
+      const k = l[0] + l[1] * nx;
+      if (!marquesCibles[k]) { marquesCibles[k] = 1; aRegler++; }
+    }
+  }
+  const cibles = aRegler > 0 ? opts.cases : undefined;
+  let d = 0;
+  while (restant > 0 && d <= arret) {
+    const seau = seaux[d & (NB_SEAUX - 1)];
+    const taille = seau.length;
+    restant -= taille;
+    for (let q = 0; q < taille; q++) {
+      const k = seau[q];
+      if (dist[k] !== d) continue; // entrée périmée (une distance plus courte a été trouvée)
+      if (cibles && marquesCibles[k] === 1) {
+        marquesCibles[k] = 2;
+        if (--aRegler === 0) arret = d + marge;
+      }
+      const i = k % nx, j = (k - i) / nx;
+      for (let v = 0; v < 8; v++) {
+        const ni = i + DI[v], nj = j + DJ[v];
+        if (ni < 0 || nj < 0 || ni >= nx || nj >= nz) continue;
+        const nk = k + DI[v] + DJ[v] * nx;
+        if (bloque[nk]) continue;
+        if (v >= 4 && (bloque[k + DI[v]] || bloque[k + DJ[v] * nx])) continue; // pas de coin coupé
+        const nd = d + DW[v];
+        if (nd < dist[nk]) {
+          dist[nk] = nd;
+          seaux[nd & (NB_SEAUX - 1)].push(nk);
+          restant++;
+        }
+      }
+    }
+    seau.length = 0;
+    d++;
+  }
+  if (opts.cases && marquesCibles.length) {
+    // remet à zéro les marques utilisées (cases demandées uniquement)
+    for (const [x, z] of opts.cases) {
+      const [i0, j0] = caseDe(c, x, z);
+      const l = libreProche(c, i0, j0, 3);
+      if (l) marquesCibles[l[0] + l[1] * nx] = 0;
+    }
+  }
+  return dist;
+}
+
+/**
+ * Descente de gradient : centre de la case voisine de plus faible distance (jusqu'à `pas` cases de suite, 1 par défaut), sans couper
+ * un coin bloqué. null si la case de départ est déjà une source (distance 0), n'a pas de champ (`DIST_INF`) ou n'a aucun voisin plus proche.
+ */
+export function descente(c: CarteNav, champ: Int32Array, x: number, z: number, pas = 1): [number, number] | null {
+  const nx = c.nx, nz = c.nz, bloque = c.bloque;
+  let [i, j] = caseDe(c, x, z);
+  let courant = champ[i + j * nx];
+  if (courant === 0) return null;
+  let bouge = false;
+  for (let s = 0; s < pas; s++) {
+    const k = i + j * nx;
+    let meilleur = courant, mi = -1, mj = -1;
+    for (let v = 0; v < 8; v++) {
+      const ni = i + DI[v], nj = j + DJ[v];
+      if (ni < 0 || nj < 0 || ni >= nx || nj >= nz) continue;
+      const nk = k + DI[v] + DJ[v] * nx;
+      if (bloque[nk]) continue;
+      if (v >= 4 && (bloque[k + DI[v]] || bloque[k + DJ[v] * nx])) continue;
+      if (champ[nk] < meilleur) { meilleur = champ[nk]; mi = ni; mj = nj; }
+    }
+    if (mi < 0) break;
+    i = mi; j = mj; courant = meilleur; bouge = true;
+    if (courant === 0) break;
+  }
+  return bouge ? centre(c, i, j) : null;
 }

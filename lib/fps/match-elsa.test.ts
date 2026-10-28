@@ -37,6 +37,9 @@ function creerContexte(alea: () => number) {
     memoriserPrecedent: () => {},
     libererVehicule: () => [],
     toucheJoueur: () => false,
+    // v5 (zombies) : non utilisés par ce service
+    joueurs: () => [...joueurs.values()], placerJoueur: () => [], retirerJoueur: () => [], equiper: () => [],
+    presence: () => ({ a: "tous", m: { t: "presence", joueurs: [] } }),
     infliger: () => [],
     tuer: () => [],
   };

@@ -15,7 +15,7 @@
  * Partagé client (tir) et serveur (validation).
  * Spec : docs/superpowers/specs/2026-10-22-arene-v2-design.md (§4 et §13.1), 2026-10-23-arene-v3-design.md (§1)
  */
-import type { ArmeFeuId, ArmeId, Vec3, Zone } from "./protocole";
+import { estMelee, type ArmeFeuId, type ArmeId, type ArmeMeleeId, type Vec3, type Zone } from "./protocole";
 
 export type CategorieArme = "principale" | "secondaire" | "speciale";
 
@@ -73,21 +73,52 @@ export const MULT_DISPERSION_ACCROUPI = 0.65;
 /** Vitesse horizontale (m/s) de référence de l'ancienne dispersion de mouvement (= MOUV.marche). Sans effet depuis §13.1. */
 export const VITESSE_REFERENCE_M_S = 9;
 
-export const COUTEAU = {
-  id: "couteau" as const,
-  nom: "Couteau",
-  nomCourt: "Couteau",
-  description: "Course bien plus rapide ; un coup au corps à corps tue un joueur sans bouclier.",
-  degats: 100,
+/** Arme blanche (slot `couteau`, v5 : couteau ou épée). Distances mesurées de la SURFACE de la capsule de la cible. */
+export interface ArmeMelee {
+  id: ArmeMeleeId;
+  nom: string;
+  /** libellé court pour le HUD (≤ 10 caractères) */
+  nomCourt: string;
+  description: string;
+  /** dégâts à un joueur */
+  degats: number;
+  /** dégâts à un tigre zombie (mode zombies) */
+  degatsZombie: number;
   /** portée annoncée (m, de la surface de la cible) et marge supplémentaire acceptée par le serveur */
-  portee: 2.2,
-  margePortee: 0.6,
-  cadenceS: 0.5,
+  portee: number;
+  margePortee: number;
+  cadenceS: number;
   /** multiplicateur de marche ET de sprint */
-  vitesse: 1.3,
-  /** cosinus du demi-angle du cône de frappe (55°) */
-  cosCone: 0.574,
-} as const;
+  vitesse: number;
+  /** cosinus du demi-angle du cône de frappe */
+  cosCone: number;
+  /** cibles touchées au plus par coup */
+  nbCiblesMax: number;
+  /** durée de l'animation de coup (s) */
+  dureeCoupS: number;
+}
+
+export const MELEE: Record<ArmeMeleeId, ArmeMelee> = {
+  couteau: {
+    id: "couteau", nom: "Couteau", nomCourt: "Couteau",
+    description: "Course bien plus rapide ; un coup au corps à corps tue un joueur sans bouclier.",
+    degats: 100, degatsZombie: 100,
+    portee: 2.2, margePortee: 0.6, cadenceS: 0.5, vitesse: 1.3,
+    /** 55° */
+    cosCone: 0.574, nbCiblesMax: 1, dureeCoupS: 0.4,
+  },
+  epee: {
+    id: "epee", nom: "Épée", nomCourt: "Épée",
+    description: "Longue portée, arc de 140° : un coup tranche jusqu'à trois cibles. Plus lente que le couteau.",
+    degats: 140, degatsZombie: 220,
+    portee: 2.6, margePortee: 0.7, cadenceS: 0.85, vitesse: 1.2,
+    /** 70° */
+    cosCone: 0.342, nbCiblesMax: 3, dureeCoupS: 0.55,
+  },
+};
+
+/** Le couteau (arme blanche par défaut). */
+export const COUTEAU = MELEE.couteau;
 
 export const STATS: Record<ArmeFeuId, Arme> = {
   pistolet: {
@@ -207,8 +238,8 @@ export const STATS: Record<ArmeFeuId, Arme> = {
 };
 
 /** Multiplicateur de déplacement de l'arme en main (couteau compris). */
-export function vitesseArme(id: ArmeId): number { return id === "couteau" ? COUTEAU.vitesse : STATS[id].vitesse; }
-export function nomArme(id: ArmeId): string { return id === "couteau" ? COUTEAU.nom : STATS[id].nom; }
+export function vitesseArme(id: ArmeId): number { return estMelee(id) ? MELEE[id].vitesse : STATS[id].vitesse; }
+export function nomArme(id: ArmeId): string { return estMelee(id) ? MELEE[id].nom : STATS[id].nom; }
 
 /** Multiplicateur de dégâts selon la distance : 1 jusqu'à `debut`, `min` à partir de `fin`, linéaire entre les deux. */
 export function multiplicateurChute(arme: ArmeFeuId, distance: number): number {

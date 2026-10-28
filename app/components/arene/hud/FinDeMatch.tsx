@@ -29,7 +29,7 @@ export interface PropsFinDeMatch {
   match: InfoMatch | null;
   maintenantServeur(): number;
   equipement: EquipementChoisi;
-  surEquipement(principale: EquipementChoisi["principale"], secondaire: EquipementChoisi["secondaire"]): void;
+  surEquipement(principale: EquipementChoisi["principale"], secondaire: EquipementChoisi["secondaire"], melee?: EquipementChoisi["melee"]): void;
   /** Tab maintenu : le tableau complet se pose à la place du podium */
   tableauOuvert?: boolean;
   /** libellé de la touche des scores pour le tableau complet */
@@ -134,6 +134,7 @@ export default function FinDeMatch({
             <ChoixEquipement
               principale={equipement.principale}
               secondaire={equipement.secondaire}
+              melee={equipement.melee}
               surChanger={surEquipement}
               variante="compact"
               idGroupe="fin"

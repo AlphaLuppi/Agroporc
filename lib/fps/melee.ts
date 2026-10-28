@@ -1,12 +1,12 @@
 /**
- * Couteau (corps à corps) de l'arène (PUR) : portée mesurée à la SURFACE de la capsule de la cible, cône de frappe, ligne de vue.
- * Côté client `trouverCibleCouteau` choisit la cible ; côté serveur `coupVraisemblable` valide le coup (portée + marge, cône, ligne
+ * Arme blanche (couteau, épée) de l'arène (PUR) : portée mesurée à la SURFACE de la capsule de la cible, cône de frappe, ligne de vue.
+ * Côté client `trouverCiblesMelee` (ou `trouverCibleCouteau`) choisit les cibles ; côté serveur `coupVraisemblable` valide le coup de chaque cible (portée + marge, cône, ligne
  * de vue tête / torse / pieds, cible vivante). Les positions de la cible sont rejouées sur `REWIND_MELEE_MS`, pas `REWIND_MAX_MS`.
- * Spec : docs/superpowers/specs/2026-10-22-arene-v2-design.md (§2.4, §5.2)
+ * Spec : docs/superpowers/specs/2026-10-22-arene-v2-design.md (§2.4, §5.2), 2026-10-27-arene-zombies-design.md (épée)
  */
-import { COUTEAU } from "./armes";
+import { MELEE } from "./armes";
 import { visible, type Monde } from "./collision";
-import { silhouetteDe, type Vec3 } from "./protocole";
+import { silhouetteDe, type ArmeMeleeId, type Vec3 } from "./protocole";
 import { pointsVisibilite, type Cible } from "./tir";
 
 export interface CibleMelee extends Cible { accroupi?: boolean }
@@ -28,18 +28,18 @@ export function distanceSurface(o: Vec3, cible: CibleMelee): number {
 }
 
 /**
- * Vrai si la capsule de la cible est dans le cône de frappe (demi-angle de `COUTEAU.cosCone`, 55°) autour de `d` : l'angle se mesure
+ * Vrai si la capsule de la cible est dans le cône de frappe (demi-angle d'arc `cosCone`, 55° au couteau, 70° à l'épée) autour de `d` : l'angle se mesure
  * vers le point de l'axe le plus proche, élargi de ce que le rayon de la capsule occupe à cette distance (une cible de côté dont le
  * bord est dans le cône est frappée). Dedans (distance à l'axe nulle ou inférieure au rayon), toujours vrai.
  */
-function dansCone(o: Vec3, d: Vec3, cible: CibleMelee): boolean {
+export function dansCone(o: Vec3, d: Vec3, cible: CibleMelee, cosCone: number): boolean {
   const a = pointAxe(o, cible);
   const vx = a[0] - o[0], vy = a[1] - o[1], vz = a[2] - o[2];
   const l = Math.hypot(vx, vy, vz);
   const rayon = silhouetteDe(cible.accroupi).corps.rayon;
   if (l <= rayon) return true;
   const cos = Math.max(-1, Math.min(1, (vx * d[0] + vy * d[1] + vz * d[2]) / l));
-  return Math.acos(cos) <= Math.acos(COUTEAU.cosCone) + Math.asin(rayon / l);
+  return Math.acos(cos) <= Math.acos(cosCone) + Math.asin(rayon / l);
 }
 
 /** Ligne de vue de l'œil à la surface de la cible : tête, centre ou pieds visibles (mêmes points que le tir, côté tireur). */
@@ -47,27 +47,38 @@ function ligneDeVue(monde: Monde, o: Vec3, cible: CibleMelee): boolean {
   return pointsVisibilite(o, cible).some((pt) => visible(monde, o, pt));
 }
 
-/** Client : cible la plus proche dans le cône et à ≤ COUTEAU.portee de surface, ligne de vue libre ; null sinon. */
-export function trouverCibleCouteau(monde: Monde, o: Vec3, d: Vec3, cibles: readonly CibleMelee[], tireur: string): { cible: string; distance: number } | null {
-  let meilleur: { cible: string; distance: number } | null = null;
+/**
+ * Client : cibles frappées par l'arme blanche `arme` : à ≤ `portee` de surface, dans son cône, ligne de vue libre, au plus
+ * `nbCiblesMax`, triées de la plus proche à la plus lointaine. `cibles` peut mélanger joueurs et tigres (même forme de capsule).
+ */
+export function trouverCiblesMelee(
+  monde: Monde, o: Vec3, d: Vec3, cibles: readonly CibleMelee[], tireur: string, arme: ArmeMeleeId = "couteau",
+): { cible: string; distance: number }[] {
+  const m = MELEE[arme];
+  const trouvees: { cible: string; distance: number }[] = [];
   for (const c of cibles) {
     if (c.id === tireur || !c.vivant) continue;
     const distance = distanceSurface(o, c);
-    if (distance > COUTEAU.portee) continue;
-    if (meilleur && distance >= meilleur.distance) continue;
-    if (!dansCone(o, d, c) || !ligneDeVue(monde, o, c)) continue;
-    meilleur = { cible: c.id, distance };
+    if (distance > m.portee) continue;
+    if (!dansCone(o, d, c, m.cosCone) || !ligneDeVue(monde, o, c)) continue;
+    trouvees.push({ cible: c.id, distance });
   }
-  return meilleur;
+  trouvees.sort((a, b) => a.distance - b.distance);
+  return trouvees.length > m.nbCiblesMax ? trouvees.slice(0, m.nbCiblesMax) : trouvees;
+}
+
+/** Client : cible la plus proche du couteau (comportement historique : une seule cible). */
+export function trouverCibleCouteau(monde: Monde, o: Vec3, d: Vec3, cibles: readonly CibleMelee[], tireur: string): { cible: string; distance: number } | null {
+  return trouverCiblesMelee(monde, o, d, cibles, tireur, "couteau")[0] ?? null;
 }
 
 /**
- * Serveur : validation d'un coup (portée + margePortee, cône, ligne de vue tête/torse/pieds, cible vivante). La cible est celle
- * rejouée à l'instant du coup sur `REWIND_MELEE_MS` : la vitesse de la cible n'élargit PAS la portée (c'est le rôle du rejeu, et
- * une marge proportionnelle à la vitesse ajouterait jusqu'à 3,6 m à un couteau de 2,2 m) ; le paramètre est gardé pour la signature.
+ * Serveur : validation d'un coup (portée + margePortee de l'arme, cône, ligne de vue tête/torse/pieds, cible vivante). La cible est celle
+ * rejouée à l'instant du coup sur `REWIND_MELEE_MS` : la vitesse de la cible n'élargit PAS la portée (c'est le rôle du rejeu).
  */
-export function coupVraisemblable(monde: Monde, o: Vec3, d: Vec3, cible: CibleMelee, _vitesseCible: number): boolean {
+export function coupVraisemblable(monde: Monde, o: Vec3, d: Vec3, cible: CibleMelee, arme: ArmeMeleeId = "couteau"): boolean {
   if (!cible.vivant) return false;
-  if (distanceSurface(o, cible) > COUTEAU.portee + COUTEAU.margePortee) return false;
-  return dansCone(o, d, cible) && ligneDeVue(monde, o, cible);
+  const m = MELEE[arme];
+  if (distanceSurface(o, cible) > m.portee + m.margePortee) return false;
+  return dansCone(o, d, cible, m.cosCone) && ligneDeVue(monde, o, cible);
 }

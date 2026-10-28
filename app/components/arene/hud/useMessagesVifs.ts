@@ -5,13 +5,14 @@
  * 50 et 25 (« PV critiques » en `assertive`, une fois par passage), « Bouclier N » / « Bouclier détruit », annonces d'Elsa, bonus ramassé,
  * « Chargeur bas » (une fois par passage sous le seuil), « Réserve épuisée » d'une arme spéciale, « Match terminé », paliers de minuterie.
  * Rien n'est annoncé au premier rendu ni au retour de la mort (les valeurs sont recalées sans bruit). La file anti-bavardage (un message
- * toutes les 2 s) est dans `useFileVive`.
+ * toutes les 2 s) est dans `useFileVive`. Zombies : « Argent insuffisant » et les autres refus d'achat (`refusAchat`) ; les annonces de manche, de porte
+ * et de relève arrivent par `annonces`.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { STATS } from "@/lib/fps/armes";
 import { niveauMunitions, parseSlots, PRIORITE_VIVE, texteBonus } from "@/lib/fps/hud-modele";
 import type { HudEtat } from "@/lib/fps/jeu-types";
-import type { ArmeSpecialeId, InfoMatch } from "@/lib/fps/protocole";
+import { estMelee, type ArmeSpecialeId, type InfoMatch } from "@/lib/fps/protocole";
 import type { Annonce, Bonus, DerniereMort } from "../contrats";
 import { libelleCause } from "../armesInfo";
 
@@ -26,10 +27,12 @@ export interface EntreesMessagesVifs {
   /** libellé de la touche de l'arme spéciale (« 4 »), vide si aucune */
   toucheSpeciale: string;
   pousser(texte: string, priorite: number, assertif?: boolean): void;
+  /** (zombies) dernier achat refusé : `n` change à chaque refus, `texte` est écrit (« Argent insuffisant ») */
+  refusAchat?: { n: number; texte: string } | null;
 }
 
 export function useMessagesVifs(p: EntreesMessagesVifs): { toast: string | null; surPalier(secondes: number): void; afficher(texte: string): void } {
-  const { hud, derniereMort, annonces, bonus, match, toucheSpeciale, pousser } = p;
+  const { hud, derniereMort, annonces, bonus, match, toucheSpeciale, pousser, refusAchat = null } = p;
   const [toast, setToast] = useState<{ id: number; texte: string } | null>(null);
   const idToast = useRef(0);
   const minuteurToast = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -101,6 +104,14 @@ export function useMessagesVifs(p: EntreesMessagesVifs): { toast: string | null;
     }
   }, [annonces, pousser, afficherToast]);
 
+  // (zombies) achat refusé : annoncé une fois par refus, sans toast (le bloc argent l'écrit déjà)
+  const dernierRefus = useRef(refusAchat?.n ?? 0);
+  useEffect(() => {
+    if (!refusAchat || refusAchat.n === dernierRefus.current) return;
+    dernierRefus.current = refusAchat.n;
+    pousser(refusAchat.texte, PRIORITE_VIVE.info);
+  }, [refusAchat, pousser]);
+
   // cadeau d'Elsa ramassé : toast + annonce
   const dernierBonus = useRef(0);
   useEffect(() => {
@@ -115,7 +126,7 @@ export function useMessagesVifs(p: EntreesMessagesVifs): { toast: string | null;
   const suiviChargeur = useRef<{ arme: string | null; bas: boolean }>({ arme, bas: false });
   useEffect(() => {
     const s = suiviChargeur.current;
-    const niveau = arme && arme !== "couteau" && !tireInterdit ? niveauMunitions(munitions, chargeur) : "normal";
+    const niveau = arme && !estMelee(arme) && !tireInterdit ? niveauMunitions(munitions, chargeur) : "normal";
     const bas = niveau !== "normal";
     if (s.arme !== arme) { suiviChargeur.current = { arme, bas }; return; }
     if (bas && !s.bas && !mort && !mortPrecedente.current) pousser("Chargeur bas", PRIORITE_VIVE.info);

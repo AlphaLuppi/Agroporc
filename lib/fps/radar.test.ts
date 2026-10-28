@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  ECHO, ECHOS_TIR, RADAR_CAPACITES, RADAR_DUREES, RADAR_PORTEES, ajouterEcho, ajouterJoueur, ajouterVoiture, ajouterVoiturePnj, creerRadarFrame, definirElsa,
-  lisserVu, purgerEchos, repereElsa, viderRadarFrame,
+  ECHO, ECHOS_TIR, RADAR_CAPACITES, RADAR_DUREES, RADAR_PORTEES, ajouterEcho, ajouterJoueur, ajouterPorte, ajouterVoiture, ajouterVoiturePnj, ajouterZombie,
+  creerRadarFrame, definirElsa, lisserVu, purgerEchos, repereElsa, viderRadarFrame,
 } from "./radar";
 
 const joueur = (surcharge = {}) => ({ id: "a", x: 10, z: 20, cap: 0.5, couleur: "#ff00ff", etat: "pied" as const, vu: 1, age: 0, ...surcharge });
@@ -176,5 +176,41 @@ describe("Elsa", () => {
     expect(f.elsa!.angle).toBeCloseTo(0, 9);
     definirElsa(f, null);
     expect(f.elsa).toBeNull();
+  });
+});
+
+describe("tigres zombies et portes (mode zombies)", () => {
+  it("préalloue 24 tigres [x, z, vu] et 5 portes [px, pz, qx, qz]", () => {
+    const f = creerRadarFrame();
+    expect(RADAR_CAPACITES.zombies).toBe(24);
+    expect(f.zombies.length).toBe(24 * 3);
+    expect(f.portes.length).toBe(5 * 4);
+    expect(f.nZombies + f.nPortes).toBe(0);
+    expect(f.modeZombies).toBe(false);
+  });
+
+  it("un tigre non vu n'apparaît jamais ; au-delà de 24, ignoré sans erreur", () => {
+    const f = creerRadarFrame();
+    expect(ajouterZombie(f, 10, 20, 0)).toBe(false);
+    expect(f.nZombies).toBe(0);
+    expect(ajouterZombie(f, 10, 20, 0.4)).toBe(true);
+    expect(Array.from(f.zombies.slice(0, 3))).toEqual([10, 20, expect.closeTo(0.4, 5)]);
+    expect(ajouterZombie(f, 1, 2, 3)).toBe(true);
+    expect(f.zombies[5]).toBe(1); // vu plafonné à 1
+    for (let i = 0; i < 40; i++) ajouterZombie(f, i, i, 1);
+    expect(f.nZombies).toBe(24);
+  });
+
+  it("les portes fermées (5 au plus) sont gardées ; `viderRadarFrame` remet tout à zéro, sans toucher aux tableaux", () => {
+    const f = creerRadarFrame();
+    const tableaux = [f.zombies, f.portes];
+    for (let i = 0; i < 7; i++) ajouterPorte(f, i, i + 1, i + 2, i + 3);
+    expect(f.nPortes).toBe(5);
+    expect(Array.from(f.portes.slice(4, 8))).toEqual([1, 2, 3, 4]);
+    ajouterZombie(f, 1, 1, 1);
+    viderRadarFrame(f);
+    expect(f.nPortes + f.nZombies).toBe(0);
+    expect([f.zombies, f.portes]).toEqual(tableaux);
+    expect(f.zombies).toBe(tableaux[0]);
   });
 });

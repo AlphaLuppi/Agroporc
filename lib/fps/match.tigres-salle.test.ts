@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Building, SceneData, Vec2 } from "../agroparc3d/types";
-import { COUTEAU, degatsPlomb } from "./armes";
+import { COUTEAU, MELEE, degatsPlomb } from "./armes";
 import { construireMonde } from "./collision";
 import { Salle, type JoueurSalle, type Sortie } from "./match";
 import { JEU, SILHOUETTE, type MessageServeur, type Vec3 } from "./protocole";
@@ -100,8 +100,19 @@ describe("salle : tigres de bout en bout (sans réseau)", () => {
     const { s, id, fin } = salleAvecTigre();
     s.recevoir("a", { t: "main", slot: "couteau" }, fin);
     const { o, d } = viser(s, "a", [61.5, 0, 0], [60, 0.4, 0]);
-    const r = s.recevoir("a", { t: "coup", o, d, cible: id }, fin + JEU.degainageMs + 10);
+    const r = s.recevoir("a", { t: "coup", o, d, cibles: [id] }, fin + JEU.degainageMs + 10);
     expect(messages(r, "tigre")).toEqual([expect.objectContaining({ evenement: "touche", par: "a", degats: COUTEAU.degats })]);
+  });
+
+  it("un coup d'épée validé sur un tigre largué : 140 dégâts (arme blanche de la v6 sur les tigres de la v5)", () => {
+    const { s, id, fin } = salleAvecTigre();
+    const a = j(s, "a");
+    a.equip = { ...a.equip, melee: "epee" };
+    s.recevoir("a", { t: "main", slot: "couteau" }, fin);
+    expect(a.arme).toBe("epee");
+    const { o, d } = viser(s, "a", [62.5, 0, 0], [60, 0.4, 0]);
+    const r = s.recevoir("a", { t: "coup", o, d, cibles: [id] }, fin + JEU.degainageMs + 10);
+    expect(messages(r, "tigre")).toEqual([expect.objectContaining({ evenement: "touche", par: "a", degats: MELEE.epee.degats })]);
   });
 
   it("tigre abattu : sort gagné, invocation, le tigre allié tue l'autre joueur et le kill revient au lanceur (cause « tigre »)", () => {
