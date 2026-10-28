@@ -548,6 +548,29 @@ export function inviteZombies(e: EntreeInvite): InviteZombies {
   return candidats[0].inv;
 }
 
+/** Ce que le joueur maintient avec E : une relève (`cible`) ou une repose de planches (`fenetre`), rien sinon. */
+export interface MaintienZombies { cible: string | null; fenetre: string | null }
+/** Décision de `decisionMaintien` : commencer à maintenir l'invite, arrêter le maintien en cours, ou rien. */
+export type DecisionMaintien = { action: "demarrer"; invite: InviteZombies } | { action: "arreter" } | null;
+
+/**
+ * Maintien de E façon BO1 (à chaque image) : un maintien en cours s'arrête dès que E est lâchée ou que l'invite ne le propose plus (planches
+ * toutes reposées, coéquipier relevé ou trop loin, autre fenêtre) ; E TENUE devant une fenêtre abîmée ou un coéquipier à terre démarre le
+ * maintien sans attendre un nouvel appui (on arrive E enfoncée, ou un tigre arrache une planche pendant qu'on la tient).
+ */
+export function decisionMaintien(interagir: boolean, peutAgir: boolean, invite: InviteZombies, en: MaintienZombies): DecisionMaintien {
+  if (en.cible !== null) {
+    return !interagir || !peutAgir || invite.invite !== "reanimer" || invite.cible !== en.cible ? { action: "arreter" } : null;
+  }
+  if (en.fenetre !== null) {
+    return !interagir || !peutAgir || invite.invite !== "reparer" || invite.id !== en.fenetre ? { action: "arreter" } : null;
+  }
+  if (interagir && peutAgir && ((invite.invite === "reanimer" && invite.cible) || (invite.invite === "reparer" && invite.id))) {
+    return { action: "demarrer", invite };
+  }
+  return null;
+}
+
 /**
  * Portes payantes encore fermées, avec le segment p → q (repère de la carte) de leur première pièce : la grande carte les dessine en
  * ambre barré. Les portes ouvertes (`portesOuvertes`) disparaissent de la liste.

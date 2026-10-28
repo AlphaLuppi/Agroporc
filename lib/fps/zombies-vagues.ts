@@ -99,10 +99,15 @@ export const ZOMBIES = {
   griffe: 50,
   griffeChef: 80,
   // ---- barricades ----
-  /** planches par fenêtre ; arrachage d'une planche (s) selon l'allure ; repose d'une planche (s), portée (m) */
+  /**
+   * planches par fenêtre ; arrachage d'une planche (s) selon l'allure ; repose (BO1 `blocker_trigger_think` : une planche, puis `wait(1)`,
+   * tant que la touche est tenue) : la première `reposePremiereS` après l'appui, les suivantes toutes les `reposeS` s (jamais plus vite,
+   * même en relâchant et réappuyant) ; portée (m)
+   */
   planches: 6,
   arrachageS: [1.4, 1.1, 0.9, 1.6] as readonly number[],
-  reposeS: 1.0,
+  reposeS: 0.9,
+  reposePremiereS: 0.2,
   reposePortee: 2.2,
   /** un tigre « à la fenêtre » à moins de cette distance (m) du point dehors */
   fenetreArriveeM: 0.8,

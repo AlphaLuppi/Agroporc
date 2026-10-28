@@ -23,6 +23,7 @@ import { VERSION_PROTOCOLE, type MessageClient, type MessageServeur } from "../.
 import { decisionMode, messageSalons } from "../../lib/fps/salons";
 import { capDeCachette } from "../../lib/fps/tigre-arene";
 import { DEPARTS, construireMondeZombies, donneesZombies } from "../../lib/fps/zombies-carte";
+import { GENRES_BONUS, type GenreBonus } from "../../lib/fps/zombies-vagues";
 import { EMPLACEMENTS_VOITURES, ROND_POINT, ZONE_APPARITION, positionElsa, trouverRondPoint } from "../../lib/fps/zones";
 
 const PORT = Number(process.env.PORT) || 8787;
@@ -129,6 +130,8 @@ const truckZombies = process.env.PDJ_FPS_ZOMBIES_TRUCK !== undefined && Number.i
 const courantZombies = process.env.PDJ_FPS_ZOMBIES_COURANT === "1";
 /** (v8, essais) tigres à remontoir en poche au départ */
 const remontoirsZombies = dureeEnv("PDJ_FPS_ZOMBIES_REMONTOIRS");
+/** (v8, essais) paquet de bonus imposé : genres séparés par des virgules (« soldes,menuisier »), les inconnus sont ignorés */
+const bonusZombies = (process.env.PDJ_FPS_ZOMBIES_BONUS ?? "").split(",").map((x) => x.trim()).filter((x): x is GenreBonus => (GENRES_BONUS as readonly string[]).includes(x));
 const optionsZombies: OptionsSalle = {
   zombies: {
     donnees: donneesZombies(scene),
@@ -139,6 +142,7 @@ const optionsZombies: OptionsSalle = {
     ...(truckZombies !== undefined ? { mancheTruck: truckZombies } : {}),
     ...(courantZombies ? { courant: true } : {}),
     ...(remontoirsZombies !== undefined ? { remontoirsDepart: remontoirsZombies } : {}),
+    ...(bonusZombies.length ? { bonus: bonusZombies } : {}),
   },
 };
 const salleZombies = new Salle(construireMondeZombies(scene), DEPARTS.map((d) => [d[0], d[1]] as [number, number]), Math.random, Date.now(), optionsZombies);

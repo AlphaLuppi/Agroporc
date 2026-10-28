@@ -806,6 +806,79 @@ describe("barricades", () => {
     const s2 = avancer(b, t + 1200, t + 3500);
     expect(msgs(s2, "zevt").filter((m) => m.e.e === "planche" && !m.e.arrachee)).toHaveLength(0);
   });
+
+  /** Partie où les tigres arrachent au moins `n` planches de F1 ; le joueur est devant, les tigres sont tués ; renvoie l'instant. */
+  function fenetreAbimee(n: number) {
+    const b = partieEnCours(["a"], { total1: 60, degatsGriffe: 0 });
+    const j = b.j("a");
+    const f = fenetreDeId("F1")!;
+    j.p = [f.dedans[0], 0, f.dedans[1]];
+    j.pv = 1e9;
+    let t = T0 + 100;
+    for (; t < T_PREMIER_TIGRE + 120_000 && b.svc.etat().fenetres[FENETRES.indexOf(f)] > ZOMBIES.planches - n; t += 100) b.svc.tic(t);
+    expect(b.svc.etat().fenetres[FENETRES.indexOf(f)]).toBeLessThanOrEqual(ZOMBIES.planches - n);
+    tuerTous(b, j, t);
+    return { b, j, f, t };
+  }
+  /** Avance de `t0` à `t1` en tuant les tigres à chaque pas (aucune planche arrachée pendant la repose) ; instants des planches reposées. */
+  function reposer(b: Banc, j: JoueurSalle, t0: number, t1: number): { t: number[]; argent: number[] } {
+    const res = { t: [] as number[], argent: [] as number[] };
+    for (let t = t0; t <= t1; t += 50) {
+      const s = b.svc.tic(t);
+      tuerTous(b, j, t);
+      if (msgs(s, "zevt").some((m) => m.e.e === "planche" && !m.e.arrachee)) res.t.push(t);
+      for (const m of msgs(s, "argent")) if (m.motif === "planche") res.argent.push(m.delta);
+    }
+    return res;
+  }
+
+  it("(v8) cadence de BO1 : la première planche 0,2 s après l'appui, puis une toutes les 0,9 s ; relâcher et réappuyer n'accélère rien", () => {
+    const { b, j, t } = fenetreAbimee(4);
+    b.svc.recevoir(j, msg({ t: "reparer", fenetre: "F1" }), t);
+    const r = reposer(b, j, t + 50, t + 2_100);
+    expect(r.t[0] - t).toBeGreaterThanOrEqual(ZOMBIES.reposePremiereS * 1000);
+    expect(r.t[0] - t).toBeLessThanOrEqual(ZOMBIES.reposePremiereS * 1000 + 50);
+    expect(r.t[1] - r.t[0]).toBeGreaterThanOrEqual(ZOMBIES.reposeS * 1000);
+    expect(r.t[1] - r.t[0]).toBeLessThanOrEqual(ZOMBIES.reposeS * 1000 + 50);
+    expect(r.argent.every((d) => d === 10)).toBe(true);
+    // E lâchée puis réappuyée aussitôt : la planche suivante attend toujours 0,9 s après la précédente
+    const derniere = r.t.at(-1)!;
+    b.svc.recevoir(j, msg({ t: "reparer", fenetre: null }), t + 2_150);
+    b.svc.recevoir(j, msg({ t: "reparer", fenetre: "F1" }), t + 2_160);
+    const r2 = reposer(b, j, t + 2_200, t + 4_000);
+    expect(r2.t[0] - derniere).toBeGreaterThanOrEqual(ZOMBIES.reposeS * 1000);
+  });
+
+  it("(v8) le gain des planches est plafonné par manche (BO1 : min(50 × manche, 500)) : au-delà, la planche est reposée sans rien rapporter", () => {
+    const { b, j, t } = fenetreAbimee(6);
+    b.svc.recevoir(j, msg({ t: "reparer", fenetre: "F1" }), t);
+    // manche 1 : plafond 50 $, soit 5 planches payées sur 6
+    const r = reposer(b, j, t + 50, t + 6_500);
+    expect(r.t).toHaveLength(6);
+    expect(r.argent.reduce((x, y) => x + y, 0)).toBe(50);
+  });
+
+  it("(v8) Menuisier : toutes les fenêtres retrouvent leurs 6 planches, +200 $ à chacun, l'état part tout de suite", () => {
+    const b = partieEnCours(["a"], { total1: 200, degatsGriffe: 0, bonus: ["menuisier"] });
+    const j = b.j("a");
+    j.pv = 1e9;
+    let t = T_PREMIER_TIGRE;
+    let ramasse: Sortie[] | null = null;
+    for (; t < T_PREMIER_TIGRE + 240_000 && !ramasse; t += 100) {
+      b.svc.tic(t);
+      // seuls les tigres entrés sont tués : les autres arrachent les planches de leur fenêtre
+      for (const z of tigresVivants(b)) if (zoneEn(ZONES_SOL, z.x, z.z)) b.svc.blesser(`z${z.id}`, 100_000, j, "tete", t);
+      const sol = b.svc.etat().bonus[0];
+      if (sol && b.svc.etat().fenetres.some((n) => n < ZOMBIES.planches)) {
+        j.p = [sol.p[0], 0, sol.p[2]];
+        ramasse = b.svc.tic(t + 50);
+      }
+    }
+    expect(ramasse).not.toBeNull();
+    expect(msgs(ramasse!, "zevt").some((m) => m.e.e === "bonus" && m.e.genre === "menuisier")).toBe(true);
+    expect(msgs(ramasse!, "argent").find((m) => m.motif === "menuisier")!.delta).toBe(200);
+    expect(dernierEtat(ramasse!)!.fenetres).toEqual(FENETRES.map(() => ZOMBIES.planches));
+  });
 });
 
 // =================================================================================================

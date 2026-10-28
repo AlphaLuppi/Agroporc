@@ -614,6 +614,15 @@ function definirFenetre(id: string, zone: ZoneId, cote: Vec2): Fenetre {
 
 export const FENETRES: readonly Fenetre[] = COTES_FENETRES.map((f) => definirFenetre(f.id, f.zone, f.cote));
 export const fenetreDeId = (id: string): Fenetre | null => FENETRES.find((f) => f.id === id) ?? null;
+/** Fenêtre dont le milieu est le plus proche de (x, z) (sons du bonus Menuisier). */
+export function fenetrePlusProche(x: number, z: number): Fenetre | null {
+  let res: Fenetre | null = null, dMin = Infinity;
+  for (const f of FENETRES) {
+    const d = Math.hypot(f.milieu[0] - x, f.milieu[1] - z);
+    if (d < dMin) { dMin = d; res = f; }
+  }
+  return res;
+}
 
 /** Fenêtres des zones données (actives : zones ouvertes et proches des joueurs). */
 export function fenetresDesZones(zones: ReadonlySet<ZoneId>): Fenetre[] {

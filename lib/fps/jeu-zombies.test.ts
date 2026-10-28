@@ -4,7 +4,7 @@ import { aleaGraine } from "../agroparc3d/cachettes";
 import type { SceneData } from "../agroparc3d/types";
 import { MELEE } from "./armes";
 import {
-  CAPACITE_ZOMBIES, DISTANCE_AFFICHAGE_M, INVITE_VIDE, MondeZombies, Rugissements, TAMPON_ZOMBIES_MS, animerCetteImage, inviteZombies,
+  CAPACITE_ZOMBIES, DISTANCE_AFFICHAGE_M, INVITE_VIDE, MondeZombies, Rugissements, TAMPON_ZOMBIES_MS, animerCetteImage, decisionMaintien, inviteZombies,
   periodeAnimation, segmentsPortesFermees, sonGriffe, tigreAffiche, trouverZombieTouche, trouverZombiesMelee, type EntreeInvite, type PartieInvite, type ZombieVue,
 } from "./jeu-zombies";
 import { FORME_TIGRE, pointLocal, toucheTigre } from "./monstres";
@@ -473,5 +473,32 @@ describe("sonGriffe : chaque type de tigre a son coup de patte", () => {
     expect(sonGriffe(3)).toBe("petit");
     expect(sonGriffe(0)).toBe("tigre");
     expect(sonGriffe(1)).toBe("tigre");
+  });
+});
+
+describe("(v8) maintien de E (relève, planches)", () => {
+  const reparer = { ...INVITE_VIDE, invite: "reparer" as const, detail: "Reposer les planches (3 / 6)", id: "F1" };
+  const relever = { ...INVITE_VIDE, invite: "reanimer" as const, detail: "Réanimer Léa", cible: "j2" };
+  const rien = { cible: null, fenetre: null };
+
+  it("E tenue devant une fenêtre abîmée démarre la repose sans nouvel appui (on arrive la touche enfoncée)", () => {
+    expect(decisionMaintien(true, true, reparer, rien)).toEqual({ action: "demarrer", invite: reparer });
+    expect(decisionMaintien(true, true, relever, rien)).toEqual({ action: "demarrer", invite: relever });
+    // E lâchée, mort, ou rien à maintenir : rien
+    expect(decisionMaintien(false, true, reparer, rien)).toBeNull();
+    expect(decisionMaintien(true, false, reparer, rien)).toBeNull();
+    expect(decisionMaintien(true, true, { ...INVITE_VIDE, invite: "acheter", id: "mur:pompe" }, rien)).toBeNull();
+  });
+
+  it("le maintien en cours continue tant que l'invite le propose, s'arrête à E lâchée, fenêtre pleine ou autre fenêtre", () => {
+    const en = { cible: null, fenetre: "F1" };
+    expect(decisionMaintien(true, true, reparer, en)).toBeNull();
+    expect(decisionMaintien(false, true, reparer, en)).toEqual({ action: "arreter" });
+    expect(decisionMaintien(true, true, INVITE_VIDE, en)).toEqual({ action: "arreter" });
+    expect(decisionMaintien(true, true, { ...reparer, id: "F2" }, en)).toEqual({ action: "arreter" });
+    const rel = { cible: "j2", fenetre: null };
+    expect(decisionMaintien(true, true, relever, rel)).toBeNull();
+    expect(decisionMaintien(true, true, { ...relever, cible: "j3" }, rel)).toEqual({ action: "arreter" });
+    expect(decisionMaintien(true, false, relever, rel)).toEqual({ action: "arreter" });
   });
 });

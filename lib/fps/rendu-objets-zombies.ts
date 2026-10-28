@@ -231,8 +231,13 @@ export interface RenduObjetsZombies {
   maj(etat: EtatPartieZombies | null, t: number, tServeur: number, dt: number): void;
   /** une planche part (arrachée) ou revient (reposée) sur la fenêtre `id` */
   planche(id: string, arrachee: boolean): void;
+  /** bonus Menuisier : toutes les planches manquantes reviennent en animation */
+  toutReposer(): void;
   dispose(): void;
 }
+
+/** Durée (s) du vol d'une planche reposée, du pied du mur à sa place. */
+const DUREE_REPOSE_S = 0.4;
 
 /** Armes que la boîte fait défiler pendant le tirage. */
 const ARMES_DEFILE: readonly ArmeFeuId[] = ["revolver", "pompe", "mitraillette", "fusil_assaut", "sniper", "mitrailleuse", "rayon", "railgun", "minigun", "magnum_dore"];
@@ -391,9 +396,23 @@ export function creerRenduObjetsZombies(scene: THREE.Scene): RenduObjetsZombies 
       const y = bas + ((k + 0.5) / ZOMBIES.planches) * (haut - bas);
       const p = boiteFil(groupe, mBois, f.largeur + (interieure ? 0.35 : 0.2), 0.16, 0.05, 0, y, 0, jetables);
       p.rotation.z = ((k * 37) % 7 - 3) * 0.035;
+      p.userData.y = y; // hauteur de repos (une planche en vol n'y est plus)
       planches.push(p);
     }
     fenetres.push({ f, groupe, planches, visibles: ZOMBIES.planches, vols: [] });
+  }
+
+  /** Une planche de plus revient sur la fenêtre (animation de `majFenetres`), `t0` ≤ 0 : délai avant son départ (s). */
+  function reposer(fp: PlanchesFenetre, t0: number): void {
+    const g = fp.planches[fp.visibles];
+    // une planche encore en vol (arrachée) est rattrapée : elle repart de sa place
+    const enVol = fp.vols.findIndex((v) => v.g === g);
+    if (enVol >= 0) fp.vols.splice(enVol, 1);
+    fp.visibles++;
+    const p0 = new THREE.Vector3(0, g.userData.y as number, 0);
+    const v = new THREE.Vector3((Math.random() - 0.5) * 0.6, 0, 0);
+    const r = new THREE.Vector3(0, (Math.random() - 0.5) * 1.2, (Math.random() - 0.5) * 1.6);
+    fp.vols.push({ g, t: t0, sens: -1, p0, v, r });
   }
 
   // ---- bonus ----
@@ -508,14 +527,18 @@ export function creerRenduObjetsZombies(scene: THREE.Scene): RenduObjetsZombies 
           v.g.rotation.set(v.r.x * v.t, v.r.y * v.t, v.r.z * v.t);
           v.g.visible = v.t < 1.4;
         } else {
-          // planche reposée : arrive de l'intérieur et se plaque
-          const k = Math.min(1, v.t / 0.35);
-          v.g.position.set(v.p0.x, v.p0.y, v.p0.z + (1 - k) * 0.8);
-          v.g.rotation.set(0, 0, v.p0.y * 0.02);
+          // planche reposée (BO1) : ramassée au pied du mur côté intérieur, elle monte en tournant et se plaque d'un coup sec ; un délai
+          // (t < 0) étale les planches du Menuisier
+          if (v.t < 0) { v.g.visible = false; continue; }
+          const e = 1 - (1 - Math.min(1, v.t / DUREE_REPOSE_S)) ** 3;
+          const reste = 1 - e;
+          const repos = ((fp.planches.indexOf(v.g) * 37) % 7 - 3) * 0.035;
+          v.g.position.set(v.p0.x + reste * v.v.x, v.p0.y - reste * 0.9 + Math.sin(Math.PI * e) * 0.22, v.p0.z + reste * 1.1);
+          v.g.rotation.set(reste * 1.3, reste * v.r.y, repos + reste * v.r.z);
           v.g.visible = true;
         }
       }
-      const fini = fp.vols.filter((v) => (v.sens === 1 ? v.t >= 1.4 : v.t >= 0.35));
+      const fini = fp.vols.filter((v) => (v.sens === 1 ? v.t >= 1.4 : v.t >= DUREE_REPOSE_S));
       for (const v of fini) {
         v.g.position.copy(v.p0);
         v.g.rotation.set(0, 0, ((fp.planches.indexOf(v.g) * 37) % 7 - 3) * 0.035);
@@ -583,13 +606,19 @@ export function creerRenduObjetsZombies(scene: THREE.Scene): RenduObjetsZombies 
         if (fp.visibles <= 0) return;
         fp.visibles--;
         const g = fp.planches[fp.visibles];
-        fp.vols.push({ g, t: 0, sens: 1, p0: g.position.clone(), v: new THREE.Vector3((Math.random() - 0.5) * 2, 2.5, -3 - Math.random() * 2), r: new THREE.Vector3(Math.random() * 6, Math.random() * 4, Math.random() * 8) });
+        const enVol = fp.vols.findIndex((v) => v.g === g);
+        if (enVol >= 0) fp.vols.splice(enVol, 1);
+        fp.vols.push({ g, t: 0, sens: 1, p0: new THREE.Vector3(0, g.userData.y as number, 0), v: new THREE.Vector3((Math.random() - 0.5) * 2, 2.5, -3 - Math.random() * 2), r: new THREE.Vector3(Math.random() * 6, Math.random() * 4, Math.random() * 8) });
       } else {
         if (fp.visibles >= ZOMBIES.planches) return;
-        const g = fp.planches[fp.visibles];
-        fp.visibles++;
-        fp.vols.push({ g, t: 0, sens: -1, p0: g.position.clone(), v: new THREE.Vector3(), r: new THREE.Vector3() });
+        reposer(fp, 0);
       }
+    },
+    toutReposer() {
+      // bonus Menuisier : toutes les planches manquantes reviennent, fenêtre par fenêtre, l'une après l'autre
+      fenetres.forEach((fp, i) => {
+        for (let k = 0; fp.visibles < ZOMBIES.planches; k++) reposer(fp, -(i % 4) * 0.05 - k * 0.09);
+      });
     },
     dispose() {
       scene.remove(racine);

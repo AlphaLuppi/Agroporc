@@ -105,6 +105,8 @@ export interface OptionsServiceZombies {
   courant?: boolean;
   /** (v8) tigres à remontoir en poche au départ (essais), `PDJ_FPS_ZOMBIES_REMONTOIRS` */
   remontoirsDepart?: number;
+  /** (v8) paquet de bonus imposé, tiré dans l'ordre puis recommencé (essais), `PDJ_FPS_ZOMBIES_BONUS` (genres séparés par des virgules) */
+  bonus?: readonly GenreBonus[];
 }
 
 type EtatMembre = JoueurZombies["etat"];
@@ -125,8 +127,9 @@ interface Membre {
   autoReleveT: number | null;
   /** argent gagné aux planches pendant la manche (plafond `plafondPlanches`) */
   planchesManche: number;
-  /** repose de planches en cours : fenêtre, prochaine planche */
+  /** repose de planches en cours : fenêtre, prochaine planche ; instant de la dernière planche reposée (cadence tenue entre deux appuis) */
   reparation: { fenetre: string; prochainT: number } | null;
+  derniereReposeT?: number;
   /** (v8) grenades à fragmentation et tigres à remontoir en poche, dernier lancer (cadence) */
   grenades: number;
   remontoirs: number;
@@ -374,7 +377,7 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
   function remettreMembre(m: Membre): void {
     m.etat = "attente"; m.admis = false; m.argent = 0; m.gagne = 0; m.reanimations = 0; m.terreFinT = undefined;
     m.atouts.clear(); m.autoReleves = AUTO_RELEVES_MAX; m.autoReleveT = null; m.planchesManche = 0; m.reparation = null;
-    m.grenades = 0; m.remontoirs = 0; m.dernierLancerT = undefined;
+    m.derniereReposeT = undefined; m.grenades = 0; m.remontoirs = 0; m.dernierLancerT = undefined;
   }
 
   /** Objets de la carte remis comme au départ (nouvelle partie, retour au lobby). */
@@ -689,7 +692,7 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
   // ---------------------------------------------------------------------------------------------
 
   function tirerBonus(): GenreBonus {
-    if (!paquet.length) paquet = paquetBonus(alea);
+    if (!paquet.length) paquet = opts.bonus?.length ? [...opts.bonus] : paquetBonus(alea);
     return paquet.shift()!;
   }
 
@@ -909,6 +912,7 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       }
       if (t < r.prochainT) continue;
       planches.set(r.fenetre, n + 1);
+      m.derniereReposeT = t;
       r.prochainT = t + ZOMBIES.reposeS * 1000;
       sorties.push(zev({ e: "planche", fenetre: r.fenetre, arrachee: false }));
       sale = true;
@@ -1494,7 +1498,11 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
           const f: Fenetre | null = fenetreDeId(msg.fenetre);
           if (!f || (planches.get(f.id) ?? 0) >= ZOMBIES.planches) return [];
           if (Math.hypot(j.p[0] - f.dedans[0], j.p[2] - f.dedans[1]) > ZOMBIES.reposePortee + margeLatence(j)) return [];
-          if (m.reparation?.fenetre !== f.id) m.reparation = { fenetre: f.id, prochainT: t + ZOMBIES.reposeS * 1000 };
+          // la première planche suit l'appui de près, les suivantes gardent la cadence de BO1 même si l'on relâche et réappuie
+          if (m.reparation?.fenetre !== f.id) {
+            const prochainT = Math.max(t + ZOMBIES.reposePremiereS * 1000, (m.derniereReposeT ?? -Infinity) + ZOMBIES.reposeS * 1000);
+            m.reparation = { fenetre: f.id, prochainT };
+          }
           return [];
         }
         case "lancerGrenade":

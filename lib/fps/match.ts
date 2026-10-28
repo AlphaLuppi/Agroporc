@@ -626,7 +626,8 @@ export class Salle implements ContexteSalle {
       case "quitter": return this.quitter(j, maintenant);
       case "arme": if (!this.zombies) this.choisir(j, { arme: msg.arme }); return [];
       case "equiper": if (!this.zombies) this.choisir(j, msg); return [];
-      case "lancerPartie": case "acheter": case "reanimer":
+      // (v8) `reparer` (planches reposées en maintenant E) passe aussi par le service : il manquait à l'aiguillage
+      case "lancerPartie": case "acheter": case "reanimer": case "reparer":
         return this.zombies ? this.zombies.recevoir(j, msg, maintenant) : [];
       case "lancerGrenade": {
         // (v8, zombies) l'œil et la direction sont validés comme ceux d'un tir ; le service juge le stock et la cadence

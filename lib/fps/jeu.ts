@@ -40,7 +40,7 @@ import { creerRenduGrenades } from "./rendu-grenades";
 import { CorpsTigres } from "./corps-tigres";
 import { ZOMBIES, echelleZombie, type TypeZombie } from "./zombies-vagues";
 import {
-  MondeZombies, Rugissements, inviteZombies, segmentsPortesFermees, sonGriffe, toucheTruckClient, trouverZombieTouche, trouverZombiesMelee, trouverZombiesTouches,
+  MondeZombies, Rugissements, decisionMaintien, inviteZombies, segmentsPortesFermees, sonGriffe, toucheTruckClient, trouverZombieTouche, trouverZombiesMelee, trouverZombiesTouches,
   INVITE_VIDE, type InviteZombies,
 } from "./jeu-zombies";
 import { sonExplosion, voixDuBonus, type IdVoix } from "./sons-echantillons";
@@ -50,7 +50,7 @@ import { creerRenduInterieurs } from "./rendu-interieurs";
 import { creerRenduObjetsZombies } from "./rendu-objets-zombies";
 import { creerModeleTruckMuche } from "./rendu-monde";
 import { objectifZombies } from "./zombies-lore";
-import { ACHATS, NOTES, achatDeId, fenetreDeId } from "./zombies-carte";
+import { ACHATS, NOTES, achatDeId, fenetreDeId, fenetrePlusProche } from "./zombies-carte";
 import { NOMS_BONUS } from "./zombies-vagues";
 import { profilZombie, nomZombie } from "./armes";
 import { creerImpactsBalles } from "./rendu-impacts";
@@ -822,18 +822,33 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     client.envoyer({ t: "reanimer", cible: null });
   }
 
+  /**
+   * Début d'un maintien de E : relève d'un coéquipier à terre, ou repose des planches (le serveur en repose une toutes les 0,9 s tant qu'on
+   * reste devant la fenêtre). Envoyé une seule fois par maintien ; rend faux si l'invite n'est ni l'une ni l'autre.
+   */
+  function demarrerMaintien(inv: InviteZombies): boolean {
+    if (inv.invite === "reanimer" && inv.cible) {
+      if (reanimCible === inv.cible) return true;
+      reanimCible = inv.cible;
+      reanimDebutT = t;
+      client.envoyer({ t: "reanimer", cible: inv.cible });
+      return true;
+    }
+    if (inv.invite === "reparer" && inv.id) {
+      if (reparFenetre === inv.id) return true;
+      reparFenetre = inv.id;
+      client.envoyer({ t: "reparer", fenetre: inv.id });
+      return true;
+    }
+    return false;
+  }
+
   /** E en zombies : relève (à maintenir) d'un coéquipier à terre, sinon achat de l'invite courante (le serveur reste juge). */
   function interagirZombies() {
     if (!peutAgir()) return;
     const inv = inviteZ();
-    if (inv.invite === "reanimer" && inv.cible) {
-      reanimCible = inv.cible;
-      reanimDebutT = t;
-      client.envoyer({ t: "reanimer", cible: inv.cible });
-    } else if (inv.invite === "reparer") {
-      // maintenir E : le serveur repose une planche par seconde tant qu'on reste devant la fenêtre
-      reparFenetre = inv.id;
-      client.envoyer({ t: "reparer", fenetre: inv.id });
+    if (demarrerMaintien(inv)) {
+      // maintien en cours (relève ou planches) : `decisionMaintien` l'arrêtera
     } else if (inv.invite === "note") {
       const id = Number(inv.id.slice(5));
       noteZ = noteZ === id ? null : id;
@@ -1505,6 +1520,12 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
             // l'annonceur parle sur la fin de la fanfare ; « Munitions max » s'affiche à la réception de l'équipement ravitaillé
             if (e.genre !== "munitions") annoncer(`${NOMS_BONUS[e.genre]} !`, "bonus", voixDuBonus(e.genre), 0.35);
             else sons.voix("munitions", 0.35);
+            if (e.genre === "menuisier") {
+              // toutes les planches reviennent en volant ; les coups de marteau de la fenêtre la plus proche
+              rObjets?.toutReposer();
+              const f = fenetrePlusProche(moi.p[0], moi.p[2]);
+              if (f) sons.planche(false, positionSon([f.milieu[0], 1.5, f.milieu[1]]));
+            }
             break;
           }
           case "nuke": feux.explosion([moi.p[0], 4, moi.p[2]]); secousse = 0.09; break;
@@ -2103,15 +2124,11 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       if (v && sonGriffe(v.type) === "chef") sons.grognementChef(positionSon([v.x, 1, v.z]));
       else if (v) sons.rugissementTigre(positionSon([v.x, 1, v.z]));
     }
-    // la relève que je maintiens s'arrête si le coéquipier est relevé, trop loin ou si j'ai lâché E
-    if (reanimCible !== null) {
-      const inv = inviteZ();
-      if (!actionActive("interagir") || inv.invite !== "reanimer" || inv.cible !== reanimCible) arreterReanimation();
-    }
-    if (reparFenetre !== null) {
-      const inv = inviteZ();
-      if (!actionActive("interagir") || inv.invite !== "reparer" || inv.id !== reparFenetre) arreterReanimation();
-    }
+    // maintien de E (relève, planches) : il s'arrête si j'ai lâché E ou si l'invite ne le propose plus, et démarre E TENUE (BO1 : on peut
+    // arriver devant la fenêtre la touche déjà enfoncée)
+    const dm = decisionMaintien(actionActive("interagir"), peutAgir(), inviteZ(), { cible: reanimCible, fenetre: reparFenetre });
+    if (dm?.action === "arreter") arreterReanimation();
+    else if (dm?.action === "demarrer") demarrerMaintien(dm.invite);
     // (v7) objets de la carte, intérieurs, Truck Muche des livraisons
     rObjets?.maj(partieZ, t, client.maintenantServeur(), dt);
     rInterieurs?.maj(t, dt);
