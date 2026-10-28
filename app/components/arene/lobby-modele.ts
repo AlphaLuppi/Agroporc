@@ -180,9 +180,11 @@ export const TEXTE_PARTIE_EN_COURS = "Partie en cours : vous entrerez à la proc
 
 /** Aide des commandes du lobby des zombies : celles de l'arène, la touche d'action servant à acheter, ouvrir et réanimer. */
 export function commandesLobbyZombies(cfg: ConfigTouches, disposition?: ReadonlyMap<string, string> | null): CommandeLobby[] {
-  return commandesLobby(cfg, disposition).map((c) => (
+  const lignes = commandesLobby(cfg, disposition).map((c) => (
     c.libelle === "Monter dans une voiture" ? { ...c, libelle: "Acheter, ouvrir une porte, réanimer (maintenir)" } : c
   ));
+  // (v8) grenades de BO1 : 2 par manche, maintenir la touche « cuit » la grenade
+  return [...lignes, { touches: toucheDe(cfg, "grenade", disposition), libelle: "Grenade (maintenir : cuire la mèche)" }];
 }
 
 export interface SituationLobbyZombies {

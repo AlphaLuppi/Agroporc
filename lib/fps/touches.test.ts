@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  ACTIONS, ACTIONS_MORT, ACTIONS_NOUVELLES, ACTIONS_V1, CLE_TOUCHES, GROUPES_ACTIONS, LIBELLES_ACTIONS, actionsSansTouche, assigner,
+  ACTIONS, ACTIONS_MORT, ACTIONS_NOUVELLES, ACTIONS_V1, ACTIONS_ZOMBIES, CLE_TOUCHES, GROUPES_ACTIONS, LIBELLES_ACTIONS, actionsSansTouche, assigner, conflit,
   ecrireTouches, estParDefaut, indexTouches, libelleTouche, lireTouches, normaliser, touchesParDefaut, type Action, type Stockage,
 } from "./touches";
 
@@ -15,12 +15,15 @@ function memoire(init: Record<string, string> = {}): Stockage & { donnees: Recor
 }
 
 describe("touches de l'arène", () => {
-  it("par défaut : ZQSD/WASD physiques, aucune touche en double", () => {
+  it("par défaut : ZQSD/WASD physiques, aucune touche en double entre actions qui coexistent", () => {
     const d = touchesParDefaut();
     expect(d.avant[0]).toBe("KeyW");
-    // « passer » (contexte mort) partage Espace avec « saut » (contexte vivant) : c'est le seul recouvrement permis
-    const toutes = ACTIONS.filter((a) => !ACTIONS_MORT.includes(a)).flatMap((a) => d[a]).filter(Boolean);
+    // « passer » (contexte mort) partage Espace avec « saut » (contexte vivant) ; les zombies partagent G et B avec l'arène
+    const toutes = ACTIONS.filter((a) => !ACTIONS_MORT.includes(a) && !ACTIONS_ZOMBIES.includes(a)).flatMap((a) => d[a]).filter(Boolean);
     expect(new Set(toutes).size).toBe(toutes.length);
+    for (const a of ACTIONS) for (const b of ACTIONS) {
+      if (a !== b && d[a].some((c) => c !== null && d[b].includes(c))) expect(conflit(a, b)).toBe(false);
+    }
     expect(d.passer).toEqual(["Space", null]);
     expect(d.saut[0]).toBe("Space");
     expect(estParDefaut(d)).toBe(true);
@@ -81,9 +84,9 @@ describe("touches de l'arène", () => {
 
   it("actions de l'équipement, du HUD, « passer », de la v3 et « invoquer » : 10 de la v1 conservées, 15 nouvelles, aucune arme1..4", () => {
     expect(ACTIONS_V1).toHaveLength(10);
-    expect(ACTIONS_NOUVELLES).toHaveLength(17);
-    expect(ACTIONS).toHaveLength(27);
-    expect(new Set(ACTIONS).size).toBe(27);
+    expect(ACTIONS_NOUVELLES).toHaveLength(19);
+    expect(ACTIONS).toHaveLength(29);
+    expect(new Set(ACTIONS).size).toBe(29);
     expect(Object.keys(touchesParDefaut()).sort()).toEqual([...ACTIONS].sort());
     expect(Object.keys(LIBELLES_ACTIONS).sort()).toEqual([...ACTIONS].sort());
     expect(ACTIONS as readonly string[]).not.toContain("arme1");
@@ -113,6 +116,41 @@ describe("touches de l'arène", () => {
     expect(cfg.recharger).toEqual(["KeyG", null]);
     expect(cfg.invoquer).toEqual([null, null]);
     expect(actionsSansTouche(cfg)).toContain("invoquer");
+  });
+
+  it("(v8) grenades des zombies : G et B, partagés avec le sort et le fumigène de l'arène, jamais avec une action « en vie »", () => {
+    const d = touchesParDefaut();
+    expect(d.grenade).toEqual(["KeyG", null]);
+    expect(d.remontoir).toEqual(["KeyB", null]);
+    expect(conflit("grenade", "invoquer")).toBe(false);
+    expect(conflit("remontoir", "fumigene")).toBe(false);
+    expect(conflit("grenade", "remontoir")).toBe(true);
+    expect(conflit("grenade", "recharger")).toBe(true);
+    expect(conflit("invoquer", "recharger")).toBe(true);
+    expect(conflit("passer", "grenade")).toBe(false);
+    expect(indexTouches(d).get("KeyG")).toEqual(["invoquer", "grenade"]);
+    // une touche « en vie » sur G dépossède les deux modes
+    const { cfg } = assigner(d, "recharger", 1, "KeyG");
+    expect(cfg.invoquer).toEqual([null, null]);
+    expect(cfg.grenade).toEqual([null, null]);
+    // la grenade sur une touche de l'arène ne la lui prend pas ; sur une touche des zombies, si
+    const r = assigner(d, "grenade", 1, "KeyK");
+    expect(r.cfg.frappeAerienne).toEqual(["KeyK", null]);
+    expect(r.depossedee).toBeNull();
+    expect(assigner(d, "grenade", 1, "KeyB").depossedee).toBe("remontoir");
+  });
+
+  it("(v8) une sauvegarde d'avant les grenades leur donne G et B, même si le sort et le fumigène les ont", () => {
+    const brut = Object.fromEntries(ACTIONS.filter((a) => !ACTIONS_ZOMBIES.includes(a)).map((a) => [a, touchesParDefaut()[a]]));
+    const cfg = normaliser(brut);
+    expect(cfg.invoquer).toEqual(["KeyG", null]);
+    expect(cfg.grenade).toEqual(["KeyG", null]);
+    expect(cfg.remontoir).toEqual(["KeyB", null]);
+    expect(actionsSansTouche(cfg)).toEqual([]);
+    // mais pas si une action « en vie » a déjà G
+    const pris = normaliser({ ...brut, recharger: ["KeyG", null] });
+    expect(pris.grenade).toEqual([null, null]);
+    expect(actionsSansTouche(pris)).toContain("grenade");
   });
 
   it("GROUPES_ACTIONS couvre chaque action exactement une fois", () => {
@@ -193,7 +231,7 @@ describe("touches de l'arène", () => {
         const nouvelle = (Object.keys(touchesParDefaut()) as Action[]).find((a) => a !== "recharger" && touchesParDefaut()[a][0] === code)!;
         expect(cfg[nouvelle]).toEqual([null, null]);
         expect(actionsSansTouche(cfg)).toEqual([nouvelle]);
-        const toutes = ACTIONS.filter((a) => !ACTIONS_MORT.includes(a)).flatMap((a) => cfg[a]).filter(Boolean);
+        const toutes = ACTIONS.filter((a) => !ACTIONS_MORT.includes(a) && !ACTIONS_ZOMBIES.includes(a)).flatMap((a) => cfg[a]).filter(Boolean);
         expect(new Set(toutes).size).toBe(toutes.length);
       });
     }
