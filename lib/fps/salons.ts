@@ -1,14 +1,31 @@
 /**
- * Routage des deux salles du serveur (PUR, sans I/O : `serveur-fps/src/index.ts` ne fait qu'appliquer ces décisions). Le message `mode` change un
+ * Routage des trois salles du serveur (PUR, sans I/O : `serveur-fps/src/index.ts` ne fait qu'appliquer ces décisions). Le message `mode` change un
  * client de salle ; la décision est prise AVANT de quitter l'ancienne salle (sinon `Salle.connecter` renverrait `erreur{plein}`, que le serveur
- * transforme en fermeture de socket). `salons` résume les deux salles pour le choix du mode.
- * Spec : docs/superpowers/specs/2026-10-27-arene-zombies-design.md (« Deux salles, un seul serveur »)
+ * transforme en fermeture de socket). `salons` résume les salles pour le choix du mode.
+ * Spec : docs/superpowers/specs/2026-10-27-arene-zombies-design.md (« Deux salles, un seul serveur »), 2026-10-28-battle-royale-design.md (troisième salle)
  */
-import { JEU, MODES_SALLE, type MessageServeur, type ModeSalle, type PhaseZombies } from "./protocole";
+import { BR } from "./br-regles";
+import { JEU, MODES_SALLE, type MessageServeur, type ModeSalle, type PhaseZombies, type ResumeSalonBr } from "./protocole";
 import { ZOMBIES } from "./zombies-vagues";
 
 /** Connexions (lobby compris) acceptées par la salle d'un mode. */
-export const capaciteSalle = (mode: ModeSalle): number => (mode === "zombies" ? ZOMBIES.joueursMax : JEU.connexionsMax);
+export function capaciteSalle(mode: ModeSalle): number {
+  switch (mode) {
+    case "zombies": return ZOMBIES.joueursMax;
+    case "br": return BR.joueursMax;
+    default: return JEU.connexionsMax;
+  }
+}
+
+/**
+ * Mode du client placé dans `salle`, par identité parmi `salles`. Une salle inconnue vaut "arene" (un client pas encore placé). Le mode d'un client
+ * dans la salle BR n'est jamais pris pour « arène » : sinon sa demande `mode{arene}` recevrait un écho et il resterait dans la salle BR avec sa
+ * place et peut-être le rôle d'hôte.
+ */
+export function modeDeSalle<T>(salle: T, salles: Record<ModeSalle, T>): ModeSalle {
+  for (const mode of MODES_SALLE) if (salles[mode] === salle) return mode;
+  return "arene";
+}
 
 export type DecisionMode =
   /** le client est déjà dans cette salle : simple écho `mode` */
@@ -31,9 +48,16 @@ export function decisionMode(e: { mode: unknown; salleActuelle: ModeSalle; enJeu
   return { action: "changer", mode };
 }
 
-/** Message `salons` (diffusé à tous à la connexion puis au changement, ≤ 1 Hz). */
+/** Message `salons` (diffusé à tous à la connexion puis au changement, ≤ 1 Hz). `br` absent : le champ est omis (un client v7 ne le voit jamais). */
 export function messageSalons(
-  arene: { joueurs: number; enJeu: number }, zombies: { phase: PhaseZombies; joueurs: number; manche: number },
+  arene: { joueurs: number; enJeu: number }, zombies: { phase: PhaseZombies; joueurs: number; manche: number }, br?: ResumeSalonBr | null,
 ): Extract<MessageServeur, { t: "salons" }> {
-  return { t: "salons", arene: { joueurs: arene.joueurs, enJeu: arene.enJeu }, zombies: { phase: zombies.phase, joueurs: zombies.joueurs, manche: zombies.manche } };
+  const m: Extract<MessageServeur, { t: "salons" }> = {
+    t: "salons", arene: { joueurs: arene.joueurs, enJeu: arene.enJeu }, zombies: { phase: zombies.phase, joueurs: zombies.joueurs, manche: zombies.manche },
+  };
+  if (br) {
+    m.br = { phase: br.phase, joueurs: br.joueurs, vivants: br.vivants };
+    if (br.palier !== undefined) m.br.palier = br.palier;
+  }
+  return m;
 }

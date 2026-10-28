@@ -126,9 +126,12 @@ export interface ZoneJouable { x0: number; z0: number; x1: number; z1: number }
 
 /**
  * La scène est celle du mode zombies (`donneesZombies(scene).data` : les 20 pièces synthétiques sont ajoutées à la fin de `buildings`) :
- * `ZONE_CARTE` s'y restreint tout seul aux bornes de la zone de jeu, sans que l'appelant ait à passer le mode.
+ * `ZONE_CARTE` s'y restreint tout seul aux bornes de la zone de jeu, sans que l'appelant ait à passer le mode. Faux pour la scène du
+ * Battle Royale (`modeCarte === "br"`) : sa carte est celle de l'arène.
  */
 export function estSceneZombies(scene: SceneData): boolean {
+  // la scène du Battle Royale a aussi des pièces typées (coques, cloisons) mais garde la zone de l'arène : `modeCarte` la distingue
+  if (scene.modeCarte === "br") return false;
   // la première pièce synthétique porte un `type` (jamais dans scene.json) : un jour où scene.json grossirait ne bascule pas l'arène en zombies
   return scene.buildings.length > INDEX_PREMIERE_PIECE && scene.buildings[INDEX_PREMIERE_PIECE].type !== undefined;
 }

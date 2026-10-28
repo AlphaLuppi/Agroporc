@@ -313,3 +313,53 @@ describe("équipement sans arme principale (zombies)", () => {
     expect(depuisAlias("revolver", sans())?.equip.sansPrincipale).toBe(true);
   });
 });
+
+describe("sansSecondaire (Battle Royale, v8)", () => {
+  const nu = (): Equipement => ({ principale: "mitraillette", secondaire: "pistolet", speciale: null, sansPrincipale: true, sansSecondaire: true });
+
+  it("armeDuSlot : la secondaire est vide, le couteau reste en main", () => {
+    expect(armeDuSlot(nu(), "secondaire")).toBeNull();
+    expect(armeDuSlot(nu(), "principale")).toBeNull();
+    expect(armeDuSlot(nu(), "couteau")).toBe("couteau");
+    expect(armeDuSlot({ ...nu(), sansSecondaire: undefined }, "secondaire")).toBe("pistolet");
+    expect(armeDuSlot(base(), "secondaire")).toBe("revolver");
+  });
+
+  it("slotDeLArme : la valeur de remplissage n'est pas portée", () => {
+    expect(slotDeLArme(nu(), "pistolet")).toBeNull();
+    expect(slotDeLArme(nu(), "mitraillette")).toBeNull();
+    const seulePrincipale: Equipement = { ...base(), sansSecondaire: true };
+    expect(slotDeLArme(seulePrincipale, "revolver")).toBeNull();
+    expect(slotDeLArme(seulePrincipale, "fusil_assaut")).toBe("principale");
+  });
+
+  it("slotVoisin saute le slot secondaire vide", () => {
+    const eq: Equipement = { ...base(), sansSecondaire: true };
+    expect(slotVoisin(eq, "principale", 1)).toBe("couteau");
+    expect(slotVoisin(eq, "couteau", -1)).toBe("principale");
+    expect(slotVoisin(nu(), "couteau", 1)).toBe("couteau");
+  });
+
+  it("normaliserEquipement garde le drapeau tant qu'aucune secondaire n'est fournie, et le retire sinon", () => {
+    const prec = nu();
+    expect(normaliserEquipement({}, prec).sansSecondaire).toBe(true);
+    expect(normaliserEquipement({ principale: "sniper" }, prec).sansSecondaire).toBe(true);
+    expect(normaliserEquipement({ secondaire: "pompe" }, prec).sansSecondaire).toBe(true); // `pompe` n'est pas une secondaire
+    const r = normaliserEquipement({ secondaire: "revolver" }, prec);
+    expect(r.secondaire).toBe("revolver");
+    expect("sansSecondaire" in r).toBe(false);
+    // `prec` n'est pas modifié
+    expect(prec.sansSecondaire).toBe(true);
+  });
+
+  it("depuisAlias : choisir une secondaire en fournit une", () => {
+    const r = depuisAlias("revolver", nu());
+    expect(r?.main).toBe("secondaire");
+    expect("sansSecondaire" in r!.equip).toBe(false);
+    expect(r!.equip.sansPrincipale).toBe(true);
+  });
+
+  it("copierEquipement garde le drapeau (équipement de départ copié par joueur)", () => {
+    expect(copierEquipement(nu()).sansSecondaire).toBe(true);
+  });
+});

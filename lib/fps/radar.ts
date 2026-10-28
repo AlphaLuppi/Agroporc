@@ -49,6 +49,8 @@ export interface RadarFrame {
   fumigenes?: { x: number; z: number; r: number }[];
   /** Zone de frappe aérienne en cours */
   frappeZone?: { x: number; z: number; r: number } | null;
+  /** (Battle Royale, v8) tempête : cercle courant et prochain cercle (centre x/z et rayon, m) ; null hors BR ou avant le départ de l'avion */
+  zoneBr?: { x: number; z: number; r: number; prochainX: number; prochainZ: number; prochainR: number } | null;
 }
 
 /** Capacités des tableaux préalloués d'un `RadarFrame`. */

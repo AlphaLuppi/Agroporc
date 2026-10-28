@@ -4,8 +4,8 @@
  * Spec : docs/superpowers/specs/2026-10-22-arene-v2-design.md (§5.18) et 2026-10-23-arene-hud-design.md (§3.2, §3.4)
  */
 import type {
-  ArmeFeuId, ArmeId, ArmeMeleeId, ArmePrincipaleId, ArmeSecondaireId, ArmeSpecialeId, CauseMort, EtatPartieZombies, InfoTueur, MessageServeur,
-  ModeSalle, RaisonAchat, Slot, TypeEvenement, Vec3, Zone,
+  ArmeFeuId, ArmeId, ArmeMeleeId, ArmePrincipaleId, ArmeSecondaireId, ArmeSpecialeId, AvionBr, CauseMort, EtatPartieBr, EtatPartieZombies, InfoTueur,
+  MessageServeur, ModeSalle, ObjetBr, RaisonAchat, Slot, TypeEvenement, Vec3, ZoneBr, Zone,
 } from "./protocole";
 import type { RadarFrame } from "./radar";
 import type { ConfigTouches } from "./touches";
@@ -62,7 +62,7 @@ export interface HudEtat {
   /** multiplicateur de course de l'arme en main (couteau 1,3 ; sinon 1 ; arrondi à 0,01) */
   bonusVitesse: number;
   /** invite d'interaction affichée sous le viseur */
-  invite: "" | "elsa" | "monter" | "descendre" | "acheter" | "porte" | "boite" | "soin" | "reanimer" | "atout" | "pap" | "courant" | "ingredient" | "four" | "reparer" | "note";
+  invite: "" | "elsa" | "monter" | "descendre" | "acheter" | "porte" | "boite" | "soin" | "reanimer" | "atout" | "pap" | "courant" | "ingredient" | "four" | "reparer" | "note" | "ramasser";
   /** "2/4" occupants pour "monter" ; distance « 12 m » pour "elsa" ; zombies : « Pompe — 900 $ », « Ouvrir la porte — 1 250 $ », « Réanimer Léa » (texte après « [E] ») */
   inviteDetail: string;
   vehicule: boolean;
@@ -107,6 +107,22 @@ export interface HudEtat {
   /** je maintiens E sur un coéquipier à terre (la progression 0..1 est dans `HudLive.reanimation`) */
   reanime?: boolean;
 
+  // ---- BATTLE ROYALE (v8) : tous optionnels et scalaires, absents hors du mode "br" ----
+  /** phase du joueur : à bord de l'avion, chute libre, parachute ouvert, atterrissage attendu du serveur, au sol ; "" hors partie (lobby, spectateur) */
+  phaseVol?: "" | "avion" | "libre" | "voile" | "attenteAtterri" | "sol";
+  /** hauteur au-dessus du sol (m, entier) et vitesse verticale descendante (m/s, entier) pendant le vol ; 0 sinon */
+  altitude?: number;
+  vitesseChute?: number;
+  /** stock de soins (messages `inventaire`) et soin en cours d'usage ("" = aucun ; la progression 0..1 est dans `HudLive.usage`) */
+  bandages?: number;
+  potions?: number;
+  usageSoin?: "" | "bandage" | "potion";
+  /** hors de la zone (la tempête me blesse) */
+  horsZone?: boolean;
+  /** je suis mort et je regarde : id du joueur suivi ("" = personne à suivre) */
+  spectateur?: boolean;
+  spectateurCible?: string;
+
   // ---- COMPATIBILITÉ v1 (shim du lot 0, tous optionnels) ----
   // Champs que le HUD v1 lit encore et que `jeu.ts` v1 émet toujours. La spec HUD (§3.2) les retire de `HudEtat` : le lot J1 cesse
   // de les émettre (les valeurs continues passent dans `HudLive`) et le lot U2a ne les lit plus. NE PAS les utiliser dans du code neuf.
@@ -139,6 +155,8 @@ export interface HudLive {
   regenDelai: number;
   /** (zombies) 0..1 : avancement de la relève d'un coéquipier que je maintiens, 0 = aucune */
   reanimation?: number;
+  /** (BR) 0..1 : avancement de l'usage d'un soin, 0 = aucun */
+  usage?: number;
 }
 
 export type JeuEvenement =
@@ -204,6 +222,34 @@ export interface EtatZombiesHud {
   reparation: string | null;
 }
 
+/**
+ * (Battle Royale, v8) État lu à intervalle par le HUD (comme `EtatZombiesHud`, hors rendu à 60 Hz). Objet neuf à chaque appel de
+ * `JeuHandle.br()`, valeurs neutres hors du mode "br".
+ */
+export interface EtatBrHud {
+  /** dernier `br{etat}` reçu (null avant le premier) */
+  partie: EtatPartieBr | null;
+  avion: AvionBr | null;
+  zone: ZoneBr | null;
+  /** phase du joueur local (cf. `HudEtat.phaseVol`) */
+  phaseVol: "" | "avion" | "libre" | "voile" | "attenteAtterri" | "sol";
+  /** horloge serveur (ms) estimée : minuteurs de la zone et de l'avion */
+  serveurT: number;
+  /** distance signée au bord de la zone courante (m, > 0 dehors, < 0 dedans) et cap relatif vers son centre (rad, 0 = devant, + = à droite) */
+  distanceBord: number;
+  capCentre: number;
+  /** soins en stock et usage en cours (finT : horodatage serveur) */
+  bandage: number;
+  potion: number;
+  usage: { objet: "bandage" | "potion"; finT: number } | null;
+  /** objets au sol à moins de 60 m, pour le dessin et l'invite de ramassage */
+  proches: ObjetBr[];
+  /** spectateur : id suivi (null si personne) */
+  suivi: string | null;
+  /** ma place provisoire (vivants restants + 1 à ma mort), null tant que je vis */
+  place: number | null;
+}
+
 /** Options de `lancerJeu` : le mode de la salle (arène par défaut, comportement historique). */
 export interface JeuOptions { mode?: ModeSalle }
 
@@ -247,6 +293,8 @@ export interface JeuHandle {
   monstres(): EtatMonstresHud;
   /** (v5) État du mode zombies (argent, gains, refus, relève) ; objet neuf à chaque appel, valeurs neutres en arène. */
   zombies(): EtatZombiesHud;
+  /** (v8) État du Battle Royale (zone, vol, soins, spectateur) ; objet neuf à chaque appel. Absent tant que `jeu.ts` ne le fournit pas. */
+  br?(): EtatBrHud;
   /** Déclenche une frappe aérienne sur le point au sol spécifié. */
   lancerFrappe?(cible: Vec3): void;
   /** Lance un fumigène devant le joueur. */

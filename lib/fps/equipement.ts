@@ -20,11 +20,11 @@ export const estSlot = (x: unknown): x is Slot => (SLOTS as readonly unknown[]).
 /** Arme blanche de l'équipement (couteau si `melee` est absent). */
 export function meleeDe(eq: Readonly<Equipement>): ArmeMeleeId { return eq.melee ?? "couteau"; }
 
-/** Arme d'un slot (l'arme blanche pour `couteau` ; null si le slot spécial est vide, ou la principale d'un équipement `sansPrincipale`). */
+/** Arme d'un slot (l'arme blanche pour `couteau` ; null si le slot spécial est vide, ou la principale / secondaire d'un équipement `sansPrincipale` / `sansSecondaire`). */
 export function armeDuSlot(eq: Equipement, slot: Slot): ArmeId | null {
   switch (slot) {
     case "principale": return eq.sansPrincipale ? null : eq.principale;
-    case "secondaire": return eq.secondaire;
+    case "secondaire": return eq.sansSecondaire ? null : eq.secondaire;
     case "couteau": return meleeDe(eq);
     case "speciale": return eq.speciale;
   }
@@ -34,7 +34,7 @@ export function armeDuSlot(eq: Equipement, slot: Slot): ArmeId | null {
 export function slotDeLArme(eq: Equipement, arme: ArmeId): Slot | null {
   if (estMelee(arme)) return "couteau";
   if (!eq.sansPrincipale && arme === eq.principale) return "principale";
-  if (arme === eq.secondaire) return "secondaire";
+  if (!eq.sansSecondaire && arme === eq.secondaire) return "secondaire";
   if (eq.speciale !== null && arme === eq.speciale) return "speciale";
   return null;
 }
@@ -44,7 +44,10 @@ export function normaliserEquipement(brut: { principale?: unknown; secondaire?: 
   const res = copierEquipement(prec);
   if (brut && typeof brut === "object") {
     if (estPrincipale(brut.principale)) res.principale = brut.principale;
-    if (estSecondaire(brut.secondaire)) res.secondaire = brut.secondaire;
+    if (estSecondaire(brut.secondaire)) {
+      res.secondaire = brut.secondaire;
+      delete res.sansSecondaire; // choisir une secondaire en fournit une
+    }
     // `couteau` = absent : seule l'épée écrit la clé ; une valeur inconnue garde celle de `prec`
     if (brut.melee === "epee") res.melee = "epee";
     else if (brut.melee === "couteau") delete res.melee;
@@ -59,7 +62,11 @@ export function depuisAlias(arme: unknown, prec: Equipement): { equip: Equipemen
     delete equip.sansPrincipale; // choisir une principale en fournit une
     return { equip, main: "principale" };
   }
-  if (estSecondaire(arme)) return { equip: { ...copierEquipement(prec), secondaire: arme }, main: "secondaire" };
+  if (estSecondaire(arme)) {
+    const equip = { ...copierEquipement(prec), secondaire: arme };
+    delete equip.sansSecondaire;
+    return { equip, main: "secondaire" };
+  }
   return null;
 }
 
