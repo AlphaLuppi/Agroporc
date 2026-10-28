@@ -173,10 +173,10 @@ describe("trouverZombieTouche", () => {
   });
 
   it("un bâtiment fermé entre le tireur et le tigre arrête la balle", () => {
-    // un mur de bâtiment coupe la ligne z = −55 vers x = 160 ; le tigre est dans la cour, de ce côté-ci
+    // un mur de bâtiment coupe la ligne z = −55 vers x = 160 ; le tigre est dans la cour, de ce côté-ci (tir parti à l'est de l'olivier, en 125,5 ; −54,5)
     const tigre = vue(1, 140, -55, 0);
     expect(trouverZombieTouche([170, 1.2, -55], [-1, 0, 0], 100, [tigre], monde)).toBeNull();
-    expect(trouverZombieTouche([125, 1.2, -55], [1, 0, 0], 100, [tigre], monde)).not.toBeNull();
+    expect(trouverZombieTouche([130, 1.2, -55], [1, 0, 0], 100, [tigre], monde)).not.toBeNull();
   });
 
   it("le pré-filtre ne perd aucun tir : même résultat que toucheTigre sur 2 000 rayons au hasard", () => {

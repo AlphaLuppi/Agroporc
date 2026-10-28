@@ -207,8 +207,8 @@ describe("marche", () => {
   it("failsafe : un tigre qui ne se rapproche plus, à plus de 25 m de tout joueur, est signalé bloqué après 30 s", () => {
     const { simu } = neuf();
     const id = simu.apparaitre(spec(1), [76, -68], CHASSE, 0)!; // cour Ouest, fermée
-    // il longe le mur vers le joueur pendant ~12 s, puis ne progresse plus : signalé 30 s plus tard
-    const { evenements } = courir(simu, 0, 45, [joueur("j1", ...(DEPARTS[2] as [number, number]))]);
+    // il serpente entre les îlots du parking vers le joueur pendant ~17 s (v8), puis ne progresse plus : signalé 30 s plus tard
+    const { evenements } = courir(simu, 0, 55, [joueur("j1", ...(DEPARTS[2] as [number, number]))]);
     const b = evenements.filter((e) => e.t === "bloque");
     expect(b).toHaveLength(1);
     expect(b[0]).toMatchObject({ tigre: id });

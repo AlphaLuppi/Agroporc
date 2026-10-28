@@ -22,7 +22,9 @@ import type { Difficulte, GenreBonus } from "./zombies-vagues";
  * choix du mode, argent, achats, relève, snap `zombies`), épée (mêlée à plusieurs cibles), cause de mort "tigre_zombie". v7 : zombies façon
  * Black Ops 1 (états de partie étendus, `zevt`, `reparer`, difficulté, armes améliorées `Equipement.ameliorees`, drapeaux d'allure et de mode
  * des tigres, Truck Muche dans le snap). v8 : réseau sans téléportation (`apparition.garder` à la relève, reprise d'une partie de zombies
-après une micro-coupure : `bienvenue.jeton` / `bienvenue.reprise`, `bonjour.reprise`). Client et serveur se déploient ensemble.
+ * après une micro-coupure : `bienvenue.jeton` / `bienvenue.reprise`, `bonjour.reprise`) et carte « Service de midi » redécoupée
+ * (aménagements ajoutés aux pièces : index des prismes de `batiments{detruits}` et positions d'achats partagés). Client et serveur se
+ * déploient ensemble.
  */
 export const VERSION_PROTOCOLE = 8;
 
