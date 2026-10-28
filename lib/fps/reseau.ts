@@ -126,7 +126,7 @@ export function connecterArene(
       try { socket.send(texte); return; } catch { /* repli sur la file */ }
     }
     // Un état, un tir, un coup, une commande de conduite ou un ping de la coupure n'a plus de sens à la reconnexion (et 64 états rejoués
-    // d'un coup avec le bonjour dépassent les 90 messages/s tolérés : le serveur couperait pour flood).
+    // d'un coup avec le bonjour seraient en partie jetés par l'anti-flood du serveur, lib/fps/anti-flood.ts).
     if (perissable) return;
     file.push(texte);
     if (file.length > FILE_MAX) file.splice(0, file.length - FILE_MAX);
