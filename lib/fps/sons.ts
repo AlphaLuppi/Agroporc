@@ -1386,7 +1386,9 @@ export function creerSons(): Sons {
       if (pic !== null) {
         // le pic du fichier tombe au contact du serveur (même calage que le claquement synthétisé de `griffe`)
         const { retard, decalage } = departCale(pic, ZOMBIES.griffeArmeS);
-        if (jouerEchantillon("griffeChef", position, { retard, decalage }) !== "absent") return;
+        // (v8, retour 16) toutes ses voix prises (plusieurs chefs aux planches) : la griffe synthétisée, jamais un coup muet
+        const r = jouerEchantillon("griffeChef", position, { retard, decalage });
+        if (r !== "absent" && r !== "plein") return;
       } else telecharger(ECHANTILLONS.griffeChef.url);
       api.griffe(position);
     },
