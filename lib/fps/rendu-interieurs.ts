@@ -32,6 +32,8 @@ export interface RenduInterieurs {
   majCourant(on: boolean): void;
   /** `t` : horloge (s), `dt` : pas (s) */
   maj(t: number, dt: number): void;
+  /** (v8) éclat d'un éclair (0..1) : les pièces s'illuminent un instant, courant coupé ou non */
+  flash(k: number): void;
   dispose(): void;
 }
 
@@ -447,17 +449,25 @@ export function creerRenduInterieurs(scene: THREE.Scene, data: SceneData, pieces
   // ---- éclairage ----
   let courant = false;
   let lumiere = 0;
+  let eclair = 0;
+  let lumiereCourante = 0;
   return {
     majCourant(on) { courant = on; },
+    flash(k) {
+      eclair = Math.max(0, Math.min(1, k));
+      uLumiere.value = Math.min(1.6, lumiereCourante + eclair);
+      uSol.value = Math.min(1.6, lumiere + eclair);
+    },
     maj(t, dt) {
       const cible = courant ? 1 : 0;
       // le courant revient en clignotant (néons qui s'amorcent), puis tient
       lumiere += (cible - lumiere) * (1 - Math.exp(-dt * 2.2));
       const scintille = courant && lumiere < 0.92 ? (Math.sin(t * 47) > 0.2 ? 1 : 0.35) : 1;
-      uLumiere.value = lumiere * scintille;
+      lumiereCourante = lumiere * scintille;
+      uLumiere.value = Math.min(1.6, lumiereCourante + eclair);
       uSecours.value = 1 - lumiere;
       uPulse.value = 0.5 + 0.5 * Math.sin(t * 3.1);
-      uSol.value = lumiere;
+      uSol.value = Math.min(1.6, lumiere + eclair);
       void C_SECOURS; void C_LUMIERE;
     },
     dispose() {

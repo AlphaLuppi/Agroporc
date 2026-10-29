@@ -35,7 +35,7 @@ export const ECHANTILLONS: Readonly<Record<IdEchantillon, DefEchantillon>> = {
   /** rugissement du tigre chef (le gros tigre rouge à toque) */
   grognementChef: { url: "/arene/sons/grognement-chef.mp3", gain: 0.85, voixMax: 2 },
   /** coup de patte du tigre chef : son du joueur (retour 16), provisoirement un effort d'ogre ralenti ; pic calé sur le contact */
-  griffeChef: { url: "/arene/sons/griffe-chef.mp3", gain: 0.9, voixMax: 2 },
+  griffeChef: { url: "/arene/sons/griffe-chef.mp3", gain: 0.9, voixMax: 3 },
   /** micro-ondes Gratinator (Pack-a-Punch) : porte qui claque + bourdonnement de cuisson (3,4 s) */
   microOndesCuisson: { url: "/arene/sons/microondes-cuisson.mp3", gain: 0.6, voixMax: 1 },
   /** trois bips à 1 kHz de fin de cuisson, loquet de la porte */

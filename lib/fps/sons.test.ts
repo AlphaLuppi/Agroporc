@@ -410,6 +410,22 @@ describe("sons : échantillons du mode zombies", () => {
     s2.dispose();
   });
 
+  it("(v8, retour 16) chaque coup de patte du chef s'entend : ses voix prises, la griffe synthétisée prend le relais", async () => {
+    const url = ECHANTILLONS.griffeChef.url;
+    servirEchantillons({ [url]: { duree: 1.2, pic: 0.2 } });
+    const sons = creerSons();
+    sons.prechargerZombies();
+    await attendre(); await attendre();
+    journal.departs = [];
+    for (let k = 0; k < ECHANTILLONS.griffeChef.voixMax; k++) sons.griffeChef();
+    expect(journal.departs.filter((x) => (x.buffer as { url?: string } | null)?.url === url)).toHaveLength(ECHANTILLONS.griffeChef.voixMax);
+    const avant = journal.demarres;
+    sons.griffeChef();
+    expect(journal.demarres).toBeGreaterThan(avant);
+    expect(journal.departs.filter((x) => (x.buffer as { url?: string } | null)?.url === url)).toHaveLength(ECHANTILLONS.griffeChef.voixMax);
+    sons.dispose();
+  });
+
   it("limite de voix : au-delà de `voixMax` lectures du même son, la suivante est ignorée (pas de repli)", async () => {
     const url = ECHANTILLONS.rebondGrenade.url;
     servirEchantillons({ [url]: { duree: 0.3, pic: 0 } });

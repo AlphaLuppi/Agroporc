@@ -3,7 +3,9 @@
  * groupe de tigres façon Black Ops 1 : sortie du sol (dans une cour), approche d'une fenêtre puis arrachage des planches et saut, chasse par
  * champ de distance sur la grille de navigation (les fenêtres y sont des murs : un tigre entré ne ressort pas), griffe à travers les fenêtres,
  * séparation entre tigres, corps écartés des joueurs debout (`corps-tigres.ts`), tigres bloqués signalés (le service les fait réapparaître), formes de touche avec rejeu de latence (tirs et mêlée),
- * blessures et snap compact (`encoderZombies`). Les petits du Truck Muche franchissent les fenêtres d'un bond (leur propre grille).
+ * blessures et snap compact (`encoderZombies`). Les petits du Truck Muche franchissent les fenêtres d'un bond (leur propre grille), mordent
+ * vite et virent sec ; les mini Trucks Muche (type 4) foncent, allument leur mèche au contact et sautent (`meche`, `explose` : le service
+ * applique le souffle).
  *
  * Repère de protocole.ts : avant d'un cap = (−sin cap, −cos cap). Le temps `t` est en ms (horloge du serveur), `dt` en secondes.
  * Spec : docs/superpowers/specs/2026-10-28-zombies-bo1-design.md (« Barricades à planches », « Équilibrage »)
@@ -11,10 +13,12 @@
 import { distanceCapsule, resoudre, visible, type Capsule, type ContactCapsule, type Monde } from "./collision";
 import { capsuleTigre, type CorpsTigre } from "./corps-tigres";
 import { DIST_INF, carteNavigation, champDistance, descente, type CarteNav } from "./navigation";
-import { FORME_TIGRE, capVers, enrouler, pointLocal, toucheTigre } from "./monstres";
+import { capVers, enrouler, formeZombie, pointLocal, toucheTigre } from "./monstres";
 import { SILHOUETTE, encoderZombies, type ModeZombie, type SnapZombies, type Vec3, type ZombieSnap, type Zone } from "./protocole";
 import type { Fenetre } from "./zombies-carte";
-import { ZOMBIES, echelleZombie, type Allure, type TypeZombie } from "./zombies-vagues";
+import {
+  ZOMBIES, armementGriffe, echelleZombie, estLivraison, rotationArmement, rotationZombie, separationZombie, type Allure, type TypeZombie,
+} from "./zombies-vagues";
 
 /**
  * Joueur vu par la simulation : id, pieds, debout (vivant). Un joueur à terre ou éliminé n'est pas une cible. `delaiMs` : aller-retour réseau
@@ -44,7 +48,11 @@ export type EvenementZombie =
   /** le tigre saute par la fenêtre */
   | { t: "saut"; tigre: number; fenetre: string }
   /** le tigre n'a pas approché un joueur depuis longtemps (coincé) : le service le retire et le remet dans la file */
-  | { t: "bloque"; tigre: number };
+  | { t: "bloque"; tigre: number }
+  /** (v8) un mini Truck allume sa mèche près d'un joueur (le drapeau « griffe » du snap) */
+  | { t: "meche"; tigre: number; joueur: string }
+  /** (v8) un mini Truck saute (mèche consumée ou contact) en `p` : le service le retire et applique le souffle */
+  | { t: "explose"; tigre: number; p: Vec3 };
 
 /** Barricades vues par la simulation : planches restantes, arrachage d'une planche (le service tient l'état). */
 export interface Barricades { planches(fenetre: string): number; arracher(fenetre: string): void }
@@ -184,9 +192,9 @@ export function creerSimuZombies(opts: OptionsSimuZombies) {
   /** dernier instant connu (ms), pour dater le drapeau d'apparition d'un snap */
   let horloge = 0;
 
-  const grilleDe = (z: Zombie): 0 | 1 => (z.type === 3 ? 1 : 0);
-  /** les petits et les tigres qui sautent ignorent les fenêtres */
-  const ignoreFenetres = (z: Zombie): boolean => z.type === 3 || z.mode === "saut";
+  const grilleDe = (z: Zombie): 0 | 1 => (estLivraison(z.type) ? 1 : 0);
+  /** les petits, les mini Trucks et les tigres qui sautent ignorent les fenêtres */
+  const ignoreFenetres = (z: Zombie): boolean => estLivraison(z.type) || z.mode === "saut";
 
   function caseJoueur(x: number, z: number): number {
     const c = cartes[0];
@@ -303,13 +311,33 @@ export function creerSimuZombies(opts: OptionsSimuZombies) {
     const d = Math.hypot(cible.p[0] - z.p[0], cible.p[2] - z.p[2]);
     if (d <= porteePatte(z.echelle, allonge) - ZOMBIES.griffeMargeDepartM && visible(monde, [z.p[0], 1, z.p[2]], [cible.p[0], 1, cible.p[2]])) {
       if (t >= z.prochaineGriffeT && t - z.apparuT >= ZOMBIES.apparitionMs) {
-        z.armeFin = t + ZOMBIES.griffeArmeS * 1000;
+        z.armeFin = t + armementGriffe(z.type) * 1000;
         z.cibleGriffe = cible.id;
         evenements.push({ t: "griffeArmee", tigre: z.id, joueur: cible.id });
       }
       return true;
     }
     return false;
+  }
+
+  /**
+   * Mèche d'un mini Truck : allumée à `contactM` m d'un joueur debout en vue (après la grâce d'apparition), elle saute `mecheS` s plus tard
+   * ou aussitôt au contact (`contactImmediatM`) ; une seule explosion (`armeFin` passe à −1 : le service le retire au même tic). Vrai
+   * quand il vient de sauter (il ne roule plus).
+   */
+  function meche(z: Zombie, t: number, cible: JoueurZombie, d: number, evenements: EvenementZombie[]): boolean {
+    if (z.armeFin < 0) return true;
+    const M = ZOMBIES.miniTruck;
+    if (z.armeFin === 0) {
+      if (d > M.contactM || t - z.apparuT < ZOMBIES.apparitionMs || !visible(monde, [z.p[0], 1, z.p[2]], [cible.p[0], 1, cible.p[2]])) return false;
+      z.armeFin = t + M.mecheS * 1000;
+      z.cibleGriffe = cible.id;
+      evenements.push({ t: "meche", tigre: z.id, joueur: cible.id });
+    }
+    if (t < z.armeFin && d > M.contactImmediatM) return false;
+    z.armeFin = -1;
+    evenements.push({ t: "explose", tigre: z.id, p: [z.p[0], 0, z.p[2]] });
+    return true;
   }
 
   // ---- tic ----
@@ -322,7 +350,6 @@ export function creerSimuZombies(opts: OptionsSimuZombies) {
     for (const j of joueurs) if (j.vivant) debout.push(j);
     if (!debout.length) return evenements;
     majChamps(t);
-    const rot = ZOMBIES.rotationMax * dt;
 
     for (const z of zombies) {
       // joueur debout le plus proche
@@ -387,7 +414,10 @@ export function creerSimuZombies(opts: OptionsSimuZombies) {
           const vise = leurre ? leurre.p : cible.p;
           const idVise = leurre ? `leurre:${leurre.id}` : cible.id;
           const dVise = leurre ? dLeurre : dMin;
-          if (leurre) {
+          if (z.type === 4) {
+            // mini Truck : il fonce sur le joueur le plus proche (les leurres ne l'attirent pas), sa mèche s'allume au contact et ne s'éteint plus
+            if (meche(z, t, cible, dMin, evenements)) { marche = false; break; }
+          } else if (leurre) {
             tx = vise[0]; tz = vise[2];
             if (z.armeFin > 0) annulerGriffe(z);
             if (dLeurre <= DISTANCE_LEURRE_M) { marche = false; z.progresT = t; z.meilleureDistance = dLeurre; break; }
@@ -419,13 +449,18 @@ export function creerSimuZombies(opts: OptionsSimuZombies) {
       let ecart = enrouler(voulu - z.cap);
       if (z.neuf) { z.cap = voulu; ecart = 0; z.neuf = false; z.histoN = 0; z.histoTete = 0; } // la pose d'apparition (cap fictif) n'est pas rejouée
       else {
-        // pendant l'armement d'un coup de patte, le tigre suit sa cible lentement : on peut le contourner
-        const r = z.armeFin > 0 ? ZOMBIES.griffeRotationMax * dt : rot;
+        // pendant l'armement d'un coup de patte, le tigre suit sa cible lentement : on peut le contourner (le petit, lui, la suit) ;
+        // la mèche d'un mini Truck ne change pas sa conduite
+        const r = (z.armeFin > 0 && z.type !== 4 ? rotationArmement(z.type) : rotationZombie(z.type)) * dt;
         z.cap = enrouler(z.cap + Math.max(-r, Math.min(r, ecart)));
       }
 
       if (marche) {
-        const v = z.vitesse * Math.max(0.25, Math.cos(ecart));
+        // le mini Truck fonce sans ralentir dans les virages (sauf pour faire demi-tour) et freine une fois sa mèche allumée (il saute près
+        // du joueur au lieu de le dépasser) ; un tigre ralentit quand il tourne
+        const v = z.type === 4
+          ? z.vitesse * (Math.abs(ecart) > Math.PI / 2 ? 0.5 : 1) * (z.armeFin > 0 ? ZOMBIES.miniTruck.vitesseMeche : 1)
+          : z.vitesse * Math.max(0.25, Math.cos(ecart));
         const [fx, fz] = avant(z.cap);
         const r = resoudre(monde, [z.p[0] + fx * v * dt, 0, z.p[2] + fz * v * dt], ZOMBIES.rayonTigre, ZOMBIES.hauteurTigre, ignoreFenetres(z));
         z.p[0] = r.p[0]; z.p[2] = r.p[2];
@@ -470,7 +505,8 @@ export function creerSimuZombies(opts: OptionsSimuZombies) {
     if (n < 2) return;
     if (suivant.length < n) throw new Error("trop de tigres pour la grille de séparation");
     tetes.fill(-1);
-    const L = ZOMBIES.separationM;
+    // cases de la taille de la plus grande séparation (mini Truck) : deux ennemis trop proches sont toujours dans des cases voisines
+    const L = ZOMBIES.miniTruck.separationM;
     const clef = (i: number, j: number) => (((i * 73856093) ^ (j * 19349663)) >>> 0) & (NB_BUCKETS - 1);
     for (let k = 0; k < n; k++) {
       const z = zombies[k];
@@ -491,10 +527,11 @@ export function creerSimuZombies(opts: OptionsSimuZombies) {
             if (a.mode === "saut" || b.mode === "saut" || a.mode === "sol" || b.mode === "sol") continue;
             let dx = b.p[0] - a.p[0], dz = b.p[2] - a.p[2];
             const d2 = dx * dx + dz * dz;
-            if (d2 >= L * L) continue;
+            const sep = a.type === b.type ? separationZombie(a.type) : (separationZombie(a.type) + separationZombie(b.type)) / 2;
+            if (d2 >= sep * sep) continue;
             let d = Math.sqrt(d2);
             if (d < 1e-6) { dx = Math.cos(k); dz = Math.sin(k); d = 1; }
-            const pousse = (L - Math.sqrt(d2)) / 2;
+            const pousse = (sep - Math.sqrt(d2)) / 2;
             const ux = dx / d, uz = dz / d;
             a.p[0] -= ux * pousse; a.p[2] -= uz * pousse;
             b.p[0] += ux * pousse; b.p[2] += uz * pousse;
@@ -518,7 +555,7 @@ export function creerSimuZombies(opts: OptionsSimuZombies) {
     if (!z) return null;
     let meilleur: TouchZombie | null = null;
     for (const [x, zz, cap] of poses(z, t, ZOMBIES.rejeuMs)) {
-      const h = toucheTigre(o, d, portee, [x, 0, zz], cap, z.echelle, monde, ZOMBIES.margeTouche);
+      const h = toucheTigre(o, d, portee, [x, 0, zz], cap, z.echelle, monde, ZOMBIES.margeTouche, formeZombie(z.type));
       if (h && (!meilleur || h.distance < meilleur.distance)) meilleur = h;
     }
     return meilleur;
@@ -530,7 +567,7 @@ export function creerSimuZombies(opts: OptionsSimuZombies) {
     const angleCone = Math.acos(Math.max(-1, Math.min(1, cosCone)));
     let meilleur: { distance: number } | null = null;
     for (const [x, zz, cap] of poses(z, t, ZOMBIES.rejeuMeleeMs)) {
-      for (const s of FORME_TIGRE) {
+      for (const s of formeZombie(z.type)) {
         const c = pointLocal([x, 0, zz], cap, z.echelle, s.d, s.h, s.a);
         const r = s.r * z.echelle;
         const vx = c[0] - o[0], vy = c[1] - o[1], vz = c[2] - o[2];

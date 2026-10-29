@@ -95,6 +95,11 @@ export interface Sons {
   canon(position?: PositionSon): void;
   /** (v4) Klaxon de camion (trompe à air, accord de trois notes) du Truck Muche fou, entendu de loin dans toute l'arène. */
   klaxonCamion(position?: PositionSon): void;
+  /**
+   * (v8, zombies) Klaxon aigu et nasillard d'un mini Truck Muche : deux « pouet » qui montent ; `meche` : mèche allumée, quatre coups
+   * pressés et plus aigus (il va sauter).
+   */
+  klaxonMiniTruck(position?: PositionSon, meche?: boolean): void;
   /** (v4) Bâtiment qui s'effondre (grondement long et fracas). */
   effondrement(position?: PositionSon): void;
   /** (v4) Pas lourd du tigre ou du titan. */
@@ -105,7 +110,7 @@ export interface Sons {
    */
   rugissementTigre(position?: PositionSon, mort?: boolean): boolean;
   /** (zombies) Coup de patte d'un tigre, joué au début de l'armement : feulement, puis griffes qui fendent l'air et choc au contact, spatialisé. */
-  griffe(position?: PositionSon): void;
+  griffe(position?: PositionSon, armeS?: number): void;
   /** (zombies) Achat accepté (caisse enregistreuse) ou refusé (buzz grave). */
   achat(ok: boolean): void;
   /** (zombies) Pièce gagnée (touche, kill, bonus de manche) : tic cristallin. */
@@ -1164,6 +1169,21 @@ export function creerSons(): Sons {
         ton(lp, t, { dur: 0.95, type: "square", f0: f * 1.004, f1: f * 0.975, gain: gain * 0.35, att: 0.03 });
       }
     },
+    klaxonMiniTruck(position, meche = false) {
+      if (!prete()) return;
+      const out = sortie(position);
+      const t = ctx!.currentTime + 0.001;
+      // petite trompe électrique : carré + dent de scie désaccordés, nasillard (passe-bande), coups courts qui montent
+      const coups = meche ? 4 : 2;
+      const pas = meche ? 0.075 : 0.16;
+      for (let i = 0; i < coups; i++) {
+        const f = (meche ? 1180 : 880) * (1 + 0.12 * i);
+        const ti = t + i * pas;
+        ton(out, ti, { dur: pas * 0.8, type: "square", f0: f, f1: f * 1.02, gain: 0.12, att: 0.005 });
+        ton(out, ti, { dur: pas * 0.8, type: "sawtooth", f0: f * 1.5 * 1.006, f1: f * 1.5, gain: 0.07, att: 0.005 });
+        bruit(out, ti, { dur: pas * 0.5, type: "bandpass", f0: f * 2, q: 6, gain: 0.05 });
+      }
+    },
     effondrement(position) {
       if (!prete()) return;
       const out = sortie(position);
@@ -1201,13 +1221,13 @@ export function creerSons(): Sons {
       bruit(out, t + 0.05, { dur: dur * 0.7, type: "bandpass", f0: 760, f1: 420, q: 5, gain: 0.1, att: 0.1 });
       return true;
     },
-    griffe(position) {
+    griffe(position, armeS) {
       if (!prete()) return;
       const out = sortie(position);
       const t = ctx!.currentTime + 0.001;
       // le coup s'annonce : feulement grave pendant l'armement (le tigre se cabre), puis la patte fend l'air et claque à l'instant du contact
-      // (`ZOMBIES.griffeArmeS`, le même que le serveur) : on l'entend venir, on a le temps de s'écarter
-      const c = ZOMBIES.griffeArmeS;
+      // (`ZOMBIES.griffeArmeS`, le même que le serveur ; (v8) `armeS` : la morsure du petit, plus courte) : on l'entend venir
+      const c = Math.max(0.14, armeS ?? ZOMBIES.griffeArmeS);
       ton(out, t, { dur: c * 0.85, type: "sawtooth", f0: 95, f1: 70, gain: 0.22, att: 0.12 });
       bruit(out, t, { dur: c * 0.85, type: "bandpass", f0: 420, f1: 300, q: 1.6, gain: 0.28, att: 0.15 });
       bruit(out, t + c - 0.13, { dur: 0.16, type: "bandpass", f0: 700, f1: 3000, q: 1.1, gain: 0.5, att: 0.1 });
@@ -1448,7 +1468,9 @@ export function creerSons(): Sons {
       if (pic !== null) {
         // le pic du fichier tombe au contact du serveur (même calage que le claquement synthétisé de `griffe`)
         const { retard, decalage } = departCale(pic, ZOMBIES.griffeArmeS);
-        if (jouerEchantillon("griffeChef", position, { retard, decalage }) !== "absent") return;
+        // (v8, retour 16) toutes ses voix prises (plusieurs chefs aux planches) : la griffe synthétisée, jamais un coup muet
+        const r = jouerEchantillon("griffeChef", position, { retard, decalage });
+        if (r !== "absent" && r !== "plein") return;
       } else telecharger(ECHANTILLONS.griffeChef.url);
       api.griffe(position);
     },

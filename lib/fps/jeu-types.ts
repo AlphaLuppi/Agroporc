@@ -298,13 +298,17 @@ export interface JeuHandle {
      * d'essai qui courait là (cap `cap`, type `type`), sans tigre du serveur. false si le tigre est inconnu (ou le modèle pas prêt)
      */
     tuerZombie(id: number, o?: {
-      arme?: ArmeId; ameliore?: boolean; zone?: Zone; cause?: "explosion" | "nuke" | "melee"; src?: Vec3; p?: Vec3; cap?: number; type?: 0 | 1 | 2 | 3;
+      arme?: ArmeId; ameliore?: boolean; zone?: Zone; cause?: "explosion" | "nuke" | "melee"; src?: Vec3; p?: Vec3; cap?: number; type?: 0 | 1 | 2 | 3 | 4;
     }): boolean;
     /**
      * (v8) traite `m` comme s'il venait du serveur, côté client seulement (captures : boîtes du Happy hour, Micro-ondes, ouverture d'une
      * porte) ; le serveur n'en sait rien
      */
     simuler(m: MessageServeur): void;
+    /** (zombies, v8) la foudre d'une manche du Truck frappera `p` dans `dansS` s (côté client seulement : captures) ; false hors zombies */
+    eclair(p: Vec3, dansS?: number): boolean;
+    /** (zombies, v8) brouillard et ciel d'une manche du Truck allumés ou levés (côté client seulement : captures) ; false hors zombies */
+    ambianceTruck(on: boolean): boolean;
     /** chat vocal : connexions, audibilité, joueurs entendus */
     voix(): Record<string, unknown>;
     /**

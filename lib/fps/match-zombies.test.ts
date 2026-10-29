@@ -1030,7 +1030,11 @@ describe("manches du Truck Muche", () => {
     expect(b.svc.etat().mancheTruck).toBe(true);
     let t = T_MANCHE1 + 100;
     let petits = 0;
-    for (; t < T_MANCHE1 + 30_000 && petits === 0; t += 100) { b.svc.tic(t); petits = tigresVivants(b).filter((z) => z.type === 3).length; }
+    // (v8) la foudre lâche les premiers petits avant que le Truck ne soit à quai
+    for (; t < T_MANCHE1 + 30_000 && (petits === 0 || b.svc.etat().truck?.phase !== "livraison"); t += 100) {
+      b.svc.tic(t);
+      petits = tigresVivants(b).filter((z) => z.type === 3).length;
+    }
     expect(petits).toBeGreaterThan(0);
     expect(b.svc.etat().truck).toMatchObject({ phase: "livraison" });
     expect(b.svc.snap()!.t).toHaveLength(5);
@@ -1051,6 +1055,115 @@ describe("manches du Truck Muche", () => {
     }
     expect(munitions).toBe(true);
     expect(b.svc.etat()).toMatchObject({ phase: "pause", manche: 2, mancheTruck: false });
+  });
+});
+
+describe("(v8) manches du Truck Muche vénères : foudre, petits, mini Trucks", () => {
+  /** Fait tourner une manche du Truck (solo, joueur increvable) et relève naissances, éclairs, vivants, sauts. */
+  function derouler(opts: Partial<OptionsServiceZombies>, duree: number, chaque?: (b: Banc, t: number, s: Sortie[]) => void) {
+    const b = partieEnCours(["a"], { mancheTruck: 1, ...opts });
+    const j = b.j("a");
+    j.pv = 1e9;
+    const nes = new Map<number, { t: number; p: Vec2; type: number }>();
+    const eclairs: { t: number; p: Vec3; dans?: number }[] = [];
+    let vivantsMax = 0;
+    const sorties: Sortie[] = [];
+    for (let t = T_MANCHE1; t <= T_MANCHE1 + duree; t += 50) {
+      const s = b.svc.tic(t);
+      sorties.push(...s);
+      for (const m of msgs(s, "zevt")) if (m.e.e === "eclair") eclairs.push({ t, p: m.e.p, dans: m.e.dans });
+      const vivants = tigresVivants(b);
+      vivantsMax = Math.max(vivantsMax, vivants.length);
+      for (const z of vivants) if (!nes.has(z.id)) nes.set(z.id, { t, p: [z.x, z.z], type: z.type });
+      chaque?.(b, t, s);
+    }
+    return { b, j, nes, eclairs, vivantsMax, sorties };
+  }
+
+  it("la foudre frappe près du joueur dans sa zone : premier ennemi moins de 3 s après le début des apparitions, un éclair annoncé par ennemi", () => {
+    const { j, nes, eclairs, vivantsMax } = derouler({ degatsGriffe: 0 }, 25_000);
+    const premier = Math.min(...[...nes.values()].map((n) => n.t));
+    expect(premier - T_PREMIER_TIGRE).toBeLessThan(3_000);
+    expect(eclairs.length).toBeGreaterThan(3);
+    for (const e of eclairs) {
+      expect(e.dans).toBe(600);
+      // l'ennemi naît sous l'éclair, 0,6 s plus tard
+      const n = [...nes.values()].find((x) => x.t >= e.t && Math.hypot(x.p[0] - e.p[0], x.p[1] - e.p[2]) < 0.6);
+      expect(n, `éclair en ${e.p}`).toBeDefined();
+      expect(n!.t - e.t).toBeGreaterThanOrEqual(550);
+      expect(n!.t - e.t).toBeLessThanOrEqual(700);
+      // dans l'open space où se tient le joueur, entre 4 et 18 m de lui
+      expect(zoneEn(ZONES_SOL, e.p[0], e.p[2])).toBe("open");
+      const d = Math.hypot(e.p[0] - j.p[0], e.p[2] - j.p[2]);
+      expect(d).toBeGreaterThanOrEqual(4);
+      expect(d).toBeLessThanOrEqual(18);
+    }
+    // plafond de 4 + 3 par joueur
+    expect(vivantsMax).toBeLessThanOrEqual(7);
+    expect(vivantsMax).toBeGreaterThanOrEqual(4);
+    // petits et mini Trucks
+    expect([...nes.values()].some((n) => n.type === 3)).toBe(true);
+    expect([...nes.values()].some((n) => n.type === 4)).toBe(true);
+  });
+
+  it("un mini Truck qui saute contre le joueur le blesse (souffle de 15 à 80 PV) et disparaît sans rapporter de kill", () => {
+    let saut: Sortie[] | null = null;
+    const { j, nes } = derouler({}, 30_000, (_b, _t, s) => {
+      if (!saut && msgs(s, "zevt").some((m) => m.e.e === "miniTruck")) saut = s;
+    });
+    expect(saut).not.toBeNull();
+    const morts = msgs(saut!, "zombieMort").filter((m) => m.par === "");
+    expect(morts.length).toBeGreaterThanOrEqual(1);
+    expect(morts[0].cause).toBe("explosion");
+    // il épargne les siens : seul le mini Truck meurt
+    expect(morts.every((m) => nes.get(Number(m.id.slice(1)))?.type === 4)).toBe(true);
+    const coups = msgs(saut!, "degats").filter((m) => m.cible === "a");
+    expect(coups.length).toBeGreaterThanOrEqual(1);
+    expect(coups[0].degats).toBeGreaterThanOrEqual(15);
+    expect(coups[0].degats).toBeLessThanOrEqual(80);
+    expect(j.kills).toBe(0);
+  });
+
+  it("un mini Truck abattu saute 120 ms plus tard ; son souffle emporte les ennemis voisins et rapporte leurs kills au tireur", () => {
+    const b = partieEnCours(["a"], { mancheTruck: 1, degatsGriffe: 0 });
+    const j = b.j("a");
+    j.pv = 1e9;
+    let t = T_MANCHE1;
+    let mini: ReturnType<typeof tigresVivants>[number] | undefined;
+    for (; t < T_MANCHE1 + 30_000 && !mini; t += 50) { b.svc.tic(t); mini = tigresVivants(b).find((z) => z.type === 4 && !z.griffe); }
+    expect(mini).toBeDefined();
+    const s1 = b.svc.blesser(`z${mini!.id}`, 1e7, j, "corps", t);
+    expect(msgs(s1, "zombieMort").map((m) => m.id)).toContain(`z${mini!.id}`);
+    expect(msgs(s1, "zevt").some((m) => m.e.e === "miniTruck")).toBe(false);
+    const killsAvant = j.kills;
+    const voisins = tigresVivants(b).filter((z) => Math.hypot(z.x - mini!.x, z.z - mini!.z) < 2.5).length;
+    const s2 = avancer(b, t + 50, t + 200);
+    const souffle = msgs(s2, "zevt").map((m) => m.e).find((e) => e.e === "miniTruck") as Extract<MessageServeur, { t: "zevt" }>["e"] & { e: "miniTruck" };
+    expect(souffle).toBeDefined();
+    expect(Math.hypot(souffle.p[0] - mini!.x, souffle.p[2] - mini!.z)).toBeLessThan(1);
+    expect(souffle).toMatchObject({ rayon: ZOMBIES.miniTruck.souffleM });
+    // les voisins pris dans le souffle (en vue du centre) sont crédités au tireur
+    const tues = msgs(s2, "zombieMort").filter((m) => m.par === "a" && m.cause === "explosion");
+    expect(j.kills - killsAvant).toBe(tues.length);
+    if (voisins) expect(tues.length).toBeGreaterThan(0);
+  });
+
+  it("le Truck Muche rit à l'ouverture de sa porte, sous la moitié de ses PV et en explosant", () => {
+    const b = partieEnCours(["a"], { mancheTruck: 1, degatsGriffe: 0 });
+    const j = b.j("a");
+    j.pv = 1e9;
+    let t = T_MANCHE1;
+    const rires: string[] = [];
+    for (; t < T_MANCHE1 + 30_000 && b.svc.etat().truck?.phase !== "livraison"; t += 50) {
+      for (const m of msgs(b.svc.tic(t), "zevt")) if (m.e.e === "truck") rires.push(m.e.quoi);
+    }
+    expect(rires).toEqual(["porte", "rire"]);
+    const pvMax = 2_500;
+    const quoi = (s: Sortie[]) => msgs(s, "zevt").flatMap((m) => (m.e.e === "truck" ? [m.e.quoi] : []));
+    expect(quoi(b.svc.blesserTruck(pvMax * 0.4, j, t))).toEqual([]);
+    expect(quoi(b.svc.blesserTruck(pvMax * 0.2, j, t))).toEqual(["rire"]);
+    expect(quoi(b.svc.blesserTruck(pvMax * 0.1, j, t))).toEqual([]);
+    expect(quoi(b.svc.blesserTruck(pvMax, j, t))).toEqual(["explosion", "rire"]);
   });
 });
 

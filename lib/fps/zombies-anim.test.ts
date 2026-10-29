@@ -62,6 +62,19 @@ describe("animation d'un tigre zombie", () => {
     expect(griffe.duree).toBeGreaterThan(CONTACT_GRIFFE);
   });
 
+  it("(v8) la morsure du petit joue le geste à la cadence de son armement : le geste dure griffe.duree / cadence", () => {
+    const cadence = ZOMBIES.griffeArmeS / ZOMBIES.morsureArmeS;
+    const a = creerAnimZombie(4);
+    jouer(a, 0.5, 0);
+    let duree = 0;
+    a.maj(DT, 0, ZOMBIES.echellePetit, true, 0, cadence);
+    for (let i = 0; i < 120; i++) { if (a.geste()) duree += DT; a.maj(DT, 0, ZOMBIES.echellePetit, false, 0, cadence); }
+    expect(duree).toBeGreaterThan(griffe.duree / cadence - 2 * DT);
+    expect(duree).toBeLessThan(griffe.duree / cadence + 2 * DT);
+    // contact du geste accéléré = armement de la morsure du serveur
+    expect(CONTACT_GRIFFE / cadence).toBeCloseTo(ZOMBIES.morsureArmeS, 9);
+  });
+
   it("la griffe se joue UNE fois par front montant du drapeau, sur toute sa durée, et la patte avant droite bouge", () => {
     const a = creerAnimZombie(3);
     jouer(a, 1, 0);

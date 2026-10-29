@@ -24,7 +24,7 @@ function monter(...snaps: [number, number, ZombieSnap[]][]) {
   for (const [ts, r, l] of snaps) m.alimenter(ts, encoderZombies(r, l));
   return m;
 }
-const vue = (id: number, x: number, z: number, cap = 0, type: 0 | 1 | 2 = 0): ZombieVue => ({
+const vue = (id: number, x: number, z: number, cap = 0, type: 0 | 1 | 2 | 3 | 4 = 0): ZombieVue => ({
   id, x, z, cap, type, echelle: echelleZombie(type), griffe: false, apparition: false, pvPct: 100, vitesse: 0, allure: 0, mode: "chasse",
 });
 
@@ -154,6 +154,19 @@ describe("trouverZombieTouche", () => {
     expect(trouverZombieTouche(o, [1, 0, 0], 100, [T], monde)).toBeNull();
     expect(trouverZombieTouche([o[0], o[1], o[2] + 8], [-1, 0, 0], 100, [T], monde)).toBeNull();
     expect(trouverZombieTouche(o, [-1, 0, 0], 100, [], monde)).toBeNull();
+  });
+
+  it("(v8) un mini Truck se touche sur SA forme : la cabine (tête) devant, rien au-dessus du toit (1 m), le corps du tigre ne compte pas", () => {
+    const M = vue(9, 128, -50, 0, 4);
+    expect(M.echelle).toBe(3);
+    // cabine : à 0,45 m, de face (l'avant est −z)
+    expect(trouverZombieTouche([128, 0.45, -60], [0, 0, 1], 100, [M], monde)).toMatchObject({ cible: "z9", zone: "tete" });
+    // de côté, au milieu de la caisse
+    expect(trouverZombieTouche([140, 0.55, -50 + 0.3], [-1, 0, 0], 100, [M], monde)).toMatchObject({ cible: "z9", zone: "corps" });
+    // à 1,4 m : dans la silhouette d'un tigre de cette échelle, au-dessus du toit du mini Truck
+    expect(trouverZombieTouche([140, 1.4, -50 + 0.17 * 3], [-1, 0, 0], 100, [M], monde)).toBeNull();
+    // mêlée : même forme
+    expect(trouverZombiesMelee([128, 1.2, -51.6], [0, -0.5, 0.87], [M], "couteau", monde).map((x) => x.cible)).toEqual(["z9"]);
   });
 
   it("le plus proche des tigres l'emporte, n limite la lecture du tableau", () => {

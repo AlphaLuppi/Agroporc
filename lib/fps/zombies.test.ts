@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { SceneData } from "../agroparc3d/types";
 import { construireMonde, detruireBatiment, lancerRayon, resoudre } from "./collision";
-import { FORME_TIGRE, pointLocal } from "./monstres";
+import { FORME_TIGRE, enrouler, pointLocal } from "./monstres";
 import { carteNavigation, invaliderNavigation } from "./navigation";
 import { PAS_SNAP_ZOMBIE, decoderZombies, type Vec3 } from "./protocole";
 import { DISTANCE_LEURRE_M, GRIFFE_DELAI_MAX_MS, creerSimuZombies, porteePatte, touchePatte, type ArriveeZombie, type Barricades, type EvenementZombie, type JoueurZombie, type Leurre, type SpecZombie } from "./zombies";
@@ -61,7 +61,7 @@ describe("apparition et état", () => {
     expect(simu.zombie(a)).toMatchObject({ pv: 350, pvMax: 350, vitesse: 3.0, echelle: 2.7, type: 0, manche: 3, allure: 0, mode: "chasse", degats: 50 });
     expect(simu.zombie(b)).toMatchObject({ pv: pvZombie(5, 1), vitesse: 6.2, echelle: echelleZombie(1), allure: 1 });
     expect(simu.zombie(c)).toMatchObject({ pv: pvZombie(10, 2), echelle: 3.4, mode: "sol", degats: 80 });
-    expect(simu.zombie(d)).toMatchObject({ vitesse: 10, echelle: 1.5, degats: 30, rechargeGriffeS: 0.8 });
+    expect(simu.zombie(d)).toMatchObject({ vitesse: 13.5, echelle: 1.5, degats: 30, rechargeGriffeS: 0.45 });
     expect(simu.zombie(a)!.p).toEqual([128, 0, -55]);
     for (let k = 4; k < ZOMBIES.plafondVivants; k++) expect(simu.apparaitre(spec(1), COUR, CHASSE, 0)).not.toBeNull();
     expect(simu.nbVivants()).toBe(24);
@@ -739,5 +739,103 @@ describe("leurres (tigre à remontoir, v8)", () => {
     const { evenements } = courirLeurres(simu, 1_000, 4, [moi], [leurre]);
     expect(evenements.some((e) => e.t === "griffeArmee")).toBe(true);
     expect(dist(simu.zombie(id)!.p, moi.p)).toBeLessThan(dist(simu.zombie(id)!.p, leurre.p));
+  });
+});
+
+// =================================================================================================
+describe("(v8) ennemis des manches du Truck Muche : petits vénères et mini Trucks explosifs", () => {
+  it("la morsure d'un petit tombe 0,22 s après son armement, deux morsures sont espacées de l'armement plus 0,45 s de recharge", () => {
+    const { simu } = neuf();
+    simu.apparaitre(spec(5, 3, 2), [COUR[0] + 0.9, COUR[1]], CHASSE, 0);
+    const j = joueur("j1", ...COUR);
+    const { evenements } = courir(simu, 0, 3, [j]);
+    const armees = evenements.filter((e) => e.t === "griffeArmee");
+    const morsures = evenements.filter((e) => e.t === "griffe");
+    expect(morsures.length).toBeGreaterThanOrEqual(3);
+    const tic = DT * 1000;
+    expect(morsures[0].t0 - armees[0].t0).toBeGreaterThanOrEqual(ZOMBIES.morsureArmeS * 1000 - 1);
+    expect(morsures[0].t0 - armees[0].t0).toBeLessThanOrEqual(ZOMBIES.morsureArmeS * 1000 + tic + 1);
+    const ecart = armees[1].t0 - armees[0].t0;
+    expect(ecart).toBeGreaterThanOrEqual((ZOMBIES.morsureArmeS + ZOMBIES.morsureRechargeS) * 1000 - 1);
+    expect(ecart).toBeLessThanOrEqual((ZOMBIES.morsureArmeS + ZOMBIES.morsureRechargeS) * 1000 + 2 * tic + 1);
+    // ≈ 1,5 morsure par seconde
+    expect((morsures.length - 1) / ((morsures[morsures.length - 1].t0 - morsures[0].t0) / 1000)).toBeGreaterThan(1.4);
+  });
+
+  it("un petit rattrape un joueur qui sprinte (13,5 m/s contre 12,5) et vire sec", () => {
+    const { simu } = neuf();
+    const id = simu.apparaitre(spec(5, 3, 2), [118, -70], CHASSE, 0)!;
+    const z = simu.zombie(id)!;
+    let vmax = 0, dernier: Vec3 = [...z.p];
+    courir(simu, 0, 2, [joueur("j1", 160, -40)], () => { vmax = Math.max(vmax, dist(z.p, dernier) / DT); dernier = [...z.p]; });
+    expect(vmax).toBeGreaterThan(12.5);
+    expect(vmax).toBeLessThan(13.5 * 1.07);
+  });
+
+  it("un mini Truck fonce sur le joueur, allume sa mèche au contact (drapeau du snap) puis saute une seule fois, sans griffer", () => {
+    const { simu } = neuf();
+    const id = simu.apparaitre(spec(5, 4, 2), [COUR[0] + 14, COUR[1]], CHASSE, 0)!;
+    expect(simu.zombie(id)).toMatchObject({ echelle: 3, vitesse: 14, degats: 0 });
+    const j = joueur("j1", ...COUR);
+    let drapeau = false;
+    const { evenements } = courir(simu, 0, 4, [j], () => { const d = decoderZombies(simu.snap()); if (d[0]?.type === 4 && d[0].griffe) drapeau = true; });
+    expect(drapeau).toBe(true);
+    expect(evenements.some((e) => e.t === "griffe" || e.t === "griffeArmee")).toBe(false);
+    const meche = evenements.find((e) => e.t === "meche")!;
+    const explose = evenements.filter((e) => e.t === "explose");
+    expect(meche).toMatchObject({ tigre: id, joueur: "j1" });
+    expect(explose).toHaveLength(1);
+    expect(explose[0].t0 - meche.t0).toBeLessThanOrEqual(ZOMBIES.miniTruck.mecheS * 1000 + DT * 1000 + 1);
+    // il saute près du joueur (le simulateur ne le retire pas : c'est le service qui applique le souffle)
+    expect(dist((explose[0] as { p: Vec3 }).p, j.p)).toBeLessThan(ZOMBIES.miniTruck.contactM + 0.5);
+  });
+
+  it("un mini Truck vire mal (2,5 rad/s) et ne ralentit pas dans les virages : il fonce, on le prend de côté", () => {
+    const { simu } = neuf();
+    // il part vers −x, le joueur est sur son flanc
+    const id = simu.apparaitre(spec(5, 4, 2), [COUR[0] + 8, COUR[1]], CHASSE, 0, Math.PI / 2)!;
+    const z = simu.zombie(id)!;
+    courir(simu, 0, DT, [joueur("j1", COUR[0] + 20, COUR[1])]); // pose d'apparition
+    z.cap = Math.PI / 2;
+    const j = joueur("j1", COUR[0] + 4, COUR[1] - 12);
+    let cap = z.cap, p: Vec3 = [...z.p], vmin = Infinity;
+    courir(simu, 0, 0.5, [j], () => {
+      expect(Math.abs(enrouler(z.cap - cap))).toBeLessThanOrEqual(ZOMBIES.miniTruck.rotation * DT + 1e-9);
+      vmin = Math.min(vmin, dist(z.p, p) / DT);
+      cap = z.cap; p = [...z.p];
+    });
+    expect(vmin).toBeGreaterThan(ZOMBIES.miniTruck.vitesse * 0.9);
+  });
+
+  it("forme de touche du mini Truck : cabine (tête) à l'avant, caisse derrière, rien au-dessus d'un mètre", () => {
+    const { simu } = neuf();
+    const id = simu.apparaitre(spec(5, 4, 2), COUR, CHASSE, 0, 0)!;
+    // avant = −z : la cabine est vers −z
+    expect(simu.toucheZombie(id, [COUR[0], 0.45, COUR[1] - 6], [0, 0, 1], 20, 0)?.zone).toBe("tete");
+    expect(simu.toucheZombie(id, [COUR[0], 0.5, COUR[1] + 6], [0, 0, -1], 20, 0)?.zone).toBe("corps");
+    expect(simu.toucheZombie(id, [COUR[0], 1.6, COUR[1] + 6], [0, 0, -1], 20, 0)).toBeNull();
+  });
+
+  it("séparation par type : les petits se serrent (0,9 m), les mini Trucks s'écartent (1,8 m)", () => {
+    for (const [type, sep] of [[3, ZOMBIES.separationPetitM], [4, ZOMBIES.miniTruck.separationM]] as const) {
+      const { simu } = neuf();
+      const a = simu.apparaitre(spec(5, type, 2), [COUR[0], COUR[1]], CHASSE, 0)!;
+      const b = simu.apparaitre(spec(5, type, 2), [COUR[0] + 0.1, COUR[1]], CHASSE, 0)!;
+      courir(simu, 0, 0.05, [joueur("j1", COUR[0] + 40, COUR[1] + 20)]);
+      const d = dist(simu.zombie(a)!.p, simu.zombie(b)!.p);
+      expect(d).toBeGreaterThan(sep * 0.85);
+      expect(d).toBeLessThan(sep * 1.6);
+    }
+  });
+
+  it("snap : le type 4 (mini Truck) passe par le bit 10 des drapeaux (bits 8 et 9 : en feu, gelé)", () => {
+    const { simu } = neuf();
+    simu.apparaitre(spec(5, 4, 2), COUR, CHASSE, 0);
+    simu.apparaitre(spec(5, 3, 2), [COUR[0] + 5, COUR[1]], CHASSE, 0);
+    const s = simu.snap(2, 10);
+    expect(s.z[4] & 3).toBe(0);
+    expect((s.z[4] >> 10) & 1).toBe(1);
+    expect(s.z[4] & (256 | 512)).toBe(0);
+    expect(decoderZombies(s).map((z) => z.type)).toEqual([4, 3]);
   });
 });

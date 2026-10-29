@@ -141,3 +141,37 @@ describe("charge zombies : 24 tigres, 10 s à 60 Hz, portes achetées en pleine 
     });
   }
 });
+
+describe("(v8) charge d'une manche du Truck Muche : 4 joueurs, 16 ennemis vivants (plafond 4 + 3 j), 5 s à 60 Hz", () => {
+  it("foudre, petits, mini Trucks qui sautent : temps CPU moyen d'un tic dans le budget", () => {
+    const monde = construireMondeZombies(scene);
+    const s = new Salle(monde, DEPARTS.map((d) => [d[0], d[1]] as [number, number]), lcg(5), T0, {
+      zombies: { pauseMs: 500, degatsGriffe: 0, total1: 300, mancheTruck: 1 },
+    });
+    const ids = ["j0", "j1", "j2", "j3"];
+    ids.forEach((id, i) => s.connecter(id, `Agent${i}`, T0));
+    s.recevoir(ids[0], { t: "lancerPartie" }, T0);
+    ids.forEach((id) => s.recevoir(id, { t: "rejoindre" }, T0));
+    const j = (id: string) => s.inspecter(id) as JoueurSalle;
+    let t = T0, vivants = 0;
+    for (let k = 0; k < 400 && vivants < 16; k++) {
+      t += 100;
+      for (const id of ids) { j(id).etatT = t; j(id).protegeJusqua = 0; }
+      for (const x of s.tic(t)) if (x.m.t === "snap" && x.m.zombies) vivants = decoderZombies(x.m.zombies).length;
+    }
+    expect(vivants).toBe(16);
+    let cpu = 0, tics = 0, pire = 0;
+    for (let k = 0; k < 300; k++) {
+      const maintenant = t + 100 + Math.round(k * TIC_MS);
+      for (const id of ids) j(id).etatT = maintenant;
+      const debut = performance.now();
+      s.tic(maintenant);
+      const dt = performance.now() - debut;
+      cpu += dt; tics++; pire = Math.max(pire, dt);
+    }
+    // eslint-disable-next-line no-console
+    console.log(`[charge Truck 4 joueurs] tic moyen ${(cpu / tics).toFixed(3)} ms, pire ${pire.toFixed(2)} ms`);
+    expect(s.resumeZombies()!.phase).toBe("manche");
+    expect(cpu / tics).toBeLessThan(BUDGET_TIC_MOYEN_MS);
+  });
+});
