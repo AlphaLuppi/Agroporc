@@ -1116,6 +1116,24 @@ export function creerModeleArmeMonde(id: ArmeId, couleur: CouleurEntree): { grou
   return { group: modele.group, dispose() { modele.dispose(); modele.group.removeFromParent(); libererMateriaux(m); } };
 }
 
+/**
+ * Boîte englobante des maillages et lignes de `racine` dans le repère LOCAL de `racine` (et non du monde, comme `Box3.setFromObject`) : ce
+ * qu'on y pose en enfant (organe de visée) se place sur l'arme où qu'elle soit (en main sous la caméra, à l'œil d'un joueur).
+ */
+export function boiteLocale(racine: THREE.Object3D): THREE.Box3 {
+  racine.updateWorldMatrix(true, true);
+  const inverse = racine.matrixWorld.clone().invert();
+  const boite = new THREE.Box3(), part = new THREE.Box3(), relative = new THREE.Matrix4();
+  racine.traverse((o) => {
+    const geo = (o as THREE.Mesh).geometry as THREE.BufferGeometry | undefined;
+    if (!geo || !geo.attributes?.position) return;
+    if (!geo.boundingBox) geo.computeBoundingBox();
+    relative.multiplyMatrices(inverse, o.matrixWorld);
+    boite.union(part.copy(geo.boundingBox!).applyMatrix4(relative));
+  });
+  return boite;
+}
+
 export function creerArmeEnMain(idInitial: ArmeId, couleur: CouleurEntree = COULEUR_ARME_PAR_DEFAUT): ArmeEnMain {
   const col = new THREE.Color(couleur);
   const m = creerMateriaux(col, true);
@@ -1179,8 +1197,9 @@ export function creerArmeEnMain(idInitial: ArmeId, couleur: CouleurEntree = COUL
   function poserViseur(): void {
     if (pieceViseur) { pieceViseur.removeFromParent(); pieceViseur = null; }
     if (viseur === "fer" || estMelee(id) || id === "sniper") { ordonner(group, true, 1000); return; }
-    const boite = new THREE.Box3().setFromObject(modele.group);
-    const y = boite.max.y - modele.group.position.y + 0.004;
+    // boîte dans le repère du modèle (la pièce en est l'enfant) : `setFromObject` la donnerait dans le monde, caméra et porte-arme compris
+    const boite = boiteLocale(modele.group);
+    const y = boite.max.y + 0.004;
     const z = (modele.prise.z + modele.bouche.z) / 2;
     const g = new THREE.Group();
     g.position.set(0, y, z);

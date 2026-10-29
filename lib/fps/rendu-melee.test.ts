@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
 import * as THREE from "three";
-import { creerArmeEnMain } from "./rendu";
+import { boiteLocale, creerArmeEnMain } from "./rendu";
 import { MELEE } from "./armes";
 
 /** Avance l'arme en main par pas de 1/60 s pendant `dureeS` ; renvoie la rotation lacet de l'arme à chaque pas (via la bouche, monde). */
@@ -134,5 +134,27 @@ describe("arme blanche en main : modèle et animation de coup", () => {
     arme.changer("pistolet");
     jouer(arme, 0.05);
     arme.dispose();
+  });
+});
+
+describe("(v8) organe de visée posé sur l'arme améliorée", () => {
+  it("le point rouge du mini Uzi gratiné est sur le dessus de l'arme, même l'arme en main sous une caméra à 1,9 m", () => {
+    const camera = new THREE.Group();
+    camera.position.set(12, 1.9, -30);
+    camera.rotation.set(-0.3, 0.8, 0);
+    const arme = creerArmeEnMain("mini_uzi");
+    camera.add(arme.group);
+    const modele = modeleDe(arme);
+    const dessus = boiteLocale(modele).max.y;
+    expect(dessus).toBeLessThan(0.3);
+    arme.regler({ paire: false, viseur: "point_rouge" });
+    const piece = modele.children[modele.children.length - 1];
+    // la pièce part du dessus de l'arme (repère du modèle), à quelques millimètres près
+    expect(piece.position.y).toBeGreaterThan(dessus - 0.01);
+    expect(piece.position.y).toBeLessThan(dessus + 0.02);
+    // et elle est bien sur l'arme dans le monde : à moins de 30 cm de la bouche du canon
+    camera.updateMatrixWorld(true);
+    const p = piece.getWorldPosition(new THREE.Vector3());
+    expect(p.distanceTo(arme.positionBouche(new THREE.Vector3()))).toBeLessThan(0.3);
   });
 });
