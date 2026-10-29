@@ -238,6 +238,8 @@ interface Client {
   salle: Salle;
   /** (v8) secret de reprise de la session, envoyé dans `bienvenue.jeton` */
   jeton: string;
+  /** (v10) version du protocole annoncée au `bonjour` (0 avant) : la salle des zombies exige `VERSION_MIN_ZOMBIES` */
+  version: number;
 }
 const clients = new Map<string, Client>();
 
@@ -372,9 +374,10 @@ function diffuserSalons(vers?: Client): void {
 function changerMode(c: Client, mode: unknown, maintenant: number): void {
   const decision = decisionMode({
     mode, salleActuelle: modeDeSalle(c.salle, SALLES), enJeu: c.salle.inspecter(c.id)?.enJeu ?? false,
-    joueursCible: (MODES_SALLE as readonly unknown[]).includes(mode) ? SALLES[mode as ModeSalle].nombreJoueurs() : 0,
+    joueursCible: (MODES_SALLE as readonly unknown[]).includes(mode) ? SALLES[mode as ModeSalle].nombreJoueurs() : 0, version: c.version,
   });
   if (!decision) return;
+  if (decision.action === "version") return refuser(c, "version", "Version du protocole incompatible : rechargez la page.");
   if (decision.action === "echo") { envoyer(c, JSON.stringify({ t: "mode", mode: decision.mode } satisfies MessageServeur)); return; }
   if (decision.action === "refus") { envoyer(c, JSON.stringify({ t: "refus", action: "mode", raison: decision.raison } satisfies MessageServeur)); return; }
   const cible = SALLES[decision.mode];
@@ -399,6 +402,7 @@ function traiter(c: Client, m: MessageClient, maintenant: number): void {
   if (!c.inscrit) {
     if (m.t !== "bonjour") return;
     if (!VERSIONS_ACCEPTEES.includes(m.v)) return refuser(c, "version", "Version du protocole incompatible : rechargez la page.");
+    c.version = m.v;
     if (reprendre(c, m.reprise, m.pseudo, maintenant)) { diffuserSalons(c); return; }
     const sorties = avecJeton(c, c.salle.connecter(c.id, typeof m.pseudo === "string" ? m.pseudo : "", maintenant));
     c.inscrit = !sorties.some((s) => s.a === c.id && s.m.t === "erreur");
@@ -485,7 +489,7 @@ wss.on("connection", (ws, req) => {
   parIp.set(ip, (parIp.get(ip) ?? 0) + 1);
   const c: Client = {
     id: nouvelId(), ws, inscrit: false, vivant: true, pingEnvoyeA: Date.now(), flood: creerEtatFlood(Date.now()), ip, utileT: Date.now(), salle: salleArene,
-    jeton: nouveauJeton(),
+    jeton: nouveauJeton(), version: 0,
   };
   clients.set(c.id, c);
   // un client qui ne dit pas « bonjour » dans les 10 s est libéré

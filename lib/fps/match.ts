@@ -30,7 +30,8 @@ import type { Monde } from "./collision";
 import { couleurJoueur } from "./couleurs";
 import type { IntervalleAvion } from "./avion";
 import type { IntervalleElsa } from "./elsa";
-import { armeDuSlot, depuisAlias, estPrincipale, estSecondaire, estSlot, normaliserEquipement } from "./equipement";
+import { armeDuSlot, couteauTenable, depuisAlias, estPrincipale, estSecondaire, estSlot, meleeDe, normaliserEquipement } from "./equipement";
+import { minutageCoupRapide } from "./coup-rapide";
 import type {
   ContexteSalle, JoueurSalle, ResumeBr, ResumeZombies, ServiceBr, ServiceElsa, ServiceEvenements, ServiceTigres, ServiceVehicules, ServiceZombies, Sortie,
 } from "./match-contexte";
@@ -402,6 +403,7 @@ export class Salle implements ContexteSalle {
       cible.glisse = false;
       cible.morts++;
       cible.serie = 0;
+      // (v10) l'Arme 3 tombe avec le Bento (les atouts sont perdus à terre)
       cible.equip.speciale = null;
       cible.munSpeciale = 0;
       cible.memoSante = null;
@@ -934,11 +936,16 @@ export class Salle implements ContexteSalle {
     return liberation;
   }
 
-  /** Changement d'arme en main : le slot doit porter une arme (la spéciale, des munitions) ; aucun tir ni recharge pendant `degainageMs`. */
+  /**
+   * Changement d'arme en main : le slot doit porter une arme (la spéciale, des munitions) ; aucun tir ni recharge pendant `degainageMs`.
+   * (v10, zombies) l'Arme 3 est un emplacement ordinaire (munitions comptées par le client) ; l'arme blanche seule est refusée à partir de deux
+   * armes à feu.
+   */
   private changerMain(j: JoueurSalle, slot: unknown, maintenant: number): Sortie[] {
     if (!j.enJeu || !j.vivant || !estSlot(slot) || slot === j.main) return [];
     const arme = armeDuSlot(j.equip, slot);
-    if (arme === null || (slot === "speciale" && j.munSpeciale <= 0)) return [];
+    if (arme === null || (slot === "speciale" && !this.zombies && j.munSpeciale <= 0)) return [];
+    if (this.zombies && slot === "couteau" && !couteauTenable(j.equip)) return [];
     const suivi = this.suivi.get(j.id);
     if (suivi) suivi.precedent = j.main;
     j.main = slot;
@@ -1109,7 +1116,7 @@ export class Salle implements ContexteSalle {
     if (j.main === "couteau" || j.arme === "couteau" || tir.arme !== j.arme) return [];
     if (!CONDUCTEUR_TIRE && this.vehicules?.estConducteur(j.id)) return [];
     if (!this.sortie(j, maintenant)) return [];
-    if (j.main === "speciale" && j.munSpeciale <= 0) return [];
+    if (j.main === "speciale" && !this.zombies && j.munSpeciale <= 0) return [];
     const armeTiree: ArmeFeuId = j.arme;
     const arme = STATS[armeTiree];
     if (!estVec3(tir.o) || !Array.isArray(tir.d) || tir.d.length < 1 || tir.d.length > arme.plombs) return [];
@@ -1135,8 +1142,9 @@ export class Salle implements ContexteSalle {
       a: "tous", sauf: j.id,
       m: { t: "tir", id: j.id, arme: armeTiree, o: tir.o, d: dirs, ...(gauche ? { main: "g" as const } : {}), ...(ameliore ? { ameliore: true as const } : {}) },
     }];
-    // arme spéciale : une munition de moins ; à 0, l'arme disparaît et le joueur retombe sur le slot précédent
-    if (j.main === "speciale") sorties.push(...this.consommerSpeciale(j, maintenant));
+    // arme spéciale : une munition de moins ; à 0, l'arme disparaît et le joueur retombe sur le slot précédent (v10 : pas en zombies, où
+    // l'Arme 3 est un emplacement ordinaire et où le client compte toutes les munitions)
+    if (j.main === "speciale" && !this.zombies) sorties.push(...this.consommerSpeciale(j, maintenant));
     // (v8, zombies) le grand secret voit passer chaque tir validé (objets du décor)
     if (this.zombies) sorties.push(...this.zombies.tirSecret(j, armeTiree, tir.o, dirs, maintenant));
     // (v8, zombies) projectile ou souffle : le service résout tout le tir (aucune touche déclarée n'est lue)
@@ -1303,12 +1311,16 @@ export class Salle implements ContexteSalle {
    * direction, angle de visée), puis chaque cible déclarée (au plus `nbCiblesMax`, distinctes) est revalidée : joueur (positions rejouées sur
    * `REWIND_MELEE_MS`, `coupVraisemblable`) ou tigre zombie (`toucheMelee`). Dégâts de l'arme ; le couteau tue un joueur sans bouclier, l'épée aussi
    * et touche jusqu'à trois cibles. En zombies seuls les tigres sont des cibles. Le coup est diffusé aux autres même dans le vide.
+   * (v10, zombies) un coup reçu arme à feu en main est un coup de couteau rapide : l'arme blanche de l'équipement frappe, à la cadence du
+   * poids de l'arme en main (`minutageCoupRapide`).
    */
   private recevoirCoup(j: JoueurSalle, coup: Extract<MessageClient, { t: "coup" }>, maintenant: number): Sortie[] {
     if (!j.enJeu || !j.vivant || this.phase !== "jeu" || this.pilote(j.id) || this.br?.enVol(j.id)) return [];
-    if (j.main !== "couteau" || !estMelee(j.arme)) return [];
-    const arme: ArmeMeleeId = j.arme;
+    const rapide = !!this.zombies && j.main !== "couteau" && !estMelee(j.arme);
+    if (!rapide && (j.main !== "couteau" || !estMelee(j.arme))) return [];
+    const arme: ArmeMeleeId = rapide ? meleeDe(j.equip) : (j.arme as ArmeMeleeId);
     const m = MELEE[arme];
+    const cadenceCoupS = rapide ? minutageCoupRapide(j.arme as ArmeFeuId, arme).dureeS : m.cadenceS;
     // BR : dégâts de mêlée propres au mode (3 coups de couteau, 2 d'épée), le couteau de l'arène tuerait en un coup
     const degatsCoup = this.br ? degatsMeleeBr(arme) : m.degats;
     if (!CONDUCTEUR_TIRE && this.vehicules?.estConducteur(j.id)) return [];
@@ -1316,7 +1328,7 @@ export class Salle implements ContexteSalle {
     if (!estVec3(coup.o) || !estVec3(coup.d)) return [];
     const dirs = this.validerVisee(j, coup.o, [coup.d], maintenant);
     if (!dirs) return [];
-    if (!this.cadenceOk(j, arme, m.cadenceS, false, maintenant)) return [];
+    if (!this.cadenceOk(j, arme, cadenceCoupS, false, maintenant)) return [];
     j.protegeJusqua = 0;
     const d = dirs[0];
     const sorties: Sortie[] = [{ a: "tous", sauf: j.id, m: { t: "coup", id: j.id, o: coup.o, d, arme } }];

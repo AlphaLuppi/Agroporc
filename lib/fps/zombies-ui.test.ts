@@ -727,6 +727,31 @@ describe("BlocArmes sans arme principale (départ des zombies)", () => {
     expect(html).not.toContain("RÉSERVE ∞");
   });
 
+  it("(v10) deux armes : emplacements « Arme 1 / 2 / 3 », l'arme blanche au coup rapide [V], l'Arme 3 sur [3], munitions x/y sans « SPÉCIALE »", () => {
+    const html = rendre({
+      arme: "pompe", slot: "principale", zombies: true, toucheCoupRapide: "V",
+      slots: "principale:pompe:6:8:24|secondaire:sniper:5:5:20|couteau:couteau:0:0|speciale:mitraillette:20:30:90",
+    });
+    expect(html).toContain("(Arme 1)");
+    expect(html).toContain("(Arme 2)");
+    expect(html).toContain("(Arme 3)");
+    expect(html).not.toContain("SPÉCIALE");
+    expect(html).toContain("20/30");
+    expect(html).toContain("COUP RAPIDE");
+    expect(html).toContain("coup rapide seulement");
+    expect(html).toMatch(/\[V\]<\/span><span[^>]*>COUTEAU/);
+    expect(html).toMatch(/\[3\]<\/span><span[^>]*>MITRAILL/);
+    expect(html).not.toContain("[4]");
+  });
+
+  it("(v10) une seule arme : l'arme blanche se tient seule, touche [3] et bonus de vitesse", () => {
+    const html = rendre({ zombies: true, toucheCoupRapide: "V" });
+    expect(html).toContain("(Arme 2)");
+    expect(html).toContain("[3]");
+    expect(html).toContain("VITESSE +30 %");
+    expect(html).not.toContain("COUP RAPIDE");
+  });
+
   it("l'épée achetée au mur occupe le slot de l'arme blanche", () => {
     const html = rendre({ slots: "secondaire:pistolet:12:12:60|couteau:epee:0:0" });
     expect(html).toContain("ÉPÉE");

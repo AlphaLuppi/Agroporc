@@ -4,11 +4,15 @@
  * Les instants `t` sont en millisecondes (horloge du jeu), comme `JEU.degainageMs`.
  * (v8, zombies) Paire akimbo (Moutarde & Sally, Perforeuses jumelles) : deux chargeurs (`main` droite / gauche), chacun de `cap`, une réserve
  * pour les deux ; une recharge remplit les deux. `munitions()` et les lignes du rack comptent la paire.
- * Spec : docs/superpowers/specs/2026-10-22-arene-v2-design.md (§2.4, §5.13)
+ * (v10, zombies) Inventaire façon Black Ops 1 : emplacements d'armes génériques ; l'arme blanche ne se prend plus seule à partir de deux armes
+ * à feu (`couteauTenable`) ; coup de couteau rapide arme en main (`coupRapide`, minutage selon le poids de l'arme, coup-rapide.ts) ; une arme à
+ * munitions limitées (railgun, minigun, magnum, bazooka) reste dans son emplacement, vide, jusqu'aux Munitions max.
+ * Spec : docs/superpowers/specs/2026-10-22-arene-v2-design.md (§2.4, §5.13), 2026-10-29-zombies-inventaire-design.md (v10)
  */
 import { JEU, copierEquipement, estMelee, type ArmeFeuId, type ArmeId, type Equipement, type MessageServeur, type Slot } from "./protocole";
 import { STATS, chargeurZombie, statsTir } from "./armes";
-import { armeDuSlot, estArmeFeu, estSlot, meleeDe, slotDeLArme, slotVoisin, type LigneSlot } from "./equipement";
+import { armeDuSlot, couteauTenable, estArmeFeu, estSlot, meleeDe, slotDeLArme, slotVoisin, type LigneSlot } from "./equipement";
+import { minutageCoupRapide } from "./coup-rapide";
 import { BR } from "./br-regles";
 
 /** Slot en main quand l'appelant n'en donne pas : on entre dans l'arène avec la principale (v2 : `mainSuivante` = principale). */
@@ -18,6 +22,8 @@ const MAIN_INITIALE: Slot = "principale";
  * `armeDuSlot` rend null pour `sansPrincipale` / `sansSecondaire`, il ne reste alors que l'arme blanche).
  */
 const SLOTS_REPLI: readonly Slot[] = ["principale", "secondaire", "couteau"];
+/** (v10, zombies) Repli : une arme à feu d'abord, l'Arme 3 comprise, l'arme blanche en dernier. */
+const SLOTS_REPLI_ZOMBIES: readonly Slot[] = ["principale", "secondaire", "speciale", "couteau"];
 
 /**
  * Options du contrôleur : `reserveChargeurs` = chargeurs de réserve par arme (zombies, v5) ; absent = réserve infinie (arène).
@@ -57,6 +63,9 @@ export class ControleurArmes {
   private readonly reserveMax: number;
   /** (v7) multiplicateur de la durée de recharge (Expresso Serré : 0,5) */
   private multRecharge = 1;
+  /** (v10, zombies) coup de couteau rapide en cours : début et fin (ms, 0 = aucun) ; ni tir, ni recharge, ni changement d'arme avant la fin */
+  private coupDebut = 0;
+  private coupFin = 0;
 
   constructor(equip: Equipement, main: Slot = MAIN_INITIALE, opts: OptionsArmes = {}) {
     this.reserveChargeurs = opts.reserveChargeurs !== undefined && opts.reserveChargeurs >= 0 ? Math.floor(opts.reserveChargeurs) : null;
@@ -178,7 +187,7 @@ export class ControleurArmes {
   /** Change de slot (refus si vide ou identique) : annule la recharge, `sortieFin = t + degainageMs`, mémorise le précédent. */
   equiper(slot: Slot, t: number): boolean {
     this.dernierT = t;
-    if (!estSlot(slot) || slot === this.main || !this.slotUtilisable(slot)) return false;
+    if (!estSlot(slot) || slot === this.main || !this.slotUtilisable(slot) || this.coupEnCours(t)) return false;
     this.precedent = this.main;
     this.main = slot;
     this.annulerRecharge();
@@ -186,9 +195,39 @@ export class ControleurArmes {
     return true;
   }
 
-  /** Slot suivant / précédent portant une arme (saute la spéciale vide), cyclique. */
+  /** Slot suivant / précédent portant une arme (saute la spéciale vide ; en zombies, l'arme blanche à partir de deux armes), cyclique. */
   molette(sens: 1 | -1, t: number): boolean {
-    return this.equiper(slotVoisin(this.equip, this.main, sens), t);
+    return this.equiper(slotVoisin(this.equip, this.main, sens, (s) => this.slotUtilisable(s)), t);
+  }
+
+  /** (v10, zombies) L'arme blanche peut se prendre seule en main (moins de deux armes à feu portées ; toujours dans l'arène). */
+  couteauTenable(): boolean { return !this.zombies || couteauTenable(this.equip); }
+
+  // ---------- coup de couteau rapide (v10, zombies) ----------
+
+  /**
+   * Coup de couteau arme à feu en main : refusé si l'arme blanche est déjà en main (c'est alors un coup ordinaire), pendant le dégainage ou un
+   * autre coup. Annule la recharge. Renvoie les instants (ms) de l'impact (le `coup` part alors) et de la fin (l'arme est remise en joue).
+   */
+  coupRapide(t: number): { impactMs: number; finMs: number; impactS: number; dureeS: number } | null {
+    this.dernierT = t;
+    const a = this.armeEnMain();
+    if (estMelee(a) || t < this.sortieFin || this.coupEnCours(t)) return null;
+    const { impactS, dureeS } = minutageCoupRapide(a, meleeDe(this.equip));
+    this.annulerRecharge();
+    this.coupDebut = t;
+    this.coupFin = t + dureeS * 1000;
+    return { impactMs: t + impactS * 1000, finMs: this.coupFin, impactS, dureeS };
+  }
+
+  /** Coup de couteau rapide en cours (aucun tir, recharge ni changement d'arme). */
+  coupEnCours(t: number): boolean { return t < this.coupFin; }
+
+  /** 0..1 : avancement du coup rapide, 0 sans coup. */
+  coupProgression(t: number): number {
+    if (!this.coupEnCours(t)) return 0;
+    const d = this.coupFin - this.coupDebut;
+    return d <= 0 ? 0 : Math.min(1, Math.max(0, (t - this.coupDebut) / d));
   }
 
   /** Dernier slot utilisé (aller-retour entre deux armes). */
@@ -207,19 +246,19 @@ export class ControleurArmes {
   peutTirer(t: number, main: "d" | "g" = "d"): boolean {
     this.dernierT = t;
     const a = this.armeEnMain();
-    return !estMelee(a) && t >= this.sortieFin && this.munitionsMain(main) > 0 && !this.rechargeEnCours();
+    return !estMelee(a) && t >= this.sortieFin && !this.coupEnCours(t) && this.munitionsMain(main) > 0 && !this.rechargeEnCours();
   }
 
   /**
    * −1 munition. Une spéciale vide est retirée de l'équipement et le joueur retombe sur le slot précédent (nouveau dégainage,
-   * daté du dernier instant vu : `peutTirer` précède toujours un tir).
+   * daté du dernier instant vu : `peutTirer` précède toujours un tir). (v10) En zombies, rien n'est retiré : l'arme vide attend les Munitions max.
    */
   tirEffectue(main: "d" | "g" = "d"): void {
     const a = this.armeEnMain();
     if (estMelee(a)) return;
     if (main === "g" && this.akimbo(a)) { this.munG[a] = Math.max(0, (this.munG[a] ?? 0) - 1); return; }
     const reste = Math.max(0, (this.mun[a] ?? 0) - 1);
-    if (this.main === "speciale" && reste === 0) {
+    if (this.main === "speciale" && reste === 0 && !this.zombies) {
       this.retirerSpeciale(this.dernierT);
       return;
     }
@@ -233,7 +272,7 @@ export class ControleurArmes {
     this.dernierT = t;
     const a = this.armeEnMain();
     if (estMelee(a) || STATS[a].sansRecharge) return false;
-    if (this.rechargeEnCours() || t < this.sortieFin) return false;
+    if (this.rechargeEnCours() || t < this.sortieFin || this.coupEnCours(t)) return false;
     if ((this.mun[a] ?? 0) >= this.cap(a) && (!this.akimbo(a) || (this.munG[a] ?? 0) >= this.cap(a))) return false;
     if (this.reserveChargeurs !== null && (this.reserve[a] ?? 0) <= 0) return false;
     this.rechargeDebut = t;
@@ -304,6 +343,8 @@ export class ControleurArmes {
       this.annulerRecharge();
       this.sortieFin = 0;
       this.sortieDebut = 0;
+      this.coupDebut = 0;
+      this.coupFin = 0;
       this.precedent = this.autrePrincipale(this.main);
     } else if (this.main !== ancien) {
       this.precedent = ancien;
@@ -328,16 +369,18 @@ export class ControleurArmes {
       // (v8) une arme qui devient une paire (Micro-ondes) reçoit son second chargeur
       if (this.akimbo(a) && this.munG[a] === undefined) this.munG[a] = this.cap(a);
     }
-    // ravitaillement acheté (zombies) : chargeur ET réserve de l'arme sont remplis ; « tout » (Munitions max) : toutes les armes
+    // ravitaillement acheté (zombies) : chargeur ET réserve de l'arme sont remplis ; « tout » (Munitions max) : toutes les armes, (v10) celles à
+    // munitions limitées comprises (en zombies, elles ne quittent jamais l'inventaire)
     if (m.t === "equipement" && m.ravitaille !== undefined) {
       for (const a of m.ravitaille === "tout" ? portees : portees.has(m.ravitaille) ? [m.ravitaille] : []) {
-        if (STATS[a].sansRecharge) continue;
+        if (STATS[a].sansRecharge && !this.zombies) continue;
         this.mun[a] = this.cap(a);
         if (this.akimbo(a)) this.munG[a] = this.cap(a);
         this.reserve[a] = this.reservePleine(a);
       }
     }
-    if (this.equip.speciale !== null) this.mun[this.equip.speciale] = Math.max(0, Math.floor(m.munSpeciale));
+    // (v10) en zombies, le serveur ne compte pas les munitions (toute arme peut être dans l'Arme 3) : le client garde les siennes
+    if (this.equip.speciale !== null && !this.zombies) this.mun[this.equip.speciale] = Math.max(0, Math.floor(m.munSpeciale));
     // une recharge qui n'est plus celle de l'arme en main n'a plus de sens
     const a = this.armeEnMain();
     if (this.rechargeEnCours() && (estMelee(a) || STATS[a].sansRecharge)) this.annulerRecharge();
@@ -345,21 +388,22 @@ export class ControleurArmes {
 
   // ---------- interne ----------
 
-  /** Le slot porte une arme (le couteau toujours, la spéciale seulement si portée). */
+  /** Le slot porte une arme (le couteau toujours, sauf en zombies à partir de deux armes à feu ; la spéciale seulement si portée). */
   private slotUtilisable(slot: Slot): boolean {
+    if (slot === "couteau" && !this.couteauTenable()) return false;
     return armeDuSlot(this.equip, slot) !== null;
   }
 
   /** Le slot de repli le plus naturel : la principale (`MAIN_INITIALE`), sinon le premier slot utilisable. */
   private slotRepli(): Slot {
-    return SLOTS_REPLI.find((s) => this.slotUtilisable(s)) ?? MAIN_INITIALE;
+    return (this.zombies ? SLOTS_REPLI_ZOMBIES : SLOTS_REPLI).find((s) => this.slotUtilisable(s)) ?? MAIN_INITIALE;
   }
 
   /** Le slot « autre » le plus naturel : la principale, ou la secondaire si c'est la principale qui est en main (premier slot utilisable différent de `main`). */
   private autrePrincipale(main: Slot): Slot {
     const nominal: Slot = main === "principale" ? "secondaire" : "principale";
     if (this.slotUtilisable(nominal)) return nominal;
-    return SLOTS_REPLI.find((s) => s !== main && this.slotUtilisable(s)) ?? nominal;
+    return (this.zombies ? SLOTS_REPLI_ZOMBIES : SLOTS_REPLI).find((s) => s !== main && this.slotUtilisable(s)) ?? nominal;
   }
 
   private precedentUtilisable(): Slot {

@@ -10,7 +10,7 @@
  */
 import { visible, type Monde } from "./collision";
 import { MELEE, STATS, nomZombie } from "./armes";
-import { meleeDe } from "./equipement";
+import { meleeDe, slotDeLArme, slotPourNouvelleArme } from "./equipement";
 import { formatArgent } from "./hud-modele";
 import { NOM_REMONTOIRS } from "./grenades";
 import { enrouler, formeZombie, pointLocal, toucheTigre } from "./monstres";
@@ -438,13 +438,18 @@ export interface EntreeInvite {
   maintenant?: number;
 }
 
-/** Slot d'une arme à feu (les armes uniques vont dans le slot spécial), comme le serveur. */
-const slotDe = (a: ArmeFeuId): string => (STATS[a].categorie === "unique" ? "speciale" : STATS[a].categorie);
+/** L'arme `a` est portée, dans n'importe quel emplacement (pas celle déposée au Micro-ondes), comme le serveur. */
+const possede = (eq: Equipement, a: ArmeFeuId): boolean => slotDeLArme(eq, a) !== null;
 
-/** L'arme `a` est portée (pas celle déposée au Micro-ondes). */
-function possede(eq: Equipement, a: ArmeFeuId): boolean {
-  if (eq.enCuisson === a) return false;
-  return (!eq.sansPrincipale && eq.principale === a) || eq.secondaire === a || eq.speciale === a;
+/**
+ * (v10) « (remplace …) » quand une nouvelle arme chasserait une arme de l'inventaire (deux emplacements pleins, trois avec le Bento) : celle en
+ * main, comme le serveur (`slotPourNouvelleArme`) ; "" s'il reste un emplacement vide.
+ */
+function suffixeRemplace(e: EntreeInvite): string {
+  const main = e.enMain && !estMelee(e.enMain) ? slotDeLArme(e.equip, e.enMain) ?? "couteau" : "couteau";
+  const place = slotPourNouvelleArme(e.equip, main, e.atouts?.includes("bento") ?? false);
+  if (!place?.remplacee) return "";
+  return ` (remplace ${nomZombie(place.remplacee, e.equip.ameliorees?.includes(place.remplacee) ?? false)})`;
 }
 
 type Description = Omit<InviteZombies, "assez" | "cible"> & { bloque?: string };
@@ -469,11 +474,11 @@ function descriptionAchat(a: Achat, e: EntreeInvite): Description | null {
       if (p && !b) return null;
       if (b && b.etat === "offre") {
         if (b.pour !== e.moi || !b.arme || b.arme === "peluche") return { invite: "boite", detail: "Boîte mystère", prix: 0, id: a.id, bloque: "Occupée" };
-        const prendre: Description = { invite: "boite", detail: `Prendre : ${b.arme === "remontoir" ? NOM_REMONTOIRS : STATS[b.arme].nom}`, prix: 0, id: a.id };
-        // (v8) son slot est réservé par mon arme au Micro-ondes : le serveur refuserait (« occupe »)
-        if (b.arme !== "remontoir" && p && p.pap.etat !== "libre" && p.pap.joueur === e.moi && p.pap.arme && slotDe(p.pap.arme) === slotDe(b.arme)) {
-          return { ...prendre, bloque: "Reprenez l'arme au Micro-ondes" };
-        }
+        const prendre: Description = {
+          invite: "boite", detail: `Prendre : ${b.arme === "remontoir" ? NOM_REMONTOIRS : `${STATS[b.arme].nom}${suffixeRemplace(e)}`}`, prix: 0, id: a.id,
+        };
+        // (v10) c'est l'arme que j'ai au Micro-ondes : le serveur refuserait (« occupe »)
+        if (b.arme !== "remontoir" && e.equip.enCuisson === b.arme) return { ...prendre, bloque: "Reprenez l'arme au Micro-ondes" };
         return prendre;
       }
       if (b && b.etat !== "fermee") return { invite: "boite", detail: "Boîte mystère", prix: 0, id: a.id, bloque: "Occupée" };
@@ -518,7 +523,10 @@ function descriptionAchat(a: Achat, e: EntreeInvite): Description | null {
         const prix = am ? PRIX_MUNITIONS_AMELIOREE : a.prixMunitions;
         return { invite: "acheter", detail: `Munitions ${nomZombie(arme, am)} — ${formatArgent(prix)}`, prix, id: a.id };
       }
-      return { invite: "acheter", detail: `${STATS[arme].nom} — ${formatArgent(a.prix)}`, prix: a.prix, id: a.id };
+      const d: Description = { invite: "acheter", detail: `${STATS[arme].nom} — ${formatArgent(a.prix)}${suffixeRemplace(e)}`, prix: a.prix, id: a.id };
+      // (v10) elle est au Micro-ondes : on la reprend là-bas (le serveur refuserait, « occupe »)
+      if (e.equip.enCuisson === arme) return { ...d, bloque: "Au Micro-ondes" };
+      return d;
     }
   }
 }

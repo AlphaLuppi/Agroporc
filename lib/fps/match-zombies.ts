@@ -24,12 +24,14 @@ import {
 } from "./effets-armes";
 import { batimentsDetruits, detruireBatiment, lancerRayon, releverBatiments, visible } from "./collision";
 import { ARMES, CIBLE_LIVRAISON, copierEquipement, estIdZombie, estMelee, idZombie } from "./protocole";
-import { armeDuSlot, meleeDe } from "./equipement";
+import {
+  armeDuSlot, armeEcriteDansSlot, armesFeuPortees, couteauTenable, meleeDe, poserDansSlot, slotDeLArme, slotPourNouvelleArme, viderSlot,
+} from "./equipement";
 import type { ContexteSalle, JoueurSalle, ResumeZombies, ServiceZombies, Sortie } from "./match-contexte";
 import { instantaneNavigation, majNavigation, restaurerNavigation } from "./navigation";
 import { capVers } from "./monstres";
 import type {
-  ArmeFeuId, ArmeId, ArmeSpecialeId, AtoutId, BonusSol, EffetsZombies, EtatBoite, EtatPap, EtatPartieZombies, Equipement, EvenementZombies,
+  ArmeFeuId, ArmeId, AtoutId, BonusSol, EffetsZombies, EtatBoite, EtatPap, EtatPartieZombies, Equipement, EvenementZombies,
   JoueurZombies, MessageClient, PhaseZombies, RaisonAchat, Slot, TruckZombies, Vec3, Zone,
 } from "./protocole";
 import { creerSimuZombies, type ArriveeZombie, type Leurre, type SpecZombie } from "./zombies";
@@ -380,10 +382,14 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     return n;
   };
 
-  /** Slot en main valide pour un équipement (le slot demandé, sinon la secondaire, la principale, l'arme blanche). */
+  /**
+   * Slot en main valide pour un équipement (le slot demandé, sinon la secondaire, la principale, l'Arme 3, l'arme blanche). (v10) L'arme
+   * blanche seule n'est valide qu'avec moins de deux armes à feu.
+   */
   function mainValide(eq: Equipement, main: Slot): Slot {
-    if (main !== "speciale" && armeDuSlot(eq, main) !== null) return main;
-    for (const s of ["secondaire", "principale", "couteau"] as const) if (armeDuSlot(eq, s) !== null) return s;
+    const permis = (s: Slot) => armeDuSlot(eq, s) !== null && (s !== "couteau" || couteauTenable(eq));
+    if (permis(main)) return main;
+    for (const s of ["secondaire", "principale", "speciale", "couteau"] as const) if (permis(s)) return s;
     return "couteau";
   }
 
@@ -1183,20 +1189,28 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     }
     pap = { etat: "libre" };
     sorties.push(zev({ e: "pap", joueur, arme, pret: false, fin: "perdue" }));
+    oublierCuisson(joueur, arme, t, sorties);
   }
 
-  /** Copie d'un équipement sans arme au Micro-ondes. */
-  function sansCuisson(eq: Equipement): Equipement {
-    const e = copierEquipement(eq);
-    delete e.enCuisson;
-    return e;
+  /** (v10) Emplacement où l'arme du Micro-ondes `enCuisson` est restée écrite (réservé jusqu'à sa reprise), null si elle n'y est plus. */
+  function slotDeCuisson(eq: Equipement): Exclude<Slot, "couteau"> | null {
+    if (!eq.enCuisson) return null;
+    return (["principale", "secondaire", "speciale"] as const).find((s) => armeEcriteDansSlot(eq, s) === eq.enCuisson) ?? null;
   }
 
-  /** Slot d'une arme à feu : les armes uniques vont dans le slot spécial. */
-  const slotArme = (x: ArmeFeuId): Slot => (STATS[x].categorie === "unique" ? "speciale" : STATS[x].categorie);
-  /** Le slot que remplirait l'arme `a` est celui de l'arme de `j` encore au Micro-ondes : réservé jusqu'à sa reprise. */
-  function slotReserve(j: JoueurSalle, a: ArmeFeuId): boolean {
-    return pap.etat !== "libre" && pap.joueur === j.id && !!pap.arme && slotArme(a) === slotArme(pap.arme);
+  /**
+   * (v10) L'arme perdue au Micro-ondes (pas reprise à temps) libère son emplacement : elle quitte l'inventaire et le joueur en est averti.
+   * Sans effet si le joueur n'est plus là ou si son arme au Micro-ondes est une autre.
+   */
+  function oublierCuisson(id: string, arme: ArmeFeuId, t: number, sorties: Sortie[]): void {
+    const j = ctx.joueur(id);
+    if (!j || j.equip.enCuisson !== arme) return;
+    const equip = copierEquipement(j.equip);
+    const slot = slotDeCuisson(equip);
+    delete equip.enCuisson;
+    if (slot) viderSlot(equip, slot);
+    if (equip.ameliorees) { equip.ameliorees = equip.ameliorees.filter((a) => a !== arme); if (!equip.ameliorees.length) delete equip.ameliorees; }
+    sorties.push(...ctx.equiper(j, equip, mainValide(equip, j.main), t));
   }
 
   function donnerAtout(j: JoueurSalle, a: AtoutId, t: number, sorties: Sortie[]): void {
@@ -1212,9 +1226,8 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
   // achats
   // ---------------------------------------------------------------------------------------------
 
-  /** L'arme `a` est portée (pas celle déposée au Micro-ondes, `enCuisson`). */
-  const possede = (eq: Equipement, a: ArmeFeuId): boolean =>
-    eq.enCuisson !== a && ((!eq.sansPrincipale && eq.principale === a) || eq.secondaire === a || eq.speciale === a);
+  /** L'arme `a` est portée, dans n'importe quel emplacement (pas celle déposée au Micro-ondes, `enCuisson`). */
+  const possede = (eq: Equipement, a: ArmeFeuId): boolean => slotDeLArme(eq, a) !== null;
 
   const refus = (j: JoueurSalle, id: string, raison: RaisonAchat): Sortie[] => [{ a: j.id, m: { t: "achat", ok: false, id, raison } }];
 
@@ -1315,38 +1328,32 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       return [...payer(j, m, achat, prix), ...ctx.equiper(j, copierEquipement(j.equip), j.main, t, arme)];
     }
     if (m.argent < achat.prix) return refus(j, achat.id, "argent");
-    // (v8) le slot de l'arme au Micro-ondes attend qu'on la reprenne
-    if (slotReserve(j, arme)) return refus(j, achat.id, "occupe");
+    // (v8) cette arme est au Micro-ondes : on la reprend là-bas, pas une seconde au mur
+    if (j.equip.enCuisson === arme) return refus(j, achat.id, "occupe");
     murs.add(achat.id);
     immediat = true;
     return [...payer(j, m, achat, achat.prix), ...equiperNouvelle(j, arme, t)];
   }
 
-  /** L'arme à feu `arme` (non possédée) remplace celle de sa catégorie, passe en main, chargeurs pleins ; l'ancienne perd son amélioration. */
-  function equiperNouvelle(j: JoueurSalle, arme: ArmeFeuId, t: number, amelioree = false): Sortie[] {
+  /**
+   * (v10, BO1) L'arme à feu `arme` (non possédée) entre dans l'inventaire : dans le premier emplacement vide (Arme 1, Arme 2, Arme 3 avec le
+   * Bento), sinon à la place de l'arme EN MAIN (`slotPourNouvelleArme`), quelle que soit sa catégorie ; elle passe en main, chargeurs pleins,
+   * et l'arme remplacée perd son amélioration. `slot` impose l'emplacement (reprise du Micro-ondes).
+   */
+  function equiperNouvelle(j: JoueurSalle, arme: ArmeFeuId, t: number, amelioree = false, slotImpose?: Exclude<Slot, "couteau">): Sortie[] {
     const equip = copierEquipement(j.equip);
-    const categorie = STATS[arme].categorie;
+    const place = slotImpose ? { slot: slotImpose, remplacee: armeDuSlot(equip, slotImpose) as ArmeFeuId | null }
+      : slotPourNouvelleArme(equip, j.main, membre(j.id).atouts.has("bento"));
+    if (!place) return [];
     ctx.memoriserPrecedent(j);
     delete j.cadenceArme[arme];
     delete j.cadenceArme[`${arme}:g`];
-    const remplacee = categorie === "speciale" || categorie === "unique" ? equip.speciale : categorie === "principale" ? (equip.sansPrincipale ? null : equip.principale) : equip.secondaire;
-    let ameliorees = (equip.ameliorees ?? []).filter((a) => a !== remplacee && a !== arme);
-    // (v8) une arme perdue au Micro-ondes laissait son slot vide : la nouvelle le remplit
-    if (equip.enCuisson && slotArme(equip.enCuisson) === slotArme(arme)) delete equip.enCuisson;
+    let ameliorees = (equip.ameliorees ?? []).filter((a) => a !== place.remplacee && a !== arme);
     if (amelioree) ameliorees = [...ameliorees, arme];
     if (ameliorees.length) equip.ameliorees = ameliorees; else delete equip.ameliorees;
-    if (categorie === "speciale" || categorie === "unique") {
-      equip.speciale = arme as ArmeSpecialeId;
-      j.munSpeciale = chargeurZombie(arme, amelioree);
-      return ctx.equiper(j, equip, "speciale", t);
-    }
-    if (categorie === "principale") {
-      equip.principale = arme as Equipement["principale"];
-      delete equip.sansPrincipale;
-    } else {
-      equip.secondaire = arme as Equipement["secondaire"];
-    }
-    return ctx.equiper(j, equip, categorie, t, arme);
+    poserDansSlot(equip, place.slot, arme);
+    if (STATS[arme].sansRecharge) j.munSpeciale = chargeurZombie(arme, amelioree);
+    return ctx.equiper(j, equip, place.slot, t, arme);
   }
 
   function acheterBoite(j: JoueurSalle, achat: Achat, m: Membre, t: number): Sortie[] {
@@ -1358,7 +1365,7 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       // prendre l'arme offerte (seul celui qui a payé)
       if (b.pour !== j.id) return refus(j, achat.id, "occupe");
       const offerte = b.arme;
-      if (offerte && offerte !== "peluche" && offerte !== "remontoir" && slotReserve(j, offerte)) return refus(j, achat.id, "occupe");
+      if (offerte && offerte !== "peluche" && offerte !== "remontoir" && j.equip.enCuisson === offerte) return refus(j, achat.id, "occupe");
       ecrireBoite(b.emplacement, { emplacement: b.emplacement, etat: "fermee", finT: 0, utilisations: b.utilisations });
       immediat = true;
       if (offerte === "remontoir") {
@@ -1372,10 +1379,9 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     const soldes = soldesActives(effets.soldesFinT, t);
     const prix = prixBoite(effets.soldesFinT, t);
     if (m.argent < prix) return refus(j, achat.id, "argent");
-    // (v8) le tigre à remontoir sort de la boîte comme une arme, si le joueur n'en a plus
-    // une arme dont le slot est réservé par le Micro-ondes (l'arme de ce joueur y cuit) ne pourrait pas être prise : elle ne sort pas
+    // (v8) le tigre à remontoir sort de la boîte comme une arme, si le joueur n'en a plus ; jamais l'arme que le joueur a au Micro-ondes
     const candidates: (ArmeFeuId | "remontoir")[] = [
-      ...armesBoite(j.equip).filter((a) => !slotReserve(j, a)), ...(m.remontoirs > 0 ? [] : ["remontoir" as const]),
+      ...armesBoite(j.equip).filter((a) => a !== j.equip.enCuisson), ...(m.remontoirs > 0 ? [] : ["remontoir" as const]),
     ];
     if (!candidates.length) return refus(j, achat.id, "deja");
     // Happy hour (et boîtes temporaires) : aucune peluche, et ces tirages ne comptent pas pour elle
@@ -1404,7 +1410,8 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
 
   /**
    * Micro-ondes Gratinator (BO1) : on paye, l'arme en main est retirée de l'inventaire (`enCuisson`, son slot est vide) et déposée dans la
-   * machine ; une fois cuite, seul ce joueur la reprend (même achat, gratuit), chargeurs pleins, dans son slot.
+   * machine ; une fois cuite, seul ce joueur la reprend (même achat, gratuit), chargeurs pleins, dans son slot. (v10) Si cet emplacement n'existe
+   * plus (l'Arme 3, Bento perdu à terre entre-temps), elle entre comme une arme nouvelle (emplacement vide, sinon à la place de l'arme en main).
    */
   function acheterPap(j: JoueurSalle, achat: Achat, m: Membre, t: number): Sortie[] {
     if (pap.etat === "pret") {
@@ -1412,9 +1419,14 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       const arme = pap.arme;
       pap = { etat: "libre" };
       immediat = true;
-      j.equip = sansCuisson(j.equip);
-      if (STATS[arme].categorie === "speciale" || STATS[arme].categorie === "unique") j.munSpeciale = chargeurZombie(arme, true);
-      return [{ a: j.id, m: { t: "achat", ok: true, id: achat.id } }, ...equiperNouvelle(j, arme, t, true), zev({ e: "pap", joueur: j.id, arme, pret: true, fin: "reprise" })];
+      const equip = copierEquipement(j.equip);
+      const slot = equip.enCuisson === arme ? slotDeCuisson(equip) : null;
+      delete equip.enCuisson;
+      // l'emplacement est vidé pour que l'arme y revienne comme une nouvelle (elle n'y est plus que pour le réserver)
+      if (slot) viderSlot(equip, slot);
+      j.equip = equip;
+      const garde = slot !== null && (slot !== "speciale" || m.atouts.has("bento")) ? slot : undefined;
+      return [{ a: j.id, m: { t: "achat", ok: true, id: achat.id } }, ...equiperNouvelle(j, arme, t, true, garde), zev({ e: "pap", joueur: j.id, arme, pret: true, fin: "reprise" })];
     }
     if (!courant) return refus(j, achat.id, "courant");
     if (pap.etat !== "libre") return refus(j, achat.id, "occupe");
@@ -1496,20 +1508,28 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       const m = membre(j.id);
       if (!m.admis || !j.enJeu || m.etat === "elimine" || m.etat === "attente") continue;
       if (m.etat === "terre") sorties.push(...relever(j, t));
+      // (v10) tous les atouts, le Bento d'abord : trois emplacements, l'Arme 1 garde une arme du joueur, l'Arme 2 reçoit le Rayon Goulaf,
+      // l'Arme 3 le Bazooka au four
+      for (const a of ATOUTS_LISTE) if (!m.atouts.has(a)) donnerAtout(j, a, t, sorties);
       const equip = copierEquipement(j.equip);
-      // une secondaire ou une spéciale encore au Micro-ondes reviendrait PAR-DESSUS la récompense (sa reprise remplace le Rayon ou le
-      // Bazooka) : le dépôt est annulé et remboursé, la machine libérée ; une principale qui cuit reviendra à sa place
+      // l'arme gardée dans l'Arme 1 : celle en main, sinon une autre arme portée, sinon celle qui cuit (jamais le Rayon ni le Bazooka)
       const auFour = pap.etat !== "libre" && pap.joueur === j.id && pap.arme ? pap.arme : null;
-      if (auFour && slotArme(auFour) !== "principale") {
+      const enMain = armeDuSlot(equip, j.main);
+      const candidates = [enMain !== null && !estMelee(enMain) ? enMain : null, ...armesFeuPortees(equip), auFour];
+      const gardee = candidates.find((a): a is ArmeFeuId => a !== null && a !== "rayon" && a !== "bazooka") ?? null;
+      // une arme au Micro-ondes qui n'est pas gardée (un Rayon ou un Bazooka reviendrait en double, une autre n'aurait plus de place) : le
+      // dépôt est annulé et remboursé, la machine libérée ; gardée, elle reste écrite dans l'Arme 1 et y reviendra
+      if (auFour && auFour !== gardee) {
         pap = { etat: "libre" };
         sorties.push(zev({ e: "pap", joueur: j.id, arme: auFour, pret: false, fin: "perdue" }));
         m.argent += PRIX_PAP;
         sorties.push(sortieArgent(j, PRIX_PAP, "pap"));
       }
-      // le Rayon et le Bazooka remplissent leurs slots, même vidés par une arme perdue (ou rendue ici) au Micro-ondes
-      if (equip.enCuisson && slotArme(equip.enCuisson) !== "principale" && !(pap.etat !== "libre" && pap.joueur === j.id)) delete equip.enCuisson;
-      equip.secondaire = "rayon";
-      equip.speciale = "bazooka";
+      if (!auFour || auFour !== gardee) delete equip.enCuisson;
+      equip.ameliorees = (equip.ameliorees ?? []).filter((a) => a === gardee);
+      if (gardee) poserDansSlot(equip, "principale", gardee); else viderSlot(equip, "principale");
+      poserDansSlot(equip, "secondaire", "rayon");
+      poserDansSlot(equip, "speciale", "bazooka");
       equip.ameliorees = [...new Set([...(equip.ameliorees ?? []).filter((a) => a !== "rayon" && a !== "bazooka"), "rayon" as ArmeFeuId, "bazooka" as ArmeFeuId])];
       ctx.memoriserPrecedent(j);
       delete j.cadenceArme.rayon;
@@ -1517,7 +1537,6 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       j.munSpeciale = chargeurZombie("bazooka", true);
       m.grenades = INVENTAIRE_GRENADES.fragMax;
       sorties.push(...ctx.equiper(j, equip, "speciale", t, "tout"));
-      for (const a of ATOUTS_LISTE) if (!m.atouts.has(a)) donnerAtout(j, a, t, sorties);
     }
     sorties.push(ctx.presence());
     immediat = true;

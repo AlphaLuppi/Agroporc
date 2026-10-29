@@ -110,7 +110,7 @@ import { creerSons, type PositionSon } from "./sons";
 import { angleRelatif, anglesVers, fovVerticalDeg, lissage, panSon } from "./vue";
 import { TANGAGE_MAX, directionVisee, rotationCamera, tangageDeVue } from "./jeu-visee";
 import { ControleurArmes } from "./jeu-equipement";
-import { serialiserSlots } from "./equipement";
+import { meleeDe, serialiserSlots } from "./equipement";
 import { ControleurKillcam } from "./jeu-killcam";
 import { MondeJeu } from "./jeu-monde";
 import { ControleurVehicule, commandesDepuisEntrees, recalerOccupants } from "./jeu-vehicule";
@@ -683,14 +683,47 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
    */
   function coupMelee(arme: ArmeMeleeId): boolean {
     if (t < prochainDe("couteau")) return false;
+    envoyerCoup(arme);
+    prochains.set("couteau", t + MELEE[arme].cadenceS);
+    armeMain.coup();
+    return true;
+  }
+
+  /** La lame frappe : cibles de l'arc de l'arme blanche dans la visée actuelle, `coup` au serveur, son. */
+  function envoyerCoup(arme: ArmeMeleeId) {
     const o = oeil();
     const d = directionVisee(lacet, tangage, kick);
     const res = ciblesDuCoup(o, d, arme);
     client.envoyer({ t: "coup", o, d, cibles: res.map((r) => r.cible) });
-    prochains.set("couteau", t + MELEE[arme].cadenceS);
-    armeMain.coup();
     sons.coup(false, undefined, arme);
-    return true;
+  }
+
+  /** (v10, zombies) Coup de couteau rapide en attente de son impact : instant (s, horloge du jeu) et arme blanche ; null sinon. */
+  let coupRapideEnAttente: { impactT: number; arme: ArmeMeleeId } | null = null;
+
+  /**
+   * (v10, zombies) Coup de couteau arme à feu en main (touche V, le « melee » de BO1) : l'arme s'écarte, la lame frappe à l'impact (le `coup`
+   * part alors, visée de cet instant), puis l'arme revient en joue. Plus l'arme est lourde, plus c'est long (coup-rapide.ts) ; ni tir, ni
+   * recharge (annulée), ni changement d'arme d'ici là. Arme blanche en main : un coup ordinaire.
+   */
+  function coupRapide() {
+    if (!peutAgir() || entracte || enKillcam() || tireInterdit() || pilote()) return;
+    const enMain = armes.armeEnMain();
+    if (estMelee(enMain)) { coupMelee(enMain); return; }
+    const c = armes.coupRapide(ms());
+    if (!c) return;
+    viseMaintenu = false;
+    const arme = meleeDe(armes.equipement());
+    coupRapideEnAttente = { impactT: t + c.impactS, arme };
+    armeMain.coupRapide(c.impactS, c.dureeS, arme);
+  }
+
+  /** (v10) L'impact d'un coup rapide est arrivé : la lame frappe (sauf si le joueur est tombé entre-temps). */
+  function majCoupRapide() {
+    if (!coupRapideEnAttente || t < coupRapideEnAttente.impactT) return;
+    const { arme } = coupRapideEnAttente;
+    coupRapideEnAttente = null;
+    if (peutAgir() && !entracte && !enKillcam()) envoyerCoup(arme);
   }
 
   /**
@@ -741,7 +774,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   function tirer(_force = false, main: "d" | "g" = "d"): boolean {
     if (pilote()) return tirerCanon();
     if (!peutAgir() || entracte || enKillcam() || tireInterdit()) return false;
-    if (armes.degainage(ms())) return false;
+    if (armes.degainage(ms()) || armes.coupEnCours(ms())) return false;
     const arme = armes.armeEnMain();
     if (estMelee(arme)) return main === "g" ? false : coupMelee(arme);
     const a = STATS[arme];
@@ -1401,6 +1434,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
    */
   function tomber() {
     vivant = false;
+    coupRapideEnAttente = null;
     pv = 0;
     bouclier = 0;
     mortT = 0;
@@ -2036,12 +2070,17 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
         case "visee": viseMaintenu = !estMelee(armes.armeEnMain()); visePresse = t; viseConsomme = false; break; // pas de visée avec une arme blanche
         case "accroupi": if (accroupiBascule) accroupiBascTenu = !accroupiBascTenu; break;
         case "armePrincipale": case "armeSecondaire": case "couteau": case "armeSpeciale": {
-          const s = SLOT_DE_L_ACTION[a];
+          // (v10, zombies) à partir de deux armes, l'arme blanche ne se tient plus seule : la touche 3 prend l'Arme 3
+          const s = a === "couteau" && modeZ && !armes.couteauTenable() ? "speciale" : SLOT_DE_L_ACTION[a];
           if (s) changerSlot(s);
           break;
         }
         case "armePrecedente": if (peutChangerArme()) apresChangementArme(armes.rapide(ms())); break;
-        case "couteauRapide": if (peutChangerArme()) apresChangementArme(armes.couteauRapide(ms())); break;
+        // (v10) zombies : coup de couteau sans lâcher l'arme ; arène : on prend le couteau (rappuyer : retour)
+        case "couteauRapide":
+          if (modeZ) coupRapide();
+          else if (peutChangerArme()) apresChangementArme(armes.couteauRapide(ms()));
+          break;
         case "interagir": interagir(); break;
         case "siege": changerSiege(); break;
         case "passer": if (kc.actif() && kc.phase() === "rejeu") kc.passer(); break;
@@ -3055,6 +3094,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     }
     sautDemande = false;
 
+    // (v10, zombies) la lame d'un coup de couteau rapide arrive
+    majCoupRapide();
     // --- tir (boucle bornée : les armes rapides tirent plus d'une fois par image) ---
     if (actif) {
       // le canon du titan tire en continu tant que le bouton est tenu

@@ -2,13 +2,14 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { aleaGraine } from "../agroparc3d/cachettes";
 import type { SceneData } from "../agroparc3d/types";
-import { MELEE } from "./armes";
+import { MELEE, STATS } from "./armes";
+import { formatArgent } from "./hud-modele";
 import {
   CAPACITE_ZOMBIES, DISTANCE_AFFICHAGE_M, INVITE_VIDE, MondeZombies, effetsMortZombie, Rugissements, TAMPON_ZOMBIES_MS, animerCetteImage, decisionMaintien, inviteZombies, objetSecretProche,
   periodeAnimation, segmentsPortesFermees, sonGriffe, tigreAffiche, trouverZombieTouche, trouverZombiesMelee, type EntreeInvite, type PartieInvite, type ZombieVue,
 } from "./jeu-zombies";
 import { FORME_TIGRE, pointLocal, toucheTigre } from "./monstres";
-import { encoderZombies, type Equipement, type Vec3, type ZombieSnap } from "./protocole";
+import { copierEquipement, encoderZombies, type Equipement, type Vec3, type ZombieSnap } from "./protocole";
 import { creerSimuZombies } from "./zombies";
 import { ACHATS, FENETRES, INTERACTIONS_SECRET, PORTES_PAYANTES, construireMondeZombies } from "./zombies-carte";
 import { ZOMBIES, echelleZombie, pvZombie } from "./zombies-vagues";
@@ -297,6 +298,19 @@ describe("inviteZombies", () => {
   });
   const achat = (id: string) => ACHATS.find((a) => a.id === id)!;
 
+  it("(v10) inventaire plein : l'invite dit quelle arme serait remplacée (celle en main) ; arme au Micro-ondes : « Au Micro-ondes »", () => {
+    const pompe = achat("mur:pompe");
+    const ici = (o: Partial<EntreeInvite>) => inviteZombies(entree([pompe.position[0], pompe.position[1]], { argent: 5000, ...o }));
+    expect(ici({}).detail).toBe(`Fusil à pompe — ${formatArgent(500)}`);
+    const pleine = copierEquipement({ principale: "sniper", secondaire: "pistolet", speciale: null, ameliorees: ["sniper"] });
+    expect(ici({ equip: pleine, enMain: "pistolet" }).detail).toBe(`Fusil à pompe — ${formatArgent(500)} (remplace Pistolet)`);
+    expect(ici({ equip: pleine, enMain: "sniper" }).detail).toBe(`Fusil à pompe — ${formatArgent(500)} (remplace ${STATS.sniper.zombie.ameliore.nom})`);
+    // avec le Bento, l'Arme 3 vide est prise d'abord
+    expect(ici({ equip: pleine, enMain: "pistolet", atouts: ["bento"] }).detail).toBe(`Fusil à pompe — ${formatArgent(500)}`);
+    const auFour = copierEquipement({ principale: "pompe", secondaire: "pistolet", speciale: null, enCuisson: "pompe" });
+    expect(ici({ equip: auFour, enMain: "pistolet" })).toMatchObject({ assez: false, bloque: "Au Micro-ondes" });
+  });
+
   it("rien à portée : invite vide", () => {
     expect(inviteZombies(entree([128, -55]))).toBe(INVITE_VIDE);
     expect(INVITE_VIDE.invite).toBe("");
@@ -346,11 +360,13 @@ describe("inviteZombies", () => {
     const offre = partieInvite({ boite: { emplacement: 0, etat: "offre", finT: 9000, utilisations: 1, arme: "pompe", pour: "a" } });
     expect(ici({ partie: offre })).toMatchObject({ invite: "boite", prix: 0, assez: true, detail: "Prendre : Fusil à pompe" });
     expect(ici({ partie: offre, moi: "b" })).toMatchObject({ assez: false, bloque: "Occupée" });
-    // (v8) ma mitraillette cuit au Micro-ondes : la pompe offerte (même slot) ne peut pas être prise avant de la reprendre
-    const auFour = { ...offre, pap: { etat: "cuisson" as const, joueur: "a", arme: "mitraillette" as const, debutT: 0, finT: 9000 } };
-    expect(ici({ partie: auFour })).toMatchObject({ invite: "boite", assez: false, bloque: "Reprenez l'arme au Micro-ondes" });
-    // une arme d'un autre slot au Micro-ondes ne bloque rien
-    expect(ici({ partie: { ...auFour, pap: { ...auFour.pap, arme: "pistolet" as const } } }).bloque).toBeUndefined();
+    // (v10) c'est justement la pompe qui cuit au Micro-ondes : elle ne peut pas être prise une seconde fois
+    const auFour = { ...offre, pap: { etat: "cuisson" as const, joueur: "a", arme: "pompe" as const, debutT: 0, finT: 9000 } };
+    const pompeAuFour = copierEquipement({ principale: "pompe", secondaire: "pistolet", speciale: null, enCuisson: "pompe" });
+    expect(ici({ partie: auFour, equip: pompeAuFour })).toMatchObject({ invite: "boite", assez: false, bloque: "Reprenez l'arme au Micro-ondes" });
+    // une autre arme au Micro-ondes ne bloque rien (les emplacements sont génériques)
+    const mitrAuFour = copierEquipement({ principale: "mitraillette", secondaire: "pistolet", speciale: null, enCuisson: "mitraillette" });
+    expect(ici({ partie: { ...auFour, pap: { ...auFour.pap, arme: "mitraillette" as const } }, equip: mitrAuFour }).bloque).toBeUndefined();
   });
 
   it("(v8) Happy hour : la boîte temporaire d'un autre emplacement s'achète à 10 $, prise ou occupée comme la principale", () => {

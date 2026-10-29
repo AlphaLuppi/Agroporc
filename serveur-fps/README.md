@@ -85,6 +85,15 @@ avion → chute et parachute (simulés en temps réel par le serveur) → fouill
 Le chat vocal y est désactivé. Les statistiques (clé = pseudo, les pseudos `Agent*` ne comptent pas) s'écrivent dans `PDJ_FPS_BR_STATS` à la fin d'une partie comptée (2 joueurs atterris au moins, `PDJ_FPS_BR_VALIDE_MS` écoulées) :
 écriture atomique asynchrone (fichier temporaire du même dossier, `fsync`, `rename`, une seule à la fois), synchrone seulement à l'arrêt (SIGTERM), fichier illisible renommé `stats-br.json.corrompu-<horodatage>`. Les ids des tigres zombies sont `z<n>` (jamais ceux des tigres largués `t<n>` de l'arène, qui n'existent pas dans cette salle).
 
+## Protocole v10 (résumé)
+
+La v10 change les règles de l'inventaire des zombies (spec `docs/superpowers/specs/2026-10-29-zombies-inventaire-design.md`) : emplacements d'armes
+génériques (deux armes à feu de n'importe quelle catégorie, une troisième avec l'atout Bento `atout:bento`, la nouvelle arme remplace celle en main),
+`coup` accepté arme à feu en main en zombies (coup de couteau rapide, cadence selon le poids de l'arme, `lib/fps/coup-rapide.ts`), `main{couteau}`
+refusé à partir de deux armes, armes à munitions limitées jamais retirées en zombies. L'arène et le BR ne changent pas : le serveur accepte les
+versions 8, 9 et 10 (`VERSIONS_ACCEPTEES`), mais un client d'avant la v10 qui demande la salle des zombies reçoit `erreur{version}`
+(« rechargez la page », `VERSION_MIN_ZOMBIES`). **Ordre de déploiement : le serveur d'abord, puis la fusion du client.**
+
 ## Protocole v8 (résumé)
 
 La v8 ajoute le Battle Royale (spec `docs/superpowers/specs/2026-10-28-battle-royale-design.md`) par des ajouts seulement : mode `br`, client `sauter`, `chute{lacet, tangage, avance, lateral, ouvrir}` (entrées de la chute, 30 Hz),

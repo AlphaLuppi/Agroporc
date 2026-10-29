@@ -15,7 +15,7 @@
  * (`telecharger` : fetch → decodeAudioData, cache par URL, échec silencieux) les sert ; ils passent par la même sortie spatialisée que les
  * sons synthétisés. Tant qu'un fichier n'est pas chargé (ou s'il manque), un son synthétisé le remplace : le jeu n'est jamais muet.
  */
-import type { ArmeFeuId, ArmeMeleeId } from "./protocole";
+import type { ArmeFeuId, ArmeMeleeId, AtoutId } from "./protocole";
 import {
   ECHANTILLONS, ECHANTILLONS_SIMULTANES_MAX, FileAnnonces, URLS_ZOMBIES, VOIX_ANNONCES, ANNONCES_EN_ATTENTE_MAX, departCale, instantPic, voixLibre,
   type IdEchantillon, type IdVoix,
@@ -153,7 +153,7 @@ export interface Sons {
   /** Planche arrachée (craquement de bois) ou reposée (coups de marteau). */
   planche(arrachee: boolean, position?: PositionSon): void;
   /** Jingle d'un distributeur d'atout (quatre notes propres à chacun) et gorgée. */
-  jingleAtout(atout: "gratin" | "expresso" | "ristretto" | "pausecafe"): void;
+  jingleAtout(atout: AtoutId): void;
   /** Boîte mystère : boîte à musique (tirage) ou rire de la peluche. */
   boite(genre: "tirage" | "peluche", position?: PositionSon): void;
   /** Bonus ramassé (fanfare, cf. `fanfareBonus`) ; un bonus qui tombe (scintillement). */
@@ -1374,7 +1374,7 @@ export function creerSons(): Sons {
       if (!prete()) return;
       const t = ctx!.currentTime + 0.001;
       const airs: Record<string, number[]> = {
-        gratin: [196, 247, 294, 392], expresso: [523, 659, 784, 1047], ristretto: [330, 330, 415, 494], pausecafe: [392, 330, 392, 523],
+        gratin: [196, 247, 294, 392], expresso: [523, 659, 784, 1047], ristretto: [330, 330, 415, 494], pausecafe: [392, 330, 392, 523], bento: [262, 330, 262, 440],
       };
       (airs[atout] ?? airs.gratin).forEach((f, i) => {
         ton(master!, t + i * 0.13, { dur: 0.22, type: "square", f0: f, gain: 0.05, att: 0.01 });

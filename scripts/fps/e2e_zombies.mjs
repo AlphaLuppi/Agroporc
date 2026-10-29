@@ -444,15 +444,18 @@ try {
    * du rendu logiciel serait perdue ; les coups partent dans le vide tant qu'ils ne sont pas à portée, ils ne coûtent que la cadence), la visée suit
    * le plus proche à chaque tour. Renvoie l'état de jeu d'Alice.
    */
+  /** (v10) dernier coup de couteau rapide (V, arme à feu en main) : un appui par durée du coup au pistolet (0,5 s) */
+  let dernierCoupRapide = 0;
   async function suivreEpee() {
     const s = await A.jeu();
     if (!s || !s.vivant) return s;
     const [t1] = (s.zombies ?? []).map((t) => ({ ...t, d: dist([t.x, t.z], plat(s.p)) })).sort((a, b) => a.d - b.d);
     if (t1 && t1.d <= (epeeTenue ? 25 : 20)) {
       await viserTigre(A, t1);
-      if (!epeeTenue) { trace(`épée maintenue : ${t1.id} à ${t1.d.toFixed(1)} m`); await A.touche("Souris0", true); epeeTenue = true; }
+      if (!epeeTenue) { trace(`garde au couteau rapide : ${t1.id} à ${t1.d.toFixed(1)} m`); epeeTenue = true; }
+      // (v10) deux armes : le couteau ne se tient plus seul, on frappe arme en main (touche V) dès qu'un tigre est à portée
+      if (t1.d <= 3.2 && Date.now() - dernierCoupRapide > 550) { dernierCoupRapide = Date.now(); await A.appui("KeyV", 60); }
     } else if (epeeTenue) {
-      await A.touche("Souris0", false);
       epeeTenue = false;
     }
     return s;
@@ -632,9 +635,17 @@ try {
     await B.page.locator("section[aria-label='À terre']").waitFor({ state: "visible", timeout: 8000 }).catch(() => { throw new Error("l'écran « À terre » ne s'affiche pas chez Bob"); });
     await B.capture("06-a-terre-B-1280");
     const posBobMort = plat((await B.jeu()).p);
-    // Alice sort le couteau (dehors, à l'abri) puis saute à côté de Bob
+    // (v10) Alice porte deux armes (pompe + pistolet) : la touche 3 ne lui donne plus le couteau seul (pas d'Arme 3 sans le Bento) ; elle
+    // garde le pistolet en main et frappera au couteau rapide (V)
     await A.appui("Digit3", 100);
-    await jusqua(async () => (await A.jeu()).slot === "couteau", { quoi: "couteau en main avant la relève" });
+    await dormir(800);
+    verifier((await A.jeu()).slot !== "couteau", "avec deux armes, la touche 3 donne encore le couteau seul");
+    await jusqua(async () => {
+      if ((await A.jeu()).slot === "secondaire") return true;
+      await A.appui("Digit2", 80);
+      await dormir(600);
+      return false;
+    }, { quoi: "pistolet en main avant la relève" });
     await aller(A, B, [posBobMort[0] + 1.2, posBobMort[1]], 1.5);
     trace("Alice près de Bob", `tigres à ${(await tigresProches(A)).map((x) => x.d.toFixed(0))} m`);
     // (v8) la relève ne doit pas téléporter Bob (`apparition{garder}`) : sa position est relevée à chaque image chez lui, le saut est mesuré
@@ -679,10 +690,10 @@ try {
   });
 
   // ------------------------------------------------------------------ 7. coup d'épée
-  await etape("7. coups de couteau sur les tigres : cibles « z<n> » envoyées, dégâts de mêlée confirmés, kills, fin de manche (sans bonus) puis pause", async () => {
+  await etape("7. coups de couteau rapides (V, pistolet en main) sur les tigres : cibles « z<n> » envoyées, dégâts de mêlée confirmés, kills, fin de manche (sans bonus) puis pause", async () => {
     const idA = await A.id();
     const depuis = Date.now() - 6000; // les premiers coups ont pu partir pendant la relève
-    await jusqua(async () => { const s = await A.jeu(); return s.slot === "couteau" && s.arme === "couteau"; }, { quoi: async () => `couteau en main (slot ${(await A.jeu()).slot}, arme ${(await A.jeu()).arme})` });
+    await jusqua(async () => { const s = await A.jeu(); return s.slot === "secondaire" && s.arme === "pistolet"; }, { quoi: async () => `pistolet en main (slot ${(await A.jeu()).slot}, arme ${(await A.jeu()).arme})` });
     // Garde à l'épée (les tigres sont revenus sur Alice pendant la relève) jusqu'à la fin de la manche
     const fin = Date.now() + 90_000;
     let n = 0, dernierNCoups = 0;
@@ -696,7 +707,6 @@ try {
         await dormir(40);
       }
     } finally {
-      await A.touche("Souris0", false);
       epeeTenue = false;
     }
     await jusqua(async () => (await A.partie())?.phase === "pause", { ms: 5000, quoi: "la manche 1 s'achève (pause)" });
@@ -709,6 +719,8 @@ try {
     verifier(degats.some((m) => m.degats >= 150), `dégâts de couteau (150) non confirmés : ${JSON.stringify(degats.slice(0, 3))}`);
     const kills = A.msgs("zombieMort", depuis).filter((m) => m.par === idA);
     verifier(kills.length >= 1, "aucun tigre tué au couteau");
+    // (v10) le coup est parti arme à feu en main : le pistolet n'a jamais quitté la main
+    verifier((await A.jeu()).arme === "pistolet", `arme en main après les coups rapides : ${(await A.jeu()).arme}`);
     const gains = A.msgs("argent", depuis).filter((m) => m.delta > 0);
     verifier(gains.some((m) => m.motif === "kill" && m.delta === 130), `gain de kill au couteau (130 $) absent : ${JSON.stringify(gains)}`);
     verifier(!gains.some((m) => m.motif === "manche"), `bonus de fin de manche inattendu (BO1 n'en donne pas) : ${JSON.stringify(gains)}`);
@@ -718,7 +730,7 @@ try {
   });
 
   // ------------------------------------------------------------------ 8. mini Uzi puis porte (pendant la pause)
-  await etape("8. pendant la pause : porte D1 (750 $) : message `batiments` reçu par les deux, porte ouverte ; puis le mini Uzi derrière (il remplace le pistolet)", async () => {
+  await etape("8. pendant la pause : porte D1 (750 $) : message `batiments` reçu par les deux, porte ouverte ; puis le mini Uzi derrière (v10 : il remplace l'arme en main, le pistolet ; la pompe reste)", async () => {
     await bobParti;
     const argentAvant = (await A.jeu()).argent;
     const depuis = Date.now();
@@ -730,10 +742,11 @@ try {
     }
     const detruits = A.msgs("batiments", depuis).find((x) => !x.complet).detruits;
     const porte = await jusqua(async () => { const p = (await B.partie())?.portes?.find((x) => x.id === "D1"); return p?.ouverte ? p : false; }, { ms: 6000, quoi: "porte D1 ouverte dans l'état de la partie chez Bob" });
+    verifier((await A.jeu()).arme === "pistolet", `le pistolet devrait être en main avant l'achat du mini Uzi : ${(await A.jeu()).arme}`);
     const prixUzi = await acheter("mur:mini_uzi", ACHAT_UZI);
     verifier(prixUzi === 1000, `mini Uzi à ${prixUzi} $`);
     const slots = JSON.stringify((await A.jeu()).slots);
-    verifier(/mini_uzi/.test(slots) && !/pistolet/.test(slots), `le mini Uzi devrait remplacer le pistolet : ${slots}`);
+    verifier(/mini_uzi/.test(slots) && !/pistolet/.test(slots) && /pompe/.test(slots), `le mini Uzi devrait remplacer le pistolet (en main), la pompe rester : ${slots}`);
     const argentApres = (await A.jeu()).argent;
     await A.capture("08-porte-ouverte-A-1280");
     return `porte D1 ${prixPorte} $ + mini Uzi ${prixUzi} $ (${argentAvant} → ${argentApres} $), prismes détruits ${JSON.stringify(detruits)}, D1 ${JSON.stringify(porte)}`;

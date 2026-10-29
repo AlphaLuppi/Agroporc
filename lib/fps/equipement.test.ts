@@ -201,8 +201,16 @@ describe("serialiserSlots / lireSlots", () => {
     expect(serialiserSlots([{ slot: "couteau", arme: "couteau", munitions: Infinity, chargeur: -1 }])).toBe("couteau:couteau:0:0");
   });
 
+  it("(v10) emplacements génériques : toute arme à feu dans la principale, la secondaire ou la spéciale (inventaire des zombies)", () => {
+    expect(lireSlots("principale:pistolet:12:12|secondaire:pompe:8:8|speciale:sniper:5:5")).toEqual([
+      { slot: "principale", arme: "pistolet", munitions: 12, chargeur: 12 },
+      { slot: "secondaire", arme: "pompe", munitions: 8, chargeur: 8 },
+      { slot: "speciale", arme: "sniper", munitions: 5, chargeur: 5 },
+    ]);
+  });
+
   it("tolère une 5e colonne (réserve) et saute les lignes abîmées", () => {
-    expect(lireSlots("principale:fusil_assaut:23:30:90|n'importe:quoi|secondaire:bazooka:1:1|secondaire:pistolet:x:12|secondaire:pistolet:12:12:-1"))
+    expect(lireSlots("principale:fusil_assaut:23:30:90|n'importe:quoi|couteau:bazooka:1:1|speciale:epee:0:0|secondaire:pistolet:x:12|secondaire:pistolet:12:12:-1"))
       .toEqual([
         { slot: "principale", arme: "fusil_assaut", munitions: 23, chargeur: 30 },
         { slot: "secondaire", arme: "pistolet", munitions: 12, chargeur: 12 },

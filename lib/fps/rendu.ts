@@ -85,6 +85,11 @@ export interface ArmeEnMain {
   tirer(main?: "g"): void;
   /** Coup de couteau : fente de l'arme (sans flash ni recul). */
   coup(): void;
+  /**
+   * (v10, zombies) Coup de couteau rapide arme à feu en main : l'arme s'écarte vers la droite, la main gauche sort la lame (`arme` : couteau ou
+   * épée) et frappe à `impactS`, puis l'arme revient en joue à `dureeS` (plus l'arme est lourde, plus c'est long).
+   */
+  coupRapide(impactS: number, dureeS: number, arme: ArmeMeleeId): void;
   /** Remplace l'arme en main (modèle, placement, bras) ; ne fait rien si c'est déjà elle. */
   changer(arme: ArmeId): void;
   /** Lance l'animation de rechargement sur `dureeS` secondes. */
@@ -1180,9 +1185,18 @@ export function creerArmeEnMain(idInitial: ArmeId, couleur: CouleurEntree = COUL
     _dir.copy(coude).sub(main).normalize();
     b.quaternion.setFromUnitVectors(BAS, _dir);
   };
-  /** Bras gauche : sur la garde de l'arme, ou sur la poignée de l'arme gauche d'une paire. */
+  /**
+   * (v10) Coup de couteau rapide : avancement (s, −1 = aucun), instants de l'impact et de la fin, lame tenue de la main gauche (créée au premier
+   * coup, refaite si l'arme blanche change), poids de sa sortie (le bras gauche la suit au-delà de la moitié).
+   */
+  let tRapide = -1, impactRapide = 0.2, dureeRapide = 0.6, sortieLame = 0;
+  let lame: ModeleArme | null = null;
+  let lameId: ArmeMeleeId | null = null;
+  const _lameCam = new THREE.Vector3(), _qGroupeInv = new THREE.Quaternion(), _qLame = new THREE.Quaternion(), _eLame = new THREE.Euler();
+  /** Bras gauche : sur la garde de l'arme, sur la poignée de l'arme gauche d'une paire, ou (coup rapide) sur le manche de la lame. */
   const orienterBrasG = () => {
-    if (modeleG) orienterBras(brasG, _main.copy(modeleG.prise).add(modeleG.group.position), coudeGPaire);
+    if (lame && lame.group.visible && sortieLame > 0.5) orienterBras(brasG, _main.copy(lame.prise).applyQuaternion(lame.group.quaternion).add(lame.group.position), coudeG);
+    else if (modeleG) orienterBras(brasG, _main.copy(modeleG.prise).add(modeleG.group.position), coudeGPaire);
     else orienterBras(brasG, modele.garde, coudeG);
   };
   orienterBras(brasD, modele.prise, coudeD);
@@ -1246,6 +1260,47 @@ export function creerArmeEnMain(idInitial: ArmeId, couleur: CouleurEntree = COUL
   const RAIDEUR = 260, AMORTISSEMENT = 21;
   const _bouche = new THREE.Vector3();
 
+  /**
+   * (v10) Coup de couteau rapide, après la pose de l'arme : l'arme s'écarte vers la droite et s'abaisse jusqu'à l'impact (`impactRapide`),
+   * pendant que la lame sort, en bas à gauche, et part en estoc vers le centre de l'écran ; elle touche à l'impact, se retire, puis l'arme
+   * revient en joue à `dureeRapide`. La lame est un enfant du groupe de l'arme : sa pose, voulue dans le repère de la caméra, est ramenée
+   * dans celui du groupe.
+   */
+  function majCoupRapide(dt: number): void {
+    if (tRapide < 0) { if (lame) lame.group.visible = false; sortieLame = 0; return; }
+    tRapide += dt;
+    const u = tRapide / dureeRapide;
+    if (u >= 1) { tRapide = -1; sortieLame = 0; if (lame) lame.group.visible = false; orienterBrasG(); return; }
+    const ui = impactRapide / dureeRapide;
+    // l'arme : écartée de l'armement à l'impact, revenue sur le dernier tiers
+    const ecart = rampe(u, 0, ui * 0.8) - rampe(u, ui + (1 - ui) * 0.45, 1);
+    group.position.x += 0.09 * ecart;
+    group.position.y -= 0.14 * ecart;
+    group.position.z += 0.04 * ecart;
+    group.rotation.z -= 0.55 * ecart;
+    group.rotation.x += 0.25 * ecart;
+    if (!lame) return;
+    // la lame : sortie (0 → 1) puis rangée ; estoc qui culmine à l'impact puis se retire
+    sortieLame = rampe(u, 0, ui * 0.45) - rampe(u, ui + (1 - ui) * 0.5, 1);
+    const estoc = rampe(u, ui * 0.35, ui) - rampe(u, ui + (1 - ui) * 0.1, ui + (1 - ui) * 0.55);
+    lame.group.visible = sortieLame > 0.02;
+    const echelle = lameId === "epee" ? 0.75 : 1;
+    lame.group.scale.setScalar(echelle);
+    _lameCam.set(
+      melange(-0.24, -0.1, sortieLame) + 0.09 * estoc,
+      melange(-0.42, -0.2, sortieLame) + 0.06 * estoc,
+      melange(-0.3, -0.36, sortieLame) - 0.28 * estoc,
+    );
+    _eLame.set(0.25 - 0.35 * estoc, -0.45 + 0.4 * estoc, 0.5 * (1 - estoc));
+    _qLame.setFromEuler(_eLame);
+    group.updateMatrix();
+    _qGroupeInv.copy(group.quaternion).invert();
+    lame.group.position.copy(_lameCam).sub(group.position).divide(group.scale).applyQuaternion(_qGroupeInv);
+    lame.group.quaternion.copy(_qGroupeInv).multiply(_qLame);
+    lame.maj(dt);
+    orienterBrasG();
+  }
+
   return {
     group,
     get progresRecharge() { return modele.progres; },
@@ -1255,6 +1310,19 @@ export function creerArmeEnMain(idInitial: ArmeId, couleur: CouleurEntree = COUL
       recul = Math.min(recul + 0.6, 1.3);
     },
     coup() { modele.coup(); },
+    coupRapide(impactS, dureeS, arme) {
+      if (estMelee(id)) { modele.coup(); return; }
+      if (lameId !== arme) {
+        lame?.dispose();
+        lame = creerModeleArme(arme, m, true);
+        lameId = arme;
+        group.add(lame.group);
+        ordonner(group, true, 1000);
+      }
+      dureeRapide = Math.max(dureeS, 0.2);
+      impactRapide = Math.min(Math.max(impactS, 0.05), dureeRapide * 0.8);
+      tRapide = 0;
+    },
     changer(arme) {
       if (arme === id) return;
       modele.dispose();
@@ -1330,6 +1398,7 @@ export function creerArmeEnMain(idInitial: ArmeId, couleur: CouleurEntree = COUL
         melange(pl.repos[2], pl.vise[2], ads) + recul * pl.reculZ,
       );
       group.rotation.set(recul * pl.reculRot + 0.15 * plongee, pl.lacet * (1 - ads), Math.sin(phase) * 0.015 * amp - 0.25 * plongee);
+      majCoupRapide(dt);
       // Une lunette remplit l'écran (HUD) : l'arme s'efface quand on vise (le sniper, et une arme améliorée à lunette).
       group.visible = !masqueEnVisee || ads < 0.85;
     },
@@ -1343,11 +1412,13 @@ export function creerArmeEnMain(idInitial: ArmeId, couleur: CouleurEntree = COUL
     dispose() {
       modele.dispose();
       modeleG?.dispose();
+      lame?.dispose();
       group.removeFromParent();
       texCamo?.dispose();
       libererMateriaux(m);
     },
   };
+
 }
 
 /**

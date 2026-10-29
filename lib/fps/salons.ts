@@ -5,7 +5,7 @@
  * Spec : docs/superpowers/specs/2026-10-27-arene-zombies-design.md (« Deux salles, un seul serveur »), 2026-10-28-battle-royale-design.md (troisième salle)
  */
 import { BR } from "./br-regles";
-import { JEU, MODES_SALLE, type MessageServeur, type ModeSalle, type PhaseZombies, type ResumeSalonBr } from "./protocole";
+import { JEU, MODES_SALLE, VERSION_MIN_ZOMBIES, type MessageServeur, type ModeSalle, type PhaseZombies, type ResumeSalonBr } from "./protocole";
 import { ZOMBIES } from "./zombies-vagues";
 
 /** Connexions (lobby compris) acceptées par la salle d'un mode. */
@@ -32,16 +32,20 @@ export type DecisionMode =
   | { action: "echo"; mode: ModeSalle }
   /** `refus{action:"mode", raison}` et le client reste où il est */
   | { action: "refus"; raison: "lobby" | "plein" }
+  /** (v10) client trop ancien pour la salle demandée : `erreur{version}` (« rechargez la page ») */
+  | { action: "version" }
   /** `deconnecter` de l'ancienne salle, `connecter` dans la nouvelle, puis `mode` + `bienvenue` */
   | { action: "changer"; mode: ModeSalle };
 
 /**
  * Que faire d'un `mode{mode}` reçu ? `null` : valeur inconnue, ignorée. `enJeu` : le client est en jeu dans sa salle actuelle (refus `lobby`) ;
- * `joueursCible` : membres de la salle d'arrivée (refus `plein` si elle est pleine).
+ * `joueursCible` : membres de la salle d'arrivée (refus `plein` si elle est pleine). `version` (v10) : version du protocole du client ; avant
+ * `VERSION_MIN_ZOMBIES`, la salle des zombies lui est fermée (absent = client à jour).
  */
-export function decisionMode(e: { mode: unknown; salleActuelle: ModeSalle; enJeu: boolean; joueursCible: number }): DecisionMode | null {
+export function decisionMode(e: { mode: unknown; salleActuelle: ModeSalle; enJeu: boolean; joueursCible: number; version?: number }): DecisionMode | null {
   if (!(MODES_SALLE as readonly unknown[]).includes(e.mode)) return null;
   const mode = e.mode as ModeSalle;
+  if (mode === "zombies" && e.version !== undefined && e.version < VERSION_MIN_ZOMBIES) return { action: "version" };
   if (mode === e.salleActuelle) return { action: "echo", mode };
   if (e.enJeu) return { action: "refus", raison: "lobby" };
   if (e.joueursCible >= capaciteSalle(mode)) return { action: "refus", raison: "plein" };

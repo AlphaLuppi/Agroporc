@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   ARMES, ARMES_MELEE, ARMES_PRINCIPALES, ARMES_PRINCIPALES_ZOMBIES, ARMES_SECONDAIRES, ARMES_SECONDAIRES_ZOMBIES, ARMES_SPECIALES, ARMES_UNIQUES, ECHELLE_AVATAR, EQUIPEMENT_DEFAUT, JEU, OEIL_SIEGE, PAS_SNAP_ZOMBIE, PLAFONDS,
-  MODES_SALLE, SILHOUETTE, SILHOUETTE_ACCROUPIE, SLOTS, VERSIONS_ACCEPTEES, VERSION_PROTOCOLE, copierEquipement, decoderZombies, encoderZombies, estIdZombie, estMelee, idZombie,
+  MODES_SALLE, SILHOUETTE, SILHOUETTE_ACCROUPIE, SLOTS, VERSIONS_ACCEPTEES, VERSION_MIN_ZOMBIES, VERSION_PROTOCOLE, copierEquipement, decoderZombies, encoderZombies, estIdZombie, estMelee, idZombie,
   oeilDe, silhouetteDe, type ZombieSnap,
   type AvionBr, type CauseMort, type EtatJoueurSnap, type EtatPartieBr, type MessageClient, type MessageServeur, type ModeSalle, type PassageAvion, type TigreLargueSnap,
 } from "./protocole";
@@ -91,8 +91,8 @@ describe("silhouette", () => {
 });
 
 describe("constantes", () => {
-  it("version 9 du protocole (événements de la v4, tigres largués de la v5, zombies et épée, réseau, carte, grenades et morts désarticulées de la v8, Battle Royale de la v9)", () => {
-    expect(VERSION_PROTOCOLE).toBe(9);
+  it("version 10 du protocole (événements de la v4, tigres largués de la v5, zombies et épée, réseau, carte, grenades et morts désarticulées de la v8, Battle Royale de la v9, inventaire des zombies de la v10)", () => {
+    expect(VERSION_PROTOCOLE).toBe(10);
   });
 
   it("chaîne de plafonds de vitesse : sprint couteau ≤ plafond horizontal ≤ plafond déclaré", () => {
@@ -114,10 +114,11 @@ describe("constantes", () => {
 });
 
 describe("protocole v6 (zombies)", () => {
-  it("version courante 9, le serveur accepte aussi le 8", () => {
-    expect(VERSION_PROTOCOLE).toBe(9);
-    expect([...VERSIONS_ACCEPTEES]).toEqual([8, 9]);
+  it("version courante 10, le serveur accepte aussi le 8 et le 9 (mais pas dans la salle des zombies)", () => {
+    expect(VERSION_PROTOCOLE).toBe(10);
+    expect([...VERSIONS_ACCEPTEES]).toEqual([8, 9, 10]);
     expect(VERSIONS_ACCEPTEES).toContain(VERSION_PROTOCOLE);
+    expect(VERSION_MIN_ZOMBIES).toBe(10);
   });
 
   it("ARMES_MELEE : couteau et épée, estMelee ne reconnaît aucune arme à feu", () => {
