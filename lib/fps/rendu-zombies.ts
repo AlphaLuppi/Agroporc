@@ -11,8 +11,8 @@
  * le long de +x de son repère, le groupe est donc tourné de `cap + π/2` (comme `rendu-monstres.ts`).
  * v7 : quatre teintes (tigre, doré qui luit, chef coiffé d'une toque, petit), sortie du sol, arrachage des planches, saut par la fenêtre,
  * rampant, recul à l'impact. v8 : la mort est un ragdoll (`ragdoll-tigre.ts` : particules de Verlet sur les os du GLB, sol, tables et murs
- * du monde, impulsion selon l'arme, la zone et l'origine du coup), au plus `RAGDOLL.actifsMax` simulés à la fois (les plus anciens se
- * figent) ; repli sur les trois morts rigides de la v7 (de côté, en avant à la tête, projeté par une explosion) sans collisions. Le cadavre
+ * du monde, impulsion selon l'arme, la zone et l'origine du coup), au plus `RAGDOLL.actifsMax` simulés à la fois (au-delà, le nouveau
+ * mort joue la mort rigide de la v7, aucun ragdoll n'est figé en route) ; repli sur les trois morts rigides de la v7 (de côté, en avant à la tête, projeté par une explosion) sans collisions. Le cadavre
  * garde son emplacement `DUREE_CADAVRE_S` (`DUREE_CADAVRE_PROJETE_S` s'il a été projeté) puis s'enfonce. Un tigre mort est ignoré des snaps
  * suivants (l'affichage a `JEU.interpolationMs` de retard : sans cela il réapparaîtrait vivant à côté de son cadavre).
  * Aucun test vitest (three, WebGL) : la logique est dans `jeu-zombies.ts` et `zombies-anim.ts`, les régressions se voient aux captures.
@@ -24,7 +24,7 @@ import { creerMonde, squelette } from "../tigre3d/squelette";
 import { animerCetteImage, tigreAffiche, type ZombieVue } from "./jeu-zombies";
 import { JEU, type Vec3 } from "./protocole";
 import {
-  creerRagdoll, limiterActifs, osDeLaPose, type CauseMort, type CollisionsRagdoll, type ImpulsionRagdoll, type Ragdoll,
+  creerRagdoll, osDeLaPose, ragdollPermis, ragdollsEveilles, type CauseMort, type CollisionsRagdoll, type ImpulsionRagdoll, type Ragdoll,
 } from "./ragdoll-tigre";
 import { creerAnimZombie, type AnimZombie } from "./zombies-anim";
 import { ZOMBIES, armementGriffe } from "./zombies-vagues";
@@ -392,9 +392,8 @@ export function creerRenduZombies(scene: THREE.Scene, collisions: CollisionsRagd
       for (const [id, t] of morts) {
         if (tempsLocal - t > DUREE_CADAVRE_PROJETE_S + 1 && !emplacements.some((e) => e.id === id && e.mortCause !== null)) morts.delete(id);
       }
-      // (v8) plafond des ragdolls simulés : les plus anciens se figent
-      const cadavres = emplacements.filter((e) => e.mortCause !== null && e.ragdoll !== null).sort((a, b) => a.mortT - b.mortT);
-      nRagdollsActifs = limiterActifs(cadavres as (Emplacement & { ragdoll: Ragdoll })[]).length;
+      // (v8) ragdolls simulés (le plafond est appliqué à la mort, `ragdollPermis`)
+      nRagdollsActifs = ragdollsEveilles(emplacements.map((e) => (e.mortCause !== null ? e.ragdoll : null)));
       for (const e of emplacements) if (e.mortCause !== null && !parId.has(e.id)) poserCadavre(e, tempsLocal, dt);
       for (let k = 0; k < nLueurs; k++) lueurs[k].visible = false;
       for (let k = 0; k < nToques; k++) toques[k].visible = false;
@@ -525,6 +524,8 @@ export function creerRenduZombies(scene: THREE.Scene, collisions: CollisionsRagd
       e.ageCadavre = 0;
       e.dureeCadavre = DUREE_CADAVRE_S;
       if (!collisions || !modele) return;
+      // plafond : au-delà de `RAGDOLL.actifsMax` ragdolls éveillés, mort rigide de la v7 (jamais un ragdoll figé en route)
+      if (!ragdollPermis(emplacements.map((x) => (x.mortCause !== null ? x.ragdoll : null)))) return;
       // le ragdoll part de la pose affichée (celle du moteur de course, recopiée sur le clone à sa dernière animation), sur sa lancée
       const sq = squelette();
       const th = e.cap + Math.PI / 2, v = Math.min(e.vitesse, LANCEE_MAX);

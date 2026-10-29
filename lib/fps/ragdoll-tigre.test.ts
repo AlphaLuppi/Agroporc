@@ -4,7 +4,7 @@ import type { SceneData } from "../agroparc3d/types";
 import { creerMonde, fk, squelette } from "../tigre3d/squelette";
 import type { Vec3 } from "./protocole";
 import {
-  RAGDOLL, ROLES_RAGDOLL, armeProjette, collisionsDuMonde, creerRagdoll, impulsionMort, limiterActifs, osDeLaPose,
+  RAGDOLL, ROLES_RAGDOLL, armeProjette, collisionsDuMonde, creerRagdoll, impulsionMort, osDeLaPose, ragdollPermis, ragdollsEveilles,
   type CollisionsRagdoll, type InfoMort, type RepereRagdoll,
 } from "./ragdoll-tigre";
 import { creerAnimZombie } from "./zombies-anim";
@@ -187,12 +187,25 @@ describe("ragdoll du tigre zombie", () => {
     }
   });
 
-  it("plafond : au-delà de 8 ragdolls éveillés, les plus anciens se figent", () => {
-    const liste = Array.from({ length: 11 }, () => ({ ragdoll: nouveau(solPlan) }));
-    const actifs = limiterActifs(liste);
-    expect(actifs.length).toBe(RAGDOLL.actifsMax);
-    expect(liste.slice(0, 3).every((a) => a.ragdoll.endormi())).toBe(true);
-    expect(liste.slice(3).every((a) => !a.ragdoll.endormi())).toBe(true);
+  it("plafond : au-delà de 8 ragdolls éveillés, le nouveau mort n'en reçoit pas ; aucun ragdoll lancé n'est figé en l'air", () => {
+    // 8 morts simultanées (nuke) projetées vers le haut
+    const liste = Array.from({ length: RAGDOLL.actifsMax }, (_, k) => {
+      const r = nouveau(solPlan);
+      r.impulsion(impulsionMort({ cause: "nuke", p: [0, 0, 0], graine: k + 1 }, [-4, 1.6, 0]));
+      return r;
+    });
+    expect(ragdollsEveilles([...liste, null])).toBe(RAGDOLL.actifsMax);
+    expect(ragdollPermis(liste)).toBe(false);
+    expect(ragdollPermis(liste.slice(1))).toBe(true);
+    // chacun finit sa chute : tous au sol (aucune particule au-dessus de ~0,5 m), alors seulement de la place pour un nouveau
+    for (const r of liste) avancer(r, RAGDOLL.vieMaxS + 0.5);
+    for (const r of liste) {
+      expect(r.endormi()).toBe(true);
+      let haut = 0;
+      for (let i = 0; i < r.n; i++) haut = Math.max(haut, r.pos[i * 3 + 1]);
+      expect(haut).toBeLessThan(0.6);
+    }
+    expect(ragdollPermis(liste)).toBe(true);
   });
 
   it("impulsions : le rayon et les armes gratinées explosives projettent, pas les autres", () => {

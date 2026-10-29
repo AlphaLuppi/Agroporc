@@ -56,7 +56,7 @@ export const RAGDOLL = {
   vieMaxS: 6,
   /** poussée de côté (m/s) du torse et de la tête à la mort (il tombe sur le flanc) */
   pousseeFlanc: 0.7,
-  /** plafond de ragdolls simulés à la fois (les plus anciens se figent) */
+  /** plafond de ragdolls simulés à la fois (au-delà, un nouveau mort joue la mort rigide de la v7 : aucun cadavre figé en l'air) */
   actifsMax: 8,
 } as const;
 
@@ -748,13 +748,18 @@ export function osDeLaPose(sq: Squelette, pose: PoseTigre, sortie: MondeOs = cre
   return fk(sq, pose, sortie);
 }
 
+/** Ragdolls encore simulés (éveillés) parmi `ragdolls` (les cadavres sans ragdoll, `null`, ne comptent pas). */
+export function ragdollsEveilles(ragdolls: readonly (Ragdoll | null)[]): number {
+  let n = 0;
+  for (const r of ragdolls) if (r && !r.endormi()) n++;
+  return n;
+}
+
 /**
- * Plafond des ragdolls simulés : parmi `actifs` (du plus ancien au plus récent), fige les plus anciens au-delà de `max` et rend ceux qui
- * restent à simuler (les endormis ne comptent pas).
+ * Plafond des ragdolls simulés : un nouveau mort reçoit un ragdoll tant que moins de `max` sont éveillés ; sinon il joue la mort rigide de
+ * la v7. On ne fige JAMAIS un ragdoll déjà lancé : figé avant d'avoir touché le sol (morts simultanées d'une nuke, d'une grenade), il
+ * resterait debout comme une statue, ou suspendu en l'air, jusqu'à s'enfoncer.
  */
-export function limiterActifs<T extends { ragdoll: Ragdoll }>(actifs: readonly T[], max: number = RAGDOLL.actifsMax): T[] {
-  const eveilles = actifs.filter((a) => !a.ragdoll.endormi());
-  const surplus = eveilles.length - max;
-  for (let k = 0; k < surplus; k++) eveilles[k].ragdoll.figer();
-  return surplus > 0 ? eveilles.slice(surplus) : eveilles;
+export function ragdollPermis(ragdolls: readonly (Ragdoll | null)[], max: number = RAGDOLL.actifsMax): boolean {
+  return ragdollsEveilles(ragdolls) < max;
 }
