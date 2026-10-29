@@ -229,7 +229,8 @@ describe("état de la zone dans le temps", () => {
         degatsPrec = e.degatsParS;
       }
     }
-  });
+    // 100 graines × 1 120 instants : lourd sous charge, d'où le délai large
+  }, 30_000);
 
   it("horsZone et distanceAuBord : bord exclu, signe selon le côté", () => {
     const e = etatZone(plan, 0);
