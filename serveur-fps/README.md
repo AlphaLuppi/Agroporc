@@ -90,6 +90,17 @@ Chat vocal : le serveur ne relaie `voix` qu'entre deux joueurs en vie (le client
 un joueur en vie n'entend jamais un spectateur, sauf le lien de killcam : une victime et son tueur, pendant `LIEN_VOIX_KILLCAM_MS` (12 s) après la mort (dans l'arène aussi, ce lien passe outre la proximité). Les messages `tir`, `coup` et `degats` portent `ts` (horodatage serveur) et le snap recopie `vise` / `recharge` déclarés dans `etat` : tout est additif, sans changement de version. Les statistiques (clé = pseudo, les pseudos `Agent*` ne comptent pas) s'écrivent dans `PDJ_FPS_BR_STATS` à la fin d'une partie comptée (2 joueurs atterris au moins, `PDJ_FPS_BR_VALIDE_MS` écoulées) :
 écriture atomique asynchrone (fichier temporaire du même dossier, `fsync`, `rename`, une seule à la fois), synchrone seulement à l'arrêt (SIGTERM), fichier illisible renommé `stats-br.json.corrompu-<horodatage>`. Les ids des tigres zombies sont `z<n>` (jamais ceux des tigres largués `t<n>` de l'arène, qui n'existent pas dans cette salle).
 
+## Aperçu des spectateurs (vue Palantir, issue #84)
+
+Spec `docs/superpowers/specs/2026-10-29-apercus-modes-design.md`. Le message serveur **`apercu`** (additif, `VERSION_PROTOCOLE` inchangé : un client d'avant l'ignore, un client à
+jour devant un serveur d'avant n'en reçoit jamais et affiche une simulation) montre une partie de **zombies** ou de **Battle Royale** aux seuls spectateurs de la salle (inscrits hors jeu :
+la vue Palantir avec le panneau « Arène » ouvert) : `{ t: "apercu", ts, mode, partie?, j: [[id, pseudo, couleur, x, y, z (décimètres), drapeaux]], z?: SnapZombies, m?: manche, br?: { phase, vivants, total, zone, avion } }`.
+Il réutilise le snap et les tigres déjà calculés (`Salle.sortiesSnap`, aucun recalcul) : un snap sur 4 en zombies (5 Hz), sur 3 en Battle Royale (3,3 Hz), **zéro octet sans spectateur**
+(budgets : ≤ 3,6 Ko à 50 joueurs en BR, ≤ 1,8 Ko pour 8 joueurs et 24 tigres). L'arène garde son snap aux spectateurs. En Battle Royale, un spectateur dont la partie n'est ni en vol ni en
+jeu reçoit l'aperçu de la partie en cours qui compte le plus de survivants (`partieApercuBr` de `salons.ts`, relayé par `index.ts` ; `partie` porte l'id de la partie d'où il vient) ; la salle
+calcule alors son aperçu même sans spectateur (`Salle.relaiApercu`, posé une fois par seconde). **Le serveur doit être reconstruit et redéployé** pour que le direct existe ; ordre indifférent
+avec le site (sans lui, la vue affiche des simulations avec un bandeau « SIMULATION »). Aucune variable d'environnement nouvelle.
+
 ## Protocole v10 (résumé)
 
 La v10 change les règles de l'inventaire des zombies (spec `docs/superpowers/specs/2026-10-29-zombies-inventaire-design.md`) : emplacements d'armes
@@ -153,6 +164,9 @@ Contrat complet et commenté : `lib/fps/protocole.ts` (ne change qu'avec le clie
 Depuis la racine, Node 22, Playwright (`npm i --no-save playwright`). Les scripts lancent ce serveur sur un port libre (jamais 8787 : un onglet de développement ouvert sur le site
 s'y reconnecterait), un `next dev` pointé dessus (`NEXT_PUBLIC_FPS_WS_URL`) et des Chromium headless, puis arrêtent ce qu'ils ont lancé (captures dans `E2E_OUT`) :
 
+* `node scripts/fps/captures_apercus.mjs` et `node scripts/fps/e2e_apercus.mjs` (aperçu par mode de la vue Palantir, issue #84) : le premier photographie la vue (arène, transition vers les zombies, manche,
+  Battle Royale, retour, panneau fermé, mouvement réduit) et vérifie la caméra, le décor et les simulations ; le second fait jouer un client WebSocket dans chaque mode pendant qu'un navigateur regarde
+  la vue (direct, bandeau « En direct », retour à la simulation quand il part). Ils lisent `window.__palantir.apercu()` et avancent la simulation par `apercuAvancer` (le rendu logiciel est lent).
 * `node scripts/fps/e2e_arene_v2.mjs` : `PDJ_FPS_ELSA_MIN_MS=6000` / `PDJ_FPS_ELSA_MAX_MS=7000`, avion des tigres et événements repoussés d'une heure ; entrée en arène, vue mutuelle, armes, kill confirmé par le serveur,
   killcam, couteau, épée (un troisième navigateur), glissade, conduite et tir d'un passager, Elsa, mini-carte et tableau des scores.
 * `node scripts/fps/e2e_arene_tigres.mjs` : avion toutes les 4 à 5 s, événements neutralisés ; avion, tigre sauvage et sort d'invocation.

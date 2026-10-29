@@ -539,6 +539,8 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
   let apercuSource: "direct" | "simulation" | null = null;
   const BLOOM_BASE = 0.62;
   let impulsionK = 0;
+  /** durée de la dernière transition de mode (s), gardée après sa fin pour le crochet de développement */
+  let derniereDuree = 0;
 
   /** Éléments propres à l'arène : POI et leurs étiquettes, voitures, bus, avion, Truck, tigre caché (masqués dans les autres modes). */
   function montrerArene(b: boolean) {
@@ -604,6 +606,7 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
     introDone = true;
     spinLeft = 0;
     const duree = immediat ? 0 : dureeTransition(dePose, versPoseT, reduced);
+    derniereDuree = duree;
     if (duree <= 0) {
       transition = null;
       camera.position.copy(vers.pos);
@@ -748,7 +751,7 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
         const sim = [...joueursMarq.values()].filter((m) => m.sim).length;
         return {
           actif: apercuActif, mode: modeCamera, modeDecor, chargé: !!rendu,
-          transition: { enCours: !!transition && transition.courbe === "mode", k: transition?.t ?? 1, duree: transition?.duree ?? 0 },
+          transition: { enCours: !!transition && transition.courbe === "mode", k: transition?.t ?? 1, duree: derniereDuree },
           camera: { pos: [camera.position.x, camera.position.y, camera.position.z], cible: [controls.target.x, controls.target.y, controls.target.z] },
           joueurs: joueursMarq.size, sim, tigres: rendu?.etat().tigres ?? 0, source: apercuSource, appelsDessin: renderer.info.render.calls,
           modele: rendu?.etat().modele ?? null,

@@ -28,7 +28,7 @@ describe("cadrages par mode", () => {
     expect(z[2]).toBeLessThanOrEqual(BORNES_ZOMBIES.z1);
     const b = bornesBr(scene);
     const c = focusDuMode("br", scene);
-    expect(c[0]).toBeCloseTo((b.x0 + b.x1) / 2);
+    expect(c[0]).toBeCloseTo((b.x0 + b.x1) / 2 + CADRAGES.br.decalageX);
     expect(c[0]).toBeGreaterThan(b.x0);
     expect(c[1]).toBeGreaterThan(b.z0);
     expect(c[1]).toBeLessThan(b.z1);
@@ -42,6 +42,13 @@ describe("cadrages par mode", () => {
     const plongee = (Math.atan2(p.pos[1] - p.cible[1], Math.hypot(p.pos[0] - p.cible[0], p.pos[2] - p.cible[2])) * 180) / Math.PI;
     expect(plongee).toBeGreaterThanOrEqual(25);
     expect(plongee).toBeLessThanOrEqual(70);
+  });
+
+  it("l'arène n'est pas décalée (cadrage historique) ; les autres modes se centrent sur ce que le panneau laisse voir", () => {
+    expect(CADRAGES.arene.decalageX).toBe(0);
+    expect(CADRAGES.zombies.decalageX).toBeGreaterThan(0);
+    expect(CADRAGES.br.decalageX).toBeGreaterThan(0);
+    expect(focusDuMode("arene", scene)).toEqual(scene.focus);
   });
 
   it("les trois cadrages sont distincts et le brouillard varie (zombies plus dense, BR plus léger)", () => {

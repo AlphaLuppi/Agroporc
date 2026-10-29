@@ -18,15 +18,20 @@ export interface Cadrage {
   dz: number;
   /** densité du brouillard exponentiel */
   brouillard: number;
+  /**
+   * décalage du point visé vers l'est (m) : le panneau « Arène » masque le tiers droit de l'écran, la carte se centre sur ce qui reste visible
+   * (l'arène garde son cadrage historique `REST`)
+   */
+  decalageX: number;
 }
 
 export const CADRAGES: Record<ModeSalle, Cadrage> = {
   // la position de repos historique (`REST` de scene.ts : un test les égale)
-  arene: { focus: null, dx: -30, y: 230, dz: 380, brouillard: 0.0011 },
+  arene: { focus: null, dx: -30, y: 230, dz: 380, brouillard: 0.0011, decalageX: 0 },
   // le Pôle R&D en gros plan : la carte tient dans 230 × 135 m
-  zombies: { focus: FOCUS_ZOMBIES, dx: -10, y: 135, dz: 175, brouillard: 0.0017 },
+  zombies: { focus: FOCUS_ZOMBIES, dx: -10, y: 135, dz: 175, brouillard: 0.0017, decalageX: 22 },
   // plongée haute et large sur toute la carte : la zone et l'avion tiennent à l'écran
-  br: { focus: null, dx: 0, y: 540, dz: 330, brouillard: 0.0006 },
+  br: { focus: null, dx: 0, y: 540, dz: 330, brouillard: 0.0006, decalageX: 90 },
 };
 
 export interface Pose { pos: Vec3; cible: Vec3 }
@@ -37,12 +42,13 @@ export const MI_TRANSITION = 0.5;
 /** Point visé d'un mode : arène = `data.focus`, zombies = le Pôle R&D, Battle Royale = le centre de ses bornes. */
 export function focusDuMode(mode: ModeSalle, data: Pick<SceneData, "focus" | "buildings">): Vec2 {
   const c = CADRAGES[mode];
-  if (c.focus) return c.focus;
-  if (mode === "br") {
+  let f: Vec2 = data.focus;
+  if (c.focus) f = c.focus;
+  else if (mode === "br") {
     const b = bornesBr(data as SceneData);
-    return [(b.x0 + b.x1) / 2, (b.z0 + b.z1) / 2];
+    f = [(b.x0 + b.x1) / 2, (b.z0 + b.z1) / 2];
   }
-  return data.focus;
+  return [f[0] + c.decalageX, f[1]];
 }
 
 /** Pose de la caméra (position et point visé) d'un mode. */

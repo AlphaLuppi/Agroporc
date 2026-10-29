@@ -65,8 +65,8 @@ const VERT = 0x6ff0a8;
 
 /** Style d'un type de tigre (0 tigre, 1 doré, 2 chef, 3 petit, 4 mini Truck Muche) : couleur et taille de la flèche. */
 const STYLE_TIGRE: readonly { couleur: number; echelle: number }[] = [
-  { couleur: 0xff8a3c, echelle: 1.5 }, { couleur: 0xffd34a, echelle: 1.8 }, { couleur: 0xff4d8d, echelle: 2.6 },
-  { couleur: 0xffb085, echelle: 0.9 }, { couleur: 0x7fd8ff, echelle: 2.2 },
+  { couleur: 0xff8a3c, echelle: 2.2 }, { couleur: 0xffd34a, echelle: 2.6 }, { couleur: 0xff4d8d, echelle: 3.6 },
+  { couleur: 0xffb085, echelle: 1.4 }, { couleur: 0x7fd8ff, echelle: 3 },
 ];
 
 /** Graine d'une simulation : tirée à chaque ouverture, changement de mode et cycle (jamais dans les modules purs). */

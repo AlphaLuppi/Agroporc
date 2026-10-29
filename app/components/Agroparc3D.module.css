@@ -64,6 +64,10 @@
 .labels > [data-kind="shop"] { color: var(--ag-ink-dim); text-shadow: none; }
 /* Repère d'un joueur de l'arène (spectateurs) : purement visuel, il ne doit pas bloquer le glisser ni les libellés cliquables dessous. */
 .labels > [data-kind="joueur"] { pointer-events: none; }
+/* Aperçu par mode : un faux joueur a un nom en italique et un contour en pointillés (jamais pris pour un vrai) ; à terre ou mort, il s'efface. */
+.labels > [data-kind="joueur"][data-sim="1"] [data-part="name"] { border-style: dashed; font-style: italic; }
+.labels > [data-kind="joueur"][data-hors] { opacity: 0.65; }
+.labels > [data-kind="joueur"][data-hors] [data-part="name"] { border-style: dotted; text-decoration: line-through; }
 
 .hud { position: absolute; z-index: 3; pointer-events: none; }
 .hudTl { left: 24px; top: 20px; max-width: 460px; }
@@ -128,6 +132,25 @@
   content: ""; display: inline-block; width: 14px; height: 2px; margin-right: 7px; vertical-align: middle;
   background: currentColor; box-shadow: 0 0 6px currentColor;
 }
+/* Bandeau de l'aperçu par mode (BadgeApercu) : simulation = contour en pointillés, direct = pastille pleine. */
+.apercu {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--ag-ink-dim); text-shadow: 0 0 6px var(--ag-ground), 0 0 2px var(--ag-ground);
+}
+.apercuPastille {
+  padding: 2px 8px; border: 1px dashed var(--ag-cadre); color: var(--ag-ink-dim); background: rgba(4, 6, 10, 0.7); text-shadow: none; font-weight: 500;
+}
+.apercuPastille[data-etat="direct"] { border: 1px solid var(--ag-ok); background: var(--ag-ok); color: var(--ag-ground); }
+.apercuPastille[data-etat="direct"]::before {
+  content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 6px; border-radius: 50%; background: currentColor; vertical-align: middle;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .apercuPastille[data-etat="direct"]::before { animation: apercuPoint 1.4s ease-in-out infinite; }
+}
+@keyframes apercuPoint { 50% { opacity: 0.25; } }
+.apercuTitre { color: var(--ag-white); }
+.apercuDetail { font-variant-numeric: tabular-nums; }
+.apercuLegende { flex-basis: 100%; letter-spacing: 0.1em; }
 .kHome { color: var(--ag-white); }
 .kResto { color: var(--ag-amber); }
 .kBat { color: var(--ag-cyan); }
