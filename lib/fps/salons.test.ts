@@ -18,6 +18,14 @@ describe("routage des deux salles (décision de `mode`)", () => {
     expect(decisionMode({ ...base, joueursCible: ZOMBIES.joueursMax - 1 })).toEqual({ action: "changer", mode: "zombies" });
   });
 
+  it("(v10) un client d'avant la v10 n'entre pas dans la salle des zombies (`erreur{version}`) ; l'arène et le BR lui restent ouverts", () => {
+    expect(decisionMode({ ...base, version: 9 })).toEqual({ action: "version" });
+    expect(decisionMode({ ...base, version: 8, enJeu: true })).toEqual({ action: "version" });
+    expect(decisionMode({ ...base, version: 10 })).toEqual({ action: "changer", mode: "zombies" });
+    expect(decisionMode({ ...base, mode: "br", version: 9 })).toEqual({ action: "changer", mode: "br" });
+    expect(decisionMode({ ...base, mode: "arene", salleActuelle: "zombies", version: 9 })).toEqual({ action: "changer", mode: "arene" });
+  });
+
   it("refus `lobby` quand le client est en jeu : décidé avant tout départ de l'ancienne salle", () => {
     expect(decisionMode({ ...base, enJeu: true })).toEqual({ action: "refus", raison: "lobby" });
     // même si la salle d'arrivée est pleine : l'état en jeu prime

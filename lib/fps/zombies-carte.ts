@@ -642,7 +642,7 @@ export type GenreAchat = "mur" | "porte" | "boite" | "atout" | "pap" | "courant"
 /** Arme à acheter au mur : une arme à feu ou l'épée. */
 export type ArmeAchat = ArmeFeuId | "epee";
 export type { AtoutId };
-export const ATOUTS_LISTE: readonly AtoutId[] = ["gratin", "expresso", "ristretto", "pausecafe"];
+export const ATOUTS_LISTE: readonly AtoutId[] = ["gratin", "expresso", "ristretto", "pausecafe", "bento"];
 export const estAtout = (x: unknown): x is AtoutId => (ATOUTS_LISTE as readonly unknown[]).includes(x);
 
 /** Mur sur lequel un achat est accroché (dessin à la craie, distributeur) : segment p → q, fraction t, normale tournée vers le joueur. */
@@ -706,6 +706,8 @@ export const ATOUTS: Readonly<Record<AtoutId, { nom: string; prix: number; prixS
   expresso: { nom: "Expresso Serré", prix: 3000, couleur: "#3fa34d", description: "Recharge deux fois plus vite", bo1: "Speed Cola" },
   ristretto: { nom: "Double Ristretto", prix: 2000, couleur: "#e6b422", description: "Cadence de tir × 1,33", bo1: "Double Tap" },
   pausecafe: { nom: "Pause Café", prix: 1500, prixSolo: 500, couleur: "#4fa3e0", description: "Relève en 1,5 s ; seul : se relève tout seul (3 fois)", bo1: "Quick Revive" },
+  // (v10) troisième emplacement d'arme ; perdu à terre avec l'arme qu'il portait
+  bento: { nom: "Bento", prix: 4000, couleur: "#c98a3e", description: "Une troisième arme", bo1: "Mule Kick" },
 };
 /** Prix du Pack-a-Punch, des munitions d'une arme améliorée, de la boîte (BO1) et de la boîte en Happy hour. */
 export const PRIX_PAP = 5000;
@@ -789,6 +791,8 @@ export const ACHATS: readonly Achat[] = ([
   { id: "atout:expresso", genre: "atout", atout: "expresso", prix: ATOUTS.expresso.prix, rayon: R_ACHAT, zone: "cuisine", ...surMurLocal(70, [1.5, 1.7], [1.5, 9.0], 0.5, [-4, 5]) },
   { id: "atout:ristretto", genre: "atout", atout: "ristretto", prix: ATOUTS.ristretto.prix, rayon: R_ACHAT, zone: "est", ...surMur([176.7, -62.5], [201.7, -55.4], 0.3, [188, -45]) },
   { id: "atout:gratin", genre: "atout", atout: "gratin", prix: ATOUTS.gratin.prix, rayon: R_ACHAT, zone: "ouest", ...surMur([96.2, -85.5], [70.1, -92.9], 0.6, [85, -75]) },
+  // (v10) Bento (le Mule Kick) : Labo, au fond du décrochement sud, entre les deux cuves
+  { id: "atout:bento", genre: "atout", atout: "bento", prix: ATOUTS.bento.prix, rayon: R_ACHAT, zone: "labo", ...surMurLocal(74, [18.7, -8.7], [30.9, -8.6], 0.5, [24.8, -6]) },
   // Pack-a-Punch (Labo), disjoncteur (Local technique)
   { id: "pap", genre: "pap", prix: PRIX_PAP, rayon: R_ACHAT, zone: "labo", ...surMurLocal(74, [49.7, -14.5], [49.6, -4.1], 0.55, [44, -9]) },
   { id: "courant", genre: "courant", prix: 0, rayon: R_ACHAT, zone: "local", ...surMurLocal(62, [0, -7.4], [0, 0], 0.4, [-5, -3]) },

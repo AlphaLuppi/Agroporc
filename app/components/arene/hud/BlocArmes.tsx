@@ -17,6 +17,9 @@ import styles from "../HudArene.module.css";
  * (v8, zombies) Arme passée au Micro-ondes (Pack-a-Punch, `ameliorees`) : son NOUVEAU nom (« Moutarde & Sally »), en magenta « gratiné »
  * (`--ag-gratin`) avec l'icône du Micro-ondes et un liseré qui ondule ; dans le rack, son nom court amélioré (« MOUTARDE ») et le même
  * liseré ; texte réservé aux lecteurs d'écran « améliorée au Micro-ondes ». Paire akimbo : une ligne `G 6 · D 6` (chargeur de chaque main).
+ * (v10, zombies) Emplacements génériques « Arme 1 », « Arme 2 », « Arme 3 » (Bento) : pas d'étiquette « SPÉCIALE », munitions `x/y` partout
+ * (sauf arme sans recharge) ; à partir de deux armes, l'arme blanche ne se prend plus seule : sa ligne porte la touche du coup rapide (V) et
+ * l'Arme 3 celle de l'arme blanche (3).
  */
 export interface PropsBlocArmes {
   arme: ArmeId;
@@ -49,6 +52,10 @@ export interface PropsBlocArmes {
   ameliorees?: string;
   /** (v8, zombies) munitions de la main gauche d'une paire akimbo, −1 ou absent = arme seule */
   munitionsG?: number;
+  /** (v10) inventaire des zombies (emplacements génériques) */
+  zombies?: boolean;
+  /** (v10, zombies) touche du coup de couteau rapide (« V »), vide si aucune */
+  toucheCoupRapide?: string;
 }
 
 /** Icône du Micro-ondes (Pack-a-Punch) : la porte vitrée, le cadran, des ondes de chaleur. Décorative. */
@@ -70,10 +77,17 @@ const MECHE_S = GRENADES.frag.mecheMs / 1000;
 const pastilles = (n: number) => "●".repeat(Math.max(0, Math.min(GRENADES_MAX, n))) + "○".repeat(Math.max(0, GRENADES_MAX - n));
 
 const LIBELLE_SLOT: Record<Slot, string> = { principale: "Principale", secondaire: "Secondaire", couteau: "Arme blanche", speciale: "Spéciale" };
+/** (v10) Emplacements génériques des zombies. */
+const LIBELLE_SLOT_ZOMBIES: Record<Slot, string> = { principale: "Arme 1", secondaire: "Arme 2", couteau: "Arme blanche", speciale: "Arme 3" };
 
 function BlocArmesBrut(p: PropsBlocArmes) {
   const slots = parseSlots(p.slots);
-  const touches: Record<Slot, string> = { principale: p.toucheP, secondaire: p.toucheS, couteau: p.toucheC, speciale: p.toucheSp };
+  // (v10, zombies) deux armes à feu ou plus : l'arme blanche ne se tient plus seule (coup rapide), la touche 3 prend l'Arme 3
+  const couteauSeul = !p.zombies || slots.filter((s) => s.slot !== "couteau").length < 2;
+  const touches: Record<Slot, string> = couteauSeul
+    ? { principale: p.toucheP, secondaire: p.toucheS, couteau: p.toucheC, speciale: p.toucheSp }
+    : { principale: p.toucheP, secondaire: p.toucheS, couteau: p.toucheCoupRapide ?? "", speciale: p.toucheC || p.toucheSp };
+  const libelles = p.zombies ? LIBELLE_SLOT_ZOMBIES : LIBELLE_SLOT;
   const couteau = estMelee(p.arme);
   const ameliorees = p.ameliorees ? p.ameliorees.split("|") : [];
   const gratinee = !couteau && ameliorees.includes(p.arme);
@@ -124,14 +138,14 @@ function BlocArmesBrut(p: PropsBlocArmes) {
               <span className={styles.slotTouche}>{touches[s.slot] ? `[${touches[s.slot]}]` : ""}</span>
               <span className={styles.slotNom}>
                 {nomCourt.toUpperCase()}
-                {s.slot === "speciale" && <em> SPÉCIALE</em>}
+                {s.slot === "speciale" && !p.zombies && <em> SPÉCIALE</em>}
                 {amel && <span className={styles.srSeul}> (améliorée)</span>}
-                <span className={styles.srSeul}> ({LIBELLE_SLOT[s.slot]})</span>
+                <span className={styles.srSeul}> ({libelles[s.slot]}{s.slot === "couteau" && !couteauSeul ? ", coup rapide seulement" : ""})</span>
               </span>
               <span className={styles.slotMun}>
                 {s.slot === "couteau"
-                  ? `VITESSE ${libelleBonusVitesse(estMelee(s.arme) ? MELEE[s.arme].vitesse : 1)}`
-                  : s.slot === "speciale"
+                  ? (couteauSeul ? `VITESSE ${libelleBonusVitesse(estMelee(s.arme) ? MELEE[s.arme].vitesse : 1)}` : "COUP RAPIDE")
+                  : s.slot === "speciale" && (!p.zombies || (!estMelee(s.arme) && STATS[s.arme].sansRecharge))
                     ? formatNombre(s.munitions)
                     : `${formatNombre(s.munitions)}/${formatNombre(s.chargeur)}`}
               </span>

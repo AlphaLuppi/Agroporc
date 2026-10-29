@@ -89,7 +89,7 @@ export const LIBELLES_ACTIONS: Record<Action, string> = {
   couteau: "Couteau",
   armeSpeciale: "Arme spéciale (si portée)",
   armePrecedente: "Dernière arme utilisée",
-  couteauRapide: "Couteau rapide (rappuyer : retour)",
+  couteauRapide: "Couteau rapide (rappuyer : retour ; zombies : coup arme en main)",
   interagir: "Monter / descendre d'une voiture",
   siege: "Changer de place dans la voiture",
   scores: "Tableau des scores (maintenir)",

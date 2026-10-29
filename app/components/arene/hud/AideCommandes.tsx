@@ -53,9 +53,16 @@ export function commandes(cfg: ConfigTouches, d: ReadonlyMap<string, string> | n
     [t("sprint"), "Sprinter"],
     [t("accroupi"), "S'accroupir (en sprint : glissade)"],
     [t("recharger"), "Recharger"],
-    [[t("armePrincipale"), t("armeSecondaire"), t("couteau"), t("armeSpeciale")].filter(Boolean).join(" "), "Changer d'arme (la 3e touche : couteau ou épée)"],
-    [t("couteauRapide"), "Arme blanche rapide (rappuyer : retour)"],
-    ...(mode === "zombies" ? [[t("grenade"), "Grenade (maintenir : cuire la mèche)"] as [string, string]] : []),
+    ...(mode === "zombies"
+      ? [
+        [[t("armePrincipale"), t("armeSecondaire"), t("couteau")].filter(Boolean).join(" "), "Changer d'arme (deux armes, une troisième avec le Bento)"],
+        [t("couteauRapide"), "Coup de couteau sans lâcher l'arme (plus lent avec une arme lourde)"],
+        [t("grenade"), "Grenade (maintenir : cuire la mèche)"],
+      ] as [string, string][]
+      : [
+        [[t("armePrincipale"), t("armeSecondaire"), t("couteau"), t("armeSpeciale")].filter(Boolean).join(" "), "Changer d'arme (la 3e touche : couteau ou épée)"],
+        [t("couteauRapide"), "Arme blanche rapide (rappuyer : retour)"],
+      ] as [string, string][]),
     mode === "zombies"
       ? [t("interagir"), "Acheter, ouvrir une porte, réanimer un coéquipier (maintenir)"]
       : [t("interagir"), "Monter / descendre d'une voiture"],

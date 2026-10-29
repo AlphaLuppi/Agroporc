@@ -46,3 +46,16 @@ describe("(v8) armes des zombies au mur", () => {
     }
   });
 });
+
+describe("(v10) distributeur du Bento", () => {
+  it("sur un vrai mur du Labo, loin des portes payantes et des autres achats", () => {
+    const a = ACHATS.find((x) => x.id === "atout:bento")!;
+    expect(a).toMatchObject({ genre: "atout", atout: "bento", zone: "labo" });
+    const f = a.facade!;
+    const s = lancerRayon(monde, [a.position[0], 1.2, a.position[1]], [-f.normale[0], 0, -f.normale[1]], 3);
+    expect(s).toBeGreaterThan(0.6);
+    expect(s).toBeLessThan(1.6);
+    for (const p of PORTES_PAYANTES) expect(distancePorte(p, a.position), p.id).toBeGreaterThan(p.portee + 0.5);
+    for (const b of ACHATS) if (b !== a) expect(Math.hypot(a.position[0] - b.position[0], a.position[1] - b.position[1]), b.id).toBeGreaterThan(3);
+  });
+});

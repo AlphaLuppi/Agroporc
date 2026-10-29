@@ -551,19 +551,94 @@ describe("achats", () => {
   const achat = (id: string) => ACHATS.find((a) => a.id === id)!;
   const acheter = (b: Banc, j: JoueurSalle, id: string, t = T_MANCHE1 + 100) => b.svc.recevoir(j, msg({ t: "acheter", id }), t);
 
-  it("départ : pistolet et couteau ; le revolver (500 $) remplace le pistolet, la craie devient l'arme ; racheté = munitions à moitié prix", () => {
+  it("départ : pistolet et couteau ; (v10) le revolver (500 $) entre dans l'Arme 1 vide, le pistolet reste, la craie devient l'arme ; racheté = munitions à moitié prix", () => {
     const { b, j } = avec(achat("mur:revolver").position, 1000);
     expect(j.equip).toEqual({ principale: "mitraillette", secondaire: "pistolet", speciale: null, sansPrincipale: true });
     expect(armeDuSlot(j.equip, "principale")).toBeNull();
     const s = acheter(b, j, "mur:revolver");
     expect(msgs(s, "achat")).toEqual([{ t: "achat", ok: true, id: "mur:revolver" }]);
     expect(msgs(s, "argent")).toEqual([{ t: "argent", solde: 500, delta: -500, motif: "achat" }]);
-    expect(j).toMatchObject({ main: "secondaire", arme: "revolver" });
-    expect(j.equip).toMatchObject({ secondaire: "revolver", sansPrincipale: true });
+    expect(j).toMatchObject({ main: "principale", arme: "revolver" });
+    expect(j.equip).toEqual({ principale: "revolver", secondaire: "pistolet", speciale: null });
     expect(b.svc.etat().murs).toEqual(["mur:revolver"]);
     const r = acheter(b, j, "mur:revolver", T_MANCHE1 + 200);
     expect(msgs(r, "argent")[0]).toMatchObject({ delta: -achat("mur:revolver").prixMunitions!, solde: 500 - achat("mur:revolver").prixMunitions! });
     expect(msgs(r, "equipement")[0]).toMatchObject({ ravitaille: "revolver" });
+  });
+
+  it("(v10) deux armes de n'importe quelle catégorie (pompe + sniper) ; pleine, la nouvelle arme remplace celle EN MAIN", () => {
+    const { b, j } = avec(achat("mur:pompe").position, 20_000);
+    acheter(b, j, "mur:pompe");
+    expect(j.equip).toEqual({ principale: "pompe", secondaire: "pistolet", speciale: null });
+    // le pistolet en main : le sniper le remplace, la pompe reste
+    j.main = "secondaire"; j.arme = "pistolet";
+    const sn = achat("mur:sniper");
+    j.p = [sn.position[0], 0, sn.position[1]];
+    const s = acheter(b, j, sn.id, T_MANCHE1 + 200);
+    expect(msgs(s, "achat")[0]).toMatchObject({ ok: true });
+    expect(j.equip).toEqual({ principale: "pompe", secondaire: "sniper", speciale: null });
+    expect(j).toMatchObject({ main: "secondaire", arme: "sniper" });
+    expect(msgs(s, "equipement")[0]).toMatchObject({ main: "secondaire", ravitaille: "sniper" });
+    // le sniper en main : la mitraillette le remplace, la pompe reste toujours
+    const mi = achat("mur:mitraillette");
+    j.p = [mi.position[0], 0, mi.position[1]];
+    acheter(b, j, mi.id, T_MANCHE1 + 300);
+    expect(j.equip).toEqual({ principale: "pompe", secondaire: "mitraillette", speciale: null });
+    // une arme améliorée remplacée perd son amélioration
+    j.equip = copierEquipement({ ...j.equip, ameliorees: ["mitraillette"] });
+    const rev = achat("mur:revolver");
+    j.p = [rev.position[0], 0, rev.position[1]];
+    acheter(b, j, rev.id, T_MANCHE1 + 400);
+    expect(j.equip).toEqual({ principale: "pompe", secondaire: "revolver", speciale: null });
+  });
+
+  it("(v10) Bento (4 000 $, courant requis) : une troisième arme, dans l'Arme 3, avant tout remplacement", () => {
+    const bento = achat("atout:bento");
+    expect(bento).toMatchObject({ prix: 4000, zone: "labo" });
+    const sans = avec(bento.position, 20_000);
+    expect(msgs(acheter(sans.b, sans.j, bento.id), "achat")[0]).toMatchObject({ ok: false, raison: "courant" });
+    const { b, j } = avec(bento.position, 20_000, { courant: true });
+    expect(msgs(acheter(b, j, bento.id), "achat")[0]).toMatchObject({ ok: true });
+    expect(b.svc.etat().joueurs[0].atouts).toContain("bento");
+    expect(msgs(acheter(b, j, bento.id, T_MANCHE1 + 150), "achat")[0]).toMatchObject({ ok: false, raison: "deja" });
+    for (const [id, t] of [["mur:pompe", 200], ["mur:sniper", 300]] as const) {
+      const a = achat(id);
+      j.p = [a.position[0], 0, a.position[1]];
+      acheter(b, j, id, T_MANCHE1 + t);
+    }
+    expect(j.equip).toEqual({ principale: "pompe", secondaire: "pistolet", speciale: "sniper" });
+    expect(j).toMatchObject({ main: "speciale", arme: "sniper" });
+    // trois armes : la quatrième remplace celle en main
+    const mi = achat("mur:mitraillette");
+    j.p = [mi.position[0], 0, mi.position[1]];
+    acheter(b, j, mi.id, T_MANCHE1 + 400);
+    expect(j.equip).toEqual({ principale: "pompe", secondaire: "pistolet", speciale: "mitraillette" });
+  });
+
+  it("(v10) à terre, le Bento et l'Arme 3 sont perdus ; relevé, on garde les deux autres armes et la suivante remplace celle en main", () => {
+    const bento = achat("atout:bento");
+    const b = partieEnCours(["a", "c"], { argentDepart: 20_000, courant: true, degatsGriffe: 0 });
+    avancer(b, T0 + 100, T_MANCHE1 + 50);
+    const j = b.j("a");
+    j.p = [bento.position[0], 0, bento.position[1]];
+    acheter(b, j, bento.id);
+    j.equip = copierEquipement({ principale: "pompe", secondaire: "pistolet", speciale: "sniper" });
+    j.main = "speciale"; j.arme = "sniper";
+    b.ctx.infliger(j, 1e6, null, "tigre_zombie", "corps", "couteau", T_MANCHE1 + 200);
+    expect(b.svc.etat().joueurs.find((x) => x.id === "a")!.atouts).toEqual([]);
+    expect(j.equip.speciale).toBeNull();
+    // fin de manche : relevé à la pause, sur une arme qui existe encore
+    const fin = finirManche(b, b.j("c"), T_MANCHE1 + 300);
+    expect(fin.t).toBeGreaterThan(T_MANCHE1);
+    expect(j.vivant).toBe(true);
+    expect(j.equip).toEqual({ principale: "pompe", secondaire: "pistolet", speciale: null });
+    expect(["principale", "secondaire"]).toContain(j.main);
+    const mi = achat("mur:mitraillette");
+    j.p = [mi.position[0], 0, mi.position[1]];
+    const main = j.main;
+    acheter(b, j, mi.id, fin.t + 100);
+    expect(armeDuSlot(j.equip, main)).toBe("mitraillette");
+    expect(j.equip.speciale).toBeNull();
   });
 
   it("une principale achetée (mitraillette, 1 200 $) remplace le remplissage, retire sansPrincipale, passe en main", () => {
@@ -765,7 +840,7 @@ describe("achats", () => {
     expect(msgs(acheter(b, j, "pap", t + 5100), "achat")[0]).toMatchObject({ ok: false, raison: "deja" });
   });
 
-  it("(v8) Micro-ondes : seul celui qui a déposé l'arme la reprend ; passé 15 s elle est perdue, sans remboursement, son slot reste vide", () => {
+  it("(v8) Micro-ondes : seul celui qui a déposé l'arme la reprend ; passé 15 s elle est perdue, sans remboursement, (v10) son emplacement se libère", () => {
     const pa = achat("pap");
     const b = partieEnCours(["a", "c"], { argentDepart: 20_000, courant: true });
     avancer(b, T0 + 100, T_MANCHE1 + 50);
@@ -777,20 +852,27 @@ describe("achats", () => {
     avancer(b, t + 50, t + CUISSON_PAP_MS + 100);
     expect(b.svc.etat().pap.etat).toBe("pret");
     expect(msgs(acheter(b, autre, "pap", t + CUISSON_PAP_MS + 200), "achat")[0]).toMatchObject({ ok: false, raison: "occupe" });
-    // le slot attend la reprise : pas de mini Uzi (secondaire) au mur entre-temps
+    // (v10) l'emplacement du pistolet attend sa reprise : le mini Uzi entre dans l'Arme 1, encore vide
     const uzi = achat("mur:mini_uzi");
     j.p = [uzi.position[0], 0, uzi.position[1]];
-    expect(msgs(acheter(b, j, uzi.id, t + CUISSON_PAP_MS + 300), "achat")[0]).toMatchObject({ ok: false, raison: "occupe" });
+    expect(msgs(acheter(b, j, uzi.id, t + CUISSON_PAP_MS + 300), "achat")[0]).toMatchObject({ ok: true });
+    expect(j.equip).toMatchObject({ principale: "mini_uzi", secondaire: "pistolet", enCuisson: "pistolet" });
+    expect(j).toMatchObject({ main: "principale", arme: "mini_uzi" });
     const perte = avancer(b, t + CUISSON_PAP_MS + 400, t + CUISSON_PAP_MS + REPRISE_PAP_MS + 200);
     expect(msgs(perte, "zevt").map((m) => m.e)).toContainEqual({ e: "pap", joueur: "a", arme: "pistolet", pret: false, fin: "perdue" });
     expect(msgs(perte, "argent").filter((m) => m.delta > 0 && m.motif !== "touche" && m.motif !== "kill")).toEqual([]);
     expect(b.svc.etat().pap.etat).toBe("libre");
-    expect(armeDuSlot(j.equip, "secondaire")).toBeNull();
-    // une arme de la même catégorie remplit le slot vide
-    const s = acheter(b, j, uzi.id, t + CUISSON_PAP_MS + REPRISE_PAP_MS + 300);
-    expect(msgs(s, "achat")[0]).toMatchObject({ ok: true });
+    // le pistolet quitte l'inventaire, l'Arme 2 est vide (et le joueur en est averti)
     expect(j.equip.enCuisson).toBeUndefined();
-    expect(j).toMatchObject({ main: "secondaire", arme: "mini_uzi" });
+    expect(armeDuSlot(j.equip, "secondaire")).toBeNull();
+    expect(msgs(perte, "equipement").at(-1)).toMatchObject({ equip: { principale: "mini_uzi", sansSecondaire: true } });
+    // la prochaine arme remplit l'emplacement vide, sans remplacer le mini Uzi
+    const rev = achat("mur:revolver");
+    j.p = [rev.position[0], 0, rev.position[1]];
+    const s = acheter(b, j, rev.id, t + CUISSON_PAP_MS + REPRISE_PAP_MS + 300);
+    expect(msgs(s, "achat")[0]).toMatchObject({ ok: true });
+    expect(j.equip).toEqual({ principale: "mini_uzi", secondaire: "revolver", speciale: null });
+    expect(j).toMatchObject({ main: "secondaire", arme: "revolver" });
   });
 
   it("(v8) Micro-ondes : un joueur qui part libère la machine", () => {
@@ -1731,12 +1813,12 @@ describe("grand secret « Le Menu fantôme » (v8)", () => {
     expect(sec().service).toBe(t);
     const fin = b.svc.blesserTruck(1e9, j, t + 10);
     expect(secrets(fin)).toEqual(["servi"]);
-    // la récompense : Rayon Goulaf et Bazooka au four (gratinés), tous les atouts, plus un tigre debout
+    // la récompense : Rayon Goulaf et Bazooka au four (gratinés), tous les atouts (le Bento compris), plus un tigre debout
     const eq = msgs(fin, "equipement").at(-1)!;
     expect(eq).toMatchObject({ main: "speciale", ravitaille: "tout" });
     expect(eq.equip).toMatchObject({ secondaire: "rayon", speciale: "bazooka" });
     expect(eq.equip.ameliorees).toEqual(expect.arrayContaining(["rayon", "bazooka"]));
-    expect(b.svc.etat().joueurs[0].atouts.sort()).toEqual(["expresso", "gratin", "pausecafe", "ristretto"]);
+    expect(b.svc.etat().joueurs[0].atouts.sort()).toEqual(["bento", "expresso", "gratin", "pausecafe", "ristretto"]);
     expect(tigresVivants(b)).toEqual([]);
     expect(sec().etape).toBe(9);
     // la cloche du comptoir finit la partie sur une victoire
@@ -1906,22 +1988,29 @@ describe("(v8) Micro-ondes et récompenses : un slot réservé n'est jamais écr
     return b.svc.recevoir(j, msg({ t: "acheter", id }), t);
   };
 
-  it("boîte mystère : tant que le pistolet cuit, aucune secondaire ne sort (elle ne pourrait pas être prise)", () => {
+  it("(v10) boîte mystère : jamais l'arme qui cuit ; l'arme prise remplace celle en main, l'emplacement du Micro-ondes reste réservé", () => {
     for (let graine = 1; graine <= 25; graine++) {
       const b = partieEnCours(["a"], { argentDepart: 20_000, courant: true, alea: suite(graine) });
       avancer(b, T0 + 100, T_MANCHE1 + 50);
       const j = b.j("a");
+      j.equip = copierEquipement({ principale: "revolver", secondaire: "pistolet", speciale: null });
+      j.main = "principale"; j.arme = "revolver";
       const t = T_MANCHE1 + 100;
       expect(msgs(acheterIci(b, j, "pap", t), "achat")[0]).toMatchObject({ ok: true });
+      expect(j).toMatchObject({ main: "secondaire", arme: "pistolet" });
       const em = b.svc.etat().boite.emplacement;
       expect(msgs(acheterIci(b, j, achatBoite(em).id, t + 50), "achat")[0]).toMatchObject({ ok: true });
       const tiree = b.svc.etat().boite.arme!;
-      expect(tiree, `graine ${graine}`).toBeDefined();
-      if (tiree !== "peluche" && tiree !== "remontoir") expect(STATS[tiree].categorie, `graine ${graine} : ${tiree}`).not.toBe("secondaire");
+      expect(tiree, `graine ${graine}`).not.toBe("revolver");
+      if (tiree === "peluche" || tiree === "remontoir") continue;
+      avancer(b, t + 100, t + TIRAGE_BOITE_MS + 100);
+      expect(msgs(acheterIci(b, j, achatBoite(em).id, t + TIRAGE_BOITE_MS + 200), "achat")[0], `graine ${graine}`).toMatchObject({ ok: true });
+      expect(j.equip, `graine ${graine}`).toMatchObject({ principale: "revolver", enCuisson: "revolver", secondaire: tiree });
+      expect(j).toMatchObject({ main: "secondaire", arme: tiree });
     }
   });
 
-  it("le grand secret servi pendant que la secondaire cuit : le dépôt est annulé et remboursé, le Rayon Goulaf reste", () => {
+  it("(v10) le grand secret servi pendant que le pistolet cuit : il garde l'Arme 1 et y revient ; Rayon Goulaf en Arme 2, Bazooka au four en Arme 3", () => {
     const b = partieEnCours(["a"], {
       argentDepart: 20_000, courant: true, degatsGriffe: 0, mancheTruck: 1, total1: 4, secret: { etape: 8, livraisonService: 1 },
     });
@@ -1938,14 +2027,64 @@ describe("(v8) Micro-ondes et récompenses : un slot réservé n'est jamais écr
     b.svc.recevoir(j, msg({ t: "acheter", id: "secret:four" }), t + 50);
     const fin = b.svc.blesserTruck(1e9, j, t + 100);
     expect(msgs(fin, "zevt").some((m) => m.e.e === "secret" && (m.e as { quoi: string }).quoi === "servi")).toBe(true);
+    // le dépôt continue (rien n'est remboursé), le pistolet est écrit dans l'Arme 1 qu'il réserve
+    expect(b.svc.etat().pap).toMatchObject({ etat: "cuisson", arme: "pistolet" });
+    expect(msgs(fin, "argent").find((m) => m.motif === "pap")).toBeUndefined();
+    expect(j.equip).toMatchObject({ principale: "pistolet", enCuisson: "pistolet", secondaire: "rayon", speciale: "bazooka" });
+    expect(b.svc.etat().joueurs.find((x) => x.id === "a")!.atouts).toContain("bento");
+    avancer(b, t + 150, t + CUISSON_PAP_MS + 500);
+    expect(msgs(acheterIci(b, j, "pap", t + CUISSON_PAP_MS + 600), "achat")[0]).toMatchObject({ ok: true });
+    expect(j.equip).toMatchObject({ principale: "pistolet", secondaire: "rayon", speciale: "bazooka" });
+    expect(j.equip.enCuisson).toBeUndefined();
+    expect(j.equip.ameliorees).toEqual(expect.arrayContaining(["pistolet", "rayon", "bazooka"]));
+    expect(j).toMatchObject({ main: "principale", arme: "pistolet" });
+  });
+
+  it("(v10) le grand secret servi pendant que le pistolet cuit, la pompe en main : la pompe garde l'Arme 1, le dépôt du pistolet est remboursé", () => {
+    const b = partieEnCours(["a"], {
+      argentDepart: 20_000, courant: true, degatsGriffe: 0, mancheTruck: 1, total1: 4, secret: { etape: 8, livraisonService: 1 },
+    });
+    const j = b.j("a");
+    j.pv = 1e9;
+    j.equip = copierEquipement({ principale: "pompe", secondaire: "pistolet", speciale: null, ameliorees: ["pompe"] });
+    j.main = "secondaire"; j.arme = "pistolet";
+    let t = T_MANCHE1 + 100;
+    avancer(b, T0 + 100, t);
+    for (; t < T_MANCHE1 + 60_000 && !(b.svc.etat().truck && b.svc.etat().truck!.phase === "livraison"); t += 100) b.svc.tic(t);
+    expect(msgs(acheterIci(b, j, "pap", t), "achat")[0]).toMatchObject({ ok: true });
+    expect(j).toMatchObject({ main: "principale", arme: "pompe" });
+    const four = INTERACTIONS_SECRET.find((x) => x.id === "four")!;
+    j.p = [four.position[0], 0, four.position[1]];
+    b.svc.recevoir(j, msg({ t: "acheter", id: "secret:four" }), t + 50);
+    const fin = b.svc.blesserTruck(1e9, j, t + 100);
     expect(b.svc.etat().pap.etat).toBe("libre");
     expect(msgs(fin, "zevt").map((m) => m.e)).toContainEqual({ e: "pap", joueur: "a", arme: "pistolet", pret: false, fin: "perdue" });
     expect(msgs(fin, "argent").find((m) => m.motif === "pap")).toMatchObject({ delta: 5000 });
-    expect(j.equip).toMatchObject({ secondaire: "rayon", speciale: "bazooka" });
+    expect(j.equip).toMatchObject({ principale: "pompe", secondaire: "rayon", speciale: "bazooka" });
     expect(j.equip.enCuisson).toBeUndefined();
-    // plus rien à reprendre : le Rayon Goulaf ne peut plus être écrasé par le pistolet
-    avancer(b, t + 150, t + CUISSON_PAP_MS + 500);
-    acheterIci(b, j, "pap", t + CUISSON_PAP_MS + 600);
-    expect(j.equip.secondaire).toBe("rayon");
+    expect(j.equip.ameliorees).toEqual(expect.arrayContaining(["pompe", "rayon", "bazooka"]));
+  });
+
+  it("(v10) le grand secret servi pendant qu'un Rayon cuit : le dépôt est annulé et remboursé (il reviendrait en double)", () => {
+    const b = partieEnCours(["a"], {
+      argentDepart: 20_000, courant: true, degatsGriffe: 0, mancheTruck: 1, total1: 4, secret: { etape: 8, livraisonService: 1 },
+    });
+    const j = b.j("a");
+    j.pv = 1e9;
+    j.equip = copierEquipement({ principale: "mitraillette", secondaire: "rayon", speciale: null });
+    j.main = "secondaire"; j.arme = "rayon";
+    let t = T_MANCHE1 + 100;
+    avancer(b, T0 + 100, t);
+    for (; t < T_MANCHE1 + 60_000 && !(b.svc.etat().truck && b.svc.etat().truck!.phase === "livraison"); t += 100) b.svc.tic(t);
+    expect(msgs(acheterIci(b, j, "pap", t), "achat")[0]).toMatchObject({ ok: true });
+    const four = INTERACTIONS_SECRET.find((x) => x.id === "four")!;
+    j.p = [four.position[0], 0, four.position[1]];
+    b.svc.recevoir(j, msg({ t: "acheter", id: "secret:four" }), t + 50);
+    const fin = b.svc.blesserTruck(1e9, j, t + 100);
+    expect(b.svc.etat().pap.etat).toBe("libre");
+    expect(msgs(fin, "zevt").map((m) => m.e)).toContainEqual({ e: "pap", joueur: "a", arme: "rayon", pret: false, fin: "perdue" });
+    expect(msgs(fin, "argent").find((m) => m.motif === "pap")).toMatchObject({ delta: 5000 });
+    expect(j.equip).toMatchObject({ principale: "mitraillette", secondaire: "rayon", speciale: "bazooka" });
+    expect(j.equip.enCuisson).toBeUndefined();
   });
 });

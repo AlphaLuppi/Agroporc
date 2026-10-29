@@ -32,11 +32,17 @@ import type { Difficulte, GenreBonus } from "./zombies-vagues";
  * huit armes des zombies (`ARMES_PRINCIPALES_ZOMBIES`, la Perforeuse), Pack-a-Punch à effets (`tir.main` d'une paire akimbo,
  * `tir.touches[].seg` des ricochets, message `projectile`, `zevt{projectile, arc, souffle}`, drapeaux « en feu » et « gelé » des tigres,
  * causes de mort `feu`, `electrique`, `souffle`). v9 : Battle Royale (troisième salle, avion, chute, butin, zone, statistiques ; changements
- * purement additifs : champs optionnels et nouveau mode). Client et serveur se déploient ensemble, le serveur d'abord (il accepte 8 et 9).
+ * purement additifs : champs optionnels et nouveau mode). v10 : inventaire des zombies façon Black Ops 1 (emplacements d'armes GÉNÉRIQUES :
+ * deux armes à feu de n'importe quelle catégorie, une troisième avec l'atout Bento `bento`, la nouvelle remplace celle en main ;
+ * coup de couteau arme en main, `coup` accepté hors du slot `couteau` ; arme blanche seule interdite à partir de deux armes ; armes à
+ * munitions limitées jamais retirées). L'arène et le BR ne changent pas : le serveur accepte 8, 9 et 10, mais la salle des zombies est
+ * refusée (`erreur{version}`) aux clients d'avant `VERSION_MIN_ZOMBIES`. Client et serveur se déploient ensemble, le serveur d'abord.
  */
-export const VERSION_PROTOCOLE = 9;
+export const VERSION_PROTOCOLE = 10;
 /** Versions de client acceptées par le serveur (le 8 sera retiré dans un second temps) : un client v8 ne voit jamais le BR. */
-export const VERSIONS_ACCEPTEES: readonly number[] = [8, 9];
+export const VERSIONS_ACCEPTEES: readonly number[] = [8, 9, 10];
+/** (v10) Version minimale d'un client admis dans la salle des zombies (l'inventaire y a changé de règles). */
+export const VERSION_MIN_ZOMBIES = 10;
 
 export type Vec3 = [number, number, number];
 
@@ -81,9 +87,14 @@ export const SLOTS: readonly Slot[] = ["principale", "secondaire", "couteau", "s
 
 /** Équipement d'un joueur (une arme blanche est toujours portée : le couteau tant que `melee` est absent). */
 export interface Equipement {
-  principale: ArmePrincipaleId;
-  secondaire: ArmeSecondaireId;
-  speciale: ArmeSpecialeId | ArmeUniqueId | null;
+  /**
+   * Arènes et Battle Royale : arme de sa catégorie (principale, secondaire, spéciale ou unique). (v10, zombies) les trois emplacements sont
+   * GÉNÉRIQUES (« Arme 1 », « Arme 2 », « Arme 3 », cf. `slotPourNouvelleArme` de equipement.ts) : n'importe quelle arme à feu dans
+   * n'importe lequel, `speciale` seulement avec l'atout Bento.
+   */
+  principale: ArmeFeuId;
+  secondaire: ArmeFeuId;
+  speciale: ArmeFeuId | null;
   /** arme blanche du slot `couteau` ; absent = couteau (v5) */
   melee?: ArmeMeleeId;
   /**
@@ -106,8 +117,8 @@ export interface Equipement {
  * Équipement et slot quand le joueur n'a rien choisi (compatibilité des tests v1 : pistolet en main).
  * FIGÉ : jamais affecté tel quel à un joueur (Elsa et `infliger` écrivent dans `speciale`) ; utiliser `copierEquipement`.
  */
-export const EQUIPEMENT_DEFAUT: Readonly<Equipement> = Object.freeze({
-  principale: "mitraillette" as ArmePrincipaleId, secondaire: "pistolet" as ArmeSecondaireId, speciale: null as ArmeSpecialeId | ArmeUniqueId | null,
+export const EQUIPEMENT_DEFAUT: Readonly<Equipement & { principale: ArmePrincipaleId; secondaire: ArmeSecondaireId }> = Object.freeze({
+  principale: "mitraillette" as ArmePrincipaleId, secondaire: "pistolet" as ArmeSecondaireId, speciale: null as ArmeFeuId | null,
 });
 export const SLOT_DEFAUT: Slot = "secondaire";
 /** Copie modifiable d'un équipement (une par joueur). `melee`, `sansPrincipale` et `sansSecondaire` ne sont recopiés que s'ils sont définis (jamais de clé `undefined`). */
@@ -175,8 +186,8 @@ export const idZombie = (n: number): string => `z${n}`;
 export const estIdZombie = (s: unknown): s is string => typeof s === "string" && /^z\d+$/.test(s);
 
 export type PhaseZombies = "lobby" | "pause" | "manche" | "fin";
-/** (v7) Atouts des distributeurs (cf. `ATOUTS` de zombies-carte.ts). */
-export type AtoutId = "gratin" | "expresso" | "ristretto" | "pausecafe";
+/** (v7) Atouts des distributeurs (cf. `ATOUTS` de zombies-carte.ts). (v10) `bento` : une troisième arme (le Mule Kick de BO1). */
+export type AtoutId = "gratin" | "expresso" | "ristretto" | "pausecafe" | "bento";
 /**
  * (v8) Genre d'une grenade : à fragmentation (mèche de 3,5 s, cuisson possible) ou « tigre à remontoir » (la Monkey Bomb de BO1 : attire les
  * tigres puis saute). Cf. `GRENADES` de lib/fps/grenades.ts.
@@ -655,7 +666,10 @@ export type MessageClient =
       /** (v8, zombies) arme de la main GAUCHE d'une paire akimbo (clic droit) ; absent = main droite. Cadence propre à chaque main. */
       main?: "g";
     }
-  /** Coup d'arme blanche. `cibles` = ids de joueurs ET de tigres `z<n>` touchés selon le client (vide = coup dans le vide ; au plus `nbCiblesMax` de l'arme). */
+  /**
+   * Coup d'arme blanche. `cibles` = ids de joueurs ET de tigres `z<n>` touchés selon le client (vide = coup dans le vide ; au plus `nbCiblesMax` de l'arme).
+   * (v10, zombies) envoyé aussi arme à feu en main : coup de couteau rapide (touche V), à la cadence de `minutageCoupRapide` (coup-rapide.ts).
+   */
   | { t: "coup"; o: Vec3; d: Vec3; cibles: string[] }
   /** Choisir le mode (v5) : change de salle, refusé (`refus{mode}`) en pleine partie ou si la salle zombies est pleine. */
   | { t: "mode"; mode: ModeSalle }
