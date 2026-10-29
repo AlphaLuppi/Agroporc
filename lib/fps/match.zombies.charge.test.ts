@@ -21,6 +21,17 @@ const TIC_MS = 1000 / 60;
 const BUDGET_TIC_MOYEN_MS = 2;
 /** Un snap de 8 joueurs + 24 tigres sérialisé (octets). */
 const BUDGET_SNAP_OCTETS = 4200;
+/**
+ * Un `zombies{etat}` sérialisé (octets) : il part EN ENTIER à toute la salle à chaque changement immédiat (lancer de grenade, effet du secret,
+ * boîte du Happy hour…). Mesuré à ≈ 2,2 ko à 8 joueurs ; une régression de taille fait échouer le test.
+ */
+const BUDGET_ETAT_OCTETS = 3200;
+/**
+ * `zombies{etat}` émis par seconde pendant la mesure (≈ 3,5/s, tirs et morts de tigres compris ; chaque joueur lance aussi ses grenades, une
+ * toutes les 2,5 s jusqu'à épuisement de son stock) : un événement fréquent passé en `immediat` ferait partir plusieurs états complets par
+ * seconde à chacun.
+ */
+const BUDGET_ETATS_PAR_S = 6;
 /** Achat d'une porte + le tic qui suit (champs de distance recalculés) : sans le recalcul complet des grilles (40 à 80 ms avant la v8). */
 const BUDGET_PORTE_MS = 10;
 
@@ -29,7 +40,7 @@ function lcg(graine: number): () => number {
   return () => (k = (k * 1103515245 + 12345) % 2147483648) / 2147483648;
 }
 
-interface Mesure { moyen: number; pire: number; plusGrosSnap: number; plusGrosEtat: number; porteMs: number[] }
+interface Mesure { moyen: number; pire: number; plusGrosSnap: number; plusGrosEtat: number; etatsParS: number; lancers: number; porteMs: number[] }
 
 /** Partie de `n` joueurs portée au plafond de 24 tigres, puis 10 s mesurées à 60 Hz, puis trois portes achetées (D1, D2, G3). */
 function mesurer(n: number): Mesure {
@@ -57,7 +68,7 @@ function mesurer(n: number): Mesure {
   }
   expect(tigres).toBe(ZOMBIES.plafondVivants);
 
-  let cpu = 0, tics = 0, pire = 0, plusGrosSnap = 0, plusGrosEtat = 0, snapsVus = 0, tigresMax = 0, entrees = 0;
+  let cpu = 0, tics = 0, pire = 0, plusGrosSnap = 0, plusGrosEtat = 0, snapsVus = 0, tigresMax = 0, entrees = 0, etats = 0, lancers = 0;
   const total = Math.round(DUREE_S * 1000 / TIC_MS);
   let maintenant = t;
   for (let k = 0; k < total; k++) {
@@ -72,6 +83,15 @@ function mesurer(n: number): Mesure {
       }
     }
     const sorties: Sortie[] = s.tic(maintenant);
+    // une grenade par joueur toutes les 2,5 s (décalées), lancée devant lui vers le sol, tant qu'il lui en reste
+    const lance = ids.findIndex((_, i) => (k + i * 19) % 150 === 0);
+    if (lance >= 0) {
+      const a = j(ids[lance]);
+      const o: Vec3 = [a.p[0], a.p[1] + SILHOUETTE.oeil, a.p[2]];
+      const avant = s.recevoir(ids[lance], { t: "lancerGrenade", genre: "frag", o, d: [0, -0.6, -0.8] }, maintenant);
+      if (avant.some((x) => x.m.t === "grenade")) lancers++;
+      sorties.push(...avant);
+    }
     if (k % 15 === 0) {
       const vu = sorties.filter((x) => x.m.t === "snap" && x.m.zombies).map((x) => x.m).at(-1);
       const liste = vu && vu.t === "snap" && vu.zombies ? decoderZombies(vu.zombies) : [];
@@ -91,7 +111,7 @@ function mesurer(n: number): Mesure {
     const dt = performance.now() - debut;
     cpu += dt; tics++; pire = Math.max(pire, dt);
     for (const x of sorties) {
-      if (x.m.t === "zombies") plusGrosEtat = Math.max(plusGrosEtat, JSON.stringify(x.m).length);
+      if (x.m.t === "zombies") { plusGrosEtat = Math.max(plusGrosEtat, JSON.stringify(x.m).length); if (x.a === "tous" || x.a === "joueurs") etats++; }
       if (x.m.t !== "snap" || x.a !== "joueurs") continue;
       plusGrosSnap = Math.max(plusGrosSnap, JSON.stringify(x.m).length);
       snapsVus++;
@@ -125,7 +145,7 @@ function mesurer(n: number): Mesure {
     }
     expect(ok, `porte ${id}`).toBe(true);
   }
-  return { moyen: cpu / tics, pire, plusGrosSnap, plusGrosEtat, porteMs };
+  return { moyen: cpu / tics, pire, plusGrosSnap, plusGrosEtat, etatsParS: etats / DUREE_S, lancers, porteMs };
 }
 
 describe("charge zombies : 24 tigres, 10 s à 60 Hz, portes achetées en pleine manche", () => {
@@ -134,8 +154,11 @@ describe("charge zombies : 24 tigres, 10 s à 60 Hz, portes achetées en pleine 
       const r = mesurer(n);
       // eslint-disable-next-line no-console
       console.log(`[charge zombies ${n} joueurs] tic moyen ${r.moyen.toFixed(3)} ms, pire ${r.pire.toFixed(2)} ms ; snap ${r.plusGrosSnap} o, `
-        + `zombies{etat} ${r.plusGrosEtat} o ; portes D1 / D2 / G3 : ${r.porteMs.map((x) => x.toFixed(2)).join(" / ")} ms`);
+        + `zombies{etat} ${r.plusGrosEtat} o, ${r.etatsParS.toFixed(1)}/s (${r.lancers} grenades) ; portes D1 / D2 / G3 : ${r.porteMs.map((x) => x.toFixed(2)).join(" / ")} ms`);
       expect(r.plusGrosSnap).toBeLessThanOrEqual(BUDGET_SNAP_OCTETS);
+      expect(r.plusGrosEtat).toBeLessThanOrEqual(BUDGET_ETAT_OCTETS);
+      expect(r.lancers).toBeGreaterThan(0);
+      expect(r.etatsParS).toBeLessThanOrEqual(BUDGET_ETATS_PAR_S);
       expect(r.moyen).toBeLessThan(BUDGET_TIC_MOYEN_MS);
       for (const ms of r.porteMs) expect(ms).toBeLessThan(BUDGET_PORTE_MS);
     });
