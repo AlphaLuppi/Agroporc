@@ -293,7 +293,7 @@ export function arbustes(data: SceneData, o: OptionsVegetation = {}): number[] {
     for (let k = 0; k < essais && out.length / 2 < ARBUSTES_MAX; k++) {
       const x = x0 + alea() * (x1 - x0), z = z0 + alea() * (z1 - z0);
       if (!dansAnneau(x, z, r) || distanceAnneau(x, z, r) < 0.8) continue;
-      if (!ilot && (exclu(o.exclure, x, z) || dansBatiment(c, x, z) || distanceBatiment(c, x, z, 1.2) < 1.2)) continue;
+      if (exclu(o.exclure, x, z) || (!ilot && (dansBatiment(c, x, z) || distanceBatiment(c, x, z, 1.2) < 1.2))) continue;
       if (pres(ev, x, z, DISTANCE_CACHETTE_M)) continue;
       let proche = false;
       pris.proches(x, z, ARBUSTES_ECART_M, (q) => { if (Math.hypot(q[0] - x, q[1] - z) < ARBUSTES_ECART_M * (ilot ? 0.6 : 1)) proche = true; });

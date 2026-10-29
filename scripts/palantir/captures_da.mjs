@@ -62,6 +62,26 @@ function pointEnVue(centre, d) {
   }
   return [centre[0], centre[1] + d];
 }
+/**
+ * Façade d'un bâtiment, vue de `d` m : parmi les points à `d` m du centre du bâtiment, hors de tout bâtiment, d'où la façade (premier point du
+ * bâtiment rencontré en marchant vers son centre) est en vue, celui qui est le plus près d'une voie M ou R (le côté de la porte, qui regarde la route).
+ */
+function vueFacade(centre, d) {
+  const routes = scene.roads.filter((r) => r.c === "M" || r.c === "R");
+  const versRoute = (p) => { let m = Infinity; for (const r of routes) for (let i = 0; i < r.p.length - 1; i++) { const [ax, az] = r.p[i], [bx, bz] = r.p[i + 1]; const ux = bx - ax, uz = bz - az, l2 = ux * ux + uz * uz, t = l2 ? Math.max(0, Math.min(1, ((p[0] - ax) * ux + (p[1] - az) * uz) / l2)) : 0; m = Math.min(m, Math.hypot(p[0] - ax - t * ux, p[1] - az - t * uz)); } return m; };
+  let meilleur = null;
+  for (let a = 0; a < 360; a += 15) {
+    const p = [centre[0] + Math.cos((a * Math.PI) / 180) * d, centre[1] + Math.sin((a * Math.PI) / 180) * d];
+    if (dansBatiment(p[0], p[1], 2)) continue;
+    // premier point du bâtiment du centre rencontré en marchant de p vers le centre
+    let facade = null;
+    for (let k = 0; k <= 60; k++) { const q = [p[0] + ((centre[0] - p[0]) * k) / 60, p[1] + ((centre[1] - p[1]) * k) / 60]; if (dansBatiment(q[0], q[1])) { facade = q; break; } }
+    if (!facade || !ligneLibre(p, [facade[0] - (centre[0] - p[0]) * 0.02, facade[1] - (centre[1] - p[1]) * 0.02])) continue;
+    const v = versRoute(p);
+    if (!meilleur || v < meilleur.v) meilleur = { v, p, facade };
+  }
+  return meilleur ?? { p: [centre[0], centre[1] + d], facade: centre };
+}
 /** Allée d'arbres : sur une voie M ou R, le point et le sens où l'on voit le plus d'arbres à moins de 8 m de l'axe, sur 60 m. */
 function alleeArbres() {
   let meilleur = null;
@@ -90,12 +110,14 @@ function alleeArbres() {
 function vuesArene() {
   const rond = pointEnVue(ROND, 45);
   const allee = alleeArbres();
+  const trefle = vueFacade([55.2, 48.5], 26);
+  const cba = vueFacade([-162.8, -12.7], 30);
   return [
     [5, "05-arene-rond-point", rond, [ROND[0], 1.2, ROND[1]]],
     [6, "06-arene-passage-pieton", [36.5, -36.4 + 14], [36.5, 0.6, -36.4]],
     [7, "07-arene-parking-conduisibles", [0, -30 + 26], [0, 1.2, -30]],
-    [8, "08-arene-bistrot-trefle", [55.2, 48.5 + 22], [55.2, 4, 48.5]],
-    [9, "09-arene-facade-cba", [-162.8, -12.7 + 30], [-162.8, 6, -12.7]],
+    [8, "08-arene-bistrot-trefle", trefle.p, [trefle.facade[0], 2.5, trefle.facade[1]]],
+    [9, "09-arene-facade-cba", cba.p, [cba.facade[0], 6, cba.facade[1]]],
     [10, "10-arene-allee-arbres", allee.depart, [allee.vers[0], 4, allee.vers[1]]],
   ];
 }
@@ -251,6 +273,7 @@ try {
   if (GROUPES.includes("arene")) {
     const { ctx, page } = await nouveauContexte("arene");
     await entrerEnJeu(page, "arene");
+    await dormir(20000); // le panneau des touches du menu d'entrée s'efface de lui-même
     for (const [n, nom, pos, cible] of vuesArene()) {
       if (!veut(n)) continue;
       if (!(await page.evaluate(() => !!window.__arene?.etat().jeu).catch(() => false))) { console.log("page rechargée : nouvelle entrée"); await entrerEnJeu(page, "arene"); }

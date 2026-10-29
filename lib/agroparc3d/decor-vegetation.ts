@@ -134,17 +134,19 @@ export function ajouterPelouses(scene: THREE.Object3D, t: readonly number[], cou
   for (let i = 0; i < n; i++) { pos[i * 3] = t[i * 2]; pos[i * 3 + 1] = Y.pelouse; pos[i * 3 + 2] = t[i * 2 + 1]; }
   const g = new THREE.BufferGeometry();
   g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-  const mat = new THREE.MeshBasicMaterial({ color: couleur, transparent: true, opacity: 0.45, depthWrite: false, side: THREE.DoubleSide });
+  const mat = new THREE.MeshBasicMaterial({ color: couleur, transparent: true, opacity: 0.32, depthWrite: false, side: THREE.DoubleSide });
   mat.onBeforeCompile = (sh) => {
     sh.vertexShader = `varying vec2 vPelouse;\n${sh.vertexShader}`.replace("#include <begin_vertex>", () => "#include <begin_vertex>\nvPelouse = (modelMatrix * vec4(transformed, 1.0)).xz;");
     sh.fragmentShader = `varying vec2 vPelouse;\n${sh.fragmentShader}`.replace("#include <opaque_fragment>", () => `float sH = (vPelouse.x + vPelouse.y) * 0.5;
 float fH = fract(sH);
-float trait = 1.0 - smoothstep(0.0, max(0.05, 1.5 * fwidth(sH)), min(fH, 1.0 - fH));
-outgoingLight = mix(outgoingLight, vec3(0.05, 0.30, 0.20), trait);
-diffuseColor.a = mix(diffuseColor.a, 0.8, trait);
+float wH = fwidth(sH);
+// les hachures s'effacent avec la distance (sinon le trait couvre tout le pixel et la prairie devient un aplat clair)
+float trait = (1.0 - smoothstep(0.0, max(0.05, 1.5 * wH), min(fH, 1.0 - fH))) * (1.0 - smoothstep(0.12, 0.4, wH));
+outgoingLight = mix(outgoingLight, vec3(0.018, 0.11, 0.075), trait);
+diffuseColor.a = mix(diffuseColor.a, 0.7, trait);
 #include <opaque_fragment>`);
   };
-  mat.customProgramCacheKey = () => "pelouse-hachuree-1";
+  mat.customProgramCacheKey = () => "pelouse-hachuree-2";
   const m = new THREE.Mesh(g, mat);
   m.renderOrder = -3;
   scene.add(m);

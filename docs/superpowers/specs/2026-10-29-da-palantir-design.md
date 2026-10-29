@@ -1,6 +1,6 @@
 # Palantir : rework de la direction artistique (issue #83)
 
-Statut : à implémenter. Cette spec ne change ni le protocole, ni le serveur, ni `scene.json`, ni `cachettes.json`. Elle s'applique à la vue
+Statut : implémentée (branche `claude/issue-83-da-palantir`, mesures et écarts à la spec en bas de page). Cette spec ne change ni le protocole, ni le serveur, ni `scene.json`, ni `cachettes.json`. Elle s'applique à la vue
 aérienne « rayons X » et, par `construireDecor`, à l'arène, aux zombies et au Battle Royale (cf. « Quels modes, quoi »).
 
 ## Demande (issue #83, « Rework de la DA graphique »)
