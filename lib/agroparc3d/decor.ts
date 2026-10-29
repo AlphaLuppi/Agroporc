@@ -293,7 +293,7 @@ if (vMur.z > 0.5) {
   float et = floor(fy);
   float ty = (fy - et) * hE;
   float px = max(max(fwuB, fwyB), 0.002);
-  float estompe = smoothstep(0.28, 0.85, px);
+  float estompe = smoothstep(0.18, 0.5, px);
   float aa = px * 0.75;
   float restoF = vStyle > 7.5 ? 1.0 : 0.0;
   float sty = floor(vStyle - 8.0 * restoF + 0.5);
@@ -301,6 +301,19 @@ if (vMur.z > 0.5) {
   vec3 cy = (restoF > 0.5 || teinteB == 0u) ? vec3(0.33, 0.81, 1.0) : (teinteB == 1u ? vec3(0.30, 0.85, 0.74) : vec3(0.52, 0.68, 0.85));
   vec3 chaud = vec3(0.62, 0.38, 0.16);
   vec3 c0 = outgoingLight;
+  vec3 moyen = c0 * 0.9 + cy * 0.025 + chaud * 0.04;
+  float ddp = abs(u - 0.5 * L);
+  bool murPorte = vMur.w > 0.5;
+  float demiPorte = sty > 2.5 ? ${(INDUSTRIEL_PORTE_L_M / 2).toFixed(1)} : ${(PORTE_L_M / 2).toFixed(1)};
+  float hautPorte = sty > 2.5 ? ${INDUSTRIEL_PORTE_H_M.toFixed(1)} : ${PORTE_H_M.toFixed(1)};
+  // enseigne néon des restaurants : barre ambre au-dessus de la porte (visible de loin)
+  float enseigne = 0.0;
+  if (murPorte && restoF > 0.5) enseigne = 1.0 - smoothstep(-aa, aa, max(ddp - ${(ENSEIGNE_L_M / 2).toFixed(1)}, abs(y - ${ENSEIGNE_Y_M.toFixed(2)}) - ${(ENSEIGNE_H_M / 2).toFixed(2)}));
+  float forme = 0.0;
+  // de loin (détail estompé à plus de 99,5 %), la couleur moyenne suffit : on saute tout le calcul de façade
+  if (estompe > 0.995) {
+    outgoingLight = moyen;
+  } else {
   float yh = vHaut - y;
   float socle = 1.0 - smoothstep(0.6 - aa, 0.6 + aa, y);
   float pil = 1.0 - smoothstep(0.45 - aa, 0.45 + aa, min(u, L - u));
@@ -309,15 +322,11 @@ if (vMur.z > 0.5) {
   float levre = 1.0 - smoothstep(0.08 - aa, 0.08 + aa, yh);
   float xu = L - ${(2 * MARGE_COLONNE_M).toFixed(1)};
   float nCol = xu < ${FENETRE_L_M.toFixed(1)} ? 0.0 : max(1.0, floor(xu / ${PAS_COLONNE_M.toFixed(1)} + 0.5));
-  float ddp = abs(u - 0.5 * L);
-  bool murPorte = vMur.w > 0.5;
   float fen = 0.0;
   float verre = 0.0;
   float allumee = 0.0;
   float bardage = 0.0;
   float reflet = 0.0;
-  float demiPorte = sty > 2.5 ? ${(INDUSTRIEL_PORTE_L_M / 2).toFixed(1)} : ${(PORTE_L_M / 2).toFixed(1)};
-  float hautPorte = sty > 2.5 ? ${INDUSTRIEL_PORTE_H_M.toFixed(1)} : ${PORTE_H_M.toFixed(1)};
   float pasCol = nCol > 0.5 ? xu / nCol : 1.0;
   float col = nCol > 0.5 ? clamp(floor((u - ${MARGE_COLONNE_M.toFixed(1)}) / pasCol), 0.0, nCol - 1.0) : 0.0;
   uint cle = (uint(vBatF + 0.5) * 73856093u) ^ (uint(et) * 19349663u) ^ (uint(col) * 83492791u) ^ (uint(L * 8.0 + 0.5) * 2654435761u);
@@ -364,7 +373,7 @@ if (vMur.z > 0.5) {
       fen = dedans;
       verre = dedans * (1.0 - cadre);
       reflet = smoothstep(0.55, 1.0, sin((u + y) * 0.35));
-      uint cleR = (uint(vBatF + 0.5) * 73856093u) ^ (uint(et) * 19349663u) ^ (uint(max(floor(k), 0.0)) * 83492791u);
+      uint cleR = (uint(vBatF + 0.5) * 73856093u) ^ (uint(et) * 19349663u) ^ (uint(floor(k)) * 83492791u);
       allumee = (hachageB(cleR) & 0xffffu) < ${Math.round(SEUIL_ALLUMEES / 2)}u ? 1.0 : 0.0;
     }
   } else {
@@ -379,13 +388,10 @@ if (vMur.z > 0.5) {
   }
   float porte = 0.0;
   float interP = 0.0;
-  float enseigne = 0.0;
   if (murPorte) {
     float dP = max(ddp - demiPorte, y - hautPorte);
     porte = 1.0 - smoothstep(-aa, aa, dP);
     interP = 1.0 - smoothstep(-0.1 - aa, -0.1 + aa, dP);
-    // enseigne néon des restaurants : barre ambre au-dessus de la porte
-    if (restoF > 0.5) enseigne = 1.0 - smoothstep(-aa, aa, max(ddp - ${(ENSEIGNE_L_M / 2).toFixed(1)}, abs(y - ${ENSEIGNE_Y_M.toFixed(2)}) - ${(ENSEIGNE_H_M / 2).toFixed(2)}));
   }
   vec3 c = mix(c0, c0 * 0.3, socle);
   c += cy * 0.03 * pil;
@@ -398,10 +404,11 @@ if (vMur.z > 0.5) {
   c += cy * 0.2 * (fen - verre) * (1.0 - 0.6 * allumee);
   c = mix(c, vec3(0.006, 0.02, 0.028), interP);
   c += cy * 0.28 * (porte - interP);
-  vec3 moyen = c0 * 0.9 + cy * 0.025 + chaud * 0.04;
   outgoingLight = mix(c, moyen, estompe);
+  forme = max(max(fen, porte), corniche * 0.6);
+  }
   outgoingLight = mix(outgoingLight, vec3(1.0, 0.66, 0.28), enseigne * (1.0 - 0.5 * estompe));
-  diffuseColor.a = mix(diffuseColor.a, 0.95, max(max(max(fen, porte), corniche * 0.6), enseigne) * (1.0 - estompe));
+  diffuseColor.a = mix(diffuseColor.a, 0.95, max(forme, enseigne) * (1.0 - estompe));
 }
 `;
 
@@ -597,7 +604,9 @@ export function ajouterReseauSol(scene: THREE.Object3D, data: SceneData, derive?
   const g = new THREE.BufferGeometry();
   g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
   g.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
-  scene.add(new THREE.LineSegments(g, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.95 })));
+  const reseau = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.95 }));
+  reseau.userData.couche = "reseau";
+  scene.add(reseau);
 }
 
 /** Grille de fond (4 km, pas de 20 m). */

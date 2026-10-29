@@ -646,6 +646,7 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
       },
       viser: (distance) => handleRef.current?.chasse?.viser(distance),
       cadrer: (x, z, distance) => handleRef.current?.cadrer(x, z, distance),
+      couches: (etat) => handleRef.current?.couches(etat),
       ecran: () => handleRef.current?.chasse?.ecran() ?? null,
     };
     return () => { delete window.__palantir; };
@@ -1221,6 +1222,8 @@ declare global {
       viser(distance?: number): void;
       /** Captures : caméra au repos (sans argument) ou sur le point (x, z) à `distance` m, vue figée. */
       cadrer(x?: number, z?: number, distance?: number): void;
+      /** Mesures : montre ou cache des couches du décor (chaussee, marquages, places, pelouses, haies, arbres, mobilier, taches, reseau). */
+      couches(etat: Record<string, boolean>): void;
       /** Position du tigre à l'écran (px), null s'il est caché ou hors champ. */
       ecran(): { x: number; y: number } | null;
     };

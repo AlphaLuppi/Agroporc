@@ -63,25 +63,27 @@ function pointEnVue(centre, d) {
   return [centre[0], centre[1] + d];
 }
 /**
- * Façade d'un bâtiment, vue de `d` m : parmi les points à `d` m du centre du bâtiment, hors de tout bâtiment, d'où la façade (premier point du
- * bâtiment rencontré en marchant vers son centre) est en vue, celui qui est le plus près d'une voie M ou R (le côté de la porte, qui regarde la route).
+ * Mur de la porte (calculé avec `murDePorte` et `mursDe` de lib/agroparc3d/facade.ts sur scene.json) : milieu du mur et normale sortante. On s'y place
+ * `d` m en avant, face à la porte, pour voir la vitrine du rez-de-chaussée et l'enseigne néon des restaurants.
  */
-function vueFacade(centre, d) {
-  const routes = scene.roads.filter((r) => r.c === "M" || r.c === "R");
-  const versRoute = (p) => { let m = Infinity; for (const r of routes) for (let i = 0; i < r.p.length - 1; i++) { const [ax, az] = r.p[i], [bx, bz] = r.p[i + 1]; const ux = bx - ax, uz = bz - az, l2 = ux * ux + uz * uz, t = l2 ? Math.max(0, Math.min(1, ((p[0] - ax) * ux + (p[1] - az) * uz) / l2)) : 0; m = Math.min(m, Math.hypot(p[0] - ax - t * ux, p[1] - az - t * uz)); } return m; };
-  let meilleur = null;
-  for (let a = 0; a < 360; a += 15) {
-    const p = [centre[0] + Math.cos((a * Math.PI) / 180) * d, centre[1] + Math.sin((a * Math.PI) / 180) * d];
-    if (dansBatiment(p[0], p[1], 2)) continue;
-    // premier point du bâtiment du centre rencontré en marchant de p vers le centre
-    let facade = null;
-    for (let k = 0; k <= 60; k++) { const q = [p[0] + ((centre[0] - p[0]) * k) / 60, p[1] + ((centre[1] - p[1]) * k) / 60]; if (dansBatiment(q[0], q[1])) { facade = q; break; } }
-    if (!facade || !ligneLibre(p, [facade[0] - (centre[0] - p[0]) * 0.02, facade[1] - (centre[1] - p[1]) * 0.02])) continue;
-    const v = versRoute(p);
-    if (!meilleur || v < meilleur.v) meilleur = { v, p, facade };
+const PORTES = {
+  trefle: { x: 100.05, z: 45.8, nx: 0.9574, nz: 0.2889 },
+  cba: { x: -186.65, z: -21.75, nx: -0.956, nz: -0.2934 },
+};
+const devantPorte = (k, d, lateral = 0) => { const p = PORTES[k]; return { p: [p.x + p.nx * d - p.nz * lateral, p.z + p.nz * d + p.nx * lateral], porte: [p.x, p.z] }; };
+/** Point d'où la porte est en vue (rien entre les deux), le plus près possible de la normale, à 6 m ou plus du mur : un petit bâtiment peut masquer la porte de face. */
+function devantPorteLibre(k) {
+  const p = PORTES[k];
+  const essais = [];
+  for (const d of [10, 14, 18, 8, 22, 6]) for (const lat of [0, 6, -6, 12, -12, 18, -18, 25, -25]) essais.push([d, lat]);
+  for (const [d, lat] of essais) {
+    const c = devantPorte(k, d, lat);
+    if (dansBatiment(c.p[0], c.p[1], 2)) continue;
+    if (ligneLibre(c.p, [p.x + p.nx * 0.6, p.z + p.nz * 0.6])) return c;
   }
-  return meilleur ?? { p: [centre[0], centre[1] + d], facade: centre };
+  return devantPorte(k, 14);
 }
+
 /** Allée d'arbres : sur une voie M ou R, le point et le sens où l'on voit le plus d'arbres à moins de 8 m de l'axe, sur 60 m. */
 function alleeArbres() {
   let meilleur = null;
@@ -110,14 +112,14 @@ function alleeArbres() {
 function vuesArene() {
   const rond = pointEnVue(ROND, 45);
   const allee = alleeArbres();
-  const trefle = vueFacade([55.2, 48.5], 26);
-  const cba = vueFacade([-162.8, -12.7], 30);
+  const trefle = devantPorteLibre("trefle");
+  const cba = devantPorteLibre("cba");
   return [
     [5, "05-arene-rond-point", rond, [ROND[0], 1.2, ROND[1]]],
     [6, "06-arene-passage-pieton", [36.5, -36.4 + 14], [36.5, 0.6, -36.4]],
     [7, "07-arene-parking-conduisibles", [0, -30 + 26], [0, 1.2, -30]],
-    [8, "08-arene-bistrot-trefle", trefle.p, [trefle.facade[0], 2.5, trefle.facade[1]]],
-    [9, "09-arene-facade-cba", cba.p, [cba.facade[0], 6, cba.facade[1]]],
+    [8, "08-arene-bistrot-trefle", trefle.p, [trefle.porte[0], 2.4, trefle.porte[1]]],
+    [9, "09-arene-facade-cba", cba.p, [cba.porte[0], 2.4, cba.porte[1]]],
     [10, "10-arene-allee-arbres", allee.depart, [allee.vers[0], 4, allee.vers[1]]],
   ];
 }
@@ -174,9 +176,10 @@ try {
   const photo = (page, nom) => page.screenshot({ path: join(SORTIE, `${PREFIXE}-${nom}.jpg`), type: "jpeg", quality: 82, timeout: 120000 });
   const mesurer = async (page, vue) => {
     if (!MESURE) return;
+    // 30 images de chauffe écartées (compilation des programmes, premiers envois de tampons), puis 60 images mesurées
     const m = await page.evaluate(() => new Promise((ok) => {
-      const t = []; let dernier = performance.now();
-      const f = (now) => { t.push(now - dernier); dernier = now; if (t.length < 61) requestAnimationFrame(f); else { t.shift(); t.sort((a, b) => a - b); ok({ mediane: t[Math.floor(t.length / 2)], p95: t[Math.floor(t.length * 0.95)] }); } };
+      const t = []; let dernier = performance.now(), n = 0;
+      const f = (now) => { if (n++ >= 30) t.push(now - dernier); dernier = now; if (t.length < 60) requestAnimationFrame(f); else { t.sort((a, b) => a - b); ok({ mediane: t[Math.floor(t.length / 2)], p95: t[Math.floor(t.length * 0.95)] }); } };
       requestAnimationFrame(f);
     }));
     fluidite[`vue${vue}`] = { mediane_ms: Math.round(m.mediane * 10) / 10, p95_ms: Math.round(m.p95 * 10) / 10 };
@@ -184,9 +187,19 @@ try {
   };
   /** Ouvre la vue Palantir par le code secret (une seule fois par essai : le retaper la refermerait). */
   const ouvrirPalantir = async (page) => {
-    await page.goto(`${urlNext}${PAGE}`, { waitUntil: "domcontentloaded", timeout: 180000 });
-    await dormir(4000);
-    await page.keyboard.type("myrtille", { delay: 60 });
+    // un `next dev` à froid recompile et recharge la page à plusieurs reprises : une navigation interrompue n'est pas une erreur
+    for (let essai = 0; ; essai++) {
+      try {
+        await page.goto(`${urlNext}${PAGE}`, { waitUntil: "domcontentloaded", timeout: 180000 });
+        await dormir(4000);
+        await page.keyboard.type("myrtille", { delay: 60 });
+        return;
+      } catch (e) {
+        if (essai >= 6) throw e;
+        console.log("ouverture : navigation interrompue, nouvel essai :", e.message.split("\n")[0]);
+        await dormir(8000);
+      }
+    }
   };
 
   // ------------------------------------------------------------------ vue aérienne : 1 à 4 et 13
@@ -198,11 +211,22 @@ try {
         await ouvrirPalantir(page);
         await page.waitForFunction(() => !!window.__palantir, null, { timeout: 90000 });
         pret = true;
-      } catch (e) { console.log("aérien : essai", essai, e.message.split("\n")[0]); }
+      } catch (e) { console.log("aérien : essai", essai, e.message.split("\n")[0]); if (/REFUSED/.test(e.message)) for (const c of enfants) console.log("journal :", c.journal.slice(-12).join("").slice(-1500)); }
     }
     if (!pret) throw new Error("vue aérienne indisponible");
     await dormir(15000);
-    const cadrer = (x, z, d) => page.evaluate(([x, z, d]) => window.__palantir.cadrer(x, z, d), [x, z, d]);
+    /** Rejoue `f` ; si la page a été rechargée entre-temps (un `next dev` à froid recompile), rouvre la vue et recommence (3 essais). */
+    const reprise = async (f) => {
+      for (let essai = 0; ; essai++) {
+        try { return await f(); } catch (e) {
+          if (essai >= 3) throw e;
+          console.log("aérien : page rechargée, nouvelle ouverture :", e.message.split("\n")[0]);
+          await ouvrirPalantir(page);
+          await page.waitForFunction(() => !!window.__palantir, null, { timeout: 90000 }).catch(() => null);
+          await dormir(15000);
+        }
+      }
+    };
     const aerien = [
       [1, "01-aerien-repos", null],
       [2, "02-aerien-rond-point", [28.2, 2.5, 120]],
@@ -211,18 +235,33 @@ try {
     ];
     for (const [n, nom, c] of aerien) {
       if (!veut(n)) continue;
-      if (c) await cadrer(...c); else await cadrer();
-      await dormir(6000);
-      await photo(page, nom);
-      if (n === 1) await mesurer(page, 1);
+      await reprise(async () => {
+        if (c) await page.evaluate(([x, z, d]) => window.__palantir.cadrer(x, z, d), c); else await page.evaluate(() => window.__palantir.cadrer());
+        await dormir(6000);
+        await photo(page, nom);
+        if (n === 1) await mesurer(page, 1);
+      });
+      if (n === 1 && process.env.MESURE_COUCHES) {
+        // temps d'image avec chaque couche du décor cachée tour à tour (rendu logiciel : le coût est surtout le remplissage)
+        const couches = ["chaussee", "marquages", "places", "pelouses", "haies", "arbres", "mobilier", "taches", "reseau"];
+        const mediane = () => page.evaluate(() => new Promise((ok) => { const t = []; let d = performance.now(); const f = (now) => { t.push(now - d); d = now; if (t.length < 40) requestAnimationFrame(f); else { t.splice(0, 12); t.sort((a, b) => a - b); ok(Math.round(t[t.length >> 1])); } }; requestAnimationFrame(f); }));
+        const res = { base0: await mediane(), base: await mediane() };
+        for (const c of couches) { await page.evaluate((c) => window.__palantir.couches({ [c]: false }), c); res[`sans_${c}`] = await mediane(); await page.evaluate((c) => window.__palantir.couches({ [c]: true }), c); }
+        await page.evaluate(() => window.__palantir.couches({ pelouses: false, taches: false })); res["sans_pelouses_taches"] = await mediane();
+        await page.evaluate(() => window.__palantir.couches(Object.fromEntries(["chaussee", "marquages", "places", "pelouses", "haies", "arbres", "mobilier", "taches", "reseau"].map((c) => [c, false])))); res["sans_tout_le_decor_secondaire"] = await mediane();
+        console.log("COUCHES", JSON.stringify(res));
+        await page.evaluate(() => window.__palantir.couches(Object.fromEntries(["chaussee", "marquages", "places", "pelouses", "haies", "arbres", "mobilier", "taches", "reseau"].map((c) => [c, true]))));
+      }
       console.log("capture", nom);
     }
     if (veut(13)) {
-      const nb = await page.evaluate(() => window.__palantir.cachettes());
+      const nb = await reprise(() => page.evaluate(() => window.__palantir.cachettes()));
       for (const [k, rang] of [[1, Math.round(nb * 0.1)], [2, Math.round(nb * 0.5)], [3, Math.round(nb * 0.9)]]) {
-        await page.evaluate((i) => { window.__palantir.placer(i); window.__palantir.viser(30); }, rang);
-        await dormir(7000);
-        await photo(page, `13-tigre-cachette-${k}`);
+        await reprise(async () => {
+          await page.evaluate((i) => { window.__palantir.placer(i); window.__palantir.viser(30); }, rang);
+          await dormir(7000);
+          await photo(page, `13-tigre-cachette-${k}`);
+        });
         console.log("capture 13 tigre", k, "rang", rang);
       }
     }
@@ -247,7 +286,7 @@ try {
           const radio = page.getByRole("radio", { name: mode === "zombies" ? /Zombies tigres/ : /Battle Royale/ });
           await radio.waitFor({ timeout: 60000 });
           await radio.evaluate((e) => e.click());
-          await page.locator(`aside[aria-label='${mode === "zombies" ? "Zombies" : "Battle Royale"}']`).waitFor({ timeout: 30000 });
+          await page.locator(`aside[aria-label='${mode === "zombies" ? "Zombies" : "Battle Royale"}']`).waitFor({ timeout: 90000 });
           await dormir(1500);
           await page.getByRole("button", { name: /Lancer la partie/ }).evaluate((e) => e.click(), undefined, { timeout: 15000 });
         }
@@ -277,10 +316,15 @@ try {
     for (const [n, nom, pos, cible] of vuesArene()) {
       if (!veut(n)) continue;
       if (!(await page.evaluate(() => !!window.__arene?.etat().jeu).catch(() => false))) { console.log("page rechargée : nouvelle entrée"); await entrerEnJeu(page, "arene"); }
-      await regarderDepuis(page, pos, cible);
-      await dormir(5000);
-      await photo(page, nom);
-      if (n === 5 || n === 9) await mesurer(page, n);
+      for (let essai = 0; essai < 3; essai++) {
+        try {
+          await regarderDepuis(page, pos, cible);
+          await dormir(5000);
+          await photo(page, nom);
+          if (n === 5 || n === 9) await mesurer(page, n);
+          break;
+        } catch (e) { console.log("arène : page rechargée :", e.message.split("\n")[0]); await entrerEnJeu(page, "arene"); await dormir(15000); }
+      }
       console.log("capture", nom, JSON.stringify(pos));
     }
     if (page.erreurs.length) console.log("erreurs arène :", page.erreurs.slice(0, 5));

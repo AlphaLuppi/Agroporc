@@ -66,13 +66,16 @@ export function ajouterVegetation(scene: THREE.Object3D, arbres: readonly ArbreC
     });
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    mesh.userData.couche = "arbres";
     scene.add(mesh);
   }
   if (troncs.length) {
     const g = new THREE.BufferGeometry();
     g.setAttribute("position", new THREE.Float32BufferAttribute(troncs, 3));
     g.setAttribute("color", new THREE.Float32BufferAttribute(couleursTroncs, 3));
-    scene.add(new THREE.LineSegments(g, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.45 })));
+    const troncsLignes = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.45 }));
+    troncsLignes.userData.couche = "arbres";
+    scene.add(troncsLignes);
   }
   if (arbustes.length) {
     const n = arbustes.length / 2;
@@ -87,6 +90,7 @@ export function ajouterVegetation(scene: THREE.Object3D, arbres: readonly ArbreC
       mesh.setMatrixAt(i, m);
     }
     mesh.instanceMatrix.needsUpdate = true;
+    mesh.userData.couche = "arbres";
     scene.add(mesh);
   }
 }
@@ -123,6 +127,7 @@ export function ajouterHaies(scene: THREE.Object3D, h: readonly number[], couleu
   gm.setAttribute("position", new THREE.BufferAttribute(tris.subarray(0, it), 3));
   const mesh = new THREE.Mesh(gm, new THREE.MeshBasicMaterial({ color: couleur, transparent: true, opacity: 0.18, depthWrite: false, side: THREE.DoubleSide }));
   mesh.renderOrder = -1;
+  ls.userData.couche = mesh.userData.couche = "haies";
   scene.add(ls, mesh);
 }
 
@@ -149,6 +154,7 @@ diffuseColor.a = mix(diffuseColor.a, 0.7, trait);
   mat.customProgramCacheKey = () => "pelouse-hachuree-2";
   const m = new THREE.Mesh(g, mat);
   m.renderOrder = -3;
+  m.userData.couche = "pelouses";
   scene.add(m);
   return m;
 }

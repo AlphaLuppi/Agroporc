@@ -38,6 +38,7 @@ export function ajouterChaussees(scene: THREE.Object3D, v: Voirie, couleur: numb
     new THREE.MeshBasicMaterial({ color: couleur, transparent: true, opacity: 1, depthWrite: false, side: THREE.DoubleSide }),
   );
   m.renderOrder = -2;
+  m.userData.couche = "chaussee";
   scene.add(m);
   return m;
 }
@@ -60,6 +61,7 @@ export function ajouterMarquages(scene: THREE.Object3D, v: Voirie, couleur: numb
     new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 1, depthWrite: false, side: THREE.DoubleSide }),
   );
   m.renderOrder = 0;
+  m.userData.couche = "marquages";
   scene.add(m);
   return m;
 }
@@ -88,6 +90,7 @@ export function ajouterPlacesParking(scene: THREE.Object3D, places: readonly num
   g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
   const l = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: couleur, transparent: true, opacity: 0.9, depthWrite: false }));
   l.renderOrder = -1;
+  l.userData.couche = "places";
   scene.add(l);
   return l;
 }

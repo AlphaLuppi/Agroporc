@@ -66,6 +66,8 @@ export interface SceneHandle {
    * dans l'azimut du repos, plongée de 40°. Fige la vue (ni intro, ni rotation automatique).
    */
   cadrer(x?: number, z?: number, distance?: number): void;
+  /** Crochet de mesures (`window.__palantir.couches`) : montre ou cache des couches du décor (`userData.couche`) ; les absentes de `etat` ne changent pas. */
+  couches(etat: Record<string, boolean>): void;
   dispose(): void;
 }
 
@@ -485,6 +487,9 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
         camera.position.set(x + Math.sin(az) * Math.cos(el) * d, Math.sin(el) * d, z + Math.cos(az) * Math.cos(el) * d);
       }
       controls.update();
+    },
+    couches(etat) {
+      scene.traverse((o) => { const c = o.userData.couche as string | undefined; if (c && c in etat) o.visible = etat[c]; });
     },
     chasse: tigre && {
       cachette: () => tigre.cachette(),

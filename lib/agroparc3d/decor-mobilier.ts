@@ -136,13 +136,17 @@ export function ajouterMobilier(scene: THREE.Object3D, m: Mobilier, c: CouleursM
     const g = new THREE.BufferGeometry();
     g.setAttribute("position", new THREE.Float32BufferAttribute(L.pos, 3));
     g.setAttribute("color", new THREE.Float32BufferAttribute(L.col, 3));
-    scene.add(new THREE.LineSegments(g, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.85 })));
+    const ls = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.85 }));
+    ls.userData.couche = "mobilier";
+    scene.add(ls);
   }
   if (F.pos.length) {
     const g = new THREE.BufferGeometry();
     g.setAttribute("position", new THREE.Float32BufferAttribute(F.pos, 3));
     g.setAttribute("color", new THREE.Float32BufferAttribute(F.col, 3));
-    scene.add(new THREE.Mesh(g, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide })));
+    const mesh = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide }));
+    mesh.userData.couche = "mobilier";
+    scene.add(mesh);
   }
   // ---- taches de lumière : disque à dégradé radial (sommets : centre clair, bord noir), mélange additif, une instance par lampadaire
   if (taches && centres.length) {
@@ -165,6 +169,7 @@ export function ajouterMobilier(scene: THREE.Object3D, m: Mobilier, c: CouleursM
     im.instanceMatrix.needsUpdate = true;
     im.renderOrder = 1;
     im.frustumCulled = false;
+    im.userData.couche = "taches";
     scene.add(im);
   }
 }
