@@ -80,6 +80,9 @@ const elsaMax = dureeEnv("PDJ_FPS_ELSA_MAX_MS");
 // Avion des tigres : idem (un passage toutes les 90 à 180 s par défaut, quelques secondes pour les tests de bout en bout)
 const avionMin = dureeEnv("PDJ_FPS_AVION_MIN_MS");
 const avionMax = dureeEnv("PDJ_FPS_AVION_MAX_MS");
+// Bus C3 express : idem (un passage toutes les 45 à 75 s par défaut ; il écrase à pied, les tests de bout en bout de l'arène l'écartent)
+const busMin = dureeEnv("PDJ_FPS_BUS_MIN_MS");
+const busMax = dureeEnv("PDJ_FPS_BUS_MAX_MS");
 /** Intervalle surchargé par l'environnement. Une seule des deux variables suffit, elle sert aux deux bornes. */
 const intervalleEnv = (min: number | undefined, max: number | undefined) =>
   min !== undefined || max !== undefined ? { minMs: min ?? max!, maxMs: Math.max(min ?? 0, max ?? min!) } : undefined;
@@ -100,6 +103,7 @@ const options: OptionsSalle = {
   circulation: { circuits, voitures: flotte(circuits) },
   vehicules: EMPLACEMENTS_VOITURES,
   tigres: { cachettes, intervalle: intervalleEnv(avionMin, avionMax) },
+  bus: { intervalle: intervalleEnv(busMin, busMax) },
   // v3 : Truck Muche fou (départ du stand d'Elsa) et tigre robot (autour du rond-point) ; délais surchargeables pour les tests
   evenements: {
     truck: { x: elsaX, z: elsaZ },

@@ -39,7 +39,7 @@ import {
   type ArmeFeuId, type ArmeId, type ArmeMeleeId, type CauseMort, type EtatJoueurSnap, type Equipement, type InfoMatch, type InfoTueur,
   type JoueurPublic, type LigneClassement, type LigneStats, type MessageClient, type MonstresSnap, type SignalVoix, type Slot, type Vec3, type Zone,
 } from "./protocole";
-import { BUS_C3, avancerBusC3, busEnSnap, armesEnSnap, ecraseParBus, estSurLeToit, ramasserArmeC3, peutMonterSurBus, creerEtatBusC3, type EtatBusC3 } from "./bus-c3";
+import { BUS_C3, avancerBusC3, busEnSnap, armesEnSnap, ecraseParBus, estSurLeToit, ramasserArmeC3, peutMonterSurBus, creerEtatBusC3, type EtatBusC3, type IntervalleBus } from "./bus-c3";
 import { creerFrappe, degatsImpactFrappe, verifierImpactsFrappe, type FrappeEnCours } from "./frappe-aerienne";
 import { creerNuageFumee, nuagesEnSnap, type NuageFumee } from "./fumigene";
 import { appliquerDegats, memoriserSante, regenerer, reinitialiserSante, restaurerSante, tuer as tuerSante } from "./sante";
@@ -189,6 +189,8 @@ export interface OptionsSalle {
    * `zoneApparition` (sinon `ZONE_APPARITION` autour du rond-point) servent, et intervalle des passages surchargeable.
    */
   tigres?: { cachettes: readonly CachetteTigre[]; intervalle?: IntervalleAvion };
+  /** Bus C3 express (arène seulement) : intervalle des passages surchargeable (tests de bout en bout) */
+  bus?: { intervalle?: IntervalleBus };
   /** événements (v3) : Truck Muche fou, tigre robot géant, titan tigre */
   evenements?: Omit<OptionsServiceEvenements, "maintenant">;
   /**
@@ -289,7 +291,7 @@ export class Salle implements ContexteSalle {
       })
       : null;
     this.zombies = options.zombies ? creerServiceZombies(this, { ...options.zombies, alea }) : null;
-    this.busC3 = options.zombies ? null : creerEtatBusC3(maintenant, this.alea);
+    this.busC3 = options.zombies ? null : creerEtatBusC3(maintenant, this.alea, options.bus?.intervalle);
   }
 
   /** (v3) Pilote du titan tigre : invulnérable, ni arme ni voiture ni état à pied. */
