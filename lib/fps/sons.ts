@@ -35,6 +35,11 @@ export interface PositionSon {
 export interface Sons {
   /** Tir d'une arme ; `position` pour un tir d'un autre joueur (omis = son du joueur local). */
   tir(arme: ArmeFeuId, position?: PositionSon): void;
+  /**
+   * (v8) Crépitement bref d'un arc électrique (chaîne d'une arme électrique entre des tigres), le même quelle que soit l'arme : le tir qui
+   * l'a lancé a déjà son propre son.
+   */
+  arc(position?: PositionSon): void;
   /** Séquence de rechargement (clics de chargeur, culasse, cartouches). */
   recharge(arme: ArmeFeuId): void;
   /** J'ai touché quelqu'un (tic ; plus aigu et plus sec à la tête). Joué à la réception de `degats` du serveur (v2 §13.2). */
@@ -733,6 +738,14 @@ export function creerSons(): Sons {
       const t = ctx!.currentTime + 0.001;
       const v = 0.92 + Math.random() * 0.16;
       PROFILS_TIR[arme](briques, out, t, v);
+    },
+    arc(position) {
+      if (!prete()) return;
+      const out = sortie(position);
+      const t = ctx!.currentTime + 0.001;
+      const v = 0.9 + Math.random() * 0.2;
+      bruit(out, t, { dur: 0.09, type: "highpass", f0: 3000 * v, f1: 6500, gain: 0.45 });
+      bruit(out, t + 0.02, { dur: 0.06, type: "bandpass", f0: 1400 * v, q: 1.2, gain: 0.3 });
     },
     recharge(arme) {
       if (!prete()) return;

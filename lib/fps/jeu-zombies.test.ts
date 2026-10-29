@@ -4,7 +4,7 @@ import { aleaGraine } from "../agroparc3d/cachettes";
 import type { SceneData } from "../agroparc3d/types";
 import { MELEE } from "./armes";
 import {
-  CAPACITE_ZOMBIES, DISTANCE_AFFICHAGE_M, INVITE_VIDE, MondeZombies, Rugissements, TAMPON_ZOMBIES_MS, animerCetteImage, decisionMaintien, inviteZombies, objetSecretProche,
+  CAPACITE_ZOMBIES, DISTANCE_AFFICHAGE_M, INVITE_VIDE, MondeZombies, effetsMortZombie, Rugissements, TAMPON_ZOMBIES_MS, animerCetteImage, decisionMaintien, inviteZombies, objetSecretProche,
   periodeAnimation, segmentsPortesFermees, sonGriffe, tigreAffiche, trouverZombieTouche, trouverZombiesMelee, type EntreeInvite, type PartieInvite, type ZombieVue,
 } from "./jeu-zombies";
 import { FORME_TIGRE, pointLocal, toucheTigre } from "./monstres";
@@ -542,5 +542,13 @@ describe("(v8) maintien de E (relève, planches)", () => {
     expect(decisionMaintien(true, true, relever, rel)).toBeNull();
     expect(decisionMaintien(true, true, { ...relever, cible: "j3" }, rel)).toEqual({ action: "arreter" });
     expect(decisionMaintien(true, false, relever, rel)).toEqual({ action: "arreter" });
+  });
+});
+
+describe("(v8) effets d'une mort reçue", () => {
+  it("un mini Truck abattu ne saigne pas et ne rugit pas ; un tigre (ou un type inconnu) si", () => {
+    expect(effetsMortZombie(4)).toEqual({ sang: false, rugissement: false });
+    for (const type of [0, 1, 2, 3] as const) expect(effetsMortZombie(type)).toEqual({ sang: true, rugissement: true });
+    expect(effetsMortZombie(null)).toEqual({ sang: true, rugissement: true });
   });
 });

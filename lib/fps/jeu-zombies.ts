@@ -382,6 +382,15 @@ export function sonGriffe(type: TypeZombie): SonGriffe {
   return type === 2 ? "chef" : type === 3 ? "petit" : "tigre";
 }
 
+/**
+ * Effets d'une mort reçue (`zombieMort`) selon le type du tigre (inconnu = `null`, il a déjà quitté l'interpolation) : un mini Truck (4) ne
+ * saigne pas et ne râle pas (il explose, `zevt{miniTruck}`, et klaxonnait) ; tous les autres, gerbe orange et rugissement d'agonie.
+ */
+export function effetsMortZombie(type: TypeZombie | null): { sang: boolean; rugissement: boolean } {
+  const vivant = type !== 4;
+  return { sang: vivant, rugissement: vivant };
+}
+
 // ---------------------------------------------------------------------------------------------
 // Invite d'interaction
 // ---------------------------------------------------------------------------------------------

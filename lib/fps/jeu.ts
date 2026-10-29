@@ -40,7 +40,7 @@ import { creerRenduGrenades } from "./rendu-grenades";
 import { CorpsTigres } from "./corps-tigres";
 import { ZOMBIES, armementGriffe, echelleZombie, type TypeZombie } from "./zombies-vagues";
 import {
-  MondeZombies, Rugissements, decisionMaintien, inviteZombies, objetSecretProche, segmentsPortesFermees, sonGriffe, toucheTruckClient, trouverZombieTouche, trouverZombiesMelee, trouverZombiesTouches,
+  MondeZombies, Rugissements, decisionMaintien, effetsMortZombie, inviteZombies, objetSecretProche, segmentsPortesFermees, sonGriffe, toucheTruckClient, trouverZombieTouche, trouverZombiesMelee, trouverZombiesTouches,
   INVITE_VIDE, type InviteZombies,
 } from "./jeu-zombies";
 import { sonExplosion, voixDuBonus, type IdVoix } from "./sons-echantillons";
@@ -394,6 +394,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   let gainZ: EtatZombiesHud["gain"] = null;
   let nGainZ = 0;
   let sonPieceT = -Infinity;
+  /** (v8) dernier crépitement d'arc d'un autre joueur (s) : une rafale d'arme électrique n'en superpose pas un par balle */
+  let sonArcT = -Infinity;
   let refusZ: EtatZombiesHud["refus"] = null;
   let nRefusZ = 0;
   let achatsZ = 0;
@@ -1704,7 +1706,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
             break;
           case "arc":
             rEffetsArmes?.arc(e.p);
-            if (e.par !== client.id && e.p.length) sons.tir("grille_pain", positionSon(e.p[0]));
+            // le tir relayé a déjà joué le son de l'arme (quelle qu'elle soit) : ici un crépitement générique, au plus un tous les 120 ms
+            if (e.par !== client.id && e.p.length && t - sonArcT > 0.12) { sonArcT = t; sons.arc(positionSon(e.p[0])); }
             break;
           case "souffle":
             rEffetsArmes?.souffle(e.o, e.d, e.portee);
@@ -1750,9 +1753,13 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
         if (enReplay) break;
         // un tigre tombe : gerbe orange et cri qui s'effondre ; mon ding si c'est moi qui l'ai abattu (jamais dans le fil des éliminations)
         const c: Vec3 = [m.p[0], 0.8, m.p[2]];
-        effets.eclaboussure(c, "#ff8a1c");
-        effets.eclaboussure([c[0], 1.4, c[2]], "#ffd9a0");
-        sons.rugissementTigre(positionSon(c), true);
+        // (v8) un mini Truck ne saigne pas et ne râle pas : son explosion (`zevt{miniTruck}`) suffit
+        const fx = effetsMortZombie(mz.parId(Number(m.id.slice(1)))?.type ?? null);
+        if (fx.sang) {
+          effets.eclaboussure(c, "#ff8a1c");
+          effets.eclaboussure([c[0], 1.4, c[2]], "#ffd9a0");
+        }
+        if (fx.rugissement) sons.rugissementTigre(positionSon(c), true);
         if (m.par === client.id) sons.kill();
         mortZombie(m);
         break;

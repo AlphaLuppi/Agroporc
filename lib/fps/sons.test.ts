@@ -90,6 +90,17 @@ describe("sons : profils de tir et de rechargement", () => {
   });
 });
 
+describe("sons : arc électrique (v8)", () => {
+  it("un crépitement bref, distinct et plus court que le tir du Grille-pain (le tir relayé a déjà son son)", () => {
+    const sons = creerSons();
+    const mesure = (f: () => void) => { const a = journal.demarres; f(); return journal.demarres - a; };
+    const arc = mesure(() => sons.arc({ distance: 10, pan: 0.2 }));
+    expect(arc).toBeGreaterThan(0);
+    expect(arc).toBeLessThan(mesure(() => sons.tir("grille_pain", { distance: 10, pan: 0.2 })));
+    sons.dispose();
+  });
+});
+
 describe("sons : effets ajoutés par la v2", () => {
   it("touche (corps et tête), coup de couteau (dans le vide et sur la chair), ramassage, régénération, choc, klaxon", () => {
     const sons = creerSons();
