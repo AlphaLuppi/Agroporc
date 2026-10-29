@@ -145,16 +145,40 @@ describe("(v8) organe de visée posé sur l'arme améliorée", () => {
     const arme = creerArmeEnMain("mini_uzi");
     camera.add(arme.group);
     const modele = modeleDe(arme);
-    const dessus = boiteLocale(modele).max.y;
-    expect(dessus).toBeLessThan(0.3);
+    expect(boiteLocale(modele).max.y).toBeLessThan(0.3);
     arme.regler({ paire: false, viseur: "point_rouge" });
     const piece = modele.children[modele.children.length - 1];
-    // la pièce part du dessus de l'arme (repère du modèle), à quelques millimètres près
-    expect(piece.position.y).toBeGreaterThan(dessus - 0.01);
-    expect(piece.position.y).toBeLessThan(dessus + 0.02);
+    // la pièce part du dessus de la carcasse SOUS elle (repère du modèle), à quelques millimètres près : ni l'éclair de bouche caché ni un
+    // guidon ailleurs sur l'arme ne la soulèvent (elle flottait 7 cm au-dessus)
+    piece.visible = false;
+    const z = piece.position.z;
+    const dessous = boiteLocale(modele, [z - 0.03, z + 0.03]).max.y;
+    piece.visible = true;
+    expect(piece.position.y).toBeGreaterThan(dessous - 0.01);
+    expect(piece.position.y).toBeLessThan(dessous + 0.02);
     // et elle est bien sur l'arme dans le monde : à moins de 30 cm de la bouche du canon
     camera.updateMatrixWorld(true);
     const p = piece.getWorldPosition(new THREE.Vector3());
     expect(p.distanceTo(arme.positionBouche(new THREE.Vector3()))).toBeLessThan(0.3);
   });
+});
+
+describe("(v8) organe de visée posé sur la carcasse, pas au-dessus", () => {
+  it.each([["mitrailleuse", "holo"], ["mitraillette", "holo"], ["pompe", "point_rouge"], ["fusil_assaut", "lunette"]] as const)(
+    "%s (%s) : la pièce touche le dessus de l'arme sous elle",
+    (id, viseur) => {
+      const arme = creerArmeEnMain(id);
+      const modele = modeleDe(arme);
+      arme.regler({ paire: false, viseur });
+      const piece = modele.children[modele.children.length - 1];
+      piece.visible = false;
+      // empreinte de la pièce : 3 cm de part et d'autre, 9 cm pour le tube d'une lunette
+      const z = piece.position.z, demi = viseur === "lunette" ? 0.09 : 0.03;
+      const dessous = boiteLocale(modele, [z - demi, z + demi]).max.y;
+      piece.visible = true;
+      expect(piece.position.y - dessous).toBeGreaterThan(-0.01);
+      expect(piece.position.y - dessous).toBeLessThan(0.02);
+      arme.dispose();
+    },
+  );
 });

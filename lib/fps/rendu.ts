@@ -1119,19 +1119,28 @@ export function creerModeleArmeMonde(id: ArmeId, couleur: CouleurEntree): { grou
 /**
  * Boîte englobante des maillages et lignes de `racine` dans le repère LOCAL de `racine` (et non du monde, comme `Box3.setFromObject`) : ce
  * qu'on y pose en enfant (organe de visée) se place sur l'arme où qu'elle soit (en main sous la caméra, à l'œil d'un joueur).
+ * `tranche` [z0, z1] : seulement les pièces VISIBLES qui la croisent en z (le dessus de l'arme là où l'organe de visée se pose, sans l'éclair
+ * de bouche caché ni les guidons qui dépassent ailleurs) ; aucune pièce dans la tranche : la boîte entière.
  */
-export function boiteLocale(racine: THREE.Object3D): THREE.Box3 {
+export function boiteLocale(racine: THREE.Object3D, tranche?: readonly [number, number]): THREE.Box3 {
   racine.updateWorldMatrix(true, true);
   const inverse = racine.matrixWorld.clone().invert();
   const boite = new THREE.Box3(), part = new THREE.Box3(), relative = new THREE.Matrix4();
+  const visible = (o: THREE.Object3D): boolean => {
+    for (let p: THREE.Object3D | null = o; p && p !== racine; p = p.parent) if (!p.visible) return false;
+    return true;
+  };
   racine.traverse((o) => {
     const geo = (o as THREE.Mesh).geometry as THREE.BufferGeometry | undefined;
     if (!geo || !geo.attributes?.position) return;
+    if (tranche && !visible(o)) return;
     if (!geo.boundingBox) geo.computeBoundingBox();
     relative.multiplyMatrices(inverse, o.matrixWorld);
-    boite.union(part.copy(geo.boundingBox!).applyMatrix4(relative));
+    part.copy(geo.boundingBox!).applyMatrix4(relative);
+    if (tranche && (part.max.z < tranche[0] || part.min.z > tranche[1])) return;
+    boite.union(part);
   });
-  return boite;
+  return tranche && boite.isEmpty() ? boiteLocale(racine) : boite;
 }
 
 export function creerArmeEnMain(idInitial: ArmeId, couleur: CouleurEntree = COULEUR_ARME_PAR_DEFAUT): ArmeEnMain {
@@ -1197,10 +1206,12 @@ export function creerArmeEnMain(idInitial: ArmeId, couleur: CouleurEntree = COUL
   function poserViseur(): void {
     if (pieceViseur) { pieceViseur.removeFromParent(); pieceViseur = null; }
     if (viseur === "fer" || estMelee(id) || id === "sniper") { ordonner(group, true, 1000); return; }
-    // boîte dans le repère du modèle (la pièce en est l'enfant) : `setFromObject` la donnerait dans le monde, caméra et porte-arme compris
-    const boite = boiteLocale(modele.group);
-    const y = boite.max.y + 0.004;
+    // boîte dans le repère du modèle (la pièce en est l'enfant) : `setFromObject` la donnerait dans le monde, caméra et porte-arme compris.
+    // Le dessus de l'arme sous l'empreinte de la pièce seulement : la boîte entière (éclair de bouche caché, guidon arrière) la faisait
+    // flotter 5 à 8 cm au-dessus de la carcasse
     const z = (modele.prise.z + modele.bouche.z) / 2;
+    const demi = viseur === "lunette" || viseur === "thermique" ? 0.09 : 0.03;
+    const y = boiteLocale(modele.group, [z - demi, z + demi]).max.y + 0.004;
     const g = new THREE.Group();
     g.position.set(0, y, z);
     if (viseur === "point_rouge") {
