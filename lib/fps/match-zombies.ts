@@ -768,8 +768,8 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
 
   /**
    * Souffle d'un mini Truck (les chiens de feu de BO1, avec les dégâts de zone de BO1 Reimagined) : joueurs debout en vue du centre blessés
-   * (80 au centre à 15 au bord, selon la difficulté, plafonnés par la griffe imposée des essais), tigres en vue blessés (1 600 à 400 : il
-   * emporte les petits et fait sauter les autres mini Trucks), kills et points au tireur qui l'a abattu, aucun s'il a sauté seul.
+   * (80 au centre à 15 au bord, selon la difficulté, plafonnés par la griffe imposée des essais) ; abattu par un joueur, il blesse aussi les
+   * tigres en vue (1 600 à 400 : il emporte les petits et fait sauter les autres mini Trucks), kills au tireur ; sauté seul, il les épargne.
    */
   function exploserMini(saut: SautMini, t: number, sorties: Sortie[]): void {
     const c = centreSouffleMini(saut.p);
@@ -783,7 +783,9 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       sorties.push(...ctx.infliger(j, degats, null, "tigre_zombie", "corps", "couteau", t, c));
       if (phase !== "manche" && phase !== "pause") return; // le dernier joueur debout est tombé
     }
-    const par = saut.par ? ctx.joueur(saut.par) : undefined;
+    // sauté seul contre un joueur, il épargne les siens (sinon il nettoierait les petits qui mordent le joueur) ; abattu, il les emporte
+    if (saut.par === null) return;
+    const par = ctx.joueur(saut.par);
     const tireur = par && membre(par.id).admis ? par : null;
     for (const z of [...simu.liste()]) {
       const d = Math.hypot(z.p[0] - c[0], z.p[2] - c[2]);

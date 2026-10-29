@@ -897,13 +897,15 @@ describe("(v8) manches du Truck Muche vénères : foudre, petits, mini Trucks", 
 
   it("un mini Truck qui saute contre le joueur le blesse (souffle de 15 à 80 PV) et disparaît sans rapporter de kill", () => {
     let saut: Sortie[] | null = null;
-    const { j } = derouler({}, 30_000, (_b, _t, s) => {
+    const { j, nes } = derouler({}, 30_000, (_b, _t, s) => {
       if (!saut && msgs(s, "zevt").some((m) => m.e.e === "miniTruck")) saut = s;
     });
     expect(saut).not.toBeNull();
     const morts = msgs(saut!, "zombieMort").filter((m) => m.par === "");
     expect(morts.length).toBeGreaterThanOrEqual(1);
     expect(morts[0].cause).toBe("explosion");
+    // il épargne les siens : seul le mini Truck meurt
+    expect(morts.every((m) => nes.get(Number(m.id.slice(1)))?.type === 4)).toBe(true);
     const coups = msgs(saut!, "degats").filter((m) => m.cible === "a");
     expect(coups.length).toBeGreaterThanOrEqual(1);
     expect(coups[0].degats).toBeGreaterThanOrEqual(15);
