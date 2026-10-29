@@ -38,7 +38,7 @@ import ToastCentre from "./hud/ToastCentre";
 import Viseur from "./hud/Viseur";
 import ZoneVive, { useFileVive } from "./hud/ZoneVive";
 import { useEphemere, useEtatZombies, useProgressionReanimation } from "./hud/useEtatZombies";
-import { AnnonceZombies, AtoutsZombies, BonusActifs, IntroZombies, MancheCraie, NoteZombies, ObjectifZombies } from "./hud/PanneauZombies";
+import { AnnonceZombies, AtoutsZombies, BonusActifs, CinematiqueZombies, IntroZombies, MancheCraie, NoteZombies, ObjectifZombies } from "./hud/PanneauZombies";
 import { useHudLive } from "./hud/useHudLive";
 import { useMessagesVifs } from "./hud/useMessagesVifs";
 import { useRetoursTouche } from "./hud/useRetoursTouche";
@@ -260,6 +260,7 @@ export default function HudArene(p: PropsHudArene) {
       {zombies && !finZ && !pause && annonceZ && <AnnonceZombies texte={annonceZ.texte} genre={annonceZ.genre} />}
       {zombies && !finZ && !pause && introZ && <IntroZombies />}
       {zombies && !finZ && !pause && ez?.note != null && <NoteZombies id={ez.note} touche={t("interagir")} />}
+      {zombies && !finZ && ez?.cinematique != null && <CinematiqueZombies k={ez.cinematique} />}
 
       {/* cockpit du titan (v3) : sous tout le reste du HUD */}
       {combat && hud.titan && p.monstres && <CockpitTitan monstres={p.monstres} maintenantServeur={maintenantServeur} />}

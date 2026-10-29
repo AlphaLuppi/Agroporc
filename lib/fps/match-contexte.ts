@@ -342,6 +342,12 @@ export interface ServiceZombies {
    * celles du tic. Renvoie la fonction qui retire l'écouteur. Sert aux quêtes et secrets (une grenade qui fait sauter quelque chose).
    */
   ecouterExplosions(f: (e: ExplosionGrenade) => Sortie[] | void): () => void;
+  /**
+   * (v8) Grand secret : un tir validé (œil, directions des plombs) passe aussi par les objets du décor (casseroles, écrans), un coup d'arme
+   * blanche par les pendules ; sorties `zevt{secret}` (rien si rien ne réagit).
+   */
+  tirSecret(j: JoueurSalle, arme: ArmeFeuId, o: Vec3, dirs: readonly Vec3[], maintenant: number): Sortie[];
+  coupSecret(j: JoueurSalle, arme: ArmeMeleeId, o: Vec3, d: Vec3, maintenant: number): Sortie[];
   /** grenades en vol ou posées (tests et supervision) */
   grenadesEnVol(): number;
 }

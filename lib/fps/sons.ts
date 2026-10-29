@@ -190,8 +190,19 @@ export interface Sons {
   grenadeBip(): void;
   /** Tigre à remontoir posé : coup de cymbales et cliquetis du ressort (à rejouer à chaque claquement). */
   remontoir(position?: PositionSon): void;
+  /**
+   * (v8) Grand secret : les seuls retours que le joueur en a sont des sons du décor (pendule qui repart, coup de midi, casserole qui tinte,
+   * marmite qui bout, givre, four qui s'embrase, bip d'écran, couperet, cloche) et un accord discret quand une étape se referme. `k` (0..1) :
+   * avancée (la casserole tinte plus haut à chaque bonne note). Tous synthétisés.
+   */
+  secret(son: SonSecret, position?: PositionSon, k?: number): void;
   dispose(): void;
 }
+
+/** (v8) Sons du grand secret (`Sons.secret`). */
+export type SonSecret =
+  | "tic" | "carillon" | "coupMidi" | "ding" | "clang" | "bouillon" | "accord" | "souffleFroid" | "givre" | "fonte" | "flamme" | "bip"
+  | "buzz" | "hachoir" | "choeur" | "cloche";
 
 interface OptionsBruit {
   dur: number;
@@ -1565,6 +1576,88 @@ export function creerSons(): Sons {
       bruit(out, t, { dur: 0.35, type: "highpass", f0: 5200, f1: 7000, gain: 0.28 });
       bruit(out, t, { dur: 0.12, type: "bandpass", f0: 3800, q: 1.5, gain: 0.2 });
       for (let i = 0; i < 3; i++) ton(out, t + 0.05 + i * 0.045, { dur: 0.02, type: "square", f0: 2400, gain: 0.03 });
+    },
+    secret(son, position, k = 0) {
+      if (!prete()) return;
+      const out = sortie(position);
+      const t = ctx!.currentTime + 0.001;
+      /** cloche : fondamentale et partiels inharmoniques d'une cloche de bronze, longue décroissance */
+      const cloche = (t0: number, f: number, gain: number, dur: number) => {
+        for (const [r, g] of [[1, 1], [2.76, 0.45], [5.4, 0.22], [8.9, 0.1]] as const) ton(out, t0, { dur: dur / Math.sqrt(r), type: "sine", f0: f * r, gain: gain * g, att: 0.003 });
+      };
+      switch (son) {
+        case "tic":
+          // le mécanisme repart : tic, tac, et le ressort qui se détend
+          clic(out, t, 3200, 0.12); clic(out, t + 0.5, 2500, 0.1); clic(out, t + 1, 3200, 0.08);
+          bruit(out, t, { dur: 0.25, type: "bandpass", f0: 1800, f1: 900, q: 4, gain: 0.05 });
+          break;
+        case "carillon":
+          // quatre notes de pendule (mi, do, ré, sol), puis le silence
+          [659, 523, 587, 392].forEach((f, i) => cloche(t + i * 0.55, f, 0.07, 2.4));
+          break;
+        case "coupMidi": cloche(t, 196, 0.11, 3.2); break;
+        case "ding": cloche(t, 880 * 2 ** (k * 1.2), 0.07, 1.4); break;
+        case "clang":
+          // la batterie entière qui s'entrechoque, faux et métallique
+          for (const f of [613, 702, 931, 1187]) ton(out, t + Math.random() * 0.06, { dur: 0.7, type: "triangle", f0: f, gain: 0.04 });
+          bruit(out, t, { dur: 0.3, type: "bandpass", f0: 2600, q: 1.2, gain: 0.25 });
+          break;
+        case "bouillon":
+          for (let i = 0; i < 5; i++) {
+            const d = 0.07 + Math.random() * 0.25;
+            ton(out, t + d * i, { dur: 0.09, type: "sine", f0: 180 + Math.random() * 120, f1: 420 + Math.random() * 200, gain: 0.07 });
+            bruit(out, t + d * i, { dur: 0.06, type: "lowpass", f0: 700, gain: 0.08 });
+          }
+          break;
+        case "accord":
+          // un accord discret, comme un souvenir qui revient (septième majeure, très doux)
+          [262, 330, 392, 494, 523].forEach((f, i) => {
+            ton(out, t + i * 0.09, { dur: 2.6, type: "sine", f0: f, gain: 0.035, att: 0.25 });
+            ton(out, t + i * 0.09, { dur: 2.2, type: "triangle", f0: f * 2, gain: 0.008, att: 0.3 });
+          });
+          break;
+        case "souffleFroid":
+          bruit(out, t, { dur: 0.12, type: "lowpass", f0: 900, f1: 200, gain: 0.5 });
+          bruit(out, t, { dur: 2.2, type: "highpass", f0: 3500, f1: 6000, gain: 0.18, att: 0.05 });
+          ton(out, t, { dur: 0.3, type: "square", f0: 70, f1: 45, gain: 0.12 });
+          break;
+        case "givre": for (let i = 0; i < 4; i++) clic(out, t + Math.random() * 0.2, 4200 + Math.random() * 2500, 0.05); break;
+        case "fonte":
+          bruit(out, t, { dur: 1.4, type: "highpass", f0: 5000, f1: 1500, gain: 0.16 });
+          for (let i = 0; i < 3; i++) ton(out, t + 0.5 + i * 0.3, { dur: 0.08, type: "sine", f0: 1200, f1: 500, gain: 0.05 });
+          bruit(out, t + 1.2, { dur: 0.08, type: "lowpass", f0: 600, gain: 0.5 });
+          break;
+        case "flamme":
+          bruit(out, t, { dur: 1.2, type: "lowpass", f0: 200, f1: 1800, gain: 0.35, att: 0.25 });
+          bruit(out, t + 0.2, { dur: 1.6, type: "bandpass", f0: 400, q: 0.8, gain: 0.15, att: 0.3 });
+          break;
+        case "bip": ton(out, t, { dur: 0.09, type: "square", f0: 1320 + k * 400, gain: 0.04 }); break;
+        case "buzz":
+          ton(out, t, { dur: 0.45, type: "sawtooth", f0: 110, gain: 0.07 });
+          ton(out, t, { dur: 0.45, type: "square", f0: 117, gain: 0.04 });
+          break;
+        case "hachoir":
+          bruit(out, t, { dur: 0.08, type: "lowpass", f0: 900, gain: 0.6 });
+          ton(out, t, { dur: 0.12, type: "sine", f0: 140, f1: 70, gain: 0.25 });
+          ton(out, t + 0.02, { dur: 0.6, type: "triangle", f0: 2100 + k * 600, gain: 0.025 });
+          break;
+        case "choeur": {
+          // une nappe qui monte comme un chœur lointain (scies désaccordées, passe-bas qui s'ouvre), puis la cloche
+          const c = ctx!;
+          const f = c.createBiquadFilter();
+          f.type = "lowpass";
+          f.frequency.setValueAtTime(300, t);
+          f.frequency.exponentialRampToValueAtTime(2400, t + 3);
+          f.connect(out);
+          for (const n of [131, 165, 196, 262, 330]) for (const d of [-4, 4]) ton(f, t, { dur: 5, type: "sawtooth", f0: n * 2 ** (d / 1200), gain: 0.012, att: 1.8 });
+          cloche(t + 3.2, 523, 0.06, 3);
+          break;
+        }
+        case "cloche":
+          // la cloche de service du comptoir : ding clair
+          for (const [r, g] of [[1, 1], [2.4, 0.4], [4.1, 0.2]] as const) ton(out, t, { dur: 1.6 / r, type: "sine", f0: 2350 * r, gain: 0.07 * g, att: 0.002 });
+          break;
+      }
     },
     dispose() {
       fini = true;

@@ -38,7 +38,8 @@ const partie = (plus: Partial<EtatPartieZombies> = {}): EtatPartieZombies => ({
   phase: "lobby", manche: 0, hote: "j1", capacite: 8, debutT: 0, finT: 0,
   joueurs: [joueur("j1", "Lea"), joueur("j2", "Marc")], portes: [{ id: "D1", ouverte: false }, { id: "D2", ouverte: false }],
   difficulte: "plat", courant: false, boite: { emplacement: 0, etat: "fermee", finT: 0, utilisations: 0 }, pap: { etat: "libre" }, fenetres: [],
-  bonus: [], effets: { instakillFinT: 0, doubleFinT: 0, soldesFinT: 0 }, quete: { ingredients: [], cuissonFinT: 0, faite: false },
+  bonus: [], effets: { instakillFinT: 0, doubleFinT: 0, soldesFinT: 0 },
+  secret: { etape: 0, pendules: 0, pendulesT: 0, periodeMidiMs: 300_000, ardoise: [0, 1, 2, 3], casseroles: 0, marmite: 0, billot: 0, postits: [1, 2, 3, 4, 5, 6, 7, 8], ecrans: 0 },
   mancheTruck: false, truck: null, murs: [], ...plus,
 });
 const salons: Salons = { arene: { joueurs: 5, enJeu: 3 }, zombies: { phase: "lobby", joueurs: 2, manche: 0 } };

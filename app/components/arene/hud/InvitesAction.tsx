@@ -37,7 +37,7 @@ function Touche({ libelle }: { libelle: string }) {
 
 function InvitesBrutes({ invite, inviteDetail, toucheInteragir, inviteRecharge, toucheRecharger, assez = true, reanime = false, refReanim }: PropsInvitesAction) {
   if (invite === "acheter" || invite === "porte" || invite === "boite" || invite === "soin" || invite === "atout" || invite === "pap"
-    || invite === "courant" || invite === "ingredient" || invite === "four" || invite === "note") {
+    || invite === "courant" || invite === "note") {
     const manque = manqueInvite(inviteDetail, assez);
     return (
       <p className={`${styles.plaque} ${styles.invite}`} data-assez={manque ? "non" : "oui"}>

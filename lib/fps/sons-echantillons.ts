@@ -47,7 +47,7 @@ export const IDS_ECHANTILLONS = Object.keys(ECHANTILLONS) as IdEchantillon[];
 /** Annonces parlées (voix d'annonceur), jouées par la file `FileAnnonces`. */
 export type IdVoix =
   | "munitions" | "instakill" | "double" | "nuke" | "menuisier" | "soldes"
-  | "truck" | "courant" | "recette_cuit" | "recette_servie" | "partie_perdue";
+  | "truck" | "courant" | "partie_perdue";
 
 export interface DefVoix {
   url: string;
@@ -64,8 +64,6 @@ export const VOIX_ANNONCES: Readonly<Record<IdVoix, DefVoix>> = {
   soldes: { url: "/arene/sons/voix/soldes.mp3", texte: "Happy hour ! Tout à dix balles !" },
   truck: { url: "/arene/sons/voix/truck.mp3", texte: "Livraison du Truck Muche ! Ça va piquer !" },
   courant: { url: "/arene/sons/voix/courant.mp3", texte: "Courant rétabli !" },
-  recette_cuit: { url: "/arene/sons/voix/recette_cuit.mp3", texte: "La recette ultime mijote. Tenez trente secondes !" },
-  recette_servie: { url: "/arene/sons/voix/recette_servie.mp3", texte: "La recette ultime est servie !" },
   partie_perdue: { url: "/arene/sons/voix/partie_perdue.mp3", texte: "Fin du service. Tout le monde à la plonge." },
 };
 

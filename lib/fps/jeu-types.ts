@@ -71,7 +71,7 @@ export interface HudEtat {
   /** multiplicateur de course de l'arme en main (couteau 1,3 ; sinon 1 ; arrondi à 0,01) */
   bonusVitesse: number;
   /** invite d'interaction affichée sous le viseur */
-  invite: "" | "elsa" | "monter" | "descendre" | "acheter" | "porte" | "boite" | "soin" | "reanimer" | "atout" | "pap" | "courant" | "ingredient" | "four" | "reparer" | "note";
+  invite: "" | "elsa" | "monter" | "descendre" | "acheter" | "porte" | "boite" | "soin" | "reanimer" | "atout" | "pap" | "courant" | "reparer" | "note";
   /** "2/4" occupants pour "monter" ; distance « 12 m » pour "elsa" ; zombies : « Pompe — 900 $ », « Ouvrir la porte — 1 250 $ », « Réanimer Léa » (texte après « [E] ») */
   inviteDetail: string;
   vehicule: boolean;
@@ -217,6 +217,8 @@ export interface EtatZombiesHud {
   objectif: string;
   /** fenêtre dont je repose les planches (E maintenu), null sinon */
   reparation: string | null;
+  /** (v8) cinématique du grand secret servi : avancée 0..1, absente hors cinématique */
+  cinematique?: number | null;
 }
 
 /** Options de `lancerJeu` : le mode de la salle (arène par défaut, comportement historique). */
@@ -318,5 +320,10 @@ export interface JeuHandle {
     essayerArme?(arme: ArmeId, ameliore?: boolean): boolean;
     /** (zombies, v8, captures) un arc électrique dessiné par ces points, une bourrasque de Soufflerie tirée de mon œil */
     effetArme?(genre: "arc" | "souffle", points?: Vec3[]): void;
+    /**
+     * (zombies, v8) grand secret : état public (étape, pendules, ordres de l'ardoise et des post-it…), heure des pendules, midi qui sonne,
+     * cinématique en cours, positions des objets du décor (scripts de captures et d'essai) ; null hors partie
+     */
+    secret?(): Record<string, unknown> | null;
   };
 }

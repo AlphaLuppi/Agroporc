@@ -3,8 +3,9 @@
  * par `alea` ; ne voit la salle que par `ContexteSalle`). Machine d'états lobby → pause → manche → pause … → fin → lobby, hôte, difficulté,
  * join-in-progress, argent et points de BO1, apparitions par le gestionnaire de zones (fenêtres à planches et sorties du sol des zones
  * occupées et voisines), barricades (arrachées par les tigres, reposées par les joueurs), bonus (seuil de BO1, tigre doré, paquet mélangé),
- * atouts, Pack-a-Punch, boîte mystère qui déménage (peluche), manches du Truck Muche (les chiens de BO1), courant, Recette ultime, joueurs
- * à terre, relève, auto-relève de la Pause Café, élimination, bilan. Les tigres eux-mêmes sont simulés par `zombies.ts`.
+ * atouts, Pack-a-Punch, boîte mystère qui déménage (peluche), manches du Truck Muche (les chiens de BO1), courant, grand secret (v8, « Le Menu
+ * fantôme », `zombies-secret.ts` : ce service lui passe les tirs, coups, grenades, kills, dépôts au Micro-ondes, Truck et E, et sert sa
+ * récompense), joueurs à terre, relève, auto-relève de la Pause Café, élimination, bilan (défaite, ou victoire à la cloche du secret). Les tigres eux-mêmes sont simulés par `zombies.ts`.
  * (v8) Grenades de BO1 (`grenades.ts`) : 2 par manche (4 au plus), lancers validés, trajectoires calculées une fois, souffle à l'échéance
  * (points de BO1, rampants, Truck, lanceur légèrement blessé), tigre à remontoir de la boîte (leurre qui attire les tigres 8 s), écouteurs
  * d'explosion (`ecouterExplosions`) pour les quêtes.
@@ -29,7 +30,7 @@ import { instantaneNavigation, majNavigation, restaurerNavigation } from "./navi
 import { capVers } from "./monstres";
 import type {
   ArmeFeuId, ArmeId, ArmeSpecialeId, AtoutId, BonusSol, EffetsZombies, EtatBoite, EtatPap, EtatPartieZombies, Equipement, EvenementZombies,
-  JoueurZombies, MessageClient, PhaseZombies, QueteZombies, RaisonAchat, Slot, TruckZombies, Vec3, Zone,
+  JoueurZombies, MessageClient, PhaseZombies, RaisonAchat, Slot, TruckZombies, Vec3, Zone,
 } from "./protocole";
 import { creerSimuZombies, type ArriveeZombie, type Leurre, type SpecZombie } from "./zombies";
 import { boiteA, boitesSoldesRestantes, destinationsEnvol, ouvrirSoldes, pelucheTiree, prixBoite, soldesActives, soldesPermises } from "./zombies-boites";
@@ -38,11 +39,12 @@ import {
   souffleAtteint, validerLancer, vitesseLancer, type ExplosionGrenade, type Lancer,
 } from "./grenades";
 import {
-  ACHATS, ATOUTS, ATOUTS_LISTE, DEPARTS, EMPLACEMENTS_DEPART_BOITE, FENETRES, INGREDIENTS_LISTE, NB_EMPLACEMENTS_BOITE, PACK_A_PUNCH, PORTES_PAYANTES,
+  ACHATS, ATOUTS, ATOUTS_LISTE, DEPARTS, EMPLACEMENTS_DEPART_BOITE, FENETRES, NB_EMPLACEMENTS_BOITE, PACK_A_PUNCH, PORTES_PAYANTES,
   PLAFOND_INTERIEUR_M, PRIX_MUNITIONS_AMELIOREE, QUAIS, TRUCK, achatDeId, rayonTruck, distancePorte, estAtout, etiqueterZones, fenetreDeId, fenetresDesZones,
-  idPrisme, lacetDepart, pieceDe, porteDeId, sortiesDuSol, zoneEn, zonesActives, zonesOuvertes,
-  type Achat, type CarteZones, type DonneesZombies, type Fenetre, type IngredientId, type PorteId, type ZoneId,
+  INTERACTIONS_SECRET, idPrisme, lacetDepart, pieceDe, porteDeId, sortiesDuSol, zoneEn, zonesActives, zonesOuvertes,
+  type Achat, type CarteZones, type DonneesZombies, type Fenetre, type PorteId, type ZoneId,
 } from "./zombies-carte";
+import { creerSecret, type ContexteSecret, type EffetSecret } from "./zombies-secret";
 import {
   GAIN_CHEF, GAIN_MENUISIER, GAIN_NUKE, GAIN_PLANCHE, GAIN_TRUCK, ZOMBIES, allureTiree, degatsGriffe, delaiApparition, estDifficulte, gainKill,
   gainTouche, mancheTruckSuivante, paquetBonus, plafondPlanches, premiereMancheTruck, pvTruck, pvZombie, rechargeGriffe, seuilBonusInitial,
@@ -77,8 +79,6 @@ const HORS_BOITE: ReadonlySet<ArmeFeuId> = new Set(["pistolet", "mini_uzi"]);
 /** Pack-a-Punch (v8, BO1) : durée de la cuisson (ms), délai pour reprendre l'arme gratinée avant qu'elle soit perdue (ms). */
 export const CUISSON_PAP_MS = PACK_A_PUNCH.cuissonMs;
 export const REPRISE_PAP_MS = PACK_A_PUNCH.repriseMs;
-/** Recette ultime : durée de la cuisson (ms), apparitions deux fois plus rapides pendant ce temps. */
-export const CUISSON_RECETTE_MS = 30_000;
 /** Pause Café en solo : auto-relève au bout de ce délai (ms), 3 fois par partie. */
 export const AUTO_RELEVE_MS = 4_000;
 export const AUTO_RELEVES_MAX = 3;
@@ -116,6 +116,12 @@ export interface OptionsServiceZombies {
   remontoirsDepart?: number;
   /** (v8) paquet de bonus imposé, tiré dans l'ordre puis recommencé (essais), `PDJ_FPS_ZOMBIES_BONUS` (genres séparés par des virgules) */
   bonus?: readonly GenreBonus[];
+  /**
+   * (v8, essais) grand secret : étape de départ de chaque partie (`PDJ_FPS_ZOMBIES_SECRET`, 0 à 9, les précédentes sont considérées faites),
+   * tour du cadran des pendules (`PDJ_FPS_ZOMBIES_SECRET_MIDI_MS`, 5 min par défaut : midi sonne une fois par tour) et première livraison
+   * du Truck où le service s'ouvre (`PDJ_FPS_ZOMBIES_SECRET_LIVRAISON`, 3 par défaut)
+   */
+  secret?: { etape?: number; periodeMidiMs?: number; livraisonService?: number };
 }
 
 type EtatMembre = JoueurZombies["etat"];
@@ -268,7 +274,12 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
   const gels = new Map<number, EtatGel>();
   const ecouteursExplosion = new Set<(e: ExplosionGrenade) => Sortie[] | void>();
   const plafond = plafondBatimentsCreux(ctx.monde, PLAFOND_INTERIEUR_M);
-  const quete: QueteZombies = { ingredients: [], cuissonFinT: 0, faite: false };
+  // (v8) grand secret « Le Menu fantôme » : machine d'états pure, ordres tirés à chaque partie par son propre générateur (semé par l'instant du
+  // lancement) : le hasard de la salle n'est pas consommé
+  const secret = creerSecret({
+    monde: ctx.monde, etapeDepart: opts.secret?.etape, periodeMidiMs: opts.secret?.periodeMidiMs, livraisonService: opts.secret?.livraisonService,
+  });
+  secret.reinitialiser(0);
   // diffusion de zombies{etat}
   let immediat = false;
   let sale = false;
@@ -321,7 +332,7 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       ...(bilan ? { bilan } : {}),
       difficulte, courant, boite: { ...boite }, ...(boitesSoldes.length ? { boitesSoldes: boitesSoldes.map((b) => ({ ...b })) } : {}), pap: { ...pap }, fenetres: FENETRES.map((f) => planches.get(f.id) ?? 0),
       bonus: bonus.map((b) => ({ ...b, p: [b.p[0], b.p[1], b.p[2]] as Vec3 })), effets: { ...effets },
-      quete: { ingredients: [...quete.ingredients], cuissonFinT: quete.cuissonFinT, faite: quete.faite },
+      secret: secret.etat(),
       mancheTruck, truck: truck ? { phase: truck.phase, quai: truck.quai, finT: truck.finT } : null, murs: [...murs],
     };
   }
@@ -415,7 +426,7 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
   }
 
   /** Objets de la carte remis comme au départ (nouvelle partie, retour au lobby). */
-  function remettreCarte(): void {
+  function remettreCarte(t: number): void {
     for (const f of FENETRES) planches.set(f.id, ZOMBIES.planches);
     courant = opts.courant === true;
     murs.clear();
@@ -427,7 +438,7 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     bonus = []; paquet = []; bonusManche = 0; scoreTotal = 0; increment = ZOMBIES.incrementBonus; lacherBonus = false;
     seuilBonus = seuilBonusInitial(nbAdmis());
     effets.instakillFinT = 0; effets.doubleFinT = 0; effets.soldesFinT = 0;
-    quete.ingredients = []; quete.cuissonFinT = 0; quete.faite = false;
+    secret.reinitialiser(t);
     truck = null; mancheTruck = false; numeroTruck = 0;
     prochaineMancheTruck = opts.mancheTruck !== undefined ? opts.mancheTruck : premiereMancheTruck(alea());
   }
@@ -445,7 +456,7 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     viderEffetsArmes();
     file = []; indexFile = 0; debutApparitionT = null;
     refermerPortes();
-    remettreCarte();
+    remettreCarte(t);
     phase = "lobby"; manche = 0; debutT = t; finT = 0; bilan = undefined;
     sorties.push(ouvrirBatimentsComplets(), ctx.presence());
     immediat = true;
@@ -459,10 +470,10 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     gels.clear();
   }
 
-  /** Défaite : bilan affiché `finAffichageMs`, tigres retirés. Sans effet hors pause / manche. */
-  function perdre(t: number): void {
+  /** Défaite (ou, `victoire`, cloche du grand secret) : bilan affiché `finAffichageMs`, tigres retirés. Sans effet hors pause / manche. */
+  function perdre(t: number, victoire = false): void {
     if (phase !== "pause" && phase !== "manche") return;
-    bilan = { manche: Math.max(0, phase === "pause" ? manche - 1 : manche), dureeMs: Math.max(0, t - partieDebutT) };
+    bilan = { manche: Math.max(0, phase === "pause" ? manche - 1 : manche), dureeMs: Math.max(0, t - partieDebutT), ...(victoire ? { victoire: true as const } : {}) };
     phase = "fin"; debutT = t; finT = t + ZOMBIES.finAffichageMs;
     simu.reinitialiser();
     grenades = [];
@@ -545,7 +556,7 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       remettreAZero(o);
       sorties.push(sortieArgent(o, 0, "depart"));
     }
-    remettreCarte();
+    remettreCarte(t);
     manche = 1;
     phase = "pause"; debutT = t; finT = t + decompteMs;
     mancheTruck = prochaineMancheTruck === 1;
@@ -645,8 +656,7 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     const id = simu.apparaitre(specPour(file[indexFile]), choix.point, choix.arrivee, t);
     if (id === null) return;
     indexFile++;
-    const k = quete.cuissonFinT > t ? 0.5 : 1;
-    prochaineApparitionT = t + delaiApparition(manche) * 1000 * k;
+    prochaineApparitionT = t + delaiApparition(manche) * 1000;
     sale = true;
   }
 
@@ -749,6 +759,8 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     if (truck.phase === "livraison" && aLivrer() <= 0) {
       truck.phase = "depart"; truck.debutT = t; truck.finT = t + TRUCK.departMs;
       sorties.push(zev({ e: "truck", quoi: "klaxon", p: [truck.p[0], 0, truck.p[1]] }));
+      // (v8) il repart intact : le service du grand secret tourne court
+      effetsSecret(secret.truck("parti", ctxSecret(t)), t, sorties);
       immediat = true;
     }
     if (truck.phase === "depart") {
@@ -781,6 +793,8 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       sorties.push(...tuerTigre(z.id, par, t, "explosion", false, p));
     }
     for (const j of ctx.joueurs()) if (membre(j.id).admis && j.enJeu) sorties.push(crediter(j, GAIN_TRUCK, "truck"));
+    // (v8) le Truck saute pendant le service du grand secret : servi
+    effetsSecret(secret.truck("detruit", ctxSecret(t)), t, sorties);
     immediat = true;
     return sorties;
   }
@@ -947,7 +961,10 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     if (r.type === 4 && cause !== "nuke") sautsMini.push({ p: r.p ?? [0, 0, 0], par: par.id, t: t + DELAI_SAUT_ABATTU_MS });
     par.kills++;
     if (points) sorties.push(crediter(par, gainKill({ double: doublePoints(t) }), "kill"));
-    if (cause !== "nuke") lacherApresKill(r.type, r.p ?? [0, 0, 0], t, sorties);
+    if (cause !== "nuke") {
+      lacherApresKill(r.type, r.p ?? [0, 0, 0], t, sorties);
+      effetsSecret(secret.kill(r.p ?? [0, 0, 0], false, ctxSecret(t)), t, sorties);
+    }
     sale = true;
     return sorties;
   }
@@ -1022,6 +1039,8 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     // fin de manche : tous les tigres sont apparus ET morts (manche du Truck : il a tout lâché et les petits sont morts)
     const finie = debutApparitionT !== null && simu.nbVivants() === 0 && indexFile >= file.length && !foudres.length;
     if (finie) {
+      // (v8) grand secret : la marmite se vide, un service en cours tourne court
+      effetsSecret(secret.finManche(ctxSecret(t)), t, sorties);
       truck = null;
       mancheTruck = false;
       foudres = [];
@@ -1029,7 +1048,7 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     }
   }
 
-  /** Ce qui avance en manche ET en pause : relèves, éliminations, bonus, planches, boîte, Pack-a-Punch, recette, auto-relèves. */
+  /** Ce qui avance en manche ET en pause : relèves, éliminations, bonus, planches, boîte, Pack-a-Punch, grand secret, auto-relèves. */
   function ticCommun(t: number, sorties: Sortie[]): void {
     const membresSalle = ctx.joueurs();
     // relèves : le relanceur maintient E à portée, la cible est à terre (1,5 s avec la Pause Café)
@@ -1067,11 +1086,11 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     ticPlanches(t, sorties);
     ticBoite(t, sorties);
     ticPap(t, sorties);
-    ticRecette(t, sorties);
+    effetsSecret(secret.tic(ctxSecret(t)), t, sorties);
   }
 
   // ---------------------------------------------------------------------------------------------
-  // planches, boîte, Pack-a-Punch, recette
+  // planches, boîte, Pack-a-Punch
   // ---------------------------------------------------------------------------------------------
 
   function ticPlanches(t: number, sorties: Sortie[]): void {
@@ -1178,28 +1197,6 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     return pap.etat !== "libre" && pap.joueur === j.id && !!pap.arme && slotArme(a) === slotArme(pap.arme);
   }
 
-  function ticRecette(t: number, sorties: Sortie[]): void {
-    if (!quete.cuissonFinT || t < quete.cuissonFinT) return;
-    quete.cuissonFinT = 0;
-    quete.faite = true;
-    sorties.push(zev({ e: "cuisson", fin: true }));
-    // chaque joueur debout reçoit le Rayon Goulaf et un atout qu'il n'a pas
-    for (const j of debout()) {
-      const m = membre(j.id);
-      const equip = copierEquipement(j.equip);
-      equip.secondaire = "rayon";
-      // le Rayon remplit le slot secondaire, même vidé par une arme perdue au Micro-ondes (celle qui y cuit encore reviendra à sa place)
-      if (equip.enCuisson && slotArme(equip.enCuisson) === "secondaire" && !(pap.etat !== "libre" && pap.joueur === j.id)) delete equip.enCuisson;
-      equip.ameliorees = [...new Set([...(equip.ameliorees ?? []).filter((a) => a !== "rayon"), "rayon" as ArmeFeuId])];
-      ctx.memoriserPrecedent(j);
-      delete j.cadenceArme.rayon;
-      sorties.push(...ctx.equiper(j, equip, "secondaire", t, "rayon"));
-      const manque = ATOUTS_LISTE.filter((a) => !m.atouts.has(a));
-      if (manque.length) donnerAtout(j, manque[Math.min(manque.length - 1, Math.floor(alea() * manque.length))], t, sorties);
-    }
-    immediat = true;
-  }
-
   function donnerAtout(j: JoueurSalle, a: AtoutId, t: number, sorties: Sortie[]): void {
     const m = membre(j.id);
     m.atouts.add(a);
@@ -1243,6 +1240,11 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
   function acheter(j: JoueurSalle, id: unknown, t: number): Sortie[] {
     const idTexte = typeof id === "string" ? id : "";
     const m = membre(j.id);
+    // (v8) E sur un objet du grand secret : aucune réponse si rien ne se passe (pas de refus qui trahirait l'objet)
+    if (idTexte.startsWith("secret:")) {
+      if ((phase !== "pause" && phase !== "manche") || !m.admis || m.etat !== "debout" || !peutJouer(j)) return [];
+      return interagirSecret(j, idTexte.slice(7), t);
+    }
     if ((phase !== "pause" && phase !== "manche") || !m.admis || m.etat !== "debout" || !peutJouer(j)) return refus(j, idTexte, "partie");
     const achat = achatDeId(idTexte);
     if (!achat) return refus(j, idTexte, "loin");
@@ -1266,8 +1268,6 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       case "atout": return acheterAtout(j, achat, m, t);
       case "pap": return acheterPap(j, achat, m, t);
       case "courant": return activerCourant(j, achat);
-      case "ingredient": return ramasserIngredient(j, achat);
-      case "four": return lancerRecette(j, achat, t);
     }
   }
 
@@ -1423,7 +1423,10 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     const equip = copierEquipement(j.equip);
     equip.enCuisson = arme;
     ctx.memoriserPrecedent(j);
-    return [...payer(j, m, achat, achat.prix), ...ctx.equiper(j, equip, mainValide(equip, j.main), t), zev({ e: "pap", joueur: j.id, arme, pret: false })];
+    const sorties = [...payer(j, m, achat, achat.prix), ...ctx.equiper(j, equip, mainValide(equip, j.main), t), zev({ e: "pap", joueur: j.id, arme, pret: false })];
+    // (v8) grand secret : déposée pendant les douze coups de midi
+    effetsSecret(secret.pap(j.id, ctxSecret(t)), t, sorties);
+    return sorties;
   }
 
   function activerCourant(j: JoueurSalle, achat: Achat): Sortie[] {
@@ -1433,22 +1436,77 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     return [{ a: j.id, m: { t: "achat", ok: true, id: achat.id } }, zev({ e: "courant" })];
   }
 
-  function ramasserIngredient(j: JoueurSalle, achat: Achat): Sortie[] {
-    const id = achat.ingredient as IngredientId;
-    if (!INGREDIENTS_LISTE.includes(id) || quete.ingredients.includes(id)) return refus(j, achat.id, "deja");
-    if (id === "truffe" && !courant) return refus(j, achat.id, "courant");
-    quete.ingredients.push(id);
-    immediat = true;
-    return [{ a: j.id, m: { t: "achat", ok: true, id: achat.id } }, zev({ e: "ingredient", id, par: j.id })];
+  // ---------------------------------------------------------------------------------------------
+  // grand secret (v8) : « Le Menu fantôme »
+  // ---------------------------------------------------------------------------------------------
+
+  /** Ce que le secret doit savoir de la partie à l'instant `t`. */
+  const ctxSecret = (t: number): ContexteSecret => ({
+    t, phase, courant, mancheTruck, numeroTruck, truck: truck?.phase ?? null, joueurs: nbAdmis(),
+  });
+
+  /**
+   * Réactions du secret : chacune part en `zevt{secret}` (le décor réagit chez tous) ; `servi` déclenche la récompense, `victoire` finit la
+   * partie. L'étape change rarement : l'état part tout de suite (le rendu montre le décor tel qu'il est).
+   */
+  function effetsSecret(effets: readonly EffetSecret[], t: number, sorties: Sortie[]): void {
+    for (const e of effets) {
+      sorties.push(zev({
+        e: "secret", quoi: e.quoi, p: arrondi(e.p), ...(e.i !== undefined ? { i: e.i } : {}), ...(e.k !== undefined ? { k: Math.round(e.k * 1000) / 1000 } : {}),
+        ...(e.joueur ? { joueur: e.joueur } : {}),
+      }));
+      immediat = true;
+      if (e.quoi === "servi") servirSecret(t, sorties);
+      else if (e.quoi === "victoire") perdre(t, true);
+    }
   }
 
-  function lancerRecette(j: JoueurSalle, achat: Achat, t: number): Sortie[] {
-    if (quete.faite || quete.cuissonFinT) return refus(j, achat.id, "deja");
-    if (!courant) return refus(j, achat.id, "courant");
-    if (quete.ingredients.length < INGREDIENTS_LISTE.length) return refus(j, achat.id, "quete");
-    quete.cuissonFinT = t + CUISSON_RECETTE_MS;
+  /** E sur un objet du secret (truffe, four, cloche), jugé sur la position serveur (marge de latence comprise), en vue de l'objet. */
+  function interagirSecret(j: JoueurSalle, objet: string, t: number): Sortie[] {
+    const it = INTERACTIONS_SECRET.find((x) => x.id === objet);
+    if (!it || !aVue(j, it.position)) return [];
+    // la marge de latence rapproche d'autant le point jugé (le secret applique sa propre portée)
+    const pos: Vec2 = [j.p[0], j.p[2]];
+    const d = Math.hypot(pos[0] - it.position[0], pos[1] - it.position[1]);
+    const k = d > 1e-6 ? Math.min(d, margeLatence(j)) / d : 0;
+    const vers: Vec2 = [pos[0] + (it.position[0] - pos[0]) * k, pos[1] + (it.position[1] - pos[1]) * k];
+    const sorties: Sortie[] = [];
+    effetsSecret(secret.interagir(j.id, objet, vers, ctxSecret(t)), t, sorties);
+    return sorties;
+  }
+
+  /**
+   * Récompense du grand secret (le Truck vient de sauter pendant le service) : courte « cinématique » (tout ce qui vit tombe en silence, sans
+   * points, la livraison s'arrête là), puis chaque joueur admis, relevé s'il était à terre, reçoit le Rayon Goulaf (pistolet à rayons
+   * gratiné), le Bazooka au four (l'arme unique de l'arène, jamais dans la boîte), tous les atouts et des munitions pleines. La cloche du
+   * comptoir peut ensuite finir la partie sur une victoire.
+   */
+  function servirSecret(t: number, sorties: Sortie[]): void {
+    for (const z of [...simu.liste()]) {
+      const r = simu.blesser(z.id, INSTAKILL, t);
+      if (r.mort) sorties.push({ a: "joueurs", m: { t: "zombieMort", id: idZombie(z.id), p: r.p ?? [0, 0, 0], par: "", zone: "corps", cause: "nuke" } });
+    }
+    foudres = []; sautsMini = []; indexFile = file.length;
+    for (const j of ctx.joueurs()) {
+      const m = membre(j.id);
+      if (!m.admis || !j.enJeu || m.etat === "elimine" || m.etat === "attente") continue;
+      if (m.etat === "terre") sorties.push(...relever(j, t));
+      const equip = copierEquipement(j.equip);
+      // le Rayon remplit le slot secondaire, même vidé par une arme perdue au Micro-ondes (celle qui y cuit encore reviendra à sa place)
+      if (equip.enCuisson && slotArme(equip.enCuisson) === "secondaire" && !(pap.etat !== "libre" && pap.joueur === j.id)) delete equip.enCuisson;
+      equip.secondaire = "rayon";
+      equip.speciale = "bazooka";
+      equip.ameliorees = [...new Set([...(equip.ameliorees ?? []).filter((a) => a !== "rayon" && a !== "bazooka"), "rayon" as ArmeFeuId, "bazooka" as ArmeFeuId])];
+      ctx.memoriserPrecedent(j);
+      delete j.cadenceArme.rayon;
+      delete j.cadenceArme.bazooka;
+      j.munSpeciale = chargeurZombie("bazooka", true);
+      m.grenades = INVENTAIRE_GRENADES.fragMax;
+      sorties.push(...ctx.equiper(j, equip, "speciale", t, "tout"));
+      for (const a of ATOUTS_LISTE) if (!m.atouts.has(a)) donnerAtout(j, a, t, sorties);
+    }
+    sorties.push(ctx.presence());
     immediat = true;
-    return [{ a: j.id, m: { t: "achat", ok: true, id: achat.id } }, zev({ e: "cuisson", fin: false })];
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -1535,6 +1593,8 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
         }
       }
     }
+    // (v8) grand secret : la cuve n° 3 du Labo
+    if (phase === "manche" || phase === "pause") effetsSecret(secret.explosion(c, ctxSecret(t)), t, sorties);
     const e: ExplosionGrenade = { id: g.id, genre: l.genre, p: c, par: g.par, t };
     for (const f of ecouteursExplosion) {
       const r = f(e);
@@ -1907,6 +1967,8 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
         // (v8) un mini Truck abattu saute un instant plus tard ; le souffle rapporte ses kills au tireur
         if (r.type === 4) sautsMini.push({ p: r.p ?? [0, 0, 0], par: par.id, t: t + DELAI_SAUT_ABATTU_MS });
         lacherApresKill(r.type, r.p ?? [0, 0, 0], t, sorties);
+        // (v8) grand secret : la marmite (livraison) et le billot (arme blanche)
+        effetsSecret(secret.kill(r.p ?? [0, 0, 0], melee, ctxSecret(t)), t, sorties);
         sorties.push(ctx.presence());
       }
       sale = true;
@@ -1963,12 +2025,17 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       if (pauseCafe && solo() && m.autoReleves > 0) { m.autoReleves--; m.autoReleveT = t + AUTO_RELEVE_MS; }
       for (const [par, r] of releves) if (r.cible === j.id || par === j.id) releves.delete(par);
       immediat = true;
+      // (v8) grand secret : la truffe portée fond, le service tourne court
+      const sorties: Sortie[] = [];
+      effetsSecret(secret.joueurTombe(j.id, ctxSecret(t)), t, sorties);
       verifierDefaite(t);
-      return [...emettre(t, []), ctx.presence()];
+      return [...emettre(t, sorties), ctx.presence()];
     },
 
     liberer(j, t) {
       for (const [par, r] of releves) if (r.cible === j.id || par === j.id) releves.delete(par);
+      const sortiesSecret: Sortie[] = [];
+      if (phase === "manche" || phase === "pause") effetsSecret(secret.joueurParti(j.id, ctxSecret(t)), t, sortiesSecret);
       // (v8) son arme au Micro-ondes est perdue, la machine se libère
       if (pap.etat !== "libre" && pap.joueur === j.id) pap = { etat: "libre" };
       if (!ctx.joueur(j.id)) {
@@ -1977,7 +2044,7 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
         remettreMembre(membre(j.id));
       }
       immediat = true;
-      const sorties: Sortie[] = [];
+      const sorties: Sortie[] = [...sortiesSecret];
       if (ctx.joueurs().length === 0 && phase !== "lobby") {
         // salle vide : retour immédiat au lobby, personne à prévenir
         sorties.push(...retourLobby(t));
@@ -2005,6 +2072,21 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
 
     resume(): ResumeZombies {
       return { phase, joueurs: ctx.joueurs().length, manche };
+    },
+
+    tirSecret(j, arme, o, dirs, t) {
+      if ((phase !== "manche" && phase !== "pause") || !membre(j.id).admis) return [];
+      const sorties: Sortie[] = [];
+      effetsSecret(secret.tir(j.id, o, dirs, STATS[arme].portee, ctxSecret(t)), t, sorties);
+      return emettre(t, sorties);
+    },
+
+    coupSecret(j, arme, o, d, t) {
+      if ((phase !== "manche" && phase !== "pause") || !membre(j.id).admis) return [];
+      const m = MELEE[arme];
+      const sorties: Sortie[] = [];
+      effetsSecret(secret.coup(j.id, o, d, m.portee + m.margePortee, m.cosCone, ctxSecret(t)), t, sorties);
+      return emettre(t, sorties);
     },
 
     ecouterExplosions(f) {

@@ -702,6 +702,19 @@
 }
 .objectifZ span { color: var(--ag-amber); font-weight: 700; letter-spacing: 0.16em; margin-right: calc(6 * var(--u)); }
 
+/* (v8) cinématique du grand secret : bandes de cinéma et voile doré, pilotés par --bandes et --voile (0..1) */
+.cinemaZ { position: absolute; inset: 0; z-index: 8; pointer-events: none; }
+.cinemaVoile {
+  position: absolute; inset: 0;
+  background: radial-gradient(ellipse at 50% 55%, color-mix(in srgb, var(--ag-amber) 45%, transparent), transparent 72%);
+  opacity: var(--voile);
+}
+.cinemaHaut, .cinemaBas {
+  position: absolute; left: 0; right: 0; height: calc(13vh * var(--bandes)); background: var(--ag-hud-fond-fort);
+}
+.cinemaHaut { top: 0; }
+.cinemaBas { bottom: 0; }
+
 .annonceZ {
   position: absolute; z-index: 7; top: 34%; left: 50%; transform: translateX(-50%); margin: 0; max-width: 80vw; padding: calc(10 * var(--u)) calc(20 * var(--u));
   background: var(--ag-hud-fond-fort); border: 2px solid var(--ag-ok); text-align: center;

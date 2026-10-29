@@ -40,7 +40,7 @@ import { creerRenduGrenades } from "./rendu-grenades";
 import { CorpsTigres } from "./corps-tigres";
 import { ZOMBIES, armementGriffe, echelleZombie, type TypeZombie } from "./zombies-vagues";
 import {
-  MondeZombies, Rugissements, decisionMaintien, inviteZombies, segmentsPortesFermees, sonGriffe, toucheTruckClient, trouverZombieTouche, trouverZombiesMelee, trouverZombiesTouches,
+  MondeZombies, Rugissements, decisionMaintien, inviteZombies, objetSecretProche, segmentsPortesFermees, sonGriffe, toucheTruckClient, trouverZombieTouche, trouverZombiesMelee, trouverZombiesTouches,
   INVITE_VIDE, type InviteZombies,
 } from "./jeu-zombies";
 import { sonExplosion, voixDuBonus, type IdVoix } from "./sons-echantillons";
@@ -53,7 +53,9 @@ import { creerRenduEclairs } from "./rendu-eclairs";
 import { creerRenduMiniTrucks } from "./rendu-mini-trucks";
 import { AMBIANCE, couleurBrouillard, densiteBrouillard, partBrouillard, pointEclairAmbiance, prochainEclairAmbiance, type EtatAmbiance } from "./ambiance-zombies";
 import { objectifZombies } from "./zombies-lore";
-import { ACHATS, NOTES, PACK_A_PUNCH, PORTES_PAYANTES, achatDeId, fenetreDeId, fenetrePlusProche, idPrisme, pieceDe } from "./zombies-carte";
+import { ACHATS, NOTES, PACK_A_PUNCH, PORTES_PAYANTES, SECRET_CARTE, achatDeId, fenetreDeId, fenetrePlusProche, idPrisme, pieceDe } from "./zombies-carte";
+import { SECRET, coupsSonnes, dansMidi, heurePendules, type QuoiSecret } from "./zombies-secret";
+import type { SonSecret } from "./sons";
 import { boiteA } from "./zombies-boites";
 import { NOMS_BONUS } from "./zombies-vagues";
 import { profilZombie, nomZombie, statsTir, viseurLunette, type StatsTir, type Viseur } from "./armes";
@@ -122,6 +124,8 @@ const FOV_H_VISEE = 78;
 /** (v8) visée à travers un point rouge ou un viseur holographique : un peu plus serrée que la mire métallique */
 const FOV_H_VISEE_OPTIQUE = 70;
 const PORTEE_EFFETS_M = 400;
+/** (v8) Durée (s) de la cinématique du grand secret servi (bandes de cinéma, voile doré). */
+const DUREE_CINEMATIQUE_S = 6;
 /** (zombies) seuls les corps des tigres à moins de cette distance (m) sont des obstacles du mouvement (un pas de 0,25 s au plus vite) */
 const PORTEE_CORPS_TIGRES_M = 8;
 const ECART_HUD_S = 1 / 15;
@@ -402,6 +406,14 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   let nAnnonceZ = 0;
   let papUtilise = false;
   let reparFenetre: string | null = null;
+  /**
+   * (v8) grand secret : coups de midi déjà sonnés (les pendules sonnent chez chacun à l'horloge serveur), prochain craquement de givre de
+   * la truffe que je porte, début de la cinématique du secret servi (horloge locale, s), éclat doré des intérieurs
+   */
+  let coupsMidiVus = 0;
+  let givreDans = 0;
+  let cinematiqueDebutS: number | null = null;
+  let eclatSecret = 0;
   /** Annonce du HUD, et dite par l'annonceur si `voix` est donnée (au plus tôt `auPlusTotS` s plus tard, après une fanfare par exemple). */
   const annoncer = (texte: string, genre = "info", voix?: IdVoix, auPlusTotS = 0) => {
     annonceZ = { n: ++nAnnonceZ, texte, genre };
@@ -944,6 +956,10 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       client.envoyer({ t: "acheter", id: inv.id });
     } else if (inv.bloque) {
       sons.achat(false);
+    } else if (inv.invite === "") {
+      // (v8) rien à acheter ni à lire : E sur un objet du décor (grand secret), sans invite ni son ; le serveur juge en silence
+      const id = objetSecretProche([moi.p[0], moi.p[2]]);
+      if (id) client.envoyer({ t: "acheter", id });
     }
   }
 
@@ -1620,7 +1636,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
             sons.rireTruck(undefined, 3.2);
           } else sons.manche();
         }
-        if (m.etat.phase === "lobby") { mancheVue = 0; papUtilise = false; noteZ = null; grenades?.vider(); projectilesZ?.vider(); rEclairs?.vider(); }
+        if (m.etat.phase === "lobby") { mancheVue = 0; papUtilise = false; noteZ = null; cinematiqueDebutS = null; grenades?.vider(); projectilesZ?.vider(); rEclairs?.vider(); }
         break;
       }
       case "zevt": {
@@ -1702,10 +1718,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
             if (d < e.rayon * 2) secousse = Math.max(secousse, 0.07 * (1 - d / (e.rayon * 2)));
             break;
           }
-          case "ingredient": annoncer(`Ingrédient trouvé (${partieZ?.quete.ingredients.length ?? 0} / 3)`, "quete"); break;
-          case "cuisson":
-            annoncer(e.fin ? "La Recette ultime est servie !" : "La Recette ultime cuit… tenez 30 s !", "quete", e.fin ? "recette_servie" : "recette_cuit");
-            break;
+          case "secret": reagirSecret(e.quoi as QuoiSecret, e.p, e.i, e.k); break;
           case "manche": break;
           case "autoReleve": if (e.joueur === client.id) annoncer("Pause Café : vous vous relevez", "info"); break;
         }
@@ -2303,6 +2316,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     // (v7) objets de la carte, intérieurs, Truck Muche des livraisons
     rObjets?.maj(partieZ, t, client.maintenantServeur(), dt);
     rInterieurs?.maj(t, dt);
+    majSecretZ(dt);
     majGrenades();
     if (projectilesZ && rEffetsArmes) {
       rEffetsArmes.majProjectiles(projectilesZ.affiches(client.maintenantServeur(), (id) => {
@@ -2335,6 +2349,77 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       const n = NOTES.find((x) => x.id === noteZ);
       if (!n || Math.hypot(n.position[0] - moi.p[0], n.position[1] - moi.p[2]) > 3) noteZ = null;
     }
+  }
+
+  /**
+   * (v8) Grand secret : le décor réagit (rendu), un son du décor là où ça se passe, et un accord discret quand une étape se referme. Aucun
+   * texte, aucune annonce : le joueur n'a que ses oreilles et ses yeux.
+   */
+  function reagirSecret(quoi: QuoiSecret, p: Vec3, i?: number, k?: number) {
+    rObjets?.secret(quoi, i, k);
+    const pos = positionSon(p);
+    const jouer = (s: SonSecret, kk = k ?? 0) => sons.secret(s, pos, kk);
+    switch (quoi) {
+      case "pendule": jouer("tic"); break;
+      case "pendules": jouer("carillon"); break;
+      case "casserole": jouer("ding"); break;
+      case "casseroles_rate": jouer("clang"); break;
+      case "casseroles": jouer("flamme"); jouer("accord"); break;
+      case "marmite": jouer("bouillon"); break;
+      case "marmite_vide": jouer("fonte"); break;
+      case "marmite_pleine": jouer("bouillon"); jouer("accord"); break;
+      case "congelateur": jouer("souffleFroid"); jouer("accord"); break;
+      case "truffe_prise": jouer("givre"); givreDans = 0.6; break;
+      case "truffe_fondue": jouer("fonte"); break;
+      case "truffe_servie": jouer("flamme"); jouer("accord"); break;
+      case "midi": sons.microOndesBip(pos); jouer("cloche"); jouer("accord"); break;
+      case "ecran": jouer("bip"); break;
+      case "ecrans_rate": jouer("buzz"); break;
+      case "ecrans": jouer("accord"); break;
+      case "billot": jouer("hachoir"); break;
+      case "billot_plein": jouer("hachoir", 1); jouer("accord"); break;
+      case "service": jouer("flamme"); break;
+      case "service_rate": jouer("fonte"); break;
+      case "servi":
+        // la courte cinématique : chœur, voile doré, bandes de cinéma, les intérieurs qui s'illuminent
+        sons.secret("choeur");
+        cinematiqueDebutS = t;
+        eclatSecret = 1;
+        if (!reduit) secousse = Math.max(secousse, 0.05);
+        break;
+      case "victoire": jouer("cloche"); break;
+    }
+  }
+
+  /**
+   * (v8) Grand secret, à chaque image : les douze coups de midi (les pendules sonnent à l'horloge serveur, depuis la plus proche), le givre
+   * qui craque de plus en plus vite dans les mains du porteur de la truffe, la fin de la cinématique.
+   */
+  function majSecretZ(dt: number) {
+    const s = partieZ?.secret;
+    if (!s || (partieZ?.phase !== "manche" && partieZ?.phase !== "pause")) { coupsMidiVus = 0; return; }
+    const ts = client.maintenantServeur();
+    const coups = coupsSonnes(s.pendulesT, s.periodeMidiMs, ts);
+    if (coups > coupsMidiVus && coups > 0) {
+      let proche = SECRET_CARTE.pendules[0], dMin = Infinity;
+      for (const p of SECRET_CARTE.pendules.slice(0, 4)) {
+        const d = Math.hypot(p.c[0] - moi.p[0], p.c[2] - moi.p[2]);
+        if (d < dMin) { dMin = d; proche = p; }
+      }
+      sons.secret("coupMidi", positionSon([proche.c[0], proche.c[1], proche.c[2]]));
+    }
+    coupsMidiVus = coups;
+    if (s.truffe?.porteur === client.id) {
+      givreDans -= dt;
+      if (givreDans <= 0) {
+        const reste = Math.max(0, (s.truffe.finT - ts) / SECRET.truffeMs);
+        givreDans = 0.25 + 1.1 * reste;
+        sons.secret("givre");
+      }
+    }
+    if (cinematiqueDebutS !== null && t - cinematiqueDebutS > DUREE_CINEMATIQUE_S) cinematiqueDebutS = null;
+    eclatSecret = Math.max(0, eclatSecret - dt / 4);
+    void dansMidi; void heurePendules;
   }
 
   /** (v8) Un éclair qui frappe `p` dans `dansS` s : sous un toit (bâtiment creusé), il jaillit du plafond, pas du ciel (caché par le toit). */
@@ -2370,7 +2455,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     couleurFond.copy(brouillard.color);
     renderer.setClearColor(couleurFond, 1);
     post.bloom.strength = bloomBase + 0.25 * k;
-    rInterieurs?.flash(k * 0.6);
+    rInterieurs?.flash(Math.max(k * 0.6, eclatSecret * 0.8));
   }
 
   /**
@@ -2769,6 +2854,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
         objectif: partieZ ? objectifZombies(partieZ, papUtilise) : "",
         reparation: reparFenetre,
         grenades: stockGrenades("frag"), remontoirs: stockGrenades("remontoir"), cuisson: grenades?.cuisson(t * 1000) ?? null,
+        cinematique: cinematiqueDebutS !== null ? borne((t - cinematiqueDebutS) / DUREE_CINEMATIQUE_S, 0, 1) : null,
       };
     },
     lancerFrappe(cible) { lancerFrappe(cible); },
@@ -2976,6 +3062,15 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
         const l = Math.hypot(d[0], d[2]) || 1, fx = d[0] / l, fz = d[2] / l;
         const devant = (m: number, cote: number): Vec3 => [o[0] + fx * m - fz * cote, 0.8, o[2] + fz * m + fx * cote];
         rEffetsArmes?.arc(points ?? [devant(4, -1.5), devant(6, 1), devant(8, -1), devant(10, 1.5)]);
+      },
+      secret() {
+        if (!modeZ || !partieZ) return null;
+        const s = partieZ.secret;
+        const ts = client.maintenantServeur();
+        return {
+          ...s, heure: heurePendules(s.pendulesT, s.periodeMidiMs, ts), midi: dansMidi(s.pendulesT, s.periodeMidiMs, ts), cinematique: cinematiqueDebutS !== null,
+          objets: SECRET_CARTE,
+        };
       },
       eclair(p, dansS = 0) {
         if (!rEclairs) return false;

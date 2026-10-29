@@ -4,13 +4,13 @@ import { aleaGraine } from "../agroparc3d/cachettes";
 import type { SceneData } from "../agroparc3d/types";
 import { MELEE } from "./armes";
 import {
-  CAPACITE_ZOMBIES, DISTANCE_AFFICHAGE_M, INVITE_VIDE, MondeZombies, Rugissements, TAMPON_ZOMBIES_MS, animerCetteImage, decisionMaintien, inviteZombies,
+  CAPACITE_ZOMBIES, DISTANCE_AFFICHAGE_M, INVITE_VIDE, MondeZombies, Rugissements, TAMPON_ZOMBIES_MS, animerCetteImage, decisionMaintien, inviteZombies, objetSecretProche,
   periodeAnimation, segmentsPortesFermees, sonGriffe, tigreAffiche, trouverZombieTouche, trouverZombiesMelee, type EntreeInvite, type PartieInvite, type ZombieVue,
 } from "./jeu-zombies";
 import { FORME_TIGRE, pointLocal, toucheTigre } from "./monstres";
 import { encoderZombies, type Equipement, type Vec3, type ZombieSnap } from "./protocole";
 import { creerSimuZombies } from "./zombies";
-import { ACHATS, FENETRES, PORTES_PAYANTES, construireMondeZombies } from "./zombies-carte";
+import { ACHATS, FENETRES, INTERACTIONS_SECRET, PORTES_PAYANTES, construireMondeZombies } from "./zombies-carte";
 import { ZOMBIES, echelleZombie, pvZombie } from "./zombies-vagues";
 
 const scene = JSON.parse(readFileSync("public/agroparc/scene.json", "utf8")) as SceneData;
@@ -333,7 +333,7 @@ describe("inviteZombies", () => {
 
   const partieInvite = (o: Partial<PartieInvite> = {}): PartieInvite => ({
     courant: false, boite: { emplacement: 0, etat: "fermee", finT: 0, utilisations: 0 }, pap: { etat: "libre" },
-    quete: { ingredients: [], cuissonFinT: 0, faite: false }, effets: { instakillFinT: 0, doubleFinT: 0, soldesFinT: 0 },
+    effets: { instakillFinT: 0, doubleFinT: 0, soldesFinT: 0 },
     fenetres: FENETRES.map(() => 6), portes: PORTES_PAYANTES.map((p) => ({ id: p.id, ouverte: false })), ...o,
   });
 
@@ -388,8 +388,18 @@ describe("inviteZombies", () => {
     const co = achat("courant");
     expect(inviteZombies(entree([co.position[0], co.position[1]], { partie: partieInvite() }))).toMatchObject({ invite: "courant", assez: true });
     expect(inviteZombies(entree([co.position[0], co.position[1]], { partie: partieInvite({ courant: true }) })).invite).not.toBe("courant");
-    const four = achat("four");
-    expect(inviteZombies(entree([four.position[0], four.position[1]], { partie: partieInvite({ courant: true }) }))).toMatchObject({ invite: "four", bloque: "Ingrédients 0 / 3" });
+  });
+
+  it("(v8) grand secret : aucune invite devant ses objets ; E sans invite près de l'un d'eux part en `secret:<objet>`, quel que soit l'état", () => {
+    for (const it of INTERACTIONS_SECRET) {
+      const inv = inviteZombies(entree([it.position[0], it.position[1]], { partie: partieInvite({ courant: true }) }));
+      expect(["", "note"], it.id).toContain(inv.invite);
+      expect(inv.detail).not.toMatch(/truffe|four|cloche|recette|ingrédient/i);
+      expect(objetSecretProche(it.position)).toBe(`secret:${it.id}`);
+    }
+    expect(objetSecretProche([0, 0])).toBeNull();
+    const [x, z] = INTERACTIONS_SECRET[0].position;
+    expect(objetSecretProche([x + INTERACTIONS_SECRET[0].portee + 0.3, z])).toBeNull();
   });
 
   it("fenêtre à reposer : à 2,2 m de son côté intérieur, planches comptées", () => {
