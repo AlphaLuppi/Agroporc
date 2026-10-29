@@ -1,4 +1,7 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import type { SceneData } from "../agroparc3d/types";
+import { construireMonde, type Monde } from "./collision";
 import { aleaGraine } from "../agroparc3d/cachettes";
 import { STATS } from "./armes";
 import { nbObjetsPour } from "./br-butin";
@@ -40,12 +43,13 @@ interface Banc {
   prendre: (id: string, o: ObjetBr, t?: number) => Sortie[];
 }
 
-function banc(opts: { nb?: number; enVol?: (j: JoueurSalle) => boolean } = {}): Banc {
+function banc(opts: { nb?: number; enVol?: (j: JoueurSalle) => boolean; monde?: Monde } = {}): Banc {
   const table = new Map<string, JoueurSalle>();
   const memorises: string[] = [];
   const alea = aleaGraine(9);
-  const partiel: Pick<ContexteSalle, "alea" | "joueur" | "memoriserPrecedent" | "equiper"> = {
+  const partiel: Pick<ContexteSalle, "alea" | "joueur" | "memoriserPrecedent" | "equiper"> & { monde?: Monde } = {
     alea,
+    ...(opts.monde ? { monde: opts.monde } : {}),
     joueur: (id: string) => table.get(id),
     memoriserPrecedent: (j: JoueurSalle) => { memorises.push(j.id); },
     // comme la salle : équipement, main, arme ; le message privé
@@ -109,6 +113,22 @@ describe("synchro et tirage", () => {
 });
 
 describe("ramasser", () => {
+  it("à travers un mur : refusé `loin` même à portée, accepté du même côté (le contexte porte le monde)", () => {
+    const scene = JSON.parse(readFileSync("public/agroparc/scene.json", "utf8")) as SceneData;
+    const mur = { h: 10, r: [[10, -5], [10.4, -5], [10.4, 5], [10, 5]] as [number, number][], c: [10.2, 0] as [number, number] };
+    const monde = construireMonde({ ...scene, buildings: [mur], pois: [] });
+    const b = banc({ monde });
+    const j = b.j("a");
+    b.butin.initialiser([{ p: [11.1, 0, 0], pool: "route" }], 5, 1);
+    const cible = b.sol()[0];
+    j.p = [9.5, 0, 0];
+    expect(msgs(b.butin.recevoir(j, { t: "ramasser", id: cible.id }, T0), "ramasse")[0]).toEqual({ t: "ramasse", ok: false, id: cible.id, raison: "loin" });
+    expect(b.sol().find((x) => x.id === cible.id)).toBeDefined();
+    j.p = [12.4, 0, 0];
+    // du même côté : plus de refus pour cause de mur (l'objet tiré peut rester `inutile`, ex. une boîte sans arme compatible)
+    expect(msgs(b.butin.recevoir(j, { t: "ramasser", id: cible.id }, T0), "ramasse")[0].raison).not.toBe("loin");
+  });
+
   it("inconnu, trop loin (horizontal ou en hauteur)", () => {
     const b = banc();
     const o = trouver(b, arme("pompe"));
@@ -174,9 +194,22 @@ describe("ramasser", () => {
     expect(tombe.id).toBeGreaterThan(avant);
     expect(dist(tombe.p, b.j("a").p)).toBeLessThan(1.5);
     expect(b.sol().find((x) => x.id === tombe.id)).toBeDefined();
-    // et on peut la reprendre
+    // et on peut la reprendre, une fois le délai de reprise passé
     const j = b.j("a");
-    expect(msgs(b.butin.recevoir(j, { t: "ramasser", id: tombe.id }, T0), "ramasse")[0].ok).toBe(true);
+    expect(msgs(b.butin.recevoir(j, { t: "ramasser", id: tombe.id }, T0 + 10_000), "ramasse")[0].ok).toBe(true);
+  });
+
+  it("reprendre aussitôt l'arme qu'on vient de jeter est refusé (pas de recharge gratuite) ; un autre joueur peut la prendre", () => {
+    const b = banc();
+    const o = trouver(b, (x) => x.genre === "arme" && ARMES_PRINCIPALES.includes(x.ref as string));
+    b.prendre("a", o);
+    const j = b.j("a");
+    const tombe = (msgs(b.butin.recevoir(j, { t: "lacher", slot: "principale" }, T0), "butin")[0]).ajoutes![0];
+    j.p = [...tombe.p];
+    expect(msgs(b.butin.recevoir(j, { t: "ramasser", id: tombe.id }, T0 + 2_000), "ramasse")[0]).toEqual({ t: "ramasse", ok: false, id: tombe.id, raison: "inutile" });
+    const autre = b.j("b");
+    autre.p = [...tombe.p];
+    expect(msgs(b.butin.recevoir(autre, { t: "ramasser", id: tombe.id }, T0 + 2_000), "ramasse")[0].ok).toBe(true);
   });
 
   it("une secondaire retire sansSecondaire", () => {
@@ -289,6 +322,72 @@ describe("lacher", () => {
     expect(j.equip.speciale).toBeNull();
     expect(j.munSpeciale).toBe(0);
     expect(j.main).toBe("couteau");
+  });
+
+  it("une spéciale lâchée puis reprise garde ses munitions restantes (pas de recharge gratuite)", () => {
+    const b = banc();
+    b.prendre("a", trouver(b, (x) => x.genre === "arme" && ARMES_SPECIALES.includes(x.ref as string)));
+    const j = b.j("a");
+    const ref = j.equip.speciale as ArmeFeuId;
+    j.munSpeciale = 1;
+    const tombe = msgs(b.butin.recevoir(j, { t: "lacher", slot: "speciale" }, T0), "butin")[0].ajoutes![0];
+    expect(j.munSpeciale).toBe(0);
+    j.p = [...tombe.p];
+    expect(msgs(b.butin.recevoir(j, { t: "ramasser", id: tombe.id }, T0 + 1_000), "ramasse")[0].ok).toBe(true);
+    expect(j.equip.speciale).toBe(ref);
+    expect(j.munSpeciale).toBe(1);
+  });
+
+  it("une spéciale remplacée par une autre tombe avec ses munitions restantes", () => {
+    const b = banc();
+    const o1 = trouver(b, (x) => x.genre === "arme" && ARMES_SPECIALES.includes(x.ref as string));
+    const o2 = trouver(b, (x) => x.genre === "arme" && ARMES_SPECIALES.includes(x.ref as string) && x.ref !== o1.ref);
+    b.prendre("a", o1);
+    const j = b.j("a");
+    j.munSpeciale = 1;
+    const s = b.prendre("a", o2);
+    const tombe = msgs(s, "butin")[0].ajoutes![0];
+    expect(tombe.ref).toBe(o1.ref);
+    j.p = [...tombe.p];
+    b.butin.recevoir(j, { t: "ramasser", id: tombe.id }, T0 + 1_000);
+    expect(j.munSpeciale).toBe(1);
+  });
+
+  it("une spéciale lâchée à la mort garde ses munitions pour qui la ramasse", () => {
+    const b = banc();
+    b.prendre("a", trouver(b, (x) => x.genre === "arme" && ARMES_SPECIALES.includes(x.ref as string)));
+    const a = b.j("a");
+    a.munSpeciale = 1;
+    const tombe = msgs(b.butin.lacherALaMort(a, T0), "butin")[0].ajoutes!.find((o) => o.ref === a.equip.speciale)!;
+    const autre = b.j("b");
+    autre.p = [...tombe.p];
+    b.butin.recevoir(autre, { t: "ramasser", id: tombe.id }, T0);
+    expect(autre.munSpeciale).toBe(1);
+  });
+
+  it("champs invalides du client : ignorés sans effet (utiliser, lacher, ramasser)", () => {
+    const b = banc();
+    const j = b.j("a");
+    j.bouclier = 0;
+    const speciale = trouver(b, (x) => x.genre === "arme" && ARMES_SPECIALES.includes(x.ref as string));
+    b.prendre("a", speciale);
+    const avant = JSON.stringify(j.equip);
+    const nbObjets = b.sol().length;
+    for (const objet of ["constructor", "__proto__", "toString", "potion ", 3, undefined, {}]) {
+      expect(b.butin.recevoir(j, { t: "utiliser", objet } as unknown as MessageClient, T0)).toEqual([]);
+    }
+    for (const slot of ["xyz", "constructor", "couteau", undefined, 2]) {
+      expect(b.butin.recevoir(j, { t: "lacher", slot } as unknown as MessageClient, T0)).toEqual([]);
+    }
+    for (const id of [NaN, 1.5, "3", undefined, null, Infinity]) {
+      expect(b.butin.recevoir(j, { t: "ramasser", id } as unknown as MessageClient, T0)).toEqual([]);
+    }
+    expect(JSON.stringify(j.equip)).toBe(avant);
+    expect(j.equip.speciale).toBe(speciale.ref);
+    expect(b.sol()).toHaveLength(nbObjets);
+    // et aucun usage n'a démarré : à la fin du délai, rien ne s'applique
+    expect(b.butin.tic(T0 + 60_000)).toEqual([]);
+    expect(j.bouclier).toBe(0);
   });
 
   it("une arme lâchée d'un slot qui n'est pas en main laisse la main", () => {

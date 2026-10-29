@@ -47,7 +47,7 @@ import { creerRenduBr } from "./rendu-br";
 import { positionAvionBr } from "./br-chute";
 import { etatDepuisZoneBr } from "./br-zone";
 import {
-  CAMERA_AVION_DY, ButinClient, ControleurVol, SuiviSpectateur, etatBrHud, etatHudBr, inviteRamassage, progressionUsage,
+  CAMERA_AVION_DY, ButinClient, ControleurVol, SuiviSpectateur, degatsDeTempete, etatBrHud, etatHudBr, inviteRamassage, progressionUsage, soinInutile, vieAffichee,
   type EntreeHudBr, type InviteRamassage,
 } from "./jeu-br";
 import { ZOMBIES } from "./zombies-vagues";
@@ -882,7 +882,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   /** L'objet à portée (≤ 2,5 m) et le texte de l'invite « [E] … » ; null hors BR, en vol, mort ou sans objet. */
   function inviteBr(): InviteRamassage | null {
     if (!modeBR || !peutAgir() || enKillcam()) return null;
-    return inviteRamassage(butin, moi.p, armes.equipement(), { bandage: bandages, potion: potions });
+    return inviteRamassage(butin, moi.p, armes.equipement(), { bandage: bandages, potion: potions }, monde);
   }
 
   /** E en BR : ramasse l'objet le plus proche (le serveur est juge : distance, pile, arme compatible) ; refus local si cela ne servirait à rien. */
@@ -906,7 +906,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   function utiliserSoin(objet: "bandage" | "potion") {
     if (!modeBR || !peutAgir() || enKillcam()) return;
     if (usageSoin?.objet === objet) { client.envoyer({ t: "utiliser", objet: null }); return; }
-    if ((objet === "bandage" ? bandages : potions) <= 0) { sons.achat(false); return; }
+    // refus local, sans aller-retour : plus de soin en stock, ou rien à soigner (le serveur ignorerait la demande sans rien dire)
+    if ((objet === "bandage" ? bandages : potions) <= 0 || soinInutile(objet, pv, bouclier, JEU.bouclierMax)) { sons.achat(false); return; }
     client.envoyer({ t: "utiliser", objet });
   }
 
@@ -986,13 +987,13 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   }
 
   function lancerFrappe(cible: Vec3) {
-    if (!peutAgir() || enKillcam() || entracte) return;
+    if (modeBR || !peutAgir() || enKillcam() || entracte) return;
     client.envoyer({ t: "lancerFrappe", cible });
     sons.sireneFrappe();
   }
 
   function lancerFumigene() {
-    if (!peutAgir() || enKillcam() || entracte || vehicule.actif() || pilote()) return;
+    if (modeBR || !peutAgir() || enKillcam() || entracte || vehicule.actif() || pilote()) return;
     const o = oeil();
     const dir = directionVisee(lacet, tangage, 0);
     const v: Vec3 = [dir[0] * 18, dir[1] * 18 + 4, dir[2] * 18];
@@ -1001,7 +1002,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   }
 
   function monterBus() {
-    if (!peutAgir() || enKillcam() || entracte || vehicule.actif() || pilote()) return;
+    if (modeBR || !peutAgir() || enKillcam() || entracte || vehicule.actif() || pilote()) return;
     client.envoyer({ t: "monterBus" });
   }
 
@@ -1338,7 +1339,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
           pv = m.pv;
           bouclier = m.bouclier;
           dernierDegatT = t;
-          if (vivant) {
+          if (vivant && !(modeBR && degatsDeTempete(m))) {
             sons.degat();
             const sens = Math.random() < 0.5 ? -1 : 1;
             secousse = SECOUSSE_DEGAT * sens;
@@ -1887,9 +1888,12 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     const kcActif = kc.actif();
     const phase = kcActif ? kc.phase() : "";
     const progression = kcActif ? kc.progression() : -1;
+    // spectateur BR : la vie du joueur suivi, pas la mienne (0 depuis ma mort)
+    const specte = spectateurActif();
+    const vie = vieAffichee(specte, specte ? etats.get(suivi.cible() ?? "") : undefined, { pv, bouclier });
     return {
-      pv: Math.max(0, Math.round(pv)),
-      bouclier: Math.max(0, Math.round(bouclier)),
+      pv: Math.max(0, Math.round(vie.pv)),
+      bouclier: Math.max(0, Math.round(vie.bouclier)),
       arme,
       slot: armes.slotActif(),
       slots: serialiserSlots(armes.lignes()),
@@ -1938,7 +1942,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
         mode: "zombies" as const, argent: argentZ, manche: partieZ?.manche ?? 0, restants: mz.restants(), aTerre: aTerreZ, elimine: elimineZ,
         invitePrix: invZ.prix, inviteAssez: invZ.bloque ? true : invZ.assez, reanime: reanimCible !== null || reparFenetre !== null,
       } : {}),
-      ...(modeBR ? { mode: "br" as const, ...etatHudBr(entreeHudBr()) } : {}),
+      // BR : une plaque « ramasser » en refus (aucune arme compatible, pile pleine) passe en danger comme un achat sans argent
+      ...(modeBR ? { mode: "br" as const, inviteAssez: !invBr?.refuse, ...etatHudBr(entreeHudBr()) } : {}),
       dansFumee: vivant && (monstresImage?.fumigenes?.some((f) => Math.hypot(moi.p[0] - f.p[0], moi.p[2] - f.p[2]) <= 12) ?? false),
     };
   }
@@ -2442,6 +2447,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     if (disposed) return;
     raf = requestAnimationFrame(frame);
     const dt = borne((maintenant - dernierT) / 1000, 0, 0.1);
+    // temps réel de l'image : la chute du BR le suit (le serveur la simule en temps réel), sans le plafond de 0,1 s du jeu
+    const dtReel = borne((maintenant - dernierT) / 1000, 0, 1);
     dernierT = maintenant;
     t += dt;
     reconnexion();
@@ -2544,7 +2551,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       // un autre, une seconde après, ouvre le parachute
       const vue = tangageDeVue(tangage, kick);
       const ts = client.maintenantServeur();
-      const ev = vol.maj(dt, actif
+      const ev = vol.majReel(dtReel, actif
         ? { lacet, tangage: vue, avance: en.avant, lateral: en.droite, saut: en.saut }
         : { lacet, tangage: vue, avance: 0, lateral: 0, saut: false }, monde);
       const e = vol.etat();

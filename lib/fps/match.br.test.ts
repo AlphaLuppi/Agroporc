@@ -414,6 +414,28 @@ describe("avion, saut, chute, atterrissage", () => {
 });
 
 // ---------------------------------------------------------------------------------------------
+describe("fenêtre de fin de vol", () => {
+  it("un `rejoindre` entre la fin du trajet de l'avion et le tic qui ferme le vol est refusé : jamais `enJeu` sans corps", () => {
+    const b = lobby(["a", "b", "c"]);
+    envoyer(b, "a", { t: "lancerPartie" });
+    b.t = T0 + 100;
+    envoyer(b, "a", { t: "rejoindre" });
+    envoyer(b, "b", { t: "rejoindre" }); // c est admis mais n'a pas encore rejoint
+    avancerJusque(b, () => etatBr(b).phase === "vol", 60_000);
+    const finT = etatBr(b).avion!.finT;
+    // le tic de `finT` n'a pas eu lieu : la phase est encore `vol`
+    b.t = finT + 5;
+    expect(etatBr(b).phase).toBe("vol");
+    expect(service(b).admis("c")).toBe(true);
+    expect(envoyer(b, "c", { t: "rejoindre" })).toEqual([{ a: "c", m: { t: "refus", action: "rejoindre", raison: "lobby" } }]);
+    expect(j(b.s, "c").enJeu).toBe(false);
+    expect(service(b).aBord("c")).toBe(false);
+    avancerJusque(b, () => etatBr(b).phase === "jeu", 20_000);
+    expect(etatBr(b).total).toBe(2);
+    expect(j(b.s, "c").enJeu).toBe(false);
+  });
+});
+
 describe("butin et mêlée", () => {
   it("ramasser une arme à portée : `ramasse`, retrait diffusé, `equipement` privé, arme en main ; hors de portée : refusé", () => {
     const b = jusquAuSol(["a", "b"]);
@@ -685,6 +707,19 @@ describe("tempête, victoire, partie non comptée", () => {
     expect(types(sorties)).not.toContain("soin");
     expect(etatBr(b).phase).toBe("fin");
     expect(etatBr(b).bilan!.vainqueurs).toEqual(["a"]);
+  });
+
+  it("départ volontaire (`quitter`) ou éviction : l'arme spéciale tombe avec le reste du butin, comme à la déconnexion", () => {
+    const b = jusquAuSol(["a", "b", "c"]);
+    const a = j(b.s, "a");
+    a.equip.speciale = "bazooka";
+    a.munSpeciale = 2;
+    const sorties = envoyer(b, "a", { t: "quitter" });
+    const lache = messages(sorties, "butin").flatMap((m) => m.ajoutes ?? []);
+    expect(lache.map((o) => o.ref)).toContain("bazooka");
+    expect(a.enJeu).toBe(false);
+    expect(a.equip.speciale).toBeNull();
+    expect(messages(sorties, "mort")[0]).toMatchObject({ cible: "a", cause: "abandon" });
   });
 
   it("partie non comptée : abandon en plein vol (aucun atterri) ; le bilan s'affiche mais les statistiques ne bougent pas", () => {

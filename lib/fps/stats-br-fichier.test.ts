@@ -117,6 +117,22 @@ describe("creerPersistanceBr", () => {
     expect(lireFichier(fichier).joueurs.bob.top1).toBe(1);
   });
 
+  it("figer() : une partie « terminée » par les abandons en chaîne de l'arrêt n'est ni comptée ni écrite", () => {
+    const fichier = join(dossier, "stats-br.json");
+    const p = creerPersistanceBr(fichier);
+    p.enregistrer(partie(1, [{ pseudo: "Alice", place: 1, kills: 1 }]));
+    p.figer();
+    const apres = p.enregistrer(partie(2, [{ pseudo: "Alice", place: 1, kills: 9 }, { pseudo: "Bob", place: 2, kills: 0 }]));
+    expect(apres.joueurs.alice).toMatchObject({ parties: 1, kills: 1 });
+    expect(apres.joueurs.bob).toBeUndefined();
+    p.arreter();
+    expect(lireFichier(fichier).joueurs.alice).toMatchObject({ parties: 1, kills: 1 });
+    expect(lireFichier(fichier).joueurs.bob).toBeUndefined();
+    // même après l'arrêt : toujours rien
+    p.enregistrer(partie(3, [{ pseudo: "Cora", place: 1, kills: 0 }]));
+    expect(lireFichier(fichier).joueurs.cora).toBeUndefined();
+  });
+
   it("arreter() sans rien de nouveau n'écrit rien", () => {
     const fichier = join(dossier, "stats-br.json");
     creerPersistanceBr(fichier).arreter();

@@ -4,9 +4,10 @@ import type { SceneData } from "../agroparc3d/types";
 import { STATS } from "./armes";
 import {
   ARMES_PAR_RARETE, CHARGEURS_PAR_BOITE, CLASSES_MUNITIONS, ESPACEMENT_BUTIN_M, POIDS_RARETE_PAR_POOL, RARETES, REPARTITION_POOLS,
-  appliquerRamassage, classeMunitions, genererButin, mulberry32, nbObjetsPour, raretePourArme,
+  appliquerRamassage, classeMunitions, genererButin, mulberry32, nbObjetsPour, ramassageAccessible, raretePourArme,
 } from "./br-butin";
 import { construireMondeBr, pointsButin } from "./br-carte";
+import { construireMonde } from "./collision";
 import { BR, EQUIPEMENT_DEPART_BR } from "./br-regles";
 import { ARMES, copierEquipement, type ArmeFeuId, type Equipement, type ObjetBr, type PointButin, type PoolButin } from "./protocole";
 
@@ -485,6 +486,31 @@ describe("appliquerRamassage", () => {
       const res = appliquerRamassage(depart(), SANS_SOINS, arme(a));
       expect(res.ok, a).toBe(true);
       expect(res.main, a).toBeDefined();
+    }
+  });
+});
+
+describe("ramassageAccessible", () => {
+  it("un mur plein entre le joueur et l'objet bloque le ramassage, deux points du même côté passent", () => {
+    const scene = JSON.parse(readFileSync("public/agroparc/scene.json", "utf8")) as SceneData;
+    const mur = { h: 10, r: [[10, -5], [10.4, -5], [10.4, 5], [10, 5]] as [number, number][], c: [10.2, 0] as [number, number] };
+    const monde = construireMonde({ ...scene, buildings: [mur], pois: [] });
+    // 1,6 m en tout, mur de 0,4 m au milieu : à portée de 2,5 m mais pas visible
+    expect(ramassageAccessible(monde, [9.5, 0, 0], [11.1, 0, 0])).toBe(false);
+    expect(ramassageAccessible(monde, [11.1, 0, 0], [9.5, 0, 0])).toBe(false);
+    expect(ramassageAccessible(monde, [8, 0, 0], [9.5, 0, 0])).toBe(true);
+    expect(ramassageAccessible(monde, [11.1, 0, 0], [12.6, 0, 0])).toBe(true);
+  });
+
+  it("sur la vraie carte, un objet d'intérieur reste atteignable depuis la pièce (0,8 m de chaque côté) mais pas depuis la rue", () => {
+    const scene = JSON.parse(readFileSync("public/agroparc/scene.json", "utf8")) as SceneData;
+    const monde = construireMondeBr(scene);
+    const interieurs = pointsButin(scene, monde).filter((x) => x.pool === "interieur");
+    expect(interieurs.length).toBeGreaterThan(50);
+    for (const { p } of interieurs) {
+      for (const [dx, dz] of [[0.8, 0], [-0.8, 0], [0, 0.8], [0, -0.8]]) {
+        expect(ramassageAccessible(monde, [p[0] + dx, p[1], p[2] + dz], p), `${p}`).toBe(true);
+      }
     }
   });
 });

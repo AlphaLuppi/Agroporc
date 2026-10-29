@@ -6,7 +6,7 @@ import { Chakra_Petch, IBM_Plex_Mono } from "next/font/google";
 import type { Carte, PdjEntry, Plat } from "@/lib/db";
 import type { Poi, SceneData } from "@/lib/agroparc3d/types";
 import type { JoueurAerien, SceneHandle } from "@/lib/agroparc3d/scene";
-import type { JeuHandle, JeuHandleBr, HudEtat } from "@/lib/fps/jeu";
+import type { JeuHandle, HudEtat } from "@/lib/fps/jeu";
 import type { HudLive } from "@/lib/fps/jeu-types";
 import { MODES_SALLE, type ArmeFeuId, type ArmeMeleeId, type ArmePrincipaleId, type ArmeSecondaireId, type ModeSalle, type Slot, type Vec3 } from "@/lib/fps/protocole";
 import { donneesZombies } from "@/lib/fps/zombies-carte";
@@ -26,6 +26,7 @@ import RestoBadge from "./RestoBadge";
 import Arene from "./arene/Arene";
 import ChoixMode from "./arene/ChoixMode";
 import { flecheReserveeAuChamp } from "./arene/lobby-modele";
+import { gardeSortieBr } from "@/lib/fps/garde-sortie-br";
 import HudArene from "./arene/HudArene";
 import LobbyZombies from "./arene/LobbyZombies";
 import LobbyBR from "./arene/LobbyBR";
@@ -332,13 +333,13 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
   const quitterRef = useRef(quitterArene);
   quitterRef.current = quitterArene;
   /**
-   * Zombies : le jeu n'a pas pu se monter alors que nous sommes admis à la partie. Sans `rejoindre` il n'y a pas de message `quitter` qui vaille
+   * Zombies et Battle Royale : le jeu n'a pas pu se monter alors que nous sommes admis à la partie. Sans `rejoindre` il n'y a pas de message `quitter` qui vaille
    * (le serveur ne retire que les joueurs en jeu) : l'admis resterait un « fantôme debout » qui empêche la défaite. On quitte la salle, une fois
    * le jeu démonté (le serveur refuse le changement de salle d'un joueur encore en jeu).
    */
   const [abandonZ, setAbandonZ] = useState(0);
   const abandonnerZombiesRef = useRef(() => {});
-  abandonnerZombiesRef.current = () => { if (modeJeuRef.current === "zombies") setAbandonZ((n) => n + 1); };
+  abandonnerZombiesRef.current = () => { if (modeJeuRef.current !== "arene") setAbandonZ((n) => n + 1); };
   useEffect(() => {
     if (abandonZ === 0 || enArene) return;
     setAbandonZ(0); // une seule fois : une sortie normale ultérieure ne doit pas ramener à l'arène
@@ -389,9 +390,11 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
   // `br{etat}` ne porte la liste des joueurs (donc `admis`) qu'au lobby, au décompte et à la fin : seul le décompte lance le montage ici.
   const moiBr = arene.br?.joueurs?.find((j) => j.id === arene.monId) ?? null;
   const admisBR = arene.mode === "br" && !!moiBr?.admis && arene.br?.phase === "decompte";
+  // La garde ne vaut que pour le décompte d'où l'on sort : elle tombe dès que la phase change (`admisBR` seul ne suffit pas, il est déjà faux
+  // quand la sortie a lieu en jeu ou en fin de partie, et la garde bloquerait alors tous les décomptes suivants).
   useEffect(() => {
-    if (arene.mode !== "br" || !admisBR) sortieBr.current = false;
-  }, [arene.mode, admisBR]);
+    sortieBr.current = gardeSortieBr(sortieBr.current, arene.mode, arene.br?.phase);
+  }, [arene.mode, arene.br?.phase]);
   useEffect(() => {
     if (!admisBR || enArene || !areneOuverte || !scene || tactile || sortieBr.current) return;
     monterJeu("br");
@@ -895,7 +898,6 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
           br={arene.br ?? null}
           statsBr={arene.statsBr ?? null}
           etatBr={etatBr}
-          surSpectateur={(sens) => (jeuRef.current as JeuHandleBr | null)?.suivreSpectateur?.(sens)}
           surRejouer={quitterArene}
           surQuitterVue={quitterEtFermer}
           reglagesHud={reglagesHud}

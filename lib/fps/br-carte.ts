@@ -35,6 +35,12 @@ export const COTE_MIN_M = 5;
 export const BATIMENT_TRUCK = 114;
 /** Pas (m) de la grille de recherche du rectangle inscrit. */
 export const PAS_RECTANGLE_M = 0.5;
+/** Devant la porte : distance (m) du point de départ au seuil, rayon du joueur (m) et distance (m) à franchir pour être « dehors ». */
+export const PORTE_DEPART_M = 1.0;
+export const PORTE_RAYON_M = 0.4;
+export const PORTE_SORTIE_M = 25;
+/** Pas (m) du flood-fill de sortie. */
+const PAS_SORTIE_M = 0.5;
 /** Étagère : longueur, profondeur et hauteur (m). */
 const ETAGERE = { ls: 1.6, lt: 0.6, h: 1.8 } as const;
 
@@ -164,6 +170,36 @@ export function rectangleInscrit(anneau: Vec2[], trous: Vec2[][] = []): Rect | n
 // Sélection et pièces des bâtiments procéduraux
 // ---------------------------------------------------------------------------------------------
 
+/**
+ * Un joueur de rayon `rayon` parti de (x, z) à pied peut-il s'éloigner d'au moins `distance` m (flood-fill 4-connexe au pas de 0,5 m, rayon libre
+ * partout, `resoudre` sur `monde`) ? Faux si le départ est lui-même dans un mur, ou si la zone atteignable est une poche fermée (porte qui donne sur
+ * les murs pleins de voisins, cour enclose). `interdit` : un rectangle du repère à 16° qu'on ne traverse pas (la coque d'un bâtiment dont on teste
+ * la porte : sans elle, le flood-fill sortirait par l'intérieur ouvert du bâtiment). Déterministe, borné par le disque de rayon `distance`.
+ */
+export function atteintLExterieur(monde: Monde, x: number, z: number, rayon: number, distance: number, interdit?: Rect): boolean {
+  const libre = (px: number, pz: number): boolean => {
+    if (interdit) { const [s, t] = versRepere(px, pz); if (s > interdit.s0 - rayon && s < interdit.s1 + rayon && t > interdit.t0 - rayon && t < interdit.t1 + rayon) return false; }
+    return resoudre(monde, [px, 0, pz], rayon, 1.8).contacts.length === 0;
+  };
+  if (!libre(x, z)) return false;
+  const cle = (i: number, j: number): string => `${i},${j}`;
+  const vus = new Set<string>([cle(0, 0)]);
+  const file: [number, number][] = [[0, 0]];
+  while (file.length) {
+    const [i, j] = file.pop()!;
+    for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const a = i + di, b = j + dj, k = cle(a, b);
+      if (vus.has(k)) continue;
+      vus.add(k);
+      const px = x + a * PAS_SORTIE_M, pz = z + b * PAS_SORTIE_M;
+      if (!libre(px, pz)) continue;
+      if (Math.hypot(a, b) * PAS_SORTIE_M >= distance) return true;
+      file.push([a, b]);
+    }
+  }
+  return false;
+}
+
 const EXCLUS: ReadonlySet<number> = new Set<number>([...BATIMENTS_CREUX, BATIMENT_TRUCK]);
 
 interface Candidat { i: number; aire: number; c: Vec2; rect: Rect }
@@ -171,6 +207,18 @@ interface Candidat { i: number; aire: number; c: Vec2; rect: Rect }
 /** Bâtiments éligibles (emprise, hauteur, remplissage, rectangle inscrit assez grand) dans l'ordre des index. */
 function candidats(scene: SceneData): Candidat[] {
   const res: Candidat[] = [];
+  // monde d'essai pour la porte : celui de la carte BR (sans le Truck), les voisins pleins ; le candidat testé est rendu traversable comme il le sera
+  let essai: Monde | null = null;
+  const porteDegagee = (i: number, r: Rect): boolean => {
+    essai ??= construireMonde({ ...scene, pois: scene.pois.filter((p) => p.type !== "truck") });
+    const prisme = essai.prismes[i];
+    const h = prisme.h, hOrigine = prisme.hOrigine;
+    prisme.h = 0; prisme.hOrigine = 0;
+    const [x, z] = depuisRepere((r.s0 + r.s1) / 2, r.t0 - PORTE_DEPART_M);
+    const ok = atteintLExterieur(essai, x, z, PORTE_RAYON_M, PORTE_SORTIE_M, r);
+    prisme.h = h; prisme.hOrigine = hOrigine;
+    return ok;
+  };
   scene.buildings.forEach((b, i) => {
     if (i >= INDEX_PREMIERE_PIECE || EXCLUS.has(i) || b.h < HAUTEUR_MIN_M) return;
     const aire = aireBatiment(b);
@@ -180,6 +228,8 @@ function candidats(scene: SceneData): Candidat[] {
     if (aire / ((s1 - s0) * (t1 - t0)) < REMPLISSAGE_MIN) return;
     const rect = rectangleInscrit(b.r, b.holes);
     if (!rect || Math.min(rect.s1 - rect.s0, rect.t1 - rect.t0) < COTE_MIN_M) return;
+    // la porte donne sur l'extérieur : pas sur les murs pleins de voisins collés, qui feraient de l'intérieur une pièce où l'on n'entre pas
+    if (!porteDegagee(i, rect)) return;
     res.push({ i, aire, c: b.c, rect });
   });
   return res;
@@ -203,7 +253,7 @@ function choisir(cands: readonly Candidat[]): Candidat[] {
 
 /**
  * Index (croissants) des bâtiments à creuser procéduralement : emprise de 100 à 700 m², hauteur ≥ 3,5 m, remplissage de leur rectangle
- * englobant (repère à 16°) ≥ 0,8, hors les quatre des zombies et le bâtiment 114 (Truck Muche), choisis par éloignement maximal pour couvrir la
+ * englobant (repère à 16°) ≥ 0,8, porte dégagée (`atteintLExterieur` depuis le seuil), hors les quatre des zombies et le bâtiment 114 (Truck Muche), choisis par éloignement maximal pour couvrir la
  * carte, jusqu'à 16 (repli : tous s'il y en a moins).
  */
 export function choisirBatimentsProcedurals(scene: SceneData): number[] {

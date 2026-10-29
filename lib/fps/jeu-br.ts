@@ -12,11 +12,11 @@
 import { STATS } from "./armes";
 import { BR } from "./br-regles";
 import { CHUTE_BR, etatChuteInitial, hauteurAuSol, pasChute, pasDuTemps, positionAvionBr, type EtatChute } from "./br-chute";
-import { appliquerRamassage, raretePourArme, type ResultatRamassage } from "./br-butin";
+import { appliquerRamassage, ramassageAccessible, raretePourArme, type ResultatRamassage } from "./br-butin";
 import { distanceAuBord, etatDepuisZoneBr, horsZone } from "./br-zone";
 import type { Monde } from "./collision";
 import type {
-  ArmeFeuId, AvionBr, ClasseMunitions, Equipement, EtatPartieBr, MessageClient, MessageServeur, ObjetBr, Rarete, Vec3, ZoneBr,
+  ArmeFeuId, AvionBr, ClasseMunitions, Equipement, EtatJoueurSnap, EtatPartieBr, MessageClient, MessageServeur, ObjetBr, Rarete, Vec3, ZoneBr,
 } from "./protocole";
 import type { EtatBrHud, HudEtat } from "./jeu-types";
 
@@ -24,6 +24,10 @@ import type { EtatBrHud, HudEtat } from "./jeu-types";
 
 export type PhaseVol = "avion" | "libre" | "voile" | "attenteAtterri" | "sol";
 
+/** Part (s) d'un `majReel` : 6 pas de la simulation, le plafond de `pasDuTemps`. */
+export const DT_PART_VOL_S = (CHUTE_BR.pasMaxParAppel * CHUTE_BR.pas) - 1e-6;
+/** Temps réel (s) au-delà duquel `majReel` abandonne le retard (onglet en veille). */
+export const DT_RATTRAPAGE_MAX_S = 1;
 /** Période d'envoi du message `chute` (ms) : 30 Hz. */
 export const PERIODE_CHUTE_MS = 1000 / 30;
 /** Écart au snap retardé (m) au-delà duquel la prédiction est recalée en vol. */
@@ -168,6 +172,24 @@ export class ControleurVol {
     if (atterri) this.phaseVol = "attenteAtterri";
     this.hauteur = atterri ? 0 : hauteurAuSol(monde, this.e.p);
     return voile || atterri ? { sauter: false, voile, atterri } : SANS_EVENT;
+  }
+
+  /**
+   * `maj` indépendant du rendu : `dt` est le temps RÉEL écoulé depuis l'image précédente (et non le `dt` de jeu plafonné à 0,1 s), découpé en parts
+   * de `DT_PART_VOL_S` pour que chaque appel reste sous le plafond de `pasDuTemps`. Le serveur simule en temps réel : sous 10 images/s, un
+   * seul `maj` par image prendrait du retard (60 m/s × l'écart) et ferait recaler la caméra à chaque seconde. Au-delà de `DT_RATTRAPAGE_MAX_S`
+   * (onglet en veille) le retard est perdu, comme dans `maj`. Les événements des parts sont fusionnés ; l'avion et l'atterrissage arrêtent la boucle.
+   */
+  majReel(dt: number, entrees: EntreesVol, monde: Monde): EvenementsVol {
+    let reste = Number.isFinite(dt) && dt > 0 ? Math.min(dt, DT_RATTRAPAGE_MAX_S) : 0;
+    let sauter = false, voile = false, atterri = false;
+    do {
+      const part = Math.min(reste, DT_PART_VOL_S);
+      const ev = this.maj(part, entrees, monde);
+      sauter ||= ev.sauter; voile ||= ev.voile; atterri ||= ev.atterri;
+      reste -= part;
+    } while (reste > 1e-9 && (this.phaseVol === "libre" || this.phaseVol === "voile"));
+    return sauter || voile || atterri ? { sauter, voile, atterri } : SANS_EVENT;
   }
 
   /**
@@ -319,16 +341,19 @@ function raisonRefus(o: ObjetBr, r: ResultatRamassage): string {
 /**
  * L'objet le plus proche à portée (≤ `BR.rayonRamassageM` en horizontal ET en hauteur) et le texte de l'invite. L'effet du ramassage vient de
  * `appliquerRamassage` (le même code que le serveur) : une boîte sans arme compatible, une pile pleine ou une épée déjà portée sont `refuse`.
- * À égalité de distance, le plus petit id. Null s'il n'y a rien à portée.
+ * À égalité de distance, le plus petit id. Null s'il n'y a rien à portée. Avec `monde`, un objet derrière un mur n'est pas proposé
+ * (même règle que le serveur, `ramassageAccessible`).
  */
 export function inviteRamassage(
   butin: Pick<ButinClient, "pourDessin">, p: Vec3, equip: Readonly<Equipement>, soins: Readonly<{ bandage: number; potion: number }>,
+  monde?: Monde,
 ): InviteRamassage | null {
   let meilleur: ObjetBr | null = null, dMin = Infinity;
   for (const o of butin.pourDessin()) {
     if (Math.abs(o.p[1] - p[1]) > BR.rayonRamassageM) continue;
     const d = Math.hypot(o.p[0] - p[0], o.p[2] - p[2]);
     if (d > BR.rayonRamassageM) continue;
+    if (monde && !ramassageAccessible(monde, p, o.p)) continue;
     if (d < dMin - 1e-9 || (Math.abs(d - dMin) <= 1e-9 && meilleur !== null && o.id < meilleur.id)) { meilleur = o; dMin = d; }
   }
   if (!meilleur) return null;
@@ -487,4 +512,27 @@ export function etatBrHud(e: EntreeHudBr, proches: readonly ObjetBr[], place: nu
     bandage: e.bandage, potion: e.potion, usage: e.usage ? { ...e.usage } : null,
     proches: [...proches], suivi: e.spectateur ? e.suivi : null, place: e.vivant ? null : place,
   };
+}
+
+/**
+ * Un message `degats` reçu par moi vient de la tempête : sans tireur (`par` vide) ni source. Le serveur les envoie par points entiers, jusqu'à
+ * ≈ 15 par seconde au dernier palier : ni son de coup, ni secousse, ni flèche de direction (elle pointerait vers l'avant) ; l'alerte « HORS ZONE »
+ * du HUD et la barre de vie suffisent.
+ */
+export const degatsDeTempete = (m: { par: string; src?: unknown }): boolean => m.par === "" && !m.src;
+
+/** Le soin ne servirait à rien (même règle que le serveur) : bandage au-dessus de son plafond de PV, potion avec le bouclier plein. */
+export function soinInutile(objet: "bandage" | "potion", pv: number, bouclier: number, bouclierMax: number): boolean {
+  return objet === "bandage" ? pv >= BR.usage.bandage.plafondPv : bouclier >= bouclierMax;
+}
+
+/**
+ * Vie affichée par le HUD : la mienne, sauf en spectateur où c'est celle du joueur suivi (le snap porte ses `pv` et son `bouclier`) ; mon propre
+ * `pv` est alors 0 depuis ma mort. Sans joueur suivi (personne à regarder, snap pas encore reçu) on garde la mienne.
+ */
+export function vieAffichee(
+  spectateur: boolean, cible: Pick<EtatJoueurSnap, "pv" | "bouclier"> | undefined, moi: { pv: number; bouclier: number },
+): { pv: number; bouclier: number } {
+  if (!spectateur || !cible) return { pv: moi.pv, bouclier: moi.bouclier };
+  return { pv: cible.pv, bouclier: cible.bouclier ?? 0 };
 }

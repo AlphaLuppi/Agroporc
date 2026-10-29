@@ -3,8 +3,8 @@ import scene from "../../public/agroparc/scene.json";
 import { dedans, distSegment } from "../agroparc3d/cachettes";
 import type { SceneData, Vec2 } from "../agroparc3d/types";
 import {
-  AIRE_MAX_M2, AIRE_MIN_M2, BATIMENT_TRUCK, HAUTEUR_MIN_M, NB_PROCEDURAUX, REMPLISSAGE_MIN,
-  centresBatimentsEligibles, choisirBatimentsProcedurals, construireMondeBr, depuisRepere, donneesBr, piecesProcedurales, pointsButin,
+  AIRE_MAX_M2, AIRE_MIN_M2, PORTE_SORTIE_M, BATIMENT_TRUCK, HAUTEUR_MIN_M, NB_PROCEDURAUX, REMPLISSAGE_MIN,
+  atteintLExterieur, centresBatimentsEligibles, choisirBatimentsProcedurals, construireMondeBr, depuisRepere, donneesBr, piecesProcedurales, pointsButin,
   rectDansEmprise, rectangleInscrit, versRepere, type Rect,
 } from "./br-carte";
 import { construireMonde, resoudre, solSous, type Monde } from "./collision";
@@ -190,6 +190,28 @@ describe("bâtiments procéduraux", () => {
     }
   });
 
+  it("chaque point de butin d'intérieur mène à l'extérieur à pied (aucune pièce fermée par des voisins), depuis le vrai monde BR", () => {
+    const interieurs = pointsButin(sc, monde).filter((p) => p.pool === "interieur");
+    expect(interieurs.length).toBeGreaterThan(0);
+    // tous les points, un flood-fill par point : la poche fermée (porte contre les murs pleins d'un voisin) laisse des points inaccessibles
+    for (const { p } of interieurs) expect(atteintLExterieur(monde, p[0], p[2], 0.4, PORTE_SORTIE_M), `(${p[0]}, ${p[2]})`).toBe(true);
+  });
+
+  it("le bâtiment 13, dont la porte donne à moins d'un mètre sur les murs pleins de 12 et 45, n'est pas creusé ; le détecteur voit la poche", () => {
+    expect(procedurauxIdx).not.toContain(13);
+    // le seuil de la porte du 13 (coque non traversable) est une poche fermée : les voisins pleins ferment la rue à moins d'un mètre
+    const r = rectangleInscrit(sc.buildings[13].r, sc.buildings[13].holes)!;
+    const [x, z] = depuisRepere((r.s0 + r.s1) / 2, r.t0 - 1);
+    const essai = construireMonde({ ...sc, pois: sc.pois.filter((q) => q.type !== "truck") });
+    essai.prismes[13].h = 0; essai.prismes[13].hOrigine = 0;
+    expect(atteintLExterieur(essai, x, z, 0.4, PORTE_SORTIE_M, r)).toBe(false);
+    // un pré dégagé loin de tout bâtiment : atteint l'extérieur
+    expect(atteintLExterieur(monde, 0, 0, 0.4, PORTE_SORTIE_M)).toBe(true);
+    // départ dans un mur : faux
+    const mur = donnees.pieces.find((q) => q.type === "coque")!;
+    expect(atteintLExterieur(monde, mur.p[0], mur.p[1], 0.4, PORTE_SORTIE_M)).toBe(false);
+  });
+
   it("les quatre bâtiments des zombies sont ouverts sans leurs portes (l'open space du 72 communique avec l'extérieur)", () => {
     expect(donnees.pieces.some((p) => p.type === "porte")).toBe(false);
     const depart = local(72, -8, -5.5);
@@ -288,8 +310,8 @@ describe("pointsButin", () => {
 
   it("comptes par pool consignés (REMESURER si scene.json, les rectangles inscrits ou les pas des grilles changent)", () => {
     const comptes = Object.fromEntries((["interieur", "toit", "facade", "route"] as const).map((p) => [p, parPool(p).length]));
-    // mesuré le 2026-10-29 : 16 bâtiments procéduraux sur scene.json (index 13, 16, 18, 32, 33, 61, 64, 67, 68, 69, 86, 98, 115, 122, 126, 131)
-    expect(comptes).toEqual({ interieur: 548, toit: 1017, facade: 590, route: 612 });
+    // mesuré le 2026-10-29 : 16 bâtiments procéduraux sur scene.json (index 16, 18, 32, 33, 45, 61, 64, 67, 68, 69, 86, 98, 115, 122, 126, 131 ; le 13, dont la porte donne à moins d'un mètre sur les murs pleins de 12 et 45, est écarté)
+    expect(comptes).toEqual({ interieur: 553, toit: 1012, facade: 589, route: 612 });
     // l'intérieur couvre le quota de 50 joueurs : 0,45 × 450 objets ≈ 202
     expect(comptes.interieur).toBeGreaterThanOrEqual(Math.ceil(0.45 * 450));
     // l'ordre est celui des pools

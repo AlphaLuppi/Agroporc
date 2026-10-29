@@ -442,6 +442,8 @@ function arreter(): void {
   clearInterval(timerPing);
   clearInterval(timerTic);
   clearInterval(timerSalons);
+  // les fermetures qui suivent font abandonner les joueurs un à un : une partie interrompue par l'arrêt ne doit rien enregistrer
+  persistanceBr.figer();
   for (const c of clients.values()) c.ws.close(1001, "arrêt du serveur");
   wss.close();
   // seul endroit où les stats s'écrivent en synchrone : l'écriture asynchrone en cours n'aurait pas le temps de finir ; ce qu'un départ en

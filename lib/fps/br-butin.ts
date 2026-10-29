@@ -6,6 +6,7 @@
  */
 import { STATS } from "./armes";
 import { BR } from "./br-regles";
+import { visible, type Monde } from "./collision";
 import { estPrincipale, estSecondaire, estSpecialeOuUnique } from "./equipement";
 import {
   copierEquipement,
@@ -199,6 +200,21 @@ export function genererButin(points: readonly PointButin[], graine: number, nb: 
 }
 
 // ---------- ramassage ----------
+
+/** Hauteur (m) au-dessus du sol du rayon de visée d'un ramassage, aux deux bouts : à hauteur de torse, au-dessus des meubles bas. */
+export const HAUTEUR_RAYON_RAMASSAGE_M = 1.2;
+
+/**
+ * Le joueur (pieds en `p`) voit-il l'objet posé en `pObjet` sans traverser un bâtiment ? Le rayon de 2,5 m seul laissait prendre depuis la rue
+ * un objet d'intérieur posé près d'un mur (≥ 1 m du mur, mur de 0,4 m). Même règle côté serveur (juge) et côté client (invite « [E] »).
+ */
+export function ramassageAccessible(monde: Monde, p: Vec3, pObjet: Vec3): boolean {
+  return visible(
+    monde,
+    [p[0], p[1] + HAUTEUR_RAYON_RAMASSAGE_M, p[2]],
+    [pObjet[0], pObjet[1] + HAUTEUR_RAYON_RAMASSAGE_M, pObjet[2]],
+  );
+}
 
 export interface ResultatRamassage {
   ok: boolean;

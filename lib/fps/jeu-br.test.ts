@@ -7,8 +7,8 @@ import { BR, EQUIPEMENT_DEPART_BR } from "./br-regles";
 import { genererPlanZone, zoneBrPublique } from "./br-zone";
 import { construireMonde, type Boite, type Monde } from "./collision";
 import {
-  ButinClient, CAMERA_AVION_DY, ControleurVol, ECART_ATTERRISSAGE_M, ECART_RECALAGE_M, PERIODE_CHUTE_MS, SuiviSpectateur,
-  etatBrHud, etatHudBr, inviteRamassage, libelleObjetBr, progressionUsage, reperesZone,
+  ButinClient, CAMERA_AVION_DY, ControleurVol, DT_RATTRAPAGE_MAX_S, ECART_ATTERRISSAGE_M, ECART_RECALAGE_M, PERIODE_CHUTE_MS, SuiviSpectateur,
+  degatsDeTempete, etatBrHud, etatHudBr, inviteRamassage, libelleObjetBr, progressionUsage, reperesZone, soinInutile, vieAffichee,
   type CandidatSuivi, type EntreeHudBr, type EntreesVol, type EtatVol,
 } from "./jeu-br";
 import { copierEquipement, type AvionBr, type Equipement, type EtatPartieBr, type ObjetBr, type Vec3 } from "./protocole";
@@ -145,6 +145,44 @@ describe("ControleurVol : chute libre et parachute", () => {
     c.maj(5, LIBRE, vide);
     expect(c.etat().tLibre).toBeCloseTo(CHUTE_BR.pasMaxParAppel * DT, 9);
     expect(c.phase()).toBe("libre");
+  });
+
+  it("majReel : sous 10 images/s la chute suit le temps réel (maj seul, plafonné à 6 pas, prendrait du retard)", () => {
+    // 5 images/s pendant 2 s de temps réel : 10 images de 0,2 s
+    const reel = new ControleurVol(), plafonne = new ControleurVol();
+    saut(reel, [0, 350, 0]);
+    saut(plafonne, [0, 350, 0]);
+    for (let k = 0; k < 10; k++) { reel.majReel(0.2, LIBRE, vide); plafonne.maj(0.2, LIBRE, vide); }
+    expect(reel.etat().tLibre).toBeCloseTo(2, 1);
+    expect(plafonne.etat().tLibre).toBeCloseTo(1, 1);
+    // la même chute à 60 images/s donne la même position (le découpage ne change pas la simulation)
+    const fin = new ControleurVol();
+    saut(fin, [0, 350, 0]);
+    for (let k = 0; k < 120; k++) fin.maj(DT, LIBRE, vide);
+    expect(reel.etat().p[1]).toBeCloseTo(fin.etat().p[1], 0);
+    expect(Math.abs(reel.etat().p[1] - fin.etat().p[1])).toBeLessThan(2);
+  });
+
+  it("majReel : un retard énorme (onglet en veille) est perdu au-delà de la limite, les événements des parts sont fusionnés", () => {
+    const c = new ControleurVol();
+    saut(c, [0, 350, 0]);
+    c.majReel(30, LIBRE, vide);
+    expect(c.etat().tLibre).toBeCloseTo(DT_RATTRAPAGE_MAX_S, 1);
+    // atterrissage en plein milieu d'un grand pas : un seul événement, la boucle s'arrête
+    const bas = new ControleurVol();
+    saut(bas, [0, 3, 0], [0, 0, 0]);
+    expect(bas.majReel(1, LIBRE, vide).atterri).toBe(true);
+    expect(bas.phase()).toBe("attenteAtterri");
+    // dans l'avion : l'appui sur saut est vu une seule fois
+    const avion = new ControleurVol();
+    avion.entrerAvion({ depart: [0, 0], arrivee: [600, 0], altitude: 350, vitesse: 30, debutT: 0, finT: 20_000 }, 0);
+    expect(avion.majReel(0.5, SAUT, vide).sauter).toBe(true);
+    // temps nul ou invalide : une seule mise à jour des entrées, rien ne bouge
+    const n = new ControleurVol();
+    saut(n, [0, 350, 0]);
+    n.majReel(Number.NaN, LIBRE, vide);
+    n.majReel(-3, LIBRE, vide);
+    expect(n.etat().tLibre).toBe(0);
   });
 
   it("entrées quantifiées : lacet et tangage au millième, avance et latéral au centième, valeurs aberrantes neutralisées", () => {
@@ -465,6 +503,14 @@ describe("inviteRamassage", () => {
     expect(inviteRamassage(avec(obj(1, "arme", "pompe", [0, 2.4, 0])), [0, 0, 0], depart(), SOINS)?.id).toBe(1);
   });
 
+  it("avec le monde, un objet derrière un mur n'est pas proposé même à portée ; un autre du même côté l'est", () => {
+    const m = mondeDe({ h: 10, r: [[1, -5], [1.4, -5], [1.4, 5], [1, 5]], c: [1.2, 0] });
+    const b = avec(obj(1, "arme", "pompe", [2, 0, 0]), obj(2, "arme", "pistolet", [-2, 0, 0]));
+    expect(inviteRamassage(b, [0, 0, 0], depart(), SOINS)?.id).toBe(1);
+    expect(inviteRamassage(b, [0, 0, 0], depart(), SOINS, m)?.id).toBe(2);
+    expect(inviteRamassage(avec(obj(1, "arme", "pompe", [2, 0, 0])), [0, 0, 0], depart(), SOINS, m)).toBeNull();
+  });
+
   it("une arme : « Ramasser Fusil d'assaut (rare) », l'objet le plus proche gagne, à égalité le plus petit id", () => {
     const b = avec(obj(4, "arme", "pistolet", [2, 0, 0]), obj(3, "arme", "fusil_assaut", [1, 0, 0]));
     const inv = inviteRamassage(b, [0, 0, 0], depart(), SOINS)!;
@@ -733,5 +779,31 @@ describe("parité avec br-chute", () => {
     }
     const e = c.etat();
     expect(Math.hypot(e.p[0] - ref.p[0], e.p[1] - ref.p[1], e.p[2] - ref.p[2])).toBeLessThan(ECART_ATTERRISSAGE_M);
+  });
+});
+
+describe("vieAffichee", () => {
+  it("vivant : ma vie ; spectateur : celle du joueur suivi (la mienne vaut 0 depuis ma mort) ; sans cible, la mienne", () => {
+    const moi = { pv: 0, bouclier: 0 };
+    expect(vieAffichee(false, { pv: 80, bouclier: 30 }, { pv: 55, bouclier: 5 })).toEqual({ pv: 55, bouclier: 5 });
+    expect(vieAffichee(true, { pv: 80, bouclier: 30 }, moi)).toEqual({ pv: 80, bouclier: 30 });
+    expect(vieAffichee(true, { pv: 42 }, moi)).toEqual({ pv: 42, bouclier: 0 });
+    expect(vieAffichee(true, undefined, moi)).toEqual({ pv: 0, bouclier: 0 });
+  });
+});
+
+describe("degatsDeTempete / soinInutile", () => {
+  it("les dégâts sans tireur ni source sont ceux de la tempête ; un tir ou une explosion ne le sont pas", () => {
+    expect(degatsDeTempete({ par: "" })).toBe(true);
+    expect(degatsDeTempete({ par: "j2" })).toBe(false);
+    expect(degatsDeTempete({ par: "", src: [1, 2, 3] })).toBe(false);
+  });
+
+  it("soin inutile : bandage au-dessus du plafond de PV, potion avec le bouclier plein (mêmes seuils que le serveur)", () => {
+    const max = BR.usage.bandage.plafondPv;
+    expect(soinInutile("bandage", max - 1, 0, 50)).toBe(false);
+    expect(soinInutile("bandage", max, 0, 50)).toBe(true);
+    expect(soinInutile("potion", 10, 49, 50)).toBe(false);
+    expect(soinInutile("potion", 10, 50, 50)).toBe(true);
   });
 });

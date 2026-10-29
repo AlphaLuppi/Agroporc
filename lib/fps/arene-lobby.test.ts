@@ -420,6 +420,10 @@ describe("LobbyBR", () => {
     const html = rendre({ monId: "j9", partie: partieBr({ phase: "jeu", joueurs: undefined, vivants: 12, total: 30, zone: zoneBr(3) }) });
     expect(html).toContain("Partie en cours : 12 en vie · zone palier 3/6 — rejoignez à la suivante.");
     expect(boutonLancer(html)).toContain("disabled");
+    // le serveur n'envoie pas la liste en jeu : ni « Personne pour l'instant » ni effectif nul
+    expect(html).not.toContain("Personne pour l");
+    expect(html).not.toContain("Joueurs de la partie");
+    expect(rendre()).toContain("Joueurs de la partie, ");
     const agent = rendre({ monId: "j2", partie: partieBr({ joueurs: [joueurBr("j1", "Lea"), joueurBr("j2", "Agent")] }), pseudo: "Agent" });
     expect(agent).toContain(TEXTE_NOM_A_CHOISIR);
   });

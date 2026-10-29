@@ -761,24 +761,27 @@ describe("EcranSpectateur et mort définitive (BR)", () => {
   const tueur = { id: "j1", pseudo: "Lea", couleur: "#aabbcc", p: [0, 0, 0] as [number, number, number], lacet: 0, tangage: 0, arme: "pompe" as const, pv: 80, bouclier: 0, distance: 31.4 };
   const joueurs = [{ id: "j1", pseudo: "Lea", couleur: "#aabbcc" }, { id: "j2", pseudo: "Marc", couleur: "#ccbbaa" }];
   const spectateur = (p: Record<string, unknown> = {}) => renderToStaticMarkup(createElement(EcranSpectateur, {
-    derniereMort: mort, place: 12, total: 37, suiviId: "j1", joueurs, toucheSuivant: "→", touchePrecedent: "←", surQuitter: () => {}, ...p,
+    derniereMort: mort, place: 12, total: 37, suiviId: "j1", joueurs, toucheSuivant: "→", touchePrecedent: "←", ...p,
   } as never));
 
-  it("bandeau : place, cause, joueur suivi, touches réelles, Quitter", () => {
-    const html = spectateur({ surSuivant: () => {}, surPrecedent: () => {} });
+  it("bandeau : place, cause, joueur suivi, touches réelles, aucun bouton mort (la souris est prise) ; Quitter passe par Échap", () => {
+    const html = spectateur();
     expect(html).toContain("Éliminé · place #12 sur 37");
     expect(html).toContain("Éliminé par Lea");
     expect(html).toContain("Vous suivez");
     expect(html).toContain("<b>Lea</b>");
-    expect(html).toMatch(/<button[^>]*>Précédent <kbd>←<\/kbd><\/button>/);
-    expect(html).toMatch(/<button[^>]*>Suivant <kbd>→<\/kbd><\/button>/);
-    expect(html).toContain("Quitter");
+    expect(html).not.toContain("<button");
+    expect(html).toContain("<kbd>←</kbd> joueur précédent");
+    expect(html).toContain("<kbd>→</kbd> joueur suivant");
+    expect(html).toContain("<kbd>Clic</kbd>");
+    expect(html).toContain("<kbd>Échap</kbd> menu (Quitter)");
   });
 
-  it("sans boutons fournis : les touches sont rappelées en texte ; personne à suivre ; tempête sans tueur", () => {
-    const html = spectateur({ suiviId: null, derniereMort: { ...mort, par: "", cause: "tempete" } });
-    expect(html).not.toContain("<button type=\"button\" class=\"EcranSpectateur_bouton");
-    expect(html).toContain("joueur suivant");
+  it("touches non assignées : le clic et Échap restent rappelés ; personne à suivre ; tempête sans tueur", () => {
+    const html = spectateur({ suiviId: null, toucheSuivant: "", touchePrecedent: "", derniereMort: { ...mort, par: "", cause: "tempete" } });
+    expect(html).not.toContain("<button");
+    expect(html).not.toContain("joueur précédent");
+    expect(html).toContain("<kbd>Clic</kbd> joueur suivant");
     expect(html).toContain("Personne à suivre");
     expect(html).toContain("Tué par la tempête");
     expect(html).not.toContain("Éliminé par");
@@ -798,7 +801,7 @@ describe("EcranSpectateur et mort définitive (BR)", () => {
   const ecran = (plus: Record<string, unknown> = {}) => renderToStaticMarkup(createElement(EcranMort, {
     hud: hudBr({ mort: true, killcamPhase: "" }), derniereMort: mort, killcamInfo: tueur, degatsAuTueur: 0, touches: touchesParDefaut(),
     equipement: { principale: "mitraillette", secondaire: "pistolet" }, surEquipement: () => {}, surPasserKillcam: () => {},
-    br: { place: 12, total: 37, suiviId: "j1", joueurs, toucheSuivant: "→", touchePrecedent: "←", surQuitter: () => {} }, ...plus,
+    br: { place: 12, total: 37, suiviId: "j1", joueurs, toucheSuivant: "→", touchePrecedent: "←" }, ...plus,
   } as never));
 
   it("EcranMort en BR : rejeu sans choix d'équipement, carte d'élimination sans réapparition, puis bandeau du spectateur", () => {
@@ -975,14 +978,14 @@ describe("HudArene en Battle Royale", () => {
     expect(rendre(HUD_BR)).not.toContain("HORS ZONE");
   });
 
-  it("mort : spectateur avec place, joueur suivi, boutons ; le HUD de combat disparaît mais barre et zone restent", () => {
+  it("mort : spectateur avec place, joueur suivi, rappel des commandes ; le HUD de combat disparaît mais barre et zone restent", () => {
     const html = rendre({ ...HUD_BR, mort: true, killcamPhase: "" }, {
-      etatBr: () => ebr({ suivi: "j2", place: 12 }), surSpectateur: () => {},
+      etatBr: () => ebr({ suivi: "j2", place: 12 }),
       derniereMort: { par: "Marc", parCouleur: "#ccbbaa", arme: "pompe", cause: "arme", zone: "corps", tueur: null },
     });
     expect(html).toContain("Éliminé · place #12 sur 50");
     expect(html).toContain("Vous suivez");
-    expect(html).toContain("Précédent");
+    expect(html).toContain("joueur précédent");
     expect(html).toContain(`37${NBSP}EN${NBSP}VIE`);
     expect(html).toContain("Tempête");
     expect(html).not.toContain("Soins en stock");

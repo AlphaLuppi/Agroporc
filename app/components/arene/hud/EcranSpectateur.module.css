@@ -35,16 +35,6 @@
 .suivi { margin: 0; display: inline-flex; align-items: center; gap: calc(8 * var(--k)); color: var(--ag-ink); }
 .suivi b { font-weight: 600; }
 .suivi .pastille { background: var(--couleur); }
-.boutons { display: flex; flex-wrap: wrap; justify-content: center; gap: calc(10 * var(--k)); margin-top: calc(4 * var(--k)); pointer-events: auto; }
-.bouton, .quitter {
-  min-height: 40px; min-width: calc(120 * var(--k)); padding: 0 calc(16 * var(--k)); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: calc(8 * var(--k));
-  font: 700 max(11px, calc(12 * var(--k)))/1 var(--ag-display), var(--ag-mono), monospace; letter-spacing: 0.12em; text-transform: uppercase;
-  background: var(--ag-hud-fond); color: var(--ag-ink); border: 1px solid var(--ag-cadre);
-}
-.bouton:hover, .bouton:focus-visible, .quitter:hover, .quitter:focus-visible { border-color: var(--ag-ink); }
-.bouton:focus-visible, .quitter:focus-visible { outline: 2px solid var(--ag-white); outline-offset: 2px; }
-.quitter { color: var(--ag-danger); }
-.bouton kbd { font: inherit; font-size: max(11px, calc(11 * var(--k))); padding: 0 calc(5 * var(--k)); border: 1px solid var(--ag-cadre); color: var(--ag-cyan); }
 .aide { margin: 0; color: var(--ag-ink-dim); font-size: max(11px, calc(12 * var(--k))); }
 .aide kbd { font: inherit; padding: 0 calc(5 * var(--k)); border: 1px solid var(--ag-cadre); color: var(--ag-cyan); }
 @media (prefers-reduced-motion: reduce) { .carte { animation: none; } }

@@ -815,10 +815,17 @@ export class Salle implements ContexteSalle {
     if (!br.admis(j.id)) return [{ a: j.id, m: { t: "refus", action: "rejoindre", raison: "lobby" } }];
     if (this.nombreEnJeu() >= BR.joueursMax) return [{ a: j.id, m: { t: "refus", action: "rejoindre", raison: "plein" } }];
     j.enJeu = true;
+    const entree = br.entreeJoueur(j, maintenant);
+    if (entree.length === 0) {
+      // le service ne l'a pas placé (l'avion a fini son trajet entre l'admission et ce message ; un placement renvoie toujours son `apparition`) :
+      // il reste en attente, jamais `enJeu` sans corps
+      j.enJeu = false;
+      return [{ a: j.id, m: { t: "refus", action: "rejoindre", raison: "lobby" } }];
+    }
     j.memoSante = null;
     j.reentreeT = -Infinity;
     this.presenceSale = true;
-    return [...br.entreeJoueur(j, maintenant), ...br.synchro(j.id)];
+    return [...entree, ...br.synchro(j.id)];
   }
 
   private quitter(j: JoueurSalle, maintenant: number): Sortie[] {
@@ -836,8 +843,10 @@ export class Salle implements ContexteSalle {
       return [...this.retirerJoueur(j, maintenant), ...this.zombies.liberer(j, maintenant)];
     }
     if (this.br) {
-      // BR : pas de réentrée différée ni de mémo de santé ; le service élimine le joueur s'il était en partie (victoire éventuelle)
-      return [...this.retirerJoueur(j, maintenant), ...this.br.liberer(j, maintenant)];
+      // BR : pas de réentrée différée ni de mémo de santé ; le service élimine le joueur s'il était en partie (victoire éventuelle).
+      // Il est libéré AVANT `retirerJoueur`, qui efface l'arme spéciale : sinon elle ne tomberait pas avec le reste du butin.
+      const sortieBr = this.br.liberer(j, maintenant);
+      return [...this.retirerJoueur(j, maintenant), ...sortieBr];
     }
     j.memoSante = j.vivant ? memoriserSante(j, maintenant) : null;
     // un mort garde son délai de réapparition (sans le raccourcir en quittant) ; un vivant doit attendre le même délai avant de revenir

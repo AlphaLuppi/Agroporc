@@ -15,6 +15,11 @@ import { appliquerPartie, lireStatsBr, statsVides, type PersistanceBr, type Resu
 export interface PersistanceBrFichier extends PersistanceBr {
   /** Résolue quand toutes les écritures demandées jusqu'ici sont terminées (réussies ou journalisées). */
   vider(): Promise<void>;
+  /**
+   * Plus rien ne s'enregistre ensuite (les `enregistrer` suivants rendent les stats telles quelles) : à appeler AVANT de fermer les sockets à l'arrêt
+   * du serveur, sinon les départs en chaîne éliminent les joueurs un à un et le dernier serait déclaré vainqueur d'une partie interrompue.
+   */
+  figer(): void;
   /** Écrit tout de suite et en synchrone ce qui n'est pas encore sur disque ; après quoi chaque `enregistrer` écrit lui aussi en synchrone. */
   arreter(): void;
 }
@@ -59,6 +64,7 @@ export function creerPersistanceBr(fichier: string): PersistanceBrFichier {
   let version = 0;
   let ecrite = 0;
   let arrete = false;
+  let fige = false;
   let serie = 0;
   /** file des écritures : une seule à la fois, la suivante s'enchaîne sur la promesse précédente (jamais rejetée) */
   let chaine: Promise<void> = Promise.resolve();
@@ -112,6 +118,7 @@ export function creerPersistanceBr(fichier: string): PersistanceBrFichier {
   return {
     lire: () => stats,
     enregistrer(partie: ResultatPartieBr): StatsBr {
+      if (fige) return stats;
       stats = appliquerPartie(stats, partie);
       version++;
       if (arrete) ecrireSynchrone();
@@ -119,6 +126,7 @@ export function creerPersistanceBr(fichier: string): PersistanceBrFichier {
       return stats;
     },
     vider: () => chaine,
+    figer(): void { fige = true; },
     arreter(): void {
       arrete = true;
       ecrireSynchrone();

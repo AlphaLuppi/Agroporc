@@ -68,6 +68,7 @@ export default function LobbyBR({
   // même règle que le serveur (nettoyerPseudo) : 2 lettres ou chiffres au moins
   const nomTropCourt = Array.from(pseudo.replace(/[^\p{L}\p{N}]/gu, "")).length < 2;
   const joueurs = partie?.joueurs ?? [];
+  const listeConnue = !partie || partie.joueurs !== undefined;
   const monPseudo = joueurs.find((j) => j.id === monId)?.pseudo ?? null;
   const peutLancer = sit.peutLancer && !tactile && !nomTropCourt;
 
@@ -127,7 +128,9 @@ export default function LobbyBR({
         </p>
       </div>
 
-      <ul className={styles.liste} aria-label={`Joueurs de la partie, ${texteEffectif(joueurs.length, sit.capacite)}`}>
+      {/* en vol et en jeu le serveur n'envoie plus la liste : le statut ci-dessus donne l'effectif, pas de liste vide trompeuse */}
+      {listeConnue && (
+      <ul className={styles.liste} aria-label={`Joueurs de la partie, ${texteEffectif(sit.joueurs, sit.capacite)}`}>
         {joueurs.length === 0 && <li className={styles.vide}>Personne pour l&apos;instant.</li>}
         {joueurs.map((j) => {
           const etiquette = partie ? etiquetteEtatBR(j, partie.phase) : "";
@@ -141,6 +144,7 @@ export default function LobbyBR({
           );
         })}
       </ul>
+      )}
 
       <section className={styles.tir} aria-labelledby={`${idPseudo}-regles`}>
         <h3 id={`${idPseudo}-regles`}>{TITRE_REGLES_BR}</h3>

@@ -75,10 +75,7 @@ function lireAideVue(): boolean {
  * (mini-carte, grande carte et scores restent), `FinDePartieBR` remplace `FinDeMatch` ; pas d'entracte, de frappe aérienne, d'Elsa ni de chat vocal. L'état
  * de la partie est lu toutes les 150 ms (`JeuHandle.br()`), jamais à 60 Hz.
  */
-export type PropsHudAreneBr = PropsHudArene & {
-  /** (BR) boutons Précédent / Suivant de l'écran du spectateur (absent : les touches suffisent) */
-  surSpectateur?(sens: "precedent" | "suivant"): void;
-};
+export type PropsHudAreneBr = PropsHudArene;
 
 export default function HudArene(p: PropsHudAreneBr) {
   const { hud, monId, joueurs, match, derniereMort } = p;
@@ -215,9 +212,6 @@ export default function HudArene(p: PropsHudAreneBr) {
   const entreesSpectateur: EntreesSpectateurBr | undefined = br ? {
     place: ebr?.place ?? null, total: partieBr?.total ?? 0, suiviId: ebr?.suivi ?? null, joueurs,
     toucheSuivant: t("spectateurSuivant"), touchePrecedent: t("spectateurPrecedent"),
-    surSuivant: p.surSpectateur ? () => p.surSpectateur?.("suivant") : undefined,
-    surPrecedent: p.surSpectateur ? () => p.surSpectateur?.("precedent") : undefined,
-    surQuitter: p.surQuitter,
   } : undefined;
 
   const miniMap = coinMap === "off" ? null : (
@@ -351,7 +345,8 @@ export default function HudArene(p: PropsHudAreneBr) {
         )}
       </CoinHud>
       <CoinHud coin="bd" coinMinimap={coinMap} miniMap={miniMap}>
-        {vue && !hud.titan && !enVol && (
+        {/* en spectateur le serveur ne donne que l'arme, les PV et le bouclier du joueur suivi : ni slots ni munitions, le bloc des armes disparaît */}
+        {combat && !hud.titan && !enVol && (
           <BlocArmes
             arme={hud.arme} slot={hud.slot} slots={hud.slots} munitions={hud.munitions} chargeur={hud.chargeur} reserve={hud.reserve}
             recharge={hud.recharge} degainage={hud.degainage} tireInterdit={hud.tireInterdit} bonusVitesse={hud.bonusVitesse}

@@ -9,7 +9,7 @@
  * par la tempête.
  * Spec : docs/superpowers/specs/2026-10-28-battle-royale-design.md (§Butin, §Inventaire)
  */
-import { appliquerRamassage, genererButin } from "./br-butin";
+import { appliquerRamassage, genererButin, ramassageAccessible } from "./br-butin";
 import { BR } from "./br-regles";
 import { armeDuSlot } from "./equipement";
 import type { ButinBr, ContexteSalle, JoueurSalle, Sortie } from "./match-contexte";
@@ -34,6 +34,16 @@ interface Inventaire {
   usage: { objet: Soin; finT: number } | null;
 }
 
+/**
+ * Délai (ms) avant qu'un joueur reprenne l'arme à feu principale ou secondaire qu'il vient de lâcher : le client oublie les munitions d'une arme
+ * quittée et la reçoit chargeur plein, reprendre aussitôt la même arme serait une recharge gratuite. (Les spéciales gardent leurs munitions
+ * restantes, côté serveur : aucun délai.)
+ */
+const DELAI_REPRISE_MS = 10_000;
+
+/** Ce que le service sait d'un objet lâché (jamais envoyé aux clients) : qui l'a jeté et quand, munitions restantes d'une spéciale. */
+interface Provenance { lacheur: string; t: number; mun?: number }
+
 /** Rayon (m) autour du joueur où tombent les objets lâchés : toujours à moins de 1,5 m de son corps. */
 const DISPERSION_MIN_M = 0.4;
 const DISPERSION_M = 1.0;
@@ -44,6 +54,8 @@ export function creerButinBr(ctx: ContexteSalle, opts: OptionsButinBr = {}): But
   const objets = new Map<number, ObjetBr>();
   let prochainId = 1;
   const inventaires = new Map<string, Inventaire>();
+  /** provenance des objets lâchés par un joueur, par id d'objet (vidée avec le ramassage) */
+  const provenances = new Map<number, Provenance>();
   /** messages produits hors d'un appel qui peut les rendre (`surDegats`) : émis au prochain tic ou appel */
   let enAttente: Sortie[] = [];
 
@@ -59,7 +71,7 @@ export function creerButinBr(ctx: ContexteSalle, opts: OptionsButinBr = {}): But
   };
 
   /** Pose un objet aux pieds de `j` (dispersé, à moins de 1,5 m) et le renvoie. */
-  function lacherObjet(j: JoueurSalle, genre: GenreObjetBr, ref: ObjetBr["ref"], qte?: number): ObjetBr {
+  function lacherObjet(j: JoueurSalle, genre: GenreObjetBr, ref: ObjetBr["ref"], t: number, qte?: number, mun?: number): ObjetBr {
     const angle = ctx.alea() * 2 * Math.PI;
     const d = DISPERSION_MIN_M + ctx.alea() * DISPERSION_M;
     const o: ObjetBr = {
@@ -67,6 +79,7 @@ export function creerButinBr(ctx: ContexteSalle, opts: OptionsButinBr = {}): But
       ...(qte !== undefined ? { qte } : {}),
     };
     objets.set(o.id, o);
+    if (genre === "arme") provenances.set(o.id, { lacheur: j.id, t, ...(mun !== undefined ? { mun } : {}) });
     return o;
   }
 
@@ -94,18 +107,28 @@ export function creerButinBr(ctx: ContexteSalle, opts: OptionsButinBr = {}): But
     const objet = objets.get(id);
     if (!objet) return refus("inconnu");
     if (Math.hypot(objet.p[0] - j.p[0], objet.p[2] - j.p[2]) > rayon || Math.abs(objet.p[1] - j.p[1]) > rayon) return refus("loin");
+    // pas à travers un mur (le banc de test partiel n'a pas de monde)
+    if (ctx.monde && !ramassageAccessible(ctx.monde, j.p, objet.p)) return refus("loin");
+
+    // pas de recharge gratuite en reprenant tout de suite l'arme qu'on vient de jeter
+    const prov = provenances.get(id);
+    if (prov && prov.mun === undefined && prov.lacheur === j.id && t - prov.t < DELAI_REPRISE_MS) return refus("inutile");
 
     const stock = inv(j.id);
     const r = appliquerRamassage(j.equip, stock, objet);
     if (!r.ok || !r.equip) return refus(r.raison ?? "inconnu");
+    const munAvant = j.munSpeciale;
+    const speciale = j.equip.speciale;
 
     const sorties: Sortie[] = [];
     // l'objet disparaît ; des soins qui ne tiennent pas en entier laissent le reste sous un nouvel id
     const retires = [id];
     const ajoutes: ObjetBr[] = [];
     objets.delete(id);
+    provenances.delete(id);
     if (r.reste !== undefined && r.reste > 0) ajoutes.push(copie(lacherSurPlace(objet, r.reste)));
-    for (const l of r.lache ?? []) ajoutes.push(copie(lacherObjet(j, l.genre, l.ref)));
+    // la spéciale remplacée tombe avec les munitions qui lui restaient
+    for (const l of r.lache ?? []) ajoutes.push(copie(lacherObjet(j, l.genre, l.ref, t, undefined, l.ref !== null && l.ref === speciale ? munAvant : undefined)));
     sorties.push({ a: "tous", m: { t: "butin", ...(ajoutes.length ? { ajoutes } : {}), retires } });
     sorties.push({ a: j.id, m: { t: "ramasse", ok: true, id } });
 
@@ -122,7 +145,8 @@ export function creerButinBr(ctx: ContexteSalle, opts: OptionsButinBr = {}): But
         if (interrompre(j.id)) sorties.push(messageInventaire(j.id));
       }
       j.equip = copierEquipement(r.equip);
-      if (r.munSpeciale !== undefined) j.munSpeciale = r.munSpeciale;
+      // une spéciale lâchée puis reprise garde ses munitions restantes (jamais plus que le chargeur plein)
+      if (r.munSpeciale !== undefined) j.munSpeciale = prov?.mun !== undefined ? Math.min(r.munSpeciale, prov.mun) : r.munSpeciale;
       // une arme neuve (principale ou secondaire) arrive chargeur plein et réserve de départ : le client la ravitaille
       const ravitaille = (r.main === "principale" || r.main === "secondaire") && !r.ajoutMunitions
         ? (armeDuSlot(j.equip, r.main) as ArmeFeuId | null) ?? undefined : undefined;
@@ -146,7 +170,7 @@ export function creerButinBr(ctx: ContexteSalle, opts: OptionsButinBr = {}): But
     if (slot === "principale") equip.sansPrincipale = true;
     else if (slot === "secondaire") equip.sansSecondaire = true;
     else equip.speciale = null;
-    const objet = lacherObjet(j, "arme", arme as ArmeFeuId);
+    const objet = lacherObjet(j, "arme", arme as ArmeFeuId, t, undefined, slot === "speciale" ? j.munSpeciale : undefined);
     const sorties: Sortie[] = [{ a: "tous", m: { t: "butin", ajoutes: [copie(objet)] } }];
     const main: Slot = j.main === slot ? "couteau" : j.main;
     if (main !== j.main && interrompre(j.id)) sorties.push(messageInventaire(j.id));
@@ -193,6 +217,7 @@ export function creerButinBr(ctx: ContexteSalle, opts: OptionsButinBr = {}): But
   return {
     initialiser(points: readonly PointButin[], graine: number, nb: number): void {
       objets.clear();
+      provenances.clear();
       inventaires.clear();
       enAttente = [];
       for (const o of genererButin(points, graine, nb)) objets.set(o.id, o);
@@ -202,10 +227,13 @@ export function creerButinBr(ctx: ContexteSalle, opts: OptionsButinBr = {}): But
     recevoir(j: JoueurSalle, m: MessageClient, t: number): Sortie[] {
       const avant = enAttente;
       enAttente = [];
+      // champs du client non fiables : hors énumération, le message est ignoré (jamais une clé arbitraire lue dans les tables de soins)
       switch (m.t) {
-        case "ramasser": return [...avant, ...ramasser(j, m.id, t)];
-        case "lacher": return [...avant, ...lacher(j, m.slot, t)];
-        case "utiliser": return [...avant, ...utiliser(j, m.objet, t)];
+        case "ramasser": return Number.isInteger(m.id) ? [...avant, ...ramasser(j, m.id, t)] : avant;
+        case "lacher":
+          return m.slot === "principale" || m.slot === "secondaire" || m.slot === "speciale" ? [...avant, ...lacher(j, m.slot, t)] : avant;
+        case "utiliser":
+          return m.objet === null || m.objet === "bandage" || m.objet === "potion" ? [...avant, ...utiliser(j, m.objet, t)] : avant;
         default: return avant;
       }
     },
@@ -228,16 +256,16 @@ export function creerButinBr(ctx: ContexteSalle, opts: OptionsButinBr = {}): But
       if (interrompre(j.id)) enAttente.push(messageInventaire(j.id));
     },
 
-    lacherALaMort(j: JoueurSalle, _t: number): Sortie[] {
+    lacherALaMort(j: JoueurSalle, t: number): Sortie[] {
       const ajoutes: ObjetBr[] = [];
       const e = j.equip;
-      if (!e.sansPrincipale) ajoutes.push(copie(lacherObjet(j, "arme", e.principale)));
-      if (!e.sansSecondaire) ajoutes.push(copie(lacherObjet(j, "arme", e.secondaire)));
-      if (e.speciale !== null) ajoutes.push(copie(lacherObjet(j, "arme", e.speciale)));
-      if (e.melee === "epee") ajoutes.push(copie(lacherObjet(j, "arme", "epee")));
+      if (!e.sansPrincipale) ajoutes.push(copie(lacherObjet(j, "arme", e.principale, t)));
+      if (!e.sansSecondaire) ajoutes.push(copie(lacherObjet(j, "arme", e.secondaire, t)));
+      if (e.speciale !== null) ajoutes.push(copie(lacherObjet(j, "arme", e.speciale, t, undefined, j.munSpeciale)));
+      if (e.melee === "epee") ajoutes.push(copie(lacherObjet(j, "arme", "epee", t)));
       const i = inv(j.id);
-      if (i.bandage > 0) ajoutes.push(copie(lacherObjet(j, "bandage", null, i.bandage)));
-      if (i.potion > 0) ajoutes.push(copie(lacherObjet(j, "potion", null, i.potion)));
+      if (i.bandage > 0) ajoutes.push(copie(lacherObjet(j, "bandage", null, t, i.bandage)));
+      if (i.potion > 0) ajoutes.push(copie(lacherObjet(j, "potion", null, t, i.potion)));
       i.bandage = 0;
       i.potion = 0;
       i.usage = null;
@@ -255,6 +283,7 @@ export function creerButinBr(ctx: ContexteSalle, opts: OptionsButinBr = {}): But
 
     reinitialiser(): void {
       objets.clear();
+      provenances.clear();
       inventaires.clear();
       enAttente = [];
       prochainId = 1;
