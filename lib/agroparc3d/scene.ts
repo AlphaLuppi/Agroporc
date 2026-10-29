@@ -76,7 +76,10 @@ export interface EtatApercu {
   sim: number;
   tigres: number;
   source: "direct" | "simulation" | null;
+  /** appels de dessin de la dernière image (toutes passes du composer) */
   appelsDessin: number;
+  /** moyenne glissante (ms) du JS de l'aperçu par image : simulation, repères, tigres, zone */
+  msApercu: number;
   modele: ModeleApercu | null;
 }
 
@@ -147,6 +150,8 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: "high-performance" });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
   renderer.setClearColor(C.ground, 1);
+  // les appels de dessin se comptent sur toute l'image (le composer enchaîne plusieurs passes) : remise à zéro à la main
+  renderer.info.autoReset = false;
   const scene = new THREE.Scene();
   const modeInitial: ModeSalle = opts.modeInitial ?? "arene";
   scene.fog = new THREE.FogExp2(C.ground, CADRAGES[modeInitial].brouillard);
@@ -538,6 +543,8 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
   let partieVoulue = false;
   let apercuSource: "direct" | "simulation" | null = null;
   const BLOOM_BASE = 0.62;
+  let msApercu = 0;
+  let appelsImage = 0;
   let impulsionK = 0;
   /** durée de la dernière transition de mode (s), gardée après sa fin pour le crochet de développement */
   let derniereDuree = 0;
@@ -668,8 +675,10 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
     const enArene = modeDecor === "arene";
     if (enArene) { moveCars(dt); moveBuses(dt); }
     tigre?.maj(dt);
+    const tApercu = performance.now();
     rendu?.maj(dt, t);
     lisserJoueurs(dt);
+    msApercu += (performance.now() - tApercu - msApercu) * 0.05;
     bloom.strength = BLOOM_BASE + 0.45 * impulsionK;
 
     for (const m of markers) { const s = reduced ? 1 : 1 + 0.18 * Math.sin(t * 2.2 + m.phase); m.ring.scale.set(s, 1, s); }
@@ -711,7 +720,9 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
       m.el.style.opacity = vis ? "1" : "0";
       if (vis) m.el.style.transform = `translate(-50%,-100%) translate(${(((tmp.x + 1) / 2) * w).toFixed(1)}px, ${(((1 - tmp.y) / 2) * h).toFixed(1)}px)`;
     }
+    renderer.info.reset();
     composer.render();
+    appelsImage = renderer.info.render.calls;
     raf = requestAnimationFrame(frame);
   }
   raf = requestAnimationFrame(frame);
@@ -753,7 +764,7 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
           actif: apercuActif, mode: modeCamera, modeDecor, chargé: !!rendu,
           transition: { enCours: !!transition && transition.courbe === "mode", k: transition?.t ?? 1, duree: derniereDuree },
           camera: { pos: [camera.position.x, camera.position.y, camera.position.z], cible: [controls.target.x, controls.target.y, controls.target.z] },
-          joueurs: joueursMarq.size, sim, tigres: rendu?.etat().tigres ?? 0, source: apercuSource, appelsDessin: renderer.info.render.calls,
+          joueurs: joueursMarq.size, sim, tigres: rendu?.etat().tigres ?? 0, source: apercuSource, appelsDessin: appelsImage, msApercu: +msApercu.toFixed(3),
           modele: rendu?.etat().modele ?? null,
         };
       },

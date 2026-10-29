@@ -245,6 +245,9 @@ export function creerRenduApercu(ctx: ContexteRenduApercu): RenduApercu {
   const lissage = new Map<number, { x: number; z: number; cap: number }>();
   const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _p = new THREE.Vector3(), _s = new THREE.Vector3(), _c = new THREE.Color();
   const _axe = new THREE.Vector3(0, 1, 0);
+  const _rouge = new THREE.Color(ROUGE);
+  const vusTigres = new Set<number>();
+  const attaqueesTmp: number[] = [];
   // suivi des changements du direct pour le journal
   let mancheVue = -1, palierVu = -1, vivantsVus = -1;
 
@@ -322,7 +325,8 @@ export function creerRenduApercu(ctx: ContexteRenduApercu): RenduApercu {
     const tigres = modeModele === "zombies" ? courant.tigres : [];
     const n = Math.min(MAX_TIGRES, tigres.length);
     const a = 1 - Math.exp(-12 * dt);
-    const vus = new Set<number>();
+    const vus = vusTigres;
+    vus.clear();
     let k = 0;
     for (const tg of tigres) {
       if (k >= n) break;
@@ -353,7 +357,7 @@ export function creerRenduApercu(ctx: ContexteRenduApercu): RenduApercu {
     _m.compose(_p, _q, _s);
     fleches.setMatrixAt(i, _m);
     _c.setHex(st.couleur);
-    if (tg.mode === "fenetre") _c.lerp(_c.clone().setHex(ROUGE), 0.45 + 0.45 * Math.sin(t * 14));
+    if (tg.mode === "fenetre") _c.lerp(_rouge, 0.45 + 0.45 * Math.sin(t * 14));
     fleches.setColorAt(i, _c);
     // anneau : pulse à la sortie du sol, rouge qui clignote quand le tigre arrache les planches, discret sinon
     let r = st.echelle * 0.9, col = st.couleur;
@@ -369,7 +373,7 @@ export function creerRenduApercu(ctx: ContexteRenduApercu): RenduApercu {
 
   function majFenetres(t: number) {
     const planches = courant.fenetres;
-    const attaquees = fenetresAttaquees(courant.tigres, FENETRES);
+    const attaquees = fenetresAttaquees(courant.tigres, FENETRES, attaqueesTmp);
     FENETRES.forEach((f, i) => {
       const p = planches?.[i] ?? 6;
       const tx = -f.normale[1], tz = f.normale[0];

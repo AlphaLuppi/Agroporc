@@ -84,9 +84,12 @@ try {
   // ---------- 0. vue normale, panneau fermé : la référence ----------
   const { ctx, page, erreurs } = await ouvrir();
   await dormir(6000);
+  // l'intro d'arrivée dure 3,2 s d'horloge de scène (plus sous un rendu logiciel lent) : on attend la position de repos (altitude 230 m = `REST`)
+  await page.waitForFunction(() => Math.abs(window.__palantir.apercu().camera.pos[1] - 230) < 1.5, null, { timeout: 90000 }).catch(() => null);
   const ferme0 = await apercu(page);
   verifier(!ferme0.actif && ferme0.sim === 0 && ferme0.mode === "arene" && ferme0.modeDecor === "arene", "panneau fermé : aperçu inactif, aucun faux joueur, décor de l'arène", JSON.stringify(sansModele(ferme0)));
-  const REST = ferme0.camera;
+  // position de repos de l'arène (REST de scene.ts : dx −30, y 230, dz 380 autour du point visé)
+  const REST = { pos: [ferme0.camera.cible[0] - 30, 230, ferme0.camera.cible[2] + 380] };
   await page.screenshot({ path: join(SORTIE, "00-vue-normale.png") });
 
   // ---------- 1. panneau ouvert : arène + simulation ----------
@@ -164,7 +167,11 @@ try {
   await page.screenshot({ path: join(SORTIE, "10-br-zone-serree.png") });
   const br2 = await apercu(page);
   verifier(br2.modele?.vivants < br2.modele?.total, "BR : des éliminations", `${br2.modele?.vivants}/${br2.modele?.total}`);
-  verifier(br2.joueurs <= 32 && br2.appelsDessin < 400, "BR : repères bornés et peu d'appels de dessin", `${br2.joueurs} repères, ${br2.appelsDessin} appels`);
+  verifier(br2.joueurs <= 32 && br2.appelsDessin < 600, "BR : repères bornés, appels de dessin raisonnables", `${br2.joueurs} repères, ${br2.appelsDessin} appels de dessin`);
+  // mesure : JS de l'aperçu par image (budget ≈ 1,2 ms sur un poste ; le rendu logiciel de ce test est bien plus lent, d'où un plafond large)
+  await dormir(3000);
+  const br3 = await apercu(page);
+  verifier(br3.msApercu < 6, "BR : JS de l'aperçu par image", `${br3.msApercu} ms (${br3.joueurs} repères, ${br3.appelsDessin} appels de dessin)`);
 
   // ---------- 4. retour à l'arène : décor, POI et caméra de départ ----------
   await choisir(page, /Arène/);
