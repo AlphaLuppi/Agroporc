@@ -1,6 +1,7 @@
 /**
  * Lore « Opération Plat du Jour » du mode zombies v7 (PUR : textes et objectifs, sans DOM). Huit notes à lire avec E (mails internes,
- * post-it, rapports) dispersées dans les zones, texte d'introduction, objectif courant déduit de l'état de la partie.
+ * post-it, rapports) dispersées dans les zones, texte d'introduction, objectif courant déduit de l'état de la partie. (v8) Les notes restent du
+ * lore : quelques phrases y font allusion au grand secret (zombies-secret.ts), sans lieu, ni nombre, ni ordre.
  * Spec : docs/superpowers/specs/2026-10-28-zombies-bo1-design.md (« Lore « Opération Plat du Jour » et objectifs »)
  */
 import type { EtatPartieZombies } from "./protocole";
@@ -17,7 +18,8 @@ export const NOTES_LORE: readonly NoteLore[] = [
   {
     id: 1, titre: "Post-it jaune, écran 4", auteur: "— Kévin, stagiaire",
     texte: "Ils ont fermé les portes de l'open space « pour notre sécurité ». Le bruit derrière les fenêtres, ce n'est PAS la clim. " +
-      "Si quelqu'un lit ça : les planches tiennent si on les remet. Les tigres détestent les planches.",
+      "Les planches tiennent si on les remet. PS : ne décollez pas mes post-it. Le local technique me les dicte toute la nuit, " +
+      "et il ne se trompe jamais d'ordre.",
   },
   {
     id: 2, titre: "Mail interne — Objet : Pause Café", auteur: "De : Services généraux",
@@ -27,17 +29,17 @@ export const NOTES_LORE: readonly NoteLore[] = [
   {
     id: 3, titre: "Rapport d'incident n° 117", auteur: "Sécurité Agroparc",
     texte: "11 h 41 : un tigre est sorti de l'écran d'accueil du site des plats du jour. 11 h 43 : trois. 11 h 50 : on a arrêté de " +
-      "compter. Ils remontent du gazon de la cour. Ils sentent la note Goulaf de loin.",
+      "compter. 11 h 58 : toutes les pendules du Pôle se sont arrêtées en même temps, et personne n'a pensé à les remonter.",
   },
   {
     id: 4, titre: "Carnet du chef, page arrachée", auteur: "— Le chef du Bistrot Trèfle",
-    texte: "La Recette ultime : sel de Guérande (ici), herbes du Trèfle (jardinière de la cour Ouest), truffe noire (congélateur du " +
-      "labo, il faut du courant). Trente secondes au four. Ce qu'ils en ont fait au labo… je préfère ne pas le servir.",
+    texte: "Mon menu ne s'écrit que sur l'ardoise, et ma batterie de cuivre le chante, pourvu qu'on la fasse sonner dans l'ordre. " +
+      "Le fumet ne monte que quand le Truck livre. Ensuite le froid, ensuite le feu. Ce qu'ils en ont fait au labo… je préfère ne pas le servir.",
   },
   {
     id: 5, titre: "Bon de livraison du Truck Muche", auteur: "Livraison n° 0666",
     texte: "Contenu : « petits plats ». Le livreur a refusé d'ouvrir l'arrière. Note du livreur : « ça griffe, ça miaule, je klaxonne et " +
-      "je repars ». Quand vous entendez le klaxon, ils arrivent par paquets.",
+      "je repars ». Au dos, d'une autre main : « à la troisième livraison, le chef sera servi. Qu'il ne reparte pas. »",
   },
   {
     id: 6, titre: "Étiquette sur le disjoncteur", auteur: "Maintenance",
@@ -51,23 +53,22 @@ export const NOTES_LORE: readonly NoteLore[] = [
   },
   {
     id: 8, titre: "Journal du Pôle R&D, dernière entrée", auteur: "— Dr Gratin",
-    texte: "Le Micro-ondes Gratinator double tout ce qu'on y met : la puissance, le chargeur, le goût. Nous y avons mis le plat du jour. " +
-      "Les tigres y ont goûté. Objectif Goulaf 10/10 atteint. Que Dieu nous pardonne. Le four de la cuisine peut tout réparer, ou tout empirer.",
+    texte: "Le Micro-ondes Gratinator double tout ce qu'on y met : la puissance, le chargeur, le goût. Il ne se trompe qu'à une heure, " +
+      "celle que l'ampoule lui répète. Les tigres y ont goûté. Le four de la cuisine peut tout réparer, ou tout empirer. Le hachoir du chef, lui, " +
+      "a encore faim.",
   },
 ];
 
 export const noteLore = (id: number): NoteLore | null => NOTES_LORE.find((n) => n.id === id) ?? null;
 
-/** Objectif affiché au joueur, déduit de l'avancement de la partie (portes, courant, Pack-a-Punch, recette). */
-export function objectifZombies(e: Pick<EtatPartieZombies, "portes" | "courant" | "quete" | "pap">, papUtilise = false): string {
+/**
+ * Objectif affiché au joueur, déduit de l'avancement de la partie (portes, courant, Pack-a-Punch) : la progression ordinaire seulement. Le grand
+ * secret (v8, zombies-secret.ts) n'apparaît JAMAIS ici : une fois l'arme gratinée, il ne reste que « Survivre ».
+ */
+export function objectifZombies(e: Pick<EtatPartieZombies, "portes" | "courant" | "pap">, papUtilise = false): string {
   const ouverte = (id: string) => e.portes.some((p) => p.id === id && p.ouverte);
   if (!ouverte("D1") && !ouverte("D2")) return "Sortir de l'open space";
   if (!e.courant) return ouverte("D8") ? "Réarmer le disjoncteur du Local technique" : "Trouver le Local technique (cour Est)";
   if (!papUtilise) return ouverte("D9") ? "Gratiner une arme au Micro-ondes du Labo" : "Atteindre le Labo R&D (cour Ouest)";
-  if (!e.quete.faite) {
-    if (e.quete.cuissonFinT) return "Tenir pendant la cuisson de la Recette ultime";
-    if (e.quete.ingredients.length < 3) return `Réunir les ingrédients de la Recette ultime (${e.quete.ingredients.length} / 3)`;
-    return "Cuisiner la Recette ultime au four de la Cuisine";
-  }
   return "Survivre";
 }

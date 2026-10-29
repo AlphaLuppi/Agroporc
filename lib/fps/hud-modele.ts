@@ -403,11 +403,17 @@ export function memeEtatZombiesHud(a: EtatZombiesHud | null, b: EtatZombiesHud |
   if (a === b) return true;
   if (!a || !b) return false;
   const pas = (x: EtatZombiesHud) => (x.reanimation ? Math.round(x.reanimation.progression * 20) : -1);
+  // (v8) la mèche d'une grenade en cuisson se lit au dixième de seconde
+  const meche = (x: EtatZombiesHud) => (x.cuisson == null ? -1 : Math.round(x.cuisson * 35));
+  // (v8) la cinématique du grand secret avance par pas de 1/40
+  const cine = (x: EtatZombiesHud) => (x.cinematique == null ? -1 : Math.round(x.cinematique * 40));
   return a.argent === b.argent && a.manche === b.manche && a.restants === b.restants && a.vivants === b.vivants
     && a.gain?.n === b.gain?.n && a.refus?.n === b.refus?.n && a.achats === b.achats
     && a.aTerre === b.aTerre && a.elimine === b.elimine && a.terreFinT === b.terreFinT
     && a.reanimation?.cible === b.reanimation?.cible && pas(a) === pas(b) && a.partie === b.partie
-    && a.pvMax === b.pvMax && a.note === b.note && a.annonce?.n === b.annonce?.n && a.objectif === b.objectif && a.reparation === b.reparation;
+    && a.pvMax === b.pvMax && a.note === b.note && a.annonce?.n === b.annonce?.n && a.objectif === b.objectif && a.reparation === b.reparation
+    && (a.grenades ?? 0) === (b.grenades ?? 0) && (a.remontoirs ?? 0) === (b.remontoirs ?? 0) && meche(a) === meche(b)
+    && cine(a) === cine(b);
 }
 
 /** Record local des zombies : la manche la plus haute atteinte (et les tigres tués cette partie-là). */

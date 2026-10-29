@@ -5,6 +5,7 @@ import {
   DIFFICULTES, GAIN_CHEF, GAIN_MENUISIER, GAIN_NUKE, GAIN_PLANCHE, GAIN_TRUCK, GENRES_BONUS, ZOMBIES, allureTiree, degatsGriffe, delaiApparition,
   echelleZombie, estDifficulte, gainKill, gainTouche, mancheTruckSuivante, nbChefs, paquetBonus, plafondPlanches, premiereMancheTruck, probaDore,
   pvBase, pvPetit, pvTruck, pvZombie, rechargeGriffe, seuilBonusInitial, totalManche, totalTruck, typesManche, valeurAllure, vitesseAllure,
+  armementGriffe, estLivraison, partMiniTrucks, plafondPetits, rotationArmement, rotationZombie, separationZombie, typesTruck,
 } from "./zombies-vagues";
 
 describe("constantes ZOMBIES", () => {
@@ -20,13 +21,15 @@ describe("constantes ZOMBIES", () => {
     expect(echelleZombie(3)).toBe(1.5);
   });
 
-  it("un tigre ne marche jamais plus vite que le joueur (marche 9 m/s), le petit reste sous le sprint", () => {
+  it("un tigre ne marche jamais plus vite que le joueur (marche 9 m/s) ; (v8) le petit dépasse le sprint, le mini Truck plus encore", () => {
     for (const allure of [0, 1, 2, 3] as const) expect(vitesseAllure(allure, 0.9999)).toBeLessThan(MOUV.marche);
     expect(vitesseAllure(2, 0.5)).toBeCloseTo(8.4, 9);
     expect(vitesseAllure(0, 0)).toBeCloseTo(3.0 * 0.94, 9);
     expect(vitesseAllure(1, 1)).toBeCloseTo(6.2 * 1.06, 9);
-    expect(vitesseAllure(2, 0.5, 3)).toBe(10);
-    expect(vitesseAllure(2, 0.9999, 3)).toBeLessThan(MOUV.sprint);
+    expect(vitesseAllure(2, 0.5, 3)).toBe(13.5);
+    // on ne sème plus un petit en sprint (BO1 : le chien rattrape le joueur), seulement en glissade
+    expect(vitesseAllure(2, 0, 3)).toBeGreaterThan(MOUV.sprint);
+    expect(vitesseAllure(2, 0.5, 4)).toBe(14);
   });
 });
 
@@ -95,10 +98,12 @@ describe("vagues de Black Ops 1", () => {
     expect(Math.ceil(ZOMBIES.pvMaxGratin / degatsGriffe())).toBe(5);
     expect(degatsGriffe(2)).toBe(80);
     expect(degatsGriffe(3)).toBe(30);
+    // (v8) la morsure suit la difficulté ; le mini Truck ne griffe pas, il saute
+    expect([degatsGriffe(3, "entree"), degatsGriffe(3, "goulaf"), degatsGriffe(4)]).toEqual([23, 38, 0]);
     expect(degatsGriffe(0, "entree")).toBe(40);
     expect(degatsGriffe(0, "goulaf")).toBe(60);
     expect(rechargeGriffe(0)).toBe(1);
-    expect(rechargeGriffe(3)).toBe(0.8);
+    expect(rechargeGriffe(3)).toBe(0.45);
   });
 
   it("chefs à partir de la manche 10, tigre doré à partir de la 2", () => {
@@ -128,11 +133,39 @@ describe("vagues de Black Ops 1", () => {
 });
 
 describe("manches du Truck Muche (les chiens de BO1)", () => {
-  it("première manche 5, 6 ou 7, puis tous les 4 à 6 ; 6 petits par joueur puis 8 ; Truck de 2 500 PV par livraison", () => {
+  it("première manche 5, 6 ou 7, puis tous les 4 à 6 ; 8 ennemis par joueur puis 11 ; Truck de 2 500 PV par livraison", () => {
     expect([0, 0.4, 0.99].map(premiereMancheTruck)).toEqual([5, 6, 7]);
     expect([0, 0.5, 0.999].map((a) => mancheTruckSuivante(6, a))).toEqual([10, 11, 12]);
-    expect([totalTruck(1, 1), totalTruck(2, 3), totalTruck(3, 2)]).toEqual([6, 18, 16]);
+    // (v8) 8 par joueur puis 11 (nos joueurs vont 40 % plus vite que ceux de BO1), au moins 10 en solo
+    expect([totalTruck(1, 1), totalTruck(2, 3), totalTruck(3, 2), totalTruck(4, 4)]).toEqual([10, 24, 22, 44]);
     expect([pvTruck(1), pvTruck(3)]).toEqual([2500, 7500]);
+  });
+
+  it("(v8) plafond de 4 + 3 par joueur (BO1 : 2 chiens par joueur), sous les 24 tigres", () => {
+    expect([1, 2, 4, 8].map(plafondPetits)).toEqual([7, 10, 16, 24]);
+  });
+
+  it("(v8) petits vénères : morsure armée en 0,22 s, suivie à 5 rad/s, virage à 11 rad/s ; le tigre garde sa griffe lisible", () => {
+    expect([armementGriffe(3), rotationArmement(3), rotationZombie(3), separationZombie(3)]).toEqual([0.22, 5, 11, 0.9]);
+    expect([armementGriffe(0), rotationArmement(2), rotationZombie(0), separationZombie(1)]).toEqual([0.55, 0.6, 6, 1.4]);
+    // le mini Truck fonce : rapide, vire mal, ne griffe pas
+    expect([rotationZombie(4), separationZombie(4), echelleZombie(4)]).toEqual([2.5, 1.8, 3]);
+    expect([estLivraison(3), estLivraison(4), estLivraison(2)]).toEqual([true, true, false]);
+    expect(allureTiree(1, 0, "entree", 4)).toBe(2);
+  });
+
+  it("(v8) mini Trucks : la moitié des PV d'un petit, 25 % puis 35 % puis 50 % de la livraison, jamais les deux premiers", () => {
+    expect([1, 2, 3].map((k) => pvZombie(1, 4, "plat", k))).toEqual([200, 450, 650]);
+    expect([1, 2, 3, 7].map(partMiniTrucks)).toEqual([0.25, 0.35, 0.5, 0.5]);
+    const alea = aleaGraine(7);
+    for (const [numero, total] of [[1, 10], [2, 24], [3, 22], [5, 44]] as const) {
+      const types = typesTruck(numero, total, alea);
+      expect(types).toHaveLength(total);
+      expect(types.slice(0, 2)).toEqual([3, 3]);
+      expect(types.filter((x) => x === 4)).toHaveLength(Math.round(total * partMiniTrucks(numero)));
+      expect(types.every((x) => x === 3 || x === 4)).toBe(true);
+    }
+    expect(typesTruck(1, 1, alea)).toEqual([3]);
   });
 });
 

@@ -45,7 +45,7 @@ import ZoneVive, { useFileVive } from "./hud/ZoneVive";
 import { useEphemere, useEtatZombies, useProgressionReanimation } from "./hud/useEtatZombies";
 import { useEtatBR, useProgressionUsage } from "./hud/useEtatBR";
 import type { EntreesSpectateurBr } from "./hud/EcranMort";
-import { AnnonceZombies, AtoutsZombies, BonusActifs, IntroZombies, MancheCraie, NoteZombies, ObjectifZombies } from "./hud/PanneauZombies";
+import { AnnonceZombies, AtoutsZombies, BonusActifs, CinematiqueZombies, IntroZombies, MancheCraie, NoteZombies, ObjectifZombies } from "./hud/PanneauZombies";
 import { useHudLive } from "./hud/useHudLive";
 import { useMessagesVifs } from "./hud/useMessagesVifs";
 import { useRetoursTouche } from "./hud/useRetoursTouche";
@@ -146,8 +146,9 @@ export default function HudArene(p: PropsHudAreneBr) {
     toucheSpeciale: toucheDe(p.touches, "armeSpeciale", disposition), pousser: vive.pousser, refusAchat,
   });
   const synthese = useMemo(() => syntheseMatch(joueurs, monId, match?.objectif ?? JEU.objectifKills), [joueurs, monId, match?.objectif]);
-  // pas de frappe aérienne en Battle Royale (la série de la présence ne compte pas)
-  const frappeDisponible = !br && (synthese.serie >= 5 || !!hud?.frappeDisponible);
+  // la frappe aérienne n'existe que dans l'arène (en zombies, une grenade enchaîne vite 5 kills sans rien débloquer ; en Battle Royale,
+  // la série de la présence ne compte pas)
+  const frappeDisponible = !zombies && !br && (synthese.serie >= 5 || !!hud?.frappeDisponible);
 
   useToucheAppui(verrouille && frappeDisponible, p.touches.frappeAerienne, () => {
     setCarteForcee((prev) => !prev);
@@ -240,8 +241,11 @@ export default function HudArene(p: PropsHudAreneBr) {
       {combat && (
         <>
           {enVol ? null : hud.lunette
-            ? <Lunette zoomX={hud.zoomX} distanceVisee={hud.distanceVisee} niveau={hud.zoomNiveau} niveaux={hud.zoomNiveaux} toucheZoom={t("zoomLunette")} />
-            : <Viseur protege={hud.protege} conduite={conduite} couteau={couteau} recharge={hud.recharge} refAnneau={refAnneau} ecart={hud.ecartViseur} />}
+            ? <Lunette zoomX={hud.zoomX} distanceVisee={hud.distanceVisee} niveau={hud.zoomNiveau} niveaux={hud.zoomNiveaux} toucheZoom={t("zoomLunette")} thermique={hud.viseur === "thermique"} />
+            : <Viseur
+                protege={hud.protege} conduite={conduite} couteau={couteau} recharge={hud.recharge} refAnneau={refAnneau} ecart={hud.ecartViseur}
+                optique={hud.vise && (hud.viseur === "point_rouge" || hud.viseur === "holo") ? hud.viseur : null}
+              />}
           <RetoursTouche chiffres={chiffres} marqueur={marqueur} kill={kill} />
           {!zombies && !br && (
             <>
@@ -289,6 +293,7 @@ export default function HudArene(p: PropsHudAreneBr) {
       {zombies && !finZ && !pause && annonceZ && <AnnonceZombies texte={annonceZ.texte} genre={annonceZ.genre} />}
       {zombies && !finZ && !pause && introZ && <IntroZombies />}
       {zombies && !finZ && !pause && ez?.note != null && <NoteZombies id={ez.note} touche={t("interagir")} />}
+      {zombies && !finZ && ez?.cinematique != null && <CinematiqueZombies k={ez.cinematique} />}
 
       {/* Battle Royale : en vie, éliminations, palier, tempête (aussi pour le spectateur), vol et soins */}
       {br && !finBr && partieBr && (partieBr.phase === "decompte" || partieBr.phase === "vol" || partieBr.phase === "jeu") && (
@@ -351,7 +356,8 @@ export default function HudArene(p: PropsHudAreneBr) {
             arme={hud.arme} slot={hud.slot} slots={hud.slots} munitions={hud.munitions} chargeur={hud.chargeur} reserve={hud.reserve}
             recharge={hud.recharge} degainage={hud.degainage} tireInterdit={hud.tireInterdit} bonusVitesse={hud.bonusVitesse}
             toucheP={t("armePrincipale")} toucheS={t("armeSecondaire")} toucheC={t("couteau")} toucheSp={t("armeSpeciale")}
-            refBarre={refBarre} refTemps={refTemps}
+            refBarre={refBarre} refTemps={refTemps} ameliorees={hud.ameliorees} munitionsG={hud.munitionsG}
+            {...(zombies ? { grenades: ez?.grenades ?? 0, remontoirs: ez?.remontoirs ?? 0, cuisson: ez?.cuisson ?? null, toucheGrenade: t("grenade"), toucheRemontoir: t("remontoir") } : {})}
           />
         )}
       </CoinHud>

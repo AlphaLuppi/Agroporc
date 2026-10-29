@@ -212,6 +212,8 @@ export function useArene(pseudo: string, jeuRef: MutableRefObject<JeuHandle | nu
           setJoueurs(m.joueurs);
           setMatch(m.match);
           setErreur(null);
+          // (v8) session reprise après une micro-coupure : même id, même salle, partie de zombies conservée (son état suit) ; rien à effacer
+          if (m.reprise) connexionPerdue.current = false;
           if (connexionPerdue.current) {
             // reconnexion : le serveur nous a remis dans l'arène ; on redemande la salle (zombies, Battle Royale) si l'interface y était (le mode mémorisé
             // du navigateur, lui, ne fait que présélectionner la carte du choix du mode : il n'envoie rien). Une partie de Battle Royale en cours est perdue

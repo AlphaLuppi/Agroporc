@@ -128,6 +128,21 @@ export const FORME_TIGRE: readonly SphereForme[] = [
   { d: 0.09, h: 0.15, a: -0.28, r: 0.06, zone: "corps" },
 ];
 
+/**
+ * (v8, zombies) Mini Truck Muche, en m du modèle × son échelle (`ZOMBIES.miniTruck.echelle` = 3, soit 2,2 m de long, 0,7 m de large, 1 m
+ * de haut, le Truck Muche réduit à 0,3) : la cabine (zone « tete », le pare-brise) à l'avant, trois sphères de caisse derrière.
+ */
+export const FORME_MINI_TRUCK: readonly SphereForme[] = [
+  { d: 0, h: 0.15, a: 0.25, r: 0.13, zone: "tete" },
+  { d: 0, h: 0.18, a: 0.07, r: 0.14, zone: "corps" },
+  { d: 0, h: 0.18, a: -0.11, r: 0.14, zone: "corps" },
+  { d: 0, h: 0.17, a: -0.26, r: 0.13, zone: "corps" },
+];
+/** Forme de touche d'un ennemi du mode zombies selon son type (4 : mini Truck, sinon le tigre). */
+export function formeZombie(type: number): readonly SphereForme[] {
+  return type === 4 ? FORME_MINI_TRUCK : FORME_TIGRE;
+}
+
 /** Plus petit t ≥ 0 où le rayon (o, d normalisé) entre dans la sphère, Infinity sinon. */
 function rayonSphere(o: Vec3, d: Vec3, c: Vec3, r: number): number {
   const wx = o[0] - c[0], wy = o[1] - c[1], wz = o[2] - c[2];
@@ -147,11 +162,11 @@ function rayonSphere(o: Vec3, d: Vec3, c: Vec3, r: number): number {
  * (si `monde`) ? `marge` agrandit chaque sphère (tolérance du serveur : retard et mouvement du monstre). La tête prime si elle est touchée.
  */
 export function toucheTigre(
-  o: Vec3, d: Vec3, portee: number, p: Vec3, cap: number, echelle: number, monde: Monde | null, marge = 0,
+  o: Vec3, d: Vec3, portee: number, p: Vec3, cap: number, echelle: number, monde: Monde | null, marge = 0, forme: readonly SphereForme[] = FORME_TIGRE,
 ): { distance: number; zone: Zone } | null {
   let meilleur = Infinity;
   let zone: Zone = "corps";
-  for (const s of FORME_TIGRE) {
+  for (const s of forme) {
     const c = pointLocal(p, cap, echelle, s.d, s.h, s.a);
     const t = rayonSphere(o, d, c, s.r * echelle + marge);
     if (t === Infinity || t > portee) continue;

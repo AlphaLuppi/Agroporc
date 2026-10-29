@@ -162,11 +162,11 @@ describe("creerPersistanceBr", () => {
 });
 
 describe("routage de serveur-fps/src/index.ts (briques pures)", () => {
-  it("le serveur accepte les clients v7 (arène, zombies) et v8, rien d'autre", async () => {
+  it("le serveur accepte les clients v8 (arène, zombies) et v9, rien d'autre", async () => {
     const { VERSIONS_ACCEPTEES, VERSION_PROTOCOLE } = await import("./protocole");
-    expect(VERSIONS_ACCEPTEES).toContain(7);
+    expect(VERSIONS_ACCEPTEES).toContain(8);
     expect(VERSIONS_ACCEPTEES).toContain(VERSION_PROTOCOLE);
-    expect(VERSIONS_ACCEPTEES.includes(6)).toBe(false);
+    expect(VERSIONS_ACCEPTEES.includes(7)).toBe(false);
   });
 
   it("modeDeSalle retrouve le mode d'un client par la salle de la table SALLES (BR jamais pris pour l'arène)", async () => {

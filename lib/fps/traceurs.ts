@@ -39,6 +39,16 @@ export const TRACEURS: Record<ArmeFeuId, ParamsTraceur> = {
   lance_grenades: { vitesse: 180, longueur: 6, epaisseurPx: 4, vieMinS: 0.25, persistanceS: 0, couleur: "#ff9234" },
   bazooka: { vitesse: 260, longueur: 14, epaisseurPx: 5, vieMinS: 0.25, persistanceS: 0, couleur: "#ff4d4d" },
   fumigene: { vitesse: 140, longueur: 5, epaisseurPx: 4, vieMinS: 0.25, persistanceS: 0, couleur: "#d0d4dc" },
+  // (v8) armes du mode zombies seulement
+  baguette: { vitesse: 150, longueur: 5, epaisseurPx: 3, vieMinS: 0.25, persistanceS: 0, couleur: "#ffb86b" },
+  agrafeuse: { vitesse: 300, longueur: 9, epaisseurPx: 3, vieMinS: 0.25, persistanceS: 0, couleur: "#e8f0ff" },
+  photocopieuse: { vitesse: 220, longueur: 6, epaisseurPx: 3, vieMinS: 0.25, persistanceS: 0, couleur: "#fff2a8" },
+  essoreuse: { vitesse: 160, longueur: 6, epaisseurPx: 3, vieMinS: 0.25, persistanceS: 0, couleur: "#9fd8ff" },
+  // l'arbalète et la soufflerie ne tracent rien de balistique (projectile dessiné, souffle en particules) : traînée discrète
+  brochette: { vitesse: 70, longueur: 2, epaisseurPx: 3, vieMinS: 0.25, persistanceS: 0, couleur: "#d9a066" },
+  soufflerie: { vitesse: 120, longueur: 10, epaisseurPx: 8, vieMinS: 0.3, persistanceS: 0, couleur: "#bfe6ff" },
+  grille_pain: { vitesse: 500, longueur: 30, epaisseurPx: 5, vieMinS: 0.35, persistanceS: 0, couleur: "#8fd8ff" },
+  perforeuse: { vitesse: 230, longueur: 6, epaisseurPx: 3, vieMinS: 0.25, persistanceS: 0, couleur: "#ffe08a" },
 };
 
 export interface EtatTraceur {

@@ -26,7 +26,7 @@ export interface AnimZombie {
    * Avance de `dt` secondes avec la vitesse mesurée `vitesse` (m/s de l'arène), l'échelle du modèle `echelle` et le drapeau de griffe armée.
    * Renvoie vrai à l'image où la griffe vient d'être lancée (front montant du drapeau : le rendu y joue le son).
    */
-  maj(dt: number, vitesse: number, echelle: number, griffeArmee: boolean, avance?: number): boolean;
+  maj(dt: number, vitesse: number, echelle: number, griffeArmee: boolean, avance?: number, cadence?: number): boolean;
   pose(): PoseTigre;
   /** x du corps (repère du sol du modèle) à ramener à l'origine du groupe (`Tigre.appliquer`). */
   x(): number;
@@ -56,7 +56,7 @@ export function creerAnimZombie(graine = 1): AnimZombie {
   let vModele = 0;
 
   return {
-    maj(dt, vitesse, echelle, griffeArmee, avance = 0) {
+    maj(dt, vitesse, echelle, griffeArmee, avance = 0, cadence = 1) {
       if (!(dt > 0)) return false;
       t += dt;
       ctx.temps = t;
@@ -64,9 +64,11 @@ export function creerAnimZombie(graine = 1): AnimZombie {
       drapeauAvant = griffeArmee;
       // `avance` : retard (s) de l'affichage des tigres sur le serveur (interpolation) ; le geste part d'autant plus loin pour que la patte
       // claque à l'écran quand le serveur touche (jamais au-delà de la moitié de l'armement : il reste lisible)
-      if (lancee) { gesteActif = true; tGeste = Math.max(0, Math.min(avance, CONTACT_GRIFFE / 2)); }
+      // `cadence` : le geste est joué d'autant plus vite (la morsure du petit claque à `CONTACT_GRIFFE / cadence`)
+      const k = Math.max(1e-3, cadence);
+      if (lancee) { gesteActif = true; tGeste = Math.max(0, Math.min(avance * k, CONTACT_GRIFFE / 2)); }
       if (gesteActif) {
-        tGeste += dt;
+        tGeste += dt * k;
         if (tGeste >= griffe.duree) gesteActif = false;
       }
       poidsGeste = gesteActif ? Math.min(1, poidsGeste + MONTEE_GESTE * dt) : Math.max(0, poidsGeste - DESCENTE_GESTE * dt);

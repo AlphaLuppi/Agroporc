@@ -3,8 +3,10 @@
  * three ; le stockage est injecté). Une touche est un `KeyboardEvent.code` (position physique :
  * `KeyW` est le Z d'un clavier AZERTY) ou un bouton de souris `Souris0` (gauche), `Souris1`
  * (milieu), `Souris2` (droit), `Souris3` / `Souris4` (boutons latéraux).
- * Chaque action a deux emplacements ; une touche ne sert qu'à une action à la fois, sauf entre le contexte « mort » (`ACTIONS_MORT` :
- * passer le rejeu de la killcam) et le contexte « en vie » : on ne saute pas pendant qu'on regarde son rejeu, Espace sert aux deux.
+ * Chaque action a deux emplacements ; une touche ne sert qu'à une action à la fois, sauf entre contextes qui ne coexistent jamais (`conflit`) :
+ * le contexte « mort » (`ACTIONS_MORT` : passer le rejeu de la killcam) et le contexte « en vie » (on ne saute pas pendant qu'on regarde son
+ * rejeu, Espace sert aux deux) ; les actions propres à l'arène (`ACTIONS_ARENE` : sort, fumigène, frappe) et celles propres aux zombies
+ * (`ACTIONS_ZOMBIES` : grenades, v8), qui ne sont jamais actives ensemble : G invoque le tigre dans l'arène et lance une grenade en zombies.
  * Échap n'est jamais assignable : elle libère toujours la souris (menu pause).
  */
 
@@ -16,6 +18,7 @@ export type Action =
   | "carte" | "minimapCoin" | "passer"
   | "zoomLunette" | "parler" | "invoquer"
   | "fumigene" | "frappeAerienne"
+  | "grenade" | "remontoir"
   | "soigner" | "potion" | "lacher" | "spectateurSuivant" | "spectateurPrecedent";
 
 /**
@@ -34,7 +37,7 @@ export const ACTIONS_V1: readonly Action[] = [
 export const ACTIONS_NOUVELLES: readonly Action[] = [
   "armePrincipale", "armeSecondaire", "couteau", "armeSpeciale", "armePrecedente", "couteauRapide",
   "accroupi", "interagir", "siege", "carte", "minimapCoin", "passer", "zoomLunette", "parler", "invoquer",
-  "fumigene", "frappeAerienne",
+  "fumigene", "frappeAerienne", "grenade", "remontoir",
   "soigner", "potion", "lacher", "spectateurSuivant", "spectateurPrecedent",
 ];
 
@@ -44,14 +47,30 @@ export const ACTIONS_NOUVELLES: readonly Action[] = [
  * précédent / suivant » (mort), sans conflit puisque les deux ne sont jamais actives ensemble.
  */
 export const ACTIONS_MORT: readonly Action[] = ["passer", "spectateurSuivant", "spectateurPrecedent"];
-const contexteDe = (a: Action): "mort" | "vie" => (ACTIONS_MORT.includes(a) ? "mort" : "vie");
+/** Actions qui n'existent que dans l'arène (sort du tigre, fumigène, frappe aérienne) ou que dans le mode zombies (grenades, v8). */
+export const ACTIONS_ARENE: readonly Action[] = ["invoquer", "fumigene", "frappeAerienne"];
+export const ACTIONS_ZOMBIES: readonly Action[] = ["grenade", "remontoir"];
+type Contexte = "mort" | "vie" | "arene" | "zombies";
+const contexteDe = (a: Action): Contexte =>
+  ACTIONS_MORT.includes(a) ? "mort" : ACTIONS_ARENE.includes(a) ? "arene" : ACTIONS_ZOMBIES.includes(a) ? "zombies" : "vie";
+
+/**
+ * Deux actions se disputent-elles une touche ? Oui dans un même contexte, et entre « en vie » et un mode (on est en vie dans les deux) ;
+ * jamais entre « mort » et le reste, ni entre l'arène et les zombies (un seul mode à la fois).
+ */
+export function conflit(a: Action, b: Action): boolean {
+  const ca = contexteDe(a), cb = contexteDe(b);
+  if (ca === cb) return true;
+  if (ca === "mort" || cb === "mort") return false;
+  return ca === "vie" || cb === "vie";
+}
 
 /** Ordre de priorité du dédoublonnage : les actions v1, puis les nouvelles. */
 export const ACTIONS: readonly Action[] = [...ACTIONS_V1, ...ACTIONS_NOUVELLES];
 
 /** Actions qui peuvent rester sans touche sans que ce soit un problème (pas d'avertissement dans le menu pause). */
 export const ACTIONS_FACULTATIVES: readonly Action[] = [
-  "minimapCoin", "passer", "zoomLunette", "parler", "fumigene", "frappeAerienne", "soigner", "potion", "lacher", "spectateurSuivant", "spectateurPrecedent",
+  "minimapCoin", "passer", "zoomLunette", "parler", "fumigene", "frappeAerienne", "remontoir", "soigner", "potion", "lacher", "spectateurSuivant", "spectateurPrecedent",
 ];
 
 export const LIBELLES_ACTIONS: Record<Action, string> = {
@@ -87,12 +106,14 @@ export const LIBELLES_ACTIONS: Record<Action, string> = {
   lacher: "Battle Royale : lâcher l'arme en main",
   spectateurSuivant: "Spectateur : joueur suivant",
   spectateurPrecedent: "Spectateur : joueur précédent",
+  grenade: "Zombies : grenade (maintenir : cuire)",
+  remontoir: "Zombies : tigre à remontoir",
 };
 
 /** Regroupement du menu pause : chaque action y figure une seule fois. */
 export const GROUPES_ACTIONS: { titre: string; actions: Action[] }[] = [
   { titre: "Déplacement", actions: ["avant", "arriere", "gauche", "droite", "saut", "sprint", "accroupi"] },
-  { titre: "Combat", actions: ["tir", "visee", "recharger", "zoomLunette", "invoquer", "fumigene", "frappeAerienne"] },
+  { titre: "Combat", actions: ["tir", "visee", "recharger", "zoomLunette", "invoquer", "fumigene", "frappeAerienne", "grenade", "remontoir"] },
   { titre: "Équipement", actions: ["armePrincipale", "armeSecondaire", "couteau", "armeSpeciale", "armePrecedente", "couteauRapide"] },
   { titre: "Véhicule", actions: ["interagir", "siege"] },
   { titre: "Battle Royale", actions: ["soigner", "potion", "lacher", "spectateurSuivant", "spectateurPrecedent"] },
@@ -139,7 +160,10 @@ export function touchesParDefaut(): ConfigTouches {
     invoquer: ["KeyG", null],
     fumigene: ["KeyB", null],
     frappeAerienne: ["KeyK", null],
-    // Battle Royale (v8) : H, J et U sont libres ; les flèches du spectateur ne gênent pas « gauche » / « droite » (contexte mort)
+    // (v8, zombies) G comme dans Black Ops ; partagés avec le sort et le fumigène de l'arène (jamais actifs ensemble, cf. `conflit`)
+    grenade: ["KeyG", null],
+    remontoir: ["KeyB", null],
+    // Battle Royale (v9) : H, J et U sont libres ; les flèches du spectateur ne gênent pas « gauche » / « droite » (contexte mort)
     soigner: ["KeyH", null],
     potion: ["KeyJ", null],
     lacher: ["KeyU", null],
@@ -163,22 +187,24 @@ export function codeValide(code: unknown): code is string {
 export function normaliser(brut: unknown): ConfigTouches {
   const defaut = touchesParDefaut();
   const src: Record<string, unknown> = brut && typeof brut === "object" ? (brut as Record<string, unknown>) : {};
-  const vusParContexte = { vie: new Set<string>(), mort: new Set<string>() };
+  // touche → actions qui l'ont déjà prise ; une touche est prise pour `a` si l'une d'elles est en conflit avec `a`
+  const prises = new Map<string, Action[]>();
+  const prise = (c: string, a: Action): boolean => (prises.get(c) ?? []).some((b) => conflit(a, b));
+  const prendre = (c: string, a: Action): void => { const l = prises.get(c); if (l) l.push(a); else prises.set(c, [a]); };
   const res = {} as ConfigTouches;
   for (const a of ACTIONS) {
-    const vus = vusParContexte[contexteDe(a)];
     const v = src[a];
     const valide = Array.isArray(v) && v.length === 2 && v.every((c) => c === null || codeValide(c));
     if (!valide && ACTIONS_NOUVELLES.includes(a)) {
-      const libres = defaut[a].filter((c): c is string => c !== null && !vus.has(c));
+      const libres = defaut[a].filter((c): c is string => c !== null && !prise(c, a));
       res[a] = [libres[0] ?? null, libres[1] ?? null];
-      for (const c of libres) vus.add(c);
+      for (const c of libres) prendre(c, a);
       continue;
     }
     const lu: Emplacements = valide ? [v[0] as string | null, v[1] as string | null] : defaut[a];
     res[a] = lu.map((c) => {
-      if (c === null || vus.has(c)) return null;
-      vus.add(c);
+      if (c === null || prise(c, a)) return null;
+      prendre(c, a);
       return c;
     }) as Emplacements;
   }
@@ -232,8 +258,8 @@ export function assigner(cfg: ConfigTouches, action: Action, slot: 0 | 1, code: 
   for (const a of ACTIONS) {
     res[a] = cfg[a].map((c, i) => {
       if (a === action && i === slot) return code;
-      // un contexte ne dépossède pas l'autre (Espace : saut en vie, rejeu de la killcam à la mort)
-      if (code !== null && c === code && contexteDe(a) === contexteDe(action)) {
+      // un contexte ne dépossède pas l'autre (Espace : saut en vie, rejeu de la killcam à la mort ; G : sort de l'arène, grenade en zombies)
+      if (code !== null && c === code && conflit(a, action)) {
         if (a !== action) depossedee = a;
         return null;
       }
@@ -243,7 +269,7 @@ export function assigner(cfg: ConfigTouches, action: Action, slot: 0 | 1, code: 
   return { cfg: res, depossedee };
 }
 
-/** Index inverse : touche → actions (une seule en pratique, cf. `assigner`). */
+/** Index inverse : touche → actions (plusieurs seulement entre contextes qui ne coexistent pas, cf. `conflit`). */
 export function indexTouches(cfg: ConfigTouches): Map<string, Action[]> {
   const m = new Map<string, Action[]>();
   for (const a of ACTIONS) {

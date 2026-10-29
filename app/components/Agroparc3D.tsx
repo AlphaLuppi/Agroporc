@@ -116,7 +116,7 @@ const HUD_REPOS: HudEtat = {
   pv: 100, bouclier: 0, arme: "fusil_assaut", slot: "principale",
   slots: "principale:fusil_assaut:30:30:-1|secondaire:pistolet:12:12:-1|couteau:couteau:0:0",
   equipSuivant: "fusil_assaut|pistolet", munitions: 30, chargeur: 30, reserve: -1, recharge: false, degainage: false,
-  vise: false, lunette: false, zoomX: 0, zoomNiveau: -1, zoomNiveaux: 0, ecartViseur: 0, distanceVisee: -1, mur: false, mort: false, reapparitionDans: 0, protege: false,
+  vise: false, lunette: false, zoomX: 0, zoomNiveau: -1, zoomNiveaux: 0, viseur: "fer", ameliorees: "", munitionsG: -1, ecartViseur: 0, distanceVisee: -1, mur: false, mort: false, reapparitionDans: 0, protege: false,
   protegeRestant: 0, verrouille: true, connecte: true, entracte: false, accroupi: false, glisse: false, regen: false,
   bonusVitesse: 1, invite: "", inviteDetail: "", vehicule: false, vehiculeId: -1, siege: -1, tireInterdit: false,
   embarquement: false, killcam: -1, killcamPhase: "", sort: false, voix: "", voixParlants: "", titan: false,
@@ -674,6 +674,13 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
       monde: () => jeuRef.current?.debug.monde() ?? null,
       tigres: (mesures) => jeuRef.current?.debug.tigres(mesures) ?? null,
       invoquer: () => jeuRef.current?.debug.invoquer() ?? false,
+      tuerZombie: (id, o) => jeuRef.current?.debug.tuerZombie(id, o) ?? false,
+      simuler: (m) => jeuRef.current?.debug.simuler(m),
+      essayerArme: (arme, ameliore) => jeuRef.current?.debug.essayerArme?.(arme, ameliore) ?? false,
+      effetArme: (genre, points) => jeuRef.current?.debug.effetArme?.(genre, points),
+      secret: () => jeuRef.current?.debug.secret?.() ?? null,
+      eclair: (p, dansS) => jeuRef.current?.debug.eclair(p, dansS) ?? false,
+      ambianceTruck: (on) => jeuRef.current?.debug.ambianceTruck(on) ?? false,
       forcerHud: (partiel) => setHudForce(partiel ? { ...partiel } : null),
       voix: (mode) => {
         const j = jeuRef.current;
@@ -1123,6 +1130,20 @@ declare global {
       tigres(mesures?: boolean): Record<string, unknown> | null;
       /** Lance le sort d'invocation comme la touche « invoquer » (false sans charge). */
       invoquer(): boolean;
+      /** Zombies : joue côté client la mort désarticulée du tigre `id` (numéro de `z<n>`) avec cette arme, zone, cause, origine (captures). */
+      tuerZombie(id: number, o?: Parameters<JeuHandle["debug"]["tuerZombie"]>[1]): boolean;
+      /** (v8) Traite un message comme s'il venait du serveur, côté client seulement (captures : Happy hour, Micro-ondes, portes). */
+      simuler(m: Parameters<JeuHandle["debug"]["simuler"]>[0]): void;
+      /** Zombies (v8) : met cette arme en main côté client seulement, améliorée ou non (captures du modèle, du camouflage, du HUD). */
+      essayerArme(arme: Parameters<NonNullable<JeuHandle["debug"]["essayerArme"]>>[0], ameliore?: boolean): boolean;
+      /** Zombies (v8) : dessine un arc électrique par ces points, ou une bourrasque de Soufflerie depuis l'œil (captures). */
+      effetArme(genre: "arc" | "souffle", points?: [number, number, number][]): void;
+      /** (zombies, v8) grand secret : état public, heure des pendules, midi, positions des objets du décor (null hors partie) */
+      secret(): Record<string, unknown> | null;
+      /** (zombies, v8) la foudre d'une manche du Truck frappera `p` dans `dansS` s, côté client seulement (captures) */
+      eclair(p: [number, number, number], dansS?: number): boolean;
+      /** (zombies, v8) brouillard et ciel d'une manche du Truck allumés ou levés, côté client seulement (captures) */
+      ambianceTruck(on: boolean): boolean;
       /** Superpose un état partiel au HUD (base : repos si le jeu n'émet rien) ; `null` rend la main au jeu. */
       forcerHud(partiel: Partial<HudEtat> | null): void;
       /** Active le chat vocal dans ce mode (null : le coupe), comme la case du menu pause. */

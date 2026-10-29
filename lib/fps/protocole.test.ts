@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  ARMES, ARMES_MELEE, ARMES_PRINCIPALES, ARMES_SECONDAIRES, ARMES_SECONDAIRES_ZOMBIES, ARMES_SPECIALES, ARMES_UNIQUES, ECHELLE_AVATAR, EQUIPEMENT_DEFAUT, JEU, OEIL_SIEGE, PAS_SNAP_ZOMBIE, PLAFONDS,
+  ARMES, ARMES_MELEE, ARMES_PRINCIPALES, ARMES_PRINCIPALES_ZOMBIES, ARMES_SECONDAIRES, ARMES_SECONDAIRES_ZOMBIES, ARMES_SPECIALES, ARMES_UNIQUES, ECHELLE_AVATAR, EQUIPEMENT_DEFAUT, JEU, OEIL_SIEGE, PAS_SNAP_ZOMBIE, PLAFONDS,
   MODES_SALLE, SILHOUETTE, SILHOUETTE_ACCROUPIE, SLOTS, VERSIONS_ACCEPTEES, VERSION_PROTOCOLE, copierEquipement, decoderZombies, encoderZombies, estIdZombie, estMelee, idZombie,
   oeilDe, silhouetteDe, type ZombieSnap,
   type AvionBr, type CauseMort, type EtatJoueurSnap, type EtatPartieBr, type MessageClient, type MessageServeur, type ModeSalle, type PassageAvion, type TigreLargueSnap,
@@ -8,10 +8,10 @@ import {
 import { STATS } from "./armes";
 
 describe("armes", () => {
-  it("ARMES : 15 armes sans doublon (le pistolet à rayons des zombies et les armes uniques du bus C3 compris), listes de catégories disjointes", () => {
-    expect(ARMES).toHaveLength(15);
+  it("ARMES : 23 armes sans doublon (les 9 armes des zombies et les armes uniques du bus C3 compris), listes de catégories disjointes", () => {
+    expect(ARMES).toHaveLength(23);
     expect(new Set(ARMES).size).toBe(ARMES.length);
-    const toutes = [...ARMES_PRINCIPALES, ...ARMES_SECONDAIRES, ...ARMES_SECONDAIRES_ZOMBIES, ...ARMES_SPECIALES, ...ARMES_UNIQUES];
+    const toutes = [...ARMES_PRINCIPALES, ...ARMES_PRINCIPALES_ZOMBIES, ...ARMES_SECONDAIRES, ...ARMES_SECONDAIRES_ZOMBIES, ...ARMES_SPECIALES, ...ARMES_UNIQUES];
     expect(new Set(toutes).size).toBe(toutes.length);
     expect([...ARMES].sort()).toEqual([...toutes].sort());
     expect(ARMES).not.toContain("couteau");
@@ -91,8 +91,8 @@ describe("silhouette", () => {
 });
 
 describe("constantes", () => {
-  it("version 8 du protocole (événements de la v4, tigres largués de la v5, zombies et épée, Battle Royale)", () => {
-    expect(VERSION_PROTOCOLE).toBe(8);
+  it("version 9 du protocole (événements de la v4, tigres largués de la v5, zombies et épée, réseau, carte, grenades et morts désarticulées de la v8, Battle Royale de la v9)", () => {
+    expect(VERSION_PROTOCOLE).toBe(9);
   });
 
   it("chaîne de plafonds de vitesse : sprint couteau ≤ plafond horizontal ≤ plafond déclaré", () => {
@@ -114,9 +114,9 @@ describe("constantes", () => {
 });
 
 describe("protocole v6 (zombies)", () => {
-  it("version courante 8, le serveur accepte aussi le 7", () => {
-    expect(VERSION_PROTOCOLE).toBe(8);
-    expect([...VERSIONS_ACCEPTEES]).toEqual([7, 8]);
+  it("version courante 9, le serveur accepte aussi le 8", () => {
+    expect(VERSION_PROTOCOLE).toBe(9);
+    expect([...VERSIONS_ACCEPTEES]).toEqual([8, 9]);
     expect(VERSIONS_ACCEPTEES).toContain(VERSION_PROTOCOLE);
   });
 
@@ -130,7 +130,7 @@ describe("protocole v6 (zombies)", () => {
   });
 
   it("les armes à feu (uniques du bus C3 comprises) (l'épée n'en est pas une)", () => {
-    expect(ARMES).toHaveLength(15);
+    expect(ARMES).toHaveLength(23);
     expect(ARMES).not.toContain("epee");
   });
 

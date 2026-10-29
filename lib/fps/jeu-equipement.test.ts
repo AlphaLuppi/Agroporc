@@ -193,6 +193,17 @@ describe("ControleurArmes : épée", () => {
 });
 
 describe("tir et recharge", () => {
+  it("(v8) une apparition `garder` (relève, reprise) garde les chargeurs ; une vraie apparition les remplit", () => {
+    const c = new ControleurArmes(equip(), "secondaire");
+    tirer(c, 5, 0);
+    const reste = c.munitions();
+    expect(reste).toBe(STATS.pistolet.chargeur - 5);
+    c.appliquerServeur({ t: "apparition", equip: equip(), main: "secondaire", munSpeciale: 0, garder: true } as never, 5000);
+    expect(c.munitions()).toBe(reste);
+    c.appliquerServeur({ t: "apparition", equip: equip(), main: "secondaire", munSpeciale: 0 } as never, 6000);
+    expect(c.munitions()).toBe(STATS.pistolet.chargeur);
+  });
+
   it("peutTirer faux sans munitions ou en recharge", () => {
     const c = new ControleurArmes(equip(), "secondaire");
     const t = tirer(c, STATS.pistolet.chargeur, 0);

@@ -927,7 +927,7 @@ describe("MenuPause et aide en Battle Royale", () => {
 
 const HUD_BR: HudEtat = {
   pv: 100, bouclier: 0, arme: "couteau", slot: "couteau", slots: "couteau:couteau:0:0", equipSuivant: "mitraillette|pistolet",
-  munitions: 0, chargeur: 0, reserve: -1, recharge: false, degainage: false, vise: false, lunette: false, zoomX: 0, zoomNiveau: -1, zoomNiveaux: 0, ecartViseur: 0,
+  munitions: 0, munitionsG: 0, chargeur: 0, reserve: -1, recharge: false, degainage: false, vise: false, viseur: "fer", ameliorees: "", lunette: false, zoomX: 0, zoomNiveau: -1, zoomNiveaux: 0, ecartViseur: 0,
   distanceVisee: -1, mur: false, mort: false, reapparitionDans: 0, protege: false, protegeRestant: 0, verrouille: true, connecte: true, entracte: false, accroupi: false,
   glisse: false, regen: false, bonusVitesse: 1.3, invite: "", inviteDetail: "", vehicule: false, vehiculeId: -1, siege: -1, tireInterdit: false, embarquement: false,
   killcam: -1, killcamPhase: "", sort: false, voix: "", voixParlants: "", titan: false, mode: "br", phaseVol: "sol", altitude: 0, vitesseChute: 0, bandages: 3, potions: 1,

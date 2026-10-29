@@ -311,7 +311,7 @@ describe("pointsButin", () => {
   it("comptes par pool consignés (REMESURER si scene.json, les rectangles inscrits ou les pas des grilles changent)", () => {
     const comptes = Object.fromEntries((["interieur", "toit", "facade", "route"] as const).map((p) => [p, parPool(p).length]));
     // mesuré le 2026-10-29 : 16 bâtiments procéduraux sur scene.json (index 16, 18, 32, 33, 45, 61, 64, 67, 68, 69, 86, 98, 115, 122, 126, 131 ; le 13, dont la porte donne à moins d'un mètre sur les murs pleins de 12 et 45, est écarté)
-    expect(comptes).toEqual({ interieur: 553, toit: 1012, facade: 589, route: 612 });
+    expect(comptes).toEqual({ interieur: 557, toit: 1012, facade: 589, route: 612 });
     // l'intérieur couvre le quota de 50 joueurs : 0,45 × 450 objets ≈ 202
     expect(comptes.interieur).toBeGreaterThanOrEqual(Math.ceil(0.45 * 450));
     // l'ordre est celui des pools

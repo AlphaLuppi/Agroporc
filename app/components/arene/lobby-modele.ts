@@ -190,7 +190,7 @@ export const REGLES_ZOMBIES: string[] = [
   "Boîte mystère : 950 $, elle déménage quand sort la peluche. Tigres dorés : ils portent un bonus (Munitions max, Insta-kill, Double points…).",
   `À terre : un coéquipier vous relève en maintenant la touche d'action ${ZOMBIES.reanimationS} s à moins de ${formatDecimal(ZOMBIES.reanimationPortee)} m (1,5 s avec la Pause Café), sinon éliminé au bout de ${Math.round(ZOMBIES.terreMs / 1000)} s. Seul, la Pause Café vous relève 3 fois.`,
   `Munitions limitées : ${ZOMBIES.ravitaillementChargeurs} chargeurs par arme (${ZOMBIES.ravitaillementChargeursAmeliore} une fois gratinée), rechargés à moitié prix aux murs.`,
-  "Toutes les 4 à 6 manches, le Truck Muche livre des petits tigres. Lisez les notes : elles mènent à la Recette ultime.",
+  "Toutes les 4 à 6 manches, le Truck Muche livre des petits tigres. Lisez les notes : le chef a laissé plus qu'un menu.",
 ];
 
 /** Phrase affichée quand une partie est déjà lancée. */
@@ -198,9 +198,11 @@ export const TEXTE_PARTIE_EN_COURS = "Partie en cours : vous entrerez à la proc
 
 /** Aide des commandes du lobby des zombies : celles de l'arène, la touche d'action servant à acheter, ouvrir et réanimer. */
 export function commandesLobbyZombies(cfg: ConfigTouches, disposition?: ReadonlyMap<string, string> | null): CommandeLobby[] {
-  return commandesLobby(cfg, disposition).map((c) => (
+  const lignes = commandesLobby(cfg, disposition).map((c) => (
     c.libelle === "Monter dans une voiture" ? { ...c, libelle: "Acheter, ouvrir une porte, réanimer (maintenir)" } : c
   ));
+  // (v8) grenades de BO1 : 2 par manche, maintenir la touche « cuit » la grenade
+  return [...lignes, { touches: toucheDe(cfg, "grenade", disposition), libelle: "Grenade (maintenir : cuire la mèche)" }];
 }
 
 export interface SituationLobbyZombies {

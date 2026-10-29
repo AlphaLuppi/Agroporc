@@ -61,3 +61,20 @@ export function messageSalons(
   }
   return m;
 }
+
+/**
+ * (v8) Codes de fermeture d'un départ volontaire : 1000 (le client ferme la vue, `CODE_DEPART_VOLONTAIRE` de reseau.ts), 1001 (onglet fermé, page
+ * rechargée), 1005 (fermeture sans code, demandée par le client). Une coupure réseau donne 1006 (ou la coupure par `terminate()` du ping).
+ */
+export const CODES_DEPART_VOLONTAIRE: readonly number[] = [1000, 1001, 1005];
+
+/**
+ * (v8) Une connexion fermée doit-elle être gardée `REPRISE_MS` pour une reprise ? Seulement un membre de la salle des zombies dont la partie est
+ * en cours (pause ou manche : il y a quelque chose à reprendre) et dont la fermeture n'est pas un départ volontaire. Au lobby, un fantôme
+ * resterait hôte (lui seul lance la partie) et compterait dans les salons ; après un départ volontaire, le client n'a plus de session.
+ */
+export function garderPourReprise(e: { salleZombies: boolean; membre: boolean; code: number; phase: PhaseZombies | null }): boolean {
+  if (!e.salleZombies || !e.membre) return false;
+  if (e.phase !== "pause" && e.phase !== "manche") return false;
+  return !CODES_DEPART_VOLONTAIRE.includes(e.code);
+}

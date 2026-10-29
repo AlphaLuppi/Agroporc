@@ -173,6 +173,8 @@ export interface EtatDestruction {
   texture: THREE.DataTexture;
   /** Avancement (0..1) du bâtiment `id` ; la texture n'est envoyée qu'au rendu suivant. */
   poser(id: number, avancement: number): void;
+  /** (v8) Efface le bâtiment `id` sans gravats (porte ouverte des zombies) : il passe sous le sol ; `poser(id, 0)` le relève. */
+  effacer(id: number): void;
   /** Brèche du bâtiment `id` (rayon 0 : aucune). */
   breche(id: number, x: number, z: number, r: number): void;
   dispose(): void;
@@ -180,6 +182,8 @@ export interface EtatDestruction {
 
 /** Hauteur gardée par un bâtiment à terre (part de sa hauteur) : un tas de gravats. */
 const RESTE_RUINE = 0.05;
+/** Avancement réservé d'un bâtiment effacé (`effacer`) : le nuanceur le pose sous le sol. */
+const EFFACE = 2;
 
 export function creerEtatDestruction(n: number): EtatDestruction {
   const nb = Math.max(1, n);
@@ -195,6 +199,11 @@ export function creerEtatDestruction(n: number): EtatDestruction {
       const v = Math.min(1, Math.max(0, avancement));
       if (data[id * 4] === v) return;
       data[id * 4] = v;
+      texture.needsUpdate = true;
+    },
+    effacer(id) {
+      if (id < 0 || id >= nb || data[id * 4] === EFFACE) return;
+      data[id * 4] = EFFACE;
       texture.needsUpdate = true;
     },
     breche(id, x, z, r) {
@@ -326,13 +335,14 @@ function brancherShader(mat: THREE.Material, o: OptionsShader): void {
     if (etat) debut += `vec4 etatB = texture2D(uDetruits, vec2((aBat + 0.5) / ${n.toFixed(1)}, 0.5));\nvBreche = etatB;\n`;
     debut += `vMondeB = (${o.instance ? "modelMatrix * instanceMatrix" : "modelMatrix"} * vec4(transformed, 1.0)).xyz;\n`;
     if (o.facade) debut += "vMur = aMur;\nvHaut = aHaut;\nvBatF = aBat;\n";
-    if (etat && !o.instance) debut += `transformed.y *= mix(1.0, ${RESTE_RUINE.toFixed(2)}, etatB.r);\n`;
+    // effacé (R > 1,5) : tout le bâtiment passe juste sous le sol, sans tas de gravats
+    if (etat && !o.instance) debut += `transformed.y = etatB.r > 1.5 ? -0.05 : transformed.y * mix(1.0, ${RESTE_RUINE.toFixed(2)}, etatB.r);\n`;
     sh.vertexShader = `${declV.join("\n")}\n${sh.vertexShader}`.replace("#include <begin_vertex>", () => debut);
     if (etat && o.instance) {
       // l'instance pose le bâtiment sur son toit : l'écrasement s'applique au monde, après la matrice d'instance
       sh.vertexShader = sh.vertexShader.replace("#include <project_vertex>", () => `vec4 mvPosition = vec4(transformed, 1.0);
 mvPosition = instanceMatrix * mvPosition;
-mvPosition.y *= mix(1.0, ${RESTE_RUINE.toFixed(2)}, etatB.r);
+mvPosition.y = etatB.r > 1.5 ? -0.05 : mvPosition.y * mix(1.0, ${RESTE_RUINE.toFixed(2)}, etatB.r);
 mvPosition = modelViewMatrix * mvPosition;
 gl_Position = projectionMatrix * mvPosition;`);
     }
@@ -343,7 +353,9 @@ gl_Position = projectionMatrix * mvPosition;`);
     let main = "void main() {\n";
     if (o.facade) main += "float fwuB = fwidth(vMur.x);\nfloat fwyB = fwidth(vMondeB.y);\n";
     if (etat) {
-      main += `float bordB = 0.0;
+      // (v8) bâtiment effacé : rien n'est dessiné (une porte ouverte des zombies ne laisse ni seuil ni arête)
+      main += `if (vBreche.x > 1.5) discard;
+float bordB = 0.0;
 if (vBreche.w > 0.0) {
   vec2 dB = vMondeB.xz - vBreche.yz;
   float aB = atan(dB.y, dB.x);
@@ -362,7 +374,7 @@ if (vBreche.w > 0.0) {
       .replace("void main() {", () => main)
       .replace("#include <opaque_fragment>", () => fin);
   };
-  mat.customProgramCacheKey = () => `batiment-effondrable-3-${n}-${etat ? "d" : "-"}${o.facade ? "f" : "-"}${o.instance ? "i" : "-"}${o.motif ?? "-"}`;
+  mat.customProgramCacheKey = () => `batiment-effondrable-4-${n}-${etat ? "d" : "-"}${o.facade ? "f" : "-"}${o.instance ? "i" : "-"}${o.motif ?? "-"}`;
 }
 
 /** Équipements de toit : une boîte unitaire instanciée (clim, édicules, antennes) et ses arêtes, un tirage par bâtiment. */

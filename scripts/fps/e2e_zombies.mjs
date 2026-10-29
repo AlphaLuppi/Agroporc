@@ -2,7 +2,7 @@
 /**
  * Test de bout en bout du mode zombies (tigres) de l'arène FPS (vue Palantir) : DEUX navigateurs Chromium headless contre un `serveur-fps` local
  * (variables d'essai : argent 3 000 $, 3 tigres à la manche 1, décompte et pauses de 20 s, griffe de 5, jamais de manche du Truck Muche) et un `next dev`
- * local, pilotés par `window.__arene`. Carte « Service de midi » (v7) : départ dans l'open space du Pôle R&D.
+ * local, pilotés par `window.__arene`. Carte « Service de midi » (v8) : départ dans l'open space du Pôle R&D.
  *
  * Scénario (chaque étape imprime OK / ÉCHEC, des captures sont prises en route) :
  *  1. vue 3D (code « myrtille »), les trois cartes de mode (arène, zombies, Battle Royale), choix du mode « Zombies tigres » par les deux joueurs,
@@ -11,11 +11,14 @@
  *  3. achat d'une arme au mur (le fusil à pompe de l'open space, 500 $) avant l'arrivée des tigres : débit confirmé par le serveur
  *  4. HUD de manche et d'argent, des tigres dans le snap des deux joueurs
  *  5. un tigre abattu au pistolet : touches confirmées par le serveur, argent crédité (touches puis kill)
- *  6. un joueur à terre (griffes), relevé par l'autre en maintenant E (3 s) : écran « À terre », aucun message `mort`, compteur de relèves
+ *  6. un joueur à terre (griffes), relevé par l'autre en maintenant E (3 s) : écran « À terre », aucun message `mort`, compteur de relèves,
+ *     relève sans téléportation (v8 : le joueur relevé bouge de 0,5 m au plus)
  *  7. coups de couteau sur les tigres (cibles « z<n> », 150 dégâts : un coup tue à la manche 1), fin de la manche 1 sans bonus (BO1), pause
  *  8. pendant la pause : achat de la porte D1 (salle de pause) : message `batiments` reçu par les deux, puis du mini Uzi derrière (il remplace le pistolet)
- *  9. manche 2 : partie perdue quand les deux sont à terre, bilan affiché, « Rejouer » ramène au lobby, la salle repasse au lobby
- * 10. aucune erreur JavaScript ni `erreur` du serveur, aucune WebSocket coupée en partie
+ *  9. manche 2 (v8) : une grenade lancée par une fenêtre tue le tigre qui en arrache les planches (souffle, stock décompté), puis E maintenu
+ *     devant une fenêtre abîmée repose une planche (`reparer`, `zevt{planche}`)
+ * 10. partie perdue quand les deux sont à terre, bilan affiché, « Rejouer » ramène au lobby, la salle repasse au lobby
+ * 11. aucune erreur JavaScript ni `erreur` du serveur, aucune WebSocket coupée en partie
  *
  * Usage : node scripts/fps/e2e_zombies.mjs        (Node 22 ; Playwright : `npm i --no-save playwright` ou PLAYWRIGHT_DIR=/dossier/avec/node_modules)
  * Variables : E2E_OUT (captures en 1280×720, défaut <tmp>/pdj-e2e-zombies), E2E_URL (Next déjà lancé : on ne le démarre pas),
@@ -32,8 +35,9 @@
  * jeu (les tigres n'apparaissent que dans les zones occupées et leurs voisines, et un tigre entré ne ressort pas par une fenêtre : le serveur ne contrôle
  * que les bornes et la vitesse) et sert d'appât à l'étape 6.
  *
- * À savoir : `teleporter` ne change que la position CLIENT et le serveur refuse tout saut plus grand que sa vitesse permise (le script déplace par
- * sauts de 40 m au plus, chacun attendu chez l'autre joueur : un saut de 40 m prend ~2 s) ; les fenêtres sont réduites en combat (rendu logiciel
+ * À savoir : `teleporter` ne change que la position CLIENT et le serveur refuse tout saut plus grand que son budget de distance (v8 : 19 m/s,
+ * plafonné à 1 s, + 1 m ; juste après une apparition, un état plus loin que ce budget est refusé en entier, jamais accepté en partie) : le script
+ * déplace par sauts de 18 m au plus, chacun attendu chez l'autre joueur ; les fenêtres sont réduites en combat (rendu logiciel
  * de deux grandes fenêtres : 2–3 images/s, trop lent pour un coup d'épée) ; le verrouillage du pointeur, absent en headless, est émulé ; le serveur
  * n'utilise jamais le port 8787 (un onglet de développement ouvert s'y reconnecterait) ; un `next dev` à froid recharge les pages ouvertes.
  */
@@ -72,6 +76,18 @@ const ZONE_ALICE_DEHORS = [60, 14];
 const FENETRES_OPEN = [
   { id: "F1", dehors: [109.05, -20.59], poste: [110.66, -26.27] },
   { id: "F2", dehors: [119.63, -17.58], poste: [121.24, -23.26] },
+];
+/**
+ * (v8) Fenêtres de l'open space et de la salle de pause (index dans `FENETRES`, donc dans `zombies{etat}.fenetres`) et lancer de grenade
+ * précalculé sur le monde de collision réel (`preparerLancer` de lib/fps/grenades.ts, œil debout) : depuis `poste` (dedans + normale × recul),
+ * visée vers `dehors` au tangage donné (degrés), la grenade passe la fenêtre et saute à moins d'un mètre du point où le tigre arrache les
+ * planches (≥ 560 dégâts à ±5°, 250 PV à la manche 2), à plus de 6,8 m d'Alice (hors du souffle).
+ */
+const FENETRES_GRENADE = [
+  { id: "F1", index: 0, dedans: [109.84, -23.38], dehors: [109.05, -20.59], normale: [0.273, -0.962], poste: [111.2, -28.19], tangage: -55 },
+  { id: "F2", index: 1, dedans: [120.42, -20.37], dehors: [119.63, -17.58], normale: [0.273, -0.962], poste: [122.06, -26.14], tangage: -50 },
+  { id: "F3", index: 2, dedans: [135.81, -15.99], dehors: [135.02, -13.2], normale: [0.273, -0.962], poste: [137.45, -21.76], tangage: -50 },
+  { id: "F4", index: 3, dedans: [146.39, -12.98], dehors: [145.6, -10.19], normale: [0.273, -0.962], poste: [147.75, -17.79], tangage: -60 },
 ];
 
 // ---------------------------------------------------------------------------------------------------------------- utilitaires
@@ -196,27 +212,30 @@ class Joueur {
 }
 
 /**
- * Pose `j` en `pos` (mètres, plan XZ) par sauts de 40 m au plus, chacun attendu chez `autre` (qui voit `j` là où le serveur l'a accepté) :
- * le serveur ne laisse franchir que la vitesse permise depuis le dernier état accepté (la distance permise grandit tant que les états sont refusés).
+ * Pose `j` en `pos` (mètres, plan XZ) par sauts de 18 m au plus, chacun attendu chez `autre` (qui voit `j` là où le serveur l'a accepté) :
+ * le serveur n'accepte un état que dans son budget de distance (19 m/s × le temps écoulé, plafonné à 1 s, + 1 m) ; au-delà il n'avance la
+ * position que de ce budget, et pas du tout juste après une apparition qui téléporte (lancement de la partie) : un saut de plus de 20 m à ce
+ * moment-là resterait refusé pour toujours.
  */
 async function aller(j, autre, pos, tolerance = 2.5) {
   const idJ = await j.id();
-  const PAS = 40;
-  for (let etape = 0; etape < 8; etape++) {
+  const PAS = 18;
+  for (let etape = 0; etape < 16; etape++) {
     const moi = plat((await j.jeu()).p);
     const reste = dist(moi, pos);
     const k = reste > PAS ? PAS / reste : 1;
     const cible = [moi[0] + (pos[0] - moi[0]) * k, moi[1] + (pos[1] - moi[1]) * k];
-    let accepte = false;
-    for (let essai = 0; essai < 3 && !accepte; essai++) {
+    let accepte = false, vu = null;
+    for (let essai = 0; essai < 4 && !accepte; essai++) {
       await j.teleporter([cible[0], 0, cible[1]]);
       accepte = await jusqua(async () => {
-        const vu = (await autre.jeu()).distants.find((x) => x.id === idJ);
+        vu = (await autre.jeu()).distants.find((x) => x.id === idJ) ?? null;
         return !!vu && dist(plat(vu.p), cible) < tolerance;
       }, { ms: 6000, quoi: "" }).then(() => true, () => false);
     }
     if (!accepte) {
       const sj = await j.jeu(), mp = await j.moiPartie();
+      process.stdout.write(`[${j.nom} vu par ${autre.nom} en ${vu ? JSON.stringify(vu.p.map((x) => +x.toFixed(1))) : "nulle part"} (vivant ${vu?.vivant})] `);
       const tg = (sj?.zombies ?? []).map((t) => [t.id, +t.x.toFixed(0), +t.z.toFixed(0)]);
       throw new Error(`${j.nom} ne peut pas être posé en (${cible.map((x) => x.toFixed(1))}) : côté client ${JSON.stringify(sj?.p.map((x) => +x.toFixed(1)))}, vivant ${sj?.vivant}, pv ${sj?.pv}, état de partie ${JSON.stringify(mp)}, tigres ${JSON.stringify(tg)}, phase ${(await j.partie())?.phase}, manche ${sj?.manche}`);
     }
@@ -618,17 +637,37 @@ try {
     await jusqua(async () => (await A.jeu()).slot === "couteau", { quoi: "couteau en main avant la relève" });
     await aller(A, B, [posBobMort[0] + 1.2, posBobMort[1]], 1.5);
     trace("Alice près de Bob", `tigres à ${(await tigresProches(A)).map((x) => x.d.toFixed(0))} m`);
-    // E maintenu : pendant ces 3 s la garde à l'épée tourne déjà (les tigres reviennent)
+    // (v8) la relève ne doit pas téléporter Bob (`apparition{garder}`) : sa position est relevée à chaque image chez lui, le saut est mesuré
+    // entre la dernière image à terre et la première debout (les corps des tigres, qui bloquent le joueur, peuvent le pousser un peu avant)
+    await B.ev(() => {
+      const obs = (window.__e2eReleve = { images: [], fin: false });
+      const image = () => {
+        const j = window.__arene?.etat()?.jeu;
+        if (j) obs.images.push({ p: [j.p[0], j.p[2]], terre: j.aTerre || !j.vivant });
+        if (!obs.fin) requestAnimationFrame(image);
+      };
+      requestAnimationFrame(image);
+    });
+    // E maintenu 3 s, sans frapper : les tigres qui reviennent griffent Alice (5 PV par griffe) mais elle tient ; s'ils mouraient pendant la
+    // relève, la fin de la manche relèverait Bob d'office (comme dans BO1) avant les 3 s
     const t0 = Date.now();
     await A.touche("KeyE", true);
     try {
-      await jusqua(async () => { await suivreEpee(); return (await B.moiPartie())?.etat === "debout"; }, { ms: 8000, pas: 50, quoi: async () => `Bob relevé (${A.resume(depuis)} ; envoyés ${JSON.stringify(A.envoyesDe("reanimer", depuis))} ; état de Bob ${JSON.stringify(await B.moiPartie())} ; tigres à ${JSON.stringify((await tigresProches(A)).map((x) => +x.d.toFixed(0)))} m)` });
+      await jusqua(async () => (await B.moiPartie())?.etat === "debout", { ms: 8000, pas: 50, quoi: async () => `Bob relevé (${A.resume(depuis)} ; envoyés ${JSON.stringify(A.envoyesDe("reanimer", depuis))} ; état de Bob ${JSON.stringify(await B.moiPartie())} ; tigres à ${JSON.stringify((await tigresProches(A)).map((x) => +x.d.toFixed(0)))} m)` });
     } finally {
       await A.touche("KeyE", false);
     }
     const duree = Date.now() - t0;
+    await jusqua(async () => (await B.jeu())?.vivant, { ms: 5000, quoi: "Bob de nouveau vivant côté client" });
+    // au moins une image debout chez Bob (rendu logiciel : 2–3 images/s) avant d'arrêter le relevé
+    await jusqua(async () => B.ev(() => window.__e2eReleve.images.at(-1)?.terre === false), { ms: 5000, pas: 100, quoi: "une image de Bob debout après la relève" });
+    const images = await B.ev(() => { window.__e2eReleve.fin = true; return window.__e2eReleve.images; });
+    const iDebout = images.findIndex((x, i) => i > 0 && !x.terre && images[i - 1].terre);
+    verifier(iDebout > 0, `relève non observée image par image chez Bob (${images.length} images : ${images.map((x) => (x.terre ? "T" : "d")).join("")})`);
+    const sautReleve = dist(images[iDebout].p, images[iDebout - 1].p);
     // Bob file se mettre à l'abri dans la cour Ouest (fermée, les tigres n'y accèdent pas) ; pas d'attente ici : les tigres reviennent sur Alice
     bobParti = aller(B, A, ZONE_BOB).catch(() => null);
+    verifier(sautReleve <= 0.5, `relève : Bob a été déplacé de ${sautReleve.toFixed(2)} m en se relevant (aucune téléportation attendue)`);
     verifier(duree >= 2500, `relève en ${duree} ms (3 s attendues)`);
     verifier(A.envoyesDe("reanimer", depuis).some((m) => m.cible === idB), `aucun message reanimer vers Bob : ${JSON.stringify(A.envoyesDe("reanimer", depuis))}`);
     const ma = await A.moiPartie();
@@ -636,7 +675,7 @@ try {
     await jusqua(async () => (await B.jeu())?.vivant, { ms: 5000, quoi: "Bob de nouveau vivant côté client" });
     const sb = await B.jeu();
     verifier(sb.pv > 0 && sb.pv <= 60, `PV de Bob après la relève : ${sb.pv}`);
-    return `Bob à terre puis relevé en ${(duree / 1000).toFixed(1)} s (PV ${sb.pv}), relèves d'Alice ${ma.reanimations}`;
+    return `Bob à terre puis relevé en ${(duree / 1000).toFixed(1)} s (PV ${sb.pv}, déplacé de ${sautReleve.toFixed(2)} m en se relevant), relèves d'Alice ${ma.reanimations}`;
   });
 
   // ------------------------------------------------------------------ 7. coup d'épée
@@ -644,7 +683,7 @@ try {
     const idA = await A.id();
     const depuis = Date.now() - 6000; // les premiers coups ont pu partir pendant la relève
     await jusqua(async () => { const s = await A.jeu(); return s.slot === "couteau" && s.arme === "couteau"; }, { quoi: async () => `couteau en main (slot ${(await A.jeu()).slot}, arme ${(await A.jeu()).arme})` });
-    // La garde à l'épée tourne depuis la relève (étape 6) : on la poursuit jusqu'à la fin de la manche
+    // Garde à l'épée (les tigres sont revenus sur Alice pendant la relève) jusqu'à la fin de la manche
     const fin = Date.now() + 90_000;
     let n = 0, dernierNCoups = 0;
     try {
@@ -665,7 +704,7 @@ try {
     verifier(p.phase === "pause" && p.manche === 2, `la manche 1 ne s'achève pas : phase ${p.phase}, manche ${p.manche} (${A.resume(depuis)})`);
     const coups = A.envoyesDe("coup", depuis);
     const coupTigre = coups.find((c) => c.cibles.some((x) => /^z\d+$/.test(x)));
-    verifier(coupTigre, `aucun message coup avec une cible de tigre : ${JSON.stringify(coups.slice(0, 3))}`);
+    verifier(coupTigre, `aucun message coup avec une cible de tigre : ${JSON.stringify(coups.slice(0, 3))} ; tigres morts ${JSON.stringify(A.msgs("zombieMort", depuis).map((m) => [m.id, m.par, m.cause ?? m.arme]))}`);
     const degats = A.msgs("degats", depuis).filter((m) => typeof m.cible === "string" && m.cible.startsWith("z"));
     verifier(degats.some((m) => m.degats >= 150), `dégâts de couteau (150) non confirmés : ${JSON.stringify(degats.slice(0, 3))}`);
     const kills = A.msgs("zombieMort", depuis).filter((m) => m.par === idA);
@@ -700,8 +739,84 @@ try {
     return `porte D1 ${prixPorte} $ + mini Uzi ${prixUzi} $ (${argentAvant} → ${argentApres} $), prismes détruits ${JSON.stringify(detruits)}, D1 ${JSON.stringify(porte)}`;
   });
 
-  // ------------------------------------------------------------------ 9. partie perdue, retour au lobby
-  await etape("9. partie perdue quand les deux sont à terre : bilan affiché, « Rejouer » ramène au lobby", async () => {
+  // ------------------------------------------------------------------ 9. grenade et planches (v8)
+  // Manche 2 : Alice attend un tigre qui arrache les planches d'une fenêtre de l'open space ou de la salle de pause, se poste face à elle et lance
+  // une grenade (lancer précalculé : elle passe la fenêtre et saute près du tigre, hors du souffle pour Alice), puis repose une planche en
+  // maintenant E devant une fenêtre abîmée. Bob reste dehors, hors de toute zone.
+  await etape("9. manche 2 : une grenade lancée tue un tigre à la fenêtre, puis maintenir E repose une planche", async () => {
+    const idA = await A.id();
+    const depuis = Date.now();
+    await jusqua(async () => (await A.partie())?.phase === "manche", { ms: 45_000, pas: 300, quoi: async () => `début de la manche 2 (phase ${(await A.partie())?.phase})` });
+    const stock0 = (await A.moiPartie())?.grenades ?? 0;
+    verifier(stock0 >= 2, `grenades d'Alice au début de la manche 2 : ${stock0} (2 par manche attendues, BO1)`);
+    for (const j of joueurs) await j.reduire(true);
+    await aller(A, B, SPOTS[0]);
+    const fin = Date.now() + 150_000;
+    let kill = null, explosion = null, lances = 0, planche = null, gainPlanche = null;
+    while (Date.now() < fin && !(kill && planche)) {
+      const s = await A.jeu();
+      verifier(s && s.vivant, `Alice à terre pendant l'essai de la grenade / des planches : ${A.resume(depuis)}`);
+      const tg = await tigresProches(A);
+      const entres = tg.filter((t) => t.mode !== "fenetre");
+      if (entres.length && entres[0].d < 4.5) { await fuir(); continue; }
+      const p = await A.partie();
+      if (!kill) {
+        const grenadesEnPoche = (await A.moiPartie())?.grenades ?? 0;
+        verifier(grenadesEnPoche > 0 || lances < stock0, `plus de grenade après ${lances} lancer(s) sans kill`);
+        if (grenadesEnPoche === 0) { await dormir(300); continue; }
+        // un tigre posté à une fenêtre (il arrache les planches), encore au moins une planche
+        const cible = tg.map((t) => ({ t, f: FENETRES_GRENADE.find((f) => t.mode === "fenetre" && dist(f.dehors, [t.x, t.z]) < 2.2) }))
+          .find((x) => x.f && (p?.fenetres?.[x.f.index] ?? 6) >= 1);
+        if (!cible) { await dormir(250); continue; }
+        const f = cible.f;
+        if (dist(plat(s.p), f.poste) > 0.8) { trace(`poste de grenade devant ${f.id}`); await aller(A, B, f.poste, 1.2); continue; }
+        // visée : vers le point d'arrivée des tigres (dehors), tangage précalculé
+        await A.ev(([x, z, tg]) => {
+          const o = window.__arene.etat().jeu.oeil;
+          window.__arene.regarder(Math.atan2(-(x - o[0]), -(z - o[2])), tg);
+        }, [f.dehors[0], f.dehors[1], (f.tangage * Math.PI) / 180]);
+        await dormir(250);
+        const lancerDepuis = Date.now();
+        trace(`grenade vers ${cible.t.id} à la fenêtre ${f.id} (planches ${p?.fenetres?.[f.index]})`);
+        await A.appui("KeyG", 120);
+        lances++;
+        const g = await jusqua(async () => A.msgs("grenade", lancerDepuis).find((m) => m.par === idA), { ms: 5000, quoi: () => `message grenade du serveur après le lancer (${A.resume(lancerDepuis)})` });
+        verifier(g.genre === "frag", `genre de grenade ${g.genre}`);
+        explosion = await jusqua(async () => A.msgs("zevt", lancerDepuis).map((m) => m.e).find((e) => e.e === "grenade" && e.id === g.id), { ms: 7000, quoi: "explosion de la grenade (zevt{grenade})" });
+        await dormir(400);
+        kill = A.msgs("zombieMort", lancerDepuis).find((m) => m.par === idA && m.cause === "explosion") ?? null;
+        trace(`explosion en ${JSON.stringify(explosion.p.map((x) => +x.toFixed(1)))}, kill ${kill?.id ?? "aucun"}`);
+        continue;
+      }
+      // planches : une fenêtre abîmée de l'open space ou de la salle de pause, sans tigre posté devant
+      const abimee = FENETRES_GRENADE.find((f) => (p?.fenetres?.[f.index] ?? 6) < 6 && !tg.some((t) => t.mode === "fenetre" && dist(f.dehors, [t.x, t.z]) < 4));
+      if (!abimee) { await dormir(300); continue; }
+      const poste = [abimee.dedans[0] + abimee.normale[0] * 1.0, abimee.dedans[1] + abimee.normale[1] * 1.0];
+      if (dist(plat(s.p), poste) > 0.8) { trace(`repose devant ${abimee.id}`); await aller(A, B, poste, 1.2); continue; }
+      const reposeDepuis = Date.now();
+      const avant = p?.fenetres?.[abimee.index];
+      await A.touche("KeyE", true);
+      try {
+        planche = await jusqua(async () => A.msgs("zevt", reposeDepuis).map((m) => m.e).find((e) => e.e === "planche" && !e.arrachee && e.fenetre === abimee.id), { ms: 5000, quoi: "" }).catch(() => null);
+      } finally {
+        await A.touche("KeyE", false);
+      }
+      if (!planche) { trace(`aucune planche reposée à ${abimee.id} (${A.resume(reposeDepuis)})`); continue; }
+      verifier(A.envoyesDe("reparer", reposeDepuis).some((m) => m.fenetre === abimee.id), `aucun message reparer vers ${abimee.id}`);
+      gainPlanche = A.msgs("argent", reposeDepuis).find((m) => m.motif === "planche") ?? null;
+      trace(`planche reposée à ${abimee.id} (${avant} → ${(await A.partie())?.fenetres?.[abimee.index]}), gain ${gainPlanche?.delta ?? 0}`);
+      planche = { ...planche, avant };
+    }
+    verifier(kill, `aucun tigre tué par une grenade en ${lances} lancer(s) (${A.resume(depuis)})`);
+    verifier(planche, `aucune planche reposée en maintenant E (${A.resume(depuis)} ; planches ${JSON.stringify((await A.partie())?.fenetres)})`);
+    const stock1 = (await A.moiPartie())?.grenades ?? 0;
+    verifier(stock1 === stock0 - lances, `stock de grenades ${stock0} → ${stock1} après ${lances} lancer(s)`);
+    await A.capture("09-grenade-planches-A-1280");
+    return `${lances} grenade(s) (${stock0} → ${stock1}), tigre ${kill.id} tué par le souffle en ${JSON.stringify(explosion.p.map((x) => +x.toFixed(1)))}, planche reposée à ${planche.fenetre} (${planche.avant} → +1)${gainPlanche ? `, +${gainPlanche.delta} $` : ""}`;
+  });
+
+  // ------------------------------------------------------------------ 10. partie perdue, retour au lobby
+  await etape("10. partie perdue quand les deux sont à terre : bilan affiché, « Rejouer » ramène au lobby", async () => {
     // Alice et Bob s'immobilisent ensemble dans l'open space : les tigres de la manche 2 arrivent et les couchent
     await Promise.all([aller(A, B, SPOTS[0]), aller(B, A, [SPOTS[0][0] + 3, SPOTS[0][1] + 3])]);
     await jusqua(async () => (await A.partie())?.phase === "fin", { ms: 120_000, pas: 250, quoi: async () => `partie perdue (phase ${(await A.partie())?.phase} ; joueurs ${JSON.stringify((await A.partie())?.joueurs?.map((x) => [x.pseudo, x.etat]))} ; tigres ${JSON.stringify((await tigresProches(A)).map((x) => +x.d.toFixed(0)))})` });
@@ -714,8 +829,8 @@ try {
     }
     const texte = (await A.page.locator("body").innerText()).replace(/\s+/g, " ");
     verifier(/Alice/.test(texte) && /Bob/.test(texte), "le bilan ne nomme pas les deux joueurs");
-    await A.capture("09-bilan-A-1280");
-    await B.capture("09-bilan-B-1280");
+    await A.capture("10-bilan-A-1280");
+    await B.capture("10-bilan-B-1280");
     // « Rejouer » : retour au lobby (le jeu se démonte), puis la salle repasse au lobby au bout du bilan (25 s)
     for (const j of joueurs) await j.page.getByRole("button", { name: "Rejouer" }).evaluate((e) => e.click());
     for (const j of joueurs) {
@@ -725,12 +840,12 @@ try {
     await jusqua(async () => (await A.partie())?.phase === "lobby" && (await B.partie())?.phase === "lobby", { ms: 40_000, pas: 500, quoi: "la salle repasse au lobby au bout du bilan" });
     await jusqua(async () => A.page.getByRole("button", { name: /Lancer la partie/ }).isEnabled(), { ms: 8000, quoi: "« Lancer la partie » de nouveau actif pour l'hôte" });
     verifier((await A.partie()).joueurs.every((x) => !x.admis && x.etat === "attente"), `joueurs encore admis dans le lobby : ${JSON.stringify((await A.partie()).joueurs)}`);
-    await A.capture("09-retour-lobby-A-1280");
+    await A.capture("10-retour-lobby-A-1280");
     return `phase fin → lobby, bilan : manche ${fin.bilan.manche} en ${(fin.bilan.dureeMs / 1000).toFixed(0)} s`;
   });
 
-  // ------------------------------------------------------------------ 10. erreurs
-  await etape("10. aucune erreur JavaScript, aucun message `erreur` du serveur, aucune WebSocket coupée en partie", async () => {
+  // ------------------------------------------------------------------ 11. erreurs
+  await etape("11. aucune erreur JavaScript, aucun message `erreur` du serveur, aucune WebSocket coupée en partie", async () => {
     const bruit = (e) => /favicon|Failed to load resource|net::ERR|api\/pdj|api\/carte|GPU stall|WebGL|ReadPixels|swiftshader/i.test(e);
     const toutes = joueurs.flatMap((j) => j.erreurs.filter((e) => !bruit(e)).map((e) => `${j.nom} ${e}`));
     verifier(toutes.length === 0, toutes.slice(0, 6).join(" | "));
@@ -744,6 +859,8 @@ try {
   resultats.push({ nom: "infrastructure", ok: false, erreur: e.message });
 } finally {
   try { await navigateur?.close(); } catch { /* fermé */ }
+  // journaux des serveurs lancés (fin seulement), pour le diagnostic
+  for (const e of enfants) { try { writeFileSync(join(SORTIE, `${e.nom}.log`), e.journal.join("")); } catch { /* sortie indisponible */ } }
   if (!process.env.E2E_GARDER) toutArreter();
   const ko = resultats.filter((r) => !r.ok);
   console.log(`\n${resultats.length - ko.length}/${resultats.length} étapes OK`);

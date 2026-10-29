@@ -4,6 +4,7 @@ import {
   lireEquipement, lireSlots, meleeDe, normaliserEquipement, serialiserSlots, slotDeLArme, slotVoisin, type LigneSlot,
 } from "./equipement";
 import { ARMES, EQUIPEMENT_DEFAUT, copierEquipement, type Equipement } from "./protocole";
+import { STATS } from "./armes";
 
 function memoire(init: Record<string, string> = {}) {
   const donnees = { ...init };
@@ -20,7 +21,8 @@ describe("garde-fous de types", () => {
   it("chaque arme est dans une seule catégorie", () => {
     for (const a of ARMES) {
       // (v7) le pistolet à rayons, secondaire des zombies seulement, n'est dans aucune liste de l'arène
-      if (a === "rayon") { expect(estSecondaire(a)).toBe(false); continue; }
+      // (v8) les armes des zombies (Brochette, Soufflerie, Perforeuse…) non plus
+      if (STATS[a].zombiesSeulement) { expect(estPrincipale(a) || estSecondaire(a)).toBe(false); continue; }
       const n = [estPrincipale(a), estSecondaire(a), estSpeciale(a), estUnique(a)].filter(Boolean).length;
       expect(n, a).toBe(1);
       expect(estArmeFeu(a)).toBe(true);
@@ -361,5 +363,21 @@ describe("sansSecondaire (Battle Royale, v8)", () => {
 
   it("copierEquipement garde le drapeau (équipement de départ copié par joueur)", () => {
     expect(copierEquipement(nu()).sansSecondaire).toBe(true);
+  });
+});
+
+describe("(v8) arme au Micro-ondes (`enCuisson`)", () => {
+  const eq = (): Equipement => ({ principale: "pompe", secondaire: "pistolet", speciale: null, enCuisson: "pistolet" });
+  it("son slot est vide : armeDuSlot / slotDeLArme renvoient null, le slot voisin la saute ; les autres slots ne changent pas", () => {
+    expect(armeDuSlot(eq(), "secondaire")).toBeNull();
+    expect(slotDeLArme(eq(), "pistolet")).toBeNull();
+    expect(armeDuSlot(eq(), "principale")).toBe("pompe");
+    expect(slotVoisin(eq(), "principale", 1)).toBe("couteau");
+    // une autre arme écrite dans le slot (Rayon de la recette) n'est pas concernée
+    expect(armeDuSlot({ ...eq(), secondaire: "rayon" }, "secondaire")).toBe("rayon");
+  });
+  it("copierEquipement la garde (jamais de clé `undefined`)", () => {
+    expect(copierEquipement(eq()).enCuisson).toBe("pistolet");
+    expect("enCuisson" in copierEquipement({ ...eq(), enCuisson: undefined })).toBe(false);
   });
 });

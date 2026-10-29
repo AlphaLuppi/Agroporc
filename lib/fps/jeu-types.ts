@@ -42,6 +42,15 @@ export interface HudEtat {
   zoomNiveau: number;
   /** nombre de niveaux de zoom de la lunette, 0 hors lunette */
   zoomNiveaux: number;
+  /**
+   * (v8) viseur de l'arme en main affiché en visée : "fer" (mire ordinaire), "point_rouge", "holo", "lunette", "thermique" (une lunette
+   * remplace le viseur dès que `lunette` est vrai)
+   */
+  viseur: "fer" | "point_rouge" | "holo" | "lunette" | "thermique";
+  /** (v8, zombies) armes passées au Pack-a-Punch, jointes par « | » ("" sans amélioration ; toujours "" dans l'arène) */
+  ameliorees: string;
+  /** (v8, zombies) munitions de la main gauche d'une paire akimbo (`munitions` = les deux), −1 pour une arme seule */
+  munitionsG: number;
   /** rayon du cercle de dispersion du viseur (part de la demi-hauteur de l'écran), 0 = aucune dispersion (sniper sans lunette seulement, v3 §1) */
   ecartViseur: number;
   /** télémétrie de lunette : distance (m, entier) de la cible visée, −1 = rien ; seulement en lunette */
@@ -62,7 +71,7 @@ export interface HudEtat {
   /** multiplicateur de course de l'arme en main (couteau 1,3 ; sinon 1 ; arrondi à 0,01) */
   bonusVitesse: number;
   /** invite d'interaction affichée sous le viseur */
-  invite: "" | "elsa" | "monter" | "descendre" | "acheter" | "porte" | "boite" | "soin" | "reanimer" | "atout" | "pap" | "courant" | "ingredient" | "four" | "reparer" | "note" | "ramasser";
+  invite: "" | "elsa" | "monter" | "descendre" | "acheter" | "porte" | "boite" | "soin" | "reanimer" | "atout" | "pap" | "courant" | "reparer" | "note" | "ramasser";
   /** "2/4" occupants pour "monter" ; distance « 12 m » pour "elsa" ; zombies : « Pompe — 900 $ », « Ouvrir la porte — 1 250 $ », « Réanimer Léa » (texte après « [E] ») */
   inviteDetail: string;
   vehicule: boolean;
@@ -216,10 +225,18 @@ export interface EtatZombiesHud {
   annonce: { n: number; texte: string; genre: string } | null;
   /** horloge serveur (ms) : minuteurs des bonus */
   serveurT: number;
+  // ---- v8 ----
+  /** grenades à fragmentation et tigres à remontoir en poche (lancers pas encore confirmés déduits) ; absents = 0 */
+  grenades?: number;
+  remontoirs?: number;
+  /** grenade en cuisson : part de la mèche écoulée 0..1, null sinon */
+  cuisson?: number | null;
   /** objectif courant (lore) */
   objectif: string;
   /** fenêtre dont je repose les planches (E maintenu), null sinon */
   reparation: string | null;
+  /** (v8) cinématique du grand secret servi : avancée 0..1, absente hors cinématique */
+  cinematique?: number | null;
 }
 
 /**
@@ -325,7 +342,36 @@ export interface JeuHandle {
     tigres(mesures?: boolean): Record<string, unknown>;
     /** lance le sort (comme la touche « invoquer »), false si aucune charge ou si le lancer est impossible */
     invoquer(): boolean;
+    /**
+     * (zombies, v8) joue la mort désarticulée du tigre `id` (numéro de `z<n>`) côté client seulement, comme si `zombieMort` arrivait avec ces
+     * champs (`src` par défaut : ma caméra) : le serveur le garde vivant, le rendu l'ignore jusqu'à la fin du cadavre. Avec `p` : un tigre
+     * d'essai qui courait là (cap `cap`, type `type`), sans tigre du serveur. false si le tigre est inconnu (ou le modèle pas prêt)
+     */
+    tuerZombie(id: number, o?: {
+      arme?: ArmeId; ameliore?: boolean; zone?: Zone; cause?: "explosion" | "nuke" | "melee"; src?: Vec3; p?: Vec3; cap?: number; type?: 0 | 1 | 2 | 3 | 4;
+    }): boolean;
+    /**
+     * (v8) traite `m` comme s'il venait du serveur, côté client seulement (captures : boîtes du Happy hour, Micro-ondes, ouverture d'une
+     * porte) ; le serveur n'en sait rien
+     */
+    simuler(m: MessageServeur): void;
+    /** (zombies, v8) la foudre d'une manche du Truck frappera `p` dans `dansS` s (côté client seulement : captures) ; false hors zombies */
+    eclair(p: Vec3, dansS?: number): boolean;
+    /** (zombies, v8) brouillard et ciel d'une manche du Truck allumés ou levés (côté client seulement : captures) ; false hors zombies */
+    ambianceTruck(on: boolean): boolean;
     /** chat vocal : connexions, audibilité, joueurs entendus */
     voix(): Record<string, unknown>;
+    /**
+     * (zombies, v8, captures) met `arme` en main CÔTÉ CLIENT seulement (améliorée ou non), comme un `equipement` du serveur : modèle, camouflage,
+     * paire akimbo, viseur et HUD. Le serveur l'ignore (ses tirs sont refusés). false hors zombies
+     */
+    essayerArme?(arme: ArmeId, ameliore?: boolean): boolean;
+    /** (zombies, v8, captures) un arc électrique dessiné par ces points, une bourrasque de Soufflerie tirée de mon œil */
+    effetArme?(genre: "arc" | "souffle", points?: Vec3[]): void;
+    /**
+     * (zombies, v8) grand secret : état public (étape, pendules, ordres de l'ardoise et des post-it…), heure des pendules, midi qui sonne,
+     * cinématique en cours, positions des objets du décor (scripts de captures et d'essai) ; null hors partie
+     */
+    secret?(): Record<string, unknown> | null;
   };
 }

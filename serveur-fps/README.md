@@ -33,6 +33,7 @@ Le site (`npm run dev` à la racine) s'y connecte tout seul en dev (`ws://localh
 | `PDJ_FPS_ELSA_MIN_MS` / `PDJ_FPS_ELSA_MAX_MS` | 20 000 / 50 000 | intervalle (ms) entre deux offres d'Elsa au Truck Muche, courts (6 000 / 7 000) pour les tests de bout en bout. Une seule des deux : elle sert aux deux bornes |
 | `CACHETTES_JSON` | `../public/agroparc/cachettes.json` | cachettes du tigre largué (seules celles de l'anneau de 25 à 140 m du rond-point servent à l'arène) |
 | `PDJ_FPS_AVION_MIN_MS` / `PDJ_FPS_AVION_MAX_MS` | 90 000 / 180 000 | intervalle (ms) entre deux passages de l'avion qui largue un tigre, compté depuis la mort ou le départ du tigre précédent. Courts (quelques secondes) pour les tests de bout en bout. Une seule des deux sert aux deux bornes. Le passage est repoussé tant que dure l'événement du tigre géant |
+| `PDJ_FPS_BUS_MIN_MS` / `PDJ_FPS_BUS_MAX_MS` | 45 000 / 75 000 | intervalle (ms) entre deux passages du bus C3 express (arène seulement), qui écrase les joueurs à pied sur son trajet. Longs (une heure) pour les tests de bout en bout de l'arène. Une seule des deux sert aux deux bornes |
 | `PDJ_FPS_EVT_MIN_MS` / `PDJ_FPS_EVT_MAX_MS` | 45–70 s puis 70–110 s | délai (ms) avant chaque événement (Truck Muche fou, tigre géant), courts pour les essais |
 | `PDJ_FPS_EVT_TYPE` | alternance | `truck` ou `tigre` : toujours le même événement |
 | `PDJ_FPS_TIGRE_PV` | 4 000 + 1 500 / joueur | PV imposés au tigre géant des événements (essais), sans effet sur les tigres largués |
@@ -54,16 +55,20 @@ Le site (`npm run dev` à la racine) s'y connecte tout seul en dev (`ws://localh
 | `PDJ_FPS_BR_VALIDE_MS` | 60 000 | durée minimale (ms) depuis le départ de l'avion pour qu'une partie compte dans les stats (avec 2 joueurs atterris au moins) |
 | `PDJ_FPS_CONNEXIONS_IP` | 24 | connexions simultanées par adresse IP (le `docker-compose.yml` de prod met 60 : cinquante amis derrière l'IP d'un bureau) |
 | `PDJ_FPS_CONNEXIONS_TOTAL` | 160 | connexions simultanées au total, inscrites ou non |
+| `PDJ_FPS_ZOMBIES_SECRET` | 0 | (v8) grand secret « Le Menu fantôme » : étape de départ de chaque partie, 1 à 9 (les précédentes sont considérées faites ; 9 = servi, la cloche finit la partie). Solution : `docs/superpowers/specs/2026-10-29-zombies-secret-SOLUTION.md` |
+| `PDJ_FPS_ZOMBIES_SECRET_MIDI_MS` | 300 000 | (v8) tour du cadran des pendules remontées : midi sonne une fois par tour (essais : 20 000) |
+| `PDJ_FPS_ZOMBIES_SECRET_LIVRAISON` | 3 | (v8) première livraison du Truck Muche où le service final du secret s'ouvre (essais : 1) |
 
-`GET /sante` renvoie `{ ok, joueurs, enJeu, match, zombies: { joueurs, enJeu, phase, manche }, br: { joueurs, enJeu, phase, vivants }, ticMaxMs, ticsLents, alerte? }`
-(connectés, joueurs en arène, numéro du match, puis la salle des zombies tigres : 8 membres au plus lobby compris, une seule partie à la fois, puis le Battle Royale : 50 membres au plus lobby compris).
+`GET /sante` renvoie `{ ok, joueurs, enJeu, match, zombies: { joueurs, enJeu, phase, manche, enSuspens }, br: { joueurs, enJeu, phase, vivants }, ticMaxMs, ticsLents, alerte? }`
+(connectés, joueurs en arène, numéro du match, puis la salle des zombies tigres : 8 membres au plus lobby compris, une seule partie à la fois, `enSuspens` = sessions coupées qui attendent leur reprise, puis le Battle Royale : 50 membres au plus lobby compris).
 `ticMaxMs` est la durée du plus long tic (les trois salles et leurs diffusions) de la dernière minute environ, `ticsLents` le nombre de tics de plus de 8 ms depuis le démarrage, `alerte: true`
-(champ absent sinon) si l'un d'eux a dépassé 8 ms dans la dernière minute : c'est le signal à surveiller après un déploiement, le conteneur étant plafonné à 0,6 vCPU.
+(champ absent sinon) si l'un d'eux a dépassé 8 ms dans la dernière minute : c'est le signal à surveiller après un déploiement.
 `GET /stats-br` renvoie `{ lignes }` : le palmarès du Battle Royale (top 50 : TOP 1 décroissant, puis kills, puis parties croissant, puis pseudo), `cache-control: no-store`, `access-control-allow-origin`
-seulement pour une origine autorisée par `ORIGINES`. Limites : messages ≤ 16 Ko (une offre SDP du chat vocal dépasse parfois 4 Ko), ≤ 90 messages/s par
-client (sinon `erreur flood` et fermeture), ping WebSocket toutes les 5 s (connexion morte fermée au bout de 10 s : un joueur parti ne reste pas en cible),
+seulement pour une origine autorisée par `ORIGINES`. Limites : messages ≤ 16 Ko ; anti-flood
+à deux seaux (`lib/fps/anti-flood.ts`) : flux `etat` / `conduite` / `pilotage` / `ping` à 45/s (rafale 90), autres messages à 90/s (rafale 270), l'excédent est JETÉ sans fermer la socket, seule une fenêtre de plus de 600 messages bruts en une seconde vaut `erreur flood` et fermeture ; ping WebSocket toutes les 5 s (connexion morte fermée au bout de 10 s : un joueur parti ne reste pas en cible),
 « bonjour » attendu dans les 10 s. Capacité : 16 joueurs EN ARÈNE (les spectateurs de la vue 3D n'occupent aucune place ; `rejoindre` au-delà répond `refus plein`, la socket reste ouverte), 64 connexions inscrites au plus par salle d'arène (50 en Battle Royale, 8 en zombies), 160 connexions au total et 24 par IP par défaut (`PDJ_FPS_CONNEXIONS_TOTAL` / `PDJ_FPS_CONNEXIONS_IP` ; dernier élément de `x-forwarded-for`, fermeture 1013 au-delà), un spectateur muet depuis 15 min est recyclé (le client se reconnecte seul), sauf dans un lobby Battle Royale d'au moins deux joueurs. Un joueur vivant sans état accepté depuis 20 s (onglet gelé) est retiré de l'arène
-(le client redemande à entrer). Les tirs sont validés contre les positions de la cible des 300 dernières ms
+(le client redemande à entrer) ; pas dans la salle des zombies (v8), où un membre dont la connexion se ferme est gardé 20 s (`REPRISE_MS`) : le client qui revient
+avec l'id et le jeton de son dernier `bienvenue` (`bonjour.reprise`) retrouve sa partie au même id (`bienvenue{reprise}`, sans téléportation). Les tirs sont validés contre les positions de la cible des 300 dernières ms
 (compensation de latence, `positionsCible` dans `lib/fps/match.ts`).
 
 ## Trois salles, salons
@@ -158,7 +163,7 @@ le site en production continue de fonctionner pendant et après `docker compose 
 reçoit `erreur{version}` (« rechargez la page »), la socket est fermée et l'arène entière est indisponible. (Avant la v8, la v7 (zombies façon Black Ops 1) imposait un déploiement simultané, un seul numéro de version étant accepté.) Le retrait du 7 est une PR ultérieure.
 `ORIGINES` doit inclure le site et le joker des previews Vercel. Le Dockerfile n'a besoin d'aucune copie en plus pour les zombies (les imports restent dans `lib/fps` et `lib/agroparc3d`).
 
-`docker-compose.yml` : conteneur `pdj-fps` (les trois salles) sur le réseau externe `dokploy-network`, 384 Mo, 0,6 vCPU (le Battle Royale à 50 joueurs envoie ≈ 86 Ko/s par client à 10 Hz ; le CPU d'un tic reste faible, le goulot est le débit sortant, à MESURER après le déploiement avec `/sante.ticMaxMs` et `docker stats`),
+`docker-compose.yml` : conteneur `pdj-fps` (les trois salles) sur le réseau externe `dokploy-network`, 512 Mo, 1 vCPU (le Battle Royale à 50 joueurs envoie ≈ 86 Ko/s par client à 10 Hz ; à MESURER après le déploiement avec `/sante.ticMaxMs` et `docker stats`),
 volume nommé `pdj-fps-donnees` monté sur `/donnees` (statistiques du Battle Royale : **ne jamais `docker compose down -v`**, il emporterait les TOP 1) et `PDJ_FPS_CONNEXIONS_IP=60`. Le volume appartient à l'utilisateur `node` de l'image (`chown` dans le Dockerfile).
 (`lib/fps/match.charge.test.ts` : 16 joueurs, 6 voitures conduisibles, 12 PNJ et Elsa, un tic coûte ≈ 0,05 ms de CPU et un snap pèse ≈ 3,5 Ko,
 `lib/fps/match.charge-tigres.test.ts` : la même salle avec un tigre sauvage en attaque et quatre tigres alliés, tic du même ordre et snap ≈ 3,8 Ko ;

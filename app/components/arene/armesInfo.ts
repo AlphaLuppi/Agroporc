@@ -25,12 +25,14 @@ const degatsParTir = (id: ArmeFeuId) => {
   return a.degats * (a.plombs > 1 ? Math.floor(a.plombs / 2) + 1 : 1);
 };
 
+/** Armes de l'arène (les armes des zombies ne changent pas l'échelle des barres du lobby). */
+const ARMES_ARENE = ARMES.filter((id) => !STATS[id].zombiesSeulement);
 /** Maxima du catalogue : les barres s'y rapportent (pas de constante magique). */
 const MAX = {
-  degats: Math.max(...ARMES.map(degatsParTir)),
-  cadence: Math.max(...ARMES.map((id) => 1 / STATS[id].cadenceS)),
-  portee: Math.max(...ARMES.map((id) => STATS[id].portee)),
-  recul: Math.max(...ARMES.map((id) => STATS[id].recul.tangage)),
+  degats: Math.max(...ARMES_ARENE.map(degatsParTir)),
+  cadence: Math.max(...ARMES_ARENE.map((id) => 1 / STATS[id].cadenceS)),
+  portee: Math.max(...ARMES_ARENE.map((id) => STATS[id].portee)),
+  recul: Math.max(...ARMES_ARENE.map((id) => STATS[id].recul.tangage)),
 };
 
 function calculer(id: ArmeFeuId): InfoArme {

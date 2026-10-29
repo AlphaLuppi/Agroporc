@@ -29,6 +29,11 @@ export interface Prisme {
    * passer les tigres (`resoudre(…, ignorerPasseTigre)`), les balles (`lancerRayon`) et les regards (`visible`).
    */
   passeTigre?: true;
+  /**
+   * (zombies) dessous (m) d'un plafond solide au-dessus de l'emprise : faux plafond d'un bâtiment creusé, linteau d'une porte intérieure.
+   * La tête du joueur ne monte pas au-dessus (`plafondSur`). Indépendant de `h` : il reste quand le prisme est détruit (porte achetée).
+   */
+  plafond?: number;
 }
 /** Brèche d'un bâtiment : cercle (m) au sol. */
 export interface Creux { x: number; z: number; r: number }
@@ -50,6 +55,8 @@ export interface Monde {
   prismes: Prisme[]; bornes: Boite; grille: GrilleMonde;
   /** (v7, zombies) ni wall-run, ni double saut, ni saut de mur, ni escalade : le mouvement de Black Ops 1 */
   sansParkour?: true;
+  /** (zombies) au moins un prisme a un `plafond` : sans lui, `plafondSur` ne coûte rien (arène, vue aérienne) */
+  plafonds?: true;
 }
 
 export interface Contact { nx: number; nz: number; profondeur: number; prisme: number }
@@ -164,6 +171,28 @@ function plusProcheAnneau(anneau: Vec2[], x: number, z: number): void {
   }
 }
 
+const tamponPlafond: number[] = [];
+
+/**
+ * Dessous du plafond le plus bas au-dessus du disque (x, z, r) : plus petit `plafond` des prismes dont l'emprise contient le centre ou en
+ * passe à moins de `r` (linteau fin d'une porte), Infinity s'il n'y en a aucun.
+ */
+export function plafondSur(m: Monde, x: number, z: number, r: number): number {
+  if (!m.plafonds) return Infinity;
+  let bas = Infinity;
+  for (const id of candidats(m, x - r, z - r, x + r, z + r, tamponPlafond)) {
+    const p = m.prismes[id];
+    if (p.plafond === undefined || p.plafond >= bas) continue;
+    const b = p.boite;
+    if (x < b.x0 - r || x > b.x1 + r || z < b.z0 - r || z > b.z1 + r) continue;
+    if (dansEmprise(p, x, z)) { bas = p.plafond; continue; }
+    proche.d = Infinity;
+    plusProcheAnneau(p.anneau, x, z);
+    if (proche.d < r) bas = p.plafond;
+  }
+  return bas;
+}
+
 /** Correction calculée pour un prisme (réutilisée entre les appels). */
 const correction = { x: 0, z: 0, nx: 0, nz: 0, profondeur: 0 };
 
@@ -270,6 +299,31 @@ export function resoudre(m: Monde, p: Vec3, rayon: number, _hauteur: number, ign
     if (!bouge) break;
   }
   return { p: [x, y, z], contacts };
+}
+
+/**
+ * Obstacle mobile (zombies : le corps d'un tigre, `corps-tigres.ts`) : capsule horizontale d'axe (ax, az) → (bx, bz) au sol, de rayon `r`,
+ * de y = 0 à `haut`. Le monde ne la connaît pas : le contrôleur du joueur la reçoit à chaque image (`etape(…, obstacles)`).
+ */
+export interface Capsule { ax: number; az: number; bx: number; bz: number; r: number; haut: number }
+
+/** Distance horizontale d'un point à l'axe d'une capsule, normale unitaire (de l'axe vers le point). */
+export interface ContactCapsule { d: number; nx: number; nz: number }
+
+/**
+ * Distance horizontale de (x, z) à l'axe de la capsule et normale sortante, rangées dans `sortie` (réutilisé). Point pile sur l'axe :
+ * normale perpendiculaire à l'axe (à gauche), ou +x pour une capsule réduite à un disque.
+ */
+export function distanceCapsule(c: Capsule, x: number, z: number, sortie: ContactCapsule): ContactCapsule {
+  const ux = c.bx - c.ax, uz = c.bz - c.az, l2 = ux * ux + uz * uz;
+  const t = l2 > EPSILON ? Math.max(0, Math.min(1, ((x - c.ax) * ux + (z - c.az) * uz) / l2)) : 0;
+  const dx = x - (c.ax + ux * t), dz = z - (c.az + uz * t);
+  const d = Math.hypot(dx, dz);
+  sortie.d = d;
+  if (d > EPSILON) { sortie.nx = dx / d; sortie.nz = dz / d; }
+  else if (l2 > EPSILON) { const l = Math.sqrt(l2); sortie.nx = -uz / l; sortie.nz = ux / l; }
+  else { sortie.nx = 1; sortie.nz = 0; }
+  return sortie;
 }
 
 /**

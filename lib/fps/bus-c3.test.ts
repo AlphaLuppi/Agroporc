@@ -35,6 +35,18 @@ describe("bus-c3", () => {
     expect(bus.v).toBe(BUS_C3.vitesse);
   });
 
+  it("intervalle surchargé (tests de bout en bout) : premier passage et suivants dans les bornes données", () => {
+    const bus = creerEtatBusC3(0, () => 1, { minMs: 600_000, maxMs: 700_000 });
+    expect(bus.prochaineT).toBe(700_000);
+    expect(avancerBusC3(bus, 650_000)).toEqual([]);
+    expect(avancerBusC3(bus, 700_000)).toEqual([{ type: "annonce" }]);
+    avancerBusC3(bus, 700_000 + BUS_C3.dureeAnnonceMs);
+    expect(bus.phase).toBe("course");
+    avancerBusC3(bus, bus.finCourseT, () => 0);
+    expect(bus.phase).toBe("attente");
+    expect(bus.prochaineT - bus.finCourseT).toBe(600_000);
+  });
+
   it("largue les 3 armes uniques aux fractions du trajet", () => {
     const bus = creerEtatBusC3(0, () => 0);
     avancerBusC3(bus, 45_000); // annonce

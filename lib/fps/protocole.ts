@@ -22,12 +22,21 @@ import type { Difficulte, GenreBonus } from "./zombies-vagues";
  * largués (snap `tigres`, messages `avion`, `tigre`, `sort`, client `invoquer`, cause de mort "tigre"). v6 : mode « zombies tigres » (deux salles,
  * choix du mode, argent, achats, relève, snap `zombies`), épée (mêlée à plusieurs cibles), cause de mort "tigre_zombie". v7 : zombies façon
  * Black Ops 1 (états de partie étendus, `zevt`, `reparer`, difficulté, armes améliorées `Equipement.ameliorees`, drapeaux d'allure et de mode
- * des tigres, Truck Muche dans le snap). v8 : Battle Royale (troisième salle, avion, chute, butin, zone, statistiques ; changements purement
- * additifs : champs optionnels et nouveau mode). Client et serveur se déploient ensemble, le serveur d'abord (il accepte 7 et 8).
+ * des tigres, Truck Muche dans le snap). v8 : réseau sans téléportation (`apparition.garder` à la relève, reprise d'une partie de zombies
+ * après une micro-coupure : `bienvenue.jeton` / `bienvenue.reprise`, `bonjour.reprise`), carte « Service de midi » redécoupée
+ * (aménagements ajoutés aux pièces : index des prismes de `batiments{detruits}` et positions d'achats partagés) et grenades balistiques
+ * des zombies (client `lancerGrenade`, serveur `grenade`, `zevt{grenade}`, stocks `JoueurZombies.grenades` / `remontoirs`, tigre à
+ * remontoir de la boîte) ; `zombieMort` dit aussi comment le tigre est mort (`arme`, `ameliore`, `src` : ragdoll côté client) ; Happy hour
+ * de BO1 (`boitesSoldes` : une boîte à chaque emplacement) ; Micro-ondes Gratinator à dépôt et reprise (`EtatPap.etat` "pret",
+ * `Equipement.enCuisson`, `zevt{pap, fin}`). Lot des armes :
+ * huit armes des zombies (`ARMES_PRINCIPALES_ZOMBIES`, la Perforeuse), Pack-a-Punch à effets (`tir.main` d'une paire akimbo,
+ * `tir.touches[].seg` des ricochets, message `projectile`, `zevt{projectile, arc, souffle}`, drapeaux « en feu » et « gelé » des tigres,
+ * causes de mort `feu`, `electrique`, `souffle`). v9 : Battle Royale (troisième salle, avion, chute, butin, zone, statistiques ; changements
+ * purement additifs : champs optionnels et nouveau mode). Client et serveur se déploient ensemble, le serveur d'abord (il accepte 8 et 9).
  */
-export const VERSION_PROTOCOLE = 8;
-/** Versions de client acceptées par le serveur (le 7 sera retiré dans un second temps) : un client v7 ne voit jamais le BR. */
-export const VERSIONS_ACCEPTEES: readonly number[] = [7, 8];
+export const VERSION_PROTOCOLE = 9;
+/** Versions de client acceptées par le serveur (le 8 sera retiré dans un second temps) : un client v8 ne voit jamais le BR. */
+export const VERSIONS_ACCEPTEES: readonly number[] = [8, 9];
 
 export type Vec3 = [number, number, number];
 
@@ -35,15 +44,20 @@ export type Vec3 = [number, number, number];
 
 /** Armes à feu par catégorie. Ajouter une arme = ajouter son id ici + une entrée STATS (lib/fps/armes.ts). */
 export const ARMES_PRINCIPALES = ["mitraillette", "pompe", "sniper", "fusil_assaut", "mitrailleuse"] as const;
+/**
+ * (v8) Armes principales du mode zombies seulement (BO1 renommé : Olympia, FAL, PPSh, SPAS, arbalète, Thundergun, Wunderwaffe) : jamais
+ * proposées au lobby de l'arène ni acceptées de son équipement.
+ */
+export const ARMES_PRINCIPALES_ZOMBIES = ["baguette", "agrafeuse", "photocopieuse", "essoreuse", "brochette", "soufflerie", "grille_pain"] as const;
 export const ARMES_SECONDAIRES = ["pistolet", "revolver", "mini_uzi"] as const;
-/** Armes secondaires du mode zombies seulement (v7) : jamais proposées au lobby de l'arène ni acceptées de son équipement. */
-export const ARMES_SECONDAIRES_ZOMBIES = ["rayon"] as const;
+/** Armes secondaires du mode zombies seulement (v7 : le pistolet à rayons ; v8 : la Perforeuse, le CZ75 de BO1). */
+export const ARMES_SECONDAIRES_ZOMBIES = ["rayon", "perforeuse"] as const;
 /** Armes spéciales : offertes par Elsa, munitions limitées, perdues à la mort. */
 export const ARMES_SPECIALES = ["railgun", "minigun", "magnum_dore"] as const;
 /** Armes uniques : larguées par le bus C3 (lance-grenades, bazooka, fumigène). */
 export const ARMES_UNIQUES = ["lance_grenades", "bazooka", "fumigene"] as const;
 
-export type ArmePrincipaleId = (typeof ARMES_PRINCIPALES)[number];
+export type ArmePrincipaleId = (typeof ARMES_PRINCIPALES)[number] | (typeof ARMES_PRINCIPALES_ZOMBIES)[number];
 export type ArmeSecondaireId = (typeof ARMES_SECONDAIRES)[number] | (typeof ARMES_SECONDAIRES_ZOMBIES)[number];
 export type ArmeSpecialeId = (typeof ARMES_SPECIALES)[number];
 export type ArmeUniqueId = (typeof ARMES_UNIQUES)[number];
@@ -57,7 +71,9 @@ export const estMelee = (x: unknown): x is ArmeMeleeId => (ARMES_MELEE as readon
 export type ArmeId = ArmeFeuId | ArmeMeleeId;
 
 /** Toutes les armes à feu (principales, secondaires, spéciales puis uniques). */
-export const ARMES: readonly ArmeFeuId[] = [...ARMES_PRINCIPALES, ...ARMES_SECONDAIRES, ...ARMES_SECONDAIRES_ZOMBIES, ...ARMES_SPECIALES, ...ARMES_UNIQUES];
+export const ARMES: readonly ArmeFeuId[] = [
+  ...ARMES_PRINCIPALES, ...ARMES_PRINCIPALES_ZOMBIES, ...ARMES_SECONDAIRES, ...ARMES_SECONDAIRES_ZOMBIES, ...ARMES_SPECIALES, ...ARMES_UNIQUES,
+];
 
 /** Emplacement d'équipement. `couteau` est toujours disponible, `speciale` seulement si portée. */
 export type Slot = "principale" | "secondaire" | "couteau" | "speciale";
@@ -77,8 +93,14 @@ export interface Equipement {
   sansPrincipale?: true;
   /** (v7, zombies) armes passées au Pack-a-Punch ; absent = aucune */
   ameliorees?: ArmeFeuId[];
-  /** Pas d'arme secondaire (Battle Royale, v8), pendant de `sansPrincipale` : `secondaire` garde une valeur de remplissage, le slot est vide. Absent = a une secondaire. */
+  /** Pas d'arme secondaire (Battle Royale, v9), pendant de `sansPrincipale` : `secondaire` garde une valeur de remplissage, le slot est vide. Absent = a une secondaire. */
   sansSecondaire?: true;
+  /**
+   * (v8, zombies) arme déposée dans le Micro-ondes Gratinator, ou perdue faute d'avoir été reprise à temps : elle reste écrite dans son slot
+   * mais ce slot est vide (`armeDuSlot` / `slotDeLArme` de equipement.ts renvoient null) jusqu'à la reprise, ou jusqu'à une nouvelle arme
+   * de sa catégorie ; absent = aucune
+   */
+  enCuisson?: ArmeFeuId;
 }
 /**
  * Équipement et slot quand le joueur n'a rien choisi (compatibilité des tests v1 : pistolet en main).
@@ -95,6 +117,7 @@ export function copierEquipement(e: Readonly<Equipement>): Equipement {
   if (e.sansPrincipale) copie.sansPrincipale = true;
   if (e.sansSecondaire) copie.sansSecondaire = true;
   if (e.ameliorees && e.ameliorees.length) copie.ameliorees = [...e.ameliorees];
+  if (e.enCuisson) copie.enCuisson = e.enCuisson;
   return copie;
 }
 
@@ -154,22 +177,60 @@ export const estIdZombie = (s: unknown): s is string => typeof s === "string" &&
 export type PhaseZombies = "lobby" | "pause" | "manche" | "fin";
 /** (v7) Atouts des distributeurs (cf. `ATOUTS` de zombies-carte.ts). */
 export type AtoutId = "gratin" | "expresso" | "ristretto" | "pausecafe";
-/** (v7) Boîte mystère : fermée, armes qui défilent (`tirage`), arme offerte au joueur `pour` (`offre`), envolée vers un autre emplacement. */
+/**
+ * (v8) Genre d'une grenade : à fragmentation (mèche de 3,5 s, cuisson possible) ou « tigre à remontoir » (la Monkey Bomb de BO1 : attire les
+ * tigres puis saute). Cf. `GRENADES` de lib/fps/grenades.ts.
+ */
+export type GenreGrenade = "frag" | "remontoir";
+/**
+ * (v7) Boîte mystère : fermée, armes qui défilent (`tirage`), arme offerte au joueur `pour` (`offre`), envolée vers un autre emplacement.
+ * (v8) `arme` peut être "remontoir" : trois tigres à remontoir (grenade spéciale) au lieu d'une arme.
+ */
 export interface EtatBoite {
-  emplacement: number; etat: "fermee" | "tirage" | "offre" | "envol"; arme?: ArmeFeuId | "peluche"; pour?: string;
+  emplacement: number; etat: "fermee" | "tirage" | "offre" | "envol"; arme?: ArmeFeuId | "peluche" | "remontoir"; pour?: string;
   /** fin de l'étape en cours (horodatage serveur ms), 0 si la boîte est fermée */
   finT: number;
   /** utilisations depuis le dernier déménagement */
   utilisations: number;
 }
-/** (v7) Pack-a-Punch : libre ou en cuisson de l'arme `arme` de `joueur` jusqu'à `finT`. */
-export interface EtatPap { etat: "libre" | "cuisson"; joueur?: string; arme?: ArmeFeuId; finT?: number }
+/**
+ * (v7) Pack-a-Punch : libre ou en cuisson de l'arme `arme` de `joueur` jusqu'à `finT`. (v8, BO1) l'arme est déposée dans la machine
+ * (`debutT` : instant du dépôt) ; à `finT` elle sort gratinée (`pret`) et attend que `joueur` vienne la reprendre jusqu'au nouveau `finT`,
+ * sinon elle est perdue.
+ */
+export interface EtatPap { etat: "libre" | "cuisson" | "pret"; joueur?: string; arme?: ArmeFeuId; finT?: number; debutT?: number }
 /** (v7) Bonus au sol : disparaît à `finT` (il clignote les 11 dernières secondes). */
 export interface BonusSol { id: number; genre: GenreBonus; p: Vec3; finT: number }
 /** (v7) Fins (horodatage serveur ms, 0 = inactif) des bonus à durée. */
 export interface EffetsZombies { instakillFinT: number; doubleFinT: number; soldesFinT: number }
-/** (v7) Recette ultime : ingrédients ramassés, fin de la cuisson en cours, faite. */
-export interface QueteZombies { ingredients: string[]; cuissonFinT: number; faite: boolean }
+/**
+ * (v8) Grand secret « Le Menu fantôme » (remplace la Recette ultime de la v7) : ce que le rendu doit savoir pour montrer le décor tel qu'il
+ * est (pendules qui tournent, ordre de l'ardoise, post-it, ampoule qui clignote…). Rien n'y est affiché comme un objectif : le client n'en
+ * tire que des détails diégétiques. `etape` : étape en cours (0 = pendules … 8 = service, 9 = servi), cf. `ETAPES_SECRET` de zombies-secret.ts.
+ */
+export interface EtatSecretZombies {
+  etape: number;
+  /** pendules remontées (bits 0 à 3 : open space, salle de pause, cuisine, labo) */
+  pendules: number;
+  /** horodatage serveur (ms) où les pendules sont reparties (11 h 58), 0 = arrêtées ; durée d'un tour du cadran des heures (ms) */
+  pendulesT: number;
+  periodeMidiMs: number;
+  /** ardoise : index des casseroles (`SECRET_CARTE.casseroles`) dans l'ordre du menu ; casseroles déjà sonnées dans cet ordre */
+  ardoise: number[];
+  casseroles: number;
+  /** marmite et billot : part remplie (0..1) */
+  marmite: number;
+  billot: number;
+  /** truffe sortie de la cuve n° 3 : porteur et fin (ms) avant qu'elle fonde */
+  truffe?: { porteur: string; finT: number };
+  /** numéro du post-it de chaque écran (`SECRET_CARTE.ecrans`) ; écrans déjà touchés dans l'ordre */
+  postits: number[];
+  ecrans: number;
+  /** code que l'ampoule du Local technique répète en morse (présent à l'étape des post-it seulement) */
+  code?: number[];
+  /** début (ms) du service en cours, absent sinon */
+  service?: number;
+}
 /** (v7) Truck Muche d'une manche de livraison : quai, étape et fin de l'étape. */
 export interface TruckZombies { phase: "arrivee" | "livraison" | "depart" | "epave"; quai: number; finT: number }
 export interface JoueurZombies {
@@ -182,24 +243,31 @@ export interface JoueurZombies {
   /** (v7) atouts bus, auto-relèves de la Pause Café restantes (solo) */
   atouts: AtoutId[];
   autoReleves: number;
+  /** (v8) grenades à fragmentation et tigres à remontoir en poche ; absents = 0 */
+  grenades?: number;
+  remontoirs?: number;
 }
 export interface EtatPartieZombies {
   phase: PhaseZombies; manche: number; hote: string; capacite: number; debutT: number;
   /** fin de la pause / du bilan (horodatage serveur ms) */
   finT: number;
   joueurs: JoueurZombies[]; portes: { id: string; ouverte: boolean }[];
-  bilan?: { manche: number; dureeMs: number };
+  /** (v8) `victoire` : la partie s'est finie à la cloche du grand secret, pas par une défaite */
+  bilan?: { manche: number; dureeMs: number; victoire?: true };
   // ---- v7 ----
   difficulte: Difficulte;
   /** courant rétabli (atouts sauf la Pause Café, Pack-a-Punch, lumières, truffe) */
   courant: boolean;
   boite: EtatBoite;
+  /** (v8) boîtes temporaires du Happy hour (une par emplacement libre) ; absent = aucune */
+  boitesSoldes?: EtatBoite[];
   pap: EtatPap;
   /** planches restantes par fenêtre, dans l'ordre de `FENETRES` */
   fenetres: number[];
   bonus: BonusSol[];
   effets: EffetsZombies;
-  quete: QueteZombies;
+  /** (v8) grand secret (remplace `quete`, la Recette ultime de la v7) */
+  secret: EtatSecretZombies;
   /** manche de livraison du Truck Muche en cours (ou à venir pendant la pause : `mancheTruck`) */
   mancheTruck: boolean;
   truck: TruckZombies | null;
@@ -215,23 +283,44 @@ export type EvenementZombies =
   | { e: "courant" }
   | { e: "peluche"; de: number }
   | { e: "atout"; joueur: string; atout: AtoutId }
-  | { e: "pap"; joueur: string; arme: ArmeFeuId; pret: boolean }
-  | { e: "truck"; quoi: "klaxon" | "porte" | "explosion"; p: Vec3 }
+  /** (v8) `pret` : l'arme sort gratinée ; `fin` : reprise par son joueur, ou perdue faute de reprise à temps */
+  | { e: "pap"; joueur: string; arme: ArmeFeuId; pret: boolean; fin?: "reprise" | "perdue" }
+  /** (v8) `rire` : le Truck Muche enragé rit (porte qui s'ouvre, sous la moitié de ses PV, épave) */
+  | { e: "truck"; quoi: "klaxon" | "porte" | "explosion" | "rire"; p: Vec3 }
+  /**
+   * (v8) éclair d'une manche du Truck Muche : la foudre frappera `p` dans `dans` ms (un petit ou un mini Truck y apparaît, comme les chiens
+   * de BO1) ; `dans` absent : éclair d'ambiance, sans ennemi
+   */
+  | { e: "eclair"; p: Vec3; dans?: number }
+  /** (v8) un mini Truck Muche saute en `p` (contact ou abattu) : souffle de `rayon` m */
+  | { e: "miniTruck"; p: Vec3; rayon: number }
   | { e: "explosion"; p: Vec3; rayon: number; par: string }
-  | { e: "ingredient"; id: string; par: string }
-  | { e: "cuisson"; fin: boolean }
+  /** (v8) grenade `id` (message `grenade`) qui saute en `p` (à tous, lanceur compris : le serveur fait foi) */
+  | { e: "grenade"; id: number; genre: GenreGrenade; p: Vec3; rayon: number; par: string }
+  /** (v8) projectile d'arme `id` (message `projectile`) qui explose en `p` (à tous, tireur compris) */
+  | { e: "projectile"; id: number; p: Vec3; rayon: number; par: string }
+  /** (v8) arc électrique : points successifs (dos des tigres de la chaîne), à tous, tireur compris */
+  | { e: "arc"; p: Vec3[]; par: string }
+  /** (v8) souffle de la Soufflerie tiré de `o` vers `d` sur `portee` m (aux autres : le tireur l'a déjà vu) */
+  | { e: "souffle"; o: Vec3; d: Vec3; portee: number; par: string }
+  /**
+   * (v8) grand secret : un détail du décor réagit (`quoi`, cf. `QuoiSecret` de zombies-secret.ts) en `p` ; `i` : rang de l'objet (pendule,
+   * casserole, écran…) ; `k` : avancée (0..1) ; `joueur` : celui qui l'a provoqué
+   */
+  | { e: "secret"; quoi: string; p: Vec3; i?: number; k?: number; joueur?: string }
   | { e: "manche"; numero: number; truck: boolean }
   | { e: "autoReleve"; joueur: string };
 /** Raisons d'un achat refusé (`achat{ok:false}`). */
-export type RaisonAchat = "argent" | "loin" | "deja" | "verrou" | "partie" | "courant" | "occupe" | "quete";
+export type RaisonAchat = "argent" | "loin" | "deja" | "verrou" | "partie" | "courant" | "occupe";
 
 /** Tigre zombie dans un snap : `z` est un tableau plat de stride `PAS_SNAP_ZOMBIE`. */
 export interface SnapZombies {
   /** tigres restants à tuer (pas encore apparus + vivants) */
   r: number;
   /**
-   * [id, xCm, zCm, capMrad, drapeaux, pvPct] par tigre ; drapeaux : bits 0–1 type (0 tigre, 1 doré, 2 chef, 3 petit), bit 2 griffe armée,
-   * bit 3 apparition, bits 4–5 allure (marche, course, sprint, rampant), bits 6–7 mode (chasse, sol, fenêtre, saut)
+   * [id, xCm, zCm, capMrad, drapeaux, pvPct] par tigre ; drapeaux : bits 0–1 type (0 tigre, 1 doré, 2 chef, 3 petit), bit 2 griffe armée
+   * (mèche allumée d'un mini Truck), bit 3 apparition, bits 4–5 allure (marche, course, sprint, rampant), bits 6–7 mode (chasse, sol,
+   * fenêtre, saut), (v8) bit 8 en feu, bit 9 gelé, bit 10 : troisième bit du type (4 = mini Truck Muche, bits 0–1 à 0)
    */
   z: number[];
   /** (v7) Truck Muche d'une manche de livraison : [xCm, zCm, capMrad, phase (0 arrivée, 1 livraison, 2 départ, 3 épave), pvPct] */
@@ -244,8 +333,11 @@ export const PAS_SNAP_ZOMBIE = 6;
 /** Tigre zombie décodé (positions en mètres, cap en radians, `pvPct` 0..100). */
 export interface ZombieSnap {
   id: number; x: number; z: number; cap: number;
-  type: 0 | 1 | 2 | 3; griffe: boolean; apparition: boolean; pvPct: number;
+  type: 0 | 1 | 2 | 3 | 4; griffe: boolean; apparition: boolean; pvPct: number;
   allure: 0 | 1 | 2 | 3; mode: Exclude<ModeZombie, "approche">;
+  /** (v8) en feu (munitions incendiaires), gelé (Soufflerie XXL) ; absents = non */
+  brule?: true;
+  gele?: true;
 }
 /** Encode des tigres en entiers : position au centimètre, cap au milliradian, PV au pour cent ; `truck` tel quel. */
 export function encoderZombies(restants: number, zombies: readonly ZombieSnap[], truck?: number[]): SnapZombies {
@@ -256,7 +348,8 @@ export function encoderZombies(restants: number, zombies: readonly ZombieSnap[],
     z[k++] = Math.round(m.x * 100);
     z[k++] = Math.round(m.z * 100);
     z[k++] = Math.round(m.cap * 1000);
-    z[k++] = (m.type & 3) | (m.griffe ? 4 : 0) | (m.apparition ? 8 : 0) | ((m.allure & 3) << 4) | (Math.max(0, MODES_SNAP.indexOf(m.mode)) << 6);
+    z[k++] = (m.type & 3) | (((m.type >> 2) & 1) << 10) | (m.griffe ? 4 : 0) | (m.apparition ? 8 : 0) | ((m.allure & 3) << 4)
+      | (Math.max(0, MODES_SNAP.indexOf(m.mode)) << 6) | (m.brule ? 256 : 0) | (m.gele ? 512 : 0);
     z[k++] = Math.max(0, Math.min(100, Math.round(m.pvPct)));
   }
   return truck ? { r: restants, z, t: truck } : { r: restants, z };
@@ -270,8 +363,9 @@ export function decoderZombies(s: SnapZombies): ZombieSnap[] {
     const d = s.z[b + 4];
     res.push({
       id: s.z[b], x: s.z[b + 1] / 100, z: s.z[b + 2] / 100, cap: s.z[b + 3] / 1000,
-      type: (d & 3) as 0 | 1 | 2 | 3, griffe: (d & 4) !== 0, apparition: (d & 8) !== 0, pvPct: s.z[b + 5],
+      type: ((d & 3) | (((d >> 10) & 1) << 2)) as ZombieSnap["type"], griffe: (d & 4) !== 0, apparition: (d & 8) !== 0, pvPct: s.z[b + 5],
       allure: ((d >> 4) & 3) as 0 | 1 | 2 | 3, mode: MODES_SNAP[(d >> 6) & 3] as ZombieSnap["mode"],
+      ...(d & 256 ? { brule: true as const } : {}), ...(d & 512 ? { gele: true as const } : {}),
     });
   }
   return res;
@@ -517,8 +611,11 @@ export interface LigneStats {
 // ---------- client → serveur ----------
 
 export type MessageClient =
-  /** Premier message obligatoire : présence dans la vue Palantir (spectateur). */
-  | { t: "bonjour"; v: number; pseudo: string }
+  /**
+   * Premier message obligatoire : présence dans la vue Palantir (spectateur). `reprise` (v8) : identifiant et jeton de la session coupée
+   * (`bienvenue.jeton`) ; dans les `REPRISE_MS` qui suivent la coupure, le serveur rattache le client à sa partie de zombies, même identifiant.
+   */
+  | { t: "bonjour"; v: number; pseudo: string; reprise?: { id: string; jeton: string } }
   /**
    * Entrer dans l'arène. `principale`/`secondaire` = équipement (v2). `arme` = ALIAS v1 : l'arme est rangée dans
    * son slot par catégorie et devient l'arme en main (une spéciale est ignorée).
@@ -547,9 +644,16 @@ export type MessageClient =
    * `touches` = plombs qui ont touché un joueur selon le client (index dans `d`).
    */
   | {
-      t: "tir"; arme: ArmeFeuId; o: Vec3; d: Vec3[]; touches: { cible: string; zone: Zone; plomb: number }[];
+      t: "tir"; arme: ArmeFeuId; o: Vec3; d: Vec3[];
+      /**
+       * (v8) `seg` : tronçon de la balle qui ricoche (0 = le tir lui-même, absent = 0), rejoué par le serveur (`segmentsRicochet` de
+       * effets-armes.ts) avant de valider la touche
+       */
+      touches: { cible: string; zone: Zone; plomb: number; seg?: number }[];
       /** plombs arrêtés par une voiture selon le client (v3 §4) ; absent = aucun */
       voitures?: { genre: GenreVoiture; id: number; plomb: number }[];
+      /** (v8, zombies) arme de la main GAUCHE d'une paire akimbo (clic droit) ; absent = main droite. Cadence propre à chaque main. */
+      main?: "g";
     }
   /** Coup d'arme blanche. `cibles` = ids de joueurs ET de tigres `z<n>` touchés selon le client (vide = coup dans le vide ; au plus `nbCiblesMax` de l'arme). */
   | { t: "coup"; o: Vec3; d: Vec3; cibles: string[] }
@@ -559,7 +663,8 @@ export type MessageClient =
   | { t: "lancerPartie"; difficulte?: Difficulte }
   /**
    * Acheter ou utiliser (zombies) : `id` du catalogue (`mur:<arme>`, `boite:B<n>` (acheter ou prendre l'arme offerte), `atout:<id>`, `pap`,
-   * `courant`, `ingredient:<id>`, `four`, portes `D1`…), à ≤ 2,5 m (3 m d'une porte) de l'achat.
+   * `courant`, portes `D1`…), à ≤ 2,5 m (3 m d'une porte) de l'achat. (v8) `secret:<objet>` (`truffe`, `four`, `cloche`) : E sur un objet du
+   * grand secret, sans invite ; le serveur ne répond rien (ni `achat`, ni refus) si rien ne se passe.
    */
   | { t: "acheter"; id: string }
   /** (v7) Maintenir E devant une fenêtre pour reposer ses planches ; `null` = relâché. */
@@ -589,6 +694,11 @@ export type MessageClient =
   | { t: "lancerFrappe"; cible: Vec3 }
   /** Lancer une grenade fumigène. */
   | { t: "lancerFumigene"; p: Vec3; v: Vec3 }
+  /**
+   * (v8, zombies) Lancer une grenade depuis l'œil `o` dans la direction de visée `d` (normalisée) ; `cuissonMs` = temps pendant lequel la
+   * touche a été maintenue goupille tirée (frag seulement, borné à la mèche). Refusé en silence (stock vide, cadence, à terre).
+   */
+  | { t: "lancerGrenade"; genre: GenreGrenade; o: Vec3; d: Vec3; cuissonMs?: number }
   /** Monter sur le toit du bus C3 s'il est proche. */
   | { t: "monterBus" }
   // ---- Battle Royale (v8) ----
@@ -607,7 +717,11 @@ export type MessageClient =
 // ---------- serveur → client ----------
 
 export type MessageServeur =
-  | { t: "bienvenue"; id: string; couleur: string; joueurs: JoueurPublic[]; match: InfoMatch; maintenant: number }
+  /**
+   * Inscription. `jeton` (v8) : secret de reprise de la session (à renvoyer dans `bonjour.reprise` après une coupure) ; `reprise` (v8) : la
+   * session coupée a été reprise (même `id`, même salle, partie de zombies en cours conservée) au lieu d'une nouvelle inscription dans l'arène.
+   */
+  | { t: "bienvenue"; id: string; couleur: string; joueurs: JoueurPublic[]; match: InfoMatch; maintenant: number; jeton?: string; reprise?: true }
   /** Liste complète des connectés, renvoyée à chaque changement (arrivée, départ, score, entrée/sortie d'arène). */
   | { t: "presence"; joueurs: JoueurPublic[] }
   /**
@@ -616,18 +730,22 @@ export type MessageServeur =
    */
   | { t: "snap"; ts: number; j: EtatJoueurSnap[]; vehicules?: VehiculeSnap[]; tigres?: TigreLargueSnap[]; monstres?: MonstresSnap; zombies?: SnapZombies }
   /**
-   * Apparition (ou réapparition) d'un joueur : le client concerné SE TÉLÉPORTE à `p`. `arme` = arme en main.
+   * Apparition (ou réapparition) d'un joueur : le client concerné SE TÉLÉPORTE à `p`. `arme` = arme en main. `garder` (v8, zombies : relève,
+   * reprise après une coupure) : le client garde SA position et son regard (à moins de `ECART_GARDE_M` de `p`), santé et armes sont remises.
    * Après `rejoindre`, le serveur envoie dans l'ordre : `apparition`, `presence` (à tous), puis au seul joueur `elsa{evenement:"etat"}` et `sieges`
    * (le jeu est lancé après `bienvenue` : il n'a rien vu de l'état d'Elsa ni des sièges).
    */
   | {
       t: "apparition"; id: string; p: Vec3; lacet: number; arme: ArmeId; pv: number; bouclier: number;
-      equip: Equipement; main: Slot; munSpeciale: number;
+      equip: Equipement; main: Slot; munSpeciale: number; garder?: true;
     }
   /** Équipement du destinataire (ramassage d'une spéciale, munitions épuisées). Privé. */
   | { t: "equipement"; equip: Equipement; main: Slot; munSpeciale: number; ravitaille?: ArmeFeuId | "tout"; ajoutMunitions?: { arme: ArmeFeuId; chargeurs: number } }
-  /** Tir d'un autre joueur, pour les traçantes et le son (pas renvoyé au tireur). */
-  | { t: "tir"; id: string; arme: ArmeFeuId; o: Vec3; d: Vec3[] }
+  /**
+   * Tir d'un autre joueur, pour les traçantes et le son (pas renvoyé au tireur). `ameliore` (v8, zombies) : arme passée au Micro-ondes, dont le
+   * profil (projectile, souffle) peut différer de l'arme de base.
+   */
+  | { t: "tir"; id: string; arme: ArmeFeuId; o: Vec3; d: Vec3[]; main?: "g"; ameliore?: true }
   /** Coup d'arme blanche d'un autre joueur (animation et son). */
   | { t: "coup"; id: string; o: Vec3; d: Vec3; arme: ArmeMeleeId }
   /**
@@ -721,10 +839,34 @@ export type MessageServeur =
   | { t: "argent"; solde: number; delta: number; motif: string }
   /** Réponse à `acheter`. Privé. */
   | { t: "achat"; ok: boolean; id: string; raison?: RaisonAchat }
-  /** Un tigre zombie est mort en `p`, tué par `par` (effets et sons ; jamais dans le fil des éliminations). */
-  | { t: "zombieMort"; id: string; p: Vec3; par: string; zone: Zone; cause?: "explosion" | "nuke" | "melee" }
+  /**
+   * Un tigre zombie est mort en `p`, tué par `par` (effets et sons ; jamais dans le fil des éliminations). (v8, optionnels) `arme` qui l'a
+   * tué, `ameliore` si elle est passée au Pack-a-Punch, `src` = d'où vient le coup (bouche du canon, centre du souffle, œil du joueur en
+   * mêlée ; absent pour la nuke) : le client en tire l'impulsion de sa mort désarticulée (`lib/fps/ragdoll-tigre.ts`).
+   */
+  | {
+      t: "zombieMort"; id: string; p: Vec3; par: string; zone: Zone;
+      /** (v8) `feu` (brûlure), `electrique` (arc), `souffle` (Soufflerie : projeté loin de `src`) */
+      cause?: "explosion" | "nuke" | "melee" | "feu" | "electrique" | "souffle"; arme?: ArmeId; ameliore?: true; src?: Vec3;
+    }
+  /**
+   * (v8, zombies) Un projectile d'arme part (Moutarde & Sally, Brochette), aux joueurs en partie, tireur compris : arme, origine, vitesse,
+   * instants serveur du tir, de l'impact (contact ou fin du vol : il reste planté là) et de l'explosion ; `cible` = tigre touché de plein
+   * fouet. Trajectoire déterministe (`trajectoireProjectile` de effets-armes.ts) ; l'explosion arrive par `zevt{projectile}`.
+   */
+  | {
+      t: "projectile"; id: number; par: string; arme: ArmeFeuId; ameliore?: true; o: Vec3; v: Vec3; t0: number; impactT: number; explosionT: number;
+      /** point d'arrêt (contact ou fin du vol) */
+      impact: Vec3;
+      cible?: string;
+    }
   /** (v7) Effet ponctuel de la partie de zombies (aux membres de la salle). */
   | { t: "zevt"; e: EvenementZombies }
+  /**
+   * (v8) Une grenade part (aux joueurs en partie, lanceur compris) : origine, vitesse et instants serveur (lancer, explosion). La trajectoire
+   * est déterministe (`preparerLancer` de lib/fps/grenades.ts sur le même monde) : le client la recalcule et la dessine.
+   */
+  | { t: "grenade"; id: number; par: string; genre: GenreGrenade; o: Vec3; v: Vec3; t0: number; explosionT: number }
   /** Frappe aérienne : disponible (série de 5 kills), lancée (coordonnées ciblées), perdue. */
   | { t: "frappe"; evenement: "disponible" | "lancee" | "perdue"; joueur: string; cible?: Vec3; serie?: number }
   /** Fumigène activé en un point. */
@@ -794,6 +936,12 @@ export const PLAFONDS = {
   vitesseVerticaleMax: 45,
   vitesseVehiculeMax: 28,
 } as const;
+
+/**
+ * (v8) `apparition.garder` : le client garde sa position si elle est à moins de cet écart (m) de celle du serveur, qui suit ses états (budget
+ * de distance) ; au-delà (client qui ment, état perdu), il se replace sur celle du serveur.
+ */
+export const ECART_GARDE_M = 3;
 
 /** Les avatars sont dessinés et touchés à cette échelle (autour des pieds). Le cylindre de collision ne change pas. */
 export const ECHELLE_AVATAR = 1.25;

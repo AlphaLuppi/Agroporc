@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { BR } from "./br-regles";
 import { JEU, MODES_SALLE, type ModeSalle } from "./protocole";
-import { capaciteSalle, decisionMode, messageSalons, modeDeSalle } from "./salons";
+import { capaciteSalle, decisionMode, garderPourReprise, messageSalons, modeDeSalle } from "./salons";
 import { ZOMBIES } from "./zombies-vagues";
 
 describe("routage des deux salles (décision de `mode`)", () => {
@@ -93,5 +93,22 @@ describe("routage à trois salles (Battle Royale)", () => {
     expect("palier" in lobby.br!).toBe(false);
     const jeu = messageSalons({ joueurs: 1, enJeu: 0 }, { phase: "lobby", joueurs: 0, manche: 0 }, { phase: "jeu", joueurs: 20, vivants: 12, palier: 3 });
     expect(jeu.br).toEqual({ phase: "jeu", joueurs: 20, vivants: 12, palier: 3 });
+  });
+});
+
+describe("(v8) session gardée pour une reprise à la fermeture d'une connexion", () => {
+  const base = { salleZombies: true, membre: true, code: 1006, phase: "manche" as const };
+  it("une coupure réseau (1006) en pleine partie (pause ou manche) est gardée", () => {
+    expect(garderPourReprise(base)).toBe(true);
+    expect(garderPourReprise({ ...base, phase: "pause" })).toBe(true);
+  });
+  it("un départ volontaire (vue fermée 1000, onglet fermé ou rechargé 1001, sans code 1005) est déconnecté tout de suite", () => {
+    for (const code of [1000, 1001, 1005]) expect(garderPourReprise({ ...base, code })).toBe(false);
+  });
+  it("au lobby ou au bilan, rien à reprendre (un fantôme resterait hôte) ; ni l'arène ni un non-membre ne sont gardés", () => {
+    expect(garderPourReprise({ ...base, phase: "lobby" })).toBe(false);
+    expect(garderPourReprise({ ...base, phase: "fin" })).toBe(false);
+    expect(garderPourReprise({ ...base, salleZombies: false, phase: null })).toBe(false);
+    expect(garderPourReprise({ ...base, membre: false })).toBe(false);
   });
 });

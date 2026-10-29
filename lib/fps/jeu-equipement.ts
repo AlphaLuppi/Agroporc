@@ -2,10 +2,12 @@
  * Contrôleur des armes côté client (PUR) : slot actif, changement d'arme (dégainage 350 ms, recharge annulée), molette, dernière arme,
  * couteau rapide, munitions par arme (gardées au changement), rechargement. L'état serveur (`apparition` / `equipement`) fait foi.
  * Les instants `t` sont en millisecondes (horloge du jeu), comme `JEU.degainageMs`.
+ * (v8, zombies) Paire akimbo (Moutarde & Sally, Perforeuses jumelles) : deux chargeurs (`main` droite / gauche), chacun de `cap`, une réserve
+ * pour les deux ; une recharge remplit les deux. `munitions()` et les lignes du rack comptent la paire.
  * Spec : docs/superpowers/specs/2026-10-22-arene-v2-design.md (§2.4, §5.13)
  */
 import { JEU, copierEquipement, estMelee, type ArmeFeuId, type ArmeId, type Equipement, type MessageServeur, type Slot } from "./protocole";
-import { STATS, chargeurZombie } from "./armes";
+import { STATS, chargeurZombie, statsTir } from "./armes";
 import { armeDuSlot, estArmeFeu, estSlot, meleeDe, slotDeLArme, slotVoisin, type LigneSlot } from "./equipement";
 import { BR } from "./br-regles";
 
@@ -32,8 +34,10 @@ export class ControleurArmes {
   private main: Slot;
   /** slot tenu avant celui-ci (pour `rapide` et le repli d'une spéciale épuisée) */
   private precedent: Slot;
-  /** chargeur courant par arme à feu portée */
+  /** chargeur courant par arme à feu portée (main droite d'une paire akimbo) */
   private mun: Partial<Record<ArmeFeuId, number>> = {};
+  /** (v8) chargeur de la main gauche d'une paire akimbo */
+  private munG: Partial<Record<ArmeFeuId, number>> = {};
   /** réserve (balles) par arme à feu portée, seulement si la réserve est limitée (zombies) ; les spéciales n'en ont pas */
   private reserve: Partial<Record<ArmeFeuId, number>> = {};
   /** chargeurs de réserve par arme, null = réserve infinie (arène) */
@@ -76,16 +80,41 @@ export class ControleurArmes {
   /** Slot tenu avant l'actuel (celui que `rapide` rejoint). */
   slotPrecedent(): Slot { return this.precedent; }
 
-  /** Munitions du chargeur de l'arme en main (`Infinity` pour le couteau : le HUD affiche 0). */
+  /** Munitions du chargeur de l'arme en main (`Infinity` pour le couteau : le HUD affiche 0) ; les deux chargeurs d'une paire akimbo. */
   munitions(): number {
     const a = this.armeEnMain();
-    return estMelee(a) ? Infinity : (this.mun[a] ?? 0);
+    if (estMelee(a)) return Infinity;
+    return (this.mun[a] ?? 0) + (this.akimbo(a) ? (this.munG[a] ?? 0) : 0);
   }
 
-  /** Taille du chargeur de l'arme en main (0 pour le couteau ; pour une spéciale, les munitions totales offertes). */
+  /** (v8) Munitions d'une main de l'arme en main (`g` = main gauche d'une paire akimbo ; 0 pour une arme seule). */
+  munitionsMain(main: "d" | "g"): number {
+    const a = this.armeEnMain();
+    if (estMelee(a)) return 0;
+    if (main === "g") return this.akimbo(a) ? (this.munG[a] ?? 0) : 0;
+    return this.mun[a] ?? 0;
+  }
+
+  /** (v8) L'arme est une paire akimbo (zombies, profil amélioré). */
+  akimbo(a: ArmeId = this.armeEnMain()): boolean {
+    if (!this.zombies || estMelee(a)) return false;
+    return statsTir(a, { zombies: true, ameliore: this.amelioree(a) }).akimbo;
+  }
+
+  /** (v8) L'arme est passée au Pack-a-Punch (zombies seulement ; jamais dans l'arène). */
+  amelioree(a: ArmeId = this.armeEnMain()): boolean {
+    return this.zombies && !estMelee(a) && (this.equip.ameliorees?.includes(a) ?? false);
+  }
+
+  /** (v8) Liste des armes améliorées, jointes par « | » (scalaire du HUD), "" sans amélioration. */
+  ameliorees(): string {
+    return this.zombies ? (this.equip.ameliorees ?? []).join("|") : "";
+  }
+
+  /** Taille du chargeur de l'arme en main (0 pour le couteau ; pour une spéciale, les munitions totales offertes ; les deux d'une paire). */
   chargeur(): number {
     const a = this.armeEnMain();
-    return estMelee(a) ? 0 : this.cap(a);
+    return estMelee(a) ? 0 : this.cap(a) * (this.akimbo(a) ? 2 : 1);
   }
 
   /** (v7) Taille du chargeur d'une arme : profil zombies (amélioré ou non) en zombies, `STATS` dans l'arène. */
@@ -136,7 +165,10 @@ export class ControleurArmes {
       const arme = armeDuSlot(this.equip, slot);
       if (arme === null) continue;
       if (estMelee(arme)) res.push({ slot, arme, munitions: 0, chargeur: 0 });
-      else res.push({ slot, arme, munitions: this.mun[arme] ?? 0, chargeur: this.cap(arme) });
+      else {
+        const paire = this.akimbo(arme);
+        res.push({ slot, arme, munitions: (this.mun[arme] ?? 0) + (paire ? (this.munG[arme] ?? 0) : 0), chargeur: this.cap(arme) * (paire ? 2 : 1) });
+      }
     }
     return res;
   }
@@ -171,20 +203,21 @@ export class ControleurArmes {
 
   // ---------- tir ----------
 
-  /** Sortie terminée, arme à feu en main, munitions > 0, pas en recharge. Le couteau a son propre message (`coup`). */
-  peutTirer(t: number): boolean {
+  /** Sortie terminée, arme à feu en main, munitions > 0 (dans la main demandée), pas en recharge. Le couteau a son propre message (`coup`). */
+  peutTirer(t: number, main: "d" | "g" = "d"): boolean {
     this.dernierT = t;
     const a = this.armeEnMain();
-    return !estMelee(a) && t >= this.sortieFin && (this.mun[a] ?? 0) > 0 && !this.rechargeEnCours();
+    return !estMelee(a) && t >= this.sortieFin && this.munitionsMain(main) > 0 && !this.rechargeEnCours();
   }
 
   /**
    * −1 munition. Une spéciale vide est retirée de l'équipement et le joueur retombe sur le slot précédent (nouveau dégainage,
    * daté du dernier instant vu : `peutTirer` précède toujours un tir).
    */
-  tirEffectue(): void {
+  tirEffectue(main: "d" | "g" = "d"): void {
     const a = this.armeEnMain();
     if (estMelee(a)) return;
+    if (main === "g" && this.akimbo(a)) { this.munG[a] = Math.max(0, (this.munG[a] ?? 0) - 1); return; }
     const reste = Math.max(0, (this.mun[a] ?? 0) - 1);
     if (this.main === "speciale" && reste === 0) {
       this.retirerSpeciale(this.dernierT);
@@ -201,7 +234,7 @@ export class ControleurArmes {
     const a = this.armeEnMain();
     if (estMelee(a) || STATS[a].sansRecharge) return false;
     if (this.rechargeEnCours() || t < this.sortieFin) return false;
-    if ((this.mun[a] ?? 0) >= this.cap(a)) return false;
+    if ((this.mun[a] ?? 0) >= this.cap(a) && (!this.akimbo(a) || (this.munG[a] ?? 0) >= this.cap(a))) return false;
     if (this.reserveChargeurs !== null && (this.reserve[a] ?? 0) <= 0) return false;
     this.rechargeDebut = t;
     this.rechargeFin = t + STATS[a].rechargeS * 1000 * this.multRecharge;
@@ -216,13 +249,16 @@ export class ControleurArmes {
     if (!this.rechargeEnCours() || t < this.rechargeFin) return false;
     const a = this.armeEnMain();
     if (!estMelee(a)) {
-      const manque = this.cap(a) - (this.mun[a] ?? 0);
-      if (this.reserveChargeurs === null) this.mun[a] = this.cap(a);
-      else {
-        // réserve limitée : on ne recharge que ce que la réserve contient
-        const pris = Math.max(0, Math.min(manque, this.reserve[a] ?? 0));
-        this.mun[a] = (this.mun[a] ?? 0) + pris;
-        this.reserve[a] = (this.reserve[a] ?? 0) - pris;
+      // (v8) une paire akimbo recharge ses deux chargeurs, la main droite d'abord
+      for (const chargeur of this.akimbo(a) ? [this.mun, this.munG] : [this.mun]) {
+        const manque = this.cap(a) - (chargeur[a] ?? 0);
+        if (this.reserveChargeurs === null) chargeur[a] = this.cap(a);
+        else {
+          // réserve limitée : on ne recharge que ce que la réserve contient
+          const pris = Math.max(0, Math.min(manque, this.reserve[a] ?? 0));
+          chargeur[a] = (chargeur[a] ?? 0) + pris;
+          this.reserve[a] = (this.reserve[a] ?? 0) - pris;
+        }
       }
     }
     this.annulerRecharge();
@@ -251,17 +287,19 @@ export class ControleurArmes {
 
   /**
    * `apparition` (équipement complet, chargeurs pleins, recharge et dégainage effacés) ou `equipement` (spéciale ramassée ou
-   * épuisée : les chargeurs des armes déjà portées sont gardés, la recharge continue si l'arme en main n'a pas changé).
+   * épuisée : les chargeurs des armes déjà portées sont gardés, la recharge continue si l'arme en main n'a pas changé). Une apparition
+   * `garder` (v8 : relève, reprise après coupure) n'est pas une nouvelle vie : les chargeurs sont gardés comme pour `equipement` (BO1).
    */
   appliquerServeur(m: Extract<MessageServeur, { t: "apparition" | "equipement" }>, t: number): void {
     this.dernierT = t;
-    const apparition = m.t === "apparition";
+    const apparition = m.t === "apparition" && m.garder !== true;
     const ancien = this.main;
     const armeAvant = this.armeEnMain();
     this.equip = copierEquipement(m.equip);
     this.main = estSlot(m.main) && this.slotUtilisable(m.main) ? m.main : this.slotRepli();
     if (apparition) {
       this.mun = {};
+      this.munG = {};
       this.reserve = {};
       this.annulerRecharge();
       this.sortieFin = 0;
@@ -283,15 +321,19 @@ export class ControleurArmes {
       if (a !== null && estArmeFeu(a)) portees.add(a);
     }
     for (const a of Object.keys(this.mun) as ArmeFeuId[]) if (!portees.has(a)) delete this.mun[a];
+    for (const a of Object.keys(this.munG) as ArmeFeuId[]) if (!portees.has(a) || !this.akimbo(a)) delete this.munG[a];
     for (const a of Object.keys(this.reserve) as ArmeFeuId[]) if (!portees.has(a)) delete this.reserve[a];
     for (const a of portees) {
       if (this.mun[a] === undefined) { this.mun[a] = this.cap(a); this.reserve[a] = this.reservePleine(a); }
+      // (v8) une arme qui devient une paire (Micro-ondes) reçoit son second chargeur
+      if (this.akimbo(a) && this.munG[a] === undefined) this.munG[a] = this.cap(a);
     }
     // ravitaillement acheté (zombies) : chargeur ET réserve de l'arme sont remplis ; « tout » (Munitions max) : toutes les armes
     if (m.t === "equipement" && m.ravitaille !== undefined) {
       for (const a of m.ravitaille === "tout" ? portees : portees.has(m.ravitaille) ? [m.ravitaille] : []) {
         if (STATS[a].sansRecharge) continue;
         this.mun[a] = this.cap(a);
+        if (this.akimbo(a)) this.munG[a] = this.cap(a);
         this.reserve[a] = this.reservePleine(a);
       }
     }
@@ -327,18 +369,23 @@ export class ControleurArmes {
 
   private remplirTout(): void {
     this.mun = {};
+    this.munG = {};
     this.reserve = {};
     for (const slot of ["principale", "secondaire", "speciale"] as const) {
       const a = armeDuSlot(this.equip, slot);
-      if (a !== null && estArmeFeu(a)) { this.mun[a] = this.cap(a); this.reserve[a] = this.reservePleine(a); }
+      if (a !== null && estArmeFeu(a)) {
+        this.mun[a] = this.cap(a);
+        if (this.akimbo(a)) this.munG[a] = this.cap(a);
+        this.reserve[a] = this.reservePleine(a);
+      }
     }
   }
 
-  /** Réserve initiale d'une arme (balles) : `reserveChargeurs` chargeurs, rien pour une spéciale (sans recharge). */
+  /** Réserve initiale d'une arme (balles) : `reserveChargeurs` chargeurs (deux fois plus pour une paire), rien pour une spéciale. */
   private reservePleine(a: ArmeFeuId): number {
     if (this.reserveChargeurs === null || STATS[a].sansRecharge) return 0;
     const n = this.equip.ameliorees?.includes(a) ? (this.reserveAmeliore ?? this.reserveChargeurs) : this.reserveChargeurs;
-    return n * this.cap(a);
+    return n * this.cap(a) * (this.akimbo(a) ? 2 : 1);
   }
 
   private debuterSortie(t: number): void {

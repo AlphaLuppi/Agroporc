@@ -1,12 +1,15 @@
 /**
  * Serveur temps réel de l'arène FPS (vue Palantir) : HTTP `GET /sante` et `GET /stats-br` + WebSocket sur le même port,
  * trois salles : l'arène « chacun pour soi » (avion et tigres largués compris), les zombies tigres (coopératif par manches) et le Battle Royale
- * (v8). Toute la logique de jeu est dans lib/fps/match.ts, match-zombies.ts et match-br.ts (purs) ; ce fichier ne fait que l'I/O : connexions,
- * anti-flood, origines, ping, boucle de tic à 60 Hz, routage du message `mode` (changement de salle), résumé `salons` et persistance des stats BR.
+ * (v9). Toute la logique de jeu est dans lib/fps/match.ts, match-zombies.ts et match-br.ts (purs) ; ce fichier ne fait que l'I/O : connexions,
+ * anti-flood (lib/fps/anti-flood.ts : l'excédent est jeté, la socket n'est coupée que pour un flood réel), origines, ping, boucle de tic à
+ * 60 Hz, routage du message `mode` (changement de salle), résumé `salons`, persistance des stats BR et (v8) reprise d'une partie de zombies
+ * après une micro-coupure (`REPRISE_MS`).
  * Spec : docs/superpowers/specs/2026-10-22-agroparc-fps-design.md (v1), 2026-10-22-arene-v2-design.md (v2),
  * 2026-10-23-arene-tigres-design.md (v5 : avion, tigres largués, sort d'invocation), 2026-10-27-arene-zombies-design.md (v6),
  * 2026-10-28-battle-royale-design.md (v8)
  */
+import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { resolve } from "node:path";
@@ -16,14 +19,16 @@ import type { SceneData } from "../../lib/agroparc3d/types";
 import { construireMondeBr } from "../../lib/fps/br-carte";
 import { BR } from "../../lib/fps/br-regles";
 import { classementStats } from "../../lib/fps/br-stats";
+import { admettre, creerEtatFlood, type EtatFlood } from "../../lib/fps/anti-flood";
 import { construireCircuits, flotte } from "../../lib/fps/circulation";
 import { construireMonde, pointsApparition } from "../../lib/fps/collision";
 import { ipClient } from "../../lib/fps/ip-client";
 import { Salle, type OptionsSalle, type Sortie } from "../../lib/fps/match";
 import { MODES_SALLE, VERSIONS_ACCEPTEES, type MessageClient, type MessageServeur, type ModeSalle } from "../../lib/fps/protocole";
-import { decisionMode, messageSalons, modeDeSalle } from "../../lib/fps/salons";
+import { decisionMode, garderPourReprise, messageSalons, modeDeSalle } from "../../lib/fps/salons";
 import { capDeCachette } from "../../lib/fps/tigre-arene";
 import { DEPARTS, construireMondeZombies, donneesZombies } from "../../lib/fps/zombies-carte";
+import { GENRES_BONUS, type GenreBonus } from "../../lib/fps/zombies-vagues";
 import { EMPLACEMENTS_VOITURES, ROND_POINT, ZONE_APPARITION, positionElsa, trouverRondPoint } from "../../lib/fps/zones";
 import { creerPersistanceBr } from "./stats-br";
 
@@ -31,8 +36,12 @@ const PORT = Number(process.env.PORT) || 8787;
 const TIC_MS = 1000 / 60;
 /** 16 ko : une offre SDP du chat vocal (candidats ICE compris) dépasse parfois 4 ko ; les autres messages restent bien en dessous. */
 const TAILLE_MAX_OCTETS = 16_384;
-const MESSAGES_PAR_SECONDE_MAX = 90;
 const PING_MS = 5_000;
+/**
+ * (v8) Un membre de la salle des zombies dont la connexion se ferme est gardé ce délai (ms) : le client qui se reconnecte avec son jeton
+ * (`bonjour.reprise`) retrouve sa partie, même identifiant, même position ; au-delà, il est déconnecté pour de bon.
+ */
+const REPRISE_MS = 20_000;
 /** Un client qui n'absorbe plus ce qu'on lui envoie est coupé (connexion saturée). */
 const TAMPON_MAX_OCTETS = 512 * 1024;
 /** Nombre strictement positif lu dans l'environnement (ms, comptes, échelles), undefined si absent ou invalide. */
@@ -86,6 +95,9 @@ const elsaMax = dureeEnv("PDJ_FPS_ELSA_MAX_MS");
 // Avion des tigres : idem (un passage toutes les 90 à 180 s par défaut, quelques secondes pour les tests de bout en bout)
 const avionMin = dureeEnv("PDJ_FPS_AVION_MIN_MS");
 const avionMax = dureeEnv("PDJ_FPS_AVION_MAX_MS");
+// Bus C3 express : idem (un passage toutes les 45 à 75 s par défaut ; il écrase à pied, les tests de bout en bout de l'arène l'écartent)
+const busMin = dureeEnv("PDJ_FPS_BUS_MIN_MS");
+const busMax = dureeEnv("PDJ_FPS_BUS_MAX_MS");
 /** Intervalle surchargé par l'environnement. Une seule des deux variables suffit, elle sert aux deux bornes. */
 const intervalleEnv = (min: number | undefined, max: number | undefined) =>
   min !== undefined || max !== undefined ? { minMs: min ?? max!, maxMs: Math.max(min ?? 0, max ?? min!) } : undefined;
@@ -106,6 +118,7 @@ const options: OptionsSalle = {
   circulation: { circuits, voitures: flotte(circuits) },
   vehicules: EMPLACEMENTS_VOITURES,
   tigres: { cachettes, intervalle: intervalleEnv(avionMin, avionMax) },
+  bus: { intervalle: intervalleEnv(busMin, busMax) },
   // v3 : Truck Muche fou (départ du stand d'Elsa) et tigre robot (autour du rond-point) ; délais surchargeables pour les tests
   evenements: {
     truck: { x: elsaX, z: elsaZ },
@@ -124,7 +137,8 @@ const options: OptionsSalle = {
 const salleArene = new Salle(monde, apparitions, Math.random, Date.now(), options);
 
 // Zombies (v5) : son propre monde MUTABLE (portes qui s'ouvrent), sans Elsa, circulation, voitures ni événements. La grille de navigation des
-// tigres est précalculée à la création du service (17 à 40 ms), puis recalculée une fois par porte achetée.
+// tigres est précalculée à la création du service (17 à 40 ms), puis mise à jour autour de chaque porte achetée (< 1 ms) et restaurée telle
+// quelle au retour au lobby.
 const argentZombies = dureeEnv("PDJ_FPS_ZOMBIES_ARGENT");
 const totalZombies = dureeEnv("PDJ_FPS_ZOMBIES_TOTAL");
 const pauseZombies = dureeEnv("PDJ_FPS_ZOMBIES_PAUSE_MS");
@@ -133,6 +147,22 @@ const griffeZombies = dureeEnv("PDJ_FPS_ZOMBIES_GRIFFE");
 const truckZombies = process.env.PDJ_FPS_ZOMBIES_TRUCK !== undefined && Number.isFinite(Number(process.env.PDJ_FPS_ZOMBIES_TRUCK))
   ? Math.max(0, Math.floor(Number(process.env.PDJ_FPS_ZOMBIES_TRUCK))) : undefined;
 const courantZombies = process.env.PDJ_FPS_ZOMBIES_COURANT === "1";
+/** (v8, essais) tigres à remontoir en poche au départ */
+const remontoirsZombies = dureeEnv("PDJ_FPS_ZOMBIES_REMONTOIRS");
+/** (v8, essais) paquet de bonus imposé : genres séparés par des virgules (« soldes,menuisier »), les inconnus sont ignorés */
+const bonusZombies = (process.env.PDJ_FPS_ZOMBIES_BONUS ?? "").split(",").map((x) => x.trim()).filter((x): x is GenreBonus => (GENRES_BONUS as readonly string[]).includes(x));
+/**
+ * (v8, essais) grand secret « Le Menu fantôme » : étape de départ de chaque partie (0 à 9, les précédentes considérées faites), tour du cadran
+ * des pendules (midi sonne une fois par tour, 300 000 ms par défaut), première livraison du Truck où le service s'ouvre (3 par défaut)
+ */
+const secretEtape = dureeEnv("PDJ_FPS_ZOMBIES_SECRET");
+const secretMidi = dureeEnv("PDJ_FPS_ZOMBIES_SECRET_MIDI_MS");
+const secretLivraison = dureeEnv("PDJ_FPS_ZOMBIES_SECRET_LIVRAISON");
+const optionsSecret = {
+  ...(secretEtape !== undefined ? { etape: secretEtape } : {}),
+  ...(secretMidi !== undefined ? { periodeMidiMs: secretMidi } : {}),
+  ...(secretLivraison !== undefined ? { livraisonService: secretLivraison } : {}),
+};
 const optionsZombies: OptionsSalle = {
   zombies: {
     donnees: donneesZombies(scene),
@@ -142,6 +172,9 @@ const optionsZombies: OptionsSalle = {
     ...(griffeZombies !== undefined ? { degatsGriffe: griffeZombies } : {}),
     ...(truckZombies !== undefined ? { mancheTruck: truckZombies } : {}),
     ...(courantZombies ? { courant: true } : {}),
+    ...(remontoirsZombies !== undefined ? { remontoirsDepart: remontoirsZombies } : {}),
+    ...(bonusZombies.length ? { bonus: bonusZombies } : {}),
+    ...(Object.keys(optionsSecret).length ? { secret: optionsSecret } : {}),
   },
 };
 const salleZombies = new Salle(construireMondeZombies(scene), DEPARTS.map((d) => [d[0], d[1]] as [number, number]), Math.random, Date.now(), optionsZombies);
@@ -196,17 +229,91 @@ interface Client {
   inscrit: boolean;
   vivant: boolean;
   pingEnvoyeA: number;
-  fenetreDebut: number;
-  fenetreNb: number;
+  /** seaux de l'anti-flood (lib/fps/anti-flood.ts) */
+  flood: EtatFlood;
   ip: string;
   /** dernier message utile (tout sauf ping et vueScores) ; sert à recycler les spectateurs oubliés */
   utileT: number;
   /** salle où le client est inscrit : l'arène à `bonjour`, puis celle qu'il choisit par `mode` */
   salle: Salle;
+  /** (v8) secret de reprise de la session, envoyé dans `bienvenue.jeton` */
+  jeton: string;
 }
 const clients = new Map<string, Client>();
 
 const parIp = new Map<string, number>();
+
+/** (v8) Sessions coupées gardées pour une reprise : id → jeton, salle, minuteur de la déconnexion définitive. */
+interface Suspens { jeton: string; salle: Salle; minuteur: ReturnType<typeof setTimeout> }
+const enSuspens = new Map<string, Suspens>();
+const nouveauJeton = (): string => randomBytes(18).toString("base64url");
+
+/** Ajoute le jeton de reprise de `c` à son `bienvenue` (inscription ou changement de salle). */
+function avecJeton(c: Client, sorties: Sortie[]): Sortie[] {
+  return sorties.map((s) => (s.a === c.id && s.m.t === "bienvenue" ? { ...s, m: { ...s.m, jeton: c.jeton } } : s));
+}
+
+/**
+ * Connexion fermée d'un inscrit : un membre d'une partie de zombies en cours dont la connexion est tombée (pas un départ volontaire,
+ * `garderPourReprise`) est gardé `REPRISE_MS` (sa partie continue, il est immobile) ; les autres sont déconnectés tout de suite.
+ */
+function fermer(c: Client, code: number): void {
+  if (!c.inscrit) return;
+  const pseudo = c.salle.inspecter(c.id)?.pseudo;
+  const garder = garderPourReprise({
+    salleZombies: c.salle === salleZombies, membre: !!c.salle.inspecter(c.id), code, phase: c.salle.resumeZombies()?.phase ?? null,
+  });
+  if (garder) {
+    const salle = c.salle, id = c.id;
+    const minuteur = setTimeout(() => {
+      enSuspens.delete(id);
+      try { diffuser(salle, salle.deconnecter(id, Date.now())); } catch (e) { console.error("déconnexion:", e); }
+      console.log(`- ${pseudo} (reprise expirée, ${salle.nombreJoueurs()} en ligne)`);
+      diffuserSalons();
+    }, REPRISE_MS);
+    minuteur.unref();
+    enSuspens.set(id, { jeton: c.jeton, salle, minuteur });
+    console.log(`~ ${pseudo} (coupure, reprise possible ${REPRISE_MS / 1000} s)`);
+    return;
+  }
+  try { diffuser(c.salle, c.salle.deconnecter(c.id, Date.now())); } catch (e) { console.error("déconnexion:", e); }
+  console.log(`- ${pseudo} (${c.salle.nombreJoueurs()} en ligne)`);
+}
+
+/**
+ * (v8) `bonjour.reprise` : la session coupée est rattachée à cette connexion (même id, même salle) si son jeton est le bon et qu'elle attend
+ * encore ; renvoie vrai si c'est fait.
+ */
+function reprendre(c: Client, reprise: unknown, pseudo: unknown, maintenant: number): boolean {
+  if (!reprise || typeof reprise !== "object") return false;
+  const { id, jeton } = reprise as { id?: unknown; jeton?: unknown };
+  if (typeof id !== "string" || typeof jeton !== "string") return false;
+  let salle: Salle;
+  const ancien = clients.get(id);
+  if (ancien && ancien !== c) {
+    // l'ancienne connexion n'est pas encore vue fermée (coupure Wi-Fi : pas de FIN, le ping ne la détecte qu'en 5 à 10 s) : elle est remplacée
+    if (!ancien.inscrit || ancien.jeton !== jeton || ancien.salle !== salleZombies || !ancien.salle.inspecter(id)) return false;
+    ancien.inscrit = false; // sa fermeture ne déconnecte plus le joueur
+    clients.delete(id);
+    ancien.ws.terminate();
+    salle = ancien.salle;
+  } else {
+    const s = enSuspens.get(id);
+    if (!s || s.jeton !== jeton || !s.salle.inspecter(id)) return false;
+    clearTimeout(s.minuteur);
+    enSuspens.delete(id);
+    salle = s.salle;
+  }
+  clients.delete(c.id);
+  c.id = id;
+  clients.set(id, c);
+  c.salle = salle;
+  c.inscrit = true;
+  c.jeton = nouveauJeton();
+  diffuser(c.salle, avecJeton(c, c.salle.reprendre(id, maintenant, pseudo)));
+  console.log(`~ ${c.salle.inspecter(id)?.pseudo} (reprise)`);
+  return true;
+}
 
 function envoyer(c: Client, texte: string): void {
   if (c.ws.readyState !== c.ws.OPEN) return;
@@ -276,20 +383,24 @@ function changerMode(c: Client, mode: unknown, maintenant: number): void {
   const depart = ancienne.deconnecter(c.id, maintenant);
   c.salle = cible; // avant de diffuser le départ : le client ne reçoit plus rien de l'ancienne salle
   diffuser(ancienne, depart);
-  diffuser(cible, [{ a: c.id, m: { t: "mode", mode: decision.mode } }, ...cible.connecter(c.id, pseudo, maintenant)]);
+  diffuser(cible, avecJeton(c, [{ a: c.id, m: { t: "mode", mode: decision.mode } }, ...cible.connecter(c.id, pseudo, maintenant)]));
   diffuserSalons();
 }
 
-function traiter(c: Client, brut: string): void {
+/** Message lu (objet avec un type) ou null. */
+function lire(brut: string): MessageClient | null {
   let msg: unknown;
-  try { msg = JSON.parse(brut); } catch { return; }
-  if (!msg || typeof msg !== "object" || typeof (msg as { t?: unknown }).t !== "string") return;
-  const m = msg as MessageClient;
-  const maintenant = Date.now();
+  try { msg = JSON.parse(brut); } catch { return null; }
+  if (!msg || typeof msg !== "object" || typeof (msg as { t?: unknown }).t !== "string") return null;
+  return msg as MessageClient;
+}
+
+function traiter(c: Client, m: MessageClient, maintenant: number): void {
   if (!c.inscrit) {
     if (m.t !== "bonjour") return;
     if (!VERSIONS_ACCEPTEES.includes(m.v)) return refuser(c, "version", "Version du protocole incompatible : rechargez la page.");
-    const sorties = c.salle.connecter(c.id, typeof m.pseudo === "string" ? m.pseudo : "", maintenant);
+    if (reprendre(c, m.reprise, m.pseudo, maintenant)) { diffuserSalons(c); return; }
+    const sorties = avecJeton(c, c.salle.connecter(c.id, typeof m.pseudo === "string" ? m.pseudo : "", maintenant));
     c.inscrit = !sorties.some((s) => s.a === c.id && s.m.t === "erreur");
     diffuser(c.salle, sorties);
     if (c.inscrit) {
@@ -329,7 +440,11 @@ const http = createServer((req, res) => {
     const maintenant = Date.now();
     const corps = JSON.stringify({
       ok: true, joueurs: salleArene.nombreJoueurs(), enJeu: salleArene.nombreEnJeu(), match: salleArene.infoMatch().numero,
-      zombies: { joueurs: salleZombies.nombreJoueurs(), enJeu: salleZombies.nombreEnJeu(), phase: z?.phase ?? "lobby", manche: z?.manche ?? 0 },
+      zombies: {
+        joueurs: salleZombies.nombreJoueurs(), enJeu: salleZombies.nombreEnJeu(), phase: z?.phase ?? "lobby", manche: z?.manche ?? 0,
+        // (v8) sessions coupées qui attendent leur reprise
+        enSuspens: enSuspens.size,
+      },
       br: { joueurs: salleBr.nombreJoueurs(), enJeu: salleBr.nombreEnJeu(), phase: b?.phase ?? "lobby", vivants: b?.vivants ?? 0 },
       ticMaxMs: Math.round(Math.max(mesuresTic.maxFenetre, mesuresTic.maxPrecedente) * 100) / 100,
       ticsLents: mesuresTic.lents,
@@ -368,7 +483,10 @@ wss.on("connection", (ws, req) => {
     return;
   }
   parIp.set(ip, (parIp.get(ip) ?? 0) + 1);
-  const c: Client = { id: nouvelId(), ws, inscrit: false, vivant: true, pingEnvoyeA: Date.now(), fenetreDebut: Date.now(), fenetreNb: 0, ip, utileT: Date.now(), salle: salleArene };
+  const c: Client = {
+    id: nouvelId(), ws, inscrit: false, vivant: true, pingEnvoyeA: Date.now(), flood: creerEtatFlood(Date.now()), ip, utileT: Date.now(), salle: salleArene,
+    jeton: nouveauJeton(),
+  };
   clients.set(c.id, c);
   // un client qui ne dit pas « bonjour » dans les 10 s est libéré
   setTimeout(() => { if (!c.inscrit && ws.readyState === ws.OPEN) ws.close(1008, "bonjour attendu"); }, 10_000).unref();
@@ -380,19 +498,20 @@ wss.on("connection", (ws, req) => {
   ws.on("message", (donnees, binaire) => {
     if (binaire) return;
     const maintenant = Date.now();
-    if (maintenant - c.fenetreDebut >= 1000) { c.fenetreDebut = maintenant; c.fenetreNb = 0; }
-    if (++c.fenetreNb > MESSAGES_PAR_SECONDE_MAX) return refuser(c, "flood", "Trop de messages.");
-    try { traiter(c, donnees.toString()); } catch (e) { console.error("message:", e); }
+    const m = lire(donnees.toString());
+    // l'excédent est jeté (paquets regroupés après une coupure) ; seul un flood réel coupe la connexion
+    const decision = admettre(c.flood, m?.t ?? null, maintenant);
+    if (decision === "couper") return refuser(c, "flood", "Trop de messages.");
+    if (decision === "jeter" || !m) return;
+    try { traiter(c, m, maintenant); } catch (e) { console.error("message:", e); }
   });
-  ws.on("close", () => {
-    clients.delete(c.id);
+  ws.on("close", (code: number) => {
+    // une connexion remplacée par une reprise ne retire pas l'entrée de la nouvelle (même id)
+    if (clients.get(c.id) === c) clients.delete(c.id);
     const n = (parIp.get(c.ip) ?? 1) - 1;
     if (n <= 0) parIp.delete(c.ip);
     else parIp.set(c.ip, n);
-    if (!c.inscrit) return;
-    const pseudo = c.salle.inspecter(c.id)?.pseudo;
-    try { diffuser(c.salle, c.salle.deconnecter(c.id, Date.now())); } catch (e) { console.error("déconnexion:", e); }
-    console.log(`- ${pseudo} (${c.salle.nombreJoueurs()} en ligne)`);
+    fermer(c, code);
   });
   ws.on("error", () => ws.terminate());
 });
@@ -442,6 +561,7 @@ function arreter(): void {
   clearInterval(timerPing);
   clearInterval(timerTic);
   clearInterval(timerSalons);
+  for (const s of enSuspens.values()) clearTimeout(s.minuteur);
   // les fermetures qui suivent font abandonner les joueurs un à un : une partie interrompue par l'arrêt ne doit rien enregistrer
   persistanceBr.figer();
   for (const c of clients.values()) c.ws.close(1001, "arrêt du serveur");

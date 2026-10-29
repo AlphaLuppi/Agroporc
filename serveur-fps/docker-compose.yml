@@ -19,9 +19,11 @@ services:
       PDJ_FPS_CONNEXIONS_IP: "60"
     volumes:
       - pdj-fps-donnees:/donnees
-    # trois salles dont un Battle Royale à 50 joueurs : on part à 0,6 vCPU et 384 Mo et on MESURE (/sante.ticMaxMs, docker stats)
-    mem_limit: 384m
-    cpus: 0.6
+    # un cœur entier : sous 0,3 vCPU (quota CFS de 30 ms par 100 ms), le moindre pic de calcul (création d'une salle, partie de zombies
+    # chargée) gelait le processus 3 fois plus longtemps, pour toutes les salles à la fois ; 512 Mo pour trois salles dont un Battle Royale
+    # à 50 joueurs (à MESURER après le déploiement : /sante.ticMaxMs, docker stats)
+    mem_limit: 512m
+    cpus: 1
     networks:
       - dokploy-network
 
