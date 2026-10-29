@@ -131,7 +131,7 @@ export function creerSimZombies(graine: number, ctx: ContexteSim): Simulation & 
     const type: TigreAerien["type"] = manche >= 5 && r < 0.05 ? 2 : manche >= 3 && r < 0.12 ? 1 : r > 0.92 ? 3 : 0;
     const pvMax = pvTigre(manche) * (type === 2 ? 2 : type === 3 ? 0.3 : 1);
     const v = vitesseTigre(manche) * (type === 3 ? 1.4 : 1) * reelEntre(alea, 0.9, 1.1);
-    const a: TigreAerien = { id: ++idTigre, x: p[0], z: p[1], cap: Math.atan2(f.dehors[0] - p[0], f.dehors[1] - p[1]), type, mode: "sol", pvPct: 100 };
+    const a: TigreAerien = { id: ++idTigre, x: p[0], z: p[1], cap: Math.atan2(p[0] - f.dehors[0], p[1] - f.dehors[1]), type, mode: "sol", pvPct: 100 };
     tigres.push({ a, phase: "sortie", fen: idx, x: p[0], z: p[1], pv: pvMax, pvMax, v, phaseS: ZOMBIES_SIM.sortieSolS, arracheS: 0, sx: 0, sz: 0, griffeS: 0 });
   }
 
@@ -159,11 +159,11 @@ export function creerSimZombies(graine: number, ctx: ContexteSim): Simulation & 
         }
         const pas = Math.min(d, tg.v * PAS_SIM);
         tg.x += (dx / d) * pas; tg.z += (dz / d) * pas;
-        a.cap = Math.atan2(dx, dz);
+        a.cap = Math.atan2(-dx, -dz);
         return;
       }
       case "arrache":
-        a.cap = Math.atan2(f.dedans[0] - f.dehors[0], f.dedans[1] - f.dehors[1]);
+        a.cap = Math.atan2(f.dehors[0] - f.dedans[0], f.dehors[1] - f.dedans[1]);
         if (planches[tg.fen] <= 0) { tg.phase = "saut"; tg.phaseS = ZOMBIES_SIM.sautS; tg.sx = tg.x; tg.sz = tg.z; mode("saut", tg); return; }
         tg.arracheS -= PAS_SIM;
         if (tg.arracheS <= 0) {
@@ -189,7 +189,7 @@ export function creerSimZombies(graine: number, ctx: ContexteSim): Simulation & 
         }
         if (!cible) return;
         const dx = cible.x - tg.x, dz = cible.z - tg.z;
-        a.cap = Math.atan2(dx, dz);
+        a.cap = Math.atan2(-dx, -dz);
         if (bd > ZOMBIES_SIM.contactM) {
           const pas = Math.min(bd - ZOMBIES_SIM.contactM * 0.8, tg.v * PAS_SIM);
           tg.x += (dx / bd) * pas; tg.z += (dz / bd) * pas;

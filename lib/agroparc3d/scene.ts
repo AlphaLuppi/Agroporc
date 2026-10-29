@@ -53,6 +53,8 @@ export interface ApercuHandle {
   mode(m: ModeSalle, opts?: { immediat?: boolean }): void;
   /** Vraies données du mode affiché (null : pas de direct). */
   direct(d: ApercuDirect | null): void;
+  /** Une partie est en cours dans le mode affiché d'après `salons` : sans aperçu en direct, le bandeau dit que le direct est indisponible. */
+  partieEnCours(b: boolean): void;
   /** État pour le crochet de développement `window.__palantir.apercu()`. */
   etat(): EtatApercu;
   /** Crochet de développement : recrée la simulation avec une graine imposée. */
@@ -533,6 +535,7 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
   let chargementRendu = false;
   let modeVoulu: ModeSalle = modeInitial;
   let directVoulu: ApercuDirect | null = null;
+  let partieVoulue = false;
   let apercuSource: "direct" | "simulation" | null = null;
   const BLOOM_BASE = 0.62;
   let impulsionK = 0;
@@ -565,6 +568,7 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
         rendu.actif(apercuActif);
         rendu.mode(modeVoulu);
         rendu.direct(directVoulu);
+        rendu.partieEnCours(partieVoulue);
         // le décor demandé avant la fin du chargement (mode initial après une partie, choix très rapide)
         if (decorVoulu !== modeDecor || modeDecor !== "arene") appliquerDecor(decorVoulu);
       })
@@ -739,6 +743,7 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
         allerAuMode(m, o?.immediat);
       },
       direct(d) { directVoulu = d; rendu?.direct(d); },
+      partieEnCours(b) { partieVoulue = b; rendu?.partieEnCours(b); },
       etat() {
         const sim = [...joueursMarq.values()].filter((m) => m.sim).length;
         return {
