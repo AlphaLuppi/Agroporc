@@ -31,9 +31,24 @@ export interface PropsKillcam {
   reapparitionDans?: number;
   /** carte du tueur et choix d'équipement, posés entre les bandes (interactifs : ils réactivent eux-mêmes les événements souris) */
   children?: ReactNode;
+  /**
+   * Chat vocal avec le tueur le temps de la killcam : `etat` du micro ("" = chat vocal coupé), `lien` = pseudos du lien en cours ("" = pas
+   * encore), `touche` = touche « parler ». Absent : pas de ligne.
+   */
+  voix?: { etat: "" | "pret" | "emet"; lien: string; touche: string; mode: "appuyer" | "ouvert" };
 }
 
-export default function Killcam({ phase, progression, tueur, derniereMort, surPasser, touchePasser = "Espace", reapparitionDans, children }: PropsKillcam) {
+/** Ligne du chat vocal de la killcam : ce qu'il faut faire pour parler au tueur, ou qu'on lui parle. */
+export function texteVoixKillcam(v: NonNullable<PropsKillcam["voix"]>, pseudo: string): string {
+  const qui = v.lien || pseudo;
+  if (v.etat === "") return `Chat vocal coupé : Échap, puis « Chat vocal », pour parler à ${qui}`;
+  if (!v.lien) return `Chat vocal : connexion avec ${qui}… (il faut que son micro soit activé)`;
+  if (v.etat === "emet") return `Vous parlez à ${qui}`;
+  if (v.mode === "ouvert") return `Micro ouvert : ${qui} vous entend`;
+  return v.touche && v.touche !== "—" ? `Maintenez ${v.touche} pour parler à ${qui}` : `Parler à ${qui}`;
+}
+
+export default function Killcam({ phase, progression, tueur, derniereMort, surPasser, touchePasser = "Espace", reapparitionDans, children, voix }: PropsKillcam) {
   const part = Math.max(0, Math.min(1, progression));
   // le texte est écrit en casse normale ; les majuscules viennent du CSS (`text-transform`)
   const pseudo = tueur?.pseudo || derniereMort?.par || "Agent";
@@ -79,6 +94,11 @@ export default function Killcam({ phase, progression, tueur, derniereMort, surPa
         {rejeu && <p className={styles.titre} role="status">Éliminé</p>}
         {rejeu && reapparitionDans !== undefined && reapparitionDans > 0 && (
           <span className={styles.delai}>· réapparition dans {formatSecondes(reapparitionDans)}</span>
+        )}
+        {voix && (tueur || derniereMort?.par) && (
+          <span className={styles.voix} data-emet={voix.etat === "emet" ? "oui" : undefined}>
+            <i aria-hidden="true" />{texteVoixKillcam(voix, pseudo)}
+          </span>
         )}
       </div>
     </div>

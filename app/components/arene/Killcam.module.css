@@ -39,6 +39,12 @@
 .titre { margin: 0; text-transform: uppercase; font-family: var(--ag-display), var(--ag-mono), monospace; font-weight: 700; font-size: max(11px, calc(32 * var(--u, 1px))); letter-spacing: 0.14em; color: var(--ag-danger); line-height: 1; }
 .delai { text-transform: uppercase; font-size: max(11px, calc(14 * var(--u, 1px))); letter-spacing: 0.1em; color: var(--ag-ink); font-variant-numeric: tabular-nums; }
 
+/* chat vocal avec le tueur : ce qu'il faut faire pour lui parler ; pastille ambre quand le micro émet */
+.voix { margin-left: auto; display: inline-flex; align-items: center; gap: calc(8 * var(--u, 1px)); font-size: max(11px, calc(13 * var(--u, 1px))); letter-spacing: 0.08em; color: var(--ag-ink); }
+.voix i { display: inline-block; width: calc(10 * var(--u, 1px)); height: calc(10 * var(--u, 1px)); min-width: 7px; min-height: 7px; border-radius: 50%; border: 1px solid var(--ag-cadre); }
+.voix[data-emet="oui"] { color: var(--ag-amber); }
+.voix[data-emet="oui"] i { background: var(--ag-amber); border-color: var(--ag-amber); }
+
 @media (prefers-reduced-motion: reduce) {
   .bandeHaut, .bandeBas { animation: none; }
 }

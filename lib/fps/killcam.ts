@@ -1,6 +1,6 @@
 /**
- * Machine de la killcam (PUR) : rejeu à la première personne de 2,5 s (vue du tueur, d'après les snaps du tampon long) puis carte du
- * tueur de 1,5 s. Ancrée sur `mort.ts` (horodatage serveur de la mort), jamais sur l'horloge locale. Les fonctions renvoient de nouveaux objets.
+ * Machine de la killcam (PUR) : rejeu à la première personne de 3 s (vue du tueur, d'après les snaps du tampon long : de 2,5 s avant la mort
+ * à 0,5 s après, pour voir le coup fatal ET la victime tomber) puis carte du tueur de 1 s. Ancrée sur `mort.ts` (horodatage serveur de la mort), jamais sur l'horloge locale. Les fonctions renvoient de nouveaux objets.
  * Sans rejeu (tueur absent du tampon, mort par la circulation), la carte seule occupe toute l'attente (rejeuMs + carteMs = délai de
  * réapparition) : la barre de progression reste honnête et la carte reste affichée jusqu'à la réapparition.
  * Spec : docs/superpowers/specs/2026-10-22-arene-v2-design.md (§2.5, §5.11)
@@ -8,7 +8,11 @@
 import type { EtatJoueurSnap, InfoTueur, Vec3 } from "./protocole";
 import { oeilDe } from "./protocole";
 
-export const KILLCAM = { rejeuMs: 2500, carteMs: 1500, tamponMs: 4000, gelApresMortMs: 150 } as const;
+/**
+ * `rejeuMs` : durée du rejeu, dont `apresMortMs` après l'instant de la mort ; `tamponMs` : profondeur des tampons longs ; `gelApresMortMs` :
+ * les tampons se figent ce temps après la réception de `mort` (il faut y avoir reçu la fin du rejeu, `apresMortMs` après la mort).
+ */
+export const KILLCAM = { rejeuMs: 3000, apresMortMs: 500, carteMs: 1000, tamponMs: 5000, gelApresMortMs: 1100 } as const;
 export type PhaseKillcam = "rejeu" | "carte" | "termine";
 export interface Killcam {
   tueurId: string; tueur: InfoTueur | null; tMortServeur: number;
@@ -48,9 +52,14 @@ export function passerKillcam(k: Killcam): Killcam {
   return { ...k, ecouleMs: KILLCAM.rejeuMs, phase: "carte" };
 }
 
-/** Horodatage serveur à échantillonner dans le tampon long (début = tMort − rejeuMs, 1×, figé à tMort une fois le rejeu fini). */
+/** Premier instant (horloge du serveur) du rejeu de la mort survenue à `tMortServeur`. */
+export function debutRejeu(tMortServeur: number): number {
+  return tMortServeur - (KILLCAM.rejeuMs - KILLCAM.apresMortMs);
+}
+
+/** Horodatage serveur à échantillonner dans le tampon long (début = tMort − 2,5 s, 1×, figé à tMort + 0,5 s une fois le rejeu fini). */
 export function tempsRejeuServeur(k: Killcam): number {
-  return k.tMortServeur - KILLCAM.rejeuMs + Math.min(Math.max(0, k.ecouleMs), KILLCAM.rejeuMs);
+  return debutRejeu(k.tMortServeur) + Math.min(Math.max(0, k.ecouleMs), KILLCAM.rejeuMs);
 }
 
 /** 0..1 sur rejeuMs + carteMs */

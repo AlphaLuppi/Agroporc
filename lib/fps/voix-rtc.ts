@@ -39,14 +39,21 @@ export interface ChatVocal {
   emet(): boolean;
   /** Présence reçue : ouvre / ferme les connexions. */
   presence(joueurs: readonly JoueurPublic[], monId: string | null): void;
+  /**
+   * Restreint les connexions à ces correspondants (Battle Royale : les liens de killcam), ou à tous (`null`, arène). Sans effet si rien ne
+   * change ; sinon ouvre et ferme aussitôt, d'après la dernière présence.
+   */
+  restreindre(ids: readonly string[] | null): void;
   recevoir(de: string, s: SignalVoix): void;
   /**
    * À chaque image : l'auditeur (`oreille`, `lacet`) et les positions des autres (`sources` : id → position de la tête, `vivant`).
-   * Un joueur absent de `sources` est muet.
+   * Un joueur absent de `sources` est muet. `direct` : lien de killcam, plein volume au centre quelle que soit la distance.
    */
-  placer(oreille: Vec3, lacet: number, sources: ReadonlyMap<string, { p: Vec3; vivant: boolean }>): void;
+  placer(oreille: Vec3, lacet: number, sources: ReadonlyMap<string, { p: Vec3; vivant: boolean; direct?: boolean }>): void;
   /** Ids des joueurs qui parlent en ce moment (niveau au-dessus du seuil ET audibles). */
   parlants(): string[];
+  /** Ids des joueurs dont on reçoit le flux (connexion établie). */
+  relies(): string[];
   /** Diagnostic (crochet de test) : connexions, état WebRTC, audibilité. */
   diagnostic(): { actif: boolean; mode: ModeVoix; emet: boolean; pairs: { id: string; connexion: string; audible: boolean; flux: boolean }[] };
   dispose(): void;
@@ -86,6 +93,9 @@ export function creerChatVocal(envoyer: (m: MessageClient) => void): ChatVocal {
   let tenue = false;
   let monId: string | null = null;
   let voulus: string[] = [];
+  let derniereListe: readonly JoueurPublic[] = [];
+  /** null : tous les joueurs avec la voix (arène) ; sinon seulement ceux-là (BR : liens de killcam) */
+  let seulement: Set<string> | null = null;
   let fini = false;
   const pairs = new Map<string, Pair>();
   // un contexte audio créé hors geste reste suspendu : le premier clic ou la première touche le réveille (comme sons.ts)
@@ -236,7 +246,8 @@ export function creerChatVocal(envoyer: (m: MessageClient) => void): ChatVocal {
 
     presence(joueurs, id) {
       monId = id;
-      voulus = correspondants(id, joueurs);
+      derniereListe = joueurs;
+      voulus = correspondants(id, joueurs, seulement);
       reconcilier();
     },
 
@@ -253,6 +264,15 @@ export function creerChatVocal(envoyer: (m: MessageClient) => void): ChatVocal {
       if (p && p.appelant && p.pc.signalingState === "have-local-offer") void p.pc.setRemoteDescription({ type: "answer", sdp: s.sdp }).catch(() => fermer(de, false));
     },
 
+    restreindre(ids) {
+      const avant = seulement ? [...seulement].sort().join(",") : null;
+      const apres = ids ? [...ids].sort().join(",") : null;
+      if (avant === apres) return;
+      seulement = ids ? new Set(ids) : null;
+      voulus = correspondants(monId, derniereListe, seulement);
+      reconcilier();
+    },
+
     placer(oreille, lacet, sources) {
       if (!ctx) return;
       const t = ctx.currentTime;
@@ -261,7 +281,10 @@ export function creerChatVocal(envoyer: (m: MessageClient) => void): ChatVocal {
         if (!p.gain || !p.pan) continue;
         const s = sources.get(p.id);
         let g = 0, pan = 0;
-        if (s) {
+        if (s?.direct) {
+          // lien de killcam : on se parle comme au téléphone
+          g = 1;
+        } else if (s) {
           const dx = s.p[0] - oreille[0], dy = s.p[1] - oreille[1], dz = s.p[2] - oreille[2];
           g = gainVoix(Math.hypot(dx, dy, dz), s.vivant);
           // droite de la vue = (cos lacet, −sin lacet) : produit scalaire normalisé, adouci (jamais une seule oreille)
@@ -284,6 +307,10 @@ export function creerChatVocal(envoyer: (m: MessageClient) => void): ChatVocal {
         if (Math.sqrt(somme / p.tampon.length) > VOIX.seuilParole) r.push(p.id);
       }
       return r.sort();
+    },
+
+    relies() {
+      return [...pairs.values()].filter((p) => !!p.source).map((p) => p.id).sort();
     },
 
     diagnostic() {

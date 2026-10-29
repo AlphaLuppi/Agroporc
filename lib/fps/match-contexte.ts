@@ -38,6 +38,9 @@ export interface JoueurSalleV2 {
   accroupi: boolean;
   /** glissade déclarée par le client (n'a de sens qu'accroupi, au sol) : recopiée dans le snap pour la pose des avatars distants */
   glisse: boolean;
+  /** vise / recharge, déclarés par le client dans `etat` et recopiés dans le snap (killcam, spectateur) */
+  vise?: boolean;
+  recharge?: boolean;
   memoSante: MemoSante | null;
   /** chat vocal activé (v3 §5) : diffusé dans la présence, condition du relais des signaux ; absent = non */
   voix?: boolean;

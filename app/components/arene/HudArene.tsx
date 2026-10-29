@@ -72,7 +72,7 @@ function lireAideVue(): boolean {
  * de l'arène et `FinDePartieZombies` remplace `FinDeMatch`. L'état de la partie est lu toutes les 150 ms (`JeuHandle.zombies()`), jamais à 60 Hz.
  * Battle Royale (`hud.mode === "br"`, v8) : `BarreBR` (en vie, éliminations, palier) remplace `BarreMatch`, `BlocZone` écrit la tempête et l'alerte « HORS ZONE »,
  * `BlocVol` guide le saut et le parachute (ni viseur ni arme en vol), `BlocInventaire` les soins, `EcranMort` devient la mort définitive puis `EcranSpectateur`
- * (mini-carte, grande carte et scores restent), `FinDePartieBR` remplace `FinDeMatch` ; pas d'entracte, de frappe aérienne, d'Elsa ni de chat vocal. L'état
+ * (mini-carte, grande carte et scores restent), `FinDePartieBR` remplace `FinDeMatch` ; pas d'entracte, de frappe aérienne ni d'Elsa, chat vocal limité au lien de killcam. L'état
  * de la partie est lu toutes les 150 ms (`JeuHandle.br()`), jamais à 60 Hz.
  */
 export type PropsHudAreneBr = PropsHudArene;
@@ -234,10 +234,22 @@ export default function HudArene(p: PropsHudAreneBr) {
       {combat && hud.pv <= 30 && <div className={styles.sang} aria-hidden="true" />}
       {combat && rupture && <div className={styles.vignetteBouclier} aria-hidden="true" />}
       {combat && hud.dansFumee && <div className={styles.fumeeOverlay} aria-hidden="true" />}
-      {combat && degats.map((d) => (
+      {(combat || spectateur) && degats.map((d) => (
         <div key={d.id} className={styles.degat} style={{ transform: `rotate(${d.angle}rad)` }} aria-hidden="true"><i /></div>
       ))}
 
+      {/* vue empruntée (rejeu de la killcam, spectateur) : le viseur, la lunette et les marqueurs de touche du joueur dont on a les yeux */}
+      {!combat && hud.vueEmpruntee && (
+        <>
+          {hud.lunette
+            ? <Lunette zoomX={hud.zoomX} distanceVisee={-1} thermique={hud.viseur === "thermique"} />
+            : <Viseur
+                protege={false} conduite={false} couteau={couteau} recharge={hud.recharge} refAnneau={refAnneau} ecart={0}
+                optique={hud.vise && (hud.viseur === "point_rouge" || hud.viseur === "holo") ? hud.viseur : null}
+              />}
+          <RetoursTouche chiffres={chiffres} marqueur={marqueur} kill={kill} />
+        </>
+      )}
       {combat && (
         <>
           {enVol ? null : hud.lunette
@@ -266,7 +278,9 @@ export default function HudArene(p: PropsHudAreneBr) {
           />
           {toast && <ToastCentre texte={toast} />}
           <div className={styles.milieu}>
-            {hud.voix && !br && <BlocVoix etat={hud.voix} parlants={hud.voixParlants} mode={p.voix.mode} toucheParler={t("parler")} />}
+            {hud.voix && (!br || !!hud.voixLien) && (
+              <BlocVoix etat={hud.voix} parlants={hud.voixParlants} mode={p.voix.mode} toucheParler={t("parler")} lien={hud.voixLien ?? ""} />
+            )}
             {hud.vehicule ? (
               <BlocVehicule
                 siege={hud.siege} vehiculeId={hud.vehiculeId} sieges={p.sieges} joueurs={joueurs} monId={monId}
@@ -374,7 +388,7 @@ export default function HudArene(p: PropsHudAreneBr) {
           hud={hud} derniereMort={derniereMort} killcamInfo={p.killcamInfo} degatsAuTueur={p.degatsAuTueur}
           touches={p.touches} equipement={p.equipement} surEquipement={p.surEquipement} surPasserKillcam={p.surPasserKillcam}
           joueurs={joueurs} aideEquipement={aideEquipement} terreFinT={ez?.terreFinT} maintenantServeur={maintenantServeur}
-          br={entreesSpectateur}
+          br={entreesSpectateur} modeVoix={p.voix.mode}
         />
       )}
 

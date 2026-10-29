@@ -1,6 +1,8 @@
 /**
- * Contrôleur de la killcam côté client (PUR, ni three ni DOM) : tampons longs de joueurs et de voitures (4 s), gelés 150 ms après
- * `mort`, machine `Killcam` ancrée sur `mort.ts`, caméra du tueur, joueurs et voitures rejoués. Appelé par `jeu.ts` (lot J1).
+ * Contrôleur de la killcam côté client (PUR, ni three ni DOM) : tampons longs de joueurs, de voitures et d'événements (5 s), gelés
+ * `KILLCAM.gelApresMortMs` après `mort`, machine `Killcam` ancrée sur `mort.ts`, caméra du tueur recalée sur ses tirs, joueurs tels que le
+ * tueur les voyait (son ping + l'interpolation plus tôt), voitures rejouées et événements (tirs, coups, dégâts, morts) à rejouer à
+ * l'instant où le tueur les a vécus (`vue-joueur.ts`). Appelé par `jeu.ts` (lot J1).
  *
  * Horloge : le contrôleur n'a pas d'horloge propre. Le délai de gel (150 ms après la RÉCEPTION de `mort`) se compte avec les `maj(dtS)`
  * reçus depuis `surMort`, comme la machine `Killcam` elle-même (J1 appelle `maj` à chaque image, y compris pendant la mort).
@@ -9,15 +11,23 @@
  */
 import type { EtatJoueurSnap, InfoTueur, MessageServeur, VehiculeSnap, Vec3 } from "./protocole";
 import {
-  KILLCAM, avancerKillcam, cameraTueur, demarrerKillcam, passerKillcam, progressionKillcam, tempsRejeuServeur, tueurPresent,
+  KILLCAM, avancerKillcam, cameraTueur, debutRejeu, demarrerKillcam, passerKillcam, progressionKillcam, tempsRejeuServeur, tueurPresent,
   type Killcam, type PhaseKillcam,
 } from "./killcam";
 import { Interpolateur } from "./reseau";
 import { InterpolateurVehicules } from "./interpolation-vehicules";
+import { JournalEvenements, VueJoueur, type EvenementVue } from "./vue-joueur";
+
+/** Comment le tueur voyait le monde : son ping (aller-retour, ms), l'interpolation de son client et l'écart entre deux snaps. */
+export interface OptionsVueTueur { pingMs?: number; decalageMs?: number; largeurMs?: number }
 
 export class ControleurKillcam {
   private readonly joueurs = new Interpolateur(KILLCAM.tamponMs);
   private readonly vehicules = new InterpolateurVehicules(KILLCAM.tamponMs);
+  private readonly journal = new JournalEvenements(KILLCAM.tamponMs);
+  private vue = new VueJoueur(50);
+  private pingMs = 0;
+  private decalageMs = 0;
   private k: Killcam | null = null;
   /** ms écoulées (somme des `maj`) depuis la réception de `mort` ; sert au gel du tampon */
   private depuisMortMs = 0;
@@ -38,13 +48,27 @@ export class ControleurKillcam {
     this.invalider();
   }
 
-  /** Ma mort : démarre la machine avec `m.ts`, `m.tueur` ; programme le gel du tampon. Ne fait rien si ce n'est pas moi. */
-  surMort(m: Extract<MessageServeur, { t: "mort" }>, moiId: string): void {
+  /** Tir, coup, dégâts ou mort (horodatés au serveur) : rejoués pendant la killcam ; sans effet une fois gelé. À appeler pour CHAQUE événement. */
+  alimenterEvenement(e: EvenementVue): void {
+    if (this.gele) return;
+    this.journal.ajouter(e);
+  }
+
+  /**
+   * Ma mort : démarre la machine avec `m.ts`, `m.tueur` ; programme le gel du tampon. Ne fait rien si ce n'est pas moi. `vue` : comment le
+   * tueur voyait le monde (sans : aucun décalage, snaps à 20 Hz).
+   */
+  surMort(m: Extract<MessageServeur, { t: "mort" }>, moiId: string, vue: OptionsVueTueur = {}): void {
     if (m.cible !== moiId) return;
     const tueurId = m.par;
     // la présence se mesure au DÉBUT du rejeu : c'est le premier instant que le spectateur verra
-    const debut = this.joueurs.echantillon(m.ts - KILLCAM.rejeuMs);
+    const debut = this.joueurs.echantillon(debutRejeu(m.ts));
     this.k = demarrerKillcam({ tueurId, tueur: m.tueur, tMortServeur: m.ts, tueurDansTampon: tueurPresent(debut, tueurId) });
+    this.pingMs = vue.pingMs ?? 0;
+    this.decalageMs = vue.decalageMs ?? 0;
+    this.vue = new VueJoueur(vue.largeurMs ?? 50);
+    // les événements d'avant le premier instant rejoué ne sont pas joués (pas de tir « fantôme » à la première image)
+    this.vue.repartir(debutRejeu(m.ts));
     this.depuisMortMs = 0;
     this.gele = false;
     this.invalider();
@@ -102,11 +126,31 @@ export class ControleurKillcam {
     return this.k && this.k.phase === "rejeu" ? tempsRejeuServeur(this.k) : null;
   }
 
-  /** Caméra du tueur (œil via `oeilDe`, siège compris) ; null hors rejeu ou repli. */
+  /**
+   * Caméra du tueur (œil via `oeilDe`, siège compris), recalée sur l'œil et l'axe EXACTS de ses tirs (la visée interpolée des snaps peut
+   * être à plusieurs degrés d'un tir rapide) ; null hors rejeu ou repli.
+   */
   camera(): { pos: Vec3; lacet: number; tangage: number } | null {
     if (!this.k || this.k.phase !== "rejeu") return null;
-    const tueur = this.echantillonRejeu(tempsRejeuServeur(this.k)).get(this.k.tueurId);
-    return tueur ? cameraTueur(tueur) : null;
+    if (!this.echantillonRejeu(tempsRejeuServeur(this.k)).has(this.k.tueurId)) return null;
+    return this.vue.camera(this.joueurs, this.journal, this.k.tueurId, tempsRejeuServeur(this.k));
+  }
+
+  /** État du tueur à l'instant rejoué (arme en main, visée, recharge, vitesse) ; null hors rejeu ou s'il manque. */
+  tueurRejoue(): EtatJoueurSnap | null {
+    const t = this.tempsServeur();
+    if (t === null || !this.k) return null;
+    return this.echantillonRejeu(t).get(this.k.tueurId) ?? null;
+  }
+
+  /**
+   * Événements que le tueur a vécus depuis l'image précédente du rejeu (ses tirs et coups à leur instant, le reste un aller-retour plus
+   * tard), chacun une fois ; vide hors rejeu. « Passer » saute ceux du rejeu restant.
+   */
+  evenementsAJouer(): EvenementVue[] {
+    const t = this.tempsServeur();
+    if (t === null || !this.k) return [];
+    return this.vue.aJouer(this.journal, this.k.tueurId, this.pingMs, t);
   }
 
   /**
@@ -115,19 +159,18 @@ export class ControleurKillcam {
    */
   cameraFigee(): { pos: Vec3; lacet: number; tangage: number } | null {
     if (!this.k || !this.k.avecRejeu || this.k.phase === "rejeu") return null;
-    const tueur = this.joueurs.echantillon(this.k.tMortServeur).get(this.k.tueurId);
+    const tueur = this.joueurs.echantillon(this.finRejeu()).get(this.k.tueurId);
     return tueur ? cameraTueur(tueur) : null;
   }
 
-  /** Joueurs rejoués à `tempsServeur()` (dont moi, SANS le tueur : on est dans sa tête). Vide hors rejeu. Ne pas modifier la Map. */
+  /**
+   * Joueurs rejoués à `tempsServeur()` (dont moi, SANS le tueur : on est dans sa tête), à l'instant où le TUEUR les voyait (son retard de
+   * vue plus tôt : c'est sur eux qu'il visait). Vide hors rejeu. Ne pas modifier la Map.
+   */
   joueursRejoues(): Map<string, EtatJoueurSnap> {
     const t = this.tempsServeur();
     if (t === null || !this.k) return new Map();
-    if (!this.cacheJoueurs) {
-      const m = new Map(this.echantillonRejeu(t));
-      m.delete(this.k.tueurId);
-      this.cacheJoueurs = m;
-    }
+    if (!this.cacheJoueurs) this.cacheJoueurs = this.vue.autres(this.joueurs, this.k.tueurId, t, this.decalageMs);
     return this.cacheJoueurs;
   }
 
@@ -139,32 +182,32 @@ export class ControleurKillcam {
     return this.cacheVehicules;
   }
 
-  /** Vrai pendant la carte qui suit un rejeu : le monde reste figé à l'instant de la mort (`tMortServeur`). */
+  /** Vrai pendant la carte qui suit un rejeu : le monde reste figé à la dernière image du rejeu. */
   private figee(): boolean {
     return !!this.k && this.k.avecRejeu && this.k.phase !== "rejeu";
   }
 
-  /** Horodatage serveur du monde figé de la carte (instant de la mort) ; null hors carte-après-rejeu. */
+  /** Horodatage serveur du monde figé de la carte (dernière image du rejeu) ; null hors carte-après-rejeu. */
   tempsFige(): number | null {
-    return this.figee() ? this.k!.tMortServeur : null;
+    return this.figee() ? this.finRejeu() : null;
+  }
+
+  private finRejeu(): number {
+    return this.k ? debutRejeu(this.k.tMortServeur) + KILLCAM.rejeuMs : 0;
   }
 
   /**
-   * Joueurs à l'instant de la mort, sans le tueur (comme `joueursRejoues`), pour la carte qui suit un rejeu : le monde ne disparaît pas
+   * Joueurs à la dernière image du rejeu, sans le tueur (comme `joueursRejoues`), pour la carte qui suit un rejeu : le monde ne disparaît pas
    * derrière la caméra figée. Vide hors carte-après-rejeu. Ne pas modifier la Map.
    */
   joueursFiges(): Map<string, EtatJoueurSnap> {
     const t = this.tempsFige();
     if (t === null || !this.k) return new Map();
-    if (!this.cacheJoueursFiges) {
-      const m = new Map(this.joueurs.echantillon(t));
-      m.delete(this.k.tueurId);
-      this.cacheJoueursFiges = m;
-    }
+    if (!this.cacheJoueursFiges) this.cacheJoueursFiges = this.vue.autres(this.joueurs, this.k.tueurId, t, this.decalageMs);
     return this.cacheJoueursFiges;
   }
 
-  /** Voitures conduisibles à l'instant de la mort (carte après rejeu). Vide ailleurs. Ne pas modifier la Map. */
+  /** Voitures conduisibles à la dernière image du rejeu (carte après rejeu). Vide ailleurs. Ne pas modifier la Map. */
   vehiculesFiges(): Map<number, VehiculeSnap> {
     const t = this.tempsFige();
     if (t === null) return new Map();
@@ -179,6 +222,7 @@ export class ControleurKillcam {
     this.gele = false;
     this.joueurs.vider();
     this.vehicules.vider();
+    this.journal.vider();
     this.invalider();
   }
 
@@ -197,13 +241,13 @@ export class ControleurKillcam {
   }
 
   /**
-   * Fin de la fenêtre de 150 ms : plus aucun `ajouter`. Le tueur peut avoir quitté pendant ces 150 ms ; l'`Interpolateur` retire les joueurs
+   * Fin de la fenêtre de `gelApresMortMs` : plus aucun `ajouter`. Le tueur peut avoir quitté entre-temps ; l'`Interpolateur` retire les joueurs
    * absents du DERNIER snap, le rejeu n'aurait alors plus de sujet : on le rétrograde en repli (carte seule) plutôt que de caméra sur rien.
    */
   private geler(): void {
     this.gele = true;
     const k = this.k;
-    if (k && k.avecRejeu && !tueurPresent(this.joueurs.echantillon(k.tMortServeur - KILLCAM.rejeuMs), k.tueurId)) {
+    if (k && k.avecRejeu && !tueurPresent(this.joueurs.echantillon(debutRejeu(k.tMortServeur)), k.tueurId)) {
       this.k = { ...k, avecRejeu: false, phase: k.ecouleMs >= KILLCAM.rejeuMs + KILLCAM.carteMs ? "termine" : "carte" };
     }
   }

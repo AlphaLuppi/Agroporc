@@ -35,17 +35,58 @@ export function gainVoix(distance: number, vivant = true): number {
   return vivant ? g : g * facteurMort;
 }
 
+/**
+ * Lien vocal de killcam : une victime et son tueur s'entendent à plein volume, quelle que soit la distance, pendant ce délai après la mort
+ * (la killcam, puis le temps d'échanger un « bien joué »). En Battle Royale, c'est le seul chat vocal (le serveur ne relaie que ces paires).
+ */
+export const LIEN_VOIX_KILLCAM_MS = 12_000;
+
+/** Clé d'un lien vocal, la même dans les deux sens. */
+export function cleLienVoix(a: string, b: string): string {
+  return a < b ? `${a}|${b}` : `${b}|${a}`;
+}
+
+/**
+ * Liens vocaux de killcam en cours, côté client : `id` → fin (horloge locale, ms). Un `mort` dont je suis la victime ou le tueur en ouvre
+ * un ; `actifs(t)` donne les correspondants dont le lien court encore.
+ */
+export class LiensVoixKillcam {
+  private readonly liens = new Map<string, number>();
+
+  /** Un `mort` reçu : lien ouvert si je suis la victime (avec le tueur) ou le tueur (avec la victime). Vrai si un lien s'ouvre. */
+  surMort(moi: string | null, cible: string, par: string, t: number): boolean {
+    if (!moi || !par || par === cible) return false;
+    const autre = cible === moi ? par : par === moi ? cible : null;
+    if (!autre) return false;
+    this.liens.set(autre, t + LIEN_VOIX_KILLCAM_MS);
+    return true;
+  }
+
+  /** Correspondants liés à l'instant `t` (triés), liens échus oubliés. */
+  actifs(t: number): string[] {
+    for (const [id, fin] of this.liens) if (fin <= t) this.liens.delete(id);
+    return [...this.liens.keys()].sort();
+  }
+
+  vider(): void {
+    this.liens.clear();
+  }
+}
+
 /** Des deux joueurs, celui à l'identifiant le plus petit fait l'offre : jamais deux offres croisées. */
 export function doitAppeler(moi: string, autre: string): boolean {
   return moi < autre;
 }
 
-/** Joueurs avec qui ouvrir une connexion : en arène, voix activée, autres que moi ; aucun si je ne suis pas moi-même en arène avec la voix. */
-export function correspondants(moi: string | null, joueurs: readonly JoueurPublic[]): string[] {
+/**
+ * Joueurs avec qui ouvrir une connexion : en arène, voix activée, autres que moi ; aucun si je ne suis pas moi-même en arène avec la voix.
+ * `seulement` (Battle Royale) : restreint aux correspondants d'un lien de killcam.
+ */
+export function correspondants(moi: string | null, joueurs: readonly JoueurPublic[], seulement?: ReadonlySet<string> | null): string[] {
   if (!moi) return [];
   const m = joueurs.find((j) => j.id === moi);
   if (!m || !m.enJeu || !m.voix) return [];
-  return joueurs.filter((j) => j.id !== moi && j.enJeu && j.voix).map((j) => j.id).sort();
+  return joueurs.filter((j) => j.id !== moi && j.enJeu && j.voix && (!seulement || seulement.has(j.id))).map((j) => j.id).sort();
 }
 
 /** Ce qu'il faut ouvrir (en appelant si c'est à moi) et fermer pour passer des connexions `actuelles` aux `voulues`. */

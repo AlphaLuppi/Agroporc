@@ -83,12 +83,12 @@ describe("rejeu", () => {
     expect(c.info()).toEqual(INFO);
   });
 
-  it("tempsServeur() est monotone de m.ts − 2500 à m.ts, à 1×", () => {
+  it("tempsServeur() est monotone de m.ts − 2500 à m.ts + 500, à 1×", () => {
     const c = pret();
     c.surMort(mort(), MOI);
-    expect(c.tempsServeur()).toBe(T_MORT - KILLCAM.rejeuMs);
+    expect(c.tempsServeur()).toBe(T_MORT - 2500);
     let prec = c.tempsServeur()!;
-    for (let i = 0; i < 25; i++) {
+    for (let i = 0; i < 31; i++) {
       c.maj(0.1);
       if (c.phase() !== "rejeu") break;
       const t = c.tempsServeur()!;
@@ -96,15 +96,15 @@ describe("rejeu", () => {
       expect(t - prec).toBeCloseTo(100, 6);
       prec = t;
     }
-    // dernière image du rejeu : on a atteint tMort sans le dépasser
-    expect(prec).toBeLessThanOrEqual(T_MORT);
-    expect(prec).toBeGreaterThan(T_MORT - 200);
+    // dernière image du rejeu : on a dépassé la mort de 0,5 s (la victime tombe), sans aller au-delà
+    expect(prec).toBeLessThanOrEqual(T_MORT + KILLCAM.apresMortMs);
+    expect(prec).toBeGreaterThan(T_MORT + KILLCAM.apresMortMs - 200);
   });
 
-  it("rejeu puis carte à 2,5 s, la carte reste jusqu'à terminer()", () => {
+  it("rejeu puis carte à 3 s, la carte reste jusqu'à terminer()", () => {
     const c = pret();
     c.surMort(mort(), MOI);
-    c.maj(2.4);
+    c.maj(2.9);
     expect(c.phase()).toBe("rejeu");
     c.maj(0.2);
     expect(c.phase()).toBe("carte");
@@ -187,21 +187,21 @@ describe("rejeu", () => {
   it("hors rejeu (carte, sans killcam) les rejoués sont vides", () => {
     const c = pret();
     c.surMort(mort(), MOI);
-    c.maj(2.6);
+    c.maj(3.1);
     expect(c.phase()).toBe("carte");
     expect(c.joueursRejoues().size).toBe(0);
     expect(c.vehiculesRejoues().size).toBe(0);
     expect(c.camera()).toBeNull();
   });
 
-  it("carte après rejeu : le monde reste figé à l'instant de la mort, joueurs et voitures présents (jamais vides), sans le tueur", () => {
+  it("carte après rejeu : le monde reste figé à la dernière image du rejeu, joueurs et voitures présents (jamais vides), sans le tueur", () => {
     const c = pret();
     c.surMort(mort(), MOI);
     expect(c.tempsFige()).toBeNull();
     expect(c.joueursFiges().size).toBe(0);
-    c.maj(2.6);
+    c.maj(3.1);
     expect(c.phase()).toBe("carte");
-    expect(c.tempsFige()).toBe(T_MORT);
+    expect(c.tempsFige()).toBe(T_MORT + KILLCAM.apresMortMs);
     const js = c.joueursFiges();
     expect([...js.keys()].sort()).toEqual(["autre", MOI]);
     expect(js.get("autre")!.p[0]).toBeCloseTo(5, 6);
@@ -211,13 +211,13 @@ describe("rejeu", () => {
     expect(c.vehiculesFiges().get(3)!.p[0]).toBeCloseTo(100, 3);
   });
 
-  it("« passer » en plein rejeu : la carte montre aussi le monde à l'instant de la mort, pas celui du moment du saut", () => {
+  it("« passer » en plein rejeu : la carte montre aussi le monde de la fin du rejeu, pas celui du moment du saut", () => {
     const c = pret();
     c.surMort(mort(), MOI);
     c.maj(0.5);
     c.passer();
     expect(c.phase()).toBe("carte");
-    expect(c.tempsFige()).toBe(T_MORT);
+    expect(c.tempsFige()).toBe(T_MORT + KILLCAM.apresMortMs);
     expect(c.vehiculesFiges().get(3)!.p[0]).toBeCloseTo(100, 3);
   });
 
@@ -234,7 +234,7 @@ describe("rejeu", () => {
     const c = pret();
     c.surMort(mort(), MOI);
     expect(c.cameraFigee()).toBeNull();
-    c.maj(2.6);
+    c.maj(3.1);
     const f = c.cameraFigee()!;
     expect(f.pos[0]).toBeCloseTo(40, 3);
     expect(f.pos[1]).toBeCloseTo(SILHOUETTE.oeil, 6);
@@ -259,26 +259,27 @@ describe("passer()", () => {
 });
 
 describe("gel du tampon", () => {
-  it("un snap reçu 200 ms après la mort n'est pas ajouté ; un snap à +100 ms l'est", () => {
+  it("un snap reçu après le gel n'est pas ajouté ; un snap reçu avant l'est", () => {
     const c = pret();
     c.surMort(mort(), MOI);
     c.maj(0.1);
     c.alimenter(T_MORT + 100, [etat(MOI, 0), etat(TUEUR, 41), etat("nouveau", 9)], undefined);
-    c.maj(0.1); // +200 ms : gelé
-    c.alimenter(T_MORT + 300, [etat(MOI, 0), etat(TUEUR, 43), etat("tard", 9)], undefined);
+    c.maj(1.0); // +1,1 s : gelé
+    c.alimenter(T_MORT + 1300, [etat(MOI, 0), etat(TUEUR, 43), etat("tard", 9)], undefined);
     // on rejoue jusqu'à la fin du rejeu : le snap tardif n'a jamais existé
-    c.maj(2.2);
+    c.maj(1.75);
     expect(c.phase()).toBe("rejeu");
-    for (const t of [c.tempsServeur()!]) expect(t).toBeLessThanOrEqual(T_MORT);
+    for (const t of [c.tempsServeur()!]) expect(t).toBeLessThanOrEqual(T_MORT + KILLCAM.apresMortMs);
     expect(c.joueursRejoues().has("tard")).toBe(false);
+    expect(c.joueursRejoues().has("nouveau")).toBe(true);
   });
 
   it("le snap tardif n'allonge pas le tampon : l'extrapolation est celle du dernier snap accepté", () => {
     const c = new ControleurKillcam();
     c.alimenter(T_MORT - 100, [etat(MOI, 0), etat(TUEUR, 10)], undefined);
     c.surMort(mort({ ts: T_MORT - 100 + 1 }), MOI);
-    c.maj(0.2);
-    c.alimenter(T_MORT + 900, [etat(MOI, 0), etat(TUEUR, 99)], undefined);
+    c.maj(KILLCAM.gelApresMortMs / 1000 + 0.05);
+    c.alimenter(T_MORT + 1900, [etat(MOI, 0), etat(TUEUR, 99)], undefined);
     expect(c.camera()).not.toBeNull();
     expect(c.camera()!.pos[0]).toBeCloseTo(10, 6);
   });
@@ -286,7 +287,7 @@ describe("gel du tampon", () => {
   it("un tueur qui disparaît du snap 1 s après reste dans le rejeu", () => {
     const c = pret();
     c.surMort(mort(), MOI);
-    c.maj(0.2); // gel
+    c.maj(1.2); // gel
     // 1 s plus tard le tueur a quitté : snaps sans lui, refusés
     for (let ts = T_MORT + 50; ts <= T_MORT + 1500; ts += PAS_SNAP_MS) c.alimenter(ts, joueursA(ts, { tueur: false }), voitureA(ts));
     c.maj(0.8);
@@ -296,12 +297,12 @@ describe("gel du tampon", () => {
     expect(cam!.pos[0]).toBeCloseTo(40 + (c.tempsServeur()! - T_MORT) / 1000, 3);
   });
 
-  it("sans gel (avant les 150 ms) un tueur qui quitte retire le rejeu : repli en carte", () => {
+  it("avant le gel, un tueur qui quitte retire le rejeu : repli en carte", () => {
     const c = pret();
     c.surMort(mort(), MOI);
     c.maj(0.05);
     c.alimenter(T_MORT + 50, joueursA(T_MORT + 50, { tueur: false }), voitureA(T_MORT + 50));
-    c.maj(0.1); // gel : le tueur n'est plus dans le dernier snap accepté
+    c.maj(KILLCAM.gelApresMortMs / 1000); // gel : le tueur n'est plus dans le dernier snap accepté
     expect(c.phase()).toBe("carte");
     expect(c.avecRejeu()).toBe(false);
     expect(c.camera()).toBeNull();
@@ -391,7 +392,7 @@ describe("robustesse", () => {
     remplir(c, T_MORT - 4000, T_MORT);
     c.surMort(mort(), MOI);
     expect(c.progression()).toBe(0);
-    expect(c.tempsServeur()).toBe(T_MORT - KILLCAM.rejeuMs);
+    expect(c.tempsServeur()).toBe(T_MORT - 2500);
   });
 
   it("snaps sans voitures (champ absent) : les voitures déjà reçues restent rejouables", () => {
@@ -399,5 +400,59 @@ describe("robustesse", () => {
     for (let ts = T_MORT - 4000; ts <= T_MORT; ts += PAS_SNAP_MS) c.alimenter(ts, joueursA(ts), ts < T_MORT - 3000 ? voitureA(ts) : undefined);
     c.surMort(mort(), MOI);
     expect(c.vehiculesRejoues().has(3)).toBe(true);
+  });
+});
+
+describe("ce que le tueur a vécu (vue-joueur)", () => {
+  const tirDe = (ts: number, id: string, d: [number, number, number]) => ({ genre: "tir" as const, ts, id, arme: "sniper" as const, o: [40, 1.6, 0] as [number, number, number], d: [d] });
+
+  it("le coup fatal est rejoué à son instant, la caméra pile dans l'axe du tir, puis la mort de la victime", () => {
+    const c = pret();
+    // le tueur tire 200 ms avant la mort (le snap le dit regarder lacet 1,2 : le tir part ailleurs, vers −x)
+    c.alimenterEvenement(tirDe(T_MORT - 200, TUEUR, [-1, 0, 0]));
+    c.alimenterEvenement({ genre: "degats", ts: T_MORT, cible: MOI, par: TUEUR, degats: 100, pv: 0, zone: "tete" });
+    c.alimenterEvenement({ genre: "mort", ts: T_MORT, cible: MOI, par: TUEUR, zone: "tete", arme: "sniper" });
+    c.surMort(mort(), MOI, { pingMs: 60, decalageMs: 170, largeurMs: 50 });
+    expect(c.evenementsAJouer()).toEqual([]);
+    c.maj(2.3); // T_MORT − 200
+    const vus = c.evenementsAJouer();
+    expect(vus.map((e) => e.genre)).toEqual(["tir"]);
+    // à l'instant du tir : la caméra regarde exactement vers −x (lacet π/2)
+    const cam = c.camera()!;
+    expect(Math.sin(cam.lacet)).toBeCloseTo(1, 6);
+    expect(cam.tangage).toBeCloseTo(0, 6);
+    // la confirmation et la mort lui parviennent un aller-retour plus tard (T_MORT + 60)
+    c.maj(0.25);
+    expect(c.evenementsAJouer()).toEqual([]);
+    c.maj(0.02);
+    expect(c.evenementsAJouer().map((e) => e.genre)).toEqual(["degats", "mort"]);
+    c.maj(0.4);
+    expect(c.evenementsAJouer()).toEqual([]);
+  });
+
+  it("les autres sont montrés tels que le tueur les voyait (son retard de vue), et l'état du tueur est rejoué", () => {
+    const c = new ControleurKillcam();
+    for (let ts = T_MORT - 4000; ts <= T_MORT + 1000; ts += PAS_SNAP_MS) {
+      c.alimenter(ts, [etat(MOI, (ts - T_MORT) / 1000), etat(TUEUR, 40, { vise: ts > T_MORT - 1000 })], undefined);
+    }
+    c.surMort(mort(), MOI, { decalageMs: 200 });
+    c.maj(2.5); // T_MORT
+    expect(c.joueursRejoues().get(MOI)!.p[0]).toBeCloseTo(-0.2, 6);
+    expect(c.joueursRejoues().has(TUEUR)).toBe(false);
+    expect(c.tueurRejoue()!.vise).toBe(true);
+  });
+
+  it("le journal gèle avec les tampons, et se vide à terminer()", () => {
+    const c = pret();
+    c.surMort(mort(), MOI);
+    c.maj(KILLCAM.gelApresMortMs / 1000 + 0.05);
+    c.alimenterEvenement(tirDe(T_MORT - 100, TUEUR, [-1, 0, 0]));
+    c.maj(3);
+    expect(c.evenementsAJouer()).toEqual([]);
+    c.terminer();
+    remplir(c, T_MORT - 4000, T_MORT);
+    c.surMort(mort(), MOI);
+    c.maj(2);
+    expect(c.evenementsAJouer()).toEqual([]);
   });
 });

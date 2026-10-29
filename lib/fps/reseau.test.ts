@@ -130,7 +130,7 @@ describe("Interpolateur", () => {
     expect(new Interpolateur().echantillon(100).size).toBe(0);
   });
 
-  it("tampon long (killcam) : garde 4 s là où le tampon par défaut en garde 1", () => {
+  it("tampon long (killcam) : garde 5 s là où le tampon par défaut en garde 1", () => {
     const court = new Interpolateur();
     const long = new Interpolateur(KILLCAM.tamponMs);
     for (let i = 0; i <= 200; i++) { // 10 s à 20 Hz
@@ -138,11 +138,11 @@ describe("Interpolateur", () => {
       court.ajouter(snap);
       long.ajouter(snap);
     }
-    // dernier snap à 10 000 ms : le long remonte à 6 000 ms (x = 120), le court seulement à 9 000 ms (x = 180)
-    expect(long.echantillon(6000).get("a")!.p[0]).toBeCloseTo(120, 10);
+    // dernier snap à 10 000 ms : le long remonte à 5 000 ms (x = 100), le court seulement à 9 000 ms (x = 180)
+    expect(long.echantillon(5000).get("a")!.p[0]).toBeCloseTo(100, 10);
     expect(long.echantillon(7500).get("a")!.p[0]).toBeCloseTo(150, 10);
     expect(court.echantillon(7500).get("a")!.p[0]).toBeCloseTo(180, 10); // trop ancien : plus ancien état conservé
-    expect(long.echantillon(5000).get("a")!.p[0]).toBeCloseTo(120, 10); // avant l'historique : tient le plus ancien
+    expect(long.echantillon(4000).get("a")!.p[0]).toBeCloseTo(100, 10); // avant l'historique : tient le plus ancien
   });
 
   it("Interpolateur() garde 1 s (valeur par défaut inchangée)", () => {

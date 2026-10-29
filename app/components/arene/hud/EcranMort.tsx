@@ -9,7 +9,7 @@ import type { ConfigTouches } from "@/lib/fps/touches";
 import ChoixEquipement from "../ChoixEquipement";
 import { useDisposition } from "../ReglageTouches";
 import { toucheDe } from "./AideCommandes";
-import Killcam from "../Killcam";
+import Killcam, { texteVoixKillcam } from "../Killcam";
 import type { DerniereMort, EquipementChoisi } from "../contrats";
 import CarteTueur from "./CarteTueur";
 import EcranSpectateur, { CarteEliminationBr, type PropsEcranSpectateur } from "./EcranSpectateur";
@@ -52,6 +52,8 @@ export interface PropsEcranMort {
   maintenantServeur?(): number;
   /** (Battle Royale) mort définitive : place, joueur suivi et commandes du spectateur ; absent = comportement de l'arène */
   br?: EntreesSpectateurBr;
+  /** mode du micro (réglage du chat vocal) : « appuyer pour parler » par défaut */
+  modeVoix?: "appuyer" | "ouvert";
 }
 
 /** Barre de saignement : temps restant avant l'élimination, qui se vide ; le texte est écrit (jamais la barre seule). */
@@ -75,6 +77,7 @@ function BarreSaignement({ terreFinT, maintenantServeur }: { terreFinT: number; 
 
 export default function EcranMort({
   hud, derniereMort, killcamInfo, degatsAuTueur, touches, equipement, surEquipement, surPasserKillcam, joueurs, aideEquipement, terreFinT = 0, maintenantServeur, br,
+  modeVoix = "appuyer",
 }: PropsEcranMort) {
   const disposition = useDisposition();
   if (!hud.mort) return null;
@@ -103,6 +106,8 @@ export default function EcranMort({
     return <div className={styles.repli}><p className={styles.statut} role="status">Apparition…</p></div>;
   }
   const phase = hud.killcamPhase;
+  // chat vocal avec le tueur le temps de la killcam (lien vocal : plein volume, où qu'il soit)
+  const voixKillcam = { etat: hud.voix, lien: hud.voixLien ?? "", touche: toucheDe(touches, "parler", disposition), mode: modeVoix };
   if (hud.mode === "br" && br) {
     if (phase === "rejeu" || phase === "carte") {
       return (
@@ -114,13 +119,16 @@ export default function EcranMort({
             derniereMort={derniereMort}
             surPasser={surPasserKillcam}
             touchePasser={toucheDe(touches, "passer", disposition)}
+            voix={voixKillcam}
           >
             {phase === "carte" && <CarteEliminationBr derniereMort={derniereMort} killcamInfo={killcamInfo} place={br.place} total={br.total} />}
           </Killcam>
         </div>
       );
     }
-    return <EcranSpectateur derniereMort={derniereMort} {...br} />;
+    // lien vocal de killcam encore ouvert (connexion établie) : on peut continuer à parler à son tueur
+    const voixSpect = hud.voixLien ? texteVoixKillcam(voixKillcam, hud.voixLien) : "";
+    return <EcranSpectateur derniereMort={derniereMort} {...br} voix={voixSpect} />;
   }
   const tueurJoueur = joueurs?.find((j) => j.id === killcamInfo?.id) ?? null;
   const km = tueurJoueur ? { kills: tueurJoueur.kills, morts: tueurJoueur.morts } : null;
@@ -153,6 +161,7 @@ export default function EcranMort({
           surPasser={surPasserKillcam}
           touchePasser={toucheDe(touches, "passer", disposition)}
           reapparitionDans={hud.reapparitionDans}
+          voix={voixKillcam}
         >
           {phase === "carte" && carte}
           {choix}

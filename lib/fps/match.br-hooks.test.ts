@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { Building, SceneData, Vec2 } from "../agroparc3d/types";
 import { BR, EQUIPEMENT_DEPART_BR, MAIN_DEPART_BR } from "./br-regles";
+import { LIEN_VOIX_KILLCAM_MS } from "./voix";
 import { construireMonde } from "./collision";
 import { Salle, HISTORIQUE_MS, INACTIF_MS, PALETTE, REWIND_MAX_MS, type JoueurSalle, type OptionsSalle, type Sortie } from "./match";
 import type { ContexteSalle, ServiceBr } from "./match-contexte";
@@ -273,13 +274,25 @@ describe("messages confiés au service", () => {
     expect(f.recus).toEqual([]);
   });
 
-  it("chat vocal désactivé : `voixActif` et `voix` sont ignorés (pas de présence, pas de relais)", () => {
+  it("chat vocal de killcam seulement : `voixActif` retenu (présence fusionnée), aucun relais hors d'un lien victime ↔ tueur", () => {
     const { s } = salleBr();
-    joueursEnJeu(s, ["a", "b"]);
+    joueursEnJeu(s, ["a", "b", "c"]);
     expect(s.recevoir("a", { t: "voixActif", actif: true }, T0 + 10)).toEqual([]);
     expect(s.recevoir("b", { t: "voixActif", actif: true }, T0 + 10)).toEqual([]);
-    expect(j(s, "a").voix).toBeUndefined();
+    expect(s.recevoir("c", { t: "voixActif", actif: true }, T0 + 10)).toEqual([]);
+    expect(j(s, "a").voix).toBe(true);
+    // pas de lien : rien n'est relayé
     expect(s.recevoir("a", { t: "voix", a: "b", s: { type: "offre", sdp: "v=0" } }, T0 + 11)).toEqual([]);
+    // a tue b : ils peuvent se parler (dans les deux sens), pas c
+    const t = T0 + JEU.protectionMs + 100;
+    s.infliger(j(s, "b"), 100, j(s, "a"), "arme", "corps", "pistolet", t);
+    expect(s.recevoir("a", { t: "voix", a: "b", s: { type: "offre", sdp: "v=0" } }, t + 10)).toEqual([{ a: "b", m: { t: "voix", de: "a", s: { type: "offre", sdp: "v=0" } } }]);
+    expect(s.recevoir("b", { t: "voix", a: "a", s: { type: "reponse", sdp: "v=1" } }, t + 20)).toHaveLength(1);
+    expect(s.recevoir("c", { t: "voix", a: "a", s: { type: "offre", sdp: "v=0" } }, t + 20)).toEqual([]);
+    // le lien expire ; « fin » passe toujours (il referme la connexion)
+    const apres = t + LIEN_VOIX_KILLCAM_MS + 1;
+    expect(s.recevoir("a", { t: "voix", a: "b", s: { type: "offre", sdp: "v=0" } }, apres)).toEqual([]);
+    expect(s.recevoir("a", { t: "voix", a: "b", s: { type: "fin" } }, apres)).toHaveLength(1);
   });
 
   it("changer d'arme (`main`) interrompt l'usage d'un soin : `surDegats(j, \"arme\")`", () => {

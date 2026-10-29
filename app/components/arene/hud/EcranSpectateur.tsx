@@ -63,10 +63,12 @@ export interface PropsEcranSpectateur {
   /** touches réelles des actions de spectateur (vides si non assignées) */
   toucheSuivant: string;
   touchePrecedent: string;
+  /** ligne du chat vocal avec son tueur (lien de killcam en cours), "" = rien */
+  voix?: string;
 }
 
 export default function EcranSpectateur({
-  derniereMort, place, total, suiviId, joueurs, toucheSuivant, touchePrecedent,
+  derniereMort, place, total, suiviId, joueurs, toucheSuivant, touchePrecedent, voix = "",
 }: PropsEcranSpectateur) {
   const suivi = suiviId ? joueurs.find((j) => j.id === suiviId) ?? null : null;
   const cause = derniereMort ? libelleCause(derniereMort.arme, derniereMort.cause, derniereMort.par) : "";
@@ -81,6 +83,7 @@ export default function EcranSpectateur({
             ? <>Vous suivez <i className={styles.pastille} style={{ "--couleur": suivi.couleur } as CSSProperties} aria-hidden="true" /><b>{suivi.pseudo}</b></>
             : "Personne à suivre pour l'instant"}
         </p>
+        {voix && <p className={styles.suivi}>{voix}</p>}
         <p className={styles.aide}>
           {touchePrecedent && <><kbd>{touchePrecedent}</kbd> joueur précédent · </>}
           {toucheSuivant && <><kbd>{toucheSuivant}</kbd> joueur suivant · </>}
