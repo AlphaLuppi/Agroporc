@@ -5,6 +5,8 @@
  * Spec : docs/superpowers/specs/2026-10-29-da-palantir-design.md (D2).
  */
 import type { Boite } from "./geo";
+import { placesParking } from "./parkings";
+import { arbustes, classerArbres, haies, pelouses, type ArbreClasse } from "./vegetation";
 import { deriverVoirie, type Voirie } from "./voirie";
 import type { SceneData, Vec2 } from "./types";
 
@@ -21,8 +23,22 @@ export interface OptionsDerivation {
 
 export interface DecorDerive {
   voirie: Voirie;
+  /** séparateurs de places de parking (segments) */
+  places: number[];
+  /** un élément par arbre de `scene.trees`, même ordre, même position */
+  arbres: ArbreClasse[];
+  /** tronçons de haie [x, z, ux, uz, …] */
+  haies: number[];
+  /** triangles de pelouse [x, z, …] */
+  pelouses: number[];
+  /** arbustes [x, z, …] */
+  arbustes: number[];
 }
 
-export function deriverDecor(data: SceneData, _opts: OptionsDerivation = {}): DecorDerive {
-  return { voirie: deriverVoirie(data) };
+export function deriverDecor(data: SceneData, opts: OptionsDerivation = {}): DecorDerive {
+  const veg = { qualite: opts.qualite, exclure: opts.exclure, eviter: opts.eviter };
+  return {
+    voirie: deriverVoirie(data), places: placesParking(data, opts.exclure),
+    arbres: classerArbres(data), haies: haies(data, veg), pelouses: pelouses(data, veg), arbustes: arbustes(data, veg),
+  };
 }

@@ -45,6 +45,16 @@ export interface Passage {
   osm: boolean;
 }
 
+/** Stop ou cédez-le-passage OSM ramené sur la voie : position sur l'axe, sens d'arrivée (unitaire) et demi-largeur. */
+export interface Arret {
+  genre: "stop" | "cedez";
+  x: number;
+  z: number;
+  ux: number;
+  uz: number;
+  demi: number;
+}
+
 export interface Entree {
   /** point d'entrée du rond-point sur la branche (m) et sens d'arrivée (vers le rond-point), unitaire */
   x: number;
@@ -69,6 +79,7 @@ export interface Voirie {
   passages: Passage[];
   /** lignes d'arrêt (stops et cédez-le-passage OSM), triangles */
   lignesArret: number[];
+  arrets: Arret[];
   /** dents de requin à chaque entrée du rond-point, triangles */
   dents: number[];
   /** flèches (chevrons) d'entrée du rond-point, triangles */
@@ -90,7 +101,7 @@ function cercle(cx: number, cz: number, r: number, n = 48): number[] {
   return out;
 }
 
-interface Seg { road: number; k: number; ax: number; az: number; bx: number; bz: number; demi: number }
+export interface Seg { road: number; k: number; ax: number; az: number; bx: number; bz: number; demi: number }
 
 function longueur(p: readonly Vec2[]): number {
   let L = 0;
@@ -99,7 +110,7 @@ function longueur(p: readonly Vec2[]): number {
 }
 
 /** Contexte partagé des fonctions : grilles de segments, rond-point. */
-interface Contexte {
+export interface Contexte {
   data: SceneData;
   /** segments des voies à chaussée (M et R) */
   chaussees: Grille<Seg>;
@@ -114,7 +125,7 @@ interface Contexte {
   arcs: Set<number>;
 }
 
-function contexte(data: SceneData): Contexte {
+function creerContexte(data: SceneData): Contexte {
   const chaussees = new Grille<Seg>(16), carrossables = new Grille<Seg>(16), murs = new Grille<[number, number, number, number]>(16), batiments = new Grille<Building>(32);
   const rond = trouverRondPoint(data);
   const arcs = new Set<number>();
@@ -140,14 +151,14 @@ function contexte(data: SceneData): Contexte {
 }
 
 /** Distance d'un point au bâtiment le plus proche (0 dedans), plafonnée à `max`. */
-function distanceBatiment(c: Contexte, x: number, z: number, max: number): number {
+export function distanceBatiment(c: Contexte, x: number, z: number, max: number): number {
   let m = max;
   c.murs.proches(x, z, max, ([ax, az, bx, bz]) => { m = Math.min(m, pointSegment(x, z, ax, az, bx, bz).d); });
   return m > 0 && dansBatiment(c, x, z) ? 0 : m;
 }
 
 /** Le point est-il dans un bâtiment (hors cours intérieures) ? */
-function dansBatiment(c: Contexte, x: number, z: number): boolean {
+export function dansBatiment(c: Contexte, x: number, z: number): boolean {
   let dedans = false;
   c.batiments.proches(x, z, 0, (b) => { if (!dedans && dansAnneau(x, z, b.r) && !(b.holes ?? []).some((h) => dansAnneau(x, z, h))) dedans = true; });
   return dedans;
@@ -282,7 +293,7 @@ function axes(c: Contexte): number[] {
 }
 
 /** Voie carrossable (M, R, S) la plus proche d'un point, à moins de `max` m. */
-function voieProche(c: Contexte, x: number, z: number, max: number): { seg: Seg; x: number; z: number; d: number } | null {
+export function voieProche(c: Contexte, x: number, z: number, max: number): { seg: Seg; x: number; z: number; d: number } | null {
   let m: { seg: Seg; x: number; z: number; d: number } | null = null;
   c.carrossables.proches(x, z, max, (s) => {
     const q = pointSegment(x, z, s.ax, s.az, s.bx, s.bz);
@@ -361,28 +372,31 @@ function zebras(passages: readonly Passage[]): number[] {
  * Lignes d'arrêt des stops et cédez-le-passage OSM : une barre de 0,5 m sur la moitié droite de la chaussée dans le sens d'arrivée, vers le
  * rond-point s'il est à moins de 80 m, sinon vers le bout de voie le plus proche.
  */
-function lignesArret(c: Contexte): number[] {
-  const out: number[] = [];
+function lignesArret(c: Contexte): { tri: number[]; arrets: Arret[] } {
+  const tri: number[] = [], arrets: Arret[] = [];
   const d = c.data.decor;
-  if (!d) return out;
-  for (const [px, pz] of [...d.stops, ...d.cedez]) {
-    const v = voieProche(c, px, pz, 8);
-    if (!v) continue;
-    const p = c.data.roads[v.seg.road].p;
-    let [ux, uz] = sens(p, v.seg.k);
-    // sens d'arrivée : vers le rond-point, sinon vers le bout de voie le plus proche
-    let cx: number, cz: number;
-    if (c.rond && Math.hypot(v.x - c.rond.centre[0], v.z - c.rond.centre[1]) < 80) [cx, cz] = c.rond.centre;
-    else {
-      const a = p[0], b = p[p.length - 1];
-      [cx, cz] = Math.hypot(v.x - a[0], v.z - a[1]) < Math.hypot(v.x - b[0], v.z - b[1]) ? a : b;
+  if (!d) return { tri, arrets };
+  for (const [genre, liste] of [["stop", d.stops], ["cedez", d.cedez]] as const) {
+    for (const [px, pz] of liste) {
+      const v = voieProche(c, px, pz, 8);
+      if (!v) continue;
+      const p = c.data.roads[v.seg.road].p;
+      let [ux, uz] = sens(p, v.seg.k);
+      // sens d'arrivée : vers le rond-point, sinon vers le bout de voie le plus proche
+      let cx: number, cz: number;
+      if (c.rond && Math.hypot(v.x - c.rond.centre[0], v.z - c.rond.centre[1]) < 80) [cx, cz] = c.rond.centre;
+      else {
+        const a = p[0], b = p[p.length - 1];
+        [cx, cz] = Math.hypot(v.x - a[0], v.z - a[1]) < Math.hypot(v.x - b[0], v.z - b[1]) ? a : b;
+      }
+      if ((cx - v.x) * ux + (cz - v.z) * uz < 0) { ux = -ux; uz = -uz; }
+      // moitié droite du sens d'arrivée : normale droite (−uz, ux) en repère x est / z sud
+      const demi = v.seg.demi;
+      quad(tri, v.x, v.z, ux, uz, 0.5, demi, demi / 2);
+      arrets.push({ genre, x: v.x, z: v.z, ux, uz, demi });
     }
-    if ((cx - v.x) * ux + (cz - v.z) * uz < 0) { ux = -ux; uz = -uz; }
-    // moitié droite du sens d'arrivée : normale droite (−uz, ux) en repère x est / z sud
-    const demi = v.seg.demi;
-    quad(out, v.x, v.z, ux, uz, 0.5, demi, demi / 2);
   }
-  return out;
+  return { tri, arrets };
 }
 
 /** Entrées du rond-point : voies M/R non circulaires dont un bout touche l'anneau ; point à 5 m du bout, sens vers le rond-point. */
@@ -448,6 +462,17 @@ function flechesEntree(entrees: readonly Entree[]): number[] {
   return out;
 }
 
+const memoContexte = new WeakMap<object, { roads: unknown; c: Contexte }>();
+
+/** Grilles de voies et de bâtiments de la scène, mémoïsées par `data.buildings` (partagées par voirie.ts, parkings.ts, vegetation.ts, mobilier.ts). */
+export function contexteSol(data: SceneData): Contexte {
+  const m = memoContexte.get(data.buildings);
+  if (m && m.roads === data.roads) return m.c;
+  const c = creerContexte(data);
+  memoContexte.set(data.buildings, { roads: data.roads, c });
+  return c;
+}
+
 const memo = new WeakMap<object, Voirie>();
 
 /**
@@ -458,18 +483,19 @@ export function deriverVoirie(data: SceneData): Voirie {
   const cle = data.roads;
   const vu = memo.get(cle);
   if (vu && (vu as Voirie & { decor?: unknown }).decor === data.decor) return vu;
-  const c = contexte(data);
+  const c = contexteSol(data);
   const bordsChaussee = bords(c, ["M", "R"], (d) => d, 0);
   const trottoirs = bords(c, ["M", "R"], (d) => d + TROTTOIR_M, TROTTOIR_M, (x, z) => distanceBatiment(c, x, z, TROTTOIR_BATIMENT_M) >= TROTTOIR_BATIMENT_M);
   const passages = passagesPietons(c);
   const entrees = entreesRond(c);
+  const arrets = lignesArret(c);
   const v: Voirie & { decor?: unknown } = {
     ruban: ruban(c),
     bordsM: bordsChaussee.M ?? [], bordsR: bordsChaussee.R ?? [],
     trottoirs: [...(trottoirs.M ?? []), ...(trottoirs.R ?? [])],
     axes: axes(c),
     zebras: zebras(passages), passages,
-    lignesArret: lignesArret(c),
+    lignesArret: arrets.tri, arrets: arrets.arrets,
     dents: dentsRequin(entrees), fleches: flechesEntree(entrees), entrees,
     giratoire: c.rond ? { centre: c.rond.centre, rayon: c.rond.rayon, ilot: c.rond.rayon - DEMI_LARGEUR.M } : null,
     ilotBord: c.rond ? cercle(c.rond.centre[0], c.rond.centre[1], c.rond.rayon - DEMI_LARGEUR.M) : [],

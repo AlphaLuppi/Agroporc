@@ -7,7 +7,8 @@ import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { SEUIL_ALLUMEES, FENETRE_H_M, FENETRE_L_M, PAS_COLONNE_M, MARGE_COLONNE_M, PORTE_H_M, PORTE_L_M, murDePorte, mursDe, nbEtages, placementsToit } from "./facade";
 import { deriverDecor, type DecorDerive, type OptionsDerivation } from "./decor-donnees";
-import { ajouterChaussees, ajouterMarquages, segmentsVoirie } from "./decor-sol";
+import { ajouterHaies, ajouterPelouses, ajouterVegetation } from "./decor-vegetation";
+import { ajouterChaussees, ajouterMarquages, ajouterPlacesParking, segmentsVoirie } from "./decor-sol";
 import type { Building, Poi, SceneData, Vec2 } from "./types";
 
 export const C = {
@@ -21,6 +22,7 @@ export const C = {
   roadS: 0x1b4a5c,
   roadF: 0x0f2e3a,
   park: 0x12303c,
+  parkPlace: 0x1c4a5a,
   water: 0x1a4f80,
   tree: 0x1d5a4a,
   grid: 0x0a161e,
@@ -569,7 +571,10 @@ export function construireDecor(scene: THREE.Object3D, data: SceneData, opts: Op
   const derive = deriverDecor(data, opts);
   ajouterChaussees(scene, derive.voirie, C.chaussee);
   ajouterReseauSol(scene, data, derive);
+  ajouterPlacesParking(scene, derive.places, C.parkPlace);
   ajouterMarquages(scene, derive.voirie, C.marquage);
   ajouterGrille(scene);
-  ajouterArbres(scene, data);
+  ajouterPelouses(scene, derive.pelouses, C.pelouse);
+  ajouterHaies(scene, derive.haies, C.haie);
+  ajouterVegetation(scene, derive.arbres, derive.arbustes, C);
 }

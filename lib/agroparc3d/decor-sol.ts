@@ -8,7 +8,7 @@ import * as THREE from "three";
 import type { Voirie } from "./voirie";
 
 /** Hauteurs des couches de sol (m). */
-export const Y = { pelouse: 0.1, chaussee: 0.3, trottoir: 0.4, marquage: 0.45, axe: 0.46 } as const;
+export const Y = { pelouse: 0.1, place: 0.27, chaussee: 0.3, trottoir: 0.4, marquage: 0.45, axe: 0.46 } as const;
 
 /** Couleurs du sol, recopiées de `C` (decor.ts) par l'appelant : decor-sol.ts ne dépend pas de decor.ts (pas de cycle). */
 export interface CouleursSol {
@@ -76,4 +76,18 @@ export function segmentsVoirie(v: Voirie, c: CouleursSol): { seg: readonly numbe
     { seg: v.ilotBord, y: Y.marquage, hex: c.trottoir, k: 1 },
     { seg: v.axes, y: Y.axe, hex: c.marquage, k: 0.7 },
   ];
+}
+
+/** Séparateurs de places de parking : un seul LineSegments (couleur de parking éclairci), sous les marquages. */
+export function ajouterPlacesParking(scene: THREE.Object3D, places: readonly number[], couleur: number): THREE.LineSegments | null {
+  if (!places.length) return null;
+  const n = places.length / 2;
+  const pos = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) { pos[i * 3] = places[i * 2]; pos[i * 3 + 1] = Y.place; pos[i * 3 + 2] = places[i * 2 + 1]; }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  const l = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: couleur, transparent: true, opacity: 0.9, depthWrite: false }));
+  l.renderOrder = -1;
+  scene.add(l);
+  return l;
 }
