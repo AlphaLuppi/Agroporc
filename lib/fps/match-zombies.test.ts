@@ -12,8 +12,10 @@ import {
 import { appliquerDegats } from "./sante";
 import {
   ACHATS, ATOUTS, DEPARTS, FENETRES, INTERACTIONS_SECRET, PORTES_PAYANTES, SECRET_CARTE, achatBoite, construireMondeZombies, etiqueterZones, fenetreDeId,
-  idPrisme, local, porteDeId, zoneEn, type ZoneId,
+  TRUCK, idPrisme, local, porteDeId, zoneEn, type ZoneId,
 } from "./zombies-carte";
+import { souffleAtteint } from "./grenades";
+import { lancerRayon } from "./collision";
 import { dansMidi } from "./zombies-secret";
 import { ZOMBIES, delaiApparition, gainKill, gainTouche, pvZombie, totalManche, type GenreBonus } from "./zombies-vagues";
 import { CUISSON_PAP_MS, OFFRE_BOITE_MS, REPRISE_PAP_MS, TIRAGE_BOITE_MS, AUTO_RELEVE_MS, ENVOL_BOITE_MS } from "./match-zombies";
@@ -1778,3 +1780,119 @@ function avancerJusqua(b: Banc, t: number, ok: (t: number) => boolean): number {
   }
   throw new Error("condition jamais atteinte");
 }
+
+// =================================================================================================
+describe("(v8) souffles des armes et insta-kill", () => {
+  /** Partie solo où le premier bonus lâché est l'insta-kill, ramassé : renvoie le banc, le joueur et l'instant (insta-kill actif). */
+  function sousInstakill(opts: Partial<OptionsServiceZombies> = {}) {
+    const b = partieEnCours(["a"], { total1: 200, degatsGriffe: 0, bonus: ["instakill"], ...opts });
+    const j = b.j("a");
+    j.pv = 1e9;
+    for (let t = T_PREMIER_TIGRE; t < T_PREMIER_TIGRE + 240_000; t += 100) {
+      b.svc.tic(t);
+      const sol = b.svc.etat().bonus[0];
+      if (sol) {
+        j.p = [sol.p[0], 0, sol.p[2]];
+        b.svc.tic(t + 50);
+        expect(b.svc.etat().effets.instakillFinT).toBeGreaterThan(t + 50);
+        // de nouveaux tigres pour la suite
+        let u = t + 100;
+        for (; u < t + 20_000 && tigresVivants(b).filter((z) => zoneEn(ZONES_SOL, z.x, z.z)).length < 2; u += 100) b.svc.tic(u);
+        return { b, j, t: u };
+      }
+      for (const z of tigresVivants(b)) if (zoneEn(ZONES_SOL, z.x, z.z)) b.svc.blesser(`z${z.id}`, 100_000, j, "tete", t);
+    }
+    throw new Error("aucun insta-kill");
+  }
+
+  it("sous insta-kill, le souffle d'un tir explosif ne tue que les tigres à portée (pas toute la carte)", () => {
+    const { b, j, t } = sousInstakill();
+    const vivants = tigresVivants(b);
+    expect(vivants.length).toBeGreaterThan(0);
+    // un point au sol à 30 m de chaque tigre au moins : le souffle du Pistolet à rayons (1,6 m) n'en atteint aucun
+    const loin = (x: number, z: number) => vivants.every((v) => Math.hypot(v.x - x, v.z - z) > 30);
+    let c: Vec3 | null = null;
+    for (let x = -200; x <= 300 && !c; x += 10) for (let z = -200; z <= 200 && !c; z += 10) if (loin(x, z)) c = [x, 1.2, z];
+    expect(c).not.toBeNull();
+    const sorties = b.svc.explosionTir(j, "rayon", [c![0] - 1, 1.2, c![2]], [1, 0, 0], 1, 50, t);
+    expect(msgs(sorties, "zombieMort")).toEqual([]);
+    expect(tigresVivants(b).length).toBe(vivants.length);
+    // à bout portant, il tue au premier coup (insta-kill)
+    const z = vivants[0];
+    const pres = b.svc.explosionTir(j, "rayon", [z.x - 3, 0.8, z.z], [1, 0, 0], 3, 50, t + 10);
+    expect(msgs(pres, "zombieMort").some((m) => m.id === `z${z.id}`)).toBe(true);
+  });
+
+  it("sous insta-kill, une balle sur le Truck Muche fait ses dégâts normaux (pas 10 000 000)", () => {
+    const { b, j, t } = sousInstakill();
+    expect(b.svc.degatsTir(j, "pistolet", "corps", 5, t)).toBeGreaterThanOrEqual(1e6);
+    expect(b.svc.degatsTirTruck(j, "pistolet", 5)).toBe(40);
+  });
+});
+
+describe("(v8) souffle d'un tir explosif : ligne de vue et Truck Muche", () => {
+  it("un tigre derrière un mur n'est pas touché par le souffle d'un tir explosif (comme un projectile ou une grenade)", () => {
+    const { monde } = { monde: construireMondeZombies(scene) };
+    const b = partieEnCours(["a"], { total1: 24, degatsGriffe: 0 });
+    const j = b.j("a");
+    j.pv = 1e9;
+    // un tigre et un mur fin tout près de lui (0,5 à 1,3 m) : le centre du souffle est posé juste derrière le mur, à portée sans le mur
+    let trouve: { id: string; c: Vec3; d: Vec3 } | null = null;
+    let t = T_PREMIER_TIGRE;
+    for (; t < T_PREMIER_TIGRE + 60_000 && !trouve; t += 100) {
+      b.svc.tic(t);
+      for (const z of tigresVivants(b)) {
+        if (z.mode !== "chasse") continue;
+        for (let a = 0; a < 360 && !trouve; a += 5) {
+          const d: Vec3 = [Math.cos((a * Math.PI) / 180), 0, Math.sin((a * Math.PI) / 180)];
+          const mur = lancerRayon(monde, [z.x, 0.8, z.z], d, 3);
+          if (!(mur >= 0.3 && mur <= 1.5)) continue;
+          // premier point libre de l'autre côté de la paroi (dans une paroi, un rayon s'arrête aussitôt), encore à portée sans le mur (≤ 2 m)
+          for (let k = mur + 0.05; k <= 2 && !trouve; k += 0.05) {
+            const c: Vec3 = [z.x + d[0] * k, 0.8, z.z + d[2] * k];
+            if (lancerRayon(monde, c, d, 0.3) < 0.3 || lancerRayon(monde, c, [-d[0], 0, -d[2]], 2) < 0.02) continue;
+            if (souffleAtteint(monde, c, [z.x, 0.3, z.z])) break;
+            trouve = { id: `z${z.id}`, c, d };
+          }
+        }
+        if (trouve) break;
+      }
+    }
+    expect(trouve).not.toBeNull();
+    const { id, c, d } = trouve!;
+    const pvAvant = tigresVivants(b).find((z) => `z${z.id}` === id)!.pvPct;
+    // tir de l'autre côté du mur, qui touche un tigre fictif au centre `c` (distanceTouche donnée : centre = c)
+    const o: Vec3 = [c[0] + d[0] * 2, c[1], c[2] + d[2] * 2];
+    const sorties = b.svc.explosionTir(j, "rayon", o, [-d[0], 0, -d[2]], 2, 50, t);
+    expect(msgs(sorties, "degats").filter((m) => m.cible === id)).toEqual([]);
+    expect(tigresVivants(b).some((z) => `z${z.id}` === id && z.pvPct === pvAvant)).toBe(true);
+  });
+
+  it("le souffle d'un tir explosif au pied du Truck Muche le blesse", () => {
+    const b = partieEnCours(["a"], { mancheTruck: 1, total1: 4, degatsGriffe: 0 });
+    const j = b.j("a");
+    j.pv = 1e9;
+    let t = T_MANCHE1 + 100;
+    avancer(b, T0 + 100, t);
+    for (; t < T_MANCHE1 + 30_000 && b.svc.etat().truck?.phase !== "livraison"; t += 100) b.svc.tic(t);
+    expect(b.svc.etat().truck).toMatchObject({ phase: "livraison" });
+    const p = b.svc.snap()!.t!;
+    const avant = p[4];
+    // centre du souffle à 1 m au-delà de la demi-longueur de la caisse (sa position au snap, en cm)
+    const o: Vec3 = [p[0] / 100 + TRUCK.demiLongueur + 3, 0.8, p[1] / 100];
+    const sorties = b.svc.explosionTir(j, "rayon", o, [-1, 0, 0], 2, 50, t);
+    expect(msgs(sorties, "degats").some((m) => m.cible === "livraison")).toBe(true);
+    expect(b.svc.snap()!.t![4]).toBeLessThan(avant);
+  });
+
+  it("le message `degats` d'un Truck détruit d'un coup est plafonné comme celui d'un tigre", () => {
+    const b = partieEnCours(["a"], { mancheTruck: 1, total1: 4, degatsGriffe: 0 });
+    const j = b.j("a");
+    j.pv = 1e9;
+    let t = T_MANCHE1 + 100;
+    avancer(b, T0 + 100, t);
+    for (; t < T_MANCHE1 + 30_000 && b.svc.etat().truck?.phase !== "livraison"; t += 100) b.svc.tic(t);
+    const s = b.svc.blesserTruck(1e7, j, t);
+    expect(msgs(s, "degats")[0].degats).toBeLessThanOrEqual(99_999);
+  });
+});

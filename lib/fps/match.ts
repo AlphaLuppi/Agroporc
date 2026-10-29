@@ -1080,7 +1080,7 @@ export class Salle implements ContexteSalle {
           const dist = this.zombies.toucheTruck(tir.o, dirs[t.plomb], arme.portee);
           if (dist === null) continue;
           plombsVus.add(t.plomb);
-          degatsTruck += this.zombies.degatsTir(j, armeTiree, "corps", dist, maintenant);
+          degatsTruck += this.zombies.degatsTirTruck(j, armeTiree, dist);
           continue;
         }
         // zombies : seuls les tigres sont des cibles (pas de tir allié), touche revérifiée sur leur forme avec rejeu de latence ; (v8) sur le

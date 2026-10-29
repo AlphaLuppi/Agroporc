@@ -777,7 +777,7 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
   function blesserTruck(degats: number, par: JoueurSalle, t: number): Sortie[] {
     if (!truck || truck.phase === "epave") return [];
     truck.pv = Math.max(0, truck.pv - Math.max(0, degats));
-    const sorties: Sortie[] = [{ a: par.id, m: { t: "degats", cible: CIBLE_LIVRAISON, par: par.id, degats, pv: Math.round((100 * truck.pv) / truck.pvMax), bouclier: 0, zone: "corps" } }];
+    const sorties: Sortie[] = [{ a: par.id, m: { t: "degats", cible: CIBLE_LIVRAISON, par: par.id, degats: Math.min(degats, 99_999), pv: Math.round((100 * truck.pv) / truck.pvMax), bouclier: 0, zone: "corps" } }];
     sale = true;
     // sous la moitié de ses PV, le Truck Muche rit de plus belle (une fois)
     if (truck.pv > 0 && !truck.rire && truck.pv <= truck.pvMax / 2) {
@@ -1640,8 +1640,10 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     let premier = true;
     for (const z of [...simu.liste()]) {
       const d = Math.hypot(z.p[0] - c[0], hauteurCorps(z.echelle) - c[1], z.p[2] - c[2]);
-      const degats = t < effets.instakillFinT ? INSTAKILL : degatsExplosion(e, Math.max(0, d - 0.6));
-      if (degats <= 0 || !souffleAtteint(ctx.monde, c, [z.p[0], 0.3, z.p[2]])) continue;
+      // le rayon d'abord, l'insta-kill ensuite (comme `exploser`) : hors du souffle, rien, insta-kill ou pas
+      const base = degatsExplosion(e, Math.max(0, d - 0.6));
+      if (base <= 0 || !souffleAtteint(ctx.monde, c, [z.p[0], 0.3, z.p[2]])) continue;
+      const degats = t < effets.instakillFinT ? INSTAKILL : base;
       const pvAvant = z.pv, pvMax = z.pvMax, type = z.type, id = z.id;
       sorties.push(...service.blesser(idZombie(id), degats, j, "corps", t, { arme, gain: premier, cause: "explosion", src: c }));
       premier = false;
@@ -1841,6 +1843,10 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       return degatsZombie(arme, zone, distance, estAmelioree(j.equip, arme));
     },
 
+    degatsTirTruck(j, arme, distance) {
+      return degatsZombie(arme, "corps", distance, estAmelioree(j.equip, arme));
+    },
+
     degatsMelee(_j, arme, t) {
       return t < effets.instakillFinT ? INSTAKILL : MELEE[arme].degatsZombie;
     },
@@ -1919,23 +1925,13 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       let dist = distanceTouche ?? lancerRayon(ctx.monde, o, d, portee);
       if (d[1] < -1e-3) dist = Math.min(dist, (o[1] - 0.05) / -d[1]);
       if (!Number.isFinite(dist) || dist > portee) return [];
+      // sur un mur ou le sol, le centre recule de 10 cm vers le tireur : posé SUR la paroi, la ligne de vue du souffle la traverserait mal
+      if (distanceTouche == null) dist = Math.max(0, dist - 0.1);
       const c: Vec3 = [o[0] + d[0] * dist, o[1] + d[1] * dist, o[2] + d[2] * dist];
       const sorties: Sortie[] = [{ a: "joueurs", sauf: j.id, m: { t: "zevt", e: { e: "explosion", p: c, rayon: e.rayon, par: j.id } } }];
-      let premier = true;
-      for (const z of [...simu.liste()]) {
-        const dz = Math.hypot(z.p[0] - c[0], 0.8 * z.echelle / 2.7 - c[1], z.p[2] - c[2]);
-        const degats = t < effets.instakillFinT ? INSTAKILL : degatsExplosion(e, Math.max(0, dz - 0.6));
-        if (degats <= 0) continue;
-        const pvAvant = z.pv, pvMax = z.pvMax, type = z.type, id = z.id;
-        sorties.push(...this.blesser(idZombie(id), degats, j, "corps", t, { arme, gain: premier, cause: "explosion", src: c }));
-        premier = false;
-        // un souffle qui ne tue pas peut couper les pattes arrière (rampant)
-        const apres = simu.zombie(id);
-        if (apres && type === 0 && (pvAvant - apres.pv) >= RAMPANT_PART_PV * pvMax && apres.allure !== 3 && alea() < RAMPANT_PROBA) {
-          simu.changerAllure(id, 3, ZOMBIES.vitesses[3]);
-        }
-      }
-      return sorties;
+      // le même souffle que celui d'un projectile : rayon puis insta-kill, ligne de vue (pas à travers les murs), Truck Muche, rampants
+      souffleArme(j, arme, c, e, t, sorties);
+      return emettre(t, sorties);
     },
 
     blesser(cible, degats, par, zone: Zone, t, o = {}) {

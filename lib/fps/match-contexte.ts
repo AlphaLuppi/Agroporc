@@ -287,6 +287,11 @@ export interface ServiceZombies {
   // ---- v7 ----
   /** dégâts d'un plomb sur un tigre (profil zombies de l'arme, amélioration, insta-kill) */
   degatsTir(j: JoueurSalle, arme: ArmeFeuId, zone: Zone, distance: number, maintenant: number): number;
+  /**
+   * (v8) dégâts d'un plomb sur le Truck Muche : le profil de l'arme seul, JAMAIS l'insta-kill (comme les grenades et les souffles ; une balle
+   * ne détruit pas un camion de plusieurs milliers de PV, ni ne finit à elle seule le service du grand secret)
+   */
+  degatsTirTruck(j: JoueurSalle, arme: ArmeFeuId, distance: number): number;
   /** dégâts d'un coup d'arme blanche sur un tigre (insta-kill compris) */
   degatsMelee(j: JoueurSalle, arme: ArmeMeleeId, maintenant: number): number;
   /** la balle de cette arme traverse tous les tigres alignés */
