@@ -4,7 +4,7 @@ import type { SceneData } from "../agroparc3d/types";
 import { lancerRayon } from "./collision";
 import { STATS } from "./armes";
 import { ARMES_PRINCIPALES_ZOMBIES, ARMES_SECONDAIRES_ZOMBIES } from "./protocole";
-import { ACHATS, construireMondeZombies } from "./zombies-carte";
+import { ACHATS, PORTES_PAYANTES, construireMondeZombies, distancePorte } from "./zombies-carte";
 
 /** (v8) Armes des zombies à la craie : sur un vrai mur, des prix de BO1, munitions à moitié prix. */
 const monde = construireMondeZombies(scene as unknown as SceneData);
@@ -27,6 +27,13 @@ describe("(v8) armes des zombies au mur", () => {
       const s = lancerRayon(monde, [a.position[0], 1.2, a.position[1]], [-f.normale[0], 0, -f.normale[1]], 3);
       expect(s, a.id).toBeGreaterThan(0.6);
       expect(s, a.id).toBeLessThan(1.6);
+    }
+  });
+
+  it("ni près d'une porte payante ni d'un autre achat (l'invite de l'arme ne doit pas être volée par la porte ou le disjoncteur)", () => {
+    for (const a of murs) {
+      for (const p of PORTES_PAYANTES) expect(distancePorte(p, a.position), `${a.id} / ${p.id}`).toBeGreaterThan(p.portee + 0.5);
+      for (const b of ACHATS) if (b !== a) expect(Math.hypot(a.position[0] - b.position[0], a.position[1] - b.position[1]), `${a.id} / ${b.id}`).toBeGreaterThan(3);
     }
   });
 

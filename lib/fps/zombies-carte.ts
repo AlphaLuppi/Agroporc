@@ -765,7 +765,7 @@ export const ACHATS: readonly Achat[] = ([
   // Passage Est : l'Agrafeuse, sur la façade de la Cuisine
   mur("agrafeuse", 1200, 600, "i2", surMur([148.1, -37.3], [156.0, -35.1], 0.5, [154, -22])),
   // Local technique : la Photocopieuse, à côté du disjoncteur
-  mur("photocopieuse", 1500, 750, "local", surMurLocal(62, [0, -7.4], [0, 0], 0.88, [-5, -3])),
+  mur("photocopieuse", 1500, 750, "local", surMurLocal(62, [0, -7.4], [0, 0], 0.82, [-5, -3])),
   // Labo : la Perforeuse, sur le mur du Micro-ondes
   mur("perforeuse", 1000, 500, "labo", surMurLocal(74, [49.7, -14.5], [49.6, -4.1], 0.12, [44, -9])),
   // atouts
