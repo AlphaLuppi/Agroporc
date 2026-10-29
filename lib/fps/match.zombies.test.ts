@@ -450,7 +450,8 @@ describe("snaps", () => {
     expect(z.r).toBeGreaterThan(0);
     expect(z.z.length % 6).toBe(0);
     expect(z.z.every((n) => Number.isInteger(n))).toBe(true);
-    expect(sorties.some((x) => x.a === "spectateurs")).toBe(false);
+    // aucun snap aux spectateurs (le lobby ne voit pas la partie) : seulement l'aperçu additif `apercu` (cf. match.apercu.test.ts)
+    expect(sorties.some((x) => x.a === "spectateurs" && x.m.t !== "apercu")).toBe(false);
   });
 
   it("l'arène (sans option zombies) ne change pas : pas de champ `zombies` dans ses snaps, phase de match inchangée", () => {

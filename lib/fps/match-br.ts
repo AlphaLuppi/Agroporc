@@ -638,6 +638,16 @@ export function creerServiceBr(ctx: ContexteSalle, opts: OptionsServiceBr): Serv
       return etatA(dernierT);
     },
 
+    apercu() {
+      const enPartie = phase !== "lobby";
+      const parts = partants();
+      return {
+        phase, vivants: parts.filter((m) => !m.elimine).length, total: parts.length,
+        zone: plan && enPartie ? zoneBrPublique(plan, dernierT) : null,
+        avion: enPartie ? vol.avion() : null,
+      };
+    },
+
     resume(): ResumeBr {
       const palier = plan && enVolOuJeu() ? etatZone(plan, dernierT).palier : undefined;
       const h = ctx.joueurs()[0];

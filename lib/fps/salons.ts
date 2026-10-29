@@ -110,6 +110,22 @@ function decisionPartieBr(
   return { action: "changer", mode: "br", partie: cible.id };
 }
 
+/** Une partie de Battle Royale vue par le choix de l'aperçu : id, phase, survivants. */
+export interface PartieApercu { id: string; phase: PhaseBr; vivants: number }
+
+/**
+ * (aperçu de la vue Palantir) Partie de Battle Royale dont un client montre le direct : la sienne si elle est en vol ou en jeu, sinon la partie
+ * en vol / en jeu aux plus de survivants (égalité : la première de la liste), sinon null (le client affiche alors la simulation).
+ */
+export function partieApercuBr(parties: readonly PartieApercu[], miennePartie: string): string | null {
+  const enCours = (p: PartieApercu): boolean => p.phase === "vol" || p.phase === "jeu";
+  const mienne = parties.find((p) => p.id === miennePartie);
+  if (mienne && enCours(mienne)) return mienne.id;
+  let meilleure: PartieApercu | null = null;
+  for (const p of parties) if (enCours(p) && (!meilleure || p.vivants > meilleure.vivants)) meilleure = p;
+  return meilleure ? meilleure.id : null;
+}
+
 /**
  * Message `salons` (diffusé à tous à la connexion puis au changement, ≤ 1 Hz). `br` absent : le champ est omis (un client v7 ne le voit jamais).
  * `parties` (Battle Royale, additif) : toutes les parties, salle permanente en tête ; omis si absent.

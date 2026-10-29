@@ -24,8 +24,8 @@ import { construireCircuits, flotte } from "../../lib/fps/circulation";
 import { construireMonde, pointsApparition } from "../../lib/fps/collision";
 import { ipClient } from "../../lib/fps/ip-client";
 import { Salle, type OptionsSalle, type Sortie } from "../../lib/fps/match";
-import { PARTIE_NOUVELLE, VERSIONS_ACCEPTEES, type MessageClient, type MessageServeur, type ModeSalle, type ResumePartieBr } from "../../lib/fps/protocole";
-import { decisionMode, garderPourReprise, messageSalons, modeDeSalle } from "../../lib/fps/salons";
+import { PARTIE_NOUVELLE, VERSIONS_ACCEPTEES, type MessageClient, type MessageServeur, type ModeSalle, type PhaseBr, type ResumePartieBr } from "../../lib/fps/protocole";
+import { decisionMode, garderPourReprise, messageSalons, modeDeSalle, partieApercuBr } from "../../lib/fps/salons";
 import { capDeCachette } from "../../lib/fps/tigre-arene";
 import { DEPARTS, construireMondeZombies, donneesZombies } from "../../lib/fps/zombies-carte";
 import { GENRES_BONUS, type GenreBonus } from "../../lib/fps/zombies-vagues";
@@ -364,8 +364,12 @@ function envoyer(c: Client, texte: string): void {
  * d'un client (n'importe quelle salle).
  */
 function diffuser(salle: Salle, sorties: Sortie[]): void {
+  const partieBr = partieDeSalle(salle);
   for (const s of sorties) {
-    const texte = JSON.stringify(s.m);
+    // aperçu d'une partie de Battle Royale : porte l'id de la partie (le bandeau de la vue Palantir le dit) et est relayé aux spectateurs des autres parties
+    const m = s.m.t === "apercu" && partieBr ? { ...s.m, partie: partieBr.id } : s.m;
+    const texte = JSON.stringify(m);
+    if (m.t === "apercu" && partieBr) relayerApercu(partieBr, texte);
     if (s.a === "tous" || s.a === "joueurs" || s.a === "spectateurs") {
       for (const c of clients.values()) {
         if (!c.inscrit || c.salle !== salle || c.id === s.sauf) continue;
@@ -379,6 +383,36 @@ function diffuser(salle: Salle, sorties: Sortie[]): void {
     envoyer(c, texte);
     if (s.m.t === "erreur") c.ws.close(1008, s.m.code);
   }
+}
+
+/** Parties de Battle Royale vues par `partieApercuBr` (id, phase, survivants). */
+const apercusParties = (): { id: string; phase: PhaseBr; vivants: number }[] =>
+  partiesBr.map((p) => { const r = p.salle.resumeBr(); return { id: p.id, phase: r?.phase ?? "lobby", vivants: r?.vivants ?? 0 }; });
+
+/**
+ * Un client de Battle Royale dont la partie n'est ni en vol ni en jeu voit l'aperçu de la partie en cours qui compte le plus de survivants
+ * (`partieApercuBr`) : le message de `source` est relayé à ceux de ses spectateurs inscrits hors jeu dans une AUTRE partie.
+ */
+function relayerApercu(source: PartieBr, texte: string): void {
+  const parties = apercusParties();
+  for (const c of clients.values()) {
+    if (!c.inscrit || c.salle === source.salle) continue;
+    const sienne = partieDeSalle(c.salle);
+    if (!sienne || c.salle.inspecter(c.id)?.enJeu) continue;
+    if (partieApercuBr(parties, sienne.id) === source.id) envoyer(c, texte);
+  }
+}
+
+/** Pose `relaiApercu` sur les parties qu'au moins un spectateur d'une autre partie regarde (une fois par seconde). */
+function majRelaisApercu(): void {
+  const parties = apercusParties();
+  const regardees = new Set<string>();
+  for (const p of partiesBr) {
+    if (p.salle.nombreJoueurs() <= p.salle.nombreEnJeu()) continue;
+    const cible = partieApercuBr(parties, p.id);
+    if (cible && cible !== p.id) regardees.add(cible);
+  }
+  for (const p of partiesBr) p.salle.relaiApercu = regardees.has(p.id);
 }
 
 function refuser(c: Client, code: Extract<MessageServeur, { t: "erreur" }>["code"], message: string): void {
@@ -619,6 +653,7 @@ const timerSalons = setInterval(() => {
   try {
     // une partie de Battle Royale vidée par une déconnexion est refermée ici (une fois par seconde suffit)
     refermerPartiesVides();
+    majRelaisApercu();
     diffuserSalons();
   } catch (e) { console.error("salons:", e); }
 }, 1000);

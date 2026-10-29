@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { BR } from "./br-regles";
 import { JEU, MODES_SALLE, PARTIE_NOUVELLE, type ModeSalle } from "./protocole";
-import { capaciteSalle, choisirPartieBr, decisionMode, garderPourReprise, messageSalons, modeDeSalle } from "./salons";
+import { capaciteSalle, choisirPartieBr, decisionMode, garderPourReprise, messageSalons, modeDeSalle, partieApercuBr } from "./salons";
 import { ZOMBIES } from "./zombies-vagues";
 
 describe("routage des deux salles (décision de `mode`)", () => {
@@ -169,5 +169,23 @@ describe("parties de Battle Royale (plusieurs salles)", () => {
       { id: "br1", phase: "jeu", joueurs: 5, vivants: 3, palier: 2, hote: "Lea" }, { id: "br2", phase: "lobby", joueurs: 0, vivants: 0 },
     ]);
     expect(m.parties).toEqual([{ id: "br1", phase: "jeu", joueurs: 5, vivants: 3, palier: 2, hote: "Lea" }, { id: "br2", phase: "lobby", joueurs: 0, vivants: 0 }]);
+  });
+});
+
+describe("partieApercuBr (aperçu de la vue Palantir)", () => {
+  const p = (id: string, phase: "lobby" | "decompte" | "vol" | "jeu" | "fin", vivants: number) => ({ id, phase, vivants });
+  it("la sienne si elle est en vol ou en jeu", () => {
+    expect(partieApercuBr([p("br1", "jeu", 3), p("br2", "jeu", 20)], "br1")).toBe("br1");
+    expect(partieApercuBr([p("br1", "vol", 3), p("br2", "jeu", 20)], "br1")).toBe("br1");
+  });
+  it("sinon la partie en cours qui compte le plus de survivants", () => {
+    expect(partieApercuBr([p("br1", "lobby", 0), p("br2", "jeu", 5), p("br3", "vol", 12), p("br4", "fin", 40)], "br1")).toBe("br3");
+  });
+  it("égalité : la première de la liste", () => {
+    expect(partieApercuBr([p("br1", "lobby", 0), p("br2", "jeu", 5), p("br3", "jeu", 5)], "br1")).toBe("br2");
+  });
+  it("aucune partie en cours : null (simulation) ; décompte et fin ne comptent pas", () => {
+    expect(partieApercuBr([p("br1", "lobby", 0), p("br2", "decompte", 8), p("br3", "fin", 1)], "br1")).toBeNull();
+    expect(partieApercuBr([], "br1")).toBeNull();
   });
 });
