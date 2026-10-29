@@ -1,7 +1,9 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
-  aireEmprise, colonnes, DIMENSIONS, estLisse, fenetreAllumee, murDePorte, mursDe, murLisse, nbEtages, PART_ALLUMEES, placementsToit,
+  acrotere, aireEmprise, BIT_RESTO, codeFacade, CODE_STYLE, colonnes, DIMENSIONS, estLisse, fenetreAllumee, INDUSTRIEL_H_MAX_M, INDUSTRIEL_M2_MIN,
+  MUR_RIDEAU_H_MIN_M, MUR_RIDEAU_M2_MIN, murDePorte, mursDe, murLisse, nbEtages, PART_ALLUMEES, PARTS_STYLE, placementsSolaires, placementsToit,
+  SOLAIRE_INCLINAISON, SOLAIRE_MIN_M2, styleFacade, teinteBatiment,
   type Equipement,
 } from "./facade";
 import type { Building, SceneData, Vec2 } from "./types";
@@ -242,3 +244,104 @@ describe("placementsToit", () => {
 });
 
 const VALEURS_FIGEES = "0000000100000001";
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Façades v2 (issue #83) : styles, acrotère, panneaux solaires, teintes
+// ---------------------------------------------------------------------------------------------------------------------
+
+describe("styleFacade (façades v2)", () => {
+  const ordinaires = scene.buildings
+    .map((b, id) => ({ b, id }))
+    .filter(({ id }) => !scene.pois.some((p) => p.b === id && (p.type === "home" || p.type === "resto")));
+  const styles = ordinaires.map(({ b, id }) => styleFacade(b, id));
+
+  it("déterministe : deux appels égaux", () => {
+    expect(ordinaires.map(({ b, id }) => styleFacade(b, id))).toEqual(styles);
+  });
+
+  it("les restaurants et la base sont toujours percés, avec le drapeau restaurant (+8) pour les restos seulement", () => {
+    for (const p of scene.pois) {
+      if (p.type !== "home" && p.type !== "resto") continue;
+      expect(styleFacade(scene.buildings[p.b], p.b, p.type)).toBe("percee");
+      expect(codeFacade(scene.buildings[p.b], p.b, p.type)).toBe(p.type === "resto" ? CODE_STYLE.percee + BIT_RESTO : CODE_STYLE.percee);
+    }
+  });
+
+  it("un bâtiment lisse est toujours percé ; chaque style respecte son admission", () => {
+    for (const { b, id } of ordinaires) {
+      const s = styleFacade(b, id);
+      if (estLisse(b)) expect(s).toBe("percee");
+      if (s === "bandeau") expect(nbEtages(b.h)).toBeGreaterThanOrEqual(2);
+      if (s === "mur_rideau") { expect(b.h).toBeGreaterThanOrEqual(MUR_RIDEAU_H_MIN_M); expect(aireEmprise(b)).toBeGreaterThanOrEqual(MUR_RIDEAU_M2_MIN); }
+      if (s === "industriel") { expect(b.h).toBeLessThan(INDUSTRIEL_H_MAX_M); expect(aireEmprise(b)).toBeGreaterThanOrEqual(INDUSTRIEL_M2_MIN); }
+    }
+  });
+
+  it("répartition : percée majoritaire, chaque autre style présent, à ± 8 points de sa part sur un grand échantillon synthétique", () => {
+    // échantillon synthétique admissible partout (haut, grand) : les parts visées sont celles de PARTS_STYLE
+    const grand = (id: number): Building => ({ h: 12, r: [[0, 0], [40, 0], [40, 30], [0, 30]], c: [20, 15] });
+    const n = 4000;
+    const compte: Record<string, number> = {};
+    for (let id = 0; id < n; id++) { const s = styleFacade(grand(id), id); compte[s] = (compte[s] ?? 0) + 1; }
+    // h = 12 : le style industriel n'est pas admis (h < 7), les parts se répartissent sur les trois autres
+    const total = PARTS_STYLE.percee + PARTS_STYLE.bandeau + PARTS_STYLE.mur_rideau;
+    for (const k of ["percee", "bandeau", "mur_rideau"] as const) expect(Math.abs((compte[k] / n) * 100 - (PARTS_STYLE[k] / total) * 100)).toBeLessThan(8);
+    expect(compte.industriel).toBeUndefined();
+    // la scène réelle : percée majoritaire, au moins un bandeau
+    expect(styles.filter((s) => s === "percee").length / styles.length).toBeGreaterThan(0.4);
+    expect(styles).toContain("bandeau");
+  });
+
+  it("qualité basse : ni mur rideau ni industriel", () => {
+    for (const { b, id } of ordinaires) expect(["percee", "bandeau"]).toContain(styleFacade(b, id, undefined, true));
+  });
+
+  it("teinte : trois nuances, toutes représentées", () => {
+    const t = new Set(scene.buildings.map((_, id) => teinteBatiment(id)));
+    expect([...t].sort()).toEqual([0, 1, 2]);
+  });
+});
+
+describe("acrotère et panneaux solaires", () => {
+  it("l'acrotère d'un carré est un anneau de côté 2 × 0,5 m plus petit, fermé", () => {
+    const seg = acrotere(carre(0, 0, 20, 9));
+    expect(seg.length / 4).toBe(4);
+    let x0 = Infinity, x1 = -Infinity;
+    for (let i = 0; i < seg.length; i += 2) { x0 = Math.min(x0, seg[i]); x1 = Math.max(x1, seg[i]); }
+    expect(x0).toBeCloseTo(0.5, 6);
+    expect(x1).toBeCloseTo(19.5, 6);
+    // fermé : la fin de chaque segment est le début du suivant
+    for (let i = 0; i < seg.length; i += 4) expect([seg[i + 2], seg[i + 3]]).toEqual([seg[(i + 4) % seg.length], seg[(i + 5) % seg.length]]);
+    expect(acrotere(carre(0, 0, 5, 9))).toEqual([]); // lisse
+    expect(acrotere(carre(0, 0, 9, 9))).toEqual([]); // moins de 100 m²
+  });
+
+  it("l'acrotère reste dans l'emprise sur les vrais bâtiments", () => {
+    let n = 0;
+    for (const b of scene.buildings) {
+      const seg = acrotere(b);
+      if (!seg.length) continue;
+      n++;
+      for (let i = 0; i < seg.length; i += 4) expect(dedans(seg[i], seg[i + 1], b.r)).toBe(true);
+    }
+    expect(n).toBeGreaterThan(40);
+  });
+
+  it("panneaux solaires : toits de plus de 300 m² seulement, par paires inclinées, déterministes, hors du bord", () => {
+    let avec = 0;
+    scene.buildings.forEach((b, id) => {
+      const s = placementsSolaires(b, id);
+      expect(placementsSolaires(b, id)).toEqual(s);
+      if (!s.length) return;
+      avec++;
+      expect(aireEmprise(b)).toBeGreaterThanOrEqual(SOLAIRE_MIN_M2);
+      expect(s).toHaveLength(2);
+      for (const e of s) { expect(e.type).toBe("solaire"); expect(e.incl).toBeCloseTo(SOLAIRE_INCLINAISON, 9); expect(dedans(e.x, e.z, b.r)).toBe(true); expect(distAnneau(e.x, e.z, b.r)).toBeGreaterThan(1.5); }
+    });
+    expect(avec).toBeGreaterThan(3);
+  });
+
+  it("placementsToit ne change pas : aucun panneau solaire dans son tirage", () => {
+    scene.buildings.forEach((b, id) => { for (const e of placementsToit(b, id)) expect(e.type).not.toBe("solaire"); });
+  });
+});

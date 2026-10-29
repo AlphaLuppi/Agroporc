@@ -119,7 +119,7 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
   controls.target.copy(repos.target);
 
   // ---------- décor (cf. decor.ts) ----------
-  construireDecor(scene, data, { fantomes: true, detail: false, qualite: qualiteParDefaut(), eviter: opts.cachettes?.map((c): Vec2 => [c.x, c.z]) });
+  construireDecor(scene, data, { fantomes: true, detail: true, qualite: qualiteParDefaut(), eviter: opts.cachettes?.map((c): Vec2 => [c.x, c.z]) });
 
   // ---------- POI markers + labels ----------
   const markers: Marker[] = [];

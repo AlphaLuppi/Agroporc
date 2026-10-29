@@ -5,7 +5,7 @@
  */
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
-import { SEUIL_ALLUMEES, FENETRE_H_M, FENETRE_L_M, PAS_COLONNE_M, MARGE_COLONNE_M, PORTE_H_M, PORTE_L_M, murDePorte, mursDe, nbEtages, placementsToit } from "./facade";
+import { SEUIL_ALLUMEES, FENETRE_H_M, FENETRE_L_M, PAS_COLONNE_M, MARGE_COLONNE_M, PORTE_H_M, PORTE_L_M, ENSEIGNE_H_M, ENSEIGNE_L_M, ENSEIGNE_Y_M, INDUSTRIEL_PORTE_H_M, INDUSTRIEL_PORTE_L_M, MUR_RIDEAU_CELLULE_M, VITRINE_BAS_M, VITRINE_HAUT_M, acrotere, codeFacade, murDePorte, mursDe, nbEtages, placementsSolaires, placementsToit } from "./facade";
 import { deriverDecor, type DecorDerive, type OptionsDerivation } from "./decor-donnees";
 import { ajouterMobilier } from "./decor-mobilier";
 import { ajouterHaies, ajouterPelouses, ajouterVegetation } from "./decor-vegetation";
@@ -65,14 +65,14 @@ export interface OptionsGroupe {
   indices?: readonly number[];
   /** état de destruction partagé : le nuanceur écrase les bâtiments et découpe les brèches */
   etat?: EtatDestruction;
-  /** façades détaillées : murs en quads (étages, fenêtres, corniche, porte) ; `portes[k]` = arête de porte du bâtiment k */
-  detail?: { portes: readonly (number | null)[] };
+  /** façades détaillées : murs en quads (étages, fenêtres, corniche, porte) ; `portes[k]` = arête de porte du bâtiment k, `styles[k]` = `codeFacade` du bâtiment k */
+  detail?: { portes: readonly (number | null)[]; styles?: readonly number[] };
   /** style d'une pièce de la carte zombies (matériau et motif propres) */
   style?: StylePiece;
 }
 
-/** Murs en quads d'un bâtiment + toit repris de l'extrusion : attributs `aBat`, `aMur` = (u, L, nEtages, porte) et `aHaut`. */
-function facesDetaillees(g: THREE.BufferGeometry, b: Building, id: number, porte: number | null): THREE.BufferGeometry {
+/** Murs en quads d'un bâtiment + toit repris de l'extrusion : attributs `aBat`, `aMur` = (u, L, nEtages, porte), `aHaut` et `aStyle` (style de façade + drapeau restaurant, cf. `codeFacade`). */
+function facesDetaillees(g: THREE.BufferGeometry, b: Building, id: number, porte: number | null, style: number): THREE.BufferGeometry {
   const src = g.index ? g.toNonIndexed() : g;
   const p = src.getAttribute("position");
   const pos: number[] = [];
@@ -99,6 +99,7 @@ function facesDetaillees(g: THREE.BufferGeometry, b: Building, id: number, porte
   f.setAttribute("aBat", new THREE.Float32BufferAttribute(new Float32Array(nb).fill(id), 1));
   f.setAttribute("aMur", new THREE.Float32BufferAttribute(mur, 4));
   f.setAttribute("aHaut", new THREE.Float32BufferAttribute(new Float32Array(nb).fill(b.h), 1));
+  f.setAttribute("aStyle", new THREE.Float32BufferAttribute(new Float32Array(nb).fill(style), 1));
   return f;
 }
 
@@ -117,11 +118,23 @@ export function buildingGroup(
   const edges: THREE.BufferGeometry[] = [];
   list.forEach((b, k) => {
     const g = extrude(b);
-    const e = new THREE.EdgesGeometry(g, 12);
+    let e: THREE.BufferGeometry = new THREE.EdgesGeometry(g, 12);
     const id = indices ? indices[k] : 0;
+    if (detail) {
+      // acrotère : liseré intérieur du toit, à 0,5 m du bord (mêmes arêtes que le reste : même matériau, même nuanceur)
+      const ac = acrotere(b);
+      if (ac.length) {
+        const pos = new Float32Array((ac.length / 4) * 6);
+        for (let i = 0; i < ac.length; i += 4) pos.set([ac[i], b.h, ac[i + 1], ac[i + 2], b.h, ac[i + 3]], (i / 4) * 6);
+        const lis = new THREE.BufferGeometry();
+        lis.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+        const fus = mergeGeometries([e, lis], false);
+        if (fus) { e.dispose(); lis.dispose(); e = fus; }
+      }
+    }
     let f: THREE.BufferGeometry;
     if (detail) {
-      f = facesDetaillees(g, b, id, detail.portes[k] ?? null);
+      f = facesDetaillees(g, b, id, detail.portes[k] ?? null, detail.styles?.[k] ?? 0);
     } else {
       f = new THREE.BufferGeometry();
       f.setAttribute("position", g.getAttribute("position"));
@@ -282,7 +295,10 @@ if (vMur.z > 0.5) {
   float px = max(max(fwuB, fwyB), 0.002);
   float estompe = smoothstep(0.28, 0.85, px);
   float aa = px * 0.75;
-  vec3 cy = vec3(0.33, 0.81, 1.0);
+  float restoF = vStyle > 7.5 ? 1.0 : 0.0;
+  float sty = floor(vStyle - 8.0 * restoF + 0.5);
+  uint teinteB = hachageB(uint(vBatF + 0.5) * 0x9e3779b1u ^ 0x1b873593u) % 3u;
+  vec3 cy = (restoF > 0.5 || teinteB == 0u) ? vec3(0.33, 0.81, 1.0) : (teinteB == 1u ? vec3(0.30, 0.85, 0.74) : vec3(0.52, 0.68, 0.85));
   vec3 chaud = vec3(0.62, 0.38, 0.16);
   vec3 c0 = outgoingLight;
   float yh = vHaut - y;
@@ -294,40 +310,98 @@ if (vMur.z > 0.5) {
   float xu = L - ${(2 * MARGE_COLONNE_M).toFixed(1)};
   float nCol = xu < ${FENETRE_L_M.toFixed(1)} ? 0.0 : max(1.0, floor(xu / ${PAS_COLONNE_M.toFixed(1)} + 0.5));
   float ddp = abs(u - 0.5 * L);
+  bool murPorte = vMur.w > 0.5;
   float fen = 0.0;
   float verre = 0.0;
   float allumee = 0.0;
-  if (nCol > 0.5 && !(vMur.w > 0.5 && et < 0.5 && ddp < ${(PORTE_L_M / 2 + 0.65).toFixed(2)})) {
-    float pas = xu / nCol;
-    float col = clamp(floor((u - ${MARGE_COLONNE_M.toFixed(1)}) / pas), 0.0, nCol - 1.0);
-    float du = abs(u - (${MARGE_COLONNE_M.toFixed(1)} + (col + 0.5) * pas));
-    float wb = (hE - ${FENETRE_H_M.toFixed(1)}) * 0.55;
-    float dv = abs(ty - (wb + ${(FENETRE_H_M / 2).toFixed(1)}));
-    float d = max(du - ${(FENETRE_L_M / 2).toFixed(2)}, dv - ${(FENETRE_H_M / 2).toFixed(1)});
-    fen = (1.0 - smoothstep(-aa, aa, d)) * (1.0 - corniche);
-    verre = (1.0 - smoothstep(-0.08 - aa, -0.08 + aa, d)) * (1.0 - corniche);
-    uint cle = (uint(vBatF + 0.5) * 73856093u) ^ (uint(et) * 19349663u) ^ (uint(col) * 83492791u) ^ (uint(L * 8.0 + 0.5) * 2654435761u);
-    allumee = (hachageB(cle) & 0xffffu) < ${SEUIL_ALLUMEES}u ? 1.0 : 0.0;
+  float bardage = 0.0;
+  float reflet = 0.0;
+  float demiPorte = sty > 2.5 ? ${(INDUSTRIEL_PORTE_L_M / 2).toFixed(1)} : ${(PORTE_L_M / 2).toFixed(1)};
+  float hautPorte = sty > 2.5 ? ${INDUSTRIEL_PORTE_H_M.toFixed(1)} : ${PORTE_H_M.toFixed(1)};
+  float pasCol = nCol > 0.5 ? xu / nCol : 1.0;
+  float col = nCol > 0.5 ? clamp(floor((u - ${MARGE_COLONNE_M.toFixed(1)}) / pasCol), 0.0, nCol - 1.0) : 0.0;
+  uint cle = (uint(vBatF + 0.5) * 73856093u) ^ (uint(et) * 19349663u) ^ (uint(col) * 83492791u) ^ (uint(L * 8.0 + 0.5) * 2654435761u);
+  uint hc = hachageB(cle) & 0xffffu;
+  float wb = (hE - ${FENETRE_H_M.toFixed(1)}) * 0.55;
+  if (sty < 0.5) {
+    // façade percée : une fenêtre par colonne ; rez-de-chaussée vitré sur le mur de la porte (vitrine continue de part et d'autre)
+    if (nCol > 0.5 && !(murPorte && et < 0.5)) {
+      float du = abs(u - (${MARGE_COLONNE_M.toFixed(1)} + (col + 0.5) * pasCol));
+      float dv = abs(ty - (wb + ${(FENETRE_H_M / 2).toFixed(1)}));
+      float d = max(du - ${(FENETRE_L_M / 2).toFixed(2)}, dv - ${(FENETRE_H_M / 2).toFixed(1)});
+      fen = (1.0 - smoothstep(-aa, aa, d)) * (1.0 - corniche);
+      verre = (1.0 - smoothstep(-0.08 - aa, -0.08 + aa, d)) * (1.0 - corniche);
+      allumee = hc < ${SEUIL_ALLUMEES}u ? 1.0 : 0.0;
+    } else if (nCol > 0.5) {
+      float uu = u - ${MARGE_COLONNE_M.toFixed(1)};
+      float d = max(max(-uu, uu - xu), max(${VITRINE_BAS_M.toFixed(2)} - y, y - ${VITRINE_HAUT_M.toFixed(1)}));
+      float meneau = 1.0 - smoothstep(0.05 - aa, 0.05 + aa, min(fract(uu / pasCol), 1.0 - fract(uu / pasCol)) * pasCol);
+      fen = 1.0 - smoothstep(-aa, aa, d);
+      verre = (1.0 - smoothstep(-0.08 - aa, -0.08 + aa, d)) * (1.0 - meneau);
+      allumee = (restoF > 0.5 || hc < ${2 * SEUIL_ALLUMEES}u) ? 1.0 : 0.0;
+    }
+  } else if (sty < 1.5) {
+    // bandeau : fenêtre continue par étage, meneaux tous les 3 m, allège pleine
+    if (nCol > 0.5 && !(murPorte && et < 0.5 && ddp < ${(PORTE_L_M / 2 + 0.65).toFixed(2)})) {
+      float uu = u - ${MARGE_COLONNE_M.toFixed(1)};
+      float dv = abs(ty - (wb + ${(FENETRE_H_M / 2).toFixed(1)}));
+      float d = max(max(-uu, uu - xu), dv - ${(FENETRE_H_M / 2).toFixed(1)});
+      float meneau = 1.0 - smoothstep(0.06 - aa, 0.06 + aa, min(fract(uu / pasCol), 1.0 - fract(uu / pasCol)) * pasCol);
+      fen = (1.0 - smoothstep(-aa, aa, d)) * (1.0 - corniche);
+      verre = (1.0 - smoothstep(-0.08 - aa, -0.08 + aa, d)) * (1.0 - corniche) * (1.0 - meneau);
+      allumee = hc < ${SEUIL_ALLUMEES}u ? 1.0 : 0.0;
+    }
+  } else if (sty < 2.5) {
+    // mur rideau : grille fine de meneaux (1,5 m × hauteur d'étage), verre sombre, reflet cyan en diagonale
+    float uu = u - 0.4;
+    float wC = L - 0.8;
+    if (wC > 1.0 && !(murPorte && et < 0.5 && ddp < ${(PORTE_L_M / 2 + 0.65).toFixed(2)})) {
+      float k = uu / ${MUR_RIDEAU_CELLULE_M.toFixed(1)};
+      float dmu = min(fract(k), 1.0 - fract(k)) * ${MUR_RIDEAU_CELLULE_M.toFixed(1)};
+      float dmv = min(ty, hE - ty);
+      float cadre = max(1.0 - smoothstep(0.04 - aa, 0.04 + aa, dmu), 1.0 - smoothstep(0.1 - aa, 0.1 + aa, dmv));
+      float dedans = (uu > 0.0 && uu < wC ? 1.0 : 0.0) * (1.0 - corniche) * (y > 0.6 ? 1.0 : 0.0);
+      fen = dedans;
+      verre = dedans * (1.0 - cadre);
+      reflet = smoothstep(0.55, 1.0, sin((u + y) * 0.35));
+      uint cleR = (uint(vBatF + 0.5) * 73856093u) ^ (uint(et) * 19349663u) ^ (uint(max(floor(k), 0.0)) * 83492791u);
+      allumee = (hachageB(cleR) & 0xffffu) < ${Math.round(SEUIL_ALLUMEES / 2)}u ? 1.0 : 0.0;
+    }
+  } else {
+    // industriel : bardage vertical, quelques fenêtres hautes, porte sectionnelle de 4 m
+    bardage = 1.0 - smoothstep(0.012 - aa, 0.012 + aa, min(fract(u / 0.6), 1.0 - fract(u / 0.6)) * 0.6);
+    float dwin = max(abs(mod(u + 3.0, 6.0) - 3.0) - 1.4, abs(y - (vHaut - 1.7)) - 0.4);
+    if (L > 8.0 && u > 1.5 && u < L - 1.5 && vHaut > 4.5) {
+      fen = (1.0 - smoothstep(-aa, aa, dwin)) * (1.0 - corniche);
+      verre = (1.0 - smoothstep(-0.08 - aa, -0.08 + aa, dwin)) * (1.0 - corniche);
+      allumee = hc < ${SEUIL_ALLUMEES}u ? 1.0 : 0.0;
+    }
   }
   float porte = 0.0;
   float interP = 0.0;
-  if (vMur.w > 0.5) {
-    float dP = max(ddp - ${(PORTE_L_M / 2).toFixed(1)}, y - ${PORTE_H_M.toFixed(1)});
+  float enseigne = 0.0;
+  if (murPorte) {
+    float dP = max(ddp - demiPorte, y - hautPorte);
     porte = 1.0 - smoothstep(-aa, aa, dP);
     interP = 1.0 - smoothstep(-0.1 - aa, -0.1 + aa, dP);
+    // enseigne néon des restaurants : barre ambre au-dessus de la porte
+    if (restoF > 0.5) enseigne = 1.0 - smoothstep(-aa, aa, max(ddp - ${(ENSEIGNE_L_M / 2).toFixed(1)}, abs(y - ${ENSEIGNE_Y_M.toFixed(2)}) - ${(ENSEIGNE_H_M / 2).toFixed(2)}));
   }
   vec3 c = mix(c0, c0 * 0.3, socle);
   c += cy * 0.03 * pil;
   c += cy * 0.06 * plancher;
   c += cy * 0.07 * corniche + cy * 0.2 * levre;
+  c += cy * 0.05 * bardage;
   c = mix(c, vec3(0.002, 0.008, 0.014), verre);
+  c += cy * 0.05 * reflet * verre * (1.0 - allumee);
   c = mix(c, chaud, verre * allumee);
   c += cy * 0.2 * (fen - verre) * (1.0 - 0.6 * allumee);
   c = mix(c, vec3(0.006, 0.02, 0.028), interP);
   c += cy * 0.28 * (porte - interP);
   vec3 moyen = c0 * 0.9 + cy * 0.025 + chaud * 0.04;
   outgoingLight = mix(c, moyen, estompe);
-  diffuseColor.a = mix(diffuseColor.a, 0.95, max(max(fen, porte), corniche * 0.6) * (1.0 - estompe));
+  outgoingLight = mix(outgoingLight, vec3(1.0, 0.66, 0.28), enseigne * (1.0 - 0.5 * estompe));
+  diffuseColor.a = mix(diffuseColor.a, 0.95, max(max(max(fen, porte), corniche * 0.6), enseigne) * (1.0 - estompe));
 }
 `;
 
@@ -357,11 +431,11 @@ function brancherShader(mat: THREE.Material, o: OptionsShader): void {
     const declV = ["varying vec3 vMondeB;"];
     if (etat) declV.push("attribute float aBat;", "uniform sampler2D uDetruits;", "varying vec4 vBreche;");
     else if (o.facade) declV.push("attribute float aBat;");
-    if (o.facade) declV.push("attribute vec4 aMur;", "attribute float aHaut;", "varying vec4 vMur;", "varying float vHaut;", "varying float vBatF;");
+    if (o.facade) declV.push("attribute vec4 aMur;", "attribute float aHaut;", "attribute float aStyle;", "varying vec4 vMur;", "varying float vHaut;", "varying float vBatF;", "varying float vStyle;");
     let debut = "#include <begin_vertex>\n";
     if (etat) debut += `vec4 etatB = texture2D(uDetruits, vec2((aBat + 0.5) / ${n.toFixed(1)}, 0.5));\nvBreche = etatB;\n`;
     debut += `vMondeB = (${o.instance ? "modelMatrix * instanceMatrix" : "modelMatrix"} * vec4(transformed, 1.0)).xyz;\n`;
-    if (o.facade) debut += "vMur = aMur;\nvHaut = aHaut;\nvBatF = aBat;\n";
+    if (o.facade) debut += "vMur = aMur;\nvHaut = aHaut;\nvBatF = aBat;\nvStyle = aStyle;\n";
     // effacé (R > 1,5) : tout le bâtiment passe juste sous le sol, sans tas de gravats
     if (etat && !o.instance) debut += `transformed.y = etatB.r > 1.5 ? -0.05 : transformed.y * mix(1.0, ${RESTE_RUINE.toFixed(2)}, etatB.r);\n`;
     sh.vertexShader = `${declV.join("\n")}\n${sh.vertexShader}`.replace("#include <begin_vertex>", () => debut);
@@ -376,7 +450,7 @@ gl_Position = projectionMatrix * mvPosition;`);
     // ---- fragments
     const declF = ["varying vec3 vMondeB;"];
     if (etat) declF.push("varying vec4 vBreche;");
-    if (o.facade) declF.push("varying vec4 vMur;", "varying float vHaut;", "varying float vBatF;", GLSL_HACHAGE);
+    if (o.facade) declF.push("varying vec4 vMur;", "varying float vHaut;", "varying float vBatF;", "varying float vStyle;", GLSL_HACHAGE);
     let main = "void main() {\n";
     if (o.facade) main += "float fwuB = fwidth(vMur.x);\nfloat fwyB = fwidth(vMondeB.y);\n";
     if (etat) {
@@ -401,7 +475,7 @@ if (vBreche.w > 0.0) {
       .replace("void main() {", () => main)
       .replace("#include <opaque_fragment>", () => fin);
   };
-  mat.customProgramCacheKey = () => `batiment-effondrable-4-${n}-${etat ? "d" : "-"}${o.facade ? "f" : "-"}${o.instance ? "i" : "-"}${o.motif ?? "-"}`;
+  mat.customProgramCacheKey = () => `batiment-effondrable-5-${n}-${etat ? "d" : "-"}${o.facade ? "f" : "-"}${o.instance ? "i" : "-"}${o.motif ?? "-"}`;
 }
 
 /** Équipements de toit : une boîte unitaire instanciée (clim, édicules, antennes) et ses arêtes, un tirage par bâtiment. */
@@ -410,6 +484,8 @@ function ajouterEquipementsToit(scene: THREE.Object3D, data: SceneData, etat?: E
   data.buildings.forEach((b, id) => {
     if (b.type && b.type !== "mur") return;
     for (const e of placementsToit(b, id)) liste.push({ id, h: b.h, e });
+    // panneaux solaires : tirage à part, ajouté en fin de liste (les positions de `placementsToit` ne bougent pas)
+    for (const e of placementsSolaires(b, id)) liste.push({ id, h: b.h, e });
   });
   if (!liste.length) return;
   const n = liste.length;
@@ -417,10 +493,12 @@ function ajouterEquipementsToit(scene: THREE.Object3D, data: SceneData, etat?: E
   boite.translate(0, 0.5, 0);
   const ids = new Float32Array(n);
   const matrices: THREE.Matrix4[] = [];
-  const q = new THREE.Quaternion(), p = new THREE.Vector3(), sc = new THREE.Vector3(), axe = new THREE.Vector3(0, 1, 0);
+  const q = new THREE.Quaternion(), qi = new THREE.Quaternion(), p = new THREE.Vector3(), sc = new THREE.Vector3(), axe = new THREE.Vector3(0, 1, 0), axeX = new THREE.Vector3(1, 0, 0);
   liste.forEach(({ id, h, e }, i) => {
     q.setFromAxisAngle(axe, e.rot);
-    matrices.push(new THREE.Matrix4().compose(p.set(e.x, h, e.z), q, sc.set(e.sx, e.sy, e.sz)));
+    // un panneau solaire est incliné (son bord bas reste sur le toit)
+    if (e.incl) q.multiply(qi.setFromAxisAngle(axeX, e.incl));
+    matrices.push(new THREE.Matrix4().compose(p.set(e.x, h + (e.incl ? 0.4 : 0), e.z), q, sc.set(e.sx, e.sy, e.sz)));
     ids[i] = id;
   });
   if (etat) boite.setAttribute("aBat", new THREE.InstancedBufferAttribute(ids, 1));
@@ -474,7 +552,7 @@ export function ajouterBatiments(scene: THREE.Object3D, data: SceneData, opts: O
     const liste = indices.map((i) => data.buildings[i]);
     scene.add(buildingGroup(liste, arete, face, opacite, fantomes ? fantome : 0, {
       indices, etat: opts.destruction, style,
-      detail: detail && !style ? { portes: liste.map((b) => murDePorte(b, data.roads)) } : undefined,
+      detail: detail && !style ? { portes: liste.map((b) => murDePorte(b, data.roads)), styles: indices.map((i, k) => codeFacade(liste[k], i, special.get(i), opts.qualite === "basse")) } : undefined,
     }));
   };
   groupe((i) => !special.has(i) && !stylePiece(i), C.cyan, 0x05080c, 0.82, 0.16);
