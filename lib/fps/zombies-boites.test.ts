@@ -54,9 +54,9 @@ describe("Happy hour (Fire Sale de BO1)", () => {
     const occupee: EtatBoite = { emplacement: 2, etat: "offre", arme: "pompe", pour: "a", finT: 5, utilisations: 0 };
     expect(destinationsEnvol(1, [], 5)).toEqual([0, 2, 3, 4]);
     expect(destinationsEnvol(1, [occupee, fermee(3)], 5)).toEqual([0, 3, 4]);
-    // tout est occupé : repli sur tous les autres emplacements
+    // tout est occupé : aucune destination (la boîte attend en l'air plutôt que d'écraser un tirage payé)
     const tous = [0, 2, 3, 4].map((i) => ({ ...occupee, emplacement: i }));
-    expect(destinationsEnvol(1, tous, 5)).toEqual([0, 2, 3, 4]);
+    expect(destinationsEnvol(1, tous, 5)).toEqual([]);
   });
 
   it("boiteA / boitesPresentes : la principale d'abord, puis les temporaires ; null pour un emplacement vide", () => {

@@ -64,13 +64,16 @@ export function boitesSoldesRestantes(temporaires: readonly EtatBoite[], soldes:
 
 /**
  * Emplacements où la boîte principale peut se poser en fin d'envol : tous sauf le sien et ceux d'une boîte temporaire en cours de tirage ou
- * d'offre (une temporaire fermée cède sa place). Jamais vide tant qu'il y a au moins deux emplacements (repli : tous sauf le sien).
+ * d'offre (une temporaire fermée cède sa place). VIDE quand toutes les autres sont occupées : la boîte attend en l'air (se poser supprimerait
+ * une temporaire payée, son tirage perdu sans remboursement).
  */
 export function destinationsEnvol(depuis: number, temporaires: readonly EtatBoite[], nb: number): number[] {
   const tous = Array.from({ length: nb }, (_, i) => i).filter((i) => i !== depuis);
-  const libres = tous.filter((i) => !temporaires.some((b) => b.emplacement === i && b.etat !== "fermee"));
-  return libres.length ? libres : tous;
+  return tous.filter((i) => !temporaires.some((b) => b.emplacement === i && b.etat !== "fermee"));
 }
+
+/** (v8) Attente (ms) d'une boîte en envol qui ne trouve aucun emplacement libre avant de réessayer. */
+export const ATTENTE_ENVOL_MS = 1000;
 
 /** Le bonus Happy hour peut-il tomber ? BO1 `get_valid_powerup` : pas avant le premier déménagement de la boîte, pas pendant un Happy hour. */
 export function soldesPermises(demenagements: number, soldesFinT: number, t: number): boolean {

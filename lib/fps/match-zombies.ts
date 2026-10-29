@@ -33,7 +33,7 @@ import type {
   JoueurZombies, MessageClient, PhaseZombies, RaisonAchat, Slot, TruckZombies, Vec3, Zone,
 } from "./protocole";
 import { creerSimuZombies, type ArriveeZombie, type Leurre, type SpecZombie } from "./zombies";
-import { boiteA, boitesSoldesRestantes, destinationsEnvol, ouvrirSoldes, pelucheTiree, prixBoite, soldesActives, soldesPermises } from "./zombies-boites";
+import { ATTENTE_ENVOL_MS, boiteA, boitesSoldesRestantes, destinationsEnvol, ouvrirSoldes, pelucheTiree, prixBoite, soldesActives, soldesPermises } from "./zombies-boites";
 import {
   GRENADES, INVENTAIRE_GRENADES, degatsGrenade, degatsLanceur, grenadesDebutManche, plafondBatimentsCreux, positionLancer, preparerLancer,
   souffleAtteint, validerLancer, vitesseLancer, type ExplosionGrenade, type Lancer,
@@ -1150,6 +1150,8 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     } else if (b.etat === "envol" && principale) {
       // une boîte temporaire refermée cède sa place ; jamais sur une temporaire en cours de tirage ou d'offre
       const autres = destinationsEnvol(b.emplacement, boitesSoldes, NB_EMPLACEMENTS_BOITE);
+      // toutes les autres sont en tirage ou en offre (Happy hour à plusieurs) : elle attend en l'air, sans écraser un tirage payé
+      if (!autres.length) { boite = { ...b, finT: t + ATTENTE_ENVOL_MS }; immediat = true; return; }
       const vers = autres[Math.min(autres.length - 1, Math.floor(alea() * autres.length))];
       demenagements++;
       boitesSoldes = boitesSoldes.filter((x) => x.emplacement !== vers);
