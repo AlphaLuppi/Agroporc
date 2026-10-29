@@ -634,6 +634,7 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
         return c ?? null;
       },
       viser: (distance) => handleRef.current?.chasse?.viser(distance),
+      cadrer: (x, z, distance) => handleRef.current?.cadrer(x, z, distance),
       ecran: () => handleRef.current?.chasse?.ecran() ?? null,
     };
     return () => { delete window.__palantir; };
@@ -1207,6 +1208,8 @@ declare global {
       /** Pose le tigre dans la cachette de rang i (0 = la plus facile). */
       placer(i: number): Cachette | null;
       viser(distance?: number): void;
+      /** Captures : caméra au repos (sans argument) ou sur le point (x, z) à `distance` m, vue figée. */
+      cadrer(x?: number, z?: number, distance?: number): void;
       /** Position du tigre à l'écran (px), null s'il est caché ou hors champ. */
       ecran(): { x: number; y: number } | null;
     };

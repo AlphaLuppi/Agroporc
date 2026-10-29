@@ -61,6 +61,11 @@ export interface SceneHandle {
   joueurs(liste: readonly JoueurAerien[]): void;
   /** Chasse au tigre (null sans cachettes). */
   chasse: ChasseHandle | null;
+  /**
+   * Crochet de captures (`window.__palantir.cadrer`) : sans argument, la caméra au repos ; sinon elle regarde le point (x, z) à `distance` m,
+   * dans l'azimut du repos, plongée de 40°. Fige la vue (ni intro, ni rotation automatique).
+   */
+  cadrer(x?: number, z?: number, distance?: number): void;
   dispose(): void;
 }
 
@@ -367,6 +372,7 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
 
   // ---------- interaction / camera moves ----------
   let idleSince = performance.now();
+  let figee = false;
   const wake = () => { idleSince = performance.now(); controls.autoRotate = false; };
   canvas.addEventListener("pointerdown", wake);
   canvas.addEventListener("wheel", wake, { passive: true });
@@ -408,7 +414,7 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
       const k = Math.min(t / INTRO, 1);
       camera.position.lerpVectors(INTRO_FROM, repos.pos, ease(k));
       if (k >= 1) introDone = true;
-    } else if (!reduced && !recentering && performance.now() - idleSince > 9000) {
+    } else if (!reduced && !figee && !recentering && performance.now() - idleSince > 9000) {
       controls.autoRotate = true;
     }
     applySpin(dt);
@@ -466,6 +472,23 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
     spin(dir) { wake(); spinLeft += dir * (Math.PI / 4); },
     recenter() { wake(); recentering = { t: 0, p0: camera.position.clone(), c0: controls.target.clone() }; },
     joueurs: majJoueurs,
+    cadrer(x, z, distance) {
+      wake();
+      figee = true;
+      introDone = true;
+      recentering = null;
+      spinLeft = 0;
+      if (x === undefined || z === undefined) {
+        controls.target.copy(repos.target);
+        camera.position.copy(repos.pos);
+      } else {
+        // azimut du repos, plongée de 40°
+        const az = Math.atan2(REST.dx, REST.dz), d = distance ?? 120, el = (40 * Math.PI) / 180;
+        controls.target.set(x, 0, z);
+        camera.position.set(x + Math.sin(az) * Math.cos(el) * d, Math.sin(el) * d, z + Math.cos(az) * Math.cos(el) * d);
+      }
+      controls.update();
+    },
     chasse: tigre && {
       cachette: () => tigre.cachette(),
       debusquer: () => tigre.debusquer(),
