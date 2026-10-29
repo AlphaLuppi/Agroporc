@@ -850,7 +850,7 @@ export const QUAIS: readonly Quai[] = [
 ];
 
 /** Truck Muche : durées de l'arrivée et du départ (ms), lâcher des petits (deux toutes les `lacherMs`), épave (ms), souffle (m), caisse (m). */
-export const TRUCK = { arriveeMs: 4_000, departMs: 4_000, lacherMs: 1_400, epaveMs: 8_000, souffleM: 6, demiLongueur: 3.2, demiLargeur: 1.3, hauteur: 3 } as const;
+export const TRUCK = { arriveeMs: 4_000, departMs: 4_000, lacherMs: 1_000, epaveMs: 8_000, souffleM: 6, demiLongueur: 3.2, demiLargeur: 1.3, hauteur: 3 } as const;
 
 /**
  * Distance le long du rayon (o, d normalisé) jusqu'à la caisse orientée du Truck (centre `p` au sol, cap `cap`), ou null. Pur, testé.

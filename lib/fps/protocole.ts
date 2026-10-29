@@ -222,7 +222,15 @@ export type EvenementZombies =
   | { e: "peluche"; de: number }
   | { e: "atout"; joueur: string; atout: AtoutId }
   | { e: "pap"; joueur: string; arme: ArmeFeuId; pret: boolean }
-  | { e: "truck"; quoi: "klaxon" | "porte" | "explosion"; p: Vec3 }
+  /** (v8) `rire` : le Truck Muche enragé rit (porte qui s'ouvre, sous la moitié de ses PV, épave) */
+  | { e: "truck"; quoi: "klaxon" | "porte" | "explosion" | "rire"; p: Vec3 }
+  /**
+   * (v8) éclair d'une manche du Truck Muche : la foudre frappera `p` dans `dans` ms (un petit ou un mini Truck y apparaît, comme les chiens
+   * de BO1) ; `dans` absent : éclair d'ambiance, sans ennemi
+   */
+  | { e: "eclair"; p: Vec3; dans?: number }
+  /** (v8) un mini Truck Muche saute en `p` (contact ou abattu) : souffle de `rayon` m */
+  | { e: "miniTruck"; p: Vec3; rayon: number }
   | { e: "explosion"; p: Vec3; rayon: number; par: string }
   /** (v8) grenade `id` (message `grenade`) qui saute en `p` (à tous, lanceur compris : le serveur fait foi) */
   | { e: "grenade"; id: number; genre: GenreGrenade; p: Vec3; rayon: number; par: string }
@@ -238,8 +246,9 @@ export interface SnapZombies {
   /** tigres restants à tuer (pas encore apparus + vivants) */
   r: number;
   /**
-   * [id, xCm, zCm, capMrad, drapeaux, pvPct] par tigre ; drapeaux : bits 0–1 type (0 tigre, 1 doré, 2 chef, 3 petit), bit 2 griffe armée,
-   * bit 3 apparition, bits 4–5 allure (marche, course, sprint, rampant), bits 6–7 mode (chasse, sol, fenêtre, saut)
+   * [id, xCm, zCm, capMrad, drapeaux, pvPct] par tigre ; drapeaux : bits 0–1 type (0 tigre, 1 doré, 2 chef, 3 petit), bit 2 griffe armée
+   * (mèche allumée d'un mini Truck), bit 3 apparition, bits 4–5 allure (marche, course, sprint, rampant), bits 6–7 mode (chasse, sol,
+   * fenêtre, saut), (v8) bit 8 : troisième bit du type (4 = mini Truck Muche, bits 0–1 à 0)
    */
   z: number[];
   /** (v7) Truck Muche d'une manche de livraison : [xCm, zCm, capMrad, phase (0 arrivée, 1 livraison, 2 départ, 3 épave), pvPct] */
@@ -252,7 +261,7 @@ export const PAS_SNAP_ZOMBIE = 6;
 /** Tigre zombie décodé (positions en mètres, cap en radians, `pvPct` 0..100). */
 export interface ZombieSnap {
   id: number; x: number; z: number; cap: number;
-  type: 0 | 1 | 2 | 3; griffe: boolean; apparition: boolean; pvPct: number;
+  type: 0 | 1 | 2 | 3 | 4; griffe: boolean; apparition: boolean; pvPct: number;
   allure: 0 | 1 | 2 | 3; mode: Exclude<ModeZombie, "approche">;
 }
 /** Encode des tigres en entiers : position au centimètre, cap au milliradian, PV au pour cent ; `truck` tel quel. */
@@ -264,7 +273,7 @@ export function encoderZombies(restants: number, zombies: readonly ZombieSnap[],
     z[k++] = Math.round(m.x * 100);
     z[k++] = Math.round(m.z * 100);
     z[k++] = Math.round(m.cap * 1000);
-    z[k++] = (m.type & 3) | (m.griffe ? 4 : 0) | (m.apparition ? 8 : 0) | ((m.allure & 3) << 4) | (Math.max(0, MODES_SNAP.indexOf(m.mode)) << 6);
+    z[k++] = (m.type & 3) | ((m.type >> 2) & 1) << 8 | (m.griffe ? 4 : 0) | (m.apparition ? 8 : 0) | ((m.allure & 3) << 4) | (Math.max(0, MODES_SNAP.indexOf(m.mode)) << 6);
     z[k++] = Math.max(0, Math.min(100, Math.round(m.pvPct)));
   }
   return truck ? { r: restants, z, t: truck } : { r: restants, z };
@@ -278,7 +287,7 @@ export function decoderZombies(s: SnapZombies): ZombieSnap[] {
     const d = s.z[b + 4];
     res.push({
       id: s.z[b], x: s.z[b + 1] / 100, z: s.z[b + 2] / 100, cap: s.z[b + 3] / 1000,
-      type: (d & 3) as 0 | 1 | 2 | 3, griffe: (d & 4) !== 0, apparition: (d & 8) !== 0, pvPct: s.z[b + 5],
+      type: ((d & 3) | (((d >> 8) & 1) << 2)) as ZombieSnap["type"], griffe: (d & 4) !== 0, apparition: (d & 8) !== 0, pvPct: s.z[b + 5],
       allure: ((d >> 4) & 3) as 0 | 1 | 2 | 3, mode: MODES_SNAP[(d >> 6) & 3] as ZombieSnap["mode"],
     });
   }

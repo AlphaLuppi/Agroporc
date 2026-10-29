@@ -41,8 +41,11 @@ import {
 import {
   GAIN_CHEF, GAIN_MENUISIER, GAIN_NUKE, GAIN_PLANCHE, GAIN_TRUCK, ZOMBIES, allureTiree, degatsGriffe, delaiApparition, estDifficulte, gainKill,
   gainTouche, mancheTruckSuivante, paquetBonus, plafondPlanches, premiereMancheTruck, pvTruck, pvZombie, rechargeGriffe, seuilBonusInitial,
-  totalTruck, typesManche, vitesseAllure, type Difficulte, type GenreBonus, type TypeZombie,
+  estLivraison, plafondPetits, totalTruck, typesManche, typesTruck, vitesseAllure, type Difficulte, type GenreBonus, type TypeZombie,
 } from "./zombies-vagues";
+import {
+  ECLAIRS, centreSouffleMini, choisirPointEclair, degatsSouffleMiniJoueur, degatsSouffleMiniTigre, intervalleEclairMs, pointsEclair,
+} from "./zombies-truck";
 import type { Vec2 } from "../agroparc3d/types";
 
 /** Position arrondie au centimètre (origine d'un coup dans `zombieMort` : quelques octets de moins par mort). */
@@ -139,11 +142,17 @@ interface GrenadeServeur { id: number; par: string; lancer: Lancer }
 /** Relève en cours : `cible` maintenue par le relanceur depuis `debutT`. */
 interface Releve { cible: string; debutT: number }
 
-/** Truck Muche d'une manche de livraison (serveur). */
+/** Truck Muche d'une manche de livraison (serveur) ; `rire` : il a déjà ri sous la moitié de ses PV. */
 interface Truck {
   quai: number; phase: TruckZombies["phase"]; debutT: number; finT: number; pv: number; pvMax: number;
-  p: Vec2; cap: number; aLacher: number; prochainLacherT: number;
+  p: Vec2; cap: number; prochainLacherT: number; rire: boolean;
 }
+/** (v8) Foudre qui frappera `p` à `t` (ms) : un ennemi de type `type` y apparaît. */
+interface Foudre { p: Vec2; type: TypeZombie; t: number }
+/** (v8) Mini Truck qui saute en `p` à `t` (ms) ; `par` : le joueur qui l'a abattu (le souffle lui rapporte ses kills), null s'il a sauté seul. */
+interface SautMini { p: Vec3; par: string | null; t: number }
+/** (v8) Un mini Truck abattu saute ce délai (ms) plus tard : une réaction en chaîne se voit (et le dernier coup de feu s'entend d'abord). */
+const DELAI_SAUT_ABATTU_MS = 120;
 
 /**
  * Point de départ et lacet d'un joueur qui entre : le départ le plus éloigné des autres joueurs (`autres` : leurs positions), le premier
@@ -187,6 +196,8 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
   // étiquettes des zones au sol et sorties du sol : calculées une fois, toutes portes fermées (le monde est neuf à la création)
   const carteZones: CarteZones = etiqueterZones(ctx.monde);
   const sorties = sortiesDuSol(carteZones);
+  // (v8) points de foudre des manches du Truck : intérieurs compris
+  const pointsFoudre = pointsEclair(carteZones);
 
   const membres = new Map<string, Membre>();
   const ouvertes = new Set<PorteId>();
@@ -213,6 +224,10 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
   let numeroTruck = 0;
   let mancheTruck = false;
   let truck: Truck | null = null;
+  /** (v8) foudres annoncées (l'ennemi n'est pas encore là), prochain éclair, mini Trucks qui vont sauter */
+  let foudres: Foudre[] = [];
+  let prochainEclairT = 0;
+  let sautsMini: SautMini[] = [];
   // objets de la partie
   let courant = false;
   const murs = new Set<string>();
@@ -256,7 +271,10 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     return m;
   }
   const hote = (): string => ctx.joueurs()[0]?.id ?? "";
-  const restants = (): number => (mancheTruck ? (truck?.aLacher ?? 0) : file.length - indexFile) + simu.nbVivants();
+  /** ennemis à tuer : pas encore lâchés (file), annoncés par la foudre, vivants */
+  const restants = (): number => file.length - indexFile + foudres.length + simu.nbVivants();
+  /** (v8) ennemis d'une manche du Truck pas encore lâchés ni annoncés */
+  const aLivrer = (): number => (mancheTruck ? file.length - indexFile : 0);
   const peutJouer = (j: JoueurSalle): boolean => j.enJeu && j.vivant;
   /**
    * (v8) Marge (m) des portées jugées sur la position serveur (relève, planches, achats) : ce que le joueur parcourt pendant la demi-latence
@@ -419,7 +437,7 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     phase = "fin"; debutT = t; finT = t + ZOMBIES.finAffichageMs;
     simu.reinitialiser();
     grenades = [];
-    file = []; indexFile = 0; debutApparitionT = null; truck = null;
+    file = []; indexFile = 0; debutApparitionT = null; truck = null; foudres = []; sautsMini = [];
     releves.clear();
     immediat = true;
   }
@@ -485,7 +503,7 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     difficulte = estDifficulte(diff) ? diff : "plat";
     refermerPortes();
     simu.reinitialiser();
-    file = []; indexFile = 0; debutApparitionT = null;
+    file = []; indexFile = 0; debutApparitionT = null; foudres = []; sautsMini = [];
     releves.clear();
     partieDebutT = t;
     bilan = undefined;
@@ -518,10 +536,12 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     if (mancheTruck) {
       numeroTruck++;
       prochaineMancheTruck = mancheTruckSuivante(manche, alea());
-      file = []; indexFile = 0;
       truck = null;
-      // le Truck arrive au quai le plus proche des joueurs, 2 s après le début (le klaxon le précède)
+      // le Truck arrive au quai le plus proche des joueurs, 2 s après le début (le klaxon le précède) ; la foudre frappe dès 1,5 s
       const total = manche === 1 && opts.total1 !== undefined ? Math.max(1, Math.round(opts.total1)) : totalTruck(numeroTruck, nJoueurs);
+      file = typesTruck(numeroTruck, total, alea); indexFile = 0;
+      foudres = [];
+      prochainEclairT = t + ECLAIRS.debutMs;
       demarrerTruck(t + 2_000, total);
     } else {
       let types = typesManche(manche, nJoueurs, alea);
@@ -604,7 +624,7 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
   // Truck Muche
   // ---------------------------------------------------------------------------------------------
 
-  function demarrerTruck(t: number, total: number): void {
+  function demarrerTruck(t: number, _total: number): void {
     const joueurs = debout();
     let meilleur = QUAIS[0], dMin = Infinity;
     for (const q of QUAIS) {
@@ -619,12 +639,57 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     const pv = pvTruck(numeroTruck);
     truck = {
       quai: meilleur.id, phase: "arrivee", debutT: t, finT: t + TRUCK.arriveeMs, pv, pvMax: pv, p: [meilleur.depart[0], meilleur.depart[1]],
-      cap: meilleur.cap, aLacher: total, prochainLacherT: 0,
+      cap: meilleur.cap, prochainLacherT: 0, rire: false,
     };
   }
 
-  /** Avance le Truck (arrivée en marche arrière, livraison, départ) et lâche les petits par l'arrière. */
-  function ticTruck(t: number, sorties: Sortie[]): void {
+  /** Ennemis du Truck vivants (petits et mini Trucks). */
+  const vivantsLivraison = (): number => simu.liste().filter((z) => estLivraison(z.type)).length;
+
+  /**
+   * Manche du Truck : la foudre (les chiens de BO1 arrivent par un éclair devant le joueur qu'ils visent) et le Truck lâchent les ennemis
+   * de la file, sous le plafond `plafondPetits` (foudres annoncées comprises).
+   */
+  function ticLivraison(t: number, sorties: Sortie[]): void {
+    if (debutApparitionT === null || t < debutApparitionT) return;
+    const plafond = plafondPetits(nbAdmis());
+    // foudres échues : l'ennemi apparaît en chasse sous l'éclair (apparition refusée au plafond de 24 : il attend)
+    if (foudres.length) {
+      const restent: Foudre[] = [];
+      for (const f of foudres) {
+        if (t < f.t || simu.apparaitre(specPour(f.type), f.p, { mode: "chasse" }, t, capVersJoueur(f.p)) === null) restent.push(f);
+        else sale = true;
+      }
+      foudres = restent;
+    }
+    // nouvel éclair : près d'un joueur debout, dans une zone active
+    if (aLivrer() > 0 && t >= prochainEclairT && vivantsLivraison() + foudres.length < plafond) {
+      const presents = debout();
+      const actives = zonesActives(zonesOccupees(), ouvertes);
+      const occupes: Vec2[] = [...simu.liste().map((z): Vec2 => [z.p[0], z.p[2]]), ...foudres.map((f) => f.p)];
+      const p = choisirPointEclair(pointsFoudre, actives, presents.map((j): Vec2 => [j.p[0], j.p[2]]), occupes, alea);
+      if (p) {
+        foudres.push({ p, type: file[indexFile++], t: t + ECLAIRS.foudreMs });
+        sorties.push(zev({ e: "eclair", p: [p[0], 0, p[1]], dans: ECLAIRS.foudreMs }));
+        sale = true;
+      }
+      prochainEclairT = t + intervalleEclairMs(numeroTruck, file.length ? indexFile / file.length : 1);
+    }
+    ticTruck(t, sorties, plafond);
+  }
+
+  /** Cap d'un ennemi né en `p` : face au joueur debout le plus proche. */
+  function capVersJoueur(p: Vec2): number {
+    let meilleur: JoueurSalle | null = null, dMin = Infinity;
+    for (const j of debout()) {
+      const d = Math.hypot(j.p[0] - p[0], j.p[2] - p[1]);
+      if (d < dMin) { dMin = d; meilleur = j; }
+    }
+    return meilleur ? capVers(p[0], p[1], meilleur.p[0], meilleur.p[2]) : 0;
+  }
+
+  /** Avance le Truck (arrivée en marche arrière, livraison, départ) et lâche des ennemis par l'arrière (un par lâcher, sous le plafond). */
+  function ticTruck(t: number, sorties: Sortie[], plafond: number): void {
     if (!truck) return;
     const q = QUAIS[truck.quai];
     const f = fenetreDeId(q.fenetre)!;
@@ -634,23 +699,24 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       truck.p = [q.depart[0] + (q.p[0] - q.depart[0]) * k, q.depart[1] + (q.p[1] - q.depart[1]) * k];
       if (k >= 1) {
         truck.phase = "livraison"; truck.debutT = t; truck.finT = 0; truck.prochainLacherT = t + 800;
-        sorties.push(zev({ e: "truck", quoi: "porte", p: [truck.p[0], 0, truck.p[1]] }));
+        const p: Vec3 = [truck.p[0], 0, truck.p[1]];
+        // la porte s'ouvre et le Truck Muche enragé rit
+        sorties.push(zev({ e: "truck", quoi: "porte", p }), zev({ e: "truck", quoi: "rire", p }));
         immediat = true;
       }
     }
-    if ((truck.phase === "livraison" || truck.phase === "epave") && truck.aLacher > 0 && t >= truck.prochainLacherT && debutApparitionT !== null && t >= debutApparitionT) {
-      const vivants = simu.liste().filter((z) => z.type === 3).length;
-      for (let k = 0; k < 2 && truck.aLacher > 0 && vivants + k < ZOMBIES.plafondPetits; k++) {
-        // l'arrière du Truck regarde la fenêtre : les petits sautent entre le Truck et la fenêtre, puis la franchissent d'un bond
-        const recul = TRUCK.demiLongueur + 1.2;
-        const x = truck.p[0] + f.normale[0] * recul + (k ? 1 : -1) * f.normale[1] * 0.8;
-        const z = truck.p[1] + f.normale[1] * recul - (k ? 1 : -1) * f.normale[0] * 0.8;
-        if (simu.apparaitre(specPour(3), [x, z], { mode: "chasse" }, t, capVers(x, z, f.milieu[0], f.milieu[1])) !== null) truck.aLacher--;
-      }
+    if ((truck.phase === "livraison" || truck.phase === "epave") && aLivrer() > 0 && t >= truck.prochainLacherT
+      && vivantsLivraison() + foudres.length < plafond) {
+      // l'arrière du Truck regarde la fenêtre : l'ennemi saute entre le Truck et la fenêtre, puis la franchit d'un bond
+      const recul = TRUCK.demiLongueur + 1.2;
+      const cote = indexFile % 2 ? 1 : -1;
+      const x = truck.p[0] + f.normale[0] * recul + cote * f.normale[1] * 0.8;
+      const z = truck.p[1] + f.normale[1] * recul - cote * f.normale[0] * 0.8;
+      if (simu.apparaitre(specPour(file[indexFile]), [x, z], { mode: "chasse" }, t, capVers(x, z, f.milieu[0], f.milieu[1])) !== null) indexFile++;
       truck.prochainLacherT = t + TRUCK.lacherMs;
       sale = true;
     }
-    if (truck.phase === "livraison" && truck.aLacher <= 0) {
+    if (truck.phase === "livraison" && aLivrer() <= 0) {
       truck.phase = "depart"; truck.debutT = t; truck.finT = t + TRUCK.departMs;
       sorties.push(zev({ e: "truck", quoi: "klaxon", p: [truck.p[0], 0, truck.p[1]] }));
       immediat = true;
@@ -660,7 +726,7 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       const av: Vec2 = [-Math.sin(truck.cap), -Math.cos(truck.cap)];
       truck.p = [q.p[0] + av[0] * 25 * k * k, q.p[1] + av[1] * 25 * k * k];
       if (k >= 1) { truck = null; immediat = true; }
-    } else if (truck.phase === "epave" && truck.aLacher <= 0 && t >= truck.finT) {
+    } else if (truck.phase === "epave" && aLivrer() <= 0 && t >= truck.finT) {
       truck = null; immediat = true;
     }
   }
@@ -671,10 +737,15 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     truck.pv = Math.max(0, truck.pv - Math.max(0, degats));
     const sorties: Sortie[] = [{ a: par.id, m: { t: "degats", cible: CIBLE_LIVRAISON, par: par.id, degats, pv: Math.round((100 * truck.pv) / truck.pvMax), bouclier: 0, zone: "corps" } }];
     sale = true;
+    // sous la moitié de ses PV, le Truck Muche rit de plus belle (une fois)
+    if (truck.pv > 0 && !truck.rire && truck.pv <= truck.pvMax / 2) {
+      truck.rire = true;
+      sorties.push(zev({ e: "truck", quoi: "rire", p: [truck.p[0], 1, truck.p[1]] }));
+    }
     if (truck.pv > 0) return sorties;
     truck.phase = "epave"; truck.debutT = t; truck.finT = t + TRUCK.epaveMs; truck.prochainLacherT = t + 1_500;
     const p: Vec3 = [truck.p[0], 1, truck.p[1]];
-    sorties.push(zev({ e: "truck", quoi: "explosion", p }));
+    sorties.push(zev({ e: "truck", quoi: "explosion", p }), zev({ e: "truck", quoi: "rire", p }));
     for (const z of [...simu.liste()]) {
       if (Math.hypot(z.p[0] - p[0], z.p[2] - p[2]) > TRUCK.souffleM) continue;
       sorties.push(...tuerTigre(z.id, par, t, "explosion", false, p));
@@ -682,6 +753,53 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     for (const j of ctx.joueurs()) if (membre(j.id).admis && j.enJeu) sorties.push(crediter(j, GAIN_TRUCK, "truck"));
     immediat = true;
     return sorties;
+  }
+
+  /** Mini Trucks dont l'heure de sauter est venue (manche et pause : le dernier saute après la fin de la manche). */
+  function ticSautsMini(t: number, sorties: Sortie[]): void {
+    // un souffle peut en déclencher d'autres (ajoutés à la file pendant la boucle, avec leur délai)
+    for (let k = 0; k < 64 && sautsMini.some((x) => t >= x.t); k++) {
+      const i = sautsMini.findIndex((x) => t >= x.t);
+      const saut = sautsMini.splice(i, 1)[0];
+      exploserMini(saut, t, sorties);
+      if (phase !== "manche" && phase !== "pause") { sautsMini = []; return; }
+    }
+  }
+
+  /**
+   * Souffle d'un mini Truck (les chiens de feu de BO1, avec les dégâts de zone de BO1 Reimagined) : joueurs debout en vue du centre blessés
+   * (80 au centre à 15 au bord, selon la difficulté, plafonnés par la griffe imposée des essais), tigres en vue blessés (1 600 à 400 : il
+   * emporte les petits et fait sauter les autres mini Trucks), kills et points au tireur qui l'a abattu, aucun s'il a sauté seul.
+   */
+  function exploserMini(saut: SautMini, t: number, sorties: Sortie[]): void {
+    const c = centreSouffleMini(saut.p);
+    const M = ZOMBIES.miniTruck;
+    sorties.push(zev({ e: "miniTruck", p: arrondi(c), rayon: M.souffleM }));
+    for (const j of ctx.joueurs()) {
+      if (!peutJouer(j) || membre(j.id).etat !== "debout" || t < j.protegeJusqua) continue;
+      const d = Math.hypot(j.p[0] - c[0], j.p[1] + 1 - c[1], j.p[2] - c[2]);
+      const degats = Math.min(degatsSouffleMiniJoueur(d, difficulte), opts.degatsGriffe ?? Infinity);
+      if (degats <= 0 || !souffleAtteint(ctx.monde, c, [j.p[0], j.p[1] + 0.3, j.p[2]])) continue;
+      sorties.push(...ctx.infliger(j, degats, null, "tigre_zombie", "corps", "couteau", t, c));
+      if (phase !== "manche" && phase !== "pause") return; // le dernier joueur debout est tombé
+    }
+    const par = saut.par ? ctx.joueur(saut.par) : undefined;
+    const tireur = par && membre(par.id).admis ? par : null;
+    for (const z of [...simu.liste()]) {
+      const d = Math.hypot(z.p[0] - c[0], z.p[2] - c[2]);
+      const degats = degatsSouffleMiniTigre(Math.max(0, d - 0.6));
+      if (degats <= 0 || !souffleAtteint(ctx.monde, c, [z.p[0], 0.3, z.p[2]])) continue;
+      if (tireur) {
+        sorties.push(...service.blesser(idZombie(z.id), degats, tireur, "corps", t, { gain: false, cause: "explosion", src: c }));
+        continue;
+      }
+      const r = simu.blesser(z.id, degats, t);
+      if (!r.mort) continue;
+      sorties.push({ a: "joueurs", m: { t: "zombieMort", id: idZombie(z.id), p: r.p ?? [0, 0, 0], par: "", zone: "corps", cause: "explosion", src: arrondi(c) } });
+      if (r.type === 4) sautsMini.push({ p: r.p ?? [0, 0, 0], par: null, t: t + DELAI_SAUT_ABATTU_MS });
+      lacherApresKill(r.type, r.p ?? [0, 0, 0], t, sorties);
+      sale = true;
+    }
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -705,7 +823,8 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     if (phase !== "manche") return;
     if (zoneEn(carteZones, p[0], p[2]) === null) return; // jamais hors de la zone de jeu (un tigre abattu dehors)
     if (type === 1) { lacher(tirerBonus(), p, t, sorties); return; }
-    if (mancheTruck && type === 3 && (truck?.aLacher ?? 0) === 0 && simu.nbVivants() === 0) { lacher("munitions", p, t, sorties); return; }
+    // BO1 `dog_round_aftermath` : munitions max garanties là où tombe le dernier ennemi de la livraison (petit ou mini Truck)
+    if (mancheTruck && type !== undefined && estLivraison(type) && restants() === 0) { lacher("munitions", p, t, sorties); return; }
     if (bonusManche >= ZOMBIES.bonusParManche) return;
     if (lacherBonus || alea() < ZOMBIES.probaBonusHasard) {
       lacherBonus = false;
@@ -778,6 +897,8 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     const r = simu.blesser(id, INSTAKILL, t);
     if (!r.mort) return [];
     const sorties: Sortie[] = [{ a: "joueurs", m: { t: "zombieMort", id: idZombie(id), p: r.p ?? [0, 0, 0], par: par.id, zone: "corps", cause, ...(src ? { src: arrondi(src) } : {}) } }];
+    // un mini Truck soufflé saute à son tour (pas sous la nuke : elle efface tout sans un bruit)
+    if (r.type === 4 && cause !== "nuke") sautsMini.push({ p: r.p ?? [0, 0, 0], par: par.id, t: t + DELAI_SAUT_ABATTU_MS });
     par.kills++;
     if (points) sorties.push(crediter(par, gainKill({ double: doublePoints(t) }), "kill"));
     if (cause !== "nuke") lacherApresKill(r.type, r.p ?? [0, 0, 0], t, sorties);
@@ -816,7 +937,17 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       if (e.t === "bloque") {
         // failsafe de BO1 : le tigre coincé est retiré et remis dans la file (il réapparaîtra ailleurs)
         const z = simu.zombie(e.tigre);
-        if (z && z.type !== 3) { simu.retirer(e.tigre); file.splice(indexFile, 0, z.type); }
+        if (z && !estLivraison(z.type)) { simu.retirer(e.tigre); file.splice(indexFile, 0, z.type); }
+        continue;
+      }
+      if (e.t === "explose") {
+        // le mini Truck saute contre un joueur : retiré tout de suite, son souffle part au même tic
+        const r = simu.blesser(e.tigre, INSTAKILL, t);
+        if (r.mort) {
+          sorties.push({ a: "joueurs", m: { t: "zombieMort", id: idZombie(e.tigre), p: r.p ?? e.p, par: "", zone: "corps", cause: "explosion" } });
+          sautsMini.push({ p: e.p, par: null, t });
+          lacherApresKill(4, e.p, t, sorties);
+        }
         continue;
       }
       if (e.t !== "griffe") continue;
@@ -827,8 +958,10 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     }
     if (phase !== "manche") return; // une griffe a pu coucher le dernier joueur debout
 
-    if (mancheTruck) ticTruck(t, sorties);
+    if (mancheTruck) ticLivraison(t, sorties);
     else apparaitre(t);
+    ticSautsMini(t, sorties);
+    if (phase !== "manche") return; // un souffle a pu coucher le dernier joueur debout
 
     // le dernier tigre sprinte (BO1 `zombie_speed_up`, à partir de la manche 4)
     if (!mancheTruck && !dernierSprinte && manche >= 4 && indexFile >= file.length && simu.nbVivants() === 1) {
@@ -841,11 +974,11 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     if (phase !== "manche") return;
 
     // fin de manche : tous les tigres sont apparus ET morts (manche du Truck : il a tout lâché et les petits sont morts)
-    const finie = debutApparitionT !== null && simu.nbVivants() === 0
-      && (mancheTruck ? (truck?.aLacher ?? 0) <= 0 : indexFile >= file.length);
+    const finie = debutApparitionT !== null && simu.nbVivants() === 0 && indexFile >= file.length && !foudres.length;
     if (finie) {
       truck = null;
       mancheTruck = false;
+      foudres = [];
       sorties.push(...entrerEnPause(t, manche + 1, pauseMs));
     }
   }
@@ -1340,7 +1473,10 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       if (phase === "pause" && t >= finT) debuterManche(t, sorties);
       ticGrenades(t, sorties);
       if (phase === "manche") ticManche(t, dt, sorties);
-      else if (phase === "pause") ticCommun(t, sorties);
+      else if (phase === "pause") {
+        ticSautsMini(t, sorties);
+        if (phase === "pause") ticCommun(t, sorties);
+      }
       return emettre(t, sorties, true);
     },
 
@@ -1462,6 +1598,8 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       }
       if (gain > 0) sorties.push(crediter(par, gain, r.mort ? "kill" : "touche"));
       if (r.mort) {
+        // (v8) un mini Truck abattu saute un instant plus tard ; le souffle rapporte ses kills au tireur
+        if (r.type === 4) sautsMini.push({ p: r.p ?? [0, 0, 0], par: par.id, t: t + DELAI_SAUT_ABATTU_MS });
         lacherApresKill(r.type, r.p ?? [0, 0, 0], t, sorties);
         sorties.push(ctx.presence());
       }

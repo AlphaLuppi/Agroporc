@@ -105,7 +105,7 @@ export interface Sons {
    */
   rugissementTigre(position?: PositionSon, mort?: boolean): boolean;
   /** (zombies) Coup de patte d'un tigre, joué au début de l'armement : feulement, puis griffes qui fendent l'air et choc au contact, spatialisé. */
-  griffe(position?: PositionSon): void;
+  griffe(position?: PositionSon, armeS?: number): void;
   /** (zombies) Achat accepté (caisse enregistreuse) ou refusé (buzz grave). */
   achat(ok: boolean): void;
   /** (zombies) Pièce gagnée (touche, kill, bonus de manche) : tic cristallin. */
@@ -1132,13 +1132,13 @@ export function creerSons(): Sons {
       bruit(out, t + 0.05, { dur: dur * 0.7, type: "bandpass", f0: 760, f1: 420, q: 5, gain: 0.1, att: 0.1 });
       return true;
     },
-    griffe(position) {
+    griffe(position, armeS) {
       if (!prete()) return;
       const out = sortie(position);
       const t = ctx!.currentTime + 0.001;
       // le coup s'annonce : feulement grave pendant l'armement (le tigre se cabre), puis la patte fend l'air et claque à l'instant du contact
-      // (`ZOMBIES.griffeArmeS`, le même que le serveur) : on l'entend venir, on a le temps de s'écarter
-      const c = ZOMBIES.griffeArmeS;
+      // (`ZOMBIES.griffeArmeS`, le même que le serveur ; (v8) `armeS` : la morsure du petit, plus courte) : on l'entend venir
+      const c = Math.max(0.14, armeS ?? ZOMBIES.griffeArmeS);
       ton(out, t, { dur: c * 0.85, type: "sawtooth", f0: 95, f1: 70, gain: 0.22, att: 0.12 });
       bruit(out, t, { dur: c * 0.85, type: "bandpass", f0: 420, f1: 300, q: 1.6, gain: 0.28, att: 0.15 });
       bruit(out, t + c - 0.13, { dur: 0.16, type: "bandpass", f0: 700, f1: 3000, q: 1.1, gain: 0.5, att: 0.1 });

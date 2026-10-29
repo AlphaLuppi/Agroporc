@@ -38,7 +38,7 @@ import { plafondBatimentsCreux } from "./grenades";
 import { creerControleurGrenades, type LancerDemande } from "./jeu-grenades";
 import { creerRenduGrenades } from "./rendu-grenades";
 import { CorpsTigres } from "./corps-tigres";
-import { ZOMBIES, echelleZombie, type TypeZombie } from "./zombies-vagues";
+import { ZOMBIES, armementGriffe, echelleZombie, type TypeZombie } from "./zombies-vagues";
 import {
   MondeZombies, Rugissements, inviteZombies, segmentsPortesFermees, sonGriffe, toucheTruckClient, trouverZombieTouche, trouverZombiesMelee, trouverZombiesTouches,
   INVITE_VIDE, type InviteZombies,
@@ -2093,7 +2093,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     const regardX = -Math.sin(camLacet), regardZ = -Math.cos(camLacet);
     rz.maj(zs, n, camPos, regardX, regardZ, dt, imageNum, {
       // le chef (gros tigre rouge) a son propre coup de patte, calé sur le contact ; les autres gardent la griffe synthétisée
-      surGriffe: (v) => (sonGriffe(v.type) === "chef" ? sons.griffeChef(positionSon([v.x, 1, v.z])) : sons.griffe(positionSon([v.x, 1, v.z]))),
+      // (v8) la morsure du petit claque à son armement (0,22 s)
+      surGriffe: (v) => (sonGriffe(v.type) === "chef" ? sons.griffeChef(positionSon([v.x, 1, v.z])) : sons.griffe(positionSon([v.x, 1, v.z]), armementGriffe(v.type))),
       // coups de patte dans les planches (simulés ici) : seul le chef s'entend, les autres ne font que le craquement du bois du serveur
       surArrachage: (v) => { if (sonGriffe(v.type) === "chef") sons.griffeChef(positionSon([v.x, 1.4, v.z])); },
     });

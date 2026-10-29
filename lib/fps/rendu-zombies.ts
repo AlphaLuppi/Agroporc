@@ -27,13 +27,16 @@ import {
   creerRagdoll, limiterActifs, osDeLaPose, type CauseMort, type CollisionsRagdoll, type ImpulsionRagdoll, type Ragdoll,
 } from "./ragdoll-tigre";
 import { creerAnimZombie, type AnimZombie } from "./zombies-anim";
-import { ZOMBIES } from "./zombies-vagues";
+import { ZOMBIES, armementGriffe } from "./zombies-vagues";
 
 /** Taille du pool (= plafond de tigres vivants) et nombre de clones créés par image. */
 export const TAILLE_POOL = ZOMBIES.plafondVivants;
 export const CREATIONS_PAR_IMAGE = 2;
-/** Teintes multipliées à la texture du pelage : tigre brun sombre, doré, chef rouge sombre, petit plus clair. */
-export const TEINTES_ZOMBIES: readonly number[] = [0x6e5442, 0xffd25a, 0x8c2a24, 0xc49a74];
+/**
+ * Teintes multipliées à la texture du pelage : tigre brun sombre, doré, chef rouge sombre, petit calciné (v8 : les chiens de l'enfer de BO1,
+ * il était clair et passait pour inoffensif) ; le mini Truck (type 4) n'est pas un tigre (`rendu-mini-trucks.ts`).
+ */
+export const TEINTES_ZOMBIES: readonly number[] = [0x6e5442, 0xffd25a, 0x8c2a24, 0x3a2216];
 /** Un cadavre reste à l'écran cette durée (s), dont la dernière seconde à s'enfoncer ; plus longtemps s'il a été projeté (il faut le voir voler). */
 export const DUREE_CADAVRE_S = 4;
 export const DUREE_CADAVRE_PROJETE_S = 5;
@@ -380,8 +383,8 @@ export function creerRenduZombies(scene: THREE.Scene, collisions: CollisionsRagd
 
       for (let i = 0; i < n; i++) {
         const v = zombies[i];
-        // mort : encore dans les snaps interpolés (retard d'affichage), son cadavre le remplace
-        if (morts.has(v.id)) continue;
+        // mort : encore dans les snaps interpolés (retard d'affichage), son cadavre le remplace ; (v8) un mini Truck a son propre rendu
+        if (morts.has(v.id) || v.type === 4) continue;
         const d = Math.hypot(v.x - cam[0], v.z - cam[2]);
         const affiche = tigreAffiche(cam, regardX, regardZ, v.x, v.z);
         if (!prets) {
@@ -421,21 +424,24 @@ export function creerRenduZombies(scene: THREE.Scene, collisions: CollisionsRagd
         if (v.type !== e.type) teinter(e, v.type);
         if (v.mode !== e.mode) { e.mode = v.mode; e.modeT = tempsLocal; }
         e.x = v.x; e.z = v.z; e.cap = v.cap; e.echelle = v.echelle; e.vitesse = v.vitesse;
+        // à la fenêtre et immobile : il arrache les planches à coups de patte, au rythme de son allure (celui du serveur) ; (v8, retour 16)
+        // le coup s'entend même hors champ (comme la griffe), le gros tigre rouge a donc son son à chaque coup dans les planches aussi
+        let griffe = v.griffe;
+        if (v.mode === "fenetre" && v.vitesse < 0.3) {
+          if (tempsLocal >= e.arracheT) { e.arracheT = tempsLocal + ZOMBIES.arrachageS[v.allure]; e.arracheSonne = false; }
+          const arme = tempsLocal > e.arracheT - ZOMBIES.griffeArmeS;
+          if (arme && !e.arracheSonne) { e.arracheSonne = true; rappels?.surArrachage?.(v); }
+          griffe = griffe || arme;
+        }
         e.groupe.visible = affiche;
         if (!affiche) continue;
         nAffiches++;
         poser(e, v, tempsLocal, dt);
         e.tigre.groupe.scale.setScalar(v.echelle);
-        // à la fenêtre et immobile : il arrache les planches à coups de patte
-        let griffe = v.griffe;
-        if (v.mode === "fenetre" && v.vitesse < 0.3) {
-          if (tempsLocal >= e.arracheT) { e.arracheT = tempsLocal + 1.1; e.arracheSonne = false; }
-          const arme = tempsLocal > e.arracheT - ZOMBIES.griffeArmeS;
-          if (arme && !e.arracheSonne) { e.arracheSonne = true; rappels?.surArrachage?.(v); }
-          griffe = griffe || arme;
-        }
         if (animerCetteImage(d, image, v.id)) {
-          e.anim.maj(e.dtAcc, v.mode === "sol" ? 0 : v.vitesse * (v.allure === 3 ? 0.6 : 1), v.echelle, griffe, JEU.interpolationMs / 1000);
+          // la morsure du petit part presque tout de suite : son geste est joué d'autant plus vite (contact à `morsureArmeS`)
+          const cadence = ZOMBIES.griffeArmeS / armementGriffe(v.type);
+          e.anim.maj(e.dtAcc, v.mode === "sol" ? 0 : v.vitesse * (v.allure === 3 ? 0.6 : 1), v.echelle, griffe, JEU.interpolationMs / 1000, cadence);
           e.dtAcc = 0;
           e.tigre.appliquer(e.anim.pose(), e.anim.x());
         }

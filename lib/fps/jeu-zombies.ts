@@ -12,7 +12,7 @@ import { MELEE, STATS, nomZombie } from "./armes";
 import { meleeDe } from "./equipement";
 import { formatArgent } from "./hud-modele";
 import { NOM_REMONTOIRS } from "./grenades";
-import { FORME_TIGRE, enrouler, pointLocal, toucheTigre } from "./monstres";
+import { enrouler, formeZombie, pointLocal, toucheTigre } from "./monstres";
 import {
   CIBLE_LIVRAISON, decoderZombies, estMelee, idZombie, type ArmeFeuId, type ArmeId, type ArmeMeleeId, type AtoutId, type EtatPartieZombies, type Equipement,
   type SnapZombies, type Vec3, type Zone,
@@ -260,7 +260,7 @@ export function trouverZombieTouche(
     // distance du centre au rayon
     const perp2 = cx * cx + cy * cy + cz * cz - proj * proj;
     if (perp2 > r * r) continue;
-    const h = toucheTigre(o, d, meilleur ? meilleur.distance : limite, [z.x, 0, z.z], z.cap, z.echelle, monde, MARGE_TOUCHE_M);
+    const h = toucheTigre(o, d, meilleur ? meilleur.distance : limite, [z.x, 0, z.z], z.cap, z.echelle, monde, MARGE_TOUCHE_M, formeZombie(z.type));
     if (h && (!meilleur || h.distance < meilleur.distance)) meilleur = { cible: idZombie(z.id), zone: h.zone, distance: h.distance };
   }
   return meilleur;
@@ -303,7 +303,7 @@ export function trouverZombiesMelee(
     // pré-filtre : la sphère englobante doit être à portée
     if (Math.hypot(z.x - o[0], z.z - o[2]) - RAYON_ENGLOBANT * z.echelle > m.portee + 1) continue;
     let meilleure = Infinity;
-    for (const s of FORME_TIGRE) {
+    for (const s of formeZombie(z.type)) {
       const c = pointLocal([z.x, 0, z.z], z.cap, z.echelle, s.d, s.h, s.a);
       const r = s.r * z.echelle;
       const vx = c[0] - o[0], vy = c[1] - o[1], vz = c[2] - o[2];
