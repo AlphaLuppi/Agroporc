@@ -4,7 +4,7 @@ import { aleaGraine } from "../agroparc3d/cachettes";
 import type { SceneData } from "../agroparc3d/types";
 import { MELEE } from "./armes";
 import {
-  CAPACITE_ZOMBIES, DISTANCE_AFFICHAGE_M, INVITE_VIDE, MondeZombies, Rugissements, TAMPON_ZOMBIES_MS, animerCetteImage, inviteZombies,
+  CAPACITE_ZOMBIES, DISTANCE_AFFICHAGE_M, INVITE_VIDE, MondeZombies, Rugissements, TAMPON_ZOMBIES_MS, animerCetteImage, decisionMaintien, inviteZombies,
   periodeAnimation, segmentsPortesFermees, sonGriffe, tigreAffiche, trouverZombieTouche, trouverZombiesMelee, type EntreeInvite, type PartieInvite, type ZombieVue,
 } from "./jeu-zombies";
 import { FORME_TIGRE, pointLocal, toucheTigre } from "./monstres";
@@ -335,6 +335,18 @@ describe("inviteZombies", () => {
     expect(ici({ partie: offre, moi: "b" })).toMatchObject({ assez: false, bloque: "Occupée" });
   });
 
+  it("(v8) Happy hour : la boîte temporaire d'un autre emplacement s'achète à 10 $, prise ou occupée comme la principale", () => {
+    const b2 = achat("boite:B2");
+    const la = (o: Partial<EntreeInvite>) => inviteZombies(entree([b2.position[0], b2.position[1]], { argent: 50, moi: "a", maintenant: 1000, ...o }));
+    const soldes = { instakillFinT: 0, doubleFinT: 0, soldesFinT: 5000 };
+    const temporaire = { emplacement: 1, etat: "fermee" as const, finT: 0, utilisations: 0 };
+    expect(la({ partie: partieInvite({ effets: soldes, boitesSoldes: [temporaire] }) })).toMatchObject({ invite: "boite", id: "boite:B2", prix: 10, assez: true });
+    const occupee = { ...temporaire, etat: "tirage" as const, arme: "pompe" as const, pour: "b", finT: 3000 };
+    expect(la({ partie: partieInvite({ effets: soldes, boitesSoldes: [occupee] }) })).toMatchObject({ invite: "boite", bloque: "Occupée" });
+    // Happy hour fini, la temporaire ne s'est pas encore refermée : 950 $ (elle disparaîtra une fois refermée)
+    expect(la({ partie: partieInvite({ boitesSoldes: [temporaire] }), argent: 2000 })).toMatchObject({ prix: 950 });
+  });
+
   it("atouts : Pause Café à 500 $ seul ; les autres « Courant coupé » sans courant ; aucune invite pour un atout déjà pris", () => {
     const pc = achat("atout:pausecafe"), gr = achat("atout:gratin");
     expect(inviteZombies(entree([pc.position[0], pc.position[1]], { solo: true, partie: partieInvite() }))).toMatchObject({ invite: "atout", prix: 500, assez: true });
@@ -353,6 +365,13 @@ describe("inviteZombies", () => {
     expect(ok.detail).toMatch(/^Gratiner : Pistolet — 5\s000\s\$$/);
     expect(ici({ partie: partieInvite({ courant: true }), enMain: "couteau" }).bloque).toBe("Prenez une arme à feu");
     expect(ici({ partie: partieInvite({ courant: true }), equip: { ...equipDepart, ameliorees: ["pistolet"] } }).bloque).toBe("Déjà gratinée");
+    // (v8) l'arme cuite attend : « Reprendre » (gratuit, couteau en main) pour celui qui l'a déposée, « Occupé » pour les autres
+    const pret = partieInvite({ courant: true, pap: { etat: "pret", joueur: "a", arme: "pistolet", finT: 9000 } });
+    const reprise = ici({ partie: pret, moi: "a", enMain: "couteau", argent: 0 });
+    expect(reprise).toMatchObject({ invite: "pap", prix: 0, assez: true });
+    expect(reprise.detail).toMatch(/^Reprendre : /);
+    expect(ici({ partie: pret, moi: "b" })).toMatchObject({ invite: "pap", bloque: "Occupé", assez: false });
+    expect(ici({ partie: partieInvite({ courant: true, pap: { etat: "cuisson", joueur: "a", arme: "pistolet", finT: 9000 } }), moi: "a" }).bloque).toBe("En cuisson");
     const co = achat("courant");
     expect(inviteZombies(entree([co.position[0], co.position[1]], { partie: partieInvite() }))).toMatchObject({ invite: "courant", assez: true });
     expect(inviteZombies(entree([co.position[0], co.position[1]], { partie: partieInvite({ courant: true }) })).invite).not.toBe("courant");
@@ -473,5 +492,32 @@ describe("sonGriffe : chaque type de tigre a son coup de patte", () => {
     expect(sonGriffe(3)).toBe("petit");
     expect(sonGriffe(0)).toBe("tigre");
     expect(sonGriffe(1)).toBe("tigre");
+  });
+});
+
+describe("(v8) maintien de E (relève, planches)", () => {
+  const reparer = { ...INVITE_VIDE, invite: "reparer" as const, detail: "Reposer les planches (3 / 6)", id: "F1" };
+  const relever = { ...INVITE_VIDE, invite: "reanimer" as const, detail: "Réanimer Léa", cible: "j2" };
+  const rien = { cible: null, fenetre: null };
+
+  it("E tenue devant une fenêtre abîmée démarre la repose sans nouvel appui (on arrive la touche enfoncée)", () => {
+    expect(decisionMaintien(true, true, reparer, rien)).toEqual({ action: "demarrer", invite: reparer });
+    expect(decisionMaintien(true, true, relever, rien)).toEqual({ action: "demarrer", invite: relever });
+    // E lâchée, mort, ou rien à maintenir : rien
+    expect(decisionMaintien(false, true, reparer, rien)).toBeNull();
+    expect(decisionMaintien(true, false, reparer, rien)).toBeNull();
+    expect(decisionMaintien(true, true, { ...INVITE_VIDE, invite: "acheter", id: "mur:pompe" }, rien)).toBeNull();
+  });
+
+  it("le maintien en cours continue tant que l'invite le propose, s'arrête à E lâchée, fenêtre pleine ou autre fenêtre", () => {
+    const en = { cible: null, fenetre: "F1" };
+    expect(decisionMaintien(true, true, reparer, en)).toBeNull();
+    expect(decisionMaintien(false, true, reparer, en)).toEqual({ action: "arreter" });
+    expect(decisionMaintien(true, true, INVITE_VIDE, en)).toEqual({ action: "arreter" });
+    expect(decisionMaintien(true, true, { ...reparer, id: "F2" }, en)).toEqual({ action: "arreter" });
+    const rel = { cible: "j2", fenetre: null };
+    expect(decisionMaintien(true, true, relever, rel)).toBeNull();
+    expect(decisionMaintien(true, true, { ...relever, cible: "j3" }, rel)).toEqual({ action: "arreter" });
+    expect(decisionMaintien(true, false, relever, rel)).toEqual({ action: "arreter" });
   });
 });

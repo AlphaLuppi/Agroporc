@@ -20,8 +20,15 @@ export const estSlot = (x: unknown): x is Slot => (SLOTS as readonly unknown[]).
 /** Arme blanche de l'équipement (couteau si `melee` est absent). */
 export function meleeDe(eq: Readonly<Equipement>): ArmeMeleeId { return eq.melee ?? "couteau"; }
 
-/** Arme d'un slot (l'arme blanche pour `couteau` ; null si le slot spécial est vide, ou la principale d'un équipement `sansPrincipale`). */
+/**
+ * Arme d'un slot (l'arme blanche pour `couteau` ; null si le slot spécial est vide, pour la principale d'un équipement `sansPrincipale`,
+ * ou (v8) pour le slot de l'arme déposée dans le Micro-ondes, `enCuisson`).
+ */
 export function armeDuSlot(eq: Equipement, slot: Slot): ArmeId | null {
+  const a = armeBruteDuSlot(eq, slot);
+  return a !== null && eq.enCuisson !== undefined && a === eq.enCuisson ? null : a;
+}
+function armeBruteDuSlot(eq: Equipement, slot: Slot): ArmeId | null {
   switch (slot) {
     case "principale": return eq.sansPrincipale ? null : eq.principale;
     case "secondaire": return eq.secondaire;
@@ -30,9 +37,10 @@ export function armeDuSlot(eq: Equipement, slot: Slot): ArmeId | null {
   }
 }
 
-/** Slot qui porte `arme` dans cet équipement, null si elle n'y est pas. */
+/** Slot qui porte `arme` dans cet équipement, null si elle n'y est pas (ou si elle est au Micro-ondes). */
 export function slotDeLArme(eq: Equipement, arme: ArmeId): Slot | null {
   if (estMelee(arme)) return "couteau";
+  if (eq.enCuisson !== undefined && arme === eq.enCuisson) return null;
   if (!eq.sansPrincipale && arme === eq.principale) return "principale";
   if (arme === eq.secondaire) return "secondaire";
   if (eq.speciale !== null && arme === eq.speciale) return "speciale";

@@ -18,10 +18,11 @@ import {
   type SnapZombies, type Vec3, type Zone,
 } from "./protocole";
 import {
-  ATOUTS, FENETRES, NOTES, PIECES_SYNTH, PORTES_PAYANTES, PRIX_BOITE_SOLDES, PRIX_MUNITIONS_AMELIOREE, achatsProches, porteDeId, rayonTruck,
+  ATOUTS, FENETRES, NOTES, PIECES_SYNTH, PORTES_PAYANTES, PRIX_MUNITIONS_AMELIOREE, achatsProches, porteDeId, rayonTruck,
   zonesOuvertes, type Achat,
 } from "./zombies-carte";
 import { ZOMBIES, echelleZombie, type Allure, type TypeZombie } from "./zombies-vagues";
+import { boiteA, boitesPresentes, prixBoite } from "./zombies-boites";
 import type { ModeZombie } from "./protocole";
 
 // ---------------------------------------------------------------------------------------------
@@ -400,7 +401,7 @@ export const INVITE_VIDE: InviteZombies = Object.freeze({ invite: "", detail: ""
 export interface CoequipierATerre { id: string; pseudo: string; p: Vec3 }
 
 /** Ce que l'invite lit de la partie (sous-ensemble de `EtatPartieZombies`). */
-export type PartieInvite = Pick<EtatPartieZombies, "courant" | "boite" | "pap" | "quete" | "effets" | "fenetres" | "portes">;
+export type PartieInvite = Pick<EtatPartieZombies, "courant" | "boite" | "boitesSoldes" | "pap" | "quete" | "effets" | "fenetres" | "portes">;
 
 export interface EntreeInvite {
   /** position (x, z) du joueur */
@@ -421,7 +422,9 @@ export interface EntreeInvite {
   maintenant?: number;
 }
 
+/** L'arme `a` est portée (pas celle déposée au Micro-ondes). */
 function possede(eq: Equipement, a: ArmeFeuId): boolean {
+  if (eq.enCuisson === a) return false;
   return (!eq.sansPrincipale && eq.principale === a) || eq.secondaire === a || eq.speciale === a;
 }
 
@@ -444,13 +447,15 @@ function descriptionAchat(a: Achat, e: EntreeInvite): Description | null {
       return d;
     }
     case "boite": {
-      if (p && p.boite.emplacement !== a.emplacement) return null;
-      if (p && p.boite.etat === "offre") {
-        if (p.boite.pour !== e.moi || !p.boite.arme || p.boite.arme === "peluche") return { invite: "boite", detail: "Boîte mystère", prix: 0, id: a.id, bloque: "Occupée" };
-        return { invite: "boite", detail: `Prendre : ${p.boite.arme === "remontoir" ? NOM_REMONTOIRS : STATS[p.boite.arme].nom}`, prix: 0, id: a.id };
+      // la boîte principale ou (Happy hour) une boîte temporaire de cet emplacement
+      const b = p ? boiteA(p, a.emplacement!) : null;
+      if (p && !b) return null;
+      if (b && b.etat === "offre") {
+        if (b.pour !== e.moi || !b.arme || b.arme === "peluche") return { invite: "boite", detail: "Boîte mystère", prix: 0, id: a.id, bloque: "Occupée" };
+        return { invite: "boite", detail: `Prendre : ${b.arme === "remontoir" ? NOM_REMONTOIRS : STATS[b.arme].nom}`, prix: 0, id: a.id };
       }
-      if (p && p.boite.etat !== "fermee") return { invite: "boite", detail: "Boîte mystère", prix: 0, id: a.id, bloque: "Occupée" };
-      const prix = p && t < p.effets.soldesFinT ? PRIX_BOITE_SOLDES : a.prix;
+      if (b && b.etat !== "fermee") return { invite: "boite", detail: "Boîte mystère", prix: 0, id: a.id, bloque: "Occupée" };
+      const prix = p ? prixBoite(p.effets.soldesFinT, t) : a.prix;
       return { invite: "boite", detail: `Boîte mystère — ${formatArgent(prix)}`, prix, id: a.id };
     }
     case "atout": {
@@ -465,6 +470,11 @@ function descriptionAchat(a: Achat, e: EntreeInvite): Description | null {
     case "pap": {
       const arme = e.enMain;
       const d: Description = { invite: "pap", detail: `Micro-ondes Gratinator — ${formatArgent(a.prix)}`, prix: a.prix, id: a.id };
+      // (v8) l'arme gratinée attend son joueur : lui seul la reprend, gratuitement
+      if (p && p.pap.etat === "pret" && p.pap.arme) {
+        if (p.pap.joueur === e.moi) return { ...d, detail: `Reprendre : ${nomZombie(p.pap.arme, true)}`, prix: 0 };
+        return { ...d, detail: "Micro-ondes Gratinator", prix: 0, bloque: "Occupé" };
+      }
       if (p && !p.courant) return { ...d, bloque: "Courant coupé" };
       if (p && p.pap.etat !== "libre") return { ...d, bloque: "En cuisson" };
       if (!arme || estMelee(arme)) return { ...d, bloque: "Prenez une arme à feu" };
@@ -521,7 +531,7 @@ export function inviteZombies(e: EntreeInvite): InviteZombies {
   const p = e.partie ?? null;
   for (const a of achatsProches([e.pos[0], e.pos[1]], {
     ouvertes: e.portesOuvertes instanceof Set ? [...e.portesOuvertes] : e.portesOuvertes,
-    ...(p ? { boite: p.boite.emplacement, ingredientsPris: p.quete.ingredients, courant: p.courant } : {}),
+    ...(p ? { boite: boitesPresentes(p).map((b) => b.emplacement), ingredientsPris: p.quete.ingredients, courant: p.courant } : {}),
   })) {
     const d = descriptionAchat(a, e);
     if (!d) continue;
@@ -546,6 +556,29 @@ export function inviteZombies(e: EntreeInvite): InviteZombies {
   if (!candidats.length) return INVITE_VIDE;
   candidats.sort((x, y) => x.d - y.d);
   return candidats[0].inv;
+}
+
+/** Ce que le joueur maintient avec E : une relève (`cible`) ou une repose de planches (`fenetre`), rien sinon. */
+export interface MaintienZombies { cible: string | null; fenetre: string | null }
+/** Décision de `decisionMaintien` : commencer à maintenir l'invite, arrêter le maintien en cours, ou rien. */
+export type DecisionMaintien = { action: "demarrer"; invite: InviteZombies } | { action: "arreter" } | null;
+
+/**
+ * Maintien de E façon BO1 (à chaque image) : un maintien en cours s'arrête dès que E est lâchée ou que l'invite ne le propose plus (planches
+ * toutes reposées, coéquipier relevé ou trop loin, autre fenêtre) ; E TENUE devant une fenêtre abîmée ou un coéquipier à terre démarre le
+ * maintien sans attendre un nouvel appui (on arrive E enfoncée, ou un tigre arrache une planche pendant qu'on la tient).
+ */
+export function decisionMaintien(interagir: boolean, peutAgir: boolean, invite: InviteZombies, en: MaintienZombies): DecisionMaintien {
+  if (en.cible !== null) {
+    return !interagir || !peutAgir || invite.invite !== "reanimer" || invite.cible !== en.cible ? { action: "arreter" } : null;
+  }
+  if (en.fenetre !== null) {
+    return !interagir || !peutAgir || invite.invite !== "reparer" || invite.id !== en.fenetre ? { action: "arreter" } : null;
+  }
+  if (interagir && peutAgir && ((invite.invite === "reanimer" && invite.cible) || (invite.invite === "reparer" && invite.id))) {
+    return { action: "demarrer", invite };
+  }
+  return null;
 }
 
 /**

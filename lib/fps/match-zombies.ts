@@ -28,13 +28,14 @@ import type {
   JoueurZombies, MessageClient, PhaseZombies, QueteZombies, RaisonAchat, Slot, TruckZombies, Vec3, Zone,
 } from "./protocole";
 import { creerSimuZombies, type ArriveeZombie, type Leurre, type SpecZombie } from "./zombies";
+import { boiteA, boitesSoldesRestantes, destinationsEnvol, ouvrirSoldes, pelucheTiree, prixBoite, soldesActives, soldesPermises } from "./zombies-boites";
 import {
   GRENADES, INVENTAIRE_GRENADES, degatsGrenade, degatsLanceur, grenadesDebutManche, plafondBatimentsCreux, positionLancer, preparerLancer,
   souffleAtteint, validerLancer, vitesseLancer, type ExplosionGrenade, type Lancer,
 } from "./grenades";
 import {
-  ACHATS, ATOUTS, ATOUTS_LISTE, DEPARTS, EMPLACEMENTS_DEPART_BOITE, FENETRES, INGREDIENTS_LISTE, NB_EMPLACEMENTS_BOITE, PORTES_PAYANTES,
-  PLAFOND_INTERIEUR_M, PRIX_BOITE, PRIX_BOITE_SOLDES, PRIX_MUNITIONS_AMELIOREE, QUAIS, TRUCK, achatDeId, rayonTruck, distancePorte, estAtout, etiqueterZones, fenetreDeId, fenetresDesZones,
+  ACHATS, ATOUTS, ATOUTS_LISTE, DEPARTS, EMPLACEMENTS_DEPART_BOITE, FENETRES, INGREDIENTS_LISTE, NB_EMPLACEMENTS_BOITE, PACK_A_PUNCH, PORTES_PAYANTES,
+  PLAFOND_INTERIEUR_M, PRIX_MUNITIONS_AMELIOREE, QUAIS, TRUCK, achatDeId, rayonTruck, distancePorte, estAtout, etiqueterZones, fenetreDeId, fenetresDesZones,
   idPrisme, lacetDepart, pieceDe, porteDeId, sortiesDuSol, zoneEn, zonesActives, zonesOuvertes,
   type Achat, type CarteZones, type DonneesZombies, type Fenetre, type IngredientId, type PorteId, type ZoneId,
 } from "./zombies-carte";
@@ -66,8 +67,9 @@ export const TIRAGE_BOITE_MS = 4_000;
 export const OFFRE_BOITE_MS = 12_000;
 export const ENVOL_BOITE_MS = 5_000;
 const HORS_BOITE: ReadonlySet<ArmeFeuId> = new Set(["pistolet", "mini_uzi"]);
-/** Pack-a-Punch : durée de la cuisson (ms). */
-export const CUISSON_PAP_MS = 3_500;
+/** Pack-a-Punch (v8, BO1) : durée de la cuisson (ms), délai pour reprendre l'arme gratinée avant qu'elle soit perdue (ms). */
+export const CUISSON_PAP_MS = PACK_A_PUNCH.cuissonMs;
+export const REPRISE_PAP_MS = PACK_A_PUNCH.repriseMs;
 /** Recette ultime : durée de la cuisson (ms), apparitions deux fois plus rapides pendant ce temps. */
 export const CUISSON_RECETTE_MS = 30_000;
 /** Pause Café en solo : auto-relève au bout de ce délai (ms), 3 fois par partie. */
@@ -105,6 +107,8 @@ export interface OptionsServiceZombies {
   courant?: boolean;
   /** (v8) tigres à remontoir en poche au départ (essais), `PDJ_FPS_ZOMBIES_REMONTOIRS` */
   remontoirsDepart?: number;
+  /** (v8) paquet de bonus imposé, tiré dans l'ordre puis recommencé (essais), `PDJ_FPS_ZOMBIES_BONUS` (genres séparés par des virgules) */
+  bonus?: readonly GenreBonus[];
 }
 
 type EtatMembre = JoueurZombies["etat"];
@@ -125,8 +129,9 @@ interface Membre {
   autoReleveT: number | null;
   /** argent gagné aux planches pendant la manche (plafond `plafondPlanches`) */
   planchesManche: number;
-  /** repose de planches en cours : fenêtre, prochaine planche */
+  /** repose de planches en cours : fenêtre, prochaine planche ; instant de la dernière planche reposée (cadence tenue entre deux appuis) */
   reparation: { fenetre: string; prochainT: number } | null;
+  derniereReposeT?: number;
   /** (v8) grenades à fragmentation et tigres à remontoir en poche, dernier lancer (cadence) */
   grenades: number;
   remontoirs: number;
@@ -217,8 +222,11 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
   let courant = false;
   const murs = new Set<string>();
   let boite: EtatBoite = { emplacement: 0, etat: "fermee", finT: 0, utilisations: 0 };
+  /** (v8) boîtes temporaires du Happy hour (`zombies-boites.ts`) : une par emplacement libre, retirées une fois refermées après la fin */
+  let boitesSoldes: EtatBoite[] = [];
   let demenagements = 0;
-  let prixPaye = PRIX_BOITE;
+  /** prix payé du tirage en cours, par emplacement (remboursé par la peluche) */
+  const prixPayes = new Map<number, number>();
   let pap: EtatPap = { etat: "libre" };
   let bonus: BonusSol[] = [];
   let bonusId = 1;
@@ -282,7 +290,7 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       phase, manche, hote: hote(), capacite: ZOMBIES.joueursMax, debutT, finT, joueurs,
       portes: PORTES_PAYANTES.map((p) => ({ id: p.id, ouverte: ouvertes.has(p.id) })),
       ...(bilan ? { bilan } : {}),
-      difficulte, courant, boite: { ...boite }, pap: { ...pap }, fenetres: FENETRES.map((f) => planches.get(f.id) ?? 0),
+      difficulte, courant, boite: { ...boite }, ...(boitesSoldes.length ? { boitesSoldes: boitesSoldes.map((b) => ({ ...b })) } : {}), pap: { ...pap }, fenetres: FENETRES.map((f) => planches.get(f.id) ?? 0),
       bonus: bonus.map((b) => ({ ...b, p: [b.p[0], b.p[1], b.p[2]] as Vec3 })), effets: { ...effets },
       quete: { ingredients: [...quete.ingredients], cuissonFinT: quete.cuissonFinT, faite: quete.faite },
       mancheTruck, truck: truck ? { phase: truck.phase, quai: truck.quai, finT: truck.finT } : null, murs: [...murs],
@@ -374,7 +382,7 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
   function remettreMembre(m: Membre): void {
     m.etat = "attente"; m.admis = false; m.argent = 0; m.gagne = 0; m.reanimations = 0; m.terreFinT = undefined;
     m.atouts.clear(); m.autoReleves = AUTO_RELEVES_MAX; m.autoReleveT = null; m.planchesManche = 0; m.reparation = null;
-    m.grenades = 0; m.remontoirs = 0; m.dernierLancerT = undefined;
+    m.derniereReposeT = undefined; m.grenades = 0; m.remontoirs = 0; m.dernierLancerT = undefined;
   }
 
   /** Objets de la carte remis comme au départ (nouvelle partie, retour au lobby). */
@@ -383,6 +391,8 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     courant = opts.courant === true;
     murs.clear();
     boite = { emplacement: EMPLACEMENTS_DEPART_BOITE[Math.min(EMPLACEMENTS_DEPART_BOITE.length - 1, Math.floor(alea() * EMPLACEMENTS_DEPART_BOITE.length))], etat: "fermee", finT: 0, utilisations: 0 };
+    boitesSoldes = [];
+    prixPayes.clear();
     demenagements = 0;
     pap = { etat: "libre" };
     bonus = []; paquet = []; bonusManche = 0; scoreTotal = 0; increment = ZOMBIES.incrementBonus; lacherBonus = false;
@@ -688,9 +698,19 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
   // bonus
   // ---------------------------------------------------------------------------------------------
 
+  /**
+   * Prochain bonus du paquet mélangé ; BO1 `get_valid_powerup` : le Happy hour est écarté (pour un autre du paquet) tant que la boîte n'a
+   * jamais déménagé ou qu'un Happy hour est en cours.
+   */
   function tirerBonus(): GenreBonus {
-    if (!paquet.length) paquet = paquetBonus(alea);
-    return paquet.shift()!;
+    const permis = (g: GenreBonus) => g !== "soldes" || soldesPermises(demenagements, effets.soldesFinT, dernierT);
+    for (let essai = 0; essai < 2; essai++) {
+      if (!paquet.length) paquet = opts.bonus?.length ? [...opts.bonus] : paquetBonus(alea);
+      const k = paquet.findIndex(permis);
+      if (k >= 0) return paquet.splice(k, 1)[0];
+      paquet = [];
+    }
+    return "munitions";
   }
 
   function lacher(genre: GenreBonus, p: Vec3, t: number, sorties: Sortie[]): void {
@@ -735,7 +755,11 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       case "munitions": sorties.push(...munitionsMax(t)); break;
       case "instakill": effets.instakillFinT = t + ZOMBIES.bonusDureeMs; break;
       case "double": effets.doubleFinT = t + ZOMBIES.bonusDureeMs; break;
-      case "soldes": effets.soldesFinT = t + ZOMBIES.bonusDureeMs; break;
+      case "soldes":
+        // BO1 `start_fire_sale` : 30 s (relancé par un second), une boîte temporaire à chaque emplacement libre, toutes à 10 $
+        effets.soldesFinT = t + ZOMBIES.bonusDureeMs;
+        boitesSoldes = ouvrirSoldes(boite, boitesSoldes, NB_EMPLACEMENTS_BOITE);
+        break;
       case "nuke": {
         sorties.push(zev({ e: "nuke", p: b.p }));
         // BO1 : la nuke tue tout ce qui est vivant (le Truck excepté) sans rapporter de points, puis +400 à chacun
@@ -909,6 +933,7 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       }
       if (t < r.prochainT) continue;
       planches.set(r.fenetre, n + 1);
+      m.derniereReposeT = t;
       r.prochainT = t + ZOMBIES.reposeS * 1000;
       sorties.push(zev({ e: "planche", fenetre: r.fenetre, arrachee: false }));
       sale = true;
@@ -926,53 +951,76 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     return ARMES.filter((a) => !HORS_BOITE.has(a) && STATS[a].categorie !== "unique" && !possede(eq, a));
   }
 
-  /** La peluche de BO1 (`treasure_chest_think`) : jamais avant 4 utilisations ; 15 % de 4 à 7 ; 8ᵉ forcée sans déménagement ; ensuite 30 % puis 50 %. */
-  function peluche(utilisations: number): boolean {
-    if (utilisations < 4) return false;
-    const r = alea() * 100;
-    if (demenagements === 0) {
-      if (utilisations >= 8) return true;
-      return r < 15;
-    }
-    if (utilisations < 8) return r < 15;
-    if (utilisations < 13) return r < 30;
-    return r < 50;
+  /** Remplace la boîte de l'emplacement `em` (la principale ou une temporaire du Happy hour). */
+  function ecrireBoite(em: number, b: EtatBoite): void {
+    if (em === boite.emplacement) boite = b;
+    else boitesSoldes = boitesSoldes.map((x) => (x.emplacement === em ? b : x));
   }
 
-  function ticBoite(t: number, sorties: Sortie[]): void {
-    if (boite.etat === "fermee" || t < boite.finT) return;
-    if (boite.etat === "tirage") {
-      if (boite.arme === "peluche") {
+  /** Étape suivante d'une boîte arrivée au bout de la sienne : tirage → offre (ou envol de la peluche), offre → fermée, envol → ailleurs. */
+  function avancerBoite(b: EtatBoite, principale: boolean, t: number, sorties: Sortie[]): void {
+    if (b.etat === "fermee" || t < b.finT) return;
+    if (b.etat === "tirage") {
+      if (b.arme === "peluche" && principale) {
         // la peluche rembourse et la boîte s'envole
-        const j = boite.pour ? ctx.joueur(boite.pour) : undefined;
-        if (j && membre(j.id).admis) { const m = membre(j.id); m.argent += prixPaye; sorties.push(sortieArgent(j, prixPaye, "peluche")); }
-        boite = { ...boite, etat: "envol", finT: t + ENVOL_BOITE_MS };
-        sorties.push(zev({ e: "peluche", de: boite.emplacement }));
+        const j = b.pour ? ctx.joueur(b.pour) : undefined;
+        const prix = prixPayes.get(b.emplacement) ?? 0;
+        if (j && membre(j.id).admis && prix > 0) { const m = membre(j.id); m.argent += prix; sorties.push(sortieArgent(j, prix, "peluche")); }
+        boite = { ...b, etat: "envol", finT: t + ENVOL_BOITE_MS };
+        sorties.push(zev({ e: "peluche", de: b.emplacement }));
       } else {
-        boite = { ...boite, etat: "offre", finT: t + OFFRE_BOITE_MS };
+        ecrireBoite(b.emplacement, { ...b, etat: "offre", finT: t + OFFRE_BOITE_MS });
       }
-    } else if (boite.etat === "offre") {
-      boite = { emplacement: boite.emplacement, etat: "fermee", finT: 0, utilisations: boite.utilisations };
-    } else if (boite.etat === "envol") {
-      const autres = Array.from({ length: NB_EMPLACEMENTS_BOITE }, (_, i) => i).filter((i) => i !== boite.emplacement);
+    } else if (b.etat === "offre") {
+      ecrireBoite(b.emplacement, { emplacement: b.emplacement, etat: "fermee", finT: 0, utilisations: b.utilisations });
+    } else if (b.etat === "envol" && principale) {
+      // une boîte temporaire refermée cède sa place ; jamais sur une temporaire en cours de tirage ou d'offre
+      const autres = destinationsEnvol(b.emplacement, boitesSoldes, NB_EMPLACEMENTS_BOITE);
       const vers = autres[Math.min(autres.length - 1, Math.floor(alea() * autres.length))];
       demenagements++;
+      boitesSoldes = boitesSoldes.filter((x) => x.emplacement !== vers);
       boite = { emplacement: vers, etat: "fermee", finT: 0, utilisations: 0 };
     }
     immediat = true;
   }
 
+  function ticBoite(t: number, sorties: Sortie[]): void {
+    avancerBoite(boite, true, t, sorties);
+    for (const b of [...boitesSoldes]) avancerBoite(b, false, t, sorties);
+    // fin du Happy hour : les boîtes temporaires refermées disparaissent (celle qu'on utilise finit son tirage d'abord)
+    const restantes = boitesSoldesRestantes(boitesSoldes, soldesActives(effets.soldesFinT, t));
+    if (restantes.length !== boitesSoldes.length) { boitesSoldes = restantes; immediat = true; }
+  }
+
+  /**
+   * Micro-ondes (BO1) : la cuisson finie, l'arme gratinée attend son joueur `REPRISE_PAP_MS` (`pret`) ; passé ce délai elle est perdue, sans
+   * remboursement : son slot reste vide (`enCuisson` gardé) jusqu'à une nouvelle arme de sa catégorie.
+   */
   function ticPap(t: number, sorties: Sortie[]): void {
-    if (pap.etat !== "cuisson" || t < (pap.finT ?? 0)) return;
-    const j = pap.joueur ? ctx.joueur(pap.joueur) : undefined;
-    const arme = pap.arme!;
-    pap = { etat: "libre" };
+    if (pap.etat === "libre" || t < (pap.finT ?? 0)) return;
+    const arme = pap.arme!, joueur = pap.joueur ?? "";
     immediat = true;
-    if (!j || !membre(j.id).admis || !possede(j.equip, arme)) return;
-    const equip = copierEquipement(j.equip);
-    equip.ameliorees = [...new Set([...(equip.ameliorees ?? []), arme])];
-    if (equip.speciale === arme) j.munSpeciale = chargeurZombie(arme, true);
-    sorties.push(...ctx.equiper(j, equip, j.main, t, arme), zev({ e: "pap", joueur: j.id, arme, pret: true }));
+    if (pap.etat === "cuisson") {
+      pap = { etat: "pret", joueur, arme, debutT: pap.debutT, finT: t + REPRISE_PAP_MS };
+      sorties.push(zev({ e: "pap", joueur, arme, pret: true }));
+      return;
+    }
+    pap = { etat: "libre" };
+    sorties.push(zev({ e: "pap", joueur, arme, pret: false, fin: "perdue" }));
+  }
+
+  /** Copie d'un équipement sans arme au Micro-ondes. */
+  function sansCuisson(eq: Equipement): Equipement {
+    const e = copierEquipement(eq);
+    delete e.enCuisson;
+    return e;
+  }
+
+  /** Slot d'une arme à feu : les armes uniques vont dans le slot spécial. */
+  const slotArme = (x: ArmeFeuId): Slot => (STATS[x].categorie === "unique" ? "speciale" : STATS[x].categorie);
+  /** Le slot que remplirait l'arme `a` est celui de l'arme de `j` encore au Micro-ondes : réservé jusqu'à sa reprise. */
+  function slotReserve(j: JoueurSalle, a: ArmeFeuId): boolean {
+    return pap.etat !== "libre" && pap.joueur === j.id && !!pap.arme && slotArme(a) === slotArme(pap.arme);
   }
 
   function ticRecette(t: number, sorties: Sortie[]): void {
@@ -985,6 +1033,8 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       const m = membre(j.id);
       const equip = copierEquipement(j.equip);
       equip.secondaire = "rayon";
+      // le Rayon remplit le slot secondaire, même vidé par une arme perdue au Micro-ondes (celle qui y cuit encore reviendra à sa place)
+      if (equip.enCuisson && slotArme(equip.enCuisson) === "secondaire" && !(pap.etat !== "libre" && pap.joueur === j.id)) delete equip.enCuisson;
       equip.ameliorees = [...new Set([...(equip.ameliorees ?? []).filter((a) => a !== "rayon"), "rayon" as ArmeFeuId])];
       ctx.memoriserPrecedent(j);
       delete j.cadenceArme.rayon;
@@ -1008,7 +1058,9 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
   // achats
   // ---------------------------------------------------------------------------------------------
 
-  const possede = (eq: Equipement, a: ArmeFeuId): boolean => (!eq.sansPrincipale && eq.principale === a) || eq.secondaire === a || eq.speciale === a;
+  /** L'arme `a` est portée (pas celle déposée au Micro-ondes, `enCuisson`). */
+  const possede = (eq: Equipement, a: ArmeFeuId): boolean =>
+    eq.enCuisson !== a && ((!eq.sansPrincipale && eq.principale === a) || eq.secondaire === a || eq.speciale === a);
 
   const refus = (j: JoueurSalle, id: string, raison: RaisonAchat): Sortie[] => [{ a: j.id, m: { t: "achat", ok: false, id, raison } }];
 
@@ -1106,6 +1158,8 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       return [...payer(j, m, achat, prix), ...ctx.equiper(j, copierEquipement(j.equip), j.main, t, arme)];
     }
     if (m.argent < achat.prix) return refus(j, achat.id, "argent");
+    // (v8) le slot de l'arme au Micro-ondes attend qu'on la reprenne
+    if (slotReserve(j, arme)) return refus(j, achat.id, "occupe");
     murs.add(achat.id);
     immediat = true;
     return [...payer(j, m, achat, achat.prix), ...equiperNouvelle(j, arme, t)];
@@ -1119,6 +1173,8 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     delete j.cadenceArme[arme];
     const remplacee = categorie === "speciale" || categorie === "unique" ? equip.speciale : categorie === "principale" ? (equip.sansPrincipale ? null : equip.principale) : equip.secondaire;
     let ameliorees = (equip.ameliorees ?? []).filter((a) => a !== remplacee && a !== arme);
+    // (v8) une arme perdue au Micro-ondes laissait son slot vide : la nouvelle le remplit
+    if (equip.enCuisson && slotArme(equip.enCuisson) === slotArme(arme)) delete equip.enCuisson;
     if (amelioree) ameliorees = [...ameliorees, arme];
     if (ameliorees.length) equip.ameliorees = ameliorees; else delete equip.ameliorees;
     if (categorie === "speciale" || categorie === "unique") {
@@ -1136,12 +1192,16 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
   }
 
   function acheterBoite(j: JoueurSalle, achat: Achat, m: Membre, t: number): Sortie[] {
-    if (achat.emplacement !== boite.emplacement) return refus(j, achat.id, "loin");
-    if (boite.etat === "offre") {
+    // la boîte principale, ou (Happy hour) une boîte temporaire de cet emplacement
+    const b = achat.emplacement !== undefined ? boiteA({ boite, boitesSoldes }, achat.emplacement) : null;
+    if (!b) return refus(j, achat.id, "loin");
+    const principale = b === boite;
+    if (b.etat === "offre") {
       // prendre l'arme offerte (seul celui qui a payé)
-      if (boite.pour !== j.id) return refus(j, achat.id, "occupe");
-      const offerte = boite.arme;
-      boite = { emplacement: boite.emplacement, etat: "fermee", finT: 0, utilisations: boite.utilisations };
+      if (b.pour !== j.id) return refus(j, achat.id, "occupe");
+      const offerte = b.arme;
+      if (offerte && offerte !== "peluche" && offerte !== "remontoir" && slotReserve(j, offerte)) return refus(j, achat.id, "occupe");
+      ecrireBoite(b.emplacement, { emplacement: b.emplacement, etat: "fermee", finT: 0, utilisations: b.utilisations });
       immediat = true;
       if (offerte === "remontoir") {
         // (v8) trois tigres à remontoir (la Monkey Bomb de BO1), à côté des armes
@@ -1150,16 +1210,19 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       }
       return [{ a: j.id, m: { t: "achat", ok: true, id: achat.id } }, ...equiperNouvelle(j, offerte as ArmeFeuId, t)];
     }
-    if (boite.etat !== "fermee") return refus(j, achat.id, "occupe");
-    const prix = t < effets.soldesFinT ? PRIX_BOITE_SOLDES : PRIX_BOITE;
+    if (b.etat !== "fermee") return refus(j, achat.id, "occupe");
+    const soldes = soldesActives(effets.soldesFinT, t);
+    const prix = prixBoite(effets.soldesFinT, t);
     if (m.argent < prix) return refus(j, achat.id, "argent");
     // (v8) le tigre à remontoir sort de la boîte comme une arme, si le joueur n'en a plus
     const candidates: (ArmeFeuId | "remontoir")[] = [...armesBoite(j.equip), ...(m.remontoirs > 0 ? [] : ["remontoir" as const])];
     if (!candidates.length) return refus(j, achat.id, "deja");
-    const utilisations = boite.utilisations + 1;
-    const arme: ArmeFeuId | "peluche" | "remontoir" = peluche(utilisations) ? "peluche" : candidates[Math.min(candidates.length - 1, Math.floor(alea() * candidates.length))];
-    prixPaye = prix;
-    boite = { emplacement: boite.emplacement, etat: "tirage", arme, pour: j.id, finT: t + TIRAGE_BOITE_MS, utilisations };
+    // Happy hour (et boîtes temporaires) : aucune peluche, et ces tirages ne comptent pas pour elle
+    const utilisations = b.utilisations + (soldes || !principale ? 0 : 1);
+    const peluche = principale && !soldes && utilisations >= 4 && pelucheTiree(utilisations, demenagements, alea() * 100, soldes);
+    const arme: ArmeFeuId | "peluche" | "remontoir" = peluche ? "peluche" : candidates[Math.min(candidates.length - 1, Math.floor(alea() * candidates.length))];
+    prixPayes.set(b.emplacement, prix);
+    ecrireBoite(b.emplacement, { emplacement: b.emplacement, etat: "tirage", arme, pour: j.id, finT: t + TIRAGE_BOITE_MS, utilisations });
     immediat = true;
     return payer(j, m, achat, prix);
   }
@@ -1178,16 +1241,33 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     return sorties;
   }
 
+  /**
+   * Micro-ondes Gratinator (BO1) : on paye, l'arme en main est retirée de l'inventaire (`enCuisson`, son slot est vide) et déposée dans la
+   * machine ; une fois cuite, seul ce joueur la reprend (même achat, gratuit), chargeurs pleins, dans son slot.
+   */
   function acheterPap(j: JoueurSalle, achat: Achat, m: Membre, t: number): Sortie[] {
+    if (pap.etat === "pret") {
+      if (pap.joueur !== j.id || !pap.arme) return refus(j, achat.id, "occupe");
+      const arme = pap.arme;
+      pap = { etat: "libre" };
+      immediat = true;
+      j.equip = sansCuisson(j.equip);
+      if (STATS[arme].categorie === "speciale" || STATS[arme].categorie === "unique") j.munSpeciale = chargeurZombie(arme, true);
+      return [{ a: j.id, m: { t: "achat", ok: true, id: achat.id } }, ...equiperNouvelle(j, arme, t, true), zev({ e: "pap", joueur: j.id, arme, pret: true, fin: "reprise" })];
+    }
     if (!courant) return refus(j, achat.id, "courant");
     if (pap.etat !== "libre") return refus(j, achat.id, "occupe");
     const arme = j.arme;
     if (estMelee(arme) || !possede(j.equip, arme)) return refus(j, achat.id, "deja");
     if (estAmelioree(j.equip, arme)) return refus(j, achat.id, "deja");
     if (m.argent < achat.prix) return refus(j, achat.id, "argent");
-    pap = { etat: "cuisson", joueur: j.id, arme, finT: t + CUISSON_PAP_MS };
+    pap = { etat: "cuisson", joueur: j.id, arme, debutT: t, finT: t + CUISSON_PAP_MS };
     immediat = true;
-    return [...payer(j, m, achat, achat.prix), zev({ e: "pap", joueur: j.id, arme, pret: false })];
+    // l'arme quitte la main : on passe à l'autre arme (ou au couteau)
+    const equip = copierEquipement(j.equip);
+    equip.enCuisson = arme;
+    ctx.memoriserPrecedent(j);
+    return [...payer(j, m, achat, achat.prix), ...ctx.equiper(j, equip, mainValide(equip, j.main), t), zev({ e: "pap", joueur: j.id, arme, pret: false })];
   }
 
   function activerCourant(j: JoueurSalle, achat: Achat): Sortie[] {
@@ -1494,7 +1574,11 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
           const f: Fenetre | null = fenetreDeId(msg.fenetre);
           if (!f || (planches.get(f.id) ?? 0) >= ZOMBIES.planches) return [];
           if (Math.hypot(j.p[0] - f.dedans[0], j.p[2] - f.dedans[1]) > ZOMBIES.reposePortee + margeLatence(j)) return [];
-          if (m.reparation?.fenetre !== f.id) m.reparation = { fenetre: f.id, prochainT: t + ZOMBIES.reposeS * 1000 };
+          // la première planche suit l'appui de près, les suivantes gardent la cadence de BO1 même si l'on relâche et réappuie
+          if (m.reparation?.fenetre !== f.id) {
+            const prochainT = Math.max(t + ZOMBIES.reposePremiereS * 1000, (m.derniereReposeT ?? -Infinity) + ZOMBIES.reposeS * 1000);
+            m.reparation = { fenetre: f.id, prochainT };
+          }
           return [];
         }
         case "lancerGrenade":
@@ -1521,6 +1605,8 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
 
     liberer(j, t) {
       for (const [par, r] of releves) if (r.cible === j.id || par === j.id) releves.delete(par);
+      // (v8) son arme au Micro-ondes est perdue, la machine se libère
+      if (pap.etat !== "libre" && pap.joueur === j.id) pap = { etat: "libre" };
       if (!ctx.joueur(j.id)) {
         membres.delete(j.id);
       } else {

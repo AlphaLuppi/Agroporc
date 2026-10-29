@@ -614,6 +614,15 @@ function definirFenetre(id: string, zone: ZoneId, cote: Vec2): Fenetre {
 
 export const FENETRES: readonly Fenetre[] = COTES_FENETRES.map((f) => definirFenetre(f.id, f.zone, f.cote));
 export const fenetreDeId = (id: string): Fenetre | null => FENETRES.find((f) => f.id === id) ?? null;
+/** Fenêtre dont le milieu est le plus proche de (x, z) (sons du bonus Menuisier). */
+export function fenetrePlusProche(x: number, z: number): Fenetre | null {
+  let res: Fenetre | null = null, dMin = Infinity;
+  for (const f of FENETRES) {
+    const d = Math.hypot(f.milieu[0] - x, f.milieu[1] - z);
+    if (d < dMin) { dMin = d; res = f; }
+  }
+  return res;
+}
 
 /** Fenêtres des zones données (actives : zones ouvertes et proches des joueurs). */
 export function fenetresDesZones(zones: ReadonlySet<ZoneId>): Fenetre[] {
@@ -699,6 +708,12 @@ export const ATOUTS: Readonly<Record<AtoutId, { nom: string; prix: number; prixS
 };
 /** Prix du Pack-a-Punch, des munitions d'une arme améliorée, de la boîte (BO1) et de la boîte en Happy hour. */
 export const PRIX_PAP = 5000;
+/**
+ * (v8) Micro-ondes Gratinator, déroulé de BO1 (`vending_weapon_upgrade`) : l'arme payée est déposée DANS la machine (`entreeMs` : elle y
+ * entre, la porte se ferme), cuit `cuissonMs` en tout (BO1 : reprise possible 4,35 s après le paiement), puis attend `repriseMs` que son
+ * joueur vienne la reprendre (BO1 `packapunch_timeout` = 15 s), sinon elle est perdue, sans remboursement.
+ */
+export const PACK_A_PUNCH = { entreeMs: 700, cuissonMs: 4_000, repriseMs: 15_000 } as const;
 export const PRIX_MUNITIONS_AMELIOREE = 2500;
 export const PRIX_BOITE = 950;
 export const PRIX_BOITE_SOLDES = 10;
@@ -788,8 +803,11 @@ export function achatDeId(id: string): Achat | null {
 export const achatBoite = (emplacement: number): Achat => ACHATS.find((a) => a.genre === "boite" && a.emplacement === emplacement)!;
 export const achatAtout = (id: AtoutId): Achat => ACHATS.find((a) => a.genre === "atout" && a.atout === id)!;
 
-/** Ce qui est actif pour le filtrage des invites : boîte présente, portes ouvertes, ingrédients déjà pris, courant. */
-export interface EtatCarte { ouvertes?: Iterable<string>; boite?: number | null; ingredientsPris?: Iterable<string>; courant?: boolean }
+/**
+ * Ce qui est actif pour le filtrage des invites : emplacement(s) des boîtes présentes (la principale, plus celles du Happy hour), portes
+ * ouvertes, ingrédients déjà pris, courant.
+ */
+export interface EtatCarte { ouvertes?: Iterable<string>; boite?: number | readonly number[] | null; ingredientsPris?: Iterable<string>; courant?: boolean }
 
 /**
  * Achats à portée de `pos` : les achats fixes à moins de leur rayon et les portes à moins de leur portée du SEGMENT de leur pièce. Les
@@ -800,9 +818,10 @@ export function achatsProches(pos: Vec2, e: EtatCarte | ReadonlySet<string> | re
   const etat: EtatCarte = e instanceof Set || Array.isArray(e) ? { ouvertes: e as Iterable<string> } : (e as EtatCarte);
   const o = new Set(etat.ouvertes ?? []);
   const pris = new Set(etat.ingredientsPris ?? []);
+  const boites = etat.boite === undefined ? null : new Set(typeof etat.boite === "number" ? [etat.boite] : etat.boite ?? []);
   const res: { a: Achat; d: number }[] = [];
   for (const a of ACHATS) {
-    if (a.genre === "boite" && etat.boite !== undefined && etat.boite !== a.emplacement) continue;
+    if (a.genre === "boite" && boites && !boites.has(a.emplacement!)) continue;
     if (a.genre === "ingredient" && (pris.has(a.ingredient!) || (a.ingredient === "truffe" && !etat.courant))) continue;
     const d = Math.hypot(pos[0] - a.position[0], pos[1] - a.position[1]);
     if (d <= a.rayon) res.push({ a, d });

@@ -313,3 +313,19 @@ describe("équipement sans arme principale (zombies)", () => {
     expect(depuisAlias("revolver", sans())?.equip.sansPrincipale).toBe(true);
   });
 });
+
+describe("(v8) arme au Micro-ondes (`enCuisson`)", () => {
+  const eq = (): Equipement => ({ principale: "pompe", secondaire: "pistolet", speciale: null, enCuisson: "pistolet" });
+  it("son slot est vide : armeDuSlot / slotDeLArme renvoient null, le slot voisin la saute ; les autres slots ne changent pas", () => {
+    expect(armeDuSlot(eq(), "secondaire")).toBeNull();
+    expect(slotDeLArme(eq(), "pistolet")).toBeNull();
+    expect(armeDuSlot(eq(), "principale")).toBe("pompe");
+    expect(slotVoisin(eq(), "principale", 1)).toBe("couteau");
+    // une autre arme écrite dans le slot (Rayon de la recette) n'est pas concernée
+    expect(armeDuSlot({ ...eq(), secondaire: "rayon" }, "secondaire")).toBe("rayon");
+  });
+  it("copierEquipement la garde (jamais de clé `undefined`)", () => {
+    expect(copierEquipement(eq()).enCuisson).toBe("pistolet");
+    expect("enCuisson" in copierEquipement({ ...eq(), enCuisson: undefined })).toBe(false);
+  });
+});

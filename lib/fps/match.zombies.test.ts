@@ -4,7 +4,7 @@ import type { SceneData } from "../agroparc3d/types";
 import { Salle, INACTIF_MS, type JoueurSalle, type OptionsSalle, type Sortie } from "./match";
 import type { OptionsServiceZombies } from "./match-zombies";
 import { JEU, SILHOUETTE, decoderZombies, type MessageClient, type MessageServeur, type Vec3 } from "./protocole";
-import { DEPARTS, construireMondeZombies } from "./zombies-carte";
+import { DEPARTS, FENETRES, construireMondeZombies } from "./zombies-carte";
 import { ZOMBIES, gainKill, gainTouche } from "./zombies-vagues";
 
 /**
@@ -386,6 +386,37 @@ describe("mise à terre, inactivité, départs", () => {
     }
     expect(griffes).toBeGreaterThan(0);
     expect(a.pv).toBeLessThanOrEqual(70);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+describe("barricades par la salle", () => {
+  it("(v8) `reparer` passe par `Salle.recevoir` : les planches arrachées sont reposées, `zevt{planche}` et 10 $ chacune", () => {
+    const s = partie(["a"], { total1: 40 });
+    const a = j(s, "a");
+    const f = FENETRES.find((x) => x.id === "F1")!;
+    const i = FENETRES.indexOf(f);
+    a.p = [f.dedans[0], 0, f.dedans[1]];
+    a.pv = 1e9;
+    let t = T0 + 50;
+    let etat = dernierEtat(avancer(s, t, t));
+    // les tigres arrachent des planches de F1
+    for (; t < T0 + 180_000 && (etat?.fenetres[i] ?? 6) > 3; t += 50) {
+      a.etatT = t;
+      etat = dernierEtat(s.tic(t)) ?? etat;
+    }
+    expect(etat!.fenetres[i]).toBeLessThanOrEqual(3);
+    // E maintenue devant la fenêtre : le message part par la salle (il manquait à l'aiguillage)
+    a.p = [f.dedans[0], 0, f.dedans[1]];
+    expect(s.recevoir("a", { t: "reparer", fenetre: "F1" }, t)).toEqual([]);
+    const sorties = avancer(s, t + 50, t + 1_500);
+    const reposees = messages(sorties, "zevt").filter((m) => m.e.e === "planche" && m.e.fenetre === "F1" && !m.e.arrachee);
+    expect(reposees.length).toBeGreaterThanOrEqual(1);
+    expect(messages(sorties, "argent").some((m) => m.motif === "planche" && m.delta === 10)).toBe(true);
+    // E lâchée : plus rien
+    s.recevoir("a", { t: "reparer", fenetre: null }, t + 1_550);
+    const apres = avancer(s, t + 1_600, t + 3_500);
+    expect(messages(apres, "zevt").filter((m) => m.e.e === "planche" && !m.e.arrachee)).toHaveLength(0);
   });
 });
 

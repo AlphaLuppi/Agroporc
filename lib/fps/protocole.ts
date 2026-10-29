@@ -25,8 +25,9 @@ import type { Difficulte, GenreBonus } from "./zombies-vagues";
  * après une micro-coupure : `bienvenue.jeton` / `bienvenue.reprise`, `bonjour.reprise`), carte « Service de midi » redécoupée
  * (aménagements ajoutés aux pièces : index des prismes de `batiments{detruits}` et positions d'achats partagés) et grenades balistiques
  * des zombies (client `lancerGrenade`, serveur `grenade`, `zevt{grenade}`, stocks `JoueurZombies.grenades` / `remontoirs`, tigre à
- * remontoir de la boîte) ; `zombieMort` dit aussi comment le tigre est mort (`arme`, `ameliore`, `src` : ragdoll côté client). Client et
- * serveur se déploient ensemble.
+ * remontoir de la boîte) ; `zombieMort` dit aussi comment le tigre est mort (`arme`, `ameliore`, `src` : ragdoll côté client) ; Happy hour
+ * de BO1 (`boitesSoldes` : une boîte à chaque emplacement) ; Micro-ondes Gratinator à dépôt et reprise (`EtatPap.etat` "pret",
+ * `Equipement.enCuisson`, `zevt{pap, fin}`). Client et serveur se déploient ensemble.
  */
 export const VERSION_PROTOCOLE = 8;
 
@@ -78,6 +79,12 @@ export interface Equipement {
   sansPrincipale?: true;
   /** (v7, zombies) armes passées au Pack-a-Punch ; absent = aucune */
   ameliorees?: ArmeFeuId[];
+  /**
+   * (v8, zombies) arme déposée dans le Micro-ondes Gratinator, ou perdue faute d'avoir été reprise à temps : elle reste écrite dans son slot
+   * mais ce slot est vide (`armeDuSlot` / `slotDeLArme` de equipement.ts renvoient null) jusqu'à la reprise, ou jusqu'à une nouvelle arme
+   * de sa catégorie ; absent = aucune
+   */
+  enCuisson?: ArmeFeuId;
 }
 /**
  * Équipement et slot quand le joueur n'a rien choisi (compatibilité des tests v1 : pistolet en main).
@@ -93,6 +100,7 @@ export function copierEquipement(e: Readonly<Equipement>): Equipement {
   if (e.melee !== undefined) copie.melee = e.melee;
   if (e.sansPrincipale) copie.sansPrincipale = true;
   if (e.ameliorees && e.ameliorees.length) copie.ameliorees = [...e.ameliorees];
+  if (e.enCuisson) copie.enCuisson = e.enCuisson;
   return copie;
 }
 
@@ -165,8 +173,12 @@ export interface EtatBoite {
   /** utilisations depuis le dernier déménagement */
   utilisations: number;
 }
-/** (v7) Pack-a-Punch : libre ou en cuisson de l'arme `arme` de `joueur` jusqu'à `finT`. */
-export interface EtatPap { etat: "libre" | "cuisson"; joueur?: string; arme?: ArmeFeuId; finT?: number }
+/**
+ * (v7) Pack-a-Punch : libre ou en cuisson de l'arme `arme` de `joueur` jusqu'à `finT`. (v8, BO1) l'arme est déposée dans la machine
+ * (`debutT` : instant du dépôt) ; à `finT` elle sort gratinée (`pret`) et attend que `joueur` vienne la reprendre jusqu'au nouveau `finT`,
+ * sinon elle est perdue.
+ */
+export interface EtatPap { etat: "libre" | "cuisson" | "pret"; joueur?: string; arme?: ArmeFeuId; finT?: number; debutT?: number }
 /** (v7) Bonus au sol : disparaît à `finT` (il clignote les 11 dernières secondes). */
 export interface BonusSol { id: number; genre: GenreBonus; p: Vec3; finT: number }
 /** (v7) Fins (horodatage serveur ms, 0 = inactif) des bonus à durée. */
@@ -200,6 +212,8 @@ export interface EtatPartieZombies {
   /** courant rétabli (atouts sauf la Pause Café, Pack-a-Punch, lumières, truffe) */
   courant: boolean;
   boite: EtatBoite;
+  /** (v8) boîtes temporaires du Happy hour (une par emplacement libre) ; absent = aucune */
+  boitesSoldes?: EtatBoite[];
   pap: EtatPap;
   /** planches restantes par fenêtre, dans l'ordre de `FENETRES` */
   fenetres: number[];
@@ -221,7 +235,8 @@ export type EvenementZombies =
   | { e: "courant" }
   | { e: "peluche"; de: number }
   | { e: "atout"; joueur: string; atout: AtoutId }
-  | { e: "pap"; joueur: string; arme: ArmeFeuId; pret: boolean }
+  /** (v8) `pret` : l'arme sort gratinée ; `fin` : reprise par son joueur, ou perdue faute de reprise à temps */
+  | { e: "pap"; joueur: string; arme: ArmeFeuId; pret: boolean; fin?: "reprise" | "perdue" }
   | { e: "truck"; quoi: "klaxon" | "porte" | "explosion"; p: Vec3 }
   | { e: "explosion"; p: Vec3; rayon: number; par: string }
   /** (v8) grenade `id` (message `grenade`) qui saute en `p` (à tous, lanceur compris : le serveur fait foi) */

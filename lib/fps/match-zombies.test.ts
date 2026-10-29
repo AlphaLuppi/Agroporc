@@ -15,7 +15,7 @@ import {
   type ZoneId,
 } from "./zombies-carte";
 import { ZOMBIES, delaiApparition, gainKill, gainTouche, pvZombie, totalManche, type GenreBonus } from "./zombies-vagues";
-import { CUISSON_PAP_MS, CUISSON_RECETTE_MS, OFFRE_BOITE_MS, TIRAGE_BOITE_MS, AUTO_RELEVE_MS, ENVOL_BOITE_MS } from "./match-zombies";
+import { CUISSON_PAP_MS, CUISSON_RECETTE_MS, OFFRE_BOITE_MS, REPRISE_PAP_MS, TIRAGE_BOITE_MS, AUTO_RELEVE_MS, ENVOL_BOITE_MS } from "./match-zombies";
 
 /**
  * Service zombies isolé : contexte factice (la salle est testée dans match.zombies.test.ts), vrai monde de la carte « Service de midi ».
@@ -495,7 +495,7 @@ describe("bonus (BO1 : seuil de points, paquet mélangé, 4 par manche)", () => 
 
   it("le premier bonus tombe après j × 500 + 2 000 points gagnés, au plus 4 par manche, et chaque genre a son effet", () => {
     const genres = new Set<GenreBonus>();
-    for (let graine = 1; graine <= 12 && genres.size < 6; graine++) {
+    for (let graine = 1; graine <= 12 && genres.size < 5; graine++) {
       const { b, vus } = jouer(graine);
       expect(vus.length).toBeGreaterThan(0);
       expect(vus.length).toBeLessThanOrEqual(ZOMBIES.bonusParManche);
@@ -513,7 +513,8 @@ describe("bonus (BO1 : seuil de points, paquet mélangé, 4 par manche)", () => 
         }
       }
     }
-    expect([...genres].sort()).toEqual(["double", "instakill", "menuisier", "munitions", "nuke", "soldes"]);
+    // (v8) le Happy hour n'est offert qu'après un déménagement de la boîte (BO1) : jamais ici, la boîte ne sert pas (cf. « Happy hour »)
+    expect([...genres].sort()).toEqual(["double", "instakill", "menuisier", "munitions", "nuke"]);
   });
 
   it("double points : un kill au corps rapporte 120 $ ; insta-kill : tout tigre meurt au premier coup", () => {
@@ -719,7 +720,7 @@ describe("achats", () => {
     expect(j.pv).toBe(ZOMBIES.reanimationPv);
   });
 
-  it("courant (local technique) : rétabli une fois, `zevt courant` ; Pack-a-Punch (5 000 $) : cuisson 3,5 s puis arme améliorée", () => {
+  it("courant (local technique) : rétabli une fois, `zevt courant` ; Pack-a-Punch (5 000 $) : dépôt, cuisson 4 s, reprise de l'arme améliorée", () => {
     const co = achat("courant");
     const { b, j } = avec(co.position, 20_000);
     const pa = achat("pap");
@@ -735,14 +736,70 @@ describe("achats", () => {
     const t = T_MANCHE1 + 200;
     const p = acheter(b, j, "pap", t);
     expect(msgs(p, "argent")[0]).toMatchObject({ delta: -5000 });
-    expect(b.svc.etat().pap).toMatchObject({ etat: "cuisson", joueur: "a", arme: "pistolet", finT: t + CUISSON_PAP_MS });
+    expect(b.svc.etat().pap).toMatchObject({ etat: "cuisson", joueur: "a", arme: "pistolet", debutT: t, finT: t + CUISSON_PAP_MS });
+    // (v8, BO1) l'arme est retirée de l'inventaire : son slot est vide, le joueur passe au couteau
+    expect(msgs(p, "equipement")[0]).toMatchObject({ main: "couteau", equip: { enCuisson: "pistolet" } });
+    expect(armeDuSlot(j.equip, "secondaire")).toBeNull();
+    expect(j.arme).toBe("couteau");
+    expect(msgs(p, "zevt")[0].e).toEqual({ e: "pap", joueur: "a", arme: "pistolet", pret: false });
     expect(msgs(acheter(b, j, "pap", t + 100), "achat")[0]).toMatchObject({ ok: false, raison: "occupe" });
     const fin = avancer(b, t + 50, t + CUISSON_PAP_MS + 100);
-    expect(msgs(fin, "equipement")[0].equip.ameliorees).toEqual(["pistolet"]);
-    expect(msgs(fin, "zevt").some((m) => m.e.e === "pap" && m.e.pret)).toBe(true);
+    // cuite : elle attend dans la machine, rien n'est rendu tant que le joueur ne vient pas la reprendre
+    expect(msgs(fin, "equipement")).toEqual([]);
+    expect(msgs(fin, "zevt").map((m) => m.e)).toContainEqual({ e: "pap", joueur: "a", arme: "pistolet", pret: true });
+    expect(b.svc.etat().pap).toMatchObject({ etat: "pret", joueur: "a", arme: "pistolet" });
+    expect(b.svc.etat().pap.finT).toBeGreaterThanOrEqual(t + CUISSON_PAP_MS + REPRISE_PAP_MS);
+    const r = acheter(b, j, "pap", t + 5000);
+    expect(msgs(r, "achat")[0]).toMatchObject({ ok: true });
+    expect(msgs(r, "argent")).toEqual([]);
+    expect(msgs(r, "equipement")[0]).toMatchObject({ main: "secondaire", ravitaille: "pistolet" });
+    expect(msgs(r, "equipement")[0].equip.ameliorees).toEqual(["pistolet"]);
+    expect(msgs(r, "equipement")[0].equip.enCuisson).toBeUndefined();
+    expect(msgs(r, "zevt")[0].e).toMatchObject({ e: "pap", fin: "reprise" });
+    expect(j.arme).toBe("pistolet");
     expect(b.svc.etat().pap.etat).toBe("libre");
     expect(b.svc.degatsTir(j, "pistolet", "corps", 5, t + 5000)).toBe(160);
-    expect(msgs(acheter(b, j, "pap", t + 5000), "achat")[0]).toMatchObject({ ok: false, raison: "deja" });
+    expect(msgs(acheter(b, j, "pap", t + 5100), "achat")[0]).toMatchObject({ ok: false, raison: "deja" });
+  });
+
+  it("(v8) Micro-ondes : seul celui qui a déposé l'arme la reprend ; passé 15 s elle est perdue, sans remboursement, son slot reste vide", () => {
+    const pa = achat("pap");
+    const b = partieEnCours(["a", "c"], { argentDepart: 20_000, courant: true });
+    avancer(b, T0 + 100, T_MANCHE1 + 50);
+    const j = b.j("a"), autre = b.j("c");
+    j.p = [pa.position[0], 0, pa.position[1]];
+    autre.p = [pa.position[0] + 0.5, 0, pa.position[1]];
+    const t = T_MANCHE1 + 100;
+    expect(msgs(acheter(b, j, "pap", t), "achat")[0]).toMatchObject({ ok: true });
+    avancer(b, t + 50, t + CUISSON_PAP_MS + 100);
+    expect(b.svc.etat().pap.etat).toBe("pret");
+    expect(msgs(acheter(b, autre, "pap", t + CUISSON_PAP_MS + 200), "achat")[0]).toMatchObject({ ok: false, raison: "occupe" });
+    // le slot attend la reprise : pas de mini Uzi (secondaire) au mur entre-temps
+    const uzi = achat("mur:mini_uzi");
+    j.p = [uzi.position[0], 0, uzi.position[1]];
+    expect(msgs(acheter(b, j, uzi.id, t + CUISSON_PAP_MS + 300), "achat")[0]).toMatchObject({ ok: false, raison: "occupe" });
+    const perte = avancer(b, t + CUISSON_PAP_MS + 400, t + CUISSON_PAP_MS + REPRISE_PAP_MS + 200);
+    expect(msgs(perte, "zevt").map((m) => m.e)).toContainEqual({ e: "pap", joueur: "a", arme: "pistolet", pret: false, fin: "perdue" });
+    expect(msgs(perte, "argent").filter((m) => m.delta > 0 && m.motif !== "touche" && m.motif !== "kill")).toEqual([]);
+    expect(b.svc.etat().pap.etat).toBe("libre");
+    expect(armeDuSlot(j.equip, "secondaire")).toBeNull();
+    // une arme de la même catégorie remplit le slot vide
+    const s = acheter(b, j, uzi.id, t + CUISSON_PAP_MS + REPRISE_PAP_MS + 300);
+    expect(msgs(s, "achat")[0]).toMatchObject({ ok: true });
+    expect(j.equip.enCuisson).toBeUndefined();
+    expect(j).toMatchObject({ main: "secondaire", arme: "mini_uzi" });
+  });
+
+  it("(v8) Micro-ondes : un joueur qui part libère la machine", () => {
+    const pa = achat("pap");
+    const b = partieEnCours(["a", "c"], { argentDepart: 20_000, courant: true });
+    avancer(b, T0 + 100, T_MANCHE1 + 50);
+    const j = b.j("a");
+    j.p = [pa.position[0], 0, pa.position[1]];
+    acheter(b, j, "pap", T_MANCHE1 + 100);
+    expect(b.svc.etat().pap.etat).toBe("cuisson");
+    b.part("a", T_MANCHE1 + 200);
+    expect(b.svc.etat().pap.etat).toBe("libre");
   });
 
   it("Recette ultime : trois ingrédients (la truffe et le four exigent le courant), 30 s de cuisson, Rayon Goulaf amélioré + un atout", () => {
@@ -779,6 +836,87 @@ describe("achats", () => {
 });
 
 // =================================================================================================
+describe("(v8) Happy hour (le Fire Sale de BO1)", () => {
+  const acheter = (b: Banc, j: JoueurSalle, id: string, t: number) => b.svc.recevoir(j, msg({ t: "acheter", id }), t);
+  const devant = (j: JoueurSalle, em: number) => { const a = achatBoite(em); j.p = [a.position[0], 0, a.position[1]]; };
+
+  /** Tire à la boîte principale jusqu'à la peluche (8 tirages au plus), puis attend la fin de l'envol : la boîte a déménagé une fois. */
+  function deplacerBoite(b: Banc, j: JoueurSalle, t: number): number {
+    for (let k = 0; k < 8; k++) {
+      devant(j, b.svc.etat().boite.emplacement);
+      expect(msgs(acheter(b, j, achatBoite(b.svc.etat().boite.emplacement).id, t), "achat")[0].ok).toBe(true);
+      const peluche = b.svc.etat().boite.arme === "peluche";
+      t += TIRAGE_BOITE_MS + 50; b.svc.tic(t);
+      if (peluche) { t += ENVOL_BOITE_MS + 50; b.svc.tic(t); return t + 50; }
+      t += OFFRE_BOITE_MS + 50; b.svc.tic(t); t += 50;
+    }
+    throw new Error("pas de peluche en 8 tirages");
+  }
+  /** Tue les tigres entrés jusqu'au premier bonus lâché, va le ramasser ; renvoie le genre et l'instant. */
+  function ramasserBonus(b: Banc, j: JoueurSalle, t0: number): { genre: GenreBonus; t: number; sorties: Sortie[] } {
+    for (let t = t0; t < t0 + 240_000; t += 100) {
+      b.svc.tic(t);
+      for (const z of tigresVivants(b)) if (zoneEn(ZONES_SOL, z.x, z.z)) b.svc.blesser(`z${z.id}`, 100_000, j, "tete", t);
+      const sol = b.svc.etat().bonus[0];
+      if (sol) { j.p = [sol.p[0], 0, sol.p[2]]; return { genre: sol.genre, t: t + 50, sorties: b.svc.tic(t + 50) }; }
+    }
+    throw new Error("aucun bonus");
+  }
+
+  it("jamais offert tant que la boîte n'a pas déménagé (un autre bonus le remplace)", () => {
+    const b = partieEnCours(["a"], { total1: 200, degatsGriffe: 0, bonus: ["soldes"] });
+    const j = b.j("a");
+    j.pv = 1e9;
+    const r = ramasserBonus(b, j, T_PREMIER_TIGRE);
+    expect(r.genre).not.toBe("soldes");
+    expect(b.svc.etat().boitesSoldes).toBeUndefined();
+  });
+
+  it("30 s : une boîte à chaque emplacement, toutes à 10 $, aucune peluche ni déménagement ; à la fin les temporaires disparaissent, sauf celle en cours", () => {
+    const b = partieEnCours(["a"], { total1: 200, degatsGriffe: 0, bonus: ["soldes"], argentDepart: 1e7 });
+    const j = b.j("a");
+    j.pv = 1e9;
+    let t = deplacerBoite(b, j, T_PREMIER_TIGRE);
+    const r = ramasserBonus(b, j, t);
+    expect(r.genre).toBe("soldes");
+    t = r.t;
+    const etat = dernierEtat(r.sorties)!;
+    expect(etat.effets.soldesFinT).toBe(t + ZOMBIES.bonusDureeMs);
+    const principale = etat.boite;
+    expect(etat.boitesSoldes!.map((x) => x.emplacement).sort()).toEqual([0, 1, 2, 3, 4].filter((i) => i !== principale.emplacement));
+    // chaque boîte (la principale comprise) tire à 10 $, jamais la peluche ; les tirages ne comptent pas pour la peluche
+    const finSoldes = etat.effets.soldesFinT;
+    for (let em = 0; em < 5; em++) {
+      devant(j, em);
+      const s = acheter(b, j, achatBoite(em).id, t);
+      expect(msgs(s, "argent")[0], `emplacement ${em}`).toMatchObject({ delta: -10 });
+      const bx = [b.svc.etat().boite, ...(b.svc.etat().boitesSoldes ?? [])].find((x) => x.emplacement === em)!;
+      expect(bx.etat).toBe("tirage");
+      expect(bx.arme).not.toBe("peluche");
+    }
+    // les offres se referment sans être prises
+    t += TIRAGE_BOITE_MS + 50; b.svc.tic(t);
+    t += OFFRE_BOITE_MS + 50; b.svc.tic(t);
+    expect(t).toBeLessThan(finSoldes);
+    expect(b.svc.etat().boite).toMatchObject({ emplacement: principale.emplacement, utilisations: principale.utilisations });
+    // un tirage lancé juste avant la fin : sa boîte temporaire reste jusqu'à ce qu'elle se referme
+    const derniere = b.svc.etat().boitesSoldes![0].emplacement;
+    devant(j, derniere);
+    t = finSoldes - 500;
+    b.svc.tic(t);
+    expect(msgs(acheter(b, j, achatBoite(derniere).id, t), "argent")[0]).toMatchObject({ delta: -10 });
+    t = finSoldes + 100;
+    b.svc.tic(t);
+    expect(b.svc.etat().boitesSoldes!.map((x) => x.emplacement)).toEqual([derniere]);
+    // après le Happy hour, 950 $ à la principale ; la temporaire disparaît une fois l'offre refermée
+    devant(j, principale.emplacement);
+    expect(msgs(acheter(b, j, achatBoite(principale.emplacement).id, t), "argent")[0]).toMatchObject({ delta: -950 });
+    avancer(b, t + 50, t + TIRAGE_BOITE_MS + OFFRE_BOITE_MS + 200, 100);
+    expect(b.svc.etat().boitesSoldes).toBeUndefined();
+  });
+});
+
+// =================================================================================================
 describe("barricades", () => {
   it("les tigres arrachent les planches ; un joueur maintenu à la fenêtre en repose une par seconde, 10 $ chacune", () => {
     const b = partieEnCours(["a"], { total1: 60, degatsGriffe: 0 });
@@ -805,6 +943,79 @@ describe("barricades", () => {
     j.p = [f.dedans[0] + f.normale[0] * 6, 0, f.dedans[1] + f.normale[1] * 6];
     const s2 = avancer(b, t + 1200, t + 3500);
     expect(msgs(s2, "zevt").filter((m) => m.e.e === "planche" && !m.e.arrachee)).toHaveLength(0);
+  });
+
+  /** Partie où les tigres arrachent au moins `n` planches de F1 ; le joueur est devant, les tigres sont tués ; renvoie l'instant. */
+  function fenetreAbimee(n: number) {
+    const b = partieEnCours(["a"], { total1: 60, degatsGriffe: 0 });
+    const j = b.j("a");
+    const f = fenetreDeId("F1")!;
+    j.p = [f.dedans[0], 0, f.dedans[1]];
+    j.pv = 1e9;
+    let t = T0 + 100;
+    for (; t < T_PREMIER_TIGRE + 120_000 && b.svc.etat().fenetres[FENETRES.indexOf(f)] > ZOMBIES.planches - n; t += 100) b.svc.tic(t);
+    expect(b.svc.etat().fenetres[FENETRES.indexOf(f)]).toBeLessThanOrEqual(ZOMBIES.planches - n);
+    tuerTous(b, j, t);
+    return { b, j, f, t };
+  }
+  /** Avance de `t0` à `t1` en tuant les tigres à chaque pas (aucune planche arrachée pendant la repose) ; instants des planches reposées. */
+  function reposer(b: Banc, j: JoueurSalle, t0: number, t1: number): { t: number[]; argent: number[] } {
+    const res = { t: [] as number[], argent: [] as number[] };
+    for (let t = t0; t <= t1; t += 50) {
+      const s = b.svc.tic(t);
+      tuerTous(b, j, t);
+      if (msgs(s, "zevt").some((m) => m.e.e === "planche" && !m.e.arrachee)) res.t.push(t);
+      for (const m of msgs(s, "argent")) if (m.motif === "planche") res.argent.push(m.delta);
+    }
+    return res;
+  }
+
+  it("(v8) cadence de BO1 : la première planche 0,2 s après l'appui, puis une toutes les 0,9 s ; relâcher et réappuyer n'accélère rien", () => {
+    const { b, j, t } = fenetreAbimee(4);
+    b.svc.recevoir(j, msg({ t: "reparer", fenetre: "F1" }), t);
+    const r = reposer(b, j, t + 50, t + 2_100);
+    expect(r.t[0] - t).toBeGreaterThanOrEqual(ZOMBIES.reposePremiereS * 1000);
+    expect(r.t[0] - t).toBeLessThanOrEqual(ZOMBIES.reposePremiereS * 1000 + 50);
+    expect(r.t[1] - r.t[0]).toBeGreaterThanOrEqual(ZOMBIES.reposeS * 1000);
+    expect(r.t[1] - r.t[0]).toBeLessThanOrEqual(ZOMBIES.reposeS * 1000 + 50);
+    expect(r.argent.every((d) => d === 10)).toBe(true);
+    // E lâchée puis réappuyée aussitôt : la planche suivante attend toujours 0,9 s après la précédente
+    const derniere = r.t.at(-1)!;
+    b.svc.recevoir(j, msg({ t: "reparer", fenetre: null }), t + 2_150);
+    b.svc.recevoir(j, msg({ t: "reparer", fenetre: "F1" }), t + 2_160);
+    const r2 = reposer(b, j, t + 2_200, t + 4_000);
+    expect(r2.t[0] - derniere).toBeGreaterThanOrEqual(ZOMBIES.reposeS * 1000);
+  });
+
+  it("(v8) le gain des planches est plafonné par manche (BO1 : min(50 × manche, 500)) : au-delà, la planche est reposée sans rien rapporter", () => {
+    const { b, j, t } = fenetreAbimee(6);
+    b.svc.recevoir(j, msg({ t: "reparer", fenetre: "F1" }), t);
+    // manche 1 : plafond 50 $, soit 5 planches payées sur 6
+    const r = reposer(b, j, t + 50, t + 6_500);
+    expect(r.t).toHaveLength(6);
+    expect(r.argent.reduce((x, y) => x + y, 0)).toBe(50);
+  });
+
+  it("(v8) Menuisier : toutes les fenêtres retrouvent leurs 6 planches, +200 $ à chacun, l'état part tout de suite", () => {
+    const b = partieEnCours(["a"], { total1: 200, degatsGriffe: 0, bonus: ["menuisier"] });
+    const j = b.j("a");
+    j.pv = 1e9;
+    let t = T_PREMIER_TIGRE;
+    let ramasse: Sortie[] | null = null;
+    for (; t < T_PREMIER_TIGRE + 240_000 && !ramasse; t += 100) {
+      b.svc.tic(t);
+      // seuls les tigres entrés sont tués : les autres arrachent les planches de leur fenêtre
+      for (const z of tigresVivants(b)) if (zoneEn(ZONES_SOL, z.x, z.z)) b.svc.blesser(`z${z.id}`, 100_000, j, "tete", t);
+      const sol = b.svc.etat().bonus[0];
+      if (sol && b.svc.etat().fenetres.some((n) => n < ZOMBIES.planches)) {
+        j.p = [sol.p[0], 0, sol.p[2]];
+        ramasse = b.svc.tic(t + 50);
+      }
+    }
+    expect(ramasse).not.toBeNull();
+    expect(msgs(ramasse!, "zevt").some((m) => m.e.e === "bonus" && m.e.genre === "menuisier")).toBe(true);
+    expect(msgs(ramasse!, "argent").find((m) => m.motif === "menuisier")!.delta).toBe(200);
+    expect(dernierEtat(ramasse!)!.fenetres).toEqual(FENETRES.map(() => ZOMBIES.planches));
   });
 });
 

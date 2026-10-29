@@ -156,6 +156,8 @@ export interface Sons {
   microOndesCuisson(position?: PositionSon): void;
   /** Micro-ondes Gratinator : trois bips à 1 kHz, c'est prêt. */
   microOndesBip(position?: PositionSon): void;
+  /** (v8) Porte payante qui s'ouvre (BO1) : déverrouillage, glissement qui monte, bois qui tombe et petit choc sourd. */
+  ouverturePorte(position?: PositionSon): void;
   /**
    * Coup de patte du tigre chef (son fourni par le joueur, retour 16), joué au début de l'armement : son pic (cherché dans le fichier)
    * tombe au contact, `ZOMBIES.griffeArmeS` plus tard, comme le claquement de `griffe`, qui sert de repli.
@@ -1284,6 +1286,19 @@ export function creerSons(): Sons {
         ton(out, t + k * 0.3, { dur: 0.17, type: "square", f0: 1000, gain: 0.05, att: 0.004 });
         ton(out, t + k * 0.3, { dur: 0.17, type: "sine", f0: 1000, gain: 0.08, att: 0.004 });
       }
+    },
+    ouverturePorte(position) {
+      if (!prete()) return;
+      const out = sortie(position);
+      const t = ctx!.currentTime + 0.001;
+      // clac du verrou, puis la porte glisse vers le haut (frottement filtré qui monte), quelques éclats de bois et un choc sourd
+      bruit(out, t, { dur: 0.06, type: "bandpass", f0: 2200, q: 3, gain: 0.5 });
+      ton(out, t, { dur: 0.08, type: "square", f0: 160, f1: 90, gain: 0.18 });
+      bruit(out, t + 0.08, { dur: 0.9, type: "bandpass", f0: 400, f1: 1300, q: 1.2, gain: 0.32, att: 0.1 });
+      ton(out, t + 0.08, { dur: 0.9, type: "sawtooth", f0: 70, f1: 110, gain: 0.05, att: 0.15 });
+      for (let k = 0; k < 3; k++) bruit(out, t + 0.35 + k * 0.17, { dur: 0.07, type: "bandpass", f0: 1100 - k * 150, q: 2, gain: 0.3 });
+      ton(out, t + 0.9, { dur: 0.25, type: "sine", f0: 85, f1: 45, gain: 0.35 });
+      bruit(out, t + 0.9, { dur: 0.5, type: "lowpass", f0: 700, f1: 200, gain: 0.25 });
     },
     annonce(texte) {
       if (fini || typeof window === "undefined" || !("speechSynthesis" in window)) return;
