@@ -16,7 +16,7 @@ import { trajetTruck } from "./truck";
 import type { Poi, SceneData, Vec2 } from "./types";
 import type { Cachette } from "./cachettes";
 import { creerTigreCache, type TigreCache } from "./tigre";
-import { C, ajouterArbres, ajouterBatiments, ajouterGrille, ajouterReseauSol, edgesOf } from "./decor";
+import { C, construireDecor, edgesOf, qualiteParDefaut } from "./decor";
 
 export interface SceneCallbacks {
   onSelect(poi: Poi): void;
@@ -119,10 +119,7 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
   controls.target.copy(repos.target);
 
   // ---------- décor (cf. decor.ts) ----------
-  ajouterBatiments(scene, data);
-  ajouterReseauSol(scene, data);
-  ajouterGrille(scene);
-  ajouterArbres(scene, data);
+  construireDecor(scene, data, { fantomes: true, detail: false, qualite: qualiteParDefaut(), eviter: opts.cachettes?.map((c): Vec2 => [c.x, c.z]) });
 
   // ---------- POI markers + labels ----------
   const markers: Marker[] = [];

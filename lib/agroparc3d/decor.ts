@@ -6,6 +6,8 @@
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { SEUIL_ALLUMEES, FENETRE_H_M, FENETRE_L_M, PAS_COLONNE_M, MARGE_COLONNE_M, PORTE_H_M, PORTE_L_M, murDePorte, mursDe, nbEtages, placementsToit } from "./facade";
+import { deriverDecor, type DecorDerive, type OptionsDerivation } from "./decor-donnees";
+import { ajouterChaussees, ajouterMarquages, segmentsVoirie } from "./decor-sol";
 import type { Building, Poi, SceneData, Vec2 } from "./types";
 
 export const C = {
@@ -24,6 +26,20 @@ export const C = {
   grid: 0x0a161e,
   car: 0x6fc3de,
   bus: 0xbfe7d6,
+  // rework de la DA (issue #83) : sol, végétation, mobilier. Tout reste sous 0,24 de luminosité (seuil du bloom) sauf marquage, lampes et enseignes.
+  chaussee: 0x070f16,
+  trottoir: 0x14323d,
+  marquage: 0xdbeef5,
+  pelouse: 0x0b2a22,
+  haie: 0x1f6f55,
+  platane: 0x2c7a52,
+  automne: 0x5a4318,
+  cypres: 0x174d3b,
+  olivier: 0x5f8f78,
+  pin: 0x2a6b52,
+  lampe: 0xffd9a0,
+  stop: 0xff4a3a,
+  info: 0x4cc3ff,
 };
 
 export function shapeFrom(ring: Vec2[], holes?: Vec2[][]): THREE.Shape {
@@ -161,6 +177,14 @@ export interface OptionsDecor {
    * est fourni (arène, zombies), faux sinon (vue aérienne, visuellement inchangée).
    */
   detail?: boolean;
+  /** Ambiance du mode : "zombies" ne pose ni mobilier, ni haies, ni pelouses, ni arbustes dans la boîte des zombies (`exclure`). Défaut : "complete". */
+  ambiance?: OptionsDerivation["ambiance"];
+  /** "basse" (tactile, peu de cœurs) : sans taches de lumière, haies ni arbustes, façades simplifiées. Défaut : "haute". */
+  qualite?: OptionsDerivation["qualite"];
+  /** Boîtes où rien du décor secondaire n'est posé (carte des zombies). */
+  exclure?: OptionsDerivation["exclure"];
+  /** Positions à dégager de tout mobilier (cachettes du tigre). */
+  eviter?: OptionsDerivation["eviter"];
 }
 
 /**
@@ -459,21 +483,36 @@ export function ajouterBatiments(scene: THREE.Object3D, data: SceneData, opts: O
   if (detail) ajouterEquipementsToit(scene, data, opts.destruction);
 }
 
-/** Voirie, parkings, eau : un seul LineSegments à couleurs par sommet. */
-export function ajouterReseauSol(scene: THREE.Object3D, data: SceneData): void {
+/**
+ * Voirie, parkings, eau : un seul LineSegments à couleurs par sommet. Avec `derive` (rework de la DA), les voies M et R perdent leur trait
+ * d'axe plein au profit des bords, des trottoirs et de l'axe pointillé (cf. voirie.ts) ; R et S gardent un trait fin.
+ */
+export function ajouterReseauSol(scene: THREE.Object3D, data: SceneData, derive?: DecorDerive): void {
   const pos: number[] = [], col: number[] = [];
-  const push = (pts: Vec2[], y: number, hex: number) => {
-    const c = new THREE.Color(hex);
+  const push = (pts: readonly Vec2[], y: number, hex: number, k = 1) => {
+    const c = new THREE.Color(hex).multiplyScalar(k);
     for (let i = 0; i < pts.length - 1; i++) {
       pos.push(pts[i][0], y, pts[i][1], pts[i + 1][0], y, pts[i + 1][1]);
       col.push(c.r, c.g, c.b, c.r, c.g, c.b);
     }
   };
   const roadColor = { M: C.roadM, R: C.roadR, S: C.roadS, F: C.roadF };
-  for (const r of data.roads) push(r.p, 0.4, roadColor[r.c] ?? C.roadS);
+  for (const r of data.roads) {
+    if (derive && r.c === "M") continue;
+    push(r.p, 0.4, roadColor[r.c] ?? C.roadS, derive && r.c === "R" ? 0.4 : 1);
+  }
   for (const p of data.parkings) push([...p, p[0]], 0.25, C.park);
   for (const w of data.water) push([...w, w[0]], 0.2, C.water);
   for (const w of data.wlines) push(w, 0.2, C.water);
+  if (derive) {
+    for (const { seg, y, hex, k } of segmentsVoirie(derive.voirie, C)) {
+      const c = new THREE.Color(hex).multiplyScalar(k);
+      for (let i = 0; i < seg.length; i += 4) {
+        pos.push(seg[i], y, seg[i + 1], seg[i + 2], y, seg[i + 3]);
+        col.push(c.r, c.g, c.b, c.r, c.g, c.b);
+      }
+    }
+  }
   const g = new THREE.BufferGeometry();
   g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
   g.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
@@ -514,10 +553,23 @@ export function ajouterArbres(scene: THREE.Object3D, data: SceneData): void {
   scene.add(new THREE.LineSegments(tg, new THREE.LineBasicMaterial({ color: C.tree, transparent: true, opacity: 0.45 })));
 }
 
-/** Tout le décor fixe, dans l'ordre de la vue aérienne : bâtiments, réseau au sol, grille, arbres. */
+/** Qualité du décor selon l'appareil : "basse" au tactile ou avec 4 cœurs ou moins (cf. spec D7). */
+export function qualiteParDefaut(): "haute" | "basse" {
+  const grossier = typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
+  const coeurs = typeof navigator !== "undefined" ? navigator.hardwareConcurrency : undefined;
+  return grossier || (coeurs !== undefined && coeurs <= 4) ? "basse" : "haute";
+}
+
+/**
+ * Tout le décor fixe, dans l'ordre de la vue aérienne : bâtiments, chaussée, réseau au sol, marquages, grille, arbres. Les données dérivées
+ * (`deriverDecor`) sont calculées une fois (déterministes, mémoïsées par `data.roads`).
+ */
 export function construireDecor(scene: THREE.Object3D, data: SceneData, opts: OptionsDecor = {}): void {
   ajouterBatiments(scene, data, opts);
-  ajouterReseauSol(scene, data);
+  const derive = deriverDecor(data, opts);
+  ajouterChaussees(scene, derive.voirie, C.chaussee);
+  ajouterReseauSol(scene, data, derive);
+  ajouterMarquages(scene, derive.voirie, C.marquage);
   ajouterGrille(scene);
   ajouterArbres(scene, data);
 }
