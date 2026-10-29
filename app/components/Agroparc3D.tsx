@@ -10,6 +10,7 @@ import type { JeuHandle, HudEtat } from "@/lib/fps/jeu";
 import type { HudLive } from "@/lib/fps/jeu-types";
 import { MODES_SALLE, type ArmeFeuId, type ArmeMeleeId, type ArmePrincipaleId, type ArmeSecondaireId, type ModeSalle, type Slot, type Vec3 } from "@/lib/fps/protocole";
 import { donneesZombies } from "@/lib/fps/zombies-carte";
+import { donneesBr } from "@/lib/fps/br-carte";
 import { ecrireEquipement, estPrincipale, estSecondaire, lireEquipement } from "@/lib/fps/equipement";
 import { creerRadarFrame } from "@/lib/fps/radar";
 import { nomPersonnage } from "@/lib/characters";
@@ -25,8 +26,10 @@ import RestoBadge from "./RestoBadge";
 import Arene from "./arene/Arene";
 import ChoixMode from "./arene/ChoixMode";
 import { flecheReserveeAuChamp } from "./arene/lobby-modele";
+import { gardeSortieBr } from "@/lib/fps/garde-sortie-br";
 import HudArene from "./arene/HudArene";
 import LobbyZombies from "./arene/LobbyZombies";
+import LobbyBR from "./arene/LobbyBR";
 import { useArene } from "./arene/useArene";
 import type { EquipementChoisi } from "./arene/contrats";
 import { actionsSansTouche, ecrireTouches, lireTouches, stockageNavigateur, type ConfigTouches } from "@/lib/fps/touches";
@@ -208,10 +211,16 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
   const radar = useCallback(() => jeuRef.current?.radar() ?? RADAR_VIDE, []);
   const monstres = useCallback(() => jeuRef.current?.monstres() ?? null, []);
   const etatZombies = useCallback(() => jeuRef.current?.zombies() ?? null, []);
+  const etatBr = useCallback(() => jeuRef.current?.br?.() ?? null, []);
+  // dernier rendu de `useArene` : le jeu se monte dans un effet, qui doit lire l'état Battle Royale d'AUJOURD'HUI et pas celui du rendu où il a été défini
+  const areneRef = useRef(arene);
+  areneRef.current = arene;
   /** Mode de la salle où le jeu est lancé ("arene" par défaut) : lu au lancement de `lancerJeu`, qui bâtit le monde du mode. */
   const modeJeuRef = useRef<ModeSalle>("arene");
   /** zombies : sortie volontaire ou forcée en cours, tant que le serveur n'a pas montré « non admis » le jeu ne se remonte pas */
   const sortieZombies = useRef(false);
+  /** Battle Royale : même garde (le décompte peut durer encore 30 s après une sortie) */
+  const sortieBr = useRef(false);
   const enAreneRef = useRef(enArene);
   enAreneRef.current = enArene;
   const equipementRef = useRef(equipement);
@@ -311,9 +320,12 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
     if (modeJeuRef.current === "zombies") {
       sortieZombies.current = true;
       setAreneOuverte(true);
+    } else if (modeJeuRef.current === "br") {
+      sortieBr.current = true;
+      setAreneOuverte(true);
     }
   };
-  /** Zombies : sort de la partie ET referme le panneau (retour à la vue aérienne). */
+  /** Zombies et Battle Royale : sort de la partie ET referme le panneau (retour à la vue aérienne). */
   const quitterEtFermer = () => {
     quitterArene();
     setAreneOuverte(false);
@@ -321,13 +333,13 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
   const quitterRef = useRef(quitterArene);
   quitterRef.current = quitterArene;
   /**
-   * Zombies : le jeu n'a pas pu se monter alors que nous sommes admis à la partie. Sans `rejoindre` il n'y a pas de message `quitter` qui vaille
+   * Zombies et Battle Royale : le jeu n'a pas pu se monter alors que nous sommes admis à la partie. Sans `rejoindre` il n'y a pas de message `quitter` qui vaille
    * (le serveur ne retire que les joueurs en jeu) : l'admis resterait un « fantôme debout » qui empêche la défaite. On quitte la salle, une fois
    * le jeu démonté (le serveur refuse le changement de salle d'un joueur encore en jeu).
    */
   const [abandonZ, setAbandonZ] = useState(0);
   const abandonnerZombiesRef = useRef(() => {});
-  abandonnerZombiesRef.current = () => { if (modeJeuRef.current === "zombies") setAbandonZ((n) => n + 1); };
+  abandonnerZombiesRef.current = () => { if (modeJeuRef.current !== "arene") setAbandonZ((n) => n + 1); };
   useEffect(() => {
     if (abandonZ === 0 || enArene) return;
     setAbandonZ(0); // une seule fois : une sortie normale ultérieure ne doit pas ramener à l'arène
@@ -336,8 +348,8 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
   }, [abandonZ, enArene]);
   // ---------- choix du mode (v5) ----------
   const choisirMode = (m: ModeSalle) => {
-    // un écran tactile ne joue pas aux zombies : s'il y entrait, il resterait au lobby (voire hôte, sans pouvoir lancer) ou admis sans jamais jouer
-    if (tactile && m === "zombies") return;
+    // un écran tactile ne joue ni aux zombies ni au Battle Royale : s'il y entrait, il resterait au lobby (voire hôte, sans pouvoir lancer) ou admis sans jamais jouer
+    if (tactile && m !== "arene") return;
     setModeMemo(m);
     try { localStorage.setItem(CLE_MODE, m); } catch { /* non retenu */ }
     arene.choisirMode(m);
@@ -345,7 +357,7 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
   /** Ouvre ou ferme le panneau « Arène ». À l'ouverture, le mode mémorisé est demandé au serveur (une action du joueur : rien ne part au chargement). */
   const basculerPanneauArene = () => {
     setSelected(null);
-    if (!areneOuverte && modeMemo !== arene.modeVoulu && !(tactile && modeMemo === "zombies")) arene.choisirMode(modeMemo);
+    if (!areneOuverte && modeMemo !== arene.modeVoulu && !(tactile && modeMemo !== "arene")) arene.choisirMode(modeMemo);
     setAreneOuverte((o) => !o);
   };
   /** Hôte du lobby des zombies : lance la partie (le nom tapé part avant). */
@@ -354,6 +366,13 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
     setPseudoConnecte(nom);
     arene.clientRef.current?.renommer(nom);
     arene.lancerPartie(difficulte);
+  };
+  /** Hôte du lobby Battle Royale : lance la partie. Le nom tapé part avant : les statistiques sont rattachées au pseudo affiché dans la salle. */
+  const lancerBr = () => {
+    const nom = pseudoSaisi.trim() || "Agent";
+    setPseudoConnecte(nom);
+    arene.clientRef.current?.renommer(nom);
+    arene.lancerPartie();
   };
   // Le serveur dit « non admis » (ou lobby) : la sortie est actée, le jeu pourra se remonter à la prochaine admission.
   const moiZ = arene.zombies?.joueurs.find((j) => j.id === arene.monId) ?? null;
@@ -367,9 +386,24 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
     monterJeu("zombies");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [admisZ, enArene, areneOuverte, scene, tactile]);
-  // Panneau refermé hors partie : on libère sa place dans la salle zombies (la salle réserve 8 places, lobby compris). Rouvrir la redemande.
+  // Battle Royale : admis à la partie (décompte, ou vol pour un retardataire) pendant que le panneau est ouvert : le jeu se monte et envoie `rejoindre`.
+  // `br{etat}` ne porte la liste des joueurs (donc `admis`) qu'au lobby, au décompte et à la fin : seul le décompte lance le montage ici.
+  const moiBr = arene.br?.joueurs?.find((j) => j.id === arene.monId) ?? null;
+  const admisBR = arene.mode === "br" && !!moiBr?.admis && arene.br?.phase === "decompte";
+  // La garde ne vaut que pour le décompte d'où l'on sort : elle tombe dès que la phase change (`admisBR` seul ne suffit pas, il est déjà faux
+  // quand la sortie a lieu en jeu ou en fin de partie, et la garde bloquerait alors tous les décomptes suivants).
   useEffect(() => {
-    if (!areneOuverte && !enArene && arene.mode === "zombies" && arene.modeVoulu === "zombies") arene.choisirMode("arene");
+    sortieBr.current = gardeSortieBr(sortieBr.current, arene.mode, arene.br?.phase);
+  }, [arene.mode, arene.br?.phase]);
+  useEffect(() => {
+    if (!admisBR || enArene || !areneOuverte || !scene || tactile || sortieBr.current) return;
+    monterJeu("br");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [admisBR, enArene, areneOuverte, scene, tactile]);
+
+  // Panneau refermé hors partie : on libère sa place dans la salle zombies (8 places, lobby compris) ou Battle Royale (50). Rouvrir la redemande.
+  useEffect(() => {
+    if (!areneOuverte && !enArene && arene.mode !== "arene" && arene.modeVoulu === arene.mode) arene.choisirMode("arene");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [areneOuverte, enArene, arene.mode, arene.modeVoulu]);
 
@@ -493,10 +527,14 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
         jeu.sensibilite(sensibiliteRef.current);
         jeu.accroupiBascule(accroupiBasculeRef.current);
         jeu.voix.mode(reglagesVoixRef.current.mode);
-        if (reglagesVoixRef.current.actif) activerVoix(jeu, reglagesVoixRef.current);
+        // pas de chat vocal en Battle Royale (50 connexions WebRTC par client) : le serveur ignore les messages `voix`
+        if (reglagesVoixRef.current.actif && modeJeuRef.current !== "br") activerVoix(jeu, reglagesVoixRef.current);
         // le jeu n'a pas vu le « bienvenue » : pseudos, couleurs et phase du match
         jeu.recevoir({ t: "presence", joueurs: arene.joueursRef.current });
         if (arene.matchRef.current) jeu.recevoir({ t: "match", match: arene.matchRef.current, classement: [] });
+        // Battle Royale : le dernier état de la partie (avion, zone), émis avant que le jeu existe ; le butin et l'inventaire suivent `rejoindre`
+        const brEtat = areneRef.current.br;
+        if (modeJeuRef.current === "br" && brEtat) jeu.recevoir({ t: "br", etat: brEtat });
       })
       .catch((e: Error) => {
         setMessage({ id: Date.now(), texte: `L'arène n'a pas pu démarrer (${e.message}). WebGL est-il activé ?` });
@@ -581,6 +619,15 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
         jeu: jeuRef.current?.debug.etat() ?? null,
         mode: dev.current.arene.mode, modeVoulu: dev.current.arene.modeVoulu, salons: dev.current.arene.salons, zombies: dev.current.arene.zombies,
         argent: dev.current.arene.argent,
+        // Battle Royale : phase, effectif, zone et avion du dernier `br{etat}`, statistiques, et l'état du jeu local (phase du vol, hauteur, butin proche)
+        br: {
+          phase: dev.current.arene.br?.phase ?? null, vivants: dev.current.arene.br?.vivants ?? 0, total: dev.current.arene.br?.total ?? 0,
+          zone: dev.current.arene.br?.zone ?? null, avion: dev.current.arene.br?.avion ?? null, etat: dev.current.arene.br ?? null,
+          statsBr: dev.current.arene.statsBr ?? null,
+          jeuBr: jeuRef.current?.br?.() ?? null,
+          vol: (jeuRef.current?.debug.etat().vol as Record<string, unknown> | null | undefined) ?? null,
+          butin: (jeuRef.current?.debug.etat().butin as Record<string, unknown> | null | undefined) ?? null,
+        },
       }),
       // une arme seule (v1) la range dans son slot par catégorie ; un équipement règle les deux ; sans argument, l'équipement mémorisé.
       // `{ mode: "zombies" }` : ouvre le lobby des zombies (le jeu se monte seul à l'admission, `lancerZombies` lance la partie) ; sans mode : l'arène.
@@ -588,14 +635,15 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
         const eq = dev.current.equipement;
         const mode = typeof a === "object" && a?.mode ? a.mode : "arene";
         if (mode === "zombies") { ouvrirZombiesRef.current(); return; }
+        if (mode === "br") { ouvrirBrRef.current(); return; }
         if (typeof a === "string") {
           if (estPrincipale(a)) choisirEquipementRef.current(a, eq.secondaire);
           else if (estSecondaire(a)) choisirEquipementRef.current(eq.principale, a);
         } else if (a) {
           choisirEquipementRef.current(a.principale ?? eq.principale, a.secondaire ?? eq.secondaire, a.melee ?? eq.melee ?? "couteau");
         }
-        // venant du lobby des zombies : on redemande d'abord l'arène (la salle change, puis l'entrée part)
-        if (dev.current.arene.mode === "zombies") {
+        // venant du lobby des zombies ou du Battle Royale : on redemande d'abord l'arène (la salle change, puis l'entrée part)
+        if (dev.current.arene.mode !== "arene") {
           choisirModeRef.current("arene");
           let essais = 0;
           const attente = setInterval(() => {
@@ -607,6 +655,14 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
         entrerRef.current();
       },
       lancerZombies: () => lancerZombiesRef.current(),
+      lancerBr: () => lancerBrRef.current(),
+      // un appui bref sur saut (sans pointer lock) : quitte l'avion, puis ouvre le parachute s'il est répété une seconde plus tard
+      sauter: () => {
+        const j = jeuRef.current;
+        if (!j) return;
+        j.debug.touche("Space", true);
+        setTimeout(() => j.debug.touche("Space", false), 120);
+      },
       quitter: () => quitterRef.current(),
       teleporter: (p) => jeuRef.current?.debug.teleporter(p),
       regarder: (lacet, tangage) => jeuRef.current?.debug.regarder(lacet, tangage),
@@ -643,16 +699,25 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
   choisirModeRef.current = choisirMode;
   const lancerZombiesRef = useRef(lancerZombies);
   lancerZombiesRef.current = lancerZombies;
+  const lancerBrRef = useRef(lancerBr);
+  lancerBrRef.current = lancerBr;
   /** dev : ouvre le lobby des zombies et y demande la salle (le panneau reste ouvert : le jeu se monte à l'admission) */
   const ouvrirZombiesRef = useRef(() => {});
   ouvrirZombiesRef.current = () => { setSelected(null); setAreneOuverte(true); choisirMode("zombies"); };
+  /** dev : ouvre le lobby du Battle Royale et y demande la salle (le jeu se monte à l'admission, `lancerBr` lance la partie) */
+  const ouvrirBrRef = useRef(() => {});
+  ouvrirBrRef.current = () => { setSelected(null); setAreneOuverte(true); choisirMode("br"); };
   const choisirEquipementRef = useRef(choisirEquipement);
   choisirEquipementRef.current = choisirEquipement;
 
-  // Scène de la mini-map et de la grande carte : en zombies, la copie aux pièces synthétiques (même fonction que le jeu), restreinte à ses bornes.
+  // Scène de la mini-map et de la grande carte : en zombies, la copie aux pièces synthétiques (même fonction que le jeu), restreinte à ses bornes ;
+  // en Battle Royale, celle de la carte BR (`modeCarte: "br"` : la carte garde la zone de l'arène, ses 20 bâtiments creux y sont dessinés).
   const sceneHud = useMemo(() => {
     if (!scene) return null;
-    return enArene && modeJeuRef.current === "zombies" ? donneesZombies(scene.data).data : scene.data;
+    if (!enArene) return scene.data;
+    if (modeJeuRef.current === "zombies") return donneesZombies(scene.data).data;
+    if (modeJeuRef.current === "br") return donneesBr(scene.data).data;
+    return scene.data;
   }, [scene, enArene]);
 
   // Plat du jour du POI cliqué (+ carte permanente en dépliant), ou statut + carte quand il n'en a pas.
@@ -736,9 +801,29 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
       {/* Un seul panneau à droite : le restaurant choisi passe devant le classement, qui reste ouvert derrière. Le choix du mode est posé en tête du
           lobby du mode CONFIRMÉ par le serveur (la carte cochée est celle qui est demandée). */}
       {!enArene && areneOuverte && !selected && (() => {
-        const choixMode = <ChoixMode mode={arene.modeVoulu} salons={arene.salons} surChoisir={choisirMode} desactive={arene.etat !== "ouvert"} indisponibles={tactile ? ["zombies"] : []} />;
+        const choixMode = <ChoixMode mode={arene.modeVoulu} salons={arene.salons} surChoisir={choisirMode} desactive={arene.etat !== "ouvert"} indisponibles={tactile ? ["zombies", "br"] : []} />;
         const pseudoParDefaut = !pseudoSaisi.trim() || pseudoSaisi.trim() === "Agent";
-        return arene.mode === "zombies" ? (
+        return arene.mode === "br" ? (
+          <LobbyBR
+            etat={arene.etat}
+            monId={arene.monId}
+            partie={arene.br ?? null}
+            salonBr={arene.salons?.br ?? null}
+            statsBr={arene.statsBr ?? null}
+            surDemanderStats={arene.demanderStatsBr}
+            pseudo={pseudoSaisi}
+            surPseudo={saisirPseudo}
+            touches={touches}
+            reglagesHud={reglagesHud}
+            surReglagesHud={setReglagesHud}
+            surLancer={lancerBr}
+            surFermer={() => setAreneOuverte(false)}
+            erreur={arene.erreur}
+            tactile={tactile}
+            pseudoParDefaut={pseudoParDefaut}
+            choixMode={choixMode}
+          />
+        ) : arene.mode === "zombies" ? (
           <LobbyZombies
             etat={arene.etat}
             monId={arene.monId}
@@ -817,6 +902,9 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
           radar={radar}
           monstres={monstres}
           zombies={etatZombies}
+          br={arene.br ?? null}
+          statsBr={arene.statsBr ?? null}
+          etatBr={etatBr}
           surRejouer={quitterArene}
           surQuitterVue={quitterEtFermer}
           reglagesHud={reglagesHud}
@@ -1019,6 +1107,10 @@ declare global {
       entrer(equipement?: ArmeFeuId | (Partial<EquipementChoisi> & { mode?: ModeSalle })): void;
       /** Zombies : l'hôte du lobby lance la partie (sans effet pour un autre joueur). */
       lancerZombies(): void;
+      /** Battle Royale : l'hôte du lobby renomme le joueur puis lance la partie (sans effet pour un autre joueur). */
+      lancerBr(): void;
+      /** Battle Royale : un appui bref sur la touche de saut (quitte l'avion, puis ouvre le parachute au second appui), sans pointer lock. */
+      sauter(): void;
       quitter(): void;
       teleporter(p: Vec3): void;
       regarder(lacet: number, tangage: number): void;

@@ -5,8 +5,11 @@
  * Spec : docs/superpowers/specs/2026-10-23-arene-hud-design.md (§3.2, §5.1, §7.2, §12)
  */
 import { MELEE, STATS } from "./armes";
-import { ARMES, SLOTS, estMelee, type ArmeId, type ArmeSpecialeId, type CauseMort, type EtatPartieZombies, type JoueurPublic, type PhaseZombies, type RaisonAchat, type Slot } from "./protocole";
-import type { EtatZombiesHud, HudLive } from "./jeu-types";
+import {
+  ARMES, SLOTS, estMelee, type ArmeId, type ArmeSpecialeId, type CauseMort, type EtatPartieBr, type EtatPartieZombies, type JoueurPublic, type PhaseZombies, type RaisonAchat,
+  type Slot, type ZoneBr,
+} from "./protocole";
+import type { EtatBrHud, EtatZombiesHud, HudLive } from "./jeu-types";
 import type { Stockage } from "./touches";
 import { PORTES_PAYANTES } from "./zombies-carte";
 
@@ -142,6 +145,8 @@ export function libelleFil(arme: ArmeId, cause: CauseMort, par: string): string 
   if (cause === "tigre_robot") return "Déchiqueté par le tigre robot";
   if (cause === "titan") return par ? `Titan tigre de ${par}` : "Titan tigre";
   if (cause === "tigre_zombie") return "Griffé par un tigre";
+  if (cause === "tempete") return "Tué par la tempête";
+  if (cause === "abandon") return "A quitté la partie";
   return estMelee(arme) ? MELEE[arme].nomCourt : STATS[arme].nomCourt;
 }
 
@@ -474,4 +479,96 @@ export function annoncesZombies(avant: EtatPartieZombies | null, apres: EtatPart
   }
   if (apres.phase === "fin" && avant.phase !== "fin") textes.push(`Partie perdue : manche ${apres.bilan?.manche ?? apres.manche}`);
   return textes;
+}
+
+// ---------- Battle Royale (v8) ----------
+
+/** Durée en « m:ss » (arrondie à la seconde au-dessus) : « 0:42 », « 2:05 ». */
+export function formatChrono(ms: number): string {
+  const total = Math.max(0, Math.ceil(ms / 1000));
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
+}
+
+export interface LibelleZoneBr {
+  /** « LA ZONE SE FERME DANS », « RÉTRÉCISSEMENT », « ZONE FERMÉE » */
+  titre: string;
+  /** temps avant le début (attente) ou la fin (rétrécissement) du rétrécissement, « 0:42 » ; vide une fois fermée */
+  chrono: string;
+  /** « PALIER 2/6 » */
+  palier: string;
+  phase: ZoneBr["phase"];
+}
+
+/** Texte de l'indicateur de zone d'après la zone publique et l'horloge serveur (ms). */
+export function libelleZoneBr(zone: ZoneBr, maintenantMs: number): LibelleZoneBr {
+  const palier = `PALIER ${zone.palier}/${zone.nbPaliers}`;
+  if (zone.phase === "attente") return { titre: "LA ZONE SE FERME DANS", chrono: formatChrono(zone.t1 - maintenantMs), palier, phase: zone.phase };
+  if (zone.phase === "retrecit") return { titre: "RÉTRÉCISSEMENT", chrono: formatChrono(zone.t2 - maintenantMs), palier, phase: zone.phase };
+  return { titre: "ZONE FERMÉE", chrono: "", palier, phase: zone.phase };
+}
+
+/** « HORS ZONE : −4 PV/s » : l'alerte est écrite en toutes lettres (jamais la couleur seule) ; le moins est un vrai « − » (U+2212). */
+export function texteHorsZone(degatsParS: number): string {
+  return `HORS ZONE : \u2212${formatDecimal(degatsParS)}${NBSP}PV/s`;
+}
+
+/** Distance signée au bord de la zone (> 0 dehors, < 0 dedans) en phrase : « 120 m hors de la zone », « Bord de la zone à 85 m ». */
+export function libelleDistanceBord(distanceM: number): string {
+  const d = Math.round(distanceM);
+  if (d === 0) return "Sur le bord de la zone";
+  return d > 0 ? `${formatMetres(d)} hors de la zone` : `Bord de la zone à ${formatMetres(-d)}`;
+}
+
+/** « 37 EN VIE » (jamais « 1 EN VIES »). */
+export function libelleEnVie(n: number): string {
+  return `${FR0.format(Math.max(0, Math.round(n)))}${NBSP}EN${NBSP}VIE`;
+}
+
+/** Place affichée à l'écran de mort : « Éliminé · place #12 sur 37 ». */
+export function libellePlaceBr(place: number | null, total: number): string {
+  return place === null ? "Éliminé" : `Éliminé · place #${place} sur ${total}`;
+}
+
+export interface AnnonceBr { texte: string; genre: "zone" | "info" }
+
+/**
+ * Annonces entre deux `br{etat}` successifs : départ annulé, avion qui décolle, phases de la tempête (attente, rétrécissement, fermeture),
+ * joueurs restants (à chaque mort sous 10, puis toutes les dizaines). Aucune annonce au premier état reçu (`avant` null). Les délais viennent
+ * de la zone elle-même (`t1 − t0`), pas de l'horloge du navigateur.
+ */
+export function annoncesBr(avant: EtatPartieBr | null, apres: EtatPartieBr): AnnonceBr[] {
+  if (!avant) return [];
+  const res: AnnonceBr[] = [];
+  if (apres.annule && !avant.annule) res.push({ texte: "Départ annulé : pas assez de joueurs", genre: "info" });
+  if (apres.phase === "vol" && avant.phase !== "vol") res.push({ texte: "L'avion décolle", genre: "info" });
+  const z = apres.zone;
+  if (z) {
+    const memePalier = avant.zone?.palier === z.palier;
+    if (z.phase === "attente" && !(memePalier && avant.zone?.phase === "attente")) {
+      res.push({ texte: `La zone se resserre dans ${formatChrono(z.t1 - z.t0)}`, genre: "zone" });
+    } else if (z.phase === "retrecit" && !(memePalier && avant.zone?.phase === "retrecit")) {
+      res.push({ texte: "La zone se resserre !", genre: "zone" });
+    } else if (z.phase === "fermee" && avant.zone?.phase !== "fermee") {
+      res.push({ texte: "La zone est fermée", genre: "zone" });
+    }
+  }
+  const enPartie = (p: EtatPartieBr) => p.phase === "vol" || p.phase === "jeu";
+  if (enPartie(avant) && enPartie(apres) && apres.vivants < avant.vivants && apres.vivants > 1 && (apres.vivants <= 10 || apres.vivants % 10 === 0)) {
+    res.push({ texte: `${apres.vivants} joueurs restants`, genre: "info" });
+  }
+  return res;
+}
+
+/**
+ * Égalité des champs affichés de `EtatBrHud` : le HUD ne se rend que si l'un d'eux change. Le temps serveur (minuteurs, qui battent dans leurs
+ * blocs) est ignoré, la distance au bord compte au mètre, le cap vers le centre aux 3° (1/20 rad), les objets proches par leurs identifiants.
+ */
+export function memeEtatBrHud(a: EtatBrHud | null, b: EtatBrHud | null): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  const ids = (x: EtatBrHud) => x.proches.map((o) => o.id).join(",");
+  return a.partie === b.partie && a.avion === b.avion && a.zone === b.zone && a.phaseVol === b.phaseVol
+    && Math.round(a.distanceBord) === Math.round(b.distanceBord) && Math.round(a.capCentre * 20) === Math.round(b.capCentre * 20)
+    && a.bandage === b.bandage && a.potion === b.potion && a.usage?.objet === b.usage?.objet && a.usage?.finT === b.usage?.finT
+    && ids(a) === ids(b) && a.suivi === b.suivi && a.place === b.place;
 }

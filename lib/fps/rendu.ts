@@ -31,6 +31,7 @@ import { LineSegmentsGeometry } from "three/examples/jsm/lines/LineSegmentsGeome
 import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 import { MELEE, type Viseur } from "./armes";
 import { ECHELLE_AVATAR, estMelee, silhouetteDe, type ArmeFeuId, type ArmeId, type ArmeMeleeId, type EtatJoueurSnap, type Vec3 } from "./protocole";
+import { creerParachute, type ParachuteFilDeFer } from "./rendu-avion";
 import { LARGEUR_MIN_M, TRACEURS, dureeVie, etatTraceur, instantImpact, largeurMonde, type ParamsTraceur } from "./traceurs";
 import { hauteurPlaquePx } from "./visibilite";
 
@@ -1388,6 +1389,8 @@ const SEG_BRAS = 0.35;
 /** Hauteur de la plaque du pseudo au-dessus des pieds (m) : debout, et accroupi ou assis (tête de la hitbox + 0,5 m). */
 const Y_PSEUDO = silhouetteDe(false).tete.y + 0.5;
 const Y_PSEUDO_BAS = silhouetteDe(true).tete.y + 0.5;
+/** (Battle Royale) Hauteur d'attache du parachute d'un avatar (m, aux épaules) ; la voilure s'ouvre à 6,5 m au-dessus (`PARACHUTE` de rendu-avion.ts). */
+const ATTACHE_PARACHUTE = silhouetteDe(false).tete.y - 0.4;
 /** Silhouette lointaine (§2.1) : barre additive 0,5 × 2,2 m (1,4 m accroupi), 35 % de la couleur, qui apparaît entre 45 et 50 m. */
 const SILHOUETTE_LOIN = { largeur: 0.5, hauteur: 2.2, hauteurBas: 1.4, opacite: 0.35, debutM: 45, pleinM: 50 };
 
@@ -1590,6 +1593,9 @@ export function creerAvatar(couleur: CouleurEntree, pseudo: string): AvatarJoueu
     b.coude.quaternion.copy(qHaut).invert().multiply(qBas);
   };
 
+  // (Battle Royale) parachute ouvert, créé à la première descente sous voile (`etat.chute === "voile"`), partagé en géométrie avec les autres
+  let parachute: ParachuteFilDeFer | null = null;
+  const phaseVoile = Math.random() * 6.28;
   let t = 0, phase = 0, amp = 0, bAir = 0, bMur = 0, coteMur = 1, tMort = 0, eclat = 0, opaciteLigne = 0.95, enEclat = false, etaitMort = false;
   /** poids lissés (0..1) des poses accroupie, glissade et assise */
   let bAcc = 0, bGli = 0, bAssis = 0;
@@ -1724,6 +1730,16 @@ export function creerAvatar(couleur: CouleurEntree, pseudo: string): AvatarJoueu
       bouclier.visible = etat.protege && !mort;
       if (bouclier.visible) matBouclier.opacity = 0.22 + 0.18 * Math.sin(t * 14);
 
+      // Parachute ouvert au-dessus de la tête, seulement sous voile (la chute libre n'en a pas) et tant que le joueur vit.
+      if (etat.chute === "voile" && !mort) {
+        if (!parachute) {
+          parachute = creerParachute(ATTACHE_PARACHUTE);
+          racine.add(parachute.groupe);
+        }
+        parachute.groupe.visible = true;
+        parachute.balancer(t, phaseVoile);
+      } else if (parachute) parachute.groupe.visible = false;
+
       // Éclat blanc quand on est touché ; opacité des arêtes.
       const opacite = mort ? 0.5 : 0.95;
       if (opacite !== opaciteLigne) { opaciteLigne = opacite; m.ligne.opacity = opacite; }
@@ -1738,6 +1754,8 @@ export function creerAvatar(couleur: CouleurEntree, pseudo: string): AvatarJoueu
     },
     dispose() {
       racine.removeFromParent();
+      parachute?.dispose();
+      parachute = null;
       for (const a of armes.values()) a.dispose();
       armes.clear();
       libererMateriaux(m);

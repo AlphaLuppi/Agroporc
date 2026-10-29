@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   ARMES, ARMES_MELEE, ARMES_PRINCIPALES, ARMES_PRINCIPALES_ZOMBIES, ARMES_SECONDAIRES, ARMES_SECONDAIRES_ZOMBIES, ARMES_SPECIALES, ARMES_UNIQUES, ECHELLE_AVATAR, EQUIPEMENT_DEFAUT, JEU, OEIL_SIEGE, PAS_SNAP_ZOMBIE, PLAFONDS,
-  SILHOUETTE, SILHOUETTE_ACCROUPIE, SLOTS, VERSION_PROTOCOLE, copierEquipement, decoderZombies, encoderZombies, estIdZombie, estMelee, idZombie, oeilDe,
-  silhouetteDe, type ZombieSnap,
-  type CauseMort, type MessageClient, type MessageServeur, type PassageAvion, type TigreLargueSnap,
+  MODES_SALLE, SILHOUETTE, SILHOUETTE_ACCROUPIE, SLOTS, VERSIONS_ACCEPTEES, VERSION_PROTOCOLE, copierEquipement, decoderZombies, encoderZombies, estIdZombie, estMelee, idZombie,
+  oeilDe, silhouetteDe, type ZombieSnap,
+  type AvionBr, type CauseMort, type EtatJoueurSnap, type EtatPartieBr, type MessageClient, type MessageServeur, type ModeSalle, type PassageAvion, type TigreLargueSnap,
 } from "./protocole";
 import { STATS } from "./armes";
 
@@ -91,8 +91,8 @@ describe("silhouette", () => {
 });
 
 describe("constantes", () => {
-  it("version 8 du protocole (événements de la v4, tigres largués de la v5, zombies et épée, réseau, carte, grenades et morts désarticulées de la v8)", () => {
-    expect(VERSION_PROTOCOLE).toBe(8);
+  it("version 9 du protocole (événements de la v4, tigres largués de la v5, zombies et épée, réseau, carte, grenades et morts désarticulées de la v8, Battle Royale de la v9)", () => {
+    expect(VERSION_PROTOCOLE).toBe(9);
   });
 
   it("chaîne de plafonds de vitesse : sprint couteau ≤ plafond horizontal ≤ plafond déclaré", () => {
@@ -114,8 +114,10 @@ describe("constantes", () => {
 });
 
 describe("protocole v6 (zombies)", () => {
-  it("version 8 (grenades des zombies)", () => {
-    expect(VERSION_PROTOCOLE).toBe(8);
+  it("version courante 9, le serveur accepte aussi le 8", () => {
+    expect(VERSION_PROTOCOLE).toBe(9);
+    expect([...VERSIONS_ACCEPTEES]).toEqual([8, 9]);
+    expect(VERSIONS_ACCEPTEES).toContain(VERSION_PROTOCOLE);
   });
 
   it("ARMES_MELEE : couteau et épée, estMelee ne reconnaît aucune arme à feu", () => {
@@ -233,5 +235,83 @@ describe("messages v5 (tigres largués à côté des événements)", () => {
       monstres: { tigre: { p: [80, 0, 0], cap: 0, v: 8, pv: 5500, pvMax: 5500, rage: true }, titan: { pilote: "j4", p: [0, 0, 0], cap: 0, v: 0, pv: 2500, pvMax: 2500 } },
     };
     expect(JSON.parse(JSON.stringify(snap))).toEqual(snap);
+  });
+});
+
+describe("protocole v8 (Battle Royale)", () => {
+  it("trois modes de salle", () => {
+    expect([...MODES_SALLE]).toEqual(["arene", "zombies", "br"]);
+    const m: ModeSalle = "br";
+    expect(MODES_SALLE).toContain(m);
+  });
+
+  it("copierEquipement ne recopie sansSecondaire que défini, sans clé undefined", () => {
+    const simple = copierEquipement(EQUIPEMENT_DEFAUT);
+    expect("sansSecondaire" in simple).toBe(false);
+    const faux = copierEquipement({ principale: "pompe", secondaire: "pistolet", speciale: null, sansSecondaire: undefined });
+    expect("sansSecondaire" in faux).toBe(false);
+    const complet = copierEquipement({ principale: "pompe", secondaire: "pistolet", speciale: null, sansPrincipale: true, sansSecondaire: true });
+    expect(complet.sansSecondaire).toBe(true);
+    expect(complet.sansPrincipale).toBe(true);
+    // la copie est indépendante
+    delete complet.sansSecondaire;
+    expect(copierEquipement(complet).sansSecondaire).toBeUndefined();
+  });
+
+  it("causes de mort tempete et abandon (et pas explosion en plus : elle existe déjà pour les voitures)", () => {
+    const causes: CauseMort[] = ["tempete", "abandon", "explosion"];
+    expect(causes).toHaveLength(3);
+  });
+
+  it("un snap sans `chute` reste valide, avec `chute` aussi", () => {
+    const base: EtatJoueurSnap = {
+      id: "j1", p: [0, 0, 0], v: [0, 0, 0], lacet: 0, tangage: 0, posture: "sol", mur: 0, arme: "couteau", pv: 100, vivant: true, protege: false,
+    };
+    const m: MessageServeur = { t: "snap", ts: 1, j: [base, { ...base, id: "j2", posture: "air", chute: "libre" }, { ...base, id: "j3", chute: "voile" }] };
+    expect(JSON.parse(JSON.stringify(m))).toEqual(m);
+  });
+
+  it("`salons` sans `br` reste valide, avec `br` aussi (champ optionnel)", () => {
+    const sans: MessageServeur = { t: "salons", arene: { joueurs: 1, enJeu: 0 }, zombies: { phase: "lobby", joueurs: 0, manche: 0 } };
+    const avec: MessageServeur = { ...sans, br: { phase: "jeu", joueurs: 30, vivants: 12, palier: 2 } };
+    expect(JSON.parse(JSON.stringify(sans))).toEqual(sans);
+    expect(JSON.parse(JSON.stringify(avec)).br.palier).toBe(2);
+  });
+
+  it("messages du mode : tous sérialisables en JSON et portant leur type", () => {
+    const avion: AvionBr = { depart: [-300, 0], arrivee: [300, 0], altitude: 350, vitesse: 30, debutT: 1000, finT: 21_000 };
+    const etat: EtatPartieBr = {
+      phase: "vol", hote: "j1", capacite: 50, minJoueurs: 2, debutT: 1000, finT: 0, avion, zone: null, vivants: 12, total: 12,
+    };
+    const client: MessageClient[] = [
+      { t: "sauter" },
+      { t: "chute", lacet: 0.1, tangage: -1, avance: 1, lateral: -0.5, ouvrir: false },
+      { t: "ramasser", id: 7 },
+      { t: "lacher", slot: "principale" },
+      { t: "utiliser", objet: null },
+      { t: "utiliser", objet: "bandage" },
+      { t: "statsBr" },
+      { t: "mode", mode: "br" },
+    ];
+    const serveur: MessageServeur[] = [
+      { t: "br", etat },
+      { t: "saut", p: [0, 350, 0], v: [30, 0, 0], lacet: 0 },
+      { t: "atterri", p: [1, 0, 2] },
+      { t: "butin", ajoutes: [{ id: 1, genre: "arme", ref: "revolver", p: [0, 0, 0] }, { id: 2, genre: "bandage", ref: null, p: [1, 0, 1], qte: 3 }], retires: [9] },
+      { t: "ramasse", ok: false, id: 3, raison: "inutile" },
+      { t: "inventaire", bandage: 2, potion: 0, usage: { objet: "bandage", finT: 5000 } },
+      { t: "soin", pv: 100, bouclier: 0, motif: "kill" },
+      { t: "statsBr", lignes: [{ cle: "toto", pseudo: "Toto", top1: 1, parties: 3, kills: 4, meilleurePlace: 1, derniereT: 9 }] },
+      { t: "equipement", equip: copierEquipement(EQUIPEMENT_DEFAUT), main: "couteau", munSpeciale: 0, ajoutMunitions: { arme: "pistolet", chargeurs: 2 } },
+      { t: "mort", cible: "j1", par: "", arme: "couteau", cause: "tempete", zone: "corps", ts: 1, delai: 0 },
+    ];
+    for (const m of [...client, ...serveur]) {
+      const aller = JSON.parse(JSON.stringify(m)) as { t: string };
+      expect(aller).toEqual(m);
+      expect(typeof aller.t).toBe("string");
+    }
+    // la chute ne porte ni séquence ni nombre de pas : le serveur avance seul, en temps réel
+    const chute = client[1] as Extract<MessageClient, { t: "chute" }>;
+    expect(Object.keys(chute).sort()).toEqual(["avance", "lacet", "lateral", "ouvrir", "t", "tangage"]);
   });
 });

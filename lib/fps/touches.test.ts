@@ -82,11 +82,11 @@ describe("touches de l'arène", () => {
     expect(libelleTouche(null)).toBe("—");
   });
 
-  it("actions de l'équipement, du HUD, « passer », de la v3 et « invoquer » : 10 de la v1 conservées, 15 nouvelles, aucune arme1..4", () => {
+  it("actions de l'équipement, du HUD, « passer », de la v3, « invoquer » et du Battle Royale : 10 de la v1 conservées, 22 nouvelles, aucune arme1..4", () => {
     expect(ACTIONS_V1).toHaveLength(10);
-    expect(ACTIONS_NOUVELLES).toHaveLength(19);
-    expect(ACTIONS).toHaveLength(29);
-    expect(new Set(ACTIONS).size).toBe(29);
+    expect(ACTIONS_NOUVELLES).toHaveLength(24);
+    expect(ACTIONS).toHaveLength(34);
+    expect(new Set(ACTIONS).size).toBe(34);
     expect(Object.keys(touchesParDefaut()).sort()).toEqual([...ACTIONS].sort());
     expect(Object.keys(LIBELLES_ACTIONS).sort()).toEqual([...ACTIONS].sort());
     expect(ACTIONS as readonly string[]).not.toContain("arme1");
@@ -158,7 +158,8 @@ describe("touches de l'arène", () => {
     expect(toutes).toHaveLength(ACTIONS.length);
     expect([...toutes].sort()).toEqual([...ACTIONS].sort());
     expect(GROUPES_ACTIONS.find((g) => g.titre === "Divers")!.actions).toContain("passer");
-    expect(GROUPES_ACTIONS.map((g) => g.titre)).toEqual(["Déplacement", "Combat", "Équipement", "Véhicule", "Divers"]);
+    expect(GROUPES_ACTIONS.map((g) => g.titre)).toEqual(["Déplacement", "Combat", "Équipement", "Véhicule", "Battle Royale", "Divers"]);
+    expect(GROUPES_ACTIONS.find((g) => g.titre === "Battle Royale")!.actions).toEqual(["soigner", "potion", "lacher", "spectateurSuivant", "spectateurPrecedent"]);
   });
 
   it("assigner entre actions nouvelles : déplace la touche et signale l'action dépossédée", () => {
@@ -183,10 +184,59 @@ describe("touches de l'arène", () => {
     expect(p.cfg.passer).toEqual(["Space", "KeyE"]);
     expect(p.cfg.interagir).toEqual(["KeyE", null]); // KeyE sert aux deux contextes
     expect(p.depossedee).toBeNull();
-    // deux actions « mort » ne se partagent pas une touche (il n'y en a qu'une aujourd'hui : le test garde la règle)
-    expect(ACTIONS_MORT).toEqual(["passer"]);
+    // le contexte « mort » regroupe « passer » et les deux actions du spectateur
+    expect(ACTIONS_MORT).toEqual(["passer", "spectateurSuivant", "spectateurPrecedent"]);
     // facultative : sans touche, pas d'avertissement (le bouton « Passer » existe)
     expect(actionsSansTouche(assigner(d, "passer", 0, null).cfg)).toEqual([]);
+  });
+
+  describe("Battle Royale (v8)", () => {
+    it("défauts : soigner H, potion J, lâcher U, spectateur sur les flèches droite / gauche", () => {
+      const d = touchesParDefaut();
+      expect(d.soigner).toEqual(["KeyH", null]);
+      expect(d.potion).toEqual(["KeyJ", null]);
+      expect(d.lacher).toEqual(["KeyU", null]);
+      expect(d.spectateurSuivant).toEqual(["ArrowRight", null]);
+      expect(d.spectateurPrecedent).toEqual(["ArrowLeft", null]);
+      // aucune de ces touches n'était déjà prise par une action « en vie » (hors flèches, qui sont du contexte mort)
+      for (const code of ["KeyH", "KeyJ", "KeyU"]) expect(indexTouches(d).get(code)).toHaveLength(1);
+    });
+
+    it("libellés en français pour les cinq actions, toutes facultatives (aucun avertissement du menu pause)", () => {
+      for (const a of ["soigner", "potion", "lacher", "spectateurSuivant", "spectateurPrecedent"] as const) {
+        expect(LIBELLES_ACTIONS[a].length).toBeGreaterThan(5);
+        expect(ACTIONS_NOUVELLES).toContain(a);
+      }
+      expect(actionsSansTouche(assigner(assigner(touchesParDefaut(), "soigner", 0, null).cfg, "lacher", 0, null).cfg)).toEqual([]);
+    });
+
+    it("les flèches servent à la fois à se déplacer (en vie) et à changer de joueur suivi (mort), sans dépossession", () => {
+      const d = touchesParDefaut();
+      expect(indexTouches(d).get("ArrowRight")).toEqual(["droite", "spectateurSuivant"]);
+      expect(indexTouches(d).get("ArrowLeft")).toEqual(["gauche", "spectateurPrecedent"]);
+      const r = assigner(d, "droite", 1, "ArrowRight");
+      expect(r.depossedee).toBeNull();
+      expect(r.cfg.spectateurSuivant).toEqual(["ArrowRight", null]);
+      // deux actions du contexte mort ne se partagent pas une touche
+      const p = assigner(d, "spectateurSuivant", 1, "ArrowLeft");
+      expect(p.cfg.spectateurPrecedent).toEqual([null, null]);
+      expect(p.depossedee).toBe("spectateurPrecedent");
+      expect(p.cfg.gauche).toEqual(["KeyA", "ArrowLeft"]);
+    });
+
+    it("une sauvegarde d'avant le BR reçoit les nouvelles actions ; une touche déjà prise les laisse sans touche, sans avertissement", () => {
+      const ancien = Object.fromEntries(ACTIONS.filter((a) => !["soigner", "potion", "lacher", "spectateurSuivant", "spectateurPrecedent"].includes(a)).map((a) => [a, touchesParDefaut()[a]]));
+      expect(normaliser(ancien)).toEqual(touchesParDefaut());
+      const cfg = normaliser({ ...ancien, recharger: ["KeyH", null] });
+      expect(cfg.recharger).toEqual(["KeyH", null]);
+      expect(cfg.soigner).toEqual([null, null]);
+      expect(actionsSansTouche(cfg)).toEqual([]);
+      // aller-retour par le stockage
+      const s = memoire();
+      const perso = assigner(touchesParDefaut(), "potion", 1, "KeyN").cfg;
+      ecrireTouches(perso, s);
+      expect(lireTouches(s)).toEqual(perso);
+    });
   });
 
   it("une sauvegarde sans « passer » (avant cette action) la reçoit avec Espace, même si « saut » a Espace", () => {
@@ -216,11 +266,11 @@ describe("touches de l'arène", () => {
     });
 
     it("les touches v1 personnalisées sont conservées, arme1..4 sont ignorées", () => {
-      const sauve = { ...v1(), avant: ["KeyZ", null], tir: ["Souris0", "KeyG"], arme1: ["KeyH", null] };
+      const sauve = { ...v1(), avant: ["KeyZ", null], tir: ["Souris0", "KeyG"], arme1: ["KeyP", null] };
       const cfg = lire(sauve);
       expect(cfg.avant).toEqual(["KeyZ", null]);
       expect(cfg.tir).toEqual(["Souris0", "KeyG"]);
-      expect(Object.values(cfg).flat()).not.toContain("KeyH");
+      expect(Object.values(cfg).flat()).not.toContain("KeyP");
       expect("arme1" in cfg).toBe(false);
     });
 

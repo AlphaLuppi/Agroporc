@@ -1,5 +1,11 @@
 import { COUTEAU, MELEE, STATS } from "@/lib/fps/armes";
-import { ARMES_SPECIALES, type ArmeMeleeId, type ArmePrincipaleId, type ArmeSecondaireId, type EtatPartieZombies, type ModeSalle } from "@/lib/fps/protocole";
+import {
+  ARMES_SPECIALES, JEU, type ArmeMeleeId, type ArmePrincipaleId, type ArmeSecondaireId, type EtatPartieBr, type EtatPartieZombies, type JoueurBr, type ModeSalle,
+  type ResumeSalonBr,
+} from "@/lib/fps/protocole";
+import { BR } from "@/lib/fps/br-regles";
+import { CHUTE_BR } from "@/lib/fps/br-chute";
+import { PALIERS_ZONE } from "@/lib/fps/br-zone";
 import { ZOMBIES } from "@/lib/fps/zombies-vagues";
 import { formatArgent, formatDecimal } from "@/lib/fps/hud-modele";
 import type { Salons } from "./contrats";
@@ -137,10 +143,11 @@ export function commandesLobby(cfg: ConfigTouches, disposition?: ReadonlyMap<str
 
 export interface CarteMode { mode: ModeSalle; titre: string; description: string }
 
-/** Les deux cartes du choix du mode, dans l'ordre d'affichage. */
+/** Les trois cartes du choix du mode, dans l'ordre d'affichage. */
 export const CARTES_MODE: readonly CarteMode[] = [
   { mode: "arene", titre: "Arène", description: "Chacun pour soi : premier à 30 kills, voitures, Elsa et monstres géants." },
   { mode: "zombies", titre: "Zombies tigres", description: "Coopératif : survivez à des manches de tigres, achetez des armes et ouvrez la carte." },
+  { mode: "br", titre: "Battle Royale", description: "Largage en avion, fouille des bâtiments, tempête qui se resserre : un seul survivant." },
 ];
 
 const pluriel = (n: number, mot: string) => `${n} ${mot}${n > 1 ? "s" : ""}`;
@@ -149,12 +156,23 @@ const pluriel = (n: number, mot: string) => `${n} ${mot}${n > 1 ? "s" : ""}`;
 export function compteurMode(mode: ModeSalle, salons: Salons | null | undefined): string {
   if (!salons) return "—";
   if (mode === "arene") return `${salons.arene.joueurs} en ligne · ${salons.arene.enJeu} en jeu`;
+  if (mode === "br") return compteurBR(salons.br);
   const z = salons.zombies;
   const effectif = `${z.joueurs}/${ZOMBIES.joueursMax}`;
   if (z.joueurs >= ZOMBIES.joueursMax) return `Salle pleine · ${effectif}`;
   if (z.phase === "lobby") return `Lobby · ${effectif}`;
   if (z.phase === "fin") return `Bilan · ${effectif}`;
   return `Manche ${z.manche} · ${effectif}`;
+}
+
+/** Compteur de la carte Battle Royale (tiret tant que le serveur n'a pas envoyé `br` dans `salons` : serveur plus ancien ou message pas encore reçu). */
+export function compteurBR(br: ResumeSalonBr | null | undefined): string {
+  if (!br) return "—";
+  const effectif = `${br.joueurs}/${BR.joueursMax}`;
+  if (br.joueurs >= BR.joueursMax) return `Salle pleine · ${effectif}`;
+  if (br.phase === "lobby") return `Lobby · ${effectif}`;
+  if (br.phase === "fin") return `Bilan · ${effectif}`;
+  return `Partie en cours · ${br.vivants} en vie`;
 }
 
 /** Compteur d'une carte de mode choisie impossible sur l'appareil (écran tactile). */
@@ -239,4 +257,103 @@ export const texteEffectif = (n: number, capacite: number): string => `${pluriel
 export function flecheReserveeAuChamp(code: string, cible: { tagName?: string; isContentEditable?: boolean } | null | undefined): boolean {
   if (!code.startsWith("Arrow") || !cible) return false;
   return !!cible.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(cible.tagName ?? "");
+}
+
+
+// ---------- lobby du Battle Royale (v8) ----------
+
+/** Texte d'introduction du lobby du Battle Royale. */
+export const TEXTE_BR = `Chacun pour soi, de ${BR.joueursMin} à ${BR.joueursMax} joueurs : tout le monde saute d'un avion au-dessus d'Agroparc, sans arme à feu. Fouillez les bâtiments pour trouver de quoi vous battre ; la tempête se resserre et le dernier en vie est TOP 1.`;
+
+/** Règles condensées du lobby du Battle Royale (valeurs tirées de `BR`, `CHUTE_BR` et `PALIERS_ZONE`). */
+export const TITRE_REGLES_BR = "Règles";
+export const REGLES_BR: string[] = [
+  `Vous démarrez dans l'avion avec un couteau et ${JEU.pvMax} PV, sans arme à feu : sautez quand vous voulez, le parachute s'ouvre seul sous ${CHUTE_BR.hauteurOuvertureAutoM} m (ou plus tôt à la touche de saut).`,
+  `Armes, munitions, bandages et potions de bouclier traînent dans les bâtiments, sur les toits et le long des routes : les plus rares sont à l'intérieur. Touche d'action pour ramasser.`,
+  `La tempête se resserre en ${PALIERS_ZONE.length} paliers vers un cercle tiré au hasard ; hors de la zone, vous perdez des PV chaque seconde, de plus en plus.`,
+  `Pas de régénération : soignez-vous au bandage (+${BR.usage.bandage.pv} PV, ${BR.usage.bandage.ms / 1000} s) ou à la potion (+${BR.usage.potion.bouclier} de bouclier, ${BR.usage.potion.ms / 1000} s). Chaque élimination vous rend ${BR.pvKill} PV.`,
+  `Mort définitive : vous regardez la fin en spectateur. Le couteau fait ${BR.melee.couteau} dégâts (${Math.ceil(JEU.pvMax / BR.melee.couteau)} coups), l'épée ${BR.melee.epee} (${Math.ceil(JEU.pvMax / BR.melee.epee)} coups).`,
+  `Les TOP 1 sont comptés par nom de joueur, une partie qui dure moins d'une minute ne compte pas.`,
+];
+
+/** Aide des commandes du lobby du Battle Royale : celles de l'arène, la touche d'action ramasse, les soins et le lâcher ont leurs touches. */
+export function commandesLobbyBR(cfg: ConfigTouches, disposition?: ReadonlyMap<string, string> | null): CommandeLobby[] {
+  const t = (a: Action) => toucheDe(cfg, a, disposition);
+  return [
+    ...commandesLobby(cfg, disposition).map((c) => {
+      if (c.libelle === "Monter dans une voiture") return { ...c, libelle: "Ramasser un objet au sol" };
+      if (c.libelle.startsWith("Sauter")) return { ...c, libelle: "Sauter de l'avion, ouvrir le parachute ; au sol : sauter, courir sur un mur" };
+      return c;
+    }),
+    { touches: t("soigner"), libelle: "Bandage" },
+    { touches: t("potion"), libelle: "Potion de bouclier" },
+    { touches: t("lacher"), libelle: "Lâcher l'arme en main" },
+  ];
+}
+
+/** Pseudo qui ne compte pas pour le palmarès : le nom par défaut « Agent » et ses doublons suffixés (même règle que `estPseudoCompte` du serveur). */
+export const pseudoCompteBr = (pseudo: string): boolean => !/^Agent\d*$/i.test(pseudo.trim());
+
+export const TEXTE_CONFLIT_NOMS = "Deux joueurs portent le même nom : renommez-vous.";
+export const TEXTE_NOM_A_CHOISIR = "Choisissez un nom pour compter vos TOP 1.";
+export const TEXTE_DEPART_ANNULE = "Départ annulé : pas assez de joueurs.";
+
+export interface SituationLobbyBR {
+  /** sous-titre de statut */
+  message: string;
+  /** avis complémentaires (départ annulé, nom à choisir), du plus important au moins important */
+  avis: string[];
+  /** je suis l'hôte du lobby */
+  hote: boolean;
+  /** le bouton « Lancer la partie » est actif (hôte, lobby, assez de joueurs, pas de conflit de noms, connecté) */
+  peutLancer: boolean;
+  /** une partie est déjà lancée (le lobby sert de salle d'attente jusqu'à la suivante) */
+  enCours: boolean;
+  joueurs: number;
+  capacite: number;
+  minJoueurs: number;
+}
+
+/**
+ * Situation du lobby d'après le dernier `br{etat}` reçu (null avant le premier) et le résumé de `salons.br` (repli pour les compteurs d'une partie en cours) :
+ * qui peut lancer, que dire au joueur. Un arrivant en cours de partie est en attente : « Partie en cours : 12 en vie · zone palier 3/6 — rejoignez à la suivante. »
+ */
+export function situationLobbyBR(
+  partie: EtatPartieBr | null, monId: string | null, connecte: boolean, salonBr?: ResumeSalonBr | null,
+): SituationLobbyBR {
+  const liste: JoueurBr[] = partie?.joueurs ?? [];
+  const joueurs = liste.length > 0 ? liste.length : salonBr?.joueurs ?? 0;
+  if (!partie || !connecte) {
+    return {
+      message: "Connexion à la salle…", avis: [], hote: false, peutLancer: false, enCours: false,
+      joueurs, capacite: partie?.capacite ?? BR.joueursMax, minJoueurs: partie?.minJoueurs ?? BR.joueursMin,
+    };
+  }
+  const hote = monId !== null && partie.hote === monId;
+  const base = { hote, joueurs, capacite: partie.capacite, minJoueurs: partie.minJoueurs };
+  if (partie.phase === "lobby") {
+    const conflit = !!partie.conflitNoms;
+    const assez = joueurs >= partie.minJoueurs;
+    const moi = liste.find((j) => j.id === monId);
+    const avis: string[] = [];
+    if (partie.annule) avis.push(TEXTE_DEPART_ANNULE);
+    if (moi && !pseudoCompteBr(moi.pseudo)) avis.push(TEXTE_NOM_A_CHOISIR);
+    const message = hote
+      ? (!assez ? `Il faut au moins ${partie.minJoueurs} joueurs.` : conflit ? TEXTE_CONFLIT_NOMS : "Vous êtes l'hôte : lancez la partie quand tout le monde est là.")
+      : (conflit ? TEXTE_CONFLIT_NOMS : "En attendant l'hôte…");
+    return { ...base, enCours: false, peutLancer: hote && assez && !conflit, message, avis };
+  }
+  if (partie.phase === "fin") return { ...base, enCours: true, peutLancer: false, avis: [], message: "Partie terminée : retour au lobby dans un instant." };
+  if (partie.phase === "decompte") return { ...base, enCours: true, peutLancer: false, avis: [], message: "Départ de l'avion imminent : vous rejoindrez la partie suivante." };
+  const vivants = partie.vivants > 0 ? partie.vivants : salonBr?.vivants ?? 0;
+  const palier = partie.zone ? `${partie.zone.palier}/${partie.zone.nbPaliers}` : salonBr?.palier !== undefined ? `${salonBr.palier}/${PALIERS_ZONE.length}` : null;
+  const detail = [`${vivants} en vie`, ...(palier ? [`zone palier ${palier}`] : [])].join(" · ");
+  return { ...base, enCours: true, peutLancer: false, avis: [], message: `Partie en cours : ${detail} — rejoignez à la suivante.` };
+}
+
+/** Étiquette d'état d'un joueur dans la liste du lobby (vide au lobby : tout le monde attend le départ). */
+export function etiquetteEtatBR(j: Pick<JoueurBr, "admis" | "aBord" | "place">, phase: EtatPartieBr["phase"]): string {
+  if (phase === "fin") return j.place === null ? "attente" : j.place === 1 ? "TOP 1" : `#${j.place}`;
+  if (phase === "decompte") return j.admis ? (j.aBord ? "à bord" : "admis") : "attente";
+  return "";
 }

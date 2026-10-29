@@ -2,14 +2,17 @@ import { describe, expect, it } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import Arene from "../../app/components/arene/Arene";
+import LobbyBR from "../../app/components/arene/LobbyBR";
 import ChoixEquipement from "../../app/components/arene/ChoixEquipement";
 import {
   BONUS_COUTEAU_POURCENT, BONUS_EPEE_POURCENT, CARTES_MAX_DETAILLEES, REGLES_TIR, TEXTE_ARMES_SPECIALES, TEXTE_COUTEAU, commandesLobby, groupePrincipale,
   groupeSecondaire, groupeMelee, choixApresChangement, largeurBarre, noteSur10, toucheDe, armeSuivanteDuGroupe, aideChoixEquipement,
+  REGLES_BR, TEXTE_CONFLIT_NOMS, TEXTE_DEPART_ANNULE, TEXTE_NOM_A_CHOISIR, commandesLobbyBR, compteurBR, compteurMode, etiquetteEtatBR, pseudoCompteBr,
+  situationLobbyBR,
 } from "../../app/components/arene/lobby-modele";
 import { STATS } from "./armes";
 import { libelleCause } from "../../app/components/arene/armesInfo";
-import { ARMES, ARMES_MELEE, ARMES_PRINCIPALES, ARMES_SECONDAIRES, ARMES_SPECIALES, JEU, type InfoMatch, type JoueurPublic } from "./protocole";
+import { ARMES, ARMES_MELEE, ARMES_PRINCIPALES, ARMES_SECONDAIRES, ARMES_SPECIALES, JEU, type EtatPartieBr, type InfoMatch, type JoueurBr, type JoueurPublic } from "./protocole";
 import { REGLAGES_HUD_DEFAUT } from "./reglages-hud";
 import { touchesParDefaut } from "./touches";
 
@@ -263,5 +266,181 @@ describe("choix d'équipement au clavier (écran de mort, entracte)", () => {
     expect(aideChoixEquipement("1", "2")).toBe("1 : arme principale suivante · 2 : arme secondaire suivante");
     expect(aideChoixEquipement("", "2")).toBe("2 : arme secondaire suivante");
     expect(aideChoixEquipement("", "")).toBe("");
+  });
+});
+
+
+// ---------- Battle Royale (v8) : lobby ----------
+
+const joueurBr = (id: string, pseudo: string, plus: Partial<JoueurBr> = {}): JoueurBr => ({
+  id, pseudo, couleur: "#aabbcc", admis: false, vivant: false, aBord: false, kills: 0, place: null, ...plus,
+});
+const partieBr = (plus: Partial<EtatPartieBr> = {}): EtatPartieBr => ({
+  phase: "lobby", hote: "j1", capacite: 50, minJoueurs: 2, debutT: 0, finT: 0, avion: null, zone: null, vivants: 0, total: 0,
+  joueurs: [joueurBr("j1", "Lea"), joueurBr("j2", "Marc")], ...plus,
+});
+const zoneBr = (palier: number) => ({
+  palier, nbPaliers: 6, phase: "attente" as const, t0: 0, t1: 60_000, t2: 90_000, c0: [0, 0] as [number, number], r0: 250, c1: [10, 10] as [number, number], r1: 150, degats: 2,
+});
+
+describe("lobby du Battle Royale : compteurs de la carte de mode", () => {
+  it("tiret sans `br`, lobby, salle pleine, bilan, partie en cours avec les vivants", () => {
+    const base = { arene: { joueurs: 1, enJeu: 0 }, zombies: { phase: "lobby" as const, joueurs: 0, manche: 0 } };
+    expect(compteurMode("br", null)).toBe("—");
+    expect(compteurMode("br", base)).toBe("—");
+    expect(compteurBR(undefined)).toBe("—");
+    expect(compteurMode("br", { ...base, br: { phase: "lobby", joueurs: 7, vivants: 0 } })).toBe("Lobby · 7/50");
+    expect(compteurMode("br", { ...base, br: { phase: "lobby", joueurs: 50, vivants: 0 } })).toBe("Salle pleine · 50/50");
+    expect(compteurMode("br", { ...base, br: { phase: "fin", joueurs: 9, vivants: 1 } })).toBe("Bilan · 9/50");
+    expect(compteurMode("br", { ...base, br: { phase: "jeu", joueurs: 30, vivants: 12, palier: 3 } })).toBe("Partie en cours · 12 en vie");
+    expect(compteurMode("br", { ...base, br: { phase: "vol", joueurs: 30, vivants: 30 } })).toBe("Partie en cours · 30 en vie");
+    // les modes existants ne changent pas
+    expect(compteurMode("arene", base)).toBe("1 en ligne · 0 en jeu");
+    expect(compteurMode("zombies", base)).toBe("Lobby · 0/8");
+  });
+});
+
+describe("situationLobbyBR", () => {
+  it("avant le premier état ou hors ligne : connexion, rien à lancer", () => {
+    expect(situationLobbyBR(null, null, true)).toMatchObject({ message: "Connexion à la salle…", peutLancer: false, hote: false, joueurs: 0, capacite: 50 });
+    expect(situationLobbyBR(partieBr(), "j1", false)).toMatchObject({ peutLancer: false, message: "Connexion à la salle…" });
+  });
+
+  it("hôte avec assez de joueurs : peut lancer ; sinon en attendant l'hôte", () => {
+    expect(situationLobbyBR(partieBr(), "j1", true)).toMatchObject({ hote: true, peutLancer: true, enCours: false, joueurs: 2, message: "Vous êtes l'hôte : lancez la partie quand tout le monde est là." });
+    const autre = situationLobbyBR(partieBr(), "j2", true);
+    expect(autre).toMatchObject({ hote: false, peutLancer: false, message: "En attendant l'hôte…" });
+  });
+
+  it("minimum de joueurs : l'hôte seul ne peut pas lancer et le message le dit", () => {
+    const seul = partieBr({ joueurs: [joueurBr("j1", "Lea")] });
+    expect(situationLobbyBR(seul, "j1", true)).toMatchObject({ peutLancer: false, message: "Il faut au moins 2 joueurs." });
+  });
+
+  it("conflit de noms : lancement bloqué, tout le monde est prévenu", () => {
+    const conflit = partieBr({ conflitNoms: true });
+    expect(situationLobbyBR(conflit, "j1", true)).toMatchObject({ peutLancer: false, message: TEXTE_CONFLIT_NOMS });
+    expect(situationLobbyBR(conflit, "j2", true).message).toBe(TEXTE_CONFLIT_NOMS);
+    expect(TEXTE_CONFLIT_NOMS).toBe("Deux joueurs portent le même nom : renommez-vous.");
+  });
+
+  it("nom à choisir pour compter les TOP 1 (« Agent » et ses doublons), départ annulé", () => {
+    const agent = partieBr({ joueurs: [joueurBr("j1", "Lea"), joueurBr("j2", "Agent2")], annule: true });
+    const sit = situationLobbyBR(agent, "j2", true);
+    expect(sit.avis).toEqual([TEXTE_DEPART_ANNULE, TEXTE_NOM_A_CHOISIR]);
+    expect(TEXTE_NOM_A_CHOISIR).toBe("Choisissez un nom pour compter vos TOP 1.");
+    expect(TEXTE_DEPART_ANNULE).toBe("Départ annulé : pas assez de joueurs.");
+    // un autre joueur ne reçoit pas l'avis sur MON nom
+    expect(situationLobbyBR(agent, "j1", true).avis).toEqual([TEXTE_DEPART_ANNULE]);
+    expect(pseudoCompteBr("Agent")).toBe(false);
+    expect(pseudoCompteBr("agent12")).toBe(false);
+    expect(pseudoCompteBr("Agentix")).toBe(true);
+    expect(pseudoCompteBr("Lea")).toBe(true);
+  });
+
+  it("arrivant en cours de partie : N en vie, zone palier k/6, rejoignez à la suivante", () => {
+    const enCours = partieBr({ phase: "jeu", joueurs: undefined, vivants: 12, total: 30, zone: zoneBr(3) });
+    const sit = situationLobbyBR(enCours, "j9", true);
+    expect(sit).toMatchObject({ enCours: true, peutLancer: false, hote: false });
+    expect(sit.message).toBe("Partie en cours : 12 en vie · zone palier 3/6 — rejoignez à la suivante.");
+    // avant que la zone existe : seulement les vivants ; repli sur salons.br pour le palier
+    expect(situationLobbyBR(partieBr({ phase: "vol", joueurs: undefined, vivants: 30, total: 30 }), "j9", true).message).toBe("Partie en cours : 30 en vie — rejoignez à la suivante.");
+    expect(situationLobbyBR(partieBr({ phase: "jeu", joueurs: undefined, vivants: 0 }), "j9", true, { phase: "jeu", joueurs: 20, vivants: 8, palier: 2 }).message)
+      .toBe("Partie en cours : 8 en vie · zone palier 2/6 — rejoignez à la suivante.");
+    expect(situationLobbyBR(partieBr({ phase: "decompte" }), "j9", true).enCours).toBe(true);
+    expect(situationLobbyBR(partieBr({ phase: "fin" }), "j9", true).message).toContain("retour au lobby");
+  });
+
+  it("étiquettes d'état de la liste : vide au lobby, à bord au décompte, place à la fin", () => {
+    expect(etiquetteEtatBR({ admis: false, aBord: false, place: null }, "lobby")).toBe("");
+    expect(etiquetteEtatBR({ admis: true, aBord: true, place: null }, "decompte")).toBe("à bord");
+    expect(etiquetteEtatBR({ admis: true, aBord: false, place: null }, "decompte")).toBe("admis");
+    expect(etiquetteEtatBR({ admis: false, aBord: false, place: null }, "decompte")).toBe("attente");
+    expect(etiquetteEtatBR({ admis: true, aBord: false, place: 1 }, "fin")).toBe("TOP 1");
+    expect(etiquetteEtatBR({ admis: true, aBord: false, place: 4 }, "fin")).toBe("#4");
+  });
+
+  it("règles et commandes : chiffres tirés des constantes, touches réelles, pas de chat vocal", () => {
+    const regles = REGLES_BR.join(" ");
+    expect(regles).toContain("90 m");
+    expect(regles).toContain("34 dégâts (3 coups)");
+    expect(regles).toContain("+20 PV");
+    expect(regles).toContain("vous rend 50 PV");
+    expect(regles).toContain("6 paliers");
+    const c = commandesLobbyBR(touchesParDefaut());
+    expect(c.find((x) => x.libelle === "Ramasser un objet au sol")?.touches).toBe("E");
+    expect(c.find((x) => x.libelle === "Bandage")?.touches).toBe("H");
+    expect(c.find((x) => x.libelle === "Potion de bouclier")?.touches).toBe("J");
+    expect(c.find((x) => x.libelle === "Lâcher l'arme en main")?.touches).toBe("U");
+    expect(c.some((x) => /voiture/i.test(x.libelle))).toBe(false);
+    expect(c.some((x) => /vocal|parler/i.test(x.libelle))).toBe(false);
+  });
+});
+
+describe("LobbyBR", () => {
+  const rendre = (plus: Record<string, unknown> = {}) => renderToStaticMarkup(createElement(LobbyBR, {
+    etat: "ouvert", monId: "j1", partie: partieBr(), pseudo: "Lea", surPseudo: () => {}, touches: touchesParDefaut(), reglagesHud: REGLAGES_HUD_DEFAUT, surReglagesHud: () => {},
+    surLancer: () => {}, surFermer: () => {}, erreur: null, tactile: false, ...plus,
+  } as never));
+  const boutonLancer = (html: string) => /<button[^>]*>Lancer la partie<\/button>/.exec(html)?.[0] ?? "";
+
+  it("aside Battle Royale : titre, effectif X/50, liste des joueurs avec hôte et « vous »", () => {
+    const html = rendre();
+    expect(html).toContain('aria-label="Battle Royale"');
+    expect(html).toContain("<h2");
+    expect(html).toContain("Chacun pour soi");
+    expect(html).toMatch(/<b>2<\/b>\/50 joueurs/);
+    expect(html).toContain("Lea<em> (vous)</em>");
+    expect(html).toContain("Marc");
+    expect(html).toContain(">hôte<");
+  });
+
+  it("hôte : bouton « Lancer la partie » actif ; autre joueur ou conflit de noms : désactivé", () => {
+    expect(boutonLancer(rendre())).not.toContain("disabled");
+    expect(boutonLancer(rendre({ monId: "j2" }))).toContain("disabled");
+    expect(boutonLancer(rendre({ partie: partieBr({ conflitNoms: true }) }))).toContain("disabled");
+    expect(rendre({ partie: partieBr({ conflitNoms: true }) })).toContain("renommez-vous");
+    expect(boutonLancer(rendre({ partie: partieBr({ joueurs: [joueurBr("j1", "Lea")] }) }))).toContain("disabled");
+    expect(boutonLancer(rendre({ pseudo: "L" }))).toContain("disabled");
+  });
+
+  it("palmarès TOP 1 repliable : chargement, puis lignes avec la mienne marquée", () => {
+    const sans = rendre();
+    expect(sans).toContain("<details");
+    expect(sans).toContain("Palmarès");
+    expect(sans).toContain("en cours de chargement");
+    const moi = { cle: "lea", pseudo: "Lea", top1: 3, parties: 8, kills: 21, meilleurePlace: 1, derniereT: 1 };
+    const html = rendre({ statsBr: { lignes: [{ cle: "zoe", pseudo: "Zoé", top1: 5, parties: 9, kills: 30, meilleurePlace: 1, derniereT: 1 }, moi], moi } });
+    expect(html).toContain("Zoé");
+    expect(html).toMatch(/<tr data-moi="oui">/);
+    expect(html).toContain("#1");
+  });
+
+  it("partie en cours : message d'attente, pas de lancement ; avis du nom à choisir", () => {
+    const html = rendre({ monId: "j9", partie: partieBr({ phase: "jeu", joueurs: undefined, vivants: 12, total: 30, zone: zoneBr(3) }) });
+    expect(html).toContain("Partie en cours : 12 en vie · zone palier 3/6 — rejoignez à la suivante.");
+    expect(boutonLancer(html)).toContain("disabled");
+    // le serveur n'envoie pas la liste en jeu : ni « Personne pour l'instant » ni effectif nul
+    expect(html).not.toContain("Personne pour l");
+    expect(html).not.toContain("Joueurs de la partie");
+    expect(rendre()).toContain("Joueurs de la partie, ");
+    const agent = rendre({ monId: "j2", partie: partieBr({ joueurs: [joueurBr("j1", "Lea"), joueurBr("j2", "Agent")] }), pseudo: "Agent" });
+    expect(agent).toContain(TEXTE_NOM_A_CHOISIR);
+  });
+
+  it("jamais de chat vocal ni de choix d'équipement ; commandes avec les touches réelles", () => {
+    const html = rendre();
+    expect(html).not.toMatch(/vocal de proximité/i);
+    expect(html).not.toContain("Équipement");
+    expect(html).toContain("<kbd>H</kbd>");
+    expect(html).toContain("Le chat vocal est désactivé dans ce mode.");
+  });
+
+  it("tactile : clavier et souris requis, aucun bouton de lancement ; connexion perdue : écrite", () => {
+    const t = rendre({ tactile: true });
+    expect(t).toContain("clavier et à la souris");
+    expect(t).not.toContain("Lancer la partie");
+    expect(rendre({ etat: "ferme", monId: null })).toContain("Serveur injoignable");
+    expect(rendre({ erreur: "La salle Battle Royale est pleine" })).toContain('role="alert"');
   });
 });

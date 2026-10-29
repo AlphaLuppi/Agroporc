@@ -83,8 +83,8 @@ const arr = (v: Vec2): Vec2 => [Math.round(v[0] * 100) / 100, Math.round(v[1] * 
  */
 export interface PieceSynth {
   id: string; type: TypePiece; p: Vec2; q: Vec2; demi: number; prolonge: number; h: number;
-  /** bâtiment creusé d'où vient la pièce (coque, cloison, porte ou fenêtre intérieure, meuble) */
-  batiment?: BatimentCreux;
+  /** bâtiment creusé d'où vient la pièce (coque, cloison, porte ou fenêtre intérieure, meuble) : index dans `buildings` (le BR en creuse d'autres que les quatre des zombies) */
+  batiment?: number;
   /** meuble : genre de rendu */
   genre?: GenreMeuble;
 }
@@ -266,8 +266,8 @@ export const CREUSAGES: readonly Creusage[] = [
   },
 ];
 
-/** Pièces d'un bâtiment creusé : coques (et leurs portes / fenêtres), cloisons, meubles. */
-function piecesCreusage(c: Creusage, h: number): PieceSynth[] {
+/** Pièces d'un bâtiment creusé : coques (et leurs portes / fenêtres), cloisons, meubles (le BR les reprend sans les portes, cf. `br-carte.ts`). */
+export function piecesCreusage(c: Creusage, h: number): PieceSynth[] {
   const res: PieceSynth[] = [];
   c.murs.forEach((m, i) => res.push(...couperMur(c.b, m, `${c.b}c${i}_`, "coque", h, DEMI_EPAISSEUR_COQUE)));
   c.cloisons.forEach((m, i) => res.push(...couperMur(c.b, m, `${c.b}k${i}_`, "cloison", h, 0)));
@@ -1002,7 +1002,7 @@ export interface DonneesZombies {
   pieces: readonly PieceSynth[];
 }
 
-const copieBatiment = (b: Building): Building => ({
+export const copieBatiment = (b: Building): Building => ({
   ...b,
   r: b.r.map((p) => [p[0], p[1]] as Vec2),
   c: [b.c[0], b.c[1]],

@@ -3,9 +3,9 @@ import type { SceneData } from "@/lib/agroparc3d/types";
 import type { ClientArene, EtatConnexion } from "@/lib/fps/reseau";
 import type {
   ArmeId, ArmeMeleeId, ArmePrincipaleId, ArmeSecondaireId, ArmeSpecialeId, CauseMort, EtatElsaMsg, EtatJoueurSnap, EtatPartieZombies, InfoMatch, InfoTueur,
-  InfoVehicule, JoueurPublic, LigneClassement, LigneStats, MessageServeur, ModeSalle, Zone,
+  EtatPartieBr, InfoVehicule, JoueurPublic, LigneClassement, LigneStats, LigneStatsBr, MessageServeur, ModeSalle, Zone,
 } from "@/lib/fps/protocole";
-import type { EtatMonstresHud, EtatZombiesHud, HudEtat, HudLive, JeuEvenement } from "@/lib/fps/jeu-types";
+import type { EtatBrHud, EtatMonstresHud, EtatZombiesHud, HudEtat, HudLive, JeuEvenement } from "@/lib/fps/jeu-types";
 import type { RadarFrame } from "@/lib/fps/radar";
 import type { ReglagesHud } from "@/lib/fps/reglages-hud";
 import type { Action, ConfigTouches } from "@/lib/fps/touches";
@@ -34,8 +34,8 @@ export type EvenementHud =
 /** Ma dernière mort ; remise à `null` sur `apparition`. */
 export interface DerniereMort { par: string; parCouleur: string; arme: ArmeId; cause: CauseMort; zone: Zone; tueur: InfoTueur | null }
 
-/** Fil d'annonces du HUD (4 au plus, 8 s chacune). `tigre` : largage et tigre abattu (v3), aussi affichés en toast. */
-export interface Annonce { id: number; texte: string; genre: "elsa" | "info" | "tigre" }
+/** Fil d'annonces du HUD (4 au plus, 8 s chacune). `tigre` : largage et tigre abattu (v3), aussi affichés en toast. `zone` : phases de la tempête (Battle Royale, v8). */
+export interface Annonce { id: number; texte: string; genre: "elsa" | "info" | "tigre" | "zone" }
 /** Toast de bonus (j'ai pris le cadeau d'Elsa). */
 export interface Bonus { id: number; genre: "soin" | "arme"; arme?: ArmeSpecialeId }
 /**
@@ -44,8 +44,11 @@ export interface Bonus { id: number; genre: "soin" | "arme"; arme?: ArmeSpeciale
  */
 export interface RepereElsa { elsaAngle: number; elsaDistance: number }
 
-/** Résumé des deux salles (message `salons`, sans son type) : compteurs du choix du mode. */
+/** Résumé des salles (message `salons`, sans son type) : compteurs du choix du mode ; `br` (v8) est optionnel. */
 export type Salons = Omit<Extract<MessageServeur, { t: "salons" }>, "t">;
+
+/** Statistiques persistées du Battle Royale (message `statsBr`, sans son type) : top 25 et ma ligne. */
+export interface StatsBrRecues { lignes: LigneStatsBr[]; moi?: LigneStatsBr }
 
 /** Gain d'argent le plus récent (zombies) : `n` augmente à chaque message `argent`, pour animer à chaque changement. */
 export interface GainArgent { n: number; delta: number; motif: string }
@@ -89,8 +92,13 @@ export interface UseArene {
   gainArgent: GainArgent | null;
   /** demande à changer de salle (refusée : message dans `erreur`, `modeVoulu` revient à `mode`) */
   choisirMode(mode: ModeSalle): void;
-  /** hôte du lobby des zombies : lance la partie */
+  /** hôte du lobby des zombies ou du Battle Royale : lance la partie */
   lancerPartie(difficulte?: import("@/lib/fps/zombies-vagues").Difficulte): void;
+  // ---- v8 : Battle Royale (optionnels : l'hôte les fournit une fois `useArene` branché) ----
+  /** dernier `br{etat}` reçu, null hors de la salle BR ou avant le premier */
+  br?: EtatPartieBr | null;
+  /** dernières statistiques persistées reçues (`statsBr`), null avant la première réponse */
+  statsBr?: StatsBrRecues | null;
 }
 
 /** Props de `HudArene` (U2 l'implémente, U1/l'hôte les fournit). */
@@ -156,6 +164,12 @@ export interface PropsHudArene {
   monstres?(): EtatMonstresHud | null;
   /** (v5) `JeuHandle.zombies()` : état du mode zombies lu à intervalle par le HUD ; absent = HUD de l'arène */
   zombies?(): EtatZombiesHud | null;
+  /** (v8) dernier `br{etat}` reçu (`UseArene.br`) : lobby, bilan ; absent ou null = HUD de l'arène */
+  br?: EtatPartieBr | null;
+  /** (v8) statistiques persistées (`UseArene.statsBr`) pour la fin de partie */
+  statsBr?: StatsBrRecues | null;
+  /** (v8) `JeuHandle.br()` : état du Battle Royale (zone, vol, soins, spectateur) lu à intervalle par le HUD, hors rendu à 60 Hz */
+  etatBr?(): EtatBrHud | null;
   /** (v5) « Rejouer » de la fin de partie : retour au lobby de la salle (le jeu est démonté) */
   surRejouer?(): void;
   /** (v5) « Quitter » de la fin de partie : sort ET referme le panneau (absent : comme `surQuitter`, retour au lobby) */

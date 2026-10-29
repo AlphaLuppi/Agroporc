@@ -78,4 +78,9 @@ export interface SceneData {
   busStops: Vec2[];
   /** point visé par la caméra au repos */
   focus: Vec2;
+  /**
+   * Marque de la scène d'un mode qui a ses propres pièces synthétiques (jamais dans `scene.json`) : "zombies" ou "br" (Battle Royale, v8).
+   * Absent = scène de l'arène. `estSceneZombies` (minimap.ts) reste faux pour "br".
+   */
+  modeCarte?: "zombies" | "br";
 }

@@ -340,3 +340,33 @@ describe("ZONE_CARTE en mode zombies", () => {
     expect(dimensionsCouche(scene, 1, ZONE_CARTE(scene, "zombies")).x0).toBe(bornes.x0);
   });
 });
+
+describe("ZONE_CARTE sur la scène du Battle Royale", () => {
+  // la scène BR ajoute, comme celle des zombies, des pièces synthétiques typées après les 142 bâtiments ; `modeCarte: "br"` la distingue
+  const dz = donneesZombies(scene).data;
+  const br: SceneData = { ...dz, modeCarte: "br" };
+  const bornes = { x0: BORNES_ZOMBIES.x0, z0: BORNES_ZOMBIES.z0, x1: BORNES_ZOMBIES.x1, z1: BORNES_ZOMBIES.z1 };
+
+  it("n'est pas prise pour la scène des zombies, même avec des pièces typées", () => {
+    expect(estSceneZombies(dz)).toBe(true);
+    expect(estSceneZombies(br)).toBe(false);
+    expect(estSceneZombies({ ...scene, modeCarte: "br" })).toBe(false);
+    expect(estSceneZombies({ ...dz, modeCarte: "zombies" })).toBe(true);
+  });
+
+  it("garde la zone de l'arène (jamais BORNES_ZOMBIES), sans que l'appelant passe le mode", () => {
+    const z = ZONE_CARTE(br);
+    expect(z).not.toEqual(bornes);
+    expect(z).toEqual(ZONE_CARTE(br, "arene"));
+    expect(z.x0).toBeLessThan(bornes.x0);
+    expect(z.x1).toBeGreaterThan(bornes.x1);
+    // et la zone de l'arène seule reste inchangée
+    expect(ZONE_CARTE(scene)).toEqual(ZONE_CARTE(scene, "arene"));
+  });
+
+  it("la couche statique couvre l'arène entière", () => {
+    const c = dimensionsCouche(br);
+    expect(c.x0).toBeLessThan(bornes.x0);
+    expect(c.largeurPx * c.hauteurPx).toBeGreaterThan(dimensionsCouche(dz).largeurPx * dimensionsCouche(dz).hauteurPx * 4);
+  });
+});

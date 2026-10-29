@@ -12,6 +12,7 @@ import { toucheDe } from "./AideCommandes";
 import Killcam from "../Killcam";
 import type { DerniereMort, EquipementChoisi } from "../contrats";
 import CarteTueur from "./CarteTueur";
+import EcranSpectateur, { CarteEliminationBr, type PropsEcranSpectateur } from "./EcranSpectateur";
 import styles from "./EcranMort.module.css";
 
 /**
@@ -23,8 +24,14 @@ import styles from "./EcranMort.module.css";
  * Le HUD de combat est masqué par l'orchestrateur pendant tout ceci (`hidden`). Rien hors mort.
  * Zombies (`hud.mode === "zombies"`) : ni rejeu, ni carte du tueur, ni choix d'équipement. « À TERRE » avec la barre de saignement (temps
  * avant l'élimination, `terreFinT`) tant qu'un coéquipier peut relever, puis « ÉLIMINÉ » avec le retour à la prochaine pause.
+ * Battle Royale (`hud.mode === "br"` et `br` fourni) : la mort est définitive. Rejeu normal, puis `CarteEliminationBr` (sans compte à rebours de
+ * réapparition ni choix d'équipement), puis le bandeau du spectateur (`EcranSpectateur`) : « Éliminé · place #N sur M », joueur suivi, Précédent / Suivant.
+ * Sans killcam (tempête, abandon : pas de tueur) le bandeau du spectateur s'affiche tout de suite.
  * Spec : docs/superpowers/specs/2026-10-23-arene-hud-design.md
  */
+/** Commandes et état de la mort définitive du Battle Royale (le reste de `PropsEcranSpectateur` vient de `derniereMort`). */
+export type EntreesSpectateurBr = Omit<PropsEcranSpectateur, "derniereMort">;
+
 export interface PropsEcranMort {
   hud: HudEtat;
   derniereMort: DerniereMort | null;
@@ -43,6 +50,8 @@ export interface PropsEcranMort {
   terreFinT?: number;
   /** (zombies) horloge serveur du saignement */
   maintenantServeur?(): number;
+  /** (Battle Royale) mort définitive : place, joueur suivi et commandes du spectateur ; absent = comportement de l'arène */
+  br?: EntreesSpectateurBr;
 }
 
 /** Barre de saignement : temps restant avant l'élimination, qui se vide ; le texte est écrit (jamais la barre seule). */
@@ -65,7 +74,7 @@ function BarreSaignement({ terreFinT, maintenantServeur }: { terreFinT: number; 
 }
 
 export default function EcranMort({
-  hud, derniereMort, killcamInfo, degatsAuTueur, touches, equipement, surEquipement, surPasserKillcam, joueurs, aideEquipement, terreFinT = 0, maintenantServeur,
+  hud, derniereMort, killcamInfo, degatsAuTueur, touches, equipement, surEquipement, surPasserKillcam, joueurs, aideEquipement, terreFinT = 0, maintenantServeur, br,
 }: PropsEcranMort) {
   const disposition = useDisposition();
   if (!hud.mort) return null;
@@ -94,6 +103,25 @@ export default function EcranMort({
     return <div className={styles.repli}><p className={styles.statut} role="status">Apparition…</p></div>;
   }
   const phase = hud.killcamPhase;
+  if (hud.mode === "br" && br) {
+    if (phase === "rejeu" || phase === "carte") {
+      return (
+        <div className={styles.ecran}>
+          <Killcam
+            phase={phase}
+            progression={Math.max(0, hud.killcam)}
+            tueur={killcamInfo}
+            derniereMort={derniereMort}
+            surPasser={surPasserKillcam}
+            touchePasser={toucheDe(touches, "passer", disposition)}
+          >
+            {phase === "carte" && <CarteEliminationBr derniereMort={derniereMort} killcamInfo={killcamInfo} place={br.place} total={br.total} />}
+          </Killcam>
+        </div>
+      );
+    }
+    return <EcranSpectateur derniereMort={derniereMort} {...br} />;
+  }
   const tueurJoueur = joueurs?.find((j) => j.id === killcamInfo?.id) ?? null;
   const km = tueurJoueur ? { kills: tueurJoueur.kills, morts: tueurJoueur.morts } : null;
   const carte = (

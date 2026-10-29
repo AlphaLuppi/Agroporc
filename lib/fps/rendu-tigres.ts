@@ -13,7 +13,7 @@
  *    poussés le long de la normale) qui dessine le contour du tigre, et qui seule garde le halo. La couleur ne suffit pas (un lanceur
  *    orange sur une fourrure orange) : une plaque « Tigre · pseudo du lanceur », au style des pseudos des joueurs, flotte au-dessus.
  *  - Avion : silhouette en fil de fer de l'avion de la vue aérienne (lib/agroparc3d/scene.ts), feux de position. Parachute : voilure et
- *    suspentes en fil de fer au-dessus du tigre en descente.
+ *    suspentes en fil de fer au-dessus du tigre en descente. Ces formes vivent dans `rendu-avion.ts`, aussi utilisé par le Battle Royale.
  *  - Tant que le GLB n'est pas chargé (ou s'il ne se charge pas), un tigre est dessiné en silhouette fil de fer à la taille de sa hitbox.
  *
  * Ressources : ce module ne libère JAMAIS le modèle partagé (`libererModele`). Comme lib/agroparc3d/tigre.ts, il dessine des COPIES de la
@@ -38,6 +38,7 @@ import { avancerCourse, creerCourse } from "./course-tigre";
 import type { AvionClient, TigreClient } from "./jeu-tigres";
 import type { Vec3 } from "./protocole";
 import { sansHalo, texturePseudo } from "./rendu";
+import { PARACHUTE, aretes, balancementVoile, creerAvionFilDeFer, geometriesParachute } from "./rendu-avion";
 import { SILHOUETTES_TIGRE, TIGRE } from "./tigre-arene";
 import { hauteurPlaquePx } from "./visibilite";
 
@@ -111,9 +112,6 @@ const EPAISSEUR_LISERE = 0.025;
 const PLAQUE = { y: 2.5, releve: 0.6, texte: (pseudo: string) => `Tigre · ${pseudo}` };
 /** Mort : bascule sur le flanc en 0,6 s, reste 0,9 s, disparaît. */
 const MORT = { basculeS: 0.6, finS: 1.5 };
-/** Parachute : hauteur de la voilure au-dessus de l'attache (m), rayon, hauteur de l'attache sur le dos, couleur. */
-const PARACHUTE = { hauteur: 6.5, rayon: 4.2, attache: 1.2, couleur: 0xe8f4ff };
-const COULEUR_AVION = 0xdfefff;
 const COULEUR_REPLI = 0xffa040;
 /** Fumée de l'apparition du tigre allié. */
 const FUMEE = { dureeS: 0.8, rayon: 1.6, couleur: 0xc8d2dc };
@@ -160,52 +158,8 @@ function tapie(): { pose: PoseTigre; x: number } {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Fil de fer : avion, parachute, silhouette de repli
+// Fil de fer : silhouette de repli (l'avion et le parachute sont dans rendu-avion.ts)
 // ---------------------------------------------------------------------------------------------
-
-function aretes(geo: THREE.BufferGeometry, seuil = 10): THREE.EdgesGeometry {
-  const e = new THREE.EdgesGeometry(geo, seuil);
-  geo.dispose();
-  return e;
-}
-
-/** Avion de la vue aérienne (lib/agroparc3d/scene.ts) : fuselage, ailes, empennage, dérive, nez vers +x, plus deux moteurs. */
-function geometriesAvion(): THREE.BufferGeometry[] {
-  const fus = new THREE.CylinderGeometry(1.4, 1.1, 26, 6);
-  fus.rotateZ(Math.PI / 2);
-  const ailes = new THREE.BoxGeometry(5, 0.4, 30);
-  const queue = new THREE.BoxGeometry(3, 0.3, 10);
-  queue.translate(-11, 1, 0);
-  const derive = new THREE.BoxGeometry(4, 6, 0.3);
-  derive.translate(-11.5, 3.5, 0);
-  // deux moteurs sous les ailes : l'avion qui largue est un cargo
-  const moteurs = [-7, 7].map((z) => {
-    const m = new THREE.CylinderGeometry(0.7, 0.7, 3.6, 8);
-    m.rotateZ(Math.PI / 2);
-    m.translate(1.6, -0.6, z);
-    return m;
-  });
-  return [fus, ailes, queue, derive, ...moteurs].map((g) => aretes(g));
-}
-
-/** Voilure (calotte de sphère ouverte) et suspentes, origine au point d'attache sur le dos du tigre. */
-function geometriesParachute(): { voilure: THREE.BufferGeometry; suspentes: THREE.BufferGeometry } {
-  const { hauteur, rayon } = PARACHUTE;
-  const ouverture = 1.0;
-  const R = rayon / Math.sin(ouverture);
-  const calotte = new THREE.SphereGeometry(R, 12, 4, 0, Math.PI * 2, 0, ouverture);
-  // la sphère est centrée sur son centre : le bord de la calotte est à R cos(ouverture) au-dessus, on le pose à `hauteur`
-  calotte.translate(0, hauteur - R * Math.cos(ouverture), 0);
-  const voilure = aretes(calotte, 1);
-  const pts: number[] = [];
-  for (let i = 0; i < 12; i++) {
-    const a = (i / 12) * Math.PI * 2;
-    pts.push(0, 0, 0, Math.cos(a) * rayon, hauteur, Math.sin(a) * rayon);
-  }
-  const suspentes = new THREE.BufferGeometry();
-  suspentes.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
-  return { voilure, suspentes };
-}
 
 /** Silhouette de repli (GLB absent) : la hitbox debout en fil de fer, museau vers +z comme le modèle. */
 function geometrieRepli(): THREE.BufferGeometry {
@@ -279,24 +233,9 @@ export function creerRenduTigres(scene: THREE.Scene): RenduTigres {
   const instances = new Map<string, Instance>();
   const mourants: Instance[] = [];
 
-  // ---- avion ----
-  const geosAvion = geometriesAvion();
-  const matAvion = new THREE.LineBasicMaterial({ color: COULEUR_AVION, transparent: true, opacity: 0.95 });
-  const avion = new THREE.Group();
-  for (const g of geosAvion) avion.add(new THREE.LineSegments(g, matAvion));
-  const geoFeu = new THREE.SphereGeometry(0.6, 8, 6);
-  const matFeuRouge = new THREE.MeshBasicMaterial({ color: 0xff5a4a });
-  const matFeuVert = new THREE.MeshBasicMaterial({ color: 0x7dffb0 });
-  const feuBas = new THREE.Mesh(geoFeu, matFeuRouge);
-  feuBas.position.set(0, -1.6, 0);
-  const feuG = new THREE.Mesh(geoFeu, matFeuRouge);
-  feuG.position.set(1, 0, -15);
-  const feuD = new THREE.Mesh(geoFeu, matFeuVert);
-  feuD.position.set(1, 0, 15);
-  avion.add(feuBas, feuG, feuD);
-  avion.visible = false;
-  for (const o of avion.children) o.frustumCulled = false;
-  racine.add(avion);
+  // ---- avion (rendu-avion.ts) ----
+  const avion = creerAvionFilDeFer();
+  racine.add(avion.groupe);
 
   // ---- parachute, repli, fumée : géométries partagées par les instances ----
   const geoPara = geometriesParachute();
@@ -531,8 +470,9 @@ export function creerRenduTigres(scene: THREE.Scene): RenduTigres {
     }
     inst.parachute.visible = true;
     // la voilure se balance doucement
-    inst.parachute.rotation.z = 0.06 * Math.sin(horloge * 1.3);
-    inst.parachute.rotation.x = 0.05 * Math.sin(horloge * 0.9 + 1);
+    const b = balancementVoile(horloge);
+    inst.parachute.rotation.z = b.z;
+    inst.parachute.rotation.x = b.x;
   }
 
   return {
@@ -540,12 +480,8 @@ export function creerRenduTigres(scene: THREE.Scene): RenduTigres {
       horloge += dt;
       racine.visible = visible;
 
-      if (av) {
-        avion.visible = true;
-        avion.position.set(av.p[0], av.p[1], av.p[2]);
-        avion.rotation.set(0, av.cap + Math.PI / 2, 0);
-        feuBas.visible = Math.sin(horloge * 7) > 0.2;
-      } else avion.visible = false;
+      if (av) avion.poser(av.p, av.cap, horloge);
+      else avion.masquer();
 
       for (const inst of instances.values()) inst.vu = false;
       const ressort = 1 - Math.exp(-RAIDEUR_POSE * dt);
@@ -664,8 +600,8 @@ export function creerRenduTigres(scene: THREE.Scene): RenduTigres {
       materiauxLisere.clear();
       for (const p of plaques.values()) { p.mat.map?.dispose(); p.mat.dispose(); }
       plaques.clear();
-      for (const g of geosAvion) g.dispose();
-      for (const x of [matAvion, geoFeu, matFeuRouge, matFeuVert, geoPara.voilure, geoPara.suspentes, matPara, matSuspentes, geoRepli, matRepli, geoFumee]) x.dispose();
+      avion.dispose();
+      for (const x of [geoPara.voilure, geoPara.suspentes, matPara, matSuspentes, geoRepli, matRepli, geoFumee]) x.dispose();
     },
   };
 }

@@ -25,6 +25,25 @@ export function toucheDe(cfg: ConfigTouches, a: Action, d?: ReadonlyMap<string, 
 
 export function commandes(cfg: ConfigTouches, d: ReadonlyMap<string, string> | null, mode: ModeSalle = "arene"): [string, string][] {
   const t = (a: Action) => toucheDe(cfg, a, d);
+  if (mode === "br") {
+    return [
+      [[t("avant"), t("gauche"), t("arriere"), t("droite")].filter(Boolean).join(" "), "Se déplacer (en vol : piloter la chute)"],
+      ["Souris", "Viser"],
+      [t("saut"), "Sauter de l'avion, ouvrir le parachute ; au sol : sauter, double saut, saut de mur"],
+      [t("interagir"), "Ramasser l'objet au sol"],
+      [t("tir"), "Tirer (maintenir : rafale)"],
+      [t("visee"), "Viser / lunette"],
+      [t("sprint"), "Sprinter"],
+      [t("accroupi"), "S'accroupir (en sprint : glissade)"],
+      [t("recharger"), "Recharger"],
+      [[t("armePrincipale"), t("armeSecondaire"), t("couteau"), t("armeSpeciale")].filter(Boolean).join(" "), "Changer d'arme (la 3e touche : couteau ou épée)"],
+      [t("soigner"), "Utiliser un bandage"],
+      [t("potion"), "Boire une potion de bouclier"],
+      [t("lacher"), "Lâcher l'arme en main"],
+      [t("scores"), "Scores (maintenir)"],
+      [t("carte"), "Grande carte et zone de la tempête (maintenir)"],
+    ];
+  }
   return [
     [[t("avant"), t("gauche"), t("arriere"), t("droite")].filter(Boolean).join(" "), "Se déplacer"],
     ["Souris", "Viser"],

@@ -5,12 +5,12 @@ import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 
 import { connecterArene, urlArene, type ClientArene, type EtatConnexion } from "@/lib/fps/reseau";
 import { STATS } from "@/lib/fps/armes";
 import {
-  JEU, type ArmeSpecialeId, type EtatElsaMsg, type EtatJoueurSnap, type EtatPartieZombies, type InfoMatch, type InfoTueur, type InfoVehicule, type JoueurPublic,
+  JEU, type ArmeSpecialeId, type EtatElsaMsg, type EtatJoueurSnap, type EtatPartieBr, type EtatPartieZombies, type InfoMatch, type InfoTueur, type InfoVehicule, type JoueurPublic,
   type LigneClassement, type LigneStats, type MessageServeur, type ModeSalle,
 } from "@/lib/fps/protocole";
-import { annoncesZombies } from "@/lib/fps/hud-modele";
+import { annoncesBr, annoncesZombies } from "@/lib/fps/hud-modele";
 import type { JeuEvenement, JeuHandle } from "@/lib/fps/jeu";
-import type { Annonce, Bonus, DerniereMort, EntreeFil, EvenementHud, GainArgent, Salons, UseArene } from "./contrats";
+import type { Annonce, Bonus, DerniereMort, EntreeFil, EvenementHud, GainArgent, Salons, StatsBrRecues, UseArene } from "./contrats";
 
 // Les types de contrat sont dans contrats.ts (partagés avec l'hôte et le HUD) ; réexportés pour les appelants existants.
 export type { DerniereMort, EntreeFil, EvenementHud, UseArene } from "./contrats";
@@ -26,6 +26,12 @@ const DUREE_BONUS_MS = 2500;
 
 const STATS_VIDES = new Map<string, LigneStats>();
 
+/** Délai minimal entre deux demandes de statistiques du Battle Royale (le serveur n'en répond qu'une toutes les 2 s). */
+const PERIODE_STATS_BR_MS = 2000;
+
+/** `UseArene` plus la demande de statistiques du Battle Royale (le lobby l'appelle à son ouverture ; le contrat partagé n'a pas ce champ). */
+export type UseAreneBr = UseArene & { demanderStatsBr(): void };
+
 /** Contenu d'une offre d'Elsa pour le fil : « soin complet (PV 100, bouclier 100) », « Railgun, 6 tirs ». */
 function contenuOffre(genre: "soin" | "arme", arme?: ArmeSpecialeId): string {
   if (genre === "soin") return "soin complet (PV 100, bouclier 100)";
@@ -37,10 +43,19 @@ function contenuOffre(genre: "soin" | "arme", arme?: ArmeSpecialeId): string {
 /** `rejoindre` refusé : 16 agents sont déjà en arène (les spectateurs de la vue 3D ne comptent pas). */
 export const TEXTE_ARENE_PLEINE = `L'arène est pleine (${JEU.joueursMax} agents en jeu), réessayez dans un instant.`;
 
-/** Texte du refus d'un `monter` / `siege` / `rejoindre` / `mode` par le serveur. */
-function texteRefus(action: "monter" | "siege" | "rejoindre" | "mode", raison: "loin" | "plein" | "deja" | "inconnu" | "mort" | "lobby"): string {
-  if (action === "rejoindre") return raison === "lobby" ? "Partie de zombies : attendez le lancement par l'hôte." : TEXTE_ARENE_PLEINE;
-  if (action === "mode") return raison === "lobby" ? "Impossible de changer de mode en pleine partie." : "La partie de zombies est pleine.";
+/** `rejoindre` ou `mode` refusé : les 50 places du Battle Royale sont prises. */
+export const TEXTE_BR_PLEIN = "La salle Battle Royale est pleine (50 joueurs), réessayez dans un instant.";
+
+/** Texte du refus d'un `monter` / `siege` / `rejoindre` / `mode` par le serveur ; `mode` = la salle concernée (demandée pour `mode`, actuelle pour `rejoindre`). */
+function texteRefus(action: "monter" | "siege" | "rejoindre" | "mode", raison: "loin" | "plein" | "deja" | "inconnu" | "mort" | "lobby", mode: ModeSalle = "arene"): string {
+  if (action === "rejoindre") {
+    if (raison === "lobby") return mode === "br" ? "Battle Royale : la partie est lancée sans vous, rejoignez la suivante." : "Partie de zombies : attendez le lancement par l'hôte.";
+    return mode === "br" ? TEXTE_BR_PLEIN : TEXTE_ARENE_PLEINE;
+  }
+  if (action === "mode") {
+    if (raison === "lobby") return "Impossible de changer de mode en pleine partie.";
+    return mode === "br" ? TEXTE_BR_PLEIN : mode === "arene" ? TEXTE_ARENE_PLEINE : "La partie de zombies est pleine.";
+  }
   switch (raison) {
     case "loin": return "Voiture trop loin";
     case "plein": return action === "siege" ? "Place occupée" : "Voiture pleine";
@@ -55,7 +70,7 @@ function texteRefus(action: "monter" | "siege" | "rejoindre" | "mode", raison: "
  * pseudo, match en cours, fil des kills, annonces d'Elsa, sièges des voitures, statistiques du tableau des scores. Un changement
  * de pseudo est envoyé sans reconnexion. Chaque message est aussi relayé à la partie en cours (`jeuRef`).
  */
-export function useArene(pseudo: string, jeuRef: MutableRefObject<JeuHandle | null>): UseArene {
+export function useArene(pseudo: string, jeuRef: MutableRefObject<JeuHandle | null>): UseAreneBr {
   const [etat, setEtat] = useState<EtatConnexion>("connexion");
   const [monId, setMonId] = useState<string | null>(null);
   const [joueurs, setJoueurs] = useState<JoueurPublic[]>([]);
@@ -79,6 +94,11 @@ export function useArene(pseudo: string, jeuRef: MutableRefObject<JeuHandle | nu
   const [zombies, setZombies] = useState<EtatPartieZombies | null>(null);
   const [argent, setArgent] = useState(0);
   const [gainArgent, setGainArgent] = useState<GainArgent | null>(null);
+  // ---- v8 : Battle Royale ----
+  const [br, setBr] = useState<EtatPartieBr | null>(null);
+  const [statsBr, setStatsBr] = useState<StatsBrRecues | null>(null);
+  const brRef = useRef<EtatPartieBr | null>(null);
+  const derniereDemandeStats = useRef(0);
   /** salle confirmée par le serveur et salle demandée (relue par les rappels du réseau) */
   const modeRef = useRef<ModeSalle>("arene");
   const modeVouluRef = useRef<ModeSalle>("arene");
@@ -137,8 +157,8 @@ export function useArene(pseudo: string, jeuRef: MutableRefObject<JeuHandle | nu
       }
       case "refus":
         // arène pleine : message du panneau (le HUD est refermé par `sortir`), sinon annonce du fil
-        if (e.action === "rejoindre") setErreur(texteRefus(e.action, e.raison));
-        else annoncer(texteRefus(e.action, e.raison), "info");
+        if (e.action === "rejoindre") setErreur(texteRefus(e.action, e.raison, modeRef.current));
+        else annoncer(texteRefus(e.action, e.raison, modeRef.current), "info");
         return;
       case "touche":
         // estimation locale : le HUD l'ignore, seul `confirme` (reçu du serveur) compte (HUD §3.4)
@@ -173,6 +193,14 @@ export function useArene(pseudo: string, jeuRef: MutableRefObject<JeuHandle | nu
     clientRef.current?.envoyer(difficulte ? { t: "lancerPartie", difficulte } : { t: "lancerPartie" });
   }, []);
 
+  /** Demande les statistiques persistées du Battle Royale (réponse privée `statsBr`) ; au plus une demande toutes les 2 s, comme le serveur. */
+  const demanderStatsBr = useCallback(() => {
+    const t = Date.now();
+    if (t - derniereDemandeStats.current < PERIODE_STATS_BR_MS) return;
+    derniereDemandeStats.current = t;
+    clientRef.current?.envoyer({ t: "statsBr" });
+  }, []);
+
   useEffect(() => {
     const surMessage = (m: MessageServeur) => {
       switch (m.t) {
@@ -187,8 +215,9 @@ export function useArene(pseudo: string, jeuRef: MutableRefObject<JeuHandle | nu
           // (v8) session reprise après une micro-coupure : même id, même salle, partie de zombies conservée (son état suit) ; rien à effacer
           if (m.reprise) connexionPerdue.current = false;
           if (connexionPerdue.current) {
-            // reconnexion : le serveur nous a remis dans l'arène ; on redemande les zombies si l'interface y était (le mode mémorisé du
-            // navigateur, lui, ne fait que présélectionner la carte du choix du mode : il n'envoie rien)
+            // reconnexion : le serveur nous a remis dans l'arène ; on redemande la salle (zombies, Battle Royale) si l'interface y était (le mode mémorisé
+            // du navigateur, lui, ne fait que présélectionner la carte du choix du mode : il n'envoie rien). Une partie de Battle Royale en cours est perdue
+            // (pas de reconnexion en partie : la place est éliminée), on repart du lobby de la salle.
             connexionPerdue.current = false;
             modeRef.current = "arene";
             setMode("arene");
@@ -196,7 +225,10 @@ export function useArene(pseudo: string, jeuRef: MutableRefObject<JeuHandle | nu
             setZombies(null);
             setArgent(0);
             setGainArgent(null);
-            if (modeVouluRef.current === "zombies") clientRef.current?.envoyer({ t: "mode", mode: "zombies" });
+            brRef.current = null;
+            setBr(null);
+            setStatsBr(null);
+            if (modeVouluRef.current !== "arene") clientRef.current?.envoyer({ t: "mode", mode: modeVouluRef.current });
           }
           break;
         case "mode":
@@ -216,13 +248,25 @@ export function useArene(pseudo: string, jeuRef: MutableRefObject<JeuHandle | nu
           setZombies(null);
           setArgent(0);
           setGainArgent(null);
+          brRef.current = null;
+          setBr(null);
+          setStatsBr(null);
           statsRef.current = STATS_VIDES;
           setStats(STATS_VIDES);
           setClassement(null);
           setErreur(null);
           break;
         case "salons":
-          setSalons({ arene: m.arene, zombies: m.zombies });
+          setSalons({ arene: m.arene, zombies: m.zombies, br: m.br });
+          break;
+        case "br": {
+          for (const a of annoncesBr(brRef.current, m.etat)) annoncer(a.texte, a.genre);
+          brRef.current = m.etat;
+          setBr(m.etat);
+          break;
+        }
+        case "statsBr":
+          setStatsBr({ lignes: m.lignes, ...(m.moi ? { moi: m.moi } : {}) });
           break;
         case "zombies": {
           for (const texte of annoncesZombies(zombiesRef.current, m.etat, monIdRef.current)) annoncer(texte, "info");
@@ -237,9 +281,10 @@ export function useArene(pseudo: string, jeuRef: MutableRefObject<JeuHandle | nu
         case "refus":
           // changement de salle refusé (partie pleine, déjà en jeu) : la carte cochée revient, le message s'affiche dans le panneau
           if (m.action === "mode") {
+            const demande = modeVouluRef.current;
             modeVouluRef.current = modeRef.current;
             setModeVoulu(modeRef.current);
-            setErreur(texteRefus("mode", m.raison));
+            setErreur(texteRefus("mode", m.raison, demande));
           }
           break;
         case "presence":
@@ -385,5 +430,6 @@ export function useArene(pseudo: string, jeuRef: MutableRefObject<JeuHandle | nu
     elsa, annonces, sieges, bonus, killcamInfo,
     stats, statsRef, demanderScores, degatsAuTueur,
     mode, modeVoulu, salons, zombies, argent, gainArgent, choisirMode, lancerPartie,
+    br, statsBr, demanderStatsBr,
   };
 }

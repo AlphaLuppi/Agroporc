@@ -117,7 +117,7 @@ export const LIBELLES_BARRES_MELEE: { cle: keyof InfoArme["barres"]; nom: string
 
 /**
  * Libellé d'une élimination : le nom de l'arme (« Pistolet », « Couteau ») pour la cause "arme", sinon la cause en toutes
- * lettres (« Écrasé par la circulation », « Renversé par <pseudo> », « Tigre de <pseudo> », « Tué par le tigre »). `par` = pseudo du
+ * lettres (« Écrasé par la circulation », « Renversé par <pseudo> », « Tigre de <pseudo> », « Tué par le tigre », « Tué par la tempête », « A quitté la partie »). `par` = pseudo du
  * tueur (vide pour la circulation et le tigre sauvage).
  */
 export function libelleCause(arme: ArmeId, cause: CauseMort, par: string): string {
@@ -131,5 +131,7 @@ export function libelleCause(arme: ArmeId, cause: CauseMort, par: string): strin
   if (cause === "tigre_zombie") return "Griffé par un tigre";
   if (cause === "bus_c3") return "Écrasé par le Bus C3";
   if (cause === "frappe_aerienne") return par ? `Frappe aérienne de ${par}` : "Frappe aérienne";
+  if (cause === "tempete") return "Tué par la tempête";
+  if (cause === "abandon") return "A quitté la partie";
   return nomArme(arme);
 }

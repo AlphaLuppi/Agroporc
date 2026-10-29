@@ -6,7 +6,7 @@
  * Spec : docs/superpowers/specs/2026-10-23-arene-hud-design.md (§8, §10)
  */
 import { MELEE, STATS, nomArme } from "./armes";
-import { estMelee, type ArmeId, type JoueurPublic, type JoueurZombies, type LigneClassement, type LigneStats } from "./protocole";
+import { estMelee, type ArmeId, type BilanBr, type JoueurPublic, type JoueurZombies, type LigneClassement, type LigneStats, type LigneStatsBr } from "./protocole";
 
 /** Colonnes du tableau, de gauche à droite (HUD §8.1). */
 export type ColonneScore = "rang" | "agent" | "k" | "m" | "kd" | "ser" | "prec" | "tete" | "deg" | "arme" | "ping";
@@ -349,3 +349,80 @@ export function formatDureePartie(ms: number): string {
   const sec = total % 60;
   return min > 0 ? `${min}${NBSP}min ${String(sec).padStart(2, "0")}${NBSP}s` : `${sec}${NBSP}s`;
 }
+
+// ---------- bilan et palmarès du Battle Royale (v8) ----------
+
+/** Ligne du classement d'une partie de Battle Royale (triée par place). */
+export interface LigneBilanBrAffichee {
+  id: string; pseudo: string; couleur: string;
+  place: number; kills: number; degats: number;
+  /** temps de survie (s) */
+  survieS: number;
+  moi: boolean;
+  /** TOP 1 de la partie */
+  vainqueur: boolean;
+}
+
+/** Lignes du bilan par place croissante (à égalité de place, par pseudo). Bilan absent : liste vide. */
+export function lignesBilanBR(bilan: BilanBr | null | undefined, monId: string | null): LigneBilanBrAffichee[] {
+  if (!bilan) return [];
+  return bilan.lignes
+    .map((l) => ({
+      id: l.id, pseudo: l.pseudo, couleur: l.couleur, place: l.place, kills: l.kills, degats: l.degats, survieS: l.survieS,
+      moi: l.id === monId, vainqueur: bilan.vainqueurs.includes(l.id),
+    }))
+    .sort((a, b) => a.place - b.place || a.pseudo.localeCompare(b.pseudo, "fr"));
+}
+
+export interface ResumeFinBr {
+  /** « TOP 1 » ou « #4 sur 12 » (« Partie terminée » si je ne figure pas au bilan) */
+  titre: string;
+  /** « Victoire » pour le TOP 1, sinon « <pseudo> remporte la partie » */
+  sousTitre: string;
+  top1: boolean;
+  /** ma place et le nombre de partants, null si je ne figure pas au bilan */
+  place: number | null;
+  total: number;
+  kills: number;
+}
+
+/** Résumé de fin de partie du point de vue du joueur `monId`. */
+export function resumeFinBr(bilan: BilanBr | null | undefined, monId: string | null): ResumeFinBr {
+  const lignes = lignesBilanBR(bilan, monId);
+  const moi = lignes.find((l) => l.moi) ?? null;
+  const vainqueur = lignes.find((l) => l.vainqueur) ?? null;
+  const total = lignes.length;
+  if (moi?.vainqueur) return { titre: "TOP 1", sousTitre: "Victoire", top1: true, place: moi.place, total, kills: moi.kills };
+  const sousTitre = vainqueur ? `${vainqueur.pseudo} remporte la partie` : "Personne n'a gagné";
+  if (moi) return { titre: `#${moi.place} sur ${total}`, sousTitre, top1: false, place: moi.place, total, kills: moi.kills };
+  return { titre: "Partie terminée", sousTitre, top1: false, place: null, total, kills: 0 };
+}
+
+/** Ligne du palmarès (« TOP 1 cumulés »). `rang` est null pour ma ligne ajoutée hors du top. */
+export interface LignePalmaresBr {
+  rang: number | null;
+  cle: string; pseudo: string;
+  top1: number; parties: number; kills: number;
+  /** « #3 », ou « — » si aucune place n'est connue */
+  meilleure: string;
+  moi: boolean;
+}
+
+/** « #3 » ; 0 (aucune partie) : tiret. */
+export const libelleMeilleurePlace = (place: number): string => (place > 0 ? `#${Math.floor(place)}` : TIRET);
+
+/**
+ * Lignes du palmarès, dans l'ordre reçu du serveur (TOP 1, kills, parties, pseudo). Ma ligne (`moi`) est marquée si elle y figure, sinon ajoutée
+ * à la fin sans rang : le joueur retrouve toujours son compte.
+ */
+export function lignesPalmaresBr(lignes: readonly LigneStatsBr[], moi?: LigneStatsBr | null): LignePalmaresBr[] {
+  const ligne = (l: LigneStatsBr, rang: number | null): LignePalmaresBr => ({
+    rang, cle: l.cle, pseudo: l.pseudo, top1: l.top1, parties: l.parties, kills: l.kills, meilleure: libelleMeilleurePlace(l.meilleurePlace), moi: !!moi && l.cle === moi.cle,
+  });
+  const res = lignes.map((l, i) => ligne(l, i + 1));
+  if (moi && !res.some((l) => l.moi)) res.push(ligne(moi, null));
+  return res;
+}
+
+/** Durée de survie (s) en « 3 min 05 s » ou « 48 s ». */
+export const formatSurvie = (survieS: number): string => formatDureePartie(survieS * 1000);

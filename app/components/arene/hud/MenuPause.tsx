@@ -15,6 +15,8 @@ import styles from "../HudArene.module.css";
  * nom de joueur, sensibilité, accroupi maintenir / basculer, chat vocal de proximité (activé, appuyer pour parler ou micro ouvert, v3 §5),
  * avertissement des actions sans touche, Quitter, puis « Interface » (mini-map,
  * taille, effets) au-dessus des touches groupées. La mini-map reste nette sous le voile pour juger les réglages (HUD §4.5).
+ * Battle Royale (`mode` "br") : ni choix d'équipement (on ramasse ce qu'on trouve), ni chat vocal (désactivé dans ce mode), et « Quitter la partie » est un
+ * abandon (le joueur est éliminé) tant qu'il n'est pas déjà éliminé (`elimine`).
  * Zombies (`mode`) : la partie continue pour les autres (« les tigres ne s'arrêtent pas »), pas de choix d'équipement (le départ est imposé,
  * les armes s'achètent) et « Quitter la partie » ramène au lobby.
  */
@@ -42,19 +44,23 @@ export interface PropsMenuPause {
   surReglagesHud(r: ReglagesHud): void;
   /** mode de la salle (absent = arène) */
   mode?: ModeSalle;
+  /** (BR) je suis déjà éliminé : quitter n'est plus un abandon */
+  elimine?: boolean;
 }
 
 export default function MenuPause(p: PropsMenuPause) {
   const zombies = p.mode === "zombies";
+  const br = p.mode === "br";
   return (
     <div className={styles.pause} onClick={(e) => { if (e.target === e.currentTarget) p.surReprendre(); }}>
       <div className={styles.pausePanneau} role="group" aria-label="Menu pause">
         <h2>{p.premiereFois ? "Prêt ?" : "Pause"}</h2>
         <p className={styles.pauseTexte}>{p.premiereFois
           ? "Cliquez pour prendre la souris et jouer."
-          : zombies ? "La partie continue : les tigres ne s'arrêtent pas, vos coéquipiers non plus." : "La partie continue : vous êtes toujours dans l'arène."}</p>
+          : zombies ? "La partie continue : les tigres ne s'arrêtent pas, vos coéquipiers non plus."
+          : br ? "La partie continue : la tempête et les autres joueurs ne s'arrêtent pas." : "La partie continue : vous êtes toujours dans l'arène."}</p>
         <button type="button" className={styles.reprendre} autoFocus onClick={p.surReprendre}>{p.premiereFois ? "Jouer" : "Reprendre"}</button>
-        {!zombies && (
+        {!zombies && !br && (
           <div className={styles.pauseArmes}>
             <span>Équipement de la prochaine apparition</span>
             <ChoixEquipement
@@ -87,6 +93,7 @@ export default function MenuPause(p: PropsMenuPause) {
           <input type="checkbox" checked={p.accroupiBascule} onChange={(e) => p.surAccroupiBascule(e.target.checked)} />
           <span>Accroupi : basculer (sinon maintenir)</span>
         </label>
+        {!br && (
         <fieldset className={styles.voixReglage}>
           <legend>Chat vocal de proximité</legend>
           <label className={styles.caseLigne}>
@@ -105,12 +112,14 @@ export default function MenuPause(p: PropsMenuPause) {
           </div>
           {p.voixErreur && <p className={styles.avertissement} role="alert">{p.voixErreur}</p>}
         </fieldset>
+        )}
         {p.actionsSansTouche.length > 0 && (
           <p className={styles.avertissement} role="alert">
             Sans touche : {p.actionsSansTouche.map((a) => LIBELLES_ACTIONS[a]).join(", ")}. Assignez-en une ci-dessous.
           </p>
         )}
-        <button type="button" className={styles.quitter} onClick={p.surQuitter}>{zombies ? "Quitter la partie" : "Quitter l'arène"}</button>
+        {br && !p.elimine && <p className={styles.pauseTexte}>Quitter la partie compte comme un abandon : vous serez éliminé.</p>}
+        <button type="button" className={styles.quitter} onClick={p.surQuitter}>{zombies || br ? "Quitter la partie" : "Quitter l'arène"}</button>
         <ReglageInterface reglages={p.reglagesHud} surReglages={p.surReglagesHud} />
         <ReglageTouches config={p.touches} surChange={p.surTouches} />
       </div>

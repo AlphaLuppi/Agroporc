@@ -11,7 +11,8 @@
  * 2026-10-24-arene-evenements-design.md (v4 : Truck Muche fou, tigre robot géant, titan tigre),
  * 2026-10-23-arene-tigres-design.md (v5 : avion, tigres largués, sort d'invocation),
  * 2026-10-27-arene-zombies-design.md (v6 : mode zombies, épée, deux salles, à côté des tigres largués),
- * 2026-10-28-zombies-bo1-design.md (v7 : zombies façon Black Ops 1, carte intérieure, atouts, Pack-a-Punch, bonus, boîte mobile, planches, Truck)
+ * 2026-10-28-zombies-bo1-design.md (v7 : zombies façon Black Ops 1, carte intérieure, atouts, Pack-a-Punch, bonus, boîte mobile, planches, Truck),
+ * 2026-10-28-battle-royale-design.md (v8 : Battle Royale, troisième salle)
  */
 import type { Difficulte, GenreBonus } from "./zombies-vagues";
 
@@ -30,9 +31,12 @@ import type { Difficulte, GenreBonus } from "./zombies-vagues";
  * `Equipement.enCuisson`, `zevt{pap, fin}`). Lot des armes :
  * huit armes des zombies (`ARMES_PRINCIPALES_ZOMBIES`, la Perforeuse), Pack-a-Punch à effets (`tir.main` d'une paire akimbo,
  * `tir.touches[].seg` des ricochets, message `projectile`, `zevt{projectile, arc, souffle}`, drapeaux « en feu » et « gelé » des tigres,
- * causes de mort `feu`, `electrique`, `souffle`). Client et serveur se déploient ensemble.
+ * causes de mort `feu`, `electrique`, `souffle`). v9 : Battle Royale (troisième salle, avion, chute, butin, zone, statistiques ; changements
+ * purement additifs : champs optionnels et nouveau mode). Client et serveur se déploient ensemble, le serveur d'abord (il accepte 8 et 9).
  */
-export const VERSION_PROTOCOLE = 8;
+export const VERSION_PROTOCOLE = 9;
+/** Versions de client acceptées par le serveur (le 8 sera retiré dans un second temps) : un client v8 ne voit jamais le BR. */
+export const VERSIONS_ACCEPTEES: readonly number[] = [8, 9];
 
 export type Vec3 = [number, number, number];
 
@@ -89,6 +93,8 @@ export interface Equipement {
   sansPrincipale?: true;
   /** (v7, zombies) armes passées au Pack-a-Punch ; absent = aucune */
   ameliorees?: ArmeFeuId[];
+  /** Pas d'arme secondaire (Battle Royale, v9), pendant de `sansPrincipale` : `secondaire` garde une valeur de remplissage, le slot est vide. Absent = a une secondaire. */
+  sansSecondaire?: true;
   /**
    * (v8, zombies) arme déposée dans le Micro-ondes Gratinator, ou perdue faute d'avoir été reprise à temps : elle reste écrite dans son slot
    * mais ce slot est vide (`armeDuSlot` / `slotDeLArme` de equipement.ts renvoient null) jusqu'à la reprise, ou jusqu'à une nouvelle arme
@@ -104,11 +110,12 @@ export const EQUIPEMENT_DEFAUT: Readonly<Equipement> = Object.freeze({
   principale: "mitraillette" as ArmePrincipaleId, secondaire: "pistolet" as ArmeSecondaireId, speciale: null as ArmeSpecialeId | ArmeUniqueId | null,
 });
 export const SLOT_DEFAUT: Slot = "secondaire";
-/** Copie modifiable d'un équipement (une par joueur). `melee` et `sansPrincipale` ne sont recopiés que s'ils sont définis (jamais de clé `undefined`). */
+/** Copie modifiable d'un équipement (une par joueur). `melee`, `sansPrincipale` et `sansSecondaire` ne sont recopiés que s'ils sont définis (jamais de clé `undefined`). */
 export function copierEquipement(e: Readonly<Equipement>): Equipement {
   const copie: Equipement = { principale: e.principale, secondaire: e.secondaire, speciale: e.speciale };
   if (e.melee !== undefined) copie.melee = e.melee;
   if (e.sansPrincipale) copie.sansPrincipale = true;
+  if (e.sansSecondaire) copie.sansSecondaire = true;
   if (e.ameliorees && e.ameliorees.length) copie.ameliorees = [...e.ameliorees];
   if (e.enCuisson) copie.enCuisson = e.enCuisson;
   return copie;
@@ -130,9 +137,12 @@ export const SIEGES_PAR_VEHICULE = 4;
 /**
  * Comment un joueur est mort. `arme` d'un message `mort` n'a de sens que pour la cause "arme". "tigre" : coup d'un tigre largué, sauvage
  * (`par` = "") ou allié (`par` = le lanceur, crédité du kill). "tigre_robot" : le tigre géant des événements, jamais un tigre largué.
- * "tigre_zombie" : coup d'un tigre zombie du mode zombies.
+ * "tigre_zombie" : coup d'un tigre zombie du mode zombies. (v8, Battle Royale) "tempete" : dégâts de la zone, aucun kill crédité ; "abandon" :
+ * le joueur a quitté la partie en cours (éliminé).
  */
-export type CauseMort = "arme" | "ecrase_pnj" | "ecrase_vehicule" | "tigre" | "explosion" | "truck_fou" | "tigre_robot" | "titan" | "tigre_zombie" | "bus_c3" | "frappe_aerienne";
+export type CauseMort =
+  | "arme" | "ecrase_pnj" | "ecrase_vehicule" | "tigre" | "explosion" | "truck_fou" | "tigre_robot" | "titan" | "tigre_zombie" | "bus_c3" | "frappe_aerienne"
+  | "tempete" | "abandon";
 
 /** Voiture de la circulation (`pnj`, indice dans `flotte`) ou voiture conduisible (`vehicule`, id du garage). */
 export type GenreVoiture = "pnj" | "vehicule";
@@ -156,9 +166,9 @@ export const CIBLE_LIVRAISON = "livraison";
 
 // ---------- mode zombies (v5) ----------
 
-/** Mode de jeu d'une salle : l'arène (chacun pour soi) ou les zombies tigres (coopératif par manches). */
-export type ModeSalle = "arene" | "zombies";
-export const MODES_SALLE: readonly ModeSalle[] = ["arene", "zombies"];
+/** Mode de jeu d'une salle : l'arène (chacun pour soi), les zombies tigres (coopératif par manches) ou le Battle Royale (v8, dernier survivant). */
+export type ModeSalle = "arene" | "zombies" | "br";
+export const MODES_SALLE: readonly ModeSalle[] = ["arene", "zombies", "br"];
 
 /** Id d'un tigre zombie dans les messages (`tir.touches[].cible`, `degats.cible`, `coup.cibles`, `zombieMort.id`) : "z" + numéro, jamais un id joueur "j<n>". */
 export const idZombie = (n: number): string => `z${n}`;
@@ -361,6 +371,53 @@ export function decoderZombies(s: SnapZombies): ZombieSnap[] {
   return res;
 }
 
+// ---------- Battle Royale (v8) ----------
+
+export type PhaseBr = "lobby" | "decompte" | "vol" | "jeu" | "fin";
+export type Rarete = "commun" | "peu_commun" | "rare" | "legendaire";
+/** Classe de munitions : une boîte donne des chargeurs à l'arme portée de la classe (principale, sinon secondaire). */
+export type ClasseMunitions = "legeres" | "moyennes" | "cartouches";
+export type GenreObjetBr = "arme" | "munitions" | "bandage" | "potion";
+export type PoolButin = "interieur" | "toit" | "facade" | "route";
+/** Emplacement de butin possible (`pointsButin` de br-carte.ts) ; `p` = au sol (ou sur le toit), en mètres. */
+export interface PointButin { p: Vec3; pool: PoolButin }
+
+/** Objet au sol. `ref` : l'arme, la classe de munitions, ou null (soins). `qte` : soins lâchés à la mort (quantité conservée). */
+export interface ObjetBr { id: number; genre: GenreObjetBr; ref: ArmeFeuId | "epee" | ClasseMunitions | null; p: Vec3; qte?: number }
+/**
+ * Avion du Battle Royale : ligne droite de `depart` à `arrivee` (x, z) à `altitude` et `vitesse` constantes, de `debutT` à `finT` (horodatages
+ * serveur, ms) ; immobile au point de départ avant `debutT`. Défini UNE seule fois ici (br-chute.ts le réexporte).
+ */
+export interface AvionBr { depart: [number, number]; arrivee: [number, number]; altitude: number; vitesse: number; debutT: number; finT: number }
+/** Zone (tempête) : cercle `c0`/`r0` au début du palier, cercle visé `c1`/`r1` ; `t0` début d'attente, `t1`/`t2` début et fin du rétrécissement (ms serveur). */
+export interface ZoneBr {
+  palier: number; nbPaliers: number; phase: "attente" | "retrecit" | "fermee";
+  t0: number; t1: number; t2: number;
+  c0: [number, number]; r0: number;
+  c1: [number, number]; r1: number;
+  /** PV/s hors zone */
+  degats: number;
+}
+export interface JoueurBr { id: string; pseudo: string; couleur: string; admis: boolean; vivant: boolean; aBord: boolean; kills: number; place: number | null }
+export interface LigneBilanBr { id: string; pseudo: string; couleur: string; place: number; kills: number; degats: number; survieS: number }
+export interface BilanBr { vainqueurs: string[]; dureeMs: number; lignes: LigneBilanBr[] }
+/** Ligne des statistiques persistées d'un joueur (clé = pseudo normalisé, cf. br-stats.ts). */
+export interface LigneStatsBr { cle: string; pseudo: string; top1: number; parties: number; kills: number; meilleurePlace: number; derniereT: number }
+export interface EtatPartieBr {
+  phase: PhaseBr; hote: string; capacite: number; minJoueurs: number;
+  /** début de la phase ; fin prévue du décompte (plafond) / de l'affichage de la fin (0 sinon) */
+  debutT: number; finT: number;
+  avion: AvionBr | null; zone: ZoneBr | null;
+  /** restants / partants */
+  vivants: number; total: number;
+  /** seulement en lobby, décompte et fin (50 lignes, 5 Hz maxi) */
+  joueurs?: JoueurBr[];
+  bilan?: BilanBr;
+  annule?: true; conflitNoms?: true; nonComptee?: true;
+}
+/** Résumé de la salle BR dans le message `salons` (compteurs du choix du mode). */
+export interface ResumeSalonBr { phase: PhaseBr; joueurs: number; vivants: number; palier?: number }
+
 // ---------- données publiques ----------
 
 /** Joueur tel que vu par tout le monde (présence + tableau des scores). */
@@ -406,6 +463,8 @@ export interface EtatJoueurSnap {
   vehicule?: OccupationVehicule;
   /** pilote du titan tigre (v3) : `p` = pieds du titan ; avatar ni dessiné ni touchable (c'est le titan qu'on vise) */
   titan?: boolean;
+  /** (v8, Battle Royale) en chute libre ou sous parachute ; absent = au sol */
+  chute?: "libre" | "voile";
   vivant: boolean;
   /** invulnérable (protection d'apparition) */
   protege: boolean;
@@ -642,6 +701,17 @@ export type MessageClient =
   | { t: "lancerGrenade"; genre: GenreGrenade; o: Vec3; d: Vec3; cuissonMs?: number }
   /** Monter sur le toit du bus C3 s'il est proche. */
   | { t: "monterBus" }
+  // ---- Battle Royale (v8) ----
+  /** Quitter l'avion (phase de vol) ; ouvre ensuite le parachute avec `chute{ouvrir}`. */
+  | { t: "sauter" }
+  /** Entrées de la chute, ≈ 30 Hz pendant la chute seulement : le serveur simule en temps réel (aucun numéro de séquence ni nombre de pas). `ouvrir` vrai tant que le snap n'a pas montré `chute: "voile"`. */
+  | { t: "chute"; lacet: number; tangage: number; avance: number; lateral: number; ouvrir: boolean }
+  | { t: "ramasser"; id: number }
+  | { t: "lacher"; slot: "principale" | "secondaire" | "speciale" }
+  /** Utiliser un soin ; `null` interrompt l'usage en cours. */
+  | { t: "utiliser"; objet: "bandage" | "potion" | null }
+  /** Demande des statistiques persistées (1 toutes les 2 s) : réponse privée `statsBr`. */
+  | { t: "statsBr" }
   | { t: "ping"; t0: number };
 
 // ---------- serveur → client ----------
@@ -670,7 +740,7 @@ export type MessageServeur =
       equip: Equipement; main: Slot; munSpeciale: number; garder?: true;
     }
   /** Équipement du destinataire (ramassage d'une spéciale, munitions épuisées). Privé. */
-  | { t: "equipement"; equip: Equipement; main: Slot; munSpeciale: number; ravitaille?: ArmeFeuId | "tout" }
+  | { t: "equipement"; equip: Equipement; main: Slot; munSpeciale: number; ravitaille?: ArmeFeuId | "tout"; ajoutMunitions?: { arme: ArmeFeuId; chargeurs: number } }
   /**
    * Tir d'un autre joueur, pour les traçantes et le son (pas renvoyé au tireur). `ameliore` (v8, zombies) : arme passée au Micro-ondes, dont le
    * profil (projectile, souffle) peut différer de l'arme de base.
@@ -756,8 +826,11 @@ export type MessageServeur =
   | { t: "titan"; phase: "debut" | "fin" | "etat"; pilote: string; p: Vec3; cap: number; finT: number; raison?: "detruit" | "temps" | "depart"; par?: string }
   /** Tir du canon du titan (pour les traçantes et le son des autres ; pas renvoyé au pilote). */
   | { t: "canon"; id: string; o: Vec3; d: Vec3 }
-  /** Résumé des deux salles (v5), diffusé à TOUS les clients à la connexion puis au changement (≤ 1 Hz) : compteurs du choix du mode. */
-  | { t: "salons"; arene: { joueurs: number; enJeu: number }; zombies: { phase: PhaseZombies; joueurs: number; manche: number } }
+  /**
+   * Résumé des salles (v5), diffusé à TOUS les clients à la connexion puis au changement (≤ 1 Hz) : compteurs du choix du mode.
+   * `br` (v8) est optionnel : un message sans lui reste valide et un client v7 l'ignore.
+   */
+  | { t: "salons"; arene: { joueurs: number; enJeu: number }; zombies: { phase: PhaseZombies; joueurs: number; manche: number }; br?: ResumeSalonBr }
   /** Confirmation du changement de salle (écho de `mode`), suivie du `bienvenue` de la nouvelle salle. */
   | { t: "mode"; mode: ModeSalle }
   /** État de la partie de zombies (aux membres de la salle zombies, à chaque changement, ≤ 5 Hz). */
@@ -802,6 +875,23 @@ export type MessageServeur =
   | { t: "busC3"; evenement: "annonce" | "passage" | "fin"; p?: Vec3; cap?: number; v?: number }
   /** Ramassage d'une arme unique tombée du bus C3. */
   | { t: "ramassageArme"; id: string; par: string; arme: ArmeUniqueId }
+  // ---- Battle Royale (v8) ----
+  /** État de la partie (aux membres de la salle BR) : ≤ 5 Hz en lobby, décompte et fin, 1 Hz et sur changement en vol et en jeu. */
+  | { t: "br"; etat: EtatPartieBr }
+  /** Privé : début de ta chute (état initial). */
+  | { t: "saut"; p: Vec3; v: Vec3; lacet: number }
+  /** Privé : fin de ta chute, `p` serveur (le client repart de là ; `seq` du joueur = −1). */
+  | { t: "atterri"; p: Vec3 }
+  /** Objets au sol, à la salle ; la synchro (privée) envoie la LISTE INITIALE COMPLÈTE plus les écarts cumulés. */
+  | { t: "butin"; ajoutes?: ObjetBr[]; retires?: number[] }
+  /** Privé : réponse à `ramasser`. */
+  | { t: "ramasse"; ok: boolean; id: number; raison?: "inutile" | "loin" | "inconnu" }
+  /** Privé : stock de soins et usage en cours (`finT` = horodatage serveur). */
+  | { t: "inventaire"; bandage: number; potion: number; usage: { objet: "bandage" | "potion"; finT: number } | null }
+  /** Privé : PV et bouclier après un soin (le client ne prend pas la hausse pour de la régénération). */
+  | { t: "soin"; pv: number; bouclier: number; motif: "kill" | "bandage" | "potion" }
+  /** Statistiques persistées : top 25 et ma ligne ; réponse privée à `statsBr`, diffusé à tous en fin de partie. */
+  | { t: "statsBr"; lignes: LigneStatsBr[]; moi?: LigneStatsBr }
   | { t: "pong"; t0: number; maintenant: number }
   | { t: "erreur"; code: "plein" | "version" | "pseudo" | "flood"; message: string };
 

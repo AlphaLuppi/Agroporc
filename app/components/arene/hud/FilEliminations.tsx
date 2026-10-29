@@ -8,7 +8,7 @@ import styles from "../HudArene.module.css";
 /**
  * Fil d'éliminations (haut-droite, §5.1) : 6 lignes de 6 s au plus. Une ligne d'arme : pastille + pseudo en `--ag-ink` (la couleur du
  * serveur n'est jamais du texte), arme en nom court (« ◎ » pour la tête), pastille + pseudo. Une mort par voiture, circulation ou tigre
- * sauvage s'écrit en toutes lettres, le kill d'un tigre allié comme celui d'une arme (« Tigre »). Mes lignes : fond ambre et barre de 3u. Les annonces d'Elsa et d'information s'intercalent par ordre d'arrivée
+ * sauvage ou la tempête s'écrit en toutes lettres (« Tué par la tempête », « A quitté la partie »), le kill d'un tigre allié comme celui d'une arme (« Tigre »). Mes lignes : fond ambre et barre de 3u. Les annonces d'Elsa et d'information s'intercalent par ordre d'arrivée
  * (les ids viennent du même compteur). `aria-live="off"` : la région vive annonce l'essentiel.
  */
 export interface PropsFilEliminations {

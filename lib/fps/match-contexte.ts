@@ -5,11 +5,11 @@
  * portent Elsa et les véhicules / la circulation PNJ, et ne voient la salle que par `ContexteSalle`.
  * Spec : docs/superpowers/specs/2026-10-22-arene-v2-design.md (§5.19) et 2026-10-23-arene-hud-design.md (§3.5)
  */
-import type { Monde } from "./collision";
+import type { Boite, Monde } from "./collision";
 import type { MemoSante } from "./sante";
 import type {
-  ArmeFeuId, ArmeId, ArmeMeleeId, CauseMort, CoteMur, Equipement, EtatPartieZombies, GenreVoiture, MessageClient, MessageServeur, MonstresSnap, PhaseZombies, Posture, Siege,
-  Slot, SnapZombies, TigreLargueSnap, Vec3, VehiculeSnap, Zone,
+  ArmeFeuId, ArmeId, ArmeMeleeId, AvionBr, CauseMort, CoteMur, Equipement, EtatPartieBr, EtatPartieZombies, GenreVoiture, MessageClient, MessageServeur, MonstresSnap,
+  PhaseBr, PhaseZombies, PointButin, Posture, Siege, Slot, SnapZombies, TigreLargueSnap, Vec3, VehiculeSnap, Zone,
 } from "./protocole";
 import type { ObstacleVoiture, Tigre } from "./tigre-arene";
 import type { ExplosionGrenade } from "./grenades";
@@ -137,10 +137,11 @@ export interface ContexteSalle {
    * Place le joueur en `p` (pieds) tourné vers `lacet` : PV, équipement (copie propre), arme en main, protection d'apparition de 1,5 s, état
    * remis à zéro (vivant, seq, historique) ; renvoie le message `apparition`. `munSpeciale` (facultatif) : munitions de la spéciale portée.
    * Ne touche ni à `enJeu` ni aux règles de réentrée de l'arène. `garder` (v8, relève) : ni téléportation ni remise à zéro du mouvement (`p`,
-   * `lacet`, `seq`, budget de distance gardés) ; le message porte `garder` et le client reste où il est.
+   * `lacet`, `seq`, budget de distance gardés) ; le message porte `garder` et le client reste où il est. `prive` (Battle Royale, v9) :
+   * l'`apparition` n'est adressée qu'au joueur concerné (les autres le voient par le snap, et à bord personne n'est dedans).
    */
   placerJoueur(
-    j: JoueurSalle, p: Vec3, lacet: number, opts: { pv: number; equip: Equipement; main: Slot; munSpeciale?: number; garder?: boolean }, maintenant: number,
+    j: JoueurSalle, p: Vec3, lacet: number, opts: { pv: number; equip: Equipement; main: Slot; munSpeciale?: number; garder?: boolean; prive?: boolean }, maintenant: number,
   ): Sortie[];
   /** sortie d'arène sans règle de réentrée ni mémo de santé (`enJeu` à faux, plus vivant, spéciale perdue) ; renvoie la libération des sièges */
   retirerJoueur(j: JoueurSalle, maintenant: number): Sortie[];
@@ -355,4 +356,84 @@ export interface ServiceZombies {
   coupSecret(j: JoueurSalle, arme: ArmeMeleeId, o: Vec3, d: Vec3, maintenant: number): Sortie[];
   /** grenades en vol ou posées (tests et supervision) */
   grenadesEnVol(): number;
+}
+
+// ---------- Battle Royale (v8) ----------
+
+/** Résumé d'une salle Battle Royale (message `salons`, `/sante`). */
+export interface ResumeBr { phase: PhaseBr; joueurs: number; vivants: number; palier?: number }
+
+/**
+ * Mode Battle Royale (v8, `match-br.ts` : `creerServiceBr(ctx, opts)`) : machine d'états lobby → décompte → vol → jeu → fin, hôte, admission,
+ * zone (tempête), places, éliminations, bilan et statistiques. Une salle BR en possède un ; l'arène et les zombies n'en ont pas. Composé de deux
+ * sous-services, `VolBr` (avion et chute) et `ButinBr` (objets au sol, soins).
+ */
+export interface ServiceBr {
+  /** machine d'états, avion, chute, tempête, usages, victoire, diffusion de `br{etat}` */
+  tic(maintenant: number): Sortie[];
+  /** retour au lobby à blanc */
+  reinitialiser(maintenant: number): Sortie[];
+  /** etat, butin (liste complète), inventaire : réponse à `rejoindre` */
+  synchro(idDest: string): Sortie[];
+  /** condition de `rejoindre` (jusqu'à `finT` de l'avion) */
+  admis(id: string): boolean;
+  /** place le joueur dans l'avion (appelé par `Salle.rejoindreBr`) */
+  entreeJoueur(j: JoueurSalle, maintenant: number): Sortie[];
+  /** dans l'avion : absent du snap */
+  aBord(id: string): boolean;
+  /** à bord ou en chute : `etat` ignoré */
+  enVol(id: string): boolean;
+  /** pour le champ `chute` du snap */
+  chute(id: string): "libre" | "voile" | undefined;
+  /** `lancerPartie`, `sauter`, `chute`, `ramasser`, `lacher`, `utiliser`, `statsBr` ; les autres types renvoient [] */
+  recevoir(j: JoueurSalle, m: MessageClient, maintenant: number): Sortie[];
+  /** interrompt l'usage d'un soin, sauf pour la cause "tempete" */
+  surDegats(j: JoueurSalle, cause: CauseMort, maintenant: number): void;
+  /** le tueur est vivant, ou mort au même tic : seul un tueur valide est crédité et soigné */
+  tueurValide(tueur: JoueurSalle, maintenant: number): boolean;
+  /** instantané, place, +50 PV (tueur vivant), butin lâché ; appelé AVANT l'effacement de l'arme spéciale */
+  surMort(cible: JoueurSalle, tueur: JoueurSalle | null, cause: CauseMort, maintenant: number): Sortie[];
+  /** départ : instantané, éliminé si en partie, hôte suivant, victoire éventuelle, retour au lobby synchrone si la salle est vide */
+  liberer(j: JoueurSalle, maintenant: number): Sortie[];
+  /** nouveau membre du lobby */
+  arrivee(j: JoueurSalle, maintenant: number): Sortie[];
+  /** partie en cours (décompte, vol ou jeu) */
+  enCours(): boolean;
+  etat(): EtatPartieBr;
+  resume(): ResumeBr;
+}
+
+/** Avion, saut, éjection, chute simulée en temps réel et atterrissage (`match-br-vol.ts` : `creerVolBr(ctx, opts)`). */
+export interface VolBr {
+  /** tire la trajectoire et place l'avion (immobile jusqu'à `debutT`) ; `bord` = joueurs montés */
+  demarrer(bord: JoueurSalle[], bornes: Boite, alea: () => number, debutT: number, o: { dureeMs?: number; altitude?: number }): AvionBr;
+  /** monte le joueur dans l'avion, à l'arrêt ou en vol (admission tardive) */
+  entrer(j: JoueurSalle, t: number): Sortie[];
+  sauter(j: JoueurSalle, t: number): Sortie[];
+  recevoirChute(j: JoueurSalle, m: Extract<MessageClient, { t: "chute" }>, t: number): void;
+  /** éjection forcée à `finT`, pas de chute, atterrissages */
+  tic(t: number): Sortie[];
+  aBord(id: string): boolean;
+  enVol(id: string): boolean;
+  chute(id: string): "libre" | "voile" | undefined;
+  avion(): AvionBr | null;
+  /** joueurs qui ont touché le sol depuis le départ de l'avion */
+  atterris(): number;
+  retirer(id: string): void;
+  reinitialiser(): void;
+}
+
+/** Objets au sol, ramassage, lâcher, soins et usages (`match-br-butin.ts` : `creerButinBr(ctx, opts)`). */
+export interface ButinBr {
+  initialiser(points: readonly PointButin[], graine: number, nb: number): void;
+  /** `ramasser`, `lacher`, `utiliser` */
+  recevoir(j: JoueurSalle, m: MessageClient, t: number): Sortie[];
+  /** fin des usages */
+  tic(t: number): Sortie[];
+  /** ignore la cause "tempete" */
+  surDegats(j: JoueurSalle, cause: CauseMort, t: number): void;
+  lacherALaMort(j: JoueurSalle, t: number): Sortie[];
+  /** liste initiale complète + écarts + inventaire */
+  synchro(idDest: string): Sortie[];
+  reinitialiser(): void;
 }

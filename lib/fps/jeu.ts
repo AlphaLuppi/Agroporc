@@ -25,6 +25,12 @@
  * dessinés (`rendu-zombies.ts`), tirs et coups d'épée sur les tigres (`z<n>`), achats et relèves à la touche E, joueurs ni cibles ni obstacles,
  * ni voitures ni Elsa ni killcam ; le joueur à terre garde la caméra au sol.
  *
+ * Mode Battle Royale (v8, `opts.mode = "br"`) : monde de la carte BR (20 bâtiments creusés à toit ouvert, mêmes données que le serveur), départ
+ * sans arme à feu, vol (`ControleurVol` de `jeu-br.ts` : avion, chute libre prédite avec le `pasChute` du serveur, parachute, atterrissage
+ * confirmé par `atterri`), butin au sol décrit par le serveur seul (`ButinClient`, dessiné par `rendu-br.ts`), ramassage à la touche E,
+ * soins (H, J), arme lâchée (U), tempête sur la mini-carte, mort définitive puis spectateur (`SuiviSpectateur`) ; snap à 10 Hz interpolé sur 150 ms
+ * (`interpMs`), ni voitures ni Elsa ni tigres ni régénération ni chat vocal.
+ *
  * Les types du contrat avec l'hôte (HudEtat, JeuEvenement, JeuCallbacks, JeuHandle…) sont dans `jeu-types.ts` et réexportés ici.
  * Spec : docs/superpowers/specs/2026-10-22-agroparc-fps-design.md, 2026-10-22-arene-v2-design.md (§6.2, §13),
  * 2026-10-23-arene-hud-design.md (§3), 2026-10-23-arene-tigres-design.md (Rendu, Sort d'invocation, Réseau)
@@ -38,6 +44,16 @@ import { plafondBatimentsCreux } from "./grenades";
 import { creerControleurGrenades, type LancerDemande } from "./jeu-grenades";
 import { creerRenduGrenades } from "./rendu-grenades";
 import { CorpsTigres } from "./corps-tigres";
+import { construireMondeBr, donneesBr } from "./br-carte";
+import { BR, EQUIPEMENT_DEPART_BR, MAIN_DEPART_BR } from "./br-regles";
+import { avionVisible } from "./rendu-br-modele";
+import { creerRenduBr } from "./rendu-br";
+import { positionAvionBr } from "./br-chute";
+import { etatDepuisZoneBr } from "./br-zone";
+import {
+  CAMERA_AVION_DY, ButinClient, ControleurVol, SuiviSpectateur, degatsDeTempete, etatBrHud, etatHudBr, inviteRamassage, progressionUsage, soinInutile, vieAffichee,
+  type EntreeHudBr, type InviteRamassage,
+} from "./jeu-br";
 import { ZOMBIES, armementGriffe, echelleZombie, type TypeZombie } from "./zombies-vagues";
 import {
   MondeZombies, Rugissements, decisionMaintien, effetsMortZombie, inviteZombies, objetSecretProche, segmentsPortesFermees, sonGriffe, toucheTruckClient, trouverZombieTouche, trouverZombiesMelee, trouverZombiesTouches,
@@ -74,9 +90,9 @@ import { tracer, type Cible } from "./tir";
 import { trouverCiblesMelee } from "./melee";
 import {
   CIBLE_TIGRE, CIBLE_TITAN, JEU, OEIL_SIEGE, OEIL_TITAN, SILHOUETTE, estIdZombie, estMelee, oeilDe,
-  type ArmeFeuId, type ArmeId, type ArmeMeleeId, type EtatJoueurSnap, type EtatPartieZombies, type JoueurPublic, type MessageServeur, type RaisonAchat, type Siege, type Slot, type Vec3, type VehiculeSnap, type Zone,
+  type ArmeFeuId, type ArmeId, type ArmeMeleeId, type EtatJoueurSnap, type EtatPartieBr, type EtatPartieZombies, type JoueurPublic, type MessageServeur, type RaisonAchat, type Siege, type Slot, type Vec3, type VehiculeSnap, type Zone,
 } from "./protocole";
-import type { EquipementJeu, EtatZombiesHud, HudEtat, HudLive, JeuCallbacks, JeuHandle, JeuOptions } from "./jeu-types";
+import type { EquipementJeu, EtatBrHud, EtatZombiesHud, HudEtat, HudLive, JeuCallbacks, JeuHandle, JeuOptions } from "./jeu-types";
 import { ajouterEcho, ajouterPorte, creerRadarFrame, definirElsa, ajouterVoiture, ajouterVoiturePnj, purgerEchos, viderRadarFrame, type RadarFrame } from "./radar";
 import { SuiviRadar, type JoueurRadarEntree } from "./jeu-radar";
 import { Interpolateur, gardePosition, type ClientArene } from "./reseau";
@@ -201,21 +217,36 @@ function mondeDynamiqueVide(): MondeDynamique {
 /** Équipement de départ de la salle zombies (celui du serveur, `EQUIPEMENT_DEPART_ZOMBIES`) : pistolet et couteau, pas d'arme principale. */
 const DEPART_ZOMBIES = { principale: "mitraillette", secondaire: "pistolet", speciale: null, sansPrincipale: true } as const;
 
+/** Distance (m) à laquelle le butin au sol alimente `JeuHandle.br()` (objets proches du HUD). */
+const PORTEE_BUTIN_HUD_M = 60;
+/** Hauteur (m) de l'œil d'un joueur en chute libre ou sous voile au-dessus de ses pieds. */
+const OEIL_CHUTE_M = 1.6;
+
+/** `JeuHandle` du mode Battle Royale : ajoute la navigation du spectateur (boutons Précédent / Suivant de l'écran d'élimination). */
+export type JeuHandleBr = JeuHandle & {
+  /** change de joueur suivi (sans effet hors spectateur) */
+  suivreSpectateur(sens: "precedent" | "suivant"): void;
+};
+
 /**
  * `equip` : l'équipement choisi (lobby, écran de mort, pause) ; on entre avec l'arme principale en main.
  * `opts.mode` : "arene" (défaut, comportement historique) ou "zombies" (v5) : monde de la carte « Cour des Restos » (mêmes données que le
  * serveur), tigres zombies interpolés et dessinés, aucun truck / voiture / PNJ / Elsa / circulation, pas de killcam ni de réentrée, joueurs
  * ni cibles ni obstacles pour les tirs et la mêlée (pas de tir allié), achats et relèves à la touche E.
  */
-export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, client: ClientArene, equip: EquipementJeu, cb: JeuCallbacks, opts: JeuOptions = {}): JeuHandle {
+export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, client: ClientArene, equip: EquipementJeu, cb: JeuCallbacks, opts: JeuOptions = {}): JeuHandleBr {
   const modeZ = opts.mode === "zombies";
-  /** données de la scène du jeu : la scène brute, ou en zombies la copie aux pièces synthétiques (même fonction que le serveur) */
+  const modeBR = opts.mode === "br";
+  /** snap du serveur : 20 Hz en arène et en zombies, 10 Hz en BR (50 joueurs), d'où une interpolation plus longue */
+  const interpMs = modeBR ? BR.interpolationMs : JEU.interpolationMs;
+  /** données de la scène du jeu : la scène brute, ou en zombies / BR la copie aux pièces synthétiques (même fonction que le serveur) */
   const donneesZ = modeZ ? donneesZombies(sceneBrute) : null;
-  const data: SceneData = donneesZ ? donneesZ.data : sceneBrute;
+  const donneesB = modeBR ? donneesBr(sceneBrute) : null;
+  const data: SceneData = donneesZ ? donneesZ.data : donneesB ? donneesB.data : sceneBrute;
   let equipSuivant: EquipementJeu = equip.melee === "epee"
     ? { principale: equip.principale, secondaire: equip.secondaire, melee: "epee" }
     : { principale: equip.principale, secondaire: equip.secondaire };
-  const monde: Monde = modeZ ? construireMondeZombies(sceneBrute) : construireMonde(data);
+  const monde: Monde = modeZ ? construireMondeZombies(sceneBrute) : modeBR ? construireMondeBr(sceneBrute) : construireMonde(data);
   const reduit = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   // ---------- rendu ----------
@@ -274,8 +305,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   // ---------- monde dynamique (voitures PNJ et conduisibles, Elsa) ----------
   const nbPnj = flotte(construireCircuits()).length;
   const mondeJeu = new MondeJeu(data, monde);
-  // zombies : ni Truck, ni voitures, ni PNJ, ni Elsa (le monde dynamique est une coquille vide qui ne dessine rien)
-  const dyn: MondeDynamique = modeZ ? mondeDynamiqueVide() : creerMondeDynamique(scene, { nbPnj, nbVehicules: EMPLACEMENTS_VOITURES.length, truck: placeTruck(data) });
+  // zombies et BR : ni Truck, ni voitures, ni PNJ, ni Elsa (le monde dynamique est une coquille vide qui ne dessine rien)
+  const dyn: MondeDynamique = modeZ || modeBR ? mondeDynamiqueVide() : creerMondeDynamique(scene, { nbPnj, nbVehicules: EMPLACEMENTS_VOITURES.length, truck: placeTruck(data) });
   /** fumées, flammes et explosions des voitures (v3 §4) */
   const feux = creerFeux(scene);
   const visib = new VisibilitePseudos(monde);
@@ -293,7 +324,10 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   // comprises) et sous le faux plafond des bâtiments creusés (comme les grenades et les projectiles)
   const rz = modeZ ? creerRenduZombies(scene, collisionsDuMonde(monde, plafondBatimentsCreux(monde, PLAFOND_INTERIEUR_M))) : null;
   // (v7) intérieurs des bâtiments creusés, objets de la carte (craie, distributeurs, boîte, planches, bonus…), Truck Muche des livraisons
-  const rInterieurs = donneesZ ? creerRenduInterieurs(scene, data, donneesZ.pieces) : null;
+  // BR : les 20 bâtiments creux à toit ouvert (on voit le ciel en fil de fer), éclairés d'emblée (aucun disjoncteur)
+  const rInterieurs = donneesZ
+    ? creerRenduInterieurs(scene, data, donneesZ.pieces)
+    : donneesB ? creerRenduInterieurs(scene, data, donneesB.pieces, { sansPlafond: true, batiments: donneesB.creux, courant: true }) : null;
   const rObjets = modeZ ? creerRenduObjetsZombies(scene) : null;
   // (v8) le Truck des livraisons a des phares rouges qui percent le brouillard ; ses mini Trucks foncent sur les joueurs ; la foudre
   const truckZ = modeZ ? creerModeleTruckMuche({ phares: true, longueurFaisceau: 22 }) : null;
@@ -359,14 +393,16 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     ? new ControleurArmes({ ...DEPART_ZOMBIES }, "secondaire", {
       reserveChargeurs: ZOMBIES.ravitaillementChargeurs, reserveChargeursAmeliore: ZOMBIES.ravitaillementChargeursAmeliore, zombies: true,
     })
-    : new ControleurArmes({ principale: equip.principale, secondaire: equip.secondaire, speciale: null }, "principale");
+    : modeBR
+      ? new ControleurArmes(EQUIPEMENT_DEPART_BR, MAIN_DEPART_BR, { reserveChargeurs: BR.reserveChargeursDepart, reserveChargeursMax: BR.reserveChargeursMax })
+      : new ControleurArmes({ principale: equip.principale, secondaire: equip.secondaire, speciale: null }, "principale");
   /** cadence locale par arme (le serveur garde la sienne) */
   /** prochain tir permis par arme (la main gauche d'une paire akimbo a sa clé `arme:g`) */
   const prochains = new Map<ArmeId | `${ArmeId}:g`, number>();
   let delaiApparitionT = 0;
   /** instant du dernier tir et son arme (le recul ne retombe qu'un moment après) */
   let dernierTirT = -Infinity;
-  let dernierTirArme: ArmeFeuId = modeZ ? "pistolet" : equip.principale;
+  let dernierTirArme: ArmeFeuId = modeZ || modeBR ? "pistolet" : equip.principale;
   /** recul de tangage (rad) ajouté par les tirs et pas encore revenu ni compensé à la souris */
   let reculAcc = 0;
   /** recul visuel (rad) : s'ajoute au tangage de la vue ET du tir, retombe vite (v2 §13.2.4) */
@@ -431,7 +467,28 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   const mesAtouts = (): readonly string[] => partieZ?.joueurs.find((x) => x.id === client.id)?.atouts ?? [];
   /** PV max (le Gratin Dauphinois en zombies) et délai de régénération de la salle */
   const pvMaxMoi = (): number => (modeZ && mesAtouts().includes("gratin") ? ZOMBIES.pvMaxGratin : JEU.pvMax);
-  const regenDelaiS = (): number => (modeZ ? ZOMBIES.regenDelaiMs : JEU.regenDelaiMs) / 1000;
+  /** BR : aucune régénération (délai infini), les PV ne remontent que par le +50 du kill, les bandages et les potions */
+  const regenDelaiS = (): number => (modeBR ? Infinity : (modeZ ? ZOMBIES.regenDelaiMs : JEU.regenDelaiMs) / 1000);
+  // ---- état du mode Battle Royale (v8) ----
+  /** vol : avion, chute libre, voile, attente de `atterri` ; le serveur ignore mes `etat` tant que je suis en l'air */
+  const vol = new ControleurVol();
+  /** objets au sol (message `butin`) : aucune génération côté client */
+  const butin = new ButinClient();
+  const renduBr = modeBR ? creerRenduBr(scene) : null;
+  let partieBr: EtatPartieBr | null = null;
+  /** `apparition` reçue, l'avion de la partie pas encore connu (ou inversement) : on monte dès que les deux sont là */
+  let entreeAvionAttendue = false;
+  /** début du vol de l'avion que `vol` connaît (un changement, au départ de l'avion, le met à jour) */
+  let avionDebutConnu = NaN;
+  let bandages = 0;
+  let potions = 0;
+  let usageSoin: { objet: "bandage" | "potion"; finT: number } | null = null;
+  /** place provisoire à ma mort (joueurs en vie avant elle), null tant que je vis */
+  let placeBr: number | null = null;
+  let suivi = new SuiviSpectateur();
+  /** objet que j'ai demandé à ramasser, pour le son de la réponse `ramasse` (l'objet disparaît du butin à `butin{retires}`) */
+  let ramassageEnAttente: { id: number; genre: string } | null = null;
+  let zoneRetrecit = false;
   /** portes encore fermées (segments), recalculées à chaque état de partie reçu */
   let portesFermees: { id: string; p: [number, number]; q: [number, number] }[] = [];
   /** hauteur de l'œil au-dessus des pieds, lissée (accroupi : 1,30 m ; assis : OEIL_SIEGE) */
@@ -519,9 +576,13 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   /** (v3) je pilote le titan tigre */
   const pilote = () => titan.actif();
   const vitesseH = () => Math.hypot(moi.v[0], moi.v[2]);
-  const peutAgir = () => apparu && vivant;
+  /** BR : à bord de l'avion, en chute libre ou sous voile (ni arme, ni tir, ni ramassage) */
+  const enVolBr = () => modeBR && (vol.phase() !== "sol" || entreeAvionAttendue);
+  const peutAgir = () => apparu && vivant && !enVolBr();
   /** killcam en cours : rien de ce que je fais n'a de sens (mort), les effets en direct sont coupés pendant le rejeu */
   const enKillcam = () => kc.actif();
+  /** BR : je suis mort, la killcam est passée : je regarde un joueur en vie */
+  const spectateurActif = () => modeBR && apparu && !vivant && !kc.actif();
 
   /** Rejeu à la première personne en cours (phase « rejeu » avec la caméra du tueur) ou carte figée sur son dernier état. */
   let enReplay = false;
@@ -966,9 +1027,70 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     }
   }
 
+  // ---------- Battle Royale : butin, soins, spectateur ----------
+  /** L'objet à portée (≤ 2,5 m) et le texte de l'invite « [E] … » ; null hors BR, en vol, mort ou sans objet. */
+  function inviteBr(): InviteRamassage | null {
+    if (!modeBR || !peutAgir() || enKillcam()) return null;
+    return inviteRamassage(butin, moi.p, armes.equipement(), { bandage: bandages, potion: potions }, monde);
+  }
+
+  /** E en BR : ramasse l'objet le plus proche (le serveur est juge : distance, pile, arme compatible) ; refus local si cela ne servirait à rien. */
+  function interagirBr() {
+    if (!peutAgir() || enKillcam()) return;
+    const inv = inviteBr();
+    if (!inv) return;
+    if (inv.refuse) { sons.achat(false); return; }
+    ramassageEnAttente = { id: inv.id, genre: inv.objet.genre };
+    client.envoyer({ t: "ramasser", id: inv.id });
+  }
+
+  /** U : lâche l'arme en main à ses pieds (principale, secondaire ou spéciale ; ni le couteau ni l'épée). */
+  function lacherArmeBr() {
+    if (!modeBR || !peutAgir() || enKillcam()) return;
+    const slot = armes.slotActif();
+    if (slot === "principale" || slot === "secondaire" || slot === "speciale") client.envoyer({ t: "lacher", slot });
+  }
+
+  /** H / J : utilise un bandage ou une potion ; la même touche pendant l'usage l'interrompt. */
+  function utiliserSoin(objet: "bandage" | "potion") {
+    if (!modeBR || !peutAgir() || enKillcam()) return;
+    if (usageSoin?.objet === objet) { client.envoyer({ t: "utiliser", objet: null }); return; }
+    // refus local, sans aller-retour : plus de soin en stock, ou rien à soigner (le serveur ignorerait la demande sans rien dire)
+    if ((objet === "bandage" ? bandages : potions) <= 0 || soinInutile(objet, pv, bouclier, JEU.bouclierMax)) { sons.achat(false); return; }
+    client.envoyer({ t: "utiliser", objet });
+  }
+
+  /** Joueurs que le spectateur peut suivre : les joueurs du snap interpolé, moi exclu. */
+  function candidatsSuivi() {
+    const r: { id: string; p: Vec3; vivant: boolean }[] = [];
+    for (const [id, e] of etats) if (id !== client.id && !e.titan) r.push({ id, p: e.p, vivant: e.vivant });
+    return r;
+  }
+  function suivreSpectateur(sens: "precedent" | "suivant") {
+    if (!spectateurActif()) return;
+    if (sens === "suivant") suivi.suivant(candidatsSuivi());
+    else suivi.precedent(candidatsSuivi());
+  }
+
+  /** Le joueur est dans l'avion de la partie : `vol` connaît son tracé (avion, départ). Appelé à l'`apparition` et à chaque `br{etat}`. */
+  function monterDansAvion() {
+    const avion = partieBr?.avion;
+    if (!avion) return;
+    if (entreeAvionAttendue) {
+      entreeAvionAttendue = false;
+      avionDebutConnu = avion.debutT;
+      vol.entrerAvion(avion, client.maintenantServeur());
+    } else if (vol.phase() === "avion" && avion.debutT !== avionDebutConnu) {
+      // l'avion part (le décompte est fini) : même trajectoire, seul le départ change
+      avionDebutConnu = avion.debutT;
+      vol.entrerAvion(avion, client.maintenantServeur());
+    }
+  }
+
   /** E : monter dans la voiture à portée, ou en descendre. Le serveur attribue le siège ; on attend sa réponse (≤ 1 s). */
   function interagir() {
     if (modeZ) { interagirZombies(); return; }
+    if (modeBR) { interagirBr(); return; }
     if (!peutAgir() || enKillcam() || embarquementFin > 0 || pilote()) return;
     if (vehicule.actif()) {
       client.envoyer({ t: "descendre" });
@@ -1014,13 +1136,13 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   }
 
   function lancerFrappe(cible: Vec3) {
-    if (!peutAgir() || enKillcam() || entracte) return;
+    if (modeBR || !peutAgir() || enKillcam() || entracte) return;
     client.envoyer({ t: "lancerFrappe", cible });
     sons.sireneFrappe();
   }
 
   function lancerFumigene() {
-    if (!peutAgir() || enKillcam() || entracte || vehicule.actif() || pilote()) return;
+    if (modeBR || !peutAgir() || enKillcam() || entracte || vehicule.actif() || pilote()) return;
     const o = oeil();
     const dir = directionVisee(lacet, tangage, 0);
     const v: Vec3 = [dir[0] * 18, dir[1] * 18 + 4, dir[2] * 18];
@@ -1074,7 +1196,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   }
 
   function monterBus() {
-    if (!peutAgir() || enKillcam() || entracte || vehicule.actif() || pilote()) return;
+    if (modeBR || !peutAgir() || enKillcam() || entracte || vehicule.actif() || pilote()) return;
     client.envoyer({ t: "monterBus" });
   }
 
@@ -1259,6 +1381,18 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     // protection d'apparition) : mitraillette comprise, il faut relâcher puis réappuyer
     tirConsomme = true;
     tirMaintenu = false;
+    if (modeBR) {
+      // BR : l'apparition place le joueur DANS l'avion (à l'arrêt pendant le décompte), pas au sol ; invulnérable jusqu'à l'atterrissage
+      protege = true;
+      protegeFin = t;
+      placeBr = null;
+      usageSoin = null;
+      suivi = new SuiviSpectateur(client.id ?? "");
+      vol.reinitialiser();
+      avionDebutConnu = NaN;
+      entreeAvionAttendue = true;
+      monterDansAvion();
+    }
   }
 
   /**
@@ -1319,7 +1453,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     switch (m.t) {
       case "bienvenue":
         majInfos(m.joueurs);
-        entracte = m.match.phase === "entracte";
+        entracte = !modeBR && m.match.phase === "entracte";
         break;
       case "presence": {
         majInfos(m.joueurs);
@@ -1333,8 +1467,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
           arreterReanimation();
           // le serveur a retiré la charge du sort à la sortie de l'arène, son annonce peut ne jamais nous parvenir
           mondeTigres.perdreCharge();
-          if (modeZ) {
-            // zombies : retiré par le serveur (partie finie, retour au lobby ; plus d'éviction pour inactivité depuis la v8) : pas de réentrée, l'hôte ramène au lobby
+          if (modeZ || modeBR) {
+            // zombies et BR : retiré par le serveur (partie finie ou annulée, retour au lobby ; plus d'éviction pour inactivité en zombies depuis la v8) : pas de réentrée, l'hôte ramène au lobby
             cb.sortir();
             break;
           }
@@ -1345,7 +1479,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
         break;
       }
       case "match":
-        entracte = m.match.phase === "entracte";
+        entracte = !modeBR && m.match.phase === "entracte";
         break;
       case "snap": {
         interp.ajouter({ ts: m.ts, j: m.j });
@@ -1355,9 +1489,15 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
         jm.alimenter(m.ts, m.monstres);
         if (modeZ) mz.alimenter(m.ts, m.zombies);
         const s = m.j.find((x) => x.id === client.id);
+        if (modeBR && s) {
+          // chute : le snap est en retard de ses ≈ 150 ms de trajet et d'intervalle ; on le rejoint à ma vitesse avant de comparer (recalage > 25 m)
+          const age = borne((client.maintenantServeur() - m.ts) / 1000, 0, 1);
+          const vv = vol.etat().v;
+          if (vol.recaler([s.p[0] + vv[0] * age, s.p[1] + vv[1] * age, s.p[2] + vv[2] * age], s.chute)) { const e = vol.etat(); moi.p = e.p; moi.v = e.v; }
+        }
         if (s && vivant) {
-          // des PV qui remontent sans cadeau d'Elsa : la régénération tourne (le délai de 5 s est donc écoulé)
-          if (s.pv > pv && s.pv < pvMaxMoi()) {
+          // des PV qui remontent sans cadeau d'Elsa : la régénération tourne (le délai de 5 s est donc écoulé) ; jamais en BR (les hausses viennent de `soin`)
+          if (!modeBR && s.pv > pv && s.pv < pvMaxMoi()) {
             dernierDegatT = Math.min(dernierDegatT, t - regenDelaiS());
             if (t - dernierSonRegenT > 0.25) { dernierSonRegenT = t; sons.regen(); }
           }
@@ -1373,6 +1513,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       case "equipement":
         armes.appliquerServeur(m, ms());
         if (modeZ && m.ravitaille === "tout") annoncer("Munitions max !", "bonus");
+        // BR : une boîte de munitions ajoute des chargeurs à la RÉSERVE de l'arme sans remplir son chargeur
+        if (m.ajoutMunitions) armes.ajouterReserve(m.ajoutMunitions.arme, m.ajoutMunitions.chargeurs);
         break;
       case "tir": {
         if (m.id === client.id) break;
@@ -1429,7 +1571,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
           pv = m.pv;
           bouclier = m.bouclier;
           dernierDegatT = t;
-          if (vivant) {
+          if (vivant && !(modeBR && degatsDeTempete(m))) {
             sons.degat();
             const sens = Math.random() < 0.5 ? -1 : 1;
             secousse = SECOUSSE_DEGAT * sens;
@@ -1460,6 +1602,18 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       case "mort": {
         if (m.cible === client.id) {
           reapparitionFin = t + m.delai / 1000;
+          if (modeBR) {
+            // mort définitive : killcam (tueur) puis spectateur ; place provisoire = joueurs en vie avant ma mort
+            placeBr = partieBr?.vivants ?? null;
+            vol.reinitialiser();
+            entreeAvionAttendue = false;
+            usageSoin = null;
+            ramassageEnAttente = null;
+            sons.ventChute(null);
+            sons.avertissementZone(false);
+            suivi = new SuiviSpectateur(client.id ?? "");
+            suivi.commencer(m.par !== "" && m.par !== client.id ? m.par : null, moi.p, candidatsSuivi());
+          }
           tomber();
           kc.surMort(m, client.id);
           cb.evenement({ type: "mort", par: m.par, arme: m.arme, cause: m.cause, zone: m.zone, delai: m.delai, ts: m.ts, tueur: m.tueur });
@@ -1798,6 +1952,68 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       case "ramassageArme":
         if (m.id === client.id) sons.ramassage("arme");
         break;
+      // ---- Battle Royale (v8) ----
+      case "br": {
+        if (!modeBR) break;
+        partieBr = m.etat;
+        monterDansAvion();
+        const retrecit = m.etat.zone?.phase === "retrecit";
+        if (retrecit && !zoneRetrecit && apparu && vivant) sons.zoneSeResserre();
+        zoneRetrecit = retrecit;
+        break;
+      }
+      case "saut": {
+        // ordre de sauter ou éjection forcée à l'arrivée de l'avion : début de MA chute, à l'état du serveur
+        if (!modeBR) break;
+        entreeAvionAttendue = false;
+        vol.surSaut(m);
+        moi.p = [m.p[0], m.p[1], m.p[2]];
+        moi.v = [m.v[0], m.v[1], m.v[2]];
+        moi.auSol = false;
+        viseMaintenu = false;
+        tirMaintenu = false;
+        break;
+      }
+      case "atterri": {
+        // fin de la chute : le mouvement normal repart de la position du serveur (je m'y téléporte si ma prédiction en diffère de plus de 0,5 m)
+        if (!modeBR) break;
+        const r = vol.surAtterri(m.p);
+        moi = etatInitial(r.p);
+        hauteurOeilLissee = OEIL_CHUTE_M;
+        protege = true;
+        protegeFin = t + BR.protectionAtterrissageMs / 1000;
+        tirMaintenu = false;
+        tirConsomme = true;
+        sautDemande = false;
+        sons.ventChute(null);
+        break;
+      }
+      case "butin":
+        if (modeBR) butin.appliquer(m);
+        break;
+      case "ramasse": {
+        if (!modeBR) break;
+        const attente = ramassageEnAttente && ramassageEnAttente.id === m.id ? ramassageEnAttente : null;
+        if (attente) ramassageEnAttente = null;
+        if (m.ok) sons.ramassage(attente && (attente.genre === "bandage" || attente.genre === "potion") ? "soin" : "arme");
+        else sons.achat(false);
+        break;
+      }
+      case "inventaire": {
+        if (!modeBR) break;
+        bandages = m.bandage;
+        potions = m.potion;
+        if (m.usage && usageSoin?.objet !== m.usage.objet) sons.usageSoin(m.usage.objet, "debut");
+        usageSoin = m.usage ? { objet: m.usage.objet, finT: m.usage.finT } : null;
+        break;
+      }
+      case "soin":
+        if (!modeBR) break;
+        pv = m.pv;
+        bouclier = m.bouclier;
+        if (m.motif === "kill") sons.regen();
+        else sons.usageSoin(m.motif, "fin");
+        break;
       default:
         break;
     }
@@ -1813,7 +2029,10 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
         case "saut": sautDemande = true; break;
         case "sprint": dashDemande = true; break;
         case "recharger": demarrerRecharge(); break;
-        case "tir": if (vivant) { tirMaintenu = true; tirPresse = t; tirConsomme = false; } break;
+        case "tir":
+          if (vivant) { tirMaintenu = true; tirPresse = t; tirConsomme = false; }
+          else if (spectateurActif()) suivreSpectateur("suivant");
+          break;
         case "visee": viseMaintenu = !estMelee(armes.armeEnMain()); visePresse = t; viseConsomme = false; break; // pas de visée avec une arme blanche
         case "accroupi": if (accroupiBascule) accroupiBascTenu = !accroupiBascTenu; break;
         case "armePrincipale": case "armeSecondaire": case "couteau": case "armeSpeciale": {
@@ -1833,7 +2052,12 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
         case "grenade": if (modeZ) presserGrenade("frag"); break;
         case "remontoir": if (modeZ) presserGrenade("remontoir"); break;
         case "zoomLunette": if (lunetteActive()) changerZoom(1, true); break;
-        case "parler": voix.parler(true); break;
+        case "parler": if (!modeBR) voix.parler(true); break;
+        case "soigner": utiliserSoin("bandage"); break;
+        case "potion": utiliserSoin("potion"); break;
+        case "lacher": lacherArmeBr(); break;
+        case "spectateurSuivant": suivreSpectateur("suivant"); break;
+        case "spectateurPrecedent": suivreSpectateur("precedent"); break;
         default: break;
       }
     }
@@ -1973,17 +2197,23 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     const lunette = lunetteActive();
     const af = armeFeu();
     const invZ = modeZ ? inviteZ() : INVITE_VIDE;
+    const invBr = inviteBr();
     const inv = modeZ
       ? { invite: invZ.invite, detail: invZ.bloque ? `${invZ.detail} · ${invZ.bloque}` : invZ.detail, vehicule: null }
-      : peutAgir() && !enKillcam()
+      : modeBR
+        ? { invite: invBr ? "ramasser" as const : "" as const, detail: invBr?.detail ?? "", vehicule: null }
+        : peutAgir() && !enKillcam()
         ? mondeJeu.invite(moi.p, info ? info.siege : null, client.maintenantServeur())
         : { invite: "" as const, detail: "", vehicule: null };
     const kcActif = kc.actif();
     const phase = kcActif ? kc.phase() : "";
     const progression = kcActif ? kc.progression() : -1;
+    // spectateur BR : la vie du joueur suivi, pas la mienne (0 depuis ma mort)
+    const specte = spectateurActif();
+    const vie = vieAffichee(specte, specte ? etats.get(suivi.cible() ?? "") : undefined, { pv, bouclier });
     return {
-      pv: Math.max(0, Math.round(pv)),
-      bouclier: Math.max(0, Math.round(bouclier)),
+      pv: Math.max(0, Math.round(vie.pv)),
+      bouclier: Math.max(0, Math.round(vie.bouclier)),
       arme,
       slot: armes.slotActif(),
       slots: serialiserSlots(armes.lignes()),
@@ -2005,10 +2235,12 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       ecartViseur: ecartViseur(),
       distanceVisee: lunette ? distanceVisee : -1,
       mur: !!moi.mur && vivant,
-      mort: !vivant,
+      // BR avant la première apparition : ni mort ni spectateur (l'apparition suit `rejoindre` de quelques ms)
+      mort: !vivant && !(modeBR && !apparu),
       reapparitionDans: vivant ? 0 : Math.max(0, Math.round((reapparitionFin - t) * 10) / 10),
-      protege: protege && vivant,
-      protegeRestant: protege && vivant ? Math.max(0.5, Math.ceil((protegeFin - t) * 2) / 2) : 0,
+      // BR : invulnérable en l'air sans minuteur, puis `protectionAtterrissageMs` après l'atterrissage
+      protege: protege && vivant && !enVolBr(),
+      protegeRestant: protege && vivant && !enVolBr() ? Math.max(0.5, Math.ceil((protegeFin - t) * 2) / 2) : 0,
       verrouille: verrouille(),
       connecte: client.id !== null,
       entracte,
@@ -2033,6 +2265,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
         mode: "zombies" as const, argent: argentZ, manche: partieZ?.manche ?? 0, restants: mz.restants(), aTerre: aTerreZ, elimine: elimineZ,
         invitePrix: invZ.prix, inviteAssez: invZ.bloque ? true : invZ.assez, reanime: reanimCible !== null || reparFenetre !== null,
       } : {}),
+      // BR : une plaque « ramasser » en refus (aucune arme compatible, pile pleine) passe en danger comme un achat sans argent
+      ...(modeBR ? { mode: "br" as const, inviteAssez: !invBr?.refuse, ...etatHudBr(entreeHudBr()) } : {}),
       dansFumee: vivant && (monstresImage?.fumigenes?.some((f) => Math.hypot(moi.p[0] - f.p[0], moi.p[2] - f.p[2]) <= 12) ?? false),
     };
   }
@@ -2058,6 +2292,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     radarFrame.x = pos[0];
     radarFrame.z = pos[2];
     radarFrame.lacet = lacet;
+    radarFrame.zoneBr = null;
     const ve = vehicule.etat();
     radarFrame.capVehicule = info && ve ? ve.cap : NaN;
     radarFrame.vitesse = info && ve ? Math.abs(ve.v) : vitesseH();
@@ -2079,6 +2314,18 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       // tigres VUS (pas de wallhack) et portes encore fermées ; ni PNJ, ni voitures, ni Elsa
       suiviRadar.majZombies(radarFrame, t, dt, camPos, directionVisee(camLacet, camTangage, 0), mz.zombies(), mz.nombre());
       for (const p of portesFermees) ajouterPorte(radarFrame, p.p[0], p.p[1], p.q[0], p.q[1]);
+      purgerEchos(radarFrame, dt);
+      return;
+    }
+    if (modeBR) {
+      // tempête : cercle courant et prochain cercle (le dernier palier n'a plus de cible : les deux se confondent) ; ni PNJ, ni voitures, ni Elsa
+      if (partieBr?.zone) {
+        const z = etatDepuisZoneBr(partieBr.zone, client.maintenantServeur());
+        radarFrame.zoneBr = {
+          x: z.centre[0], z: z.centre[1], r: z.rayon,
+          prochainX: z.cible ? z.cible.c[0] : z.centre[0], prochainZ: z.cible ? z.cible.c[1] : z.centre[1], prochainR: z.cible ? z.cible.r : z.rayon,
+        };
+      }
       purgerEchos(radarFrame, dt);
       return;
     }
@@ -2155,7 +2402,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
 
   const listeVisible: JoueurVisible[] = [];
   function majDistants(dt: number) {
-    etats = interp.echantillon(client.maintenantServeur() - JEU.interpolationMs);
+    etats = interp.echantillon(client.maintenantServeur() - interpMs);
     {
       // conducteur : les occupants de ma voiture (dessinée à l'état local) suivent la caisse, sinon ils flottent 3 à 4 m derrière
       const info = vehicule.actif();
@@ -2163,14 +2410,15 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       if (info && ev) etats = recalerOccupants(etats, client.id, info.vehicule, ev);
     }
     etatsRendu = enReplay && joueursRejouesCache ? joueursRejouesCache : etats;
-    // pendant le rejeu, notre propre avatar est dessiné (on se voit mourir) ; sinon jamais
+    // pendant le rejeu, notre propre avatar est dessiné (on se voit mourir) ; sinon jamais ; en spectateur, jamais celui du joueur dont on a les yeux
+    const suiviId = spectateurActif() ? suivi.cible() : null;
     for (const [id, e] of etatsRendu) {
-      if ((id === client.id && !enReplay) || e.titan) continue;
+      if ((id === client.id && !enReplay) || e.titan || id === suiviId) continue;
       const d = distants.get(id) ?? creerAvatarDistant(id);
       d.avatar.maj(e, dt);
     }
     for (const id of [...distants.keys()]) {
-      if (!etatsRendu.has(id) || (id === client.id && !enReplay) || etatsRendu.get(id)?.titan) retirerAvatar(id);
+      if (!etatsRendu.has(id) || (id === client.id && !enReplay) || etatsRendu.get(id)?.titan || id === suiviId) retirerAvatar(id);
     }
     // pseudos : seulement si le joueur est VU (distance, champ de vision, ligne de vue), jamais pendant le rejeu
     listeVisible.length = 0;
@@ -2178,7 +2426,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       if (id === client.id || e.titan) continue;
       listeVisible.push({ id, p: e.p, accroupi: !!e.accroupi || !!e.vehicule, vivant: e.vivant });
     }
-    if (!modeZ) {
+    if (!modeZ && !modeBR) {
       const te = dyn.elsaTete();
       listeVisible.push({ id: "elsa", p: [te[0], te[1] - SILHOUETTE.tete.y, te[2]], vivant: true });
     }
@@ -2208,6 +2456,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   }
   /** Voitures PNJ, voitures conduisibles, épaves, feux et Elsa (rendu three), à l'horloge serveur ou, en rejeu, à l'instant rejoué. */
   function majMondeDynamique(dt: number) {
+    if (modeBR) return;
     // zombies : ni voitures ni Elsa, mais les explosions (grenades, Truck, armes explosives) passent par les feux
     if (modeZ) {
       // (v8) tigres en feu : des flammes sur leur dos (sources de feu), le givre des tigres gelés
@@ -2255,7 +2504,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   /** (v3) Monstres : interpolés comme les joueurs ; mon titan est à l'état local (sans retard). Pas lourds du tigre et du titan. */
   function majMonstres(dt: number) {
     const tsServeur = client.maintenantServeur();
-    monstresImage = jm.a(tsServeur - JEU.interpolationMs);
+    monstresImage = jm.a(tsServeur - interpMs);
     const local = titan.etat();
     if (local && monstresImage.titan && client.id) monstresImage.titan = { ...monstresImage.titan, p: local.p, cap: local.cap, v: local.v };
     const ti = monstresImage.titan;
@@ -2471,8 +2720,9 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
    * moteur de l'avion. Pendant le rejeu de la killcam, rien du présent ne se superpose au passé : tigres, avion et leurs sons sont coupés.
    */
   function majTigres(dt: number) {
+    if (modeBR) return;
     const tsServeur = client.maintenantServeur();
-    const ts = tsServeur - JEU.interpolationMs;
+    const ts = tsServeur - interpMs;
     tigresVus = mondeTigres.tigresA(ts);
     tigresDessines = tigresVus;
     const av = mondeTigres.avionA(tsServeur);
@@ -2486,14 +2736,42 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     sons.avion(av ? placeSon(av.p) : null);
   }
 
+  /**
+   * (BR) Butin, avion, mur de la tempête et anneau de la prochaine zone (rendu), intérieurs des bâtiments creux, sons du vol et de la zone.
+   * Pendant le rejeu de la killcam rien du présent ne se superpose au passé : le rendu est caché et les sons de zone et de vol sont coupés.
+   */
+  function majBr(dt: number) {
+    if (!modeBR || !renduBr) return;
+    const tsServeur = client.maintenantServeur();
+    rInterieurs?.maj(t, dt);
+    renduBr.maj({
+      tsServeur, oeil: camPos, avion: partieBr?.avion ?? null, zone: partieBr?.zone ?? null, butin: butin.pourDessin(), visible: !enReplay,
+    }, dt);
+    const avion = partieBr?.avion ?? null;
+    sons.avion(!enReplay && avion && avionVisible(avion, tsServeur) ? placeSon(positionAvionBr(avion, tsServeur)) : null);
+    const e = vol.etat();
+    sons.ventChute(vivant && !enReplay && e.phase === "libre" ? Math.hypot(e.v[0], e.v[1], e.v[2]) : null);
+    // « hors zone » : pulsation grave tant que la tempête me blesse (la valeur est celle du HUD)
+    sons.avertissementZone(vivant && !enReplay && etatHudBr(entreeHudBr()).horsZone);
+  }
+
+  /** Entrée commune de `etatHudBr` / `etatBrHud` : mon état de vol, mes soins, la partie et la zone à l'horloge serveur. */
+  function entreeHudBr(): EntreeHudBr {
+    return {
+      partie: partieBr, vol: vol.etat(), serveurT: client.maintenantServeur(), p: moi.p, lacet, vivant, bandage: bandages, potion: potions,
+      usage: usageSoin, spectateur: spectateurActif(), suivi: spectateurActif() ? suivi.cible() : null,
+    };
+  }
+
   function reconnexion() {
     // la connexion a été refaite (coupure réseau) : nouvel identifiant, plus dans l'arène
     if (client.id !== null && client.id !== idConnu) {
       const premier = idConnu === null;
       idConnu = client.id;
       if (premier) return;
-      // zombies : nouvel id = reprise refusée (coupure de plus de 20 s, cf. `bonjour.reprise`) : on repart dans l'arène, la partie est perdue pour nous
-      if (modeZ) { apparu = false; vivant = false; arreterReanimation(); cb.sortir(); return; }
+      // zombies : nouvel id = reprise refusée (coupure de plus de 20 s, cf. `bonjour.reprise`) : on repart dans l'arène, la partie est perdue pour nous ;
+      // BR : le serveur a oublié la salle choisie, la place est éliminée
+      if (modeZ || modeBR) { apparu = false; vivant = false; arreterReanimation(); cb.sortir(); return; }
       apparu = false;
       vivant = false;
       interp.vider();
@@ -2519,6 +2797,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
    */
   function envoyerEtat() {
     if (!apparu || (!vivant && !(modeZ && aTerreZ && !elimineZ))) return;
+    // BR : le serveur simule ma chute (message `chute`) et ignore tout `etat` tant que je suis à bord ou en l'air
+    if (enVolBr()) return;
     const vue = tangageDeVue(tangage, kick);
     if (pilote()) {
       const m = titan.message(lacet, vue);
@@ -2571,12 +2851,25 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     }
     if (!apparu) {
       // en attente de la première apparition : survol de l'arène, centré sur le rond-point (zombies : sur la cour de départ)
-      const fx = modeZ ? FOCUS_ZOMBIES[0] : cx, fz = modeZ ? FOCUS_ZOMBIES[1] : cz;
-      camera.position.set(fx, 70, fz + 90);
+      // BR : sur le centre de la carte, plus haut et plus loin (741 m de large)
+      const b = monde.bornes;
+      const fx = modeZ ? FOCUS_ZOMBIES[0] : modeBR ? (b.x0 + b.x1) / 2 : cx, fz = modeZ ? FOCUS_ZOMBIES[1] : modeBR ? (b.z0 + b.z1) / 2 : cz;
+      const haut = modeBR ? 220 : 70, recul = modeBR ? 280 : 90;
+      camera.position.set(fx, haut, fz + recul);
       camera.rotation.set(-0.5, 0, 0);
-      camPos[0] = fx; camPos[1] = 70; camPos[2] = fz + 90;
+      camPos[0] = fx; camPos[1] = haut; camPos[2] = fz + recul;
       camLacet = 0;
       camTangage = -0.5;
+    } else if (vivant && modeBR && enVolBr()) {
+      // BR : dans l'avion (2 m au-dessus de sa position, regard libre) ou en chute (à la position simulée, première personne)
+      const e = vol.etat();
+      const dy = e.phase === "avion" ? CAMERA_AVION_DY : OEIL_CHUTE_M;
+      camera.position.set(moi.p[0], moi.p[1] + dy, moi.p[2]);
+      const [rx, ry, rz] = rotationCamera(lacet, tangage, 0, 0, secousse);
+      camera.rotation.set(rx, ry, rz);
+      camPos[0] = moi.p[0]; camPos[1] = moi.p[1] + dy; camPos[2] = moi.p[2];
+      camLacet = lacet;
+      camTangage = rx;
     } else if (vivant) {
       const assis = vehicule.actif() !== null;
       const cible = pilote() ? OEIL_TITAN : assis ? OEIL_SIEGE : hauteurOeil(moi.accroupi);
@@ -2591,6 +2884,20 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       camPos[0] = o[0]; camPos[1] = o[1] + bob; camPos[2] = o[2];
       camLacet = lacet;
       camTangage = rx;
+    } else if (spectateurActif()) {
+      // BR, mort : les yeux du joueur suivi (position et angles du snap interpolé) ; plus personne à suivre, la caméra reste où elle est
+      const e = suivi.cible() !== null ? etats.get(suivi.cible()!) : undefined;
+      if (e) {
+        const hauteur = oeilDe(e);
+        camera.position.set(e.p[0], e.p[1] + hauteur, e.p[2]);
+        camera.rotation.set(tangageDeVue(e.tangage, 0), e.lacet, 0);
+        camPos[0] = e.p[0]; camPos[1] = e.p[1] + hauteur; camPos[2] = e.p[2];
+        camLacet = e.lacet;
+        camTangage = e.tangage;
+        // les sons et le radar sont ceux de sa place
+        moi.p = [e.p[0], e.p[1], e.p[2]];
+        lacet = e.lacet;
+      }
     } else {
       // mort sans rejeu (repli) : la caméra s'effondre et bascule sur le côté
       mortT += dt;
@@ -2610,9 +2917,15 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     if (disposed) return;
     raf = requestAnimationFrame(frame);
     const dt = borne((maintenant - dernierT) / 1000, 0, 0.1);
+    // temps réel de l'image : la chute du BR le suit (le serveur la simule en temps réel), sans le plafond de 0,1 s du jeu
+    const dtReel = borne((maintenant - dernierT) / 1000, 0, 1);
     dernierT = maintenant;
     t += dt;
     reconnexion();
+
+    // --- BR : la killcam finie (rejeu 2,5 s + carte 1,5 s), le mort devient spectateur ; il suit un joueur en vie ---
+    if (modeBR && kc.actif() && kc.progression() >= 1) terminerKillcam();
+    if (spectateurActif()) suivi.maj(candidatsSuivi());
 
     // --- killcam : machine, rejeu ou carte figée ---
     if (kc.actif()) {
@@ -2639,7 +2952,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       terminerKillcam();
     }
 
-    baseVehicules = enReplay && vehiculesRejouesCache ? vehiculesRejouesCache : mondeJeu.vehiculesA(client.maintenantServeur() - JEU.interpolationMs);
+    baseVehicules = enReplay && vehiculesRejouesCache ? vehiculesRejouesCache : mondeJeu.vehiculesA(client.maintenantServeur() - interpMs);
 
     // --- état des armes : recharge, rechargement automatique, modèle en main ---
     armes.majRecharge(ms());
@@ -2647,7 +2960,12 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       const a = armeFeu();
       if (a && peutAgir() && !enKillcam() && armes.munitions() <= 0 && !armes.rechargeEnCours() && t >= prochainDe(a)) demarrerRecharge();
     }
-    armeMain.changer(enReplay ? (kc.info()?.arme ?? armes.armeEnMain()) : armes.armeEnMain());
+    {
+      // spectateur (BR) : l'arme du joueur suivi ; rejeu de la killcam : celle du tueur
+      const suiviId = spectateurActif() ? suivi.cible() : null;
+      const armeSuivie = suiviId !== null ? etats.get(suiviId)?.arme : undefined;
+      armeMain.changer(enReplay ? (kc.info()?.arme ?? armes.armeEnMain()) : (armeSuivie ?? armes.armeEnMain()));
+    }
     {
       // (v7) camouflage du Pack-a-Punch sur l'arme en main
       const enMain = armes.armeEnMain();
@@ -2707,6 +3025,28 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       }
       const choc = vehicule.choc();
       if (choc > CHOC_SEUIL && t - dernierChocT > 0.3) { dernierChocT = t; sons.choc(borne(choc / 12, 0, 1)); }
+    } else if (modeBR && apparu && vivant && enVolBr()) {
+      // BR : à bord de l'avion ou en l'air, la position vient de `ControleurVol` (le serveur simule la même chute) ; un appui sur saut quitte l'avion,
+      // un autre, une seconde après, ouvre le parachute
+      const vue = tangageDeVue(tangage, kick);
+      const ts = client.maintenantServeur();
+      const ev = vol.majReel(dtReel, actif
+        ? { lacet, tangage: vue, avance: en.avant, lateral: en.droite, saut: en.saut }
+        : { lacet, tangage: vue, avance: 0, lateral: 0, saut: false }, monde);
+      const e = vol.etat();
+      if (e.phase === "avion") {
+        const pa = vol.positionAvion(ts);
+        moi.p = [pa[0], pa[1], pa[2]];
+        moi.v = [0, 0, 0];
+        moi.auSol = false;
+        // pendant le décompte l'avion est immobile : le serveur ignorerait le saut
+        if (ev.sauter && partieBr?.avion && ts >= partieBr.avion.debutT) client.envoyer({ t: "sauter" });
+      } else if (e.phase !== "sol") {
+        moi.p = e.p;
+        moi.v = e.v;
+        moi.auSol = false;
+        if (ev.voile) sons.voile();
+      }
     } else if (apparu) {
       const entreesUtiles: Entrees = actif ? en : { avant: 0, droite: 0, saut: false, sprint: false, accroupi: false, lacet };
       const mult = vitesseArme(arme) * (vise ? 0.8 : 1);
@@ -2770,6 +3110,11 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       accEtat = 0;
       envoyerEtat();
     }
+    // BR, en l'air : les entrées de la chute (≈ 30 Hz, cadence propre au contrôleur), les mêmes que celles de la prédiction de cette image
+    if (modeBR && vivant && vol.enVol()) {
+      const mc = vol.message(lacet, tangageDeVue(tangage, kick));
+      if (mc) client.envoyer(mc);
+    }
 
     // --- caméra (avant les pseudos et le radar, qui s'évaluent depuis elle) ---
     const lunetteAct = vise && aLunette && !armes.rechargeEnCours();
@@ -2794,9 +3139,10 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     majVoix();
     majMonstres(dt);
     majZombies(dt);
+    majBr(dt);
     effets.maj(dt);
 
-    porteArme.visible = apparu && (vivant || enReplay) && !(info && tireInterdit()) && !pilote();
+    porteArme.visible = apparu && (vivant || enReplay || spectateurActif()) && !(info && tireInterdit()) && !pilote() && !enVolBr();
     armeMain.maj(dt, { vitesseH: vh, auSol: moi.auSol, vise: vise && !enReplay });
 
     remplirRadar(dt);
@@ -2806,7 +3152,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     live.recharge = armes.rechargeEnCours() ? Math.max(0.001, armes.rechargeProgression(ms())) : 0;
     live.vitesse = info && ve ? Math.abs(ve.v) : vh;
     live.vitesseKmh = info ? vehicule.vitesseKmh() : 0;
-    live.regenDelai = !vivant || pv >= pvMaxMoi() ? 1 : borne((t - dernierDegatT) / regenDelaiS(), 0, 1);
+    live.regenDelai = modeBR || !vivant || pv >= pvMaxMoi() ? 1 : borne((t - dernierDegatT) / regenDelaiS(), 0, 1);
+    live.usage = modeBR && usageSoin ? progressionUsage(usageSoin, client.maintenantServeur()) : 0;
     live.reanimation = reanimCible !== null ? borne((t - reanimDebutT) / ZOMBIES.reanimationS, 0, 1) : 0;
     accHud += dt;
     if (accHud >= ECART_HUD_S) { accHud = 0; emettreHud(); }
@@ -2865,6 +3212,10 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
         cinematique: cinematiqueDebutS !== null ? borne((t - cinematiqueDebutS) / DUREE_CINEMATIQUE_S, 0, 1) : null,
       };
     },
+    br(): EtatBrHud {
+      return etatBrHud(entreeHudBr(), modeBR ? butin.proches(moi.p, PORTEE_BUTIN_HUD_M) : [], placeBr);
+    },
+    suivreSpectateur(sens) { suivreSpectateur(sens); },
     lancerFrappe(cible) { lancerFrappe(cible); },
     lancerFumigene() { lancerFumigene(); },
     monterBus() { monterBus(); },
@@ -2891,6 +3242,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       sons.glisse(false);
       sons.moteur(null);
       sons.avion(null);
+      sons.ventChute(null);
+      sons.avertissementZone(false);
       sons.dispose();
       voix.dispose();
       terminerKillcam();
@@ -2910,6 +3263,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       rEffetsArmes?.dispose();
       projectilesZ?.vider();
       truckZ?.dispose();
+      renduBr?.dispose();
       rMini?.dispose();
       rEclairs?.dispose();
       impactsBalles.dispose();
@@ -2944,7 +3298,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
           killcam: kc.actif() ? { phase: kc.phase(), progression: kc.progression() } : null,
           p: [...moi.p], v: [...moi.v], auSol: moi.auSol, posture: postureDe(moi), mur: coteMurDe(moi),
           lacet, tangage, verrouille: verrouille(), entracte, fov: fovV, oeil: oeil(),
-          mode: modeZ ? "zombies" : "arene", argent: argentZ, manche: partieZ?.manche ?? 0, restants: mz.restants(), aTerre: aTerreZ, elimine: elimineZ,
+          mode: modeZ ? "zombies" : modeBR ? "br" : "arene", argent: argentZ, manche: partieZ?.manche ?? 0, restants: mz.restants(), aTerre: aTerreZ, elimine: elimineZ,
           zombies: modeZ ? mz.zombies().slice(0, mz.nombre()).map((v) => ({ id: v.id, x: v.x, z: v.z, type: v.type, griffe: v.griffe, mode: v.mode, cap: v.cap })) : [],
           rugissements: rz ? { pret: rz.pret(), affiches: rz.affiches(), ragdolls: rz.ragdollsActifs() } : null,
           // (v8) dernier état de la partie de zombies et horloge serveur (captures : `simuler` en part)
@@ -2954,6 +3308,13 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
             frag: stockGrenades("frag"), remontoirs: stockGrenades("remontoir"), cuisson: grenades.cuisson(t * 1000),
             vol: grenades.affichees(client.maintenantServeur()).map((g) => ({ id: g.id, genre: g.genre, p: g.p, posee: g.posee })),
           } : null,
+          // BR : vol (phase, position, hauteur, vitesse de descente), soins, objets au sol proches et rendu
+          vol: modeBR ? { ...vol.etat(), attendu: entreeAvionAttendue } : null,
+          butin: modeBR ? {
+            total: butin.taille(), proches: butin.proches(moi.p, 12).slice(0, 8), invite: inviteBr()?.detail ?? "",
+            bandages, potions, usage: usageSoin, rendu: renduBr?.etat() ?? null,
+          } : null,
+          spectateur: modeBR ? { actif: spectateurActif(), suivi: suivi.cible(), place: placeBr } : null,
           distants: [...etats.entries()].filter(([id]) => id !== client.id).map(([id, e]) => ({
             id, p: e.p, vivant: e.vivant, protege: e.protege, arme: e.arme, accroupi: !!e.accroupi, glisse: !!e.glisse, vehicule: e.vehicule ?? null,
             pseudoAlpha: visib.alpha(id),
@@ -2968,7 +3329,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
         // tigres échantillonnés à l'instant du tir, comme un joueur à 60 images par seconde. Sous un rendu lent (tests sans GPU), ceux
         // de la dernière image dateraient de plusieurs centaines de ms : un tigre qui court serait visé hors de la fenêtre de
         // compensation du serveur (`REWIND_MAX_MS`), et tous les tirs rejetés
-        tigresVus = mondeTigres.tigresA(client.maintenantServeur() - JEU.interpolationMs);
+        tigresVus = mondeTigres.tigresA(client.maintenantServeur() - interpMs);
         // tigre : centre de la tête de sa silhouette de touche (pose courante)
         const tg = tigresVus.get(id);
         if (tg) {
@@ -2999,7 +3360,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       },
       slot(s) { changerSlot(s); },
       monter(id) {
-        const v = mondeJeu.vehiculesA(client.maintenantServeur() - JEU.interpolationMs).get(id);
+        const v = mondeJeu.vehiculesA(client.maintenantServeur() - interpMs).get(id);
         if (!v || !peutAgir()) return;
         forceActif = true;
         // à 2,2 m à droite de la caisse, puis demande d'entrée

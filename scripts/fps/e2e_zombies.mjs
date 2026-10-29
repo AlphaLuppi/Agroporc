@@ -5,8 +5,8 @@
  * local, pilotés par `window.__arene`. Carte « Service de midi » (v8) : départ dans l'open space du Pôle R&D.
  *
  * Scénario (chaque étape imprime OK / ÉCHEC, des captures sont prises en route) :
- *  1. vue 3D (code « myrtille »), choix du mode « Zombies tigres » par les deux joueurs, lobby : liste des joueurs, badge « hôte », bouton « Lancer la partie »
- *     actif pour l'hôte seulement
+ *  1. vue 3D (code « myrtille »), les trois cartes de mode (arène, zombies, Battle Royale), choix du mode « Zombies tigres » par les deux joueurs,
+ *     lobby : liste des joueurs, badge « hôte », bouton « Lancer la partie » actif pour l'hôte seulement
  *  2. le second ne peut pas lancer (même par le crochet), l'hôte lance : les deux entrent en jeu (équipement de départ : pistolet + couteau)
  *  3. achat d'une arme au mur (le fusil à pompe de l'open space, 500 $) avant l'arrivée des tigres : débit confirmé par le serveur
  *  4. HUD de manche et d'argent, des tigres dans le snap des deux joueurs
@@ -349,7 +349,7 @@ try {
 
   // ------------------------------------------------------------------ 1. choix du mode et lobby
   const lobby = await etape("1. vue 3D (code « myrtille »), choix du mode « Zombies tigres » par les deux joueurs, lobby", async () => {
-    const ouvert = (j) => j.ev(() => !!window.__arene && !!document.querySelector("aside[aria-label='Arène'], aside[aria-label='Zombies']")).catch(() => false);
+    const ouvert = (j) => j.ev(() => !!window.__arene && !!document.querySelector("aside[aria-label='Arène'], aside[aria-label='Zombies'], aside[aria-label='Battle Royale']")).catch(() => false);
     async function ouvrir(j) {
       await j.page.goto(`${urlNext}${PAGE}`, { waitUntil: "domcontentloaded", timeout: 120_000 });
       await dormir(2500); // hydratation
@@ -368,9 +368,9 @@ try {
     }
     verifier(stable >= 2, "la vue Palantir et le panneau d'entrée ne restent pas ouverts chez les deux joueurs");
     await jusqua(async () => (await A.etat().catch(() => null))?.connexion === "ouvert" && (await B.etat().catch(() => null))?.connexion === "ouvert", { ms: 60_000, quoi: "connexion WebSocket des deux joueurs" });
-    // par défaut : l'arène ; les deux cartes du choix du mode sont là, avec leurs compteurs
+    // par défaut : l'arène ; les trois cartes du choix du mode (arène, zombies, Battle Royale) sont là, avec leurs compteurs
     const choix = await A.page.locator("input[type=radio][name$='-mode']").evaluateAll((l) => l.map((x) => ({ valeur: x.value, coche: x.checked })));
-    verifier(choix.length === 2 && choix.find((c) => c.valeur === "arene")?.coche, `choix du mode inattendu : ${JSON.stringify(choix)}`);
+    verifier(choix.length === 3 && choix.find((c) => c.valeur === "arene")?.coche && ["arene", "zombies", "br"].every((v) => choix.some((c) => c.valeur === v)), `choix du mode inattendu : ${JSON.stringify(choix)}`);
     await jusqua(async () => (await A.etat()).salons, { ms: 8000, quoi: "message `salons` reçu (compteurs des modes)" });
     await A.capture("01-choix-mode-arene-1280");
 

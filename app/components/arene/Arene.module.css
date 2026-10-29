@@ -42,7 +42,7 @@
 /* ---------- choix du mode (v5) ---------- */
 .modes { border: 0; margin: 4px 0 12px; padding: 0; min-width: 0; }
 .modes legend { padding: 0; margin-bottom: 6px; font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ag-ink-dim); }
-.modesGrille { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.modesGrille { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
 .carteMode {
   position: relative; display: flex; flex-direction: column; gap: 4px; padding: 10px; cursor: pointer; min-width: 0;
   border: 1px solid var(--ag-line-strong); background: var(--ag-hud-fond);
@@ -97,6 +97,14 @@
 .entrer:disabled { cursor: default; background: transparent; color: var(--ag-ink-dim); border-color: var(--ag-line-strong); }
 .astuce, .tactile { margin: 10px 0 0; font-size: 11px; line-height: 1.5; color: var(--ag-ink-dim); }
 .tactile { padding: 10px; border: 1px dashed var(--ag-line-strong); color: var(--ag-ink); font-size: 12px; margin-top: 16px; }
+
+/* ---------- lobby du Battle Royale (v8) ---------- */
+.avis { margin: 0 0 6px; padding: 4px 8px; font-size: 11px; line-height: 1.5; color: var(--ag-amber); border-left: 3px solid var(--ag-amber); background: var(--ag-hud-fond); }
+.palmares { margin-top: 14px; border: 1px solid var(--ag-line-strong); background: var(--ag-hud-fond); }
+.palmares summary { min-height: 32px; box-sizing: border-box; padding: 8px 12px; cursor: pointer; font-size: 11px; font-weight: 500; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ag-amber); }
+.palmares summary:focus-visible { outline: 2px solid var(--ag-white); outline-offset: -2px; }
+.palmaresCorps { padding: 0 12px 10px; max-height: 220px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--ag-line) transparent; }
+.palmaresAide { margin: 0 0 6px; font-size: 11px; line-height: 1.5; color: var(--ag-ink-dim); }
 
 @media (max-width: 640px) {
   .modesGrille { grid-template-columns: 1fr; }

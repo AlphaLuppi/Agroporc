@@ -43,10 +43,10 @@ describe("joueurs : pas de wallhack", () => {
     expect(ajouterJoueur(f, joueur({ etat: "mort", age: 3 }))).toBe(false);
     expect(f.nJoueurs).toBe(1);
   });
-  it("capacité de 16 : au-delà, ignoré sans erreur", () => {
+  it("capacité de 50 (battle royale) : au-delà, ignoré sans erreur", () => {
     const f = creerRadarFrame();
-    for (let i = 0; i < 20; i++) ajouterJoueur(f, joueur({ id: String(i) }));
-    expect(f.nJoueurs).toBe(16);
+    for (let i = 0; i < 60; i++) ajouterJoueur(f, joueur({ id: String(i) }));
+    expect(f.nJoueurs).toBe(RADAR_CAPACITES.joueurs);
   });
 });
 
@@ -65,7 +65,7 @@ describe("identité des tableaux d'une image à l'autre (zéro allocation)", () 
     expect(f.joueurs[0].id).toBe("b");
     expect([f.joueurs, f.voitures, f.echos, f.voituresPnj]).toEqual(tableaux);
     expect(f.voituresPnj).toBe(pnj);
-    expect(f.joueurs).toHaveLength(16);
+    expect(f.joueurs).toHaveLength(RADAR_CAPACITES.joueurs);
   });
   it("vider remet capVehicule à NaN et efface Elsa", () => {
     const f = creerRadarFrame();

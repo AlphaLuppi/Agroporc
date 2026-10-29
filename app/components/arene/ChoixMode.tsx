@@ -7,9 +7,10 @@ import { CARTES_MODE, TEXTE_MODE_INDISPONIBLE, compteurMode } from "./lobby-mode
 import styles from "./Arene.module.css";
 
 /**
- * Choix du mode de jeu en tête du panneau « Arène » de la vue Palantir : deux cartes radio natives (flèches du clavier, un seul arrêt de
+ * Choix du mode de jeu en tête du panneau « Arène » de la vue Palantir : trois cartes radio natives (Arène, Zombies tigres, Battle Royale) (flèches du clavier, un seul arrêt de
  * tabulation), chacune avec le nombre de joueurs de sa salle (message `salons`, tiret tant qu'il n'est pas arrivé). Le mode coché est celui
- * qui est DEMANDÉ : il revient en arrière si le serveur refuse le changement. Le lobby du mode confirmé s'affiche dessous.
+ * qui est DEMANDÉ : il revient en arrière si le serveur refuse le changement. Le lobby du mode confirmé s'affiche dessous. Les cartes passent à la ligne
+ * (`auto-fit`, 150 px au moins) ; `indisponibles` y range les modes qu'un écran tactile ne peut pas jouer (zombies et Battle Royale).
  * Spec : docs/superpowers/specs/2026-10-27-arene-zombies-design.md (« HUD et écrans »)
  */
 export interface PropsChoixMode {
@@ -19,12 +20,12 @@ export interface PropsChoixMode {
   surChoisir(mode: ModeSalle): void;
   /** changement impossible (connexion perdue) */
   desactive?: boolean;
-  /** modes qu'on ne peut pas choisir sur cet appareil (zombies sur un écran tactile : clavier et souris requis) */
+  /** modes qu'on ne peut pas choisir sur cet appareil (zombies et Battle Royale sur un écran tactile : clavier et souris requis) */
   indisponibles?: readonly ModeSalle[];
 }
 
 /**
- * Le lobby du mode confirmé remplace l'autre (`Arene` ↔ `LobbyZombies`), donc ce groupe est démonté puis remonté à chaque changement
+ * Le lobby du mode confirmé remplace l'autre (`Arene` ↔ `LobbyZombies` ↔ `LobbyBR`), donc ce groupe est démonté puis remonté à chaque changement
  * confirmé par le serveur : un joueur au clavier (flèches) perdrait le focus à chaque bascule. On note l'instant du dernier choix et le
  * groupe remonté dans les secondes qui suivent redonne le focus à sa radio cochée.
  */

@@ -30,7 +30,7 @@ export interface RadarFrame {
   /** cap de la voiture si je suis assis, sinon NaN */
   capVehicule: number;
   vitesse: number;
-  joueurs: RadarJoueur[]; nJoueurs: number;           // préalloué à 16
+  joueurs: RadarJoueur[]; nJoueurs: number;           // préalloué à 50 (battle royale)
   voituresPnj: Float32Array; nPnj: number;             // [x, z, cap] × 12
   voitures: RadarVoiture[]; nVoitures: number;         // préalloué à 6
   echos: RadarEcho[]; nEchos: number;                  // préalloué à 8
@@ -49,10 +49,12 @@ export interface RadarFrame {
   fumigenes?: { x: number; z: number; r: number }[];
   /** Zone de frappe aérienne en cours */
   frappeZone?: { x: number; z: number; r: number } | null;
+  /** (Battle Royale, v8) tempête : cercle courant et prochain cercle (centre x/z et rayon, m) ; null hors BR ou avant le départ de l'avion */
+  zoneBr?: { x: number; z: number; r: number; prochainX: number; prochainZ: number; prochainR: number } | null;
 }
 
 /** Capacités des tableaux préalloués d'un `RadarFrame`. */
-export const RADAR_CAPACITES = { joueurs: 16, voitures: 6, echos: 8, pnj: 12, zombies: 24, portes: 5 } as const;
+export const RADAR_CAPACITES = { joueurs: 50, voitures: 6, echos: 8, pnj: 12, zombies: 24, portes: 5 } as const;
 /** Échos de tir sur la mini-map : activés ; une constante les coupe (choix de gameplay à valider, HUD §14). */
 export const ECHOS_TIR = true;
 export const ECHO = { rayonM: 70, dureeS: 1.2, pasM: 8 } as const;

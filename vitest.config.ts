@@ -9,5 +9,7 @@ export default defineConfig({
     globals: true,
     environment: "node",
     include: ["lib/**/*.test.ts"],
+    // Les simulations de salle sont lourdes : 5 s sautaient au hasard quand plusieurs fichiers tournent en parallèle.
+    testTimeout: 20_000,
   },
 });
