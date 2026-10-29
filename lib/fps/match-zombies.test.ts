@@ -758,7 +758,7 @@ describe("achats", () => {
     expect(msgs(r, "zevt")[0].e).toMatchObject({ e: "pap", fin: "reprise" });
     expect(j.arme).toBe("pistolet");
     expect(b.svc.etat().pap.etat).toBe("libre");
-    expect(b.svc.degatsTir(j, "pistolet", "corps", 5, t + 5000)).toBe(160);
+    expect(b.svc.degatsTir(j, "pistolet", "corps", 5, t + 5000)).toBe(1000); // (v8) Moutarde & Sally : impact de 1 000 (BO1)
     expect(msgs(acheter(b, j, "pap", t + 5100), "achat")[0]).toMatchObject({ ok: false, raison: "deja" });
   });
 
@@ -1371,5 +1371,135 @@ describe("équipement de départ", () => {
     const eq: Equipement = e2;
     const main: Slot = "secondaire";
     expect(armeDuSlot(eq, main)).toBe("pistolet");
+  });
+});
+
+// =================================================================================================
+describe("(v8) armes : effets appliqués par le serveur (brûlure, arc, projectile, souffle, gel)", () => {
+  /** Partie avancée jusqu'à `n` tigres en chasse (sortis du sol ou entrés), griffes neutralisées ; `proches` : à moins de 7 m l'un de l'autre. */
+  function avecTigres(n: number, proches = false) {
+    const b = partieEnCours(["a"], { degatsGriffe: 0, total1: Math.max(3, n + 2) });
+    let t = T_PREMIER_TIGRE;
+    const chasse = () => tigresVivants(b).filter((z) => z.mode === "chasse");
+    const ok = () => {
+      const c = chasse();
+      if (c.length < n) return false;
+      return !proches || c.some((x) => c.filter((y) => Math.hypot(x.x - y.x, x.z - y.z) < 6).length >= n);
+    };
+    for (; t < T_PREMIER_TIGRE + 120_000 && !ok(); t += 100) b.svc.tic(t);
+    expect(ok()).toBe(true);
+    return { b, j: b.j("a"), t, tigres: chasse() };
+  }
+  const avec = (j: JoueurSalle, slot: "principale" | "secondaire", arme: string, ameliore: boolean) => {
+    const e = copierEquipement(j.equip);
+    if (slot === "principale") { e.principale = arme as Equipement["principale"]; delete e.sansPrincipale; } else e.secondaire = arme as Equipement["secondaire"];
+    if (ameliore) e.ameliorees = [arme as Equipement["secondaire"]]; else delete e.ameliorees;
+    j.equip = e; j.main = slot; j.arme = arme as JoueurSalle["arme"];
+  };
+  /** Le joueur est posé à `d` m du tigre (du côté où il se trouvait) et vise son dos. */
+  function viser(j: JoueurSalle, z: { x: number; z: number }, d: number): { o: Vec3; dir: Vec3 } {
+    let dx = j.p[0] - z.x, dz = j.p[2] - z.z;
+    const l = Math.hypot(dx, dz) || 1; dx /= l; dz /= l;
+    j.p = [z.x + dx * d, 0, z.z + dz * d];
+    const o: Vec3 = [j.p[0], 1.6, j.p[2]];
+    const v: Vec3 = [z.x - o[0], 0.8 - o[1], z.z - o[2]];
+    const n = Math.hypot(v[0], v[1], v[2]);
+    return { o, dir: [v[0] / n, v[1] / n, v[2] / n] };
+  }
+
+  it("statsTir du joueur : amélioration comprise ; une arme à balles n'est pas un tir spécial", () => {
+    const { b, j, t, tigres } = avecTigres(1);
+    avec(j, "secondaire", "perforeuse", true);
+    expect(b.svc.statsTir(j, "perforeuse")).toMatchObject({ akimbo: true, auto: true });
+    avec(j, "secondaire", "perforeuse", false);
+    expect(b.svc.statsTir(j, "perforeuse")).toMatchObject({ akimbo: false, auto: false });
+    const { o, dir } = viser(j, tigres[0], 4);
+    expect(b.svc.tirSpecial(j, "perforeuse", o, dir, t)).toBeNull();
+    expect(b.svc.positionZombie(`z${tigres[0].id}`)).not.toBeNull();
+    expect(b.svc.positionZombie("z9999")).toBeNull();
+  });
+
+  it("munitions incendiaires (Cobra flambé) : le tigre prend feu (drapeau du snap), perd des PV toutes les 0,5 s et meurt brûlé", () => {
+    const { b, j, t, tigres } = avecTigres(1);
+    avec(j, "secondaire", "revolver", true);
+    const z = tigres[0], id = `z${z.id}`;
+    b.svc.blesser(id, 10, j, "corps", t);
+    const avant = tigresVivants(b).find((x) => x.id === z.id)!.pvPct;
+    b.svc.effetsTir(j, "revolver", [{ cible: id, p: [z.x, 0, z.z] }], t);
+    expect(tigresVivants(b).find((x) => x.id === z.id)!.brule).toBe(true);
+    // une arme sans effet ne fait rien
+    expect(b.svc.effetsTir(j, "mitraillette", [{ cible: id, p: [z.x, 0, z.z] }], t)).toEqual([]);
+    const sorties = avancer(b, t + 50, t + 3000);
+    const mort = msgs(sorties, "zombieMort").find((m) => m.id === id);
+    const encore = tigresVivants(b).find((x) => x.id === z.id);
+    // 150 PV à la manche 1, 200 PV/s : il brûle jusqu'à la mort (ou au moins perd des PV s'il est plus robuste)
+    if (mort) expect(mort.cause).toBe("feu");
+    else expect(encore!.pvPct).toBeLessThan(avant);
+    expect(msgs(sorties, "degats").some((m) => m.cible === id)).toBe(true);
+  });
+
+  it("arc électrique (Grille-pain) : saute du premier tigre sur ses voisins, `zevt{arc}`, morts « electrique »", () => {
+    const { b, j, t, tigres } = avecTigres(2, true);
+    avec(j, "principale", "grille_pain", false);
+    const depart = tigres.find((x) => tigres.some((y) => y !== x && Math.hypot(x.x - y.x, x.z - y.z) < 6))!;
+    const sorties = b.svc.effetsTir(j, "grille_pain", [{ cible: `z${depart.id}`, p: [depart.x, 0, depart.z] }], t);
+    const arc = msgs(sorties, "zevt").find((m) => m.e.e === "arc");
+    expect(arc).toBeDefined();
+    expect((arc!.e as { p: Vec3[] }).p.length).toBeGreaterThanOrEqual(2);
+    const morts = msgs(sorties, "zombieMort");
+    expect(morts.length).toBeGreaterThanOrEqual(2);
+    expect(morts.every((m) => m.cause === "electrique" && m.arme === "grille_pain")).toBe(true);
+  });
+
+  it("projectile (Moutarde & Sally) : `projectile` à tous, planté dans le tigre, impact de 1 000 puis souffle `zevt{projectile}`", () => {
+    const { b, j, t, tigres } = avecTigres(1);
+    avec(j, "secondaire", "pistolet", true);
+    const z = tigres[0];
+    const { o, dir } = viser(j, z, 4);
+    const sorties = b.svc.tirSpecial(j, "pistolet", o, dir, t)!;
+    const p = msgs(sorties, "projectile")[0];
+    expect(p).toMatchObject({ par: "a", arme: "pistolet", ameliore: true, cible: `z${z.id}` });
+    expect(sorties.find((s) => s.m.t === "projectile")!.a).toBe("joueurs");
+    expect(p.impactT).toBeGreaterThan(t);
+    expect(p.explosionT).toBe(p.impactT);
+    const suite = avancer(b, t + 50, p.explosionT + 100);
+    expect(msgs(suite, "zevt").some((m) => m.e.e === "projectile" && m.e.id === p.id)).toBe(true);
+    expect(msgs(suite, "zombieMort").some((m) => m.id === `z${z.id}`)).toBe(true);
+  });
+
+  it("carreau de Brochette : planté, il saute 1,5 s plus tard (pas avant)", () => {
+    const { b, j, t, tigres } = avecTigres(1);
+    avec(j, "principale", "brochette", false);
+    const { o, dir } = viser(j, tigres[0], 5);
+    const p = msgs(b.svc.tirSpecial(j, "brochette", o, dir, t)!, "projectile")[0];
+    expect(p.explosionT - p.impactT).toBe(STATS.brochette.zombie.projectile!.delaiMs);
+    const avant = avancer(b, t + 50, p.explosionT - 100);
+    expect(msgs(avant, "zevt").some((m) => m.e.e === "projectile")).toBe(false);
+    const apres = avancer(b, p.explosionT - 50, p.explosionT + 100);
+    expect(msgs(apres, "zevt").some((m) => m.e.e === "projectile" && m.e.id === p.id)).toBe(true);
+  });
+
+  it("Soufflerie : un tigre proche dans le cône est projeté (tué, cause « souffle », origine = l'œil) ; derrière, rien", () => {
+    const { b, j, t, tigres } = avecTigres(1);
+    avec(j, "principale", "soufflerie", false);
+    const z = tigres[0];
+    const { o, dir } = viser(j, z, 3);
+    const dos: Vec3 = [-dir[0], -dir[1], -dir[2]];
+    expect(msgs(b.svc.tirSpecial(j, "soufflerie", o, dos, t)!, "zombieMort")).toEqual([]);
+    const sorties = b.svc.tirSpecial(j, "soufflerie", o, dir, t + 1100)!;
+    const mort = msgs(sorties, "zombieMort").find((m) => m.id === `z${z.id}`)!;
+    expect(mort).toMatchObject({ cause: "souffle", arme: "soufflerie" });
+    expect(mort.src![0]).toBeCloseTo(o[0], 1);
+  });
+
+  it("gel (Soufflerie XXL) : le tigre touché qui survit est marqué gelé, puis dégelé au bout de 4 s", () => {
+    const { b, j, t, tigres } = avecTigres(1);
+    avec(j, "principale", "soufflerie", true);
+    const z = tigres[0];
+    b.svc.effetsTir(j, "soufflerie", [{ cible: `z${z.id}`, p: [z.x, 0, z.z] }], t);
+    expect(tigresVivants(b).find((x) => x.id === z.id)?.gele).toBe(true);
+    avancer(b, t + 50, t + 4200, 100);
+    const apres = tigresVivants(b).find((x) => x.id === z.id);
+    if (apres) expect(apres.gele).toBeUndefined();
   });
 });

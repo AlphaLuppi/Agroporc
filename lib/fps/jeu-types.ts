@@ -42,6 +42,15 @@ export interface HudEtat {
   zoomNiveau: number;
   /** nombre de niveaux de zoom de la lunette, 0 hors lunette */
   zoomNiveaux: number;
+  /**
+   * (v8) viseur de l'arme en main affiché en visée : "fer" (mire ordinaire), "point_rouge", "holo", "lunette", "thermique" (une lunette
+   * remplace le viseur dès que `lunette` est vrai)
+   */
+  viseur: "fer" | "point_rouge" | "holo" | "lunette" | "thermique";
+  /** (v8, zombies) armes passées au Pack-a-Punch, jointes par « | » ("" sans amélioration ; toujours "" dans l'arène) */
+  ameliorees: string;
+  /** (v8, zombies) munitions de la main gauche d'une paire akimbo (`munitions` = les deux), −1 pour une arme seule */
+  munitionsG: number;
   /** rayon du cercle de dispersion du viseur (part de la demi-hauteur de l'écran), 0 = aucune dispersion (sniper sans lunette seulement, v3 §1) */
   ecartViseur: number;
   /** télémétrie de lunette : distance (m, entier) de la cible visée, −1 = rien ; seulement en lunette */
@@ -298,5 +307,12 @@ export interface JeuHandle {
     simuler(m: MessageServeur): void;
     /** chat vocal : connexions, audibilité, joueurs entendus */
     voix(): Record<string, unknown>;
+    /**
+     * (zombies, v8, captures) met `arme` en main CÔTÉ CLIENT seulement (améliorée ou non), comme un `equipement` du serveur : modèle, camouflage,
+     * paire akimbo, viseur et HUD. Le serveur l'ignore (ses tirs sont refusés). false hors zombies
+     */
+    essayerArme?(arme: ArmeId, ameliore?: boolean): boolean;
+    /** (zombies, v8, captures) un arc électrique dessiné par ces points, une bourrasque de Soufflerie tirée de mon œil */
+    effetArme?(genre: "arc" | "souffle", points?: Vec3[]): void;
   };
 }

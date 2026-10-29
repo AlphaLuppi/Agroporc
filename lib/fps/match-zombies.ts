@@ -16,7 +16,11 @@
  * - `zombies{etat}` est diffusé aux changements (≤ 5 Hz), tout de suite pour les changements qui comptent ; les effets ponctuels partent en `zevt`.
  * Spec : docs/superpowers/specs/2026-10-28-zombies-bo1-design.md
  */
-import { MELEE, STATS, chargeurZombie, degatsExplosion, degatsZombie, profilZombie } from "./armes";
+import { MELEE, STATS, chargeurZombie, degatsExplosion, degatsZombie, profilZombie, statsTir, type Explosion } from "./armes";
+import {
+  HAUTEUR_ARC_M, allumer, chaineArc, dansSouffle, degeler, fractionSphere, geler, pointImpact, preparerProjectile, ticBrulures,
+  type EtatBrulure, type EtatGel, type TirProjectile,
+} from "./effets-armes";
 import { batimentsDetruits, detruireBatiment, lancerRayon, releverBatiments, visible } from "./collision";
 import { ARMES, CIBLE_LIVRAISON, copierEquipement, estIdZombie, estMelee, idZombie } from "./protocole";
 import { armeDuSlot, meleeDe } from "./equipement";
@@ -140,6 +144,8 @@ interface Membre {
 
 /** (v8) Grenade en vol (ou posée) : lancer complet, lanceur. */
 interface GrenadeServeur { id: number; par: string; lancer: Lancer }
+/** (v8) Projectile d'arme en vol ou planté : tir complet, tireur, tigre touché de plein fouet, dégâts d'impact déjà appliqués. */
+interface ProjectileServeur { id: number; par: string; tir: TirProjectile; cible: number | null; impactFait: boolean }
 
 /** Relève en cours : `cible` maintenue par le relanceur depuis `debutT`. */
 interface Releve { cible: string; debutT: number }
@@ -240,6 +246,11 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
   // grenades (v8) : en vol ou posées, écouteurs d'explosion ; le faux plafond des bâtiments creusés ne change jamais
   let grenades: GrenadeServeur[] = [];
   let grenadeId = 1;
+  // armes (v8) : projectiles en vol, tigres en feu et gelés
+  let projectiles: ProjectileServeur[] = [];
+  let projectileId = 1;
+  const brulures = new Map<number, EtatBrulure>();
+  const gels = new Map<number, EtatGel>();
   const ecouteursExplosion = new Set<(e: ExplosionGrenade) => Sortie[] | void>();
   const plafond = plafondBatimentsCreux(ctx.monde, PLAFOND_INTERIEUR_M);
   const quete: QueteZombies = { ingredients: [], cuissonFinT: 0, faite: false };
@@ -413,6 +424,7 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     releves.clear();
     simu.reinitialiser();
     grenades = [];
+    viderEffetsArmes();
     file = []; indexFile = 0; debutApparitionT = null;
     refermerPortes();
     remettreCarte();
@@ -422,6 +434,13 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     return sorties;
   }
 
+  /** (v8) Plus de projectile, de brûlure ni de gel (nouvelle partie, défaite). */
+  function viderEffetsArmes(): void {
+    projectiles = [];
+    brulures.clear();
+    gels.clear();
+  }
+
   /** Défaite : bilan affiché `finAffichageMs`, tigres retirés. Sans effet hors pause / manche. */
   function perdre(t: number): void {
     if (phase !== "pause" && phase !== "manche") return;
@@ -429,6 +448,7 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     phase = "fin"; debutT = t; finT = t + ZOMBIES.finAffichageMs;
     simu.reinitialiser();
     grenades = [];
+    viderEffetsArmes();
     file = []; indexFile = 0; debutApparitionT = null; truck = null;
     releves.clear();
     immediat = true;
@@ -1171,6 +1191,7 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     const categorie = STATS[arme].categorie;
     ctx.memoriserPrecedent(j);
     delete j.cadenceArme[arme];
+    delete j.cadenceArme[`${arme}:g`];
     const remplacee = categorie === "speciale" || categorie === "unique" ? equip.speciale : categorie === "principale" ? (equip.sansPrincipale ? null : equip.principale) : equip.secondaire;
     let ameliorees = (equip.ameliorees ?? []).filter((a) => a !== remplacee && a !== arme);
     // (v8) une arme perdue au Micro-ondes laissait son slot vide : la nouvelle le remplit
@@ -1311,6 +1332,13 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       const prof = GRENADES[g.lancer.genre];
       if (prof.attractionM > 0 && t >= g.lancer.poseT && t < g.lancer.explosionT) r.push({ id: g.id, p: positionLancer(g.lancer, t), rayon: prof.attractionM });
     }
+    // (v8) la Brochette du chef plantée attire les tigres jusqu'à l'explosion (le « monkey bolt » de BO1) ; ids négatifs, distincts des grenades
+    for (const p of projectiles) {
+      const attraction = profilZombie(p.tir.arme, p.tir.ameliore).projectile?.attractionM ?? 0;
+      if (attraction <= 0 || t < p.tir.impactT || t >= p.tir.explosionT) continue;
+      const z = p.cible !== null ? simu.zombie(p.cible) : undefined;
+      r.push({ id: -p.id, p: z ? [z.p[0], 0, z.p[2]] : pointImpact(p.tir), rayon: attraction });
+    }
     return r;
   }
 
@@ -1392,6 +1420,151 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     }
   }
 
+
+  // ---------------------------------------------------------------------------------------------
+  // armes (v8) : projectiles, souffle de la Soufflerie, brûlures, gel, arcs électriques
+  // ---------------------------------------------------------------------------------------------
+
+  /** Message `projectile` d'un tir (à tous les joueurs en partie, ou à un seul pour la synchro). */
+  const sortieProjectile = (p: ProjectileServeur, a: string): Sortie => ({
+    a, m: {
+      t: "projectile", id: p.id, par: p.par, arme: p.tir.arme, ...(p.tir.ameliore ? { ameliore: true as const } : {}), o: p.tir.o, v: p.tir.v,
+      t0: p.tir.t0, impactT: p.tir.impactT, explosionT: p.tir.explosionT, impact: arrondi(pointImpact(p.tir)),
+      ...(p.cible !== null ? { cible: idZombie(p.cible) } : {}),
+    },
+  });
+
+  /** Hauteur (m) du centre du corps d'un tigre (le même repère que les souffles des grenades). */
+  const hauteurCorps = (echelle: number): number => (0.8 * echelle) / 2.7;
+
+  /**
+   * Souffle `e` d'une arme en `c` (projectile, Soufflerie exclue) : tigres à portée ET en vue blessés (dégâts dégressifs), rampants possibles,
+   * Truck Muche ; le premier tigre seul rapporte le gain de touche.
+   */
+  function souffleArme(j: JoueurSalle, arme: ArmeFeuId, c: Vec3, e: Explosion, t: number, sorties: Sortie[]): void {
+    let premier = true;
+    for (const z of [...simu.liste()]) {
+      const d = Math.hypot(z.p[0] - c[0], hauteurCorps(z.echelle) - c[1], z.p[2] - c[2]);
+      const degats = t < effets.instakillFinT ? INSTAKILL : degatsExplosion(e, Math.max(0, d - 0.6));
+      if (degats <= 0 || !souffleAtteint(ctx.monde, c, [z.p[0], 0.3, z.p[2]])) continue;
+      const pvAvant = z.pv, pvMax = z.pvMax, type = z.type, id = z.id;
+      sorties.push(...service.blesser(idZombie(id), degats, j, "corps", t, { arme, gain: premier, cause: "explosion", src: c }));
+      premier = false;
+      const apres = simu.zombie(id);
+      if (apres && type === 0 && (pvAvant - apres.pv) >= RAMPANT_PART_PV * pvMax && apres.allure !== 3 && alea() < RAMPANT_PROBA) {
+        simu.changerAllure(id, 3, ZOMBIES.vitesses[3]);
+      }
+    }
+    if (truck && truck.phase !== "epave") {
+      const dTruck = Math.max(0, Math.hypot(truck.p[0] - c[0], truck.p[1] - c[2]) - TRUCK.demiLongueur);
+      const degats = degatsExplosion(e, dTruck);
+      if (degats > 0) sorties.push(...blesserTruck(degats, j, t));
+    }
+  }
+
+  /**
+   * Tir d'un projectile (Moutarde & Sally, Brochette) : trajectoire calculée une fois ici avec arrêt sur le premier tigre rencontré (formes de
+   * touche du serveur, présélection par sphère englobante), `projectile` à tous les joueurs en partie, tireur compris.
+   */
+  function tirerProjectile(j: JoueurSalle, arme: ArmeFeuId, o: Vec3, d: Vec3, t: number): Sortie[] {
+    const ameliore = estAmelioree(j.equip, arme);
+    let derniere: { id: number; p: Vec3 } | null = null;
+    const arret = (a: Vec3, b: Vec3): number | null => {
+      const l = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+      if (l < 1e-9) return null;
+      const dir: Vec3 = [(b[0] - a[0]) / l, (b[1] - a[1]) / l, (b[2] - a[2]) / l];
+      let meilleur: { k: number; id: number } | null = null;
+      for (const z of simu.liste()) {
+        const k = z.echelle / 2.7;
+        if (fractionSphere(a, b, [z.p[0], hauteurCorps(z.echelle), z.p[2]], 1.6 * k + 0.2) === null) continue;
+        const h = simu.toucheZombie(z.id, a, dir, l, t);
+        if (h && (!meilleur || h.distance / l < meilleur.k)) meilleur = { k: h.distance / l, id: z.id };
+      }
+      if (!meilleur) return null;
+      derniere = { id: meilleur.id, p: [a[0] + (b[0] - a[0]) * meilleur.k, a[1] + (b[1] - a[1]) * meilleur.k, a[2] + (b[2] - a[2]) * meilleur.k] };
+      return meilleur.k;
+    };
+    const tir = preparerProjectile(ctx.monde, arme, ameliore, o, d, t, { plafond, arret });
+    if (!tir) return [];
+    // le tigre est touché si la trajectoire s'arrête au point où l'arrêt sur cible l'a placée
+    let cible: number | null = null;
+    const fin = pointImpact(tir);
+    const dc = derniere as { id: number; p: Vec3 } | null;
+    if (tir.contact && dc && Math.hypot(fin[0] - dc.p[0], fin[1] - dc.p[1], fin[2] - dc.p[2]) < 1e-6) cible = dc.id;
+    const p: ProjectileServeur = { id: projectileId++, par: j.id, tir, cible, impactFait: false };
+    projectiles.push(p);
+    return [sortieProjectile(p, "joueurs")];
+  }
+
+  /** Projectiles : dégâts de plein fouet à l'impact, souffle à l'explosion (`zevt{projectile}`), là où il est planté (ou sur le tigre). */
+  function ticProjectiles(t: number, sorties: Sortie[]): void {
+    if (!projectiles.length) return;
+    const restent: ProjectileServeur[] = [];
+    for (const p of projectiles) {
+      const j = ctx.joueur(p.par);
+      const prof = profilZombie(p.tir.arme, p.tir.ameliore);
+      if (!p.impactFait && t >= p.tir.impactT) {
+        p.impactFait = true;
+        if (j && membre(j.id).admis && p.cible !== null && simu.zombie(p.cible)) {
+          const degats = t < effets.instakillFinT ? INSTAKILL : prof.degats;
+          sorties.push(...service.blesser(idZombie(p.cible), degats, j, "corps", t, { arme: p.tir.arme, gain: true, src: p.tir.o }));
+        }
+      }
+      if (t < p.tir.explosionT) { restent.push(p); continue; }
+      // le carreau planté dans un tigre saute avec lui, là où il est rendu
+      const z = p.cible !== null ? simu.zombie(p.cible) : undefined;
+      const c: Vec3 = z ? [z.p[0], hauteurCorps(z.echelle), z.p[2]] : pointImpact(p.tir);
+      const e = prof.explosion;
+      sorties.push(zev({ e: "projectile", id: p.id, p: c, rayon: e?.rayon ?? 0, par: p.par }));
+      if (e && j && membre(j.id).admis) souffleArme(j, p.tir.arme, c, e, t, sorties);
+      if (phase !== "manche" && phase !== "pause") { projectiles = []; return; }
+    }
+    projectiles = restent;
+  }
+
+  /**
+   * Souffle de la Soufflerie (le Thundergun de BO1) : tous les tigres en vue dans le cône tronqué ; en deçà de la portée mortelle ils sont
+   * projetés (tués), au-delà ils perdent une part de leurs PV max (et gèlent avec la Soufflerie XXL). `zevt{souffle}` aux autres joueurs.
+   */
+  function souffler(j: JoueurSalle, arme: ArmeFeuId, o: Vec3, d: Vec3, t: number): Sortie[] {
+    const prof = profilZombie(arme, estAmelioree(j.equip, arme));
+    const s = prof.souffle!;
+    const sorties: Sortie[] = [{ a: "joueurs", sauf: j.id, m: { t: "zevt", e: { e: "souffle", o, d, portee: s.portee, par: j.id } } }];
+    let premier = true;
+    for (const z of [...simu.liste()]) {
+      const c: Vec3 = [z.p[0], hauteurCorps(z.echelle), z.p[2]];
+      const a = dansSouffle(o, d, c, s);
+      if (a === null || !visible(ctx.monde, o, c)) continue;
+      const mortel = a <= s.porteeMortelle || t < effets.instakillFinT;
+      const degats = mortel ? INSTAKILL : Math.ceil(s.partLoin * z.pvMax);
+      const id = z.id, vitesse = z.vitesse;
+      sorties.push(...service.blesser(idZombie(id), degats, j, "corps", t, { arme, gain: premier, cause: "souffle", src: o }));
+      premier = false;
+      if (prof.gel && simu.zombie(id)) {
+        const v = geler(gels, id, vitesse, prof.gel, t);
+        if (v !== null) simu.changerAllure(id, simu.zombie(id)!.allure, v);
+      }
+    }
+    return sorties;
+  }
+
+  /** Brûlures (pas de 0,5 s) et fins de gel. */
+  function ticEffetsArmes(t: number, sorties: Sortie[]): void {
+    if (brulures.size) {
+      for (const b of ticBrulures(brulures, t, (id) => simu.zombie(id) !== undefined)) {
+        const j = ctx.joueur(b.par);
+        if (!j || !membre(j.id).admis) { brulures.delete(b.id); continue; }
+        sorties.push(...service.blesser(idZombie(b.id), t < effets.instakillFinT ? INSTAKILL : b.degats, j, "corps", t, { gain: false, cause: "feu" }));
+      }
+    }
+    if (gels.size) {
+      for (const g of degeler(gels, t, (id) => simu.zombie(id)?.vitesse)) {
+        const z = simu.zombie(g.id);
+        if (z) simu.changerAllure(g.id, z.allure, g.vitesse);
+      }
+    }
+  }
+
   // ---------------------------------------------------------------------------------------------
   // service
   // ---------------------------------------------------------------------------------------------
@@ -1419,6 +1592,7 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       }
       if (phase === "pause" && t >= finT) debuterManche(t, sorties);
       ticGrenades(t, sorties);
+      if (phase === "manche" || phase === "pause") { ticProjectiles(t, sorties); ticEffetsArmes(t, sorties); }
       if (phase === "manche") ticManche(t, dt, sorties);
       else if (phase === "pause") ticCommun(t, sorties);
       return emettre(t, sorties, true);
@@ -1436,11 +1610,16 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       const m = membres.get(idDest);
       if (m?.admis) sorties.push({ a: idDest, m: { t: "argent", solde: m.argent, delta: 0, motif: "synchro" } });
       for (const g of grenades) sorties.push(sortieGrenade(g, idDest));
+      for (const p of projectiles) sorties.push(sortieProjectile(p, idDest));
       return sorties;
     },
 
     snap() {
-      return phase === "lobby" ? null : simu.snap(restants(), dernierT, etatTruck());
+      if (phase === "lobby") return null;
+      const marques = brulures.size || gels.size
+        ? (id: number) => (brulures.has(id) || gels.has(id) ? { brule: brulures.has(id), gele: gels.has(id) } : undefined)
+        : undefined;
+      return simu.snap(restants(), dernierT, etatTruck(), marques);
     },
 
     possede(id) {
@@ -1474,6 +1653,51 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
 
     cadence(j) {
       return membre(j.id).atouts.has("ristretto") ? 1 / 1.33 : 1;
+    },
+
+    statsTir(j, arme) {
+      return statsTir(arme, { zombies: true, ameliore: estAmelioree(j.equip, arme) });
+    },
+
+    tirSpecial(j, arme, o, d, t) {
+      const st = statsTir(arme, { zombies: true, ameliore: estAmelioree(j.equip, arme) });
+      if (st.projectile) return emettre(t, tirerProjectile(j, arme, o, d, t));
+      if (st.souffle) return emettre(t, souffler(j, arme, o, d, t));
+      return null;
+    },
+
+    positionZombie(cible) {
+      const z = estIdZombie(cible) ? simu.zombie(numero(cible)) : undefined;
+      return z ? [z.p[0], z.p[1], z.p[2]] : null;
+    },
+
+    effetsTir(j, arme, touches, t) {
+      const prof = profilZombie(arme, estAmelioree(j.equip, arme));
+      if (!prof.brulure && !prof.gel && !prof.arc) return [];
+      const sorties: Sortie[] = [];
+      for (const tc of touches) {
+        const id = numero(tc.cible);
+        const z = simu.zombie(id);
+        if (!z) continue;
+        if (prof.brulure) allumer(brulures, id, prof.brulure, j.id, t);
+        if (prof.gel) {
+          const v = geler(gels, id, z.vitesse, prof.gel, t);
+          if (v !== null) simu.changerAllure(id, z.allure, v);
+        }
+      }
+      if (prof.arc && touches.length) {
+        // l'arc part du tigre touché le plus proche (même s'il vient de mourir) et saute de proche en proche
+        const depart = { id: numero(touches[0].cible), p: touches[0].p };
+        const candidats = simu.liste().map((z) => ({ id: z.id, p: z.p }));
+        const chaine = chaineArc(depart, candidats, prof.arc, ctx.monde);
+        sorties.push(zev({ e: "arc", p: chaine.map((c) => arrondi([c.p[0], HAUTEUR_ARC_M, c.p[2]])), par: j.id }));
+        for (const c of chaine) {
+          if (!simu.zombie(c.id)) continue;
+          const degats = t < effets.instakillFinT ? INSTAKILL : prof.arc.degats;
+          sorties.push(...this.blesser(idZombie(c.id), degats, j, "corps", t, { arme, gain: false, cause: "electrique", src: arrondi([depart.p[0], HAUTEUR_ARC_M, depart.p[2]]) }));
+        }
+      }
+      return sorties;
     },
 
     sante(j) {

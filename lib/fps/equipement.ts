@@ -5,7 +5,7 @@
  * Spec : docs/superpowers/specs/2026-10-22-arene-v2-design.md (§2.4, §5.12), 2026-10-27-arene-zombies-design.md (épée)
  */
 import {
-  ARMES, ARMES_PRINCIPALES, ARMES_SECONDAIRES, ARMES_SPECIALES, ARMES_UNIQUES, EQUIPEMENT_DEFAUT, SLOTS, copierEquipement, estMelee,
+  ARMES, ARMES_PRINCIPALES, ARMES_PRINCIPALES_ZOMBIES, ARMES_SECONDAIRES, ARMES_SECONDAIRES_ZOMBIES, ARMES_SPECIALES, ARMES_UNIQUES, EQUIPEMENT_DEFAUT, SLOTS, copierEquipement, estMelee,
   type ArmeFeuId, type ArmeId, type ArmeMeleeId, type ArmePrincipaleId, type ArmeSecondaireId, type ArmeSpecialeId, type ArmeUniqueId, type Equipement, type Slot,
 } from "./protocole";
 
@@ -149,8 +149,8 @@ export function serialiserSlots(lignes: readonly LigneSlot[]): string {
 
 export function armeValidePourSlot(slot: Slot, arme: string): boolean {
   switch (slot) {
-    case "principale": return estPrincipale(arme);
-    case "secondaire": return estSecondaire(arme) || arme === "rayon"; // (v7) pistolet à rayons des zombies
+    case "principale": return estPrincipale(arme) || (ARMES_PRINCIPALES_ZOMBIES as readonly string[]).includes(arme); // (v8) armes des zombies
+    case "secondaire": return estSecondaire(arme) || (ARMES_SECONDAIRES_ZOMBIES as readonly string[]).includes(arme); // (v7) pistolet à rayons…
     case "couteau": return estMelee(arme);
     case "speciale": return estSpecialeOuUnique(arme);
   }

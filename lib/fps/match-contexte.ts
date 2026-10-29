@@ -13,6 +13,7 @@ import type {
 } from "./protocole";
 import type { ObstacleVoiture, Tigre } from "./tigre-arene";
 import type { ExplosionGrenade } from "./grenades";
+import type { StatsTir } from "./armes";
 
 /**
  * Un message à émettre. `a` : "tous" (tous les inscrits), "joueurs" (en arène), "spectateurs" (inscrits hors arène) ou l'id d'un client ;
@@ -30,7 +31,7 @@ export interface JoueurSalleV2 {
   /** pas de tir ni de recharge avant (maintenant + degainageMs ; le serveur tolère 30 %) */
   sortieJusqua: number;
   /** remplace `prochainTir` : prochain tir permis, par arme (couteau compris) */
-  cadenceArme: Partial<Record<ArmeId, number>>;
+  cadenceArme: Partial<Record<ArmeId | `${ArmeId}:g`, number>>;
   bouclier: number;
   dernierDegatT: number;
   regenAcc: number;
@@ -281,7 +282,7 @@ export interface ServiceZombies {
    */
   blesser(
     cible: string, degats: number, par: JoueurSalle, zone: Zone, maintenant: number,
-    opts?: { melee?: boolean; arme?: ArmeId; gain?: boolean; cause?: "explosion" | "nuke" | "melee"; src?: Vec3 },
+    opts?: { melee?: boolean; arme?: ArmeId; gain?: boolean; cause?: "explosion" | "nuke" | "melee" | "feu" | "electrique" | "souffle"; src?: Vec3 },
   ): Sortie[];
   // ---- v7 ----
   /** dégâts d'un plomb sur un tigre (profil zombies de l'arme, amélioration, insta-kill) */
@@ -303,6 +304,21 @@ export interface ServiceZombies {
    * au sol ; dégâts dégressifs sur les tigres proches, rampants possibles, `zevt{explosion}` aux autres joueurs.
    */
   explosionTir(j: JoueurSalle, arme: ArmeFeuId, o: Vec3, d: Vec3, distanceTouche: number | null, portee: number, maintenant: number): Sortie[];
+  // ---- v8 (armes) ----
+  /** ce qu'il faut pour valider le tir (`statsTir` de armes.ts avec l'amélioration du joueur) : cadence par arme, auto, akimbo, ricochets */
+  statsTir(j: JoueurSalle, arme: ArmeFeuId): StatsTir;
+  /**
+   * Tir qui n'est pas une balle : projectile (Moutarde & Sally, Brochette) ou souffle en cône (Soufflerie). Le service le résout entièrement
+   * (le client ne déclare aucune touche) et renvoie ses sorties ; null pour une arme à balles (la salle valide alors les touches).
+   */
+  tirSpecial(j: JoueurSalle, arme: ArmeFeuId, o: Vec3, d: Vec3, maintenant: number): Sortie[] | null;
+  /** position (pieds) du tigre `cible`, null s'il n'existe pas : prise AVANT les dégâts d'un tir (départ d'un arc électrique) */
+  positionZombie(cible: string): Vec3 | null;
+  /**
+   * Effets d'un tir à balles après ses dégâts : brûlure et gel des tigres touchés, arc électrique depuis le plus proche (`touches` triées du
+   * plus proche au plus lointain, positions prises avant les dégâts)
+   */
+  effetsTir(j: JoueurSalle, arme: ArmeFeuId, touches: readonly { cible: string; p: Vec3 }[], maintenant: number): Sortie[];
   /**
    * `lancerPartie`, `acheter`, `reanimer`, `reparer`, `lancerGrenade` (v8 : œil et direction déjà validés par la salle) ; les autres types
    * renvoient []

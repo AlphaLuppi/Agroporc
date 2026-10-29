@@ -243,6 +243,18 @@ const CLICS_RECHARGE: Record<ArmeFeuId, Clic[]> = {
   railgun: [], minigun: [], magnum_dore: [],
   rayon: [{ t: 0.4, f: 900, g: 0.4 }, { t: 1.4, f: 1600, g: 0.35 }, { t: 2.4, f: 2200, g: 0.45 }],
   lance_grenades: [], bazooka: [], fumigene: [],
+  // (v8) armes du mode zombies seulement
+  baguette: [{ t: 0.3, f: 900, g: 0.5 }, { t: 0.7, f: 1400, g: 0.3 }, { t: 1.3, f: 1400, g: 0.35 }, { t: 1.6, f: 1400, g: 0.35 }, { t: 2.0, f: 800, g: 0.55 }],
+  agrafeuse: [{ t: 0.3, f: 1000, g: 0.4 }, { t: 1.3, f: 1500, g: 0.5 }, { t: 1.95, f: 2100, g: 0.45 }],
+  photocopieuse: [{ t: 0.35, f: 800, g: 0.45 }, { t: 1.2, f: 600, g: 0.4 }, { t: 2.0, f: 1200, g: 0.5 }, { t: 2.6, f: 2000, g: 0.45 }],
+  essoreuse: [
+    { t: 0.4, f: 1400, g: 0.35 }, { t: 0.75, f: 1400, g: 0.35 }, { t: 1.1, f: 1400, g: 0.35 }, { t: 1.45, f: 1400, g: 0.35 },
+    { t: 1.8, f: 1400, g: 0.35 }, { t: 2.15, f: 1400, g: 0.35 }, { t: 2.5, f: 1400, g: 0.35 }, { t: 2.95, f: 900, g: 0.55 },
+  ],
+  brochette: [{ t: 0.4, f: 700, g: 0.45 }, { t: 1.2, f: 1300, g: 0.35 }, { t: 1.9, f: 2200, g: 0.5 }],
+  soufflerie: [{ t: 0.5, f: 600, g: 0.5 }, { t: 1.4, f: 900, g: 0.45 }, { t: 2.4, f: 1800, g: 0.5 }],
+  grille_pain: [{ t: 0.4, f: 800, g: 0.4 }, { t: 1.5, f: 1700, g: 0.4 }, { t: 2.5, f: 2600, g: 0.45 }],
+  perforeuse: [{ t: 0.2, f: 1250, g: 0.35 }, { t: 0.95, f: 1800, g: 0.45 }, { t: 1.3, f: 2300, g: 0.4 }],
 };
 
 /** Enregistrement du moteur (boucle de ralenti CC0) et réglages de sa lecture. */
@@ -359,6 +371,61 @@ const PROFILS_TIR: Record<ArmeFeuId, ProfilTir> = {
   fumigene(b, out, t, v) {
     b.bruit(out, t, { dur: 0.18, type: "bandpass", f0: 3500 * v, f1: 1500, q: 1.2, gain: 0.7 });
     b.ton(out, t, { dur: 0.15, type: "sine", f0: 220 * v, f1: 90, gain: 0.5 });
+  },
+  // ---- (v8) armes du mode zombies seulement ----
+  /** Double canon : une détonation énorme et grave, le canon qui résonne. */
+  baguette(b, out, t, v) {
+    b.bruit(out, t, { dur: 0.42, type: "lowpass", f0: 2200 * v, f1: 180, gain: 1 });
+    b.bruit(out, t, { dur: 0.1, type: "bandpass", f0: 1500, q: 0.6, gain: 0.8 });
+    b.ton(out, t, { dur: 0.4, type: "sine", f0: 80 * v, f1: 26, gain: 1 });
+    b.ton(out, t + 0.03, { dur: 0.35, type: "triangle", f0: 420 * v, f1: 260, gain: 0.08 });
+  },
+  /** Semi-automatique lourd : claquement sec, un peu de métal (l'agrafe qui part). */
+  agrafeuse(b, out, t, v) {
+    b.bruit(out, t, { dur: 0.16, type: "bandpass", f0: 2400 * v, f1: 700, q: 0.8, gain: 0.85 });
+    b.bruit(out, t, { dur: 0.03, type: "highpass", f0: 5200, gain: 0.55 });
+    b.ton(out, t, { dur: 0.14, type: "sine", f0: 140 * v, f1: 50, gain: 0.75 });
+    b.clic(out, t + 0.06, 2600 * v, 0.25);
+  },
+  /** Tambour de 71 coups : chaque tir est un claquement mat et bref, la cadence fait le reste. */
+  photocopieuse(b, out, t, v) {
+    b.bruit(out, t, { dur: 0.055, type: "bandpass", f0: 1900 * v, f1: 1000, q: 0.9, gain: 0.6 });
+    b.bruit(out, t, { dur: 0.015, type: "highpass", f0: 4800, gain: 0.3 });
+    b.ton(out, t, { dur: 0.05, type: "square", f0: 160 * v, f1: 90, gain: 0.18 });
+  },
+  /** Pompe semi-automatique : plus court que le pompe (pas de pompe à actionner), la culasse revient seule. */
+  essoreuse(b, out, t, v) {
+    b.bruit(out, t, { dur: 0.26, type: "lowpass", f0: 2600 * v, f1: 260, gain: 0.95 });
+    b.bruit(out, t, { dur: 0.07, type: "bandpass", f0: 1900, q: 0.6, gain: 0.6 });
+    b.ton(out, t, { dur: 0.24, type: "sine", f0: 100 * v, f1: 36, gain: 0.9 });
+    b.clic(out, t + 0.12, 1700 * v, 0.35);
+  },
+  /** Arbalète : corde qui claque, sifflement du pique qui part. */
+  brochette(b, out, t, v) {
+    b.ton(out, t, { dur: 0.08, type: "triangle", f0: 320 * v, f1: 140, gain: 0.55 });
+    b.bruit(out, t, { dur: 0.05, type: "highpass", f0: 3200, gain: 0.35 });
+    b.bruit(out, t + 0.02, { dur: 0.3, type: "bandpass", f0: 2600 * v, f1: 5200, q: 2.5, gain: 0.22 });
+  },
+  /** Soufflerie : montée de turbine, puis une rafale de vent grave et large qui balaie tout. */
+  soufflerie(b, out, t, v) {
+    b.ton(out, t, { dur: 0.18, type: "sawtooth", f0: 180 * v, f1: 900, gain: 0.2, att: 0.05 });
+    b.bruit(out, t + 0.12, { dur: 0.9, type: "lowpass", f0: 1800 * v, f1: 120, gain: 1 });
+    b.bruit(out, t + 0.12, { dur: 0.5, type: "bandpass", f0: 700, f1: 300, q: 0.5, gain: 0.7 });
+    b.ton(out, t + 0.12, { dur: 0.7, type: "sine", f0: 60 * v, f1: 22, gain: 1 });
+  },
+  /** Grille-pain : bourdonnement électrique, puis le claquement de l'arc (craquement large bande). */
+  grille_pain(b, out, t, v) {
+    b.ton(out, t, { dur: 0.12, type: "square", f0: 120 * v, f1: 180, gain: 0.25, att: 0.02 });
+    b.bruit(out, t + 0.08, { dur: 0.35, type: "highpass", f0: 2500, f1: 7000, gain: 0.8 });
+    b.bruit(out, t + 0.08, { dur: 0.25, type: "bandpass", f0: 900, q: 0.7, gain: 0.6 });
+    b.ton(out, t + 0.08, { dur: 0.3, type: "sawtooth", f0: 1800 * v, f1: 300, gain: 0.12 });
+    b.ton(out, t + 0.1, { dur: 0.4, type: "sine", f0: 75 * v, f1: 30, gain: 0.8 });
+  },
+  /** Pistolet lourd : entre le pistolet et le revolver, sec et métallique. */
+  perforeuse(b, out, t, v) {
+    b.bruit(out, t, { dur: 0.09, type: "bandpass", f0: 2900 * v, f1: 1000, q: 0.85, gain: 0.85 });
+    b.bruit(out, t, { dur: 0.025, type: "highpass", f0: 5400, gain: 0.45 });
+    b.ton(out, t, { dur: 0.1, type: "sine", f0: 170 * v, f1: 60, gain: 0.65 });
   },
 };
 

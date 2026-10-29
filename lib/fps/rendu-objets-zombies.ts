@@ -74,6 +74,15 @@ function silhouette(arme: ArmeAchat): [number, number][][] {
     case "sniper": return [rect(80, 92, 470, 108), rect(180, 55, 330, 80), [[20, 95], [80, 92], [80, 118], [30, 150]], [[160, 108], [195, 108], [185, 150], [150, 150]], rect(205, 80, 215, 92), rect(300, 80, 310, 92)];
     case "mitrailleuse": return [rect(90, 80, 450, 118), rect(450, 92, 505, 104), [[30, 85], [90, 82], [90, 118], [40, 145]], rect(220, 118, 300, 200), rect(380, 118, 390, 175), rect(410, 118, 420, 175)];
     case "epee": return [rect(170, 118, 470, 136), [[470, 118], [500, 127], [470, 136]], rect(150, 95, 170, 160), rect(70, 120, 150, 134), rect(55, 116, 70, 138)];
+    // (v8) armes des zombies
+    case "baguette": return [rect(170, 82, 430, 98), rect(170, 100, 430, 116), rect(130, 80, 175, 120), [[60, 92], [130, 85], [130, 118], [80, 150]], [[140, 120], [175, 120], [165, 165], [130, 165]]];
+    case "agrafeuse": return [rect(100, 95, 420, 120), [[100, 92], [400, 80], [420, 92], [100, 96]], rect(420, 102, 490, 110), rect(230, 120, 265, 190), [[40, 98], [100, 95], [100, 125], [50, 150]], [[150, 120], [185, 120], [175, 170], [140, 170]]];
+    case "photocopieuse": return [rect(120, 85, 400, 118), rect(400, 92, 470, 108), [[60, 90], [120, 88], [120, 116], [70, 140]], [[285, 118], [325, 145], [285, 185], [245, 145]], [[160, 118], [195, 118], [185, 170], [150, 170]]];
+    case "essoreuse": return [rect(150, 92, 470, 108), rect(220, 108, 330, 130), [[275, 130], [300, 145], [275, 165], [250, 145]], [[40, 95], [150, 90], [150, 120], [50, 150]], [[150, 120], [185, 120], [175, 160], [140, 160]]];
+    case "brochette": return [rect(110, 105, 420, 120), [[330, 40], [345, 112], [330, 190]], [[330, 40], [420, 112], [330, 190]], rect(120, 96, 470, 100), [[50, 108], [110, 104], [110, 124], [60, 150]], [[180, 120], [210, 120], [200, 165], [170, 165]]];
+    case "soufflerie": return [rect(130, 85, 330, 135), [[330, 85], [450, 55], [450, 165], [330, 135]], rect(160, 55, 300, 85), [[190, 135], [225, 135], [215, 200], [180, 200]]];
+    case "grille_pain": return [rect(170, 70, 330, 170), rect(200, 55, 225, 70), rect(270, 55, 295, 70), rect(330, 108, 420, 128), [[420, 100], [450, 118], [420, 136]], [[215, 170], [250, 170], [240, 225], [205, 225]]];
+    case "perforeuse": return [rect(180, 80, 340, 120), rect(340, 92, 370, 108), [[370, 96], [440, 100], [370, 104]], [[210, 120], [250, 120], [240, 185], [200, 185]], rect(185, 185, 265, 210)];
     default: return [rect(120, 90, 420, 115)];
   }
 }
@@ -243,7 +252,10 @@ export interface RenduObjetsZombies {
 const DUREE_REPOSE_S = 0.4;
 
 /** Armes que la boîte fait défiler pendant le tirage. */
-const ARMES_DEFILE: readonly ArmeFeuId[] = ["revolver", "pompe", "mitraillette", "fusil_assaut", "sniper", "mitrailleuse", "rayon", "railgun", "minigun", "magnum_dore"];
+const ARMES_DEFILE: readonly ArmeFeuId[] = [
+  "revolver", "pompe", "mitraillette", "soufflerie", "fusil_assaut", "sniper", "brochette", "mitrailleuse", "rayon", "grille_pain", "essoreuse", "railgun",
+  "photocopieuse", "minigun", "agrafeuse", "magnum_dore", "baguette", "perforeuse",
+];
 
 /** Une boîte mystère (un emplacement) : groupe contre le mur, groupe de l'envol, caisse, couvercle, faisceau, armes qui défilent. */
 interface RenduBoite {

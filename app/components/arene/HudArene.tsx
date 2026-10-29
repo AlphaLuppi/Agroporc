@@ -208,8 +208,11 @@ export default function HudArene(p: PropsHudArene) {
       {combat && (
         <>
           {hud.lunette
-            ? <Lunette zoomX={hud.zoomX} distanceVisee={hud.distanceVisee} niveau={hud.zoomNiveau} niveaux={hud.zoomNiveaux} toucheZoom={t("zoomLunette")} />
-            : <Viseur protege={hud.protege} conduite={conduite} couteau={couteau} recharge={hud.recharge} refAnneau={refAnneau} ecart={hud.ecartViseur} />}
+            ? <Lunette zoomX={hud.zoomX} distanceVisee={hud.distanceVisee} niveau={hud.zoomNiveau} niveaux={hud.zoomNiveaux} toucheZoom={t("zoomLunette")} thermique={hud.viseur === "thermique"} />
+            : <Viseur
+                protege={hud.protege} conduite={conduite} couteau={couteau} recharge={hud.recharge} refAnneau={refAnneau} ecart={hud.ecartViseur}
+                optique={hud.vise && (hud.viseur === "point_rouge" || hud.viseur === "holo") ? hud.viseur : null}
+              />}
           <RetoursTouche chiffres={chiffres} marqueur={marqueur} kill={kill} />
           {!zombies && (
             <>
@@ -295,7 +298,7 @@ export default function HudArene(p: PropsHudArene) {
             arme={hud.arme} slot={hud.slot} slots={hud.slots} munitions={hud.munitions} chargeur={hud.chargeur} reserve={hud.reserve}
             recharge={hud.recharge} degainage={hud.degainage} tireInterdit={hud.tireInterdit} bonusVitesse={hud.bonusVitesse}
             toucheP={t("armePrincipale")} toucheS={t("armeSecondaire")} toucheC={t("couteau")} toucheSp={t("armeSpeciale")}
-            refBarre={refBarre} refTemps={refTemps}
+            refBarre={refBarre} refTemps={refTemps} ameliorees={hud.ameliorees} munitionsG={hud.munitionsG}
             {...(zombies ? { grenades: ez?.grenades ?? 0, remontoirs: ez?.remontoirs ?? 0, cuisson: ez?.cuisson ?? null, toucheGrenade: t("grenade"), toucheRemontoir: t("remontoir") } : {})}
           />
         )}
