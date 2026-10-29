@@ -619,6 +619,8 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
       tigres: (mesures) => jeuRef.current?.debug.tigres(mesures) ?? null,
       invoquer: () => jeuRef.current?.debug.invoquer() ?? false,
       tuerZombie: (id, o) => jeuRef.current?.debug.tuerZombie(id, o) ?? false,
+      essayerArme: (arme, ameliore) => jeuRef.current?.debug.essayerArme?.(arme, ameliore) ?? false,
+      effetArme: (genre, points) => jeuRef.current?.debug.effetArme?.(genre, points),
       forcerHud: (partiel) => setHudForce(partiel ? { ...partiel } : null),
       voix: (mode) => {
         const j = jeuRef.current;
@@ -1034,6 +1036,10 @@ declare global {
       invoquer(): boolean;
       /** Zombies : joue côté client la mort désarticulée du tigre `id` (numéro de `z<n>`) avec cette arme, zone, cause, origine (captures). */
       tuerZombie(id: number, o?: Parameters<JeuHandle["debug"]["tuerZombie"]>[1]): boolean;
+      /** Zombies (v8) : met cette arme en main côté client seulement, améliorée ou non (captures du modèle, du camouflage, du HUD). */
+      essayerArme(arme: Parameters<NonNullable<JeuHandle["debug"]["essayerArme"]>>[0], ameliore?: boolean): boolean;
+      /** Zombies (v8) : dessine un arc électrique par ces points, ou une bourrasque de Soufflerie depuis l'œil (captures). */
+      effetArme(genre: "arc" | "souffle", points?: [number, number, number][]): void;
       /** Superpose un état partiel au HUD (base : repos si le jeu n'émet rien) ; `null` rend la main au jeu. */
       forcerHud(partiel: Partial<HudEtat> | null): void;
       /** Active le chat vocal dans ce mode (null : le coupe), comme la case du menu pause. */

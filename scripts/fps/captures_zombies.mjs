@@ -5,6 +5,8 @@
  * départ, ce qui suffit pour photographier le décor), puis attend les premiers tigres aux fenêtres de l'open space.
  * Usage : node scripts/fps/captures_zombies.mjs   (E2E_OUT = dossier des captures, défaut <tmp>/pdj-captures-zombies ; E2E_URL / E2E_WS réutilisent des serveurs lancés)
  * RAGDOLL=1 (avec PAUSE courte) : au lieu des points de vue, les morts désarticulées des tigres, une par arme (SCENARIOS, DELAIS en ms).
+ * ARMES=1 : (v8) au lieu des points de vue, les armes des zombies en main, de base et améliorées (camouflage, paire akimbo, viseurs, HUD
+ * gratiné ; `essayerArme` côté client seulement), la lunette thermique, un arc et une bourrasque, puis les nouvelles armes à la craie.
  */
 import { spawn, spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
@@ -164,7 +166,59 @@ try {
       console.log("ragdolls", JSON.stringify(await ev(() => window.__arene.etat().jeu.rugissements).catch(() => null)));
     }
   }
-  for (const [nom, p, cible] of process.env.RAGDOLL ? [] : VUES) {
+  if (process.env.ARMES) {
+    // (v8) armes en main : [nom, arme, améliorée, visée (clic droit maintenu)]
+    const ESSAIS = JSON.parse(process.env.ESSAIS ?? "null") ?? [
+      ["40-perforeuse", "perforeuse", false, false],
+      ["41-perforeuses-jumelles", "perforeuse", true, false],
+      ["42-moutarde-sally", "pistolet", true, false],
+      ["43-agrafeuse-pro-holo", "agrafeuse", true, true],
+      ["44-cobra-point-rouge", "revolver", true, true],
+      ["45-baguette", "baguette", false, false],
+      ["46-photocopieuse", "photocopieuse", false, false],
+      ["47-essoreuse-turbo", "essoreuse", true, false],
+      ["48-brochette", "brochette", false, false],
+      ["49-soufflerie", "soufflerie", false, false],
+      ["50-grille-pain", "grille_pain", false, false],
+      ["51-fusil-bourguignon-lunette", "fusil_assaut", true, true],
+      ["52-sniper-thermique", "sniper", true, true],
+    ];
+    await ev(() => { window.__arene.teleporter([131, 0, -50]); window.__arene.regarder(Math.PI * 0.75, -0.05); });
+    for (const [nom, arme, ameliore, vise] of ESSAIS) {
+      if (!(await ev(() => !!window.__arene?.etat().jeu).catch(() => false))) { console.log("rechargée : nouvelle entrée"); await entrer(); }
+      const ok = await ev(([a, am]) => window.__arene.essayerArme(a, am), [arme, ameliore]);
+      if (vise) await ev(() => window.__arene.touche("Souris2", true));
+      await dormir(2500);
+      await capture(nom);
+      if (vise) await ev(() => window.__arene.touche("Souris2", false));
+      console.log("arme", nom, ok);
+    }
+    await ev(() => window.__arene.essayerArme("soufflerie", false));
+    await dormir(1500);
+    await ev(() => window.__arene.effetArme("souffle"));
+    await dormir(150);
+    await capture("53-bourrasque");
+    await ev(() => window.__arene.effetArme("arc"));
+    await dormir(120);
+    await capture("54-arc");
+    // les nouvelles armes à la craie, vues du point d'achat (l'invite de l'arme, pas celle d'une porte ou du disjoncteur voisins)
+    for (const [nom, p, c] of [
+      ["55-craie-baguette", [99.16, -36.99], [98.7, 1.4, -35.35]],
+      ["56-craie-agrafeuse", [151.59, -34.56], [152.05, 1.4, -36.2]],
+      ["57-craie-photocopieuse", [214.18, -48.69], [216.25, 1.4, -47.65]],
+      ["58-craie-perforeuse", [96.9, -26.6], [99.2, 1.3, -25.7]],
+    ]) {
+      await ev(([p, c]) => {
+        window.__arene.teleporter([p[0], 0, p[1]]);
+        const o = window.__arene.etat().jeu.oeil;
+        const dx = c[0] - p[0], dz = c[2] - p[1], dy = c[1] - o[1];
+        window.__arene.regarder(Math.atan2(-dx, -dz), Math.atan2(dy, Math.hypot(dx, dz)));
+      }, [p, c]);
+      await dormir(2500);
+      await capture(nom);
+    }
+  }
+  for (const [nom, p, cible] of process.env.RAGDOLL || process.env.ARMES ? [] : VUES) {
     // `next dev` recharge parfois la page (compilation à la demande) : on rentre en partie
     if (!(await ev(() => !!window.__arene?.etat().jeu).catch(() => false))) { console.log("rechargée : nouvelle entrée"); await entrer(); }
     await ev(([p, c]) => {
@@ -177,7 +231,7 @@ try {
     await capture(nom);
     console.log("capture", nom);
   }
-  if (!process.env.SANS_TIGRES && !process.env.RAGDOLL) {
+  if (!process.env.SANS_TIGRES && !process.env.RAGDOLL && !process.env.ARMES) {
     // retour au départ (position du serveur) : on attend la manche et les tigres aux fenêtres
     await ev((p) => window.__arene.teleporter(p), depart);
     let n = 0;

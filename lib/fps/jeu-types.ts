@@ -302,5 +302,12 @@ export interface JeuHandle {
     }): boolean;
     /** chat vocal : connexions, audibilité, joueurs entendus */
     voix(): Record<string, unknown>;
+    /**
+     * (zombies, v8, captures) met `arme` en main CÔTÉ CLIENT seulement (améliorée ou non), comme un `equipement` du serveur : modèle, camouflage,
+     * paire akimbo, viseur et HUD. Le serveur l'ignore (ses tirs sont refusés). false hors zombies
+     */
+    essayerArme?(arme: ArmeId, ameliore?: boolean): boolean;
+    /** (zombies, v8, captures) un arc électrique dessiné par ces points, une bourrasque de Soufflerie tirée de mon œil */
+    effetArme?(genre: "arc" | "souffle", points?: Vec3[]): void;
   };
 }

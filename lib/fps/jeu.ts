@@ -2824,6 +2824,28 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
         };
       },
       invoquer() { forceActif = true; return invoquer(); },
+      essayerArme(arme, ameliore = false) {
+        if (!modeZ || estMelee(arme)) return false;
+        const e = armes.equipement();
+        const categorie = STATS[arme].categorie;
+        const slot: Slot = categorie === "principale" ? "principale" : categorie === "secondaire" ? "secondaire" : "speciale";
+        if (slot === "principale") { e.principale = arme as typeof e.principale; delete e.sansPrincipale; }
+        else if (slot === "secondaire") e.secondaire = arme as typeof e.secondaire;
+        else e.speciale = arme as typeof e.speciale;
+        const autres = (e.ameliorees ?? []).filter((x) => x !== arme);
+        e.ameliorees = ameliore ? [...autres, arme] : autres;
+        armes.appliquerServeur({ t: "equipement", equip: e, main: slot, munSpeciale: 20, ravitaille: arme }, ms());
+        emettreHud(true);
+        return true;
+      },
+      effetArme(genre, points) {
+        const o = oeil(), d = directionVisee(lacet, tangage, 0);
+        if (genre === "souffle") { rEffetsArmes?.souffle(o, d, 24); return; }
+        // sans points : quatre « tigres » devant moi, de 4 à 10 m, en quinconce
+        const l = Math.hypot(d[0], d[2]) || 1, fx = d[0] / l, fz = d[2] / l;
+        const devant = (m: number, cote: number): Vec3 => [o[0] + fx * m - fz * cote, 0.8, o[2] + fz * m + fx * cote];
+        rEffetsArmes?.arc(points ?? [devant(4, -1.5), devant(6, 1), devant(8, -1), devant(10, 1.5)]);
+      },
       tuerZombie(id, o = {}) {
         // (zombies) mort jouée côté client seulement, comme à la réception de `zombieMort` : le serveur garde le tigre (captures du ragdoll)
         // `o.p` : un tigre d'essai qui court là (cap `o.cap`, type `o.type`), sans tigre du serveur
