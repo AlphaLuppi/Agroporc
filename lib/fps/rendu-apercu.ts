@@ -10,7 +10,7 @@ import * as THREE from "three";
 import { C, ajouterBatiments, creerAvionFilaire } from "../agroparc3d/decor";
 import type { SceneData, Vec2 } from "../agroparc3d/types";
 import {
-  SuiviSource, choisirSource, libelleBandeau, type ApercuDirect, type Bandeau, type JoueurAerien, type ModeleApercu, type ResumeBandeau,
+  SuiviSource, choisirSource, directAffichable, libelleBandeau, type ApercuDirect, type Bandeau, type JoueurAerien, type ModeleApercu, type ResumeBandeau,
   type TigreAerien,
 } from "./apercu-source";
 import { creerSolLibre, type SolLibre } from "./apercu-sol";
@@ -19,7 +19,8 @@ import { creerSimArene, type TraitTir } from "./apercu-sim-arene";
 import { creerSimBr } from "./apercu-sim-br";
 import { creerSimZombies } from "./apercu-sim-zombies";
 import { batimentDesJoueurs, fenetresAttaquees } from "./apercu-zombies-vue";
-import { bornesBr, centresBatimentsEligibles, donneesBr } from "./br-carte";
+import { amorcerProcedural, bornesBr, centresBatimentsEligibles, donneesBr, type ProceduralPrecalcule } from "./br-carte";
+import proceduralPrecalcule from "./br-procedural-precalcule.json";
 import { positionAvionBr } from "./br-chute";
 import { etatDepuisZoneBr } from "./br-zone";
 import type { ModeSalle } from "./protocole";
@@ -49,7 +50,7 @@ export interface RenduApercu {
   /** Le serveur dit qu'une partie est en cours dans ce mode alors qu'aucun aperçu en direct n'arrive (ancien serveur). */
   partieEnCours(b: boolean): void;
   maj(dt: number, t: number): void;
-  etat(): { tigres: number; modele: ModeleApercu | null };
+  etat(): { tigres: number; modele: ModeleApercu | null; dureesDecorMs: { zombies?: number; br?: number } };
   graine(n: number): void;
   avancer(s: number): void;
   dispose(): void;
@@ -89,7 +90,11 @@ export function creerRenduApercu(ctx: ContexteRenduApercu): RenduApercu {
   let dz: ReturnType<typeof donneesZombies> | null = null;
   let db: ReturnType<typeof donneesBr> | null = null;
   const donneesZ = () => (dz ??= donneesZombies(data));
-  const donneesB = () => (db ??= donneesBr(data));
+  // la sélection des bâtiments procéduraux du Battle Royale (150 à 300 ms à froid) est précalculée hors ligne : jamais calculée dans le navigateur
+  const donneesB = () => {
+    amorcerProcedural(data, proceduralPrecalcule as readonly ProceduralPrecalcule[]);
+    return (db ??= donneesBr(data));
+  };
   const sols: Partial<Record<ModeSalle, SolLibre>> = {};
   function solDe(mode: ModeSalle): SolLibre {
     return (sols[mode] ??= mode === "zombies"
@@ -98,39 +103,61 @@ export function creerRenduApercu(ctx: ContexteRenduApercu): RenduApercu {
   }
 
   // ---------- décors ----------
-  const decors: Partial<Record<ModeSalle, DecorMode>> = {};
-  function construireDecor(mode: "zombies" | "br"): DecorMode {
-    const existant = decors[mode];
-    if (existant) return existant;
-    const groupe = new THREE.Group();
-    groupe.name = `apercu-decor-${mode}`;
-    groupe.visible = false;
-    scene.add(groupe);
-    let interieurs: RenduInterieurs | null = null;
-    if (mode === "zombies") {
-      const d = donneesZ();
-      ajouterBatiments(groupe, d.data);
-      interieurs = creerRenduInterieurs(groupe, d.data, d.pieces, { sansPlafond: true, courant: true });
-    } else {
-      const d = donneesB();
-      ajouterBatiments(groupe, d.data);
-      interieurs = creerRenduInterieurs(groupe, d.data, d.pieces, { sansPlafond: true, batiments: d.creux, courant: true });
+  // Un décor se construit en étapes (données, bâtiments, intérieurs) : chacune est une tâche courte, une par créneau d'inactivité (budget de la
+  // spec : 300 ms au plus pour tout le décor, jamais d'image gelée pendant l'intro ou la transition de caméra). `decor()` termine ce qui reste
+  // en synchrone si le mode est demandé avant la fin.
+  const ETAPES_DECOR = 3;
+  interface DecorEnCours { groupe: THREE.Group; interieurs: RenduInterieurs | null; etape: number }
+  const decors: Partial<Record<"zombies" | "br", DecorEnCours>> = {};
+  /** durée de la plus longue étape de construction d'un décor (ms), pour les captures */
+  const dureesDecor: Partial<Record<"zombies" | "br", number>> = {};
+  const decorPret = (mode: "zombies" | "br"): boolean => (decors[mode]?.etape ?? 0) >= ETAPES_DECOR;
+  /** Exécute l'étape suivante du décor de `mode` ; vrai s'il est complet après elle. */
+  function avancerDecor(mode: "zombies" | "br"): boolean {
+    const t0 = performance.now();
+    let d = decors[mode];
+    if (!d) {
+      const groupe = new THREE.Group();
+      groupe.name = `apercu-decor-${mode}`;
+      groupe.visible = false;
+      scene.add(groupe);
+      d = decors[mode] = { groupe, interieurs: null, etape: 0 };
     }
-    return (decors[mode] = { groupe, interieurs });
+    if (d.etape >= ETAPES_DECOR) return true;
+    if (d.etape === 0) { if (mode === "zombies") donneesZ(); else donneesB(); }
+    else if (d.etape === 1) ajouterBatiments(d.groupe, (mode === "zombies" ? donneesZ() : donneesB()).data);
+    else if (mode === "zombies") {
+      const z = donneesZ();
+      d.interieurs = creerRenduInterieurs(d.groupe, z.data, z.pieces, { sansPlafond: true, courant: true });
+    } else {
+      const b = donneesB();
+      d.interieurs = creerRenduInterieurs(d.groupe, b.data, b.pieces, { sansPlafond: true, batiments: b.creux, courant: true });
+    }
+    d.etape++;
+    dureesDecor[mode] = Math.max(dureesDecor[mode] ?? 0, performance.now() - t0);
+    return d.etape >= ETAPES_DECOR;
   }
-  /** Construit les décors un par créneau d'inactivité (jamais pendant le premier affichage). */
+  function construireDecor(mode: "zombies" | "br"): DecorEnCours {
+    while (!avancerDecor(mode));
+    return decors[mode]!;
+  }
+  /** Construit le décor d'un mode étape par étape, une par créneau d'inactivité. */
   let creneaux: number[] = [];
-  function planifierDecors() {
-    const file: ("zombies" | "br")[] = ["zombies", "br"];
-    const suivant = () => {
-      const m = file.shift();
-      if (!m || disposed) return;
-      if (!decors[m]) construireDecor(m);
-      if (file.length) planifier(suivant);
-    };
-    planifier(suivant);
+  function planifierDecor(mode: "zombies" | "br", ensuite?: () => void, urgent = false) {
+    planifier(() => {
+      if (disposed) return;
+      if (!avancerDecor(mode)) planifierDecor(mode, ensuite, urgent);
+      else ensuite?.();
+    }, urgent);
   }
-  function planifier(f: () => void) {
+  /** Les décors des deux modes, l'un après l'autre. */
+  function planifierDecors() {
+    if (!decorPret("zombies")) planifierDecor("zombies", () => { if (!decorPret("br")) planifierDecor("br"); });
+    else if (!decorPret("br")) planifierDecor("br");
+  }
+  /** `urgent` (un mode vient d'être demandé, le décor doit être prêt au point haut de la transition) : à la prochaine image libre, pas à l'inactivité. */
+  function planifier(f: () => void, urgent = false) {
+    if (urgent) { creneaux.push(window.setTimeout(f, 0)); return; }
     const w = window as Window & { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number };
     if (w.requestIdleCallback) creneaux.push(w.requestIdleCallback(f, { timeout: 1500 }));
     else creneaux.push(window.setTimeout(f, 250));
@@ -352,17 +379,22 @@ export function creerRenduApercu(ctx: ContexteRenduApercu): RenduApercu {
     const mort = tg.pvPct <= 0;
     // la flèche regarde dans le sens du cap du protocole : avant = (−sin cap, −cos cap)
     _q.setFromAxisAngle(_axe, l.cap + Math.PI);
-    const echelle = st.echelle * (tg.mode === "sol" ? 0.6 + 0.4 * Math.min(1, (t * 2) % 1.2) : 1) * (mort ? 0.5 : 1);
+    // mouvement réduit : aucune oscillation (taille, teinte, clignotement), l'état se lit à la teinte et au rayon fixes
+    const reduit = ctx.reduit;
+    const echelle = st.echelle * (tg.mode === "sol" && !reduit ? 0.6 + 0.4 * Math.min(1, (t * 2) % 1.2) : 1) * (mort ? 0.5 : 1);
     _p.set(l.x, 1.4, l.z); _s.setScalar(echelle);
     _m.compose(_p, _q, _s);
     fleches.setMatrixAt(i, _m);
     _c.setHex(st.couleur);
-    if (tg.mode === "fenetre") _c.lerp(_rouge, 0.45 + 0.45 * Math.sin(t * 14));
+    if (tg.mode === "fenetre") _c.lerp(_rouge, reduit ? 0.7 : 0.45 + 0.45 * Math.sin(t * 14));
     fleches.setColorAt(i, _c);
     // anneau : pulse à la sortie du sol, rouge qui clignote quand le tigre arrache les planches, discret sinon
     let r = st.echelle * 0.9, col = st.couleur;
-    if (tg.mode === "sol") r = st.echelle * (1 + 1.4 * ((t * 1.4) % 1));
-    else if (tg.mode === "fenetre") { r = st.echelle * (1.4 + 0.25 * Math.sin(t * 14)); col = Math.sin(t * 14) > 0 ? ROUGE : ORANGE; }
+    if (tg.mode === "sol") r = st.echelle * (reduit ? 1.8 : 1 + 1.4 * ((t * 1.4) % 1));
+    else if (tg.mode === "fenetre") {
+      if (reduit) { r = st.echelle * 1.5; col = ROUGE; }
+      else { r = st.echelle * (1.4 + 0.25 * Math.sin(t * 14)); col = Math.sin(t * 14) > 0 ? ROUGE : ORANGE; }
+    }
     else if (tg.mode === "saut") r = st.echelle * 1.6;
     _p.set(l.x, 0.9, l.z); _s.setScalar(r); _q.identity();
     _m.compose(_p, _q, _s);
@@ -380,7 +412,7 @@ export function creerRenduApercu(ctx: ContexteRenduApercu): RenduApercu {
       _q.setFromAxisAngle(_axe, Math.atan2(-tz, tx));
       const attaquee = attaquees.includes(i);
       _p.set(f.milieu[0], 1.5, f.milieu[1]);
-      _s.set(Math.max(1.6, f.largeur), attaquee ? 1 + 0.5 * Math.abs(Math.sin(t * 9)) : 1, 1);
+      _s.set(Math.max(1.6, f.largeur), attaquee ? (ctx.reduit ? 1.3 : 1 + 0.5 * Math.abs(Math.sin(t * 9))) : 1, 1);
       _m.compose(_p, _q, _s);
       barres.setMatrixAt(i, _m);
       _c.setHex(p >= 5 ? VERT : p >= 3 ? ORANGE : p >= 1 ? 0xff9a5c : ROUGE);
@@ -429,7 +461,7 @@ export function creerRenduApercu(ctx: ContexteRenduApercu): RenduApercu {
       }
     }
     contour.visible = contourDe !== null && attaque;
-    contourMat.opacity = attaque ? 0.55 + 0.4 * Math.sin(t * 6) : 0;
+    contourMat.opacity = attaque ? (ctx.reduit ? 0.8 : 0.55 + 0.4 * Math.sin(t * 6)) : 0;
   }
 
   function majTraits(sim: SimAvecTraits | null) {
@@ -457,7 +489,7 @@ export function creerRenduApercu(ctx: ContexteRenduApercu): RenduApercu {
       zoneUniformes.uRayon.value = e.rayon;
       zoneUniformes.uCible.value.set(e.cible ? e.cible.c[0] : e.centre[0], e.cible ? e.cible.c[1] : e.centre[1]);
       zoneUniformes.uRayonCible.value = e.cible ? e.cible.r : 0;
-      zoneUniformes.uTemps.value = t;
+      zoneUniformes.uTemps.value = ctx.reduit ? 0 : t;
     }
     const av = courant.avion;
     const visible = !!av && horloge >= av.debutT - 1000 && horloge <= av.finT + 2000;
@@ -467,8 +499,8 @@ export function creerRenduApercu(ctx: ContexteRenduApercu): RenduApercu {
       avionBr.groupe.position.set(p[0], p[1], p[2]);
       // nez le long de +x du modèle : tourné de θ = atan2(−dz, dx) vers la direction du trajet
       avionBr.groupe.rotation.y = Math.atan2(-(av.arrivee[1] - av.depart[1]), av.arrivee[0] - av.depart[0]);
-      avionBr.navLight.visible = t % 1.1 < 0.12;
-      avionBr.wingLight.visible = t % 1.1 > 0.5 && t % 1.1 < 0.6;
+      avionBr.navLight.visible = ctx.reduit || t % 1.1 < 0.12;
+      avionBr.wingLight.visible = ctx.reduit || (t % 1.1 > 0.5 && t % 1.1 < 0.6);
     }
   }
 
@@ -491,13 +523,14 @@ export function creerRenduApercu(ctx: ContexteRenduApercu): RenduApercu {
   /** Une image : source (direct ou simulation), simulation, repères, tigres, fenêtres, zone, avion, bandeau. */
   function maj(dt: number, t: number) {
     if (disposed) return;
-    const d = decors[modeModele];
+    const d = modeModele === "arene" ? undefined : decors[modeModele];
     if (d?.interieurs && d.groupe.visible) d.interieurs.maj(t, dt);
     if (!estActif) return;
     const candidate = choisirSource({ modeAffiche: modeModele, modeConfirme: modeModele, connecte: true, direct, maintenant: maintenant() });
     const src = suivi.maj(candidate, maintenant());
-    // le direct ne vaut que s'il est de ce mode et récent : sinon la simulation, même pendant l'hystérésis (le dernier paquet n'est plus frais)
-    const utiliseDirect = src === "direct" && direct !== null && direct.mode === modeModele;
+    // le direct ne vaut que s'il est de ce mode et récent : sinon la simulation, même pendant l'hystérésis (un instantané plus vieux que la péremption
+    // est figé, le bandeau ne dirait plus la vérité). L'hystérésis ne couvre donc que le retour de la simulation vers le direct, pas un direct périmé.
+    const utiliseDirect = directAffichable(src, direct, modeModele, maintenant());
     if (utiliseDirect !== (sourceCourante === "direct")) { ctx.joueurs([]); lissage.clear(); dernierPush = -1; mancheVue = palierVu = vivantsVus = -1; }
     sourceCourante = utiliseDirect ? "direct" : "simulation";
     ctx.surSource(sourceCourante);
@@ -566,12 +599,12 @@ export function creerRenduApercu(ctx: ContexteRenduApercu): RenduApercu {
     },
     mode(m) {
       // la transition de caméra et l'échange du décor sont ceux de scene.ts ; on prépare ici le décor voulu pour qu'il soit prêt au point haut
-      if (estActif && m !== "arene" && !decors[m]) planifier(() => { if (!disposed && !decors[m]) construireDecor(m); });
+      if (estActif && m !== "arene" && !decorPret(m)) planifierDecor(m, undefined, true);
     },
     direct(d) { direct = d; },
     partieEnCours(b) { partieEnCoursFlag = b; },
     maj,
-    etat() { return { tigres: fleches.count, modele: estActif ? courant : null }; },
+    etat() { return { tigres: fleches.count, modele: estActif ? courant : null, dureesDecorMs: { ...dureesDecor } }; },
     graine(n) {
       graineImposee = n;
       delete sims[modeModele];

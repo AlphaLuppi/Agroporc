@@ -83,7 +83,8 @@ export type SourceApercu = "direct" | "simulation";
 
 /**
  * Direct ou simulation ? Direct si connecté, le mode affiché est le mode confirmé par le serveur, l'aperçu est de ce mode, assez récent et montre
- * au moins un joueur réel ou un tigre.
+ * au moins un joueur réel ou un tigre. Exception du Battle Royale : tant que tous les joueurs sont encore dans l'avion le snap n'en montre aucun,
+ * mais l'aperçu porte déjà la vraie zone et le vrai avion (le serveur les omet hors partie) : c'est bien une partie réelle, donc le direct.
  */
 export function choisirSource(e: {
   modeAffiche: ModeSalle; modeConfirme: ModeSalle; connecte: boolean; direct: ApercuDirect | null; maintenant: number;
@@ -91,7 +92,8 @@ export function choisirSource(e: {
   const d = e.direct;
   if (!e.connecte || !d || e.modeAffiche !== e.modeConfirme || d.mode !== e.modeAffiche) return "simulation";
   if (e.maintenant - d.recuT > APERCU.perimeMs) return "simulation";
-  return d.joueurs.length > 0 || d.tigres.length > 0 ? "direct" : "simulation";
+  if (d.joueurs.length > 0 || d.tigres.length > 0) return "direct";
+  return d.mode === "br" && (!!d.avion || !!d.zone) ? "direct" : "simulation";
 }
 
 /** Hystérésis : simulation → direct tout de suite ; direct → simulation seulement après `retourSimulationMs` sans direct. */
@@ -119,11 +121,20 @@ export class SuiviSource {
   }
 }
 
+/**
+ * Le direct est-il ce qu'on affiche ? La source du suivi dit « direct » (hystérésis comprise) ET l'aperçu est de ce mode ET encore frais : pendant
+ * l'hystérésis le dernier paquet peut être périmé, on ne montre pas un instantané figé sous un bandeau « En direct ».
+ */
+export function directAffichable(src: SourceApercu, d: ApercuDirect | null, mode: ModeSalle, maintenant: number): d is ApercuDirect {
+  return src === "direct" && d !== null && d.mode === mode && maintenant - d.recuT <= APERCU.perimeMs;
+}
+
 export const TITRE_MODE: Record<ModeSalle, string> = { arene: "Match à mort", zombies: "Zombies tigres", br: "Battle Royale" };
 /** Légende des repères de la vue, par mode. */
 export const LEGENDE_MODE: Record<ModeSalle, string> = { arene: "Agents", zombies: "Survivants · Tigres · Fenêtres", br: "Joueurs · Zone · Avion" };
 
-export interface Bandeau { etat: SourceApercu; titre: string; detail: string }
+/** `mode` : le mode DONT le bandeau parle (il change au point haut de la transition de caméra, pas au clic) : la légende doit le suivre. */
+export interface Bandeau { etat: SourceApercu; mode: ModeSalle; titre: string; detail: string }
 
 /** Ce que le bandeau sait du modèle affiché. */
 export interface ResumeBandeau {
@@ -145,7 +156,7 @@ export function libelleBandeau(source: SourceApercu, mode: ModeSalle, r: ResumeB
   const titre = TITRE_MODE[mode];
   const parties: string[] = [];
   if (source === "simulation") {
-    if (r.partieEnCours) return { etat: "simulation", titre, detail: "partie en cours, aperçu en direct indisponible" };
+    if (r.partieEnCours) return { etat: "simulation", mode, titre, detail: "partie en cours, aperçu en direct indisponible" };
     if (mode === "arene") parties.push(pluriel(r.joueurs, "agent fictif", "agents fictifs"));
     else if (mode === "zombies") {
       if (r.manche) parties.push(`manche ${r.manche}`);
@@ -155,7 +166,7 @@ export function libelleBandeau(source: SourceApercu, mode: ModeSalle, r: ResumeB
       parties.push(`${r.vivants ?? r.joueurs} en vie sur ${r.total ?? r.joueurs}`);
       if (r.palier && r.nbPaliers) parties.push(`zone ${r.palier}/${r.nbPaliers}`);
     }
-    return { etat: "simulation", titre, detail: parties.join(" · ") };
+    return { etat: "simulation", mode, titre, detail: parties.join(" · ") };
   }
   if (mode === "arene") parties.push(pluriel(r.joueurs, "joueur en jeu", "joueurs en jeu"));
   else if (mode === "zombies") {
@@ -167,7 +178,7 @@ export function libelleBandeau(source: SourceApercu, mode: ModeSalle, r: ResumeB
     if (r.palier && r.nbPaliers) parties.push(`zone ${r.palier}/${r.nbPaliers}`);
     if (r.partie) parties.push(`partie ${r.partie}`);
   }
-  return { etat: "direct", titre, detail: parties.join(" · ") };
+  return { etat: "direct", mode, titre, detail: parties.join(" · ") };
 }
 
 /** Écart d'horloge serveur − client (ms) d'après l'horodatage `ts` d'un message reçu à `maintenant`. */

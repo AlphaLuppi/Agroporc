@@ -96,7 +96,7 @@ try {
   const erreurs = [];
   page.on("pageerror", (e) => erreurs.push(String(e).slice(0, 400)));
   const apercu = () => page.evaluate(() => window.__palantir.apercu());
-  const bandeau = () => page.locator("[role=status]").filter({ hasText: /En direct|Simulation/i }).first().innerText().then((t) => t.replace(/\n/g, " ")).catch(() => "");
+  const bandeau = () => page.locator("[data-apercu]").filter({ hasText: /En direct|Simulation/i }).first().innerText().then((t) => t.replace(/\n/g, " ")).catch(() => "");
   const choisir = async (nom) => { const r = page.getByRole("radio", { name: nom }); await r.waitFor({ timeout: 60000 }); await r.evaluate((e) => e.click()); };
   for (let essai = 0; essai < 5; essai++) {
     try {

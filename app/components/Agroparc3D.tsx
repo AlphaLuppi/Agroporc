@@ -886,8 +886,8 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
 
       {!enArene && (<>
       <div className={`${styles.hud} ${styles.hudBl}`} inert={chargement}>
-        {bandeau && <BadgeApercu bandeau={bandeau} mode={modeAffiche} />}
-        {!(bandeau && modeAffiche !== "arene") && (
+        {bandeau && <BadgeApercu bandeau={bandeau} />}
+        {!(bandeau && bandeau.mode !== "arene") && (
           <div className={styles.legend}>
             <span className={styles.kHome}>CBA</span>
             <span className={styles.kResto}>Restaurants PDJ</span>
@@ -895,7 +895,7 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
           </div>
         )}
         <div className={styles.hint}>
-          Glisser : pivoter · Clic droit ou deux doigts : déplacer · Molette : zoom · Flèches : déplacer · Clic sur un restaurant : plat du jour et carte · <b>Échap</b> ou <b>Retour au site</b> pour revenir
+          Glisser : pivoter · Clic droit ou deux doigts : déplacer · Molette : zoom · Flèches : déplacer · {(bandeau?.mode ?? "arene") === "arene" && "Clic sur un restaurant : plat du jour et carte · "}<b>Échap</b> ou <b>Retour au site</b> pour revenir
         </div>
         <div className={styles.ctl}>
           <button type="button" onClick={() => handleRef.current?.spin(1)} aria-label="Pivoter vers la gauche">↺ Pivoter</button>

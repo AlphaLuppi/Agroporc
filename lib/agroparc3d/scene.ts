@@ -16,6 +16,7 @@ import { trajetTruck } from "./truck";
 import type { Poi, SceneData, Vec2 } from "./types";
 import type { Cachette } from "./cachettes";
 import { creerTigreCache, type TigreCache } from "./tigre";
+import { placerEtiquette, rectEtiquette, type RectEtiquette } from "./etiquettes";
 import { C, ajouterArbres, ajouterBatiments, ajouterGrille, ajouterReseauSol, creerAvionFilaire, edgesOf } from "./decor";
 import {
   CADRAGES, brouillardInterpole, dureeTransition, impulsionBloom, interpolerCadrage, leveDeTransition, poseCadrage, type Pose,
@@ -81,6 +82,8 @@ export interface EtatApercu {
   /** moyenne glissante (ms) du JS de l'aperçu par image : simulation, repères, tigres, zone */
   msApercu: number;
   modele: ModeleApercu | null;
+  /** durée (ms) de la plus longue étape de construction du décor de chaque mode (budget de la spec : 300 ms pour tout le décor) */
+  dureesDecorMs: { zombies?: number; br?: number };
 }
 
 /** Chasse au tigre, pour l'hôte et le crochet de développement `window.__palantir`. */
@@ -424,6 +427,13 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
     }
     m.anchor.set(p[0], (chute ? 0 : p[1]) + m.hauteurEtiquette, p[2]);
   }
+  /** Taille d'une étiquette, mesurée au plus une fois par seconde (lire la mise en page à chaque image la forcerait). */
+  const taillesEtiquettes = new WeakMap<HTMLElement, { w: number; h: number; t: number }>();
+  function tailleEtiquette(el: HTMLElement, maintenant: number): { w: number; h: number } {
+    let q = taillesEtiquettes.get(el);
+    if (!q || maintenant - q.t > 1000) { q = { w: el.offsetWidth || 90, h: el.offsetHeight || 24, t: maintenant }; taillesEtiquettes.set(el, q); }
+    return q;
+  }
   let prochainClassement = 0;
   const _q = new THREE.Vector3();
   function majJoueurs(liste: readonly JoueurAerien[], o: OptionsJoueurs = {}) {
@@ -538,6 +548,8 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
   let decorVoulu: ModeSalle = modeInitial;
   let rendu: RenduApercu | null = null;
   let chargementRendu = false;
+  /** le chargement ou la création du rendu a échoué : on ne réessaie pas (un import() réseau par image, sinon), la vue reste sur l'arène */
+  let echecRendu = false;
   let modeVoulu: ModeSalle = modeInitial;
   let directVoulu: ApercuDirect | null = null;
   let partieVoulue = false;
@@ -564,7 +576,7 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
   }
 
   function chargerRendu() {
-    if (rendu || chargementRendu) return;
+    if (rendu || chargementRendu || echecRendu) return;
     chargementRendu = true;
     import("../fps/rendu-apercu")
       .then(({ creerRenduApercu }) => {
@@ -581,7 +593,18 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
         // le décor demandé avant la fin du chargement (mode initial après une partie, choix très rapide)
         if (decorVoulu !== modeDecor || modeDecor !== "arene") appliquerDecor(decorVoulu);
       })
-      .catch(() => { chargementRendu = false; });
+      .catch(() => {
+        chargementRendu = false;
+        if (disposed) return;
+        // échec définitif (réseau, chunk introuvable, exception à la création) : un seul essai, l'arène reste affichée
+        echecRendu = true;
+        try { rendu?.dispose(); } catch { /* déjà en échec */ }
+        rendu = null;
+        cb.onEvent("ERR", "aperçu des modes indisponible");
+        modeVoulu = "arene";
+        cb.onApercu?.(null);
+        allerAuMode("arene");
+      });
   }
 
   /** Échange du décor affiché (au milieu de la transition). Attend le chargement du rendu pour tout mode autre que l'arène. */
@@ -601,6 +624,8 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
 
   /** Lance la transition vers le cadrage de `cible` (coupure franche en mouvement réduit). */
   function allerAuMode(cible: ModeSalle, immediat = false) {
+    // sans rendu (échec du chargement), seul le cadrage de l'arène a un décor : jamais de caméra vers un mode dont le décor ne viendra pas
+    if (echecRendu && cible !== "arene") cible = "arene";
     if (cible === modeCamera && !transition) { decorVoulu = cible; return; }
     const vers = versPose3(poseCadrage(cible, data));
     const de: Pose3 = { pos: camera.position.clone(), cible: controls.target.clone() };
@@ -707,18 +732,28 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
     }
 
     const w = canvas.clientWidth, h = canvas.clientHeight;
+    // les noms des restaurants d'abord (ils sont le sujet de la vue), puis les noms des repères de l'aperçu : un nom qui tomberait sur un autre est masqué
+    const occupes: RectEtiquette[] = [];
+    const maintenantMs = performance.now();
     for (const m of markers) {
       if (m.el.hidden || !enArene) continue;
       tmp.copy(m.anchor).project(camera);
       const vis = tmp.z < 1 && Math.abs(tmp.x) < 1.1 && Math.abs(tmp.y) < 1.1;
       m.el.style.opacity = vis ? "1" : "0";
-      if (vis) m.el.style.transform = `translate(-50%,-100%) translate(${(((tmp.x + 1) / 2) * w).toFixed(1)}px, ${(((1 - tmp.y) / 2) * h).toFixed(1)}px)`;
+      if (vis) {
+        const x = ((tmp.x + 1) / 2) * w, y = (1 - tmp.y) / 2 * h;
+        m.el.style.transform = `translate(-50%,-100%) translate(${x.toFixed(1)}px, ${y.toFixed(1)}px)`;
+        if (m.el.style.display !== "none") { const q = tailleEtiquette(m.el, maintenantMs); placerEtiquette(occupes, rectEtiquette(x, y, q.w, q.h)); }
+      }
     }
     for (const m of joueursMarq.values()) {
       tmp.copy(m.anchor).project(camera);
-      const vis = m.etiquette && tmp.z < 1 && Math.abs(tmp.x) < 1.1 && Math.abs(tmp.y) < 1.1;
+      let vis = m.etiquette && tmp.z < 1 && Math.abs(tmp.x) < 1.1 && Math.abs(tmp.y) < 1.1;
+      const x = ((tmp.x + 1) / 2) * w, y = (1 - tmp.y) / 2 * h;
+      // chemin historique de l'arène (spectateurs d'une vraie partie) : inchangé ; seuls les repères de l'aperçu cèdent la place
+      if (vis && m.lisser) { const q = tailleEtiquette(m.el, maintenantMs); vis = placerEtiquette(occupes, rectEtiquette(x, y, q.w, q.h)); }
       m.el.style.opacity = vis ? "1" : "0";
-      if (vis) m.el.style.transform = `translate(-50%,-100%) translate(${(((tmp.x + 1) / 2) * w).toFixed(1)}px, ${(((1 - tmp.y) / 2) * h).toFixed(1)}px)`;
+      if (vis) m.el.style.transform = `translate(-50%,-100%) translate(${x.toFixed(1)}px, ${y.toFixed(1)}px)`;
     }
     renderer.info.reset();
     composer.render();
@@ -766,6 +801,7 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
           camera: { pos: [camera.position.x, camera.position.y, camera.position.z], cible: [controls.target.x, controls.target.y, controls.target.z] },
           joueurs: joueursMarq.size, sim, tigres: rendu?.etat().tigres ?? 0, source: apercuSource, appelsDessin: appelsImage, msApercu: +msApercu.toFixed(3),
           modele: rendu?.etat().modele ?? null,
+          dureesDecorMs: rendu?.etat().dureesDecorMs ?? {},
         };
       },
       graine(n) { rendu?.graine(n); },

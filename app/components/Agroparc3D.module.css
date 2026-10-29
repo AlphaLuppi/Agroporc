@@ -136,7 +136,10 @@
 .apercu {
   display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase;
   color: var(--ag-ink-dim); text-shadow: 0 0 6px var(--ag-ground), 0 0 2px var(--ag-ground);
+  /* fond propre : le texte se lit sur les arêtes des bâtiments en fil de fer (comme la pastille et les boutons) */
+  padding: 6px 10px; background: rgba(4, 6, 10, 0.7); width: fit-content; max-width: 100%;
 }
+.apercuEtat { display: inline-flex; align-items: center; gap: 4px 10px; }
 .apercuPastille {
   padding: 2px 8px; border: 1px dashed var(--ag-cadre); color: var(--ag-ink-dim); background: rgba(4, 6, 10, 0.7); text-shadow: none; font-weight: 500;
 }

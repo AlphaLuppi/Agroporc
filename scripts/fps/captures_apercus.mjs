@@ -104,7 +104,7 @@ try {
   const dRest = Math.hypot(...arene.camera.pos.map((v, i) => v - REST.pos[i]));
   verifier(dRest < 60, "arène : cadrage d'arène (REST, à l'intro et la rotation près)", `${dRest.toFixed(1)} m`);
   await page.screenshot({ path: join(SORTIE, "01-arene-simulation.png") });
-  const bandeau = await page.locator("[role=status]").filter({ hasText: /Simulation/i }).first().innerText().catch(() => "");
+  const bandeau = await page.locator("[data-apercu]").filter({ hasText: /Simulation/i }).first().innerText().catch(() => "");
   verifier(/match à mort/i.test(bandeau) && /fictif/i.test(bandeau), "bandeau « Simulation · Match à mort · agents fictifs »", bandeau.replace(/\n/g, " "));
 
   // ---------- 2. zombies : transition puis simulation ----------
@@ -143,7 +143,7 @@ try {
   }
   await page.screenshot({ path: join(SORTIE, "06-zombies-fenetre-attaquee.png") });
   verifier(attaque, "zombies : un tigre arrache les planches d'une fenêtre", "");
-  const bz = await page.locator("[role=status]").first().innerText().catch(() => "");
+  const bz = await page.locator("[data-apercu]").first().innerText().catch(() => "");
   verifier(/zombies tigres/i.test(bz) && /Simulation/i.test(bz), "bandeau « Simulation · Zombies tigres »", bz.replace(/\n/g, " "));
 
   // ---------- 3. Battle Royale ----------
@@ -172,6 +172,10 @@ try {
   await dormir(3000);
   const br3 = await apercu(page);
   verifier(br3.msApercu < 6, "BR : JS de l'aperçu par image", `${br3.msApercu} ms (${br3.joueurs} repères, ${br3.appelsDessin} appels de dessin)`);
+  // mesure : plus longue étape de construction d'un décor (la spec admet 300 ms pour tout le décor ; le rendu logiciel de ce test est bien plus lent
+  // qu'un poste, mais la sélection des bâtiments procéduraux du BR est précalculée, donc chaque étape reste courte)
+  const maxEtape = Math.max(br3.dureesDecorMs?.zombies ?? 0, br3.dureesDecorMs?.br ?? 0);
+  verifier(maxEtape > 0 && maxEtape < 300, "décors : plus longue étape de construction sous le budget de la spec", `zombies ${br3.dureesDecorMs?.zombies?.toFixed(0)} ms, BR ${br3.dureesDecorMs?.br?.toFixed(0)} ms`);
 
   // ---------- 4. retour à l'arène : décor, POI et caméra de départ ----------
   await choisir(page, /Arène/);

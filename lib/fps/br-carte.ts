@@ -319,6 +319,30 @@ function procedural(scene: SceneData): Procedural {
   return p;
 }
 
+/** Bâtiment procédural et son rectangle inscrit, tels que `procedural` les calcule (précalculables hors ligne : cf. `amorcerProcedural`). */
+export interface ProceduralPrecalcule { i: number; rect: Rect }
+
+/** Sélection procédurale complète d'une scène (indices croissants), au format précalculé (pour `scripts/fps/generer_br_procedural.mjs`). */
+export function proceduralPrecalcule(scene: SceneData): ProceduralPrecalcule[] {
+  const p = procedural(scene);
+  return p.indices.map((i) => ({ i, rect: p.rects.get(i)! }));
+}
+
+/** Texte du fichier précalculé (JSON indenté d'un niveau, fin de ligne finale). */
+export const serialiserProceduralPrecalcule = (pre: readonly ProceduralPrecalcule[]): string => JSON.stringify(pre, null, 1) + "\n";
+
+/**
+ * Remplit le cache de `procedural` pour `scene` avec une sélection précalculée HORS LIGNE : la sélection (`candidats` + `choisir`) prend de 150 à
+ * 300 ms à froid, trop pour le navigateur (vue Palantir, aperçu du Battle Royale). Sans effet si le cache est déjà rempli. Un test vérifie que le
+ * précalcul est celui que `procedural` calcule sur le vrai `scene.json`.
+ */
+export function amorcerProcedural(scene: SceneData, pre: readonly ProceduralPrecalcule[]): void {
+  if (cache.has(scene)) return;
+  const pieces: PieceSynth[] = [];
+  for (const { i, rect } of pre) pieces.push(...piecesDeCoque(i, rect, scene.buildings[i].h));
+  cache.set(scene, { indices: pre.map((c) => c.i), rects: new Map(pre.map((c) => [c.i, c.rect])), pieces });
+}
+
 // ---------------------------------------------------------------------------------------------
 // Données de scène et monde
 // ---------------------------------------------------------------------------------------------
