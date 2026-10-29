@@ -33,8 +33,9 @@ export interface JoueurZombie { id: string; p: Vec3; vivant: boolean; delaiMs?: 
  */
 export const GRIFFE_DELAI_MAX_MS = 200;
 /**
- * (v8) Leurre : un tigre à remontoir posé (la Monkey Bomb de BO1). Tout tigre à moins de `rayon` m le préfère aux joueurs : il y court (le
- * champ de distance part des leurres tant qu'il y en a), ne griffe plus personne et l'entoure, jusqu'à ce que le service le retire.
+ * (v8) Leurre : un tigre à remontoir posé (la Monkey Bomb de BO1). Tout tigre à moins de `rayon` m le préfère aux joueurs (sauf le mini
+ * Truck) : il y court (par un champ de distance propre aux leurres, que seuls les tigres attirés suivent : les autres gardent celui des
+ * joueurs), ne griffe plus personne et l'entoure, jusqu'à ce que le service le retire.
  */
 export interface Leurre { id: number; p: Vec3; rayon: number }
 /** Distance (m) à laquelle un tigre attiré s'arrête autour du leurre. */
@@ -161,6 +162,17 @@ export function touchePatte(z: { p: Vec3; cap: number; echelle: number }, p: Vec
   return Math.hypot(dx - fx * s, dz - fz * s) <= ZOMBIES.griffeRayonM + ZOMBIES.griffeRayonPatte * z.echelle;
 }
 
+/** Leurre le plus proche à portée d'un tigre (aucun pour un mini Truck : les leurres ne l'attirent pas). */
+function leurreProche(z: Zombie, leurres: readonly Leurre[]): { leurre: Leurre | null; d: number } {
+  let leurre: Leurre | null = null, dLeurre = Infinity;
+  if (z.type === 4) return { leurre, d: dLeurre };
+  for (const l of leurres) {
+    const d = Math.hypot(l.p[0] - z.p[0], l.p[2] - z.p[2]);
+    if (d <= l.rayon && d < dLeurre) { dLeurre = d; leurre = l; }
+  }
+  return { leurre, d: dLeurre };
+}
+
 export function creerSimuZombies(opts: OptionsSimuZombies) {
   const { monde, alea } = opts;
   const barricades: Barricades = opts.barricades ?? { planches: () => 0, arracher: () => {} };
@@ -172,15 +184,17 @@ export function creerSimuZombies(opts: OptionsSimuZombies) {
   const zombies: Zombie[] = [];
   let prochainId = 1;
 
-  // ---- champs de distance (un par grille) ----
+  // ---- champs de distance (un par grille) : vers les joueurs debout, et vers les leurres (suivi par les seuls tigres attirés) ----
   const champs: [Int32Array, Int32Array] = [new Int32Array(cartes[0].nx * cartes[0].nz).fill(DIST_INF), new Int32Array(cartes[1].nx * cartes[1].nz).fill(DIST_INF)];
+  const champsLeurres: [Int32Array, Int32Array] = [new Int32Array(cartes[0].nx * cartes[0].nz).fill(DIST_INF), new Int32Array(cartes[1].nx * cartes[1].nz).fill(DIST_INF)];
   let prochainChampT = 0;
   let carteChangee = true;
   let calculsChamp = 0;
   let signature: number[] = [];
-  /** leurres du tic en cours et signature de ceux qui ont servi au dernier champ */
+  /** leurres du tic en cours et signature (leurres, tigres attirés) de ceux qui ont servi au dernier champ des leurres */
   let leurresActifs: readonly Leurre[] = [];
   let signatureLeurres = "";
+  let prochainChampLeurresT = 0;
   const sourcesBuf: [number, number][] = [];
   const casesBuf: [number, number][] = [];
 
@@ -204,18 +218,16 @@ export function creerSimuZombies(opts: OptionsSimuZombies) {
   }
 
   function majChamps(t: number): void {
+    // le champ des leurres d'abord : il lit `carteChangee`, que celui des joueurs remet à faux
+    majChampLeurres(t);
     if (t < prochainChampT) return;
-    // tant qu'un leurre est posé, le champ part des leurres (les tigres attirés y courent) au lieu des joueurs
-    const sigLeurres = leurresActifs.map((l) => `${l.id}:${caseJoueur(l.p[0], l.p[2])}`).join(",");
-    let besoin = carteChangee || sigLeurres !== signatureLeurres || (!leurresActifs.length && signature.length !== debout.length);
-    if (!besoin && !leurresActifs.length) for (let k = 0; k < debout.length; k++) if (signature[k] !== caseJoueur(debout[k].p[0], debout[k].p[2])) { besoin = true; break; }
+    let besoin = carteChangee || signature.length !== debout.length;
+    if (!besoin) for (let k = 0; k < debout.length; k++) if (signature[k] !== caseJoueur(debout[k].p[0], debout[k].p[2])) { besoin = true; break; }
     if (!besoin) for (const z of zombies) if (!z.champOk && z.mode === "chasse") { besoin = true; break; }
     if (!besoin) return;
     sourcesBuf.length = 0;
     signature = [];
-    signatureLeurres = sigLeurres;
-    if (leurresActifs.length) for (const l of leurresActifs) sourcesBuf.push([l.p[0], l.p[2]]);
-    else for (const j of debout) { sourcesBuf.push([j.p[0], j.p[2]]); signature.push(caseJoueur(j.p[0], j.p[2])); }
+    for (const j of debout) { sourcesBuf.push([j.p[0], j.p[2]]); signature.push(caseJoueur(j.p[0], j.p[2])); }
     for (const g of [0, 1] as const) {
       casesBuf.length = 0;
       for (const z of zombies) if (grilleDe(z) === g && z.mode === "chasse") casesBuf.push([z.p[0], z.p[2]]);
@@ -227,6 +239,29 @@ export function creerSimuZombies(opts: OptionsSimuZombies) {
     for (const z of zombies) z.champOk = true;
     prochainChampT = t + ZOMBIES.periodeChampMs;
     carteChangee = false;
+  }
+
+  /**
+   * Champ des leurres : sources = les leurres, cases à régler = les seuls tigres attirés (en chasse, à portée d'un leurre, hors mini Trucks).
+   * Recalculé quand les leurres, l'ensemble des tigres attirés ou la carte changent ; aucun calcul sans leurre.
+   */
+  function majChampLeurres(t: number): void {
+    if (!leurresActifs.length) { signatureLeurres = ""; return; }
+    if (t < prochainChampLeurresT) return;
+    let sig = leurresActifs.map((l) => `${l.id}:${caseJoueur(l.p[0], l.p[2])}`).join(",") + "|";
+    for (const z of zombies) if (z.mode === "chasse" && leurreProche(z, leurresActifs).leurre) sig += `${z.id},`;
+    if (!carteChangee && sig === signatureLeurres) return;
+    signatureLeurres = sig;
+    sourcesBuf.length = 0;
+    for (const l of leurresActifs) sourcesBuf.push([l.p[0], l.p[2]]);
+    for (const g of [0, 1] as const) {
+      casesBuf.length = 0;
+      for (const z of zombies) if (grilleDe(z) === g && z.mode === "chasse" && leurreProche(z, leurresActifs).leurre) casesBuf.push([z.p[0], z.p[2]]);
+      if (!casesBuf.length) continue;
+      champDistance(cartes[g], sourcesBuf, { cases: casesBuf, marge: ZOMBIES.margeChamp, sortie: champsLeurres[g] });
+      calculsChamp++;
+    }
+    prochainChampLeurresT = t + ZOMBIES.periodeChampMs;
   }
 
   // ---- historique ----
@@ -358,12 +393,8 @@ export function creerSimuZombies(opts: OptionsSimuZombies) {
         const d = Math.hypot(j.p[0] - z.p[0], j.p[2] - z.p[2]);
         if (d < dMin) { dMin = d; cible = j; }
       }
-      // (v8) un leurre à portée passe avant les joueurs
-      let leurre: Leurre | null = null, dLeurre = Infinity;
-      for (const l of leurres) {
-        const d = Math.hypot(l.p[0] - z.p[0], l.p[2] - z.p[2]);
-        if (d <= l.rayon && d < dLeurre) { dLeurre = d; leurre = l; }
-      }
+      // (v8) un leurre à portée passe avant les joueurs (le mini Truck ne s'en soucie pas)
+      const { leurre, d: dLeurre } = leurreProche(z, leurres);
       let tx = cible.p[0], tz = cible.p[2];
       let marche = true;
 
@@ -434,7 +465,8 @@ export function creerSimuZombies(opts: OptionsSimuZombies) {
           } else z.voit = false;
           if (!direct) {
             const g = grilleDe(z);
-            const pas = descente(cartes[g], champs[g], z.p[0], z.p[2], 2);
+            // un tigre attiré suit le champ des leurres, les autres celui des joueurs
+            const pas = descente(cartes[g], leurre ? champsLeurres[g] : champs[g], z.p[0], z.p[2], 2);
             if (pas) { tx = pas[0]; tz = pas[1]; }
           }
           // failsafe (BO1 `zombie_use_failsafe`) : un tigre qui ne se rapproche plus, loin de tout joueur
@@ -667,9 +699,12 @@ export function creerSimuZombies(opts: OptionsSimuZombies) {
         const n = cartes[g].nx * cartes[g].nz;
         if (champs[g].length !== n) champs[g] = new Int32Array(n);
         champs[g].fill(DIST_INF);
+        if (champsLeurres[g].length !== n) champsLeurres[g] = new Int32Array(n);
+        champsLeurres[g].fill(DIST_INF);
       }
       carteChangee = true;
       prochainChampT = 0;
+      prochainChampLeurresT = 0;
       for (const z of zombies) z.champOk = false;
     },
     /** Compteurs d'essai : nombre de champs de distance calculés depuis la création. */
@@ -680,9 +715,13 @@ export function creerSimuZombies(opts: OptionsSimuZombies) {
       prochainId = 1;
       champs[0].fill(DIST_INF);
       champs[1].fill(DIST_INF);
+      champsLeurres[0].fill(DIST_INF);
+      champsLeurres[1].fill(DIST_INF);
       signature = [];
+      signatureLeurres = "";
       carteChangee = true;
       prochainChampT = 0;
+      prochainChampLeurresT = 0;
     },
   };
 }

@@ -731,6 +731,29 @@ describe("leurres (tigre à remontoir, v8)", () => {
     }
   });
 
+  it("un tigre hors de portée du leurre et sans vue sur le joueur suit le champ des joueurs, pas celui du leurre (mini Truck compris)", () => {
+    const trajet = (leurres: Leurre[], type: TypeZombie) => {
+      const { simu } = neuf();
+      const id = simu.apparaitre(spec(1, type, 1), [118, -70], CHASSE, 0)!;
+      const moi = joueur("a", 140, -50); // ≈ 30 m : au-delà de la vision directe, le tigre descend le champ
+      const points: Vec3[] = [];
+      let t = 0;
+      for (let k = 0; k < 2 * 60; k++) {
+        t += DT * 1000;
+        simu.tic(t, DT, [moi], leurres);
+        if (k % 10 === 0) points.push([...simu.zombie(id)!.p] as Vec3);
+      }
+      return { points, d: dist(simu.zombie(id)!.p, moi.p) };
+    };
+    // leurre à l'opposé du joueur, à portée seulement de ce qui l'approche à moins de 8 m
+    const leurre: Leurre = { id: 1, p: [100, 0.15, -75], rayon: 8 };
+    for (const type of [0, 4] as TypeZombie[]) {
+      const sans = trajet([], type), avec = trajet([leurre], type);
+      expect(avec.points).toEqual(sans.points);
+      expect(avec.d).toBeLessThan(25);
+    }
+  });
+
   it("hors de portée du leurre, le tigre chasse toujours les joueurs", () => {
     const { simu } = neuf();
     const id = simu.apparaitre(spec(1, 0, 1), COUR, CHASSE, 0)!;
