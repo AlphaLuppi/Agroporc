@@ -438,6 +438,9 @@ export interface EntreeInvite {
   maintenant?: number;
 }
 
+/** Slot d'une arme à feu (les armes uniques vont dans le slot spécial), comme le serveur. */
+const slotDe = (a: ArmeFeuId): string => (STATS[a].categorie === "unique" ? "speciale" : STATS[a].categorie);
+
 /** L'arme `a` est portée (pas celle déposée au Micro-ondes). */
 function possede(eq: Equipement, a: ArmeFeuId): boolean {
   if (eq.enCuisson === a) return false;
@@ -466,7 +469,12 @@ function descriptionAchat(a: Achat, e: EntreeInvite): Description | null {
       if (p && !b) return null;
       if (b && b.etat === "offre") {
         if (b.pour !== e.moi || !b.arme || b.arme === "peluche") return { invite: "boite", detail: "Boîte mystère", prix: 0, id: a.id, bloque: "Occupée" };
-        return { invite: "boite", detail: `Prendre : ${b.arme === "remontoir" ? NOM_REMONTOIRS : STATS[b.arme].nom}`, prix: 0, id: a.id };
+        const prendre: Description = { invite: "boite", detail: `Prendre : ${b.arme === "remontoir" ? NOM_REMONTOIRS : STATS[b.arme].nom}`, prix: 0, id: a.id };
+        // (v8) son slot est réservé par mon arme au Micro-ondes : le serveur refuserait (« occupe »)
+        if (b.arme !== "remontoir" && p && p.pap.etat !== "libre" && p.pap.joueur === e.moi && p.pap.arme && slotDe(p.pap.arme) === slotDe(b.arme)) {
+          return { ...prendre, bloque: "Reprenez l'arme au Micro-ondes" };
+        }
+        return prendre;
       }
       if (b && b.etat !== "fermee") return { invite: "boite", detail: "Boîte mystère", prix: 0, id: a.id, bloque: "Occupée" };
       const prix = p ? prixBoite(p.effets.soldesFinT, t) : a.prix;

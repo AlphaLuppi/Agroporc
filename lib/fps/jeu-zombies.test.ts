@@ -346,6 +346,11 @@ describe("inviteZombies", () => {
     const offre = partieInvite({ boite: { emplacement: 0, etat: "offre", finT: 9000, utilisations: 1, arme: "pompe", pour: "a" } });
     expect(ici({ partie: offre })).toMatchObject({ invite: "boite", prix: 0, assez: true, detail: "Prendre : Fusil à pompe" });
     expect(ici({ partie: offre, moi: "b" })).toMatchObject({ assez: false, bloque: "Occupée" });
+    // (v8) ma mitraillette cuit au Micro-ondes : la pompe offerte (même slot) ne peut pas être prise avant de la reprendre
+    const auFour = { ...offre, pap: { etat: "cuisson" as const, joueur: "a", arme: "mitraillette" as const, debutT: 0, finT: 9000 } };
+    expect(ici({ partie: auFour })).toMatchObject({ invite: "boite", assez: false, bloque: "Reprenez l'arme au Micro-ondes" });
+    // une arme d'un autre slot au Micro-ondes ne bloque rien
+    expect(ici({ partie: { ...auFour, pap: { ...auFour.pap, arme: "pistolet" as const } } }).bloque).toBeUndefined();
   });
 
   it("(v8) Happy hour : la boîte temporaire d'un autre emplacement s'achète à 10 $, prise ou occupée comme la principale", () => {

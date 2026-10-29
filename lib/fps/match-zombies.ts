@@ -40,7 +40,7 @@ import {
 } from "./grenades";
 import {
   ACHATS, ATOUTS, ATOUTS_LISTE, DEPARTS, EMPLACEMENTS_DEPART_BOITE, FENETRES, NB_EMPLACEMENTS_BOITE, PACK_A_PUNCH, PORTES_PAYANTES,
-  PLAFOND_INTERIEUR_M, PRIX_MUNITIONS_AMELIOREE, QUAIS, TRUCK, achatDeId, rayonTruck, distancePorte, estAtout, etiqueterZones, fenetreDeId, fenetresDesZones,
+  PLAFOND_INTERIEUR_M, PRIX_MUNITIONS_AMELIOREE, PRIX_PAP, QUAIS, TRUCK, achatDeId, rayonTruck, distancePorte, estAtout, etiqueterZones, fenetreDeId, fenetresDesZones,
   INTERACTIONS_SECRET, idPrisme, lacetDepart, pieceDe, porteDeId, sortiesDuSol, zoneEn, zonesActives, zonesOuvertes,
   type Achat, type CarteZones, type DonneesZombies, type Fenetre, type PorteId, type ZoneId,
 } from "./zombies-carte";
@@ -1371,7 +1371,10 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     const prix = prixBoite(effets.soldesFinT, t);
     if (m.argent < prix) return refus(j, achat.id, "argent");
     // (v8) le tigre à remontoir sort de la boîte comme une arme, si le joueur n'en a plus
-    const candidates: (ArmeFeuId | "remontoir")[] = [...armesBoite(j.equip), ...(m.remontoirs > 0 ? [] : ["remontoir" as const])];
+    // une arme dont le slot est réservé par le Micro-ondes (l'arme de ce joueur y cuit) ne pourrait pas être prise : elle ne sort pas
+    const candidates: (ArmeFeuId | "remontoir")[] = [
+      ...armesBoite(j.equip).filter((a) => !slotReserve(j, a)), ...(m.remontoirs > 0 ? [] : ["remontoir" as const]),
+    ];
     if (!candidates.length) return refus(j, achat.id, "deja");
     // Happy hour (et boîtes temporaires) : aucune peluche, et ces tirages ne comptent pas pour elle
     const utilisations = b.utilisations + (soldes || !principale ? 0 : 1);
@@ -1492,8 +1495,17 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       if (!m.admis || !j.enJeu || m.etat === "elimine" || m.etat === "attente") continue;
       if (m.etat === "terre") sorties.push(...relever(j, t));
       const equip = copierEquipement(j.equip);
-      // le Rayon remplit le slot secondaire, même vidé par une arme perdue au Micro-ondes (celle qui y cuit encore reviendra à sa place)
-      if (equip.enCuisson && slotArme(equip.enCuisson) === "secondaire" && !(pap.etat !== "libre" && pap.joueur === j.id)) delete equip.enCuisson;
+      // une secondaire ou une spéciale encore au Micro-ondes reviendrait PAR-DESSUS la récompense (sa reprise remplace le Rayon ou le
+      // Bazooka) : le dépôt est annulé et remboursé, la machine libérée ; une principale qui cuit reviendra à sa place
+      const auFour = pap.etat !== "libre" && pap.joueur === j.id && pap.arme ? pap.arme : null;
+      if (auFour && slotArme(auFour) !== "principale") {
+        pap = { etat: "libre" };
+        sorties.push(zev({ e: "pap", joueur: j.id, arme: auFour, pret: false, fin: "perdue" }));
+        m.argent += PRIX_PAP;
+        sorties.push(sortieArgent(j, PRIX_PAP, "pap"));
+      }
+      // le Rayon et le Bazooka remplissent leurs slots, même vidés par une arme perdue (ou rendue ici) au Micro-ondes
+      if (equip.enCuisson && slotArme(equip.enCuisson) !== "principale" && !(pap.etat !== "libre" && pap.joueur === j.id)) delete equip.enCuisson;
       equip.secondaire = "rayon";
       equip.speciale = "bazooka";
       equip.ameliorees = [...new Set([...(equip.ameliorees ?? []).filter((a) => a !== "rayon" && a !== "bazooka"), "rayon" as ArmeFeuId, "bazooka" as ArmeFeuId])];

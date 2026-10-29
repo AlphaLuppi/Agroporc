@@ -1896,3 +1896,56 @@ describe("(v8) souffle d'un tir explosif : ligne de vue et Truck Muche", () => {
     expect(msgs(s, "degats")[0].degats).toBeLessThanOrEqual(99_999);
   });
 });
+
+// =================================================================================================
+describe("(v8) Micro-ondes et récompenses : un slot réservé n'est jamais écrasé ni offert", () => {
+  const achatId = (id: string) => ACHATS.find((a) => a.id === id)!;
+  const acheterIci = (b: Banc, j: JoueurSalle, id: string, t: number) => {
+    const a = achatId(id);
+    j.p = [a.position[0], 0, a.position[1]];
+    return b.svc.recevoir(j, msg({ t: "acheter", id }), t);
+  };
+
+  it("boîte mystère : tant que le pistolet cuit, aucune secondaire ne sort (elle ne pourrait pas être prise)", () => {
+    for (let graine = 1; graine <= 25; graine++) {
+      const b = partieEnCours(["a"], { argentDepart: 20_000, courant: true, alea: suite(graine) });
+      avancer(b, T0 + 100, T_MANCHE1 + 50);
+      const j = b.j("a");
+      const t = T_MANCHE1 + 100;
+      expect(msgs(acheterIci(b, j, "pap", t), "achat")[0]).toMatchObject({ ok: true });
+      const em = b.svc.etat().boite.emplacement;
+      expect(msgs(acheterIci(b, j, achatBoite(em).id, t + 50), "achat")[0]).toMatchObject({ ok: true });
+      const tiree = b.svc.etat().boite.arme!;
+      expect(tiree, `graine ${graine}`).toBeDefined();
+      if (tiree !== "peluche" && tiree !== "remontoir") expect(STATS[tiree].categorie, `graine ${graine} : ${tiree}`).not.toBe("secondaire");
+    }
+  });
+
+  it("le grand secret servi pendant que la secondaire cuit : le dépôt est annulé et remboursé, le Rayon Goulaf reste", () => {
+    const b = partieEnCours(["a"], {
+      argentDepart: 20_000, courant: true, degatsGriffe: 0, mancheTruck: 1, total1: 4, secret: { etape: 8, livraisonService: 1 },
+    });
+    const j = b.j("a");
+    j.pv = 1e9;
+    let t = T_MANCHE1 + 100;
+    avancer(b, T0 + 100, t);
+    for (; t < T_MANCHE1 + 60_000 && !(b.svc.etat().truck && b.svc.etat().truck!.phase === "livraison"); t += 100) b.svc.tic(t);
+    expect(b.svc.etat().truck?.phase).toBe("livraison");
+    expect(msgs(acheterIci(b, j, "pap", t), "achat")[0]).toMatchObject({ ok: true });
+    expect(b.svc.etat().pap).toMatchObject({ etat: "cuisson", arme: "pistolet" });
+    const four = INTERACTIONS_SECRET.find((x) => x.id === "four")!;
+    j.p = [four.position[0], 0, four.position[1]];
+    b.svc.recevoir(j, msg({ t: "acheter", id: "secret:four" }), t + 50);
+    const fin = b.svc.blesserTruck(1e9, j, t + 100);
+    expect(msgs(fin, "zevt").some((m) => m.e.e === "secret" && (m.e as { quoi: string }).quoi === "servi")).toBe(true);
+    expect(b.svc.etat().pap.etat).toBe("libre");
+    expect(msgs(fin, "zevt").map((m) => m.e)).toContainEqual({ e: "pap", joueur: "a", arme: "pistolet", pret: false, fin: "perdue" });
+    expect(msgs(fin, "argent").find((m) => m.motif === "pap")).toMatchObject({ delta: 5000 });
+    expect(j.equip).toMatchObject({ secondaire: "rayon", speciale: "bazooka" });
+    expect(j.equip.enCuisson).toBeUndefined();
+    // plus rien à reprendre : le Rayon Goulaf ne peut plus être écrasé par le pistolet
+    avancer(b, t + 150, t + CUISSON_PAP_MS + 500);
+    acheterIci(b, j, "pap", t + CUISSON_PAP_MS + 600);
+    expect(j.equip.secondaire).toBe("rayon");
+  });
+});
