@@ -15,7 +15,10 @@ export const RESERVE_PROJECTILES = 16;
 const MAX_ARCS = 6;
 const POINTS_ARC = 64;
 const MAX_SOUFFLES = 3;
-const STRIES = 36;
+const STRIES = 64;
+/** anneaux d'air qui filent le long du cône (lisibles même de loin), points par anneau */
+const ANNEAUX = 3;
+const POINTS_ANNEAU = 24;
 const MAX_GIVRES = 24;
 /** Durées de vie (s) d'un arc et d'une bourrasque. */
 const VIE_ARC_S = 0.32;
@@ -35,7 +38,10 @@ export interface RenduEffetsArmes {
 }
 
 interface Arc { ligne: THREE.LineSegments; pos: Float32Array; vie: number; mat: THREE.LineBasicMaterial }
-interface Souffle { strie: THREE.LineSegments; pos: Float32Array; base: Float32Array; vie: number; mat: THREE.LineBasicMaterial }
+interface Souffle {
+  strie: THREE.LineSegments; pos: Float32Array; base: Float32Array; vie: number; mat: THREE.LineBasicMaterial;
+  anneaux: THREE.LineLoop[]; o: Vec3; f: Vec3; u: Vec3; w: Vec3; portee: number;
+}
 
 export function creerRenduEffetsArmes(scene: THREE.Object3D): RenduEffetsArmes {
   const racine = new THREE.Group();
@@ -106,7 +112,19 @@ export function creerRenduEffetsArmes(scene: THREE.Object3D): RenduEffetsArmes {
     strie.renderOrder = 16;
     racine.add(strie);
     geos.push(geo); mats.push(mat);
-    souffles.push({ strie, pos, base, vie: 0, mat });
+    const anneaux: THREE.LineLoop[] = [];
+    for (let k = 0; k < ANNEAUX; k++) {
+      const ga = new THREE.BufferGeometry();
+      ga.setAttribute("position", new THREE.BufferAttribute(new Float32Array(POINTS_ANNEAU * 3), 3).setUsage(THREE.DynamicDrawUsage));
+      const boucle = new THREE.LineLoop(ga, mat);
+      boucle.frustumCulled = false;
+      boucle.visible = false;
+      boucle.renderOrder = 16;
+      racine.add(boucle);
+      geos.push(ga);
+      anneaux.push(boucle);
+    }
+    souffles.push({ strie, pos, base, vie: 0, mat, anneaux, o: [0, 0, 0], f: [0, 0, -1], u: [1, 0, 0], w: [0, 1, 0], portee: 1 });
   }
   let souffleSuivant = 0;
 
@@ -208,6 +226,10 @@ export function creerRenduEffetsArmes(scene: THREE.Object3D): RenduEffetsArmes {
       }
       s.vie = VIE_SOUFFLE_S;
       s.strie.visible = true;
+      s.o = [o[0], o[1] - 0.15, o[2]];
+      s.f = [f[0], f[1], f[2]]; s.u = [u[0], u[1], u[2]]; s.w = [w[0], w[1], w[2]];
+      s.portee = portee;
+      for (const a of s.anneaux) a.visible = true;
     },
 
     majGivre(positions, t) {
@@ -234,13 +256,28 @@ export function creerRenduEffetsArmes(scene: THREE.Object3D): RenduEffetsArmes {
       for (const s of souffles) {
         if (!s.strie.visible) continue;
         s.vie -= dt;
-        if (s.vie <= 0) { s.strie.visible = false; continue; }
+        if (s.vie <= 0) { s.strie.visible = false; for (const a of s.anneaux) a.visible = false; continue; }
         const age = VIE_SOUFFLE_S - s.vie;
+        // anneaux : partis l'un après l'autre, ils s'élargissent en filant jusqu'au bout du cône
+        s.anneaux.forEach((a, k) => {
+          const u = Math.min(1, Math.max(0, (age - k * 0.07) / (VIE_SOUFFLE_S * 0.8)));
+          const dist = 0.8 + u * s.portee * 0.9, r = 0.35 + u * 4.2;
+          const attr = a.geometry.getAttribute("position") as THREE.BufferAttribute;
+          const P = attr.array as Float32Array;
+          for (let i = 0; i < POINTS_ANNEAU; i++) {
+            const ang = (i / POINTS_ANNEAU) * Math.PI * 2, c = Math.cos(ang) * r, sn = Math.sin(ang) * r;
+            P[i * 3] = s.o[0] + s.f[0] * dist + s.u[0] * c + s.w[0] * sn;
+            P[i * 3 + 1] = s.o[1] + s.f[1] * dist + s.u[1] * c + s.w[1] * sn;
+            P[i * 3 + 2] = s.o[2] + s.f[2] * dist + s.u[2] * c + s.w[2] * sn;
+          }
+          attr.needsUpdate = true;
+          a.visible = u > 0 && u < 1;
+        });
         for (let i = 0; i < STRIES; i++) {
           const b = i * 7, k = i * 6;
           const dist = s.base[b + 6] * age;
           const x = s.base[b] + s.base[b + 3] * dist, y = s.base[b + 1] + s.base[b + 4] * dist, z = s.base[b + 2] + s.base[b + 5] * dist;
-          const lg = 1.2;
+          const lg = 2.6;
           s.pos[k] = x; s.pos[k + 1] = y; s.pos[k + 2] = z;
           s.pos[k + 3] = x - s.base[b + 3] * lg; s.pos[k + 4] = y - s.base[b + 4] * lg; s.pos[k + 5] = z - s.base[b + 5] * lg;
         }

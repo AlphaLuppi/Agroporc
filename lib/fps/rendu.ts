@@ -882,20 +882,20 @@ function creerModeleArme(id: ArmeId, m: Materiaux, devant: boolean): ModeleArme 
     case "soufflerie": {
       // Soufflerie : gros souffleur de feuilles d'atelier. Cuve d'air sur le dessus, corps cylindrique, turbine à pales qui tourne (elle
       // s'emballe au tir), large tuyère évasée à l'avant, poignée et garde.
-      piece(inner, geoCyl(0.06, 0.32, 12), m, 0, 0.01, -0.12);
-      piece(inner, geoCone(0.06, 0.13, 0.22, 12), m, 0, 0.01, -0.39);
-      piece(inner, geoCyl(0.135, 0.02, 14), m, 0, 0.01, -0.5);
+      piece(inner, geoCyl(0.05, 0.32, 12), m, 0, 0.01, -0.12);
+      piece(inner, geoCone(0.05, 0.085, 0.2, 12), m, 0, 0.01, -0.38);
+      piece(inner, geoCyl(0.09, 0.02, 14), m, 0, 0.01, -0.48);
       const turbine = new THREE.Group();
-      turbine.position.set(0, 0.01, -0.46);
+      turbine.position.set(0, 0.01, -0.45);
       inner.add(turbine);
-      for (let i = 0; i < 5; i++) piece(turbine, geoBoite(0.012, 0.11, 0.008), m, 0, 0, 0, 0.25, 0, (i * Math.PI * 2) / 5);
-      piece(inner, geoCyl(0.04, 0.26, 10), m, 0, 0.1, -0.08);
-      for (const z of [0.02, -0.18]) piece(inner, geoBoite(0.014, 0.04, 0.014), m, 0, 0.065, z);
+      for (let i = 0; i < 5; i++) piece(turbine, geoBoite(0.01, 0.075, 0.006), m, 0, 0, 0, 0.25, 0, (i * Math.PI * 2) / 5);
+      piece(inner, geoCyl(0.034, 0.24, 10), m, 0, 0.088, -0.08);
+      for (const z of [0.02, -0.18]) piece(inner, geoBoite(0.012, 0.035, 0.012), m, 0, 0.058, z);
       piece(inner, geoBoite(0.034, 0.11, 0.045), m, 0, -0.085, 0.02, -0.2);
       piece(inner, geoBoite(0.03, 0.07, 0.035), m, 0, -0.07, -0.25);
       prise.set(0, -0.09, 0.02);
       garde.set(0, -0.08, -0.25);
-      bouche.set(0, 0.01, -0.52);
+      bouche.set(0, 0.01, -0.5);
       porte.set(0.13, -0.2, -0.2);
       echelleFlash = 0;
       inclinaison = 0.35;
@@ -1091,11 +1091,11 @@ const PLACEMENT: Record<ArmeId, PlacementArme> = {
   fumigene: { repos: [0.18, -0.18, -0.32], vise: [0, -0.08, -0.28], lacet: 0.05, reculZ: 0.03, reculRot: 0.08 },
   // (v8) armes du mode zombies seulement
   baguette: { repos: [0.17, -0.2, -0.22], vise: [0, -0.065, -0.2], lacet: 0.05, reculZ: 0.11, reculRot: 0.26 },
-  agrafeuse: { repos: [0.17, -0.19, -0.24], vise: [0, -0.085, -0.2], lacet: 0.04, reculZ: 0.04, reculRot: 0.09 },
+  agrafeuse: { repos: [0.17, -0.19, -0.24], vise: [0, -0.115, -0.22], lacet: 0.04, reculZ: 0.04, reculRot: 0.09 },
   photocopieuse: PLACEMENT_MITRAILLETTE,
   essoreuse: { repos: [0.17, -0.2, -0.17], vise: [0, -0.06, -0.15], lacet: 0.05, reculZ: 0.07, reculRot: 0.15 },
   brochette: { repos: [0.17, -0.19, -0.24], vise: [0, -0.1, -0.2], lacet: 0.04, reculZ: 0.05, reculRot: 0.1 },
-  soufflerie: { repos: [0.19, -0.21, -0.2], vise: [0.06, -0.12, -0.18], lacet: 0.04, reculZ: 0.12, reculRot: 0.22 },
+  soufflerie: { repos: [0.2, -0.23, -0.22], vise: [0.07, -0.14, -0.2], lacet: 0.04, reculZ: 0.12, reculRot: 0.22 },
   grille_pain: { repos: [0.17, -0.19, -0.3], vise: [0, -0.1, -0.26], lacet: 0.05, reculZ: 0.07, reculRot: 0.18 },
   perforeuse: PLACEMENT_PISTOLET,
   couteau: { repos: [0.2, -0.2, -0.36], vise: [0.2, -0.2, -0.36], lacet: -0.05, reculZ: 0, reculRot: 0 },

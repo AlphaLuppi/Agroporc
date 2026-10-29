@@ -76,13 +76,13 @@
 /* (v8, zombies) viseurs des armes améliorées, affichés en visée : point rouge (point et halo), holographique (cercle, point, graduations) */
 .viseurOptique { position: absolute; left: 50%; top: 50%; width: 0; height: 0; }
 .pointRouge {
-  position: absolute; width: max(5px, calc(6 * var(--u))); height: max(5px, calc(6 * var(--u))); border-radius: 50%;
-  left: max(-2.5px, calc(-3 * var(--u))); top: max(-2.5px, calc(-3 * var(--u)));
+  position: absolute; width: max(7px, calc(9 * var(--u))); height: max(7px, calc(9 * var(--u))); border-radius: 50%;
+  left: max(-3.5px, calc(-4.5 * var(--u))); top: max(-3.5px, calc(-4.5 * var(--u)));
   background: var(--ag-danger); box-shadow: 0 0 calc(6 * var(--u)) var(--ag-danger), 0 0 2px var(--ag-ground);
 }
 .anneauRouge {
-  position: absolute; width: calc(46 * var(--u)); height: calc(46 * var(--u)); left: calc(-23 * var(--u)); top: calc(-23 * var(--u)); border-radius: 50%;
-  border: 1px solid color-mix(in srgb, var(--ag-danger) 35%, transparent);
+  position: absolute; width: calc(56 * var(--u)); height: calc(56 * var(--u)); left: calc(-28 * var(--u)); top: calc(-28 * var(--u)); border-radius: 50%;
+  border: max(1px, calc(1.5 * var(--u))) solid color-mix(in srgb, var(--ag-danger) 55%, transparent);
 }
 .holo {
   position: absolute; width: calc(64 * var(--u)); height: calc(64 * var(--u)); left: calc(-32 * var(--u)); top: calc(-32 * var(--u)); border-radius: 50%;
