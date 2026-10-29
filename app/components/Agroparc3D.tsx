@@ -527,8 +527,8 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
         jeu.sensibilite(sensibiliteRef.current);
         jeu.accroupiBascule(accroupiBasculeRef.current);
         jeu.voix.mode(reglagesVoixRef.current.mode);
-        // pas de chat vocal en Battle Royale (50 connexions WebRTC par client) : le serveur ignore les messages `voix`
-        if (reglagesVoixRef.current.actif && modeJeuRef.current !== "br") activerVoix(jeu, reglagesVoixRef.current);
+        // Battle Royale : le chat vocal se limite aux liens de killcam (victime ↔ tueur), jamais 50 connexions WebRTC par client
+        if (reglagesVoixRef.current.actif) activerVoix(jeu, reglagesVoixRef.current);
         // le jeu n'a pas vu le « bienvenue » : pseudos, couleurs et phase du match
         jeu.recevoir({ t: "presence", joueurs: arene.joueursRef.current });
         if (arene.matchRef.current) jeu.recevoir({ t: "match", match: arene.matchRef.current, classement: [] });

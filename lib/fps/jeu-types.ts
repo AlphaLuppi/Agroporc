@@ -92,6 +92,13 @@ export interface HudEtat {
   voix: "" | "pret" | "emet";
   /** pseudos des joueurs qu'on entend parler en ce moment, séparés par « · » ("" = personne) */
   voixParlants: string;
+  /**
+   * Vue empruntée : rejeu de la killcam (yeux du tueur) ou spectateur du BR (yeux du joueur suivi). `arme`, `vise`, `lunette`, `zoom*`,
+   * `viseur` et `recharge` sont alors les siens : le HUD dessine SON viseur, SA lunette, SES marqueurs de touche.
+   */
+  vueEmpruntee?: boolean;
+  /** pseudos des joueurs d'un lien vocal de killcam en cours (victime ↔ tueur, plein volume), « · » entre eux ; vide sans lien */
+  voixLien?: string;
   /** (v3) je pilote le titan tigre (bloc d'armes remplacé par le bandeau du titan) */
   titan: boolean;
   /** Le joueur local est immergé dans un nuage de fumigène */
@@ -175,8 +182,9 @@ export type JeuEvenement =
    * un `degats` du serveur dont `par` est moi (zone et dégâts du serveur, `absorbe` = part prise par le bouclier) ;
    * `tue` si le `mort` correspondant suit dans la même trame. SEULE source des marqueurs et chiffres de touche (HUD §3.4).
    */
-  | { type: "confirme"; cible: string; degats: number; absorbe: number; zone: Zone; tue: boolean }
-  | { type: "kill"; cible: string; zone: Zone; arme: ArmeId }
+  /** `vue` : touche ou kill du joueur dont on a les yeux (killcam, spectateur), pas les miens : marqueur seulement, aucun cumul */
+  | { type: "confirme"; cible: string; degats: number; absorbe: number; zone: Zone; tue: boolean; vue?: true }
+  | { type: "kill"; cible: string; zone: Zone; arme: ArmeId; vue?: true }
   /** je suis mort ; `tueur` pour la carte de killcam */
   | { type: "mort"; par: string; arme: ArmeId; cause: CauseMort; zone: Zone; delai: number; ts: number; tueur?: InfoTueur }
   /** j'ai pris des dégâts ; `angle` relatif à ma vue (0 = devant, + = à droite) */

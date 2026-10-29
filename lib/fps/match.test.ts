@@ -213,6 +213,16 @@ describe("états reçus", () => {
     const e = messages(s.tic(T0 + 120), "snap")[0].j[0];
     expect(e).toMatchObject({ lacet: 1, tangage: 0.2, posture: "sol", v: [3, 0, 0] });
   });
+  it("visée et recharge déclarées : recopiées dans l'instantané (killcam, spectateur), absentes sinon", () => {
+    const s = salleEnJeu(["sniper"]);
+    const [x, , z] = j(s, "a").p;
+    s.recevoir("a", etat(1, [x, 0, z], { vise: true }), T0 + 100);
+    expect(messages(s.tic(T0 + 120), "snap")[0].j[0]).toMatchObject({ vise: true });
+    s.recevoir("a", etat(2, [x, 0, z], { recharge: true }), T0 + 150);
+    const e = messages(s.tic(T0 + 170), "snap")[0].j[0];
+    expect(e.vise).toBeUndefined();
+    expect(e.recharge).toBe(true);
+  });
   it("téléportation refusée : la position serveur est gardée, puis un déplacement réaliste passe", () => {
     const s = salleEnJeu(["pistolet"]);
     const avant = [...j(s, "a").p];
@@ -281,7 +291,10 @@ describe("tirs", () => {
     const sorties = tirer(s, "a", "b", t);
     const [tirMsg] = sorties.filter((x) => x.m.t === "tir");
     expect(tirMsg).toMatchObject({ a: "tous", sauf: "a" });
+    // horodatés au serveur : la killcam et le spectateur les rejouent à leur instant
+    expect(tirMsg.m).toMatchObject({ ts: t });
     const [deg] = messages(sorties, "degats");
+    expect(deg.ts).toBe(t);
     const dist = Math.hypot(20, SILHOUETTE.oeil - SILHOUETTE.centreY);
     expect(deg).toMatchObject({ cible: "b", par: "a", degats: degatsPlomb("pistolet", "corps", dist), zone: "corps" });
     expect(deg.degats).toBe(28);

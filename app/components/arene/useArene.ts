@@ -164,7 +164,8 @@ export function useArene(pseudo: string, jeuRef: MutableRefObject<JeuHandle | nu
         // estimation locale : le HUD l'ignore, seul `confirme` (reçu du serveur) compte (HUD §3.4)
         return;
       case "confirme": {
-        degatsParCible.current.set(e.cible, (degatsParCible.current.get(e.cible) ?? 0) + e.degats);
+        // une touche vue par les yeux d'un autre (killcam, spectateur) n'est pas un dégât que J'AI infligé
+        if (!e.vue) degatsParCible.current.set(e.cible, (degatsParCible.current.get(e.cible) ?? 0) + e.degats);
         const id = ++compteur.current;
         const ev: EvenementHud = { id, type: "confirme", cible: e.cible, degats: e.degats, absorbe: e.absorbe, zone: e.zone, tue: e.tue, t: performance.now() };
         setEvenements((l) => [...l.slice(-5), ev]);

@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { JoueurPublic } from "./protocole";
 import {
-  CLE_VOIX, VOIX, correspondants, doitAppeler, ecrireReglagesVoix, gainVoix, lireReglagesVoix, microOuvert, planConnexions, signalValide,
+  CLE_VOIX, LIEN_VOIX_KILLCAM_MS, LiensVoixKillcam, VOIX, cleLienVoix, correspondants, doitAppeler, ecrireReglagesVoix, gainVoix, lireReglagesVoix,
+  microOuvert, planConnexions, signalValide,
 } from "./voix";
 
 const j = (id: string, enJeu = true, voix = true): JoueurPublic => ({ id, pseudo: id, couleur: "#fff", enJeu, kills: 0, morts: 0, ping: 0, ...(voix ? { voix } : {}) });
@@ -63,5 +64,36 @@ describe("réglages", () => {
     m.set(CLE_VOIX, "{abîmé");
     expect(lireReglagesVoix(st)).toEqual({ actif: false, mode: "appuyer" });
     expect(lireReglagesVoix(null)).toEqual({ actif: false, mode: "appuyer" });
+  });
+});
+
+describe("liens vocaux de killcam", () => {
+  it("la victime et le tueur sont liés, personne d'autre ; le lien expire", () => {
+    const l = new LiensVoixKillcam();
+    // un kill entre deux autres joueurs ne me lie à personne
+    expect(l.surMort("moi", "x", "y", 0)).toBe(false);
+    // suicide, mort sans tueur : rien
+    expect(l.surMort("moi", "moi", "moi", 0)).toBe(false);
+    expect(l.surMort("moi", "moi", "", 0)).toBe(false);
+    // je meurs : lié au tueur ; je tue : lié à la victime
+    expect(l.surMort("moi", "moi", "tueur", 1000)).toBe(true);
+    expect(l.surMort("moi", "victime", "moi", 2000)).toBe(true);
+    expect(l.actifs(1500)).toEqual(["tueur", "victime"]);
+    expect(l.actifs(1000 + LIEN_VOIX_KILLCAM_MS)).toEqual(["victime"]);
+    expect(l.actifs(2000 + LIEN_VOIX_KILLCAM_MS)).toEqual([]);
+    expect(l.surMort(null, "moi", "tueur", 0)).toBe(false);
+  });
+
+  it("la clé est la même dans les deux sens", () => {
+    expect(cleLienVoix("a", "b")).toBe(cleLienVoix("b", "a"));
+    expect(cleLienVoix("a", "b")).not.toBe(cleLienVoix("a", "c"));
+  });
+
+  it("correspondants restreints (Battle Royale) : seulement les liens, toujours avec la voix activée des deux côtés", () => {
+    const tous = [j("a"), j("b"), j("c"), j("d", true, false)];
+    expect(correspondants("a", tous)).toEqual(["b", "c"]);
+    expect(correspondants("a", tous, new Set(["c", "d"]))).toEqual(["c"]);
+    expect(correspondants("a", tous, new Set())).toEqual([]);
+    expect(correspondants("a", tous, null)).toEqual(["b", "c"]);
   });
 });

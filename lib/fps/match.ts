@@ -55,6 +55,7 @@ import type { CachetteTigre } from "./tigre-arene";
 import { toucheVraisemblable } from "./tir";
 import { ROND_POINT, ZONE_APPARITION, choisirPointZone, lacetVers, filtrerApparitions, type ZoneApparition } from "./zones";
 import { ZOMBIES } from "./zombies-vagues";
+import { LIEN_VOIX_KILLCAM_MS, cleLienVoix } from "./voix";
 import type { Vec2 } from "../agroparc3d/types";
 
 // `Sortie` et `JoueurSalle` vivent dans match-contexte.ts (partagés avec les services Elsa / véhicules) ; réexportés pour les appelants.
@@ -256,6 +257,8 @@ export class Salle implements ContexteSalle {
   private readonly historiqueMs: number;
   /** (v8, BR) `presence` à émettre : levée par `rejoindreBr`, les morts et les évictions, vidée par `tic` (une seule `presence` par tic). */
   private presenceSale = false;
+  /** Liens vocaux de killcam (victime ↔ tueur) : clé `lienVoix(a, b)` → fin (ms) ; ils passent outre la proximité, et sont le SEUL chat vocal du BR. */
+  private readonly liensVoix = new Map<string, number>();
   /** (v8, BR) instant de mort des joueurs morts (retrait du snap `BR.retraitMortSnapMs` plus tard) */
   private readonly mortT = new Map<string, number>();
   /** Bus C3 express : arène seulement (null en zombies). */
@@ -368,7 +371,7 @@ export class Salle implements ContexteSalle {
       a: "tous",
       m: {
         t: "degats", cible: cible.id, par: par?.id ?? "", degats, pv: cible.pv, bouclier: cible.bouclier, zone,
-        ...(src ? { src } : {}), ...(r.absorbe > 0 ? { absorbe: r.absorbe } : {}),
+        ...(src ? { src } : {}), ...(r.absorbe > 0 ? { absorbe: r.absorbe } : {}), ts: maintenant,
       },
     }];
     if (r.mort) sorties.push(...this.mourir(cible, par, cause, zone, arme, maintenant));
@@ -385,7 +388,7 @@ export class Salle implements ContexteSalle {
       a: "tous",
       m: {
         t: "degats", cible: cible.id, par: par?.id ?? "", degats: total, pv: 0, bouclier: 0, zone: "corps",
-        ...(absorbe > 0 ? { absorbe } : {}),
+        ...(absorbe > 0 ? { absorbe } : {}), ts: maintenant,
       },
     }];
     sorties.push(...this.mourir(cible, par, cause, "corps", "couteau", maintenant));
@@ -423,6 +426,7 @@ export class Salle implements ContexteSalle {
     cible.munSpeciale = 0;
     cible.memoSante = null;
     const tueur = par && par !== cible ? par : null;
+    if (tueur) this.lierVoix(cible.id, tueur.id, maintenant);
     const sorties: Sortie[] = [{
       a: "tous",
       m: {
@@ -467,6 +471,7 @@ export class Salle implements ContexteSalle {
     cible.memoSante = null;
     this.mortT.set(cible.id, maintenant);
     const tueur = par && par !== cible ? par : null;
+    if (tueur) this.lierVoix(cible.id, tueur.id, maintenant);
     const valide = tueur !== null && br.tueurValide(tueur, maintenant);
     const sorties: Sortie[] = [{
       a: "tous",
@@ -645,7 +650,7 @@ export class Salle implements ContexteSalle {
       renommages: [],
       // v2 : une copie PAR joueur (EQUIPEMENT_DEFAUT est figé et ne doit jamais être affecté tel quel)
       equip: copierEquipement(EQUIPEMENT_DEFAUT), main: SLOT_DEFAUT, mainSuivante: SLOT_DEFAUT, munSpeciale: 0,
-      sortieJusqua: -Infinity, cadenceArme: {}, bouclier: 0, dernierDegatT: maintenant, regenAcc: 0, accroupi: false, glisse: false, memoSante: null,
+      sortieJusqua: -Infinity, cadenceArme: {}, bouclier: 0, dernierDegatT: maintenant, regenAcc: 0, accroupi: false, glisse: false, vise: false, recharge: false, memoSante: null,
       // compteurs du tableau des scores (HUD §3.5)
       tirs: 0, touches: 0, tetes: 0, degats: 0, serie: 0, serieMax: 0, killsParArme: {},
       scoresOuvert: false, scoresDemandeT: -Infinity, scoresEnvoyeT: -Infinity,
@@ -765,9 +770,9 @@ export class Salle implements ContexteSalle {
       }
       case "vueScores": return this.vueScores(j, msg.ouvert, maintenant);
       case "invoquer": return j.enJeu && this.tigres ? this.tigres.recevoir(j, msg, maintenant) : [];
-      // chat vocal désactivé en BR (v1) : 50 joueurs feraient 1 225 échanges SDP
-      case "voixActif": return this.br ? [] : this.voixActif(j, msg.actif);
-      case "voix": return this.br ? [] : this.relayerVoix(j, msg.a, msg.s);
+      // chat vocal du BR : seulement entre une victime et son tueur, le temps de la killcam (50 joueurs en maillage feraient 1 225 échanges SDP)
+      case "voixActif": return this.voixActif(j, msg.actif);
+      case "voix": return this.relayerVoix(j, msg.a, msg.s, maintenant);
       case "ping": return estNombre(msg.t0) ? [{ a: id, m: { t: "pong", t0: msg.t0, maintenant } }] : [];
       default: return []; // "bonjour" : déjà traité par connecter
     }
@@ -779,14 +784,30 @@ export class Salle implements ContexteSalle {
   private voixActif(j: JoueurSalle, actif: unknown): Sortie[] {
     if (typeof actif !== "boolean" || !!j.voix === actif) return [];
     j.voix = actif;
+    // BR : présence fusionnée, une seule par tic
+    if (this.br) { this.presenceSale = true; return []; }
     return [this.presence()];
   }
 
-  /** Signal relayé tel quel au joueur `a`, si les deux sont en arène avec la voix activée et que le signal a la bonne forme. */
-  private relayerVoix(j: JoueurSalle, a: unknown, s: unknown): Sortie[] {
+  /** Une victime et son tueur peuvent se parler `LIEN_VOIX_KILLCAM_MS` après la mort, où qu'ils soient (et même en BR). */
+  private lierVoix(victime: string, tueur: string, maintenant: number): void {
+    for (const [k, fin] of this.liensVoix) if (fin <= maintenant) this.liensVoix.delete(k);
+    this.liensVoix.set(cleLienVoix(victime, tueur), maintenant + LIEN_VOIX_KILLCAM_MS);
+  }
+
+  /**
+   * Signal relayé tel quel au joueur `a`, si les deux sont en arène avec la voix activée et que le signal a la bonne forme. En BR, seulement
+   * entre une victime et son tueur pendant leur lien de killcam (une fois établie, la connexion WebRTC ne passe plus par ici).
+   */
+  private relayerVoix(j: JoueurSalle, a: unknown, s: unknown, maintenant: number): Sortie[] {
     if (typeof a !== "string" || a === j.id || !signalVoixValide(s)) return [];
     const dest = this.table.get(a);
     if (!dest || !j.voix || !dest.voix || !j.enJeu || !dest.enJeu) return [];
+    if (this.br) {
+      const fin = this.liensVoix.get(cleLienVoix(j.id, a));
+      // « fin » passe toujours : il referme une connexion
+      if ((fin === undefined || fin <= maintenant) && (s as SignalVoix).type !== "fin") return [];
+    }
     return [{ a, m: { t: "voix", de: j.id, s } }];
   }
 
@@ -1030,6 +1051,9 @@ export class Salle implements ContexteSalle {
     // accroupi seulement au sol (pas en l'air, pas en wall-run) ; se relever est toujours permis
     j.accroupi = j.posture === "sol" && e.accroupi === true;
     j.glisse = j.accroupi && e.glisse === true;
+    // visée et recharge : seulement recopiées dans le snap (la killcam et le spectateur montrent la lunette, l'arme en joue, la recharge)
+    j.vise = e.vise === true;
+    j.recharge = e.recharge === true;
     if (aTerre) {
       // corps à terre : il glisse ou retombe encore un instant chez le client, la position suit ; ni posture debout ni cible rejouée
       j.posture = "mort";
@@ -1140,7 +1164,7 @@ export class Salle implements ContexteSalle {
     const ameliore = !!this.zombies && (j.equip.ameliorees?.includes(armeTiree) ?? false);
     const sorties: Sortie[] = [{
       a: "tous", sauf: j.id,
-      m: { t: "tir", id: j.id, arme: armeTiree, o: tir.o, d: dirs, ...(gauche ? { main: "g" as const } : {}), ...(ameliore ? { ameliore: true as const } : {}) },
+      m: { t: "tir", id: j.id, arme: armeTiree, o: tir.o, d: dirs, ...(gauche ? { main: "g" as const } : {}), ...(ameliore ? { ameliore: true as const } : {}), ts: maintenant },
     }];
     // arme spéciale : une munition de moins ; à 0, l'arme disparaît et le joueur retombe sur le slot précédent (v10 : pas en zombies, où
     // l'Arme 3 est un emplacement ordinaire et où le client compte toutes les munitions)
@@ -1331,7 +1355,7 @@ export class Salle implements ContexteSalle {
     if (!this.cadenceOk(j, arme, cadenceCoupS, false, maintenant)) return [];
     j.protegeJusqua = 0;
     const d = dirs[0];
-    const sorties: Sortie[] = [{ a: "tous", sauf: j.id, m: { t: "coup", id: j.id, o: coup.o, d, arme } }];
+    const sorties: Sortie[] = [{ a: "tous", sauf: j.id, m: { t: "coup", id: j.id, o: coup.o, d, arme, ts: maintenant } }];
     // (v8, zombies) le grand secret voit passer chaque coup, même dans le vide (pendules)
     if (this.zombies) sorties.push(...this.zombies.coupSecret(j, arme, coup.o, d, maintenant));
     // `cibles` vient du réseau : un tableau absent ou mal formé (ancien format `cible`, client truqué) vaut un coup dans le vide
@@ -1592,6 +1616,8 @@ export class Salle implements ContexteSalle {
         ...(occupation ? { vehicule: { id: occupation.vehicule, siege: occupation.siege } } : {}),
         ...(this.pilote(j.id) ? { titan: true } : {}),
         ...(chute ? { chute } : {}),
+        ...(j.vivant && j.vise ? { vise: true } : {}),
+        ...(j.vivant && j.recharge ? { recharge: true } : {}),
         vivant: j.vivant,
         protege: j.vivant && maintenant < j.protegeJusqua,
       });

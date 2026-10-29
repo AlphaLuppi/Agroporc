@@ -106,6 +106,8 @@ import { MondeTigres, coupDeMonTigre, tracerTigres, trouverTigreCouteau, type Ti
 import { hitboxTigre } from "./tigre-arene";
 import { creerFeux, type SourceFeu } from "./rendu-feux";
 import { creerChatVocal } from "./voix-rtc";
+import { LiensVoixKillcam } from "./voix";
+import { EchantillonsImage, JournalEvenements, VueJoueur, decalageVue, evenementVue, type EvenementVue } from "./vue-joueur";
 import { creerSons, type PositionSon } from "./sons";
 import { angleRelatif, anglesVers, fovVerticalDeg, lissage, panSon } from "./vue";
 import { TANGAGE_MAX, directionVisee, rotationCamera, tangageDeVue } from "./jeu-visee";
@@ -301,6 +303,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   const interp = new Interpolateur();
   /** chat vocal de proximité (v3 §5) : activé par l'hôte (menu pause), volumes réglés à chaque image d'après les positions */
   const voix = creerChatVocal((m) => client.envoyer(m));
+  // Battle Royale : aucune connexion hors des liens de killcam, dès la première présence
+  if (modeBR) voix.restreindre([]);
 
   // ---------- monde dynamique (voitures PNJ et conduisibles, Elsa) ----------
   const nbPnj = flotte(construireCircuits()).length;
@@ -586,6 +590,31 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
 
   /** Rejeu à la première personne en cours (phase « rejeu » avec la caméra du tueur) ou carte figée sur son dernier état. */
   let enReplay = false;
+
+  // ---------- vue empruntée : rejeu de la killcam (vue du tueur) et spectateur du BR (vue du joueur suivi), cf. vue-joueur.ts ----------
+  /** écart entre deux snaps (ms) : la correction de la visée sur les vrais tirs s'efface en ce temps */
+  const largeurSnapMs = 1000 / (modeBR ? BR.snapHz : JEU.snapHz);
+  /** tirs, coups, dégâts et morts horodatés au serveur, rejoués sur la ligne de temps du joueur suivi (le tampon de la killcam a le sien) */
+  const journalLive = new JournalEvenements();
+  const vueSpect = new VueJoueur(largeurSnapMs);
+  let vueSpectSujet: string | null = null;
+  /** liens vocaux de killcam (victime ↔ tueur, plein volume quelle que soit la distance ; seul chat vocal du BR) */
+  const liensVoix = new LiensVoixKillcam();
+  /** état du joueur dont on a les yeux (tueur rejoué, joueur suivi) à cette image ; null hors vue empruntée */
+  let sujetVue: EtatJoueurSnap | null = null;
+  let sujetVueId: string | null = null;
+  /** recharge du sujet déjà animée (front montant du `recharge` de son snap) */
+  let rechargeSujetVue = false;
+  /** visée tenue à cette image : envoyée dans `etat`, recopiée dans le snap pour qui me regarde (killcam, spectateur) */
+  let viseEtat = false;
+  const pingDe = (id: string | null) => (id ? infos.get(id)?.ping ?? 0 : 0);
+  /** Horodatage serveur estimé d'un message reçu sans `ts` (ancien serveur) : maintenant moins un demi aller-retour. */
+  const tsRecu = () => client.maintenantServeur() - pingDe(client.id) / 2;
+  /** échantillons du tampon courant de cette image (caméra, sujet, autres : un seul calcul par instant demandé) */
+  const srcVue = new EchantillonsImage(interp);
+  /** horloge serveur du rendu en direct, figée pour toute l'image (le cache s'en sert de clé) : la ligne de temps du spectateur */
+  let tsVueImage = 0;
+  const tsVueLive = () => tsVueImage;
 
   /** Œil du joueur (monde), debout, accroupi (lissé) ou assis. */
   function oeil(): Vec3 {
@@ -1366,6 +1395,152 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     return [e.p[0], e.p[1] + (zone === "tete" ? s.tete : s.centre), e.p[2]];
   }
 
+  // ---------- vue empruntée : voir EXACTEMENT ce que le tueur (rejeu) ou le joueur suivi (spectateur) a vécu ----------
+
+  /** Joueur dont on a les yeux à cette image : le tueur pendant le rejeu, le joueur suivi en spectateur ; son état (arme, visée, recharge). */
+  function majSujetVue() {
+    let id: string | null = null;
+    let e: EtatJoueurSnap | null = null;
+    if (enReplay && kc.phase() === "rejeu") {
+      id = kc.tueurId();
+      e = kc.tueurRejoue();
+    } else if (spectateurActif()) {
+      id = suivi.cible();
+      // nouveau joueur suivi : ses événements ne se jouent qu'à partir de maintenant (pas de rafale du passé)
+      if (id !== vueSpectSujet) { vueSpectSujet = id; vueSpect.repartir(tsVueLive()); }
+      e = id !== null ? srcVue.echantillon(tsVueLive()).get(id) ?? null : null;
+    }
+    if (!spectateurActif()) vueSpectSujet = null;
+    const nouvelId = e ? id : null;
+    if (nouvelId !== sujetVueId) rechargeSujetVue = false;
+    sujetVueId = nouvelId;
+    sujetVue = e;
+  }
+
+  /** Champ horizontal (°) du joueur dont on a les yeux : sa lunette au niveau par défaut, sa visée, ou le champ normal. */
+  function fovSujet(e: EtatJoueurSnap): number {
+    if (!e.vise || estMelee(e.arme)) return FOV_H;
+    const st = statsTir(e.arme);
+    if (viseurLunette(st.viseur)) return e.recharge ? FOV_H : st.zooms.length ? st.zooms[Math.min(st.zooms.length - 1, st.zoomDefaut)] : FOV_H;
+    return st.viseur === "point_rouge" || st.viseur === "holo" ? FOV_H_VISEE_OPTIQUE : FOV_H_VISEE;
+  }
+
+  /** Les joueurs d'une vue en cibles de traçantes. */
+  function ciblesVue(vue: ReadonlyMap<string, EtatJoueurSnap>): Cible[] {
+    const r: Cible[] = [];
+    for (const [id, e] of vue) if (!e.titan) r.push({ id, p: e.p, vivant: e.vivant, accroupi: !!e.accroupi || !!e.vehicule });
+    return r;
+  }
+
+  /** Rejoue les événements que le joueur dont on a les yeux a vécus depuis l'image précédente (après `majDistants` : avatars à jour). */
+  function majVue() {
+    if (sujetVueId === null) return;
+    const evts = enReplay
+      ? kc.evenementsAJouer()
+      : spectateurActif() ? vueSpect.aJouer(journalLive, sujetVueId, pingDe(sujetVueId), tsVueLive()) : [];
+    for (const e of evts) jouerEvenementVue(e, sujetVueId, etatsRendu);
+  }
+
+  /** (crochet de test) derniers événements rejoués par la vue empruntée */
+  const vueJouees: { quand: "killcam" | "spectateur"; sujet: string; genre: EvenementVue["genre"]; ts: number; id: string; cible: string | null }[] = [];
+
+  /** Son à la place de la caméra (vue empruntée). */
+  const sonDepuisCam = (p: Vec3): PositionSon => {
+    const dx = p[0] - camPos[0], dz = p[2] - camPos[2];
+    return { distance: Math.hypot(dx, p[1] - camPos[1], dz), pan: panSon(camLacet, dx, dz) };
+  };
+
+  /**
+   * Un événement tel que `sujet` l'a vécu : ses tirs partent de l'arme en main (flash, recul, son plein, traçantes, impacts), ses coups
+   * d'arme blanche aussi ; il entend et voit les tirs des autres depuis sa place ; ses touches font le son et le marqueur de touche, ses
+   * kills le marqueur de kill ; les coups qu'il prend secouent la vue (et, en spectateur, marquent leur direction). `vue` : les autres
+   * joueurs tels qu'il les voyait (cibles des traçantes, giclées).
+   */
+  function jouerEvenementVue(e: EvenementVue, sujet: string, vue: ReadonlyMap<string, EtatJoueurSnap>) {
+    vueJouees.push({ quand: enReplay ? "killcam" : "spectateur", sujet, genre: e.genre, ts: e.ts, id: e.genre === "tir" || e.genre === "coup" ? e.id : e.par, cible: e.genre === "degats" || e.genre === "mort" ? e.cible : null });
+    if (vueJouees.length > 200) vueJouees.shift();
+    switch (e.genre) {
+      case "tir": {
+        const a = STATS[e.arme];
+        if (!a) return;
+        const liste = ciblesVue(vue);
+        let depart: Vec3;
+        if (e.id === sujet) {
+          armeMain.tirer(e.main);
+          sons.tir(e.arme);
+          const lunetteSujet = !!sujetVue?.vise && viseurLunette(statsTir(e.arme).viseur);
+          const d0 = e.d[0];
+          if (lunetteSujet && d0) depart = [e.o[0] + d0[0] * 0.8, e.o[1] + d0[1] * 0.8 - 0.08, e.o[2] + d0[2] * 0.8];
+          else {
+            armeMain.positionBouche(_bouche, e.main);
+            depart = [_bouche.x, _bouche.y, _bouche.z];
+          }
+        } else {
+          const avatar = distants.get(e.id)?.avatar;
+          avatar?.tirer();
+          depart = avatar ? avatar.positionBouche() : e.o;
+          sons.tir(e.arme, sonDepuisCam(e.o));
+        }
+        for (const d of e.d) {
+          const portee = Math.min(a.portee, PORTEE_EFFETS_M);
+          const imp = tracerEffets(e.o, d, portee, liste, e.id);
+          effets.traçante(depart, imp.point, e.arme);
+          if (!imp.cible && imp.distance < a.portee - 0.01) {
+            effets.impact(imp.point, [-d[0], -d[1], -d[2]], couleurDe(e.id));
+            if (imp.distance < portee - 0.01) impactsBalles.ajouter(imp.point, normaleImpact(monde, imp.point, e.o));
+          }
+        }
+        return;
+      }
+      case "coup": {
+        if (e.id === sujet) {
+          armeMain.coup();
+          sons.coup(false, undefined, e.arme);
+        } else {
+          distants.get(e.id)?.avatar.coup();
+          sons.coup(false, sonDepuisCam(e.o), e.arme);
+        }
+        return;
+      }
+      case "degats": {
+        if (e.cible === sujet) {
+          // il encaisse : le son, la vue qui tremble et (spectateur) la direction du coup
+          sons.degat();
+          secousse = SECOUSSE_DEGAT * (Math.random() < 0.5 ? -1 : 1);
+          if (spectateurActif()) {
+            const src = e.src ?? vue.get(e.par)?.p ?? null;
+            const ang = src ? angleRelatif(camLacet, src[0] - camPos[0], src[2] - camPos[2]) : 0;
+            cb.evenement({ type: "degat", par: e.par, degats: e.degats, angle: ang });
+          }
+        } else {
+          const c = posToucheDans(vue, e.cible, e.zone);
+          if (c) effets.eclaboussure(c, couleurDe(e.cible));
+          distants.get(e.cible)?.avatar.toucher();
+        }
+        if (e.par === sujet && e.cible !== sujet) {
+          sons.touche(e.zone === "tete");
+          cb.evenement({ type: "confirme", cible: e.cible, degats: e.degats, absorbe: e.absorbe ?? 0, zone: e.zone, tue: e.pv <= 0, vue: true });
+        }
+        return;
+      }
+      case "mort": {
+        if (e.par === sujet && e.cible !== sujet) {
+          sons.kill();
+          cb.evenement({ type: "kill", cible: e.cible, zone: e.zone, arme: e.arme as ArmeId, vue: true });
+        }
+        return;
+      }
+    }
+  }
+
+  /** Point touché sur un joueur d'une vue (giclée), comme `posTouche` mais aux positions de la vue. */
+  function posToucheDans(vue: ReadonlyMap<string, EtatJoueurSnap>, id: string, zone: Zone): Vec3 | null {
+    const e = vue.get(id);
+    if (!e) return null;
+    const s = e.accroupi || e.vehicule ? { tete: 1.3 - 0.1, centre: 0.8 } : { tete: SILHOUETTE.tete.y - 0.1, centre: SILHOUETTE.centreY };
+    return [e.p[0], e.p[1] + (zone === "tete" ? s.tete : s.centre), e.p[2]];
+  }
+
   function terminerKillcam() {
     kc.terminer();
     camTueurCache = null;
@@ -1484,6 +1659,11 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
 
   function recevoir(m: MessageServeur) {
     if (disposed) return;
+    // tirs, coups, dégâts et morts : journal de la vue empruntée (killcam, spectateur), horodatés au serveur ; inutile en zombies
+    if (!modeZ) {
+      const ev = evenementVue(m, tsRecu());
+      if (ev) { kc.alimenterEvenement(ev); journalLive.ajouter(ev); }
+    }
     switch (m.t) {
       case "bienvenue":
         majInfos(m.joueurs);
@@ -1554,8 +1734,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
         if (m.id === client.id) break;
         // écho de la mini-map : un tir entendu dont le tireur n'est pas à l'écran (HUD §3.3)
         ajouterEcho(radarFrame, m.o[0], m.o[2], suiviRadar.vu(m.id) > 0);
-        // pendant le rejeu, rien du présent ne se superpose au passé (§2.5)
-        if (enReplay) break;
+        // pendant le rejeu, rien du présent ne se superpose au passé (§2.5) ; en spectateur, le tir est rejoué à son instant (`majVue`)
+        if (enReplay || spectateurActif()) break;
         const a = STATS[m.arme];
         const liste = cibles();
         const avatar = distants.get(m.id)?.avatar;
@@ -1593,7 +1773,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
         break;
       }
       case "coup": {
-        if (m.id === client.id || enReplay) break;
+        if (m.id === client.id || enReplay || spectateurActif()) break;
         distants.get(m.id)?.avatar.coup();
         const cam = oeil();
         const dx = m.o[0] - cam[0], dz = m.o[2] - cam[2];
@@ -1620,7 +1800,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
           // zombies : à 0 PV on tombe tout de suite (l'état « à terre » ou « éliminé » du serveur le confirme ensuite)
           if (modeZ && m.pv <= 0 && vivant) { aTerreZ = true; tomber(); }
         } else {
-          if (!enReplay) {
+          if (!enReplay && !spectateurActif()) {
             const c = posTouche(m.cible, m.zone);
             // un tigre touché saigne orange, un joueur dans sa couleur
             if (c) effets.eclaboussure(c, estIdZombie(m.cible) ? "#ff8a1c" : couleurDe(m.cible));
@@ -1634,6 +1814,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
         break;
       }
       case "mort": {
+        // victime ou tueur : on peut se parler le temps de la killcam (lien vocal, cf. voix.ts)
+        liensVoix.surMort(client.id, m.cible, m.par, t * 1000);
         if (m.cible === client.id) {
           reapparitionFin = t + m.delai / 1000;
           if (modeBR) {
@@ -1649,7 +1831,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
             suivi.commencer(m.par !== "" && m.par !== client.id ? m.par : null, moi.p, candidatsSuivi());
           }
           tomber();
-          kc.surMort(m, client.id);
+          // le rejeu montre le monde comme le tueur le voyait : son ping et l'interpolation de son client
+          kc.surMort(m, client.id, { pingMs: pingDe(m.par), decalageMs: decalageVue(pingDe(m.par), interpMs), largeurMs: largeurSnapMs });
           cb.evenement({ type: "mort", par: m.par, arme: m.arme, cause: m.cause, zone: m.zone, delai: m.delai, ts: m.ts, tueur: m.tueur });
         } else if (m.par === client.id) {
           sons.kill();
@@ -2091,7 +2274,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
         case "grenade": if (modeZ) presserGrenade("frag"); break;
         case "remontoir": if (modeZ) presserGrenade("remontoir"); break;
         case "zoomLunette": if (lunetteActive()) changerZoom(1, true); break;
-        case "parler": if (!modeBR) voix.parler(true); break;
+        case "parler": voix.parler(true); break;
         case "soigner": utiliserSoin("bandage"); break;
         case "potion": utiliserSoin("potion"); break;
         case "lacher": lacherArmeBr(); break;
@@ -2250,6 +2433,23 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     // spectateur BR : la vie du joueur suivi, pas la mienne (0 depuis ma mort)
     const specte = spectateurActif();
     const vie = vieAffichee(specte, specte ? etats.get(suivi.cible() ?? "") : undefined, { pv, bouclier });
+    // vue empruntée (rejeu, spectateur) : viseur, lunette et arme du joueur dont on a les yeux
+    const sv = sujetVue;
+    const stSv = sv && !estMelee(sv.arme) ? statsTir(sv.arme) : null;
+    const lunetteSv = !!sv?.vise && !!stSv && viseurLunette(stSv.viseur) && !sv.recharge;
+    const liens = liensVoix.actifs(t * 1000);
+    const champVue = sv ? {
+      arme: sv.arme as ArmeId,
+      recharge: !!sv.recharge,
+      vise: !!sv.vise,
+      lunette: lunetteSv,
+      zoomX: lunetteSv ? zoomX(fovSujet(sv)) : 0,
+      zoomNiveau: lunetteSv && stSv ? stSv.zoomDefaut : -1,
+      zoomNiveaux: lunetteSv && stSv ? stSv.zooms.length : 0,
+      viseur: stSv?.viseur ?? ("fer" as Viseur),
+      ecartViseur: 0,
+      distanceVisee: -1,
+    } : null;
     return {
       pv: Math.max(0, Math.round(vie.pv)),
       bouclier: Math.max(0, Math.round(vie.bouclier)),
@@ -2307,6 +2507,10 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       // BR : une plaque « ramasser » en refus (aucune arme compatible, pile pleine) passe en danger comme un achat sans argent
       ...(modeBR ? { mode: "br" as const, inviteAssez: !invBr?.refuse, ...etatHudBr(entreeHudBr()) } : {}),
       dansFumee: vivant && (monstresImage?.fumigenes?.some((f) => Math.hypot(moi.p[0] - f.p[0], moi.p[2] - f.p[2]) <= 12) ?? false),
+      ...(champVue ?? {}),
+      vueEmpruntee: champVue !== null,
+      // seulement les liens dont la voix arrive (connexion établie) : « en ligne avec » n'est jamais un mensonge
+      voixLien: liens.length && voix.actif() ? liens.filter((id) => voix.relies().includes(id)).map(pseudoDe).join(" · ") : "",
     };
   }
   function emettreHud(force = false) {
@@ -2448,7 +2652,10 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       const ev = info && vehicule.estConducteur() ? vehicule.etat() : null;
       if (info && ev) etats = recalerOccupants(etats, client.id, info.vehicule, ev);
     }
-    etatsRendu = enReplay && joueursRejouesCache ? joueursRejouesCache : etats;
+    // rejeu : le tampon long tel que le tueur le voyait ; spectateur : les autres tels que le joueur suivi les voyait (son retard de vue)
+    etatsRendu = enReplay && joueursRejouesCache ? joueursRejouesCache
+      : spectateurActif() && sujetVueId !== null ? vueSpect.autres(srcVue, sujetVueId, tsVueLive(), decalageVue(pingDe(sujetVueId), interpMs))
+        : etats;
     // pendant le rejeu, notre propre avatar est dessiné (on se voit mourir) ; sinon jamais ; en spectateur, jamais celui du joueur dont on a les yeux
     const suiviId = spectateurActif() ? suivi.cible() : null;
     for (const [id, e] of etatsRendu) {
@@ -2482,15 +2689,21 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
 
   const sourcesFeux: SourceFeu[] = [];
   /** positions des têtes des autres joueurs pour le chat vocal (réutilisée d'une image à l'autre) */
-  const sourcesVoix = new Map<string, { p: Vec3; vivant: boolean }>();
-  /** Chat vocal : on entend depuis sa propre tête (même pendant la killcam : le présent, pas le rejeu). */
+  const sourcesVoix = new Map<string, { p: Vec3; vivant: boolean; direct?: boolean }>();
+  /**
+   * Chat vocal : on entend depuis sa propre tête (même pendant la killcam : le présent, pas le rejeu). Une victime et son tueur
+   * (lien de killcam) s'entendent à plein volume où qu'ils soient ; en BR ce sont les seules connexions.
+   */
   function majVoix() {
+    const liens = liensVoix.actifs(t * 1000);
+    voix.restreindre(modeBR ? liens : null);
     if (!voix.actif()) return;
     sourcesVoix.clear();
     for (const [id, e] of etats) {
       if (id === client.id) continue;
-      sourcesVoix.set(id, { p: [e.p[0], e.p[1] + oeilDe(e), e.p[2]], vivant: e.vivant });
+      sourcesVoix.set(id, { p: [e.p[0], e.p[1] + oeilDe(e), e.p[2]], vivant: e.vivant, ...(liens.includes(id) ? { direct: true } : {}) });
     }
+    for (const id of liens) if (!sourcesVoix.has(id)) sourcesVoix.set(id, { p: oeil(), vivant: true, direct: true });
     voix.placer(oeil(), lacet, sourcesVoix);
   }
   /** Voitures PNJ, voitures conduisibles, épaves, feux et Elsa (rendu three), à l'horloge serveur ou, en rejeu, à l'instant rejoué. */
@@ -2854,7 +3067,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
         const s = vehicule.positionSiege();
         if (!ve || !s) return;
         const av = [-Math.sin(ve.cap) * ve.v, 0, -Math.cos(ve.cap) * ve.v] as Vec3;
-        client.envoyer({ t: "etat", seq: ++seq, p: [s[0], s[1], s[2]], v: av, lacet, tangage: vue, posture: "sol", mur: 0 });
+        client.envoyer({ t: "etat", seq: ++seq, p: [s[0], s[1], s[2]], v: av, lacet, tangage: vue, posture: "sol", mur: 0, ...drapeauxVue() });
       }
       return;
     }
@@ -2863,14 +3076,22 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       lacet, tangage: vue, posture: postureDe(moi), mur: coteMurDe(moi),
       ...(moi.accroupi ? { accroupi: true } : {}),
       ...(moi.accroupi && moi.glisse ? { glisse: true } : {}),
+      ...drapeauxVue(),
     });
+  }
+
+  /** Visée et recharge, recopiées dans le snap : qui me regarde (killcam, spectateur) voit ma lunette et mes recharges. */
+  function drapeauxVue(): { vise?: boolean; recharge?: boolean } {
+    return { ...(viseEtat ? { vise: true } : {}), ...(armes.rechargeEnCours() ? { recharge: true } : {}) };
   }
 
   /** Place la caméra : survol avant la première apparition, première personne, rejeu du tueur ou caméra de mort. */
   function placerCamera(dt: number, vise: boolean, lunetteAct: boolean, vh: number) {
     const a = armeFeu();
     const vsr = a ? statsMoi(a).viseur : "fer";
-    const cibleFov = lunetteAct && a ? fovLunette(a) : vise ? (vsr === "point_rouge" || vsr === "holo" ? FOV_H_VISEE_OPTIQUE : FOV_H_VISEE) : FOV_H;
+    // vue empruntée : le champ du joueur dont on a les yeux (sa lunette, sa visée)
+    const cibleFov = sujetVue ? fovSujet(sujetVue)
+      : lunetteAct && a ? fovLunette(a) : vise ? (vsr === "point_rouge" || vsr === "holo" ? FOV_H_VISEE_OPTIQUE : FOV_H_VISEE) : FOV_H;
     fovH += (cibleFov - fovH) * lissage(14, dt);
     appliquerFov();
     kick *= Math.exp(-11 * dt);
@@ -2881,7 +3102,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       const c = camTueurCache;
       if (c) {
         camera.position.set(c.pos[0], c.pos[1], c.pos[2]);
-        camera.rotation.set(tangageDeVue(c.tangage, 0), c.lacet, 0);
+        // la secousse : les coups que le tueur encaissait
+        camera.rotation.set(tangageDeVue(c.tangage, 0), c.lacet, secousse);
         camPos[0] = c.pos[0]; camPos[1] = c.pos[1]; camPos[2] = c.pos[2];
         camLacet = c.lacet;
         camTangage = c.tangage;
@@ -2924,18 +3146,18 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       camLacet = lacet;
       camTangage = rx;
     } else if (spectateurActif()) {
-      // BR, mort : les yeux du joueur suivi (position et angles du snap interpolé) ; plus personne à suivre, la caméra reste où elle est
-      const e = suivi.cible() !== null ? etats.get(suivi.cible()!) : undefined;
-      if (e) {
-        const hauteur = oeilDe(e);
-        camera.position.set(e.p[0], e.p[1] + hauteur, e.p[2]);
-        camera.rotation.set(tangageDeVue(e.tangage, 0), e.lacet, 0);
-        camPos[0] = e.p[0]; camPos[1] = e.p[1] + hauteur; camPos[2] = e.p[2];
-        camLacet = e.lacet;
-        camTangage = e.tangage;
+      // BR, mort : les yeux du joueur suivi (snap interpolé, visée recalée sur ses vrais tirs) ; plus personne à suivre, la caméra reste où elle est
+      const e = sujetVue;
+      const c = e && sujetVueId !== null ? vueSpect.camera(srcVue, journalLive, sujetVueId, tsVueLive()) : null;
+      if (e && c) {
+        camera.position.set(c.pos[0], c.pos[1], c.pos[2]);
+        camera.rotation.set(tangageDeVue(c.tangage, 0), c.lacet, secousse);
+        camPos[0] = c.pos[0]; camPos[1] = c.pos[1]; camPos[2] = c.pos[2];
+        camLacet = c.lacet;
+        camTangage = c.tangage;
         // les sons et le radar sont ceux de sa place
         moi.p = [e.p[0], e.p[1], e.p[2]];
-        lacet = e.lacet;
+        lacet = c.lacet;
       }
     } else {
       // mort sans rejeu (repli) : la caméra s'effondre et bascule sur le côté
@@ -2961,6 +3183,9 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     dernierT = maintenant;
     t += dt;
     reconnexion();
+    // vue empruntée : un instant et un cache d'échantillons par image
+    srcVue.vider();
+    tsVueImage = client.maintenantServeur() - interpMs;
 
     // --- BR : la killcam finie (rejeu 2,5 s + carte 1,5 s), le mort devient spectateur ; il suit un joueur en vie ---
     if (modeBR && kc.actif() && kc.progression() >= 1) terminerKillcam();
@@ -2990,6 +3215,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     } else if (enReplay) {
       terminerKillcam();
     }
+    majSujetVue();
 
     baseVehicules = enReplay && vehiculesRejouesCache ? vehiculesRejouesCache : mondeJeu.vehiculesA(client.maintenantServeur() - interpMs);
 
@@ -3000,12 +3226,18 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       if (a && peutAgir() && !enKillcam() && armes.munitions() <= 0 && !armes.rechargeEnCours() && t >= prochainDe(a)) demarrerRecharge();
     }
     {
-      // spectateur (BR) : l'arme du joueur suivi ; rejeu de la killcam : celle du tueur
-      const suiviId = spectateurActif() ? suivi.cible() : null;
-      const armeSuivie = suiviId !== null ? etats.get(suiviId)?.arme : undefined;
-      armeMain.changer(enReplay ? (kc.info()?.arme ?? armes.armeEnMain()) : (armeSuivie ?? armes.armeEnMain()));
+      // vue empruntée (rejeu de la killcam, spectateur) : l'arme que le joueur avait en main à cet instant ; carte du tueur : son arme
+      armeMain.changer(sujetVue?.arme ?? (enReplay ? (kc.info()?.arme ?? armes.armeEnMain()) : armes.armeEnMain()));
     }
-    {
+    if (sujetVue) {
+      const enMain = sujetVue.arme;
+      armeMain.ameliorer(false);
+      armeMain.regler({ paire: false, viseur: estMelee(enMain) ? "fer" : statsTir(enMain).viseur });
+      // sa recharge : animée au front montant du drapeau de son snap
+      const r = !!sujetVue.recharge && !estMelee(enMain);
+      if (r && !rechargeSujetVue) armeMain.recharger(STATS[enMain as ArmeFeuId].rechargeS);
+      rechargeSujetVue = r;
+    } else {
       // (v7) camouflage du Pack-a-Punch sur l'arme en main
       const enMain = armes.armeEnMain();
       armeMain.ameliorer(armes.amelioree(enMain));
@@ -3031,6 +3263,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     const paire = !!stMain?.akimbo;
     const aLunette = !!stMain && viseurLunette(stMain.viseur);
     const vise = viseMaintenu && peutAgir() && !!a && !paire && !(aLunette && armes.rechargeEnCours()) && !enKillcam() && !pilote();
+    viseEtat = vise;
     if (pilote()) {
       // titan : simulé en local, le joueur est à ses pieds (l'œil est à OEIL_TITAN)
       const avantDash = titan.etat()?.dash ?? 0, avantSol = titan.etat()?.auSol ?? true;
@@ -3175,6 +3408,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
 
     // --- joueurs distants, monde dynamique et effets ---
     majDistants(dt);
+    majVue();
     majMondeDynamique(dt);
     majTigres(dt);
     majVoix();
@@ -3184,7 +3418,10 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     effets.maj(dt);
 
     porteArme.visible = apparu && (vivant || enReplay || spectateurActif()) && !(info && tireInterdit()) && !pilote() && !enVolBr();
-    armeMain.maj(dt, { vitesseH: vh, auSol: moi.auSol, vise: vise && !enReplay });
+    const sv = sujetVue;
+    armeMain.maj(dt, sv
+      ? { vitesseH: Math.hypot(sv.v[0], sv.v[2]), auSol: sv.posture === "sol", vise: !!sv.vise }
+      : { vitesseH: vh, auSol: moi.auSol, vise: vise && !enReplay });
 
     remplirRadar(dt);
     post.rendre();
@@ -3356,6 +3593,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
             bandages, potions, usage: usageSoin, rendu: renduBr?.etat() ?? null,
           } : null,
           spectateur: modeBR ? { actif: spectateurActif(), suivi: suivi.cible(), place: placeBr } : null,
+          // vue empruntée (rejeu, spectateur) : joueur dont on a les yeux et derniers événements rejoués (tests de bout en bout)
+          vue: { sujet: sujetVueId, vise: !!sujetVue?.vise, fov: fovH, jouees: vueJouees.slice() },
           distants: [...etats.entries()].filter(([id]) => id !== client.id).map(([id, e]) => ({
             id, p: e.p, vivant: e.vivant, protege: e.protege, arme: e.arme, accroupi: !!e.accroupi, glisse: !!e.glisse, vehicule: e.vehicule ?? null,
             pseudoAlpha: visib.alpha(id),

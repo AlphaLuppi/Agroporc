@@ -575,7 +575,7 @@ try {
       await dormir(700);
       coupDeBob = A.msgs("degats", depuis).find((m) => m.cible === idA && m.par === idB);
     }
-    verifier(coupDeBob, `Bob n'a pas touché Alice : ${B.resume(depuis)}`);
+    verifier(coupDeBob, `Bob n'a pas touché Alice : ${B.resume(depuis)} ; coups ${JSON.stringify(B.envoyesDe("coup", depuis).slice(-3))} ; sans type ${JSON.stringify(B.envoyes.filter((r) => r.a >= depuis && r.t === undefined).slice(-2).map((r) => r.m))} ; Bob ${JSON.stringify(arrondi((await B.jeu()).p))} Alice ${JSON.stringify(arrondi((await A.jeu()).p))}`);
     verifier(coupDeBob.degats === 34 && coupDeBob.pv <= pvAliceAvant - 34 + 1, `coup de couteau de Bob : ${JSON.stringify(coupDeBob)} (34 dégâts, ${pvAliceAvant - 34} PV attendus)`);
     // Alice frappe Bob jusqu'à sa mort (3 coups de 34 sur 100 PV)
     const pvBob = (await B.jeu()).pv;
@@ -621,6 +621,13 @@ try {
     verifier(apparitions() === 0, `Bob a reçu ${apparitions()} message(s) apparition après sa mort`);
     verifier((await B.jeu()).vivant === false, "Bob est revenu en vie");
     verifier(B.envoyesDe("rejoindre", mort.a).length === 0, "Bob a renvoyé rejoindre après sa mort");
+    // la killcam a montré le coup fatal : vue d'Alice, son coup de couteau et la mort de Bob rejoués à leur instant
+    const vue = (await B.jeu()).vue;
+    const rejoues = (vue?.jouees ?? []).filter((x) => x.quand === "killcam" && x.sujet === idA);
+    verifier(rejoues.some((x) => x.genre === "coup" && x.id === idA), `killcam sans le coup d'Alice : ${JSON.stringify(vue?.jouees)}`);
+    verifier(rejoues.some((x) => x.genre === "mort" && x.cible === idB), `killcam sans la mort de Bob : ${JSON.stringify(vue?.jouees)}`);
+    // spectateur : il a les yeux d'Alice (seule vivante proche)
+    verifier(vue?.sujet === (await B.jeu()).spectateur?.suivi, `sujet de la vue ${vue?.sujet}, suivi ${(await B.jeu()).spectateur?.suivi}`);
     // les morts sortent du snap 5 s après leur mort : Alice ne voit plus Bob (il reste dans la présence)
     verifier(!(await A.jeu()).distants.some((d) => d.id === idB && d.vivant), "Alice voit encore Bob vivant");
     const presA = (await A.etat()).joueurs.find((j) => j.id === idB);

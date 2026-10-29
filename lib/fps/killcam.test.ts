@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  KILLCAM, avancerKillcam, cameraTueur, demarrerKillcam, passerKillcam, progressionKillcam, tempsRejeuServeur, tueurPresent,
+  KILLCAM, avancerKillcam, cameraTueur, debutRejeu, demarrerKillcam, passerKillcam, progressionKillcam, tempsRejeuServeur, tueurPresent,
   type Killcam,
 } from "./killcam";
 import type { EtatJoueurSnap, InfoTueur } from "./protocole";
@@ -20,9 +20,13 @@ function etat(extra: Partial<EtatJoueurSnap> = {}): EtatJoueurSnap {
 }
 
 describe("constantes", () => {
-  it("2,5 s de rejeu + 1,5 s de carte = délai de réapparition", () => {
+  it("3 s de rejeu (dont 0,5 s après la mort) + 1 s de carte = délai de réapparition", () => {
     expect(KILLCAM.rejeuMs + KILLCAM.carteMs).toBe(JEU.delaiReapparitionMs);
     expect(KILLCAM.tamponMs).toBeGreaterThan(KILLCAM.rejeuMs);
+    expect(KILLCAM.apresMortMs).toBeGreaterThan(0);
+    expect(KILLCAM.apresMortMs).toBeLessThan(KILLCAM.rejeuMs);
+    // le tampon gèle après avoir reçu la fin du rejeu (snap de `apresMortMs` après la mort, plus son trajet)
+    expect(KILLCAM.gelApresMortMs).toBeGreaterThan(KILLCAM.apresMortMs + 300);
   });
 });
 
@@ -32,14 +36,14 @@ describe("machine de la killcam", () => {
     expect(k).toMatchObject({ tueurId: "j2", tueur: TUEUR, tMortServeur: T_MORT, avecRejeu: true, ecouleMs: 0, phase: "rejeu" });
   });
 
-  it("rejeu 2,5 s → carte 1,5 s → terminé", () => {
+  it("rejeu 3 s → carte 1 s → terminé", () => {
     let k = avecRejeu();
-    k = avancerKillcam(k, 2.4);
+    k = avancerKillcam(k, 2.9);
     expect(k.phase).toBe("rejeu");
     k = avancerKillcam(k, 0.1);
-    expect(k.ecouleMs).toBeCloseTo(2500, 6);
+    expect(k.ecouleMs).toBeCloseTo(3000, 6);
     expect(k.phase).toBe("carte");
-    k = avancerKillcam(k, 1.4);
+    k = avancerKillcam(k, 0.9);
     expect(k.phase).toBe("carte");
     k = avancerKillcam(k, 0.1);
     expect(k.phase).toBe("termine");
@@ -70,9 +74,9 @@ describe("machine de la killcam", () => {
     const k = passerKillcam(avancerKillcam(avecRejeu(), 0.5));
     expect(k.phase).toBe("carte");
     expect(k.ecouleMs).toBe(KILLCAM.rejeuMs);
-    // la carte garde ses 1,5 s
-    expect(avancerKillcam(k, 1.4).phase).toBe("carte");
-    expect(avancerKillcam(k, 1.5).phase).toBe("termine");
+    // la carte garde sa seconde
+    expect(avancerKillcam(k, 0.9).phase).toBe("carte");
+    expect(avancerKillcam(k, 1).phase).toBe("termine");
     // sans effet en carte et une fois terminé
     expect(passerKillcam(k)).toEqual(k);
     const fin = avancerKillcam(avecRejeu(), 10);
@@ -97,22 +101,23 @@ describe("machine de la killcam", () => {
     expect(k.tueur).toBe(TUEUR);
   });
 
-  it("tempsRejeuServeur : monotone de tMort − 2500 à tMort, figé en carte", () => {
+  it("tempsRejeuServeur : monotone de tMort − 2500 à tMort + 500 (on voit la victime tomber), figé en carte", () => {
     let k: Killcam = avecRejeu();
-    expect(tempsRejeuServeur(k)).toBe(T_MORT - KILLCAM.rejeuMs);
+    expect(tempsRejeuServeur(k)).toBe(T_MORT - 2500);
+    expect(debutRejeu(T_MORT)).toBe(T_MORT - 2500);
     let prec = tempsRejeuServeur(k);
-    for (let i = 0; i < 300; i++) {
+    for (let i = 0; i < 360; i++) {
       k = avancerKillcam(k, 1 / 60);
       const t = tempsRejeuServeur(k);
       expect(t).toBeGreaterThanOrEqual(prec);
-      expect(t).toBeLessThanOrEqual(T_MORT);
+      expect(t).toBeLessThanOrEqual(T_MORT + KILLCAM.apresMortMs);
       prec = t;
     }
-    expect(tempsRejeuServeur(k)).toBe(T_MORT);
+    expect(tempsRejeuServeur(k)).toBe(T_MORT + KILLCAM.apresMortMs);
     // 1× : 1 s écoulée = 1000 ms de temps serveur
     expect(tempsRejeuServeur(avancerKillcam(avecRejeu(), 1))).toBeCloseTo(T_MORT - 1500, 6);
     // passer : on est à la fin du rejeu
-    expect(tempsRejeuServeur(passerKillcam(avecRejeu()))).toBe(T_MORT);
+    expect(tempsRejeuServeur(passerKillcam(avecRejeu()))).toBe(T_MORT + KILLCAM.apresMortMs);
   });
 
   it("progression 0..1 sur rejeu + carte", () => {

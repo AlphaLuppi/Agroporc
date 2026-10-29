@@ -316,6 +316,29 @@ export class Interpolateur {
     this.snaps = [];
   }
 
+  /**
+   * États de `id` dans les snaps qui encadrent `tsServeur` : jusqu'à deux avant (`ts ≤ tsServeur`) et deux après, du plus ancien au plus
+   * récent, sans copie (ne pas modifier). Vide si `tsServeur` n'est pas encadré (avant le premier snap, à ou après le dernier : c'est alors
+   * l'extrapolation d'`echantillon`) ou si le joueur a quitté (absent du dernier snap). Sert à l'interpolation cubique de la vue empruntée.
+   */
+  voisins(tsServeur: number, id: string): { ts: number; e: EtatJoueurSnap }[] {
+    const n = this.snaps.length;
+    if (n < 2 || !(tsServeur < this.snaps[n - 1].ts) || tsServeur < this.snaps[0].ts) return [];
+    if (!this.snaps[n - 1].j.some((x) => x.id === id)) return [];
+    // premier snap strictement après tsServeur (recherche dichotomique)
+    let lo = 0, hi = n - 1;
+    while (lo < hi) {
+      const mi = (lo + hi) >> 1;
+      if (this.snaps[mi].ts <= tsServeur) lo = mi + 1; else hi = mi;
+    }
+    const r: { ts: number; e: EtatJoueurSnap }[] = [];
+    for (let i = Math.max(0, lo - 2); i <= Math.min(n - 1, lo + 1); i++) {
+      const e = this.snaps[i].j.find((x) => x.id === id);
+      if (e) r.push({ ts: this.snaps[i].ts, e });
+    }
+    return r;
+  }
+
   echantillon(tsServeur: number): Map<string, EtatJoueurSnap> {
     const res = new Map<string, EtatJoueurSnap>();
     const n = this.snaps.length;

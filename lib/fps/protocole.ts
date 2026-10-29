@@ -476,6 +476,10 @@ export interface EtatJoueurSnap {
   titan?: boolean;
   /** (v8, Battle Royale) en chute libre ou sous parachute ; absent = au sol */
   chute?: "libre" | "voile";
+  /** vise (clic droit : visée, lunette) ; absent = non. Additif : sert à la killcam et au spectateur (voir ce que le joueur voit). */
+  vise?: boolean;
+  /** recharge en cours ; absent = non. Additif, même usage que `vise`. */
+  recharge?: boolean;
   vivant: boolean;
   /** invulnérable (protection d'apparition) */
   protege: boolean;
@@ -648,6 +652,10 @@ export type MessageClient =
       accroupi?: boolean;
       /** glissade en cours (n'a de sens qu'avec `accroupi`) ; absent = non */
       glisse?: boolean;
+      /** vise (clic droit tenu, lunette comprise) ; absent = non. Recopié dans le snap pour la killcam et le spectateur. */
+      vise?: boolean;
+      /** recharge en cours ; absent = non. Recopié dans le snap. */
+      recharge?: boolean;
     }
   /**
    * Un tir (une pression de détente ; plusieurs plombs pour le fusil à pompe). Le couteau n'utilise PAS `tir`.
@@ -759,14 +767,18 @@ export type MessageServeur =
    * Tir d'un autre joueur, pour les traçantes et le son (pas renvoyé au tireur). `ameliore` (v8, zombies) : arme passée au Micro-ondes, dont le
    * profil (projectile, souffle) peut différer de l'arme de base.
    */
-  | { t: "tir"; id: string; arme: ArmeFeuId; o: Vec3; d: Vec3[]; main?: "g"; ameliore?: true }
-  /** Coup d'arme blanche d'un autre joueur (animation et son). */
-  | { t: "coup"; id: string; o: Vec3; d: Vec3; arme: ArmeMeleeId }
+  | {
+      t: "tir"; id: string; arme: ArmeFeuId; o: Vec3; d: Vec3[]; main?: "g"; ameliore?: true;
+      /** horodatage serveur (ms) de la réception du tir : il le place sur la ligne de temps des snaps (killcam, spectateur) ; absent = estimé */
+      ts?: number;
+    }
+  /** Coup d'arme blanche d'un autre joueur (animation et son). `ts` : comme pour `tir`. */
+  | { t: "coup"; id: string; o: Vec3; d: Vec3; arme: ArmeMeleeId; ts?: number }
   /**
    * `bouclier` = bouclier restant de la cible ; `src` = position de la source (angle du marqueur de dégât) ;
    * `absorbe` = part des `degats` prise par le bouclier (HUD §3.4, absent = 0 : un client plus ancien l'ignore).
    */
-  | { t: "degats"; cible: string; par: string; degats: number; pv: number; bouclier: number; zone: Zone; src?: Vec3; absorbe?: number }
+  | { t: "degats"; cible: string; par: string; degats: number; pv: number; bouclier: number; zone: Zone; src?: Vec3; absorbe?: number; ts?: number }
   /**
    * `par` = "" si aucun joueur (écrasé par une voiture PNJ). `arme` n'a de sens que pour cause "arme"
    * (mettre "couteau" sinon). `tueur` absent si `par` est "". `ts` = horodatage serveur (ms) de la mort : il ancre le rejeu de la killcam.
