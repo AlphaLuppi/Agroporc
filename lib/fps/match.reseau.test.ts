@@ -228,6 +228,35 @@ describe("budget de distance des états (arène)", () => {
     expect(parcouru).toBeLessThanOrEqual(19 * 4 + 19 * 0.5 + 1 + 1e-6);
   });
 
+  it("coupure de 1 s à 16 m/s livrée d'un coup puis course : la position serveur rattrape le client (jamais figée derrière)", () => {
+    const { s, t } = duel();
+    // 1 s de course normale à 30 Hz, tout est accepté
+    const avant = courir(s, "b", 16, 30, 30, 1, t);
+    expect(avant.acceptes).toBe(30);
+    // coupure de 1 s : les 30 états suivants arrivent ensemble à la fin, puis la course continue 3 s à 30 Hz
+    const depart = j(s, "b").p[0];
+    let x = depart, seq = 30;
+    const tCoupure = avant.t + 1000;
+    for (let q = 1; q <= 30; q++) {
+      x = depart + (16 * q) / 30;
+      s.recevoir("b", etat(++seq, [x, 0, 20], [16, 0, 0]), tCoupure);
+    }
+    expect(x - j(s, "b").p[0]).toBeGreaterThan(5); // la rafale dépasse le budget plafonné
+    for (let q = 1; q <= 90; q++) {
+      x += 16 / 30;
+      s.recevoir("b", etat(++seq, [x, 0, 20], [16, 0, 0]), tCoupure + Math.round((q * 1000) / 30));
+    }
+    expect(x - j(s, "b").p[0]).toBeLessThan(0.01);
+  });
+
+  it("une téléportation après un état accepté n'avance que du budget (19 m/s × 0,5 s + 1 m), quelle que soit l'attente", () => {
+    const { s, t } = duel();
+    s.recevoir("b", etat(1, [11, 0, 20]), t);
+    expect(j(s, "b").p[0]).toBe(11);
+    s.recevoir("b", etat(2, [60, 0, 20]), t + 60_000);
+    expect(j(s, "b").p[0]).toBeCloseTo(11 + 19 * 0.5 + 1, 6);
+  });
+
   it("une téléportation reste refusée quelle que soit l'attente (le budget est plafonné)", () => {
     const { s, t } = duel();
     s.recevoir("b", etat(1, [40, 0, 20]), t + 60_000);

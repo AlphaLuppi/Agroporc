@@ -72,7 +72,8 @@ export const DT_MAX_S = 5;
  * à `vitesse max × BUDGET_*_S` ; un état est accepté si son déplacement tient dans le budget + la marge, qu'il consomme. Les paquets regroupés
  * (perte TCP, client à 10 images/s) passent donc tous, et la vitesse MOYENNE reste bornée (l'ancienne vérification instantanée tolérait
  * +1 m par état : 30 m/s de plus à 30 Hz, mais refusait toute rafale). Arène : le plafond court garde l'anti-triche de vitesse strict (un
- * tricheur ne gagne au plus que 0,5 s d'avance) ; zombies (coopératif) : une seconde de rafale, et un dépassement est accepté en partie.
+ * tricheur ne gagne au plus que 0,5 s d'avance) ; zombies (coopératif) : une seconde de rafale. Dans les deux, un dépassement est accepté
+ * en partie (sinon une rafale plus longue que le plafond figerait la position serveur pour toujours).
  */
 export const BUDGET_ARENE_S = 0.5;
 export const BUDGET_ZOMBIES_S = 1;
@@ -208,7 +209,7 @@ interface SuiviJoueur {
   budgetV: number;
   budgetT: number;
   /**
-   * (zombies) un dépassement du budget peut être accepté en partie : faux après une téléportation (apparition) jusqu'au premier état accepté en
+   * un dépassement du budget peut être accepté en partie : faux après une téléportation (apparition) jusqu'au premier état accepté en
    * entier, pour qu'un état encore en vol depuis l'ancienne position ne tire pas le joueur en arrière
    */
   partiel: boolean;
@@ -835,9 +836,9 @@ export class Salle implements ContexteSalle {
 
   /**
    * État prédit par le client : accepté s'il reste dans les bornes et dans le budget de distance (`BUDGET_ARENE_S`). Le mouvement est
-   * autoritaire côté client : le serveur ne corrige jamais le joueur, il ne fait que borner ce qu'il accepte. En zombies, un dépassement du
-   * budget est accepté en partie (la position serveur avance de ce que le budget permet, sans jamais rester figée loin derrière le client),
-   * et le corps d'un joueur à terre est suivi (posture « mort », sans historique).
+   * autoritaire côté client : le serveur ne corrige jamais le joueur, il ne fait que borner ce qu'il accepte. Un dépassement du budget est
+   * accepté en partie (la position serveur avance de ce que le budget permet, sans jamais rester figée loin derrière le client), sauf
+   * juste après une téléportation ; en zombies, le corps d'un joueur à terre est suivi (posture « mort », sans historique).
    */
   private recevoirEtat(j: JoueurSalle, e: Extract<MessageClient, { t: "etat" }>, maintenant: number): void {
     const aTerre = !j.vivant && j.enJeu && !!this.zombies?.aTerre(j.id);
@@ -872,8 +873,10 @@ export class Salle implements ContexteSalle {
     let p: Vec3 = [e.p[0], e.p[1], e.p[2]];
     const entier = dh <= permisH && dy <= permisV;
     if (!entier) {
-      // arène : refusé (anti-triche de vitesse) ; zombies : la position avance de ce que le budget permet, vers celle du client
-      if (!this.zombies || !suivi.partiel) return;
+      // la position avance de ce que le budget permet, vers celle du client (arène comme zombies) : un refus sec laisserait la position
+      // serveur figée pour toujours dès qu'une rafale la met plus loin que le plafond du budget (+ marge) derrière le client, le budget
+      // ne pouvant jamais couvrir l'écart ; la vitesse moyenne acceptée reste bornée par le budget consommé (anti-triche de vitesse)
+      if (!suivi.partiel) return;
       const kh = dh > permisH ? permisH / dh : 1, kv = dy > permisV ? permisV / dy : 1;
       p = [j.p[0] + (e.p[0] - j.p[0]) * kh, j.p[1] + (e.p[1] - j.p[1]) * kv, j.p[2] + (e.p[2] - j.p[2]) * kh];
     }
