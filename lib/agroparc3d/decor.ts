@@ -7,6 +7,7 @@ import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { SEUIL_ALLUMEES, FENETRE_H_M, FENETRE_L_M, PAS_COLONNE_M, MARGE_COLONNE_M, PORTE_H_M, PORTE_L_M, murDePorte, mursDe, nbEtages, placementsToit } from "./facade";
 import { deriverDecor, type DecorDerive, type OptionsDerivation } from "./decor-donnees";
+import { ajouterMobilier } from "./decor-mobilier";
 import { ajouterHaies, ajouterPelouses, ajouterVegetation } from "./decor-vegetation";
 import { ajouterChaussees, ajouterMarquages, ajouterPlacesParking, segmentsVoirie } from "./decor-sol";
 import type { Building, Poi, SceneData, Vec2 } from "./types";
@@ -577,4 +578,5 @@ export function construireDecor(scene: THREE.Object3D, data: SceneData, opts: Op
   ajouterPelouses(scene, derive.pelouses, C.pelouse);
   ajouterHaies(scene, derive.haies, C.haie);
   ajouterVegetation(scene, derive.arbres, derive.arbustes, C);
+  ajouterMobilier(scene, derive.mobilier, C, opts.qualite !== "basse" && opts.ambiance !== "zombies");
 }

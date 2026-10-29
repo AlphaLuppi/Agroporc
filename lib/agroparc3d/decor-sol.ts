@@ -43,11 +43,11 @@ export function ajouterChaussees(scene: THREE.Object3D, v: Voirie, couleur: numb
 }
 
 /**
- * Marquages : passages piétons (55 %), lignes d'arrêt, dents de requin et flèches d'entrée du rond-point, UN seul Mesh à couleurs par sommet.
+ * Marquages : passages piétons (42 %), lignes d'arrêt, dents de requin et flèches d'entrée du rond-point, UN seul Mesh à couleurs par sommet.
  * La brillance reste juste sous le seuil du bloom : pas de halo envahissant.
  */
 export function ajouterMarquages(scene: THREE.Object3D, v: Voirie, couleur: number): THREE.Mesh | null {
-  const parts: [readonly number[], number][] = [[v.zebras, 0.55], [v.lignesArret, 0.6], [v.dents, 0.55], [v.fleches, 0.5]];
+  const parts: [readonly number[], number][] = [[v.zebras, 0.42], [v.lignesArret, 0.5], [v.dents, 0.45], [v.fleches, 0.4]];
   const tri: number[] = [], col: number[] = [];
   const c = new THREE.Color();
   for (const [t, k] of parts) {

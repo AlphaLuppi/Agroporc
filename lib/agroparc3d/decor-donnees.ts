@@ -5,6 +5,7 @@
  * Spec : docs/superpowers/specs/2026-10-29-da-palantir-design.md (D2).
  */
 import type { Boite } from "./geo";
+import { mobilier, type Mobilier } from "./mobilier";
 import { placesParking } from "./parkings";
 import { arbustes, classerArbres, haies, pelouses, type ArbreClasse } from "./vegetation";
 import { deriverVoirie, type Voirie } from "./voirie";
@@ -33,6 +34,7 @@ export interface DecorDerive {
   pelouses: number[];
   /** arbustes [x, z, …] */
   arbustes: number[];
+  mobilier: Mobilier;
 }
 
 export function deriverDecor(data: SceneData, opts: OptionsDerivation = {}): DecorDerive {
@@ -40,5 +42,6 @@ export function deriverDecor(data: SceneData, opts: OptionsDerivation = {}): Dec
   return {
     voirie: deriverVoirie(data), places: placesParking(data, opts.exclure),
     arbres: classerArbres(data), haies: haies(data, veg), pelouses: pelouses(data, veg), arbustes: arbustes(data, veg),
+    mobilier: mobilier(data, { ambiance: opts.ambiance, exclure: opts.exclure, eviter: opts.eviter }),
   };
 }
