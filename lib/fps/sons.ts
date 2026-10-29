@@ -95,6 +95,11 @@ export interface Sons {
   canon(position?: PositionSon): void;
   /** (v4) Klaxon de camion (trompe à air, accord de trois notes) du Truck Muche fou, entendu de loin dans toute l'arène. */
   klaxonCamion(position?: PositionSon): void;
+  /**
+   * (v8, zombies) Klaxon aigu et nasillard d'un mini Truck Muche : deux « pouet » qui montent ; `meche` : mèche allumée, quatre coups
+   * pressés et plus aigus (il va sauter).
+   */
+  klaxonMiniTruck(position?: PositionSon, meche?: boolean): void;
   /** (v4) Bâtiment qui s'effondre (grondement long et fracas). */
   effondrement(position?: PositionSon): void;
   /** (v4) Pas lourd du tigre ou du titan. */
@@ -1093,6 +1098,21 @@ export function creerSons(): Sons {
       for (const [f, gain] of [[185, 0.16], [233, 0.14], [277, 0.11]] as const) {
         ton(lp, t, { dur: 0.95, type: "sawtooth", f0: f, f1: f * 0.97, gain, att: 0.03 });
         ton(lp, t, { dur: 0.95, type: "square", f0: f * 1.004, f1: f * 0.975, gain: gain * 0.35, att: 0.03 });
+      }
+    },
+    klaxonMiniTruck(position, meche = false) {
+      if (!prete()) return;
+      const out = sortie(position);
+      const t = ctx!.currentTime + 0.001;
+      // petite trompe électrique : carré + dent de scie désaccordés, nasillard (passe-bande), coups courts qui montent
+      const coups = meche ? 4 : 2;
+      const pas = meche ? 0.075 : 0.16;
+      for (let i = 0; i < coups; i++) {
+        const f = (meche ? 1180 : 880) * (1 + 0.12 * i);
+        const ti = t + i * pas;
+        ton(out, ti, { dur: pas * 0.8, type: "square", f0: f, f1: f * 1.02, gain: 0.12, att: 0.005 });
+        ton(out, ti, { dur: pas * 0.8, type: "sawtooth", f0: f * 1.5 * 1.006, f1: f * 1.5, gain: 0.07, att: 0.005 });
+        bruit(out, ti, { dur: pas * 0.5, type: "bandpass", f0: f * 2, q: 6, gain: 0.05 });
       }
     },
     effondrement(position) {

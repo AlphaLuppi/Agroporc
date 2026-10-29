@@ -255,6 +255,19 @@ export function creerRenduZombies(scene: THREE.Scene, collisions: CollisionsRagd
   const matToque = new THREE.MeshBasicMaterial({ color: 0xf2f2ec });
   aDisposer.push(geoToque, geoBouffant, matToque);
   const toques: THREE.Group[] = [];
+  // (v8) yeux rouges des petits du Truck : deux lueurs additives hors brouillard (on les voit venir dans la purée de pois)
+  // (rouge sombre : le bloom en ferait des boules de feu)
+  const matYeux = new THREE.SpriteMaterial({ map: texLueur, color: 0x9a0c06, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, fog: false });
+  aDisposer.push(matYeux);
+  const yeux: THREE.Sprite[] = [];
+  let nYeux = 0;
+  function oeilSuivant(): THREE.Sprite {
+    let o = yeux[nYeux];
+    if (!o) { o = new THREE.Sprite(matYeux); o.renderOrder = 16; racine.add(o); yeux.push(o); }
+    nYeux++;
+    o.visible = true;
+    return o;
+  }
   let nLueurs = 0, nToques = 0;
   const _tete = new THREE.Vector3();
   function lueurSuivante(): THREE.Sprite {
@@ -378,7 +391,8 @@ export function creerRenduZombies(scene: THREE.Scene, collisions: CollisionsRagd
       for (const e of emplacements) if (e.mortCause !== null && !parId.has(e.id)) poserCadavre(e, tempsLocal, dt);
       for (let k = 0; k < nLueurs; k++) lueurs[k].visible = false;
       for (let k = 0; k < nToques; k++) toques[k].visible = false;
-      nLueurs = 0; nToques = 0;
+      for (let k = 0; k < nYeux; k++) yeux[k].visible = false;
+      nLueurs = 0; nToques = 0; nYeux = 0;
       for (let i = 0; i < TAILLE_POOL; i++) boites[i].visible = false;
 
       for (let i = 0; i < n; i++) {
@@ -449,6 +463,19 @@ export function creerRenduZombies(scene: THREE.Scene, collisions: CollisionsRagd
           const l = lueurSuivante();
           l.position.set(v.x, 1.0 * v.echelle / 2.7 + e.groupe.position.y, v.z);
           l.scale.setScalar(3.2 + 0.4 * Math.sin(tempsLocal * 6 + v.id));
+        } else if (v.type === 3) {
+          const os = tete(e);
+          if (os) {
+            os.getWorldPosition(_tete);
+            // les yeux : un peu devant et au-dessus de l'os de la tête, de part et d'autre du museau
+            const fx = -Math.sin(v.cap), fz = -Math.cos(v.cap), rx = Math.cos(v.cap), rz = -Math.sin(v.cap);
+            const av = 0.11 * v.echelle, ec = 0.035 * v.echelle;
+            for (const sx of [-1, 1]) {
+              const o = oeilSuivant();
+              o.position.set(_tete.x + fx * av + rx * ec * sx, _tete.y + 0.02 * v.echelle, _tete.z + fz * av + rz * ec * sx);
+              o.scale.setScalar(0.06 + (v.griffe ? 0.03 : 0));
+            }
+          }
         } else if (v.type === 2) {
           const os = tete(e);
           if (os) {

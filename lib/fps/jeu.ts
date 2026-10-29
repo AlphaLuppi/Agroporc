@@ -49,6 +49,9 @@ import { collisionsDuMonde, impulsionMort } from "./ragdoll-tigre";
 import { creerRenduInterieurs } from "./rendu-interieurs";
 import { creerRenduObjetsZombies } from "./rendu-objets-zombies";
 import { creerModeleTruckMuche } from "./rendu-monde";
+import { creerRenduEclairs } from "./rendu-eclairs";
+import { creerRenduMiniTrucks } from "./rendu-mini-trucks";
+import { AMBIANCE, couleurBrouillard, densiteBrouillard, partBrouillard, pointEclairAmbiance, prochainEclairAmbiance, type EtatAmbiance } from "./ambiance-zombies";
 import { objectifZombies } from "./zombies-lore";
 import { ACHATS, NOTES, achatDeId, fenetreDeId } from "./zombies-carte";
 import { NOMS_BONUS } from "./zombies-vagues";
@@ -243,6 +246,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   }
   const effets = creerEffets(scene);
   const post = creerPostTraitement(renderer, scene, camera);
+  /** éclat du bloom de l'arène, que la foudre des manches du Truck pousse (v8) */
+  const bloomBase = post.bloom.strength;
   const sons = creerSons();
   // (zombies) effets échantillonnés et annonces : téléchargés dès l'entrée, décodés au premier geste (pas d'attente au premier chef)
   if (modeZ) sons.prechargerZombies();
@@ -273,8 +278,20 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   // (v7) intérieurs des bâtiments creusés, objets de la carte (craie, distributeurs, boîte, planches, bonus…), Truck Muche des livraisons
   const rInterieurs = donneesZ ? creerRenduInterieurs(scene, data, donneesZ.pieces) : null;
   const rObjets = modeZ ? creerRenduObjetsZombies(scene) : null;
-  const truckZ = modeZ ? creerModeleTruckMuche() : null;
+  // (v8) le Truck des livraisons a des phares rouges qui percent le brouillard ; ses mini Trucks foncent sur les joueurs ; la foudre
+  const truckZ = modeZ ? creerModeleTruckMuche({ phares: true, longueurFaisceau: 22 }) : null;
   if (truckZ) { truckZ.group.visible = false; scene.add(truckZ.group); }
+  const rMini = modeZ ? creerRenduMiniTrucks(scene) : null;
+  const rEclairs = modeZ ? creerRenduEclairs(scene) : null;
+  const plafondZ = modeZ ? plafondBatimentsCreux(monde, PLAFOND_INTERIEUR_M) : null;
+  /** (v8) ambiance des manches du Truck : brouillard, ciel, éclairs d'ambiance, klaxon du Truck (s) */
+  let ambianceZ: EtatAmbiance = { truck: false, debutS: null, finS: null };
+  let eclairAmbianceDans = 0;
+  /** (crochet de dev) ambiance imposée : les messages de la partie ne la lèvent pas */
+  let ambianceForcee = false;
+  let klaxonTruckZDans = 1.5;
+  const brouillard = scene.fog as THREE.FogExp2;
+  const couleurFond = new THREE.Color();
   // (v8) grenades : la main du joueur (cuisson), les grenades prédites et diffusées (trajectoires du serveur), leur rendu
   const grenades = modeZ ? creerControleurGrenades(monde, plafondBatimentsCreux(monde, PLAFOND_INTERIEUR_M)) : null;
   const rGrenades = modeZ ? creerRenduGrenades(scene) : null;
@@ -1185,7 +1202,10 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     const repli: Vec3 = tueur ? [tueur.p[0], tueur.p[1] + SILHOUETTE.oeil, tueur.p[2]] : [camPos[0], camPos[1], camPos[2]];
     const impulsion = impulsionMort({ cause, arme: m.arme, ameliore: m.ameliore, src: m.src, p: m.p, graine: id }, repli);
     if (essai) rz?.cadavreEssai({ x: m.p[0], z: m.p[2], cap: essai.cap, type: essai.type, echelle: echelleZombie(essai.type) }, cause, impulsion);
-    else rz?.mort(id, cause, impulsion);
+    else {
+      rz?.mort(id, cause, impulsion);
+      rMini?.mort(id);
+    }
   }
 
   function recevoir(m: MessageServeur) {
@@ -1466,6 +1486,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
         partieZ = m.etat;
         rInterieurs?.majCourant(m.etat.courant);
         if (avant && avant.phase === "manche" && m.etat.phase === "pause") { sons.finManche(); }
+        // (v8) la livraison finie (dernier ennemi, défaite, retour au lobby) : le brouillard se lève
+        if (ambianceZ.truck && !ambianceForcee && (m.etat.phase !== "manche" || !m.etat.mancheTruck)) ambianceZ = { truck: false, debutS: ambianceZ.debutS, finS: t };
         if (avant && avant.phase !== "fin" && m.etat.phase === "fin") sons.voix("partie_perdue", 1.2);
         if (m.etat.pap.etat === "cuisson" && m.etat.pap.joueur === client.id) papUtilise = true;
         portesFermees = segmentsPortesFermees(m.etat.portes.filter((x) => x.ouverte).map((x) => x.id));
@@ -1481,13 +1503,16 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
           mancheVue = m.etat.manche;
           // livraison (les manches des chiens de BO1) : coup de tonnerre, sirène, annonce, puis le Truck Muche rit
           if (m.etat.mancheTruck) {
+            // le ciel s'assombrit, le brouillard tombe sur toute la carte
+            ambianceZ = { truck: true, debutS: t, finS: null };
+            eclairAmbianceDans = 0.4;
             sons.tonnerre();
             sons.mancheTruck();
             annoncer("Livraison du Truck Muche !", "truck", "truck", 0.7);
             sons.rireTruck(undefined, 3.2);
           } else sons.manche();
         }
-        if (m.etat.phase === "lobby") { mancheVue = 0; papUtilise = false; noteZ = null; grenades?.vider(); }
+        if (m.etat.phase === "lobby") { mancheVue = 0; papUtilise = false; noteZ = null; grenades?.vider(); rEclairs?.vider(); }
         break;
       }
       case "zevt": {
@@ -1524,8 +1549,18 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
           }
           case "truck":
             if (e.quoi === "explosion") { feux.explosion(e.p); sons.explosion(positionSon(e.p)); annoncer("Truck Muche explosé : +500 $", "truck"); }
+            else if (e.quoi === "rire") sons.rireTruck(positionSon(e.p));
             else sons.klaxonCamion(positionSon(e.p));
             break;
+          // (v8) la foudre annonce un petit ou un mini Truck (il naît quand elle frappe) ; le tonnerre part à la frappe
+          case "eclair": eclairZ(e.p, (e.dans ?? 0) / 1000); break;
+          case "miniTruck": {
+            feux.explosion(e.p);
+            sons.grenadeExplosion(positionSon(e.p));
+            const d = Math.hypot(e.p[0] - moi.p[0], e.p[1] - moi.p[1] - 1, e.p[2] - moi.p[2]);
+            if (d < e.rayon * 2.5 && !reduit) secousse = Math.max(secousse, 0.08 * (1 - d / (e.rayon * 2.5)));
+            break;
+          }
           case "explosion": feux.explosion(e.p); sonSouffle(e.rayon, e.p); break;
           case "grenade": {
             grenades?.exploser(e.id);
@@ -2102,7 +2137,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     if (id !== null) {
       const v = mz.parId(id);
       if (v && sonGriffe(v.type) === "chef") sons.grognementChef(positionSon([v.x, 1, v.z]));
-      else if (v) sons.rugissementTigre(positionSon([v.x, 1, v.z]));
+      else if (v && v.type !== 4) sons.rugissementTigre(positionSon([v.x, 1, v.z])); // un mini Truck ne rugit pas, il klaxonne
     }
     // la relève que je maintiens s'arrête si le coéquipier est relevé, trop loin ou si j'ai lâché E
     if (reanimCible !== null) {
@@ -2123,15 +2158,60 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       if (tr) {
         truckZ.group.position.set(tr.x, 0, tr.z);
         truckZ.group.rotation.y = tr.cap;
-        // l'épave fume et s'assombrit
+        // l'épave fume et s'assombrit, ses phares s'éteignent ; vivant, il klaxonne de rage toutes les 2,5 à 5 s
         truckZ.materiaux.ligne.color.set(tr.phase === 3 ? 0x5a3a20 : 0xffb35c);
+        truckZ.phares?.intensite(tr.phase === 3 ? 0 : 1 + 0.25 * Math.sin(t * 9));
+        klaxonTruckZDans -= dt;
+        if (tr.phase !== 3 && klaxonTruckZDans <= 0) {
+          klaxonTruckZDans = 2.5 + Math.random() * 2.5;
+          sons.klaxonCamion(positionSon([tr.x, 1.5, tr.z]));
+        }
       }
     }
+    // (v8) mini Trucks : klaxon aigu en fonçant, coups pressés quand la mèche s'allume
+    rMini?.maj(zs, n, camPos, regardX, regardZ, dt, { klaxon: (v, meche) => sons.klaxonMiniTruck(positionSon([v.x, 0.8, v.z]), meche) });
+    majAmbianceZ(dt);
     // une note ouverte se referme si l'on s'en éloigne
     if (noteZ !== null) {
       const n = NOTES.find((x) => x.id === noteZ);
       if (!n || Math.hypot(n.position[0] - moi.p[0], n.position[1] - moi.p[2]) > 3) noteZ = null;
     }
+  }
+
+  /** (v8) Un éclair qui frappe `p` dans `dansS` s : sous un toit (bâtiment creusé), il jaillit du plafond, pas du ciel (caché par le toit). */
+  function eclairZ(p: Vec3, dansS: number) {
+    if (!rEclairs || !plafondZ) return;
+    const plafond = plafondZ(p[0], p[2]);
+    rEclairs.eclair(p, dansS, Number.isFinite(plafond) ? Math.max(1.5, plafond - 0.05) : AMBIANCE.hauteurM);
+  }
+
+  /**
+   * (v8) Ambiance des manches du Truck Muche : éclairs (tonnerre à la frappe, éclat global), éclairs d'ambiance au loin, brouillard (le MÊME
+   * `FogExp2` : densité et couleur sont des uniformes, aucune recompilation), fond, bloom et intérieurs illuminés par la foudre.
+   */
+  function majAmbianceZ(dt: number) {
+    if (!rEclairs) return;
+    const part = partBrouillard(ambianceZ, t);
+    if (ambianceZ.truck && part > 0.5) {
+      eclairAmbianceDans -= dt;
+      if (eclairAmbianceDans <= 0) {
+        eclairAmbianceDans = prochainEclairAmbiance(Math.random());
+        rEclairs.eclair(pointEclairAmbiance(camPos, Math.random), 0, 70, true);
+      }
+    }
+    const flash = rEclairs.maj(dt, camPos, (p, ambiance) => {
+      sons.tonnerre(positionSon([p[0], 3, p[2]]));
+      const d = Math.hypot(p[0] - moi.p[0], p[2] - moi.p[2]);
+      if (!ambiance && !reduit && d < 14) secousse = Math.max(secousse, 0.05 * (1 - d / 14));
+    });
+    // un éclair par apparition, soit jusqu'à un par seconde : un éclat franc mais jamais blanc (le bloom saturerait tout l'écran)
+    const k = reduit ? flash * 0.25 : flash;
+    brouillard.density = densiteBrouillard(ambianceZ, t);
+    brouillard.color.setHex(couleurBrouillard(C.ground, part, k * 0.35));
+    couleurFond.copy(brouillard.color);
+    renderer.setClearColor(couleurFond, 1);
+    post.bloom.strength = bloomBase + 0.25 * k;
+    rInterieurs?.flash(k * 0.6);
   }
 
   /**
@@ -2556,6 +2636,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       rGrenades?.dispose();
       grenades?.vider();
       truckZ?.dispose();
+      rMini?.dispose();
+      rEclairs?.dispose();
       impactsBalles.dispose();
       tracesPneus.dispose();
       debris.dispose();
@@ -2689,6 +2771,17 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
         };
       },
       invoquer() { forceActif = true; return invoquer(); },
+      eclair(p, dansS = 0) {
+        if (!rEclairs) return false;
+        eclairZ(p, dansS);
+        return true;
+      },
+      ambianceTruck(on) {
+        if (!rEclairs) return false;
+        ambianceForcee = on;
+        ambianceZ = on ? { truck: true, debutS: t, finS: null } : { truck: false, debutS: ambianceZ.debutS, finS: t };
+        return true;
+      },
       tuerZombie(id, o = {}) {
         // (zombies) mort jouée côté client seulement, comme à la réception de `zombieMort` : le serveur garde le tigre (captures du ragdoll)
         // `o.p` : un tigre d'essai qui court là (cap `o.cap`, type `o.type`), sans tigre du serveur
