@@ -8,7 +8,7 @@ import type { Poi, SceneData } from "@/lib/agroparc3d/types";
 import type { JoueurAerien, SceneHandle } from "@/lib/agroparc3d/scene";
 import type { JeuHandle, HudEtat } from "@/lib/fps/jeu";
 import type { HudLive } from "@/lib/fps/jeu-types";
-import { MODES_SALLE, type ArmeFeuId, type ArmeMeleeId, type ArmePrincipaleId, type ArmeSecondaireId, type ModeSalle, type Slot, type Vec3 } from "@/lib/fps/protocole";
+import { MODES_SALLE, PARTIE_NOUVELLE, type ArmeFeuId, type ArmeMeleeId, type ArmePrincipaleId, type ArmeSecondaireId, type ModeSalle, type Slot, type Vec3 } from "@/lib/fps/protocole";
 import { donneesZombies } from "@/lib/fps/zombies-carte";
 import { donneesBr } from "@/lib/fps/br-carte";
 import { ecrireEquipement, estPrincipale, estSecondaire, lireEquipement } from "@/lib/fps/equipement";
@@ -221,6 +221,10 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
   const sortieZombies = useRef(false);
   /** Battle Royale : même garde (le décompte peut durer encore 30 s après une sortie) */
   const sortieBr = useRef(false);
+  /** Battle Royale : le jeu monté regarde la partie en cours sans y jouer (`regarder` au lieu de `rejoindre`), lu au lancement de `lancerJeu` */
+  const spectateurJeuRef = useRef(false);
+  /** Battle Royale : partie à regarder dès que le serveur nous y aura placés (« Regarder » sur une autre partie que la mienne) */
+  const regarderApres = useRef<string | null>(null);
   const enAreneRef = useRef(enArene);
   enAreneRef.current = enArene;
   const equipementRef = useRef(equipement);
@@ -294,8 +298,12 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
     jeuRef.current?.touches(cfg);
     ecrireTouches(cfg, stockageNavigateur());
   };
-  /** Monte le jeu sur un canvas neuf pour le mode `m` (le monde, le décor et les règles en dépendent : lu au lancement par `lancerJeu`). */
-  const monterJeu = (m: ModeSalle) => {
+  /**
+   * Monte le jeu sur un canvas neuf pour le mode `m` (le monde, le décor et les règles en dépendent : lu au lancement par `lancerJeu`).
+   * `spectateur` (Battle Royale) : regarder la partie en cours sans y jouer.
+   */
+  const monterJeu = (m: ModeSalle, spectateur = false) => {
+    spectateurJeuRef.current = spectateur;
     // le nom tapé juste avant d'entrer part tout de suite, sans attendre la pause de frappe
     const nom = pseudoSaisi.trim() || "Agent";
     setPseudoConnecte(nom);
@@ -367,6 +375,31 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
     arene.clientRef.current?.renommer(nom);
     arene.lancerPartie(difficulte);
   };
+  /** Battle Royale : regarde la partie en cours de ma salle (`id` null ou la mienne), ou va d'abord dans la partie `id` puis la regarde. */
+  const regarderBr = (id: string | null) => {
+    if (!scene || tactile) return;
+    if (id === null || id === arene.partieBr) {
+      regarderApres.current = null;
+      monterJeu("br", true);
+      return;
+    }
+    regarderApres.current = id;
+    arene.choisirMode("br", id);
+  };
+  /** Battle Royale : créer ma partie pendant que la mienne est lancée (le serveur reprend une salle vide s'il y en a une). */
+  const creerPartieBr = () => {
+    regarderApres.current = null;
+    arene.choisirMode("br", PARTIE_NOUVELLE);
+  };
+  // « Regarder » une autre partie : une fois le serveur nous y a placés et la partie toujours en cours, le jeu se monte en spectateur
+  const phaseBr = arene.br?.phase;
+  useEffect(() => {
+    const voulue = regarderApres.current;
+    if (!voulue || arene.mode !== "br" || arene.partieBr !== voulue || !phaseBr || enArene || !areneOuverte) return;
+    regarderApres.current = null;
+    if (phaseBr === "decompte" || phaseBr === "vol" || phaseBr === "jeu") monterJeu("br", true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [arene.mode, arene.partieBr, phaseBr, enArene, areneOuverte]);
   /** Hôte du lobby Battle Royale : lance la partie. Le nom tapé part avant : les statistiques sont rattachées au pseudo affiché dans la salle. */
   const lancerBr = () => {
     const nom = pseudoSaisi.trim() || "Agent";
@@ -522,12 +555,12 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
           evenement: arene.pousserEvenement,
           sortir: () => quitterRef.current(),
           erreur: (texte) => setMessage({ id: Date.now(), texte }),
-        }, { mode: modeJeuRef.current });
+        }, { mode: modeJeuRef.current, ...(modeJeuRef.current === "br" && spectateurJeuRef.current ? { spectateur: true } : {}) });
         jeuRef.current = jeu;
         jeu.sensibilite(sensibiliteRef.current);
         jeu.accroupiBascule(accroupiBasculeRef.current);
         jeu.voix.mode(reglagesVoixRef.current.mode);
-        // Battle Royale : le chat vocal se limite aux liens de killcam (victime ↔ tueur), jamais 50 connexions WebRTC par client
+        // Battle Royale : le jeu choisit les connexions (voisins en vie, ou spectateurs entre eux), jamais 50 connexions WebRTC par client
         if (reglagesVoixRef.current.actif) activerVoix(jeu, reglagesVoixRef.current);
         // le jeu n'a pas vu le « bienvenue » : pseudos, couleurs et phase du match
         jeu.recevoir({ t: "presence", joueurs: arene.joueursRef.current });
@@ -623,7 +656,7 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
         br: {
           phase: dev.current.arene.br?.phase ?? null, vivants: dev.current.arene.br?.vivants ?? 0, total: dev.current.arene.br?.total ?? 0,
           zone: dev.current.arene.br?.zone ?? null, avion: dev.current.arene.br?.avion ?? null, etat: dev.current.arene.br ?? null,
-          statsBr: dev.current.arene.statsBr ?? null,
+          statsBr: dev.current.arene.statsBr ?? null, partie: dev.current.arene.partieBr,
           jeuBr: jeuRef.current?.br?.() ?? null,
           vol: (jeuRef.current?.debug.etat().vol as Record<string, unknown> | null | undefined) ?? null,
           butin: (jeuRef.current?.debug.etat().butin as Record<string, unknown> | null | undefined) ?? null,
@@ -656,6 +689,8 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
       },
       lancerZombies: () => lancerZombiesRef.current(),
       lancerBr: () => lancerBrRef.current(),
+      regarderBr: (id) => regarderBrRef.current(id ?? null),
+      creerPartieBr: () => creerPartieBrRef.current(),
       // un appui bref sur saut (sans pointer lock) : quitte l'avion, puis ouvre le parachute s'il est répété une seconde plus tard
       sauter: () => {
         const j = jeuRef.current;
@@ -701,6 +736,10 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
   lancerZombiesRef.current = lancerZombies;
   const lancerBrRef = useRef(lancerBr);
   lancerBrRef.current = lancerBr;
+  const regarderBrRef = useRef(regarderBr);
+  regarderBrRef.current = regarderBr;
+  const creerPartieBrRef = useRef(creerPartieBr);
+  creerPartieBrRef.current = creerPartieBr;
   /** dev : ouvre le lobby des zombies et y demande la salle (le panneau reste ouvert : le jeu se monte à l'admission) */
   const ouvrirZombiesRef = useRef(() => {});
   ouvrirZombiesRef.current = () => { setSelected(null); setAreneOuverte(true); choisirMode("zombies"); };
@@ -808,7 +847,12 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
             etat={arene.etat}
             monId={arene.monId}
             partie={arene.br ?? null}
-            salonBr={arene.salons?.br ?? null}
+            salonBr={arene.salons?.parties?.find((p) => p.id === arene.partieBr) ?? arene.salons?.br ?? null}
+            parties={arene.salons?.parties ?? null}
+            partieActuelle={arene.partieBr}
+            surRejoindrePartie={(id) => { regarderApres.current = null; arene.choisirMode("br", id); }}
+            surRegarder={regarderBr}
+            surCreerPartie={creerPartieBr}
             statsBr={arene.statsBr ?? null}
             surDemanderStats={arene.demanderStatsBr}
             pseudo={pseudoSaisi}
@@ -1109,6 +1153,10 @@ declare global {
       lancerZombies(): void;
       /** Battle Royale : l'hôte du lobby renomme le joueur puis lance la partie (sans effet pour un autre joueur). */
       lancerBr(): void;
+      /** Battle Royale : regarde la partie en cours de ma salle (sans id), ou va dans la partie `id` puis la regarde. */
+      regarderBr(id?: string): void;
+      /** Battle Royale : crée ma partie (bouton « Créer ma partie »). */
+      creerPartieBr(): void;
       /** Battle Royale : un appui bref sur la touche de saut (quitte l'avion, puis ouvre le parachute au second appui), sans pointer lock. */
       sauter(): void;
       quitter(): void;

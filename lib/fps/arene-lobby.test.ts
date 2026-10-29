@@ -7,8 +7,8 @@ import ChoixEquipement from "../../app/components/arene/ChoixEquipement";
 import {
   BONUS_COUTEAU_POURCENT, BONUS_EPEE_POURCENT, CARTES_MAX_DETAILLEES, REGLES_TIR, TEXTE_ARMES_SPECIALES, TEXTE_COUTEAU, commandesLobby, groupePrincipale,
   groupeSecondaire, groupeMelee, choixApresChangement, largeurBarre, noteSur10, toucheDe, armeSuivanteDuGroupe, aideChoixEquipement,
-  REGLES_BR, TEXTE_CONFLIT_NOMS, TEXTE_DEPART_ANNULE, TEXTE_NOM_A_CHOISIR, commandesLobbyBR, compteurBR, compteurMode, etiquetteEtatBR, pseudoCompteBr,
-  situationLobbyBR,
+  REGLES_BR, TEXTE_CONFLIT_NOMS, TEXTE_DEPART_ANNULE, TEXTE_NOM_A_CHOISIR, commandesLobbyBR, compteurBR, compteurMode, compteurPartiesBR, etiquetteEtatBR,
+  lignesPartiesBR, pseudoCompteBr, situationLobbyBR,
 } from "../../app/components/arene/lobby-modele";
 import { STATS } from "./armes";
 import { libelleCause } from "../../app/components/arene/armesInfo";
@@ -300,6 +300,37 @@ describe("lobby du Battle Royale : compteurs de la carte de mode", () => {
   });
 });
 
+describe("parties de Battle Royale (plusieurs en même temps)", () => {
+  it("compteur de la carte : nombre de parties et de joueurs ; une seule partie : le compteur habituel", () => {
+    const p = (id: string, joueurs: number) => ({ id, phase: "lobby" as const, joueurs, vivants: 0 });
+    expect(compteurPartiesBR([p("br1", 1), p("br2", 4)])).toBe("2 parties · 5 joueurs");
+    const salons = { arene: { joueurs: 0, enJeu: 0 }, zombies: { phase: "lobby" as const, joueurs: 0, manche: 0 }, br: p("br1", 3) };
+    expect(compteurMode("br", { ...salons, parties: [p("br1", 3)] })).toBe("Lobby · 3/50");
+    expect(compteurMode("br", { ...salons, parties: [p("br1", 3), p("br2", 1)] })).toBe("2 parties · 4 joueurs");
+  });
+
+  it("lignes : rejoindre un lobby, regarder une partie en cours, rien pour la sienne au lobby ni pour une partie pleine", () => {
+    const lignes = lignesPartiesBR([
+      { id: "br1", phase: "jeu", joueurs: 30, vivants: 1, hote: "Lea" },
+      { id: "br2", phase: "lobby", joueurs: 2, vivants: 0, hote: "Zoé" },
+      { id: "br3", phase: "lobby", joueurs: 50, vivants: 0, hote: "Max" },
+      { id: "br4", phase: "fin", joueurs: 4, vivants: 1, hote: "Ana" },
+      { id: "br5", phase: "jeu", joueurs: 50, vivants: 40, hote: "Bob" },
+      { id: "br6", phase: "decompte", joueurs: 0, vivants: 0 },
+    ], "br2");
+    expect(lignes.map((l) => [l.id, l.titre, l.etat, l.ici, l.action])).toEqual([
+      ["br1", "Partie de Lea", "En cours · 1 survivant", false, "regarder"],
+      ["br2", "Partie de Zoé", "Lobby · 2/50", true, null],
+      ["br3", "Partie de Max", "Pleine · 50/50", false, null],
+      ["br4", "Partie de Ana", "Bilan", false, "rejoindre"],
+      ["br5", "Partie de Bob", "Pleine · 50/50", false, null],
+      ["br6", "Partie vide", "Départ imminent", false, "regarder"],
+    ]);
+    // ma partie en cours, même pleine : je peux la regarder
+    expect(lignesPartiesBR([{ id: "br1", phase: "jeu", joueurs: 50, vivants: 9 }], "br1")[0]).toMatchObject({ ici: true, action: "regarder", etat: "En cours · 9 survivants" });
+  });
+});
+
 describe("situationLobbyBR", () => {
   it("avant le premier état ou hors ligne : connexion, rien à lancer", () => {
     expect(situationLobbyBR(null, null, true)).toMatchObject({ message: "Connexion à la salle…", peutLancer: false, hote: false, joueurs: 0, capacite: 50 });
@@ -338,16 +369,19 @@ describe("situationLobbyBR", () => {
     expect(pseudoCompteBr("Lea")).toBe(true);
   });
 
-  it("arrivant en cours de partie : N en vie, zone palier k/6, rejoignez à la suivante", () => {
+  it("arrivant en cours de partie : N en vie, zone palier k/6, regarder ou créer sa partie", () => {
     const enCours = partieBr({ phase: "jeu", joueurs: undefined, vivants: 12, total: 30, zone: zoneBr(3) });
     const sit = situationLobbyBR(enCours, "j9", true);
-    expect(sit).toMatchObject({ enCours: true, peutLancer: false, hote: false });
-    expect(sit.message).toBe("Partie en cours : 12 en vie · zone palier 3/6 — rejoignez à la suivante.");
+    expect(sit).toMatchObject({ enCours: true, peutLancer: false, hote: false, peutRegarder: true });
+    expect(sit.message).toBe("Partie en cours : 12 en vie · zone palier 3/6 — regardez-la en spectateur, créez votre partie ou attendez la suivante.");
     // avant que la zone existe : seulement les vivants ; repli sur salons.br pour le palier
-    expect(situationLobbyBR(partieBr({ phase: "vol", joueurs: undefined, vivants: 30, total: 30 }), "j9", true).message).toBe("Partie en cours : 30 en vie — rejoignez à la suivante.");
+    expect(situationLobbyBR(partieBr({ phase: "vol", joueurs: undefined, vivants: 30, total: 30 }), "j9", true).message).toBe("Partie en cours : 30 en vie — regardez-la en spectateur, créez votre partie ou attendez la suivante.");
     expect(situationLobbyBR(partieBr({ phase: "jeu", joueurs: undefined, vivants: 0 }), "j9", true, { phase: "jeu", joueurs: 20, vivants: 8, palier: 2 }).message)
-      .toBe("Partie en cours : 8 en vie · zone palier 2/6 — rejoignez à la suivante.");
-    expect(situationLobbyBR(partieBr({ phase: "decompte" }), "j9", true).enCours).toBe(true);
+      .toBe("Partie en cours : 8 en vie · zone palier 2/6 — regardez-la en spectateur, créez votre partie ou attendez la suivante.");
+    expect(situationLobbyBR(partieBr({ phase: "decompte" }), "j9", true)).toMatchObject({ enCours: true, peutRegarder: true });
+    // admis au décompte : le jeu se monte tout seul, rien à regarder
+    expect(situationLobbyBR(partieBr({ phase: "decompte", joueurs: [{ ...joueurBr("j9", "Lea"), admis: true }] }), "j9", true)).toMatchObject({ peutRegarder: false, message: "Départ de l'avion imminent." });
+    expect(situationLobbyBR(partieBr({ phase: "fin" }), "j9", true)).toMatchObject({ peutRegarder: false });
     expect(situationLobbyBR(partieBr({ phase: "fin" }), "j9", true).message).toContain("retour au lobby");
   });
 
@@ -418,7 +452,7 @@ describe("LobbyBR", () => {
 
   it("partie en cours : message d'attente, pas de lancement ; avis du nom à choisir", () => {
     const html = rendre({ monId: "j9", partie: partieBr({ phase: "jeu", joueurs: undefined, vivants: 12, total: 30, zone: zoneBr(3) }) });
-    expect(html).toContain("Partie en cours : 12 en vie · zone palier 3/6 — rejoignez à la suivante.");
+    expect(html).toContain("Partie en cours : 12 en vie · zone palier 3/6 — regardez-la en spectateur, créez votre partie ou attendez la suivante.");
     expect(boutonLancer(html)).toContain("disabled");
     // le serveur n'envoie pas la liste en jeu : ni « Personne pour l'instant » ni effectif nul
     expect(html).not.toContain("Personne pour l");
@@ -433,7 +467,30 @@ describe("LobbyBR", () => {
     expect(html).not.toMatch(/vocal de proximité/i);
     expect(html).not.toContain("Équipement");
     expect(html).toContain("<kbd>H</kbd>");
-    expect(html).toContain("Le chat vocal est désactivé dans ce mode.");
+    expect(html).toContain("les joueurs en vie n&#x27;entendent pas");
+  });
+
+  it("partie en cours : « Regarder la partie » et « Créer ma partie » ; liste des parties avec leurs boutons", () => {
+    const parties = [
+      { id: "br1", phase: "jeu" as const, joueurs: 20, vivants: 12, hote: "Lea" },
+      { id: "br2", phase: "lobby" as const, joueurs: 3, vivants: 0, hote: "Zoé" },
+      { id: "br3", phase: "vol" as const, joueurs: 4, vivants: 4, hote: "Max" },
+    ];
+    const html = rendre({
+      monId: "j9", partie: partieBr({ phase: "jeu", joueurs: undefined, vivants: 12, total: 20 }), parties, partieActuelle: "br1",
+      surRegarder: () => {}, surCreerPartie: () => {}, surRejoindrePartie: () => {},
+    });
+    expect(html).toContain(">Regarder la partie</button>");
+    expect(html).toContain(">Créer ma partie</button>");
+    expect(html).toContain("Partie de Lea<em> (vous)</em>");
+    expect(html).toContain("En cours · 12 survivants");
+    expect(html).toMatch(/aria-label="Rejoindre la partie de zoé"/);
+    expect(html).toMatch(/aria-label="Regarder la partie de max"/);
+    // au lobby avec une seule partie : ni liste ni boutons
+    const lobby = rendre({ parties: [{ id: "br1", phase: "lobby", joueurs: 2, vivants: 0, hote: "Lea" }], partieActuelle: "br1", surRegarder: () => {}, surCreerPartie: () => {} });
+    expect(lobby).not.toContain("Regarder");
+    expect(lobby).not.toContain("Créer ma partie");
+    expect(lobby).not.toContain(">Parties<");
   });
 
   it("tactile : clavier et souris requis, aucun bouton de lancement ; connexion perdue : écrite", () => {

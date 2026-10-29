@@ -11,7 +11,7 @@
  */
 import type { EtatJoueurSnap, InfoTueur, MessageServeur, VehiculeSnap, Vec3 } from "./protocole";
 import {
-  KILLCAM, avancerKillcam, cameraTueur, debutRejeu, demarrerKillcam, passerKillcam, progressionKillcam, tempsRejeuServeur, tueurPresent,
+  KILLCAM, avancerKillcam, cameraTueur, debutRejeu, demarrerKillcam, passerKillcam, progressionKillcam, tempsRejeuServeur, touchePasserPermise, tueurPresent,
   type Killcam, type PhaseKillcam,
 } from "./killcam";
 import { Interpolateur } from "./reseau";
@@ -99,6 +99,11 @@ export class ControleurKillcam {
   /** Le rejeu à la première personne a lieu (tueur trouvé dans le tampon). Faux hors killcam et en repli. */
   avecRejeu(): boolean {
     return this.k?.avecRejeu ?? false;
+  }
+
+  /** La touche « passer » peut sauter le rejeu (pas pendant sa première seconde, cf. `touchePasserPermise`). */
+  touchePasserPermise(): boolean {
+    return !!this.k && touchePasserPermise(this.k);
   }
 
   /** saute le rejeu → carte */

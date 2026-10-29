@@ -48,6 +48,15 @@ export function texteVoixKillcam(v: NonNullable<PropsKillcam["voix"]>, pseudo: s
   return v.touche && v.touche !== "—" ? `Maintenez ${v.touche} pour parler à ${qui}` : `Parler à ${qui}`;
 }
 
+/** (BR) Ligne du chat vocal des spectateurs (que les joueurs en vie n'entendent pas) : qui parle, sinon comment parler. */
+export function texteVoixSpectateurs(v: NonNullable<PropsKillcam["voix"]>, parlants: string): string {
+  if (v.etat === "") return "Chat vocal coupé : Échap, puis « Chat vocal », pour parler aux autres spectateurs (les joueurs en vie ne vous entendent pas)";
+  if (parlants) return `Spectateurs : ${parlants}`;
+  if (v.etat === "emet") return "Vous parlez aux spectateurs";
+  if (v.mode === "ouvert") return "Micro ouvert : les spectateurs vous entendent";
+  return v.touche && v.touche !== "—" ? `Maintenez ${v.touche} pour parler aux spectateurs` : "Parler aux spectateurs";
+}
+
 export default function Killcam({ phase, progression, tueur, derniereMort, surPasser, touchePasser = "Espace", reapparitionDans, children, voix }: PropsKillcam) {
   const part = Math.max(0, Math.min(1, progression));
   // le texte est écrit en casse normale ; les majuscules viennent du CSS (`text-transform`)

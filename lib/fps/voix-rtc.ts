@@ -12,7 +12,7 @@
  * Spec : docs/superpowers/specs/2026-10-23-arene-v3-design.md (§5)
  */
 import type { JoueurPublic, MessageClient, SignalVoix, Vec3 } from "./protocole";
-import { VOIX, correspondants, doitAppeler, gainVoix, microOuvert, planConnexions, signalValide, type ModeVoix } from "./voix";
+import { VOIX, correspondants, doitAppeler, gainVoix, microOuvert, planConnexions, signalValide, type CiblesVoix, type ModeVoix } from "./voix";
 
 const SERVEURS_ICE: RTCIceServer[] = [{ urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] }];
 /** Attente maximale de la collecte des candidats ICE avant d'envoyer la SDP (ms). */
@@ -40,10 +40,10 @@ export interface ChatVocal {
   /** Présence reçue : ouvre / ferme les connexions. */
   presence(joueurs: readonly JoueurPublic[], monId: string | null): void;
   /**
-   * Restreint les connexions à ces correspondants (Battle Royale : les liens de killcam), ou à tous (`null`, arène). Sans effet si rien ne
-   * change ; sinon ouvre et ferme aussitôt, d'après la dernière présence.
+   * Battle Royale : connexions choisies par le jeu (`ciblesVoixBr` : voisins en vie, ou spectateurs entre eux, plus les liens de killcam) au
+   * lieu de tous les joueurs de la présence (`null`, arène). Sans effet si rien ne change ; sinon ouvre et ferme aussitôt.
    */
-  restreindre(ids: readonly string[] | null): void;
+  cibler(c: CiblesVoix | null): void;
   recevoir(de: string, s: SignalVoix): void;
   /**
    * À chaque image : l'auditeur (`oreille`, `lacet`) et les positions des autres (`sources` : id → position de la tête, `vivant`).
@@ -54,6 +54,8 @@ export interface ChatVocal {
   parlants(): string[];
   /** Ids des joueurs dont on reçoit le flux (connexion établie). */
   relies(): string[];
+  /** Ids des connexions ouvertes ou en cours d'ouverture. */
+  connexions(): string[];
   /** Diagnostic (crochet de test) : connexions, état WebRTC, audibilité. */
   diagnostic(): { actif: boolean; mode: ModeVoix; emet: boolean; pairs: { id: string; connexion: string; audible: boolean; flux: boolean }[] };
   dispose(): void;
@@ -94,8 +96,11 @@ export function creerChatVocal(envoyer: (m: MessageClient) => void): ChatVocal {
   let monId: string | null = null;
   let voulus: string[] = [];
   let derniereListe: readonly JoueurPublic[] = [];
-  /** null : tous les joueurs avec la voix (arène) ; sinon seulement ceux-là (BR : liens de killcam) */
-  let seulement: Set<string> | null = null;
+  /** connexions gardées si l'autre appelle (BR : un peu plus loin que mes voisins appelés) ; en arène, les voulus */
+  let admis: string[] = [];
+  /** null : tous les joueurs avec la voix (arène) ; sinon les cibles choisies par le jeu (BR) */
+  let cibles: CiblesVoix | null = null;
+  let signatureCibles = "";
   let fini = false;
   const pairs = new Map<string, Pair>();
   // un contexte audio créé hors geste reste suspendu : le premier clic ou la première touche le réveille (comme sons.ts)
@@ -197,7 +202,7 @@ export function creerChatVocal(envoyer: (m: MessageClient) => void): ChatVocal {
       for (const id of [...pairs.keys()]) fermer(id, false);
       return;
     }
-    const plan = planConnexions(monId, pairs.keys(), voulus);
+    const plan = planConnexions(monId, pairs.keys(), voulus, admis);
     for (const id of plan.fermer) fermer(id, false);
     for (const id of plan.appeler) void appeler(id);
   }
@@ -247,7 +252,10 @@ export function creerChatVocal(envoyer: (m: MessageClient) => void): ChatVocal {
     presence(joueurs, id) {
       monId = id;
       derniereListe = joueurs;
-      voulus = correspondants(id, joueurs, seulement);
+      if (!cibles) {
+        voulus = correspondants(id, joueurs);
+        admis = voulus;
+      }
       reconcilier();
     },
 
@@ -264,12 +272,14 @@ export function creerChatVocal(envoyer: (m: MessageClient) => void): ChatVocal {
       if (p && p.appelant && p.pc.signalingState === "have-local-offer") void p.pc.setRemoteDescription({ type: "answer", sdp: s.sdp }).catch(() => fermer(de, false));
     },
 
-    restreindre(ids) {
-      const avant = seulement ? [...seulement].sort().join(",") : null;
-      const apres = ids ? [...ids].sort().join(",") : null;
-      if (avant === apres) return;
-      seulement = ids ? new Set(ids) : null;
-      voulus = correspondants(monId, derniereListe, seulement);
+    cibler(c) {
+      const signature = c ? `${c.voulus.join(",")}|${c.admis.join(",")}` : "";
+      if (c && cibles && signature === signatureCibles) return;
+      if (!c && !cibles) return;
+      cibles = c;
+      signatureCibles = signature;
+      voulus = c ? c.voulus : correspondants(monId, derniereListe);
+      admis = c ? c.admis : voulus;
       reconcilier();
     },
 
@@ -311,6 +321,10 @@ export function creerChatVocal(envoyer: (m: MessageClient) => void): ChatVocal {
 
     relies() {
       return [...pairs.values()].filter((p) => !!p.source).map((p) => p.id).sort();
+    },
+
+    connexions() {
+      return [...pairs.keys()].sort();
     },
 
     diagnostic() {

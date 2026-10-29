@@ -428,6 +428,13 @@ export interface EtatPartieBr {
 }
 /** Résumé de la salle BR dans le message `salons` (compteurs du choix du mode). */
 export interface ResumeSalonBr { phase: PhaseBr; joueurs: number; vivants: number; palier?: number }
+/**
+ * (additif, 2026-10-29) Une partie de Battle Royale parmi celles du serveur (`salons.parties`) : la salle permanente et celles que des
+ * joueurs ont créées pendant une partie en cours. `id` sert à `mode{mode:"br", partie}` ; `hote` = pseudo de l'hôte (absent : salle vide).
+ */
+export interface ResumePartieBr extends ResumeSalonBr { id: string; hote?: string }
+/** `mode{mode:"br", partie}` : `PARTIE_NOUVELLE` crée une partie (ou reprend une salle vide au lobby). */
+export const PARTIE_NOUVELLE = "nouvelle";
 
 // ---------- données publiques ----------
 
@@ -447,6 +454,8 @@ export interface JoueurPublic {
   serie?: number;
   /** chat vocal activé (v3 §5) ; absent = non */
   voix?: boolean;
+  /** (BR, additif) en jeu sans être en vie : éliminé ou spectateur venu regarder ; canal vocal des spectateurs. Absent = non */
+  spec?: true;
 }
 
 /** Véhicule conduisible occupé par un joueur (dans le snap du joueur). */
@@ -679,8 +688,17 @@ export type MessageClient =
    * (v10, zombies) envoyé aussi arme à feu en main : coup de couteau rapide (touche V), à la cadence de `minutageCoupRapide` (coup-rapide.ts).
    */
   | { t: "coup"; o: Vec3; d: Vec3; cibles: string[] }
-  /** Choisir le mode (v5) : change de salle, refusé (`refus{mode}`) en pleine partie ou si la salle zombies est pleine. */
-  | { t: "mode"; mode: ModeSalle }
+  /**
+   * Choisir le mode (v5) : change de salle, refusé (`refus{mode}`) en pleine partie ou si la salle zombies est pleine. `partie` (BR,
+   * additif) : id d'une partie de `salons.parties`, ou `PARTIE_NOUVELLE` pour créer la sienne ; absent = la partie au lobby la plus peuplée,
+   * sinon la salle permanente.
+   */
+  | { t: "mode"; mode: ModeSalle; partie?: string }
+  /**
+   * (BR, additif) Regarder la partie en cours de sa salle sans y jouer (arrivé après le lancement, ou pas admis) : réponse privée
+   * `spectateur`, puis les snaps comme un éliminé ; refus `refus{action:"regarder", raison:"lobby"}` hors décompte, vol et jeu.
+   */
+  | { t: "regarder" }
   /** Lancer la partie de zombies (hôte du lobby seulement) ; v7 : difficulté choisie (défaut « plat »). */
   | { t: "lancerPartie"; difficulte?: Difficulte }
   /**
@@ -799,9 +817,12 @@ export type MessageServeur =
   /**
    * Réponse à `monter` / `siege` / `rejoindre` / `mode` refusés (jamais `erreur` : le serveur ferme la socket sur tout message `erreur`).
    * `rejoindre` n'est refusé que pour `plein` (16 agents déjà en arène) ou `lobby` (zombies : joueur non admis) ; `mode` pour `plein`
-   * (salle zombies pleine) ou `lobby` (déjà en jeu). Privé.
+   * (salle zombies pleine) ou `lobby` (déjà en jeu), `limite` (BR : plus de place pour une partie de plus) ; `regarder` pour `lobby` (pas de
+   * partie en cours) ou `deja` (déjà en jeu). Privé.
    */
-  | { t: "refus"; action: "monter" | "siege" | "rejoindre" | "mode"; raison: "loin" | "plein" | "deja" | "inconnu" | "mort" | "lobby" }
+  | { t: "refus"; action: "monter" | "siege" | "rejoindre" | "mode" | "regarder"; raison: "loin" | "plein" | "deja" | "inconnu" | "mort" | "lobby" | "limite" }
+  /** (BR, additif) Réponse à `regarder` : le destinataire regarde la partie en spectateur (en jeu, jamais en vie, jamais dans le snap). Privé. */
+  | { t: "spectateur" }
   /** Le destinataire n'est plus dans un véhicule : il se téléporte à `p` (sortie, expulsion). Privé. */
   | { t: "descente"; p: Vec3; lacet: number; raison: "volontaire" | "expulse" }
   /**
@@ -854,11 +875,15 @@ export type MessageServeur =
   | { t: "canon"; id: string; o: Vec3; d: Vec3 }
   /**
    * Résumé des salles (v5), diffusé à TOUS les clients à la connexion puis au changement (≤ 1 Hz) : compteurs du choix du mode.
-   * `br` (v8) est optionnel : un message sans lui reste valide et un client v7 l'ignore.
+   * `br` (v8) est optionnel : un message sans lui reste valide et un client v7 l'ignore. `br` résume la salle permanente ; `parties`
+   * (additif, 2026-10-29) liste toutes les parties de Battle Royale, salle permanente en tête.
    */
-  | { t: "salons"; arene: { joueurs: number; enJeu: number }; zombies: { phase: PhaseZombies; joueurs: number; manche: number }; br?: ResumeSalonBr }
-  /** Confirmation du changement de salle (écho de `mode`), suivie du `bienvenue` de la nouvelle salle. */
-  | { t: "mode"; mode: ModeSalle }
+  | {
+    t: "salons"; arene: { joueurs: number; enJeu: number }; zombies: { phase: PhaseZombies; joueurs: number; manche: number }; br?: ResumeSalonBr;
+    parties?: ResumePartieBr[];
+  }
+  /** Confirmation du changement de salle (écho de `mode`), suivie du `bienvenue` de la nouvelle salle. `partie` (BR, additif) : id de la partie. */
+  | { t: "mode"; mode: ModeSalle; partie?: string }
   /** État de la partie de zombies (aux membres de la salle zombies, à chaque changement, ≤ 5 Hz). */
   | { t: "zombies"; etat: EtatPartieZombies }
   /** Argent du destinataire (zombies) : solde, variation et motif (« touche », « kill », « manche », « achat »…). Privé. */

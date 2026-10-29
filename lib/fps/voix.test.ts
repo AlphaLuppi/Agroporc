@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { JoueurPublic } from "./protocole";
 import {
   CLE_VOIX, LIEN_VOIX_KILLCAM_MS, LiensVoixKillcam, VOIX, cleLienVoix, correspondants, doitAppeler, ecrireReglagesVoix, gainVoix, lireReglagesVoix,
-  microOuvert, planConnexions, signalValide,
+  ciblesVoixBr, microOuvert, planConnexions, relaiVoixBr, signalValide, type ParticipantVoixBr,
 } from "./voix";
 
 const j = (id: string, enJeu = true, voix = true): JoueurPublic => ({ id, pseudo: id, couleur: "#fff", enJeu, kills: 0, morts: 0, ping: 0, ...(voix ? { voix } : {}) });
@@ -95,5 +95,73 @@ describe("liens vocaux de killcam", () => {
     expect(correspondants("a", tous, new Set(["c", "d"]))).toEqual(["c"]);
     expect(correspondants("a", tous, new Set())).toEqual([]);
     expect(correspondants("a", tous, null)).toEqual(["b", "c"]);
+  });
+});
+
+describe("rayon du chat vocal (élargi le 2026-10-29)", () => {
+  it("on s'entend nettement à 30 m et encore un peu à 60 m ; muet au-delà de 75 m", () => {
+    expect(VOIX.distanceMax).toBe(75);
+    expect(gainVoix(8)).toBe(1);
+    expect(gainVoix(30)).toBeGreaterThan(0.5);
+    expect(gainVoix(60)).toBeGreaterThan(0.1);
+    expect(gainVoix(75)).toBe(0);
+  });
+});
+
+describe("planConnexions avec des connexions admises", () => {
+  it("une connexion admise (l'autre m'a appelé) n'est pas fermée ; une connexion ni voulue ni admise l'est", () => {
+    expect(planConnexions("j2", ["j7", "j9"], ["j3"], ["j3", "j7"])).toEqual({ appeler: ["j3"], fermer: ["j9"] });
+  });
+});
+
+describe("chat vocal du Battle Royale", () => {
+  const vivant = (id: string, x: number, voix = true): ParticipantVoixBr => ({ id, voix, spectateur: false, p: [x, 1.6, 0] });
+  const spect = (id: string, voix = true): ParticipantVoixBr => ({ id, voix, spectateur: true, p: null });
+
+  it("en vie : seulement les vivants proches avec la voix, les plus proches d'abord, jamais un spectateur", () => {
+    const moi = vivant("m", 0);
+    const autres = [vivant("a", 10), vivant("b", 80), vivant("c", 100), vivant("d", 20, false), spect("s1"), { ...vivant("z", 5), p: null }];
+    // b à 80 m (< 85) appelé, c à 100 m seulement admis s'il appelle, d sans voix, s1 spectateur, z sans position (à bord)
+    expect(ciblesVoixBr(moi, autres, [])).toEqual({ voulus: ["a", "b"], admis: ["a", "b", "c"] });
+    // hystérésis : une connexion établie tient jusqu'à 110 m
+    expect(ciblesVoixBr(moi, autres, [], new Set(["c"])).voulus).toEqual(["a", "b", "c"]);
+    expect(ciblesVoixBr(moi, [vivant("e", 120)], [], new Set(["e"]))).toEqual({ voulus: [], admis: [] });
+  });
+
+  it("en vie : au plus `voisinsMaxBr` voisins appelés, les plus proches", () => {
+    const autres = Array.from({ length: 12 }, (_, i) => vivant(`v${String(i).padStart(2, "0")}`, 70 - i * 5));
+    const c = ciblesVoixBr(vivant("m", 0), autres, []);
+    expect(c.voulus).toHaveLength(VOIX.voisinsMaxBr);
+    expect(c.voulus).not.toContain("v00"); // le plus loin (70 m)
+    expect(c.admis).toHaveLength(12);
+  });
+
+  it("spectateur : les autres spectateurs seulement (plein canal), jamais un vivant ; le lien de killcam passe outre", () => {
+    const autres = [vivant("a", 1), spect("s1"), spect("s2"), spect("s3", false)];
+    expect(ciblesVoixBr(spect("m"), autres, [])).toEqual({ voulus: ["s1", "s2"], admis: ["s1", "s2"] });
+    expect(ciblesVoixBr(spect("m"), autres, ["a"])).toEqual({ voulus: ["a", "s1", "s2"], admis: ["a", "s1", "s2"] });
+    // un vivant lié à sa victime spectatrice
+    expect(ciblesVoixBr(vivant("a", 0), [spect("m")], ["m"])).toEqual({ voulus: ["m"], admis: ["m"] });
+    // au plus `spectateursMaxBr` appelés, tous admis
+    const foule = Array.from({ length: 20 }, (_, i) => spect(`s${String(i).padStart(2, "0")}`));
+    const c = ciblesVoixBr(spect("m"), foule, []);
+    expect(c.voulus).toHaveLength(VOIX.spectateursMaxBr);
+    expect(c.admis).toHaveLength(20);
+  });
+
+  it("voix coupée ou position inconnue (à bord) : rien, hors liens", () => {
+    expect(ciblesVoixBr({ ...vivant("m", 0), voix: false }, [vivant("a", 1)], ["a"])).toEqual({ voulus: [], admis: [] });
+    expect(ciblesVoixBr({ ...vivant("m", 0), p: null }, [vivant("a", 1)], [])).toEqual({ voulus: [], admis: [] });
+  });
+
+  it("relais du serveur : deux vivants ou deux spectateurs ; un vivant et un spectateur seulement par le lien de killcam", () => {
+    const v = { enJeu: true, vivant: true }, s = { enJeu: true, vivant: false }, dehors = { enJeu: false, vivant: false };
+    expect(relaiVoixBr(v, v, false)).toBe(true);
+    expect(relaiVoixBr(s, s, false)).toBe(true);
+    expect(relaiVoixBr(v, s, false)).toBe(false);
+    expect(relaiVoixBr(s, v, false)).toBe(false);
+    expect(relaiVoixBr(v, s, true)).toBe(true);
+    expect(relaiVoixBr(dehors, dehors, false)).toBe(false);
+    expect(relaiVoixBr(v, dehors, true)).toBe(false);
   });
 });

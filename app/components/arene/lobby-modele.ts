@@ -1,7 +1,7 @@
 import { COUTEAU, MELEE, STATS } from "@/lib/fps/armes";
 import {
   ARMES_SPECIALES, JEU, type ArmeMeleeId, type ArmePrincipaleId, type ArmeSecondaireId, type EtatPartieBr, type EtatPartieZombies, type JoueurBr, type ModeSalle,
-  type ResumeSalonBr,
+  type ResumePartieBr, type ResumeSalonBr,
 } from "@/lib/fps/protocole";
 import { BR } from "@/lib/fps/br-regles";
 import { CHUTE_BR } from "@/lib/fps/br-chute";
@@ -156,7 +156,7 @@ const pluriel = (n: number, mot: string) => `${n} ${mot}${n > 1 ? "s" : ""}`;
 export function compteurMode(mode: ModeSalle, salons: Salons | null | undefined): string {
   if (!salons) return "—";
   if (mode === "arene") return `${salons.arene.joueurs} en ligne · ${salons.arene.enJeu} en jeu`;
-  if (mode === "br") return compteurBR(salons.br);
+  if (mode === "br") return salons.parties && salons.parties.length > 1 ? compteurPartiesBR(salons.parties) : compteurBR(salons.br);
   const z = salons.zombies;
   const effectif = `${z.joueurs}/${ZOMBIES.joueursMax}`;
   if (z.joueurs >= ZOMBIES.joueursMax) return `Salle pleine · ${effectif}`;
@@ -173,6 +173,43 @@ export function compteurBR(br: ResumeSalonBr | null | undefined): string {
   if (br.phase === "lobby") return `Lobby · ${effectif}`;
   if (br.phase === "fin") return `Bilan · ${effectif}`;
   return `Partie en cours · ${br.vivants} en vie`;
+}
+
+/** Compteur de la carte Battle Royale quand plusieurs parties tournent : « 2 parties · 17 joueurs ». */
+export function compteurPartiesBR(parties: readonly ResumePartieBr[]): string {
+  const joueurs = parties.reduce((n, p) => n + p.joueurs, 0);
+  return `${pluriel(parties.length, "partie")} · ${pluriel(joueurs, "joueur")}`;
+}
+
+/** Une ligne de la liste des parties du lobby Battle Royale. */
+export interface LignePartieBR {
+  id: string;
+  /** « Partie de Alice », « Partie vide » */
+  titre: string;
+  /** « Lobby · 3/50 », « En cours · 12 en vie », « Bilan », « Pleine · 50/50 » */
+  etat: string;
+  /** c'est ma partie */
+  ici: boolean;
+  /** bouton de la ligne : aller dans son lobby, la regarder en spectateur (en y allant d'abord si ce n'est pas la mienne), aucun */
+  action: "rejoindre" | "regarder" | null;
+}
+
+/**
+ * Lignes de la liste des parties (`salons.parties`, la mienne = `ici`). Une partie au lobby ou au bilan se rejoint, une partie en cours se
+ * regarde ; une partie pleine n'a pas de bouton (sauf la mienne, en cours : j'y suis déjà).
+ */
+export function lignesPartiesBR(parties: readonly ResumePartieBr[], partieActuelle: string | null): LignePartieBR[] {
+  return parties.map((p) => {
+    const ici = p.id === partieActuelle;
+    const pleine = p.joueurs >= BR.joueursMax;
+    const enCours = p.phase === "decompte" || p.phase === "vol" || p.phase === "jeu";
+    const etat = pleine && !ici ? `Pleine · ${p.joueurs}/${BR.joueursMax}`
+      : p.phase === "lobby" ? `Lobby · ${p.joueurs}/${BR.joueursMax}`
+        : p.phase === "fin" ? "Bilan"
+          : p.phase === "decompte" ? "Départ imminent" : `En cours · ${pluriel(p.vivants, "survivant")}`;
+    const action = enCours ? (ici || !pleine ? "regarder" : null) : ici || pleine ? null : "rejoindre";
+    return { id: p.id, titre: p.hote ? `Partie de ${p.hote}` : "Partie vide", etat, ici, action };
+  });
 }
 
 /** Compteur d'une carte de mode choisie impossible sur l'appareil (écran tactile). */
@@ -309,6 +346,8 @@ export interface SituationLobbyBR {
   peutLancer: boolean;
   /** une partie est déjà lancée (le lobby sert de salle d'attente jusqu'à la suivante) */
   enCours: boolean;
+  /** la partie en cours se regarde en spectateur (décompte, vol ou jeu, sans y être admis) */
+  peutRegarder: boolean;
   joueurs: number;
   capacite: number;
   minJoueurs: number;
@@ -316,7 +355,7 @@ export interface SituationLobbyBR {
 
 /**
  * Situation du lobby d'après le dernier `br{etat}` reçu (null avant le premier) et le résumé de `salons.br` (repli pour les compteurs d'une partie en cours) :
- * qui peut lancer, que dire au joueur. Un arrivant en cours de partie est en attente : « Partie en cours : 12 en vie · zone palier 3/6 — rejoignez à la suivante. »
+ * qui peut lancer, que dire au joueur. Un arrivant en cours de partie peut la regarder ou créer la sienne : « Partie en cours : 12 en vie · zone palier 3/6 — regardez-la… »
  */
 export function situationLobbyBR(
   partie: EtatPartieBr | null, monId: string | null, connecte: boolean, salonBr?: ResumeSalonBr | null,
@@ -325,7 +364,7 @@ export function situationLobbyBR(
   const joueurs = liste.length > 0 ? liste.length : salonBr?.joueurs ?? 0;
   if (!partie || !connecte) {
     return {
-      message: "Connexion à la salle…", avis: [], hote: false, peutLancer: false, enCours: false,
+      message: "Connexion à la salle…", avis: [], hote: false, peutLancer: false, enCours: false, peutRegarder: false,
       joueurs, capacite: partie?.capacite ?? BR.joueursMax, minJoueurs: partie?.minJoueurs ?? BR.joueursMin,
     };
   }
@@ -341,15 +380,25 @@ export function situationLobbyBR(
     const message = hote
       ? (!assez ? `Il faut au moins ${partie.minJoueurs} joueurs.` : conflit ? TEXTE_CONFLIT_NOMS : "Vous êtes l'hôte : lancez la partie quand tout le monde est là.")
       : (conflit ? TEXTE_CONFLIT_NOMS : "En attendant l'hôte…");
-    return { ...base, enCours: false, peutLancer: hote && assez && !conflit, message, avis };
+    return { ...base, enCours: false, peutRegarder: false, peutLancer: hote && assez && !conflit, message, avis };
   }
-  if (partie.phase === "fin") return { ...base, enCours: true, peutLancer: false, avis: [], message: "Partie terminée : retour au lobby dans un instant." };
-  if (partie.phase === "decompte") return { ...base, enCours: true, peutLancer: false, avis: [], message: "Départ de l'avion imminent : vous rejoindrez la partie suivante." };
+  if (partie.phase === "fin") return { ...base, enCours: true, peutRegarder: false, peutLancer: false, avis: [], message: "Partie terminée : retour au lobby dans un instant." };
+  if (partie.phase === "decompte") {
+    // admis : le jeu se monte tout seul, rien à regarder
+    const admis = !!liste.find((j) => j.id === monId)?.admis;
+    return {
+      ...base, enCours: true, peutRegarder: !admis, peutLancer: false, avis: [],
+      message: admis ? "Départ de l'avion imminent." : `Départ de l'avion imminent : ${TEXTE_REGARDER_OU_CREER}`,
+    };
+  }
   const vivants = partie.vivants > 0 ? partie.vivants : salonBr?.vivants ?? 0;
   const palier = partie.zone ? `${partie.zone.palier}/${partie.zone.nbPaliers}` : salonBr?.palier !== undefined ? `${salonBr.palier}/${PALIERS_ZONE.length}` : null;
   const detail = [`${vivants} en vie`, ...(palier ? [`zone palier ${palier}`] : [])].join(" · ");
-  return { ...base, enCours: true, peutLancer: false, avis: [], message: `Partie en cours : ${detail} — rejoignez à la suivante.` };
+  return { ...base, enCours: true, peutRegarder: true, peutLancer: false, avis: [], message: `Partie en cours : ${detail} — ${TEXTE_REGARDER_OU_CREER}` };
 }
+
+/** Ce qu'un arrivant peut faire pendant une partie en cours. */
+export const TEXTE_REGARDER_OU_CREER = "regardez-la en spectateur, créez votre partie ou attendez la suivante.";
 
 /** Étiquette d'état d'un joueur dans la liste du lobby (vide au lobby : tout le monde attend le départ). */
 export function etiquetteEtatBR(j: Pick<JoueurBr, "admis" | "aBord" | "place">, phase: EtatPartieBr["phase"]): string {

@@ -138,6 +138,8 @@ export interface HudEtat {
   /** je suis mort et je regarde : id du joueur suivi ("" = personne à suivre) */
   spectateur?: boolean;
   spectateurCible?: string;
+  /** (BR) spectateur venu regarder la partie en cours (ni éliminé, ni place) */
+  spectateurExterne?: boolean;
 
   // ---- COMPATIBILITÉ v1 (shim du lot 0, tous optionnels) ----
   // Champs que le HUD v1 lit encore et que `jeu.ts` v1 émet toujours. La spec HUD (§3.2) les retire de `HudEtat` : le lot J1 cesse
@@ -192,7 +194,7 @@ export type JeuEvenement =
   /** j'ai pris le cadeau d'Elsa */
   | { type: "bonus"; genre: "soin" | "arme"; arme?: ArmeSpecialeId }
   /** le serveur a refusé `monter` / `siege` (message `refus`) : toast « Voiture trop loin », « Voiture pleine »… ; `rejoindre` : arène pleine */
-  | { type: "refus"; action: "monter" | "siege" | "rejoindre" | "mode"; raison: "loin" | "plein" | "deja" | "inconnu" | "mort" | "lobby" };
+  | { type: "refus"; action: "monter" | "siege" | "rejoindre" | "mode" | "regarder"; raison: "loin" | "plein" | "deja" | "inconnu" | "mort" | "lobby" | "limite" };
 
 /** (v3) État des événements pour le bandeau du HUD (lu à intervalle par `BandeauEvenement`, hors rendu à 60 Hz). */
 export interface EtatMonstresHud {
@@ -276,7 +278,11 @@ export interface EtatBrHud {
 }
 
 /** Options de `lancerJeu` : le mode de la salle (arène par défaut, comportement historique). */
-export interface JeuOptions { mode?: ModeSalle }
+export interface JeuOptions {
+  mode?: ModeSalle;
+  /** (BR) regarder la partie en cours sans y jouer : le jeu envoie `regarder` au lieu de `rejoindre` */
+  spectateur?: boolean;
+}
 
 export interface JeuCallbacks {
   /** ≈ 15 Hz, seulement quand quelque chose a changé */

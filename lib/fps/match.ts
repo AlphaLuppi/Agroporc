@@ -55,7 +55,7 @@ import type { CachetteTigre } from "./tigre-arene";
 import { toucheVraisemblable } from "./tir";
 import { ROND_POINT, ZONE_APPARITION, choisirPointZone, lacetVers, filtrerApparitions, type ZoneApparition } from "./zones";
 import { ZOMBIES } from "./zombies-vagues";
-import { LIEN_VOIX_KILLCAM_MS, cleLienVoix } from "./voix";
+import { LIEN_VOIX_KILLCAM_MS, cleLienVoix, relaiVoixBr } from "./voix";
 import type { Vec2 } from "../agroparc3d/types";
 
 // `Sortie` et `JoueurSalle` vivent dans match-contexte.ts (partagés avec les services Elsa / véhicules) ; réexportés pour les appelants.
@@ -257,7 +257,7 @@ export class Salle implements ContexteSalle {
   private readonly historiqueMs: number;
   /** (v8, BR) `presence` à émettre : levée par `rejoindreBr`, les morts et les évictions, vidée par `tic` (une seule `presence` par tic). */
   private presenceSale = false;
-  /** Liens vocaux de killcam (victime ↔ tueur) : clé `lienVoix(a, b)` → fin (ms) ; ils passent outre la proximité, et sont le SEUL chat vocal du BR. */
+  /** Liens vocaux de killcam (victime ↔ tueur) : clé `lienVoix(a, b)` → fin (ms) ; ils passent outre la proximité et, en BR, la séparation des spectateurs. */
   private readonly liensVoix = new Map<string, number>();
   /** (v8, BR) instant de mort des joueurs morts (retrait du snap `BR.retraitMortSnapMs` plus tard) */
   private readonly mortT = new Map<string, number>();
@@ -566,6 +566,7 @@ export class Salle implements ContexteSalle {
     j.accroupi = false;
     j.glisse = false;
     j.scoresOuvert = false;
+    j.spectateur = false;
     return liberation;
   }
 
@@ -603,6 +604,8 @@ export class Salle implements ContexteSalle {
       id: j.id, pseudo: j.pseudo, couleur: j.couleur, enJeu: j.enJeu, kills: j.kills, morts: j.morts, ping: j.ping,
       ...(j.serie > 0 ? { serie: j.serie } : {}),
       ...(j.voix ? { voix: true } : {}),
+      // BR : éliminé ou spectateur venu regarder (canal vocal des spectateurs)
+      ...(this.br && j.enJeu && !j.vivant ? { spec: true as const } : {}),
     }));
   }
   classement(): LigneClassement[] {
@@ -720,6 +723,7 @@ export class Salle implements ContexteSalle {
       case "rejoindre":
         return this.zombies ? this.rejoindreZombies(j, maintenant) : this.br ? this.rejoindreBr(j, maintenant) : this.rejoindre(j, msg, maintenant);
       case "quitter": return this.quitter(j, maintenant);
+      case "regarder": return this.br ? this.regarderBr(j) : [];
       case "arme": if (!this.zombies && !this.br) this.choisir(j, { arme: msg.arme }); return [];
       case "equiper": if (!this.zombies && !this.br) this.choisir(j, msg); return [];
       case "lancerPartie":
@@ -770,7 +774,7 @@ export class Salle implements ContexteSalle {
       }
       case "vueScores": return this.vueScores(j, msg.ouvert, maintenant);
       case "invoquer": return j.enJeu && this.tigres ? this.tigres.recevoir(j, msg, maintenant) : [];
-      // chat vocal du BR : seulement entre une victime et son tueur, le temps de la killcam (50 joueurs en maillage feraient 1 225 échanges SDP)
+      // chat vocal du BR : voisins en vie entre eux, spectateurs entre eux, plus le lien de killcam (cf. `relayerVoix`)
       case "voixActif": return this.voixActif(j, msg.actif);
       case "voix": return this.relayerVoix(j, msg.a, msg.s, maintenant);
       case "ping": return estNombre(msg.t0) ? [{ a: id, m: { t: "pong", t0: msg.t0, maintenant } }] : [];
@@ -797,16 +801,18 @@ export class Salle implements ContexteSalle {
 
   /**
    * Signal relayé tel quel au joueur `a`, si les deux sont en arène avec la voix activée et que le signal a la bonne forme. En BR, seulement
-   * entre une victime et son tueur pendant leur lien de killcam (une fois établie, la connexion WebRTC ne passe plus par ici).
+   * entre deux joueurs en vie (proximité, le client n'appelle que ses voisins) ou entre deux spectateurs (éliminés, venus regarder), plus
+   * une victime et son tueur pendant leur lien de killcam : un joueur en vie n'entend jamais les spectateurs (`relaiVoixBr`). Une fois
+   * établie, la connexion WebRTC ne passe plus par ici : chaque client referme celles qui ne sont plus permises.
    */
   private relayerVoix(j: JoueurSalle, a: unknown, s: unknown, maintenant: number): Sortie[] {
     if (typeof a !== "string" || a === j.id || !signalVoixValide(s)) return [];
     const dest = this.table.get(a);
     if (!dest || !j.voix || !dest.voix || !j.enJeu || !dest.enJeu) return [];
-    if (this.br) {
+    // « fin » passe toujours : il referme une connexion
+    if (this.br && (s as SignalVoix).type !== "fin") {
       const fin = this.liensVoix.get(cleLienVoix(j.id, a));
-      // « fin » passe toujours : il referme une connexion
-      if ((fin === undefined || fin <= maintenant) && (s as SignalVoix).type !== "fin") return [];
+      if (!relaiVoixBr(j, dest, fin !== undefined && fin > maintenant)) return [];
     }
     return [{ a, m: { t: "voix", de: j.id, s } }];
   }
@@ -917,6 +923,25 @@ export class Salle implements ContexteSalle {
     j.reentreeT = -Infinity;
     this.presenceSale = true;
     return [...entree, ...br.synchro(j.id)];
+  }
+
+  /**
+   * (BR, 2026-10-29) `regarder` : un membre qui ne joue pas la partie en cours (arrivé après le lancement, ou éliminé puis sorti) la regarde
+   * en spectateur. Il passe en jeu SANS être en vie : il reçoit les snaps comme un éliminé, n'est ni dans le snap ni touchable, ne compte pas
+   * dans la partie (le service ne le connaît pas comme partant) ; la fin de partie le ramène au lobby comme les autres (`retirerJoueur`).
+   */
+  private regarderBr(j: JoueurSalle): Sortie[] {
+    const br = this.br!;
+    if (j.enJeu) return [{ a: j.id, m: { t: "refus", action: "regarder", raison: "deja" } }];
+    if (!br.peutRegarder(j.id)) return [{ a: j.id, m: { t: "refus", action: "regarder", raison: "lobby" } }];
+    j.enJeu = true;
+    j.vivant = false;
+    j.spectateur = true;
+    j.posture = "mort";
+    j.histo = [];
+    j.reapparitionT = null;
+    this.presenceSale = true;
+    return [{ a: j.id, m: { t: "spectateur" } }, ...br.synchro(j.id)];
   }
 
   private quitter(j: JoueurSalle, maintenant: number): Sortie[] {
@@ -1600,8 +1625,9 @@ export class Salle implements ContexteSalle {
     for (const j of this.table.values()) {
       if (!j.enJeu) continue;
       if (this.br) {
-        // BR : un joueur à bord n'est ni dessiné ni touchable ; un mort sort du snap `retraitMortSnapMs` après sa mort (il reste dans `presence`)
-        if (this.br.aBord(j.id)) continue;
+        // BR : un joueur à bord n'est ni dessiné ni touchable ; un mort sort du snap `retraitMortSnapMs` après sa mort (il reste dans `presence`) ;
+        // un spectateur venu regarder n'a pas de corps
+        if (j.spectateur || this.br.aBord(j.id)) continue;
         const mort = this.mortT.get(j.id);
         if (!j.vivant && mort !== undefined && maintenant - mort > BR.retraitMortSnapMs) continue;
       }

@@ -92,6 +92,11 @@ export interface JoueurSalle extends JoueurSalleV2, JoueurStatsSalle {
   armeSuivante: ArmeId;
   pv: number;
   vivant: boolean;
+  /**
+   * (BR, 2026-10-29) spectateur venu regarder la partie en cours (`regarder`) : en jeu, jamais en vie, jamais dans le snap ; remis à faux
+   * par `retirerJoueur` (fin de partie, sortie)
+   */
+  spectateur?: boolean;
   /** invulnérable jusqu'à cet horodatage (ms) */
   protegeJusqua: number;
   /** horodatage de la réapparition prévue, null si vivant ou hors arène */
@@ -364,7 +369,7 @@ export interface ServiceZombies {
 // ---------- Battle Royale (v8) ----------
 
 /** Résumé d'une salle Battle Royale (message `salons`, `/sante`). */
-export interface ResumeBr { phase: PhaseBr; joueurs: number; vivants: number; palier?: number }
+export interface ResumeBr { phase: PhaseBr; joueurs: number; vivants: number; palier?: number; /** pseudo de l'hôte (absent : salle vide) */ hote?: string }
 
 /**
  * Mode Battle Royale (v8, `match-br.ts` : `creerServiceBr(ctx, opts)`) : machine d'états lobby → décompte → vol → jeu → fin, hôte, admission,
@@ -402,6 +407,8 @@ export interface ServiceBr {
   arrivee(j: JoueurSalle, maintenant: number): Sortie[];
   /** partie en cours (décompte, vol ou jeu) */
   enCours(): boolean;
+  /** (2026-10-29) `regarder` permis : partie en cours et le joueur n'y participe pas (pas admis, ou déjà éliminé) */
+  peutRegarder(id: string): boolean;
   etat(): EtatPartieBr;
   resume(): ResumeBr;
 }

@@ -1,7 +1,7 @@
 /**
  * Serveur temps réel de l'arène FPS (vue Palantir) : HTTP `GET /sante` et `GET /stats-br` + WebSocket sur le même port,
- * trois salles : l'arène « chacun pour soi » (avion et tigres largués compris), les zombies tigres (coopératif par manches) et le Battle Royale
- * (v9). Toute la logique de jeu est dans lib/fps/match.ts, match-zombies.ts et match-br.ts (purs) ; ce fichier ne fait que l'I/O : connexions,
+ * trois modes : l'arène « chacun pour soi » (avion et tigres largués compris), les zombies tigres (coopératif par manches) et le Battle Royale
+ * (v9, plusieurs parties en même temps depuis le 2026-10-29). Toute la logique de jeu est dans lib/fps/match.ts, match-zombies.ts et match-br.ts (purs) ; ce fichier ne fait que l'I/O : connexions,
  * anti-flood (lib/fps/anti-flood.ts : l'excédent est jeté, la socket n'est coupée que pour un flood réel), origines, ping, boucle de tic à
  * 60 Hz, routage du message `mode` (changement de salle), résumé `salons`, persistance des stats BR et (v8) reprise d'une partie de zombies
  * après une micro-coupure (`REPRISE_MS`).
@@ -24,7 +24,7 @@ import { construireCircuits, flotte } from "../../lib/fps/circulation";
 import { construireMonde, pointsApparition } from "../../lib/fps/collision";
 import { ipClient } from "../../lib/fps/ip-client";
 import { Salle, type OptionsSalle, type Sortie } from "../../lib/fps/match";
-import { MODES_SALLE, VERSIONS_ACCEPTEES, type MessageClient, type MessageServeur, type ModeSalle } from "../../lib/fps/protocole";
+import { PARTIE_NOUVELLE, VERSIONS_ACCEPTEES, type MessageClient, type MessageServeur, type ModeSalle, type ResumePartieBr } from "../../lib/fps/protocole";
 import { decisionMode, garderPourReprise, messageSalons, modeDeSalle } from "../../lib/fps/salons";
 import { capDeCachette } from "../../lib/fps/tigre-arene";
 import { DEPARTS, construireMondeZombies, donneesZombies } from "../../lib/fps/zombies-carte";
@@ -193,7 +193,6 @@ const objetsBr = dureeEnv("PDJ_FPS_BR_OBJETS");
 const finBr = dureeEnv("PDJ_FPS_BR_FIN_MS");
 /** durée minimale (ms) pour qu'une partie compte dans les stats ; `BR.partieValideMinMs` (60 s) par défaut */
 const valideBr = dureeEnv("PDJ_FPS_BR_VALIDE_MS");
-const mondeBr = construireMondeBr(scene);
 const optionsBr: OptionsSalle = {
   br: {
     scene,
@@ -211,12 +210,48 @@ const optionsBr: OptionsSalle = {
   rewindMaxMs: BR.rewindMaxMs,
   historiqueMs: BR.historiqueMs,
 };
-// point de départ jamais utilisé (le service place les joueurs dans l'avion) : le centre des bornes du monde BR
-const DEPARTS_BR: [number, number][] = [[(mondeBr.bornes.x0 + mondeBr.bornes.x1) / 2, (mondeBr.bornes.z0 + mondeBr.bornes.z1) / 2]];
-const salleBr = new Salle(mondeBr, DEPARTS_BR, Math.random, Date.now(), optionsBr);
+/**
+ * Une salle Battle Royale neuve, avec son propre monde (≈ 90 ms et 2 Mo). Le point de départ n'est jamais utilisé (le service place les
+ * joueurs dans l'avion) : le centre des bornes du monde.
+ */
+function creerSalleBr(): Salle {
+  const mondeBr = construireMondeBr(scene);
+  const depart: [number, number][] = [[(mondeBr.bornes.x0 + mondeBr.bornes.x1) / 2, (mondeBr.bornes.z0 + mondeBr.bornes.z1) / 2]];
+  return new Salle(mondeBr, depart, Math.random, Date.now(), optionsBr);
+}
+/**
+ * Parties de Battle Royale : la salle permanente `br1`, plus celles qu'ouvrent les joueurs arrivés pendant une partie en cours
+ * (`mode{br, partie:"nouvelle"}`), refermées dès qu'elles sont vides. Au plus `PDJ_FPS_BR_PARTIES` (4) en même temps : chacune coûte son
+ * monde et son tic, sur un conteneur plafonné à 1 vCPU.
+ */
+const PARTIES_BR_MAX = Math.max(1, Math.floor(nombreEnv("PDJ_FPS_BR_PARTIES") ?? 4));
+interface PartieBr { id: string; salle: Salle }
+const partiesBr: PartieBr[] = [{ id: "br1", salle: creerSalleBr() }];
+let compteurPartiesBr = 1;
+/** la salle permanente (résumé `salons.br` des clients d'avant les parties multiples, `/sante.br`) */
+const salleBr = partiesBr[0].salle;
+const partieDeSalle = (salle: Salle): PartieBr | null => partiesBr.find((p) => p.salle === salle) ?? null;
+/** Ouvre une partie de plus (la décision a vérifié qu'il reste de la place). */
+function ouvrirPartieBr(): PartieBr {
+  const partie = { id: `br${++compteurPartiesBr}`, salle: creerSalleBr() };
+  partiesBr.push(partie);
+  console.log(`+ partie BR ${partie.id} (${partiesBr.length} en tout)`);
+  return partie;
+}
+/** Referme les parties créées par les joueurs qui sont vides (jamais la salle permanente). Vrai si une partie a été refermée. */
+function refermerPartiesVides(): boolean {
+  let fait = false;
+  for (let i = partiesBr.length - 1; i >= 1; i--) {
+    if (partiesBr[i].salle.nombreJoueurs() > 0) continue;
+    console.log(`- partie BR ${partiesBr[i].id}`);
+    partiesBr.splice(i, 1);
+    fait = true;
+  }
+  return fait;
+}
 
-/** Les trois salles par mode : `modeDeSalle` retrouve le mode d'un client par identité de sa salle. */
-const SALLES: Record<ModeSalle, Salle> = { arene: salleArene, zombies: salleZombies, br: salleBr };
+/** Les salles par mode : `modeDeSalle` retrouve le mode d'un client par identité de sa salle. */
+const SALLES = (): Record<ModeSalle, Salle | readonly Salle[]> => ({ arene: salleArene, zombies: salleZombies, br: partiesBr.map((p) => p.salle) });
 
 /** Ids courts (« j1 », « j2 »… en base 36) : un id figure dans chaque joueur de chaque snap, `randomUUID` pesait 36 octets par occurrence. */
 let compteurId = 0;
@@ -351,10 +386,16 @@ function refuser(c: Client, code: Extract<MessageServeur, { t: "erreur" }>["code
   c.ws.close(1008, code);
 }
 
-/** Résumé des trois salles (choix du mode, compteurs). */
+/** Résumé d'une partie de Battle Royale (`salons.parties`). */
+function resumePartie(p: PartieBr): ResumePartieBr {
+  const r = p.salle.resumeBr() ?? { phase: "lobby" as const, joueurs: p.salle.nombreJoueurs(), vivants: 0 };
+  return { id: p.id, ...r };
+}
+
+/** Résumé des salles (choix du mode, compteurs) ; toutes les parties de Battle Royale dans `parties`. */
 function salons(): MessageServeur {
   const z = salleZombies.resumeZombies() ?? { phase: "lobby" as const, joueurs: salleZombies.nombreJoueurs(), manche: 0 };
-  return messageSalons({ joueurs: salleArene.nombreJoueurs(), enJeu: salleArene.nombreEnJeu() }, z, salleBr.resumeBr());
+  return messageSalons({ joueurs: salleArene.nombreJoueurs(), enJeu: salleArene.nombreEnJeu() }, z, salleBr.resumeBr(), partiesBr.map(resumePartie));
 }
 let dernierSalons = "";
 
@@ -368,25 +409,41 @@ function diffuserSalons(vers?: Client): void {
 }
 
 /**
- * Changement de salle (`mode`). Refusé AVANT de quitter l'ancienne salle (sinon `connecter` renverrait `erreur{plein}` et la socket serait
- * fermée) : en jeu (`lobby`), salle d'arrivée pleine (`plein`). Le pseudo et l'id sont conservés ; la nouvelle salle répond `mode` (écho) puis `bienvenue`.
+ * Changement de salle (`mode`), ou de partie de Battle Royale (`partie`). Refusé AVANT de quitter l'ancienne salle (sinon `connecter`
+ * renverrait `erreur{plein}` et la socket serait fermée) : en jeu (`lobby`), salle d'arrivée pleine (`plein`), plus de partie possible
+ * (`limite`). Le pseudo et l'id sont conservés ; la nouvelle salle répond `mode` (écho, avec la partie) puis `bienvenue`.
  */
-function changerMode(c: Client, mode: unknown, maintenant: number): void {
+function changerMode(c: Client, mode: unknown, partie: unknown, maintenant: number): void {
+  const salles = SALLES();
+  const salleActuelle = modeDeSalle(c.salle, salles);
   const decision = decisionMode({
-    mode, salleActuelle: modeDeSalle(c.salle, SALLES), enJeu: c.salle.inspecter(c.id)?.enJeu ?? false,
-    joueursCible: (MODES_SALLE as readonly unknown[]).includes(mode) ? SALLES[mode as ModeSalle].nombreJoueurs() : 0, version: c.version,
+    mode, salleActuelle, enJeu: c.salle.inspecter(c.id)?.enJeu ?? false,
+    joueursCible: mode === "arene" ? salleArene.nombreJoueurs() : mode === "zombies" ? salleZombies.nombreJoueurs() : 0, version: c.version,
+    partie, partieActuelle: partieDeSalle(c.salle)?.id ?? null,
+    parties: partiesBr.map((p) => ({ id: p.id, joueurs: p.salle.nombreJoueurs(), phase: p.salle.resumeBr()?.phase ?? "lobby" })),
+    creerPossible: partiesBr.length < PARTIES_BR_MAX,
   });
   if (!decision) return;
   if (decision.action === "version") return refuser(c, "version", "Version du protocole incompatible : rechargez la page.");
-  if (decision.action === "echo") { envoyer(c, JSON.stringify({ t: "mode", mode: decision.mode } satisfies MessageServeur)); return; }
+  if (decision.action === "echo") {
+    envoyer(c, JSON.stringify({ t: "mode", mode: decision.mode, ...(decision.partie ? { partie: decision.partie } : {}) } satisfies MessageServeur));
+    return;
+  }
   if (decision.action === "refus") { envoyer(c, JSON.stringify({ t: "refus", action: "mode", raison: decision.raison } satisfies MessageServeur)); return; }
-  const cible = SALLES[decision.mode];
+  let partieCible: PartieBr | null = null;
+  if (decision.mode === "br") {
+    partieCible = decision.partie === PARTIE_NOUVELLE ? ouvrirPartieBr() : partiesBr.find((p) => p.id === decision.partie) ?? null;
+    if (!partieCible) return;
+  }
+  const cible = decision.mode === "arene" ? salleArene : decision.mode === "zombies" ? salleZombies : partieCible!.salle;
   const pseudo = c.salle.inspecter(c.id)?.pseudo ?? "";
   const ancienne = c.salle;
   const depart = ancienne.deconnecter(c.id, maintenant);
   c.salle = cible; // avant de diffuser le départ : le client ne reçoit plus rien de l'ancienne salle
   diffuser(ancienne, depart);
-  diffuser(cible, avecJeton(c, [{ a: c.id, m: { t: "mode", mode: decision.mode } }, ...cible.connecter(c.id, pseudo, maintenant)]));
+  const echo: MessageServeur = { t: "mode", mode: decision.mode, ...(partieCible ? { partie: partieCible.id } : {}) };
+  diffuser(cible, avecJeton(c, [{ a: c.id, m: echo }, ...cible.connecter(c.id, pseudo, maintenant)]));
+  refermerPartiesVides();
   diffuserSalons();
 }
 
@@ -415,7 +472,7 @@ function traiter(c: Client, m: MessageClient, maintenant: number): void {
   }
   if (m.t === "bonjour") return;
   if (m.t !== "ping" && m.t !== "vueScores") c.utileT = maintenant;
-  if (m.t === "mode") return changerMode(c, m.mode, maintenant);
+  if (m.t === "mode") return changerMode(c, m.mode, m.partie, maintenant);
   diffuser(c.salle, c.salle.recevoir(c.id, m, maintenant));
 }
 
@@ -449,7 +506,11 @@ const http = createServer((req, res) => {
         // (v8) sessions coupées qui attendent leur reprise
         enSuspens: enSuspens.size,
       },
-      br: { joueurs: salleBr.nombreJoueurs(), enJeu: salleBr.nombreEnJeu(), phase: b?.phase ?? "lobby", vivants: b?.vivants ?? 0 },
+      br: {
+        joueurs: salleBr.nombreJoueurs(), enJeu: salleBr.nombreEnJeu(), phase: b?.phase ?? "lobby", vivants: b?.vivants ?? 0,
+        // toutes les parties, salle permanente comprise
+        parties: partiesBr.map((p) => ({ ...resumePartie(p), enJeu: p.salle.nombreEnJeu() })),
+      },
       ticMaxMs: Math.round(Math.max(mesuresTic.maxFenetre, mesuresTic.maxPrecedente) * 100) / 100,
       ticsLents: mesuresTic.lents,
       ...(maintenant - mesuresTic.dernierLentT < FENETRE_TIC_MS && mesuresTic.dernierLentT > 0 ? { alerte: true } : {}),
@@ -522,8 +583,8 @@ wss.on("connection", (ws, req) => {
 
 /** Membre du lobby du Battle Royale qui attend l'hôte avec au moins un autre joueur : jamais recyclé pour inactivité. */
 function attendDansLobbyBr(c: Client): boolean {
-  if (c.salle !== salleBr) return false;
-  const r = salleBr.resumeBr();
+  if (!partieDeSalle(c.salle)) return false;
+  const r = c.salle.resumeBr();
   return !!r && r.phase === "lobby" && r.joueurs >= 2;
 }
 
@@ -546,15 +607,20 @@ const timerTic = setInterval(() => {
   if (salleZombies.nombreJoueurs() > 0) {
     try { diffuser(salleZombies, salleZombies.tic(Date.now())); } catch (e) { console.error("tic zombies:", e); }
   }
-  if (salleBr.nombreJoueurs() > 0) {
-    try { diffuser(salleBr, salleBr.tic(Date.now())); } catch (e) { console.error("tic br:", e); }
+  for (const { salle } of partiesBr) {
+    if (salle.nombreJoueurs() === 0) continue;
+    try { diffuser(salle, salle.tic(Date.now())); } catch (e) { console.error("tic br:", e); }
   }
   noterTic(performance.now() - debut, Date.now());
 }, TIC_MS);
 
 // Résumé des salles : à tous, une fois par seconde s'il a changé (le choix du mode affiche les compteurs en direct)
 const timerSalons = setInterval(() => {
-  try { diffuserSalons(); } catch (e) { console.error("salons:", e); }
+  try {
+    // une partie de Battle Royale vidée par une déconnexion est refermée ici (une fois par seconde suffit)
+    refermerPartiesVides();
+    diffuserSalons();
+  } catch (e) { console.error("salons:", e); }
 }, 1000);
 
 http.listen(PORT, "0.0.0.0", () => {

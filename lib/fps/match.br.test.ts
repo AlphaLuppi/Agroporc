@@ -174,7 +174,7 @@ describe("lobby, lancement, admission", () => {
     expect(types(sorties)).toEqual(["bienvenue", "presence", "br"]);
     expect(messages(sorties, "bienvenue")[0].match).toMatchObject({ phase: "jeu", objectif: 0, fin: null });
     expect(dernierEtat(sorties)).toMatchObject({ phase: "lobby", hote: "a", capacite: BR.joueursMax, minJoueurs: BR.joueursMin, avion: null, zone: null });
-    expect(s.resumeBr()).toEqual({ phase: "lobby", joueurs: 1, vivants: 0 });
+    expect(s.resumeBr()).toEqual({ phase: "lobby", joueurs: 1, vivants: 0, hote: "Alice" });
     expect(s.nombreEnJeu()).toBe(0);
     // le deuxième arrive : tout le monde apprend la liste
     const deux = s.connecter("b", "Bob", T0 + 10);
@@ -325,6 +325,45 @@ describe("lobby, lancement, admission", () => {
     expect(messages(tic, "presence")[0].joueurs.filter((x) => x.enJeu)).toHaveLength(50);
     expect(b.s.nombreEnJeu()).toBe(50);
     expect(dernierEtat(reponses)!.joueurs).toHaveLength(50);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+describe("spectateur venu regarder la partie en cours (2026-10-29)", () => {
+  it("`regarder` : en jeu sans être en vie, snaps reçus mais absent du snap, `spec` dans la présence, hors des partants ; la fin de partie le ramène au lobby", () => {
+    const b = jusquAuVol(["a", "b"]);
+    b.log.push(...b.s.connecter("c", "Cora", b.t));
+    // au lobby de la salle, pas encore spectateur
+    expect(j(b.s, "c").enJeu).toBe(false);
+    const r = envoyer(b, "c", { t: "regarder" });
+    expect(r[0]).toEqual({ a: "c", m: { t: "spectateur" } });
+    expect(messages(r, "br")).toHaveLength(1);
+    expect(j(b.s, "c")).toMatchObject({ enJeu: true, vivant: false, spectateur: true });
+    // une seconde demande : déjà en jeu
+    expect(envoyer(b, "c", { t: "regarder" })).toEqual([{ a: "c", m: { t: "refus", action: "regarder", raison: "deja" } }]);
+    const sorties = avancer(b, 1_000);
+    expect(b.s.joueursPublics().find((x) => x.id === "c")).toMatchObject({ enJeu: true, spec: true });
+    // le snap part aux joueurs en jeu (le spectateur compris) mais ne le contient pas
+    expect(sorties.some((x) => recoit(x, "c", true) && x.m.t === "snap")).toBe(true);
+    for (const x of messages(sorties.filter((y) => y.a === "joueurs"), "snap")) expect(x.j.some((e) => e.id === "c")).toBe(false);
+    // il ne compte pas dans la partie
+    expect(etatBr(b)).toMatchObject({ vivants: 2, total: 2 });
+    // retour au lobby : plus en jeu, plus spectateur
+    service(b).reinitialiser(b.t);
+    expect(j(b.s, "c")).toMatchObject({ enJeu: false, spectateur: false });
+    // au lobby, rien à regarder
+    expect(envoyer(b, "c", { t: "regarder" })).toEqual([{ a: "c", m: { t: "refus", action: "regarder", raison: "lobby" } }]);
+  });
+
+  it("un éliminé sorti de la partie peut revenir la regarder ; un admis encore en lice ne le peut pas", () => {
+    const b = lobby(["a", "b", "c"]);
+    envoyer(b, "a", { t: "lancerPartie" });
+    // admis au décompte : il monte dans l'avion, il ne regarde pas
+    expect(envoyer(b, "a", { t: "regarder" })).toEqual([{ a: "a", m: { t: "refus", action: "regarder", raison: "lobby" } }]);
+    expect(service(b).peutRegarder("a")).toBe(false);
+    // un membre arrivé après le lancement le peut
+    b.log.push(...b.s.connecter("d", "Dan", b.t));
+    expect(service(b).peutRegarder("d")).toBe(true);
   });
 });
 

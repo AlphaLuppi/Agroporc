@@ -12,7 +12,7 @@ import { oeilDe } from "./protocole";
  * `rejeuMs` : durée du rejeu, dont `apresMortMs` après l'instant de la mort ; `tamponMs` : profondeur des tampons longs ; `gelApresMortMs` :
  * les tampons se figent ce temps après la réception de `mort` (il faut y avoir reçu la fin du rejeu, `apresMortMs` après la mort).
  */
-export const KILLCAM = { rejeuMs: 3000, apresMortMs: 500, carteMs: 1000, tamponMs: 5000, gelApresMortMs: 1100 } as const;
+export const KILLCAM = { rejeuMs: 3000, apresMortMs: 500, carteMs: 1000, tamponMs: 5000, gelApresMortMs: 1100, passerApresMs: 1000 } as const;
 export type PhaseKillcam = "rejeu" | "carte" | "termine";
 export interface Killcam {
   tueurId: string; tueur: InfoTueur | null; tMortServeur: number;
@@ -44,6 +44,15 @@ export function avancerKillcam(k: Killcam, dtS: number): Killcam {
   const ms = Number.isFinite(dtS) && dtS > 0 ? dtS * 1000 : 0;
   const ecouleMs = Math.min(DUREE_TOTALE_MS, k.ecouleMs + ms);
   return { ...k, ecouleMs, phase: phaseA(k.avecRejeu, ecouleMs) };
+}
+
+/**
+ * La TOUCHE « passer » (Espace par défaut, partagée avec le saut) peut-elle sauter le rejeu ? Pas pendant sa première seconde
+ * (`passerApresMs`) : on saute sans arrêt en combat, un appui juste après la mort sautait tout le rejeu et l'on ne voyait jamais le tueur viser.
+ * Le bouton « Passer » de l'écran, lui, agit tout de suite.
+ */
+export function touchePasserPermise(k: Killcam): boolean {
+  return k.phase === "rejeu" && k.ecouleMs >= KILLCAM.passerApresMs;
 }
 
 /** saute le rejeu → carte (sans effet en carte ou terminé ; la barre de progression saute à la fin du rejeu, la carte garde ses 1,5 s). */

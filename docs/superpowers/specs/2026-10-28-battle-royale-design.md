@@ -9,7 +9,7 @@ Date : 2026-10-28 (révisée après deux critiques le 2026-10-29) · Branche : `
 Décisions prises sur les questions ouvertes pendant l'implémentation :
 
 - **Reconnexion en cours de partie** : hors périmètre v1 (la place est éliminée, voir « Décisions de conception » et « Risques »).
-- **Chat vocal** : désactivé en BR (les messages `voix*` sont ignorés par la salle).
+- **Chat vocal** : désactivé en BR (les messages `voix*` sont ignorés par la salle). **Remplacé le 2026-10-29** par la proximité entre vivants et le canal des spectateurs, avec les parties multiples et le spectateur venu regarder : `2026-10-29-br-voix-parties-design.md`.
 - **Rayon final de la zone** : 0 (palier 6), avec le départage de la clé de place de « Éliminations » ; la zone fermée tue tous les survivants, donc la partie ne dure jamais indéfiniment.
 - **Partie comptée** : en plus de 2 joueurs atterris, durée minimale réglable par l'essai serveur `PDJ_FPS_BR_VALIDE_MS` (défaut 60 000 ms, `BR.partieValideMinMs`).
 - **Snap** : les morts sortent du snap `joueurs` `BR.retraitMortSnapMs` (5 s) après leur mort et restent dans `presence` ; le client tolère l'absence de sa propre entrée.

@@ -106,7 +106,7 @@ import { MondeTigres, coupDeMonTigre, tracerTigres, trouverTigreCouteau, type Ti
 import { hitboxTigre } from "./tigre-arene";
 import { creerFeux, type SourceFeu } from "./rendu-feux";
 import { creerChatVocal } from "./voix-rtc";
-import { LiensVoixKillcam } from "./voix";
+import { LiensVoixKillcam, ciblesVoixBr, type ParticipantVoixBr } from "./voix";
 import { EchantillonsImage, JournalEvenements, VueJoueur, decalageVue, evenementVue, type EvenementVue } from "./vue-joueur";
 import { creerSons, type PositionSon } from "./sons";
 import { angleRelatif, anglesVers, fovVerticalDeg, lissage, panSon } from "./vue";
@@ -303,8 +303,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   const interp = new Interpolateur();
   /** chat vocal de proximité (v3 §5) : activé par l'hôte (menu pause), volumes réglés à chaque image d'après les positions */
   const voix = creerChatVocal((m) => client.envoyer(m));
-  // Battle Royale : aucune connexion hors des liens de killcam, dès la première présence
-  if (modeBR) voix.restreindre([]);
+  // Battle Royale : connexions choisies par le jeu (voisins en vie, ou spectateurs entre eux), aucune avant le premier calcul
+  if (modeBR) voix.cibler({ voulus: [], admis: [] });
 
   // ---------- monde dynamique (voitures PNJ et conduisibles, Elsa) ----------
   const nbPnj = flotte(construireCircuits()).length;
@@ -489,6 +489,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   let usageSoin: { objet: "bandage" | "potion"; finT: number } | null = null;
   /** place provisoire à ma mort (joueurs en vie avant elle), null tant que je vis */
   let placeBr: number | null = null;
+  /** (BR) je regarde la partie sans y jouer (`regarder` accepté par le serveur) */
+  let spectateurExterne = false;
   let suivi = new SuiviSpectateur();
   /** objet que j'ai demandé à ramasser, pour le son de la réponse `ramasse` (l'objet disparaît du butin à `butin{retires}`) */
   let ramassageEnAttente: { id: number; genre: string } | null = null;
@@ -1550,6 +1552,26 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     enReplay = false;
   }
 
+  /**
+   * (BR) Spectateur venu regarder la partie en cours (`spectateur`, réponse à `regarder`) : comme un éliminé dont la killcam est passée,
+   * sans place ni cause ; il suit le joueur en vie le plus proche du centre de la carte.
+   */
+  function devenirSpectateur() {
+    if (apparu) return;
+    apparu = true;
+    vivant = false;
+    spectateurExterne = true;
+    placeBr = null;
+    usageSoin = null;
+    vol.reinitialiser();
+    entreeAvionAttendue = false;
+    const b = monde.bornes;
+    moi = etatInitial([(b.x0 + b.x1) / 2, 0, (b.z0 + b.z1) / 2]);
+    suivi = new SuiviSpectateur(client.id ?? "");
+    suivi.commencer(null, moi.p, candidatsSuivi());
+    emettreHud(true);
+  }
+
   function apparaitre(m: Extract<MessageServeur, { t: "apparition" }>) {
     const deboutLocal = apparu && vivant;
     aTerreZ = false;
@@ -1875,8 +1897,12 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       case "refus":
         embarquementFin = 0;
         cb.evenement({ type: "refus", action: m.action, raison: m.raison });
-        // arène pleine (16 agents en jeu) : on ne reste pas devant un rond-point vide à attendre une apparition qui n'arrivera pas
-        if (m.action === "rejoindre") cb.sortir();
+        // arène pleine (16 agents en jeu) : on ne reste pas devant un rond-point vide à attendre une apparition qui n'arrivera pas ;
+        // BR : plus de partie à regarder (elle vient de finir)
+        if (m.action === "rejoindre" || m.action === "regarder") cb.sortir();
+        break;
+      case "spectateur":
+        if (modeBR) devenirSpectateur();
         break;
       case "descente":
         // sortie volontaire ou expulsion (nouveau match) : on se téléporte, sans toucher aux munitions
@@ -2266,7 +2292,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
           break;
         case "interagir": interagir(); break;
         case "siege": changerSiege(); break;
-        case "passer": if (kc.actif() && kc.phase() === "rejeu") kc.passer(); break;
+        case "passer": if (kc.actif() && kc.touchePasserPermise()) kc.passer(); break;
         case "invoquer": if (!modeZ) invoquer(); break;
         case "fumigene": if (!modeZ) lancerFumigene(); break;
         case "frappeAerienne": break;
@@ -2301,7 +2327,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     const actions = index.get(e.code);
     // l'action « passer » (Espace par défaut, remappable) saute le rejeu de la killcam ; elle partage Espace avec « saut », qui ne doit
     // pas partir pendant la mort (sinon un saut en attente suit le joueur à sa réapparition)
-    if (actions?.includes("passer") && kc.actif() && kc.phase() === "rejeu") { e.preventDefault(); if (!e.repeat) kc.passer(); return; }
+    // (pas pendant la première seconde du rejeu : un saut juste après la mort ne doit pas le faire disparaître)
+    if (actions?.includes("passer") && kc.actif() && kc.phase() === "rejeu") { e.preventDefault(); if (!e.repeat && kc.touchePasserPermise()) kc.passer(); return; }
     // le tableau des scores (Tab par défaut) est géré par l'UI React, qui bloque elle-même le focus
     if (actions && !actions.includes("scores")) e.preventDefault();
     if (e.repeat) return;
@@ -2505,7 +2532,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
         invitePrix: invZ.prix, inviteAssez: invZ.bloque ? true : invZ.assez, reanime: reanimCible !== null || reparFenetre !== null,
       } : {}),
       // BR : une plaque « ramasser » en refus (aucune arme compatible, pile pleine) passe en danger comme un achat sans argent
-      ...(modeBR ? { mode: "br" as const, inviteAssez: !invBr?.refuse, ...etatHudBr(entreeHudBr()) } : {}),
+      ...(modeBR ? { mode: "br" as const, inviteAssez: !invBr?.refuse, ...etatHudBr(entreeHudBr()), ...(spectateurExterne ? { spectateurExterne: true } : {}) } : {}),
       dansFumee: vivant && (monstresImage?.fumigenes?.some((f) => Math.hypot(moi.p[0] - f.p[0], moi.p[2] - f.p[2]) <= 12) ?? false),
       ...(champVue ?? {}),
       vueEmpruntee: champVue !== null,
@@ -2690,15 +2717,43 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   const sourcesFeux: SourceFeu[] = [];
   /** positions des têtes des autres joueurs pour le chat vocal (réutilisée d'une image à l'autre) */
   const sourcesVoix = new Map<string, { p: Vec3; vivant: boolean; direct?: boolean }>();
+  /** (BR) dernier calcul des correspondants du chat vocal (s, horloge du jeu) : 4 fois par seconde suffisent */
+  let ciblesVoixT = -Infinity;
+  const autresVoix: ParticipantVoixBr[] = [];
+  /**
+   * (BR) Correspondants du chat vocal : en vie, les voisins en vie les plus proches ; éliminé ou spectateur venu regarder, les autres
+   * spectateurs, que les joueurs en vie n'entendent jamais ; plus le lien de killcam (cf. `ciblesVoixBr`).
+   */
+  function ciblerVoixBr(liens: readonly string[], spectateur: boolean) {
+    if (t - ciblesVoixT < 0.25) return;
+    ciblesVoixT = t;
+    autresVoix.length = 0;
+    for (const j of infos.values()) {
+      if (j.id === client.id || !j.enJeu) continue;
+      const e = j.spec ? undefined : etats.get(j.id);
+      autresVoix.push({ id: j.id, voix: !!j.voix, spectateur: !!j.spec, p: e && e.vivant ? [e.p[0], e.p[1] + oeilDe(e), e.p[2]] : null });
+    }
+    const moiVoix: ParticipantVoixBr = {
+      id: client.id ?? "", voix: voix.actif(), spectateur, p: !spectateur && vivant && !enVolBr() ? oeil() : null,
+    };
+    voix.cibler(ciblesVoixBr(moiVoix, autresVoix, liens, new Set(voix.connexions())));
+  }
   /**
    * Chat vocal : on entend depuis sa propre tête (même pendant la killcam : le présent, pas le rejeu). Une victime et son tueur
-   * (lien de killcam) s'entendent à plein volume où qu'ils soient ; en BR ce sont les seules connexions.
+   * (lien de killcam) s'entendent à plein volume où qu'ils soient. En BR, un spectateur (éliminé ou venu regarder) entend les autres
+   * spectateurs à plein volume, comme au téléphone.
    */
   function majVoix() {
     const liens = liensVoix.actifs(t * 1000);
-    voix.restreindre(modeBR ? liens : null);
+    const spectateurBr = modeBR && apparu && !vivant;
+    if (modeBR) ciblerVoixBr(liens, spectateurBr);
     if (!voix.actif()) return;
     sourcesVoix.clear();
+    if (spectateurBr) {
+      for (const id of voix.connexions()) sourcesVoix.set(id, { p: oeil(), vivant: true, direct: true });
+      voix.placer(oeil(), lacet, sourcesVoix);
+      return;
+    }
     for (const [id, e] of etats) {
       if (id === client.id) continue;
       sourcesVoix.set(id, { p: [e.p[0], e.p[1] + oeilDe(e), e.p[2]], vivant: e.vivant, ...(liens.includes(id) ? { direct: true } : {}) });
@@ -3438,7 +3493,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   }
   raf = requestAnimationFrame(frame);
 
-  client.envoyer({ t: "rejoindre", ...choixEquipement() });
+  // BR : regarder la partie en cours sans y jouer (réponse `spectateur`), sinon monter dans l'avion
+  client.envoyer(modeBR && opts.spectateur ? { t: "regarder" } : { t: "rejoindre", ...choixEquipement() });
   emettreHud(true);
 
   // ---------- poignée ----------
@@ -3650,9 +3706,15 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       },
       killcam() {
         if (!kc.actif()) return null;
+        // la victime (moi) telle que le tueur la voyait à l'instant rejoué, et son avatar dessiné ou non
+        const victime = enReplay && joueursRejouesCache ? joueursRejouesCache.get(client.id ?? "") ?? null : null;
         return {
           phase: kc.phase(), progression: kc.progression(), tueur: kc.tueurId(), info: kc.info(), tempsServeur: kc.tempsServeur(),
-          camera: kc.camera(), rejeu: enReplay,
+          camera: kc.camera(), rejeu: enReplay, cameraRendue: { pos: [...camPos], lacet: camLacet, tangage: camTangage },
+          victime: victime ? { p: victime.p, vivant: victime.vivant, posture: victime.posture } : null,
+          // avatar de la victime dessiné (dans la scène, visible) et projection de son buste sur l'écran (NDC, −1..1 ; z < 1 : devant la caméra)
+          avatarVictime: (() => { const g = distants.get(client.id ?? "")?.avatar.group; return !!g && g.visible && g.parent === scene; })(),
+          ndcVictime: victime ? (() => { const v = new THREE.Vector3(victime.p[0], victime.p[1] + 1.2, victime.p[2]).project(camera); return [v.x, v.y, v.z]; })() : null,
         };
       },
       voix() {

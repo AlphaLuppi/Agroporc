@@ -208,10 +208,15 @@ export function creerServiceBr(ctx: ContexteSalle, opts: OptionsServiceBr): Serv
   // statistiques
   // ---------------------------------------------------------------------------------------------
 
+  /** une écriture de la persistance a échoué : les statistiques de ce service vivent en mémoire jusqu'à la prochaine écriture réussie */
+  let enMemoire = false;
+
   function stats(): StatsBr {
-    if (!statsCourantes) {
-      try { statsCourantes = opts.stats ? opts.stats.lire() : statsVides(); } catch { statsCourantes = statsVides(); }
+    // la persistance est partagée par toutes les parties du serveur (plusieurs salles BR) : la relire, une autre a pu enregistrer depuis
+    if (opts.stats && !enMemoire) {
+      try { statsCourantes = opts.stats.lire(); } catch { statsCourantes ??= statsVides(); }
     }
+    statsCourantes ??= statsVides();
     return statsCourantes;
   }
 
@@ -219,9 +224,11 @@ export function creerServiceBr(ctx: ContexteSalle, opts: OptionsServiceBr): Serv
     if (partie.lignes.length === 0) return;
     try {
       statsCourantes = opts.stats ? opts.stats.enregistrer(partie) : appliquerPartie(stats(), partie);
+      enMemoire = false;
     } catch {
       // l'écriture a échoué : la partie n'est pas bloquée, les statistiques restent en mémoire
       statsCourantes = appliquerPartie(stats(), partie);
+      enMemoire = true;
     }
   }
 
@@ -620,13 +627,21 @@ export function creerServiceBr(ctx: ContexteSalle, opts: OptionsServiceBr): Serv
       return phase === "decompte" || phase === "vol" || phase === "jeu";
     },
 
+    peutRegarder(id) {
+      if (phase !== "decompte" && phase !== "vol" && phase !== "jeu") return false;
+      const m = membres.get(id);
+      // un admis encore en lice monte dans l'avion (`rejoindre`) : spectateur, il ferait attendre le décompte jusqu'au bout
+      return !m || !m.admis || !!m.elimine;
+    },
+
     etat() {
       return etatA(dernierT);
     },
 
     resume(): ResumeBr {
       const palier = plan && enVolOuJeu() ? etatZone(plan, dernierT).palier : undefined;
-      return { phase, joueurs: ctx.joueurs().length, vivants: vivants(), ...(palier !== undefined ? { palier } : {}) };
+      const h = ctx.joueurs()[0];
+      return { phase, joueurs: ctx.joueurs().length, vivants: vivants(), ...(palier !== undefined ? { palier } : {}), ...(h ? { hote: h.pseudo } : {}) };
     },
   };
 }
