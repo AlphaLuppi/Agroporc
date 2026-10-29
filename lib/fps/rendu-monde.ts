@@ -281,7 +281,7 @@ function geometrieAnneau(): THREE.BufferGeometry {
  * Le Truck Muche en repère local (avant = −z, droite = +x, origine au sol au centre) : châssis, cabine, caisse en PANNEAUX minces (on voit
  * dedans par le passe-plat ouvert du flanc droit), comptoir, volet relevé en auvent, roues et enseigne. Un seul maillage fusionné.
  */
-function geometrieTruck(): THREE.BufferGeometry {
+function geometrieTruck(avecRoues = true): THREE.BufferGeometry {
   const { longueur: L, largeur: l, hauteur: H, cabine, hauteurCabine, plancher, comptoir, linteau, fenetreZ, fenetreLargeur } = TRUCK;
   const e = 0.06; // épaisseur des panneaux
   const z0 = -L / 2 + cabine, z1 = L / 2; // caisse
@@ -312,8 +312,8 @@ function geometrieTruck(): THREE.BufferGeometry {
   m.push(nu(volet));
   // enseigne sur le toit, côté passe-plat
   b(0.08, 0.55, 3.6, l / 2 - 0.25, H + 0.35, fenetreZ);
-  // roues (avant sous la cabine, arrière sous la caisse)
-  for (const sx of [-1, 1]) {
+  // roues (avant sous la cabine, arrière sous la caisse) ; (v8) le mini Truck des zombies a les siennes, à part, qui tournent
+  for (const sx of avecRoues ? [-1, 1] : []) {
     for (const z of [-L / 2 + 1, L / 2 - 1.3]) {
       const r = new THREE.CylinderGeometry(0.45, 0.45, 0.3, 12, 1, false);
       r.rotateZ(Math.PI / 2);
@@ -332,16 +332,64 @@ function geometrieTruck(): THREE.BufferGeometry {
   return fusion;
 }
 
+/** (v8, zombies) Options du Truck Muche seul : roues à part qui tournent, phares rouges qui percent le brouillard, couleur, enseigne. */
+export interface OptionsModeleTruck {
+  /** roues séparées (`roues`), à faire tourner par l'appelant autour de x */
+  roues?: boolean;
+  /** phares rouges : deux lueurs et deux faisceaux additifs, hors brouillard */
+  phares?: boolean;
+  /** couleur du fil de fer (0xffb35c, celle du Truck garé, par défaut) */
+  couleur?: number;
+  /** enseigne « LE TRUCK MUCHE » (par défaut) */
+  enseigne?: boolean;
+  /** longueur (m, du repère du modèle) des faisceaux des phares */
+  longueurFaisceau?: number;
+}
+/** Le Truck Muche seul (`creerModeleTruckMuche`) : groupe, matériaux, roues (vides sans l'option) et rayon d'une roue, phares. */
+export interface ModeleTruckMuche {
+  group: THREE.Group;
+  materiaux: { ligne: THREE.LineBasicMaterial; fond: THREE.MeshBasicMaterial };
+  roues: THREE.Object3D[];
+  rayonRoue: number;
+  /** groupe des phares (null sans l'option) : `intensite` règle leur éclat (klaxon, mèche), 0..1+ */
+  phares: { groupe: THREE.Group; intensite(k: number): void } | null;
+  dispose(): void;
+}
+
+const RAYON_ROUE_TRUCK = 0.45;
+const COULEUR_PHARES = 0xff2418;
+
+/** Disque doux (lueur d'un phare). */
+function textureHalo(): THREE.Texture {
+  if (typeof document === "undefined") return new THREE.Texture();
+  const cv = document.createElement("canvas");
+  cv.width = cv.height = 64;
+  const ctx = cv.getContext("2d");
+  if (ctx) {
+    const g = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+    g.addColorStop(0, "rgba(255,255,255,1)");
+    g.addColorStop(0.35, "rgba(255,255,255,0.45)");
+    g.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, 64, 64);
+  }
+  const t = new THREE.CanvasTexture(cv);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
 /**
  * (v7, zombies) Le Truck Muche seul (manches de livraison) : la même géométrie que le Truck garé de l'arène, enseigne comprise ; avant = −z
- * de son repère, origine au sol au centre. À libérer avec `dispose`.
+ * de son repère, origine au sol au centre. (v8) Options : roues à part qui tournent (le mini Truck Muche, réduit à 0,3 par l'appelant),
+ * phares rouges qui percent le brouillard, couleur. À libérer avec `dispose`.
  */
-export function creerModeleTruckMuche(): { group: THREE.Group; materiaux: { ligne: THREE.LineBasicMaterial; fond: THREE.MeshBasicMaterial }; dispose(): void } {
+export function creerModeleTruckMuche(o: OptionsModeleTruck = {}): ModeleTruckMuche {
   const group = new THREE.Group();
-  const geo = enPiece(geometrieTruck());
-  const m = creerMateriaux(new THREE.Color(COULEUR_TRUCK));
+  const aLiberer: { dispose(): void }[] = [];
+  const geo = enPiece(geometrieTruck(!o.roues));
+  const m = creerMateriaux(new THREE.Color(o.couleur ?? COULEUR_TRUCK));
   group.add(new THREE.Mesh(geo.geo, m.fond), new THREE.LineSegments(geo.aretes, m.ligne));
-  const tex = textureEnseigne();
+  const tex = o.enseigne === false ? null : textureEnseigne();
   let enseigne: THREE.Mesh | null = null;
   if (tex) {
     enseigne = new THREE.Mesh(new THREE.PlaneGeometry(3.4, 0.5), new THREE.MeshBasicMaterial({ map: tex, transparent: true, side: THREE.DoubleSide }));
@@ -349,13 +397,72 @@ export function creerModeleTruckMuche(): { group: THREE.Group; materiaux: { lign
     enseigne.rotation.y = Math.PI / 2;
     group.add(enseigne);
   }
+  // roues à part : un cylindre d'axe x et une croix de rayons, pour qu'on les voie tourner
+  const roues: THREE.Object3D[] = [];
+  if (o.roues) {
+    const { longueur: L, largeur: l } = TRUCK;
+    const cyl = new THREE.CylinderGeometry(RAYON_ROUE_TRUCK, RAYON_ROUE_TRUCK, 0.3, 12, 1, false);
+    cyl.rotateZ(Math.PI / 2);
+    const rayons = mergeGeometries([boite(0.32, 0.08, RAYON_ROUE_TRUCK * 1.9), boite(0.32, RAYON_ROUE_TRUCK * 1.9, 0.08)], false)!;
+    const gRoue = enPiece(cyl), gRayons = enPiece(rayons);
+    aLiberer.push({ dispose: () => { libererPiece(gRoue); libererPiece(gRayons); } });
+    for (const sx of [-1, 1]) {
+      for (const z of [-L / 2 + 1, L / 2 - 1.3]) {
+        const r = new THREE.Group();
+        r.position.set(sx * (l / 2 - 0.12), RAYON_ROUE_TRUCK, z);
+        r.add(new THREE.Mesh(gRoue.geo, m.fond), new THREE.LineSegments(gRoue.aretes, m.ligne), new THREE.LineSegments(gRayons.aretes, m.ligne));
+        group.add(r);
+        roues.push(r);
+      }
+    }
+  }
+  // phares rouges : deux lueurs à l'avant de la cabine, deux faisceaux en cône vers l'avant (additifs, sans brouillard)
+  let phares: ModeleTruckMuche["phares"] = null;
+  if (o.phares) {
+    const groupe = new THREE.Group();
+    const texHalo = textureHalo();
+    const matHalo = new THREE.SpriteMaterial({ map: texHalo, color: COULEUR_PHARES, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, fog: false, toneMapped: false });
+    const lf = o.longueurFaisceau ?? 16;
+    const cone = new THREE.ConeGeometry(lf * 0.15, lf, 16, 1, true);
+    // pointe au phare, ouverture vers l'avant (−z)
+    cone.translate(0, -lf / 2, 0);
+    cone.rotateX(Math.PI / 2);
+    const matCone = new THREE.MeshBasicMaterial({
+      color: COULEUR_PHARES, transparent: true, opacity: 0.07, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, fog: false, toneMapped: false,
+    });
+    aLiberer.push(texHalo, matHalo, cone, matCone);
+    const halos: THREE.Sprite[] = [];
+    for (const sx of [-1, 1]) {
+      const x = sx * (TRUCK.largeur / 2 - 0.4), y = 1.05, z = -TRUCK.longueur / 2 - 0.05;
+      const h = new THREE.Sprite(matHalo);
+      h.position.set(x, y, z);
+      h.scale.setScalar(1.1);
+      h.renderOrder = ORDRE_BASE + 3;
+      const c = new THREE.Mesh(cone, matCone);
+      c.position.set(x, y, z);
+      c.rotation.x = -0.08; // un peu vers le sol
+      c.renderOrder = ORDRE_BASE + 3;
+      groupe.add(h, c);
+      halos.push(h);
+    }
+    group.add(groupe);
+    phares = {
+      groupe,
+      intensite(k) {
+        matCone.opacity = 0.07 * Math.max(0, k);
+        matHalo.opacity = Math.min(1, 0.6 + 0.4 * k);
+        for (const h of halos) h.scale.setScalar(1.1 * (0.8 + 0.5 * k));
+      },
+    };
+  }
   return {
-    group, materiaux: m,
+    group, materiaux: m, roues, rayonRoue: RAYON_ROUE_TRUCK, phares,
     dispose() {
       libererPiece(geo);
       m.ligne.dispose(); m.fond.dispose();
       if (enseigne) { enseigne.geometry.dispose(); (enseigne.material as THREE.Material).dispose(); }
       tex?.dispose();
+      for (const x of aLiberer) x.dispose();
       group.removeFromParent();
     },
   };

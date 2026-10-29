@@ -1,7 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EtatJoueurSnap, MessageServeur } from "./protocole";
 import { KILLCAM } from "./killcam";
-import { HorlogeServeur, Interpolateur, connecterArene, lerpAngle, urlArene, type SocketLike } from "./reseau";
+import { HorlogeServeur, Interpolateur, connecterArene, gardePosition, lerpAngle, urlArene, type SocketLike } from "./reseau";
+
+describe("gardePosition (v8, relève sans téléportation)", () => {
+  it("garde la position du client à moins de 3 m de celle du serveur, se replace au-delà ou pour une vraie apparition", () => {
+    expect(gardePosition({ p: [10, 0, 5], garder: true }, [11.5, 0, 6])).toBe(true);
+    expect(gardePosition({ p: [10, 0, 5], garder: true }, [14, 0, 5])).toBe(false);
+    expect(gardePosition({ p: [10, 0, 5] }, [10, 0, 5])).toBe(false);
+    // reprise après une coupure, debout : on reste où l'on est, même loin (la position serveur rattrape)
+    expect(gardePosition({ p: [10, 0, 5], garder: true }, [30, 0, 5], true)).toBe(true);
+    expect(gardePosition({ p: [10, 0, 5] }, [30, 0, 5], true)).toBe(false);
+  });
+});
 
 function joueur(id: string, x: number, extra: Partial<EtatJoueurSnap> = {}): EtatJoueurSnap {
   return {
@@ -205,7 +216,8 @@ class FauxSocket implements SocketLike {
   envoyes: string[] = [];
   constructor(public url: string) { FauxSocket.tous.push(this); }
   send(data: string) { this.envoyes.push(data); }
-  close() { this.readyState = 3; this.onclose?.({}); }
+  codeFermeture: number | undefined;
+  close(code?: number) { this.codeFermeture = code; this.readyState = 3; this.onclose?.({}); }
   ouvrir() { this.readyState = 1; this.onopen?.({}); }
   recevoir(m: MessageServeur) { this.onmessage?.({ data: JSON.stringify(m) }); }
   couper() { this.readyState = 3; this.onclose?.({}); }
@@ -248,6 +260,38 @@ describe("connecterArene", () => {
     expect(client.id).toBe("j7");
     expect(client.maintenantServeur()).toBe(107_000);
     client.fermer();
+  });
+
+  it("(v8) reconnexion : le bonjour demande à reprendre la session (id + jeton du dernier bienvenue), et la reprise garde l'id", () => {
+    const { client, socket } = demarrer();
+    const match = { numero: 1, fin: null, objectif: 0, phase: "jeu" as const, prochain: null };
+    socket().ouvrir();
+    expect(JSON.parse(socket().envoyes[0]).reprise).toBeUndefined();
+    socket().recevoir({ t: "bienvenue", id: "j7", couleur: "#fff", joueurs: [], maintenant: 0, match, jeton: "secret" });
+    // changement de salle : nouveau bienvenue sans jeton, même id, la session reste
+    socket().recevoir({ t: "bienvenue", id: "j7", couleur: "#fff", joueurs: [], maintenant: 0, match });
+    socket().couper();
+    vi.advanceTimersByTime(1000);
+    socket().ouvrir();
+    expect(JSON.parse(socket().envoyes[0])).toMatchObject({ t: "bonjour", reprise: { id: "j7", jeton: "secret" } });
+    socket().recevoir({ t: "bienvenue", id: "j7", couleur: "#fff", joueurs: [], maintenant: 0, match, jeton: "neuf", reprise: true });
+    expect(client.id).toBe("j7");
+    // reprise refusée (délai dépassé) : nouvelle inscription, nouvel id, la reconnexion suivante reprend celle-ci
+    socket().couper();
+    vi.advanceTimersByTime(1000);
+    socket().ouvrir();
+    expect(JSON.parse(socket().envoyes[0]).reprise).toEqual({ id: "j7", jeton: "neuf" });
+    socket().recevoir({ t: "bienvenue", id: "j9", couleur: "#fff", joueurs: [], maintenant: 0, match, jeton: "autre" });
+    expect(client.id).toBe("j9");
+    client.fermer();
+  });
+
+  it("(v8) fermer() est un départ volontaire : code 1000, le serveur ne garde pas la session pour une reprise", () => {
+    const { client, socket } = demarrer();
+    socket().ouvrir();
+    const s = socket();
+    client.fermer();
+    expect(s.codeFermeture).toBe(1000);
   });
 
   it("ping toutes les 2 s et applique le décalage du pong", () => {

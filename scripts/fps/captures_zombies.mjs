@@ -4,6 +4,10 @@
  * photographie la carte « Service de midi » depuis une liste de points de vue (téléportation CÔTÉ CLIENT seulement : le serveur garde le joueur au
  * départ, ce qui suffit pour photographier le décor), puis attend les premiers tigres aux fenêtres de l'open space.
  * Usage : node scripts/fps/captures_zombies.mjs   (E2E_OUT = dossier des captures, défaut <tmp>/pdj-captures-zombies ; E2E_URL / E2E_WS réutilisent des serveurs lancés)
+ * RAGDOLL=1 (avec PAUSE courte) : au lieu des points de vue, les morts désarticulées des tigres, une par arme (SCENARIOS, DELAIS en ms).
+ * ARMES=1 : (v8) au lieu des points de vue, les armes des zombies en main, de base et améliorées (camouflage, paire akimbo, viseurs, HUD
+ * gratiné ; `essayerArme` côté client seulement), la lunette thermique, un arc et une bourrasque, puis les nouvelles armes à la craie.
+ * SECRET=<étape> : (v8) la partie démarre à cette étape du grand secret (`PDJ_FPS_ZOMBIES_SECRET`), pour photographier son décor (avec VUES).
  */
 import { spawn, spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
@@ -39,6 +43,14 @@ const VUES = JSON.parse(process.env.VUES ?? "null") ?? [
   ["11-local-courant", [207, -40], [214, 1.4, -45.8]],
   ["12-labo-pap", [94, -36], [99, 1.2, -30.4]],
   ["13-fenetre-N2c-dedans", [117, -68], [114.65, 1.3, -78.15]],
+  // v8 : les deux cours à olivier (anneau d'entraînement), le parking serré de la Cour Ouest, les boîtes dans leur coin
+  ["14-olivier-cour-centre", [117, -47], [125.5, 2.6, -54.5]],
+  ["15-cour-centre-anneau", [140, -40], [118, 1.5, -64]],
+  ["16-olivier-cour-est", [170, -29], [180.5, 2.6, -36.5]],
+  ["17-cour-est-livraison-B3", [182, -30], [172.5, 1, -19.5]],
+  ["18-parking-rue", [60.7, -53.6], [85, 1.2, -47.6]],
+  ["19-parking-allees", [74.4, -61.2], [81.5, 1.2, -86]],
+  ["20-boite-B2-coin", [131, -68], [125.6, 0.6, -76.4]],
 ];
 
 mkdirSync(SORTIE, { recursive: true });
@@ -51,7 +63,7 @@ try {
     urlWs = `ws://localhost:${port}`;
     const b = spawnSync(process.execPath, ["scripts/build.mjs"], { cwd: join(RACINE, "serveur-fps"), encoding: "utf8" });
     if (b.status !== 0) throw new Error(b.stdout + b.stderr);
-    const srv = lancer(process.execPath, ["dist/index.js"], { cwd: join(RACINE, "serveur-fps"), env: { ...process.env, PORT: String(port), SCENE_JSON: join(RACINE, "public/agroparc/scene.json"), PDJ_FPS_ZOMBIES_ARGENT: "50000", PDJ_FPS_ZOMBIES_PAUSE_MS: process.env.PAUSE ?? "90000", PDJ_FPS_ZOMBIES_TOTAL: "12", PDJ_FPS_ZOMBIES_GRIFFE: "1", ...(process.env.COURANT ? { PDJ_FPS_ZOMBIES_COURANT: "1" } : {}) } });
+    const srv = lancer(process.execPath, ["dist/index.js"], { cwd: join(RACINE, "serveur-fps"), env: { ...process.env, PORT: String(port), SCENE_JSON: join(RACINE, "public/agroparc/scene.json"), PDJ_FPS_ZOMBIES_ARGENT: "50000", PDJ_FPS_ZOMBIES_PAUSE_MS: process.env.PAUSE ?? "90000", PDJ_FPS_ZOMBIES_TOTAL: "12", PDJ_FPS_ZOMBIES_GRIFFE: "1", ...(process.env.COURANT ? { PDJ_FPS_ZOMBIES_COURANT: "1" } : {}), ...(process.env.SECRET ? { PDJ_FPS_ZOMBIES_SECRET: process.env.SECRET } : {}) } });
     await attendreHttp(`http://localhost:${port}/sante`, 20000).catch((e) => { throw new Error(e.message + srv.journal.join("")); });
   }
   let urlNext = process.env.E2E_URL;
@@ -110,7 +122,104 @@ try {
   await entrer();
   await capture("00-entree");
   const depart = await ev(() => window.__arene.etat().jeu.p);
-  for (const [nom, p, cible] of VUES) {
+  if (process.env.RAGDOLL) {
+    // (v8) morts désarticulées : à chaque scénario, un tigre d'essai (côté client, `tuerZombie` avec `p`) meurt dans la cour avec cette arme,
+    // touché de côté, photographié trois fois pendant sa chute (rendu logiciel lent : le ragdoll avance d'au plus 8 pas de 1/120 s par image,
+    // la chute dure plusieurs secondes réelles). Caméra en CAM, tigre en TIGRE (x, z), coup venant de 5 m sur son côté.
+    const SCENARIOS = JSON.parse(process.env.SCENARIOS ?? "null") ?? [
+      ["pistolet", { arme: "pistolet" }],
+      ["pompe", { arme: "pompe" }],
+      ["tete-revolver", { arme: "revolver", zone: "tete" }],
+      ["couteau", { arme: "couteau", cause: "melee" }],
+      ["epee", { arme: "epee", cause: "melee" }],
+      ["grenade", { arme: "lance_grenades", cause: "explosion" }],
+      ["rayon", { arme: "rayon" }],
+      ["rayon-goulaf", { arme: "rayon", ameliore: true }],
+      ["petit-pompe", { arme: "pompe", type: 3 }],
+      ["chef-rayon", { arme: "rayon", type: 2 }],
+      ["rayon-mur", { arme: "rayon", depuis: "camera" }],
+    ];
+    const DELAIS = JSON.parse(process.env.DELAIS ?? "null") ?? [800, 3500, 9000];
+    const CAM = JSON.parse(process.env.CAM ?? "null") ?? [124, -45];
+    const TIGRE = JSON.parse(process.env.TIGRE ?? "null") ?? [131.5, -55.5];
+    let n = 0;
+    for (const [nom, o] of SCENARIOS) {
+      if (!(await ev(() => !!window.__arene?.etat().jeu).catch(() => false))) { console.log("rechargée : nouvelle entrée"); await entrer(); }
+      const ok = await ev(([o, cam, t, n]) => {
+        window.__arene.teleporter([cam[0], 0, cam[1]]);
+        const e = window.__arene.etat().jeu.oeil;
+        const vx = t[0] - e[0], vz = t[1] - e[2], l = Math.hypot(vx, vz), ux = vx / l, uz = vz / l;
+        window.__arene.regarder(Math.atan2(-vx, -vz), Math.atan2(0.5 - e[1], l));
+        // le tireur est de côté, à 5 m du tigre qui le chargeait (`depuis: "camera"` : c'est la caméra qui tire, le tigre part vers le fond)
+        const [sx, sz] = o.depuis === "camera" ? [-ux, -uz] : [uz, -ux];
+        const src = o.cause === "explosion" ? [t[0] + sx * 1.2, 0.3, t[1] + sz * 1.2] : o.depuis === "camera" ? e : [t[0] + sx * 5, 1.6, t[1] + sz * 5];
+        const cap = Math.atan2(-sx, -sz);
+        const { depuis, ...reste } = o;
+        return window.__arene.tuerZombie(-1000 - n, { ...reste, src, p: [t[0], 0, t[1]], cap });
+      }, [o, CAM, TIGRE, n++]);
+      console.log("mort", nom, ok);
+      let avant = 0;
+      for (const d of DELAIS) {
+        await dormir(d - avant);
+        avant = d;
+        await capture(`30-ragdoll-${nom}-${d}`);
+      }
+      console.log("ragdolls", JSON.stringify(await ev(() => window.__arene.etat().jeu.rugissements).catch(() => null)));
+    }
+  }
+  if (process.env.ARMES) {
+    // (v8) armes en main : [nom, arme, améliorée, visée (clic droit maintenu)]
+    const ESSAIS = JSON.parse(process.env.ESSAIS ?? "null") ?? [
+      ["40-perforeuse", "perforeuse", false, false],
+      ["41-perforeuses-jumelles", "perforeuse", true, false],
+      ["42-moutarde-sally", "pistolet", true, false],
+      ["43-agrafeuse-pro-holo", "agrafeuse", true, true],
+      ["44-cobra-point-rouge", "revolver", true, true],
+      ["45-baguette", "baguette", false, false],
+      ["46-photocopieuse", "photocopieuse", false, false],
+      ["47-essoreuse-turbo", "essoreuse", true, false],
+      ["48-brochette", "brochette", false, false],
+      ["49-soufflerie", "soufflerie", false, false],
+      ["50-grille-pain", "grille_pain", false, false],
+      ["51-fusil-bourguignon-lunette", "fusil_assaut", true, true],
+      ["52-sniper-thermique", "sniper", true, true],
+    ];
+    await ev(() => { window.__arene.teleporter([131, 0, -50]); window.__arene.regarder(Math.PI * 0.75, -0.05); });
+    for (const [nom, arme, ameliore, vise] of ESSAIS) {
+      if (!(await ev(() => !!window.__arene?.etat().jeu).catch(() => false))) { console.log("rechargée : nouvelle entrée"); await entrer(); }
+      const ok = await ev(([a, am]) => window.__arene.essayerArme(a, am), [arme, ameliore]);
+      if (vise) await ev(() => window.__arene.touche("Souris2", true));
+      await dormir(2500);
+      await capture(nom);
+      if (vise) await ev(() => window.__arene.touche("Souris2", false));
+      console.log("arme", nom, ok);
+    }
+    await ev(() => window.__arene.essayerArme("soufflerie", false));
+    await dormir(1500);
+    await ev(() => window.__arene.effetArme("souffle"));
+    await dormir(150);
+    await capture("53-bourrasque");
+    await ev(() => window.__arene.effetArme("arc"));
+    await dormir(120);
+    await capture("54-arc");
+    // les nouvelles armes à la craie, vues du point d'achat (l'invite de l'arme, pas celle d'une porte ou du disjoncteur voisins)
+    for (const [nom, p, c] of [
+      ["55-craie-baguette", [99.16, -36.99], [98.7, 1.4, -35.35]],
+      ["56-craie-agrafeuse", [151.59, -34.56], [152.05, 1.4, -36.2]],
+      ["57-craie-photocopieuse", [214.18, -48.69], [216.25, 1.4, -47.65]],
+      ["58-craie-perforeuse", [96.9, -26.6], [99.2, 1.3, -25.7]],
+    ]) {
+      await ev(([p, c]) => {
+        window.__arene.teleporter([p[0], 0, p[1]]);
+        const o = window.__arene.etat().jeu.oeil;
+        const dx = c[0] - p[0], dz = c[2] - p[1], dy = c[1] - o[1];
+        window.__arene.regarder(Math.atan2(-dx, -dz), Math.atan2(dy, Math.hypot(dx, dz)));
+      }, [p, c]);
+      await dormir(2500);
+      await capture(nom);
+    }
+  }
+  for (const [nom, p, cible] of process.env.RAGDOLL || process.env.ARMES ? [] : VUES) {
     // `next dev` recharge parfois la page (compilation à la demande) : on rentre en partie
     if (!(await ev(() => !!window.__arene?.etat().jeu).catch(() => false))) { console.log("rechargée : nouvelle entrée"); await entrer(); }
     await ev(([p, c]) => {
@@ -123,7 +232,7 @@ try {
     await capture(nom);
     console.log("capture", nom);
   }
-  if (!process.env.SANS_TIGRES) {
+  if (!process.env.SANS_TIGRES && !process.env.RAGDOLL && !process.env.ARMES) {
     // retour au départ (position du serveur) : on attend la manche et les tigres aux fenêtres
     await ev((p) => window.__arene.teleporter(p), depart);
     let n = 0;

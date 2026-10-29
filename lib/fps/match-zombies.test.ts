@@ -11,11 +11,14 @@ import {
 } from "./protocole";
 import { appliquerDegats } from "./sante";
 import {
-  ACHATS, ATOUTS, DEPARTS, FENETRES, PORTES_PAYANTES, achatBoite, construireMondeZombies, etiqueterZones, fenetreDeId, idPrisme, porteDeId, zoneEn,
-  type ZoneId,
+  ACHATS, ATOUTS, DEPARTS, FENETRES, INTERACTIONS_SECRET, PORTES_PAYANTES, SECRET_CARTE, achatBoite, construireMondeZombies, etiqueterZones, fenetreDeId,
+  TRUCK, idPrisme, local, porteDeId, zoneEn, type ZoneId,
 } from "./zombies-carte";
+import { souffleAtteint } from "./grenades";
+import { lancerRayon } from "./collision";
+import { dansMidi } from "./zombies-secret";
 import { ZOMBIES, delaiApparition, gainKill, gainTouche, pvZombie, totalManche, type GenreBonus } from "./zombies-vagues";
-import { CUISSON_PAP_MS, CUISSON_RECETTE_MS, OFFRE_BOITE_MS, TIRAGE_BOITE_MS, AUTO_RELEVE_MS, ENVOL_BOITE_MS } from "./match-zombies";
+import { CUISSON_PAP_MS, OFFRE_BOITE_MS, REPRISE_PAP_MS, TIRAGE_BOITE_MS, AUTO_RELEVE_MS, ENVOL_BOITE_MS } from "./match-zombies";
 
 /**
  * Service zombies isolé : contexte factice (la salle est testée dans match.zombies.test.ts), vrai monde de la carte « Service de midi ».
@@ -378,6 +381,27 @@ describe("points de BO1", () => {
     expect(msgs(melee, "zombieMort")[0].cause).toBe("melee");
   });
 
+  it("(v8) zombieMort dit comment : arme, amélioration au Pack-a-Punch, origine du coup arrondie au cm ; rien de plus sans ces options", () => {
+    const { b, id, j } = avecUnTigre();
+    j.equip = { ...j.equip, ameliorees: ["pistolet"] };
+    const mort = msgs(b.svc.blesser(id, 99_999, j, "tete", T_PREMIER_TIGRE + 200, { arme: "pistolet", src: [1.234, 1.6, -2.006] }), "zombieMort")[0];
+    expect(mort).toMatchObject({ arme: "pistolet", ameliore: true, src: [1.23, 1.6, -2.01], zone: "tete" });
+    const c = avecUnTigre();
+    const nu = msgs(c.b.svc.blesser(c.id, 99_999, c.j, "corps", T_PREMIER_TIGRE + 200), "zombieMort")[0];
+    expect(Object.keys(nu).sort()).toEqual(["id", "p", "par", "t", "zone"]);
+  });
+
+  it("(v8) souffle du Pistolet à rayons : zombieMort en explosion, arme « rayon », origine = centre du souffle", () => {
+    const { b, z, id, j } = avecUnTigre();
+    const t = T_PREMIER_TIGRE + 200;
+    const o: Vec3 = [z.x - 3, 0.8, z.z];
+    const sorties = b.svc.explosionTir(j, "rayon", o, [1, 0, 0], 3, 50, t);
+    const mort = msgs(sorties, "zombieMort").find((m) => m.id === id)!;
+    expect(mort).toMatchObject({ cause: "explosion", arme: "rayon" });
+    expect(mort.src![0]).toBeCloseTo(z.x, 1);
+    expect(mort.src![2]).toBeCloseTo(z.z, 1);
+  });
+
   it("pas de bonus de fin de manche (BO1) : l'argent ne vient que des touches, kills, planches et bonus", () => {
     const b = partieEnCours(["a"], { degatsGriffe: 0 });
     const j = b.j("a");
@@ -474,7 +498,7 @@ describe("bonus (BO1 : seuil de points, paquet mélangé, 4 par manche)", () => 
 
   it("le premier bonus tombe après j × 500 + 2 000 points gagnés, au plus 4 par manche, et chaque genre a son effet", () => {
     const genres = new Set<GenreBonus>();
-    for (let graine = 1; graine <= 12 && genres.size < 6; graine++) {
+    for (let graine = 1; graine <= 12 && genres.size < 5; graine++) {
       const { b, vus } = jouer(graine);
       expect(vus.length).toBeGreaterThan(0);
       expect(vus.length).toBeLessThanOrEqual(ZOMBIES.bonusParManche);
@@ -492,7 +516,8 @@ describe("bonus (BO1 : seuil de points, paquet mélangé, 4 par manche)", () => 
         }
       }
     }
-    expect([...genres].sort()).toEqual(["double", "instakill", "menuisier", "munitions", "nuke", "soldes"]);
+    // (v8) le Happy hour n'est offert qu'après un déménagement de la boîte (BO1) : jamais ici, la boîte ne sert pas (cf. « Happy hour »)
+    expect([...genres].sort()).toEqual(["double", "instakill", "menuisier", "munitions", "nuke"]);
   });
 
   it("double points : un kill au corps rapporte 120 $ ; insta-kill : tout tigre meurt au premier coup", () => {
@@ -698,7 +723,7 @@ describe("achats", () => {
     expect(j.pv).toBe(ZOMBIES.reanimationPv);
   });
 
-  it("courant (local technique) : rétabli une fois, `zevt courant` ; Pack-a-Punch (5 000 $) : cuisson 3,5 s puis arme améliorée", () => {
+  it("courant (local technique) : rétabli une fois, `zevt courant` ; Pack-a-Punch (5 000 $) : dépôt, cuisson 4 s, reprise de l'arme améliorée", () => {
     const co = achat("courant");
     const { b, j } = avec(co.position, 20_000);
     const pa = achat("pap");
@@ -714,39 +739,70 @@ describe("achats", () => {
     const t = T_MANCHE1 + 200;
     const p = acheter(b, j, "pap", t);
     expect(msgs(p, "argent")[0]).toMatchObject({ delta: -5000 });
-    expect(b.svc.etat().pap).toMatchObject({ etat: "cuisson", joueur: "a", arme: "pistolet", finT: t + CUISSON_PAP_MS });
+    expect(b.svc.etat().pap).toMatchObject({ etat: "cuisson", joueur: "a", arme: "pistolet", debutT: t, finT: t + CUISSON_PAP_MS });
+    // (v8, BO1) l'arme est retirée de l'inventaire : son slot est vide, le joueur passe au couteau
+    expect(msgs(p, "equipement")[0]).toMatchObject({ main: "couteau", equip: { enCuisson: "pistolet" } });
+    expect(armeDuSlot(j.equip, "secondaire")).toBeNull();
+    expect(j.arme).toBe("couteau");
+    expect(msgs(p, "zevt")[0].e).toEqual({ e: "pap", joueur: "a", arme: "pistolet", pret: false });
     expect(msgs(acheter(b, j, "pap", t + 100), "achat")[0]).toMatchObject({ ok: false, raison: "occupe" });
     const fin = avancer(b, t + 50, t + CUISSON_PAP_MS + 100);
-    expect(msgs(fin, "equipement")[0].equip.ameliorees).toEqual(["pistolet"]);
-    expect(msgs(fin, "zevt").some((m) => m.e.e === "pap" && m.e.pret)).toBe(true);
+    // cuite : elle attend dans la machine, rien n'est rendu tant que le joueur ne vient pas la reprendre
+    expect(msgs(fin, "equipement")).toEqual([]);
+    expect(msgs(fin, "zevt").map((m) => m.e)).toContainEqual({ e: "pap", joueur: "a", arme: "pistolet", pret: true });
+    expect(b.svc.etat().pap).toMatchObject({ etat: "pret", joueur: "a", arme: "pistolet" });
+    expect(b.svc.etat().pap.finT).toBeGreaterThanOrEqual(t + CUISSON_PAP_MS + REPRISE_PAP_MS);
+    const r = acheter(b, j, "pap", t + 5000);
+    expect(msgs(r, "achat")[0]).toMatchObject({ ok: true });
+    expect(msgs(r, "argent")).toEqual([]);
+    expect(msgs(r, "equipement")[0]).toMatchObject({ main: "secondaire", ravitaille: "pistolet" });
+    expect(msgs(r, "equipement")[0].equip.ameliorees).toEqual(["pistolet"]);
+    expect(msgs(r, "equipement")[0].equip.enCuisson).toBeUndefined();
+    expect(msgs(r, "zevt")[0].e).toMatchObject({ e: "pap", fin: "reprise" });
+    expect(j.arme).toBe("pistolet");
     expect(b.svc.etat().pap.etat).toBe("libre");
-    expect(b.svc.degatsTir(j, "pistolet", "corps", 5, t + 5000)).toBe(160);
-    expect(msgs(acheter(b, j, "pap", t + 5000), "achat")[0]).toMatchObject({ ok: false, raison: "deja" });
+    expect(b.svc.degatsTir(j, "pistolet", "corps", 5, t + 5000)).toBe(1000); // (v8) Moutarde & Sally : impact de 1 000 (BO1)
+    expect(msgs(acheter(b, j, "pap", t + 5100), "achat")[0]).toMatchObject({ ok: false, raison: "deja" });
   });
 
-  it("Recette ultime : trois ingrédients (la truffe et le four exigent le courant), 30 s de cuisson, Rayon Goulaf amélioré + un atout", () => {
-    const { b, j } = avec([0, 0], 1000, { courant: true });
-    const four = achat("four");
-    j.p = [four.position[0], 0, four.position[1]];
-    expect(msgs(acheter(b, j, "four"), "achat")[0]).toMatchObject({ ok: false, raison: "quete" });
-    for (const ing of ["sel", "herbes", "truffe"]) {
-      const a = achat(`ingredient:${ing}`);
-      j.p = [a.position[0], 0, a.position[1]];
-      const s = acheter(b, j, a.id);
-      expect(msgs(s, "achat")[0], ing).toMatchObject({ ok: true });
-      expect(msgs(acheter(b, j, a.id), "achat")[0]).toMatchObject({ ok: false, raison: "deja" });
-    }
-    expect(b.svc.etat().quete.ingredients).toEqual(["sel", "herbes", "truffe"]);
-    j.p = [four.position[0], 0, four.position[1]];
-    const t = T_MANCHE1 + 200;
-    expect(msgs(acheter(b, j, "four", t), "achat")[0]).toMatchObject({ ok: true });
-    expect(b.svc.etat().quete.cuissonFinT).toBe(t + CUISSON_RECETTE_MS);
-    j.pv = 1e9;
-    const fin = avancer(b, t + 50, t + CUISSON_RECETTE_MS + 100, 100);
-    const eq = msgs(fin, "equipement").find((m) => m.equip.secondaire === "rayon")!;
-    expect(eq.equip.ameliorees).toContain("rayon");
-    expect(b.svc.etat().quete.faite).toBe(true);
-    expect(b.svc.etat().joueurs[0].atouts.length).toBe(1);
+  it("(v8) Micro-ondes : seul celui qui a déposé l'arme la reprend ; passé 15 s elle est perdue, sans remboursement, son slot reste vide", () => {
+    const pa = achat("pap");
+    const b = partieEnCours(["a", "c"], { argentDepart: 20_000, courant: true });
+    avancer(b, T0 + 100, T_MANCHE1 + 50);
+    const j = b.j("a"), autre = b.j("c");
+    j.p = [pa.position[0], 0, pa.position[1]];
+    autre.p = [pa.position[0] + 0.5, 0, pa.position[1]];
+    const t = T_MANCHE1 + 100;
+    expect(msgs(acheter(b, j, "pap", t), "achat")[0]).toMatchObject({ ok: true });
+    avancer(b, t + 50, t + CUISSON_PAP_MS + 100);
+    expect(b.svc.etat().pap.etat).toBe("pret");
+    expect(msgs(acheter(b, autre, "pap", t + CUISSON_PAP_MS + 200), "achat")[0]).toMatchObject({ ok: false, raison: "occupe" });
+    // le slot attend la reprise : pas de mini Uzi (secondaire) au mur entre-temps
+    const uzi = achat("mur:mini_uzi");
+    j.p = [uzi.position[0], 0, uzi.position[1]];
+    expect(msgs(acheter(b, j, uzi.id, t + CUISSON_PAP_MS + 300), "achat")[0]).toMatchObject({ ok: false, raison: "occupe" });
+    const perte = avancer(b, t + CUISSON_PAP_MS + 400, t + CUISSON_PAP_MS + REPRISE_PAP_MS + 200);
+    expect(msgs(perte, "zevt").map((m) => m.e)).toContainEqual({ e: "pap", joueur: "a", arme: "pistolet", pret: false, fin: "perdue" });
+    expect(msgs(perte, "argent").filter((m) => m.delta > 0 && m.motif !== "touche" && m.motif !== "kill")).toEqual([]);
+    expect(b.svc.etat().pap.etat).toBe("libre");
+    expect(armeDuSlot(j.equip, "secondaire")).toBeNull();
+    // une arme de la même catégorie remplit le slot vide
+    const s = acheter(b, j, uzi.id, t + CUISSON_PAP_MS + REPRISE_PAP_MS + 300);
+    expect(msgs(s, "achat")[0]).toMatchObject({ ok: true });
+    expect(j.equip.enCuisson).toBeUndefined();
+    expect(j).toMatchObject({ main: "secondaire", arme: "mini_uzi" });
+  });
+
+  it("(v8) Micro-ondes : un joueur qui part libère la machine", () => {
+    const pa = achat("pap");
+    const b = partieEnCours(["a", "c"], { argentDepart: 20_000, courant: true });
+    avancer(b, T0 + 100, T_MANCHE1 + 50);
+    const j = b.j("a");
+    j.p = [pa.position[0], 0, pa.position[1]];
+    acheter(b, j, "pap", T_MANCHE1 + 100);
+    expect(b.svc.etat().pap.etat).toBe("cuisson");
+    b.part("a", T_MANCHE1 + 200);
+    expect(b.svc.etat().pap.etat).toBe("libre");
   });
 
   it("munitions d'une arme améliorée au mur : 2 500 $", () => {
@@ -754,6 +810,87 @@ describe("achats", () => {
     acheter(b, j, "mur:revolver");
     j.equip = copierEquipement({ ...j.equip, ameliorees: ["revolver"] });
     expect(msgs(acheter(b, j, "mur:revolver", T_MANCHE1 + 200), "argent")[0]).toMatchObject({ delta: -2500 });
+  });
+});
+
+// =================================================================================================
+describe("(v8) Happy hour (le Fire Sale de BO1)", () => {
+  const acheter = (b: Banc, j: JoueurSalle, id: string, t: number) => b.svc.recevoir(j, msg({ t: "acheter", id }), t);
+  const devant = (j: JoueurSalle, em: number) => { const a = achatBoite(em); j.p = [a.position[0], 0, a.position[1]]; };
+
+  /** Tire à la boîte principale jusqu'à la peluche (8 tirages au plus), puis attend la fin de l'envol : la boîte a déménagé une fois. */
+  function deplacerBoite(b: Banc, j: JoueurSalle, t: number): number {
+    for (let k = 0; k < 8; k++) {
+      devant(j, b.svc.etat().boite.emplacement);
+      expect(msgs(acheter(b, j, achatBoite(b.svc.etat().boite.emplacement).id, t), "achat")[0].ok).toBe(true);
+      const peluche = b.svc.etat().boite.arme === "peluche";
+      t += TIRAGE_BOITE_MS + 50; b.svc.tic(t);
+      if (peluche) { t += ENVOL_BOITE_MS + 50; b.svc.tic(t); return t + 50; }
+      t += OFFRE_BOITE_MS + 50; b.svc.tic(t); t += 50;
+    }
+    throw new Error("pas de peluche en 8 tirages");
+  }
+  /** Tue les tigres entrés jusqu'au premier bonus lâché, va le ramasser ; renvoie le genre et l'instant. */
+  function ramasserBonus(b: Banc, j: JoueurSalle, t0: number): { genre: GenreBonus; t: number; sorties: Sortie[] } {
+    for (let t = t0; t < t0 + 240_000; t += 100) {
+      b.svc.tic(t);
+      for (const z of tigresVivants(b)) if (zoneEn(ZONES_SOL, z.x, z.z)) b.svc.blesser(`z${z.id}`, 100_000, j, "tete", t);
+      const sol = b.svc.etat().bonus[0];
+      if (sol) { j.p = [sol.p[0], 0, sol.p[2]]; return { genre: sol.genre, t: t + 50, sorties: b.svc.tic(t + 50) }; }
+    }
+    throw new Error("aucun bonus");
+  }
+
+  it("jamais offert tant que la boîte n'a pas déménagé (un autre bonus le remplace)", () => {
+    const b = partieEnCours(["a"], { total1: 200, degatsGriffe: 0, bonus: ["soldes"] });
+    const j = b.j("a");
+    j.pv = 1e9;
+    const r = ramasserBonus(b, j, T_PREMIER_TIGRE);
+    expect(r.genre).not.toBe("soldes");
+    expect(b.svc.etat().boitesSoldes).toBeUndefined();
+  });
+
+  it("30 s : une boîte à chaque emplacement, toutes à 10 $, aucune peluche ni déménagement ; à la fin les temporaires disparaissent, sauf celle en cours", () => {
+    const b = partieEnCours(["a"], { total1: 200, degatsGriffe: 0, bonus: ["soldes"], argentDepart: 1e7 });
+    const j = b.j("a");
+    j.pv = 1e9;
+    let t = deplacerBoite(b, j, T_PREMIER_TIGRE);
+    const r = ramasserBonus(b, j, t);
+    expect(r.genre).toBe("soldes");
+    t = r.t;
+    const etat = dernierEtat(r.sorties)!;
+    expect(etat.effets.soldesFinT).toBe(t + ZOMBIES.bonusDureeMs);
+    const principale = etat.boite;
+    expect(etat.boitesSoldes!.map((x) => x.emplacement).sort()).toEqual([0, 1, 2, 3, 4].filter((i) => i !== principale.emplacement));
+    // chaque boîte (la principale comprise) tire à 10 $, jamais la peluche ; les tirages ne comptent pas pour la peluche
+    const finSoldes = etat.effets.soldesFinT;
+    for (let em = 0; em < 5; em++) {
+      devant(j, em);
+      const s = acheter(b, j, achatBoite(em).id, t);
+      expect(msgs(s, "argent")[0], `emplacement ${em}`).toMatchObject({ delta: -10 });
+      const bx = [b.svc.etat().boite, ...(b.svc.etat().boitesSoldes ?? [])].find((x) => x.emplacement === em)!;
+      expect(bx.etat).toBe("tirage");
+      expect(bx.arme).not.toBe("peluche");
+    }
+    // les offres se referment sans être prises
+    t += TIRAGE_BOITE_MS + 50; b.svc.tic(t);
+    t += OFFRE_BOITE_MS + 50; b.svc.tic(t);
+    expect(t).toBeLessThan(finSoldes);
+    expect(b.svc.etat().boite).toMatchObject({ emplacement: principale.emplacement, utilisations: principale.utilisations });
+    // un tirage lancé juste avant la fin : sa boîte temporaire reste jusqu'à ce qu'elle se referme
+    const derniere = b.svc.etat().boitesSoldes![0].emplacement;
+    devant(j, derniere);
+    t = finSoldes - 500;
+    b.svc.tic(t);
+    expect(msgs(acheter(b, j, achatBoite(derniere).id, t), "argent")[0]).toMatchObject({ delta: -10 });
+    t = finSoldes + 100;
+    b.svc.tic(t);
+    expect(b.svc.etat().boitesSoldes!.map((x) => x.emplacement)).toEqual([derniere]);
+    // après le Happy hour, 950 $ à la principale ; la temporaire disparaît une fois l'offre refermée
+    devant(j, principale.emplacement);
+    expect(msgs(acheter(b, j, achatBoite(principale.emplacement).id, t), "argent")[0]).toMatchObject({ delta: -950 });
+    avancer(b, t + 50, t + TIRAGE_BOITE_MS + OFFRE_BOITE_MS + 200, 100);
+    expect(b.svc.etat().boitesSoldes).toBeUndefined();
   });
 });
 
@@ -785,6 +922,79 @@ describe("barricades", () => {
     const s2 = avancer(b, t + 1200, t + 3500);
     expect(msgs(s2, "zevt").filter((m) => m.e.e === "planche" && !m.e.arrachee)).toHaveLength(0);
   });
+
+  /** Partie où les tigres arrachent au moins `n` planches de F1 ; le joueur est devant, les tigres sont tués ; renvoie l'instant. */
+  function fenetreAbimee(n: number) {
+    const b = partieEnCours(["a"], { total1: 60, degatsGriffe: 0 });
+    const j = b.j("a");
+    const f = fenetreDeId("F1")!;
+    j.p = [f.dedans[0], 0, f.dedans[1]];
+    j.pv = 1e9;
+    let t = T0 + 100;
+    for (; t < T_PREMIER_TIGRE + 120_000 && b.svc.etat().fenetres[FENETRES.indexOf(f)] > ZOMBIES.planches - n; t += 100) b.svc.tic(t);
+    expect(b.svc.etat().fenetres[FENETRES.indexOf(f)]).toBeLessThanOrEqual(ZOMBIES.planches - n);
+    tuerTous(b, j, t);
+    return { b, j, f, t };
+  }
+  /** Avance de `t0` à `t1` en tuant les tigres à chaque pas (aucune planche arrachée pendant la repose) ; instants des planches reposées. */
+  function reposer(b: Banc, j: JoueurSalle, t0: number, t1: number): { t: number[]; argent: number[] } {
+    const res = { t: [] as number[], argent: [] as number[] };
+    for (let t = t0; t <= t1; t += 50) {
+      const s = b.svc.tic(t);
+      tuerTous(b, j, t);
+      if (msgs(s, "zevt").some((m) => m.e.e === "planche" && !m.e.arrachee)) res.t.push(t);
+      for (const m of msgs(s, "argent")) if (m.motif === "planche") res.argent.push(m.delta);
+    }
+    return res;
+  }
+
+  it("(v8) cadence de BO1 : la première planche 0,2 s après l'appui, puis une toutes les 0,9 s ; relâcher et réappuyer n'accélère rien", () => {
+    const { b, j, t } = fenetreAbimee(4);
+    b.svc.recevoir(j, msg({ t: "reparer", fenetre: "F1" }), t);
+    const r = reposer(b, j, t + 50, t + 2_100);
+    expect(r.t[0] - t).toBeGreaterThanOrEqual(ZOMBIES.reposePremiereS * 1000);
+    expect(r.t[0] - t).toBeLessThanOrEqual(ZOMBIES.reposePremiereS * 1000 + 50);
+    expect(r.t[1] - r.t[0]).toBeGreaterThanOrEqual(ZOMBIES.reposeS * 1000);
+    expect(r.t[1] - r.t[0]).toBeLessThanOrEqual(ZOMBIES.reposeS * 1000 + 50);
+    expect(r.argent.every((d) => d === 10)).toBe(true);
+    // E lâchée puis réappuyée aussitôt : la planche suivante attend toujours 0,9 s après la précédente
+    const derniere = r.t.at(-1)!;
+    b.svc.recevoir(j, msg({ t: "reparer", fenetre: null }), t + 2_150);
+    b.svc.recevoir(j, msg({ t: "reparer", fenetre: "F1" }), t + 2_160);
+    const r2 = reposer(b, j, t + 2_200, t + 4_000);
+    expect(r2.t[0] - derniere).toBeGreaterThanOrEqual(ZOMBIES.reposeS * 1000);
+  });
+
+  it("(v8) le gain des planches est plafonné par manche (BO1 : min(50 × manche, 500)) : au-delà, la planche est reposée sans rien rapporter", () => {
+    const { b, j, t } = fenetreAbimee(6);
+    b.svc.recevoir(j, msg({ t: "reparer", fenetre: "F1" }), t);
+    // manche 1 : plafond 50 $, soit 5 planches payées sur 6
+    const r = reposer(b, j, t + 50, t + 6_500);
+    expect(r.t).toHaveLength(6);
+    expect(r.argent.reduce((x, y) => x + y, 0)).toBe(50);
+  });
+
+  it("(v8) Menuisier : toutes les fenêtres retrouvent leurs 6 planches, +200 $ à chacun, l'état part tout de suite", () => {
+    const b = partieEnCours(["a"], { total1: 200, degatsGriffe: 0, bonus: ["menuisier"] });
+    const j = b.j("a");
+    j.pv = 1e9;
+    let t = T_PREMIER_TIGRE;
+    let ramasse: Sortie[] | null = null;
+    for (; t < T_PREMIER_TIGRE + 240_000 && !ramasse; t += 100) {
+      b.svc.tic(t);
+      // seuls les tigres entrés sont tués : les autres arrachent les planches de leur fenêtre
+      for (const z of tigresVivants(b)) if (zoneEn(ZONES_SOL, z.x, z.z)) b.svc.blesser(`z${z.id}`, 100_000, j, "tete", t);
+      const sol = b.svc.etat().bonus[0];
+      if (sol && b.svc.etat().fenetres.some((n) => n < ZOMBIES.planches)) {
+        j.p = [sol.p[0], 0, sol.p[2]];
+        ramasse = b.svc.tic(t + 50);
+      }
+    }
+    expect(ramasse).not.toBeNull();
+    expect(msgs(ramasse!, "zevt").some((m) => m.e.e === "bonus" && m.e.genre === "menuisier")).toBe(true);
+    expect(msgs(ramasse!, "argent").find((m) => m.motif === "menuisier")!.delta).toBe(200);
+    expect(dernierEtat(ramasse!)!.fenetres).toEqual(FENETRES.map(() => ZOMBIES.planches));
+  });
 });
 
 // =================================================================================================
@@ -798,13 +1008,19 @@ describe("manches du Truck Muche", () => {
     expect(b.svc.etat().mancheTruck).toBe(true);
     let t = T_MANCHE1 + 100;
     let petits = 0;
-    for (; t < T_MANCHE1 + 30_000 && petits === 0; t += 100) { b.svc.tic(t); petits = tigresVivants(b).filter((z) => z.type === 3).length; }
+    // (v8) la foudre lâche les premiers petits avant que le Truck ne soit à quai
+    for (; t < T_MANCHE1 + 30_000 && (petits === 0 || b.svc.etat().truck?.phase !== "livraison"); t += 100) {
+      b.svc.tic(t);
+      petits = tigresVivants(b).filter((z) => z.type === 3).length;
+    }
     expect(petits).toBeGreaterThan(0);
     expect(b.svc.etat().truck).toMatchObject({ phase: "livraison" });
     expect(b.svc.snap()!.t).toHaveLength(5);
     // criblé à mort
     const s = b.svc.blesserTruck(1e7, j, t);
     expect(msgs(s, "zevt").some((m) => m.e.e === "truck" && m.e.quoi === "explosion")).toBe(true);
+    // (v8) les petits soufflés par l'explosion savent d'où elle vient
+    expect(msgs(s, "zombieMort").every((m) => m.cause === "explosion" && m.src !== undefined)).toBe(true);
     expect(msgs(s, "argent").find((m) => m.motif === "truck")!.delta).toBe(500);
     expect(b.svc.etat().truck).toMatchObject({ phase: "epave" });
     expect(b.svc.toucheTruck([0, 1, 0], [1, 0, 0], 50)).toBeNull();
@@ -817,6 +1033,115 @@ describe("manches du Truck Muche", () => {
     }
     expect(munitions).toBe(true);
     expect(b.svc.etat()).toMatchObject({ phase: "pause", manche: 2, mancheTruck: false });
+  });
+});
+
+describe("(v8) manches du Truck Muche vénères : foudre, petits, mini Trucks", () => {
+  /** Fait tourner une manche du Truck (solo, joueur increvable) et relève naissances, éclairs, vivants, sauts. */
+  function derouler(opts: Partial<OptionsServiceZombies>, duree: number, chaque?: (b: Banc, t: number, s: Sortie[]) => void) {
+    const b = partieEnCours(["a"], { mancheTruck: 1, ...opts });
+    const j = b.j("a");
+    j.pv = 1e9;
+    const nes = new Map<number, { t: number; p: Vec2; type: number }>();
+    const eclairs: { t: number; p: Vec3; dans?: number }[] = [];
+    let vivantsMax = 0;
+    const sorties: Sortie[] = [];
+    for (let t = T_MANCHE1; t <= T_MANCHE1 + duree; t += 50) {
+      const s = b.svc.tic(t);
+      sorties.push(...s);
+      for (const m of msgs(s, "zevt")) if (m.e.e === "eclair") eclairs.push({ t, p: m.e.p, dans: m.e.dans });
+      const vivants = tigresVivants(b);
+      vivantsMax = Math.max(vivantsMax, vivants.length);
+      for (const z of vivants) if (!nes.has(z.id)) nes.set(z.id, { t, p: [z.x, z.z], type: z.type });
+      chaque?.(b, t, s);
+    }
+    return { b, j, nes, eclairs, vivantsMax, sorties };
+  }
+
+  it("la foudre frappe près du joueur dans sa zone : premier ennemi moins de 3 s après le début des apparitions, un éclair annoncé par ennemi", () => {
+    const { j, nes, eclairs, vivantsMax } = derouler({ degatsGriffe: 0 }, 25_000);
+    const premier = Math.min(...[...nes.values()].map((n) => n.t));
+    expect(premier - T_PREMIER_TIGRE).toBeLessThan(3_000);
+    expect(eclairs.length).toBeGreaterThan(3);
+    for (const e of eclairs) {
+      expect(e.dans).toBe(600);
+      // l'ennemi naît sous l'éclair, 0,6 s plus tard
+      const n = [...nes.values()].find((x) => x.t >= e.t && Math.hypot(x.p[0] - e.p[0], x.p[1] - e.p[2]) < 0.6);
+      expect(n, `éclair en ${e.p}`).toBeDefined();
+      expect(n!.t - e.t).toBeGreaterThanOrEqual(550);
+      expect(n!.t - e.t).toBeLessThanOrEqual(700);
+      // dans l'open space où se tient le joueur, entre 4 et 18 m de lui
+      expect(zoneEn(ZONES_SOL, e.p[0], e.p[2])).toBe("open");
+      const d = Math.hypot(e.p[0] - j.p[0], e.p[2] - j.p[2]);
+      expect(d).toBeGreaterThanOrEqual(4);
+      expect(d).toBeLessThanOrEqual(18);
+    }
+    // plafond de 4 + 3 par joueur
+    expect(vivantsMax).toBeLessThanOrEqual(7);
+    expect(vivantsMax).toBeGreaterThanOrEqual(4);
+    // petits et mini Trucks
+    expect([...nes.values()].some((n) => n.type === 3)).toBe(true);
+    expect([...nes.values()].some((n) => n.type === 4)).toBe(true);
+  });
+
+  it("un mini Truck qui saute contre le joueur le blesse (souffle de 15 à 80 PV) et disparaît sans rapporter de kill", () => {
+    let saut: Sortie[] | null = null;
+    const { j, nes } = derouler({}, 30_000, (_b, _t, s) => {
+      if (!saut && msgs(s, "zevt").some((m) => m.e.e === "miniTruck")) saut = s;
+    });
+    expect(saut).not.toBeNull();
+    const morts = msgs(saut!, "zombieMort").filter((m) => m.par === "");
+    expect(morts.length).toBeGreaterThanOrEqual(1);
+    expect(morts[0].cause).toBe("explosion");
+    // il épargne les siens : seul le mini Truck meurt
+    expect(morts.every((m) => nes.get(Number(m.id.slice(1)))?.type === 4)).toBe(true);
+    const coups = msgs(saut!, "degats").filter((m) => m.cible === "a");
+    expect(coups.length).toBeGreaterThanOrEqual(1);
+    expect(coups[0].degats).toBeGreaterThanOrEqual(15);
+    expect(coups[0].degats).toBeLessThanOrEqual(80);
+    expect(j.kills).toBe(0);
+  });
+
+  it("un mini Truck abattu saute 120 ms plus tard ; son souffle emporte les ennemis voisins et rapporte leurs kills au tireur", () => {
+    const b = partieEnCours(["a"], { mancheTruck: 1, degatsGriffe: 0 });
+    const j = b.j("a");
+    j.pv = 1e9;
+    let t = T_MANCHE1;
+    let mini: ReturnType<typeof tigresVivants>[number] | undefined;
+    for (; t < T_MANCHE1 + 30_000 && !mini; t += 50) { b.svc.tic(t); mini = tigresVivants(b).find((z) => z.type === 4 && !z.griffe); }
+    expect(mini).toBeDefined();
+    const s1 = b.svc.blesser(`z${mini!.id}`, 1e7, j, "corps", t);
+    expect(msgs(s1, "zombieMort").map((m) => m.id)).toContain(`z${mini!.id}`);
+    expect(msgs(s1, "zevt").some((m) => m.e.e === "miniTruck")).toBe(false);
+    const killsAvant = j.kills;
+    const voisins = tigresVivants(b).filter((z) => Math.hypot(z.x - mini!.x, z.z - mini!.z) < 2.5).length;
+    const s2 = avancer(b, t + 50, t + 200);
+    const souffle = msgs(s2, "zevt").map((m) => m.e).find((e) => e.e === "miniTruck") as Extract<MessageServeur, { t: "zevt" }>["e"] & { e: "miniTruck" };
+    expect(souffle).toBeDefined();
+    expect(Math.hypot(souffle.p[0] - mini!.x, souffle.p[2] - mini!.z)).toBeLessThan(1);
+    expect(souffle).toMatchObject({ rayon: ZOMBIES.miniTruck.souffleM });
+    // les voisins pris dans le souffle (en vue du centre) sont crédités au tireur
+    const tues = msgs(s2, "zombieMort").filter((m) => m.par === "a" && m.cause === "explosion");
+    expect(j.kills - killsAvant).toBe(tues.length);
+    if (voisins) expect(tues.length).toBeGreaterThan(0);
+  });
+
+  it("le Truck Muche rit à l'ouverture de sa porte, sous la moitié de ses PV et en explosant", () => {
+    const b = partieEnCours(["a"], { mancheTruck: 1, degatsGriffe: 0 });
+    const j = b.j("a");
+    j.pv = 1e9;
+    let t = T_MANCHE1;
+    const rires: string[] = [];
+    for (; t < T_MANCHE1 + 30_000 && b.svc.etat().truck?.phase !== "livraison"; t += 50) {
+      for (const m of msgs(b.svc.tic(t), "zevt")) if (m.e.e === "truck") rires.push(m.e.quoi);
+    }
+    expect(rires).toEqual(["porte", "rire"]);
+    const pvMax = 2_500;
+    const quoi = (s: Sortie[]) => msgs(s, "zevt").flatMap((m) => (m.e.e === "truck" ? [m.e.quoi] : []));
+    expect(quoi(b.svc.blesserTruck(pvMax * 0.4, j, t))).toEqual([]);
+    expect(quoi(b.svc.blesserTruck(pvMax * 0.2, j, t))).toEqual(["rire"]);
+    expect(quoi(b.svc.blesserTruck(pvMax * 0.1, j, t))).toEqual([]);
+    expect(quoi(b.svc.blesserTruck(pvMax, j, t))).toEqual(["explosion", "rire"]);
   });
 });
 
@@ -1137,5 +1462,490 @@ describe("équipement de départ", () => {
     const eq: Equipement = e2;
     const main: Slot = "secondaire";
     expect(armeDuSlot(eq, main)).toBe("pistolet");
+  });
+});
+
+// =================================================================================================
+describe("(v8) armes : effets appliqués par le serveur (brûlure, arc, projectile, souffle, gel)", () => {
+  /** Partie avancée jusqu'à `n` tigres en chasse (sortis du sol ou entrés), griffes neutralisées ; `proches` : à moins de 7 m l'un de l'autre. */
+  function avecTigres(n: number, proches = false) {
+    const b = partieEnCours(["a"], { degatsGriffe: 0, total1: Math.max(3, n + 2) });
+    let t = T_PREMIER_TIGRE;
+    const chasse = () => tigresVivants(b).filter((z) => z.mode === "chasse");
+    const ok = () => {
+      const c = chasse();
+      if (c.length < n) return false;
+      return !proches || c.some((x) => c.filter((y) => Math.hypot(x.x - y.x, x.z - y.z) < 6).length >= n);
+    };
+    for (; t < T_PREMIER_TIGRE + 120_000 && !ok(); t += 100) b.svc.tic(t);
+    expect(ok()).toBe(true);
+    return { b, j: b.j("a"), t, tigres: chasse() };
+  }
+  const avec = (j: JoueurSalle, slot: "principale" | "secondaire", arme: string, ameliore: boolean) => {
+    const e = copierEquipement(j.equip);
+    if (slot === "principale") { e.principale = arme as Equipement["principale"]; delete e.sansPrincipale; } else e.secondaire = arme as Equipement["secondaire"];
+    if (ameliore) e.ameliorees = [arme as Equipement["secondaire"]]; else delete e.ameliorees;
+    j.equip = e; j.main = slot; j.arme = arme as JoueurSalle["arme"];
+  };
+  /** Le joueur est posé à `d` m du tigre (du côté où il se trouvait) et vise son dos. */
+  function viser(j: JoueurSalle, z: { x: number; z: number }, d: number): { o: Vec3; dir: Vec3 } {
+    let dx = j.p[0] - z.x, dz = j.p[2] - z.z;
+    const l = Math.hypot(dx, dz) || 1; dx /= l; dz /= l;
+    j.p = [z.x + dx * d, 0, z.z + dz * d];
+    const o: Vec3 = [j.p[0], 1.6, j.p[2]];
+    const v: Vec3 = [z.x - o[0], 0.8 - o[1], z.z - o[2]];
+    const n = Math.hypot(v[0], v[1], v[2]);
+    return { o, dir: [v[0] / n, v[1] / n, v[2] / n] };
+  }
+
+  it("statsTir du joueur : amélioration comprise ; une arme à balles n'est pas un tir spécial", () => {
+    const { b, j, t, tigres } = avecTigres(1);
+    avec(j, "secondaire", "perforeuse", true);
+    expect(b.svc.statsTir(j, "perforeuse")).toMatchObject({ akimbo: true, auto: true });
+    avec(j, "secondaire", "perforeuse", false);
+    expect(b.svc.statsTir(j, "perforeuse")).toMatchObject({ akimbo: false, auto: false });
+    const { o, dir } = viser(j, tigres[0], 4);
+    expect(b.svc.tirSpecial(j, "perforeuse", o, dir, t)).toBeNull();
+    expect(b.svc.positionZombie(`z${tigres[0].id}`)).not.toBeNull();
+    expect(b.svc.positionZombie("z9999")).toBeNull();
+  });
+
+  it("munitions incendiaires (Cobra flambé) : le tigre prend feu (drapeau du snap), perd des PV toutes les 0,5 s et meurt brûlé", () => {
+    const { b, j, t, tigres } = avecTigres(1);
+    avec(j, "secondaire", "revolver", true);
+    const z = tigres[0], id = `z${z.id}`;
+    b.svc.blesser(id, 10, j, "corps", t);
+    const avant = tigresVivants(b).find((x) => x.id === z.id)!.pvPct;
+    b.svc.effetsTir(j, "revolver", [{ cible: id, p: [z.x, 0, z.z] }], t);
+    expect(tigresVivants(b).find((x) => x.id === z.id)!.brule).toBe(true);
+    // une arme sans effet ne fait rien
+    expect(b.svc.effetsTir(j, "mitraillette", [{ cible: id, p: [z.x, 0, z.z] }], t)).toEqual([]);
+    const sorties = avancer(b, t + 50, t + 3000);
+    const mort = msgs(sorties, "zombieMort").find((m) => m.id === id);
+    const encore = tigresVivants(b).find((x) => x.id === z.id);
+    // 150 PV à la manche 1, 200 PV/s : il brûle jusqu'à la mort (ou au moins perd des PV s'il est plus robuste)
+    if (mort) expect(mort.cause).toBe("feu");
+    else expect(encore!.pvPct).toBeLessThan(avant);
+    expect(msgs(sorties, "degats").some((m) => m.cible === id)).toBe(true);
+  });
+
+  it("arc électrique (Grille-pain) : saute du premier tigre sur ses voisins, `zevt{arc}`, morts « electrique »", () => {
+    const { b, j, t, tigres } = avecTigres(2, true);
+    avec(j, "principale", "grille_pain", false);
+    const depart = tigres.find((x) => tigres.some((y) => y !== x && Math.hypot(x.x - y.x, x.z - y.z) < 6))!;
+    const sorties = b.svc.effetsTir(j, "grille_pain", [{ cible: `z${depart.id}`, p: [depart.x, 0, depart.z] }], t);
+    const arc = msgs(sorties, "zevt").find((m) => m.e.e === "arc");
+    expect(arc).toBeDefined();
+    expect((arc!.e as { p: Vec3[] }).p.length).toBeGreaterThanOrEqual(2);
+    const morts = msgs(sorties, "zombieMort");
+    expect(morts.length).toBeGreaterThanOrEqual(2);
+    expect(morts.every((m) => m.cause === "electrique" && m.arme === "grille_pain")).toBe(true);
+  });
+
+  it("projectile (Moutarde & Sally) : `projectile` à tous, planté dans le tigre, impact de 1 000 puis souffle `zevt{projectile}`", () => {
+    const { b, j, t, tigres } = avecTigres(1);
+    avec(j, "secondaire", "pistolet", true);
+    const z = tigres[0];
+    const { o, dir } = viser(j, z, 4);
+    const sorties = b.svc.tirSpecial(j, "pistolet", o, dir, t)!;
+    const p = msgs(sorties, "projectile")[0];
+    expect(p).toMatchObject({ par: "a", arme: "pistolet", ameliore: true, cible: `z${z.id}` });
+    expect(sorties.find((s) => s.m.t === "projectile")!.a).toBe("joueurs");
+    expect(p.impactT).toBeGreaterThan(t);
+    expect(p.explosionT).toBe(p.impactT);
+    const suite = avancer(b, t + 50, p.explosionT + 100);
+    expect(msgs(suite, "zevt").some((m) => m.e.e === "projectile" && m.e.id === p.id)).toBe(true);
+    expect(msgs(suite, "zombieMort").some((m) => m.id === `z${z.id}`)).toBe(true);
+  });
+
+  it("carreau de Brochette : planté, il saute 1,5 s plus tard (pas avant)", () => {
+    const { b, j, t, tigres } = avecTigres(1);
+    avec(j, "principale", "brochette", false);
+    const { o, dir } = viser(j, tigres[0], 5);
+    const p = msgs(b.svc.tirSpecial(j, "brochette", o, dir, t)!, "projectile")[0];
+    expect(p.explosionT - p.impactT).toBe(STATS.brochette.zombie.projectile!.delaiMs);
+    const avant = avancer(b, t + 50, p.explosionT - 100);
+    expect(msgs(avant, "zevt").some((m) => m.e.e === "projectile")).toBe(false);
+    const apres = avancer(b, p.explosionT - 50, p.explosionT + 100);
+    expect(msgs(apres, "zevt").some((m) => m.e.e === "projectile" && m.e.id === p.id)).toBe(true);
+  });
+
+  it("Soufflerie : un tigre proche dans le cône est projeté (tué, cause « souffle », origine = l'œil) ; derrière, rien", () => {
+    const { b, j, t, tigres } = avecTigres(1);
+    avec(j, "principale", "soufflerie", false);
+    const z = tigres[0];
+    const { o, dir } = viser(j, z, 3);
+    const dos: Vec3 = [-dir[0], -dir[1], -dir[2]];
+    expect(msgs(b.svc.tirSpecial(j, "soufflerie", o, dos, t)!, "zombieMort")).toEqual([]);
+    const sorties = b.svc.tirSpecial(j, "soufflerie", o, dir, t + 1100)!;
+    const mort = msgs(sorties, "zombieMort").find((m) => m.id === `z${z.id}`)!;
+    expect(mort).toMatchObject({ cause: "souffle", arme: "soufflerie" });
+    expect(mort.src![0]).toBeCloseTo(o[0], 1);
+  });
+
+  it("gel (Soufflerie XXL) : le tigre touché qui survit est marqué gelé, puis dégelé au bout de 4 s", () => {
+    const { b, j, t, tigres } = avecTigres(1);
+    avec(j, "principale", "soufflerie", true);
+    const z = tigres[0];
+    b.svc.effetsTir(j, "soufflerie", [{ cible: `z${z.id}`, p: [z.x, 0, z.z] }], t);
+    expect(tigresVivants(b).find((x) => x.id === z.id)?.gele).toBe(true);
+    avancer(b, t + 50, t + 4200, 100);
+    const apres = tigresVivants(b).find((x) => x.id === z.id);
+    if (apres) expect(apres.gele).toBeUndefined();
+  });
+});
+
+// =================================================================================================
+describe("grand secret « Le Menu fantôme » (v8)", () => {
+  const C = SECRET_CARTE;
+  const norme = (v: Vec3): Vec3 => { const l = Math.hypot(v[0], v[1], v[2]); return [v[0] / l, v[1] / l, v[2] / l]; };
+  /** Le joueur se poste en (x, z) : œil à 1,62 m, direction vers le centre de l'objet. */
+  const poster = (j: JoueurSalle, pos: Vec2, cible: readonly number[]): { o: Vec3; d: Vec3 } => {
+    j.p = [pos[0], 0, pos[1]];
+    const o: Vec3 = [pos[0], 1.62, pos[1]];
+    return { o, d: norme([cible[0] - o[0], cible[1] - o[1], cible[2] - o[2]]) };
+  };
+  const secrets = (s: Sortie[]) => msgs(s, "zevt").map((m) => m.e).filter((e) => e.e === "secret").map((e) => (e as { quoi: string }).quoi);
+  const interagir = (b: Banc, j: JoueurSalle, objet: string, t: number) => {
+    const it = INTERACTIONS_SECRET.find((x) => x.id === objet)!;
+    j.p = [it.position[0], 0, it.position[1]];
+    return b.svc.recevoir(j, msg({ t: "acheter", id: `secret:${objet}` }), t);
+  };
+  function porte(b: Banc, j: JoueurSalle, id: string, t: number): void {
+    const p = porteDeId(id)!;
+    for (let r = 1.0; r <= 2.8; r += 0.2) {
+      for (let a = 0; a < 360; a += 10) {
+        j.p = [p.point[0] + Math.cos((a * Math.PI) / 180) * r, 0, p.point[1] + Math.sin((a * Math.PI) / 180) * r];
+        const m = msgs(b.svc.recevoir(j, msg({ t: "acheter", id }), t), "achat")[0];
+        if (m.ok) return;
+        if (m.raison !== "loin") throw new Error(`${id} : ${m.raison}`);
+      }
+    }
+    throw new Error(`porte ${id} introuvable`);
+  }
+  /**
+   * Avance la manche en ne tuant (avec `melee`) que les tigres arrivés à moins de `rayon` m de `centre`, le joueur posté là (les tigres le
+   * chassent, la griffe ne fait rien) ; s'arrête dès que `fini()`.
+   */
+  function attirer(b: Banc, j: JoueurSalle, poste: Vec2, centre: readonly number[], rayon: number, melee: boolean, t: number, fini: () => boolean): { t: number; sorties: Sortie[] } {
+    const sorties: Sortie[] = [];
+    for (let k = 0; k < 3000 && !fini(); k++, t += 100) {
+      j.p = [poste[0], 0, poste[1]];
+      sorties.push(...b.svc.tic(t));
+      for (const z of tigresVivants(b)) {
+        if (Math.hypot(z.x - centre[0], z.z - centre[2]) > rayon) continue;
+        sorties.push(...b.svc.blesser(`z${z.id}`, 1e7, j, "corps", t, { melee }));
+      }
+    }
+    return { t, sorties };
+  }
+
+  it("enchaînement complet par la salle : pendules, casseroles, marmite (livraison), cuve, truffe, midi, post-it, billot, service, cloche", () => {
+    const periodeMidiMs = 20_000;
+    const b = partieEnCours(["a"], {
+      argentDepart: 200_000, courant: true, degatsGriffe: 0, mancheTruck: 1, total1: 10, pauseMs: 2_000, secret: { periodeMidiMs, livraisonService: 2 },
+    });
+    let t = T_MANCHE1 + 100;
+    avancer(b, T0 + 100, t);
+    const j = b.j("a");
+    j.pv = 1e9;
+    const sec = () => b.svc.etat().secret;
+    expect(b.svc.etat()).toMatchObject({ phase: "manche", mancheTruck: true });
+    // les tigres doivent pouvoir rejoindre la cour, puis la cuisine
+    for (const id of ["D2", "D4"]) porte(b, j, id, t);
+
+    // 1. les quatre pendules arrêtées, au couteau
+    for (const p of C.pendules.slice(0, 4)) {
+      const v = poster(j, p.position, p.c);
+      b.svc.coupSecret(j, "couteau", v.o, v.d, t);
+    }
+    expect(sec()).toMatchObject({ etape: 1, pendules: 15, pendulesT: t });
+    // 2. la batterie de cuivre dans l'ordre de l'ardoise (tiré à chaque partie)
+    const enCuisine: Vec2 = local(70, -9.5, -9.5);
+    let s: Sortie[] = [];
+    for (const i of sec().ardoise) {
+      const v = poster(j, enCuisine, C.casseroles[i].c);
+      s = b.svc.tirSecret(j, "pistolet", v.o, [v.d], t);
+    }
+    expect(secrets(s)).toEqual(["casserole", "casseroles"]);
+    expect(sec().etape).toBe(2);
+    // 3. la marmite : des petits du Truck tués autour d'elle pendant la livraison
+    const devantMarmite: Vec2 = [C.marmite.c[0] - 2, C.marmite.c[2] + 1.5];
+    const r3 = attirer(b, j, devantMarmite, C.marmite.c, 5.5, false, t, () => sec().etape >= 3 || b.svc.etat().phase !== "manche");
+    t = r3.t;
+    expect(secrets(r3.sorties)).toContain("marmite_pleine");
+    expect(sec().etape).toBe(3);
+    ({ t } = finirManche(b, j, t));
+    // 4. une grenade au pied de la cuve n° 3 (une manche ordinaire)
+    t = avancerJusqua(b, t, () => b.svc.etat().phase === "manche");
+    const truffe = INTERACTIONS_SECRET.find((x) => x.id === "truffe")!;
+    const g = poster(j, truffe.position, [C.cuves[2].c[0], 0, C.cuves[2].c[2]]);
+    b.svc.recevoir(j, msg({ t: "lancerGrenade", genre: "frag", o: g.o, d: norme([g.d[0] * 0.3, -1, g.d[2] * 0.3]) }), t);
+    const r4 = avancer(b, t + 50, t + 4500, 50);
+    t += 4500;
+    expect(secrets(r4)).toContain("congelateur");
+    expect(sec().etape).toBe(4);
+    // 5. la truffe portée au four à temps (aucune réponse d'achat : le serveur ne trahit rien)
+    expect(msgs(interagir(b, j, "truffe", t), "achat")).toEqual([]);
+    expect(sec().truffe).toEqual({ porteur: "a", finT: t + 30_000 });
+    t += 12_000;
+    avancer(b, t - 11_900, t, 100);
+    expect(secrets(interagir(b, j, "four", t))).toEqual(["truffe_servie"]);
+    expect(sec().etape).toBe(5);
+    // 6. une arme au Micro-ondes pendant les douze coups de midi
+    t = avancerJusqua(b, t, (tt) => dansMidi(sec().pendulesT, periodeMidiMs, tt));
+    const pap = ACHATS.find((a) => a.id === "pap")!;
+    j.p = [pap.position[0], 0, pap.position[1]];
+    j.main = "secondaire"; j.arme = "pistolet";
+    const r6 = b.svc.recevoir(j, msg({ t: "acheter", id: "pap" }), t);
+    expect(msgs(r6, "achat")[0]).toMatchObject({ ok: true });
+    expect(secrets(r6)).toEqual(["midi"]);
+    expect(sec().etape).toBe(6);
+    // 7. les écrans dont le post-it porte le code que l'ampoule du Local technique clignote
+    const { postits, code } = sec() as { postits: number[]; code: number[] };
+    const enOpen: Vec2 = local(72, -11, -5.4);
+    for (const n of code) {
+      const v = poster(j, enOpen, C.ecrans[postits.indexOf(n)].c);
+      s = b.svc.tirSecret(j, "pistolet", v.o, [v.d], t);
+    }
+    expect(secrets(s)).toEqual(["ecran", "ecrans"]);
+    expect(sec().etape).toBe(7);
+    // 8. le billot : des tigres achevés au couteau près de lui (la cuisine)
+    const devantBillot: Vec2 = [C.billot.c[0] - 2.2, C.billot.c[2]];
+    let r8 = attirer(b, j, devantBillot, C.billot.c, 4.5, true, t, () => sec().etape >= 8 || b.svc.etat().phase !== "manche");
+    t = r8.t;
+    while (sec().etape < 8) {
+      t = avancerJusqua(b, t, () => b.svc.etat().phase === "manche");
+      r8 = attirer(b, j, devantBillot, C.billot.c, 4.5, true, t, () => sec().etape >= 8 || b.svc.etat().phase !== "manche");
+      t = r8.t;
+    }
+    expect(sec().etape).toBe(8);
+    // 9. le service : au four pendant une livraison (la 2e ici, `livraisonService`), le Truck qui saute avant de repartir
+    let garde = 0;
+    while (!(b.svc.etat().phase === "manche" && b.svc.etat().mancheTruck && b.svc.etat().truck)) {
+      if (b.svc.etat().phase === "manche" && !b.svc.etat().mancheTruck) ({ t } = finirManche(b, j, t));
+      else { b.svc.tic(t); t += 100; }
+      if (++garde > 20_000) throw new Error("pas de deuxième livraison");
+    }
+    expect(secrets(interagir(b, j, "four", t))).toEqual(["service"]);
+    expect(sec().service).toBe(t);
+    const fin = b.svc.blesserTruck(1e9, j, t + 10);
+    expect(secrets(fin)).toEqual(["servi"]);
+    // la récompense : Rayon Goulaf et Bazooka au four (gratinés), tous les atouts, plus un tigre debout
+    const eq = msgs(fin, "equipement").at(-1)!;
+    expect(eq).toMatchObject({ main: "speciale", ravitaille: "tout" });
+    expect(eq.equip).toMatchObject({ secondaire: "rayon", speciale: "bazooka" });
+    expect(eq.equip.ameliorees).toEqual(expect.arrayContaining(["rayon", "bazooka"]));
+    expect(b.svc.etat().joueurs[0].atouts.sort()).toEqual(["expresso", "gratin", "pausecafe", "ristretto"]);
+    expect(tigresVivants(b)).toEqual([]);
+    expect(sec().etape).toBe(9);
+    // la cloche du comptoir finit la partie sur une victoire
+    const v = interagir(b, j, "cloche", t + 100);
+    expect(secrets(v)).toEqual(["victoire"]);
+    expect(b.svc.etat()).toMatchObject({ phase: "fin", bilan: { victoire: true } });
+  });
+
+  it("reprise : le porteur de la truffe qui tombe la fait fondre (la cuve se referme), un autre la reprendra après une nouvelle grenade", () => {
+    const b = partieEnCours(["a", "c"], { courant: true, secret: { etape: 4 } });
+    avancer(b, T0 + 100, T_MANCHE1 + 50);
+    const a = b.j("a");
+    interagir(b, a, "truffe", T_MANCHE1 + 100);
+    expect(b.svc.etat().secret.truffe?.porteur).toBe("a");
+    // le second joueur ne la prend pas des mains du premier
+    expect(interagir(b, b.j("c"), "truffe", T_MANCHE1 + 150)).toEqual([]);
+    a.pv = 1;
+    const s = b.ctx.infliger(a, 50, null, "tigre_zombie", "corps", "couteau", T_MANCHE1 + 200);
+    expect(secrets(s)).toContain("truffe_fondue");
+    expect(b.svc.etat().secret).toMatchObject({ etape: 3 });
+    expect(b.svc.etat().secret.truffe).toBeUndefined();
+  });
+
+  it("E sur un objet du secret hors de son étape : rien du tout (ni refus, ni effet) ; une nouvelle partie repart de zéro", () => {
+    const b = partieEnCours(["a"], { courant: true });
+    avancer(b, T0 + 100, T_MANCHE1 + 50);
+    for (const id of ["truffe", "four", "cloche"]) expect(interagir(b, b.j("a"), id, T_MANCHE1 + 100)).toEqual([]);
+    expect(b.svc.recevoir(b.j("a"), msg({ t: "acheter", id: "secret:inconnu" }), T_MANCHE1 + 100)).toEqual([]);
+    expect(b.svc.etat().secret).toMatchObject({ etape: 0, pendulesT: 0 });
+    // un tir ou un coup qui ne touche rien du décor ne produit rien
+    expect(b.svc.tirSecret(b.j("a"), "pistolet", [118, 1.6, -24], [[1, 0, 0]], T_MANCHE1 + 100)).toEqual([]);
+    expect(b.svc.coupSecret(b.j("a"), "couteau", [118, 1.6, -24], [1, 0, 0], T_MANCHE1 + 100)).toEqual([]);
+  });
+});
+
+/** Avance de 100 ms en 100 ms (sans tuer de tigre, la griffe des essais ne fait rien) jusqu'à `ok()`. */
+function avancerJusqua(b: Banc, t: number, ok: (t: number) => boolean): number {
+  for (let k = 0; k < 20_000; k++, t += 100) {
+    if (ok(t)) return t;
+    b.svc.tic(t);
+  }
+  throw new Error("condition jamais atteinte");
+}
+
+// =================================================================================================
+describe("(v8) souffles des armes et insta-kill", () => {
+  /** Partie solo où le premier bonus lâché est l'insta-kill, ramassé : renvoie le banc, le joueur et l'instant (insta-kill actif). */
+  function sousInstakill(opts: Partial<OptionsServiceZombies> = {}) {
+    const b = partieEnCours(["a"], { total1: 200, degatsGriffe: 0, bonus: ["instakill"], ...opts });
+    const j = b.j("a");
+    j.pv = 1e9;
+    for (let t = T_PREMIER_TIGRE; t < T_PREMIER_TIGRE + 240_000; t += 100) {
+      b.svc.tic(t);
+      const sol = b.svc.etat().bonus[0];
+      if (sol) {
+        j.p = [sol.p[0], 0, sol.p[2]];
+        b.svc.tic(t + 50);
+        expect(b.svc.etat().effets.instakillFinT).toBeGreaterThan(t + 50);
+        // de nouveaux tigres pour la suite
+        let u = t + 100;
+        for (; u < t + 20_000 && tigresVivants(b).filter((z) => zoneEn(ZONES_SOL, z.x, z.z)).length < 2; u += 100) b.svc.tic(u);
+        return { b, j, t: u };
+      }
+      for (const z of tigresVivants(b)) if (zoneEn(ZONES_SOL, z.x, z.z)) b.svc.blesser(`z${z.id}`, 100_000, j, "tete", t);
+    }
+    throw new Error("aucun insta-kill");
+  }
+
+  it("sous insta-kill, le souffle d'un tir explosif ne tue que les tigres à portée (pas toute la carte)", () => {
+    const { b, j, t } = sousInstakill();
+    const vivants = tigresVivants(b);
+    expect(vivants.length).toBeGreaterThan(0);
+    // un point au sol à 30 m de chaque tigre au moins : le souffle du Pistolet à rayons (1,6 m) n'en atteint aucun
+    const loin = (x: number, z: number) => vivants.every((v) => Math.hypot(v.x - x, v.z - z) > 30);
+    let c: Vec3 | null = null;
+    for (let x = -200; x <= 300 && !c; x += 10) for (let z = -200; z <= 200 && !c; z += 10) if (loin(x, z)) c = [x, 1.2, z];
+    expect(c).not.toBeNull();
+    const sorties = b.svc.explosionTir(j, "rayon", [c![0] - 1, 1.2, c![2]], [1, 0, 0], 1, 50, t);
+    expect(msgs(sorties, "zombieMort")).toEqual([]);
+    expect(tigresVivants(b).length).toBe(vivants.length);
+    // à bout portant, il tue au premier coup (insta-kill)
+    const z = vivants[0];
+    const pres = b.svc.explosionTir(j, "rayon", [z.x - 3, 0.8, z.z], [1, 0, 0], 3, 50, t + 10);
+    expect(msgs(pres, "zombieMort").some((m) => m.id === `z${z.id}`)).toBe(true);
+  });
+
+  it("sous insta-kill, une balle sur le Truck Muche fait ses dégâts normaux (pas 10 000 000)", () => {
+    const { b, j, t } = sousInstakill();
+    expect(b.svc.degatsTir(j, "pistolet", "corps", 5, t)).toBeGreaterThanOrEqual(1e6);
+    expect(b.svc.degatsTirTruck(j, "pistolet", 5)).toBe(40);
+  });
+});
+
+describe("(v8) souffle d'un tir explosif : ligne de vue et Truck Muche", () => {
+  it("un tigre derrière un mur n'est pas touché par le souffle d'un tir explosif (comme un projectile ou une grenade)", () => {
+    const { monde } = { monde: construireMondeZombies(scene) };
+    const b = partieEnCours(["a"], { total1: 24, degatsGriffe: 0 });
+    const j = b.j("a");
+    j.pv = 1e9;
+    // un tigre et un mur fin tout près de lui (0,5 à 1,3 m) : le centre du souffle est posé juste derrière le mur, à portée sans le mur
+    let trouve: { id: string; c: Vec3; d: Vec3 } | null = null;
+    let t = T_PREMIER_TIGRE;
+    for (; t < T_PREMIER_TIGRE + 60_000 && !trouve; t += 100) {
+      b.svc.tic(t);
+      for (const z of tigresVivants(b)) {
+        if (z.mode !== "chasse") continue;
+        for (let a = 0; a < 360 && !trouve; a += 5) {
+          const d: Vec3 = [Math.cos((a * Math.PI) / 180), 0, Math.sin((a * Math.PI) / 180)];
+          const mur = lancerRayon(monde, [z.x, 0.8, z.z], d, 3);
+          if (!(mur >= 0.3 && mur <= 1.5)) continue;
+          // premier point libre de l'autre côté de la paroi (dans une paroi, un rayon s'arrête aussitôt), encore à portée sans le mur (≤ 2 m)
+          for (let k = mur + 0.05; k <= 2 && !trouve; k += 0.05) {
+            const c: Vec3 = [z.x + d[0] * k, 0.8, z.z + d[2] * k];
+            if (lancerRayon(monde, c, d, 0.3) < 0.3 || lancerRayon(monde, c, [-d[0], 0, -d[2]], 2) < 0.02) continue;
+            if (souffleAtteint(monde, c, [z.x, 0.3, z.z])) break;
+            trouve = { id: `z${z.id}`, c, d };
+          }
+        }
+        if (trouve) break;
+      }
+    }
+    expect(trouve).not.toBeNull();
+    const { id, c, d } = trouve!;
+    const pvAvant = tigresVivants(b).find((z) => `z${z.id}` === id)!.pvPct;
+    // tir de l'autre côté du mur, qui touche un tigre fictif au centre `c` (distanceTouche donnée : centre = c)
+    const o: Vec3 = [c[0] + d[0] * 2, c[1], c[2] + d[2] * 2];
+    const sorties = b.svc.explosionTir(j, "rayon", o, [-d[0], 0, -d[2]], 2, 50, t);
+    expect(msgs(sorties, "degats").filter((m) => m.cible === id)).toEqual([]);
+    expect(tigresVivants(b).some((z) => `z${z.id}` === id && z.pvPct === pvAvant)).toBe(true);
+  });
+
+  it("le souffle d'un tir explosif au pied du Truck Muche le blesse", () => {
+    const b = partieEnCours(["a"], { mancheTruck: 1, total1: 4, degatsGriffe: 0 });
+    const j = b.j("a");
+    j.pv = 1e9;
+    let t = T_MANCHE1 + 100;
+    avancer(b, T0 + 100, t);
+    for (; t < T_MANCHE1 + 30_000 && b.svc.etat().truck?.phase !== "livraison"; t += 100) b.svc.tic(t);
+    expect(b.svc.etat().truck).toMatchObject({ phase: "livraison" });
+    const p = b.svc.snap()!.t!;
+    const avant = p[4];
+    // centre du souffle à 1 m au-delà de la demi-longueur de la caisse (sa position au snap, en cm)
+    const o: Vec3 = [p[0] / 100 + TRUCK.demiLongueur + 3, 0.8, p[1] / 100];
+    const sorties = b.svc.explosionTir(j, "rayon", o, [-1, 0, 0], 2, 50, t);
+    expect(msgs(sorties, "degats").some((m) => m.cible === "livraison")).toBe(true);
+    expect(b.svc.snap()!.t![4]).toBeLessThan(avant);
+  });
+
+  it("le message `degats` d'un Truck détruit d'un coup est plafonné comme celui d'un tigre", () => {
+    const b = partieEnCours(["a"], { mancheTruck: 1, total1: 4, degatsGriffe: 0 });
+    const j = b.j("a");
+    j.pv = 1e9;
+    let t = T_MANCHE1 + 100;
+    avancer(b, T0 + 100, t);
+    for (; t < T_MANCHE1 + 30_000 && b.svc.etat().truck?.phase !== "livraison"; t += 100) b.svc.tic(t);
+    const s = b.svc.blesserTruck(1e7, j, t);
+    expect(msgs(s, "degats")[0].degats).toBeLessThanOrEqual(99_999);
+  });
+});
+
+// =================================================================================================
+describe("(v8) Micro-ondes et récompenses : un slot réservé n'est jamais écrasé ni offert", () => {
+  const achatId = (id: string) => ACHATS.find((a) => a.id === id)!;
+  const acheterIci = (b: Banc, j: JoueurSalle, id: string, t: number) => {
+    const a = achatId(id);
+    j.p = [a.position[0], 0, a.position[1]];
+    return b.svc.recevoir(j, msg({ t: "acheter", id }), t);
+  };
+
+  it("boîte mystère : tant que le pistolet cuit, aucune secondaire ne sort (elle ne pourrait pas être prise)", () => {
+    for (let graine = 1; graine <= 25; graine++) {
+      const b = partieEnCours(["a"], { argentDepart: 20_000, courant: true, alea: suite(graine) });
+      avancer(b, T0 + 100, T_MANCHE1 + 50);
+      const j = b.j("a");
+      const t = T_MANCHE1 + 100;
+      expect(msgs(acheterIci(b, j, "pap", t), "achat")[0]).toMatchObject({ ok: true });
+      const em = b.svc.etat().boite.emplacement;
+      expect(msgs(acheterIci(b, j, achatBoite(em).id, t + 50), "achat")[0]).toMatchObject({ ok: true });
+      const tiree = b.svc.etat().boite.arme!;
+      expect(tiree, `graine ${graine}`).toBeDefined();
+      if (tiree !== "peluche" && tiree !== "remontoir") expect(STATS[tiree].categorie, `graine ${graine} : ${tiree}`).not.toBe("secondaire");
+    }
+  });
+
+  it("le grand secret servi pendant que la secondaire cuit : le dépôt est annulé et remboursé, le Rayon Goulaf reste", () => {
+    const b = partieEnCours(["a"], {
+      argentDepart: 20_000, courant: true, degatsGriffe: 0, mancheTruck: 1, total1: 4, secret: { etape: 8, livraisonService: 1 },
+    });
+    const j = b.j("a");
+    j.pv = 1e9;
+    let t = T_MANCHE1 + 100;
+    avancer(b, T0 + 100, t);
+    for (; t < T_MANCHE1 + 60_000 && !(b.svc.etat().truck && b.svc.etat().truck!.phase === "livraison"); t += 100) b.svc.tic(t);
+    expect(b.svc.etat().truck?.phase).toBe("livraison");
+    expect(msgs(acheterIci(b, j, "pap", t), "achat")[0]).toMatchObject({ ok: true });
+    expect(b.svc.etat().pap).toMatchObject({ etat: "cuisson", arme: "pistolet" });
+    const four = INTERACTIONS_SECRET.find((x) => x.id === "four")!;
+    j.p = [four.position[0], 0, four.position[1]];
+    b.svc.recevoir(j, msg({ t: "acheter", id: "secret:four" }), t + 50);
+    const fin = b.svc.blesserTruck(1e9, j, t + 100);
+    expect(msgs(fin, "zevt").some((m) => m.e.e === "secret" && (m.e as { quoi: string }).quoi === "servi")).toBe(true);
+    expect(b.svc.etat().pap.etat).toBe("libre");
+    expect(msgs(fin, "zevt").map((m) => m.e)).toContainEqual({ e: "pap", joueur: "a", arme: "pistolet", pret: false, fin: "perdue" });
+    expect(msgs(fin, "argent").find((m) => m.motif === "pap")).toMatchObject({ delta: 5000 });
+    expect(j.equip).toMatchObject({ secondaire: "rayon", speciale: "bazooka" });
+    expect(j.equip.enCuisson).toBeUndefined();
+    // plus rien à reprendre : le Rayon Goulaf ne peut plus être écrasé par le pistolet
+    avancer(b, t + 150, t + CUISSON_PAP_MS + 500);
+    acheterIci(b, j, "pap", t + CUISSON_PAP_MS + 600);
+    expect(j.equip.secondaire).toBe("rayon");
   });
 });

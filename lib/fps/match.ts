@@ -19,6 +19,7 @@
  * 2026-10-24-arene-evenements-design.md, 2026-10-23-arene-tigres-design.md et 2026-10-27-arene-zombies-design.md
  */
 import { MELEE, STATS, degatsPlomb, gerbeRespectee } from "./armes";
+import { segmentsRicochet, type SegmentTir } from "./effets-armes";
 import { ecarterDesCircuits, type Circuit, type VoiturePnj } from "./circulation";
 import type { Monde } from "./collision";
 import type { IntervalleAvion } from "./avion";
@@ -38,7 +39,7 @@ import {
   type ArmeFeuId, type ArmeId, type ArmeMeleeId, type CauseMort, type EtatJoueurSnap, type Equipement, type InfoMatch, type InfoTueur,
   type JoueurPublic, type LigneClassement, type LigneStats, type MessageClient, type MonstresSnap, type SignalVoix, type Slot, type Vec3, type Zone,
 } from "./protocole";
-import { BUS_C3, avancerBusC3, busEnSnap, armesEnSnap, ecraseParBus, estSurLeToit, ramasserArmeC3, peutMonterSurBus, creerEtatBusC3, type EtatBusC3 } from "./bus-c3";
+import { BUS_C3, avancerBusC3, busEnSnap, armesEnSnap, ecraseParBus, estSurLeToit, ramasserArmeC3, peutMonterSurBus, creerEtatBusC3, type EtatBusC3, type IntervalleBus } from "./bus-c3";
 import { creerFrappe, degatsImpactFrappe, verifierImpactsFrappe, type FrappeEnCours } from "./frappe-aerienne";
 import { creerNuageFumee, nuagesEnSnap, type NuageFumee } from "./fumigene";
 import { appliquerDegats, memoriserSante, regenerer, reinitialiserSante, restaurerSante, tuer as tuerSante } from "./sante";
@@ -64,8 +65,21 @@ export const PSEUDO_DEFAUT = "Agent";
 export const VITESSE_MAX_H_M_S = PLAFONDS.vitesseHorizontaleMax;
 /** Vitesse verticale maximale (m/s) : une chute depuis un toit dépasse la vitesse horizontale. */
 export const VITESSE_MAX_V_M_S = 45;
-/** Plus grand écart de temps (s) crédité à un état : borne la distance acceptée après un silence. */
+/** (avant le budget de distance) Plus grand écart de temps (s) crédité à un état ; gardé pour les appelants, le budget le remplace. */
 export const DT_MAX_S = 5;
+/**
+ * Budget de distance des états (seau à jetons, horizontal et vertical) : chaque état reçu crédite `vitesse max × temps serveur écoulé`, plafonné
+ * à `vitesse max × BUDGET_*_S` ; un état est accepté si son déplacement tient dans le budget + la marge, qu'il consomme. Les paquets regroupés
+ * (perte TCP, client à 10 images/s) passent donc tous, et la vitesse MOYENNE reste bornée (l'ancienne vérification instantanée tolérait
+ * +1 m par état : 30 m/s de plus à 30 Hz, mais refusait toute rafale). Arène : le plafond court garde l'anti-triche de vitesse strict (un
+ * tricheur ne gagne au plus que 0,5 s d'avance) ; zombies (coopératif) : une seconde de rafale. Dans les deux, un dépassement est accepté
+ * en partie (sinon une rafale plus longue que le plafond figerait la position serveur pour toujours).
+ */
+export const BUDGET_ARENE_S = 0.5;
+export const BUDGET_ZOMBIES_S = 1;
+/** Marge (m) d'un état au-delà du budget (horizontale, verticale) : une fois, le budget peut descendre jusqu'à −marge. */
+export const MARGE_ETAT_H_M = 1;
+export const MARGE_ETAT_V_M = 1.5;
 /** Les pieds peuvent dépasser les bornes de l'arène de cette marge (m). */
 export const MARGE_HORS_BORNES_M = 0.5;
 /** Cadence tolérée : fraction de la cadence nominale de l'arme. */
@@ -175,6 +189,8 @@ export interface OptionsSalle {
    * `zoneApparition` (sinon `ZONE_APPARITION` autour du rond-point) servent, et intervalle des passages surchargeable.
    */
   tigres?: { cachettes: readonly CachetteTigre[]; intervalle?: IntervalleAvion };
+  /** Bus C3 express (arène seulement) : intervalle des passages surchargeable (tests de bout en bout) */
+  bus?: { intervalle?: IntervalleBus };
   /** événements (v3) : Truck Muche fou, tigre robot géant, titan tigre */
   evenements?: Omit<OptionsServiceEvenements, "maintenant">;
   /**
@@ -190,6 +206,15 @@ interface SuiviJoueur {
   prochain: Equipement;
   /** slot tenu avant le changement en cours (retour d'une spéciale épuisée) */
   precedent: Slot;
+  /** budget de distance des états (m, horizontal et vertical) et instant de son dernier crédit (cf. `BUDGET_ARENE_S`) */
+  budgetH: number;
+  budgetV: number;
+  budgetT: number;
+  /**
+   * un dépassement du budget peut être accepté en partie : faux après une téléportation (apparition) jusqu'au premier état accepté en
+   * entier, pour qu'un état encore en vol depuis l'ancienne position ne tire pas le joueur en arrière
+   */
+  partiel: boolean;
 }
 
 /** Position d'une cible à valider : un point de son historique et sa posture à cet instant. */
@@ -266,7 +291,7 @@ export class Salle implements ContexteSalle {
       })
       : null;
     this.zombies = options.zombies ? creerServiceZombies(this, { ...options.zombies, alea }) : null;
-    this.busC3 = options.zombies ? null : creerEtatBusC3(maintenant, this.alea);
+    this.busC3 = options.zombies ? null : creerEtatBusC3(maintenant, this.alea, options.bus?.intervalle);
   }
 
   /** (v3) Pilote du titan tigre : invulnérable, ni arme ni voiture ni état à pied. */
@@ -402,17 +427,25 @@ export class Salle implements ContexteSalle {
   /**
    * (v5, zombies) Place le joueur en `p` : PV, équipement (copie propre), arme en main, protection d'apparition ; l'état de mouvement est remis
    * à zéro (le client repart de `seq` 0). Ne change ni `enJeu` ni les règles de réentrée de l'arène. Renvoie le message `apparition`.
+   * `garder` (v8, relève) : PAS de téléportation : la position et le regard suivis par les états du client restent, ainsi que `seq` et le
+   * budget de distance (les états en vol restent jugés contre la même référence) ; le message porte `garder`.
    */
-  placerJoueur(j: JoueurSalle, p: Vec3, lacet: number, opts: { pv: number; equip: Equipement; main: Slot; munSpeciale?: number }, maintenant: number): Sortie[] {
-    j.p = [p[0], p[1], p[2]];
+  placerJoueur(
+    j: JoueurSalle, p: Vec3, lacet: number, opts: { pv: number; equip: Equipement; main: Slot; munSpeciale?: number; garder?: boolean }, maintenant: number,
+  ): Sortie[] {
+    const garder = opts.garder === true;
+    if (!garder) {
+      j.p = [p[0], p[1], p[2]];
+      j.lacet = lacet;
+      j.tangage = 0;
+      j.seq = -1;
+      this.reinitialiserBudget(j, maintenant);
+    }
     j.v = [0, 0, 0];
-    j.lacet = lacet;
-    j.tangage = 0;
     j.posture = "sol";
     j.mur = 0;
     j.accroupi = false;
     j.glisse = false;
-    j.seq = -1;
     j.equip = copierEquipement(opts.equip);
     j.main = opts.main;
     j.arme = armeDuSlot(j.equip, j.main) ?? j.equip.secondaire;
@@ -435,8 +468,8 @@ export class Salle implements ContexteSalle {
     return [{
       a: "tous",
       m: {
-        t: "apparition", id: j.id, p: j.p, lacet, arme: j.arme, pv: j.pv, bouclier: j.bouclier,
-        equip: copierEquipement(j.equip), main: j.main, munSpeciale: j.munSpeciale,
+        t: "apparition", id: j.id, p: [j.p[0], j.p[1], j.p[2]], lacet: j.lacet, arme: j.arme, pv: j.pv, bouclier: j.bouclier,
+        equip: copierEquipement(j.equip), main: j.main, munSpeciale: j.munSpeciale, ...(garder ? { garder: true as const } : {}),
       },
     }];
   }
@@ -541,7 +574,7 @@ export class Salle implements ContexteSalle {
       scoresOuvert: false, scoresDemandeT: -Infinity, scoresEnvoyeT: -Infinity,
     };
     this.table.set(id, j);
-    this.suivi.set(id, { prochain: copierEquipement(EQUIPEMENT_DEFAUT), precedent: "principale" });
+    this.suivi.set(id, { prochain: copierEquipement(EQUIPEMENT_DEFAUT), precedent: "principale", budgetH: 0, budgetV: 0, budgetT: maintenant, partiel: false });
     return [
       { a: id, m: { t: "bienvenue", id, couleur, joueurs: this.joueursPublics(), match: this.infoMatch(), maintenant } },
       { a: "tous", sauf: id, m: { t: "presence", joueurs: this.joueursPublics() } },
@@ -562,6 +595,34 @@ export class Salle implements ContexteSalle {
     return [...liberation, this.presence(), ...sortieZombies];
   }
 
+  /**
+   * (v8) Reprise d'une session coupée (le serveur a gardé le joueur, cf. `REPRISE_MS` de serveur-fps) : le client revient avec le même id.
+   * Rien ne bouge dans la salle ; renvoie au seul client `bienvenue{reprise}`, l'état de la partie de zombies (argent, portes) et, s'il est en
+   * jeu et debout, une `apparition{garder}` qui resynchronise santé et armes sans le déplacer (à terre, l'état de la partie suffit).
+   * `pseudo` : celui du `bonjour` de la reconnexion (un renommage fait pendant la coupure n'est pas mis en file par le client) ; s'il diffère,
+   * il est appliqué comme un message `pseudo` et la `presence` qui en résulte part à toute la salle.
+   */
+  reprendre(id: string, maintenant: number, pseudo?: unknown): Sortie[] {
+    const j = this.table.get(id);
+    if (!j) return [];
+    const renomme = typeof pseudo === "string" && pseudo !== j.pseudo ? this.renommer(j, pseudo, maintenant) : [];
+    const sorties: Sortie[] = [
+      { a: id, m: { t: "bienvenue", id, couleur: j.couleur, joueurs: this.joueursPublics(), match: this.infoMatch(), maintenant, reprise: true } },
+      ...renomme,
+    ];
+    if (this.zombies) sorties.push(...this.zombies.synchro(id));
+    if (j.enJeu && j.vivant) {
+      sorties.push({
+        a: id,
+        m: {
+          t: "apparition", id, p: [j.p[0], j.p[1], j.p[2]], lacet: j.lacet, arme: j.arme, pv: j.pv, bouclier: j.bouclier,
+          equip: copierEquipement(j.equip), main: j.main, munSpeciale: j.munSpeciale, garder: true,
+        },
+      });
+    }
+    return sorties;
+  }
+
   // ---------- messages des clients ----------
 
   recevoir(id: string, msg: MessageClient, maintenant: number): Sortie[] {
@@ -573,8 +634,15 @@ export class Salle implements ContexteSalle {
       case "quitter": return this.quitter(j, maintenant);
       case "arme": if (!this.zombies) this.choisir(j, { arme: msg.arme }); return [];
       case "equiper": if (!this.zombies) this.choisir(j, msg); return [];
-      case "lancerPartie": case "acheter": case "reanimer":
+      // (v8) `reparer` (planches reposées en maintenant E) passe aussi par le service : il manquait à l'aiguillage
+      case "lancerPartie": case "acheter": case "reanimer": case "reparer":
         return this.zombies ? this.zombies.recevoir(j, msg, maintenant) : [];
+      case "lancerGrenade": {
+        // (v8, zombies) l'œil et la direction sont validés comme ceux d'un tir ; le service juge le stock et la cadence
+        if (!this.zombies || !j.enJeu || !j.vivant || !estVec3(msg.o) || !estVec3(msg.d)) return [];
+        const dirs = this.validerVisee(j, msg.o, [msg.d], maintenant);
+        return dirs ? this.zombies.recevoir(j, { ...msg, d: dirs[0] }, maintenant) : [];
+      }
       case "main": return this.changerMain(j, msg.slot, maintenant);
       case "etat": this.recevoirEtat(j, msg, maintenant); return [];
       case "tir": return this.recevoirTir(j, msg, maintenant);
@@ -762,9 +830,25 @@ export class Salle implements ContexteSalle {
     return [];
   }
 
-  /** État prédit par le client : accepté s'il reste dans les bornes et dans la vitesse permise. */
+  /** Budget de distance remis à zéro (téléportation : apparition, réapparition) ; plus d'acceptation partielle jusqu'au prochain état entier. */
+  private reinitialiserBudget(j: JoueurSalle, maintenant: number): void {
+    const suivi = this.suivi.get(j.id);
+    if (!suivi) return;
+    suivi.budgetH = 0;
+    suivi.budgetV = 0;
+    suivi.budgetT = maintenant;
+    suivi.partiel = false;
+  }
+
+  /**
+   * État prédit par le client : accepté s'il reste dans les bornes et dans le budget de distance (`BUDGET_ARENE_S`). Le mouvement est
+   * autoritaire côté client : le serveur ne corrige jamais le joueur, il ne fait que borner ce qu'il accepte. Un dépassement du budget est
+   * accepté en partie (la position serveur avance de ce que le budget permet, sans jamais rester figée loin derrière le client), sauf
+   * juste après une téléportation ; en zombies, le corps d'un joueur à terre est suivi (posture « mort », sans historique).
+   */
   private recevoirEtat(j: JoueurSalle, e: Extract<MessageClient, { t: "etat" }>, maintenant: number): void {
-    if (!j.enJeu || !j.vivant || this.pilote(j.id)) return;
+    const aTerre = !j.vivant && j.enJeu && !!this.zombies?.aTerre(j.id);
+    if (!j.enJeu || (!j.vivant && !aTerre) || this.pilote(j.id)) return;
     if (!estNombre(e.seq) || e.seq <= j.seq) return;
     if (this.vehicules?.occupation(j.id)) {
       // occupant : la voiture fait foi pour p / v / posture / mur (service des véhicules) ; seul le regard est retenu
@@ -780,15 +864,34 @@ export class Salle implements ContexteSalle {
     if (e.p[0] < b.x0 - MARGE_HORS_BORNES_M || e.p[0] > b.x1 + MARGE_HORS_BORNES_M) return;
     if (e.p[2] < b.z0 - MARGE_HORS_BORNES_M || e.p[2] > b.z1 + MARGE_HORS_BORNES_M) return;
     if (e.p[1] < -10 || e.p[1] > 400) return;
-    // La référence (position, temps) ne bouge qu'à l'acceptation : après un refus, le temps écoulé
-    // grandit et l'écart permis avec lui, comme pour un joueur réellement parti plus loin.
-    const dt = Math.min(DT_MAX_S, Math.max(0, (maintenant - j.etatT) / 1000));
+    // Budget de distance : crédité du temps serveur écoulé depuis le dernier état REÇU (refusé compris), plafonné. Après un refus, la
+    // référence (dernière position acceptée) ne bouge pas et le budget continue de grandir : un joueur réellement parti plus loin est
+    // rattrapé dès que le budget couvre l'écart.
+    const suivi = this.suivi.get(j.id)!;
+    const plafondS = this.zombies ? BUDGET_ZOMBIES_S : BUDGET_ARENE_S;
+    const dtB = Math.max(0, (maintenant - suivi.budgetT) / 1000);
+    suivi.budgetT = maintenant;
+    suivi.budgetH = Math.min(VITESSE_MAX_H_M_S * plafondS, suivi.budgetH + VITESSE_MAX_H_M_S * dtB);
+    suivi.budgetV = Math.min(VITESSE_MAX_V_M_S * plafondS, suivi.budgetV + VITESSE_MAX_V_M_S * dtB);
+    const permisH = Math.max(0, suivi.budgetH + MARGE_ETAT_H_M), permisV = Math.max(0, suivi.budgetV + MARGE_ETAT_V_M);
     const dh = Math.hypot(e.p[0] - j.p[0], e.p[2] - j.p[2]);
-    if (dh > VITESSE_MAX_H_M_S * dt + 1) return;
-    if (Math.abs(e.p[1] - j.p[1]) > VITESSE_MAX_V_M_S * dt + 1.5) return;
+    const dy = Math.abs(e.p[1] - j.p[1]);
+    let p: Vec3 = [e.p[0], e.p[1], e.p[2]];
+    const entier = dh <= permisH && dy <= permisV;
+    if (!entier) {
+      // la position avance de ce que le budget permet, vers celle du client (arène comme zombies) : un refus sec laisserait la position
+      // serveur figée pour toujours dès qu'une rafale la met plus loin que le plafond du budget (+ marge) derrière le client, le budget
+      // ne pouvant jamais couvrir l'écart ; la vitesse moyenne acceptée reste bornée par le budget consommé (anti-triche de vitesse)
+      if (!suivi.partiel) return;
+      const kh = dh > permisH ? permisH / dh : 1, kv = dy > permisV ? permisV / dy : 1;
+      p = [j.p[0] + (e.p[0] - j.p[0]) * kh, j.p[1] + (e.p[1] - j.p[1]) * kv, j.p[2] + (e.p[2] - j.p[2]) * kh];
+    }
+    suivi.budgetH -= Math.hypot(p[0] - j.p[0], p[2] - j.p[2]);
+    suivi.budgetV -= Math.abs(p[1] - j.p[1]);
+    if (entier) suivi.partiel = true;
     j.seq = e.seq;
     j.etatT = maintenant;
-    j.p = [e.p[0], e.p[1], e.p[2]];
+    j.p = p;
     // vitesse bornée comme la position : un `v` gonflé agrandirait sa propre hitbox et sa tolérance d'œil
     const vh = Math.hypot(e.v[0], e.v[2]);
     const k = vh > VITESSE_DECLAREE_MAX_H_M_S ? VITESSE_DECLAREE_MAX_H_M_S / vh : 1;
@@ -800,7 +903,15 @@ export class Salle implements ContexteSalle {
     // accroupi seulement au sol (pas en l'air, pas en wall-run) ; se relever est toujours permis
     j.accroupi = j.posture === "sol" && e.accroupi === true;
     j.glisse = j.accroupi && e.glisse === true;
-    j.histo.push({ t: maintenant, p: [e.p[0], e.p[1], e.p[2]], accroupi: j.accroupi });
+    if (aTerre) {
+      // corps à terre : il glisse ou retombe encore un instant chez le client, la position suit ; ni posture debout ni cible rejouée
+      j.posture = "mort";
+      j.mur = 0;
+      j.accroupi = false;
+      j.glisse = false;
+      return;
+    }
+    j.histo.push({ t: maintenant, p: [p[0], p[1], p[2]], accroupi: j.accroupi });
     while (j.histo.length > 1 && maintenant - j.histo[0].t > HISTORIQUE_MS) j.histo.shift();
   }
 
@@ -863,7 +974,7 @@ export class Salle implements ContexteSalle {
    * Cadence par arme (un aller-retour d'arme ne contourne pas la cadence du sniper). 85 % de l'intervalle nominal ; crédit de rafale pour
    * la gigue réseau : un demi-intervalle (une fois), ou pour une arme automatique `max(3 intervalles, 200 ms)`. Vrai et cadence avancée si le tir passe.
    */
-  private cadenceOk(j: JoueurSalle, arme: ArmeId, cadenceS: number, auto: boolean, maintenant: number): boolean {
+  private cadenceOk(j: JoueurSalle, arme: ArmeId | `${ArmeId}:g`, cadenceS: number, auto: boolean, maintenant: number): boolean {
     const intervalle = cadenceS * 1000 * TOLERANCE_CADENCE;
     const prochain = j.cadenceArme[arme] ?? -Infinity;
     if (maintenant < prochain) return false;
@@ -887,14 +998,40 @@ export class Salle implements ContexteSalle {
     if (!dirs) return [];
     // gerbe FIXE (§13.1) : les plombs d'un tir à plusieurs plombs sont ceux de `directionsTir` autour de l'axe, à 0,02 rad près
     if (!gerbeRespectee(armeTiree, dirs)) return [];
+    // (v8, zombies) cadence, tir automatique et paire akimbo de l'arme telle qu'elle est (Pack-a-Punch compris) ; chaque main d'une paire
+    // a sa propre cadence (`main: "g"` = la main gauche, refusée pour une arme seule)
+    const st = this.zombies?.statsTir(j, armeTiree) ?? null;
+    const gauche = tir.main === "g";
+    if (gauche && !st?.akimbo) return [];
     // (v7, zombies) le Double Ristretto raccourcit l'intervalle entre deux tirs
-    if (!this.cadenceOk(j, armeTiree, arme.cadenceS * (this.zombies?.cadence(j) ?? 1), arme.auto, maintenant)) return [];
+    const cleCadence = gauche ? (`${armeTiree}:g` as const) : armeTiree;
+    if (!this.cadenceOk(j, cleCadence, (st?.cadenceS ?? arme.cadenceS) * (this.zombies?.cadence(j) ?? 1), st?.auto ?? arme.auto, maintenant)) return [];
     j.protegeJusqua = 0; // tirer annule la protection d'apparition
     j.tirs++;
 
-    const sorties: Sortie[] = [{ a: "tous", sauf: j.id, m: { t: "tir", id: j.id, arme: armeTiree, o: tir.o, d: dirs } }];
+    // (v8, zombies) l'amélioration voyage avec le tir : les autres clients en tirent le profil (projectile, souffle, traçante)
+    const ameliore = !!this.zombies && (j.equip.ameliorees?.includes(armeTiree) ?? false);
+    const sorties: Sortie[] = [{
+      a: "tous", sauf: j.id,
+      m: { t: "tir", id: j.id, arme: armeTiree, o: tir.o, d: dirs, ...(gauche ? { main: "g" as const } : {}), ...(ameliore ? { ameliore: true as const } : {}) },
+    }];
     // arme spéciale : une munition de moins ; à 0, l'arme disparaît et le joueur retombe sur le slot précédent
     if (j.main === "speciale") sorties.push(...this.consommerSpeciale(j, maintenant));
+    // (v8, zombies) le grand secret voit passer chaque tir validé (objets du décor)
+    if (this.zombies) sorties.push(...this.zombies.tirSecret(j, armeTiree, tir.o, dirs, maintenant));
+    // (v8, zombies) projectile ou souffle : le service résout tout le tir (aucune touche déclarée n'est lue)
+    const special = this.zombies?.tirSpecial(j, armeTiree, tir.o, dirs[0], maintenant) ?? null;
+    if (special) { sorties.push(...special); return sorties; }
+    /** (v8, zombies) tronçons des balles qui ricochent, calculés à la demande par plomb (mêmes que ceux du client) */
+    const ricochets = st?.ricochets ?? 0;
+    const troncons = new Map<number, SegmentTir[]>();
+    const tronconDe = (plomb: number, seg: number): SegmentTir | null => {
+      if (seg === 0) return { o: tir.o, d: dirs[plomb], longueur: arme.portee, debut: 0 };
+      if (!(seg > 0 && seg <= ricochets)) return null;
+      let s = troncons.get(plomb);
+      if (!s) { s = segmentsRicochet(this.monde, tir.o, dirs[plomb], arme.portee, ricochets); troncons.set(plomb, s); }
+      return s[seg] ?? null;
+    };
 
     const touches = Array.isArray(tir.touches) ? tir.touches : [];
     const plombsVus = new Set<number>();
@@ -907,12 +1044,16 @@ export class Salle implements ContexteSalle {
     const cumulZombies = new Map<string, { degats: number; zone: Zone }>();
     /** (v7, zombies) une arme qui perce compte un même plomb sur plusieurs tigres ; dégâts sur le Truck, distance du premier tigre touché (souffle) */
     const perce = this.zombies?.perce(j, armeTiree) ?? false;
+    /** (v8) distance du plus proche plomb sur chaque tigre touché (ordre de l'arc électrique) */
+    const distancesZombies = new Map<string, number>();
     let degatsTruck = 0;
     let premiereTouche: number | null = null;
     const vusZombies = new Set<string>();
     for (const t of touches) {
       if (!t || typeof t.cible !== "string" || !estZone(t.zone) || !Number.isInteger(t.plomb)) continue;
       if (t.plomb < 0 || t.plomb >= dirs.length) continue;
+      const seg = t.seg === undefined ? 0 : t.seg;
+      if (!Number.isInteger(seg) || (seg !== 0 && (!this.zombies || !estIdZombie(t.cible)))) continue;
       if (plombsVus.has(t.plomb) && !(perce && estIdZombie(t.cible))) continue;
       if (this.tigres?.estTigre(t.cible)) {
         // positions du tigre rejouées sur son historique serveur, mêmes règles que pour un joueur
@@ -941,16 +1082,21 @@ export class Salle implements ContexteSalle {
           const dist = this.zombies.toucheTruck(tir.o, dirs[t.plomb], arme.portee);
           if (dist === null) continue;
           plombsVus.add(t.plomb);
-          degatsTruck += this.zombies.degatsTir(j, armeTiree, "corps", dist, maintenant);
+          degatsTruck += this.zombies.degatsTirTruck(j, armeTiree, dist);
           continue;
         }
-        // zombies : seuls les tigres sont des cibles (pas de tir allié), touche revérifiée sur leur forme avec rejeu de latence
+        // zombies : seuls les tigres sont des cibles (pas de tir allié), touche revérifiée sur leur forme avec rejeu de latence ; (v8) sur le
+        // tronçon déclaré d'une balle qui ricoche, rejoué ici
         if (!estIdZombie(t.cible) || vusZombies.has(`${t.cible}|${t.plomb}`)) continue;
-        const vu = this.zombies.toucheZombie(t.cible, tir.o, dirs[t.plomb], arme.portee, maintenant);
-        if (!vu) continue;
+        const tr = tronconDe(t.plomb, seg);
+        if (!tr) continue;
+        const vuT = this.zombies.toucheZombie(t.cible, tr.o, tr.d, tr.longueur, maintenant);
+        if (!vuT) continue;
+        const vu = { zone: vuT.zone, distance: tr.debut + vuT.distance };
         plombsVus.add(t.plomb);
         vusZombies.add(`${t.cible}|${t.plomb}`);
-        if (t.plomb === 0 && (premiereTouche === null || vu.distance < premiereTouche)) premiereTouche = vu.distance;
+        if (t.plomb === 0 && seg === 0 && (premiereTouche === null || vu.distance < premiereTouche)) premiereTouche = vu.distance;
+        if (!distancesZombies.has(t.cible) || vu.distance < distancesZombies.get(t.cible)!) distancesZombies.set(t.cible, vu.distance);
         const dg = this.zombies.degatsTir(j, armeTiree, vu.zone, vu.distance, maintenant);
         const cu = cumulZombies.get(t.cible);
         if (cu) { cu.degats += dg; if (vu.zone === "tete") cu.zone = "tete"; }
@@ -979,12 +1125,19 @@ export class Salle implements ContexteSalle {
       if ([...cumul.values(), ...cumulMonstres.values(), ...cumulZombies.values()].some((cu) => cu.zone === "tete")) j.tetes++;
     }
     for (const [cibleId, { degats, zone }] of cumulMonstres) sorties.push(...this.evenements!.blesserMonstre(cibleId, degats, j, zone, maintenant));
-    // le gain d'une touche (+10 $) est unique par tir, quel que soit le nombre de tigres ou de plombs
+    // le gain d'une touche (+10 $) est unique par tir, quel que soit le nombre de tigres ou de plombs ; (v8) positions prises avant les dégâts
+    // (départ de l'arc électrique, même si le premier tigre en meurt)
     let premier = true;
+    const touchesEffets: { cible: string; p: Vec3 }[] = [];
+    for (const cibleId of [...cumulZombies.keys()].sort((a, b) => (distancesZombies.get(a) ?? 0) - (distancesZombies.get(b) ?? 0))) {
+      const p = this.zombies!.positionZombie(cibleId);
+      if (p) touchesEffets.push({ cible: cibleId, p });
+    }
     for (const [cibleId, { degats, zone }] of cumulZombies) {
-      sorties.push(...this.zombies!.blesser(cibleId, degats, j, zone, maintenant, { arme: armeTiree, gain: premier }));
+      sorties.push(...this.zombies!.blesser(cibleId, degats, j, zone, maintenant, { arme: armeTiree, gain: premier, src: tir.o }));
       premier = false;
     }
+    if (this.zombies && touchesEffets.length) sorties.push(...this.zombies.effetsTir(j, armeTiree, touchesEffets, maintenant));
     if (this.zombies) {
       if (degatsTruck > 0) sorties.push(...this.zombies.blesserTruck(degatsTruck, j, maintenant));
       // (v7) arme explosive : souffle au premier tigre touché, sinon au premier mur ou au sol
@@ -1044,6 +1197,8 @@ export class Salle implements ContexteSalle {
     j.protegeJusqua = 0;
     const d = dirs[0];
     const sorties: Sortie[] = [{ a: "tous", sauf: j.id, m: { t: "coup", id: j.id, o: coup.o, d, arme } }];
+    // (v8, zombies) le grand secret voit passer chaque coup, même dans le vide (pendules)
+    if (this.zombies) sorties.push(...this.zombies.coupSecret(j, arme, coup.o, d, maintenant));
     // `cibles` vient du réseau : un tableau absent ou mal formé (ancien format `cible`, client truqué) vaut un coup dans le vide
     const ids = Array.isArray(coup.cibles)
       ? [...new Set(coup.cibles.filter((x): x is string => typeof x === "string"))].slice(0, m.nbCiblesMax)
@@ -1056,7 +1211,7 @@ export class Salle implements ContexteSalle {
         if (!estIdZombie(id)) continue; // pas de coup allié
         const vu = this.zombies.toucheMelee(id, coup.o, d, m.portee + m.margePortee, m.cosCone, maintenant);
         if (!vu) continue;
-        sorties.push(...this.zombies.blesser(id, this.zombies.degatsMelee(j, arme, maintenant), j, "corps", maintenant, { melee: true, arme, gain: premierTigre }));
+        sorties.push(...this.zombies.blesser(id, this.zombies.degatsMelee(j, arme, maintenant), j, "corps", maintenant, { melee: true, arme, gain: premierTigre, src: coup.o }));
         premierTigre = false;
         continue;
       }
@@ -1217,7 +1372,9 @@ export class Salle implements ContexteSalle {
     for (const j of this.table.values()) {
       if (j.enJeu && !j.vivant && j.reapparitionT !== null && maintenant >= j.reapparitionT) {
         sorties.push(this.placer(j, maintenant));
-      } else if (j.enJeu && j.vivant && maintenant - j.etatT > INACTIF_MS) {
+      } else if (!this.zombies && j.enJeu && j.vivant && maintenant - j.etatT > INACTIF_MS) {
+        // (v8) pas en zombies : un onglet caché ou une coupure (reprise de 20 s, cf. serveur-fps) ne fait pas perdre la partie ; immobile,
+        // le joueur finit à terre sous les griffes comme dans BO1, et une connexion vraiment morte est fermée par le ping du serveur
         // plus aucun état accepté : onglet gelé ou connexion zombie. Sinon il resterait en cible immobile.
         sorties.push(...this.retirerDeLArene(j, maintenant));
         evince = true;
@@ -1378,6 +1535,7 @@ export class Salle implements ContexteSalle {
     j.etatT = maintenant;
     j.histo = [];
     if (suivi) suivi.precedent = j.main === "principale" ? "secondaire" : "principale";
+    this.reinitialiserBudget(j, maintenant);
     return {
       a: "tous",
       m: {

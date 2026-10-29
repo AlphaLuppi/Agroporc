@@ -1,7 +1,8 @@
 /**
  * Mode zombies côté client (PUR, testé, ni three ni DOM) : tampon des `snap.zombies` interpolé à l'instant du rendu (appariement par id,
  * apparition et disparition, tableaux préalloués), touches des tirs et de la mêlée sur les tigres, sélection du niveau de détail,
- * rugissements espacés et invite d'interaction (achat, porte, boîte, atout, Pack-a-Punch, disjoncteur, recette, planches, note, relève).
+ * rugissements espacés et invite d'interaction (achat, porte, boîte, atout, Pack-a-Punch, disjoncteur, planches, note, relève) ; (v8) E sans
+ * invite près d'un objet du grand secret (`objetSecretProche`).
  * v7 : allure et mode des tigres, Truck Muche interpolé, balles qui percent.
  * Spec : docs/superpowers/specs/2026-10-27-arene-zombies-design.md (« Rendu et performances côté client »), 2026-10-28-zombies-bo1-design.md
  *
@@ -11,16 +12,18 @@ import { visible, type Monde } from "./collision";
 import { MELEE, STATS, nomZombie } from "./armes";
 import { meleeDe } from "./equipement";
 import { formatArgent } from "./hud-modele";
-import { FORME_TIGRE, enrouler, pointLocal, toucheTigre } from "./monstres";
+import { NOM_REMONTOIRS } from "./grenades";
+import { enrouler, formeZombie, pointLocal, toucheTigre } from "./monstres";
 import {
   CIBLE_LIVRAISON, decoderZombies, estMelee, idZombie, type ArmeFeuId, type ArmeId, type ArmeMeleeId, type AtoutId, type EtatPartieZombies, type Equipement,
   type SnapZombies, type Vec3, type Zone,
 } from "./protocole";
 import {
-  ATOUTS, FENETRES, NOTES, PIECES_SYNTH, PORTES_PAYANTES, PRIX_BOITE_SOLDES, PRIX_MUNITIONS_AMELIOREE, achatsProches, porteDeId, rayonTruck,
+  ATOUTS, FENETRES, INTERACTIONS_SECRET, NOTES, PIECES_SYNTH, PORTES_PAYANTES, PRIX_MUNITIONS_AMELIOREE, achatsProches, porteDeId, rayonTruck,
   zonesOuvertes, type Achat,
 } from "./zombies-carte";
 import { ZOMBIES, echelleZombie, type Allure, type TypeZombie } from "./zombies-vagues";
+import { boiteA, boitesPresentes, prixBoite } from "./zombies-boites";
 import type { ModeZombie } from "./protocole";
 
 // ---------------------------------------------------------------------------------------------
@@ -64,6 +67,9 @@ export interface ZombieVue {
   /** (v7) allure (marche, course, sprint, rampant) et mode (chasse, sortie du sol, fenêtre, saut) */
   allure: Allure;
   mode: Exclude<ModeZombie, "approche">;
+  /** (v8) en feu (munitions incendiaires : flammes sur le dos), gelé (Soufflerie XXL : givre, ralenti) */
+  brule?: boolean;
+  gele?: boolean;
 }
 
 /** (v7) Truck Muche d'une manche de livraison, interpolé : position, cap, étape (0 arrivée, 1 livraison, 2 départ, 3 épave), PV en %. */
@@ -99,7 +105,7 @@ export class MondeZombies {
   private compte = 0;
   private readonly vues: ZombieVue[] = Array.from({ length: CAPACITE_ZOMBIES }, () => ({
     id: 0, x: 0, z: 0, cap: 0, type: 0 as TypeZombie, echelle: echelleZombie(0), griffe: false, apparition: false, pvPct: 100, vitesse: 0,
-    allure: 0 as Allure, mode: "chasse" as ZombieVue["mode"],
+    allure: 0 as Allure, mode: "chasse" as ZombieVue["mode"], brule: false, gele: false,
   }));
   private nVues = 0;
   private readonly truckVue: TruckVue = { x: 0, z: 0, cap: 0, phase: 0, pvPct: 100 };
@@ -132,7 +138,8 @@ export class MondeZombies {
       for (let i = 0; i < n; i++) {
         const m = liste[i];
         cible.ids[i] = m.id; cible.x[i] = m.x; cible.z[i] = m.z; cible.cap[i] = m.cap; cible.type[i] = m.type;
-        cible.drapeaux[i] = (m.griffe ? 4 : 0) | (m.apparition ? 8 : 0) | (m.allure << 4) | (Math.max(0, MODES.indexOf(m.mode)) << 6);
+        cible.drapeaux[i] = (m.griffe ? 4 : 0) | (m.apparition ? 8 : 0) | (m.allure << 4) | (Math.max(0, MODES.indexOf(m.mode)) << 6)
+          | (m.brule ? 256 : 0) | (m.gele ? 512 : 0);
         cible.pv[i] = m.pvPct;
       }
       cible.n = n;
@@ -181,6 +188,8 @@ export class MondeZombies {
       v.apparition = (proche.drapeaux[i] & 8) !== 0;
       v.allure = ((proche.drapeaux[i] >> 4) & 3) as Allure;
       v.mode = MODES[(proche.drapeaux[i] >> 6) & 3];
+      v.brule = (proche.drapeaux[i] & 256) !== 0;
+      v.gele = (proche.drapeaux[i] & 512) !== 0;
       v.pvPct = proche.pv[i];
       if (j < 0) {
         v.x = proche.x[i]; v.z = proche.z[i]; v.cap = proche.cap[i]; v.vitesse = 0;
@@ -259,7 +268,7 @@ export function trouverZombieTouche(
     // distance du centre au rayon
     const perp2 = cx * cx + cy * cy + cz * cz - proj * proj;
     if (perp2 > r * r) continue;
-    const h = toucheTigre(o, d, meilleur ? meilleur.distance : limite, [z.x, 0, z.z], z.cap, z.echelle, monde, MARGE_TOUCHE_M);
+    const h = toucheTigre(o, d, meilleur ? meilleur.distance : limite, [z.x, 0, z.z], z.cap, z.echelle, monde, MARGE_TOUCHE_M, formeZombie(z.type));
     if (h && (!meilleur || h.distance < meilleur.distance)) meilleur = { cible: idZombie(z.id), zone: h.zone, distance: h.distance };
   }
   return meilleur;
@@ -302,7 +311,7 @@ export function trouverZombiesMelee(
     // pré-filtre : la sphère englobante doit être à portée
     if (Math.hypot(z.x - o[0], z.z - o[2]) - RAYON_ENGLOBANT * z.echelle > m.portee + 1) continue;
     let meilleure = Infinity;
-    for (const s of FORME_TIGRE) {
+    for (const s of formeZombie(z.type)) {
       const c = pointLocal([z.x, 0, z.z], z.cap, z.echelle, s.d, s.h, s.a);
       const r = s.r * z.echelle;
       const vx = c[0] - o[0], vy = c[1] - o[1], vz = c[2] - o[2];
@@ -365,11 +374,28 @@ export class Rugissements {
   }
 }
 
+/** Genre du son d'un coup de patte (et du rugissement) : le chef a le sien, le petit du Truck mord, les autres griffent. */
+export type SonGriffe = "tigre" | "chef" | "petit";
+
+/** Son du coup de patte d'un tigre de type `type` : chef (2, le gros tigre rouge à toque, retour 16), petit (3), sinon tigre (0, doré 1). */
+export function sonGriffe(type: TypeZombie): SonGriffe {
+  return type === 2 ? "chef" : type === 3 ? "petit" : "tigre";
+}
+
+/**
+ * Effets d'une mort reçue (`zombieMort`) selon le type du tigre (inconnu = `null`, il a déjà quitté l'interpolation) : un mini Truck (4) ne
+ * saigne pas et ne râle pas (il explose, `zevt{miniTruck}`, et klaxonnait) ; tous les autres, gerbe orange et rugissement d'agonie.
+ */
+export function effetsMortZombie(type: TypeZombie | null): { sang: boolean; rugissement: boolean } {
+  const vivant = type !== 4;
+  return { sang: vivant, rugissement: vivant };
+}
+
 // ---------------------------------------------------------------------------------------------
 // Invite d'interaction
 // ---------------------------------------------------------------------------------------------
 
-export type GenreInvite = "" | "acheter" | "porte" | "boite" | "atout" | "pap" | "courant" | "ingredient" | "four" | "reanimer" | "reparer" | "note";
+export type GenreInvite = "" | "acheter" | "porte" | "boite" | "atout" | "pap" | "courant" | "reanimer" | "reparer" | "note";
 
 export interface InviteZombies {
   invite: GenreInvite;
@@ -391,7 +417,7 @@ export const INVITE_VIDE: InviteZombies = Object.freeze({ invite: "", detail: ""
 export interface CoequipierATerre { id: string; pseudo: string; p: Vec3 }
 
 /** Ce que l'invite lit de la partie (sous-ensemble de `EtatPartieZombies`). */
-export type PartieInvite = Pick<EtatPartieZombies, "courant" | "boite" | "pap" | "quete" | "effets" | "fenetres" | "portes">;
+export type PartieInvite = Pick<EtatPartieZombies, "courant" | "boite" | "boitesSoldes" | "pap" | "effets" | "fenetres" | "portes">;
 
 export interface EntreeInvite {
   /** position (x, z) du joueur */
@@ -412,11 +438,14 @@ export interface EntreeInvite {
   maintenant?: number;
 }
 
+/** Slot d'une arme à feu (les armes uniques vont dans le slot spécial), comme le serveur. */
+const slotDe = (a: ArmeFeuId): string => (STATS[a].categorie === "unique" ? "speciale" : STATS[a].categorie);
+
+/** L'arme `a` est portée (pas celle déposée au Micro-ondes). */
 function possede(eq: Equipement, a: ArmeFeuId): boolean {
+  if (eq.enCuisson === a) return false;
   return (!eq.sansPrincipale && eq.principale === a) || eq.secondaire === a || eq.speciale === a;
 }
-
-const NOMS_INGREDIENTS: Readonly<Record<string, string>> = { sel: "Sel de Guérande", herbes: "Herbes du Trèfle", truffe: "Truffe noire" };
 
 type Description = Omit<InviteZombies, "assez" | "cible"> & { bloque?: string };
 
@@ -435,13 +464,20 @@ function descriptionAchat(a: Achat, e: EntreeInvite): Description | null {
       return d;
     }
     case "boite": {
-      if (p && p.boite.emplacement !== a.emplacement) return null;
-      if (p && p.boite.etat === "offre") {
-        if (p.boite.pour !== e.moi || !p.boite.arme || p.boite.arme === "peluche") return { invite: "boite", detail: "Boîte mystère", prix: 0, id: a.id, bloque: "Occupée" };
-        return { invite: "boite", detail: `Prendre : ${STATS[p.boite.arme].nom}`, prix: 0, id: a.id };
+      // la boîte principale ou (Happy hour) une boîte temporaire de cet emplacement
+      const b = p ? boiteA(p, a.emplacement!) : null;
+      if (p && !b) return null;
+      if (b && b.etat === "offre") {
+        if (b.pour !== e.moi || !b.arme || b.arme === "peluche") return { invite: "boite", detail: "Boîte mystère", prix: 0, id: a.id, bloque: "Occupée" };
+        const prendre: Description = { invite: "boite", detail: `Prendre : ${b.arme === "remontoir" ? NOM_REMONTOIRS : STATS[b.arme].nom}`, prix: 0, id: a.id };
+        // (v8) son slot est réservé par mon arme au Micro-ondes : le serveur refuserait (« occupe »)
+        if (b.arme !== "remontoir" && p && p.pap.etat !== "libre" && p.pap.joueur === e.moi && p.pap.arme && slotDe(p.pap.arme) === slotDe(b.arme)) {
+          return { ...prendre, bloque: "Reprenez l'arme au Micro-ondes" };
+        }
+        return prendre;
       }
-      if (p && p.boite.etat !== "fermee") return { invite: "boite", detail: "Boîte mystère", prix: 0, id: a.id, bloque: "Occupée" };
-      const prix = p && t < p.effets.soldesFinT ? PRIX_BOITE_SOLDES : a.prix;
+      if (b && b.etat !== "fermee") return { invite: "boite", detail: "Boîte mystère", prix: 0, id: a.id, bloque: "Occupée" };
+      const prix = p ? prixBoite(p.effets.soldesFinT, t) : a.prix;
       return { invite: "boite", detail: `Boîte mystère — ${formatArgent(prix)}`, prix, id: a.id };
     }
     case "atout": {
@@ -456,6 +492,11 @@ function descriptionAchat(a: Achat, e: EntreeInvite): Description | null {
     case "pap": {
       const arme = e.enMain;
       const d: Description = { invite: "pap", detail: `Micro-ondes Gratinator — ${formatArgent(a.prix)}`, prix: a.prix, id: a.id };
+      // (v8) l'arme gratinée attend son joueur : lui seul la reprend, gratuitement
+      if (p && p.pap.etat === "pret" && p.pap.arme) {
+        if (p.pap.joueur === e.moi) return { ...d, detail: `Reprendre : ${nomZombie(p.pap.arme, true)}`, prix: 0 };
+        return { ...d, detail: "Micro-ondes Gratinator", prix: 0, bloque: "Occupé" };
+      }
       if (p && !p.courant) return { ...d, bloque: "Courant coupé" };
       if (p && p.pap.etat !== "libre") return { ...d, bloque: "En cuisson" };
       if (!arme || estMelee(arme)) return { ...d, bloque: "Prenez une arme à feu" };
@@ -465,19 +506,6 @@ function descriptionAchat(a: Achat, e: EntreeInvite): Description | null {
     case "courant":
       if (p?.courant) return null;
       return { invite: "courant", detail: "Rétablir le courant", prix: 0, id: a.id };
-    case "ingredient": {
-      if (p && p.quete.ingredients.includes(a.ingredient!)) return null;
-      if (a.ingredient === "truffe" && p && !p.courant) return null;
-      return { invite: "ingredient", detail: `Ramasser : ${NOMS_INGREDIENTS[a.ingredient!] ?? a.ingredient}`, prix: 0, id: a.id };
-    }
-    case "four": {
-      if (!p || p.quete.faite) return null;
-      const d: Description = { invite: "four", detail: "Cuisiner la Recette ultime", prix: 0, id: a.id };
-      if (p.quete.cuissonFinT) return { ...d, bloque: "En cuisson" };
-      if (!p.courant) return { ...d, bloque: "Courant coupé" };
-      if (p.quete.ingredients.length < 3) return { ...d, bloque: `Ingrédients ${p.quete.ingredients.length} / 3` };
-      return d;
-    }
     case "mur": {
       const arme = a.arme!;
       if (arme === "epee") {
@@ -512,7 +540,7 @@ export function inviteZombies(e: EntreeInvite): InviteZombies {
   const p = e.partie ?? null;
   for (const a of achatsProches([e.pos[0], e.pos[1]], {
     ouvertes: e.portesOuvertes instanceof Set ? [...e.portesOuvertes] : e.portesOuvertes,
-    ...(p ? { boite: p.boite.emplacement, ingredientsPris: p.quete.ingredients, courant: p.courant } : {}),
+    ...(p ? { boite: boitesPresentes(p).map((b) => b.emplacement), courant: p.courant } : {}),
   })) {
     const d = descriptionAchat(a, e);
     if (!d) continue;
@@ -537,6 +565,43 @@ export function inviteZombies(e: EntreeInvite): InviteZombies {
   if (!candidats.length) return INVITE_VIDE;
   candidats.sort((x, y) => x.d - y.d);
   return candidats[0].inv;
+}
+
+/**
+ * (v8) Grand secret : E sans invite (rien à acheter, à lire ni à reposer) près d'un objet qu'on prend ou qu'on actionne (la truffe dans la cuve
+ * n° 3, le four, la cloche du comptoir) : id d'achat `secret:<objet>` à envoyer, ou null. Ne dépend PAS de l'état du secret (aucune invite,
+ * rien qui trahisse l'objet) : le serveur juge en silence.
+ */
+export function objetSecretProche(pos: readonly [number, number]): string | null {
+  let res: string | null = null, dMin = Infinity;
+  for (const it of INTERACTIONS_SECRET) {
+    const d = Math.hypot(it.position[0] - pos[0], it.position[1] - pos[1]);
+    if (d <= it.portee && d < dMin) { dMin = d; res = `secret:${it.id}`; }
+  }
+  return res;
+}
+
+/** Ce que le joueur maintient avec E : une relève (`cible`) ou une repose de planches (`fenetre`), rien sinon. */
+export interface MaintienZombies { cible: string | null; fenetre: string | null }
+/** Décision de `decisionMaintien` : commencer à maintenir l'invite, arrêter le maintien en cours, ou rien. */
+export type DecisionMaintien = { action: "demarrer"; invite: InviteZombies } | { action: "arreter" } | null;
+
+/**
+ * Maintien de E façon BO1 (à chaque image) : un maintien en cours s'arrête dès que E est lâchée ou que l'invite ne le propose plus (planches
+ * toutes reposées, coéquipier relevé ou trop loin, autre fenêtre) ; E TENUE devant une fenêtre abîmée ou un coéquipier à terre démarre le
+ * maintien sans attendre un nouvel appui (on arrive E enfoncée, ou un tigre arrache une planche pendant qu'on la tient).
+ */
+export function decisionMaintien(interagir: boolean, peutAgir: boolean, invite: InviteZombies, en: MaintienZombies): DecisionMaintien {
+  if (en.cible !== null) {
+    return !interagir || !peutAgir || invite.invite !== "reanimer" || invite.cible !== en.cible ? { action: "arreter" } : null;
+  }
+  if (en.fenetre !== null) {
+    return !interagir || !peutAgir || invite.invite !== "reparer" || invite.id !== en.fenetre ? { action: "arreter" } : null;
+  }
+  if (interagir && peutAgir && ((invite.invite === "reanimer" && invite.cible) || (invite.invite === "reparer" && invite.id))) {
+    return { action: "demarrer", invite };
+  }
+  return null;
 }
 
 /**

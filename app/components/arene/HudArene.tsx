@@ -38,7 +38,7 @@ import ToastCentre from "./hud/ToastCentre";
 import Viseur from "./hud/Viseur";
 import ZoneVive, { useFileVive } from "./hud/ZoneVive";
 import { useEphemere, useEtatZombies, useProgressionReanimation } from "./hud/useEtatZombies";
-import { AnnonceZombies, AtoutsZombies, BonusActifs, IntroZombies, MancheCraie, NoteZombies, ObjectifZombies } from "./hud/PanneauZombies";
+import { AnnonceZombies, AtoutsZombies, BonusActifs, CinematiqueZombies, IntroZombies, MancheCraie, NoteZombies, ObjectifZombies } from "./hud/PanneauZombies";
 import { useHudLive } from "./hud/useHudLive";
 import { useMessagesVifs } from "./hud/useMessagesVifs";
 import { useRetoursTouche } from "./hud/useRetoursTouche";
@@ -122,7 +122,8 @@ export default function HudArene(p: PropsHudArene) {
     toucheSpeciale: toucheDe(p.touches, "armeSpeciale", disposition), pousser: vive.pousser, refusAchat,
   });
   const synthese = useMemo(() => syntheseMatch(joueurs, monId, match?.objectif ?? JEU.objectifKills), [joueurs, monId, match?.objectif]);
-  const frappeDisponible = synthese.serie >= 5 || !!hud?.frappeDisponible;
+  // la frappe aérienne n'existe que dans l'arène (en zombies, une grenade enchaîne vite 5 kills sans rien débloquer)
+  const frappeDisponible = !zombies && (synthese.serie >= 5 || !!hud?.frappeDisponible);
 
   useToucheAppui(verrouille && frappeDisponible, p.touches.frappeAerienne, () => {
     setCarteForcee((prev) => !prev);
@@ -207,8 +208,11 @@ export default function HudArene(p: PropsHudArene) {
       {combat && (
         <>
           {hud.lunette
-            ? <Lunette zoomX={hud.zoomX} distanceVisee={hud.distanceVisee} niveau={hud.zoomNiveau} niveaux={hud.zoomNiveaux} toucheZoom={t("zoomLunette")} />
-            : <Viseur protege={hud.protege} conduite={conduite} couteau={couteau} recharge={hud.recharge} refAnneau={refAnneau} ecart={hud.ecartViseur} />}
+            ? <Lunette zoomX={hud.zoomX} distanceVisee={hud.distanceVisee} niveau={hud.zoomNiveau} niveaux={hud.zoomNiveaux} toucheZoom={t("zoomLunette")} thermique={hud.viseur === "thermique"} />
+            : <Viseur
+                protege={hud.protege} conduite={conduite} couteau={couteau} recharge={hud.recharge} refAnneau={refAnneau} ecart={hud.ecartViseur}
+                optique={hud.vise && (hud.viseur === "point_rouge" || hud.viseur === "holo") ? hud.viseur : null}
+              />}
           <RetoursTouche chiffres={chiffres} marqueur={marqueur} kill={kill} />
           {!zombies && (
             <>
@@ -256,6 +260,7 @@ export default function HudArene(p: PropsHudArene) {
       {zombies && !finZ && !pause && annonceZ && <AnnonceZombies texte={annonceZ.texte} genre={annonceZ.genre} />}
       {zombies && !finZ && !pause && introZ && <IntroZombies />}
       {zombies && !finZ && !pause && ez?.note != null && <NoteZombies id={ez.note} touche={t("interagir")} />}
+      {zombies && !finZ && ez?.cinematique != null && <CinematiqueZombies k={ez.cinematique} />}
 
       {/* cockpit du titan (v3) : sous tout le reste du HUD */}
       {combat && hud.titan && p.monstres && <CockpitTitan monstres={p.monstres} maintenantServeur={maintenantServeur} />}
@@ -294,7 +299,8 @@ export default function HudArene(p: PropsHudArene) {
             arme={hud.arme} slot={hud.slot} slots={hud.slots} munitions={hud.munitions} chargeur={hud.chargeur} reserve={hud.reserve}
             recharge={hud.recharge} degainage={hud.degainage} tireInterdit={hud.tireInterdit} bonusVitesse={hud.bonusVitesse}
             toucheP={t("armePrincipale")} toucheS={t("armeSecondaire")} toucheC={t("couteau")} toucheSp={t("armeSpeciale")}
-            refBarre={refBarre} refTemps={refTemps}
+            refBarre={refBarre} refTemps={refTemps} ameliorees={hud.ameliorees} munitionsG={hud.munitionsG}
+            {...(zombies ? { grenades: ez?.grenades ?? 0, remontoirs: ez?.remontoirs ?? 0, cuisson: ez?.cuisson ?? null, toucheGrenade: t("grenade"), toucheRemontoir: t("remontoir") } : {})}
           />
         )}
       </CoinHud>

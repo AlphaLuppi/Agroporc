@@ -3,8 +3,12 @@
  * par `alea` ; ne voit la salle que par `ContexteSalle`). Machine d'états lobby → pause → manche → pause … → fin → lobby, hôte, difficulté,
  * join-in-progress, argent et points de BO1, apparitions par le gestionnaire de zones (fenêtres à planches et sorties du sol des zones
  * occupées et voisines), barricades (arrachées par les tigres, reposées par les joueurs), bonus (seuil de BO1, tigre doré, paquet mélangé),
- * atouts, Pack-a-Punch, boîte mystère qui déménage (peluche), manches du Truck Muche (les chiens de BO1), courant, Recette ultime, joueurs
- * à terre, relève, auto-relève de la Pause Café, élimination, bilan. Les tigres eux-mêmes sont simulés par `zombies.ts`.
+ * atouts, Pack-a-Punch, boîte mystère qui déménage (peluche), manches du Truck Muche (les chiens de BO1), courant, grand secret (v8, « Le Menu
+ * fantôme », `zombies-secret.ts` : ce service lui passe les tirs, coups, grenades, kills, dépôts au Micro-ondes, Truck et E, et sert sa
+ * récompense), joueurs à terre, relève, auto-relève de la Pause Café, élimination, bilan (défaite, ou victoire à la cloche du secret). Les tigres eux-mêmes sont simulés par `zombies.ts`.
+ * (v8) Grenades de BO1 (`grenades.ts`) : 2 par manche (4 au plus), lancers validés, trajectoires calculées une fois, souffle à l'échéance
+ * (points de BO1, rampants, Truck, lanceur légèrement blessé), tigre à remontoir de la boîte (leurre qui attire les tigres 8 s), écouteurs
+ * d'explosion (`ecouterExplosions`) pour les quêtes.
  *
  * Choix de conception :
  * - l'argent, les atouts, l'état (debout / à terre / éliminé / en attente), l'admission et les relèves de chaque joueur vivent dans une `Map`
@@ -13,30 +17,46 @@
  * - `zombies{etat}` est diffusé aux changements (≤ 5 Hz), tout de suite pour les changements qui comptent ; les effets ponctuels partent en `zevt`.
  * Spec : docs/superpowers/specs/2026-10-28-zombies-bo1-design.md
  */
-import { MELEE, STATS, chargeurZombie, degatsExplosion, degatsZombie, profilZombie } from "./armes";
+import { MELEE, STATS, chargeurZombie, degatsExplosion, degatsZombie, profilZombie, statsTir, type Explosion } from "./armes";
+import {
+  HAUTEUR_ARC_M, allumer, chaineArc, dansSouffle, degeler, fractionSphere, geler, pointImpact, preparerProjectile, ticBrulures,
+  type EtatBrulure, type EtatGel, type TirProjectile,
+} from "./effets-armes";
 import { batimentsDetruits, detruireBatiment, lancerRayon, releverBatiments, visible } from "./collision";
 import { ARMES, CIBLE_LIVRAISON, copierEquipement, estIdZombie, estMelee, idZombie } from "./protocole";
 import { armeDuSlot, meleeDe } from "./equipement";
 import type { ContexteSalle, JoueurSalle, ResumeZombies, ServiceZombies, Sortie } from "./match-contexte";
-import { invaliderNavigation } from "./navigation";
+import { instantaneNavigation, majNavigation, restaurerNavigation } from "./navigation";
 import { capVers } from "./monstres";
 import type {
   ArmeFeuId, ArmeId, ArmeSpecialeId, AtoutId, BonusSol, EffetsZombies, EtatBoite, EtatPap, EtatPartieZombies, Equipement, EvenementZombies,
-  JoueurZombies, MessageClient, PhaseZombies, QueteZombies, RaisonAchat, Slot, TruckZombies, Vec3, Zone,
+  JoueurZombies, MessageClient, PhaseZombies, RaisonAchat, Slot, TruckZombies, Vec3, Zone,
 } from "./protocole";
-import { creerSimuZombies, type ArriveeZombie, type SpecZombie } from "./zombies";
+import { creerSimuZombies, type ArriveeZombie, type Leurre, type SpecZombie } from "./zombies";
+import { ATTENTE_ENVOL_MS, boiteA, boitesSoldesRestantes, destinationsEnvol, ouvrirSoldes, pelucheTiree, prixBoite, soldesActives, soldesPermises } from "./zombies-boites";
 import {
-  ACHATS, ATOUTS, ATOUTS_LISTE, DEPARTS, EMPLACEMENTS_DEPART_BOITE, FENETRES, INGREDIENTS_LISTE, NB_EMPLACEMENTS_BOITE, PORTES_PAYANTES,
-  PRIX_BOITE, PRIX_BOITE_SOLDES, PRIX_MUNITIONS_AMELIOREE, QUAIS, TRUCK, achatDeId, rayonTruck, distancePorte, estAtout, etiqueterZones, fenetreDeId, fenetresDesZones,
-  idPrisme, lacetDepart, pieceDe, porteDeId, sortiesDuSol, zoneEn, zonesActives, zonesOuvertes,
-  type Achat, type CarteZones, type DonneesZombies, type Fenetre, type IngredientId, type PorteId, type ZoneId,
+  GRENADES, INVENTAIRE_GRENADES, degatsGrenade, degatsLanceur, grenadesDebutManche, plafondBatimentsCreux, positionLancer, preparerLancer,
+  souffleAtteint, validerLancer, vitesseLancer, type ExplosionGrenade, type Lancer,
+} from "./grenades";
+import {
+  ACHATS, ATOUTS, ATOUTS_LISTE, DEPARTS, EMPLACEMENTS_DEPART_BOITE, FENETRES, NB_EMPLACEMENTS_BOITE, PACK_A_PUNCH, PORTES_PAYANTES,
+  PLAFOND_INTERIEUR_M, PRIX_MUNITIONS_AMELIOREE, PRIX_PAP, QUAIS, TRUCK, achatDeId, rayonTruck, distancePorte, estAtout, etiqueterZones, fenetreDeId, fenetresDesZones,
+  INTERACTIONS_SECRET, idPrisme, lacetDepart, pieceDe, porteDeId, sortiesDuSol, zoneEn, zonesActives, zonesOuvertes,
+  type Achat, type CarteZones, type DonneesZombies, type Fenetre, type PorteId, type ZoneId,
 } from "./zombies-carte";
+import { creerSecret, type ContexteSecret, type EffetSecret } from "./zombies-secret";
 import {
   GAIN_CHEF, GAIN_MENUISIER, GAIN_NUKE, GAIN_PLANCHE, GAIN_TRUCK, ZOMBIES, allureTiree, degatsGriffe, delaiApparition, estDifficulte, gainKill,
   gainTouche, mancheTruckSuivante, paquetBonus, plafondPlanches, premiereMancheTruck, pvTruck, pvZombie, rechargeGriffe, seuilBonusInitial,
-  totalTruck, typesManche, vitesseAllure, type Difficulte, type GenreBonus, type TypeZombie,
+  estLivraison, plafondPetits, totalTruck, typesManche, typesTruck, vitesseAllure, type Difficulte, type GenreBonus, type TypeZombie,
 } from "./zombies-vagues";
+import {
+  ECLAIRS, centreSouffleMini, choisirPointEclair, degatsSouffleMiniJoueur, degatsSouffleMiniTigre, intervalleEclairMs, pointsEclair,
+} from "./zombies-truck";
 import type { Vec2 } from "../agroparc3d/types";
+
+/** Position arrondie au centimètre (origine d'un coup dans `zombieMort` : quelques octets de moins par mort). */
+const arrondi = (v: Vec3): Vec3 => [Math.round(v[0] * 100) / 100, Math.round(v[1] * 100) / 100, Math.round(v[2] * 100) / 100];
 
 /** Équipement de départ (copie à prendre avec `copierEquipement`) : pistolet et couteau seulement, pas d'arme principale. */
 export const EQUIPEMENT_DEPART_ZOMBIES: Readonly<Equipement> = Object.freeze({
@@ -56,10 +76,9 @@ export const TIRAGE_BOITE_MS = 4_000;
 export const OFFRE_BOITE_MS = 12_000;
 export const ENVOL_BOITE_MS = 5_000;
 const HORS_BOITE: ReadonlySet<ArmeFeuId> = new Set(["pistolet", "mini_uzi"]);
-/** Pack-a-Punch : durée de la cuisson (ms). */
-export const CUISSON_PAP_MS = 3_500;
-/** Recette ultime : durée de la cuisson (ms), apparitions deux fois plus rapides pendant ce temps. */
-export const CUISSON_RECETTE_MS = 30_000;
+/** Pack-a-Punch (v8, BO1) : durée de la cuisson (ms), délai pour reprendre l'arme gratinée avant qu'elle soit perdue (ms). */
+export const CUISSON_PAP_MS = PACK_A_PUNCH.cuissonMs;
+export const REPRISE_PAP_MS = PACK_A_PUNCH.repriseMs;
 /** Pause Café en solo : auto-relève au bout de ce délai (ms), 3 fois par partie. */
 export const AUTO_RELEVE_MS = 4_000;
 export const AUTO_RELEVES_MAX = 3;
@@ -71,6 +90,8 @@ const PART_FENETRES = 0.6;
 /** Rampant : un souffle non mortel qui ôte au moins cette part des PV a cette probabilité de couper les pattes arrière. */
 const RAMPANT_PART_PV = 0.25;
 const RAMPANT_PROBA = 0.35;
+/** Plus grande marge de latence ajoutée à une portée (m). */
+const MARGE_LATENCE_MAX_M = 1.5;
 /** Dégâts « tue à coup sûr » de l'insta-kill. */
 const INSTAKILL = 10_000_000;
 
@@ -91,6 +112,16 @@ export interface OptionsServiceZombies {
   mancheTruck?: number;
   /** courant rétabli dès le départ (essais), `PDJ_FPS_ZOMBIES_COURANT` */
   courant?: boolean;
+  /** (v8) tigres à remontoir en poche au départ (essais), `PDJ_FPS_ZOMBIES_REMONTOIRS` */
+  remontoirsDepart?: number;
+  /** (v8) paquet de bonus imposé, tiré dans l'ordre puis recommencé (essais), `PDJ_FPS_ZOMBIES_BONUS` (genres séparés par des virgules) */
+  bonus?: readonly GenreBonus[];
+  /**
+   * (v8, essais) grand secret : étape de départ de chaque partie (`PDJ_FPS_ZOMBIES_SECRET`, 0 à 9, les précédentes sont considérées faites),
+   * tour du cadran des pendules (`PDJ_FPS_ZOMBIES_SECRET_MIDI_MS`, 5 min par défaut : midi sonne une fois par tour) et première livraison
+   * du Truck où le service s'ouvre (`PDJ_FPS_ZOMBIES_SECRET_LIVRAISON`, 3 par défaut)
+   */
+  secret?: { etape?: number; periodeMidiMs?: number; livraisonService?: number };
 }
 
 type EtatMembre = JoueurZombies["etat"];
@@ -111,18 +142,34 @@ interface Membre {
   autoReleveT: number | null;
   /** argent gagné aux planches pendant la manche (plafond `plafondPlanches`) */
   planchesManche: number;
-  /** repose de planches en cours : fenêtre, prochaine planche */
+  /** repose de planches en cours : fenêtre, prochaine planche ; instant de la dernière planche reposée (cadence tenue entre deux appuis) */
   reparation: { fenetre: string; prochainT: number } | null;
+  derniereReposeT?: number;
+  /** (v8) grenades à fragmentation et tigres à remontoir en poche, dernier lancer (cadence) */
+  grenades: number;
+  remontoirs: number;
+  dernierLancerT?: number;
 }
+
+/** (v8) Grenade en vol (ou posée) : lancer complet, lanceur. */
+interface GrenadeServeur { id: number; par: string; lancer: Lancer }
+/** (v8) Projectile d'arme en vol ou planté : tir complet, tireur, tigre touché de plein fouet, dégâts d'impact déjà appliqués. */
+interface ProjectileServeur { id: number; par: string; tir: TirProjectile; cible: number | null; impactFait: boolean }
 
 /** Relève en cours : `cible` maintenue par le relanceur depuis `debutT`. */
 interface Releve { cible: string; debutT: number }
 
-/** Truck Muche d'une manche de livraison (serveur). */
+/** Truck Muche d'une manche de livraison (serveur) ; `rire` : il a déjà ri sous la moitié de ses PV. */
 interface Truck {
   quai: number; phase: TruckZombies["phase"]; debutT: number; finT: number; pv: number; pvMax: number;
-  p: Vec2; cap: number; aLacher: number; prochainLacherT: number;
+  p: Vec2; cap: number; prochainLacherT: number; rire: boolean;
 }
+/** (v8) Foudre qui frappera `p` à `t` (ms) : un ennemi de type `type` y apparaît. */
+interface Foudre { p: Vec2; type: TypeZombie; t: number }
+/** (v8) Mini Truck qui saute en `p` à `t` (ms) ; `par` : le joueur qui l'a abattu (le souffle lui rapporte ses kills), null s'il a sauté seul. */
+interface SautMini { p: Vec3; par: string | null; t: number }
+/** (v8) Un mini Truck abattu saute ce délai (ms) plus tard : une réaction en chaîne se voit (et le dernier coup de feu s'entend d'abord). */
+const DELAI_SAUT_ABATTU_MS = 120;
 
 /**
  * Point de départ et lacet d'un joueur qui entre : le départ le plus éloigné des autres joueurs (`autres` : leurs positions), le premier
@@ -160,9 +207,14 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       },
     },
   });
+  // grilles de navigation des tigres toutes portes fermées (calculées par `creerSimuZombies`) : remises telles quelles au retour au lobby
+  // et à chaque nouvelle partie, au lieu d'un recalcul complet de 40 à 80 ms qui gelait tout le serveur
+  const navigationFermee = instantaneNavigation(ctx.monde);
   // étiquettes des zones au sol et sorties du sol : calculées une fois, toutes portes fermées (le monde est neuf à la création)
   const carteZones: CarteZones = etiqueterZones(ctx.monde);
   const sorties = sortiesDuSol(carteZones);
+  // (v8) points de foudre des manches du Truck : intérieurs compris
+  const pointsFoudre = pointsEclair(carteZones);
 
   const membres = new Map<string, Membre>();
   const ouvertes = new Set<PorteId>();
@@ -189,12 +241,19 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
   let numeroTruck = 0;
   let mancheTruck = false;
   let truck: Truck | null = null;
+  /** (v8) foudres annoncées (l'ennemi n'est pas encore là), prochain éclair, mini Trucks qui vont sauter */
+  let foudres: Foudre[] = [];
+  let prochainEclairT = 0;
+  let sautsMini: SautMini[] = [];
   // objets de la partie
   let courant = false;
   const murs = new Set<string>();
   let boite: EtatBoite = { emplacement: 0, etat: "fermee", finT: 0, utilisations: 0 };
+  /** (v8) boîtes temporaires du Happy hour (`zombies-boites.ts`) : une par emplacement libre, retirées une fois refermées après la fin */
+  let boitesSoldes: EtatBoite[] = [];
   let demenagements = 0;
-  let prixPaye = PRIX_BOITE;
+  /** prix payé du tirage en cours, par emplacement (remboursé par la peluche) */
+  const prixPayes = new Map<number, number>();
   let pap: EtatPap = { etat: "libre" };
   let bonus: BonusSol[] = [];
   let bonusId = 1;
@@ -205,7 +264,22 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
   let seuilBonus = 0;
   let lacherBonus = false;
   const effets: EffetsZombies = { instakillFinT: 0, doubleFinT: 0, soldesFinT: 0 };
-  const quete: QueteZombies = { ingredients: [], cuissonFinT: 0, faite: false };
+  // grenades (v8) : en vol ou posées, écouteurs d'explosion ; le faux plafond des bâtiments creusés ne change jamais
+  let grenades: GrenadeServeur[] = [];
+  let grenadeId = 1;
+  // armes (v8) : projectiles en vol, tigres en feu et gelés
+  let projectiles: ProjectileServeur[] = [];
+  let projectileId = 1;
+  const brulures = new Map<number, EtatBrulure>();
+  const gels = new Map<number, EtatGel>();
+  const ecouteursExplosion = new Set<(e: ExplosionGrenade) => Sortie[] | void>();
+  const plafond = plafondBatimentsCreux(ctx.monde, PLAFOND_INTERIEUR_M);
+  // (v8) grand secret « Le Menu fantôme » : machine d'états pure, ordres tirés à chaque partie par son propre générateur (semé par l'instant du
+  // lancement) : le hasard de la salle n'est pas consommé
+  const secret = creerSecret({
+    monde: ctx.monde, etapeDepart: opts.secret?.etape, periodeMidiMs: opts.secret?.periodeMidiMs, livraisonService: opts.secret?.livraisonService,
+  });
+  secret.reinitialiser(0);
   // diffusion de zombies{etat}
   let immediat = false;
   let sale = false;
@@ -220,16 +294,24 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     if (!m) {
       m = {
         etat: "attente", admis: false, argent: 0, gagne: 0, reanimations: 0, admisT: 0, atouts: new Set(), autoReleves: AUTO_RELEVES_MAX,
-        autoReleveT: null, planchesManche: 0, reparation: null,
+        autoReleveT: null, planchesManche: 0, reparation: null, grenades: 0, remontoirs: 0,
       };
       membres.set(id, m);
     }
     return m;
   }
   const hote = (): string => ctx.joueurs()[0]?.id ?? "";
-  const restants = (): number => (mancheTruck ? (truck?.aLacher ?? 0) : file.length - indexFile) + simu.nbVivants();
+  /** ennemis à tuer : pas encore lâchés (file), annoncés par la foudre, vivants */
+  const restants = (): number => file.length - indexFile + foudres.length + simu.nbVivants();
+  /** (v8) ennemis d'une manche du Truck pas encore lâchés ni annoncés */
+  const aLivrer = (): number => (mancheTruck ? file.length - indexFile : 0);
   const peutJouer = (j: JoueurSalle): boolean => j.enJeu && j.vivant;
-  const nbAdmis = (): number => Math.max(1, ctx.joueurs().filter((j) => membre(j.id).admis).length);
+  /**
+   * (v8) Marge (m) des portées jugées sur la position serveur (relève, planches, achats) : ce que le joueur parcourt pendant la demi-latence
+   * (sa position serveur a ce retard sur celle de son écran), au plus `MARGE_LATENCE_MAX_M`.
+   */
+  const margeLatence = (j: JoueurSalle): number => Math.min(MARGE_LATENCE_MAX_M, (Math.hypot(j.v[0], j.v[2]) * Math.min(j.ping, 300)) / 2000);
+  const nbAdmis =(): number => Math.max(1, ctx.joueurs().filter((j) => membre(j.id).admis).length);
   const solo = (): boolean => nbAdmis() === 1;
   const doublePoints = (t: number): boolean => t < effets.doubleFinT;
   const zev = (e: EvenementZombies): Sortie => ({ a: "joueurs", m: { t: "zevt", e } });
@@ -241,15 +323,16 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
         id: j.id, pseudo: j.pseudo, couleur: j.couleur, etat: m.etat, admis: m.admis, kills: j.kills, gagne: m.gagne, reanimations: m.reanimations,
         ...(m.etat === "terre" && m.terreFinT !== undefined ? { terreFinT: m.terreFinT } : {}),
         atouts: ATOUTS_LISTE.filter((a) => m.atouts.has(a)), autoReleves: m.autoReleves,
+        ...(m.grenades ? { grenades: m.grenades } : {}), ...(m.remontoirs ? { remontoirs: m.remontoirs } : {}),
       };
     });
     return {
       phase, manche, hote: hote(), capacite: ZOMBIES.joueursMax, debutT, finT, joueurs,
       portes: PORTES_PAYANTES.map((p) => ({ id: p.id, ouverte: ouvertes.has(p.id) })),
       ...(bilan ? { bilan } : {}),
-      difficulte, courant, boite: { ...boite }, pap: { ...pap }, fenetres: FENETRES.map((f) => planches.get(f.id) ?? 0),
+      difficulte, courant, boite: { ...boite }, ...(boitesSoldes.length ? { boitesSoldes: boitesSoldes.map((b) => ({ ...b })) } : {}), pap: { ...pap }, fenetres: FENETRES.map((f) => planches.get(f.id) ?? 0),
       bonus: bonus.map((b) => ({ ...b, p: [b.p[0], b.p[1], b.p[2]] as Vec3 })), effets: { ...effets },
-      quete: { ingredients: [...quete.ingredients], cuissonFinT: quete.cuissonFinT, faite: quete.faite },
+      secret: secret.etat(),
       mancheTruck, truck: truck ? { phase: truck.phase, quai: truck.quai, finT: truck.finT } : null, murs: [...murs],
     };
   }
@@ -321,13 +404,13 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     return { a: "tous", m: { t: "batiments", complet: true, detruits: batimentsDetruits(ctx.monde), breches: [] } };
   }
 
-  /** Remet les portes en place (nouvelle partie, retour au lobby) : prismes relevés, navigation recalculée si une porte avait été ouverte. */
+  /** Remet les portes en place (nouvelle partie, retour au lobby) : prismes relevés, grilles « portes fermées » restaurées si une porte était ouverte. */
   function refermerPortes(): void {
     const avait = ouvertes.size > 0;
     ouvertes.clear();
     releverBatiments(ctx.monde);
     if (avait) {
-      invaliderNavigation(ctx.monde);
+      restaurerNavigation(ctx.monde, navigationFermee);
       simu.rafraichirCarte();
     }
   }
@@ -339,20 +422,23 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
   function remettreMembre(m: Membre): void {
     m.etat = "attente"; m.admis = false; m.argent = 0; m.gagne = 0; m.reanimations = 0; m.terreFinT = undefined;
     m.atouts.clear(); m.autoReleves = AUTO_RELEVES_MAX; m.autoReleveT = null; m.planchesManche = 0; m.reparation = null;
+    m.derniereReposeT = undefined; m.grenades = 0; m.remontoirs = 0; m.dernierLancerT = undefined;
   }
 
   /** Objets de la carte remis comme au départ (nouvelle partie, retour au lobby). */
-  function remettreCarte(): void {
+  function remettreCarte(t: number): void {
     for (const f of FENETRES) planches.set(f.id, ZOMBIES.planches);
     courant = opts.courant === true;
     murs.clear();
     boite = { emplacement: EMPLACEMENTS_DEPART_BOITE[Math.min(EMPLACEMENTS_DEPART_BOITE.length - 1, Math.floor(alea() * EMPLACEMENTS_DEPART_BOITE.length))], etat: "fermee", finT: 0, utilisations: 0 };
+    boitesSoldes = [];
+    prixPayes.clear();
     demenagements = 0;
     pap = { etat: "libre" };
     bonus = []; paquet = []; bonusManche = 0; scoreTotal = 0; increment = ZOMBIES.incrementBonus; lacherBonus = false;
     seuilBonus = seuilBonusInitial(nbAdmis());
     effets.instakillFinT = 0; effets.doubleFinT = 0; effets.soldesFinT = 0;
-    quete.ingredients = []; quete.cuissonFinT = 0; quete.faite = false;
+    secret.reinitialiser(t);
     truck = null; mancheTruck = false; numeroTruck = 0;
     prochaineMancheTruck = opts.mancheTruck !== undefined ? opts.mancheTruck : premiereMancheTruck(alea());
   }
@@ -366,22 +452,33 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     }
     releves.clear();
     simu.reinitialiser();
+    grenades = [];
+    viderEffetsArmes();
     file = []; indexFile = 0; debutApparitionT = null;
     refermerPortes();
-    remettreCarte();
+    remettreCarte(t);
     phase = "lobby"; manche = 0; debutT = t; finT = 0; bilan = undefined;
     sorties.push(ouvrirBatimentsComplets(), ctx.presence());
     immediat = true;
     return sorties;
   }
 
-  /** Défaite : bilan affiché `finAffichageMs`, tigres retirés. Sans effet hors pause / manche. */
-  function perdre(t: number): void {
+  /** (v8) Plus de projectile, de brûlure ni de gel (nouvelle partie, défaite). */
+  function viderEffetsArmes(): void {
+    projectiles = [];
+    brulures.clear();
+    gels.clear();
+  }
+
+  /** Défaite (ou, `victoire`, cloche du grand secret) : bilan affiché `finAffichageMs`, tigres retirés. Sans effet hors pause / manche. */
+  function perdre(t: number, victoire = false): void {
     if (phase !== "pause" && phase !== "manche") return;
-    bilan = { manche: Math.max(0, phase === "pause" ? manche - 1 : manche), dureeMs: Math.max(0, t - partieDebutT) };
+    bilan = { manche: Math.max(0, phase === "pause" ? manche - 1 : manche), dureeMs: Math.max(0, t - partieDebutT), ...(victoire ? { victoire: true as const } : {}) };
     phase = "fin"; debutT = t; finT = t + ZOMBIES.finAffichageMs;
     simu.reinitialiser();
-    file = []; indexFile = 0; debutApparitionT = null; truck = null;
+    grenades = [];
+    viderEffetsArmes();
+    file = []; indexFile = 0; debutApparitionT = null; truck = null; foudres = []; sautsMini = [];
     releves.clear();
     immediat = true;
   }
@@ -398,14 +495,17 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     return ctx.placerJoueur(j, d.p, d.lacet, { pv, equip: copierEquipement(EQUIPEMENT_DEPART_ZOMBIES), main: MAIN_DEPART_ZOMBIES }, t);
   }
 
-  /** Relève d'un joueur à terre à sa position (PV 50, équipement conservé sans la spéciale, apparition). */
+  /**
+   * Relève d'un joueur à terre là où il est (PV 50, équipement conservé sans la spéciale) : `apparition{garder}`, sans téléportation (sa
+   * position serveur a suivi son corps à terre, le client garde la sienne).
+   */
   function relever(j: JoueurSalle, t: number): Sortie[] {
     const m = membre(j.id);
     m.etat = "debout";
     m.terreFinT = undefined;
     m.autoReleveT = null;
     const equip = copierEquipement({ ...j.equip, speciale: null });
-    const sorties = ctx.placerJoueur(j, [j.p[0], j.p[1], j.p[2]], j.lacet, { pv: ZOMBIES.reanimationPv, equip, main: mainValide(equip, j.main) }, t);
+    const sorties = ctx.placerJoueur(j, j.p, j.lacet, { pv: ZOMBIES.reanimationPv, equip, main: mainValide(equip, j.main), garder: true }, t);
     for (const [par, r] of releves) if (r.cible === j.id) releves.delete(par);
     releves.delete(j.id);
     immediat = true;
@@ -423,7 +523,7 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       if (m.etat === "terre") {
         sorties.push(...relever(j, t));
       } else if (m.etat === "elimine") {
-        m.etat = "debout"; m.terreFinT = undefined; m.argent = argentDepart; m.admisT = t; m.atouts.clear();
+        m.etat = "debout"; m.terreFinT = undefined; m.argent = argentDepart; m.admisT = t; m.atouts.clear(); m.grenades = 0; m.remontoirs = 0;
         sorties.push(...remettreEnJeu(j, t, ZOMBIES.pvMax), sortieArgent(j, 0, "retour"));
       } else if (m.etat === "attente" && !m.admis) {
         m.etat = "debout"; m.admis = true; m.admisT = t; m.argent = argentDepart; m.gagne = 0; m.reanimations = 0; m.atouts.clear();
@@ -444,7 +544,7 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     difficulte = estDifficulte(diff) ? diff : "plat";
     refermerPortes();
     simu.reinitialiser();
-    file = []; indexFile = 0; debutApparitionT = null;
+    file = []; indexFile = 0; debutApparitionT = null; foudres = []; sautsMini = [];
     releves.clear();
     partieDebutT = t;
     bilan = undefined;
@@ -452,10 +552,11 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       const m = membre(o.id);
       remettreMembre(m);
       m.etat = "debout"; m.admis = true; m.admisT = t; m.argent = argentDepart;
+      m.remontoirs = Math.max(0, Math.min(INVENTAIRE_GRENADES.remontoirMax, Math.floor(opts.remontoirsDepart ?? 0)));
       remettreAZero(o);
       sorties.push(sortieArgent(o, 0, "depart"));
     }
-    remettreCarte();
+    remettreCarte(t);
     manche = 1;
     phase = "pause"; debutT = t; finT = t + decompteMs;
     mancheTruck = prochaineMancheTruck === 1;
@@ -468,14 +569,20 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     const nJoueurs = nbAdmis();
     bonusManche = 0;
     dernierSprinte = false;
-    for (const m of membres.values()) m.planchesManche = 0;
+    for (const m of membres.values()) {
+      m.planchesManche = 0;
+      // BO1 `award_grenades_for_survivors` : +2 grenades à fragmentation, 4 au plus (les joueurs à terre aussi, comme dans BO1)
+      if (m.admis) m.grenades = grenadesDebutManche(m.grenades);
+    }
     if (mancheTruck) {
       numeroTruck++;
       prochaineMancheTruck = mancheTruckSuivante(manche, alea());
-      file = []; indexFile = 0;
       truck = null;
-      // le Truck arrive au quai le plus proche des joueurs, 2 s après le début (le klaxon le précède)
+      // le Truck arrive au quai le plus proche des joueurs, 2 s après le début (le klaxon le précède) ; la foudre frappe dès 1,5 s
       const total = manche === 1 && opts.total1 !== undefined ? Math.max(1, Math.round(opts.total1)) : totalTruck(numeroTruck, nJoueurs);
+      file = typesTruck(numeroTruck, total, alea); indexFile = 0;
+      foudres = [];
+      prochainEclairT = t + ECLAIRS.debutMs;
       demarrerTruck(t + 2_000, total);
     } else {
       let types = typesManche(manche, nJoueurs, alea);
@@ -549,8 +656,7 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     const id = simu.apparaitre(specPour(file[indexFile]), choix.point, choix.arrivee, t);
     if (id === null) return;
     indexFile++;
-    const k = quete.cuissonFinT > t ? 0.5 : 1;
-    prochaineApparitionT = t + delaiApparition(manche) * 1000 * k;
+    prochaineApparitionT = t + delaiApparition(manche) * 1000;
     sale = true;
   }
 
@@ -558,7 +664,7 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
   // Truck Muche
   // ---------------------------------------------------------------------------------------------
 
-  function demarrerTruck(t: number, total: number): void {
+  function demarrerTruck(t: number, _total: number): void {
     const joueurs = debout();
     let meilleur = QUAIS[0], dMin = Infinity;
     for (const q of QUAIS) {
@@ -573,12 +679,57 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     const pv = pvTruck(numeroTruck);
     truck = {
       quai: meilleur.id, phase: "arrivee", debutT: t, finT: t + TRUCK.arriveeMs, pv, pvMax: pv, p: [meilleur.depart[0], meilleur.depart[1]],
-      cap: meilleur.cap, aLacher: total, prochainLacherT: 0,
+      cap: meilleur.cap, prochainLacherT: 0, rire: false,
     };
   }
 
-  /** Avance le Truck (arrivée en marche arrière, livraison, départ) et lâche les petits par l'arrière. */
-  function ticTruck(t: number, sorties: Sortie[]): void {
+  /** Ennemis du Truck vivants (petits et mini Trucks). */
+  const vivantsLivraison = (): number => simu.liste().filter((z) => estLivraison(z.type)).length;
+
+  /**
+   * Manche du Truck : la foudre (les chiens de BO1 arrivent par un éclair devant le joueur qu'ils visent) et le Truck lâchent les ennemis
+   * de la file, sous le plafond `plafondPetits` (foudres annoncées comprises).
+   */
+  function ticLivraison(t: number, sorties: Sortie[]): void {
+    if (debutApparitionT === null || t < debutApparitionT) return;
+    const plafond = plafondPetits(nbAdmis());
+    // foudres échues : l'ennemi apparaît en chasse sous l'éclair (apparition refusée au plafond de 24 : il attend)
+    if (foudres.length) {
+      const restent: Foudre[] = [];
+      for (const f of foudres) {
+        if (t < f.t || simu.apparaitre(specPour(f.type), f.p, { mode: "chasse" }, t, capVersJoueur(f.p)) === null) restent.push(f);
+        else sale = true;
+      }
+      foudres = restent;
+    }
+    // nouvel éclair : près d'un joueur debout, dans une zone active
+    if (aLivrer() > 0 && t >= prochainEclairT && vivantsLivraison() + foudres.length < plafond) {
+      const presents = debout();
+      const actives = zonesActives(zonesOccupees(), ouvertes);
+      const occupes: Vec2[] = [...simu.liste().map((z): Vec2 => [z.p[0], z.p[2]]), ...foudres.map((f) => f.p)];
+      const p = choisirPointEclair(pointsFoudre, actives, presents.map((j): Vec2 => [j.p[0], j.p[2]]), occupes, alea);
+      if (p) {
+        foudres.push({ p, type: file[indexFile++], t: t + ECLAIRS.foudreMs });
+        sorties.push(zev({ e: "eclair", p: [p[0], 0, p[1]], dans: ECLAIRS.foudreMs }));
+        sale = true;
+      }
+      prochainEclairT = t + intervalleEclairMs(numeroTruck, file.length ? indexFile / file.length : 1);
+    }
+    ticTruck(t, sorties, plafond);
+  }
+
+  /** Cap d'un ennemi né en `p` : face au joueur debout le plus proche. */
+  function capVersJoueur(p: Vec2): number {
+    let meilleur: JoueurSalle | null = null, dMin = Infinity;
+    for (const j of debout()) {
+      const d = Math.hypot(j.p[0] - p[0], j.p[2] - p[1]);
+      if (d < dMin) { dMin = d; meilleur = j; }
+    }
+    return meilleur ? capVers(p[0], p[1], meilleur.p[0], meilleur.p[2]) : 0;
+  }
+
+  /** Avance le Truck (arrivée en marche arrière, livraison, départ) et lâche des ennemis par l'arrière (un par lâcher, sous le plafond). */
+  function ticTruck(t: number, sorties: Sortie[], plafond: number): void {
     if (!truck) return;
     const q = QUAIS[truck.quai];
     const f = fenetreDeId(q.fenetre)!;
@@ -588,25 +739,28 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       truck.p = [q.depart[0] + (q.p[0] - q.depart[0]) * k, q.depart[1] + (q.p[1] - q.depart[1]) * k];
       if (k >= 1) {
         truck.phase = "livraison"; truck.debutT = t; truck.finT = 0; truck.prochainLacherT = t + 800;
-        sorties.push(zev({ e: "truck", quoi: "porte", p: [truck.p[0], 0, truck.p[1]] }));
+        const p: Vec3 = [truck.p[0], 0, truck.p[1]];
+        // la porte s'ouvre et le Truck Muche enragé rit
+        sorties.push(zev({ e: "truck", quoi: "porte", p }), zev({ e: "truck", quoi: "rire", p }));
         immediat = true;
       }
     }
-    if ((truck.phase === "livraison" || truck.phase === "epave") && truck.aLacher > 0 && t >= truck.prochainLacherT && debutApparitionT !== null && t >= debutApparitionT) {
-      const vivants = simu.liste().filter((z) => z.type === 3).length;
-      for (let k = 0; k < 2 && truck.aLacher > 0 && vivants + k < ZOMBIES.plafondPetits; k++) {
-        // l'arrière du Truck regarde la fenêtre : les petits sautent entre le Truck et la fenêtre, puis la franchissent d'un bond
-        const recul = TRUCK.demiLongueur + 1.2;
-        const x = truck.p[0] + f.normale[0] * recul + (k ? 1 : -1) * f.normale[1] * 0.8;
-        const z = truck.p[1] + f.normale[1] * recul - (k ? 1 : -1) * f.normale[0] * 0.8;
-        if (simu.apparaitre(specPour(3), [x, z], { mode: "chasse" }, t, capVers(x, z, f.milieu[0], f.milieu[1])) !== null) truck.aLacher--;
-      }
+    if ((truck.phase === "livraison" || truck.phase === "epave") && aLivrer() > 0 && t >= truck.prochainLacherT
+      && vivantsLivraison() + foudres.length < plafond) {
+      // l'arrière du Truck regarde la fenêtre : l'ennemi saute entre le Truck et la fenêtre, puis la franchit d'un bond
+      const recul = TRUCK.demiLongueur + 1.2;
+      const cote = indexFile % 2 ? 1 : -1;
+      const x = truck.p[0] + f.normale[0] * recul + cote * f.normale[1] * 0.8;
+      const z = truck.p[1] + f.normale[1] * recul - cote * f.normale[0] * 0.8;
+      if (simu.apparaitre(specPour(file[indexFile]), [x, z], { mode: "chasse" }, t, capVers(x, z, f.milieu[0], f.milieu[1])) !== null) indexFile++;
       truck.prochainLacherT = t + TRUCK.lacherMs;
       sale = true;
     }
-    if (truck.phase === "livraison" && truck.aLacher <= 0) {
+    if (truck.phase === "livraison" && aLivrer() <= 0) {
       truck.phase = "depart"; truck.debutT = t; truck.finT = t + TRUCK.departMs;
       sorties.push(zev({ e: "truck", quoi: "klaxon", p: [truck.p[0], 0, truck.p[1]] }));
+      // (v8) il repart intact : le service du grand secret tourne court
+      effetsSecret(secret.truck("parti", ctxSecret(t)), t, sorties);
       immediat = true;
     }
     if (truck.phase === "depart") {
@@ -614,7 +768,7 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       const av: Vec2 = [-Math.sin(truck.cap), -Math.cos(truck.cap)];
       truck.p = [q.p[0] + av[0] * 25 * k * k, q.p[1] + av[1] * 25 * k * k];
       if (k >= 1) { truck = null; immediat = true; }
-    } else if (truck.phase === "epave" && truck.aLacher <= 0 && t >= truck.finT) {
+    } else if (truck.phase === "epave" && aLivrer() <= 0 && t >= truck.finT) {
       truck = null; immediat = true;
     }
   }
@@ -623,28 +777,94 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
   function blesserTruck(degats: number, par: JoueurSalle, t: number): Sortie[] {
     if (!truck || truck.phase === "epave") return [];
     truck.pv = Math.max(0, truck.pv - Math.max(0, degats));
-    const sorties: Sortie[] = [{ a: par.id, m: { t: "degats", cible: CIBLE_LIVRAISON, par: par.id, degats, pv: Math.round((100 * truck.pv) / truck.pvMax), bouclier: 0, zone: "corps" } }];
+    const sorties: Sortie[] = [{ a: par.id, m: { t: "degats", cible: CIBLE_LIVRAISON, par: par.id, degats: Math.min(degats, 99_999), pv: Math.round((100 * truck.pv) / truck.pvMax), bouclier: 0, zone: "corps" } }];
     sale = true;
+    // sous la moitié de ses PV, le Truck Muche rit de plus belle (une fois)
+    if (truck.pv > 0 && !truck.rire && truck.pv <= truck.pvMax / 2) {
+      truck.rire = true;
+      sorties.push(zev({ e: "truck", quoi: "rire", p: [truck.p[0], 1, truck.p[1]] }));
+    }
     if (truck.pv > 0) return sorties;
     truck.phase = "epave"; truck.debutT = t; truck.finT = t + TRUCK.epaveMs; truck.prochainLacherT = t + 1_500;
     const p: Vec3 = [truck.p[0], 1, truck.p[1]];
-    sorties.push(zev({ e: "truck", quoi: "explosion", p }));
+    sorties.push(zev({ e: "truck", quoi: "explosion", p }), zev({ e: "truck", quoi: "rire", p }));
     for (const z of [...simu.liste()]) {
       if (Math.hypot(z.p[0] - p[0], z.p[2] - p[2]) > TRUCK.souffleM) continue;
-      sorties.push(...tuerTigre(z.id, par, t, "explosion", false));
+      sorties.push(...tuerTigre(z.id, par, t, "explosion", false, p));
     }
     for (const j of ctx.joueurs()) if (membre(j.id).admis && j.enJeu) sorties.push(crediter(j, GAIN_TRUCK, "truck"));
+    // (v8) le Truck saute pendant le service du grand secret : servi
+    effetsSecret(secret.truck("detruit", ctxSecret(t)), t, sorties);
     immediat = true;
     return sorties;
+  }
+
+  /** Mini Trucks dont l'heure de sauter est venue (manche et pause : le dernier saute après la fin de la manche). */
+  function ticSautsMini(t: number, sorties: Sortie[]): void {
+    // un souffle peut en déclencher d'autres (ajoutés à la file pendant la boucle, avec leur délai)
+    for (let k = 0; k < 64 && sautsMini.some((x) => t >= x.t); k++) {
+      const i = sautsMini.findIndex((x) => t >= x.t);
+      const saut = sautsMini.splice(i, 1)[0];
+      exploserMini(saut, t, sorties);
+      if (phase !== "manche" && phase !== "pause") { sautsMini = []; return; }
+    }
+  }
+
+  /**
+   * Souffle d'un mini Truck (les chiens de feu de BO1, avec les dégâts de zone de BO1 Reimagined) : joueurs debout en vue du centre blessés
+   * (80 au centre à 15 au bord, selon la difficulté, plafonnés par la griffe imposée des essais) ; abattu par un joueur, il blesse aussi les
+   * tigres en vue (1 600 à 400 : il emporte les petits et fait sauter les autres mini Trucks), kills au tireur ; sauté seul, il les épargne.
+   */
+  function exploserMini(saut: SautMini, t: number, sorties: Sortie[]): void {
+    const c = centreSouffleMini(saut.p);
+    const M = ZOMBIES.miniTruck;
+    sorties.push(zev({ e: "miniTruck", p: arrondi(c), rayon: M.souffleM }));
+    for (const j of ctx.joueurs()) {
+      if (!peutJouer(j) || membre(j.id).etat !== "debout" || t < j.protegeJusqua) continue;
+      const d = Math.hypot(j.p[0] - c[0], j.p[1] + 1 - c[1], j.p[2] - c[2]);
+      const degats = Math.min(degatsSouffleMiniJoueur(d, difficulte), opts.degatsGriffe ?? Infinity);
+      if (degats <= 0 || !souffleAtteint(ctx.monde, c, [j.p[0], j.p[1] + 0.3, j.p[2]])) continue;
+      sorties.push(...ctx.infliger(j, degats, null, "tigre_zombie", "corps", "couteau", t, c));
+      if (phase !== "manche" && phase !== "pause") return; // le dernier joueur debout est tombé
+    }
+    // sauté seul contre un joueur, il épargne les siens (sinon il nettoierait les petits qui mordent le joueur) ; abattu, il les emporte
+    if (saut.par === null) return;
+    const par = ctx.joueur(saut.par);
+    const tireur = par && membre(par.id).admis ? par : null;
+    for (const z of [...simu.liste()]) {
+      const d = Math.hypot(z.p[0] - c[0], z.p[2] - c[2]);
+      const degats = degatsSouffleMiniTigre(Math.max(0, d - 0.6));
+      if (degats <= 0 || !souffleAtteint(ctx.monde, c, [z.p[0], 0.3, z.p[2]])) continue;
+      if (tireur) {
+        sorties.push(...service.blesser(idZombie(z.id), degats, tireur, "corps", t, { gain: false, cause: "explosion", src: c }));
+        continue;
+      }
+      const r = simu.blesser(z.id, degats, t);
+      if (!r.mort) continue;
+      sorties.push({ a: "joueurs", m: { t: "zombieMort", id: idZombie(z.id), p: r.p ?? [0, 0, 0], par: "", zone: "corps", cause: "explosion", src: arrondi(c) } });
+      if (r.type === 4) sautsMini.push({ p: r.p ?? [0, 0, 0], par: null, t: t + DELAI_SAUT_ABATTU_MS });
+      lacherApresKill(r.type, r.p ?? [0, 0, 0], t, sorties);
+      sale = true;
+    }
   }
 
   // ---------------------------------------------------------------------------------------------
   // bonus
   // ---------------------------------------------------------------------------------------------
 
+  /**
+   * Prochain bonus du paquet mélangé ; BO1 `get_valid_powerup` : le Happy hour est écarté (pour un autre du paquet) tant que la boîte n'a
+   * jamais déménagé ou qu'un Happy hour est en cours.
+   */
   function tirerBonus(): GenreBonus {
-    if (!paquet.length) paquet = paquetBonus(alea);
-    return paquet.shift()!;
+    const permis = (g: GenreBonus) => g !== "soldes" || soldesPermises(demenagements, effets.soldesFinT, dernierT);
+    for (let essai = 0; essai < 2; essai++) {
+      if (!paquet.length) paquet = opts.bonus?.length ? [...opts.bonus] : paquetBonus(alea);
+      const k = paquet.findIndex(permis);
+      if (k >= 0) return paquet.splice(k, 1)[0];
+      paquet = [];
+    }
+    return "munitions";
   }
 
   function lacher(genre: GenreBonus, p: Vec3, t: number, sorties: Sortie[]): void {
@@ -659,7 +879,8 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     if (phase !== "manche") return;
     if (zoneEn(carteZones, p[0], p[2]) === null) return; // jamais hors de la zone de jeu (un tigre abattu dehors)
     if (type === 1) { lacher(tirerBonus(), p, t, sorties); return; }
-    if (mancheTruck && type === 3 && (truck?.aLacher ?? 0) === 0 && simu.nbVivants() === 0) { lacher("munitions", p, t, sorties); return; }
+    // BO1 `dog_round_aftermath` : munitions max garanties là où tombe le dernier ennemi de la livraison (petit ou mini Truck)
+    if (mancheTruck && type !== undefined && estLivraison(type) && restants() === 0) { lacher("munitions", p, t, sorties); return; }
     if (bonusManche >= ZOMBIES.bonusParManche) return;
     if (lacherBonus || alea() < ZOMBIES.probaBonusHasard) {
       lacherBonus = false;
@@ -674,6 +895,10 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     for (const j of ctx.joueurs()) {
       if (!j.enJeu || !membre(j.id).admis) continue;
       if (j.equip.speciale) j.munSpeciale = munSpecialeDe(j.equip);
+      // (v8) les grenades aussi : 4 à fragmentation, et les remontoirs de qui en porte encore
+      const m = membre(j.id);
+      m.grenades = INVENTAIRE_GRENADES.fragMax;
+      if (m.remontoirs > 0) m.remontoirs = INVENTAIRE_GRENADES.remontoirMax;
       sorties.push(...ctx.equiper(j, copierEquipement(j.equip), j.main, t, "tout"));
     }
     return sorties;
@@ -685,7 +910,11 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       case "munitions": sorties.push(...munitionsMax(t)); break;
       case "instakill": effets.instakillFinT = t + ZOMBIES.bonusDureeMs; break;
       case "double": effets.doubleFinT = t + ZOMBIES.bonusDureeMs; break;
-      case "soldes": effets.soldesFinT = t + ZOMBIES.bonusDureeMs; break;
+      case "soldes":
+        // BO1 `start_fire_sale` : 30 s (relancé par un second), une boîte temporaire à chaque emplacement libre, toutes à 10 $
+        effets.soldesFinT = t + ZOMBIES.bonusDureeMs;
+        boitesSoldes = ouvrirSoldes(boite, boitesSoldes, NB_EMPLACEMENTS_BOITE);
+        break;
       case "nuke": {
         sorties.push(zev({ e: "nuke", p: b.p }));
         // BO1 : la nuke tue tout ce qui est vivant (le Truck excepté) sans rapporter de points, puis +400 à chacun
@@ -724,13 +953,18 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
    * Tue le tigre `id` (nuke, souffle du Truck) : `zombieMort` (cause), kill crédité à `par` ; `points` : gain de kill au tueur (jamais pour la
    * nuke) ; bonus éventuel sauf pour la nuke.
    */
-  function tuerTigre(id: number, par: JoueurSalle, t: number, cause: "explosion" | "nuke", points: boolean): Sortie[] {
+  function tuerTigre(id: number, par: JoueurSalle, t: number, cause: "explosion" | "nuke", points: boolean, src?: Vec3): Sortie[] {
     const r = simu.blesser(id, INSTAKILL, t);
     if (!r.mort) return [];
-    const sorties: Sortie[] = [{ a: "joueurs", m: { t: "zombieMort", id: idZombie(id), p: r.p ?? [0, 0, 0], par: par.id, zone: "corps", cause } }];
+    const sorties: Sortie[] = [{ a: "joueurs", m: { t: "zombieMort", id: idZombie(id), p: r.p ?? [0, 0, 0], par: par.id, zone: "corps", cause, ...(src ? { src: arrondi(src) } : {}) } }];
+    // un mini Truck soufflé saute à son tour (pas sous la nuke : elle efface tout sans un bruit)
+    if (r.type === 4 && cause !== "nuke") sautsMini.push({ p: r.p ?? [0, 0, 0], par: par.id, t: t + DELAI_SAUT_ABATTU_MS });
     par.kills++;
     if (points) sorties.push(crediter(par, gainKill({ double: doublePoints(t) }), "kill"));
-    if (cause !== "nuke") lacherApresKill(r.type, r.p ?? [0, 0, 0], t, sorties);
+    if (cause !== "nuke") {
+      lacherApresKill(r.type, r.p ?? [0, 0, 0], t, sorties);
+      effetsSecret(secret.kill(r.p ?? [0, 0, 0], false, ctxSecret(t)), t, sorties);
+    }
     sale = true;
     return sorties;
   }
@@ -755,9 +989,10 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     }
 
     // simulation des tigres : cibles = joueurs en jeu et debout
-    const cibles = membresSalle.filter((j) => peutJouer(j) && membre(j.id).etat === "debout").map((j) => ({ id: j.id, p: j.p, vivant: true }));
+    // (v8) la griffe attend l'aller-retour du joueur visé avant d'être jugée une seconde fois (en sa faveur, cf. GRIFFE_DELAI_MAX_MS)
+    const cibles = membresSalle.filter((j) => peutJouer(j) && membre(j.id).etat === "debout").map((j) => ({ id: j.id, p: j.p, vivant: true, delaiMs: j.ping }));
     evenementsTic = [];
-    const evenements = simu.tic(t, dt, cibles);
+    const evenements = simu.tic(t, dt, cibles, leurres(t));
     sorties.push(...evenementsTic);
     evenementsTic = [];
     for (const e of evenements) {
@@ -765,7 +1000,17 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       if (e.t === "bloque") {
         // failsafe de BO1 : le tigre coincé est retiré et remis dans la file (il réapparaîtra ailleurs)
         const z = simu.zombie(e.tigre);
-        if (z && z.type !== 3) { simu.retirer(e.tigre); file.splice(indexFile, 0, z.type); }
+        if (z && !estLivraison(z.type)) { simu.retirer(e.tigre); file.splice(indexFile, 0, z.type); }
+        continue;
+      }
+      if (e.t === "explose") {
+        // le mini Truck saute contre un joueur : retiré tout de suite, son souffle part au même tic
+        const r = simu.blesser(e.tigre, INSTAKILL, t);
+        if (r.mort) {
+          sorties.push({ a: "joueurs", m: { t: "zombieMort", id: idZombie(e.tigre), p: r.p ?? e.p, par: "", zone: "corps", cause: "explosion" } });
+          sautsMini.push({ p: e.p, par: null, t });
+          lacherApresKill(4, e.p, t, sorties);
+        }
         continue;
       }
       if (e.t !== "griffe") continue;
@@ -776,8 +1021,10 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     }
     if (phase !== "manche") return; // une griffe a pu coucher le dernier joueur debout
 
-    if (mancheTruck) ticTruck(t, sorties);
+    if (mancheTruck) ticLivraison(t, sorties);
     else apparaitre(t);
+    ticSautsMini(t, sorties);
+    if (phase !== "manche") return; // un souffle a pu coucher le dernier joueur debout
 
     // le dernier tigre sprinte (BO1 `zombie_speed_up`, à partir de la manche 4)
     if (!mancheTruck && !dernierSprinte && manche >= 4 && indexFile >= file.length && simu.nbVivants() === 1) {
@@ -790,23 +1037,25 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     if (phase !== "manche") return;
 
     // fin de manche : tous les tigres sont apparus ET morts (manche du Truck : il a tout lâché et les petits sont morts)
-    const finie = debutApparitionT !== null && simu.nbVivants() === 0
-      && (mancheTruck ? (truck?.aLacher ?? 0) <= 0 : indexFile >= file.length);
+    const finie = debutApparitionT !== null && simu.nbVivants() === 0 && indexFile >= file.length && !foudres.length;
     if (finie) {
+      // (v8) grand secret : la marmite se vide, un service en cours tourne court
+      effetsSecret(secret.finManche(ctxSecret(t)), t, sorties);
       truck = null;
       mancheTruck = false;
+      foudres = [];
       sorties.push(...entrerEnPause(t, manche + 1, pauseMs));
     }
   }
 
-  /** Ce qui avance en manche ET en pause : relèves, éliminations, bonus, planches, boîte, Pack-a-Punch, recette, auto-relèves. */
+  /** Ce qui avance en manche ET en pause : relèves, éliminations, bonus, planches, boîte, Pack-a-Punch, grand secret, auto-relèves. */
   function ticCommun(t: number, sorties: Sortie[]): void {
     const membresSalle = ctx.joueurs();
     // relèves : le relanceur maintient E à portée, la cible est à terre (1,5 s avec la Pause Café)
     for (const [parId, r] of [...releves]) {
       const par = ctx.joueur(parId), cible = ctx.joueur(r.cible);
       if (!par || !cible || !peutJouer(par) || membre(parId).etat !== "debout" || membre(r.cible).etat !== "terre"
-        || Math.hypot(par.p[0] - cible.p[0], par.p[2] - cible.p[2]) > ZOMBIES.reanimationAnnulePortee) {
+        || Math.hypot(par.p[0] - cible.p[0], par.p[2] - cible.p[2]) > ZOMBIES.reanimationAnnulePortee + margeLatence(par)) {
         releves.delete(parId);
         continue;
       }
@@ -837,11 +1086,11 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     ticPlanches(t, sorties);
     ticBoite(t, sorties);
     ticPap(t, sorties);
-    ticRecette(t, sorties);
+    effetsSecret(secret.tic(ctxSecret(t)), t, sorties);
   }
 
   // ---------------------------------------------------------------------------------------------
-  // planches, boîte, Pack-a-Punch, recette
+  // planches, boîte, Pack-a-Punch
   // ---------------------------------------------------------------------------------------------
 
   function ticPlanches(t: number, sorties: Sortie[]): void {
@@ -852,12 +1101,13 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       const f = fenetreDeId(r.fenetre);
       const n = planches.get(r.fenetre) ?? 0;
       if (!f || !peutJouer(j) || m.etat !== "debout" || n >= ZOMBIES.planches
-        || Math.hypot(j.p[0] - f.dedans[0], j.p[2] - f.dedans[1]) > ZOMBIES.reposePortee + 0.6) {
+        || Math.hypot(j.p[0] - f.dedans[0], j.p[2] - f.dedans[1]) > ZOMBIES.reposePortee + 0.6 + margeLatence(j)) {
         m.reparation = null;
         continue;
       }
       if (t < r.prochainT) continue;
       planches.set(r.fenetre, n + 1);
+      m.derniereReposeT = t;
       r.prochainT = t + ZOMBIES.reposeS * 1000;
       sorties.push(zev({ e: "planche", fenetre: r.fenetre, arrachee: false }));
       sale = true;
@@ -875,73 +1125,78 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     return ARMES.filter((a) => !HORS_BOITE.has(a) && STATS[a].categorie !== "unique" && !possede(eq, a));
   }
 
-  /** La peluche de BO1 (`treasure_chest_think`) : jamais avant 4 utilisations ; 15 % de 4 à 7 ; 8ᵉ forcée sans déménagement ; ensuite 30 % puis 50 %. */
-  function peluche(utilisations: number): boolean {
-    if (utilisations < 4) return false;
-    const r = alea() * 100;
-    if (demenagements === 0) {
-      if (utilisations >= 8) return true;
-      return r < 15;
-    }
-    if (utilisations < 8) return r < 15;
-    if (utilisations < 13) return r < 30;
-    return r < 50;
+  /** Remplace la boîte de l'emplacement `em` (la principale ou une temporaire du Happy hour). */
+  function ecrireBoite(em: number, b: EtatBoite): void {
+    if (em === boite.emplacement) boite = b;
+    else boitesSoldes = boitesSoldes.map((x) => (x.emplacement === em ? b : x));
   }
 
-  function ticBoite(t: number, sorties: Sortie[]): void {
-    if (boite.etat === "fermee" || t < boite.finT) return;
-    if (boite.etat === "tirage") {
-      if (boite.arme === "peluche") {
+  /** Étape suivante d'une boîte arrivée au bout de la sienne : tirage → offre (ou envol de la peluche), offre → fermée, envol → ailleurs. */
+  function avancerBoite(b: EtatBoite, principale: boolean, t: number, sorties: Sortie[]): void {
+    if (b.etat === "fermee" || t < b.finT) return;
+    if (b.etat === "tirage") {
+      if (b.arme === "peluche" && principale) {
         // la peluche rembourse et la boîte s'envole
-        const j = boite.pour ? ctx.joueur(boite.pour) : undefined;
-        if (j && membre(j.id).admis) { const m = membre(j.id); m.argent += prixPaye; sorties.push(sortieArgent(j, prixPaye, "peluche")); }
-        boite = { ...boite, etat: "envol", finT: t + ENVOL_BOITE_MS };
-        sorties.push(zev({ e: "peluche", de: boite.emplacement }));
+        const j = b.pour ? ctx.joueur(b.pour) : undefined;
+        const prix = prixPayes.get(b.emplacement) ?? 0;
+        if (j && membre(j.id).admis && prix > 0) { const m = membre(j.id); m.argent += prix; sorties.push(sortieArgent(j, prix, "peluche")); }
+        boite = { ...b, etat: "envol", finT: t + ENVOL_BOITE_MS };
+        sorties.push(zev({ e: "peluche", de: b.emplacement }));
       } else {
-        boite = { ...boite, etat: "offre", finT: t + OFFRE_BOITE_MS };
+        ecrireBoite(b.emplacement, { ...b, etat: "offre", finT: t + OFFRE_BOITE_MS });
       }
-    } else if (boite.etat === "offre") {
-      boite = { emplacement: boite.emplacement, etat: "fermee", finT: 0, utilisations: boite.utilisations };
-    } else if (boite.etat === "envol") {
-      const autres = Array.from({ length: NB_EMPLACEMENTS_BOITE }, (_, i) => i).filter((i) => i !== boite.emplacement);
+    } else if (b.etat === "offre") {
+      ecrireBoite(b.emplacement, { emplacement: b.emplacement, etat: "fermee", finT: 0, utilisations: b.utilisations });
+    } else if (b.etat === "envol" && principale) {
+      // une boîte temporaire refermée cède sa place ; jamais sur une temporaire en cours de tirage ou d'offre
+      const autres = destinationsEnvol(b.emplacement, boitesSoldes, NB_EMPLACEMENTS_BOITE);
+      // toutes les autres sont en tirage ou en offre (Happy hour à plusieurs) : elle attend en l'air, sans écraser un tirage payé
+      if (!autres.length) { boite = { ...b, finT: t + ATTENTE_ENVOL_MS }; immediat = true; return; }
       const vers = autres[Math.min(autres.length - 1, Math.floor(alea() * autres.length))];
       demenagements++;
+      boitesSoldes = boitesSoldes.filter((x) => x.emplacement !== vers);
       boite = { emplacement: vers, etat: "fermee", finT: 0, utilisations: 0 };
     }
     immediat = true;
   }
 
-  function ticPap(t: number, sorties: Sortie[]): void {
-    if (pap.etat !== "cuisson" || t < (pap.finT ?? 0)) return;
-    const j = pap.joueur ? ctx.joueur(pap.joueur) : undefined;
-    const arme = pap.arme!;
-    pap = { etat: "libre" };
-    immediat = true;
-    if (!j || !membre(j.id).admis || !possede(j.equip, arme)) return;
-    const equip = copierEquipement(j.equip);
-    equip.ameliorees = [...new Set([...(equip.ameliorees ?? []), arme])];
-    if (equip.speciale === arme) j.munSpeciale = chargeurZombie(arme, true);
-    sorties.push(...ctx.equiper(j, equip, j.main, t, arme), zev({ e: "pap", joueur: j.id, arme, pret: true }));
+  function ticBoite(t: number, sorties: Sortie[]): void {
+    avancerBoite(boite, true, t, sorties);
+    for (const b of [...boitesSoldes]) avancerBoite(b, false, t, sorties);
+    // fin du Happy hour : les boîtes temporaires refermées disparaissent (celle qu'on utilise finit son tirage d'abord)
+    const restantes = boitesSoldesRestantes(boitesSoldes, soldesActives(effets.soldesFinT, t));
+    if (restantes.length !== boitesSoldes.length) { boitesSoldes = restantes; immediat = true; }
   }
 
-  function ticRecette(t: number, sorties: Sortie[]): void {
-    if (!quete.cuissonFinT || t < quete.cuissonFinT) return;
-    quete.cuissonFinT = 0;
-    quete.faite = true;
-    sorties.push(zev({ e: "cuisson", fin: true }));
-    // chaque joueur debout reçoit le Rayon Goulaf et un atout qu'il n'a pas
-    for (const j of debout()) {
-      const m = membre(j.id);
-      const equip = copierEquipement(j.equip);
-      equip.secondaire = "rayon";
-      equip.ameliorees = [...new Set([...(equip.ameliorees ?? []).filter((a) => a !== "rayon"), "rayon" as ArmeFeuId])];
-      ctx.memoriserPrecedent(j);
-      delete j.cadenceArme.rayon;
-      sorties.push(...ctx.equiper(j, equip, "secondaire", t, "rayon"));
-      const manque = ATOUTS_LISTE.filter((a) => !m.atouts.has(a));
-      if (manque.length) donnerAtout(j, manque[Math.min(manque.length - 1, Math.floor(alea() * manque.length))], t, sorties);
-    }
+  /**
+   * Micro-ondes (BO1) : la cuisson finie, l'arme gratinée attend son joueur `REPRISE_PAP_MS` (`pret`) ; passé ce délai elle est perdue, sans
+   * remboursement : son slot reste vide (`enCuisson` gardé) jusqu'à une nouvelle arme de sa catégorie.
+   */
+  function ticPap(t: number, sorties: Sortie[]): void {
+    if (pap.etat === "libre" || t < (pap.finT ?? 0)) return;
+    const arme = pap.arme!, joueur = pap.joueur ?? "";
     immediat = true;
+    if (pap.etat === "cuisson") {
+      pap = { etat: "pret", joueur, arme, debutT: pap.debutT, finT: t + REPRISE_PAP_MS };
+      sorties.push(zev({ e: "pap", joueur, arme, pret: true }));
+      return;
+    }
+    pap = { etat: "libre" };
+    sorties.push(zev({ e: "pap", joueur, arme, pret: false, fin: "perdue" }));
+  }
+
+  /** Copie d'un équipement sans arme au Micro-ondes. */
+  function sansCuisson(eq: Equipement): Equipement {
+    const e = copierEquipement(eq);
+    delete e.enCuisson;
+    return e;
+  }
+
+  /** Slot d'une arme à feu : les armes uniques vont dans le slot spécial. */
+  const slotArme = (x: ArmeFeuId): Slot => (STATS[x].categorie === "unique" ? "speciale" : STATS[x].categorie);
+  /** Le slot que remplirait l'arme `a` est celui de l'arme de `j` encore au Micro-ondes : réservé jusqu'à sa reprise. */
+  function slotReserve(j: JoueurSalle, a: ArmeFeuId): boolean {
+    return pap.etat !== "libre" && pap.joueur === j.id && !!pap.arme && slotArme(a) === slotArme(pap.arme);
   }
 
   function donnerAtout(j: JoueurSalle, a: AtoutId, t: number, sorties: Sortie[]): void {
@@ -957,7 +1212,9 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
   // achats
   // ---------------------------------------------------------------------------------------------
 
-  const possede = (eq: Equipement, a: ArmeFeuId): boolean => (!eq.sansPrincipale && eq.principale === a) || eq.secondaire === a || eq.speciale === a;
+  /** L'arme `a` est portée (pas celle déposée au Micro-ondes, `enCuisson`). */
+  const possede = (eq: Equipement, a: ArmeFeuId): boolean =>
+    eq.enCuisson !== a && ((!eq.sansPrincipale && eq.principale === a) || eq.secondaire === a || eq.speciale === a);
 
   const refus = (j: JoueurSalle, id: string, raison: RaisonAchat): Sortie[] => [{ a: j.id, m: { t: "achat", ok: false, id, raison } }];
 
@@ -985,6 +1242,11 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
   function acheter(j: JoueurSalle, id: unknown, t: number): Sortie[] {
     const idTexte = typeof id === "string" ? id : "";
     const m = membre(j.id);
+    // (v8) E sur un objet du grand secret : aucune réponse si rien ne se passe (pas de refus qui trahirait l'objet)
+    if (idTexte.startsWith("secret:")) {
+      if ((phase !== "pause" && phase !== "manche") || !m.admis || m.etat !== "debout" || !peutJouer(j)) return [];
+      return interagirSecret(j, idTexte.slice(7), t);
+    }
     if ((phase !== "pause" && phase !== "manche") || !m.admis || m.etat !== "debout" || !peutJouer(j)) return refus(j, idTexte, "partie");
     const achat = achatDeId(idTexte);
     if (!achat) return refus(j, idTexte, "loin");
@@ -992,13 +1254,13 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     const porte = achat.genre === "porte" && achat.porte ? porteDeId(achat.porte) : null;
     // portée (2,5 m ; 3 m du segment d'une porte) puis ligne de vue
     if (porte) {
-      if (distancePorte(porte, pos) > porte.portee) return refus(j, idTexte, "loin");
+      if (distancePorte(porte, pos) > porte.portee + margeLatence(j)) return refus(j, idTexte, "loin");
       if (ouvertes.has(porte.id)) return refus(j, idTexte, "deja");
       if (!aVue(j, pointPorte(porte.prismes[0], j))) return refus(j, idTexte, "loin");
       const accessibles = zonesOuvertes(ouvertes);
       if (!accessibles.has(porte.zones[0]) && !accessibles.has(porte.zones[1])) return refus(j, idTexte, "verrou");
     } else {
-      if (Math.hypot(pos[0] - achat.position[0], pos[1] - achat.position[1]) > achat.rayon) return refus(j, idTexte, "loin");
+      if (Math.hypot(pos[0] - achat.position[0], pos[1] - achat.position[1]) > achat.rayon + margeLatence(j)) return refus(j, idTexte, "loin");
       if (!aVue(j, achat.position)) return refus(j, idTexte, "loin");
     }
     switch (achat.genre) {
@@ -1008,8 +1270,6 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       case "atout": return acheterAtout(j, achat, m, t);
       case "pap": return acheterPap(j, achat, m, t);
       case "courant": return activerCourant(j, achat);
-      case "ingredient": return ramasserIngredient(j, achat);
-      case "four": return lancerRecette(j, achat, t);
     }
   }
 
@@ -1029,7 +1289,8 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       if (detruireBatiment(ctx.monde, index)) detruits.push(index);
     }
     ouvertes.add(porte.id);
-    invaliderNavigation(ctx.monde);
+    // seules les cases autour des pièces de la porte changent (< 5 ms au lieu de 40 à 80 ms pour les deux grilles)
+    majNavigation(ctx.monde, detruits.map((i) => ctx.monde.prismes[i].boite));
     simu.rafraichirCarte();
     sorties.push({ a: "tous", m: { t: "batiments", complet: false, detruits, breches: [] } });
     immediat = true;
@@ -1054,6 +1315,8 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       return [...payer(j, m, achat, prix), ...ctx.equiper(j, copierEquipement(j.equip), j.main, t, arme)];
     }
     if (m.argent < achat.prix) return refus(j, achat.id, "argent");
+    // (v8) le slot de l'arme au Micro-ondes attend qu'on la reprenne
+    if (slotReserve(j, arme)) return refus(j, achat.id, "occupe");
     murs.add(achat.id);
     immediat = true;
     return [...payer(j, m, achat, achat.prix), ...equiperNouvelle(j, arme, t)];
@@ -1065,8 +1328,11 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     const categorie = STATS[arme].categorie;
     ctx.memoriserPrecedent(j);
     delete j.cadenceArme[arme];
+    delete j.cadenceArme[`${arme}:g`];
     const remplacee = categorie === "speciale" || categorie === "unique" ? equip.speciale : categorie === "principale" ? (equip.sansPrincipale ? null : equip.principale) : equip.secondaire;
     let ameliorees = (equip.ameliorees ?? []).filter((a) => a !== remplacee && a !== arme);
+    // (v8) une arme perdue au Micro-ondes laissait son slot vide : la nouvelle le remplit
+    if (equip.enCuisson && slotArme(equip.enCuisson) === slotArme(arme)) delete equip.enCuisson;
     if (amelioree) ameliorees = [...ameliorees, arme];
     if (ameliorees.length) equip.ameliorees = ameliorees; else delete equip.ameliorees;
     if (categorie === "speciale" || categorie === "unique") {
@@ -1084,24 +1350,40 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
   }
 
   function acheterBoite(j: JoueurSalle, achat: Achat, m: Membre, t: number): Sortie[] {
-    if (achat.emplacement !== boite.emplacement) return refus(j, achat.id, "loin");
-    if (boite.etat === "offre") {
+    // la boîte principale, ou (Happy hour) une boîte temporaire de cet emplacement
+    const b = achat.emplacement !== undefined ? boiteA({ boite, boitesSoldes }, achat.emplacement) : null;
+    if (!b) return refus(j, achat.id, "loin");
+    const principale = b === boite;
+    if (b.etat === "offre") {
       // prendre l'arme offerte (seul celui qui a payé)
-      if (boite.pour !== j.id) return refus(j, achat.id, "occupe");
-      const arme = boite.arme as ArmeFeuId;
-      boite = { emplacement: boite.emplacement, etat: "fermee", finT: 0, utilisations: boite.utilisations };
+      if (b.pour !== j.id) return refus(j, achat.id, "occupe");
+      const offerte = b.arme;
+      if (offerte && offerte !== "peluche" && offerte !== "remontoir" && slotReserve(j, offerte)) return refus(j, achat.id, "occupe");
+      ecrireBoite(b.emplacement, { emplacement: b.emplacement, etat: "fermee", finT: 0, utilisations: b.utilisations });
       immediat = true;
-      return [{ a: j.id, m: { t: "achat", ok: true, id: achat.id } }, ...equiperNouvelle(j, arme, t)];
+      if (offerte === "remontoir") {
+        // (v8) trois tigres à remontoir (la Monkey Bomb de BO1), à côté des armes
+        m.remontoirs = INVENTAIRE_GRENADES.remontoirBoite;
+        return [{ a: j.id, m: { t: "achat", ok: true, id: achat.id } }];
+      }
+      return [{ a: j.id, m: { t: "achat", ok: true, id: achat.id } }, ...equiperNouvelle(j, offerte as ArmeFeuId, t)];
     }
-    if (boite.etat !== "fermee") return refus(j, achat.id, "occupe");
-    const prix = t < effets.soldesFinT ? PRIX_BOITE_SOLDES : PRIX_BOITE;
+    if (b.etat !== "fermee") return refus(j, achat.id, "occupe");
+    const soldes = soldesActives(effets.soldesFinT, t);
+    const prix = prixBoite(effets.soldesFinT, t);
     if (m.argent < prix) return refus(j, achat.id, "argent");
-    const candidates = armesBoite(j.equip);
+    // (v8) le tigre à remontoir sort de la boîte comme une arme, si le joueur n'en a plus
+    // une arme dont le slot est réservé par le Micro-ondes (l'arme de ce joueur y cuit) ne pourrait pas être prise : elle ne sort pas
+    const candidates: (ArmeFeuId | "remontoir")[] = [
+      ...armesBoite(j.equip).filter((a) => !slotReserve(j, a)), ...(m.remontoirs > 0 ? [] : ["remontoir" as const]),
+    ];
     if (!candidates.length) return refus(j, achat.id, "deja");
-    const utilisations = boite.utilisations + 1;
-    const arme: ArmeFeuId | "peluche" = peluche(utilisations) ? "peluche" : candidates[Math.min(candidates.length - 1, Math.floor(alea() * candidates.length))];
-    prixPaye = prix;
-    boite = { emplacement: boite.emplacement, etat: "tirage", arme, pour: j.id, finT: t + TIRAGE_BOITE_MS, utilisations };
+    // Happy hour (et boîtes temporaires) : aucune peluche, et ces tirages ne comptent pas pour elle
+    const utilisations = b.utilisations + (soldes || !principale ? 0 : 1);
+    const peluche = principale && !soldes && utilisations >= 4 && pelucheTiree(utilisations, demenagements, alea() * 100, soldes);
+    const arme: ArmeFeuId | "peluche" | "remontoir" = peluche ? "peluche" : candidates[Math.min(candidates.length - 1, Math.floor(alea() * candidates.length))];
+    prixPayes.set(b.emplacement, prix);
+    ecrireBoite(b.emplacement, { emplacement: b.emplacement, etat: "tirage", arme, pour: j.id, finT: t + TIRAGE_BOITE_MS, utilisations });
     immediat = true;
     return payer(j, m, achat, prix);
   }
@@ -1120,16 +1402,36 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     return sorties;
   }
 
+  /**
+   * Micro-ondes Gratinator (BO1) : on paye, l'arme en main est retirée de l'inventaire (`enCuisson`, son slot est vide) et déposée dans la
+   * machine ; une fois cuite, seul ce joueur la reprend (même achat, gratuit), chargeurs pleins, dans son slot.
+   */
   function acheterPap(j: JoueurSalle, achat: Achat, m: Membre, t: number): Sortie[] {
+    if (pap.etat === "pret") {
+      if (pap.joueur !== j.id || !pap.arme) return refus(j, achat.id, "occupe");
+      const arme = pap.arme;
+      pap = { etat: "libre" };
+      immediat = true;
+      j.equip = sansCuisson(j.equip);
+      if (STATS[arme].categorie === "speciale" || STATS[arme].categorie === "unique") j.munSpeciale = chargeurZombie(arme, true);
+      return [{ a: j.id, m: { t: "achat", ok: true, id: achat.id } }, ...equiperNouvelle(j, arme, t, true), zev({ e: "pap", joueur: j.id, arme, pret: true, fin: "reprise" })];
+    }
     if (!courant) return refus(j, achat.id, "courant");
     if (pap.etat !== "libre") return refus(j, achat.id, "occupe");
     const arme = j.arme;
     if (estMelee(arme) || !possede(j.equip, arme)) return refus(j, achat.id, "deja");
     if (estAmelioree(j.equip, arme)) return refus(j, achat.id, "deja");
     if (m.argent < achat.prix) return refus(j, achat.id, "argent");
-    pap = { etat: "cuisson", joueur: j.id, arme, finT: t + CUISSON_PAP_MS };
+    pap = { etat: "cuisson", joueur: j.id, arme, debutT: t, finT: t + CUISSON_PAP_MS };
     immediat = true;
-    return [...payer(j, m, achat, achat.prix), zev({ e: "pap", joueur: j.id, arme, pret: false })];
+    // l'arme quitte la main : on passe à l'autre arme (ou au couteau)
+    const equip = copierEquipement(j.equip);
+    equip.enCuisson = arme;
+    ctx.memoriserPrecedent(j);
+    const sorties = [...payer(j, m, achat, achat.prix), ...ctx.equiper(j, equip, mainValide(equip, j.main), t), zev({ e: "pap", joueur: j.id, arme, pret: false })];
+    // (v8) grand secret : déposée pendant les douze coups de midi
+    effetsSecret(secret.pap(j.id, ctxSecret(t)), t, sorties);
+    return sorties;
   }
 
   function activerCourant(j: JoueurSalle, achat: Achat): Sortie[] {
@@ -1139,22 +1441,339 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     return [{ a: j.id, m: { t: "achat", ok: true, id: achat.id } }, zev({ e: "courant" })];
   }
 
-  function ramasserIngredient(j: JoueurSalle, achat: Achat): Sortie[] {
-    const id = achat.ingredient as IngredientId;
-    if (!INGREDIENTS_LISTE.includes(id) || quete.ingredients.includes(id)) return refus(j, achat.id, "deja");
-    if (id === "truffe" && !courant) return refus(j, achat.id, "courant");
-    quete.ingredients.push(id);
-    immediat = true;
-    return [{ a: j.id, m: { t: "achat", ok: true, id: achat.id } }, zev({ e: "ingredient", id, par: j.id })];
+  // ---------------------------------------------------------------------------------------------
+  // grand secret (v8) : « Le Menu fantôme »
+  // ---------------------------------------------------------------------------------------------
+
+  /** Ce que le secret doit savoir de la partie à l'instant `t`. */
+  const ctxSecret = (t: number): ContexteSecret => ({
+    t, phase, courant, mancheTruck, numeroTruck, truck: truck?.phase ?? null, joueurs: nbAdmis(),
+  });
+
+  /**
+   * Réactions du secret : chacune part en `zevt{secret}` (le décor réagit chez tous) ; `servi` déclenche la récompense, `victoire` finit la
+   * partie. L'étape change rarement : l'état part tout de suite (le rendu montre le décor tel qu'il est).
+   */
+  function effetsSecret(effets: readonly EffetSecret[], t: number, sorties: Sortie[]): void {
+    for (const e of effets) {
+      sorties.push(zev({
+        e: "secret", quoi: e.quoi, p: arrondi(e.p), ...(e.i !== undefined ? { i: e.i } : {}), ...(e.k !== undefined ? { k: Math.round(e.k * 1000) / 1000 } : {}),
+        ...(e.joueur ? { joueur: e.joueur } : {}),
+      }));
+      immediat = true;
+      if (e.quoi === "servi") servirSecret(t, sorties);
+      else if (e.quoi === "victoire") perdre(t, true);
+    }
   }
 
-  function lancerRecette(j: JoueurSalle, achat: Achat, t: number): Sortie[] {
-    if (quete.faite || quete.cuissonFinT) return refus(j, achat.id, "deja");
-    if (!courant) return refus(j, achat.id, "courant");
-    if (quete.ingredients.length < INGREDIENTS_LISTE.length) return refus(j, achat.id, "quete");
-    quete.cuissonFinT = t + CUISSON_RECETTE_MS;
+  /** E sur un objet du secret (truffe, four, cloche), jugé sur la position serveur (marge de latence comprise), en vue de l'objet. */
+  function interagirSecret(j: JoueurSalle, objet: string, t: number): Sortie[] {
+    const it = INTERACTIONS_SECRET.find((x) => x.id === objet);
+    if (!it || !aVue(j, it.position)) return [];
+    // la marge de latence rapproche d'autant le point jugé (le secret applique sa propre portée)
+    const pos: Vec2 = [j.p[0], j.p[2]];
+    const d = Math.hypot(pos[0] - it.position[0], pos[1] - it.position[1]);
+    const k = d > 1e-6 ? Math.min(d, margeLatence(j)) / d : 0;
+    const vers: Vec2 = [pos[0] + (it.position[0] - pos[0]) * k, pos[1] + (it.position[1] - pos[1]) * k];
+    const sorties: Sortie[] = [];
+    effetsSecret(secret.interagir(j.id, objet, vers, ctxSecret(t)), t, sorties);
+    return sorties;
+  }
+
+  /**
+   * Récompense du grand secret (le Truck vient de sauter pendant le service) : courte « cinématique » (tout ce qui vit tombe en silence, sans
+   * points, la livraison s'arrête là), puis chaque joueur admis, relevé s'il était à terre, reçoit le Rayon Goulaf (pistolet à rayons
+   * gratiné), le Bazooka au four (l'arme unique de l'arène, jamais dans la boîte), tous les atouts et des munitions pleines. La cloche du
+   * comptoir peut ensuite finir la partie sur une victoire.
+   */
+  function servirSecret(t: number, sorties: Sortie[]): void {
+    for (const z of [...simu.liste()]) {
+      const r = simu.blesser(z.id, INSTAKILL, t);
+      if (r.mort) sorties.push({ a: "joueurs", m: { t: "zombieMort", id: idZombie(z.id), p: r.p ?? [0, 0, 0], par: "", zone: "corps", cause: "nuke" } });
+    }
+    foudres = []; sautsMini = []; indexFile = file.length;
+    for (const j of ctx.joueurs()) {
+      const m = membre(j.id);
+      if (!m.admis || !j.enJeu || m.etat === "elimine" || m.etat === "attente") continue;
+      if (m.etat === "terre") sorties.push(...relever(j, t));
+      const equip = copierEquipement(j.equip);
+      // une secondaire ou une spéciale encore au Micro-ondes reviendrait PAR-DESSUS la récompense (sa reprise remplace le Rayon ou le
+      // Bazooka) : le dépôt est annulé et remboursé, la machine libérée ; une principale qui cuit reviendra à sa place
+      const auFour = pap.etat !== "libre" && pap.joueur === j.id && pap.arme ? pap.arme : null;
+      if (auFour && slotArme(auFour) !== "principale") {
+        pap = { etat: "libre" };
+        sorties.push(zev({ e: "pap", joueur: j.id, arme: auFour, pret: false, fin: "perdue" }));
+        m.argent += PRIX_PAP;
+        sorties.push(sortieArgent(j, PRIX_PAP, "pap"));
+      }
+      // le Rayon et le Bazooka remplissent leurs slots, même vidés par une arme perdue (ou rendue ici) au Micro-ondes
+      if (equip.enCuisson && slotArme(equip.enCuisson) !== "principale" && !(pap.etat !== "libre" && pap.joueur === j.id)) delete equip.enCuisson;
+      equip.secondaire = "rayon";
+      equip.speciale = "bazooka";
+      equip.ameliorees = [...new Set([...(equip.ameliorees ?? []).filter((a) => a !== "rayon" && a !== "bazooka"), "rayon" as ArmeFeuId, "bazooka" as ArmeFeuId])];
+      ctx.memoriserPrecedent(j);
+      delete j.cadenceArme.rayon;
+      delete j.cadenceArme.bazooka;
+      j.munSpeciale = chargeurZombie("bazooka", true);
+      m.grenades = INVENTAIRE_GRENADES.fragMax;
+      sorties.push(...ctx.equiper(j, equip, "speciale", t, "tout"));
+      for (const a of ATOUTS_LISTE) if (!m.atouts.has(a)) donnerAtout(j, a, t, sorties);
+    }
+    sorties.push(ctx.presence());
     immediat = true;
-    return [{ a: j.id, m: { t: "achat", ok: true, id: achat.id } }, zev({ e: "cuisson", fin: false })];
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // grenades (v8)
+  // ---------------------------------------------------------------------------------------------
+
+  /** Message `grenade` d'un lancer (à tous les joueurs en partie, ou à un seul pour la synchro). */
+  const sortieGrenade = (g: GrenadeServeur, a: string): Sortie => ({
+    a, m: { t: "grenade", id: g.id, par: g.par, genre: g.lancer.genre, o: g.lancer.o, v: g.lancer.v, t0: g.lancer.t0, explosionT: g.lancer.explosionT },
+  });
+
+  /** Tigres à remontoir posés : les leurres de la simulation. */
+  function leurres(t: number): Leurre[] {
+    const r: Leurre[] = [];
+    for (const g of grenades) {
+      const prof = GRENADES[g.lancer.genre];
+      if (prof.attractionM > 0 && t >= g.lancer.poseT && t < g.lancer.explosionT) r.push({ id: g.id, p: positionLancer(g.lancer, t), rayon: prof.attractionM });
+    }
+    // (v8) la Brochette du chef plantée attire les tigres jusqu'à l'explosion (le « monkey bolt » de BO1) ; ids négatifs, distincts des grenades
+    for (const p of projectiles) {
+      const attraction = profilZombie(p.tir.arme, p.tir.ameliore).projectile?.attractionM ?? 0;
+      if (attraction <= 0 || t < p.tir.impactT || t >= p.tir.explosionT) continue;
+      const z = p.cible !== null ? simu.zombie(p.cible) : undefined;
+      r.push({ id: -p.id, p: z ? [z.p[0], 0, z.p[2]] : pointImpact(p.tir), rayon: attraction });
+    }
+    return r;
+  }
+
+  /**
+   * Lancer d'une grenade (œil et direction déjà validés par la salle, `d` normalisée) : joueur debout en partie, stock et cadence
+   * (`validerLancer`) ; la trajectoire est calculée une fois ici, `grenade` part à tous les joueurs (le lanceur compris).
+   */
+  function lancerGrenade(j: JoueurSalle, msg: Extract<MessageClient, { t: "lancerGrenade" }>, t: number): Sortie[] {
+    const m = membre(j.id);
+    if ((phase !== "manche" && phase !== "pause") || !m.admis || m.etat !== "debout" || !peutJouer(j)) return [];
+    const stock = msg.genre === "remontoir" ? m.remontoirs : msg.genre === "frag" ? m.grenades : 0;
+    const v = validerLancer(msg.genre, stock, m.dernierLancerT, t, msg.cuissonMs);
+    if (!v.ok) return [];
+    if (v.genre === "frag") m.grenades--; else m.remontoirs--;
+    m.dernierLancerT = t;
+    const o: Vec3 = [msg.o[0], msg.o[1], msg.o[2]];
+    const lancer = preparerLancer(ctx.monde, v.genre, o, vitesseLancer(v.genre, msg.d), t, v.cuissonMs, { plafond });
+    const g: GrenadeServeur = { id: grenadeId++, par: j.id, lancer };
+    grenades.push(g);
+    immediat = true; // le compteur du HUD suit tout de suite
+    return emettre(t, [sortieGrenade(g, "joueurs")]);
+  }
+
+  /**
+   * Souffle d'une grenade à son échéance : `zevt{grenade}` à tous, tigres à portée ET en vue du centre blessés (dégâts dégressifs, +10 $ par
+   * tigre touché, 60 / 100 $ par kill comme BO1, rampants possibles), Truck Muche, lanceur légèrement blessé (jamais les coéquipiers), puis
+   * les écouteurs d'explosion.
+   */
+  function exploser(g: GrenadeServeur, t: number, sorties: Sortie[]): void {
+    const l = g.lancer;
+    const prof = GRENADES[l.genre];
+    const c = positionLancer(l, l.explosionT);
+    sorties.push(zev({ e: "grenade", id: g.id, genre: l.genre, p: c, rayon: prof.rayonM, par: g.par }));
+    const par = ctx.joueur(g.par);
+    if (par && membre(par.id).admis) {
+      for (const z of [...simu.liste()]) {
+        const yz = (0.8 * z.echelle) / 2.7;
+        const d = Math.hypot(z.p[0] - c[0], yz - c[1], z.p[2] - c[2]);
+        const degats = degatsGrenade(l.genre, Math.max(0, d - 0.6));
+        if (degats <= 0 || !souffleAtteint(ctx.monde, c, [z.p[0], 0.3, z.p[2]])) continue;
+        const pvAvant = z.pv, pvMax = z.pvMax, type = z.type, id = z.id;
+        sorties.push(...service.blesser(idZombie(id), t < effets.instakillFinT ? INSTAKILL : degats, par, "corps", t, { gain: true, cause: "explosion", src: c }));
+        const apres = simu.zombie(id);
+        if (apres && type === 0 && (pvAvant - apres.pv) >= RAMPANT_PART_PV * pvMax && apres.allure !== 3 && alea() < RAMPANT_PROBA) {
+          simu.changerAllure(id, 3, ZOMBIES.vitesses[3]);
+        }
+      }
+      if (truck && truck.phase !== "epave") {
+        const dTruck = Math.max(0, Math.hypot(truck.p[0] - c[0], truck.p[1] - c[2]) - TRUCK.demiLongueur);
+        const degats = degatsGrenade(l.genre, dTruck);
+        if (degats > 0) sorties.push(...blesserTruck(degats, par, t));
+      }
+      // BO1 : sa propre grenade blesse un peu (jamais assez pour tomber depuis la pleine santé)
+      if (peutJouer(par) && membre(par.id).etat === "debout" && t >= par.protegeJusqua) {
+        const torse: Vec3 = [par.p[0], par.p[1] + 1, par.p[2]];
+        const blessure = degatsLanceur(l.genre, Math.hypot(torse[0] - c[0], torse[1] - c[1], torse[2] - c[2]));
+        if (blessure > 0 && souffleAtteint(ctx.monde, c, [par.p[0], par.p[1] + 0.3, par.p[2]])) {
+          sorties.push(...ctx.infliger(par, blessure, null, "explosion", "corps", "couteau", t, c));
+        }
+      }
+    }
+    // (v8) grand secret : la cuve n° 3 du Labo
+    if (phase === "manche" || phase === "pause") effetsSecret(secret.explosion(c, ctxSecret(t)), t, sorties);
+    const e: ExplosionGrenade = { id: g.id, genre: l.genre, p: c, par: g.par, t };
+    for (const f of ecouteursExplosion) {
+      const r = f(e);
+      if (r) sorties.push(...r);
+    }
+  }
+
+  /** Grenades arrivées à échéance (manche et pause). */
+  function ticGrenades(t: number, sorties: Sortie[]): void {
+    if (!grenades.length) return;
+    const restent: GrenadeServeur[] = [];
+    const parties: GrenadeServeur[] = [];
+    for (const g of grenades) (t >= g.lancer.explosionT ? parties : restent).push(g);
+    grenades = restent;
+    for (const g of parties) {
+      exploser(g, t, sorties);
+      if (phase !== "manche" && phase !== "pause") break; // le souffle a pu coucher le dernier joueur debout
+    }
+  }
+
+
+  // ---------------------------------------------------------------------------------------------
+  // armes (v8) : projectiles, souffle de la Soufflerie, brûlures, gel, arcs électriques
+  // ---------------------------------------------------------------------------------------------
+
+  /** Message `projectile` d'un tir (à tous les joueurs en partie, ou à un seul pour la synchro). */
+  const sortieProjectile = (p: ProjectileServeur, a: string): Sortie => ({
+    a, m: {
+      t: "projectile", id: p.id, par: p.par, arme: p.tir.arme, ...(p.tir.ameliore ? { ameliore: true as const } : {}), o: p.tir.o, v: p.tir.v,
+      t0: p.tir.t0, impactT: p.tir.impactT, explosionT: p.tir.explosionT, impact: arrondi(pointImpact(p.tir)),
+      ...(p.cible !== null ? { cible: idZombie(p.cible) } : {}),
+    },
+  });
+
+  /** Hauteur (m) du centre du corps d'un tigre (le même repère que les souffles des grenades). */
+  const hauteurCorps = (echelle: number): number => (0.8 * echelle) / 2.7;
+
+  /**
+   * Souffle `e` d'une arme en `c` (projectile, Soufflerie exclue) : tigres à portée ET en vue blessés (dégâts dégressifs), rampants possibles,
+   * Truck Muche ; le premier tigre seul rapporte le gain de touche.
+   */
+  function souffleArme(j: JoueurSalle, arme: ArmeFeuId, c: Vec3, e: Explosion, t: number, sorties: Sortie[]): void {
+    let premier = true;
+    for (const z of [...simu.liste()]) {
+      const d = Math.hypot(z.p[0] - c[0], hauteurCorps(z.echelle) - c[1], z.p[2] - c[2]);
+      // le rayon d'abord, l'insta-kill ensuite (comme `exploser`) : hors du souffle, rien, insta-kill ou pas
+      const base = degatsExplosion(e, Math.max(0, d - 0.6));
+      if (base <= 0 || !souffleAtteint(ctx.monde, c, [z.p[0], 0.3, z.p[2]])) continue;
+      const degats = t < effets.instakillFinT ? INSTAKILL : base;
+      const pvAvant = z.pv, pvMax = z.pvMax, type = z.type, id = z.id;
+      sorties.push(...service.blesser(idZombie(id), degats, j, "corps", t, { arme, gain: premier, cause: "explosion", src: c }));
+      premier = false;
+      const apres = simu.zombie(id);
+      if (apres && type === 0 && (pvAvant - apres.pv) >= RAMPANT_PART_PV * pvMax && apres.allure !== 3 && alea() < RAMPANT_PROBA) {
+        simu.changerAllure(id, 3, ZOMBIES.vitesses[3]);
+      }
+    }
+    if (truck && truck.phase !== "epave") {
+      const dTruck = Math.max(0, Math.hypot(truck.p[0] - c[0], truck.p[1] - c[2]) - TRUCK.demiLongueur);
+      const degats = degatsExplosion(e, dTruck);
+      if (degats > 0) sorties.push(...blesserTruck(degats, j, t));
+    }
+  }
+
+  /**
+   * Tir d'un projectile (Moutarde & Sally, Brochette) : trajectoire calculée une fois ici avec arrêt sur le premier tigre rencontré (formes de
+   * touche du serveur, présélection par sphère englobante), `projectile` à tous les joueurs en partie, tireur compris.
+   */
+  function tirerProjectile(j: JoueurSalle, arme: ArmeFeuId, o: Vec3, d: Vec3, t: number): Sortie[] {
+    const ameliore = estAmelioree(j.equip, arme);
+    let derniere: { id: number; p: Vec3 } | null = null;
+    const arret = (a: Vec3, b: Vec3): number | null => {
+      const l = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+      if (l < 1e-9) return null;
+      const dir: Vec3 = [(b[0] - a[0]) / l, (b[1] - a[1]) / l, (b[2] - a[2]) / l];
+      let meilleur: { k: number; id: number } | null = null;
+      for (const z of simu.liste()) {
+        const k = z.echelle / 2.7;
+        if (fractionSphere(a, b, [z.p[0], hauteurCorps(z.echelle), z.p[2]], 1.6 * k + 0.2) === null) continue;
+        const h = simu.toucheZombie(z.id, a, dir, l, t);
+        if (h && (!meilleur || h.distance / l < meilleur.k)) meilleur = { k: h.distance / l, id: z.id };
+      }
+      if (!meilleur) return null;
+      derniere = { id: meilleur.id, p: [a[0] + (b[0] - a[0]) * meilleur.k, a[1] + (b[1] - a[1]) * meilleur.k, a[2] + (b[2] - a[2]) * meilleur.k] };
+      return meilleur.k;
+    };
+    const tir = preparerProjectile(ctx.monde, arme, ameliore, o, d, t, { plafond, arret });
+    if (!tir) return [];
+    // le tigre est touché si la trajectoire s'arrête au point où l'arrêt sur cible l'a placée
+    let cible: number | null = null;
+    const fin = pointImpact(tir);
+    const dc = derniere as { id: number; p: Vec3 } | null;
+    if (tir.contact && dc && Math.hypot(fin[0] - dc.p[0], fin[1] - dc.p[1], fin[2] - dc.p[2]) < 1e-6) cible = dc.id;
+    const p: ProjectileServeur = { id: projectileId++, par: j.id, tir, cible, impactFait: false };
+    projectiles.push(p);
+    return [sortieProjectile(p, "joueurs")];
+  }
+
+  /** Projectiles : dégâts de plein fouet à l'impact, souffle à l'explosion (`zevt{projectile}`), là où il est planté (ou sur le tigre). */
+  function ticProjectiles(t: number, sorties: Sortie[]): void {
+    if (!projectiles.length) return;
+    const restent: ProjectileServeur[] = [];
+    for (const p of projectiles) {
+      const j = ctx.joueur(p.par);
+      const prof = profilZombie(p.tir.arme, p.tir.ameliore);
+      if (!p.impactFait && t >= p.tir.impactT) {
+        p.impactFait = true;
+        if (j && membre(j.id).admis && p.cible !== null && simu.zombie(p.cible)) {
+          const degats = t < effets.instakillFinT ? INSTAKILL : prof.degats;
+          sorties.push(...service.blesser(idZombie(p.cible), degats, j, "corps", t, { arme: p.tir.arme, gain: true, src: p.tir.o }));
+        }
+      }
+      if (t < p.tir.explosionT) { restent.push(p); continue; }
+      // le carreau planté dans un tigre saute avec lui, là où il est rendu
+      const z = p.cible !== null ? simu.zombie(p.cible) : undefined;
+      const c: Vec3 = z ? [z.p[0], hauteurCorps(z.echelle), z.p[2]] : pointImpact(p.tir);
+      const e = prof.explosion;
+      sorties.push(zev({ e: "projectile", id: p.id, p: c, rayon: e?.rayon ?? 0, par: p.par }));
+      if (e && j && membre(j.id).admis) souffleArme(j, p.tir.arme, c, e, t, sorties);
+      if (phase !== "manche" && phase !== "pause") { projectiles = []; return; }
+    }
+    projectiles = restent;
+  }
+
+  /**
+   * Souffle de la Soufflerie (le Thundergun de BO1) : tous les tigres en vue dans le cône tronqué ; en deçà de la portée mortelle ils sont
+   * projetés (tués), au-delà ils perdent une part de leurs PV max (et gèlent avec la Soufflerie XXL). `zevt{souffle}` aux autres joueurs.
+   */
+  function souffler(j: JoueurSalle, arme: ArmeFeuId, o: Vec3, d: Vec3, t: number): Sortie[] {
+    const prof = profilZombie(arme, estAmelioree(j.equip, arme));
+    const s = prof.souffle!;
+    const sorties: Sortie[] = [{ a: "joueurs", sauf: j.id, m: { t: "zevt", e: { e: "souffle", o, d, portee: s.portee, par: j.id } } }];
+    let premier = true;
+    for (const z of [...simu.liste()]) {
+      const c: Vec3 = [z.p[0], hauteurCorps(z.echelle), z.p[2]];
+      const a = dansSouffle(o, d, c, s);
+      if (a === null || !visible(ctx.monde, o, c)) continue;
+      const mortel = a <= s.porteeMortelle || t < effets.instakillFinT;
+      const degats = mortel ? INSTAKILL : Math.ceil(s.partLoin * z.pvMax);
+      const id = z.id, vitesse = z.vitesse;
+      sorties.push(...service.blesser(idZombie(id), degats, j, "corps", t, { arme, gain: premier, cause: "souffle", src: o }));
+      premier = false;
+      if (prof.gel && simu.zombie(id)) {
+        const v = geler(gels, id, vitesse, prof.gel, t);
+        if (v !== null) simu.changerAllure(id, simu.zombie(id)!.allure, v);
+      }
+    }
+    return sorties;
+  }
+
+  /** Brûlures (pas de 0,5 s) et fins de gel. */
+  function ticEffetsArmes(t: number, sorties: Sortie[]): void {
+    if (brulures.size) {
+      for (const b of ticBrulures(brulures, t, (id) => simu.zombie(id) !== undefined)) {
+        const j = ctx.joueur(b.par);
+        if (!j || !membre(j.id).admis) { brulures.delete(b.id); continue; }
+        sorties.push(...service.blesser(idZombie(b.id), t < effets.instakillFinT ? INSTAKILL : b.degats, j, "corps", t, { gain: false, cause: "feu" }));
+      }
+    }
+    if (gels.size) {
+      for (const g of degeler(gels, t, (id) => simu.zombie(id)?.vitesse)) {
+        const z = simu.zombie(g.id);
+        if (z) simu.changerAllure(g.id, z.allure, g.vitesse);
+      }
+    }
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -1168,7 +1787,7 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     return [Math.round(truck.p[0] * 100), Math.round(truck.p[1] * 100), Math.round(truck.cap * 1000), ph, Math.round((100 * truck.pv) / truck.pvMax)];
   };
 
-  return {
+  const service: ServiceZombies = {
     tic(t) {
       const sorties: Sortie[] = [];
       const dt = Math.min(DT_MAX_S, Math.max(0, (t - dernierT) / 1000));
@@ -1183,8 +1802,13 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
         return emettre(t, sorties, true);
       }
       if (phase === "pause" && t >= finT) debuterManche(t, sorties);
+      ticGrenades(t, sorties);
+      if (phase === "manche" || phase === "pause") { ticProjectiles(t, sorties); ticEffetsArmes(t, sorties); }
       if (phase === "manche") ticManche(t, dt, sorties);
-      else if (phase === "pause") ticCommun(t, sorties);
+      else if (phase === "pause") {
+        ticSautsMini(t, sorties);
+        if (phase === "pause") ticCommun(t, sorties);
+      }
       return emettre(t, sorties, true);
     },
 
@@ -1199,11 +1823,17 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       ];
       const m = membres.get(idDest);
       if (m?.admis) sorties.push({ a: idDest, m: { t: "argent", solde: m.argent, delta: 0, motif: "synchro" } });
+      for (const g of grenades) sorties.push(sortieGrenade(g, idDest));
+      for (const p of projectiles) sorties.push(sortieProjectile(p, idDest));
       return sorties;
     },
 
     snap() {
-      return phase === "lobby" ? null : simu.snap(restants(), dernierT, etatTruck());
+      if (phase === "lobby") return null;
+      const marques = brulures.size || gels.size
+        ? (id: number) => (brulures.has(id) || gels.has(id) ? { brule: brulures.has(id), gele: gels.has(id) } : undefined)
+        : undefined;
+      return simu.snap(restants(), dernierT, etatTruck(), marques);
     },
 
     possede(id) {
@@ -1227,6 +1857,10 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       return degatsZombie(arme, zone, distance, estAmelioree(j.equip, arme));
     },
 
+    degatsTirTruck(j, arme, distance) {
+      return degatsZombie(arme, "corps", distance, estAmelioree(j.equip, arme));
+    },
+
     degatsMelee(_j, arme, t) {
       return t < effets.instakillFinT ? INSTAKILL : MELEE[arme].degatsZombie;
     },
@@ -1237,6 +1871,51 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
 
     cadence(j) {
       return membre(j.id).atouts.has("ristretto") ? 1 / 1.33 : 1;
+    },
+
+    statsTir(j, arme) {
+      return statsTir(arme, { zombies: true, ameliore: estAmelioree(j.equip, arme) });
+    },
+
+    tirSpecial(j, arme, o, d, t) {
+      const st = statsTir(arme, { zombies: true, ameliore: estAmelioree(j.equip, arme) });
+      if (st.projectile) return emettre(t, tirerProjectile(j, arme, o, d, t));
+      if (st.souffle) return emettre(t, souffler(j, arme, o, d, t));
+      return null;
+    },
+
+    positionZombie(cible) {
+      const z = estIdZombie(cible) ? simu.zombie(numero(cible)) : undefined;
+      return z ? [z.p[0], z.p[1], z.p[2]] : null;
+    },
+
+    effetsTir(j, arme, touches, t) {
+      const prof = profilZombie(arme, estAmelioree(j.equip, arme));
+      if (!prof.brulure && !prof.gel && !prof.arc) return [];
+      const sorties: Sortie[] = [];
+      for (const tc of touches) {
+        const id = numero(tc.cible);
+        const z = simu.zombie(id);
+        if (!z) continue;
+        if (prof.brulure) allumer(brulures, id, prof.brulure, j.id, t);
+        if (prof.gel) {
+          const v = geler(gels, id, z.vitesse, prof.gel, t);
+          if (v !== null) simu.changerAllure(id, z.allure, v);
+        }
+      }
+      if (prof.arc && touches.length) {
+        // l'arc part du tigre touché le plus proche (même s'il vient de mourir) et saute de proche en proche
+        const depart = { id: numero(touches[0].cible), p: touches[0].p };
+        const candidats = simu.liste().map((z) => ({ id: z.id, p: z.p }));
+        const chaine = chaineArc(depart, candidats, prof.arc, ctx.monde);
+        sorties.push(zev({ e: "arc", p: chaine.map((c) => arrondi([c.p[0], HAUTEUR_ARC_M, c.p[2]])), par: j.id }));
+        for (const c of chaine) {
+          if (!simu.zombie(c.id)) continue;
+          const degats = t < effets.instakillFinT ? INSTAKILL : prof.arc.degats;
+          sorties.push(...this.blesser(idZombie(c.id), degats, j, "corps", t, { arme, gain: false, cause: "electrique", src: arrondi([depart.p[0], HAUTEUR_ARC_M, depart.p[2]]) }));
+        }
+      }
+      return sorties;
     },
 
     sante(j) {
@@ -1260,23 +1939,13 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       let dist = distanceTouche ?? lancerRayon(ctx.monde, o, d, portee);
       if (d[1] < -1e-3) dist = Math.min(dist, (o[1] - 0.05) / -d[1]);
       if (!Number.isFinite(dist) || dist > portee) return [];
+      // sur un mur ou le sol, le centre recule de 10 cm vers le tireur : posé SUR la paroi, la ligne de vue du souffle la traverserait mal
+      if (distanceTouche == null) dist = Math.max(0, dist - 0.1);
       const c: Vec3 = [o[0] + d[0] * dist, o[1] + d[1] * dist, o[2] + d[2] * dist];
       const sorties: Sortie[] = [{ a: "joueurs", sauf: j.id, m: { t: "zevt", e: { e: "explosion", p: c, rayon: e.rayon, par: j.id } } }];
-      let premier = true;
-      for (const z of [...simu.liste()]) {
-        const dz = Math.hypot(z.p[0] - c[0], 0.8 * z.echelle / 2.7 - c[1], z.p[2] - c[2]);
-        const degats = t < effets.instakillFinT ? INSTAKILL : degatsExplosion(e, Math.max(0, dz - 0.6));
-        if (degats <= 0) continue;
-        const pvAvant = z.pv, pvMax = z.pvMax, type = z.type, id = z.id;
-        sorties.push(...this.blesser(idZombie(id), degats, j, "corps", t, { arme, gain: premier, cause: "explosion" }));
-        premier = false;
-        // un souffle qui ne tue pas peut couper les pattes arrière (rampant)
-        const apres = simu.zombie(id);
-        if (apres && type === 0 && (pvAvant - apres.pv) >= RAMPANT_PART_PV * pvMax && apres.allure !== 3 && alea() < RAMPANT_PROBA) {
-          simu.changerAllure(id, 3, ZOMBIES.vitesses[3]);
-        }
-      }
-      return sorties;
+      // le même souffle que celui d'un projectile : rayon puis insta-kill, ligne de vue (pas à travers les murs), Truck Muche, rampants
+      souffleArme(j, arme, c, e, t, sorties);
+      return emettre(t, sorties);
     },
 
     blesser(cible, degats, par, zone: Zone, t, o = {}) {
@@ -1294,13 +1963,22 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
         par.serie++;
         par.serieMax = Math.max(par.serieMax, par.serie);
         if (o.arme) par.killsParArme[o.arme] = (par.killsParArme[o.arme] ?? 0) + 1;
-        sorties.push({ a: "joueurs", m: { t: "zombieMort", id: cible, p: r.p ?? [0, 0, 0], par: par.id, zone, ...(o.cause ? { cause: o.cause } : melee ? { cause: "melee" as const } : {}) } });
+        // (v8) arme, amélioration et origine du coup : le client en tire la mort désarticulée du tigre
+        const ameliore = o.arme !== undefined && !estMelee(o.arme) && estAmelioree(par.equip, o.arme);
+        sorties.push({ a: "joueurs", m: {
+          t: "zombieMort", id: cible, p: r.p ?? [0, 0, 0], par: par.id, zone, ...(o.cause ? { cause: o.cause } : melee ? { cause: "melee" as const } : {}),
+          ...(o.arme ? { arme: o.arme } : {}), ...(ameliore ? { ameliore: true as const } : {}), ...(o.src ? { src: arrondi(o.src) } : {}),
+        } });
       } else if (o.gain !== false) {
         gain += gainTouche({ double });
       }
       if (gain > 0) sorties.push(crediter(par, gain, r.mort ? "kill" : "touche"));
       if (r.mort) {
+        // (v8) un mini Truck abattu saute un instant plus tard ; le souffle rapporte ses kills au tireur
+        if (r.type === 4) sautsMini.push({ p: r.p ?? [0, 0, 0], par: par.id, t: t + DELAI_SAUT_ABATTU_MS });
         lacherApresKill(r.type, r.p ?? [0, 0, 0], t, sorties);
+        // (v8) grand secret : la marmite (livraison) et le billot (arme blanche)
+        effetsSecret(secret.kill(r.p ?? [0, 0, 0], melee, ctxSecret(t)), t, sorties);
         sorties.push(ctx.presence());
       }
       sale = true;
@@ -1321,7 +1999,7 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
           if ((phase !== "manche" && phase !== "pause") || !peutJouer(j) || m.etat !== "debout" || msg.cible === j.id) return [];
           const cible = ctx.joueur(msg.cible);
           if (!cible || membre(cible.id).etat !== "terre") return [];
-          if (Math.hypot(j.p[0] - cible.p[0], j.p[2] - cible.p[2]) > ZOMBIES.reanimationPortee) return [];
+          if (Math.hypot(j.p[0] - cible.p[0], j.p[2] - cible.p[2]) > ZOMBIES.reanimationPortee + margeLatence(j)) return [];
           if (releves.get(j.id)?.cible !== cible.id) releves.set(j.id, { cible: cible.id, debutT: t });
           return [];
         }
@@ -1331,10 +2009,16 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
           if ((phase !== "manche" && phase !== "pause") || !peutJouer(j) || m.etat !== "debout") return [];
           const f: Fenetre | null = fenetreDeId(msg.fenetre);
           if (!f || (planches.get(f.id) ?? 0) >= ZOMBIES.planches) return [];
-          if (Math.hypot(j.p[0] - f.dedans[0], j.p[2] - f.dedans[1]) > ZOMBIES.reposePortee) return [];
-          if (m.reparation?.fenetre !== f.id) m.reparation = { fenetre: f.id, prochainT: t + ZOMBIES.reposeS * 1000 };
+          if (Math.hypot(j.p[0] - f.dedans[0], j.p[2] - f.dedans[1]) > ZOMBIES.reposePortee + margeLatence(j)) return [];
+          // la première planche suit l'appui de près, les suivantes gardent la cadence de BO1 même si l'on relâche et réappuie
+          if (m.reparation?.fenetre !== f.id) {
+            const prochainT = Math.max(t + ZOMBIES.reposePremiereS * 1000, (m.derniereReposeT ?? -Infinity) + ZOMBIES.reposeS * 1000);
+            m.reparation = { fenetre: f.id, prochainT };
+          }
           return [];
         }
+        case "lancerGrenade":
+          return lancerGrenade(j, msg, t);
         default:
           return [];
       }
@@ -1351,19 +2035,26 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       if (pauseCafe && solo() && m.autoReleves > 0) { m.autoReleves--; m.autoReleveT = t + AUTO_RELEVE_MS; }
       for (const [par, r] of releves) if (r.cible === j.id || par === j.id) releves.delete(par);
       immediat = true;
+      // (v8) grand secret : la truffe portée fond, le service tourne court
+      const sorties: Sortie[] = [];
+      effetsSecret(secret.joueurTombe(j.id, ctxSecret(t)), t, sorties);
       verifierDefaite(t);
-      return [...emettre(t, []), ctx.presence()];
+      return [...emettre(t, sorties), ctx.presence()];
     },
 
     liberer(j, t) {
       for (const [par, r] of releves) if (r.cible === j.id || par === j.id) releves.delete(par);
+      const sortiesSecret: Sortie[] = [];
+      if (phase === "manche" || phase === "pause") effetsSecret(secret.joueurParti(j.id, ctxSecret(t)), t, sortiesSecret);
+      // (v8) son arme au Micro-ondes est perdue, la machine se libère
+      if (pap.etat !== "libre" && pap.joueur === j.id) pap = { etat: "libre" };
       if (!ctx.joueur(j.id)) {
         membres.delete(j.id);
       } else {
         remettreMembre(membre(j.id));
       }
       immediat = true;
-      const sorties: Sortie[] = [];
+      const sorties: Sortie[] = [...sortiesSecret];
       if (ctx.joueurs().length === 0 && phase !== "lobby") {
         // salle vide : retour immédiat au lobby, personne à prévenir
         sorties.push(...retourLobby(t));
@@ -1379,6 +2070,10 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       return emettre(t, []);
     },
 
+    aTerre(id) {
+      return membres.get(id)?.etat === "terre";
+    },
+
     enCours() {
       return phase === "pause" || phase === "manche";
     },
@@ -1388,7 +2083,32 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     resume(): ResumeZombies {
       return { phase, joueurs: ctx.joueurs().length, manche };
     },
+
+    tirSecret(j, arme, o, dirs, t) {
+      if ((phase !== "manche" && phase !== "pause") || !membre(j.id).admis) return [];
+      const sorties: Sortie[] = [];
+      effetsSecret(secret.tir(j.id, o, dirs, STATS[arme].portee, ctxSecret(t)), t, sorties);
+      return emettre(t, sorties);
+    },
+
+    coupSecret(j, arme, o, d, t) {
+      if ((phase !== "manche" && phase !== "pause") || !membre(j.id).admis) return [];
+      const m = MELEE[arme];
+      const sorties: Sortie[] = [];
+      effetsSecret(secret.coup(j.id, o, d, m.portee + m.margePortee, m.cosCone, ctxSecret(t)), t, sorties);
+      return emettre(t, sorties);
+    },
+
+    ecouterExplosions(f) {
+      ecouteursExplosion.add(f);
+      return () => { ecouteursExplosion.delete(f); };
+    },
+
+    grenadesEnVol() {
+      return grenades.length;
+    },
   };
+  return service;
 }
 
 /** Liste des achats (réexport pour les essais). */

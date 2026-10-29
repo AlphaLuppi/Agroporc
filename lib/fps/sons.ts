@@ -8,11 +8,18 @@
  * patte, plainte) et l'avion qui les largue sont placés de la même façon (spec 2026-10-23-arene-tigres-design.md, Rendu). Le tigre
  * géant des événements a ses propres sons (`alerte`, `laser`, `pasLourd`, `explosionMonstre`), jamais ceux des tigres largués.
  *
- * Seule exception au « tout synthétisé » : le moteur de la voiture conduite est un VRAI enregistrement (`/arene/moteur.wav`, boucle de
- * ralenti CC0, cf. public/arene/CREDITS.txt) joué en boucle, dont la vitesse de lecture (donc le régime) suit celle de la voiture (v3 §3).
- * Tant qu'il n'est pas chargé (ou s'il ne se charge pas), un moteur synthétisé doux le remplace.
+ * Exceptions au « tout synthétisé » : le moteur de la voiture conduite est un VRAI enregistrement (`/arene/moteur.wav`, boucle de
+ * ralenti CC0, cf. public/arene/CREDITS.txt) joué en boucle, dont la vitesse de lecture (donc le régime) suit celle de la voiture (v3 §3) ;
+ * et le mode zombies a ses échantillons (tonnerre, rire du Truck, grenades, micro-ondes, tigre chef, fanfare, annonces parlées), dont le
+ * registre et la logique pure (calage du pic, limite de voix, file des annonces) sont dans `sons-echantillons.ts`. Un chargeur commun
+ * (`telecharger` : fetch → decodeAudioData, cache par URL, échec silencieux) les sert ; ils passent par la même sortie spatialisée que les
+ * sons synthétisés. Tant qu'un fichier n'est pas chargé (ou s'il manque), un son synthétisé le remplace : le jeu n'est jamais muet.
  */
 import type { ArmeFeuId, ArmeMeleeId } from "./protocole";
+import {
+  ECHANTILLONS, ECHANTILLONS_SIMULTANES_MAX, FileAnnonces, URLS_ZOMBIES, VOIX_ANNONCES, ANNONCES_EN_ATTENTE_MAX, departCale, instantPic, voixLibre,
+  type IdEchantillon, type IdVoix,
+} from "./sons-echantillons";
 import { ZOMBIES } from "./zombies-vagues";
 
 /** Voix de tigres en même temps au plus (zombies) : au-delà, un nouveau rugissement est ignoré. */
@@ -28,6 +35,11 @@ export interface PositionSon {
 export interface Sons {
   /** Tir d'une arme ; `position` pour un tir d'un autre joueur (omis = son du joueur local). */
   tir(arme: ArmeFeuId, position?: PositionSon): void;
+  /**
+   * (v8) Crépitement bref d'un arc électrique (chaîne d'une arme électrique entre des tigres), le même quelle que soit l'arme : le tir qui
+   * l'a lancé a déjà son propre son.
+   */
+  arc(position?: PositionSon): void;
   /** Séquence de rechargement (clics de chargeur, culasse, cartouches). */
   recharge(arme: ArmeFeuId): void;
   /** J'ai touché quelqu'un (tic ; plus aigu et plus sec à la tête). Joué à la réception de `degats` du serveur (v2 §13.2). */
@@ -88,6 +100,11 @@ export interface Sons {
   canon(position?: PositionSon): void;
   /** (v4) Klaxon de camion (trompe à air, accord de trois notes) du Truck Muche fou, entendu de loin dans toute l'arène. */
   klaxonCamion(position?: PositionSon): void;
+  /**
+   * (v8, zombies) Klaxon aigu et nasillard d'un mini Truck Muche : deux « pouet » qui montent ; `meche` : mèche allumée, quatre coups
+   * pressés et plus aigus (il va sauter).
+   */
+  klaxonMiniTruck(position?: PositionSon, meche?: boolean): void;
   /** (v4) Bâtiment qui s'effondre (grondement long et fracas). */
   effondrement(position?: PositionSon): void;
   /** (v4) Pas lourd du tigre ou du titan. */
@@ -98,7 +115,7 @@ export interface Sons {
    */
   rugissementTigre(position?: PositionSon, mort?: boolean): boolean;
   /** (zombies) Coup de patte d'un tigre, joué au début de l'armement : feulement, puis griffes qui fendent l'air et choc au contact, spatialisé. */
-  griffe(position?: PositionSon): void;
+  griffe(position?: PositionSon, armeS?: number): void;
   /** (zombies) Achat accepté (caisse enregistreuse) ou refusé (buzz grave). */
   achat(ok: boolean): void;
   /** (zombies) Pièce gagnée (touche, kill, bonus de manche) : tic cristallin. */
@@ -116,22 +133,81 @@ export interface Sons {
   jingleAtout(atout: "gratin" | "expresso" | "ristretto" | "pausecafe"): void;
   /** Boîte mystère : boîte à musique (tirage) ou rire de la peluche. */
   boite(genre: "tirage" | "peluche", position?: PositionSon): void;
-  /** Bonus ramassé (accord brillant) ; un bonus qui tombe (scintillement). */
+  /** Bonus ramassé (fanfare, cf. `fanfareBonus`) ; un bonus qui tombe (scintillement). */
   bonus(ramasse: boolean, position?: PositionSon): void;
   /** Courant rétabli : clac du disjoncteur, montée des néons. */
   courant(): void;
-  /** Micro-ondes : bourdonnement pendant la cuisson, « ding » quand c'est prêt. */
+  /** Micro-ondes : porte et bourdonnement pendant la cuisson (`microOndesCuisson`), trois bips quand c'est prêt (`microOndesBip`). */
   microondes(pret: boolean, position?: PositionSon): void;
-  /** Annonce parlée (synthèse vocale du navigateur, en français, voix grave) : « Munitions max ! »… Sans voix disponible : rien. */
+  /**
+   * Annonce parlée par la synthèse vocale du navigateur (repli des annonces échantillonnées) : attend la liste des voix, choisit une voix
+   * française, ne coupe pas l'annonce en cours (file du navigateur, au plus `ANNONCES_EN_ATTENTE_MAX` en attente), précédée d'un jingle.
+   */
   annonce(texte: string): void;
+  // ---- échantillons du mode zombies (registre : sons-echantillons.ts) ; chacun a un repli synthétisé ----
+  /** Lance le téléchargement de tous les fichiers du mode zombies (décodés dès que le contexte audio existe). */
+  prechargerZombies(): void;
+  /**
+   * Joue l'échantillon `id` dans `retardS` s, spatialisé par `position`. Rend vrai s'il est pris en charge (joué, ou ignoré car toutes
+   * ses voix sont prises) et faux s'il n'est pas chargé : à l'appelant de jouer un repli.
+   */
+  echantillon(id: IdEchantillon, position?: PositionSon, retardS?: number): boolean;
+  /** Annonce parlée de l'annonceur (file : jamais coupée, enchaînée), au plus tôt dans `auPlusTotS` s ; repli : `annonce(texte)`. */
+  voix(id: IdVoix, auPlusTotS?: number): void;
+  /** Coup de tonnerre (éclair de la manche du Truck Muche). */
+  tonnerre(position?: PositionSon): void;
+  /** Rire maléfique du Truck Muche enragé, dans `retardS` s. */
+  rireTruck(position?: PositionSon, retardS?: number): void;
+  /** Explosion d'une grenade (ou d'un tir explosif) ; `force` 0..1. */
+  explosionGrenade(position?: PositionSon, force?: number): void;
+  /** Rebond d'une grenade sur le sol ou un mur ; `force` 0..1 (vitesse de l'impact). */
+  rebondGrenade(position?: PositionSon, force?: number): void;
+  /** Micro-ondes Gratinator : la porte claque et la cuisson bourdonne (3,4 s). */
+  microOndesCuisson(position?: PositionSon): void;
+  /** Micro-ondes Gratinator : trois bips à 1 kHz, c'est prêt. */
+  microOndesBip(position?: PositionSon): void;
+  /** (v8) Porte payante qui s'ouvre (BO1) : déverrouillage, glissement qui monte, bois qui tombe et petit choc sourd. */
+  ouverturePorte(position?: PositionSon): void;
+  /**
+   * Coup de patte du tigre chef (son fourni par le joueur, retour 16), joué au début de l'armement : son pic (cherché dans le fichier)
+   * tombe au contact, `ZOMBIES.griffeArmeS` plus tard, comme le claquement de `griffe`, qui sert de repli.
+   */
+  griffeChef(position?: PositionSon): void;
+  /** Rugissement du tigre chef ; repli et limite de voix : ceux de `rugissementTigre`. Rend vrai si une voix a été jouée. */
+  grognementChef(position?: PositionSon): boolean;
+  /** Fanfare d'un bonus ramassé (avant son annonce). */
+  fanfareBonus(position?: PositionSon): void;
   /** Klaxon deux tons du bus C3. */
   klaxonBus(position?: PositionSon): void;
   /** Sirène d'alerte de frappe aérienne. */
   sireneFrappe(position?: PositionSon): void;
   /** Déploiement et sifflement d'un fumigène. */
   fumigene(position?: PositionSon): void;
+  // ---- v8 (grenades des zombies) : points d'entrée stables ; rebond et explosion lisent les échantillons de `explosionGrenade` /
+  // `rebondGrenade` (synthèse en repli), le reste est synthétisé ----
+  /** Grenade lancée : cuillère qui saute et souffle du bras (la mienne), ou froissement lointain (celle d'un autre, `position`). */
+  grenadeLancer(position?: PositionSon): void;
+  /** Rebond d'une grenade sur le carrelage ou un mur ; `force` = vitesse du choc (m/s). */
+  grenadeRebond(force: number, position?: PositionSon): void;
+  /** Explosion d'une grenade : détonation sèche, souffle, éclats qui retombent. */
+  grenadeExplosion(position?: PositionSon): void;
+  /** Bip de cuisson (goupille tirée, la mèche court) : un clic métallique par demi-seconde. */
+  grenadeBip(): void;
+  /** Tigre à remontoir posé : coup de cymbales et cliquetis du ressort (à rejouer à chaque claquement). */
+  remontoir(position?: PositionSon): void;
+  /**
+   * (v8) Grand secret : les seuls retours que le joueur en a sont des sons du décor (pendule qui repart, coup de midi, casserole qui tinte,
+   * marmite qui bout, givre, four qui s'embrase, bip d'écran, couperet, cloche) et un accord discret quand une étape se referme. `k` (0..1) :
+   * avancée (la casserole tinte plus haut à chaque bonne note). Tous synthétisés.
+   */
+  secret(son: SonSecret, position?: PositionSon, k?: number): void;
   dispose(): void;
 }
+
+/** (v8) Sons du grand secret (`Sons.secret`). */
+export type SonSecret =
+  | "tic" | "carillon" | "coupMidi" | "ding" | "clang" | "bouillon" | "accord" | "souffleFroid" | "givre" | "fonte" | "flamme" | "bip"
+  | "buzz" | "hachoir" | "choeur" | "cloche";
 
 interface OptionsBruit {
   dur: number;
@@ -188,6 +264,18 @@ const CLICS_RECHARGE: Record<ArmeFeuId, Clic[]> = {
   railgun: [], minigun: [], magnum_dore: [],
   rayon: [{ t: 0.4, f: 900, g: 0.4 }, { t: 1.4, f: 1600, g: 0.35 }, { t: 2.4, f: 2200, g: 0.45 }],
   lance_grenades: [], bazooka: [], fumigene: [],
+  // (v8) armes du mode zombies seulement
+  baguette: [{ t: 0.3, f: 900, g: 0.5 }, { t: 0.7, f: 1400, g: 0.3 }, { t: 1.3, f: 1400, g: 0.35 }, { t: 1.6, f: 1400, g: 0.35 }, { t: 2.0, f: 800, g: 0.55 }],
+  agrafeuse: [{ t: 0.3, f: 1000, g: 0.4 }, { t: 1.3, f: 1500, g: 0.5 }, { t: 1.95, f: 2100, g: 0.45 }],
+  photocopieuse: [{ t: 0.35, f: 800, g: 0.45 }, { t: 1.2, f: 600, g: 0.4 }, { t: 2.0, f: 1200, g: 0.5 }, { t: 2.6, f: 2000, g: 0.45 }],
+  essoreuse: [
+    { t: 0.4, f: 1400, g: 0.35 }, { t: 0.75, f: 1400, g: 0.35 }, { t: 1.1, f: 1400, g: 0.35 }, { t: 1.45, f: 1400, g: 0.35 },
+    { t: 1.8, f: 1400, g: 0.35 }, { t: 2.15, f: 1400, g: 0.35 }, { t: 2.5, f: 1400, g: 0.35 }, { t: 2.95, f: 900, g: 0.55 },
+  ],
+  brochette: [{ t: 0.4, f: 700, g: 0.45 }, { t: 1.2, f: 1300, g: 0.35 }, { t: 1.9, f: 2200, g: 0.5 }],
+  soufflerie: [{ t: 0.5, f: 600, g: 0.5 }, { t: 1.4, f: 900, g: 0.45 }, { t: 2.4, f: 1800, g: 0.5 }],
+  grille_pain: [{ t: 0.4, f: 800, g: 0.4 }, { t: 1.5, f: 1700, g: 0.4 }, { t: 2.5, f: 2600, g: 0.45 }],
+  perforeuse: [{ t: 0.2, f: 1250, g: 0.35 }, { t: 0.95, f: 1800, g: 0.45 }, { t: 1.3, f: 2300, g: 0.4 }],
 };
 
 /** Enregistrement du moteur (boucle de ralenti CC0) et réglages de sa lecture. */
@@ -305,6 +393,61 @@ const PROFILS_TIR: Record<ArmeFeuId, ProfilTir> = {
     b.bruit(out, t, { dur: 0.18, type: "bandpass", f0: 3500 * v, f1: 1500, q: 1.2, gain: 0.7 });
     b.ton(out, t, { dur: 0.15, type: "sine", f0: 220 * v, f1: 90, gain: 0.5 });
   },
+  // ---- (v8) armes du mode zombies seulement ----
+  /** Double canon : une détonation énorme et grave, le canon qui résonne. */
+  baguette(b, out, t, v) {
+    b.bruit(out, t, { dur: 0.42, type: "lowpass", f0: 2200 * v, f1: 180, gain: 1 });
+    b.bruit(out, t, { dur: 0.1, type: "bandpass", f0: 1500, q: 0.6, gain: 0.8 });
+    b.ton(out, t, { dur: 0.4, type: "sine", f0: 80 * v, f1: 26, gain: 1 });
+    b.ton(out, t + 0.03, { dur: 0.35, type: "triangle", f0: 420 * v, f1: 260, gain: 0.08 });
+  },
+  /** Semi-automatique lourd : claquement sec, un peu de métal (l'agrafe qui part). */
+  agrafeuse(b, out, t, v) {
+    b.bruit(out, t, { dur: 0.16, type: "bandpass", f0: 2400 * v, f1: 700, q: 0.8, gain: 0.85 });
+    b.bruit(out, t, { dur: 0.03, type: "highpass", f0: 5200, gain: 0.55 });
+    b.ton(out, t, { dur: 0.14, type: "sine", f0: 140 * v, f1: 50, gain: 0.75 });
+    b.clic(out, t + 0.06, 2600 * v, 0.25);
+  },
+  /** Tambour de 71 coups : chaque tir est un claquement mat et bref, la cadence fait le reste. */
+  photocopieuse(b, out, t, v) {
+    b.bruit(out, t, { dur: 0.055, type: "bandpass", f0: 1900 * v, f1: 1000, q: 0.9, gain: 0.6 });
+    b.bruit(out, t, { dur: 0.015, type: "highpass", f0: 4800, gain: 0.3 });
+    b.ton(out, t, { dur: 0.05, type: "square", f0: 160 * v, f1: 90, gain: 0.18 });
+  },
+  /** Pompe semi-automatique : plus court que le pompe (pas de pompe à actionner), la culasse revient seule. */
+  essoreuse(b, out, t, v) {
+    b.bruit(out, t, { dur: 0.26, type: "lowpass", f0: 2600 * v, f1: 260, gain: 0.95 });
+    b.bruit(out, t, { dur: 0.07, type: "bandpass", f0: 1900, q: 0.6, gain: 0.6 });
+    b.ton(out, t, { dur: 0.24, type: "sine", f0: 100 * v, f1: 36, gain: 0.9 });
+    b.clic(out, t + 0.12, 1700 * v, 0.35);
+  },
+  /** Arbalète : corde qui claque, sifflement du pique qui part. */
+  brochette(b, out, t, v) {
+    b.ton(out, t, { dur: 0.08, type: "triangle", f0: 320 * v, f1: 140, gain: 0.55 });
+    b.bruit(out, t, { dur: 0.05, type: "highpass", f0: 3200, gain: 0.35 });
+    b.bruit(out, t + 0.02, { dur: 0.3, type: "bandpass", f0: 2600 * v, f1: 5200, q: 2.5, gain: 0.22 });
+  },
+  /** Soufflerie : montée de turbine, puis une rafale de vent grave et large qui balaie tout. */
+  soufflerie(b, out, t, v) {
+    b.ton(out, t, { dur: 0.18, type: "sawtooth", f0: 180 * v, f1: 900, gain: 0.2, att: 0.05 });
+    b.bruit(out, t + 0.12, { dur: 0.9, type: "lowpass", f0: 1800 * v, f1: 120, gain: 1 });
+    b.bruit(out, t + 0.12, { dur: 0.5, type: "bandpass", f0: 700, f1: 300, q: 0.5, gain: 0.7 });
+    b.ton(out, t + 0.12, { dur: 0.7, type: "sine", f0: 60 * v, f1: 22, gain: 1 });
+  },
+  /** Grille-pain : bourdonnement électrique, puis le claquement de l'arc (craquement large bande). */
+  grille_pain(b, out, t, v) {
+    b.ton(out, t, { dur: 0.12, type: "square", f0: 120 * v, f1: 180, gain: 0.25, att: 0.02 });
+    b.bruit(out, t + 0.08, { dur: 0.35, type: "highpass", f0: 2500, f1: 7000, gain: 0.8 });
+    b.bruit(out, t + 0.08, { dur: 0.25, type: "bandpass", f0: 900, q: 0.7, gain: 0.6 });
+    b.ton(out, t + 0.08, { dur: 0.3, type: "sawtooth", f0: 1800 * v, f1: 300, gain: 0.12 });
+    b.ton(out, t + 0.1, { dur: 0.4, type: "sine", f0: 75 * v, f1: 30, gain: 0.8 });
+  },
+  /** Pistolet lourd : entre le pistolet et le revolver, sec et métallique. */
+  perforeuse(b, out, t, v) {
+    b.bruit(out, t, { dur: 0.09, type: "bandpass", f0: 2900 * v, f1: 1000, q: 0.85, gain: 0.85 });
+    b.bruit(out, t, { dur: 0.025, type: "highpass", f0: 5400, gain: 0.45 });
+    b.ton(out, t, { dur: 0.1, type: "sine", f0: 170 * v, f1: 60, gain: 0.65 });
+  },
 };
 
 export function creerSons(): Sons {
@@ -340,6 +483,136 @@ export function creerSons(): Sons {
   /** fins (horloge audio, s) des rugissements de tigres en cours */
   let voixTigres: number[] = [];
 
+  /**
+   * Échantillons (mode zombies) : par URL, les octets en vol (le téléchargement part dès `prechargerZombies`, avant même le contexte
+   * audio), puis le son décodé et l'instant de son pic. Un échec (réseau, 404, format) est définitif et silencieux : le repli synthétisé
+   * reste. Cache propre à cette instance (le navigateur garde les fichiers dans son cache HTTP d'une partie à l'autre).
+   */
+  interface Chargement { octets: Promise<ArrayBuffer> | null; buf: AudioBuffer | null; pic: number; echec: boolean; decodage: boolean }
+  const chargements = new Map<string, Chargement>();
+  const decoder = (c: Chargement) => {
+    if (!ctx || fini || c.buf || c.echec || c.decodage || !c.octets) return;
+    const cx = ctx;
+    if (typeof cx.decodeAudioData !== "function") { c.echec = true; return; }
+    c.decodage = true;
+    c.octets
+      .then((b) => cx.decodeAudioData(b))
+      .then((buf) => {
+        if (fini) return;
+        c.buf = buf;
+        c.pic = instantPic(buf.getChannelData(0), buf.sampleRate);
+      })
+      .catch(() => { c.echec = true; });
+  };
+  const telecharger = (url: string): Chargement => {
+    let c = chargements.get(url);
+    if (c) { decoder(c); return c; }
+    c = { octets: null, buf: null, pic: 0, echec: false, decodage: false };
+    chargements.set(url, c);
+    if (typeof fetch !== "function") { c.echec = true; return c; }
+    const ch = c;
+    try {
+      ch.octets = fetch(url).then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(String(r.status)))));
+      ch.octets.catch(() => { ch.echec = true; });
+    } catch {
+      ch.echec = true;
+    }
+    decoder(ch);
+    return ch;
+  };
+  /** fins (horloge audio) des lectures en cours, par URL et toutes ensemble */
+  const finsEchantillons = new Map<string, number[]>();
+  let finsTous: number[] = [];
+  /**
+   * Lit le son de `url` : « absent » s'il n'est pas (encore) chargé, « plein » si ses voix (`voixMax`) ou toutes les voix
+   * (`ECHANTILLONS_SIMULTANES_MAX`) sont prises, sinon l'instant (horloge audio) où il se tait.
+   */
+  const lire = (
+    url: string, gain: number, voixMax: number, position?: PositionSon, o: { retard?: number; decalage?: number; vitesse?: number } = {},
+  ): number | "absent" | "plein" => {
+    const c = telecharger(url);
+    if (!c.buf || !ctx || !master) return "absent";
+    const maintenant = ctx.currentTime;
+    const v1 = voixLibre(finsEchantillons.get(url) ?? [], maintenant, voixMax);
+    const v2 = voixLibre(finsTous, maintenant, ECHANTILLONS_SIMULTANES_MAX);
+    finsEchantillons.set(url, v1.fins);
+    finsTous = v2.fins;
+    if (!v1.libre || !v2.libre) return "plein";
+    const vitesse = o.vitesse ?? 1;
+    const decalage = Math.min(Math.max(0, o.decalage ?? 0), c.buf.duration);
+    const t = maintenant + 0.001 + Math.max(0, o.retard ?? 0);
+    const src = ctx.createBufferSource();
+    src.buffer = c.buf;
+    if (vitesse !== 1) src.playbackRate?.setValueAtTime(vitesse, t);
+    const g = ctx.createGain();
+    g.gain.value = gain;
+    src.connect(g);
+    g.connect(sortie(position));
+    src.start(t, decalage);
+    const fin = t + (c.buf.duration - decalage) / vitesse;
+    v1.fins.push(fin);
+    finsTous.push(fin);
+    return fin;
+  };
+  const jouerEchantillon = (id: IdEchantillon, position?: PositionSon, o?: { retard?: number; decalage?: number; vitesse?: number }) => {
+    const d = ECHANTILLONS[id];
+    return lire(d.url, d.gain, d.voixMax, position, o);
+  };
+  /** Pic (s) du son `id` s'il est chargé. */
+  const picDe = (id: IdEchantillon): number | null => {
+    const c = chargements.get(ECHANTILLONS[id].url);
+    return c?.buf ? c.pic : null;
+  };
+  /** File des annonces parlées échantillonnées (horloge audio). */
+  const fileAnnonces = new FileAnnonces();
+
+  /** Synthèse vocale du navigateur (repli) : voix française choisie une fois la liste arrivée, annonces en file (jamais `cancel`). */
+  let voixNavigateur: SpeechSynthesisVoice | null | undefined;
+  let attenteVoix = false;
+  let parolesEnFile = 0;
+  const choisirVoixNavigateur = (): SpeechSynthesisVoice | null | undefined => {
+    const toutes = window.speechSynthesis.getVoices();
+    if (!toutes.length) return undefined;
+    const fr = toutes.filter((v) => v.lang.toLowerCase().replace("_", "-").startsWith("fr"));
+    // une voix de France plutôt que du Canada ; une voix locale (hors ligne, sans délai) plutôt qu'une voix réseau
+    return fr.find((v) => /^fr-fr/i.test(v.lang.replace("_", "-")) && v.localService) ?? fr.find((v) => /^fr-fr/i.test(v.lang.replace("_", "-"))) ?? fr[0] ?? null;
+  };
+  const parler = (texte: string) => {
+    if (fini || typeof window === "undefined" || !("speechSynthesis" in window)) return;
+    const ss = window.speechSynthesis;
+    if (parolesEnFile > ANNONCES_EN_ATTENTE_MAX) return; // celle qui parle + 2 en attente au plus
+    const dire = () => {
+      if (fini) return;
+      try {
+        const u = new SpeechSynthesisUtterance(texte);
+        u.lang = "fr-FR";
+        u.pitch = 0.75;
+        u.rate = 1.0;
+        u.volume = 0.9;
+        if (voixNavigateur) u.voice = voixNavigateur;
+        parolesEnFile++;
+        u.onend = u.onerror = () => { parolesEnFile = Math.max(0, parolesEnFile - 1); };
+        ss.speak(u);
+      } catch { /* synthèse indisponible : silence */ }
+    };
+    if (voixNavigateur === undefined) voixNavigateur = choisirVoixNavigateur();
+    if (voixNavigateur !== undefined) { dire(); return; }
+    // liste des voix pas encore arrivée (Chrome la remplit après coup) : on attend `voiceschanged`, 800 ms au plus
+    if (attenteVoix) { setTimeout(dire, 850); return; }
+    attenteVoix = true;
+    let fait = false;
+    const suite = () => {
+      if (fait) return;
+      fait = true;
+      attenteVoix = false;
+      try { ss.removeEventListener("voiceschanged", suite); } catch { /* ancien navigateur */ }
+      voixNavigateur = choisirVoixNavigateur() ?? null;
+      dire();
+    };
+    try { ss.addEventListener("voiceschanged", suite); } catch { /* ancien navigateur */ }
+    setTimeout(suite, 800);
+  };
+
   const ouvrir = () => {
     if (ctx || fini || typeof window === "undefined") return;
     const AC: typeof AudioContext | undefined = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
@@ -361,6 +634,8 @@ export function creerSons(): Sons {
     bruitBuf = ctx.createBuffer(1, n, ctx.sampleRate);
     const d = bruitBuf.getChannelData(0);
     for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
+    // les échantillons téléchargés avant le premier geste se décodent maintenant
+    for (const c of chargements.values()) decoder(c);
   };
 
   /** Premier geste (clic, touche) : crée le contexte ou le sort de sa veille. */
@@ -456,13 +731,21 @@ export function creerSons(): Sons {
     }
   };
 
-  return {
+  const api: Sons = {
     tir(arme, position) {
       if (!prete()) return;
       const out = sortie(position);
       const t = ctx!.currentTime + 0.001;
       const v = 0.92 + Math.random() * 0.16;
       PROFILS_TIR[arme](briques, out, t, v);
+    },
+    arc(position) {
+      if (!prete()) return;
+      const out = sortie(position);
+      const t = ctx!.currentTime + 0.001;
+      const v = 0.9 + Math.random() * 0.2;
+      bruit(out, t, { dur: 0.09, type: "highpass", f0: 3000 * v, f1: 6500, gain: 0.45 });
+      bruit(out, t + 0.02, { dur: 0.06, type: "bandpass", f0: 1400 * v, q: 1.2, gain: 0.3 });
     },
     recharge(arme) {
       if (!prete()) return;
@@ -910,6 +1193,21 @@ export function creerSons(): Sons {
         ton(lp, t, { dur: 0.95, type: "square", f0: f * 1.004, f1: f * 0.975, gain: gain * 0.35, att: 0.03 });
       }
     },
+    klaxonMiniTruck(position, meche = false) {
+      if (!prete()) return;
+      const out = sortie(position);
+      const t = ctx!.currentTime + 0.001;
+      // petite trompe électrique : carré + dent de scie désaccordés, nasillard (passe-bande), coups courts qui montent
+      const coups = meche ? 4 : 2;
+      const pas = meche ? 0.075 : 0.16;
+      for (let i = 0; i < coups; i++) {
+        const f = (meche ? 1180 : 880) * (1 + 0.12 * i);
+        const ti = t + i * pas;
+        ton(out, ti, { dur: pas * 0.8, type: "square", f0: f, f1: f * 1.02, gain: 0.12, att: 0.005 });
+        ton(out, ti, { dur: pas * 0.8, type: "sawtooth", f0: f * 1.5 * 1.006, f1: f * 1.5, gain: 0.07, att: 0.005 });
+        bruit(out, ti, { dur: pas * 0.5, type: "bandpass", f0: f * 2, q: 6, gain: 0.05 });
+      }
+    },
     effondrement(position) {
       if (!prete()) return;
       const out = sortie(position);
@@ -947,13 +1245,13 @@ export function creerSons(): Sons {
       bruit(out, t + 0.05, { dur: dur * 0.7, type: "bandpass", f0: 760, f1: 420, q: 5, gain: 0.1, att: 0.1 });
       return true;
     },
-    griffe(position) {
+    griffe(position, armeS) {
       if (!prete()) return;
       const out = sortie(position);
       const t = ctx!.currentTime + 0.001;
       // le coup s'annonce : feulement grave pendant l'armement (le tigre se cabre), puis la patte fend l'air et claque à l'instant du contact
-      // (`ZOMBIES.griffeArmeS`, le même que le serveur) : on l'entend venir, on a le temps de s'écarter
-      const c = ZOMBIES.griffeArmeS;
+      // (`ZOMBIES.griffeArmeS`, le même que le serveur ; (v8) `armeS` : la morsure du petit, plus courte) : on l'entend venir
+      const c = Math.max(0.14, armeS ?? ZOMBIES.griffeArmeS);
       ton(out, t, { dur: c * 0.85, type: "sawtooth", f0: 95, f1: 70, gain: 0.22, att: 0.12 });
       bruit(out, t, { dur: c * 0.85, type: "bandpass", f0: 420, f1: 300, q: 1.6, gain: 0.28, att: 0.15 });
       bruit(out, t + c - 0.13, { dur: 0.16, type: "bandpass", f0: 700, f1: 3000, q: 1.1, gain: 0.5, att: 0.1 });
@@ -1060,14 +1358,12 @@ export function creerSons(): Sons {
       }
     },
     bonus(ramasse, position) {
+      // ramassé : la fanfare (échantillon, repli synthétisé) ; qui tombe : scintillement
+      if (ramasse) { api.fanfareBonus(position); return; }
       if (!prete()) return;
       const out = sortie(position);
       const t = ctx!.currentTime + 0.001;
-      if (ramasse) {
-        [523, 784, 1047, 1568].forEach((f, i) => ton(out, t + i * 0.05, { dur: 0.5, type: "triangle", f0: f, gain: 0.08, att: 0.01 }));
-      } else {
-        for (let k = 0; k < 6; k++) ton(out, t + k * 0.06, { dur: 0.12, type: "sine", f0: 1800 + k * 250, gain: 0.04, att: 0.005 });
-      }
+      for (let k = 0; k < 6; k++) ton(out, t + k * 0.06, { dur: 0.12, type: "sine", f0: 1800 + k * 250, gain: 0.04, att: 0.005 });
     },
     courant() {
       if (!prete()) return;
@@ -1078,25 +1374,146 @@ export function creerSons(): Sons {
       ton(master!, t + 0.25, { dur: 2.2, type: "sine", f0: 100, f1: 240, gain: 0.06, att: 0.3 });
     },
     microondes(pret, position) {
+      if (pret) api.microOndesBip(position);
+      else api.microOndesCuisson(position);
+    },
+    microOndesCuisson(position) {
+      if (!prete() || jouerEchantillon("microOndesCuisson", position) !== "absent") return;
+      // repli : la porte claque (choc sourd), puis le magnétron bourdonne et le ventilateur souffle
+      const out = sortie(position);
+      const t = ctx!.currentTime + 0.001;
+      bruit(out, t, { dur: 0.12, type: "lowpass", f0: 1100, f1: 200, gain: 0.7 });
+      ton(out, t, { dur: 0.12, type: "sine", f0: 90, f1: 60, gain: 0.5 });
+      ton(out, t + 0.12, { dur: 3.3, type: "sawtooth", f0: 120, f1: 121, gain: 0.04, att: 0.25 });
+      ton(out, t + 0.12, { dur: 3.3, type: "sine", f0: 240, gain: 0.05, att: 0.25 });
+      bruit(out, t + 0.12, { dur: 1.9, type: "bandpass", f0: 700, q: 0.5, gain: 0.06, att: 0.4 });
+    },
+    microOndesBip(position) {
+      if (!prete() || jouerEchantillon("microOndesBip", position) !== "absent") return;
+      // repli : les trois bips piézo à 1 kHz d'un vrai micro-ondes
+      const out = sortie(position);
+      const t = ctx!.currentTime + 0.001;
+      for (let k = 0; k < 3; k++) {
+        ton(out, t + k * 0.3, { dur: 0.17, type: "square", f0: 1000, gain: 0.05, att: 0.004 });
+        ton(out, t + k * 0.3, { dur: 0.17, type: "sine", f0: 1000, gain: 0.08, att: 0.004 });
+      }
+    },
+    ouverturePorte(position) {
       if (!prete()) return;
       const out = sortie(position);
       const t = ctx!.currentTime + 0.001;
-      if (pret) ton(out, t, { dur: 1.2, type: "sine", f0: 1760, gain: 0.12, att: 0.003 });
-      else ton(out, t, { dur: 3.4, type: "sawtooth", f0: 118, f1: 122, gain: 0.05, att: 0.2 });
+      // clac du verrou, puis la porte glisse vers le haut (frottement filtré qui monte), quelques éclats de bois et un choc sourd
+      bruit(out, t, { dur: 0.06, type: "bandpass", f0: 2200, q: 3, gain: 0.5 });
+      ton(out, t, { dur: 0.08, type: "square", f0: 160, f1: 90, gain: 0.18 });
+      bruit(out, t + 0.08, { dur: 0.9, type: "bandpass", f0: 400, f1: 1300, q: 1.2, gain: 0.32, att: 0.1 });
+      ton(out, t + 0.08, { dur: 0.9, type: "sawtooth", f0: 70, f1: 110, gain: 0.05, att: 0.15 });
+      for (let k = 0; k < 3; k++) bruit(out, t + 0.35 + k * 0.17, { dur: 0.07, type: "bandpass", f0: 1100 - k * 150, q: 2, gain: 0.3 });
+      ton(out, t + 0.9, { dur: 0.25, type: "sine", f0: 85, f1: 45, gain: 0.35 });
+      bruit(out, t + 0.9, { dur: 0.5, type: "lowpass", f0: 700, f1: 200, gain: 0.25 });
     },
     annonce(texte) {
-      if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
-      try {
-        const u = new SpeechSynthesisUtterance(texte);
-        u.lang = "fr-FR";
-        u.pitch = 0.45;
-        u.rate = 0.92;
-        u.volume = 0.9;
-        const voix = window.speechSynthesis.getVoices().find((v) => v.lang.startsWith("fr"));
-        if (voix) u.voice = voix;
-        window.speechSynthesis.cancel();
-        window.speechSynthesis.speak(u);
-      } catch { /* synthèse indisponible : silence */ }
+      if (fini || typeof window === "undefined" || !("speechSynthesis" in window)) return;
+      // petit jingle (deux notes montantes), puis la voix du navigateur
+      if (prete()) {
+        const t = ctx!.currentTime + 0.001;
+        ton(master!, t, { dur: 0.16, type: "triangle", f0: 659, gain: 0.08, att: 0.005 });
+        ton(master!, t + 0.12, { dur: 0.28, type: "triangle", f0: 988, gain: 0.08, att: 0.005 });
+      }
+      setTimeout(() => parler(texte), 280);
+    },
+    prechargerZombies() {
+      if (fini) return;
+      // le contexte existe déjà si l'utilisateur a cliqué (lobby) : le décodage suit le téléchargement ; sinon `ouvrir` s'en chargera
+      prete();
+      for (const url of URLS_ZOMBIES) telecharger(url);
+    },
+    echantillon(id, position, retardS = 0) {
+      if (!prete()) return true; // pas de contexte : silence, rien à remplacer
+      return jouerEchantillon(id, position, { retard: retardS }) !== "absent";
+    },
+    voix(id, auPlusTotS = 0) {
+      if (fini) return;
+      const d = VOIX_ANNONCES[id];
+      const c = telecharger(d.url);
+      // fichier absent ou pas encore décodé, ou pas de contexte audio : la voix du navigateur prend le relais
+      if (!c.buf || !prete()) { api.annonce(d.texte); return; }
+      const maintenant = ctx!.currentTime;
+      const debut = fileAnnonces.planifier(maintenant, c.buf.duration, maintenant + Math.max(0, auPlusTotS));
+      if (debut === null) return; // file pleine : l'annonce est abandonnée plutôt que d'en couper une
+      // l'annonceur passe au-dessus de tout (gain fort, non spatialisé), hors limite de voix des effets
+      const src = ctx!.createBufferSource();
+      src.buffer = c.buf;
+      const g = ctx!.createGain();
+      g.gain.value = 1.1;
+      src.connect(g);
+      g.connect(master!);
+      src.start(debut);
+    },
+    tonnerre(position) {
+      if (!prete() || jouerEchantillon("tonnerre", position) !== "absent") return;
+      // repli : craquement sec puis grondement qui roule
+      const out = sortie(position);
+      const t = ctx!.currentTime + 0.001;
+      bruit(out, t, { dur: 0.25, type: "highpass", f0: 1500, f1: 500, gain: 0.7 });
+      bruit(out, t + 0.05, { dur: 3.5, type: "lowpass", f0: 700, f1: 60, gain: 0.9, att: 0.15 });
+      ton(out, t + 0.05, { dur: 3, type: "sine", f0: 45, f1: 28, gain: 0.5, att: 0.3 });
+    },
+    rireTruck(position, retardS = 0) {
+      if (!prete() || jouerEchantillon("rireTruck", position, { retard: retardS }) !== "absent") return;
+      // repli : « HA HA HA » grave et nasal qui descend
+      const out = sortie(position);
+      const t = ctx!.currentTime + 0.001 + Math.max(0, retardS);
+      for (let k = 0; k < 6; k++) {
+        ton(out, t + k * 0.2, { dur: 0.15, type: "sawtooth", f0: 180 - k * 12, f1: 140 - k * 12, gain: 0.12, att: 0.01 });
+        bruit(out, t + k * 0.2, { dur: 0.12, type: "bandpass", f0: 800, q: 3, gain: 0.15 });
+      }
+    },
+    explosionGrenade(position, force = 1) {
+      if (!prete()) return;
+      const k = Math.min(Math.max(force, 0), 1);
+      const d = ECHANTILLONS.explosionGrenade;
+      if (lire(d.url, d.gain * (0.55 + 0.45 * k), d.voixMax, position, { vitesse: 1.08 - 0.12 * k }) !== "absent") return;
+      api.explosionMonstre(0.4 + 0.5 * k, position);
+    },
+    rebondGrenade(position, force = 1) {
+      if (!prete()) return;
+      const k = Math.min(Math.max(force, 0), 1);
+      const d = ECHANTILLONS.rebondGrenade;
+      if (lire(d.url, d.gain * (0.35 + 0.65 * k), d.voixMax, position, { vitesse: 0.9 + Math.random() * 0.2 }) !== "absent") return;
+      // repli : « tonk » métallique bref
+      const out = sortie(position);
+      const t = ctx!.currentTime + 0.001;
+      ton(out, t, { dur: 0.1, type: "triangle", f0: 1300, f1: 900, gain: 0.08 * (0.4 + k) });
+      bruit(out, t, { dur: 0.05, type: "bandpass", f0: 2200, q: 1.5, gain: 0.15 * (0.4 + k) });
+    },
+    griffeChef(position) {
+      if (!prete()) return;
+      const pic = picDe("griffeChef");
+      if (pic !== null) {
+        // le pic du fichier tombe au contact du serveur (même calage que le claquement synthétisé de `griffe`)
+        const { retard, decalage } = departCale(pic, ZOMBIES.griffeArmeS);
+        // (v8, retour 16) toutes ses voix prises (plusieurs chefs aux planches) : la griffe synthétisée, jamais un coup muet
+        const r = jouerEchantillon("griffeChef", position, { retard, decalage });
+        if (r !== "absent" && r !== "plein") return;
+      } else telecharger(ECHANTILLONS.griffeChef.url);
+      api.griffe(position);
+    },
+    grognementChef(position) {
+      if (!prete()) return false;
+      const t = ctx!.currentTime + 0.001;
+      voixTigres = voixTigres.filter((fin) => fin > t);
+      if (voixTigres.length >= VOIX_TIGRES_MAX) return false;
+      const r = jouerEchantillon("grognementChef", position, { vitesse: 0.92 + Math.random() * 0.16 });
+      if (r === "absent") return api.rugissementTigre(position);
+      if (r === "plein") return false;
+      voixTigres.push(r);
+      return true;
+    },
+    fanfareBonus(position) {
+      if (!prete() || jouerEchantillon("fanfareBonus", position) !== "absent") return;
+      const out = sortie(position);
+      const t = ctx!.currentTime + 0.001;
+      [523, 784, 1047, 1568].forEach((f, i) => ton(out, t + i * 0.05, { dur: 0.5, type: "triangle", f0: f, gain: 0.08, att: 0.01 }));
     },
     klaxonBus(position) {
       if (!prete()) return;
@@ -1121,8 +1538,144 @@ export function creerSons(): Sons {
       ton(out, t, { dur: 0.12, type: "sine", f0: 280, f1: 90, gain: 0.5 });
       bruit(out, t + 0.05, { dur: 1.5, type: "highpass", f0: 2400, f1: 1800, gain: 0.45, att: 0.08 });
     },
+    grenadeLancer(position) {
+      if (!prete()) return;
+      const out = sortie(position);
+      const t = ctx!.currentTime + 0.001;
+      // cuillère qui saute (tintement), puis souffle du bras
+      ton(out, t, { dur: 0.05, type: "triangle", f0: 2900, f1: 2300, gain: 0.18 });
+      ton(out, t + 0.04, { dur: 0.04, type: "triangle", f0: 3400, f1: 3100, gain: 0.1 });
+      bruit(out, t + 0.06, { dur: 0.22, type: "bandpass", f0: 700, f1: 1600, q: 0.8, gain: 0.32, att: 0.05 });
+    },
+    grenadeRebond(force, position) {
+      if (!prete()) return;
+      const g = Math.max(0.05, Math.min(1, force / 12));
+      // échantillon du lot audio (Kenney, CC0) d'abord, synthèse en repli
+      const d = ECHANTILLONS.rebondGrenade;
+      if (lire(d.url, d.gain * (0.35 + 0.65 * g), d.voixMax, position, { vitesse: 0.9 + Math.random() * 0.2 }) !== "absent") return;
+      const out = sortie(position);
+      const t = ctx!.currentTime + 0.001;
+      // métal sur le carrelage : clac bref et tintement creux
+      bruit(out, t, { dur: 0.03, type: "bandpass", f0: 2600, q: 2.5, gain: 0.45 * g });
+      ton(out, t, { dur: 0.09, type: "square", f0: 620 + 180 * g, f1: 520, gain: 0.06 * g });
+    },
+    grenadeExplosion(position) {
+      if (!prete()) return;
+      // échantillon du lot audio (Kenney, CC0) à pleine force d'abord, synthèse en repli
+      const d = ECHANTILLONS.explosionGrenade;
+      if (lire(d.url, d.gain, d.voixMax, position, { vitesse: 0.96 }) !== "absent") return;
+      const out = sortie(position);
+      const t = ctx!.currentTime + 0.001;
+      // plus sèche qu'une voiture : claquement, grave court, souffle, éclats
+      bruit(out, t, { dur: 0.05, type: "highpass", f0: 3200, gain: 0.9 });
+      ton(out, t, { dur: 0.55, type: "sine", f0: 110, f1: 30, gain: 1 });
+      bruit(out, t, { dur: 0.75, type: "lowpass", f0: 4200, f1: 160, gain: 1 });
+      for (let i = 0; i < 6; i++) {
+        bruit(out, t + 0.12 + i * 0.07 + Math.random() * 0.05, { dur: 0.04, type: "bandpass", f0: 3000 + Math.random() * 2500, q: 3, gain: 0.12 });
+      }
+      bruit(out, t + 0.25, { dur: 0.9, type: "lowpass", f0: 700, f1: 150, gain: 0.25 }); // écho dans les bureaux
+    },
+    grenadeBip() {
+      if (!prete()) return;
+      const out = sortie();
+      const t = ctx!.currentTime + 0.001;
+      ton(out, t, { dur: 0.03, type: "square", f0: 1900, gain: 0.05 });
+    },
+    remontoir(position) {
+      if (!prete()) return;
+      const out = sortie(position);
+      const t = ctx!.currentTime + 0.001;
+      // cymbales (bruit aigu qui s'éteint) et cliquetis du ressort
+      bruit(out, t, { dur: 0.35, type: "highpass", f0: 5200, f1: 7000, gain: 0.28 });
+      bruit(out, t, { dur: 0.12, type: "bandpass", f0: 3800, q: 1.5, gain: 0.2 });
+      for (let i = 0; i < 3; i++) ton(out, t + 0.05 + i * 0.045, { dur: 0.02, type: "square", f0: 2400, gain: 0.03 });
+    },
+    secret(son, position, k = 0) {
+      if (!prete()) return;
+      const out = sortie(position);
+      const t = ctx!.currentTime + 0.001;
+      /** cloche : fondamentale et partiels inharmoniques d'une cloche de bronze, longue décroissance */
+      const cloche = (t0: number, f: number, gain: number, dur: number) => {
+        for (const [r, g] of [[1, 1], [2.76, 0.45], [5.4, 0.22], [8.9, 0.1]] as const) ton(out, t0, { dur: dur / Math.sqrt(r), type: "sine", f0: f * r, gain: gain * g, att: 0.003 });
+      };
+      switch (son) {
+        case "tic":
+          // le mécanisme repart : tic, tac, et le ressort qui se détend
+          clic(out, t, 3200, 0.12); clic(out, t + 0.5, 2500, 0.1); clic(out, t + 1, 3200, 0.08);
+          bruit(out, t, { dur: 0.25, type: "bandpass", f0: 1800, f1: 900, q: 4, gain: 0.05 });
+          break;
+        case "carillon":
+          // quatre notes de pendule (mi, do, ré, sol), puis le silence
+          [659, 523, 587, 392].forEach((f, i) => cloche(t + i * 0.55, f, 0.07, 2.4));
+          break;
+        case "coupMidi": cloche(t, 196, 0.11, 3.2); break;
+        case "ding": cloche(t, 880 * 2 ** (k * 1.2), 0.07, 1.4); break;
+        case "clang":
+          // la batterie entière qui s'entrechoque, faux et métallique
+          for (const f of [613, 702, 931, 1187]) ton(out, t + Math.random() * 0.06, { dur: 0.7, type: "triangle", f0: f, gain: 0.04 });
+          bruit(out, t, { dur: 0.3, type: "bandpass", f0: 2600, q: 1.2, gain: 0.25 });
+          break;
+        case "bouillon":
+          for (let i = 0; i < 5; i++) {
+            const d = 0.07 + Math.random() * 0.25;
+            ton(out, t + d * i, { dur: 0.09, type: "sine", f0: 180 + Math.random() * 120, f1: 420 + Math.random() * 200, gain: 0.07 });
+            bruit(out, t + d * i, { dur: 0.06, type: "lowpass", f0: 700, gain: 0.08 });
+          }
+          break;
+        case "accord":
+          // un accord discret, comme un souvenir qui revient (septième majeure, très doux)
+          [262, 330, 392, 494, 523].forEach((f, i) => {
+            ton(out, t + i * 0.09, { dur: 2.6, type: "sine", f0: f, gain: 0.035, att: 0.25 });
+            ton(out, t + i * 0.09, { dur: 2.2, type: "triangle", f0: f * 2, gain: 0.008, att: 0.3 });
+          });
+          break;
+        case "souffleFroid":
+          bruit(out, t, { dur: 0.12, type: "lowpass", f0: 900, f1: 200, gain: 0.5 });
+          bruit(out, t, { dur: 2.2, type: "highpass", f0: 3500, f1: 6000, gain: 0.18, att: 0.05 });
+          ton(out, t, { dur: 0.3, type: "square", f0: 70, f1: 45, gain: 0.12 });
+          break;
+        case "givre": for (let i = 0; i < 4; i++) clic(out, t + Math.random() * 0.2, 4200 + Math.random() * 2500, 0.05); break;
+        case "fonte":
+          bruit(out, t, { dur: 1.4, type: "highpass", f0: 5000, f1: 1500, gain: 0.16 });
+          for (let i = 0; i < 3; i++) ton(out, t + 0.5 + i * 0.3, { dur: 0.08, type: "sine", f0: 1200, f1: 500, gain: 0.05 });
+          bruit(out, t + 1.2, { dur: 0.08, type: "lowpass", f0: 600, gain: 0.5 });
+          break;
+        case "flamme":
+          bruit(out, t, { dur: 1.2, type: "lowpass", f0: 200, f1: 1800, gain: 0.35, att: 0.25 });
+          bruit(out, t + 0.2, { dur: 1.6, type: "bandpass", f0: 400, q: 0.8, gain: 0.15, att: 0.3 });
+          break;
+        case "bip": ton(out, t, { dur: 0.09, type: "square", f0: 1320 + k * 400, gain: 0.04 }); break;
+        case "buzz":
+          ton(out, t, { dur: 0.45, type: "sawtooth", f0: 110, gain: 0.07 });
+          ton(out, t, { dur: 0.45, type: "square", f0: 117, gain: 0.04 });
+          break;
+        case "hachoir":
+          bruit(out, t, { dur: 0.08, type: "lowpass", f0: 900, gain: 0.6 });
+          ton(out, t, { dur: 0.12, type: "sine", f0: 140, f1: 70, gain: 0.25 });
+          ton(out, t + 0.02, { dur: 0.6, type: "triangle", f0: 2100 + k * 600, gain: 0.025 });
+          break;
+        case "choeur": {
+          // une nappe qui monte comme un chœur lointain (scies désaccordées, passe-bas qui s'ouvre), puis la cloche
+          const c = ctx!;
+          const f = c.createBiquadFilter();
+          f.type = "lowpass";
+          f.frequency.setValueAtTime(300, t);
+          f.frequency.exponentialRampToValueAtTime(2400, t + 3);
+          f.connect(out);
+          for (const n of [131, 165, 196, 262, 330]) for (const d of [-4, 4]) ton(f, t, { dur: 5, type: "sawtooth", f0: n * 2 ** (d / 1200), gain: 0.012, att: 1.8 });
+          cloche(t + 3.2, 523, 0.06, 3);
+          break;
+        }
+        case "cloche":
+          // la cloche de service du comptoir : ding clair
+          for (const [r, g] of [[1, 1], [2.4, 0.4], [4.1, 0.2]] as const) ton(out, t, { dur: 1.6 / r, type: "sine", f0: 2350 * r, gain: 0.07 * g, att: 0.002 });
+          break;
+      }
+    },
     dispose() {
       fini = true;
+      fileAnnonces.vider();
+      chargements.clear();
       if (typeof window !== "undefined" && "speechSynthesis" in window) { try { window.speechSynthesis.cancel(); } catch { /* rien */ } }
       if (typeof window !== "undefined") for (const g of GESTES) window.removeEventListener(g, reveiller, { capture: true });
       if (frottement) {
@@ -1155,4 +1708,5 @@ export function creerSons(): Sons {
       bruitBuf = null;
     },
   };
+  return api;
 }

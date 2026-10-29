@@ -69,11 +69,44 @@ export const ZOMBIES = {
   /** vitesses (m/s) : marche, course, sprint, rampant (BO1 : un sprinteur va à peu près à la course du joueur) ; ± 6 % par tigre */
   vitesses: [3.0, 6.2, 8.4, 1.4] as readonly number[],
   variationVitesse: 0.06,
-  /** petits du Truck Muche : vitesse (m/s), morsure, recharge (s), vivants au plus */
-  vitessePetit: 10,
+  /**
+   * Petits du Truck Muche (les chiens de BO1, qui sprintent dès l'apparition) : vitesse (m/s) au-dessus du sprint du joueur (12,5 m/s : on ne
+   * les sème plus qu'en glissade), morsure (dégâts « plat du jour »), armement court de la morsure (s) et recharge (s) : ≈ 1,5 morsure par
+   * seconde, deux petits couchent 100 PV en 2 s. Pendant l'armement, le petit suit sa cible à `morsureRotationMax` (rad/s) ; hors armement il
+   * vire à `rotationPetit` (rayon de virage ≈ 1,2 m) ; deux petits se serrent jusqu'à `separationPetitM`.
+   */
+  vitessePetit: 13.5,
   morsurePetit: 30,
-  morsureRechargeS: 0.8,
-  plafondPetits: 8,
+  morsureArmeS: 0.22,
+  morsureRechargeS: 0.45,
+  morsureRotationMax: 5,
+  rotationPetit: 11,
+  separationPetitM: 0.9,
+  /**
+   * Mini Truck Muche (les chiens de feu de BO1, qui explosent) : un petit camion qui fonce sur le joueur le plus proche sans ralentir, vire
+   * mal (rayon de virage ≈ 5,6 m : un pas de côté le fait passer à côté, son souffle seul vous rattrape), allume sa mèche (klaxon aigu) à `contactM` m d'un joueur, ralentit à `vitesseMeche` × sa vitesse et saute
+   * `mecheS` s plus tard, ou aussitôt à `contactImmediatM` m. Abattu, il saute aussi (souffle d'autant plus dangereux qu'on l'a laissé
+   * approcher). Souffle de `souffleM` m : `souffleJoueur` PV au centre à `souffleJoueurBord` au bord (difficulté « plat du jour »),
+   * `souffleTigre` à `souffleTigreBord` pour les tigres (un mini Truck abattu au milieu des petits les emporte, et les autres mini Trucks).
+   * L'échelle de 3 cale le corps (`capsuleTigre`, ≈ 2 m de long) sur le modèle : le Truck Muche réduit à 0,3.
+   */
+  miniTruck: {
+    vitesse: 14,
+    rotation: 2.5,
+    separationM: 1.8,
+    contactM: 2.2,
+    contactImmediatM: 1.5,
+    mecheS: 0.3,
+    vitesseMeche: 0.55,
+    souffleM: 4.5,
+    souffleJoueur: 80,
+    souffleJoueurBord: 15,
+    souffleTigre: 1600,
+    souffleTigreBord: 400,
+    echelle: 3,
+    /** PV : cette part de ceux d'un petit de la même livraison */
+    partPv: 0.5,
+  },
   // ---- griffe (coup de patte qu'on voit venir et qu'on esquive, comme les attaques des zombies de BO1) ----
   /**
    * Instant (s) du contact après le début du coup : le tigre se cabre et lève la patte pendant cet armement (le geste `griffe` du client
@@ -99,10 +132,15 @@ export const ZOMBIES = {
   griffe: 50,
   griffeChef: 80,
   // ---- barricades ----
-  /** planches par fenêtre ; arrachage d'une planche (s) selon l'allure ; repose d'une planche (s), portée (m) */
+  /**
+   * planches par fenêtre ; arrachage d'une planche (s) selon l'allure ; repose (BO1 `blocker_trigger_think` : une planche, puis `wait(1)`,
+   * tant que la touche est tenue) : la première `reposePremiereS` après l'appui, les suivantes toutes les `reposeS` s (jamais plus vite,
+   * même en relâchant et réappuyant) ; portée (m)
+   */
   planches: 6,
   arrachageS: [1.4, 1.1, 0.9, 1.6] as readonly number[],
-  reposeS: 1.0,
+  reposeS: 0.9,
+  reposePremiereS: 0.2,
   reposePortee: 2.2,
   /** un tigre « à la fenêtre » à moins de cette distance (m) du point dehors */
   fenetreArriveeM: 0.8,
@@ -136,8 +174,13 @@ export const ZOMBIES = {
   probaBonusHasard: 0.02,
 } as const;
 
-/** Types de tigres : tigre (0), tigre doré porteur d'un bonus (1), tigre chef (2), petit des manches du Truck Muche (3). */
-export type TypeZombie = 0 | 1 | 2 | 3;
+/**
+ * Types de tigres : tigre (0), tigre doré porteur d'un bonus (1), tigre chef (2), petit des manches du Truck Muche (3), mini Truck Muche
+ * explosif des mêmes manches (4, pas un tigre : un petit camion qui fonce et saute, cf. `ZOMBIES.miniTruck`).
+ */
+export type TypeZombie = 0 | 1 | 2 | 3 | 4;
+/** Ennemi des seules manches du Truck Muche (petit ou mini Truck) : lâché par le Truck ou par la foudre, il franchit les fenêtres. */
+export const estLivraison = (type: number): boolean => type === 3 || type === 4;
 /** Allure d'un tigre : marche (0), course (1), sprint (2), rampant (3). */
 export type Allure = 0 | 1 | 2 | 3;
 
@@ -198,9 +241,9 @@ export function pvPetit(numeroTruck: number): number {
   return numeroTruck <= 1 ? 400 : numeroTruck === 2 ? 900 : numeroTruck === 3 ? 1300 : 1600;
 }
 
-/** PV d'un tigre de la manche `n` selon son type et la difficulté : doré × 1,5, chef × 4 ; un petit suit `pvPetit`. */
+/** PV d'un tigre de la manche `n` selon son type et la difficulté : doré × 1,5, chef × 4 ; un petit suit `pvPetit`, un mini Truck la moitié. */
 export function pvZombie(n: number, type: TypeZombie = 0, difficulte: Difficulte = "plat", numeroTruck = 1): number {
-  const base = type === 3 ? pvPetit(numeroTruck) : pvBase(n);
+  const base = type === 3 ? pvPetit(numeroTruck) : type === 4 ? pvPetit(numeroTruck) * ZOMBIES.miniTruck.partPv : pvBase(n);
   const k = type === 1 ? 1.5 : type === 2 ? 4 : 1;
   return Math.max(1, Math.round(base * k * DIFFICULTES[difficulte].pv));
 }
@@ -220,23 +263,24 @@ export function valeurAllure(n: number): number {
  * ≤ 35 marche, ≤ 70 course, sinon sprint. `alea` ∈ [0, 1[ injecté. Un chef ne dépasse jamais la course.
  */
 export function allureTiree(n: number, alea: number, difficulte: Difficulte = "plat", type: TypeZombie = 0): Allure {
-  if (type === 3) return 2;
+  if (estLivraison(type)) return 2;
   const v = valeurAllure(n) + DIFFICULTES[difficulte].allure;
   const r = v + Math.floor(Math.min(0.999999, Math.max(0, alea)) * 35);
   const allure: Allure = r <= 35 ? 0 : r <= 70 ? 1 : 2;
   return type === 2 && allure === 2 ? 1 : allure;
 }
 
-/** Vitesse (m/s) d'une allure, ± `variationVitesse` selon `alea` ∈ [0, 1[. Un petit court à `vitessePetit`. */
+/** Vitesse (m/s) d'une allure, ± `variationVitesse` selon `alea` ∈ [0, 1[. Un petit court à `vitessePetit`, un mini Truck roule à la sienne. */
 export function vitesseAllure(allure: Allure, alea: number, type: TypeZombie = 0): number {
   const a = Math.min(1, Math.max(0, alea));
-  const base = type === 3 ? ZOMBIES.vitessePetit : ZOMBIES.vitesses[allure];
+  const base = type === 3 ? ZOMBIES.vitessePetit : type === 4 ? ZOMBIES.miniTruck.vitesse : ZOMBIES.vitesses[allure];
   return base * (1 + ZOMBIES.variationVitesse * (2 * a - 1));
 }
 
-/** Dégâts d'une griffe selon le type et la difficulté (le petit mord). */
+/** Dégâts d'une griffe selon le type et la difficulté (le petit mord : 22 en entrée, 30, 38 en goulaf ; le mini Truck ne griffe pas, il saute). */
 export function degatsGriffe(type: TypeZombie = 0, difficulte: Difficulte = "plat"): number {
-  if (type === 3) return ZOMBIES.morsurePetit;
+  if (type === 3) return Math.round(ZOMBIES.morsurePetit * facteurDifficulte(difficulte));
+  if (type === 4) return 0;
   const d = DIFFICULTES[difficulte].griffe;
   return type === 2 ? d + (ZOMBIES.griffeChef - ZOMBIES.griffe) : d;
 }
@@ -246,9 +290,31 @@ export function rechargeGriffe(type: TypeZombie): number {
   return type === 3 ? ZOMBIES.morsureRechargeS : ZOMBIES.griffeRechargeS;
 }
 
+/** Armement (s) d'un coup : la morsure du petit part presque tout de suite, la griffe des tigres se voit venir (`griffeArmeS`). */
+export function armementGriffe(type: TypeZombie): number {
+  return type === 3 ? ZOMBIES.morsureArmeS : ZOMBIES.griffeArmeS;
+}
+/** Rotation (rad/s) pendant l'armement : le petit suit sa cible, le tigre se laisse contourner. */
+export function rotationArmement(type: TypeZombie): number {
+  return type === 3 ? ZOMBIES.morsureRotationMax : ZOMBIES.griffeRotationMax;
+}
+/** Rotation (rad/s) hors armement : le petit vire sec, le mini Truck vire mal (il fonce tout droit). */
+export function rotationZombie(type: TypeZombie): number {
+  return type === 3 ? ZOMBIES.rotationPetit : type === 4 ? ZOMBIES.miniTruck.rotation : ZOMBIES.rotationMax;
+}
+/** Distance de séparation (m) d'un type ; entre deux types, la moyenne. */
+export function separationZombie(type: TypeZombie): number {
+  return type === 3 ? ZOMBIES.separationPetitM : type === 4 ? ZOMBIES.miniTruck.separationM : ZOMBIES.separationM;
+}
+
 /** Échelle du modèle d'un tigre selon son type. */
 export function echelleZombie(type: TypeZombie): number {
-  return type === 2 ? ZOMBIES.echelleBrute : type === 3 ? ZOMBIES.echellePetit : ZOMBIES.echelle;
+  return type === 2 ? ZOMBIES.echelleBrute : type === 3 ? ZOMBIES.echellePetit : type === 4 ? ZOMBIES.miniTruck.echelle : ZOMBIES.echelle;
+}
+
+/** Facteur de dégâts des ennemis du Truck selon la difficulté (entrée 0,75, plat 1, goulaf 1,25). */
+export function facteurDifficulte(difficulte: Difficulte): number {
+  return difficulte === "entree" ? 0.75 : difficulte === "goulaf" ? 1.25 : 1;
 }
 
 /** Tigres chefs de la manche `n` : floor((n − 6) / 4) à partir de la manche 10. */
@@ -294,9 +360,36 @@ export function premiereMancheTruck(alea: number): number {
 export function mancheTruckSuivante(n: number, alea: number): number {
   return n + 4 + Math.min(2, Math.floor(Math.max(0, alea) * 3));
 }
-/** Petits d'une manche du Truck : 6 par joueur aux deux premières, 8 ensuite. */
+/**
+ * Ennemis d'une manche du Truck (petits et mini Trucks) : BO1 lâche 6 chiens par joueur aux deux premières, 8 ensuite ; nos joueurs vont
+ * 40 % plus vite que ceux de BO1, la livraison en lâche donc 8 par joueur puis 11, et au moins 10 en solo.
+ */
 export function totalTruck(numeroTruck: number, j: number): number {
-  return Math.max(1, Math.floor(j)) * (numeroTruck < 3 ? 6 : 8);
+  return Math.max(10, Math.max(1, Math.floor(j)) * (numeroTruck < 3 ? 8 : 11));
+}
+/** Ennemis du Truck vivants au plus (BO1 : 2 chiens par joueur) : 4 + 3 par joueur, sous le plafond de 24 (solo 7, 2 joueurs 10, 4 joueurs 16). */
+export function plafondPetits(j: number): number {
+  return Math.min(ZOMBIES.plafondVivants, 4 + 3 * Math.max(1, Math.floor(j)));
+}
+/** Part des mini Trucks parmi les ennemis d'une livraison (BO1 : la moitié des chiens sont des chiens de feu) : 25 %, 35 %, puis 50 %. */
+export function partMiniTrucks(numeroTruck: number): number {
+  return numeroTruck <= 1 ? 0.25 : numeroTruck === 2 ? 0.35 : 0.5;
+}
+/**
+ * Ordre des ennemis d'une manche du Truck : `total` petits (3) dont `round(total × partMiniTrucks)` mini Trucks (4), répartis au hasard
+ * (injecté), jamais aux deux premières places (la manche s'ouvre sur des petits).
+ */
+export function typesTruck(numeroTruck: number, total: number, alea: () => number): TypeZombie[] {
+  const types: TypeZombie[] = new Array(Math.max(0, total)).fill(3);
+  const libres: number[] = [];
+  for (let i = Math.min(2, total); i < total; i++) libres.push(i);
+  const minis = Math.min(libres.length, Math.round(total * partMiniTrucks(numeroTruck)));
+  for (let k = 0; k < minis; k++) {
+    const r = Math.min(libres.length - 1, Math.floor(alea() * libres.length));
+    types[libres[r]] = 4;
+    libres.splice(r, 1);
+  }
+  return types;
 }
 /** PV du Truck Muche lui-même (on peut le faire exploser). */
 export function pvTruck(numeroTruck: number): number {

@@ -15,6 +15,7 @@
   --ag-shield: #7fb2ff; /* bouclier : 6,8:1 */
   --ag-ok: #6ff0a8; /* soin, régénération, ping bon : 10,2:1 */
   --ag-tete: #ffd166; /* tir à la tête : 10,1:1 */
+  --ag-gratin: #ff8ae8; /* (v8, zombies) arme passée au Micro-ondes (Pack-a-Punch) : ≈ 8:1 sur la plaque */
   --ag-hud-fond: rgba(4, 6, 10, 0.86); /* toute plaque qui porte du texte < 24u */
   --ag-hud-fond-fort: rgba(4, 6, 10, 0.94); /* tableau, carte du tueur, fin de match */
   --ag-cadre: var(--ag-ink-dim); /* contours ESSENTIELS (mini-map, plaques) ; --ag-line-strong reste aux filets décoratifs */

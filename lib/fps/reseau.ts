@@ -7,7 +7,7 @@
  */
 
 import type { EtatJoueurSnap, MessageClient, MessageServeur, Vec3 } from "./protocole";
-import { VERSION_PROTOCOLE } from "./protocole";
+import { ECART_GARDE_M, VERSION_PROTOCOLE } from "./protocole";
 
 export type EtatConnexion = "connexion" | "ouvert" | "ferme" | "erreur";
 
@@ -74,6 +74,9 @@ export class HorlogeServeur {
 // ---------- WebSocket ----------
 
 /** Sous-ensemble de WebSocket utilisé (permet d'injecter un faux socket dans les tests). */
+/** Code de fermeture d'un départ volontaire (vue fermée, sortie du jeu), cf. `garderPourReprise` de salons.ts. */
+export const CODE_DEPART_VOLONTAIRE = 1000;
+
 export interface SocketLike {
   readyState: number;
   onopen: ((ev: unknown) => void) | null;
@@ -81,7 +84,8 @@ export interface SocketLike {
   onerror: ((ev: unknown) => void) | null;
   onclose: ((ev: unknown) => void) | null;
   send(data: string): void;
-  close(): void;
+  /** `code` 1000 : départ volontaire (le serveur ne garde pas la session pour une reprise) */
+  close(code?: number): void;
 }
 
 export interface OptionsReseau {
@@ -108,6 +112,8 @@ export function connecterArene(
   const horloge = new HorlogeServeur();
   let socket: SocketLike | null = null;
   let id: string | null = null;
+  /** (v8) dernière session (id + jeton de `bienvenue`) : la reconnexion demande à la reprendre (`bonjour.reprise`) */
+  let session: { id: string; jeton: string } | null = null;
   let file: string[] = [];
   let tentatives = 0;
   let minuteurReconnexion: ReturnType<typeof setTimeout> | null = null;
@@ -124,7 +130,7 @@ export function connecterArene(
       try { socket.send(texte); return; } catch { /* repli sur la file */ }
     }
     // Un état, un tir, un coup, une commande de conduite ou un ping de la coupure n'a plus de sens à la reconnexion (et 64 états rejoués
-    // d'un coup avec le bonjour dépassent les 90 messages/s tolérés : le serveur couperait pour flood).
+    // d'un coup avec le bonjour seraient en partie jetés par l'anti-flood du serveur, lib/fps/anti-flood.ts).
     if (perissable) return;
     file.push(texte);
     if (file.length > FILE_MAX) file.splice(0, file.length - FILE_MAX);
@@ -155,8 +161,8 @@ export function connecterArene(
     s.onopen = () => {
       if (s !== socket) return;
       tentatives = 0;
-      // le « bonjour » ouvre toujours la session, puis la file accumulée pendant la coupure
-      s.send(JSON.stringify({ t: "bonjour", v: VERSION_PROTOCOLE, pseudo } satisfies MessageClient));
+      // le « bonjour » ouvre toujours la session (en demandant à reprendre la précédente, v8), puis la file accumulée pendant la coupure
+      s.send(JSON.stringify({ t: "bonjour", v: VERSION_PROTOCOLE, pseudo, ...(session ? { reprise: session } : {}) } satisfies MessageClient));
       const attente = file;
       file = [];
       for (const texte of attente) s.send(texte);
@@ -179,6 +185,9 @@ export function connecterArene(
       if (!m || typeof m !== "object" || typeof m.t !== "string") return;
       if (m.t === "bienvenue") {
         id = m.id;
+        // un changement de salle renvoie un `bienvenue` sans jeton : la session (et son jeton) reste celle de la connexion
+        if (m.jeton) session = { id: m.id, jeton: m.jeton };
+        else if (session && session.id !== m.id) session = null;
         horloge.amorcer(m.maintenant, horlogeLocale());
       } else if (m.t === "pong") {
         horloge.ajouter(m.t0, m.maintenant, horlogeLocale());
@@ -224,7 +233,8 @@ export function connecterArene(
       id = null;
       if (s) {
         s.onopen = s.onmessage = s.onerror = s.onclose = null;
-        try { s.close(); } catch { /* déjà fermé */ }
+        // 1000 = départ volontaire : le serveur déconnecte tout de suite au lieu de garder la session (`REPRISE_MS`)
+        try { s.close(CODE_DEPART_VOLONTAIRE); } catch { /* déjà fermé */ }
         surEtat("ferme");
       }
     },
@@ -235,6 +245,20 @@ export function connecterArene(
       return horloge.maintenant(horlogeLocale());
     },
   };
+}
+
+// ---------- apparition ----------
+
+/**
+ * (v8) Le joueur local garde-t-il sa position à cette apparition ? Jamais pour une vraie apparition. Pour une apparition `garder` : toujours
+ * s'il est debout chez lui (reprise après une coupure : il a continué de bouger, la position serveur le rattrape par le budget de distance),
+ * et pour une relève (à terre chez lui) s'il est à moins de `ECART_GARDE_M` de la position serveur, qui a suivi son corps ; au-delà (écart
+ * anormal, états perdus), il se replace sur celle du serveur.
+ */
+export function gardePosition(m: { p: Vec3; garder?: true }, actuelle: Vec3, deboutLocal = false): boolean {
+  if (m.garder !== true) return false;
+  if (deboutLocal) return true;
+  return Math.hypot(actuelle[0] - m.p[0], actuelle[1] - m.p[1], actuelle[2] - m.p[2]) <= ECART_GARDE_M;
 }
 
 // ---------- interpolation ----------

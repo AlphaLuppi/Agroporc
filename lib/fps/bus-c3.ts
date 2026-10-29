@@ -59,6 +59,10 @@ export interface ArmeLachee {
 
 export type PhaseBus = "attente" | "annonce" | "course";
 
+/** Intervalle entre deux passages (ms), surchargeable pour les tests de bout en bout (`PDJ_FPS_BUS_MIN_MS` / `_MAX_MS` du serveur). */
+export interface IntervalleBus { minMs: number; maxMs: number }
+const INTERVALLE_DEFAUT: IntervalleBus = { minMs: BUS_C3.intervalleMinMs, maxMs: BUS_C3.intervalleMaxMs };
+
 export interface EtatBusC3 {
   phase: PhaseBus;
   prochaineT: number;
@@ -73,6 +77,8 @@ export interface EtatBusC3 {
   armesLachees: ArmeLachee[];
   lachementsFaits: Set<number>;
   passagers: Set<string>;
+  /** intervalle entre deux passages */
+  intervalle: IntervalleBus;
 }
 
 /** Calcule les longueurs cumulées d'une polyligne. */
@@ -85,9 +91,9 @@ export function calculerCumuls(pts: readonly [number, number][]): { cumuls: numb
   return { cumuls, longueur: cumuls[cumuls.length - 1] };
 }
 
-export function creerEtatBusC3(maintenant: number, alea: () => number = Math.random): EtatBusC3 {
+export function creerEtatBusC3(maintenant: number, alea: () => number = Math.random, intervalle: IntervalleBus = INTERVALLE_DEFAUT): EtatBusC3 {
   const { cumuls, longueur } = calculerCumuls(TRAJET_BUS_C3);
-  const delai = BUS_C3.intervalleMinMs + alea() * (BUS_C3.intervalleMaxMs - BUS_C3.intervalleMinMs);
+  const delai = intervalle.minMs + alea() * (intervalle.maxMs - intervalle.minMs);
   return {
     phase: "attente",
     prochaineT: maintenant + delai,
@@ -102,6 +108,7 @@ export function creerEtatBusC3(maintenant: number, alea: () => number = Math.ran
     armesLachees: [],
     lachementsFaits: new Set(),
     passagers: new Set(),
+    intervalle: { minMs: intervalle.minMs, maxMs: intervalle.maxMs },
   };
 }
 
@@ -206,7 +213,7 @@ export function avancerBusC3(
 
     if (maintenant >= e.finCourseT || s >= e.longueurTrajet) {
       e.phase = "attente";
-      const intervalle = BUS_C3.intervalleMinMs + alea() * (BUS_C3.intervalleMaxMs - BUS_C3.intervalleMinMs);
+      const intervalle = e.intervalle.minMs + alea() * (e.intervalle.maxMs - e.intervalle.minMs);
       e.prochaineT = maintenant + intervalle;
       e.v = 0;
       e.passagers.clear();

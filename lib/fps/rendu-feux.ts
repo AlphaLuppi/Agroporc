@@ -20,6 +20,8 @@ export interface Feux {
 
 const MAX_PARTICULES = 900;
 const MAX_ECLAIRS = 4;
+/** Distance à la caméra (m) sous laquelle les particules s'éteignent (éteintes à 30 % de cette distance). */
+const PROCHE_M = 3.5;
 /** Émissions par seconde et par source : [fumée, flammes]. */
 const DEBITS: Record<NiveauFeu, [number, number]> = { fumee: [12, 0], feu: [16, 45], epave: [20, 30] };
 /** Couleurs de départ (additif : plus c'est vif, plus ça brille). */
@@ -58,6 +60,19 @@ function systeme(racine: THREE.Object3D, tex: THREE.Texture, taille: number, n: 
     size: taille, map: tex, vertexColors: true, transparent: true, depthWrite: false, depthTest: true,
     blending: THREE.AdditiveBlending, sizeAttenuation: true, toneMapped: false,
   });
+  // une particule tout contre la caméra (mini Truck ou grenade qui saute au contact, voiture qui explose à côté) grossirait sans borne
+  // (taille / profondeur) : cent braises additives couvraient tout l'écran, saturé en blanc par le bloom pendant une seconde. Elles
+  // s'éteignent entre `PROCHE_M` et la caméra : on voit la gerbe autour de soi, pas un écran blanc
+  mat.onBeforeCompile = (s) => {
+    s.vertexShader = s.vertexShader.replace(
+      "#include <logdepthbuf_vertex>",
+      `#ifdef USE_COLOR
+        vColor.rgb *= smoothstep(${PROCHE_M.toFixed(1)} * 0.3, ${PROCHE_M.toFixed(1)}, - mvPosition.z);
+      #endif
+      #include <logdepthbuf_vertex>`,
+    );
+  };
+  mat.customProgramCacheKey = () => "feux-proches";
   const pts = new THREE.Points(geo, mat);
   pts.frustumCulled = false;
   pts.renderOrder = 15;

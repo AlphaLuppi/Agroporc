@@ -3,7 +3,7 @@
  * paramètre et n'est JAMAIS modifié). On démarre DANS le bâtiment 72 : quatre bâtiments sont creusés (72, 70, 62, 74), leurs murs deviennent
  * des pièces `coque` percées de portes et de fenêtres, l'intérieur reçoit des `cloison` et des `meuble`. Les cours d'Agroparc relient les
  * intérieurs par des passages fermés de portes payantes ou de barricades à planches. Zones, portes, fenêtres, sorties du sol, achats (murs,
- * atouts, Pack-a-Punch, boîte, disjoncteur, ingrédients, four), notes de lore, quais du Truck Muche, points de départ.
+ * atouts, Pack-a-Punch, boîte, disjoncteur), notes de lore, objets du grand secret (`SECRET_CARTE`), quais du Truck Muche, points de départ.
  * Serveur ET client appellent `donneesZombies` / `construireMondeZombies` avant de bâtir le monde de collision, pour voir la même carte.
  * Repère de scene.json : x vers l'est, z vers le sud, mètres. Les bâtiments sont tournés de 16° : chacun a son repère local (s le long
  * de sa façade, t vers le nord), cf. `Repere`.
@@ -33,6 +33,13 @@ export const PROLONGEMENT_PIECE = 0.3;
 /** Hauteur de dessin d'une pièce extérieure (m) ; une porte intérieure fait la hauteur d'une porte. */
 export const HAUTEUR_PIECE = 6;
 export const HAUTEUR_PORTE_INTERIEURE = 2.6;
+/**
+ * Faux plafond des bâtiments creusés (m) : dessiné par rendu-interieurs.ts, solide pour la tête du joueur (`plafondZombies`,
+ * `construireMondeZombies`) et pour les grenades (`plafondBatimentsCreux` de grenades.ts). Une seule source pour les trois.
+ */
+export const HAUTEUR_PLAFOND_ZOMBIES = 3.4;
+/** Alias de `HAUTEUR_PLAFOND_ZOMBIES` (nom du lot des grenades). */
+export const PLAFOND_INTERIEUR_M = HAUTEUR_PLAFOND_ZOMBIES;
 /** Largeur (m) d'une ouverture de porte et d'une fenêtre dans une coque ou une cloison. */
 export const LARGEUR_PORTE = 2.6;
 export const LARGEUR_FENETRE = 1.8;
@@ -81,7 +88,14 @@ export interface PieceSynth {
   /** meuble : genre de rendu */
   genre?: GenreMeuble;
 }
-export type GenreMeuble = "bureau" | "table" | "comptoir" | "etagere" | "rack" | "paillasse" | "cuve" | "canape" | "piano";
+/**
+ * Genres de mobilier. Intérieurs : bureau … piano. Aménagements (v8, dehors et dedans) : `olivier` (tronc de l'olivier, qui dessine aussi
+ * l'arbre et son bac), `bac` (barre de collision du bac octogonal, sans dessin propre), `haie`, `conteneur`, `palette`, `voiture`,
+ * `terrasse` (table, chaises et parasol), `muret`.
+ */
+export type GenreMeuble =
+  | "bureau" | "table" | "comptoir" | "etagere" | "rack" | "paillasse" | "cuve" | "canape" | "piano"
+  | "olivier" | "bac" | "haie" | "conteneur" | "palette" | "voiture" | "terrasse" | "muret";
 
 const piece = (id: string, type: TypePiece, p: Vec2, q: Vec2, o: Partial<PieceSynth> = {}): PieceSynth => ({
   id, type, p: arr(p), q: arr(q), demi: o.demi ?? DEMI_EPAISSEUR_PIECE, prolonge: o.prolonge ?? PROLONGEMENT_PIECE, h: o.h ?? HAUTEUR_PIECE,
@@ -191,8 +205,8 @@ export const CREUSAGES: readonly Creusage[] = [
       // passe et pianos de cuisson le long du mur ouest, plan de travail central, étagères
       { s: -5.5, t: -9.5, ls: 2.0, lt: 6.0, h: 0.95, genre: "piano" },
       { s: -5.5, t: 1.5, ls: 2.0, lt: 5.0, h: 0.95, genre: "comptoir" },
-      { s: -2.2, t: -18.5, ls: 6.0, lt: 1.0, h: 1.8, genre: "etagere" },
-      { s: -10.8, t: -12, ls: 1.2, lt: 3.0, h: 1.8, genre: "etagere" },
+      { s: -2.7, t: -20.4, ls: 7.0, lt: 0.8, h: 1.8, genre: "etagere" },
+      { s: -11.6, t: -12, ls: 1.2, lt: 3.0, h: 1.8, genre: "etagere" },
     ],
   },
   {
@@ -218,10 +232,10 @@ export const CREUSAGES: readonly Creusage[] = [
     ],
     cloisons: [],
     meubles: [
-      { s: -6.5, t: -4, ls: 1.0, lt: 5.0, h: 2.1, genre: "rack" },
-      { s: -9.5, t: -4, ls: 1.0, lt: 5.0, h: 2.1, genre: "rack" },
+      { s: -6, t: -5, ls: 1.0, lt: 4.0, h: 2.1, genre: "rack" },
+      { s: -12.9, t: -5.3, ls: 1.0, lt: 4.0, h: 2.1, genre: "rack" },
       { s: -5, t: -24.5, ls: 4.0, lt: 1.0, h: 1.0, genre: "paillasse" },
-      { s: -11, t: -22, ls: 1.2, lt: 3.0, h: 1.8, genre: "etagere" },
+      { s: -13.2, t: -21.8, ls: 1.2, lt: 3.0, h: 1.8, genre: "etagere" },
     ],
   },
   {
@@ -246,8 +260,8 @@ export const CREUSAGES: readonly Creusage[] = [
       { s: 10, t: -6.5, ls: 4.0, lt: 1.2, h: 0.95, genre: "paillasse" },
       { s: 25, t: -4.5, ls: 4.0, lt: 1.2, h: 0.95, genre: "paillasse" },
       { s: 34, t: -6, ls: 4.0, lt: 1.2, h: 0.95, genre: "paillasse" },
-      { s: 38.5, t: -12.6, ls: 1.4, lt: 1.4, h: 2.0, genre: "cuve" },
-      { s: 13, t: -12.5, ls: 1.4, lt: 1.4, h: 2.0, genre: "cuve" },
+      { s: 35.7, t: -13.5, ls: 1.4, lt: 1.4, h: 2.0, genre: "cuve" },
+      { s: 17.6, t: -13.5, ls: 1.4, lt: 1.4, h: 2.0, genre: "cuve" },
     ],
   },
 ];
@@ -288,13 +302,113 @@ const PIECES_EXTERIEURES: readonly PieceSynth[] = [
   piece("PE", "mur", [207.8, 6.6], [207.8, 24]),
 ];
 
+// ---------------------------------------------------------------------------------------------
+// Aménagements (v8) : deux grandes cours à olivier, le reste resserré
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * Olivier au centre de la Cour Centre et de la Cour Est (le seul obstacle de ces deux cours, autour duquel on fait tourner les tigres) :
+ * tronc carré de `demiTronc` (collision jusqu'à `hauteurTronc`, les balles passent dans la ramure), bac octogonal bas d'apothème
+ * `apothemeBac` (on peut monter dessus, mais un tigre au pied du bac atteint tout joueur posé dessus : pas de refuge).
+ */
+export const OLIVIER = { demiTronc: 0.45, hauteurTronc: 2.4, apothemeBac: 1.4, hauteurBac: 0.45 } as const;
+/** Dimensions (m) des aménagements : `l` le long de la pièce, `w` en travers, `h` hauteur de collision (≥ 2,45 m : on ne s'y hisse pas). */
+export const AMENAGEMENTS = {
+  haie: { l: 0, w: 0.9, h: 2.5 },
+  conteneur: { l: 6.06, w: 2.44, h: 2.6 },
+  voiture: { l: 4.4, w: 1.9, h: 1.5 },
+  palette: { l: 2.4, w: 1.2, h: 1.3 },
+  terrasse: { l: 1.8, w: 1.8, h: 0.75 },
+  muret: { l: 0, w: 0.4, h: 0.9 },
+} as const;
+
+/** Pièce d'aménagement : rectangle centré en `c`, `l` le long de l'angle `angle` (rad, 16° par défaut : comme les façades), `w` en travers. */
+function amenagement(id: string, genre: GenreMeuble, c: Vec2, l: number, w: number, h: number, angle = ANGLE_BATIMENTS, batiment?: BatimentCreux): PieceSynth {
+  const ux = Math.cos(angle) * l / 2, uz = Math.sin(angle) * l / 2;
+  return piece(id, "meuble", [c[0] - ux, c[1] - uz], [c[0] + ux, c[1] + uz], { demi: w / 2, prolonge: 0, h, genre, ...(batiment !== undefined ? { batiment } : {}) });
+}
+/** Aménagement d'un genre standard (dimensions de `AMENAGEMENTS`, longueur imposée pour les haies et murets). */
+function amenag(id: string, genre: keyof typeof AMENAGEMENTS, c: Vec2, l?: number, angle = ANGLE_BATIMENTS): PieceSynth {
+  const d = AMENAGEMENTS[genre];
+  return amenagement(id, genre, c, l ?? d.l, d.w, d.h, angle);
+}
+
+/** Les deux oliviers : id de la pièce du tronc, zone, centre. */
+export const OLIVIERS: readonly { id: string; zone: ZoneId; c: Vec2 }[] = [
+  { id: "OL1", zone: "cour", c: [125.5, -54.5] },
+  { id: "OL2", zone: "est", c: [180.5, -36.5] },
+];
+
+/** Pièces d'un olivier : le tronc (genre `olivier`) puis les quatre barres du bac (genre `bac`), dont l'union est l'octogone. */
+function piecesOlivier(id: string, c: Vec2): PieceSynth[] {
+  const o = OLIVIER, a = o.apothemeBac;
+  const res = [amenagement(id, "olivier", c, 2 * o.demiTronc, 2 * o.demiTronc, o.hauteurTronc)];
+  // l'octogone d'apothème a est l'union de quatre barres de longueur 2a et de largeur égale à son côté (2a tan 22,5°), tous les 45°
+  for (let k = 0; k < 4; k++) res.push(amenagement(`${id}b${k}`, "bac", c, 2 * a, 2 * a * Math.tan(Math.PI / 8), o.hauteurBac, ANGLE_BATIMENTS + (k * Math.PI) / 4));
+  return res;
+}
+
+/** Centre (s, t), dans le repère du Labo (74), de sa troisième cuve cryogénique (le « congélateur n° 3 » du grand secret). */
+export const CUVE_3: Vec2 = [44.6, -13.4];
+
+/** Point (s, t) du repère du Labo (74), qui sert de repère à la Cour Ouest (s le long de la façade nord du Labo, t vers le nord). */
+const L74 = (s: number, t: number): Vec2 => local(74, s, t);
+/** Angle d'une pièce posée en travers des façades (voiture garée en épi). */
+const PERP = ANGLE_BATIMENTS + Math.PI / 2;
+/** Rangée de `n` voitures garées côte à côte (en travers des façades, 0,4 m entre deux), la première à (s0, t) du repère du Labo. */
+function rangee(prefixe: string, s0: number, t: number, n: number): PieceSynth[] {
+  const v = AMENAGEMENTS.voiture;
+  return Array.from({ length: n }, (_, k) => amenag(`${prefixe}${k}`, "voiture", L74(s0 + v.w / 2 + k * (v.w + 0.4), t), undefined, PERP));
+}
+
+/** Point d'un segment p → q à la fraction t, décalé de `d` m sur sa normale gauche (−uz, ux). */
+function surSegment(p: Vec2, q: Vec2, t: number, d: number): Vec2 {
+  const l = Math.hypot(q[0] - p[0], q[1] - p[1]);
+  const ux = (q[0] - p[0]) / l, uz = (q[1] - p[1]) / l;
+  return [p[0] + (q[0] - p[0]) * t - uz * d, p[1] + (q[1] - p[1]) * t + ux * d];
+}
+/** Façade sud de la Cour Est (bâtiment 73), de l'ouest vers l'est : la cour est à sa droite (décalage négatif de `surSegment`). */
+const MUR_SUD_EST: readonly [Vec2, Vec2] = [[167.5, -20.1], [178.6, -17.0]];
+/** Conteneur de livraison de la Cour Est, en travers de sa façade sud, collé à elle à la fraction `FRACTION_CONTENEUR_EST` (coin de la boîte B3). */
+const FRACTION_CONTENEUR_EST = 0.2;
+const CONTENEUR_EST: Vec2 = surSegment(MUR_SUD_EST[0], MUR_SUD_EST[1], FRACTION_CONTENEUR_EST, -(AMENAGEMENTS.conteneur.l / 2 + 0.05));
+
+/**
+ * Aménagements, ajoutés APRÈS toutes les autres pièces (les index des pièces de la v7 ne bougent pas). La Cour Ouest devient le « Parking du
+ * personnel » : une rue le long du Labo (W → D9 → G1), puis des îlots de voitures, de conteneurs, de palettes et de haies séparés par des
+ * allées de 3 à 4,5 m ; on peut y faire tourner des tigres autour d'un îlot, mais serré. Passage Est, Local technique : un îlot ou un meuble
+ * de plus. Cour Centre et Cour Est gardent leur grand anneau autour de l'olivier, avec du mobilier sur les bords seulement.
+ */
+export const PIECES_AMENAGEMENT: readonly PieceSynth[] = [
+  ...OLIVIERS.flatMap((o) => piecesOlivier(o.id, o.c)),
+  // ---- Cour Ouest : Parking du personnel (repère du Labo : s de 1 à 32,4, t de 0,5 à 43) ----
+  // rue le long du Labo (t de 0,5 à 7,3), puis quatre rangées d'îlots séparées par des allées de 4,2 à 4,6 m, trouées de passages de 3 à 5 m
+  ...rangee("PA", 5.4, 9.5, 3), amenag("PA3", "conteneur", L74(18.7, 9.5)), ...rangee("PA4", 25.9, 9.5, 2),
+  amenag("PA6", "palette", L74(37.5, 6), undefined, PERP),
+  amenag("PB0", "haie", L74(7.4, 18.4), 13.2), ...rangee("PB1", 18.2, 18.4, 3), amenag("PB4", "palette", L74(28.6, 18.4), undefined, PERP),
+  amenag("PC0", "conteneur", L74(7.5, 27.4)), ...rangee("PC1", 14.6, 27.4, 2), amenag("PC3", "haie", L74(25, 27.4), 6),
+  ...rangee("PD", 5.5, 36, 2), amenag("PD2", "palette", L74(14.2, 36.2)), ...rangee("PD3", 20.4, 36, 3),
+  // ---- Cour Centre : terrasse du Bistrot devant D4, loin de l'anneau de l'olivier (≈ 18 m) ----
+  amenag("TC1", "terrasse", [142, -63]), amenag("TC2", "terrasse", [140.8, -48.5]), amenag("TC3", "terrasse", [138.5, -67.5]),
+  // ---- Cour Est : conteneur de livraison contre la façade sud (coin de la boîte B3), tables devant D7 ----
+  amenag("CE1", "conteneur", CONTENEUR_EST, undefined, PERP), amenag("CE2", "palette", surSegment(MUR_SUD_EST[0], MUR_SUD_EST[1], 0.85, -0.75)),
+  amenag("TE1", "terrasse", [166, -51]), amenag("TE2", "terrasse", [166.5, -45.5]),
+  // ---- Passage Est : une pile de palettes au milieu (on en fait le tour) ----
+  amenag("PE1", "palette", [152.3, -26.5], undefined, PERP),
+  // ---- Local technique : une baie de plus au milieu ----
+  amenagement("LT1", "rack", local(62, -7, -15), 4, 1, 2.1, PERP, 62),
+  // ---- Labo : la troisième cuve cryogénique (« congélateur n° 3 » du grand secret), près du Micro-ondes ----
+  amenagement("LB1", "cuve", local(74, CUVE_3[0], CUVE_3[1]), 1.4, 1.4, 2.0, ANGLE_BATIMENTS, 74),
+];
+
 /** Hauteur du bâtiment creusé `b` dans scene.json (repli : 6 m). */
 const hauteur = (scene: SceneData | null, b: BatimentCreux): number => scene?.buildings[b]?.h ?? 6;
 
-/** Toutes les pièces, dans l'ORDRE FIXE de leur index dans `buildings` (à partir de `INDEX_PREMIERE_PIECE`). */
+/** Toutes les pièces, dans l'ORDRE FIXE de leur index dans `buildings` (à partir de `INDEX_PREMIERE_PIECE`) : aménagements en dernier. */
 export function piecesSynth(scene: SceneData | null = null): PieceSynth[] {
   const res: PieceSynth[] = [...PIECES_EXTERIEURES];
   for (const c of CREUSAGES) res.push(...piecesCreusage(c, hauteur(scene, c.b)));
+  res.push(...PIECES_AMENAGEMENT);
   return res;
 }
 /** Pièces calculées une fois (hauteurs de scene.json : 72 = 7,7, 70 = 8,1, 62 = 8, 74 = 4,7 ; les tests les comparent à la vraie scène). */
@@ -362,7 +476,7 @@ export const ZONES: readonly Zone[] = [
   { id: "i2", nom: "Passage Est", interieur: false, graine: [154, -22] },
   { id: "cuisine", nom: "Cuisine du Bistrot Trèfle", interieur: true, graine: local(70, -9, -4) },
   { id: "est", nom: "Cour Est", interieur: false, graine: [185, -38] },
-  { id: "local", nom: "Local technique", interieur: true, graine: local(62, -7, -15) },
+  { id: "local", nom: "Local technique", interieur: true, graine: local(62, -4, -15) },
   { id: "i1", nom: "Passage Ouest", interieur: false, graine: [102, -42] },
   { id: "ouest", nom: "Cour Ouest", interieur: false, graine: [76, -68] },
   { id: "labo", nom: "Labo R&D", interieur: true, graine: local(74, 22, -5) },
@@ -505,6 +619,15 @@ function definirFenetre(id: string, zone: ZoneId, cote: Vec2): Fenetre {
 
 export const FENETRES: readonly Fenetre[] = COTES_FENETRES.map((f) => definirFenetre(f.id, f.zone, f.cote));
 export const fenetreDeId = (id: string): Fenetre | null => FENETRES.find((f) => f.id === id) ?? null;
+/** Fenêtre dont le milieu est le plus proche de (x, z) (sons du bonus Menuisier). */
+export function fenetrePlusProche(x: number, z: number): Fenetre | null {
+  let res: Fenetre | null = null, dMin = Infinity;
+  for (const f of FENETRES) {
+    const d = Math.hypot(f.milieu[0] - x, f.milieu[1] - z);
+    if (d < dMin) { dMin = d; res = f; }
+  }
+  return res;
+}
 
 /** Fenêtres des zones données (actives : zones ouvertes et proches des joueurs). */
 export function fenetresDesZones(zones: ReadonlySet<ZoneId>): Fenetre[] {
@@ -515,20 +638,18 @@ export function fenetresDesZones(zones: ReadonlySet<ZoneId>): Fenetre[] {
 // Achats et objets de la carte
 // ---------------------------------------------------------------------------------------------
 
-export type GenreAchat = "mur" | "porte" | "boite" | "atout" | "pap" | "courant" | "ingredient" | "four";
+export type GenreAchat = "mur" | "porte" | "boite" | "atout" | "pap" | "courant";
 /** Arme à acheter au mur : une arme à feu ou l'épée. */
 export type ArmeAchat = ArmeFeuId | "epee";
 export type { AtoutId };
 export const ATOUTS_LISTE: readonly AtoutId[] = ["gratin", "expresso", "ristretto", "pausecafe"];
 export const estAtout = (x: unknown): x is AtoutId => (ATOUTS_LISTE as readonly unknown[]).includes(x);
-export type IngredientId = "sel" | "herbes" | "truffe";
-export const INGREDIENTS_LISTE: readonly IngredientId[] = ["sel", "herbes", "truffe"];
 
 /** Mur sur lequel un achat est accroché (dessin à la craie, distributeur) : segment p → q, fraction t, normale tournée vers le joueur. */
 export interface Facade { p: Vec2; q: Vec2; t: number; normale: Vec2 }
 
 export interface Achat {
-  /** id du catalogue (`mur:pompe`, `boite:B2`, `atout:gratin`, `pap`, `courant`, `ingredient:sel`, `four`, `D1`…) */
+  /** id du catalogue (`mur:pompe`, `boite:B2`, `atout:gratin`, `pap`, `courant`, `D1`…) */
   id: string;
   genre: GenreAchat;
   prix: number;
@@ -547,8 +668,6 @@ export interface Achat {
   atout?: AtoutId;
   /** `boite` : numéro d'emplacement (0 à 4) */
   emplacement?: number;
-  /** `ingredient` */
-  ingredient?: IngredientId;
   /** mur ou objet porteur : où dessiner (absent pour un objet posé au sol) */
   facade?: Facade;
 }
@@ -590,23 +709,58 @@ export const ATOUTS: Readonly<Record<AtoutId, { nom: string; prix: number; prixS
 };
 /** Prix du Pack-a-Punch, des munitions d'une arme améliorée, de la boîte (BO1) et de la boîte en Happy hour. */
 export const PRIX_PAP = 5000;
+/**
+ * (v8) Micro-ondes Gratinator, déroulé de BO1 (`vending_weapon_upgrade`) : l'arme payée est déposée DANS la machine (`entreeMs` : elle y
+ * entre, la porte se ferme), cuit `cuissonMs` en tout (BO1 : reprise possible 4,35 s après le paiement), puis attend `repriseMs` que son
+ * joueur vienne la reprendre (BO1 `packapunch_timeout` = 15 s), sinon elle est perdue, sans remboursement.
+ */
+export const PACK_A_PUNCH = { entreeMs: 700, cuissonMs: 4_000, repriseMs: 15_000 } as const;
 export const PRIX_MUNITIONS_AMELIOREE = 2500;
 export const PRIX_BOITE = 950;
 export const PRIX_BOITE_SOLDES = 10;
 
-/** Emplacements de la boîte mystère (B1 à B5) : position du joueur et façade (la caisse est posée contre le mur). */
+/**
+ * Caisse de la boîte mystère (m) : `longueur` le long du mur, `profondeur`, `recul` de son centre à la façade (le rendu la pose à
+ * façade(t) + normale × recul, son grand côté le long de p → q, sa face ouverte vers la normale), `jeuCoin` entre son bout et le mur
+ * perpendiculaire du coin.
+ */
+export const BOITE = { longueur: 1.6, profondeur: 0.75, recul: 0.5, jeuCoin: 0.15 } as const;
+/**
+ * Fraction t d'un mur de longueur `l` qui cale la caisse dans le coin du bout `bout` (0 : p, 1 : q) : son bout à `jeuCoin` de la face du mur
+ * perpendiculaire, elle-même à `retrait` m en deçà du bout du segment (0,4 m pour une coque : épaisseur du mur voisin).
+ */
+function tCoin(l: number, bout: 0 | 1, retrait = 0): number {
+  const k = (retrait + BOITE.jeuCoin + BOITE.longueur / 2) / l;
+  return bout === 0 ? k : 1 - k;
+}
+const longueurLocale = (de: Vec2, a: Vec2): number => Math.hypot(a[0] - de[0], a[1] - de[1]);
+const RETRAIT_COQUE = 2 * DEMI_EPAISSEUR_COQUE;
+const LONGUEUR_MUR_SUD_EST = Math.hypot(MUR_SUD_EST[1][0] - MUR_SUD_EST[0][0], MUR_SUD_EST[1][1] - MUR_SUD_EST[0][1]);
+
+/**
+ * Emplacements de la boîte mystère (B1 à B5) : position du joueur et façade. Chaque caisse est dans un COIN (v8) : dos à un mur (la façade),
+ * un bout à `jeuCoin` d'un mur perpendiculaire, face ouverte vers la pièce ; vérifié par un test (rayons vers le mur du fond et le mur du coin).
+ */
 const EMPLACEMENTS_BOITE: readonly { zone: ZoneId; pos: { position: Vec2; facade: Facade } }[] = [
-  { zone: "pause", pos: surMurLocal(72, [30.9, -0.1], [23.3, -0.1], 0.4, [26, -5]) },
-  { zone: "cour", pos: surMur([108, -67.3], [103.1, -50.2], 0.55, [120, -58]) },
-  { zone: "est", pos: surMur([178.6, -17.0], [167.5, -20.1], 0.5, [175, -30]) },
-  { zone: "ouest", pos: surMur([96.2, -85.5], [70.1, -92.9], 0.25, [85, -75]) },
-  { zone: "labo", pos: surMurLocal(74, [4.7, -9.7], [4.6, -14.6], 0.5, [10, -12]) },
+  // Salle de pause : coin nord-est, contre le mur nord, à côté de la porte de service D3
+  { zone: "pause", pos: surMurLocal(72, [30.9, -0.1], [23.3, -0.1], tCoin(longueurLocale([30.9, -0.1], [23.3, -0.1]), 0, RETRAIT_COQUE), [26, -5]) },
+  // Cour Centre : coin nord-ouest, contre la façade du bâtiment 69, au pied du décrochement (près de la barricade N2c)
+  { zone: "cour", pos: surMur([124.1, -77.5], [149.1, -70.4], tCoin(Math.hypot(25, 7.1), 0), [130, -60]) },
+  // Cour Est : contre la façade sud, calée contre le conteneur de livraison
+  {
+    zone: "est",
+    pos: surMur(MUR_SUD_EST[0], MUR_SUD_EST[1], FRACTION_CONTENEUR_EST + (AMENAGEMENTS.conteneur.w / 2 + BOITE.jeuCoin + BOITE.longueur / 2) / LONGUEUR_MUR_SUD_EST, [175, -30]),
+  },
+  // Cour Ouest (parking) : coin nord-ouest, contre le mur nord
+  { zone: "ouest", pos: surMur([96.2, -85.5], [70.1, -92.9], tCoin(Math.hypot(26.1, 7.4), 1), [85, -75]) },
+  // Labo : coin sud-ouest, contre le petit mur du fond
+  { zone: "labo", pos: surMurLocal(74, [4.7, -9.7], [4.6, -14.6], tCoin(longueurLocale([4.7, -9.7], [4.6, -14.6]), 1, RETRAIT_COQUE), [10, -12]) },
 ];
 export const NB_EMPLACEMENTS_BOITE = EMPLACEMENTS_BOITE.length;
 /** Emplacements possibles au départ (BO1 : la boîte commence près du départ) : Salle de pause ou Cour Centre. */
 export const EMPLACEMENTS_DEPART_BOITE: readonly number[] = [0, 1];
 
-/** Tous les achats fixes (sans les portes) : armes au mur, atouts, Pack-a-Punch, boîtes, disjoncteur, ingrédients, four. */
+/** Tous les achats fixes (sans les portes) : armes au mur, atouts, Pack-a-Punch, boîtes, disjoncteur. */
 export const ACHATS: readonly Achat[] = ([
   // Open space : le revolver (le M14 de BO1) et le fusil à pompe (l'Olympia)
   mur("revolver", 500, 250, "open", surMurLocal(72, [6, -10.4], [6, 0.05], 0.18, [0, -5], DECALAGE_FACADE_M, false)),
@@ -621,19 +775,23 @@ export const ACHATS: readonly Achat[] = ([
   mur("epee", 3000, undefined, "est", surMur([176.7, -62.5], [201.7, -55.4], 0.7, [188, -45])),
   // Cour Ouest : le sniper
   mur("sniper", 1500, 750, "ouest", surMur([97.7, -83.1], [90.5, -57.9], 0.5, [80, -70])),
+  // (v8) armes des zombies le long du chemin, de moins en moins chères à mesure qu'on s'éloigne du départ (BO1 : Olympia, FAL, PPSh, CZ75)
+  // Passage Ouest : le Coupe-baguette, sur la façade du Labo
+  mur("baguette", 750, 375, "i1", surMur([101.7, -34.5], [95.7, -36.2], 0.5, [102, -42])),
+  // Passage Est : l'Agrafeuse, sur la façade de la Cuisine
+  mur("agrafeuse", 1200, 600, "i2", surMur([148.1, -37.3], [156.0, -35.1], 0.5, [154, -22])),
+  // Local technique : la Photocopieuse, à côté du disjoncteur
+  mur("photocopieuse", 1500, 750, "local", surMurLocal(62, [0, -7.4], [0, 0], 0.82, [-5, -3])),
+  // Labo : la Perforeuse, sur le mur du Micro-ondes
+  mur("perforeuse", 1000, 500, "labo", surMurLocal(74, [49.7, -14.5], [49.6, -4.1], 0.12, [44, -9])),
   // atouts
   { id: "atout:pausecafe", genre: "atout", atout: "pausecafe", prix: ATOUTS.pausecafe.prix, rayon: R_ACHAT, zone: "pause", ...surMurLocal(72, [23.3, 4.2], [11.8, 4.1], 0.5, [17, -2]) },
   { id: "atout:expresso", genre: "atout", atout: "expresso", prix: ATOUTS.expresso.prix, rayon: R_ACHAT, zone: "cuisine", ...surMurLocal(70, [1.5, 1.7], [1.5, 9.0], 0.5, [-4, 5]) },
   { id: "atout:ristretto", genre: "atout", atout: "ristretto", prix: ATOUTS.ristretto.prix, rayon: R_ACHAT, zone: "est", ...surMur([176.7, -62.5], [201.7, -55.4], 0.3, [188, -45]) },
   { id: "atout:gratin", genre: "atout", atout: "gratin", prix: ATOUTS.gratin.prix, rayon: R_ACHAT, zone: "ouest", ...surMur([96.2, -85.5], [70.1, -92.9], 0.6, [85, -75]) },
-  // Pack-a-Punch (Labo), disjoncteur (Local technique), four (Cuisine)
+  // Pack-a-Punch (Labo), disjoncteur (Local technique)
   { id: "pap", genre: "pap", prix: PRIX_PAP, rayon: R_ACHAT, zone: "labo", ...surMurLocal(74, [49.7, -14.5], [49.6, -4.1], 0.55, [44, -9]) },
   { id: "courant", genre: "courant", prix: 0, rayon: R_ACHAT, zone: "local", ...surMurLocal(62, [0, -7.4], [0, 0], 0.4, [-5, -3]) },
-  { id: "four", genre: "four", prix: 0, rayon: R_ACHAT, zone: "cuisine", ...surMurLocal(70, [-6.6, 11.8], [-6.6, 8.9], 0.5, [-3, 6]) },
-  // ingrédients de la Recette ultime
-  { id: "ingredient:sel", genre: "ingredient", ingredient: "sel", prix: 0, rayon: 2, zone: "cuisine", position: local(70, -2.2, -16.8) },
-  { id: "ingredient:herbes", genre: "ingredient", ingredient: "herbes", prix: 0, rayon: 2, zone: "ouest", position: [72, -76] },
-  { id: "ingredient:truffe", genre: "ingredient", ingredient: "truffe", prix: 0, rayon: 2, zone: "labo", position: local(74, 38.5, -10.6) },
   // boîtes
   ...EMPLACEMENTS_BOITE.map((e, i): Achat => ({ id: `boite:B${i + 1}`, genre: "boite", emplacement: i, prix: PRIX_BOITE, rayon: R_ACHAT, zone: e.zone, ...e.pos })),
 ] as Achat[]).map((a): Achat => ({ ...a, position: arr(a.position) }));
@@ -650,22 +808,24 @@ export function achatDeId(id: string): Achat | null {
 export const achatBoite = (emplacement: number): Achat => ACHATS.find((a) => a.genre === "boite" && a.emplacement === emplacement)!;
 export const achatAtout = (id: AtoutId): Achat => ACHATS.find((a) => a.genre === "atout" && a.atout === id)!;
 
-/** Ce qui est actif pour le filtrage des invites : boîte présente, portes ouvertes, ingrédients déjà pris, courant. */
-export interface EtatCarte { ouvertes?: Iterable<string>; boite?: number | null; ingredientsPris?: Iterable<string>; courant?: boolean }
+/**
+ * Ce qui est actif pour le filtrage des invites : emplacement(s) des boîtes présentes (la principale, plus celles du Happy hour), portes
+ * ouvertes, courant.
+ */
+export interface EtatCarte { ouvertes?: Iterable<string>; boite?: number | readonly number[] | null; courant?: boolean }
 
 /**
  * Achats à portée de `pos` : les achats fixes à moins de leur rayon et les portes à moins de leur portée du SEGMENT de leur pièce. Les
- * portes déjà ouvertes, les boîtes absentes de l'emplacement courant, les ingrédients pris (et la truffe sans courant) sont écartés.
+ * portes déjà ouvertes et les boîtes absentes de l'emplacement courant sont écartées.
  * Triés du plus proche au plus lointain.
  */
 export function achatsProches(pos: Vec2, e: EtatCarte | ReadonlySet<string> | readonly string[] = {}): Achat[] {
   const etat: EtatCarte = e instanceof Set || Array.isArray(e) ? { ouvertes: e as Iterable<string> } : (e as EtatCarte);
   const o = new Set(etat.ouvertes ?? []);
-  const pris = new Set(etat.ingredientsPris ?? []);
+  const boites = etat.boite === undefined ? null : new Set(typeof etat.boite === "number" ? [etat.boite] : etat.boite ?? []);
   const res: { a: Achat; d: number }[] = [];
   for (const a of ACHATS) {
-    if (a.genre === "boite" && etat.boite !== undefined && etat.boite !== a.emplacement) continue;
-    if (a.genre === "ingredient" && (pris.has(a.ingredient!) || (a.ingredient === "truffe" && !etat.courant))) continue;
+    if (a.genre === "boite" && boites && !boites.has(a.emplacement!)) continue;
     const d = Math.hypot(pos[0] - a.position[0], pos[1] - a.position[1]);
     if (d <= a.rayon) res.push({ a, d });
   }
@@ -677,6 +837,83 @@ export function achatsProches(pos: Vec2, e: EtatCarte | ReadonlySet<string> | re
   res.sort((x, y) => x.d - y.d);
   return res.map((r) => r.a);
 }
+
+// ---------------------------------------------------------------------------------------------
+// Objets du grand secret (« Le Menu fantôme ») : positions seulement, la machine d'états est dans zombies-secret.ts
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * Objet du décor qui sert au grand secret : centre (m, y compris) visé par les tirs, les coups et les souffles, `rayon` de sa sphère de touche
+ * (ou d'action pour un objet qu'on prend avec E, mesuré au sol depuis `position`), façade où le rendu l'accroche (absente : posé au sol ou sur
+ * un meuble). Aucun n'a de collision : ce sont des détails du décor (la cuve n° 3 est une pièce `meuble`, `LB1`).
+ */
+export interface ObjetSecret { id: string; zone: ZoneId; c: readonly [number, number, number]; rayon: number; position: Vec2; facade?: Facade }
+
+/** Objet accroché à une façade : centre à `recul` m du mur, à `y` m du sol. */
+function objetMur(id: string, zone: ZoneId, pos: { position: Vec2; facade: Facade }, y: number, rayon: number, recul = 0.06): ObjetSecret {
+  const f = pos.facade;
+  const mx = f.p[0] + (f.q[0] - f.p[0]) * f.t, mz = f.p[1] + (f.q[1] - f.p[1]) * f.t;
+  return { id, zone, c: [Math.round((mx + f.normale[0] * recul) * 100) / 100, y, Math.round((mz + f.normale[1] * recul) * 100) / 100], rayon, position: arr(pos.position), facade: f };
+}
+/** Objet posé (sol, meuble) au point local (s, t) du bâtiment `b`, centre à `y` m. */
+function objetPose(id: string, zone: ZoneId, b: BatimentCreux | null, st: Vec2, y: number, rayon: number): ObjetSecret {
+  const p = arr(b === null ? st : local(b, st[0], st[1]));
+  return { id, zone, c: [p[0], y, p[1]], rayon, position: p };
+}
+
+/** Hauteur (m) du centre des pendules (sous le faux plafond de 3,4 m, au-dessus des têtes). */
+export const HAUTEUR_PENDULE_M = 2.55;
+/** Pictogrammes des restaurants peints sur les casseroles et sur l'ardoise (ceux de lib/resto-pictos.ts, redessinés à la craie). */
+export const PICTOS_SECRET = ["trefle", "croissant", "camion", "feuille"] as const;
+export type PictoSecret = (typeof PICTOS_SECRET)[number];
+
+/**
+ * Le décor du grand secret. Rien n'est signalé au joueur : ce sont des objets de cuisine et de bureau, posés là où ils iraient, qui ne
+ * réagissent qu'au bon geste au bon moment (solution : docs/superpowers/specs/2026-10-29-zombies-secret-SOLUTION.md).
+ * - `pendules` : quatre pendules arrêtées sur 11 h 58 (open space, salle de pause, cuisine, labo), puis celle du Local technique, qui tourne
+ *   dès que le courant revient ;
+ * - `ardoise` : le menu du jour de la cuisine (pictos dans un ordre tiré à chaque partie, plats barrés) ; `casseroles` : la batterie de cuivre
+ *   pendue au-dessus du piano, un picto chacune ;
+ * - `marmite` : contre la façade de la cuisine, dans la Cour Centre ; `cuves` : les trois cuves cryogéniques du Labo, numérotées 1 à 3 ;
+ * - `four` : le four de la cuisine ; `lampeLabo` / `lampeLocal` : les ampoules au-dessus du Micro-ondes et du disjoncteur ;
+ * - `ecrans` : huit des douze écrans de l'open space (un post-it numéroté chacun, numéros tirés à chaque partie) ; `billot` et `cloche` : sur
+ *   le comptoir de la cuisine.
+ */
+export const SECRET_CARTE = (() => {
+  const pendules: ObjetSecret[] = [
+    objetMur("pendule:open", "open", surMurLocal(72, [6, -10.4], [6, 0.05], 0.86, [0, -5], DECALAGE_FACADE_M, false), HAUTEUR_PENDULE_M, 0.32),
+    objetMur("pendule:pause", "pause", surMurLocal(72, [6, -10.4], [6, 0.05], 0.12, [12, -5], DECALAGE_FACADE_M, false), HAUTEUR_PENDULE_M, 0.32),
+    objetMur("pendule:cuisine", "cuisine", surMurLocal(70, [1.6, -21.2], [1.5, -3.5], 0.2, [-4, -10]), HAUTEUR_PENDULE_M, 0.32),
+    objetMur("pendule:labo", "labo", surMurLocal(74, [49.6, -4.1], [43.4, -4.1], 0.5, [46.5, -9]), HAUTEUR_PENDULE_M, 0.32),
+    objetMur("pendule:local", "local", surMurLocal(62, [0, -7.4], [0, 0], 0.12, [-5, -3]), HAUTEUR_PENDULE_M, 0.32),
+  ];
+  const casseroles: ObjetSecret[] = [-11.6, -10.2, -8.8, -7.4].map((t, i) => objetPose(`casserole:${i}`, "cuisine", 70, [-5.5, t], 2.15, 0.3));
+  const cuves: ObjetSecret[] = [[17.6, -13.5], [35.7, -13.5], CUVE_3].map((st, i) => objetPose(`cuve:${i + 1}`, "labo", 74, st as Vec2, 1.0, 0.75));
+  // les écrans sont ceux que rendu-interieurs.ts dessine sur les îlots de bureaux (u = ±L/4, w = ±l/4) : tout le premier îlot, deux du deuxième,
+  // deux du troisième
+  const ecrans: ObjetSecret[] = ([
+    [-14.8, -2.8], [-13.2, -2.8], [-14.8, -3.6], [-13.2, -3.6], [-9.3, -2.8], [-7.7, -3.6], [-9.3, -7.2], [-7.7, -8.0],
+  ] as Vec2[]).map((st, i) => objetPose(`ecran:${i}`, "open", 72, st, 1.04, 0.3));
+  return {
+    pendules,
+    ardoise: objetMur("ardoise", "cuisine", surMurLocal(70, [-12.7, 9.1], [-12.6, -17.3], 0.66, [-8, -7]), 1.75, 0.6),
+    casseroles,
+    marmite: objetPose("marmite", "cour", 70, [-14.4, 4], 0.45, 0.6),
+    cuves,
+    four: objetMur("four", "cuisine", surMurLocal(70, [-6.6, 11.8], [-6.6, 8.9], 0.5, [-3, 6]), 0.5, 2.2, 0.5),
+    lampeLabo: objetMur("lampe:labo", "labo", surMurLocal(74, [49.7, -14.5], [49.6, -4.1], 0.55, [44, -9]), 2.95, 0.15),
+    lampeLocal: objetMur("lampe:local", "local", surMurLocal(62, [0, -7.4], [0, 0], 0.4, [-5, -3]), 2.95, 0.15),
+    ecrans,
+    billot: objetPose("billot", "cuisine", 70, [-5.5, 3.0], 1.05, 0.4),
+    cloche: objetPose("cloche", "cuisine", 70, [-5.5, 0.2], 1.05, 2.2),
+  } as const;
+})();
+/** Objets qu'on prend ou qu'on actionne avec E (sans invite) : id d'achat `secret:<id>`, portée au sol (m). */
+export const INTERACTIONS_SECRET: readonly { id: "truffe" | "four" | "cloche"; position: Vec2; portee: number }[] = [
+  { id: "truffe", position: arr(local(74, CUVE_3[0], CUVE_3[1] + 1.5)), portee: 2.2 },
+  { id: "four", position: SECRET_CARTE.four.position, portee: 2.2 },
+  { id: "cloche", position: arr(local(70, -5.5 - 1.6, 0.2)), portee: 2.2 },
+];
 
 // ---------------------------------------------------------------------------------------------
 // Notes de lore, quais du Truck, départs
@@ -712,7 +949,7 @@ export const QUAIS: readonly Quai[] = [
 ];
 
 /** Truck Muche : durées de l'arrivée et du départ (ms), lâcher des petits (deux toutes les `lacherMs`), épave (ms), souffle (m), caisse (m). */
-export const TRUCK = { arriveeMs: 4_000, departMs: 4_000, lacherMs: 1_400, epaveMs: 8_000, souffleM: 6, demiLongueur: 3.2, demiLargeur: 1.3, hauteur: 3 } as const;
+export const TRUCK = { arriveeMs: 4_000, departMs: 4_000, lacherMs: 1_000, epaveMs: 8_000, souffleM: 6, demiLongueur: 3.2, demiLargeur: 1.3, hauteur: 3 } as const;
 
 /**
  * Distance le long du rayon (o, d normalisé) jusqu'à la caisse orientée du Truck (centre `p` au sol, cap `cap`), ou null. Pur, testé.
@@ -789,21 +1026,30 @@ export function donneesZombies(scene: SceneData): DonneesZombies {
 /** Types dont le prisme garde sa vraie hauteur (le mobilier : on tire par-dessus) ; les bâtiments creusés n'ont pas de prisme utile (h = 0). */
 const HAUTEUR_REELLE: ReadonlySet<string> = new Set(["meuble"]);
 
+
+/** Dessous du faux plafond d'un bâtiment creusé de hauteur `h` (m) : `HAUTEUR_PLAFOND_ZOMBIES`, ou 0,3 m sous un toit plus bas. */
+export const plafondZombies = (h: number): number => Math.min(HAUTEUR_PLAFOND_ZOMBIES, h - 0.3);
+
 /**
  * Monde de collision de la carte zombies : bornes réduites, bâtiments creusés sans hauteur (ni collision ni rayon, jamais relevés), murs
- * hauts (`h = hOrigine = 40`) pour tout le reste sauf le mobilier, pas de wall-run ni de double saut (`sansParkour`).
+ * hauts (`h = hOrigine = 40`) pour tout le reste sauf le mobilier, pas de wall-run, de double saut ni d'escalade (`sansParkour`).
+ * Plafonds (`Prisme.plafond`, `Monde.plafonds`) : l'emprise d'un bâtiment creusé a son faux plafond (`plafondZombies`), une porte
+ * intérieure son linteau (`HAUTEUR_PORTE_INTERIEURE`, gardé quand la porte est achetée) ; la tête du joueur ne les passe pas.
  */
 export function construireMondeZombies(scene: SceneData): Monde {
-  const donnees = donneesZombies(scene).data;
+  const { data: donnees, pieces } = donneesZombies(scene);
   const monde = construireMonde(donnees);
   monde.bornes = { ...BORNES_ZOMBIES };
   monde.prismes.forEach((p, i) => {
     const t = donnees.buildings[i]?.type;
-    if (t === "creux") { p.h = 0; p.hOrigine = 0; return; }
+    if (t === "creux") { p.plafond = plafondZombies(donnees.buildings[i].h); p.h = 0; p.hOrigine = 0; return; }
+    // linteau d'une porte intérieure (dessiné de 2,6 m au toit par `rendu-interieurs.ts`)
+    if (t === "porte" && i >= INDEX_PREMIERE_PIECE && pieces[i - INDEX_PREMIERE_PIECE]?.batiment !== undefined) p.plafond = HAUTEUR_PORTE_INTERIEURE;
     if (t && HAUTEUR_REELLE.has(t)) return;
     p.h = HAUTEUR_MURS_ZOMBIES; p.hOrigine = HAUTEUR_MURS_ZOMBIES;
   });
   monde.sansParkour = true;
+  monde.plafonds = true;
   return monde;
 }
 

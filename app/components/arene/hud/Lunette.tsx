@@ -9,6 +9,7 @@ import styles from "../HudArene.module.css";
  * (`distanceVisee`, absente si −1) à droite et sous le réticule. Les blocs de coin restent à leur place, sur le noir plein.
  * En lunette le tir est exact (pas de cercle de dispersion, v3 §1). Plusieurs niveaux de zoom (v3 §1) : une pastille par niveau sous
  * le grossissement, l'actuelle pleine, et le rappel de la touche (molette ou `zoomLunette`). Décoratif, sauf la télémétrie qui est du texte.
+ * (v8, zombies) Lunette thermique (Sniper en croûte, Railgun thermidor) : décor éteint dans le cercle, tigres incandescents, mention « THERMIQUE ».
  */
 export interface PropsLunette {
   zoomX: number;
@@ -19,13 +20,16 @@ export interface PropsLunette {
   niveaux?: number;
   /** libellé de la touche « niveau de zoom suivant » */
   toucheZoom?: string;
+  /** (v8) lunette thermique */
+  thermique?: boolean;
 }
 
-function LunetteBrute({ zoomX, distanceVisee, niveau = -1, niveaux = 0, toucheZoom }: PropsLunette) {
+function LunetteBrute({ zoomX, distanceVisee, niveau = -1, niveaux = 0, toucheZoom, thermique = false }: PropsLunette) {
   return (
-    <div className={styles.lunette}>
+    <div className={`${styles.lunette} ${thermique ? styles.lunetteThermique : ""}`} data-thermique={thermique ? "oui" : undefined}>
       <i className={styles.lunetteH} aria-hidden="true" /><i className={styles.lunetteV} aria-hidden="true" />
       <div className={styles.lunetteTelemetrie}>
+        {thermique && <span className={styles.lunetteMode}>THERMIQUE</span>}
         {zoomX > 0 && <span className={styles.lunetteZoom}>×{zoomX}</span>}
         {niveaux > 1 && (
           <span className={styles.lunetteNiveaux} aria-hidden="true">

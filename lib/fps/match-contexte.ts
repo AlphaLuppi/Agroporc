@@ -12,6 +12,8 @@ import type {
   Slot, SnapZombies, TigreLargueSnap, Vec3, VehiculeSnap, Zone,
 } from "./protocole";
 import type { ObstacleVoiture, Tigre } from "./tigre-arene";
+import type { ExplosionGrenade } from "./grenades";
+import type { StatsTir } from "./armes";
 
 /**
  * Un message à émettre. `a` : "tous" (tous les inscrits), "joueurs" (en arène), "spectateurs" (inscrits hors arène) ou l'id d'un client ;
@@ -29,7 +31,7 @@ export interface JoueurSalleV2 {
   /** pas de tir ni de recharge avant (maintenant + degainageMs ; le serveur tolère 30 %) */
   sortieJusqua: number;
   /** remplace `prochainTir` : prochain tir permis, par arme (couteau compris) */
-  cadenceArme: Partial<Record<ArmeId, number>>;
+  cadenceArme: Partial<Record<ArmeId | `${ArmeId}:g`, number>>;
   bouclier: number;
   dernierDegatT: number;
   regenAcc: number;
@@ -134,9 +136,12 @@ export interface ContexteSalle {
   /**
    * Place le joueur en `p` (pieds) tourné vers `lacet` : PV, équipement (copie propre), arme en main, protection d'apparition de 1,5 s, état
    * remis à zéro (vivant, seq, historique) ; renvoie le message `apparition`. `munSpeciale` (facultatif) : munitions de la spéciale portée.
-   * Ne touche ni à `enJeu` ni aux règles de réentrée de l'arène.
+   * Ne touche ni à `enJeu` ni aux règles de réentrée de l'arène. `garder` (v8, relève) : ni téléportation ni remise à zéro du mouvement (`p`,
+   * `lacet`, `seq`, budget de distance gardés) ; le message porte `garder` et le client reste où il est.
    */
-  placerJoueur(j: JoueurSalle, p: Vec3, lacet: number, opts: { pv: number; equip: Equipement; main: Slot; munSpeciale?: number }, maintenant: number): Sortie[];
+  placerJoueur(
+    j: JoueurSalle, p: Vec3, lacet: number, opts: { pv: number; equip: Equipement; main: Slot; munSpeciale?: number; garder?: boolean }, maintenant: number,
+  ): Sortie[];
   /** sortie d'arène sans règle de réentrée ni mémo de santé (`enJeu` à faux, plus vivant, spéciale perdue) ; renvoie la libération des sièges */
   retirerJoueur(j: JoueurSalle, maintenant: number): Sortie[];
   /** message `presence` de la salle (scores, entrées / sorties d'arène) */
@@ -277,11 +282,16 @@ export interface ServiceZombies {
    */
   blesser(
     cible: string, degats: number, par: JoueurSalle, zone: Zone, maintenant: number,
-    opts?: { melee?: boolean; arme?: ArmeId; gain?: boolean; cause?: "explosion" | "nuke" | "melee" },
+    opts?: { melee?: boolean; arme?: ArmeId; gain?: boolean; cause?: "explosion" | "nuke" | "melee" | "feu" | "electrique" | "souffle"; src?: Vec3 },
   ): Sortie[];
   // ---- v7 ----
   /** dégâts d'un plomb sur un tigre (profil zombies de l'arme, amélioration, insta-kill) */
   degatsTir(j: JoueurSalle, arme: ArmeFeuId, zone: Zone, distance: number, maintenant: number): number;
+  /**
+   * (v8) dégâts d'un plomb sur le Truck Muche : le profil de l'arme seul, JAMAIS l'insta-kill (comme les grenades et les souffles ; une balle
+   * ne détruit pas un camion de plusieurs milliers de PV, ni ne finit à elle seule le service du grand secret)
+   */
+  degatsTirTruck(j: JoueurSalle, arme: ArmeFeuId, distance: number): number;
   /** dégâts d'un coup d'arme blanche sur un tigre (insta-kill compris) */
   degatsMelee(j: JoueurSalle, arme: ArmeMeleeId, maintenant: number): number;
   /** la balle de cette arme traverse tous les tigres alignés */
@@ -299,7 +309,25 @@ export interface ServiceZombies {
    * au sol ; dégâts dégressifs sur les tigres proches, rampants possibles, `zevt{explosion}` aux autres joueurs.
    */
   explosionTir(j: JoueurSalle, arme: ArmeFeuId, o: Vec3, d: Vec3, distanceTouche: number | null, portee: number, maintenant: number): Sortie[];
-  /** `lancerPartie`, `acheter`, `reanimer` ; les autres types renvoient [] */
+  // ---- v8 (armes) ----
+  /** ce qu'il faut pour valider le tir (`statsTir` de armes.ts avec l'amélioration du joueur) : cadence par arme, auto, akimbo, ricochets */
+  statsTir(j: JoueurSalle, arme: ArmeFeuId): StatsTir;
+  /**
+   * Tir qui n'est pas une balle : projectile (Moutarde & Sally, Brochette) ou souffle en cône (Soufflerie). Le service le résout entièrement
+   * (le client ne déclare aucune touche) et renvoie ses sorties ; null pour une arme à balles (la salle valide alors les touches).
+   */
+  tirSpecial(j: JoueurSalle, arme: ArmeFeuId, o: Vec3, d: Vec3, maintenant: number): Sortie[] | null;
+  /** position (pieds) du tigre `cible`, null s'il n'existe pas : prise AVANT les dégâts d'un tir (départ d'un arc électrique) */
+  positionZombie(cible: string): Vec3 | null;
+  /**
+   * Effets d'un tir à balles après ses dégâts : brûlure et gel des tigres touchés, arc électrique depuis le plus proche (`touches` triées du
+   * plus proche au plus lointain, positions prises avant les dégâts)
+   */
+  effetsTir(j: JoueurSalle, arme: ArmeFeuId, touches: readonly { cible: string; p: Vec3 }[], maintenant: number): Sortie[];
+  /**
+   * `lancerPartie`, `acheter`, `reanimer`, `reparer`, `lancerGrenade` (v8 : œil et direction déjà validés par la salle) ; les autres types
+   * renvoient []
+   */
   recevoir(j: JoueurSalle, m: MessageClient, maintenant: number): Sortie[];
   /** le joueur vient de tomber à 0 PV (`Salle.mourir`) : à terre, défaite éventuelle, `zombies{etat}` immédiat + `presence` */
   surMort(j: JoueurSalle, maintenant: number): Sortie[];
@@ -309,6 +337,22 @@ export interface ServiceZombies {
   arrivee(j: JoueurSalle, maintenant: number): Sortie[];
   /** partie en cours (pause ou manche) */
   enCours(): boolean;
+  /** le joueur est à terre (attend une relève) : ses états suivent encore son corps (`Salle.recevoirEtat`) */
+  aTerre(id: string): boolean;
   etat(): EtatPartieZombies;
   resume(): ResumeZombies;
+  // ---- v8 ----
+  /**
+   * Écoute les explosions de grenades (événement PUR : où, par qui, quel genre, quand), après leur souffle ; les sorties renvoyées partent avec
+   * celles du tic. Renvoie la fonction qui retire l'écouteur. Sert aux quêtes et secrets (une grenade qui fait sauter quelque chose).
+   */
+  ecouterExplosions(f: (e: ExplosionGrenade) => Sortie[] | void): () => void;
+  /**
+   * (v8) Grand secret : un tir validé (œil, directions des plombs) passe aussi par les objets du décor (casseroles, écrans), un coup d'arme
+   * blanche par les pendules ; sorties `zevt{secret}` (rien si rien ne réagit).
+   */
+  tirSecret(j: JoueurSalle, arme: ArmeFeuId, o: Vec3, dirs: readonly Vec3[], maintenant: number): Sortie[];
+  coupSecret(j: JoueurSalle, arme: ArmeMeleeId, o: Vec3, d: Vec3, maintenant: number): Sortie[];
+  /** grenades en vol ou posées (tests et supervision) */
+  grenadesEnVol(): number;
 }

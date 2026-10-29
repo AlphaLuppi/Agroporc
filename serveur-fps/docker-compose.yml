@@ -13,8 +13,10 @@ services:
       PORT: "8787"
       # origines autorisées pour le WebSocket, séparées par des virgules (vide = toutes)
       ORIGINES: "${ORIGINES:-}"
-    mem_limit: 256m
-    cpus: 0.3
+    # un cœur entier : sous 0,3 vCPU (quota CFS de 30 ms par 100 ms), le moindre pic de calcul (création d'une salle, partie de zombies
+    # chargée) gelait le processus 3 fois plus longtemps, pour les deux salles à la fois ; 384 Mo pour 64 connexions et deux mondes
+    mem_limit: 384m
+    cpus: 1
     networks:
       - dokploy-network
 

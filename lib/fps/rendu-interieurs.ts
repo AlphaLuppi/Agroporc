@@ -2,7 +2,8 @@
  * Rendu des intérieurs de la carte zombies v7 (three) : les quatre bâtiments creusés (72, 70, 62, 74) et leurs pièces `coque` / `cloison`
  * / `meuble` / `fenetre`, que le décor ne dessine pas. Murs en boîtes à deux faces (façade sombre à arêtes cyan dehors, enduit dedans avec
  * plinthe et cimaise), linteaux au-dessus des portes et des fenêtres, allèges sous les fenêtres, sol carrelé, faux plafond à dalles
- * lumineuses à `PLAFOND_M`, toit à la hauteur du bâtiment, mobilier par genre. Éclairage : secours rouge qui pulse tant que le courant est
+ * lumineuses à `PLAFOND_M`, toit à la hauteur du bâtiment, mobilier par genre, dedans comme dehors (v8 : oliviers low poly dans leur bac,
+ * voitures garées, conteneurs, palettes, haies, terrasses ; feuillage et haies dans un maillage à part). Éclairage : secours rouge qui pulse tant que le courant est
  * coupé, lumière chaude une fois le disjoncteur réarmé (`majCourant`). Les portes payantes restent au décor (elles s'effondrent avec lui).
  * Aucun test vitest (three) : la géométrie vient de `zombies-carte.ts` (testée), les régressions se voient aux captures.
  * Spec : docs/superpowers/specs/2026-10-28-zombies-bo1-design.md (« Carte « Service de midi » »)
@@ -11,10 +12,10 @@ import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { shapeFrom } from "../agroparc3d/decor";
 import type { SceneData, Vec2 } from "../agroparc3d/types";
-import { BATIMENTS_CREUX, HAUTEUR_PORTE_INTERIEURE, batimentDePiece, type GenreMeuble, type PieceSynth } from "./zombies-carte";
+import { ANGLE_BATIMENTS, BATIMENTS_CREUX, HAUTEUR_PLAFOND_ZOMBIES, HAUTEUR_PORTE_INTERIEURE, OLIVIER, batimentDePiece, plafondZombies, type GenreMeuble, type PieceSynth } from "./zombies-carte";
 
-/** Hauteur du faux plafond (m) et des fenêtres (allège, linteau). */
-export const PLAFOND_M = 3.4;
+/** Hauteur du faux plafond (m, solide aussi pour la tête du joueur : `construireMondeZombies`) et des fenêtres (allège, linteau). */
+export const PLAFOND_M = HAUTEUR_PLAFOND_ZOMBIES;
 export const FENETRE_BAS_M = 0.9;
 export const FENETRE_HAUT_M = 2.3;
 
@@ -31,6 +32,8 @@ export interface RenduInterieurs {
   majCourant(on: boolean): void;
   /** `t` : horloge (s), `dt` : pas (s) */
   maj(t: number, dt: number): void;
+  /** (v8) éclat d'un éclair (0..1) : les pièces s'illuminent un instant, courant coupé ou non */
+  flash(k: number): void;
   dispose(): void;
 }
 
@@ -65,17 +68,116 @@ function geometrie(pos: number[], col: number[]): THREE.BufferGeometry {
   return g;
 }
 
+/** Hachage (0 à 1) d'un id de pièce et d'un rang : variations stables d'un rendu à l'autre (couleur d'une voiture, hauteur d'une haie). */
+function hacher(id: string, k = 0): number {
+  let h = 2166136261 ^ k;
+  for (let i = 0; i < id.length; i++) h = Math.imul(h ^ id.charCodeAt(i), 16777619);
+  h = Math.imul(h ^ (h >>> 15), 2246822507);
+  return ((h ^ (h >>> 13)) >>> 0) / 4294967296;
+}
+
+/** Triangles à couleur par face (sommets en coordonnées de la carte) : le mobilier et la végétation y ajoutent leurs faces. */
+interface Faces { pos: number[]; col: number[] }
+const tri = (f: Faces, a: readonly number[], b: readonly number[], c: readonly number[], couleur: THREE.Color) => {
+  for (const q of [a, b, c]) { f.pos.push(q[0], q[1], q[2]); f.col.push(couleur.r, couleur.g, couleur.b); }
+};
+
+/** Prisme droit d'un polygone convexe (sommets dans le plan xz) de `y0` à `y1` : côtés et dessus. */
+function prismePolygone(f: Faces, pts: readonly Vec2[], y0: number, y1: number, cote: THREE.Color, dessus: THREE.Color): void {
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i], b = pts[(i + 1) % pts.length];
+    tri(f, [a[0], y0, a[1]], [b[0], y0, b[1]], [b[0], y1, b[1]], cote);
+    tri(f, [a[0], y0, a[1]], [b[0], y1, b[1]], [a[0], y1, a[1]], cote);
+  }
+  for (let i = 1; i < pts.length - 1; i++) tri(f, [pts[0][0], y1, pts[0][1]], [pts[i][0], y1, pts[i][1]], [pts[i + 1][0], y1, pts[i + 1][1]], dessus);
+}
+
+/** Tronçon de branche : tube à six pans de `a` (rayon `ra`) à `b` (rayon `rb`). */
+function tube(f: Faces, a: THREE.Vector3, b: THREE.Vector3, ra: number, rb: number, c: THREE.Color): void {
+  const d = new THREE.Vector3().subVectors(b, a).normalize();
+  const haut = Math.abs(d.y) < 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
+  const e1 = new THREE.Vector3().crossVectors(d, haut).normalize(), e2 = new THREE.Vector3().crossVectors(d, e1);
+  const anneau = (o: THREE.Vector3, r: number) => Array.from({ length: 6 }, (_, k) => {
+    const t = (k / 6) * Math.PI * 2;
+    return o.clone().addScaledVector(e1, Math.cos(t) * r).addScaledVector(e2, Math.sin(t) * r).toArray();
+  });
+  const A = anneau(a, ra), B = anneau(b, rb);
+  for (let k = 0; k < 6; k++) {
+    const j = (k + 1) % 6;
+    // une face sur deux un peu plus claire : le pan tourné vers le ciel ressort sans éclairage
+    const cc = k % 2 ? c : c.clone().multiplyScalar(1.25);
+    tri(f, A[k], A[j], B[j], cc);
+    tri(f, A[k], B[j], B[k], cc);
+  }
+}
+
+/** Touffe de feuillage : icosaèdre aplati, une couleur par face (gris-vert de l'olivier, quelques reflets argentés). */
+function touffe(f: Faces, centre: THREE.Vector3, r: number, aplati: number, base: THREE.Color, graine: string): void {
+  const g = new THREE.IcosahedronGeometry(1, 0);
+  const geo = g.index ? g.toNonIndexed() : g;
+  const p = geo.getAttribute("position");
+  for (let i = 0; i < p.count; i += 3) {
+    const k = hacher(graine, i);
+    const c = base.clone().multiplyScalar(0.7 + 0.45 * k);
+    if (k > 0.88) c.lerp(new THREE.Color(0x9aa892), 0.35);
+    const v = (j: number) => [centre.x + p.getX(j) * r, centre.y + p.getY(j) * r * aplati, centre.z + p.getZ(j) * r];
+    tri(f, v(i), v(i + 1), v(i + 2), c);
+  }
+  geo.dispose();
+  if (geo !== g) g.dispose();
+}
+
+/**
+ * Olivier (centre `c`) : bac octogonal de pierre et sa terre, tronc tordu en trois tronçons qui se partage en trois charpentières, ramure
+ * de touffes gris-vert entre 2,6 et 4,6 m (au-dessus du tronc de collision : les balles y passent).
+ */
+function olivier(id: string, c: Vec2, f: Faces, veg: Faces): void {
+  const o = OLIVIER, R = o.apothemeBac / Math.cos(Math.PI / 8);
+  const octo = (r: number): Vec2[] => Array.from({ length: 8 }, (_, k) => {
+    const a = ANGLE_BATIMENTS + Math.PI / 8 + (k * Math.PI) / 4;
+    return [c[0] + Math.cos(a) * r, c[1] + Math.sin(a) * r];
+  });
+  const pierre = new THREE.Color(0x4a4640), margelle = new THREE.Color(0x67635a), terre = new THREE.Color(0x2b2119);
+  prismePolygone(f, octo(R), 0, o.hauteurBac, pierre, margelle);
+  prismePolygone(f, octo(R - 0.22), o.hauteurBac, o.hauteurBac + 0.012, terre, terre);
+  const V = (dx: number, y: number, dz: number) => new THREE.Vector3(c[0] + dx, y, c[1] + dz);
+  const ecorce = new THREE.Color(0x4d4237);
+  // torsion bornée : le tronc dessiné reste dans le carré de collision (diagonale 0,64 m)
+  const tors = (k: number) => (hacher(id, k) - 0.5) * 0.3;
+  const pts = [V(0, 0.3, 0), V(0.1 + tors(1), 1.0, -0.08), V(-0.1, 1.7, 0.12 + tors(2)), V(0.08, 2.3, -0.05)];
+  const rayons = [0.4, 0.33, 0.27, 0.22];
+  for (let k = 0; k < pts.length - 1; k++) tube(f, pts[k], pts[k + 1], rayons[k], rayons[k + 1], ecorce);
+  const feuillage = new THREE.Color(0x5b6e53);
+  const tete = pts[pts.length - 1];
+  for (let k = 0; k < 3; k++) {
+    const a = (k / 3) * Math.PI * 2 + hacher(id, 10 + k) * 1.2;
+    const bout = V(Math.cos(a) * 1.5, 3.2 + hacher(id, 20 + k) * 0.5, Math.sin(a) * 1.5);
+    const coude = tete.clone().lerp(bout, 0.5).add(new THREE.Vector3(0, 0.25, 0));
+    tube(f, tete, coude, 0.17, 0.12, ecorce);
+    tube(f, coude, bout, 0.12, 0.07, ecorce);
+    touffe(veg, bout.clone().add(new THREE.Vector3(0, 0.45, 0)), 1.35 + hacher(id, 30 + k) * 0.4, 0.62, feuillage, `${id}t${k}`);
+  }
+  touffe(veg, V(0, 4.1, 0), 1.6, 0.55, feuillage, `${id}h`);
+  touffe(veg, V(0.6, 3.5, -0.8), 1.1, 0.6, feuillage, `${id}h2`);
+}
+
+/** Couleurs de carrosserie des voitures garées (sombres, comme le reste de la carte). */
+const CARROSSERIES = [0x2a3a55, 0x553030, 0x34463a, 0x4c4c48, 0x2a2a30, 0x5a4a2a].map((c) => new THREE.Color(c));
+/** Couleurs de conteneurs maritimes. */
+const CONTENEURS = [0x5a2a1e, 0x1f3550, 0x2f4a2c].map((c) => new THREE.Color(c));
+
 /** Mobilier : boîtes simples par genre, dans le repère du rectangle (u le long, v en travers), ajoutées en coordonnées de la carte. */
-function meuble(p: PieceSynth, pos: number[], col: number[], led: number[]): void {
+function meuble(p: PieceSynth, pos: number[], col: number[], led: number[], veg: Faces): void {
   const [px, pz] = p.p, [qx, qz] = p.q;
   const L = Math.hypot(qx - px, qz - pz) || 1;
   const ux = (qx - px) / L, uz = (qz - pz) / L, vx = -uz, vz = ux;
   const cx = (px + qx) / 2, cz = (pz + qz) / 2;
   const l = p.demi * 2;
-  const b = (u0: number, u1: number, w0: number, w1: number, y0: number, y1: number, c: THREE.Color) => {
+  const principal: Faces = { pos, col };
+  const b = (u0: number, u1: number, w0: number, w1: number, y0: number, y1: number, c: THREE.Color, f: Faces = principal) => {
     const k = (u: number, w: number): Vec2 => [cx + ux * u + vx * w, cz + uz * u + vz * w];
     const coins = [k(u0, w0), k(u1, w0), k(u1, w1), k(u0, w1)];
-    const quad = (a: number[], bb: number[], cc: number[], d: number[]) => { for (const q of [a, bb, cc, a, cc, d]) { pos.push(q[0], q[1], q[2]); col.push(c.r, c.g, c.b); } };
+    const quad = (a: number[], bb: number[], cc: number[], d: number[]) => { for (const q of [a, bb, cc, a, cc, d]) { f.pos.push(q[0], q[1], q[2]); f.col.push(c.r, c.g, c.b); } };
     for (let i = 0; i < 4; i++) {
       const j = (i + 1) % 4;
       quad([coins[i][0], y0, coins[i][1]], [coins[j][0], y0, coins[j][1]], [coins[j][0], y1, coins[j][1]], [coins[i][0], y1, coins[i][1]]);
@@ -86,6 +188,68 @@ function meuble(p: PieceSynth, pos: number[], col: number[], led: number[]): voi
   const bois = new THREE.Color(0x3a2a1c), metal = new THREE.Color(0x2a313a), sombre = new THREE.Color(0x12161c), tissu = new THREE.Color(0x3a2230);
   const ledAt = (u: number, w: number, y: number, c: THREE.Color) => led.push(cx + ux * u + vx * w, y, cz + uz * u + vz * w, c.r, c.g, c.b);
   switch (p.genre as GenreMeuble) {
+    case "olivier":
+      olivier(p.id, [cx, cz], principal, veg);
+      break;
+    case "bac":
+      // barres de collision du bac : il est dessiné avec l'olivier
+      break;
+    case "haie": {
+      // tronçons de 0,8 m de hauteur inégale, un peu ventrus : une haie taillée mais vivante
+      const n = Math.max(1, Math.round(L / 0.8));
+      for (let k = 0; k < n; k++) {
+        const u0 = -L / 2 + (k * L) / n, u1 = -L / 2 + ((k + 1) * L) / n;
+        const r = hacher(p.id, k);
+        const vert = new THREE.Color(0x1f3a24).multiplyScalar(0.8 + 0.5 * r);
+        b(u0, u1, -l / 2 - 0.05 * r, l / 2 + 0.05 * r, 0, h - 0.3 * hacher(p.id, k + 50), vert, veg);
+      }
+      break;
+    }
+    case "conteneur": {
+      const c = CONTENEURS[Math.floor(hacher(p.id) * CONTENEURS.length)];
+      b(-L / 2, L / 2, -l / 2, l / 2, 0, h, c);
+      // nervures des grands côtés, portes et barres de fermeture au bout
+      const nervure = c.clone().multiplyScalar(1.35);
+      for (let u = -L / 2 + 0.3; u < L / 2 - 0.2; u += 0.6) for (const s of [-1, 1]) b(u - 0.08, u + 0.08, s * l / 2 - 0.03, s * l / 2 + 0.03, 0.08, h - 0.08, nervure);
+      for (const w of [-l / 4 - 0.15, -l / 4 + 0.15, l / 4 - 0.15, l / 4 + 0.15]) b(L / 2, L / 2 + 0.04, w - 0.025, w + 0.025, 0.1, h - 0.1, metal);
+      break;
+    }
+    case "palette": {
+      // deux palettes de 1,2 m chargées de cartons, sur deux niveaux
+      const planche = new THREE.Color(0x5a4630), carton = new THREE.Color(0x6b5338);
+      for (const s of [-1, 1]) {
+        const u0 = s < 0 ? -L / 2 : 0.02, u1 = s < 0 ? -0.02 : L / 2;
+        for (const [y0, y1] of [[0, 0.62], [0.65, h]] as const) {
+          b(u0, u1, -l / 2, l / 2, y0, y0 + 0.14, planche);
+          b(u0 + 0.05, u1 - 0.05, -l / 2 + 0.05, l / 2 - 0.05, y0 + 0.14, y1, carton.clone().multiplyScalar(0.85 + 0.3 * hacher(p.id, s + y0 * 10)));
+        }
+      }
+      break;
+    }
+    case "voiture": {
+      // caisse, habitacle vitré plus étroit, quatre roues ; phares jaunes à l'avant, feux rouges à l'arrière
+      const c = CARROSSERIES[Math.floor(hacher(p.id) * CARROSSERIES.length)];
+      const vitre = new THREE.Color(0x101820), pneu = new THREE.Color(0x0b0b0d);
+      for (const su of [-1, 1]) for (const sw of [-1, 1]) b(su * L * 0.32 - 0.33, su * L * 0.32 + 0.33, sw * l / 2 - 0.25, sw * l / 2 + 0.02, 0, 0.62, pneu);
+      b(-L / 2, L / 2, -l / 2 + 0.03, l / 2 - 0.03, 0.3, 0.92, c);
+      b(-L * 0.24, L * 0.2, -l / 2 + 0.15, l / 2 - 0.15, 0.92, h - 0.06, vitre);
+      b(-L * 0.22, L * 0.18, -l / 2 + 0.18, l / 2 - 0.18, h - 0.06, h, c);
+      for (const w of [-l / 2 + 0.3, l / 2 - 0.3]) { ledAt(L / 2 + 0.01, w, 0.72, new THREE.Color(0xffe08a)); ledAt(-L / 2 - 0.01, w, 0.75, new THREE.Color(0xff3a2a)); }
+      break;
+    }
+    case "terrasse": {
+      // table de bistrot, deux chaises, parasol fermé
+      b(-0.38, 0.38, -0.38, 0.38, h - 0.04, h, bois);
+      b(-0.04, 0.04, -0.04, 0.04, 0, h - 0.04, metal);
+      for (const s of [-1, 1]) { b(s * 0.62 - 0.2, s * 0.62 + 0.2, -0.2, 0.2, 0, 0.45, metal); b(s * 0.8 - 0.03, s * 0.8 + 0.03, -0.2, 0.2, 0.45, 0.9, metal); }
+      b(-0.025, 0.025, -0.025, 0.025, h, 2.1, metal);
+      b(-0.12, 0.12, -0.12, 0.12, 1.3, 2.1, new THREE.Color(0x6a2a24));
+      break;
+    }
+    case "muret":
+      b(-L / 2, L / 2, -l / 2, l / 2, 0, h - 0.06, new THREE.Color(0x3a3a40));
+      b(-L / 2 - 0.03, L / 2 + 0.03, -l / 2 - 0.04, l / 2 + 0.04, h - 0.06, h, new THREE.Color(0x55555c));
+      break;
     case "bureau":
       b(-L / 2, L / 2, -l / 2, l / 2, h - 0.05, h, bois);
       for (const su of [-1, 1]) for (const sw of [-1, 1]) b(su * L / 2 - su * 0.08 - 0.03, su * L / 2 - su * 0.08 + 0.03, sw * l / 2 - sw * 0.08 - 0.03, sw * l / 2 - sw * 0.08 + 0.03, 0, h - 0.05, metal);
@@ -139,16 +303,18 @@ export function creerRenduInterieurs(scene: THREE.Scene, data: SceneData, pieces
   // ---- murs, linteaux, allèges, mobilier ----
   const pos: number[] = [], col: number[] = [];
   const posM: number[] = [], colM: number[] = [], leds: number[] = [];
+  const veg: Faces = { pos: [], col: [] };
   const centres = new Map<number, Vec2>();
   for (const b of BATIMENTS_CREUX) centres.set(b, data.buildings[b].c);
   for (const p of pieces) {
+    // le mobilier se dessine aussi dehors (aménagements de la v8 : olivier, voitures, conteneurs, haies…)
+    if (p.type === "meuble") { meuble(p, posM, colM, leds, veg); continue; }
     if (p.batiment === undefined) continue;
     const h = data.buildings[p.batiment]?.h ?? p.h;
     const centre = centres.get(p.batiment) ?? null;
     if (p.type === "coque" || p.type === "cloison") boitePiece(p, 0, h, centre, pos, col);
     else if (p.type === "porte") boitePiece({ ...p, type: p.type }, HAUTEUR_PORTE_INTERIEURE, h, centre, pos, col);
     else if (p.type === "fenetre") { boitePiece(p, 0, FENETRE_BAS_M, centre, pos, col); boitePiece(p, FENETRE_HAUT_M, h, centre, pos, col); }
-    else if (p.type === "meuble") meuble(p, posM, colM, leds);
   }
   const geoMurs = geometrie(pos, col);
   const matMurs = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 2 });
@@ -187,6 +353,15 @@ export function creerRenduInterieurs(scene: THREE.Scene, data: SceneData, pieces
     racine.add(aretesM);
     aDisposer.push(geoMeubles, matMeubles, aretesM.geometry, aretesM.material as THREE.Material);
   }
+  // végétation (feuillage des oliviers, haies) : à part, arêtes vertes très discrètes (les arêtes ambre des meubles hérisseraient le feuillage)
+  if (veg.pos.length) {
+    const geoVeg = geometrie(veg.pos, veg.col);
+    const matVeg = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 2 });
+    racine.add(new THREE.Mesh(geoVeg, matVeg));
+    const aretesV = new THREE.LineSegments(new THREE.EdgesGeometry(geoVeg, 30), new THREE.LineBasicMaterial({ color: 0xb8e6a8, transparent: true, opacity: 0.14 }));
+    racine.add(aretesV);
+    aDisposer.push(geoVeg, matVeg, aretesV.geometry, aretesV.material as THREE.Material);
+  }
   // voyants des meubles (écrans, LED, brûleurs) : petits points lumineux, au-dessus du seuil du halo
   const nLed = leds.length / 6;
   if (nLed) {
@@ -212,7 +387,7 @@ export function creerRenduInterieurs(scene: THREE.Scene, data: SceneData, pieces
     geoSols.push(sol);
     const plafond = new THREE.ShapeGeometry(forme);
     plafond.rotateX(-Math.PI / 2);
-    plafond.translate(0, Math.min(PLAFOND_M, bat.h - 0.3), 0);
+    plafond.translate(0, plafondZombies(bat.h), 0);
     geoPlafonds.push(plafond);
     const toit = new THREE.ShapeGeometry(forme);
     toit.rotateX(-Math.PI / 2);
@@ -274,17 +449,25 @@ export function creerRenduInterieurs(scene: THREE.Scene, data: SceneData, pieces
   // ---- éclairage ----
   let courant = false;
   let lumiere = 0;
+  let eclair = 0;
+  let lumiereCourante = 0;
   return {
     majCourant(on) { courant = on; },
+    flash(k) {
+      eclair = Math.max(0, Math.min(1, k));
+      uLumiere.value = Math.min(1.6, lumiereCourante + eclair);
+      uSol.value = Math.min(1.6, lumiere + eclair);
+    },
     maj(t, dt) {
       const cible = courant ? 1 : 0;
       // le courant revient en clignotant (néons qui s'amorcent), puis tient
       lumiere += (cible - lumiere) * (1 - Math.exp(-dt * 2.2));
       const scintille = courant && lumiere < 0.92 ? (Math.sin(t * 47) > 0.2 ? 1 : 0.35) : 1;
-      uLumiere.value = lumiere * scintille;
+      lumiereCourante = lumiere * scintille;
+      uLumiere.value = Math.min(1.6, lumiereCourante + eclair);
       uSecours.value = 1 - lumiere;
       uPulse.value = 0.5 + 0.5 * Math.sin(t * 3.1);
-      uSol.value = lumiere;
+      uSol.value = Math.min(1.6, lumiere + eclair);
       void C_SECOURS; void C_LUMIERE;
     },
     dispose() {

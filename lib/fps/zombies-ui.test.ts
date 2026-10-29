@@ -38,7 +38,8 @@ const partie = (plus: Partial<EtatPartieZombies> = {}): EtatPartieZombies => ({
   phase: "lobby", manche: 0, hote: "j1", capacite: 8, debutT: 0, finT: 0,
   joueurs: [joueur("j1", "Lea"), joueur("j2", "Marc")], portes: [{ id: "D1", ouverte: false }, { id: "D2", ouverte: false }],
   difficulte: "plat", courant: false, boite: { emplacement: 0, etat: "fermee", finT: 0, utilisations: 0 }, pap: { etat: "libre" }, fenetres: [],
-  bonus: [], effets: { instakillFinT: 0, doubleFinT: 0, soldesFinT: 0 }, quete: { ingredients: [], cuissonFinT: 0, faite: false },
+  bonus: [], effets: { instakillFinT: 0, doubleFinT: 0, soldesFinT: 0 },
+  secret: { etape: 0, pendules: 0, pendulesT: 0, periodeMidiMs: 300_000, ardoise: [0, 1, 2, 3], casseroles: 0, marmite: 0, billot: 0, postits: [1, 2, 3, 4, 5, 6, 7, 8], ecrans: 0 },
   mancheTruck: false, truck: null, murs: [], ...plus,
 });
 const salons: Salons = { arene: { joueurs: 5, enJeu: 3 }, zombies: { phase: "lobby", joueurs: 2, manche: 0 } };
@@ -55,7 +56,7 @@ function stockageFaux(initial: Record<string, string> = {}): Stockage & { magasi
 
 const HUD: HudEtat = {
   pv: 100, bouclier: 0, arme: "pistolet", slot: "secondaire", slots: "secondaire:pistolet:12:12:60|couteau:couteau:0:0", equipSuivant: "mitraillette|pistolet",
-  munitions: 12, chargeur: 12, reserve: 60, recharge: false, degainage: false, vise: false, lunette: false, zoomX: 0, zoomNiveau: -1, zoomNiveaux: 0, ecartViseur: 0,
+  munitions: 12, chargeur: 12, reserve: 60, recharge: false, degainage: false, vise: false, lunette: false, zoomX: 0, zoomNiveau: -1, zoomNiveaux: 0, viseur: "fer", ameliorees: "", munitionsG: -1, ecartViseur: 0,
   distanceVisee: -1, mur: false, mort: false, reapparitionDans: 0, protege: false, protegeRestant: 0, verrouille: true, connecte: true, entracte: false, accroupi: false,
   glisse: false, regen: false, bonusVitesse: 1, invite: "", inviteDetail: "", vehicule: false, vehiculeId: -1, siege: -1, tireInterdit: false, embarquement: false,
   killcam: -1, killcamPhase: "", sort: false, voix: "", voixParlants: "", titan: false, mode: "zombies", argent: 500, manche: 3, restants: 12, aTerre: false, elimine: false,
@@ -274,7 +275,8 @@ describe("modèle du lobby des zombies", () => {
     const z = commandesLobbyZombies(touchesParDefaut());
     expect(z.find((c) => c.libelle.startsWith("Acheter"))?.touches).toBe("E");
     expect(z.some((c) => /voiture/i.test(c.libelle))).toBe(false);
-    expect(z.length).toBe(commandes(touchesParDefaut(), null).length - 4);
+    expect(z.length).toBe(commandes(touchesParDefaut(), null).length - 3);
+    expect(z.at(-1)).toEqual({ touches: "G", libelle: "Grenade (maintenir : cuire la mèche)" });
   });
 
   it("aide en partie : la touche d'action zombies", () => {
@@ -704,6 +706,25 @@ describe("BlocArmes sans arme principale (départ des zombies)", () => {
     const html = rendre({ slots: "secondaire:pistolet:12:12:60|couteau:epee:0:0" });
     expect(html).toContain("ÉPÉE");
     expect(html).toContain("VITESSE +20 %");
+  });
+
+  it("(v8) grenades : pastilles sur 4 sous le rack, remontoirs s'il en reste, mèche qui court pendant la cuisson ; rien en arène", () => {
+    expect(rendre()).not.toContain("GRENADES");
+    const html = rendre({ grenades: 2, remontoirs: 0, cuisson: null, toucheGrenade: "G", toucheRemontoir: "B" });
+    expect(html).toContain('aria-label="Grenades"');
+    expect(html).toContain("[G]");
+    expect(html).toContain("●●○○");
+    expect(html).toContain("2 sur 4");
+    expect(html).not.toContain("REMONTOIR");
+    const avec = rendre({ grenades: 0, remontoirs: 3, toucheGrenade: "G", toucheRemontoir: "B" });
+    expect(avec).toContain("○○○○");
+    expect(avec).toContain('data-niveau="vide"');
+    expect(avec).toContain("REMONTOIR");
+    expect(avec).toContain("×3");
+    expect(avec).toContain("[B]");
+    const cuit = rendre({ grenades: 1, cuisson: 0.5, toucheGrenade: "G" });
+    expect(cuit).toContain("MÈCHE");
+    expect(cuit).toContain("1,8 s");
   });
 
   it("après l'achat d'une principale, la ligne apparaît", () => {

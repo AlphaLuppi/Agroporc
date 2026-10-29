@@ -64,7 +64,7 @@ export default function FinDePartieZombies({ partie, monId, maintenantServeur, s
     <section className={styles.fin} aria-label="Fin de partie">
       <div className={styles.contenu}>
         <header className={styles.entete}>
-          <h2 className={styles.titre}>Partie perdue</h2>
+          <h2 className={styles.titre}>{partie.bilan?.victoire ? "Service accompli" : "Partie perdue"}</h2>
           <p className={styles.manche}>Manche atteinte : <b>{manche}</b></p>
           <p className={styles.record} data-battu={battu ? "oui" : "non"}>
             {battu ? <>NOUVEAU RECORD <span aria-hidden="true">·</span> manche {record.manche}</>
