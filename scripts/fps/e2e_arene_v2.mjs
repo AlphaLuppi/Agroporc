@@ -21,8 +21,8 @@
  * 12. aucune erreur JavaScript ni `erreur` du serveur, aucune WebSocket coupée en partie
  *
  * Usage : node scripts/fps/e2e_arene_v2.mjs        (Node 22 ; Playwright : `npm i --no-save playwright` ou PLAYWRIGHT_DIR=/dossier/avec/node_modules)
- * L'avion des tigres est neutralisé sur le serveur lancé par le script (`PDJ_FPS_AVION_*` à 10 min). Un serveur déjà lancé (E2E_WS) doit
- * l'être de même, sinon un tigre largué peut gâcher une étape. Les tigres ont leur propre scénario : scripts/fps/e2e_arene_tigres.mjs.
+ * L'avion des tigres et le bus C3 (qui écrase à pied) sont neutralisés sur le serveur lancé par le script (`PDJ_FPS_AVION_*`, `PDJ_FPS_BUS_*`
+ * à 1 h). Un serveur déjà lancé (E2E_WS) doit l'être de même, sinon un tigre largué peut gâcher une étape (un écrasement par le bus la rejoue). Les tigres ont leur propre scénario : scripts/fps/e2e_arene_tigres.mjs.
  * Variables : E2E_OUT (captures, défaut <tmp>/pdj-e2e-arene-v2), E2E_URL (Next déjà lancé : on ne le démarre pas),
  *             E2E_WS (serveur déjà lancé), E2E_WS_PORT (port imposé au serveur lancé par le script, à faire coïncider avec NEXT_PUBLIC_FPS_WS_URL d'un Next déjà lancé),
  *             E2E_PAGE (page qui monte le code « myrtille », défaut une 404 : aucune lecture de la base), E2E_HEADED=1,
@@ -125,8 +125,11 @@ class Joueur {
     this.erreurs = [];
     /** fermetures de la WebSocket en cours de scénario (le client se reconnecte seul : à surveiller) */
     this.fermetures = [];
+    /** chargements de la page (le premier, puis les rechargements de `next dev`) : { a, etape } */
+    this.chargements = [];
     page.on("pageerror", (e) => this.erreurs.push(`pageerror : ${String(e).slice(0, 300)}`));
     page.on("console", (m) => { if (m.type() === "error") this.erreurs.push(`console.error : ${m.text().slice(0, 300)}`); });
+    page.on("load", () => this.chargements.push({ a: Date.now(), etape: etapeCourante }));
     page.on("websocket", (ws) => {
       ws.on("framereceived", (f) => { try { const m = JSON.parse(String(f.payload)); this.recus.push({ t: m.t, m, a: Date.now() }); } catch { /* binaire */ } });
       ws.on("framesent", (f) => { try { const m = JSON.parse(String(f.payload)); this.envoyes.push({ t: m.t, m, a: Date.now() }); } catch { /* binaire */ } });
@@ -215,20 +218,92 @@ function trouverPiste(longueur = 26) {
 }
 
 /**
+ * Chemin à pied de `de` à `a` (plan XZ) pour `poser` : A* sur une grille de 2 m bornée à la boîte des deux points élargie de 60 m ; les abords
+ * des routes (8 m, voitures PNJ) coûtent 3 fois plus, les cases à moins de 2 m d'un bâtiment 40 fois plus (on ne s'y pose jamais, mais un départ
+ * coincé contre un mur en sort). Simulé hors ligne sur l'anneau d'apparition : toujours un chemin, en 1 s au plus. Renvoie la suite des centres
+ * de cases (sans `de`, `a` en dernier), ou null.
+ */
+const CASE_CHEMIN = 2;
+const COUT_BLOQUE = 40;
+const cacheCases = new Map();
+function coutCase(i, j) {
+  const k = `${i},${j}`;
+  let c = cacheCases.get(k);
+  if (c === undefined) {
+    const x = i * CASE_CHEMIN, z = j * CASE_CHEMIN;
+    c = distBatiments(x, z) < 2 ? COUT_BLOQUE : distRoutes(x, z) < 8 ? 3 : 1;
+    cacheCases.set(k, c);
+  }
+  return c;
+}
+const caseBloquee = (p) => coutCase(Math.round(p[0] / CASE_CHEMIN), Math.round(p[1] / CASE_CHEMIN)) >= COUT_BLOQUE;
+function cheminAPied(de, a) {
+  const ci = (v) => Math.round(v / CASE_CHEMIN);
+  const [i0, j0, i1, j1] = [ci(de[0]), ci(de[1]), ci(a[0]), ci(a[1])];
+  const marge = 30;
+  const imin = Math.min(i0, i1) - marge, imax = Math.max(i0, i1) + marge, jmin = Math.min(j0, j1) - marge, jmax = Math.max(j0, j1) + marge;
+  const cle = (i, j) => (i - imin) + (j - jmin) * (imax - imin + 1);
+  const g = new Map(), parent = new Map();
+  const tas = [];
+  const pousser = (n) => { tas.push(n); let k = tas.length - 1; while (k > 0) { const p = (k - 1) >> 1; if (tas[p].f <= tas[k].f) break; [tas[p], tas[k]] = [tas[k], tas[p]]; k = p; } };
+  const extraire = () => { const r = tas[0], d = tas.pop(); if (tas.length) { tas[0] = d; let k = 0; for (;;) { const l = 2 * k + 1, rr = l + 1; let m = k; if (l < tas.length && tas[l].f < tas[m].f) m = l; if (rr < tas.length && tas[rr].f < tas[m].f) m = rr; if (m === k) break; [tas[m], tas[k]] = [tas[k], tas[m]]; k = m; } } return r; };
+  const h = (i, j) => Math.hypot(i - i1, j - j1);
+  g.set(cle(i0, j0), 0);
+  pousser({ i: i0, j: j0, f: h(i0, j0) });
+  while (tas.length) {
+    const n = extraire();
+    const kn = cle(n.i, n.j);
+    if (n.i === i1 && n.j === j1) {
+      const res = [];
+      for (let k = kn; k !== undefined && k !== cle(i0, j0); k = parent.get(k)) {
+        const i = (k % (imax - imin + 1)) + imin, j = Math.floor(k / (imax - imin + 1)) + jmin;
+        res.push([i * CASE_CHEMIN, j * CASE_CHEMIN]);
+      }
+      res.reverse();
+      res.push([a[0], a[1]]);
+      return res;
+    }
+    const gn = g.get(kn);
+    if (n.f > gn + h(n.i, n.j) + 1e-9) continue;
+    for (let di = -1; di <= 1; di++) for (let dj = -1; dj <= 1; dj++) {
+      if (!di && !dj) continue;
+      const i = n.i + di, j = n.j + dj;
+      if (i < imin || i > imax || j < jmin || j > jmax) continue;
+      const fin = i === i1 && j === j1;
+      const gg = gn + Math.hypot(di, dj) * (fin ? 1 : coutCase(i, j));
+      const k = cle(i, j);
+      if (gg < (g.get(k) ?? Infinity)) { g.set(k, gg); parent.set(k, kn); pousser({ i, j, f: gg + h(i, j) }); }
+    }
+  }
+  return null;
+}
+
+/**
  * Pose `j` en `pos` : `teleporter` ne change que la position CLIENT, et le serveur n'accepte un état que s'il reste dans la limite
  * de son budget de distance (v8 : `VITESSE_MAX_H_M_S` × temps écoulé, plafonné à `BUDGET_ARENE_S` = 0,5 s, + 1 m : 10,5 m). Un saut est donc
- * découpé en étapes de 9 m (posées loin des routes : une voiture PNJ tue), chacune attendue chez `autre` (qui voit `j` là où le serveur l'a accepté).
+ * découpé en étapes de 9 m le long d'un chemin à pied (`cheminAPied` : hors des bâtiments, loin des routes autant que possible : une voiture PNJ
+ * tue), chacune attendue chez `autre` (qui voit `j` là où le serveur l'a accepté).
  */
 async function poser(j, autre, pos, tolerance = 2.5) {
   const idJ = await j.id();
   let vu = null;
   const PAS = 9;
-  for (let etape = 0; etape < 60; etape++) {
+  const depart = (await j.jeu()).p;
+  // v8 : pas de 9 m au plus (budget du serveur) le long d'un chemin à pied : un pas posé dans un bâtiment serait refusé (la collision du client
+  // l'en ressort), et un détour pris au hasard ferait osciller la marche
+  const chemin = (Math.hypot(pos[0] - depart[0], pos[2] - depart[2]) > PAS && cheminAPied([depart[0], depart[2]], [pos[0], pos[2]])) || [[pos[0], pos[2]]];
+  let idx = 0;
+  for (let etape = 0; etape < 80; etape++) {
     const moi = (await j.jeu()).p;
-    const reste = Math.hypot(pos[0] - moi[0], pos[2] - moi[2]);
-    const k = reste > PAS ? PAS / reste : 1;
-    let cible = [moi[0] + (pos[0] - moi[0]) * k, pos[1], moi[2] + (pos[2] - moi[2]) * k];
-    if (k < 1) { const [lx, lz] = pointLibre(cible[0], cible[2]); cible = [lx, pos[1], lz]; } // étape intermédiaire : loin des routes
+    const loin = (q) => Math.hypot(q[0] - moi[0], q[1] - moi[2]);
+    let m = idx;
+    while (m + 1 < chemin.length && loin(chemin[m + 1]) <= PAS) m++;
+    while (m > idx && m !== chemin.length - 1 && caseBloquee(chemin[m])) m--;
+    const fin = m === chemin.length - 1;
+    let cible = fin ? [pos[0], pos[1], pos[2]] : [chemin[m][0], pos[1], chemin[m][1]];
+    const d = Math.hypot(cible[0] - moi[0], cible[2] - moi[2]);
+    const k = d > PAS ? PAS / d : 1;
+    if (k < 1) cible = [moi[0] + (cible[0] - moi[0]) * k, pos[1], moi[2] + (cible[2] - moi[2]) * k]; // hors du chemin : pas en ligne droite
     let accepte = false;
     for (let essai = 0; essai < 3 && !accepte; essai++) {
       await j.teleporter(cible);
@@ -239,10 +314,10 @@ async function poser(j, autre, pos, tolerance = 2.5) {
     }
     if (!accepte) {
       const sj = await j.jeu();
-      const recents = j.recus.filter((r) => ["mort", "apparition", "erreur", "match"].includes(r.t) && Date.now() - r.a < 90_000).map((r) => `${r.t}${r.m.cause ? `:${r.m.cause}` : ""}@-${((Date.now() - r.a) / 1000).toFixed(0)}s`);
+      const recents = j.recus.filter((r) => ["mort", "apparition", "erreur", "match"].includes(r.t) && (r.t !== "apparition" || r.m.id === idJ) && Date.now() - r.a < 90_000).map((r) => `${r.t}${r.m.cause ? `:${r.m.cause}` : ""}@-${((Date.now() - r.a) / 1000).toFixed(0)}s`);
       throw new Error(`${j.nom} ne peut pas être posé en (${cible.map((x) => x.toFixed(1))}) : vu en ${vu ? `${vu.p.map((x) => x.toFixed(1))} (vivant ${vu.vivant})` : "nulle part"} par ${autre.nom} ; ${j.nom} côté client : p ${sj.p.map((x) => x.toFixed(1))}, vivant ${sj.vivant}, pv ${sj.pv} ; messages récents ${recents.join(" ")}`);
     }
-    if (k === 1) return vu;
+    if (k === 1) { idx = m + 1; if (fin) return vu; }
   }
   throw new Error(`${j.nom} n'arrive pas en (${pos.map((x) => x.toFixed(1))})`);
 }
@@ -253,6 +328,11 @@ const resultats = [];
 let etapeCourante = "avant le scénario";
 /** Les deux joueurs, pour que `etape` sache si un accident de circulation (voiture PNJ, mortelle par conception) a gâché une étape. */
 let participants = [];
+/**
+ * Remet en arène un joueur dont la page a été rechargée (un `next dev` recharge parfois toutes les pages ouvertes quand il compile à la demande,
+ * même en cours de scénario) ; rend vrai s'il a fallu le faire. Définie dans le programme principal (lobby, entrée).
+ */
+let reprendreJoueur = async () => false;
 /** Un match dure 8 min (entracte de 12 s ensuite, tout le monde réapparaît) : on ne démarre pas une étape dans les 90 dernières secondes. */
 async function garantirMatch() {
   const A = participants[0];
@@ -272,6 +352,7 @@ async function etape(nom, fn) {
   const t0 = Date.now();
   etapeCourante = nom;
   process.stdout.write(`- ${nom} ... `);
+  for (const j of participants) await reprendreJoueur(j).catch((e) => process.stdout.write(`[reprise de ${j.nom} impossible : ${e.message}] `));
   if (participants.length) await garantirMatch().catch((e) => process.stdout.write(`[${e.message}] `));
   for (let essai = 1; ; essai++) {
     const debut = Date.now();
@@ -281,7 +362,8 @@ async function etape(nom, fn) {
       console.log(`OK (${((Date.now() - t0) / 1000).toFixed(1)} s)${essai > 1 ? ` après ${essai} essais` : ""}${detail ? ` — ${detail}` : ""}`);
       return true;
     } catch (e) {
-      const accident = participants.some((j) => j.msgs("mort", debut).some((m) => m.cause === "ecrase_pnj"));
+      // voitures PNJ, et le bus C3 si le serveur (E2E_WS) ne l'écarte pas
+      const accident = participants.some((j) => j.msgs("mort", debut).some((m) => m.cause === "ecrase_pnj" || m.cause === "bus_c3"));
       if (accident && essai < 3) {
         process.stdout.write(`[accident de circulation, étape rejouée] `);
         try {
@@ -292,6 +374,11 @@ async function etape(nom, fn) {
       }
       resultats.push({ nom, ok: false, erreur: e.message });
       console.log(`ÉCHEC — ${e.message}`);
+      // diagnostic : page de chaque joueur (vue 3D montée ou non), dernières erreurs JavaScript
+      for (const j of participants) {
+        const page = await j.ev(() => ({ url: location.pathname, crochet: !!window.__arene, vue: !!document.querySelector("[data-arene]"), jeu: !!window.__arene?.etat()?.jeu })).catch((x) => ({ erreur: x.message.slice(0, 120) }));
+        console.log(`    ${j.nom} : ${JSON.stringify(page)} ; chargements ${j.chargements.length} ; erreurs ${JSON.stringify(j.erreurs.slice(-4))}`);
+      }
       return false;
     }
   }
@@ -319,7 +406,7 @@ try {
       // ici (repoussés d'une heure, ils tueraient les joueurs en pleine étape), l'avion est testé par e2e_arene_tigres.mjs
       env: {
         ...process.env, PORT: String(portWs), PDJ_FPS_ELSA_MIN_MS: "6000", PDJ_FPS_ELSA_MAX_MS: "7000", SCENE_JSON: join(RACINE, "public/agroparc/scene.json"),
-        PDJ_FPS_AVION_MIN_MS: "3600000", PDJ_FPS_AVION_MAX_MS: "3700000",
+        PDJ_FPS_AVION_MIN_MS: "3600000", PDJ_FPS_AVION_MAX_MS: "3700000", PDJ_FPS_BUS_MIN_MS: "3600000", PDJ_FPS_BUS_MAX_MS: "3700000",
         PDJ_FPS_EVT_MIN_MS: process.env.E2E_EVT_MIN_MS ?? "3600000", PDJ_FPS_EVT_MAX_MS: process.env.E2E_EVT_MAX_MS ?? "3700000",
       },
     });
@@ -378,6 +465,25 @@ try {
     const champ = j.page.getByLabel("Nom de joueur");
     if (await champ.waitFor({ state: "visible", timeout: 30_000 }).then(() => true, () => false)) await champ.fill(j.nom).catch(() => null);
   }
+
+  reprendreJoueur = async (j) => {
+    // le crochet n'existe qu'avec la vue 3D montée : absent, la page a été rechargée (un joueur sorti exprès de l'arène garde le crochet)
+    if (await j.ev(() => !!window.__arene).catch(() => false)) return false;
+    process.stdout.write(`[page de ${j.nom} rechargée : retour en arène] `);
+    await jusqua(async () => { if (!(await lobbyOuvert(j))) await ouvrirLobby(j); return lobbyOuvert(j); }, { ms: 180_000, pas: 500, quoi: `lobby de ${j.nom} rouvert` });
+    await jusqua(async () => (await j.etat().catch(() => null))?.connexion === "ouvert", { ms: 60_000, quoi: `connexion de ${j.nom}` });
+    const radio = j.page.locator("input[type=radio][name$='-mode'][value=arene]");
+    if (!(await radio.isChecked())) await radio.evaluate((e) => e.click());
+    await j.page.locator("aside[aria-label='Arène']").waitFor({ state: "visible", timeout: 8000 });
+    await j.ev(() => window.__arene.entrer({ principale: "fusil_assaut", secondaire: "pistolet" }));
+    await jusqua(async () => { const s = await j.jeu(); return s && s.apparu && s.vivant; }, { ms: 40_000, quoi: `apparition de ${j.nom}` });
+    await jusqua(async () => {
+      if ((await j.jeu()).verrouille) return true;
+      await j.page.getByRole("button", { name: /^jouer$/i }).first().evaluate((e) => e.click()).catch(() => null);
+      return false;
+    }, { ms: 15_000, quoi: `prise de la souris de ${j.nom}` });
+    return true;
+  };
 
   // ------------------------------------------------------------------ 1. lobby et entrée
   const demarre = await etape("1. ouverture de la vue 3D (code « myrtille ») et du lobby, entrée des deux joueurs", async () => {
@@ -491,7 +597,12 @@ try {
     verifier(degats.every((m, i, a) => i === 0 || m.pv + m.bouclier <= a[i - 1].pv + a[i - 1].bouclier), "les PV+bouclier ne baissent pas de façon monotone");
     const mort = await jusqua(async () => A.msgs("mort", depuis).find((m) => m.cible === victimeId), { ms: 8000, quoi: "message `mort` de B" });
     verifier(mort.par === tueurId && mort.cause === "arme", `mort inattendue : ${JSON.stringify(mort)}`);
-    verifier(!(await B.jeu()).vivant, "B est encore vivant côté client");
+    // la killcam de B commence tout de suite : le processeur lui est rendu dès maintenant (fenêtre d'Alice réduite, celle de B en 1280×720,
+    // cf. étape 5), sinon le rejeu peut finir avant que l'étape 5 le voie
+    await A.page.setViewportSize({ width: 480, height: 270 });
+    await B.page.setViewportSize({ width: 1280, height: 720 });
+    // le client de B traite `mort` à sa prochaine image (rendu logiciel : quelques images par seconde)
+    await jusqua(async () => !(await B.jeu()).vivant, { ms: 5000, pas: 50, quoi: "B mort côté client" });
     return `${degats.length} touches confirmées (bouclier initial ${bouclierAvant}), PV vus ${pvVus.join(" → ")}, zone finale ${mort.zone}`;
   });
 
@@ -500,7 +611,8 @@ try {
     // le rendu logiciel de deux grandes fenêtres tourne à 2–10 images/s : on libère le processeur de B pendant la killcam
     await A.page.setViewportSize({ width: 480, height: 270 });
     await B.page.setViewportSize({ width: 1280, height: 720 });
-    const kc = await jusqua(async () => B.ev(() => window.__arene.killcam()), { ms: 8000, quoi: "killcam active chez B" });
+    // la killcam (ou, si elle est déjà finie, l'habillage du rejeu noté par l'observateur du DOM)
+    const kc = await jusqua(async () => (await B.ev(() => window.__arene.killcam())) || (await B.ev(() => (window.__e2eKillcam.rejeu ? { dejaVue: true } : null))), { ms: 8000, quoi: "killcam active chez B" });
     // Rejeu : capturé dès que l'habillage apparaît (la carte du tueur est vérifiée à l'étape 6b, après un « Passer » immédiat : une capture dure
     // plusieurs secondes en rendu logiciel, plus que la killcam entière)
     await jusqua(async () => B.ev(() => !!window.__e2eKillcam.rejeu), { ms: 8000, pas: 40, quoi: "habillage du rejeu chez B" });
@@ -511,7 +623,7 @@ try {
     verifier(rejeu, "l'habillage du rejeu (légende « Rejeu », barre de progression) n'est jamais apparu chez B");
     verifier(/Alice/i.test(rejeu.legende), `la légende du rejeu ne nomme pas le tueur : « ${rejeu.legende} »`);
     verifier(!rejeu.hudCombat, "le HUD de combat reste affiché pendant le rejeu");
-    verifier(kc.tueur === tueurId, `la killcam suit le mauvais joueur : ${kc.tueur} (attendu ${tueurId})`);
+    if (!kc.dejaVue) verifier(kc.tueur === tueurId, `la killcam suit le mauvais joueur : ${kc.tueur} (attendu ${tueurId})`);
     const tm = Date.now();
     const j = await jusqua(async () => { const s = await B.jeu(); return s.vivant && s.apparu && !s.killcam ? s : false; }, { ms: 40_000, quoi: "réapparition de B" });
     const d = distXZ(j.p, ROND_POINT);
@@ -542,10 +654,17 @@ try {
     // v5 : le coup envoyé porte les cibles touchées (`coup{o, d, cibles}`), ici Bob seul
     const coup = A.envoyes.filter((r) => r.t === "coup" && r.a >= depuis).map((r) => r.m).find((m) => Array.isArray(m.cibles) && m.cibles.includes(victimeId));
     verifier(coup && coup.cibles.length === 1, `aucun message coup{cibles: [Bob]} envoyé par Alice : ${JSON.stringify(A.envoyes.filter((r) => r.t === "coup").slice(-3).map((r) => r.m))}`);
-    // « Passer » est pressé par l'observateur dès l'apparition du rejeu : la carte du tueur doit suivre aussitôt
-    await jusqua(async () => B.ev(() => !!window.__e2eKillcam.carte), { ms: 5000, pas: 40, quoi: "carte du tueur après « Passer » chez B" });
-    await B.capture("06-killcam-carte-B-1280");
-    const { carte } = await B.ev(() => { window.__e2eKillcam.auto = false; return { carte: window.__e2eKillcam.carte }; });
+    // « Passer » est pressé par l'observateur dès l'apparition du rejeu : la carte du tueur doit suivre aussitôt (le rendu logiciel de la
+    // grande fenêtre d'Alice ralentit celui de B : elle est réduite le temps de la killcam, comme à l'étape 5)
+    await A.page.setViewportSize({ width: 480, height: 270 });
+    let carte;
+    try {
+      await jusqua(async () => B.ev(() => !!window.__e2eKillcam.carte), { ms: 12_000, pas: 40, quoi: async () => `carte du tueur après « Passer » chez B (observateur ${JSON.stringify(await B.ev(() => window.__e2eKillcam))})` });
+      await B.capture("06-killcam-carte-B-1280");
+      ({ carte } = await B.ev(() => { window.__e2eKillcam.auto = false; return { carte: window.__e2eKillcam.carte }; }));
+    } finally {
+      await A.page.setViewportSize(process.env.E2E_1280 ? { width: 1280, height: 720 } : { width: 1920, height: 1080 });
+    }
     verifier(/Alice/i.test(carte.texte), `la carte du tueur ne nomme pas Alice : « ${carte.texte.slice(0, 160)} »`);
     verifier(/Réapparition dans/i.test(carte.texte), `la carte du tueur n'indique pas le compte à rebours : « ${carte.texte.slice(0, 160)} »`);
     await A.capture("06-couteau-kill-A-1920");
@@ -569,6 +688,9 @@ try {
       await jusqua(async () => (await C.etat().catch(() => null))?.connexion === "ouvert", { ms: 30_000, quoi: "connexion de Chloé" });
       await C.ev(() => window.__arene.entrer({ principale: "fusil_assaut", secondaire: "pistolet", melee: "epee" }));
       await jusqua(async () => { const s = await C.jeu(); return s && s.apparu && s.vivant; }, { ms: 120_000, quoi: async () => { const e = await C.etat(); return `apparition de Chloé (connexion ${e.connexion}, enArene ${e.enArene}, jeu ${e.jeu ? JSON.stringify({ apparu: e.jeu.apparu, vivant: e.jeu.vivant }) : "absent"} ; erreurs ${C.erreurs.slice(0, 3).join(" | ")} ; ${C.resume()})`; } });
+      // la première visite d'une troisième page peut faire recompiler `next dev`, qui recharge alors toutes les pages ouvertes
+      await dormir(3000);
+      for (const j of [A, B]) await reprendreJoueur(j);
       for (const j of [A, B]) await jusqua(async () => { const s = await j.jeu(); return s && s.vivant && s.apparu && !s.killcam; }, { ms: 40_000, quoi: `${j.nom} vivant` });
       const idA = await A.id(), idB = await B.id(), idC = await C.id();
       // terrain dégagé (ni route ni bâtiment à proximité : les voitures PNJ tuent, un mur couperait le coup)
@@ -758,7 +880,10 @@ try {
     await A.page.keyboard.up("Tab");
     verifier(/Alice/.test(texte) && /Bob/.test(texte), `les deux pseudos manquent dans le tableau : « ${texte.slice(0, 200)} »`);
     for (const col of ["AGENT", "K/D", "SÉR", "PRÉC", "TÊTE", "DÉG", "ARME FAV", "PING"]) verifier(texte.toUpperCase().includes(col), `colonne « ${col} » absente du tableau des scores : « ${texte.slice(0, 220)} »`);
-    verifier(/VOUS/.test(texte) && /LEADER/i.test(texte), "ma ligne (VOUS) ou le leader n'est pas repéré dans le tableau");
+    verifier(/VOUS/.test(texte), `ma ligne (VOUS) n'est pas repérée dans le tableau : « ${texte.slice(0, 220)} »`);
+    // le leader n'est marqué qu'avec au moins un kill (`estLeader`) : un match commencé pendant le scénario (8 min) peut n'en compter aucun
+    const kills = (A.msgs("presence").at(-1)?.joueurs ?? []).reduce((n, x) => n + (x.kills ?? 0), 0);
+    if (kills > 0) verifier(/LEADER/i.test(texte), `le leader n'est pas repéré dans le tableau (${kills} kill(s) dans le match) : « ${texte.slice(0, 220)} »`);
     verifier(/Vous menez|égalité|à \d+ kills? du leader/i.test(texte), `phrase de situation absente : « ${texte.slice(0, 220)} »`);
     return `« ${texte.slice(0, 140)}… »`;
   });
@@ -813,12 +938,11 @@ try {
     verifier(etats.includes("fumee") || etats.includes("feu"), `ni fumée ni feu avant l'explosion : ${JSON.stringify(etats)}`);
     verifier(etats.includes("epave"), `pas d'épave annoncée : ${JSON.stringify(etats)}`);
     await jusqua(async () => B.msgs("explosion", depuis).some((m) => m.id === veh.id), { ms: 4000, quoi: "explosion reçue par B" });
-    await dormir(250);
+    // hors service jusqu'à son retour (15 s après l'explosion) : vérifié avant les captures, qui durent plusieurs secondes en rendu logiciel
+    await jusqua(async () => !(await A.ev(() => window.__arene.monde())).vehicules.some((v) => v.id === veh.id), { ms: 5000, pas: 200, quoi: "la voiture explosée quitte le snap" });
     await A.capture("10e-explosion-A-1920");
     await dormir(1500);
     await A.capture("10e-epave-A-1920");
-    const apres = await A.ev(() => window.__arene.monde());
-    verifier(!apres.vehicules.some((v) => v.id === veh.id), "la voiture explosée est encore dans le snap");
     verifier((await A.jeu()).vivant, "A est mort de sa propre explosion à 14 m");
     return `voiture ${veh.id} : ${[...new Set(etats)].join(" → ")}`;
   });
@@ -907,6 +1031,9 @@ try {
   resultats.push({ nom: "infrastructure", ok: false, erreur: e.message });
 } finally {
   try { await navigateur?.close(); } catch { /* fermé */ }
+  // journaux des serveurs lancés (fin seulement) et rechargements des pages, pour le diagnostic
+  for (const e of enfants) { try { writeFileSync(join(SORTIE, `${e.nom}.log`), e.journal.join("")); } catch { /* sortie indisponible */ } }
+  try { writeFileSync(join(SORTIE, "chargements.json"), JSON.stringify(participants.map((j) => ({ nom: j.nom, chargements: j.chargements })), null, 2)); } catch { /* idem */ }
   if (!process.env.E2E_GARDER) toutArreter();
   const ko = resultats.filter((r) => !r.ok);
   console.log(`\n${resultats.length - ko.length}/${resultats.length} étapes OK`);
