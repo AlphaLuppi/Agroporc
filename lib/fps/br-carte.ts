@@ -341,6 +341,9 @@ function bornesDe(buildings: readonly Building[]): Boite {
   return { x0: x0 - MARGE_BORNES_M, z0: z0 - MARGE_BORNES_M, x1: x1 + MARGE_BORNES_M, z1: z1 + MARGE_BORNES_M };
 }
 
+/** Bornes du monde du Battle Royale d'après la scène d'origine (cadrage de l'aperçu de la vue Palantir). */
+export const bornesBr = (scene: SceneData): Boite => bornesDe(scene.buildings.slice(0, INDEX_PREMIERE_PIECE));
+
 /** Pièces des quatre bâtiments des zombies, sans leurs portes (l'ouverture reste libre). */
 const piecesZombiesSansPortes = (scene: SceneData): PieceSynth[] =>
   CREUSAGES.flatMap((c) => piecesCreusage(c, scene.buildings[c.b]?.h ?? 6)).filter((p) => p.type !== "porte");

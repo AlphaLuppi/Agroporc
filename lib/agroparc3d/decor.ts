@@ -521,3 +521,17 @@ export function construireDecor(scene: THREE.Object3D, data: SceneData, opts: Op
   ajouterGrille(scene);
   ajouterArbres(scene, data);
 }
+
+/** Avion filaire de la vue aérienne (fuselage, aile, queue, dérive et deux feux de position), partagé avec l'aperçu du Battle Royale. */
+export interface AvionFilaire { groupe: THREE.Group; navLight: THREE.Mesh; wingLight: THREE.Mesh }
+export function creerAvionFilaire(): AvionFilaire {
+  const groupe = new THREE.Group();
+  const fus = new THREE.CylinderGeometry(1.4, 1.1, 26, 6); fus.rotateZ(Math.PI / 2);
+  groupe.add(edgesOf(fus, C.white));
+  groupe.add(edgesOf(new THREE.BoxGeometry(5, 0.4, 30), C.white));
+  const tail = edgesOf(new THREE.BoxGeometry(3, 0.3, 10), C.white); tail.position.set(-11, 1, 0); groupe.add(tail);
+  const fin = edgesOf(new THREE.BoxGeometry(4, 6, 0.3), C.white); fin.position.set(-11.5, 3.5, 0); groupe.add(fin);
+  const navLight = new THREE.Mesh(new THREE.SphereGeometry(0.7, 8, 8), new THREE.MeshBasicMaterial({ color: 0xff5a4a })); navLight.position.set(0, -1.6, 0); groupe.add(navLight);
+  const wingLight = new THREE.Mesh(new THREE.SphereGeometry(0.5, 8, 8), new THREE.MeshBasicMaterial({ color: 0xbfffd0 })); wingLight.position.set(1, 0, 15); groupe.add(wingLight);
+  return { groupe, navLight, wingLight };
+}

@@ -16,18 +16,66 @@ import { trajetTruck } from "./truck";
 import type { Poi, SceneData, Vec2 } from "./types";
 import type { Cachette } from "./cachettes";
 import { creerTigreCache, type TigreCache } from "./tigre";
-import { C, ajouterArbres, ajouterBatiments, ajouterGrille, ajouterReseauSol, edgesOf } from "./decor";
+import { C, ajouterArbres, ajouterBatiments, ajouterGrille, ajouterReseauSol, creerAvionFilaire, edgesOf } from "./decor";
+import {
+  CADRAGES, brouillardInterpole, dureeTransition, impulsionBloom, interpolerCadrage, leveDeTransition, poseCadrage, type Pose,
+} from "../fps/apercu-cadrage";
+import type { ApercuDirect, Bandeau, JoueurAerien, ModeleApercu } from "../fps/apercu-source";
+import type { ModeSalle } from "../fps/protocole";
+import type { RenduApercu } from "../fps/rendu-apercu";
+
+export type { JoueurAerien } from "../fps/apercu-source";
 
 export interface SceneCallbacks {
   onSelect(poi: Poi): void;
   onEvent(tag: string, text: string): void;
   /** Le tigre caché vient d'être débusqué dans la cachette `c`. */
   onTigre?(c: Cachette): void;
+  /** Bandeau de l'aperçu par mode (simulation ou direct) ; `null` : plus d'aperçu (panneau fermé). Appelé seulement quand le texte change. */
+  onApercu?(b: Bandeau | null): void;
 }
 
 export interface OptionsScene {
   /** Cachettes du tigre (public/agroparc/cachettes.json) : sans elles, pas de chasse. */
   cachettes?: readonly Cachette[];
+  /**
+   * Mode dont le cadrage et le décor sont ceux du départ (la scène recréée après une partie démarre sur celui du lobby) ; l'intro d'arrivée
+   * vise ce cadrage. Défaut : l'arène.
+   */
+  modeInitial?: ModeSalle;
+}
+
+/** Aperçu par mode de la vue Palantir (décors des zombies et du Battle Royale, joueurs en direct ou simulés), chargé à la demande. */
+export interface ApercuHandle {
+  /** Panneau « Arène » ouvert : l'aperçu est actif. Faux : retour à l'arène, simulations et marqueurs détruits. */
+  actif(b: boolean): void;
+  /** Mode affiché : lance la transition de caméra (`immediat` : sans transition). Sans effet tant que l'aperçu n'est pas actif. */
+  mode(m: ModeSalle, opts?: { immediat?: boolean }): void;
+  /** Vraies données du mode affiché (null : pas de direct). */
+  direct(d: ApercuDirect | null): void;
+  /** État pour le crochet de développement `window.__palantir.apercu()`. */
+  etat(): EtatApercu;
+  /** Crochet de développement : recrée la simulation avec une graine imposée. */
+  graine(n: number): void;
+  /** Crochet de développement : avance la simulation de `s` secondes (pas de 1/30 s). */
+  avancer(s: number): void;
+}
+
+export interface EtatApercu {
+  actif: boolean;
+  /** mode du cadrage visé et mode dont le décor est affiché */
+  mode: ModeSalle;
+  modeDecor: ModeSalle;
+  chargé: boolean;
+  transition: { enCours: boolean; k: number; duree: number };
+  camera: { pos: [number, number, number]; cible: [number, number, number] };
+  /** repères posés dans la scène, dont `sim` fictifs */
+  joueurs: number;
+  sim: number;
+  tigres: number;
+  source: "direct" | "simulation" | null;
+  appelsDessin: number;
+  modele: ModeleApercu | null;
 }
 
 /** Chasse au tigre, pour l'hôte et le crochet de développement `window.__palantir`. */
@@ -41,15 +89,6 @@ export interface ChasseHandle {
   ecran(): { x: number; y: number } | null;
 }
 
-/** Joueur en jeu dans l'arène FPS, vu d'en haut par les spectateurs (position = pieds). */
-export interface JoueurAerien {
-  id: string;
-  pseudo: string;
-  /** "#rrggbb" attribuée par le serveur de l'arène */
-  couleur: string;
-  p: [number, number, number];
-}
-
 export interface SceneHandle {
   /** pivote la caméra de 45° autour du point visé */
   spin(dir: 1 | -1): void;
@@ -61,6 +100,8 @@ export interface SceneHandle {
   joueurs(liste: readonly JoueurAerien[]): void;
   /** Chasse au tigre (null sans cachettes). */
   chasse: ChasseHandle | null;
+  /** Aperçu par mode (panneau « Arène » ouvert). */
+  apercu: ApercuHandle;
   dispose(): void;
 }
 
@@ -74,8 +115,25 @@ export const REST = { dx: -30, y: 230, dz: 380 } as const;
 const POI_LABEL: Record<Poi["type"], string> = { home: "Base", resto: "Restaurant", truck: "Food truck", shop: "Repère" };
 const ease = (t: number) => 1 - Math.pow(1 - t, 3);
 
-interface MarqueurJoueur { g: THREE.Group; el: HTMLDivElement; couleur: string; anchor: THREE.Vector3; materiaux: THREE.Material[] }
+interface MarqueurJoueur {
+  g: THREE.Group; el: HTMLDivElement; cle: string; anchor: THREE.Vector3; materiaux: THREE.Material[];
+  /** faisceau et anneau (le faisceau d'un joueur en chute descend jusqu'au sol) */
+  beam: THREE.Line; ring: THREE.Line;
+  /** position visée (m) : le repère s'en approche exponentiellement quand `lisser` */
+  cible: THREE.Vector3; lisser: boolean; pose: boolean; etiquette: boolean; hauteurEtiquette: number; sim: boolean;
+}
 interface Marker { poi: Poi; el: HTMLDivElement; ring: THREE.LineLoop; beam: THREE.Line; anchor: THREE.Vector3; phase: number }
+
+/** Réglages de `majJoueurs` (aperçu) : sans eux, le chemin historique de l'arène (position posée telle quelle, toutes les étiquettes). */
+interface OptionsJoueurs { lisser?: boolean; etiquettesMax?: number }
+/** Couleur du repère d'un joueur à terre ou mort (`--ag-ink-dim`). */
+const GRIS_HORS = 0x93abb7;
+/** Transition entre deux cadrages : `courbe` "legacy" = le recentrage historique (1,2 s, `ease`), "mode" = arc entrée-sortie. */
+interface Transition {
+  t: number; duree: number; de: Pose3; vers: Pose3; leve: number; courbe: "legacy" | "mode"; mode: ModeSalle | null; brouillardDe: number;
+}
+interface Pose3 { pos: THREE.Vector3; cible: THREE.Vector3 }
+const versPose3 = (p: Pose): Pose3 => ({ pos: new THREE.Vector3(...p.pos), cible: new THREE.Vector3(...p.cible) });
 interface Car { g: THREE.Group; pts: THREE.Vector3[]; cum: number[]; len: number; oneway: boolean; s: number; dir: 1 | -1; v: number; lane: number }
 /** Bus = voiture + arrêts (abscisses s le long de la voie), pause `wait` s à chaque arrêt franchi. */
 interface Bus extends Car { stops: number[]; lastStop: number | null; wait: number }
@@ -88,11 +146,13 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
   renderer.setClearColor(C.ground, 1);
   const scene = new THREE.Scene();
-  scene.fog = new THREE.FogExp2(C.ground, 0.0011);
+  const modeInitial: ModeSalle = opts.modeInitial ?? "arene";
+  scene.fog = new THREE.FogExp2(C.ground, CADRAGES[modeInitial].brouillard);
   const camera = new THREE.PerspectiveCamera(45, 1, 1, 6000);
-  const F = data.focus;
-  const repos = { pos: new THREE.Vector3(F[0] + REST.dx, REST.y, F[1] + REST.dz), target: new THREE.Vector3(F[0], 0, F[1]) };
-  const INTRO_FROM = new THREE.Vector3(F[0], 1400, F[1] + 1200);
+  // position de repos du mode affiché (celle de l'arène : `REST`) ; change avec le mode (cf. `demanderMode`)
+  const poseInitiale = versPose3(poseCadrage(modeInitial, data));
+  const repos = { pos: poseInitiale.pos.clone(), target: poseInitiale.cible.clone() };
+  const INTRO_FROM = new THREE.Vector3(repos.target.x, 1400, repos.target.z + 1200);
   camera.position.copy(INTRO_FROM);
 
   // OrbitControls pose un écouteur clavier sur `canvas.getRootNode()` (document) et le retire par le même
@@ -114,7 +174,10 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
   controls.target.copy(repos.target);
 
   // ---------- décor (cf. decor.ts) ----------
-  ajouterBatiments(scene, data);
+  // les bâtiments de l'arène sont dans un groupe : les aperçus des zombies et du Battle Royale posent leurs propres bâtiments à côté et masquent celui-ci
+  const decorArene = new THREE.Group();
+  scene.add(decorArene);
+  ajouterBatiments(decorArene, data);
   ajouterReseauSol(scene, data);
   ajouterGrille(scene);
   ajouterArbres(scene, data);
@@ -156,14 +219,7 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
   }
 
   // ---------- plane ----------
-  const plane = new THREE.Group();
-  const fus = new THREE.CylinderGeometry(1.4, 1.1, 26, 6); fus.rotateZ(Math.PI / 2);
-  plane.add(edgesOf(fus, C.white));
-  plane.add(edgesOf(new THREE.BoxGeometry(5, 0.4, 30), C.white));
-  const tail = edgesOf(new THREE.BoxGeometry(3, 0.3, 10), C.white); tail.position.set(-11, 1, 0); plane.add(tail);
-  const fin = edgesOf(new THREE.BoxGeometry(4, 6, 0.3), C.white); fin.position.set(-11.5, 3.5, 0); plane.add(fin);
-  const navLight = new THREE.Mesh(new THREE.SphereGeometry(0.7, 8, 8), new THREE.MeshBasicMaterial({ color: 0xff5a4a })); navLight.position.set(0, -1.6, 0); plane.add(navLight);
-  const wingLight = new THREE.Mesh(new THREE.SphereGeometry(0.5, 8, 8), new THREE.MeshBasicMaterial({ color: 0xbfffd0 })); wingLight.position.set(1, 0, 15); plane.add(wingLight);
+  const { groupe: plane, navLight, wingLight } = creerAvionFilaire();
   plane.visible = false;
   scene.add(plane);
   const FLIGHT = { from: new THREE.Vector3(-1100, 150, 760), to: new THREE.Vector3(1100, 190, -760), dur: 34, next: 5, t: -1 };
@@ -298,7 +354,7 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
     }
   }
 
-  // ---------- joueurs de l'arène (spectateurs) ----------
+  // ---------- joueurs (spectateurs de l'arène, aperçus des autres modes) ----------
   const joueursMarq = new Map<string, MarqueurJoueur>();
   const joueurRing = new THREE.BufferGeometry().setFromPoints(
     Array.from({ length: 25 }, (_, i) => { const a = (i / 24) * Math.PI * 2; return new THREE.Vector3(Math.cos(a) * 3.2, 24, Math.sin(a) * 3.2); }),
@@ -307,38 +363,108 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
   function retirerJoueur(m: MarqueurJoueur) {
     scene.remove(m.g);
     m.materiaux.forEach((x) => x.dispose());
+    // l'anneau en pointillés d'un faux joueur a sa propre géométrie (distances cumulées)
+    if (m.ring.geometry !== joueurRing) m.ring.geometry.dispose();
     m.el.remove();
   }
-  function majJoueurs(liste: readonly JoueurAerien[]) {
+  /** Cherche la clé de style : tout ce qui change l'apparence du repère (couleur, fictif, à terre, mort). */
+  const cleStyle = (j: JoueurAerien): string => `${j.couleur}|${j.sim ? 1 : 0}|${j.hors ?? ""}`;
+  function creerMarqueur(j: JoueurAerien): MarqueurJoueur {
+    const hors = j.hors !== undefined;
+    const couleur = hors ? GRIS_HORS : new THREE.Color(j.couleur).getHex();
+    const sim = j.sim === true;
+    const beamMat = new THREE.LineBasicMaterial({ color: couleur, transparent: true, opacity: hors ? 0 : sim ? 0.4 : 0.85 });
+    const g = new THREE.Group();
+    const beam = new THREE.Line(joueurBeam, beamMat);
+    beam.visible = !hors;
+    let ring: THREE.Line, ringMat: THREE.Material;
+    if (sim) {
+      // faux joueur : anneau en POINTILLÉS (jamais pris pour un vrai)
+      const geo = joueurRing.clone();
+      ringMat = new THREE.LineDashedMaterial({ color: couleur, transparent: true, opacity: hors ? 0.7 : 1, dashSize: 1.1, gapSize: 0.85 });
+      ring = new THREE.Line(geo, ringMat);
+      ring.computeLineDistances();
+    } else {
+      ringMat = new THREE.LineBasicMaterial({ color: couleur, transparent: true, opacity: hors ? 0.7 : 1 });
+      ring = new THREE.LineLoop(joueurRing, ringMat);
+    }
+    g.add(beam, ring);
+    const el = document.createElement("div");
+    el.dataset.kind = "joueur";
+    if (sim) el.dataset.sim = "1";
+    if (hors) el.dataset.hors = j.hors;
+    el.style.color = hors ? "var(--ag-ink-dim)" : j.couleur;
+    const name = document.createElement("span"); name.dataset.part = "name";
+    el.append(name);
+    labelsEl.appendChild(el);
+    scene.add(g);
+    return {
+      g, el, cle: cleStyle(j), anchor: new THREE.Vector3(), materiaux: [beamMat, ringMat], beam, ring, cible: new THREE.Vector3(), lisser: false, pose: false,
+      etiquette: true, hauteurEtiquette: 28, sim,
+    };
+  }
+  /** Pose le repère à `p` (pieds ; en chute, le faisceau descend jusqu'au sol et l'anneau reste en l'air). */
+  function poserMarqueur(m: MarqueurJoueur, p: [number, number, number], chute: boolean) {
+    m.g.position.set(p[0], chute ? 0 : p[1], p[2]);
+    if (chute) {
+      m.ring.position.y = p[1] - 24;
+      m.beam.scale.y = Math.max(0.01, p[1]) / 24;
+      m.hauteurEtiquette = p[1] + 4;
+    } else {
+      m.ring.position.y = 0;
+      m.beam.scale.y = 1;
+      m.hauteurEtiquette = 28;
+    }
+    m.anchor.set(p[0], (chute ? 0 : p[1]) + m.hauteurEtiquette, p[2]);
+  }
+  let prochainClassement = 0;
+  const _q = new THREE.Vector3();
+  function majJoueurs(liste: readonly JoueurAerien[], o: OptionsJoueurs = {}) {
     const vus = new Set<string>();
     for (const j of liste) {
       vus.add(j.id);
       let m = joueursMarq.get(j.id);
-      if (m && m.couleur !== j.couleur) { retirerJoueur(m); joueursMarq.delete(j.id); m = undefined; }
-      if (!m) {
-        const beamMat = new THREE.LineBasicMaterial({ color: j.couleur, transparent: true, opacity: 0.85 });
-        const ringMat = new THREE.LineBasicMaterial({ color: j.couleur, transparent: true, opacity: 1 });
-        const g = new THREE.Group();
-        g.add(new THREE.Line(joueurBeam, beamMat), new THREE.LineLoop(joueurRing, ringMat));
-        const el = document.createElement("div");
-        el.dataset.kind = "joueur";
-        el.style.color = j.couleur;
-        const name = document.createElement("span"); name.dataset.part = "name";
-        el.append(name);
-        labelsEl.appendChild(el);
-        scene.add(g);
-        m = { g, el, couleur: j.couleur, anchor: new THREE.Vector3(), materiaux: [beamMat, ringMat] };
-        joueursMarq.set(j.id, m);
-      }
+      if (m && m.cle !== cleStyle(j)) { retirerJoueur(m); joueursMarq.delete(j.id); m = undefined; }
+      if (!m) { m = creerMarqueur(j); joueursMarq.set(j.id, m); }
       const nom = m.el.firstElementChild as HTMLElement;
-      if (nom.textContent !== j.pseudo) nom.textContent = j.pseudo;
-      m.g.position.set(j.p[0], j.p[1], j.p[2]);
-      m.anchor.set(j.p[0], j.p[1] + 28, j.p[2]);
+      const texte = j.sim ? `◇ ${j.pseudo}` : j.pseudo;
+      if (nom.textContent !== texte) nom.textContent = texte;
+      const chute = j.chute !== undefined;
+      m.g.userData.chute = chute;
+      m.cible.set(j.p[0], j.p[1], j.p[2]);
+      // chemin historique (pas de lissage) : posé tel quel ; sinon la boucle d'image s'approche de la cible, sauf à la première pose
+      if (!o.lisser || !m.pose || !m.lisser) poserMarqueur(m, j.p, chute);
+      m.lisser = !!o.lisser;
+      m.pose = true;
     }
     for (const [id, m] of joueursMarq) {
       if (vus.has(id)) continue;
       retirerJoueur(m);
       joueursMarq.delete(id);
+    }
+    // étiquettes plafonnées : les `etiquettesMax` plus proches du point visé (recalcul à 2 Hz, les affichées gardent un léger avantage)
+    const max = o.etiquettesMax;
+    if (max === undefined || joueursMarq.size <= max) {
+      for (const m of joueursMarq.values()) m.etiquette = true;
+    } else if (performance.now() >= prochainClassement) {
+      prochainClassement = performance.now() + 500;
+      const cx = controls.target.x, cz = controls.target.z;
+      const classes = [...joueursMarq.values()].map((m) => ({ m, d: Math.hypot(m.cible.x - cx, m.cible.z - cz) * (m.etiquette ? 0.85 : 1) }));
+      classes.sort((a, b) => a.d - b.d);
+      classes.forEach((c, i) => { c.m.etiquette = i < max; });
+    }
+  }
+  /** Lissage exponentiel des repères en mode `lisser` (téléport au-delà de 12 m). */
+  function lisserJoueurs(dt: number) {
+    const a = 1 - Math.exp(-12 * dt);
+    for (const m of joueursMarq.values()) {
+      if (!m.lisser) continue;
+      const chute = m.g.userData.chute === true;
+      const px = m.g.position.x, pz = m.g.position.z;
+      const py = chute ? m.ring.position.y + 24 : m.g.position.y;
+      _q.set(m.cible.x - px, m.cible.y - py, m.cible.z - pz);
+      if (_q.length() > 12) { poserMarqueur(m, [m.cible.x, m.cible.y, m.cible.z], chute); continue; }
+      poserMarqueur(m, [px + _q.x * a, py + _q.y * a, pz + _q.z * a], chute);
     }
   }
 
@@ -350,7 +476,7 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
   // ---------- post-processing ----------
   const composer = new EffectComposer(renderer);
   composer.addPass(new RenderPass(scene, camera));
-  const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.62, 0.42, 0.24);
+  const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.62, 0.42, 0.24); // force : BLOOM_BASE
   composer.addPass(bloom);
   composer.addPass(new OutputPass());
 
@@ -372,7 +498,7 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
   canvas.addEventListener("wheel", wake, { passive: true });
 
   let spinLeft = 0;
-  let recentering: { t: number; p0: THREE.Vector3; c0: THREE.Vector3 } | null = null;
+  let transition: Transition | null = null;
   const _off = new THREE.Vector3(), UP = new THREE.Vector3(0, 1, 0);
   function applySpin(dt: number) {
     if (Math.abs(spinLeft) < 1e-4) return;
@@ -381,13 +507,130 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
     _off.copy(camera.position).sub(controls.target).applyAxisAngle(UP, step);
     camera.position.copy(controls.target).add(_off);
   }
-  function applyRecenter(dt: number) {
-    if (!recentering) return;
-    recentering.t = Math.min(1, recentering.t + dt / 1.2);
-    const k = ease(recentering.t);
-    camera.position.lerpVectors(recentering.p0, repos.pos, k);
-    controls.target.lerpVectors(recentering.c0, repos.target, k);
-    if (recentering.t >= 1) recentering = null;
+  /** Pose de la caméra et du point visé à la fraction `k` d'une transition (recentrage historique : lerp et `ease` ; mode : arc entrée-sortie). */
+  function appliquerPose(tr: Transition, k: number) {
+    if (tr.courbe === "legacy") {
+      const e = ease(k);
+      camera.position.lerpVectors(tr.de.pos, tr.vers.pos, e);
+      controls.target.lerpVectors(tr.de.cible, tr.vers.cible, e);
+      return;
+    }
+    const p = interpolerCadrage(
+      { pos: [tr.de.pos.x, tr.de.pos.y, tr.de.pos.z], cible: [tr.de.cible.x, tr.de.cible.y, tr.de.cible.z] },
+      { pos: [tr.vers.pos.x, tr.vers.pos.y, tr.vers.pos.z], cible: [tr.vers.cible.x, tr.vers.cible.y, tr.vers.cible.z] }, k, tr.leve,
+    );
+    camera.position.set(...p.pos);
+    controls.target.set(...p.cible);
+  }
+
+  // ---------- aperçu par mode (cf. lib/fps/rendu-apercu.ts, chargé à la demande) ----------
+  let apercuActif = false;
+  let modeCamera: ModeSalle = modeInitial;
+  /** mode dont le décor est affiché, et mode dont le décor doit l'être dès que la transition a passé son milieu et que le rendu est chargé */
+  let modeDecor: ModeSalle = modeInitial;
+  let decorVoulu: ModeSalle = modeInitial;
+  let rendu: RenduApercu | null = null;
+  let chargementRendu = false;
+  let modeVoulu: ModeSalle = modeInitial;
+  let directVoulu: ApercuDirect | null = null;
+  let apercuSource: "direct" | "simulation" | null = null;
+  const BLOOM_BASE = 0.62;
+  let impulsionK = 0;
+
+  /** Éléments propres à l'arène : POI et leurs étiquettes, voitures, bus, avion, Truck, tigre caché (masqués dans les autres modes). */
+  function montrerArene(b: boolean) {
+    for (const m of markers) {
+      m.beam.visible = b && !(m.poi.type === "truck" && !TRUCK.arrived);
+      m.ring.visible = m.beam.visible;
+      m.el.style.display = b ? "" : "none";
+    }
+    for (const c of cars) c.g.visible = b;
+    for (const c of buses) c.g.visible = b;
+    truck.visible = b;
+    plane.visible = b && FLIGHT.t >= 0;
+    tigre?.afficher(b);
+  }
+
+  function chargerRendu() {
+    if (rendu || chargementRendu) return;
+    chargementRendu = true;
+    import("../fps/rendu-apercu")
+      .then(({ creerRenduApercu }) => {
+        if (disposed) return;
+        rendu = creerRenduApercu({
+          scene, data, labelsEl, reduit: reduced, decorArene, joueurs: majJoueurs, cible: () => controls.target,
+          surBandeau: (b) => cb.onApercu?.(b), surEvenement: (tag, texte) => cb.onEvent(tag, texte),
+          surSource: (src) => { apercuSource = src; },
+        });
+        rendu.actif(apercuActif);
+        rendu.mode(modeVoulu);
+        rendu.direct(directVoulu);
+        // le décor demandé avant la fin du chargement (mode initial après une partie, choix très rapide)
+        if (decorVoulu !== modeDecor || modeDecor !== "arene") appliquerDecor(decorVoulu);
+      })
+      .catch(() => { chargementRendu = false; });
+  }
+
+  /** Échange du décor affiché (au milieu de la transition). Attend le chargement du rendu pour tout mode autre que l'arène. */
+  function appliquerDecor(mode: ModeSalle): boolean {
+    if (mode === "arene" && !rendu) {
+      decorArene.visible = true;
+      montrerArene(true);
+      modeDecor = "arene";
+      return true;
+    }
+    if (!rendu) { chargerRendu(); return false; }
+    rendu.decor(mode);
+    montrerArene(mode === "arene");
+    modeDecor = mode;
+    return true;
+  }
+
+  /** Lance la transition vers le cadrage de `cible` (coupure franche en mouvement réduit). */
+  function allerAuMode(cible: ModeSalle, immediat = false) {
+    if (cible === modeCamera && !transition) { decorVoulu = cible; return; }
+    const vers = versPose3(poseCadrage(cible, data));
+    const de: Pose3 = { pos: camera.position.clone(), cible: controls.target.clone() };
+    const dePose: Pose = { pos: [de.pos.x, de.pos.y, de.pos.z], cible: [de.cible.x, de.cible.y, de.cible.z] };
+    const versPoseT: Pose = { pos: [vers.pos.x, vers.pos.y, vers.pos.z], cible: [vers.cible.x, vers.cible.y, vers.cible.z] };
+    modeCamera = cible;
+    decorVoulu = cible;
+    repos.pos.copy(vers.pos);
+    repos.target.copy(vers.cible);
+    introDone = true;
+    spinLeft = 0;
+    const duree = immediat ? 0 : dureeTransition(dePose, versPoseT, reduced);
+    if (duree <= 0) {
+      transition = null;
+      camera.position.copy(vers.pos);
+      controls.target.copy(vers.cible);
+      (scene.fog as THREE.FogExp2).density = CADRAGES[cible].brouillard;
+      appliquerDecor(cible);
+      return;
+    }
+    transition = {
+      t: 0, duree, de, vers, leve: leveDeTransition(dePose, versPoseT), courbe: "mode", mode: cible, brouillardDe: (scene.fog as THREE.FogExp2).density,
+    };
+  }
+  function avancerTransition(dt: number) {
+    if (!transition) {
+      if (decorVoulu !== modeDecor) appliquerDecor(decorVoulu);
+      return;
+    }
+    const tr = transition;
+    tr.t = Math.min(1, tr.t + dt / tr.duree);
+    appliquerPose(tr, tr.t);
+    if (tr.courbe === "mode" && tr.mode) {
+      (scene.fog as THREE.FogExp2).density = brouillardInterpole(tr.brouillardDe, CADRAGES[tr.mode].brouillard, tr.t);
+      impulsionK = impulsionBloom(tr.t, tr.duree);
+      // le décor est échangé au point haut, caché par l'impulsion de bloom
+      if (tr.t >= 0.5 && decorVoulu !== modeDecor) appliquerDecor(decorVoulu);
+    }
+    if (tr.t >= 1) {
+      transition = null;
+      impulsionK = 0;
+      if (decorVoulu !== modeDecor) appliquerDecor(decorVoulu);
+    }
   }
 
   // ---------- loop ----------
@@ -408,19 +651,23 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
       const k = Math.min(t / INTRO, 1);
       camera.position.lerpVectors(INTRO_FROM, repos.pos, ease(k));
       if (k >= 1) introDone = true;
-    } else if (!reduced && !recentering && performance.now() - idleSince > 9000) {
+    } else if (!reduced && !transition && performance.now() - idleSince > 9000) {
       controls.autoRotate = true;
     }
     applySpin(dt);
-    applyRecenter(dt);
+    avancerTransition(dt);
     controls.update();
-    moveCars(dt);
-    moveBuses(dt);
+    // voitures, bus, avion et Truck n'existent que dans l'arène
+    const enArene = modeDecor === "arene";
+    if (enArene) { moveCars(dt); moveBuses(dt); }
     tigre?.maj(dt);
+    rendu?.maj(dt, t);
+    lisserJoueurs(dt);
+    bloom.strength = BLOOM_BASE + 0.45 * impulsionK;
 
     for (const m of markers) { const s = reduced ? 1 : 1 + 0.18 * Math.sin(t * 2.2 + m.phase); m.ring.scale.set(s, 1, s); }
 
-    if (!reduced) {
+    if (!reduced && enArene) {
       if (FLIGHT.t < 0 && t > FLIGHT.next) { FLIGHT.t = 0; plane.visible = true; }
       if (FLIGHT.t >= 0) {
         FLIGHT.t += dt;
@@ -433,7 +680,7 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
       }
     }
 
-    if (!TRUCK.arrived && truckPoi && t > TRUCK.start) {
+    if (enArene && !TRUCK.arrived && truckPoi && t > TRUCK.start) {
       const k = Math.min((t - TRUCK.start) / TRUCK.dur, 1);
       placeTruck(ease(k) * truckLen);
       if (k >= 1 && truckMarker) {
@@ -445,7 +692,7 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
 
     const w = canvas.clientWidth, h = canvas.clientHeight;
     for (const m of markers) {
-      if (m.el.hidden) continue;
+      if (m.el.hidden || !enArene) continue;
       tmp.copy(m.anchor).project(camera);
       const vis = tmp.z < 1 && Math.abs(tmp.x) < 1.1 && Math.abs(tmp.y) < 1.1;
       m.el.style.opacity = vis ? "1" : "0";
@@ -453,7 +700,7 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
     }
     for (const m of joueursMarq.values()) {
       tmp.copy(m.anchor).project(camera);
-      const vis = tmp.z < 1 && Math.abs(tmp.x) < 1.1 && Math.abs(tmp.y) < 1.1;
+      const vis = m.etiquette && tmp.z < 1 && Math.abs(tmp.x) < 1.1 && Math.abs(tmp.y) < 1.1;
       m.el.style.opacity = vis ? "1" : "0";
       if (vis) m.el.style.transform = `translate(-50%,-100%) translate(${(((tmp.x + 1) / 2) * w).toFixed(1)}px, ${(((1 - tmp.y) / 2) * h).toFixed(1)}px)`;
     }
@@ -462,10 +709,49 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
   }
   raf = requestAnimationFrame(frame);
 
+  // scène recréée sur le cadrage d'un autre mode (après une partie) : son décor, tout de suite (le rendu se charge, l'arène reste masquée)
+  if (modeInitial !== "arene") { decorArene.visible = false; montrerArene(false); chargerRendu(); }
+
   return {
     spin(dir) { wake(); spinLeft += dir * (Math.PI / 4); },
-    recenter() { wake(); recentering = { t: 0, p0: camera.position.clone(), c0: controls.target.clone() }; },
-    joueurs: majJoueurs,
+    recenter() {
+      wake();
+      // retour à la position de repos du mode affiché (1,2 s, comme avant)
+      transition = {
+        t: 0, duree: 1.2, de: { pos: camera.position.clone(), cible: controls.target.clone() }, vers: { pos: repos.pos.clone(), cible: repos.target.clone() },
+        leve: 0, courbe: "legacy", mode: null, brouillardDe: 0,
+      };
+    },
+    joueurs: (liste) => majJoueurs(liste),
+    apercu: {
+      actif(b) {
+        apercuActif = b;
+        if (b) chargerRendu();
+        rendu?.actif(b);
+        // panneau fermé : retour à l'arène (ou à son cadrage si on y est déjà)
+        if (!b) { modeVoulu = "arene"; rendu?.mode("arene"); allerAuMode("arene"); apercuSource = null; cb.onApercu?.(null); }
+        else allerAuMode(modeVoulu);
+      },
+      mode(m, o) {
+        modeVoulu = m;
+        if (!apercuActif) return;
+        rendu?.mode(m);
+        allerAuMode(m, o?.immediat);
+      },
+      direct(d) { directVoulu = d; rendu?.direct(d); },
+      etat() {
+        const sim = [...joueursMarq.values()].filter((m) => m.sim).length;
+        return {
+          actif: apercuActif, mode: modeCamera, modeDecor, chargé: !!rendu,
+          transition: { enCours: !!transition && transition.courbe === "mode", k: transition?.t ?? 1, duree: transition?.duree ?? 0 },
+          camera: { pos: [camera.position.x, camera.position.y, camera.position.z], cible: [controls.target.x, controls.target.y, controls.target.z] },
+          joueurs: joueursMarq.size, sim, tigres: rendu?.etat().tigres ?? 0, source: apercuSource, appelsDessin: renderer.info.render.calls,
+          modele: rendu?.etat().modele ?? null,
+        };
+      },
+      graine(n) { rendu?.graine(n); },
+      avancer(secondes) { rendu?.avancer(secondes); },
+    },
     chasse: tigre && {
       cachette: () => tigre.cachette(),
       debusquer: () => tigre.debusquer(),
@@ -475,7 +761,7 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
         if (!centre) return;
         wake();
         introDone = true;
-        recentering = null;
+        transition = null;
         spinLeft = 0;
         // Même azimut que la vue courante, plongée de 40°.
         const az = Math.atan2(camera.position.x - controls.target.x, camera.position.z - controls.target.z);
@@ -494,6 +780,8 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
     },
     dispose() {
       disposed = true;
+      rendu?.dispose();
+      rendu = null;
       tigre?.dispose();
       cancelAnimationFrame(raf);
       ro.disconnect();
