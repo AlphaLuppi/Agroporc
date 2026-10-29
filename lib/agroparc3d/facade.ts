@@ -4,6 +4,7 @@
  * étages, fenêtres, corniche et porte reprend les mêmes constantes et le même hachage.
  * Rendu seulement : aucune collision ne dépend de ce module.
  */
+import { hachage32, mulberry32 } from "./hasard";
 import type { Building, Vec2 } from "./types";
 
 /** Hauteur nominale d'un étage (m) : `nbEtages = round(h / ETAGE_M)`. */
@@ -66,15 +67,6 @@ export function estLisse(b: Pick<Building, "h" | "r" | "holes">): boolean {
 // ---------------------------------------------------------------------------------------------------------------------
 // Hachage des fenêtres allumées : entier 32 bits, identique au nuanceur (uint, produits modulo 2^32).
 // ---------------------------------------------------------------------------------------------------------------------
-
-function hachage32(x: number): number {
-  x = (x ^ (x >>> 16)) >>> 0;
-  x = Math.imul(x, 0x7feb352d) >>> 0;
-  x = (x ^ (x >>> 15)) >>> 0;
-  x = Math.imul(x, 0x846ca68b) >>> 0;
-  x = (x ^ (x >>> 16)) >>> 0;
-  return x;
-}
 
 /** Seuil du nuanceur : `(hachage & 0xffff) < SEUIL_ALLUMEES`. */
 export const SEUIL_ALLUMEES = Math.round(PART_ALLUMEES * 65536);
@@ -206,16 +198,6 @@ export const DIMENSIONS: Record<TypeEquipement, readonly [number, number, number
   edicule: [2.6, 2.2, 2.6],
   antenne: [0.14, 3.6, 0.14],
 };
-
-function mulberry32(graine: number): () => number {
-  let a = graine >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
 
 function dansAnneau(x: number, z: number, r: readonly Vec2[]): boolean {
   let d = false;

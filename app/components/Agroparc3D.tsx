@@ -4,7 +4,7 @@ import type { Difficulte } from "@/lib/fps/zombies-vagues";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Chakra_Petch, IBM_Plex_Mono } from "next/font/google";
 import type { Carte, PdjEntry, Plat } from "@/lib/db";
-import type { Poi, SceneData } from "@/lib/agroparc3d/types";
+import type { DecorOsm, Poi, SceneData } from "@/lib/agroparc3d/types";
 import type { JoueurAerien, SceneHandle } from "@/lib/agroparc3d/scene";
 import type { JeuHandle, HudEtat } from "@/lib/fps/jeu";
 import type { HudLive } from "@/lib/fps/jeu-types";
@@ -15,6 +15,7 @@ import { ecrireEquipement, estPrincipale, estSecondaire, lireEquipement } from "
 import { creerRadarFrame } from "@/lib/fps/radar";
 import { nomPersonnage } from "@/lib/characters";
 import { lireCachettes, type Cachette, type FichierCachettes } from "@/lib/agroparc3d/cachettes";
+import { lireDecor } from "@/lib/agroparc3d/decor-osm";
 import { etatRestaurant } from "@/lib/agroparc3d/panneau";
 import { couleurNote, remplissage } from "@/lib/agroparc3d/jauge";
 import { MODE_LABEL, noteMode, trierCarte, type Mode } from "@/lib/carte-tri";
@@ -53,6 +54,16 @@ async function fetchCachettes(): Promise<Cachette[]> {
     return r.ok ? lireCachettes((await r.json()) as FichierCachettes) : [];
   } catch {
     return [];
+  }
+}
+
+/** Détails de décor OpenStreetMap (scripts/agroparc/build_decor.py). Indisponibles ou illisibles : le décor se dessine avec les seules règles de scene.json. */
+async function fetchDecor(): Promise<DecorOsm | undefined> {
+  try {
+    const r = await fetch("/agroparc/decor.json");
+    return r.ok ? lireDecor(await r.json()) : undefined;
+  } catch {
+    return undefined;
   }
 }
 
@@ -503,8 +514,8 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
     let cancelled = false;
     const data = fetch("/agroparc/scene.json")
       .then((r) => { if (!r.ok) throw new Error(`scene.json ${r.status}`); return r.json() as Promise<SceneData>; });
-    Promise.all([data, fetchCachettes()])
-      .then(([d, cachettes]) => { if (!cancelled) setScene({ data: d, cachettes }); })
+    Promise.all([data, fetchCachettes(), fetchDecor()])
+      .then(([d, cachettes, decor]) => { if (!cancelled) setScene({ data: decor ? { ...d, decor } : d, cachettes }); })
       .catch((e: Error) => { if (!cancelled) setError(`Impossible de charger la carte (${e.message}).`); });
     fetchPdj().then((d) => { if (!cancelled) setPdj(d); });
     return () => { cancelled = true; };
