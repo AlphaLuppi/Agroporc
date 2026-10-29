@@ -193,8 +193,34 @@ export interface EtatPap { etat: "libre" | "cuisson" | "pret"; joueur?: string; 
 export interface BonusSol { id: number; genre: GenreBonus; p: Vec3; finT: number }
 /** (v7) Fins (horodatage serveur ms, 0 = inactif) des bonus à durée. */
 export interface EffetsZombies { instakillFinT: number; doubleFinT: number; soldesFinT: number }
-/** (v7) Recette ultime : ingrédients ramassés, fin de la cuisson en cours, faite. */
-export interface QueteZombies { ingredients: string[]; cuissonFinT: number; faite: boolean }
+/**
+ * (v8) Grand secret « Le Menu fantôme » (remplace la Recette ultime de la v7) : ce que le rendu doit savoir pour montrer le décor tel qu'il
+ * est (pendules qui tournent, ordre de l'ardoise, post-it, ampoule qui clignote…). Rien n'y est affiché comme un objectif : le client n'en
+ * tire que des détails diégétiques. `etape` : étape en cours (0 = pendules … 8 = service, 9 = servi), cf. `ETAPES_SECRET` de zombies-secret.ts.
+ */
+export interface EtatSecretZombies {
+  etape: number;
+  /** pendules remontées (bits 0 à 3 : open space, salle de pause, cuisine, labo) */
+  pendules: number;
+  /** horodatage serveur (ms) où les pendules sont reparties (11 h 58), 0 = arrêtées ; durée d'un tour du cadran des heures (ms) */
+  pendulesT: number;
+  periodeMidiMs: number;
+  /** ardoise : index des casseroles (`SECRET_CARTE.casseroles`) dans l'ordre du menu ; casseroles déjà sonnées dans cet ordre */
+  ardoise: number[];
+  casseroles: number;
+  /** marmite et billot : part remplie (0..1) */
+  marmite: number;
+  billot: number;
+  /** truffe sortie de la cuve n° 3 : porteur et fin (ms) avant qu'elle fonde */
+  truffe?: { porteur: string; finT: number };
+  /** numéro du post-it de chaque écran (`SECRET_CARTE.ecrans`) ; écrans déjà touchés dans l'ordre */
+  postits: number[];
+  ecrans: number;
+  /** code que l'ampoule du Local technique répète en morse (présent à l'étape des post-it seulement) */
+  code?: number[];
+  /** début (ms) du service en cours, absent sinon */
+  service?: number;
+}
 /** (v7) Truck Muche d'une manche de livraison : quai, étape et fin de l'étape. */
 export interface TruckZombies { phase: "arrivee" | "livraison" | "depart" | "epave"; quai: number; finT: number }
 export interface JoueurZombies {
@@ -216,7 +242,8 @@ export interface EtatPartieZombies {
   /** fin de la pause / du bilan (horodatage serveur ms) */
   finT: number;
   joueurs: JoueurZombies[]; portes: { id: string; ouverte: boolean }[];
-  bilan?: { manche: number; dureeMs: number };
+  /** (v8) `victoire` : la partie s'est finie à la cloche du grand secret, pas par une défaite */
+  bilan?: { manche: number; dureeMs: number; victoire?: true };
   // ---- v7 ----
   difficulte: Difficulte;
   /** courant rétabli (atouts sauf la Pause Café, Pack-a-Punch, lumières, truffe) */
@@ -229,7 +256,8 @@ export interface EtatPartieZombies {
   fenetres: number[];
   bonus: BonusSol[];
   effets: EffetsZombies;
-  quete: QueteZombies;
+  /** (v8) grand secret (remplace `quete`, la Recette ultime de la v7) */
+  secret: EtatSecretZombies;
   /** manche de livraison du Truck Muche en cours (ou à venir pendant la pause : `mancheTruck`) */
   mancheTruck: boolean;
   truck: TruckZombies | null;
@@ -265,12 +293,15 @@ export type EvenementZombies =
   | { e: "arc"; p: Vec3[]; par: string }
   /** (v8) souffle de la Soufflerie tiré de `o` vers `d` sur `portee` m (aux autres : le tireur l'a déjà vu) */
   | { e: "souffle"; o: Vec3; d: Vec3; portee: number; par: string }
-  | { e: "ingredient"; id: string; par: string }
-  | { e: "cuisson"; fin: boolean }
+  /**
+   * (v8) grand secret : un détail du décor réagit (`quoi`, cf. `QuoiSecret` de zombies-secret.ts) en `p` ; `i` : rang de l'objet (pendule,
+   * casserole, écran…) ; `k` : avancée (0..1) ; `joueur` : celui qui l'a provoqué
+   */
+  | { e: "secret"; quoi: string; p: Vec3; i?: number; k?: number; joueur?: string }
   | { e: "manche"; numero: number; truck: boolean }
   | { e: "autoReleve"; joueur: string };
 /** Raisons d'un achat refusé (`achat{ok:false}`). */
-export type RaisonAchat = "argent" | "loin" | "deja" | "verrou" | "partie" | "courant" | "occupe" | "quete";
+export type RaisonAchat = "argent" | "loin" | "deja" | "verrou" | "partie" | "courant" | "occupe";
 
 /** Tigre zombie dans un snap : `z` est un tableau plat de stride `PAS_SNAP_ZOMBIE`. */
 export interface SnapZombies {
@@ -573,7 +604,8 @@ export type MessageClient =
   | { t: "lancerPartie"; difficulte?: Difficulte }
   /**
    * Acheter ou utiliser (zombies) : `id` du catalogue (`mur:<arme>`, `boite:B<n>` (acheter ou prendre l'arme offerte), `atout:<id>`, `pap`,
-   * `courant`, `ingredient:<id>`, `four`, portes `D1`…), à ≤ 2,5 m (3 m d'une porte) de l'achat.
+   * `courant`, portes `D1`…), à ≤ 2,5 m (3 m d'une porte) de l'achat. (v8) `secret:<objet>` (`truffe`, `four`, `cloche`) : E sur un objet du
+   * grand secret, sans invite ; le serveur ne répond rien (ni `achat`, ni refus) si rien ne se passe.
    */
   | { t: "acheter"; id: string }
   /** (v7) Maintenir E devant une fenêtre pour reposer ses planches ; `null` = relâché. */

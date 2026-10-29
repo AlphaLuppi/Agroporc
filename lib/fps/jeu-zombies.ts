@@ -1,7 +1,8 @@
 /**
  * Mode zombies côté client (PUR, testé, ni three ni DOM) : tampon des `snap.zombies` interpolé à l'instant du rendu (appariement par id,
  * apparition et disparition, tableaux préalloués), touches des tirs et de la mêlée sur les tigres, sélection du niveau de détail,
- * rugissements espacés et invite d'interaction (achat, porte, boîte, atout, Pack-a-Punch, disjoncteur, recette, planches, note, relève).
+ * rugissements espacés et invite d'interaction (achat, porte, boîte, atout, Pack-a-Punch, disjoncteur, planches, note, relève) ; (v8) E sans
+ * invite près d'un objet du grand secret (`objetSecretProche`).
  * v7 : allure et mode des tigres, Truck Muche interpolé, balles qui percent.
  * Spec : docs/superpowers/specs/2026-10-27-arene-zombies-design.md (« Rendu et performances côté client »), 2026-10-28-zombies-bo1-design.md
  *
@@ -18,7 +19,7 @@ import {
   type SnapZombies, type Vec3, type Zone,
 } from "./protocole";
 import {
-  ATOUTS, FENETRES, NOTES, PIECES_SYNTH, PORTES_PAYANTES, PRIX_MUNITIONS_AMELIOREE, achatsProches, porteDeId, rayonTruck,
+  ATOUTS, FENETRES, INTERACTIONS_SECRET, NOTES, PIECES_SYNTH, PORTES_PAYANTES, PRIX_MUNITIONS_AMELIOREE, achatsProches, porteDeId, rayonTruck,
   zonesOuvertes, type Achat,
 } from "./zombies-carte";
 import { ZOMBIES, echelleZombie, type Allure, type TypeZombie } from "./zombies-vagues";
@@ -385,7 +386,7 @@ export function sonGriffe(type: TypeZombie): SonGriffe {
 // Invite d'interaction
 // ---------------------------------------------------------------------------------------------
 
-export type GenreInvite = "" | "acheter" | "porte" | "boite" | "atout" | "pap" | "courant" | "ingredient" | "four" | "reanimer" | "reparer" | "note";
+export type GenreInvite = "" | "acheter" | "porte" | "boite" | "atout" | "pap" | "courant" | "reanimer" | "reparer" | "note";
 
 export interface InviteZombies {
   invite: GenreInvite;
@@ -407,7 +408,7 @@ export const INVITE_VIDE: InviteZombies = Object.freeze({ invite: "", detail: ""
 export interface CoequipierATerre { id: string; pseudo: string; p: Vec3 }
 
 /** Ce que l'invite lit de la partie (sous-ensemble de `EtatPartieZombies`). */
-export type PartieInvite = Pick<EtatPartieZombies, "courant" | "boite" | "boitesSoldes" | "pap" | "quete" | "effets" | "fenetres" | "portes">;
+export type PartieInvite = Pick<EtatPartieZombies, "courant" | "boite" | "boitesSoldes" | "pap" | "effets" | "fenetres" | "portes">;
 
 export interface EntreeInvite {
   /** position (x, z) du joueur */
@@ -433,8 +434,6 @@ function possede(eq: Equipement, a: ArmeFeuId): boolean {
   if (eq.enCuisson === a) return false;
   return (!eq.sansPrincipale && eq.principale === a) || eq.secondaire === a || eq.speciale === a;
 }
-
-const NOMS_INGREDIENTS: Readonly<Record<string, string>> = { sel: "Sel de Guérande", herbes: "Herbes du Trèfle", truffe: "Truffe noire" };
 
 type Description = Omit<InviteZombies, "assez" | "cible"> & { bloque?: string };
 
@@ -490,19 +489,6 @@ function descriptionAchat(a: Achat, e: EntreeInvite): Description | null {
     case "courant":
       if (p?.courant) return null;
       return { invite: "courant", detail: "Rétablir le courant", prix: 0, id: a.id };
-    case "ingredient": {
-      if (p && p.quete.ingredients.includes(a.ingredient!)) return null;
-      if (a.ingredient === "truffe" && p && !p.courant) return null;
-      return { invite: "ingredient", detail: `Ramasser : ${NOMS_INGREDIENTS[a.ingredient!] ?? a.ingredient}`, prix: 0, id: a.id };
-    }
-    case "four": {
-      if (!p || p.quete.faite) return null;
-      const d: Description = { invite: "four", detail: "Cuisiner la Recette ultime", prix: 0, id: a.id };
-      if (p.quete.cuissonFinT) return { ...d, bloque: "En cuisson" };
-      if (!p.courant) return { ...d, bloque: "Courant coupé" };
-      if (p.quete.ingredients.length < 3) return { ...d, bloque: `Ingrédients ${p.quete.ingredients.length} / 3` };
-      return d;
-    }
     case "mur": {
       const arme = a.arme!;
       if (arme === "epee") {
@@ -537,7 +523,7 @@ export function inviteZombies(e: EntreeInvite): InviteZombies {
   const p = e.partie ?? null;
   for (const a of achatsProches([e.pos[0], e.pos[1]], {
     ouvertes: e.portesOuvertes instanceof Set ? [...e.portesOuvertes] : e.portesOuvertes,
-    ...(p ? { boite: boitesPresentes(p).map((b) => b.emplacement), ingredientsPris: p.quete.ingredients, courant: p.courant } : {}),
+    ...(p ? { boite: boitesPresentes(p).map((b) => b.emplacement), courant: p.courant } : {}),
   })) {
     const d = descriptionAchat(a, e);
     if (!d) continue;
@@ -562,6 +548,20 @@ export function inviteZombies(e: EntreeInvite): InviteZombies {
   if (!candidats.length) return INVITE_VIDE;
   candidats.sort((x, y) => x.d - y.d);
   return candidats[0].inv;
+}
+
+/**
+ * (v8) Grand secret : E sans invite (rien à acheter, à lire ni à reposer) près d'un objet qu'on prend ou qu'on actionne (la truffe dans la cuve
+ * n° 3, le four, la cloche du comptoir) : id d'achat `secret:<objet>` à envoyer, ou null. Ne dépend PAS de l'état du secret (aucune invite,
+ * rien qui trahisse l'objet) : le serveur juge en silence.
+ */
+export function objetSecretProche(pos: readonly [number, number]): string | null {
+  let res: string | null = null, dMin = Infinity;
+  for (const it of INTERACTIONS_SECRET) {
+    const d = Math.hypot(it.position[0] - pos[0], it.position[1] - pos[1]);
+    if (d <= it.portee && d < dMin) { dMin = d; res = `secret:${it.id}`; }
+  }
+  return res;
 }
 
 /** Ce que le joueur maintient avec E : une relève (`cible`) ou une repose de planches (`fenetre`), rien sinon. */

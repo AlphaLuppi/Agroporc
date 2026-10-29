@@ -29,8 +29,6 @@ LIGNES=(
   "soldes|Hapi aoueur ! Tout à dix balles !|0.8|0.09|150"
   "truck|Livraison du truc muche ! Ça va piquer !|0.6|0.16|125"
   "courant|Courant rétabli !|0.72|0.11|130"
-  "recette_cuit|La recette ultime mijote. Tenez trente secondes !|0.74|0.1|140"
-  "recette_servie|La recette ultime est servie !|0.72|0.12|130"
   "partie_perdue|Fin du service. Tout le monde à la plonge.|0.62|0.16|120"
 )
 

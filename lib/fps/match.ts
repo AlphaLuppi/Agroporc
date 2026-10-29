@@ -1003,6 +1003,8 @@ export class Salle implements ContexteSalle {
     const sorties: Sortie[] = [{ a: "tous", sauf: j.id, m: { t: "tir", id: j.id, arme: armeTiree, o: tir.o, d: dirs, ...(gauche ? { main: "g" as const } : {}) } }];
     // arme spéciale : une munition de moins ; à 0, l'arme disparaît et le joueur retombe sur le slot précédent
     if (j.main === "speciale") sorties.push(...this.consommerSpeciale(j, maintenant));
+    // (v8, zombies) le grand secret voit passer chaque tir validé (objets du décor)
+    if (this.zombies) sorties.push(...this.zombies.tirSecret(j, armeTiree, tir.o, dirs, maintenant));
     // (v8, zombies) projectile ou souffle : le service résout tout le tir (aucune touche déclarée n'est lue)
     const special = this.zombies?.tirSpecial(j, armeTiree, tir.o, dirs[0], maintenant) ?? null;
     if (special) { sorties.push(...special); return sorties; }
@@ -1181,6 +1183,8 @@ export class Salle implements ContexteSalle {
     j.protegeJusqua = 0;
     const d = dirs[0];
     const sorties: Sortie[] = [{ a: "tous", sauf: j.id, m: { t: "coup", id: j.id, o: coup.o, d, arme } }];
+    // (v8, zombies) le grand secret voit passer chaque coup, même dans le vide (pendules)
+    if (this.zombies) sorties.push(...this.zombies.coupSecret(j, arme, coup.o, d, maintenant));
     // `cibles` vient du réseau : un tableau absent ou mal formé (ancien format `cible`, client truqué) vaut un coup dans le vide
     const ids = Array.isArray(coup.cibles)
       ? [...new Set(coup.cibles.filter((x): x is string => typeof x === "string"))].slice(0, m.nbCiblesMax)

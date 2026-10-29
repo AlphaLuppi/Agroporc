@@ -132,6 +132,18 @@ const courantZombies = process.env.PDJ_FPS_ZOMBIES_COURANT === "1";
 const remontoirsZombies = dureeEnv("PDJ_FPS_ZOMBIES_REMONTOIRS");
 /** (v8, essais) paquet de bonus imposé : genres séparés par des virgules (« soldes,menuisier »), les inconnus sont ignorés */
 const bonusZombies = (process.env.PDJ_FPS_ZOMBIES_BONUS ?? "").split(",").map((x) => x.trim()).filter((x): x is GenreBonus => (GENRES_BONUS as readonly string[]).includes(x));
+/**
+ * (v8, essais) grand secret « Le Menu fantôme » : étape de départ de chaque partie (0 à 9, les précédentes considérées faites), tour du cadran
+ * des pendules (midi sonne une fois par tour, 300 000 ms par défaut), première livraison du Truck où le service s'ouvre (3 par défaut)
+ */
+const secretEtape = dureeEnv("PDJ_FPS_ZOMBIES_SECRET");
+const secretMidi = dureeEnv("PDJ_FPS_ZOMBIES_SECRET_MIDI_MS");
+const secretLivraison = dureeEnv("PDJ_FPS_ZOMBIES_SECRET_LIVRAISON");
+const optionsSecret = {
+  ...(secretEtape !== undefined ? { etape: secretEtape } : {}),
+  ...(secretMidi !== undefined ? { periodeMidiMs: secretMidi } : {}),
+  ...(secretLivraison !== undefined ? { livraisonService: secretLivraison } : {}),
+};
 const optionsZombies: OptionsSalle = {
   zombies: {
     donnees: donneesZombies(scene),
@@ -143,6 +155,7 @@ const optionsZombies: OptionsSalle = {
     ...(courantZombies ? { courant: true } : {}),
     ...(remontoirsZombies !== undefined ? { remontoirsDepart: remontoirsZombies } : {}),
     ...(bonusZombies.length ? { bonus: bonusZombies } : {}),
+    ...(Object.keys(optionsSecret).length ? { secret: optionsSecret } : {}),
   },
 };
 const salleZombies = new Salle(construireMondeZombies(scene), DEPARTS.map((d) => [d[0], d[1]] as [number, number]), Math.random, Date.now(), optionsZombies);

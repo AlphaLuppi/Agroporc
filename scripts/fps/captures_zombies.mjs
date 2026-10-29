@@ -7,6 +7,7 @@
  * RAGDOLL=1 (avec PAUSE courte) : au lieu des points de vue, les morts désarticulées des tigres, une par arme (SCENARIOS, DELAIS en ms).
  * ARMES=1 : (v8) au lieu des points de vue, les armes des zombies en main, de base et améliorées (camouflage, paire akimbo, viseurs, HUD
  * gratiné ; `essayerArme` côté client seulement), la lunette thermique, un arc et une bourrasque, puis les nouvelles armes à la craie.
+ * SECRET=<étape> : (v8) la partie démarre à cette étape du grand secret (`PDJ_FPS_ZOMBIES_SECRET`), pour photographier son décor (avec VUES).
  */
 import { spawn, spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
@@ -62,7 +63,7 @@ try {
     urlWs = `ws://localhost:${port}`;
     const b = spawnSync(process.execPath, ["scripts/build.mjs"], { cwd: join(RACINE, "serveur-fps"), encoding: "utf8" });
     if (b.status !== 0) throw new Error(b.stdout + b.stderr);
-    const srv = lancer(process.execPath, ["dist/index.js"], { cwd: join(RACINE, "serveur-fps"), env: { ...process.env, PORT: String(port), SCENE_JSON: join(RACINE, "public/agroparc/scene.json"), PDJ_FPS_ZOMBIES_ARGENT: "50000", PDJ_FPS_ZOMBIES_PAUSE_MS: process.env.PAUSE ?? "90000", PDJ_FPS_ZOMBIES_TOTAL: "12", PDJ_FPS_ZOMBIES_GRIFFE: "1", ...(process.env.COURANT ? { PDJ_FPS_ZOMBIES_COURANT: "1" } : {}) } });
+    const srv = lancer(process.execPath, ["dist/index.js"], { cwd: join(RACINE, "serveur-fps"), env: { ...process.env, PORT: String(port), SCENE_JSON: join(RACINE, "public/agroparc/scene.json"), PDJ_FPS_ZOMBIES_ARGENT: "50000", PDJ_FPS_ZOMBIES_PAUSE_MS: process.env.PAUSE ?? "90000", PDJ_FPS_ZOMBIES_TOTAL: "12", PDJ_FPS_ZOMBIES_GRIFFE: "1", ...(process.env.COURANT ? { PDJ_FPS_ZOMBIES_COURANT: "1" } : {}), ...(process.env.SECRET ? { PDJ_FPS_ZOMBIES_SECRET: process.env.SECRET } : {}) } });
     await attendreHttp(`http://localhost:${port}/sante`, 20000).catch((e) => { throw new Error(e.message + srv.journal.join("")); });
   }
   let urlNext = process.env.E2E_URL;

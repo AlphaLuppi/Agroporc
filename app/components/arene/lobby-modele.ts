@@ -172,7 +172,7 @@ export const REGLES_ZOMBIES: string[] = [
   "Boîte mystère : 950 $, elle déménage quand sort la peluche. Tigres dorés : ils portent un bonus (Munitions max, Insta-kill, Double points…).",
   `À terre : un coéquipier vous relève en maintenant la touche d'action ${ZOMBIES.reanimationS} s à moins de ${formatDecimal(ZOMBIES.reanimationPortee)} m (1,5 s avec la Pause Café), sinon éliminé au bout de ${Math.round(ZOMBIES.terreMs / 1000)} s. Seul, la Pause Café vous relève 3 fois.`,
   `Munitions limitées : ${ZOMBIES.ravitaillementChargeurs} chargeurs par arme (${ZOMBIES.ravitaillementChargeursAmeliore} une fois gratinée), rechargés à moitié prix aux murs.`,
-  "Toutes les 4 à 6 manches, le Truck Muche livre des petits tigres. Lisez les notes : elles mènent à la Recette ultime.",
+  "Toutes les 4 à 6 manches, le Truck Muche livre des petits tigres. Lisez les notes : le chef a laissé plus qu'un menu.",
 ];
 
 /** Phrase affichée quand une partie est déjà lancée. */

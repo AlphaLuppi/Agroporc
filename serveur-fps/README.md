@@ -40,6 +40,9 @@ Le site (`npm run dev` à la racine) s'y connecte tout seul en dev (`ws://localh
 | `PDJ_FPS_ZOMBIES_GRIFFE` | 50 (selon la difficulté et le type) | dégâts de griffe imposés (ex. 100 : un seul coup met à terre ; le test de bout en bout utilise 20) |
 | `PDJ_FPS_ZOMBIES_TRUCK` | 5, 6 ou 7 au hasard | première manche du Truck Muche (essais) ; 0 = jamais |
 | `PDJ_FPS_ZOMBIES_COURANT` | (absent) | `1` : courant rétabli dès le départ (essais : atouts et Pack-a-Punch utilisables tout de suite) |
+| `PDJ_FPS_ZOMBIES_SECRET` | 0 | (v8) grand secret « Le Menu fantôme » : étape de départ de chaque partie, 1 à 9 (les précédentes sont considérées faites ; 9 = servi, la cloche finit la partie). Solution : `docs/superpowers/specs/2026-10-29-zombies-secret-SOLUTION.md` |
+| `PDJ_FPS_ZOMBIES_SECRET_MIDI_MS` | 300 000 | (v8) tour du cadran des pendules remontées : midi sonne une fois par tour (essais : 20 000) |
+| `PDJ_FPS_ZOMBIES_SECRET_LIVRAISON` | 3 | (v8) première livraison du Truck Muche où le service final du secret s'ouvre (essais : 1) |
 
 `GET /sante` renvoie `{ ok, joueurs, enJeu, match, zombies: { joueurs, enJeu, phase, manche, enSuspens } }` (connectés, joueurs en arène, numéro du match, puis la salle des zombies tigres : deuxième salle du même serveur, 8 membres au plus lobby compris, une seule partie à la fois ; `enSuspens` = sessions coupées qui attendent leur reprise). Limites : messages ≤ 16 Ko ; anti-flood
 à deux seaux (`lib/fps/anti-flood.ts`) : flux `etat` / `conduite` / `pilotage` / `ping` à 45/s (rafale 90), autres messages à 90/s (rafale 270), l'excédent est JETÉ sans fermer la socket, seule une fenêtre de plus de 600 messages bruts en une seconde vaut `erreur flood` et fermeture ; ping WebSocket toutes les 5 s (connexion morte fermée au bout de 10 s : un joueur parti ne reste pas en cible),

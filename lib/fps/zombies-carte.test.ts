@@ -208,14 +208,11 @@ describe("portes, zones actives, achats proches", () => {
     expect(zonesActives([null], o)).toEqual(new Set(["open"]));
   });
 
-  it("achatsProches : la boîte à l'emplacement courant seulement, la truffe au courant, les ingrédients pris écartés", () => {
+  it("achatsProches : la boîte à l'emplacement courant seulement ; (v8) plus aucun achat pour le grand secret (ni ingrédient, ni four)", () => {
     const b1 = ACHATS.find((a) => a.id === "boite:B1")!;
     expect(achatsProches(b1.position, { boite: 0 }).some((a) => a.id === "boite:B1")).toBe(true);
     expect(achatsProches(b1.position, { boite: 2 }).some((a) => a.id === "boite:B1")).toBe(false);
-    const truffe = ACHATS.find((a) => a.id === "ingredient:truffe")!;
-    expect(achatsProches(truffe.position, { courant: false }).some((a) => a.id === truffe.id)).toBe(false);
-    expect(achatsProches(truffe.position, { courant: true }).some((a) => a.id === truffe.id)).toBe(true);
-    expect(achatsProches(truffe.position, { courant: true, ingredientsPris: ["truffe"] }).some((a) => a.id === truffe.id)).toBe(false);
+    expect(ACHATS.filter((a) => /ingredient|four|secret/.test(a.id))).toEqual([]);
   });
 
   it("prix de BO1 : atouts 2 500 / 3 000 / 2 000 / 1 500 (500 seul)", () => {

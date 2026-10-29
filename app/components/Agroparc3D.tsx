@@ -622,6 +622,7 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
       simuler: (m) => jeuRef.current?.debug.simuler(m),
       essayerArme: (arme, ameliore) => jeuRef.current?.debug.essayerArme?.(arme, ameliore) ?? false,
       effetArme: (genre, points) => jeuRef.current?.debug.effetArme?.(genre, points),
+      secret: () => jeuRef.current?.debug.secret?.() ?? null,
       eclair: (p, dansS) => jeuRef.current?.debug.eclair(p, dansS) ?? false,
       ambianceTruck: (on) => jeuRef.current?.debug.ambianceTruck(on) ?? false,
       forcerHud: (partiel) => setHudForce(partiel ? { ...partiel } : null),
@@ -1045,6 +1046,8 @@ declare global {
       essayerArme(arme: Parameters<NonNullable<JeuHandle["debug"]["essayerArme"]>>[0], ameliore?: boolean): boolean;
       /** Zombies (v8) : dessine un arc électrique par ces points, ou une bourrasque de Soufflerie depuis l'œil (captures). */
       effetArme(genre: "arc" | "souffle", points?: [number, number, number][]): void;
+      /** (zombies, v8) grand secret : état public, heure des pendules, midi, positions des objets du décor (null hors partie) */
+      secret(): Record<string, unknown> | null;
       /** (zombies, v8) la foudre d'une manche du Truck frappera `p` dans `dansS` s, côté client seulement (captures) */
       eclair(p: [number, number, number], dansS?: number): boolean;
       /** (zombies, v8) brouillard et ciel d'une manche du Truck allumés ou levés, côté client seulement (captures) */

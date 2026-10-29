@@ -115,3 +115,20 @@ function IntroZombiesBrute() {
   );
 }
 export const IntroZombies = memo(IntroZombiesBrute);
+
+/**
+ * (v8) Courte « cinématique » du grand secret servi : bandes noires qui se referment puis se rouvrent, voile doré qui s'éteint, sans un mot
+ * (`k` : avancée 0..1). Décorative : aucun texte, rien pour les lecteurs d'écran.
+ */
+function CinematiqueZombiesBrute({ k }: { k: number }) {
+  const bandes = Math.min(1, k * 5, (1 - k) * 4);
+  const voile = Math.max(0, 1 - k * 1.4);
+  return (
+    <div className={styles.cinemaZ} aria-hidden="true" style={{ ["--bandes" as string]: bandes.toFixed(3), ["--voile" as string]: voile.toFixed(3) }}>
+      <span className={styles.cinemaVoile} />
+      <span className={styles.cinemaHaut} />
+      <span className={styles.cinemaBas} />
+    </div>
+  );
+}
+export const CinematiqueZombies = memo(CinematiqueZombiesBrute);
