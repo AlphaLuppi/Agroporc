@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { BR } from "./br-regles";
-import { JEU, MODES_SALLE, type ModeSalle } from "./protocole";
-import { capaciteSalle, decisionMode, garderPourReprise, messageSalons, modeDeSalle } from "./salons";
+import { JEU, MODES_SALLE, PARTIE_NOUVELLE, type ModeSalle } from "./protocole";
+import { capaciteSalle, choisirPartieBr, decisionMode, garderPourReprise, messageSalons, modeDeSalle } from "./salons";
 import { ZOMBIES } from "./zombies-vagues";
 
 describe("routage des deux salles (décision de `mode`)", () => {
@@ -118,5 +118,56 @@ describe("(v8) session gardée pour une reprise à la fermeture d'une connexion"
     expect(garderPourReprise({ ...base, phase: "fin" })).toBe(false);
     expect(garderPourReprise({ ...base, salleZombies: false, phase: null })).toBe(false);
     expect(garderPourReprise({ ...base, membre: false })).toBe(false);
+  });
+});
+
+describe("parties de Battle Royale (plusieurs salles)", () => {
+  const p = (id: string, joueurs: number, phase: "lobby" | "decompte" | "vol" | "jeu" | "fin" = "lobby") => ({ id, joueurs, phase });
+  const base = { mode: "br", salleActuelle: "arene" as const, enJeu: false, joueursCible: 0, creerPossible: true };
+
+  it("choisirPartieBr : le lobby le plus peuplé, sinon la première partie qui a de la place, sinon personne", () => {
+    expect(choisirPartieBr([p("br1", 3, "jeu"), p("br2", 1), p("br3", 4)])?.id).toBe("br3");
+    expect(choisirPartieBr([p("br1", 0), p("br2", 0)])?.id).toBe("br1");
+    expect(choisirPartieBr([p("br1", 30, "jeu"), p("br2", 2, "fin")])?.id).toBe("br1");
+    expect(choisirPartieBr([p("br1", BR.joueursMax, "jeu"), p("br2", 2, "jeu")])?.id).toBe("br2");
+    expect(choisirPartieBr([p("br1", BR.joueursMax)])).toBeNull();
+  });
+
+  it("sans partie nommée : là où l'on attend ; déjà dans une partie : écho de la sienne", () => {
+    expect(decisionMode({ ...base, parties: [p("br1", 9, "jeu"), p("br2", 2)] })).toEqual({ action: "changer", mode: "br", partie: "br2" });
+    expect(decisionMode({ ...base, parties: [p("br1", 9, "jeu")] })).toEqual({ action: "changer", mode: "br", partie: "br1" });
+    expect(decisionMode({ ...base, salleActuelle: "br", partieActuelle: "br1", parties: [p("br1", 9, "jeu"), p("br2", 2)] }))
+      .toEqual({ action: "echo", mode: "br", partie: "br1" });
+    expect(decisionMode({ ...base, parties: [p("br1", BR.joueursMax)] })).toEqual({ action: "refus", raison: "plein" });
+  });
+
+  it("partie nommée : on y va, sauf en jeu ou si elle est pleine ; la sienne : écho", () => {
+    const parties = [p("br1", 9, "jeu"), p("br2", 2), p("br3", BR.joueursMax)];
+    const dansBr = { ...base, salleActuelle: "br" as const, partieActuelle: "br1", parties };
+    expect(decisionMode({ ...dansBr, partie: "br2" })).toEqual({ action: "changer", mode: "br", partie: "br2" });
+    expect(decisionMode({ ...dansBr, partie: "br2", enJeu: true })).toEqual({ action: "refus", raison: "lobby" });
+    expect(decisionMode({ ...dansBr, partie: "br3" })).toEqual({ action: "refus", raison: "plein" });
+    expect(decisionMode({ ...dansBr, partie: "br1" })).toEqual({ action: "echo", mode: "br", partie: "br1" });
+    // une partie disparue : on reste dans la sienne
+    expect(decisionMode({ ...dansBr, partie: "br9" })).toEqual({ action: "echo", mode: "br", partie: "br1" });
+  });
+
+  it("nouvelle partie : reprend une salle vide au lobby, sinon en crée une, sinon refus « limite » ; jamais en jeu", () => {
+    const dansBr = { ...base, salleActuelle: "br" as const, partieActuelle: "br1", partie: PARTIE_NOUVELLE };
+    expect(decisionMode({ ...dansBr, parties: [p("br1", 9, "jeu")] })).toEqual({ action: "changer", mode: "br", partie: PARTIE_NOUVELLE });
+    expect(decisionMode({ ...dansBr, parties: [p("br1", 9, "jeu"), p("br2", 0)] })).toEqual({ action: "changer", mode: "br", partie: "br2" });
+    expect(decisionMode({ ...dansBr, parties: [p("br1", 9, "jeu")], creerPossible: false })).toEqual({ action: "refus", raison: "limite" });
+    expect(decisionMode({ ...dansBr, parties: [p("br1", 9, "jeu")], enJeu: true })).toEqual({ action: "refus", raison: "lobby" });
+  });
+
+  it("modeDeSalle avec plusieurs salles BR ; salons.parties", () => {
+    const a = { n: "a" }, z = { n: "z" }, b1 = { n: "b1" }, b2 = { n: "b2" };
+    const salles = { arene: a, zombies: z, br: [b1, b2] };
+    expect(modeDeSalle(b2, salles)).toBe("br");
+    expect(modeDeSalle(a, salles)).toBe("arene");
+    const m = messageSalons({ joueurs: 1, enJeu: 0 }, { phase: "lobby", joueurs: 0, manche: 0 }, { phase: "jeu", joueurs: 5, vivants: 3 }, [
+      { id: "br1", phase: "jeu", joueurs: 5, vivants: 3, palier: 2, hote: "Lea" }, { id: "br2", phase: "lobby", joueurs: 0, vivants: 0 },
+    ]);
+    expect(m.parties).toEqual([{ id: "br1", phase: "jeu", joueurs: 5, vivants: 3, palier: 2, hote: "Lea" }, { id: "br2", phase: "lobby", joueurs: 0, vivants: 0 }]);
   });
 });

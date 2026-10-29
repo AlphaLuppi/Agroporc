@@ -256,6 +256,20 @@ describe("passer()", () => {
     c.passer();
     expect(c.phase()).toBe("carte");
   });
+
+  it("la touche « passer » ne saute pas la première seconde du rejeu (on saute sans arrêt en combat)", () => {
+    const c = pret();
+    expect(c.touchePasserPermise()).toBe(false);
+    c.surMort(mort(), MOI);
+    expect(c.touchePasserPermise()).toBe(false);
+    c.maj((KILLCAM.passerApresMs - 50) / 1000);
+    expect(c.touchePasserPermise()).toBe(false);
+    c.maj(0.1);
+    expect(c.touchePasserPermise()).toBe(true);
+    c.passer();
+    // en carte : plus rien à passer
+    expect(c.touchePasserPermise()).toBe(false);
+  });
 });
 
 describe("gel du tampon", () => {

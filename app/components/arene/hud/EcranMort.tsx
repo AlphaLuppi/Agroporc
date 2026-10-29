@@ -9,7 +9,7 @@ import type { ConfigTouches } from "@/lib/fps/touches";
 import ChoixEquipement from "../ChoixEquipement";
 import { useDisposition } from "../ReglageTouches";
 import { toucheDe } from "./AideCommandes";
-import Killcam, { texteVoixKillcam } from "../Killcam";
+import Killcam, { texteVoixKillcam, texteVoixSpectateurs } from "../Killcam";
 import type { DerniereMort, EquipementChoisi } from "../contrats";
 import CarteTueur from "./CarteTueur";
 import EcranSpectateur, { CarteEliminationBr, type PropsEcranSpectateur } from "./EcranSpectateur";
@@ -127,7 +127,8 @@ export default function EcranMort({
       );
     }
     // lien vocal de killcam encore ouvert (connexion établie) : on peut continuer à parler à son tueur
-    const voixSpect = hud.voixLien ? texteVoixKillcam(voixKillcam, hud.voixLien) : "";
+    // sinon le canal des spectateurs (éliminés et spectateurs venus regarder)
+    const voixSpect = hud.voixLien ? texteVoixKillcam(voixKillcam, hud.voixLien) : texteVoixSpectateurs(voixKillcam, hud.voixParlants ?? "");
     return <EcranSpectateur derniereMort={derniereMort} {...br} voix={voixSpect} />;
   }
   const tueurJoueur = joueurs?.find((j) => j.id === killcamInfo?.id) ?? null;

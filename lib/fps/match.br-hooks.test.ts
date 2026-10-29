@@ -79,6 +79,7 @@ function creerFake(): Fake {
     liberer: (j) => { f.liberes.push({ id: j.id, present: !!f.ctx!.joueur(j.id) }); return [{ a: "tous", m: { t: "br", etat: etat() } }]; },
     arrivee: (j) => { f.appels.push(`arrivee:${j.id}`); return []; },
     enCours: () => false,
+    peutRegarder: () => false,
     etat,
     resume: () => ({ phase: "jeu", joueurs: 3, vivants: 2, palier: 1 }),
   };
@@ -274,25 +275,34 @@ describe("messages confiés au service", () => {
     expect(f.recus).toEqual([]);
   });
 
-  it("chat vocal de killcam seulement : `voixActif` retenu (présence fusionnée), aucun relais hors d'un lien victime ↔ tueur", () => {
+  it("chat vocal : vivants entre eux, spectateurs entre eux, un vivant n'entend jamais un spectateur hors du lien de killcam", () => {
     const { s } = salleBr();
-    joueursEnJeu(s, ["a", "b", "c"]);
-    expect(s.recevoir("a", { t: "voixActif", actif: true }, T0 + 10)).toEqual([]);
-    expect(s.recevoir("b", { t: "voixActif", actif: true }, T0 + 10)).toEqual([]);
-    expect(s.recevoir("c", { t: "voixActif", actif: true }, T0 + 10)).toEqual([]);
+    joueursEnJeu(s, ["a", "b", "c", "d"]);
+    for (const id of ["a", "b", "c", "d"]) expect(s.recevoir(id, { t: "voixActif", actif: true }, T0 + 10)).toEqual([]);
     expect(j(s, "a").voix).toBe(true);
-    // pas de lien : rien n'est relayé
-    expect(s.recevoir("a", { t: "voix", a: "b", s: { type: "offre", sdp: "v=0" } }, T0 + 11)).toEqual([]);
-    // a tue b : ils peuvent se parler (dans les deux sens), pas c
+    const offre = { type: "offre" as const, sdp: "v=0" };
+    // deux vivants : relayé (le client n'appelle que ses voisins)
+    expect(s.recevoir("a", { t: "voix", a: "b", s: offre }, T0 + 11)).toEqual([{ a: "b", m: { t: "voix", de: "a", s: offre } }]);
+    // a tue b, puis c tue d : b et d sont spectateurs
     const t = T0 + JEU.protectionMs + 100;
     s.infliger(j(s, "b"), 100, j(s, "a"), "arme", "corps", "pistolet", t);
-    expect(s.recevoir("a", { t: "voix", a: "b", s: { type: "offre", sdp: "v=0" } }, t + 10)).toEqual([{ a: "b", m: { t: "voix", de: "a", s: { type: "offre", sdp: "v=0" } } }]);
+    s.infliger(j(s, "d"), 100, j(s, "c"), "arme", "corps", "pistolet", t);
+    // la présence dit qui est spectateur
+    expect(s.joueursPublics().filter((x) => x.spec).map((x) => x.id).sort()).toEqual(["b", "d"]);
+    // deux spectateurs : relayé
+    expect(s.recevoir("b", { t: "voix", a: "d", s: offre }, t + 10)).toHaveLength(1);
+    // un vivant et un spectateur : jamais, sauf le lien de killcam (a ↔ b, c ↔ d)
+    expect(s.recevoir("c", { t: "voix", a: "b", s: offre }, t + 10)).toEqual([]);
+    expect(s.recevoir("b", { t: "voix", a: "c", s: offre }, t + 10)).toEqual([]);
+    expect(s.recevoir("a", { t: "voix", a: "b", s: offre }, t + 10)).toHaveLength(1);
     expect(s.recevoir("b", { t: "voix", a: "a", s: { type: "reponse", sdp: "v=1" } }, t + 20)).toHaveLength(1);
-    expect(s.recevoir("c", { t: "voix", a: "a", s: { type: "offre", sdp: "v=0" } }, t + 20)).toEqual([]);
     // le lien expire ; « fin » passe toujours (il referme la connexion)
     const apres = t + LIEN_VOIX_KILLCAM_MS + 1;
-    expect(s.recevoir("a", { t: "voix", a: "b", s: { type: "offre", sdp: "v=0" } }, apres)).toEqual([]);
+    expect(s.recevoir("a", { t: "voix", a: "b", s: offre }, apres)).toEqual([]);
     expect(s.recevoir("a", { t: "voix", a: "b", s: { type: "fin" } }, apres)).toHaveLength(1);
+    // vivants entre eux, spectateurs entre eux : toujours permis après le lien
+    expect(s.recevoir("a", { t: "voix", a: "c", s: offre }, apres)).toHaveLength(1);
+    expect(s.recevoir("d", { t: "voix", a: "b", s: offre }, apres)).toHaveLength(1);
   });
 
   it("changer d'arme (`main`) interrompt l'usage d'un soin : `surDegats(j, \"arme\")`", () => {

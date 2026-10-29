@@ -13,7 +13,7 @@ import Lunette from "../../app/components/arene/hud/Lunette";
 import RetoursTouche, { texteChiffre } from "../../app/components/arene/hud/RetoursTouche";
 import Viseur from "../../app/components/arene/hud/Viseur";
 import ZoneVive from "../../app/components/arene/hud/ZoneVive";
-import Killcam from "../../app/components/arene/Killcam";
+import Killcam, { texteVoixSpectateurs } from "../../app/components/arene/Killcam";
 import { commandes, toucheDe } from "../../app/components/arene/hud/AideCommandes";
 import BarreBR from "../../app/components/arene/hud/BarreBR";
 import BlocInventaire from "../../app/components/arene/hud/BlocInventaire";
@@ -787,6 +787,23 @@ describe("EcranSpectateur et mort définitive (BR)", () => {
     expect(html).not.toContain("Éliminé par");
   });
 
+  it("spectateur venu regarder la partie : « Spectateur », sans place ni cause ; ligne du chat vocal des spectateurs", () => {
+    const html = spectateur({ externe: true, derniereMort: null, place: null, voix: "Spectateurs : Marc" });
+    expect(html).toContain(">Spectateur<");
+    expect(html).not.toContain("Éliminé");
+    expect(html).toContain("Vous suivez");
+    expect(html).toContain("Spectateurs : Marc");
+  });
+
+  it("chat vocal des spectateurs : coupé, qui parle, comment parler", () => {
+    const v = { etat: "pret" as const, lien: "", touche: "T", mode: "appuyer" as const };
+    expect(texteVoixSpectateurs({ ...v, etat: "" }, "")).toContain("les joueurs en vie ne vous entendent pas");
+    expect(texteVoixSpectateurs(v, "Marc · Zoé")).toBe("Spectateurs : Marc · Zoé");
+    expect(texteVoixSpectateurs(v, "")).toBe("Maintenez T pour parler aux spectateurs");
+    expect(texteVoixSpectateurs({ ...v, etat: "emet" }, "")).toBe("Vous parlez aux spectateurs");
+    expect(texteVoixSpectateurs({ ...v, mode: "ouvert" }, "")).toBe("Micro ouvert : les spectateurs vous entendent");
+  });
+
   it("carte d'élimination de la killcam : tueur, arme et distance, place provisoire, jamais de réapparition", () => {
     const html = renderToStaticMarkup(createElement(CarteEliminationBr, { derniereMort: mort, killcamInfo: tueur, place: 12, total: 37 }));
     expect(html).toContain("Éliminé par");
@@ -900,9 +917,11 @@ describe("MenuPause et aide en Battle Royale", () => {
     reglagesHud: REGLAGES_HUD_DEFAUT, surReglagesHud: () => {}, ...plus,
   } as never));
 
-  it("pas de chat vocal ni de choix d'équipement ; quitter est un abandon tant qu'on vit", () => {
+  it("chat vocal de proximité (canal des spectateurs une fois éliminé), pas de choix d'équipement ; quitter est un abandon tant qu'on vit", () => {
     const html = rendre({ mode: "br" });
-    expect(html).not.toContain("Chat vocal de proximité");
+    expect(html).toContain("Chat vocal de proximité");
+    expect(html).toContain("les spectateurs ne vous parlent pas");
+    expect(rendre({ mode: "br", elimine: true })).toContain("parler avec les autres spectateurs (les joueurs en vie ne vous entendent pas)");
     expect(html).not.toContain("Équipement de la prochaine apparition");
     expect(html).toContain("la tempête et les autres joueurs ne s&#x27;arrêtent pas");
     expect(html).toContain("compte comme un abandon");
@@ -997,10 +1016,10 @@ describe("HudArene en Battle Royale", () => {
     expect(html).toContain("Fin de partie");
     expect(html).toContain(">TOP 1<");
     expect(html).not.toContain("Menu pause");
-    // souris libre en cours de partie : menu pause BR sans chat vocal
+    // souris libre en cours de partie : menu pause BR avec le chat vocal de proximité
     const pause = rendre({ ...HUD_BR, verrouille: false });
     expect(pause).toContain("Menu pause");
-    expect(pause).not.toContain("Chat vocal de proximité");
+    expect(pause).toContain("Chat vocal de proximité");
   });
 
   it("l'arène n'est pas touchée : pas de bloc BR", () => {

@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useRef, type CSSProperties, type ReactNode } from "react";
 import type { EtatConnexion } from "@/lib/fps/reseau";
-import type { EtatPartieBr, ResumeSalonBr } from "@/lib/fps/protocole";
+import type { EtatPartieBr, ResumePartieBr, ResumeSalonBr } from "@/lib/fps/protocole";
 import type { ConfigTouches } from "@/lib/fps/touches";
 import type { ReglagesHud } from "@/lib/fps/reglages-hud";
 import ReglageInterface from "./hud/ReglageInterface";
@@ -11,7 +11,7 @@ import { useDisposition } from "./ReglageTouches";
 import { PSEUDO_MAX } from "./Arene";
 import type { StatsBrRecues } from "./contrats";
 import {
-  REGLES_BR, TEXTE_BR, TITRE_REGLES_BR, commandesLobbyBR, etiquetteEtatBR, pseudoCompteBr, situationLobbyBR, texteEffectif,
+  REGLES_BR, TEXTE_BR, TITRE_REGLES_BR, commandesLobbyBR, etiquetteEtatBR, lignesPartiesBR, pseudoCompteBr, situationLobbyBR, texteEffectif,
 } from "./lobby-modele";
 import styles from "./Arene.module.css";
 
@@ -19,9 +19,9 @@ import styles from "./Arene.module.css";
  * Lobby de la salle Battle Royale (aside « Battle Royale », calqué sur `LobbyZombies`) : statut de la connexion, effectif X/50, message de l'hôte (ou de ce
  * qui bloque le lancement : minimum de joueurs, deux joueurs du même nom, nom à choisir pour compter ses TOP 1, départ annulé), nom de joueur, liste des
  * joueurs par ordre d'arrivée (puce de couleur, badge « hôte »), règles, palmarès « TOP 1 » repliable, commandes et « Lancer la partie » réservé à l'hôte.
- * Un arrivant en cours de partie reste en attente : « Partie en cours : 12 en vie · zone palier 3/6 — rejoignez à la suivante. ». Pas de chat vocal dans
- * ce mode. Les statistiques sont demandées une seule fois, à l'ouverture du lobby (`surDemanderStats`). Le choix du mode (`choixMode`) est posé par l'hôte
- * du composant au-dessus du lobby.
+ * Un arrivant en cours de partie peut la regarder en spectateur (« Regarder la partie ») ou créer la sienne (« Créer ma partie ») ; la liste des
+ * parties (`parties`, plusieurs peuvent tourner en même temps) permet de passer de l'une à l'autre. Les statistiques sont demandées une seule fois, à
+ * l'ouverture du lobby (`surDemanderStats`). Le choix du mode (`choixMode`) est posé par l'hôte du composant au-dessus du lobby.
  * Spec : docs/superpowers/specs/2026-10-28-battle-royale-design.md (« Interface »)
  */
 export interface PropsLobbyBR {
@@ -48,6 +48,15 @@ export interface PropsLobbyBR {
   pseudoParDefaut?: boolean;
   /** `ChoixMode` posé sous le titre */
   choixMode?: ReactNode;
+  /** toutes les parties du serveur (`salons.parties`) et la mienne ; absent : serveur d'avant les parties multiples */
+  parties?: readonly ResumePartieBr[] | null;
+  partieActuelle?: string | null;
+  /** aller dans le lobby d'une autre partie */
+  surRejoindrePartie?(id: string): void;
+  /** regarder une partie en cours en spectateur (la mienne, ou une autre : on y va d'abord) */
+  surRegarder?(id: string | null): void;
+  /** créer ma partie (ou reprendre une salle vide) */
+  surCreerPartie?(): void;
 }
 
 function statut(etat: EtatConnexion, monId: string | null): { texte: string; classe: string } {
@@ -58,7 +67,7 @@ function statut(etat: EtatConnexion, monId: string | null): { texte: string; cla
 
 export default function LobbyBR({
   etat, monId, partie, salonBr = null, statsBr = null, surDemanderStats, pseudo, surPseudo, touches, reglagesHud, surReglagesHud, surLancer, surFermer, erreur, tactile,
-  pseudoParDefaut = false, choixMode,
+  pseudoParDefaut = false, choixMode, parties = null, partieActuelle = null, surRejoindrePartie, surRegarder, surCreerPartie,
 }: PropsLobbyBR) {
   const idPseudo = useId();
   const disposition = useDisposition();
@@ -71,6 +80,9 @@ export default function LobbyBR({
   const listeConnue = !partie || partie.joueurs !== undefined;
   const monPseudo = joueurs.find((j) => j.id === monId)?.pseudo ?? null;
   const peutLancer = sit.peutLancer && !tactile && !nomTropCourt;
+  const lignesParties = parties ? lignesPartiesBR(parties, partieActuelle) : [];
+  // la liste ne sert que s'il y a un choix à faire : plusieurs parties, ou la mienne déjà lancée
+  const montrerParties = connecte && !tactile && lignesParties.length > 0 && (lignesParties.length > 1 || sit.enCours);
 
   // les statistiques ne sont demandées qu'à l'ouverture du lobby (une fois), jamais au chargement du site
   const demandees = useRef(false);
@@ -101,6 +113,38 @@ export default function LobbyBR({
       <p className={`${styles.match} ${sit.enCours ? styles.enCours : ""}`} role="status">{sit.message}</p>
       {sit.avis.map((a) => <p key={a} className={styles.avis}>{a}</p>)}
       {erreur && <p className={styles.erreur} role="alert">{erreur}</p>}
+      {/* serveur d'avant les parties multiples (`parties` absent) : ni regarder ni créer */}
+      {connecte && !tactile && sit.enCours && parties && (
+        <div className={styles.actionsPartie}>
+          {sit.peutRegarder && surRegarder && (
+            <button type="button" className={styles.boutonSecondaire} onClick={() => surRegarder(null)}>Regarder la partie</button>
+          )}
+          {surCreerPartie && <button type="button" className={styles.boutonSecondaire} onClick={surCreerPartie}>Créer ma partie</button>}
+        </div>
+      )}
+      {montrerParties && (
+        <section className={styles.parties} aria-labelledby={`${idPseudo}-parties`}>
+          <h3 id={`${idPseudo}-parties`}>Parties</h3>
+          <ul className={styles.liste}>
+            {lignesParties.map((l) => (
+              <li key={l.id}>
+                <span className={styles.nom}>{l.titre}{l.ici && <em> (vous)</em>}</span>
+                <span className={styles.partieEtat}>{l.etat}</span>
+                {l.action === "rejoindre" && surRejoindrePartie && (
+                  <button type="button" className={styles.boutonSecondaire} onClick={() => surRejoindrePartie(l.id)} aria-label={`Rejoindre la ${l.titre.toLowerCase()}`}>
+                    Rejoindre
+                  </button>
+                )}
+                {l.action === "regarder" && surRegarder && (!l.ici || sit.peutRegarder) && (
+                  <button type="button" className={styles.boutonSecondaire} onClick={() => surRegarder(l.ici ? null : l.id)} aria-label={`Regarder la ${l.titre.toLowerCase()}`}>
+                    Regarder
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <div className={styles.champ}>
         <label htmlFor={idPseudo}>Nom de joueur</label>
@@ -175,7 +219,10 @@ export default function LobbyBR({
               </div>
             ))}
           </dl>
-          <p className={styles.astuce}>Toutes les touches se changent en partie : Échap puis « Touches ». Le chat vocal est désactivé dans ce mode.</p>
+          <p className={styles.astuce}>
+            Toutes les touches se changent en partie : Échap puis « Touches ». Chat vocal (Échap, puis « Chat vocal ») : en vie, vous entendez les joueurs proches ;
+            éliminé ou spectateur, vous parlez avec les autres spectateurs, que les joueurs en vie n&apos;entendent pas.
+          </p>
           <div className={styles.pied}>
             <button type="button" className={styles.entrer} disabled={!peutLancer} onClick={surLancer}>
               Lancer la partie

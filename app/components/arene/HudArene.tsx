@@ -212,7 +212,7 @@ export default function HudArene(p: PropsHudAreneBr) {
   /** mort définitive du Battle Royale : place, joueur suivi et commandes du spectateur (touches réelles) */
   const entreesSpectateur: EntreesSpectateurBr | undefined = br ? {
     place: ebr?.place ?? null, total: partieBr?.total ?? 0, suiviId: ebr?.suivi ?? null, joueurs,
-    toucheSuivant: t("spectateurSuivant"), touchePrecedent: t("spectateurPrecedent"),
+    toucheSuivant: t("spectateurSuivant"), touchePrecedent: t("spectateurPrecedent"), externe: !!hud.spectateurExterne,
   } : undefined;
 
   const miniMap = coinMap === "off" ? null : (
@@ -278,7 +278,7 @@ export default function HudArene(p: PropsHudAreneBr) {
           />
           {toast && <ToastCentre texte={toast} />}
           <div className={styles.milieu}>
-            {hud.voix && (!br || !!hud.voixLien) && (
+            {hud.voix && (
               <BlocVoix etat={hud.voix} parlants={hud.voixParlants} mode={p.voix.mode} toucheParler={t("parler")} lien={hud.voixLien ?? ""} />
             )}
             {hud.vehicule ? (

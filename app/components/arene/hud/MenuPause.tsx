@@ -15,7 +15,7 @@ import styles from "../HudArene.module.css";
  * nom de joueur, sensibilité, accroupi maintenir / basculer, chat vocal de proximité (activé, appuyer pour parler ou micro ouvert, v3 §5),
  * avertissement des actions sans touche, Quitter, puis « Interface » (mini-map,
  * taille, effets) au-dessus des touches groupées. La mini-map reste nette sous le voile pour juger les réglages (HUD §4.5).
- * Battle Royale (`mode` "br") : ni choix d'équipement (on ramasse ce qu'on trouve), chat vocal réduit au lien de killcam (une victime et son tueur), et « Quitter la partie » est un
+ * Battle Royale (`mode` "br") : ni choix d'équipement (on ramasse ce qu'on trouve), chat vocal de proximité entre joueurs en vie et canal à part entre spectateurs, et « Quitter la partie » est un
  * abandon (le joueur est éliminé) tant qu'il n'est pas déjà éliminé (`elimine`).
  * Zombies (`mode`) : la partie continue pour les autres (« les tigres ne s'arrêtent pas »), pas de choix d'équipement (le départ est imposé,
  * les armes s'achètent) et « Quitter la partie » ramène au lobby.
@@ -94,11 +94,13 @@ export default function MenuPause(p: PropsMenuPause) {
           <span>Accroupi : basculer (sinon maintenir)</span>
         </label>
         <fieldset className={styles.voixReglage}>
-          <legend>{br ? "Chat vocal de killcam" : "Chat vocal de proximité"}</legend>
+          <legend>Chat vocal de proximité</legend>
           <label className={styles.caseLigne}>
             <input type="checkbox" checked={p.voix.actif} onChange={(e) => p.surVoix({ ...p.voix, actif: e.target.checked })} />
             <span>{br
-              ? "Activer le micro : parler à son tueur (ou à sa victime) le temps de la killcam"
+              ? (p.elimine
+                ? "Activer le micro : parler avec les autres spectateurs (les joueurs en vie ne vous entendent pas)"
+                : "Activer le micro et entendre les joueurs proches (les spectateurs ne vous parlent pas)")
               : "Activer le micro et entendre les joueurs proches (et son tueur pendant la killcam)"}</span>
           </label>
           <div className={styles.voixModes} role="radiogroup" aria-label="Mode du micro">

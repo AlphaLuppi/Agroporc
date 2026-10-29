@@ -636,6 +636,50 @@ try {
     return `« ${texte.slice(0, 80)} », suivi ${JSON.stringify(sb.spectateur?.suivi)}`;
   });
 
+  // ------------------------------------------------------------------ 6b. parties multiples, spectateur venu regarder
+  await etape("6b. Bob quitte la partie, crée la sienne (`mode{br, partie:\"nouvelle\"}`), puis revient regarder celle d'Alice en spectateur (`regarder`)", async () => {
+    const depuis = Date.now();
+    await B.ev(() => window.__arene.quitter());
+    await jusqua(async () => !(await B.jeu()), { ms: 10_000, quoi: "jeu démonté chez Bob" });
+    await B.page.locator("aside[aria-label='Battle Royale']").waitFor({ state: "visible", timeout: 8000 });
+    // le lobby propose de regarder ou de créer sa partie, et liste les parties
+    await B.page.getByRole("button", { name: "Créer ma partie" }).waitFor({ state: "visible", timeout: 8000 });
+    verifier(await B.page.getByRole("button", { name: "Regarder la partie" }).isVisible(), "pas de bouton « Regarder la partie » chez Bob");
+    const premiere = (await B.etat()).br?.partie;
+    verifier(premiere === "br1", `partie de Bob avant : ${premiere}`);
+    await B.capture("06b-lobby-partie-en-cours-B-1280");
+    // nouvelle partie : Bob en est l'hôte, la liste montre les deux parties
+    await B.page.getByRole("button", { name: "Créer ma partie" }).click();
+    await jusqua(async () => (await B.etat()).br?.partie && (await B.etat()).br.partie !== "br1", { ms: 10_000, quoi: "Bob dans sa nouvelle partie" });
+    const nouvelle = (await B.etat()).br.partie;
+    await jusqua(async () => (await B.partie())?.hote === idB && (await B.partie())?.phase === "lobby", { ms: 10_000, quoi: "Bob hôte du lobby de sa partie" });
+    await jusqua(async () => ((await B.etat()).salons?.parties ?? []).length === 2, { ms: 10_000, quoi: "deux parties dans `salons.parties`" });
+    const parties = (await B.etat()).salons.parties;
+    verifier(parties[0].id === "br1" && parties[0].phase !== "lobby" && parties[1].id === nouvelle, `salons.parties : ${JSON.stringify(parties)}`);
+    await B.page.locator("section[aria-labelledby$='-parties']").waitFor({ state: "visible", timeout: 8000 });
+    await B.capture("06b-nouvelle-partie-B-1280");
+    // la partie d'Alice ne voit plus Bob dans sa salle, mais son bilan le comptera
+    // « Regarder » la partie d'Alice : Bob y retourne, puis le jeu se monte en spectateur
+    await B.ev((id) => window.__arene.regarderBr(id), "br1");
+    await jusqua(async () => (await B.etat()).br?.partie === "br1", { ms: 10_000, quoi: "Bob de retour dans la partie d'Alice" });
+    await B.page.locator("section[aria-label='Spectateur']").waitFor({ state: "visible", timeout: 40_000 }).catch(() => { throw new Error("l'écran « Spectateur » ne s'affiche pas chez Bob venu regarder"); });
+    verifier(B.envoyesDe("regarder", depuis).length === 1, `Bob a envoyé ${B.envoyesDe("regarder", depuis).length} regarder`);
+    verifier(B.msgs("spectateur", depuis).length === 1, "Bob n'a pas reçu `spectateur`");
+    verifier(B.envoyesDe("rejoindre", depuis).length === 0, "Bob a envoyé rejoindre");
+    const texte = (await B.page.locator("section[aria-label='Spectateur']").innerText()).replace(/\s+/g, " ");
+    verifier(/spectateur/i.test(texte) && /Alice|Cora/.test(texte), `bandeau du spectateur venu regarder : « ${texte.slice(0, 160)} »`);
+    const sb = await B.jeu();
+    verifier(sb.vivant === false && sb.spectateur?.actif && sb.spectateur?.suivi, `Bob spectateur : ${JSON.stringify(sb.spectateur)}`);
+    // la partie créée, vide, est refermée
+    await jusqua(async () => ((await B.etat()).salons?.parties ?? []).length === 1, { ms: 10_000, quoi: "la partie vide de Bob est refermée" });
+    // présence : Bob en jeu, spectateur ; jamais dans le snap
+    const presB = (await A.etat()).joueurs.find((j) => j.id === idB);
+    verifier(presB?.enJeu && presB?.spec, `présence de Bob chez Alice : ${JSON.stringify(presB)}`);
+    verifier(!(await A.jeu()).distants.some((d) => d.id === idB), "Alice voit le corps de Bob spectateur");
+    await B.capture("06b-spectateur-venu-regarder-B-1280");
+    return `partie créée ${nouvelle}, puis « ${texte.slice(0, 60)} », suivi ${sb.spectateur.suivi}`;
+  });
+
   // ------------------------------------------------------------------ 7. tempête
   await etape("7. la tempête : dégâts hors zone sans tueur, mort de Cora par la tempête (cause `tempete`)", async () => {
     const depuis = Date.now() - 60_000;

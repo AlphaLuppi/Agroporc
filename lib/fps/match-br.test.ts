@@ -265,7 +265,7 @@ describe("lobby, hôte, lancement", () => {
     expect(etat.annule).toBeUndefined();
     b.arrive("b", "Bob");
     expect(b.svc.etat().hote).toBe("a");
-    expect(b.svc.resume()).toEqual({ phase: "lobby", joueurs: 2, vivants: 0 });
+    expect(b.svc.resume()).toEqual({ phase: "lobby", joueurs: 2, vivants: 0, hote: "Alice" });
     expect(b.svc.enCours()).toBe(false);
   });
 

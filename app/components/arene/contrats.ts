@@ -90,8 +90,11 @@ export interface UseArene {
   /** argent des zombies (dernier solde reçu) et dernier gain, pour l'animation */
   argent: number;
   gainArgent: GainArgent | null;
-  /** demande à changer de salle (refusée : message dans `erreur`, `modeVoulu` revient à `mode`) */
-  choisirMode(mode: ModeSalle): void;
+  /**
+   * demande à changer de salle (refusée : message dans `erreur`, `modeVoulu` revient à `mode`) ; `partie` (Battle Royale) : une partie de
+   * `salons.parties` ou `PARTIE_NOUVELLE`
+   */
+  choisirMode(mode: ModeSalle, partie?: string): void;
   /** hôte du lobby des zombies ou du Battle Royale : lance la partie */
   lancerPartie(difficulte?: import("@/lib/fps/zombies-vagues").Difficulte): void;
   // ---- v8 : Battle Royale (optionnels : l'hôte les fournit une fois `useArene` branché) ----

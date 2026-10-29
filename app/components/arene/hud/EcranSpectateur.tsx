@@ -12,7 +12,8 @@ import styles from "./EcranSpectateur.module.css";
  * Écrans de la mort définitive du Battle Royale (le serveur ne fait jamais réapparaître) :
  *  - `CarteEliminationBr` : la carte entre les bandes de la killcam (phase « carte »), sans compte à rebours de réapparition ni choix d'équipement :
  *    « Éliminé par <pseudo> » (ou la cause en toutes lettres : tempête, abandon…), l'arme et la distance, la place provisoire ;
- *  - `EcranSpectateur` (défaut) : le bandeau du spectateur, une fois la killcam passée ou sans killcam (tempête) : « Éliminé · place #12 sur 37 », la cause,
+ *  - `EcranSpectateur` (défaut) : le bandeau du spectateur, une fois la killcam passée ou sans killcam (tempête) : « Éliminé · place #12 sur 37 » (« Spectateur »
+ *    pour qui est venu regarder la partie en cours), la cause,
  *    le joueur suivi et le rappel des commandes avec leurs touches RÉELLES. Aucun bouton : la souris reste prise par le jeu (pointer lock) tant que le
  *    joueur n'a pas appuyé sur Échap, et Échap ouvre le menu pause, qui remplace ce bandeau (c'est là que se trouve « Quitter »). Les flèches changent de
  *    cible, le clic de tir passe au suivant.
@@ -65,10 +66,12 @@ export interface PropsEcranSpectateur {
   touchePrecedent: string;
   /** ligne du chat vocal avec son tueur (lien de killcam en cours), "" = rien */
   voix?: string;
+  /** spectateur venu regarder la partie en cours (ni éliminé, ni place) */
+  externe?: boolean;
 }
 
 export default function EcranSpectateur({
-  derniereMort, place, total, suiviId, joueurs, toucheSuivant, touchePrecedent, voix = "",
+  derniereMort, place, total, suiviId, joueurs, toucheSuivant, touchePrecedent, voix = "", externe = false,
 }: PropsEcranSpectateur) {
   const suivi = suiviId ? joueurs.find((j) => j.id === suiviId) ?? null : null;
   const cause = derniereMort ? libelleCause(derniereMort.arme, derniereMort.cause, derniereMort.par) : "";
@@ -76,7 +79,7 @@ export default function EcranSpectateur({
   return (
     <section className={styles.spectateur} aria-label="Spectateur">
       <div className={styles.bandeau}>
-        <h2 className={styles.titreBandeau} role="status">{libellePlaceBr(place, total)}</h2>
+        <h2 className={styles.titreBandeau} role="status">{externe ? "Spectateur" : libellePlaceBr(place, total)}</h2>
         {derniereMort && <p className={styles.cause}>{parJoueur ? `Éliminé par ${derniereMort.par || "un joueur"} · ${cause}` : cause}</p>}
         <p className={styles.suivi}>
           {suivi

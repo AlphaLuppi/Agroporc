@@ -52,6 +52,7 @@ Le site (`npm run dev` à la racine) s'y connecte tout seul en dev (`ws://localh
 | `PDJ_FPS_BR_ZONE_ECHELLE` | selon le nombre d'admis (0,6 / 0,8 / 1) | échelle de durée de la zone, sans plancher (ex. 0,08 pour les tests de bout en bout) |
 | `PDJ_FPS_BR_OBJETS` | `clamp(9 × joueurs, 120, 480)` | nombre d'objets du butin |
 | `PDJ_FPS_BR_FIN_MS` | 30 000 | durée d'affichage du bilan avant le retour au lobby |
+| `PDJ_FPS_BR_PARTIES` | 4 | parties de Battle Royale en même temps au plus (salle permanente comprise ; chacune a son monde, ≈ 2 Mo) |
 | `PDJ_FPS_BR_VALIDE_MS` | 60 000 | durée minimale (ms) depuis le départ de l'avion pour qu'une partie compte dans les stats (avec 2 joueurs atterris au moins) |
 | `PDJ_FPS_CONNEXIONS_IP` | 24 | connexions simultanées par adresse IP (le `docker-compose.yml` de prod met 60 : cinquante amis derrière l'IP d'un bureau) |
 | `PDJ_FPS_CONNEXIONS_TOTAL` | 160 | connexions simultanées au total, inscrites ou non |
@@ -81,8 +82,12 @@ puis le serveur répond `mode` (écho) et le `bienvenue` de la nouvelle salle (m
 choisie à la reconnexion : l'interface renvoie `mode{zombies}` ou `mode{br}` dès le `bienvenue` si elle y était (une reconnexion EN COURS de partie Battle Royale n'existe pas en v1 : la place est éliminée). Les clients qui n'ont rien choisi ne coûtent rien aux salles des
 zombies et du Battle Royale, dont le tic est sauté tant qu'elles sont vides. Une partie de zombies : lobby (l'hôte, premier arrivé, lance) → décompte → manches séparées de pauses → bilan de 25 s → lobby ;
 un arrivant en cours de partie reste en attente et entre à la pause suivante. Une partie de Battle Royale : lobby (hôte, 2 joueurs au moins, noms distincts) → décompte (fini dès que tous ont rejoint) →
-avion → chute et parachute (simulés en temps réel par le serveur) → fouille et tempête, mort définitive avec spectateur → bilan de 30 s → lobby ; un arrivant en cours de partie reste dans le lobby pour la suivante.
-Le chat vocal y est réduit au lien de killcam : le serveur ne relaie `voix` qu'entre une victime et son tueur, pendant `LIEN_VOIX_KILLCAM_MS` (12 s) après la mort (dans l'arène aussi, ce lien passe outre la proximité). Les messages `tir`, `coup` et `degats` portent `ts` (horodatage serveur) et le snap recopie `vise` / `recharge` déclarés dans `etat` : tout est additif, sans changement de version. Les statistiques (clé = pseudo, les pseudos `Agent*` ne comptent pas) s'écrivent dans `PDJ_FPS_BR_STATS` à la fin d'une partie comptée (2 joueurs atterris au moins, `PDJ_FPS_BR_VALIDE_MS` écoulées) :
+avion → chute et parachute (simulés en temps réel par le serveur) → fouille et tempête, mort définitive avec spectateur → bilan de 30 s → lobby. Plusieurs parties tournent en même temps
+(2026-10-29, `docs/superpowers/specs/2026-10-29-br-voix-parties-design.md`) : la salle permanente `br1`, plus celles qu'ouvrent les joueurs arrivés pendant une partie en cours
+(`mode{mode:"br", partie:"nouvelle"}`, au plus `PDJ_FPS_BR_PARTIES`), refermées dès qu'elles sont vides ; `salons.parties` les liste, `mode{mode:"br", partie}` en choisit une.
+Un arrivant en cours de partie peut aussi la regarder en spectateur (`regarder` → `spectateur` : en jeu sans être en vie, hors du snap).
+Chat vocal : le serveur ne relaie `voix` qu'entre deux joueurs en vie (le client n'appelle que ses voisins) ou entre deux spectateurs (éliminés et spectateurs venus regarder) ;
+un joueur en vie n'entend jamais un spectateur, sauf le lien de killcam : une victime et son tueur, pendant `LIEN_VOIX_KILLCAM_MS` (12 s) après la mort (dans l'arène aussi, ce lien passe outre la proximité). Les messages `tir`, `coup` et `degats` portent `ts` (horodatage serveur) et le snap recopie `vise` / `recharge` déclarés dans `etat` : tout est additif, sans changement de version. Les statistiques (clé = pseudo, les pseudos `Agent*` ne comptent pas) s'écrivent dans `PDJ_FPS_BR_STATS` à la fin d'une partie comptée (2 joueurs atterris au moins, `PDJ_FPS_BR_VALIDE_MS` écoulées) :
 écriture atomique asynchrone (fichier temporaire du même dossier, `fsync`, `rename`, une seule à la fois), synchrone seulement à l'arrêt (SIGTERM), fichier illisible renommé `stats-br.json.corrompu-<horodatage>`. Les ids des tigres zombies sont `z<n>` (jamais ceux des tigres largués `t<n>` de l'arène, qui n'existent pas dans cette salle).
 
 ## Protocole v10 (résumé)

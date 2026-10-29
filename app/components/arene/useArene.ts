@@ -30,7 +30,11 @@ const STATS_VIDES = new Map<string, LigneStats>();
 const PERIODE_STATS_BR_MS = 2000;
 
 /** `UseArene` plus la demande de statistiques du Battle Royale (le lobby l'appelle à son ouverture ; le contrat partagé n'a pas ce champ). */
-export type UseAreneBr = UseArene & { demanderStatsBr(): void };
+export type UseAreneBr = UseArene & {
+  demanderStatsBr(): void;
+  /** partie de Battle Royale où je suis (id de `salons.parties`), null ailleurs */
+  partieBr: string | null;
+};
 
 /** Contenu d'une offre d'Elsa pour le fil : « soin complet (PV 100, bouclier 100) », « Railgun, 6 tirs ». */
 function contenuOffre(genre: "soin" | "arme", arme?: ArmeSpecialeId): string {
@@ -46,8 +50,16 @@ export const TEXTE_ARENE_PLEINE = `L'arène est pleine (${JEU.joueursMax} agents
 /** `rejoindre` ou `mode` refusé : les 50 places du Battle Royale sont prises. */
 export const TEXTE_BR_PLEIN = "La salle Battle Royale est pleine (50 joueurs), réessayez dans un instant.";
 
-/** Texte du refus d'un `monter` / `siege` / `rejoindre` / `mode` par le serveur ; `mode` = la salle concernée (demandée pour `mode`, actuelle pour `rejoindre`). */
-function texteRefus(action: "monter" | "siege" | "rejoindre" | "mode", raison: "loin" | "plein" | "deja" | "inconnu" | "mort" | "lobby", mode: ModeSalle = "arene"): string {
+/** `mode{br, partie:"nouvelle"}` refusé : le serveur a déjà son nombre maximal de parties de Battle Royale. */
+export const TEXTE_BR_LIMITE = "Trop de parties de Battle Royale en même temps : regardez celle en cours ou attendez la fin d'une partie.";
+
+type ActionRefus = Extract<MessageServeur, { t: "refus" }>["action"];
+type RaisonRefus = Extract<MessageServeur, { t: "refus" }>["raison"];
+
+/** Texte du refus d'un `monter` / `siege` / `rejoindre` / `mode` / `regarder` par le serveur ; `mode` = la salle concernée (demandée pour `mode`, actuelle pour `rejoindre`). */
+function texteRefus(action: ActionRefus, raison: RaisonRefus, mode: ModeSalle = "arene"): string {
+  if (action === "regarder") return "Battle Royale : il n'y a plus de partie en cours à regarder.";
+  if (raison === "limite") return TEXTE_BR_LIMITE;
   if (action === "rejoindre") {
     if (raison === "lobby") return mode === "br" ? "Battle Royale : la partie est lancée sans vous, rejoignez la suivante." : "Partie de zombies : attendez le lancement par l'hôte.";
     return mode === "br" ? TEXTE_BR_PLEIN : TEXTE_ARENE_PLEINE;
@@ -97,6 +109,9 @@ export function useArene(pseudo: string, jeuRef: MutableRefObject<JeuHandle | nu
   // ---- v8 : Battle Royale ----
   const [br, setBr] = useState<EtatPartieBr | null>(null);
   const [statsBr, setStatsBr] = useState<StatsBrRecues | null>(null);
+  /** partie de Battle Royale où je suis (id de `salons.parties`), null hors Battle Royale ou serveur d'avant les parties multiples */
+  const [partieBr, setPartieBr] = useState<string | null>(null);
+  const partieBrRef = useRef<string | null>(null);
   const brRef = useRef<EtatPartieBr | null>(null);
   const derniereDemandeStats = useRef(0);
   /** salle confirmée par le serveur et salle demandée (relue par les rappels du réseau) */
@@ -157,7 +172,7 @@ export function useArene(pseudo: string, jeuRef: MutableRefObject<JeuHandle | nu
       }
       case "refus":
         // arène pleine : message du panneau (le HUD est refermé par `sortir`), sinon annonce du fil
-        if (e.action === "rejoindre") setErreur(texteRefus(e.action, e.raison, modeRef.current));
+        if (e.action === "rejoindre" || e.action === "regarder") setErreur(texteRefus(e.action, e.raison, modeRef.current));
         else annoncer(texteRefus(e.action, e.raison, modeRef.current), "info");
         return;
       case "touche":
@@ -181,13 +196,16 @@ export function useArene(pseudo: string, jeuRef: MutableRefObject<JeuHandle | nu
     }
   }, [apres, annoncer]);
 
-  /** Demande à changer de salle ; la carte cochée suit tout de suite (`modeVoulu`), le serveur confirme par `mode` ou refuse par `refus`. */
-  const choisirMode = useCallback((m: ModeSalle) => {
-    if (modeVouluRef.current === m) return;
+  /**
+   * Demande à changer de salle ; la carte cochée suit tout de suite (`modeVoulu`), le serveur confirme par `mode` ou refuse par `refus`.
+   * `partie` (Battle Royale) : une partie de `salons.parties`, ou `PARTIE_NOUVELLE` pour créer la sienne (envoyé même si le mode est déjà « br »).
+   */
+  const choisirMode = useCallback((m: ModeSalle, partie?: string) => {
+    if (modeVouluRef.current === m && partie === undefined) return;
     modeVouluRef.current = m;
     setModeVoulu(m);
     setErreur(null);
-    clientRef.current?.envoyer({ t: "mode", mode: m });
+    clientRef.current?.envoyer(partie !== undefined ? { t: "mode", mode: m, partie } : { t: "mode", mode: m });
   }, []);
   /** Hôte du lobby des zombies : lance la partie (le serveur ignore le message d'un autre joueur). */
   const lancerPartie = useCallback((difficulte?: Difficulte) => {
@@ -222,6 +240,8 @@ export function useArene(pseudo: string, jeuRef: MutableRefObject<JeuHandle | nu
             connexionPerdue.current = false;
             modeRef.current = "arene";
             setMode("arene");
+            partieBrRef.current = null;
+            setPartieBr(null);
             zombiesRef.current = null;
             setZombies(null);
             setArgent(0);
@@ -234,13 +254,15 @@ export function useArene(pseudo: string, jeuRef: MutableRefObject<JeuHandle | nu
           break;
         case "mode":
           // simple écho (déjà dans cette salle, ex. demande rejouée après une reconnexion) : le serveur n'enverra ni « bienvenue » ni état,
-          // tout effacer ici laisserait le lobby sans état jusqu'au prochain changement
-          if (m.mode === modeRef.current) {
+          // tout effacer ici laisserait le lobby sans état jusqu'au prochain changement (en Battle Royale, la même partie)
+          if (m.mode === modeRef.current && (m.mode !== "br" || (m.partie ?? null) === partieBrRef.current)) {
             modeVouluRef.current = m.mode;
             setModeVoulu(m.mode);
             break;
           }
-          // changement de salle confirmé : l'état de l'ancienne salle ne vaut plus rien (le « bienvenue » et l'état de la nouvelle suivent)
+          // changement de salle (ou de partie) confirmé : l'état de l'ancienne ne vaut plus rien (le « bienvenue » et l'état de la nouvelle suivent)
+          partieBrRef.current = m.mode === "br" ? m.partie ?? null : null;
+          setPartieBr(partieBrRef.current);
           modeRef.current = m.mode;
           modeVouluRef.current = m.mode;
           setMode(m.mode);
@@ -258,7 +280,7 @@ export function useArene(pseudo: string, jeuRef: MutableRefObject<JeuHandle | nu
           setErreur(null);
           break;
         case "salons":
-          setSalons({ arene: m.arene, zombies: m.zombies, br: m.br });
+          setSalons({ arene: m.arene, zombies: m.zombies, br: m.br, ...(m.parties ? { parties: m.parties } : {}) });
           break;
         case "br": {
           for (const a of annoncesBr(brRef.current, m.etat)) annoncer(a.texte, a.genre);
@@ -431,6 +453,6 @@ export function useArene(pseudo: string, jeuRef: MutableRefObject<JeuHandle | nu
     elsa, annonces, sieges, bonus, killcamInfo,
     stats, statsRef, demanderScores, degatsAuTueur,
     mode, modeVoulu, salons, zombies, argent, gainArgent, choisirMode, lancerPartie,
-    br, statsBr, demanderStatsBr,
+    br, statsBr, demanderStatsBr, partieBr,
   };
 }

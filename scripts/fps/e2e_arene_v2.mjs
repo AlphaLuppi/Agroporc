@@ -9,7 +9,7 @@
  *  3. changement d'arme 1 / 2 / 3 puis retour
  *  4. A tue B au fusil d'assaut : touches confirmées par le serveur (`degats`), PV qui baissent, `mort` avec le kill
  *  5. killcam de B (habillage du rejeu à la vue du tueur), réapparition près du rond-point
- *  6. coup de couteau mortel ; « Passer » (Espace) saute le rejeu, carte du tueur ; 6b. réapparition
+ *  6. coup de couteau mortel ; « Passer » saute le rejeu, carte du tueur ; 6b. réapparition
  *  6c. épée (v5) : un troisième navigateur entre avec l'épée ; un seul coup tue en une fois les deux joueurs placés dans son arc, message `coup{cibles}`
  *  7. accroupi, puis glissade (sprint + accroupi) sur une piste dégagée
  *  8. voiture conduisible : montée, conduite de quelques mètres, passager qui tire sur le conducteur ; sortie, sièges libérés
@@ -569,16 +569,24 @@ try {
         const legende = ([...document.querySelectorAll("p")].find((p) => /^\s*◎?\s*Rejeu/i.test(p.textContent ?? ""))?.textContent ?? "").replace(/\s+/g, " ").trim();
         if (barre && legende && !obs.rejeu) {
           obs.rejeu = { legende, hudCombat: !!document.querySelector('section[aria-label="Armes et munitions"]'), t: performance.now() };
-          // `auto` : « Passer » (Espace) tout de suite, sans attendre l'aller-retour avec le test (une capture dure plus que la killcam)
-          if (obs.auto) { window.__arene.touche("Space", true); setTimeout(() => window.__arene.touche("Space", false), 60); }
+          // `auto` : bouton « Passer » tout de suite, sans attendre l'aller-retour avec le test (une capture dure plus que la killcam ; la touche
+          // Espace, elle, n'agit qu'après la première seconde du rejeu : on saute sans arrêt en combat)
+          if (obs.auto) [...document.querySelectorAll("button")].find((x) => /passer/i.test(x.textContent ?? ""))?.click();
         }
         const carte = document.querySelector('section[aria-label="Carte du tueur"]');
-        if (carte && !obs.carte) obs.carte = { texte: (carte.textContent ?? "").replace(/\s+/g, " ").trim(), t: performance.now() };
+        // la carte peut apparaître avant que le nom du tueur soit rendu (le bouton « Passer » agit dans la même image) : on garde sa version complète
+        if (carte && (!obs.carte || !/ par /i.test(` ${obs.carte.texte} `))) obs.carte = { texte: (carte.textContent ?? "").replace(/\s+/g, " ").trim(), t: obs.carte?.t ?? performance.now() };
       };
       new MutationObserver(lire).observe(document.body, { subtree: true, childList: true, characterData: true, attributes: true });
     });
     await poser(B, A, [ROND_POINT[0] - 6, 0, ROND_POINT[1]]);
     await poser(A, B, [ROND_POINT[0] + 8, 0, ROND_POINT[1]]);
+    // A vise B AVANT de tirer (B doit être dans le champ du rejeu de la killcam, cf. étape 5)
+    {
+      const pa = (await A.jeu()).p, pb = (await B.jeu()).p;
+      const dx = pb[0] - pa[0], dz = pb[2] - pa[2];
+      await A.ev(([l]) => window.__arene.regarder(l, 0), [Math.atan2(-dx, -dz)]);
+    }
     await dormir(800);
     const depuis = Date.now();
     const pvVus = [];
@@ -613,6 +621,20 @@ try {
     await B.page.setViewportSize({ width: 1280, height: 720 });
     // la killcam (ou, si elle est déjà finie, l'habillage du rejeu noté par l'observateur du DOM)
     const kc = await jusqua(async () => (await B.ev(() => window.__arene.killcam())) || (await B.ev(() => (window.__e2eKillcam.rejeu ? { dejaVue: true } : null))), { ms: 8000, quoi: "killcam active chez B" });
+    // la victime (B) est dessinée dans le rejeu et, A la visant, reste au centre de la vue du tueur. Le rendu logiciel n'avance le rejeu
+    // que par à-coups (et la réapparition, au bout de 4 s côté serveur, peut le couper) : on vérifie les échantillons pris pendant la seconde
+    // qui précède la mort, s'il y en a (une capture d'image, elle, laisse défiler la fin du rejeu)
+    const tMort = B.msgs("mort").filter((m) => m.cible === victimeId).at(-1)?.ts ?? Infinity;
+    const echantillons = [];
+    for (let i = 0; i < 400; i++) {
+      const k = await B.ev(() => window.__arene.killcam());
+      if (!k || k.phase !== "rejeu") break;
+      if (k.rejeu && k.victime && k.tempsServeur >= tMort - 1000 && k.tempsServeur <= tMort) echantillons.push(k);
+    }
+    if (process.env.E2E_DEBUG_KC) console.log(JSON.stringify(echantillons.map((k) => ({ ts: k.tempsServeur, cam: k.cameraRendue, victime: k.victime, avatar: k.avatarVictime, ndc: k.ndcVictime }))));
+    verifier(echantillons.every((k) => k.avatarVictime), "avatar de la victime absent du rejeu de la killcam");
+    verifier(echantillons.every((k) => Math.abs(k.ndcVictime[0]) < 0.25 && Math.abs(k.ndcVictime[1]) < 0.5 && k.ndcVictime[2] < 1),
+      `la victime sort de la vue du tueur pendant le rejeu (NDC) : ${echantillons.map((k) => k.ndcVictime.map((x) => x.toFixed(2)).join("/")).join(", ")}`);
     // Rejeu : capturé dès que l'habillage apparaît (la carte du tueur est vérifiée à l'étape 6b, après un « Passer » immédiat : une capture dure
     // plusieurs secondes en rendu logiciel, plus que la killcam entière)
     await jusqua(async () => B.ev(() => !!window.__e2eKillcam.rejeu), { ms: 8000, pas: 40, quoi: "habillage du rejeu chez B" });
@@ -629,7 +651,7 @@ try {
     const d = distXZ(j.p, ROND_POINT);
     verifier(d >= 20 && d <= 145, `réapparition à ${d.toFixed(0)} m du rond-point`);
     await B.capture("05-reapparition-B-1920");
-    return `rejeu « ${rejeu.legende.slice(0, 60)} », réapparu ${((Date.now() - tm) / 1000).toFixed(1)} s après la fin de la killcam, à ${d.toFixed(0)} m du rond-point`;
+    return `rejeu « ${rejeu.legende.slice(0, 60)} » (victime au centre de la vue sur ${echantillons.length} image(s) avant la mort), réapparu ${((Date.now() - tm) / 1000).toFixed(1)} s après la fin de la killcam, à ${d.toFixed(0)} m du rond-point`;
   });
 
   // ------------------------------------------------------------------ 6. couteau
