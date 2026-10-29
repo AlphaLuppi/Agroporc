@@ -896,7 +896,7 @@ export const SECRET_CARTE = (() => {
   ] as Vec2[]).map((st, i) => objetPose(`ecran:${i}`, "open", 72, st, 1.04, 0.3));
   return {
     pendules,
-    ardoise: objetMur("ardoise", "cuisine", surMurLocal(70, [-12.7, 9.1], [-12.6, -17.3], 0.72, [-8, -8]), 1.75, 0.6),
+    ardoise: objetMur("ardoise", "cuisine", surMurLocal(70, [-12.7, 9.1], [-12.6, -17.3], 0.66, [-8, -7]), 1.75, 0.6),
     casseroles,
     marmite: objetPose("marmite", "cour", 70, [-14.4, 4], 0.45, 0.6),
     cuves,

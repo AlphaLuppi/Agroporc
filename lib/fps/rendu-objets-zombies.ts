@@ -803,7 +803,9 @@ function creerDecorSecret(racine: THREE.Group, jetables: { dispose(): void }[], 
   if (texCadran) jetables.push(texCadran);
   const pendules = C.pendules.map((p) => {
     const g = contreMur(p.facade!, 0.03, p.c[1]);
-    const face = panneau(g, texCadran, 0.62, 0.62, 0, 0, 0, jetables, { depthWrite: true });
+    // opaque (découpe du cercle par alphaTest) et hors du halo du bloom : sinon le cadran crème sature et les aiguilles disparaissent
+    const face = panneau(g, texCadran, 0.62, 0.62, 0, 0, 0, jetables, { transparent: false, alphaTest: 0.5 });
+    sansHalo(face.material as THREE.Material);
     const aiguille = (l: number, larg: number, z: number) => {
       const pivot = new THREE.Group();
       pivot.position.z = z;
@@ -821,6 +823,7 @@ function creerDecorSecret(racine: THREE.Group, jetables: { dispose(): void }[], 
   // ---- ardoise du menu, batterie de cuivre au-dessus du piano, veilleuses bleues ----
   const gArdoise = contreMur(C.ardoise.facade!, 0.03, C.ardoise.c[1]);
   const ardoise = panneau(gArdoise, null, 1.2, 0.9, 0, 0, 0, jetables, { transparent: false });
+  sansHalo(ardoise.material as THREE.Material);
   racine.add(gArdoise);
   let ordreArdoise = "";
   const lacetCuisson = lacetVers([-U_BAT[0], -U_BAT[1]]);
@@ -922,7 +925,7 @@ function creerDecorSecret(racine: THREE.Group, jetables: { dispose(): void }[], 
   const ampoule = (ob: ObjetSecret) => {
     const g = contreMur(ob.facade!, 0.12, ob.c[1]);
     boiteFil(g, mMetal, 0.04, 0.12, 0.12, 0, 0.1, -0.06, jetables);
-    const verre = new THREE.Mesh(geo(new THREE.SphereGeometry(0.06, 10, 8)), mat({ color: 0x2a2a26 }));
+    const verre = new THREE.Mesh(geo(new THREE.SphereGeometry(0.085, 12, 10)), mat({ color: 0x2a2a26 }));
     g.add(verre);
     const halo = panneau(g, halo2, 0.9, 0.9, 0, 0, 0.02, jetables, { color: 0xfff0b0, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
     racine.add(g);
@@ -944,8 +947,11 @@ function creerDecorSecret(racine: THREE.Group, jetables: { dispose(): void }[], 
     g.position.set(ob.c[0], ob.c[1], ob.c[2]);
     g.rotation.y = lacetEcran;
     const postits = [1, -1].map((s) => {
-      const m = panneau(g, null, 0.085, 0.085, s * 0.2, 0.11, s * 0.026, jetables, { transparent: false, side: THREE.DoubleSide });
-      m.rotation.z = s * 0.12;
+      const m = panneau(g, null, 0.11, 0.11, s * 0.19, 0.1, s * 0.026, jetables, { transparent: false, side: THREE.FrontSide });
+      // jaune vif : hors du halo du bloom, sinon le numéro se noie dans la lueur
+      sansHalo(m.material as THREE.Material);
+      // chaque face de l'écran a son post-it tourné vers elle (une face arrière montrerait le numéro en miroir)
+      m.rotation.set(0, s < 0 ? Math.PI : 0, 0.12);
       return m;
     });
     const lueurs = [1, -1].map((s) => panneau(g, null, 0.54, 0.32, 0, 0, s * 0.024, jetables, { color: 0x40ff70, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
@@ -1001,7 +1007,7 @@ function creerDecorSecret(racine: THREE.Group, jetables: { dispose(): void }[], 
         p.minutes.rotation.z = -((m % 60) / 60) * Math.PI * 2;
         // les douze coups de midi : le cadran pâlit à chaque coup
         const k = i < 4 && coups ? Math.max(0, 1 - ((tServeur - (dernierMidi(s.pendulesT, s.periodeMidiMs, tServeur) ?? 0)) % SECRET.coupMidiMs) / 250) : 0;
-        (p.face.material as THREE.MeshBasicMaterial).color.setScalar(0.82 + 0.35 * k);
+        (p.face.material as THREE.MeshBasicMaterial).color.setScalar(0.8 + 0.2 * k);
       });
       coupsVus = coups;
       // ardoise : retracée quand l'ordre change (nouvelle partie)
@@ -1058,7 +1064,7 @@ function creerDecorSecret(racine: THREE.Group, jetables: { dispose(): void }[], 
       colonne.scale.set(1 + (1 - fin) * 0.6, 1, 1 + (1 - fin) * 0.6);
       // ampoules : « MIDI » au-dessus du Micro-ondes (après la truffe), le code au-dessus du disjoncteur (après midi) ; éteintes sans courant
       const allumer = (l: typeof lampeLabo, on: boolean, flash: number) => {
-        (l.verre.material as THREE.MeshBasicMaterial).color.set(flash > 0 ? 0xffd060 : on ? 0xfff6d8 : 0x2a2a26);
+        (l.verre.material as THREE.MeshBasicMaterial).color.set(flash > 0 ? 0xffd060 : on ? 0xfff6d8 : 0x56514a);
         (l.halo.material as THREE.MeshBasicMaterial).opacity = flash > 0 ? 0.6 * flash : on ? 0.55 : 0;
       };
       allumer(lampeLabo, etat.courant && s.etape === etapeDe("midi") && morseAllume("MIDI", tServeur), Math.max(0, 1 - (t - lampeLabo.flashT) / 2.5));
