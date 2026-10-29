@@ -75,12 +75,21 @@ export interface CollisionsRagdoll {
   sol(x: number, y: number, z: number): number;
   /** pousse la sphère (x, y, z, r) hors des murs ; faux si elle n'en touche aucun */
   mur(x: number, y: number, z: number, r: number, sortie: PousseeMur): boolean;
+  /**
+   * (facultatif) dessous du plafond au-dessus de (x, z), `Infinity` à ciel ouvert : le faux plafond des bâtiments creusés du mode zombies
+   * (le même que celui des grenades, des projectiles et du joueur) ; un cadavre projeté rebondit dessous au lieu de traverser le toit
+   */
+  plafond?(x: number, z: number): number;
 }
 
-/** Collisions d'un monde de `collision.ts` : `solSous` (petite tolérance) et `resoudre` (les champs passe-tigres arrêtent aussi un cadavre). */
-export function collisionsDuMonde(m: Monde): CollisionsRagdoll {
+/**
+ * Collisions d'un monde de `collision.ts` : `solSous` (petite tolérance) et `resoudre` (les champs passe-tigres arrêtent aussi un cadavre) ;
+ * `plafond` : celui des bâtiments creusés (`plafondBatimentsCreux` de grenades.ts), sans plafond par défaut.
+ */
+export function collisionsDuMonde(m: Monde, plafond?: (x: number, z: number) => number): CollisionsRagdoll {
   const p: Vec3 = [0, 0, 0];
   return {
+    ...(plafond ? { plafond } : {}),
     sol: (x, y, z) => solSous(m, x, z, y, 0.05),
     mur(x, y, z, r, sortie) {
       p[0] = x; p[1] = y; p[2] = z;
@@ -481,14 +490,16 @@ export function creerRagdoll(
     }
   }
 
-  /** sol sous chaque particule (une requête par pas), vitesse verticale d'arrivée, contact du pas */
-  const solP = new Float64Array(n), vyArrivee = new Float64Array(n), contact = new Uint8Array(n);
+  /** sol et plafond sous / au-dessus de chaque particule (une requête par pas), vitesse verticale d'arrivée, contacts du pas */
+  const solP = new Float64Array(n), plafondP = new Float64Array(n).fill(Infinity), vyArrivee = new Float64Array(n), contact = new Uint8Array(n);
+  const contactHaut = new Uint8Array(n);
 
-  /** Sol : projection dans chaque itération de contraintes (sinon les contraintes et le sol se renvoient la particule, qui tremble). */
+  /** Sol (et plafond) : projection dans chaque itération de contraintes (sinon les contraintes et le sol se renvoient la particule, qui tremble). */
   function poserAuSol(): void {
     for (let i = 0; i < n; i++) {
-      const k = i * 3 + 1, bas = solP[i] + rayon[i];
+      const k = i * 3 + 1, bas = solP[i] + rayon[i], haut = plafondP[i] - rayon[i];
       if (pos[k] < bas) { pos[k] = bas; contact[i] = 1; }
+      else if (pos[k] > haut && haut > bas) { pos[k] = haut; contactHaut[i] = 1; }
     }
   }
 
@@ -501,6 +512,9 @@ export function creerRagdoll(
         const f = 1 - RAGDOLL.frottementSol;
         prec[k] = pos[k] - (pos[k] - prec[k]) * f;
         prec[k + 2] = pos[k + 2] - (pos[k + 2] - prec[k + 2]) * f;
+      } else if (contactHaut[i]) {
+        // plafond : la vitesse montante repart vers le bas, amortie comme au sol
+        prec[k + 1] = vyArrivee[i] > 0 ? pos[k + 1] + vyArrivee[i] * RAGDOLL.rebondSol : pos[k + 1];
       }
       if (!collisions.mur(pos[k], pos[k + 1], pos[k + 2], r, poussee)) continue;
       // mur : sortie par la normale, vitesse normale renvoyée (rebond), vitesse tangentielle un peu freinée
@@ -526,8 +540,12 @@ export function creerRagdoll(
       pos[k] += vx; pos[k + 1] += vy; pos[k + 2] += vz;
       vyArrivee[i] = vy;
       contact[i] = 0;
+      contactHaut[i] = 0;
       // le toit le plus haut sous la particule à sa hauteur d'avant (table, muret) : on retombe dessus
       solP[i] = collisions.sol(pos[k], prec[k + 1], pos[k + 2]);
+      // le plafond ne retient qu'une particule qui était dessous (pas un cadavre posé sur un toit au-dessus d'un bâtiment voisin)
+      const pf = collisions.plafond ? collisions.plafond(pos[k], pos[k + 2]) : Infinity;
+      plafondP[i] = prec[k + 1] < pf ? pf : Infinity;
     }
     for (let it = 0; it < RAGDOLL.iterations; it++) { contraintes(); poserAuSol(); }
     collisionsPas();

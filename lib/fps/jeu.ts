@@ -289,8 +289,9 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   const mz = new MondeZombies();
   /** (zombies) corps des tigres proches, obstacles du mouvement */
   const corpsTigres = new CorpsTigres();
-  // (v8) les cadavres sont des ragdolls : ils tombent sur le sol et les tables, et rebondissent sur les murs du monde des zombies (portes ouvertes comprises)
-  const rz = modeZ ? creerRenduZombies(scene, collisionsDuMonde(monde)) : null;
+  // (v8) les cadavres sont des ragdolls : ils tombent sur le sol et les tables, et rebondissent sur les murs du monde des zombies (portes ouvertes
+  // comprises) et sous le faux plafond des bâtiments creusés (comme les grenades et les projectiles)
+  const rz = modeZ ? creerRenduZombies(scene, collisionsDuMonde(monde, plafondBatimentsCreux(monde, PLAFOND_INTERIEUR_M))) : null;
   // (v7) intérieurs des bâtiments creusés, objets de la carte (craie, distributeurs, boîte, planches, bonus…), Truck Muche des livraisons
   const rInterieurs = donneesZ ? creerRenduInterieurs(scene, data, donneesZ.pieces) : null;
   const rObjets = modeZ ? creerRenduObjetsZombies(scene) : null;

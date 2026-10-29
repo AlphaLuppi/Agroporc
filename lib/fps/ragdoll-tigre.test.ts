@@ -8,7 +8,8 @@ import {
   type CollisionsRagdoll, type InfoMort, type RepereRagdoll,
 } from "./ragdoll-tigre";
 import { creerAnimZombie } from "./zombies-anim";
-import { construireMondeZombies } from "./zombies-carte";
+import { PLAFOND_INTERIEUR_M, construireMondeZombies } from "./zombies-carte";
+import { plafondBatimentsCreux } from "./grenades";
 import { ZOMBIES } from "./zombies-vagues";
 
 const sq = squelette();
@@ -229,6 +230,27 @@ describe("ragdoll du tigre zombie", () => {
     const m = impulsionMort({ ...base, cause: "melee", arme: "couteau" }, cam);
     expect(Math.abs(m.d![2])).toBeGreaterThan(0.7);
     expect(impulsionMort({ ...base, cause: "tete", arme: "pistolet" }, cam).cible).toBe("tete");
+  });
+
+  it("un cadavre projeté par un souffle sous lui, dans l'open space, rebondit sous le faux plafond (3,4 m) au lieu de traverser le toit", () => {
+    const scene = JSON.parse(readFileSync("public/agroparc/scene.json", "utf8")) as SceneData;
+    const monde = construireMondeZombies(scene);
+    const plafond = plafondBatimentsCreux(monde, PLAFOND_INTERIEUR_M);
+    expect(plafond(118, -24.5)).toBeLessThanOrEqual(PLAFOND_INTERIEUR_M);
+    const hauteurMax = (col: CollisionsRagdoll) => {
+      const r = nouveau(col, { x: 118, z: -24.5, cap: 0.3 });
+      // Rayon Goulaf à bout portant : souffle au pied du tigre
+      r.impulsion(impulsionMort({ cause: "explosion", arme: "rayon", ameliore: true, src: [118.2, 0.1, -24.3], p: [118, 0, -24.5], graine: 3 }, [116, 1.6, -26]));
+      let haut = 0;
+      for (let t = 0; t < 2; t += 1 / 60) {
+        r.pas(1 / 60);
+        for (let i = 0; i < r.n; i++) haut = Math.max(haut, r.pos[i * 3 + 1]);
+      }
+      return haut;
+    };
+    // sans plafond, il monte au-dessus des dalles (l'anomalie) ; avec, jamais
+    expect(hauteurMax(collisionsDuMonde(monde))).toBeGreaterThan(plafond(118, -24.5));
+    expect(hauteurMax(collisionsDuMonde(monde, plafond))).toBeLessThanOrEqual(plafond(118, -24.5) + 1e-6);
   });
 
   it("coût : moins de 0,3 ms par ragdoll et par image (10 ragdolls, 3 s à 60 Hz, dans la vraie carte, pose comprise)", () => {
