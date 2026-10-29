@@ -1003,7 +1003,12 @@ export class Salle implements ContexteSalle {
     j.protegeJusqua = 0; // tirer annule la protection d'apparition
     j.tirs++;
 
-    const sorties: Sortie[] = [{ a: "tous", sauf: j.id, m: { t: "tir", id: j.id, arme: armeTiree, o: tir.o, d: dirs, ...(gauche ? { main: "g" as const } : {}) } }];
+    // (v8, zombies) l'amélioration voyage avec le tir : les autres clients en tirent le profil (projectile, souffle, traçante)
+    const ameliore = !!this.zombies && (j.equip.ameliorees?.includes(armeTiree) ?? false);
+    const sorties: Sortie[] = [{
+      a: "tous", sauf: j.id,
+      m: { t: "tir", id: j.id, arme: armeTiree, o: tir.o, d: dirs, ...(gauche ? { main: "g" as const } : {}), ...(ameliore ? { ameliore: true as const } : {}) },
+    }];
     // arme spéciale : une munition de moins ; à 0, l'arme disparaît et le joueur retombe sur le slot précédent
     if (j.main === "speciale") sorties.push(...this.consommerSpeciale(j, maintenant));
     // (v8, zombies) le grand secret voit passer chaque tir validé (objets du décor)

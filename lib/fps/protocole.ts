@@ -671,8 +671,11 @@ export type MessageServeur =
     }
   /** Équipement du destinataire (ramassage d'une spéciale, munitions épuisées). Privé. */
   | { t: "equipement"; equip: Equipement; main: Slot; munSpeciale: number; ravitaille?: ArmeFeuId | "tout" }
-  /** Tir d'un autre joueur, pour les traçantes et le son (pas renvoyé au tireur). */
-  | { t: "tir"; id: string; arme: ArmeFeuId; o: Vec3; d: Vec3[]; main?: "g" }
+  /**
+   * Tir d'un autre joueur, pour les traçantes et le son (pas renvoyé au tireur). `ameliore` (v8, zombies) : arme passée au Micro-ondes, dont le
+   * profil (projectile, souffle) peut différer de l'arme de base.
+   */
+  | { t: "tir"; id: string; arme: ArmeFeuId; o: Vec3; d: Vec3[]; main?: "g"; ameliore?: true }
   /** Coup d'arme blanche d'un autre joueur (animation et son). */
   | { t: "coup"; id: string; o: Vec3; d: Vec3; arme: ArmeMeleeId }
   /**

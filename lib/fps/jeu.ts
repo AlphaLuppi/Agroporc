@@ -1381,7 +1381,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
         const liste = cibles();
         const avatar = distants.get(m.id)?.avatar;
         // (v8) arbalète, Soufflerie : le projectile (`projectile`) ou la bourrasque (`zevt{souffle}`) se dessinent à part, pas de traçante
-        const stD = statsTir(m.arme, { zombies: modeZ });
+        const stD = statsTir(m.arme, { zombies: modeZ, ameliore: m.ameliore === true });
         if (stD.projectile || stD.souffle) {
           avatar?.tirer();
           const cam0 = oeil();

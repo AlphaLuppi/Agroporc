@@ -131,4 +131,14 @@ describe("(v8) tir spécial", () => {
     expect(messages(sorties, "projectile")).toHaveLength(1);
     expect(messages(sorties, "tir")).toHaveLength(1);
   });
+
+  it("le tir relayé aux autres porte `ameliore` pour une arme gratinée (Moutarde & Sally : leur client n'y voit pas un hitscan)", () => {
+    for (const ameliore of [true, false]) {
+      const { s, z, id, t } = faceAUnTigre("pistolet", "secondaire", ameliore, 4);
+      const { o, d } = regarder(s, "a", [z.x, 0.8, z.z]);
+      const relais = messages(s.recevoir("a", { t: "tir", arme: "pistolet", o, d: [d], touches: [{ cible: id, zone: "corps", plomb: 0 }] }, t), "tir");
+      expect(relais).toHaveLength(1);
+      expect(relais[0].ameliore).toBe(ameliore ? true : undefined);
+    }
+  });
 });
