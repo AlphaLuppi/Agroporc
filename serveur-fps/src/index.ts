@@ -20,7 +20,7 @@ import { construireMonde, pointsApparition } from "../../lib/fps/collision";
 import { ipClient } from "../../lib/fps/ip-client";
 import { Salle, type OptionsSalle, type Sortie } from "../../lib/fps/match";
 import { VERSION_PROTOCOLE, type MessageClient, type MessageServeur } from "../../lib/fps/protocole";
-import { decisionMode, messageSalons } from "../../lib/fps/salons";
+import { decisionMode, garderPourReprise, messageSalons } from "../../lib/fps/salons";
 import { capDeCachette } from "../../lib/fps/tigre-arene";
 import { DEPARTS, construireMondeZombies, donneesZombies } from "../../lib/fps/zombies-carte";
 import { GENRES_BONUS, type GenreBonus } from "../../lib/fps/zombies-vagues";
@@ -196,13 +196,16 @@ function avecJeton(c: Client, sorties: Sortie[]): Sortie[] {
 }
 
 /**
- * Connexion fermée d'un inscrit : un membre de la salle des zombies est gardé `REPRISE_MS` (sa partie continue, il est immobile), les autres
- * sont déconnectés tout de suite.
+ * Connexion fermée d'un inscrit : un membre d'une partie de zombies en cours dont la connexion est tombée (pas un départ volontaire,
+ * `garderPourReprise`) est gardé `REPRISE_MS` (sa partie continue, il est immobile) ; les autres sont déconnectés tout de suite.
  */
-function fermer(c: Client): void {
+function fermer(c: Client, code: number): void {
   if (!c.inscrit) return;
   const pseudo = c.salle.inspecter(c.id)?.pseudo;
-  if (c.salle === salleZombies && c.salle.inspecter(c.id)) {
+  const garder = garderPourReprise({
+    salleZombies: c.salle === salleZombies, membre: !!c.salle.inspecter(c.id), code, phase: c.salle.resumeZombies()?.phase ?? null,
+  });
+  if (garder) {
     const salle = c.salle, id = c.id;
     const minuteur = setTimeout(() => {
       enSuspens.delete(id);
@@ -223,7 +226,7 @@ function fermer(c: Client): void {
  * (v8) `bonjour.reprise` : la session coupée est rattachée à cette connexion (même id, même salle) si son jeton est le bon et qu'elle attend
  * encore ; renvoie vrai si c'est fait.
  */
-function reprendre(c: Client, reprise: unknown, maintenant: number): boolean {
+function reprendre(c: Client, reprise: unknown, pseudo: unknown, maintenant: number): boolean {
   if (!reprise || typeof reprise !== "object") return false;
   const { id, jeton } = reprise as { id?: unknown; jeton?: unknown };
   if (typeof id !== "string" || typeof jeton !== "string") return false;
@@ -249,7 +252,7 @@ function reprendre(c: Client, reprise: unknown, maintenant: number): boolean {
   c.salle = salle;
   c.inscrit = true;
   c.jeton = nouveauJeton();
-  diffuser(c.salle, avecJeton(c, c.salle.reprendre(id, maintenant)));
+  diffuser(c.salle, avecJeton(c, c.salle.reprendre(id, maintenant, pseudo)));
   console.log(`~ ${c.salle.inspecter(id)?.pseudo} (reprise)`);
   return true;
 }
@@ -338,7 +341,7 @@ function traiter(c: Client, m: MessageClient, maintenant: number): void {
   if (!c.inscrit) {
     if (m.t !== "bonjour") return;
     if (m.v !== VERSION_PROTOCOLE) return refuser(c, "version", "Version du protocole incompatible : rechargez la page.");
-    if (reprendre(c, m.reprise, maintenant)) { diffuserSalons(c); return; }
+    if (reprendre(c, m.reprise, m.pseudo, maintenant)) { diffuserSalons(c); return; }
     const sorties = avecJeton(c, c.salle.connecter(c.id, typeof m.pseudo === "string" ? m.pseudo : "", maintenant));
     c.inscrit = !sorties.some((s) => s.a === c.id && s.m.t === "erreur");
     diffuser(c.salle, sorties);
@@ -408,13 +411,13 @@ wss.on("connection", (ws, req) => {
     if (decision === "jeter" || !m) return;
     try { traiter(c, m, maintenant); } catch (e) { console.error("message:", e); }
   });
-  ws.on("close", () => {
+  ws.on("close", (code: number) => {
     // une connexion remplacée par une reprise ne retire pas l'entrée de la nouvelle (même id)
     if (clients.get(c.id) === c) clients.delete(c.id);
     const n = (parIp.get(c.ip) ?? 1) - 1;
     if (n <= 0) parIp.delete(c.ip);
     else parIp.set(c.ip, n);
-    fermer(c);
+    fermer(c, code);
   });
   ws.on("error", () => ws.terminate());
 });

@@ -216,7 +216,8 @@ class FauxSocket implements SocketLike {
   envoyes: string[] = [];
   constructor(public url: string) { FauxSocket.tous.push(this); }
   send(data: string) { this.envoyes.push(data); }
-  close() { this.readyState = 3; this.onclose?.({}); }
+  codeFermeture: number | undefined;
+  close(code?: number) { this.codeFermeture = code; this.readyState = 3; this.onclose?.({}); }
   ouvrir() { this.readyState = 1; this.onopen?.({}); }
   recevoir(m: MessageServeur) { this.onmessage?.({ data: JSON.stringify(m) }); }
   couper() { this.readyState = 3; this.onclose?.({}); }
@@ -283,6 +284,14 @@ describe("connecterArene", () => {
     socket().recevoir({ t: "bienvenue", id: "j9", couleur: "#fff", joueurs: [], maintenant: 0, match, jeton: "autre" });
     expect(client.id).toBe("j9");
     client.fermer();
+  });
+
+  it("(v8) fermer() est un départ volontaire : code 1000, le serveur ne garde pas la session pour une reprise", () => {
+    const { client, socket } = demarrer();
+    socket().ouvrir();
+    const s = socket();
+    client.fermer();
+    expect(s.codeFermeture).toBe(1000);
   });
 
   it("ping toutes les 2 s et applique le décalage du pong", () => {

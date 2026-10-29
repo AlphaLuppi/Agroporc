@@ -597,12 +597,16 @@ export class Salle implements ContexteSalle {
    * (v8) Reprise d'une session coupée (le serveur a gardé le joueur, cf. `REPRISE_MS` de serveur-fps) : le client revient avec le même id.
    * Rien ne bouge dans la salle ; renvoie au seul client `bienvenue{reprise}`, l'état de la partie de zombies (argent, portes) et, s'il est en
    * jeu et debout, une `apparition{garder}` qui resynchronise santé et armes sans le déplacer (à terre, l'état de la partie suffit).
+   * `pseudo` : celui du `bonjour` de la reconnexion (un renommage fait pendant la coupure n'est pas mis en file par le client) ; s'il diffère,
+   * il est appliqué comme un message `pseudo` et la `presence` qui en résulte part à toute la salle.
    */
-  reprendre(id: string, maintenant: number): Sortie[] {
+  reprendre(id: string, maintenant: number, pseudo?: unknown): Sortie[] {
     const j = this.table.get(id);
     if (!j) return [];
+    const renomme = typeof pseudo === "string" && pseudo !== j.pseudo ? this.renommer(j, pseudo, maintenant) : [];
     const sorties: Sortie[] = [
       { a: id, m: { t: "bienvenue", id, couleur: j.couleur, joueurs: this.joueursPublics(), match: this.infoMatch(), maintenant, reprise: true } },
+      ...renomme,
     ];
     if (this.zombies) sorties.push(...this.zombies.synchro(id));
     if (j.enJeu && j.vivant) {

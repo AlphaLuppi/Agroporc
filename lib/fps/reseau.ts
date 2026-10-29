@@ -74,6 +74,9 @@ export class HorlogeServeur {
 // ---------- WebSocket ----------
 
 /** Sous-ensemble de WebSocket utilisé (permet d'injecter un faux socket dans les tests). */
+/** Code de fermeture d'un départ volontaire (vue fermée, sortie du jeu), cf. `garderPourReprise` de salons.ts. */
+export const CODE_DEPART_VOLONTAIRE = 1000;
+
 export interface SocketLike {
   readyState: number;
   onopen: ((ev: unknown) => void) | null;
@@ -81,7 +84,8 @@ export interface SocketLike {
   onerror: ((ev: unknown) => void) | null;
   onclose: ((ev: unknown) => void) | null;
   send(data: string): void;
-  close(): void;
+  /** `code` 1000 : départ volontaire (le serveur ne garde pas la session pour une reprise) */
+  close(code?: number): void;
 }
 
 export interface OptionsReseau {
@@ -229,7 +233,8 @@ export function connecterArene(
       id = null;
       if (s) {
         s.onopen = s.onmessage = s.onerror = s.onclose = null;
-        try { s.close(); } catch { /* déjà fermé */ }
+        // 1000 = départ volontaire : le serveur déconnecte tout de suite au lieu de garder la session (`REPRISE_MS`)
+        try { s.close(CODE_DEPART_VOLONTAIRE); } catch { /* déjà fermé */ }
         surEtat("ferme");
       }
     },

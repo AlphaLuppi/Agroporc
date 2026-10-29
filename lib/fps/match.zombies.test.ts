@@ -361,6 +361,18 @@ describe("mise à terre, inactivité, départs", () => {
     expect(s.reprendre("inconnu", T0 + 1800)).toEqual([]);
   });
 
+  it("(v8) reprendre avec le pseudo du `bonjour` : un renommage fait pendant la coupure est appliqué et diffusé à toute la salle", () => {
+    const s = partie(["a", "b"]);
+    avancer(s, T0 + 50, T0 + 1500);
+    const sorties = s.reprendre("a", T0 + 1600, "Nouveau");
+    expect(j(s, "a").pseudo).toBe("Nouveau");
+    expect(messages(sorties, "bienvenue")[0].joueurs.find((x) => x.id === "a")?.pseudo).toBe("Nouveau");
+    const presence = sorties.find((x) => x.m.t === "presence");
+    expect(presence?.a).toBe("tous");
+    // même pseudo : rien de plus que la reprise
+    expect(types(s.reprendre("a", T0 + 1700, "Nouveau"))).not.toContain("presence");
+  });
+
   it("déconnexion : la liste et l'hôte sont à jour, la partie continue pour les autres", () => {
     const s = partie(["a", "b", "c"]);
     const sorties = s.deconnecter("a", T0 + 1000);
