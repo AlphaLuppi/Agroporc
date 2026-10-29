@@ -2,6 +2,22 @@
 
 Date : 2026-10-28 (révisée après deux critiques le 2026-10-29) · Branche : `feat/battle-royale` · Protocole : `VERSION_PROTOCOLE = 8`. Les changements v8 sont purement additifs (champs optionnels, nouveau mode) : le serveur accepte les versions **7 et 8** (`VERSIONS_ACCEPTEES` de `protocole.ts`) pour l'arène et les zombies, et un client v7 ne voit jamais le BR (son `MODES_SALLE` l'ignore). **Ordre de déploiement : le serveur d'abord, puis la fusion du client** ; un client v8 devant un serveur v7 reçoit `erreur{version}`. Le 7 sera retiré dans un second temps.
 
+## Statut
+
+**Implémenté** sur la branche `feat/battle-royale` (vagues 0 à 4 : contrat, modules purs, serveur, intégration, assemblage client ; vague 5 : test de bout en bout `scripts/fps/e2e_br.mjs` et documentation, `CLAUDE.md` et `serveur-fps/README.md` à jour). Pas encore déployé : le serveur d'abord, puis la fusion du client (voir l'ordre de déploiement ci-dessus).
+
+Décisions prises sur les questions ouvertes pendant l'implémentation :
+
+- **Reconnexion en cours de partie** : hors périmètre v1 (la place est éliminée, voir « Décisions de conception » et « Risques »).
+- **Chat vocal** : désactivé en BR (les messages `voix*` sont ignorés par la salle).
+- **Rayon final de la zone** : 0 (palier 6), avec le départage de la clé de place de « Éliminations » ; la zone fermée tue tous les survivants, donc la partie ne dure jamais indéfiniment.
+- **Partie comptée** : en plus de 2 joueurs atterris, durée minimale réglable par l'essai serveur `PDJ_FPS_BR_VALIDE_MS` (défaut 60 000 ms, `BR.partieValideMinMs`).
+- **Snap** : les morts sortent du snap `joueurs` `BR.retraitMortSnapMs` (5 s) après leur mort et restent dans `presence` ; le client tolère l'absence de sa propre entrée.
+- **Déploiement** : plafond global de 160 connexions (`PDJ_FPS_CONNEXIONS_TOTAL`), 24 par IP par défaut (`PDJ_FPS_CONNEXIONS_IP`, 60 dans le `docker-compose.yml`), volume nommé `pdj-fps-donnees` pour les statistiques.
+- **Performance du site** : aucun code du BR dans le premier chargement de la page du menu ; tout reste derrière les imports dynamiques existants (`MyrtilleEasterEgg` → `next/dynamic` `Agroparc3D` → `import("@/lib/fps/jeu")`), et les statistiques ne sont demandées qu'à l'ouverture du lobby BR.
+
+À mesurer après le déploiement : `/sante.ticMaxMs` et `docker stats` avec 50 joueurs (conteneur à 0,6 vCPU et 384 Mo), débit sortant à 10 Hz.
+
 ## Demande
 
 Un troisième mode de jeu dans la vue Palantir, « Battle Royale », façon Fortnite :
