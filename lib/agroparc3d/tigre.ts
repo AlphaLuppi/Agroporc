@@ -90,6 +90,11 @@ export interface TigreCache {
   placer(c: Cachette): void;
   /** Position monde du corps (pour viser la caméra). */
   centre(sortie: THREE.Vector3): THREE.Vector3 | null;
+  /**
+   * Montre ou cache le tigre (aperçus par mode de la vue Palantir : hors de l'arène il serait pris pour un tigre des zombies et flotterait
+   * hors de son bâtiment). Caché, il n'est ni dessiné ni cliquable ; la cachette et le minuteur de retour continuent.
+   */
+  afficher(visible: boolean): void;
   maj(dt: number): void;
   dispose(): void;
 }
@@ -143,6 +148,7 @@ export function creerTigreCache(o: OptionsTigre): TigreCache {
   let retourDans = -1;
   let detruit = false;
   let pose: PoseTigre | null = null;
+  let masque = false;
 
   function placer(c: Cachette) {
     courante = c;
@@ -150,7 +156,7 @@ export function creerTigreCache(o: OptionsTigre): TigreCache {
     if (precedentes.length > 5) precedentes.shift();
     conteneur.position.set(c.x, 0, c.z);
     conteneur.rotation.y = c.cap;
-    conteneur.visible = !!tigre;
+    conteneur.visible = !!tigre && !masque;
     retourDans = -1;
   }
   function tirer() {
@@ -192,7 +198,7 @@ export function creerTigreCache(o: OptionsTigre): TigreCache {
     conteneur.add(t.groupe);
     tigre = t;
     poser();
-    if (courante) conteneur.visible = true;
+    if (courante) conteneur.visible = !masque;
     else tirer();
   }).catch((e) => { if (!detruit) o.surEchec?.(e); });
 
@@ -247,6 +253,10 @@ export function creerTigreCache(o: OptionsTigre): TigreCache {
     centre(sortie) {
       if (!courante) return null;
       return sortie.set(courante.x, 0.8, courante.z);
+    },
+    afficher(visible) {
+      masque = !visible;
+      conteneur.visible = visible && !!tigre && !!courante;
     },
     maj(dt) {
       horloge += dt;

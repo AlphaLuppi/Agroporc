@@ -9,7 +9,7 @@
  */
 import { BR } from "./br-regles";
 import {
-  JEU, MODES_SALLE, PARTIE_AUTO, PARTIE_NOUVELLE, VERSION_MIN_ZOMBIES, type MessageServeur, type ModeSalle, type PhaseZombies, type ResumePartie,
+  JEU, MODES_SALLE, PARTIE_AUTO, PARTIE_NOUVELLE, VERSION_MIN_ZOMBIES, type MessageServeur, type ModeSalle, type PhaseBr, type PhaseZombies, type ResumePartie,
   type ResumePartieBr, type ResumeSalonBr,
 } from "./protocole";
 import { ZOMBIES } from "./zombies-vagues";
@@ -191,6 +191,26 @@ export function decisionPartie(e: {
   if (cible.joueurs >= capaciteDe(mode, cible)) return { action: "refus", raison: "plein" };
   return { action: "changer", mode, partie: cible.id };
 }
+
+/** Une partie vue par le choix de l'aperçu : id, phase (zombies ou Battle Royale), joueurs encore en lice. */
+export interface PartieApercu { id: string; phase: PhaseBr | PhaseZombies; vivants: number }
+
+/**
+ * (aperçu de la vue Palantir) Partie dont un client montre le direct, parmi les parties de SON mode : la sienne si elle est en cours (BR : vol ou
+ * jeu ; zombies (v11, parties parallèles) : pause entre deux manches ou manche), sinon la partie en cours aux plus de joueurs en lice (égalité : la
+ * première de la liste), sinon null (le client affiche alors la simulation).
+ */
+export function partieApercu(mode: "zombies" | "br", parties: readonly PartieApercu[], miennePartie: string): string | null {
+  const enCours = (p: PartieApercu): boolean => (mode === "br" ? p.phase === "vol" || p.phase === "jeu" : p.phase === "pause" || p.phase === "manche");
+  const mienne = parties.find((p) => p.id === miennePartie);
+  if (mienne && enCours(mienne)) return mienne.id;
+  let meilleure: PartieApercu | null = null;
+  for (const p of parties) if (enCours(p) && (!meilleure || p.vivants > meilleure.vivants)) meilleure = p;
+  return meilleure ? meilleure.id : null;
+}
+
+/** `partieApercu` du Battle Royale (nom d'origine, issue #84). */
+export const partieApercuBr = (parties: readonly PartieApercu[], miennePartie: string): string | null => partieApercu("br", parties, miennePartie);
 
 /**
  * Message `salons` (diffusé à tous à la connexion puis au changement, ≤ 1 Hz). `br` absent : le champ est omis (un client v7 ne le voit jamais).

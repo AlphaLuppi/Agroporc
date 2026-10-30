@@ -4,7 +4,8 @@
  * étages, fenêtres, corniche et porte reprend les mêmes constantes et le même hachage.
  * Rendu seulement : aucune collision ne dépend de ce module.
  */
-import type { Building, Vec2 } from "./types";
+import { hachage32, mulberry32 } from "./hasard";
+import type { Building, PoiType, Vec2 } from "./types";
 
 /** Hauteur nominale d'un étage (m) : `nbEtages = round(h / ETAGE_M)`. */
 export const ETAGE_M = 3.2;
@@ -18,6 +19,18 @@ export const FENETRE_H_M = 1.4;
 /** Porte du rez-de-chaussée : largeur et hauteur (m). */
 export const PORTE_L_M = 1.6;
 export const PORTE_H_M = 2.4;
+/** Porte sectionnelle des bâtiments industriels (m). */
+export const INDUSTRIEL_PORTE_L_M = 4;
+export const INDUSTRIEL_PORTE_H_M = 3.2;
+/** Rez-de-chaussée vitré d'une façade percée : bas et haut de la vitrine (m). */
+export const VITRINE_BAS_M = 0.35;
+export const VITRINE_HAUT_M = 2.6;
+/** Mur rideau : côté d'une cellule vitrée (m). */
+export const MUR_RIDEAU_CELLULE_M = 1.5;
+/** Enseigne néon d'un restaurant : barre ambre au-dessus de la porte (largeur, hauteur, hauteur du centre, m). */
+export const ENSEIGNE_L_M = 2.4;
+export const ENSEIGNE_H_M = 0.28;
+export const ENSEIGNE_Y_M = 2.7;
 /** Un mur plus court est lisse ; un bâtiment plus bas ou de moins de 40 m² l'est tout entier. */
 export const LISSE_ARETE_M = 3;
 export const LISSE_HAUTEUR_M = 3;
@@ -67,17 +80,11 @@ export function estLisse(b: Pick<Building, "h" | "r" | "holes">): boolean {
 // Hachage des fenêtres allumées : entier 32 bits, identique au nuanceur (uint, produits modulo 2^32).
 // ---------------------------------------------------------------------------------------------------------------------
 
-function hachage32(x: number): number {
-  x = (x ^ (x >>> 16)) >>> 0;
-  x = Math.imul(x, 0x7feb352d) >>> 0;
-  x = (x ^ (x >>> 15)) >>> 0;
-  x = Math.imul(x, 0x846ca68b) >>> 0;
-  x = (x ^ (x >>> 16)) >>> 0;
-  return x;
-}
-
 /** Seuil du nuanceur : `(hachage & 0xffff) < SEUIL_ALLUMEES`. */
 export const SEUIL_ALLUMEES = Math.round(PART_ALLUMEES * 65536);
+
+/** Luminosité de la vitrine allumée du rez-de-chaussée relativement à une fenêtre d'étage (1) : sous le seuil du bloom, pour laisser l'enseigne seule en accent. */
+export const LUM_VITRINE = 0.55;
 
 /**
  * La fenêtre (étage, colonne) du bâtiment `aBat` est-elle allumée ? Déterministe (≈ 25 %). `mur` distingue les murs d'un même
@@ -185,7 +192,7 @@ export function murDePorte(b: Pick<Building, "h" | "r" | "holes">, routes: Route
 // Équipements de toit
 // ---------------------------------------------------------------------------------------------------------------------
 
-export type TypeEquipement = "clim" | "edicule" | "antenne";
+export type TypeEquipement = "clim" | "edicule" | "antenne" | "solaire";
 
 export interface Equipement {
   type: TypeEquipement;
@@ -198,6 +205,8 @@ export interface Equipement {
   sz: number;
   /** rotation autour de l'axe vertical (rad) : celle du plus long mur, pour que ça paraisse posé */
   rot: number;
+  /** inclinaison autour de l'axe horizontal de la boîte (rad) : les panneaux solaires seulement */
+  incl?: number;
 }
 
 /** Dimensions des équipements (m). */
@@ -205,17 +214,8 @@ export const DIMENSIONS: Record<TypeEquipement, readonly [number, number, number
   clim: [1.5, 1, 1.2],
   edicule: [2.6, 2.2, 2.6],
   antenne: [0.14, 3.6, 0.14],
+  solaire: [3, 0.12, 1.6],
 };
-
-function mulberry32(graine: number): () => number {
-  let a = graine >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
 
 function dansAnneau(x: number, z: number, r: readonly Vec2[]): boolean {
   let d = false;
@@ -271,4 +271,120 @@ export function placementsToit(b: Pick<Building, "h" | "r" | "holes">, graine: n
     }
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Panneaux solaires (D6) : un tirage à part, jamais mêlé à celui de `placementsToit` (ses positions ne bougent pas)
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** Un toit plat de plus de cette surface (m²) peut porter des panneaux solaires. */
+export const SOLAIRE_MIN_M2 = 300;
+/** Inclinaison des panneaux (rad). */
+export const SOLAIRE_INCLINAISON = (25 * Math.PI) / 180;
+
+/**
+ * Panneaux solaires d'un toit : un tirage (≈ 60 % des toits de plus de 300 m²), de 2 panneaux côte à côte, inclinés, hors du bord. Déterministe pour un
+ * même (bâtiment, graine) ; aucun pour un bâtiment lisse ou de moins de 300 m². Tirage indépendant de `placementsToit` (autre graine).
+ */
+export function placementsSolaires(b: Pick<Building, "h" | "r" | "holes">, graine: number): Equipement[] {
+  if (estLisse(b) || aireEmprise(b) < SOLAIRE_MIN_M2) return [];
+  const alea = mulberry32(Math.imul(graine | 0, 2246822519) ^ 0x85ebca6b);
+  if (alea() > 0.6) return [];
+  let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+  for (const [x, z] of b.r) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z); }
+  const murs = mursDe(b).filter((m) => !m.trou);
+  const long = murs.length ? murs.reduce((u, v) => (v.L > u.L ? v : u)) : null;
+  const rot = long ? -Math.atan2(long.b[1] - long.a[1], long.b[0] - long.a[0]) : 0;
+  const [sx, sy, sz] = DIMENSIONS.solaire;
+  const out: Equipement[] = [];
+  for (let essai = 0; essai < 60 && out.length < 1; essai++) {
+    const x = x0 + alea() * (x1 - x0), z = z0 + alea() * (z1 - z0);
+    // le centre d'un couple de panneaux (2 × 3 m), loin des bords et des cours
+    const c = Math.cos(rot), si = Math.sin(rot);
+    const pts: Vec2[] = [[x, z], [x + c * 3.2, z - si * 3.2], [x - c * 3.2, z + si * 3.2]];
+    if (!pts.every(([px, pz]) => dansAnneau(px, pz, b.r) && distanceAnneau(px, pz, b.r) > 2.5 && !(b.holes ?? []).some((h) => dansAnneau(px, pz, h) || distanceAnneau(px, pz, h) < 2.5))) continue;
+    out.push({ type: "solaire", x: pts[1][0], z: pts[1][1], sx, sy, sz, rot, incl: SOLAIRE_INCLINAISON });
+    out.push({ type: "solaire", x: pts[2][0], z: pts[2][1], sx, sy, sz, rot, incl: SOLAIRE_INCLINAISON });
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Acrotère : liseré intérieur d'un toit, à 0,5 m du bord
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** Distance du liseré d'acrotère au bord du toit (m) et surface minimale d'un toit qui en porte un (m²). */
+export const ACROTERE_M = 0.5;
+export const ACROTERE_MIN_M2 = 100;
+
+/**
+ * Liseré d'acrotère : l'anneau extérieur décalé de 0,5 m vers l'intérieur (miter limité). Vide pour un bâtiment lisse, de moins de 100 m², ou si le
+ * décalage sort de l'emprise (anneau trop fin ou trop concave). Segments [ax, az, bx, bz, …].
+ */
+export function acrotere(b: Pick<Building, "h" | "r" | "holes">): number[] {
+  if (estLisse(b) || aireEmprise(b) < ACROTERE_MIN_M2 || b.r.length < 3) return [];
+  const sens = aireSignee(b.r) >= 0 ? 1 : -1;
+  const n = b.r.length;
+  const pts: Vec2[] = [];
+  for (let i = 0; i < n; i++) {
+    const a = b.r[(i + n - 1) % n], c = b.r[i], d = b.r[(i + 1) % n];
+    const l1 = Math.hypot(c[0] - a[0], c[1] - a[1]) || 1, l2 = Math.hypot(d[0] - c[0], d[1] - c[1]) || 1;
+    // normales intérieures des deux arêtes : (−dz, dx) pour une aire signée positive
+    const n1: Vec2 = [(-sens * (c[1] - a[1])) / l1, (sens * (c[0] - a[0])) / l1], n2: Vec2 = [(-sens * (d[1] - c[1])) / l2, (sens * (d[0] - c[0])) / l2];
+    let mx = n1[0] + n2[0], mz = n1[1] + n2[1];
+    const L = Math.hypot(mx, mz);
+    if (L < 1e-6) return [];
+    mx /= L; mz /= L;
+    const k = ACROTERE_M / Math.max(0.5, mx * n1[0] + mz * n1[1]);
+    pts.push([c[0] + mx * k, c[1] + mz * k]);
+  }
+  if (!pts.every(([x, z]) => dansAnneau(x, z, b.r) && !(b.holes ?? []).some((h) => dansAnneau(x, z, h)))) return [];
+  const out: number[] = [];
+  for (let i = 0; i < n; i++) out.push(pts[i][0], pts[i][1], pts[(i + 1) % n][0], pts[(i + 1) % n][1]);
+  return out;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Styles de façade (D6) : hypothèses de paysage tertiaire, isolées dans cette table
+// ---------------------------------------------------------------------------------------------------------------------
+
+export type StyleFacade = "percee" | "bandeau" | "mur_rideau" | "industriel";
+
+/** Code du style dans l'attribut `aStyle` (bits bas) ; le drapeau « restaurant » (enseigne néon) est le bit 3, soit +8. */
+export const CODE_STYLE: Record<StyleFacade, number> = { percee: 0, bandeau: 1, mur_rideau: 2, industriel: 3 };
+export const BIT_RESTO = 8;
+
+/** Parts visées (parmi les styles admissibles) : façade percée 50 %, bandeau 25 %, mur rideau 15 %, industriel 10 %. */
+export const PARTS_STYLE: Record<StyleFacade, number> = { percee: 0.5, bandeau: 0.25, mur_rideau: 0.15, industriel: 0.1 };
+/** Conditions d'admission : bandeau dès 2 étages, mur rideau si h ≥ 9 m et emprise ≥ 150 m², industriel si h < 7 m et emprise ≥ 400 m². */
+export const MUR_RIDEAU_H_MIN_M = 9;
+export const MUR_RIDEAU_M2_MIN = 150;
+export const INDUSTRIEL_H_MAX_M = 7;
+export const INDUSTRIEL_M2_MIN = 400;
+
+/**
+ * Style de façade d'un bâtiment (déterministe : hachage de `id`). Les restaurants et la base sont toujours « percée » (enseigne néon pour les restos) ;
+ * un bâtiment lisse aussi. `simple` (qualité basse) retombe sur « percée » pour le mur rideau et l'industriel.
+ */
+export function styleFacade(b: Pick<Building, "h" | "r" | "holes">, id: number, poiType?: PoiType, simple = false): StyleFacade {
+  if (poiType === "home" || poiType === "resto" || estLisse(b)) return "percee";
+  const aire = aireEmprise(b);
+  const admis: StyleFacade[] = ["percee"];
+  if (nbEtages(b.h) >= 2) admis.push("bandeau");
+  if (!simple && b.h >= MUR_RIDEAU_H_MIN_M && aire >= MUR_RIDEAU_M2_MIN) admis.push("mur_rideau");
+  if (!simple && b.h < INDUSTRIEL_H_MAX_M && aire >= INDUSTRIEL_M2_MIN) admis.push("industriel");
+  const total = admis.reduce((t, k) => t + PARTS_STYLE[k], 0);
+  let r = (hachage32((Math.imul(id | 0, 2654435761) ^ 0x2f6b5c11) >>> 0) / 4294967296) * total;
+  for (const k of admis) { r -= PARTS_STYLE[k]; if (r < 0) return k; }
+  return "percee";
+}
+
+/** Valeur de l'attribut `aStyle` d'un bâtiment. */
+export function codeFacade(b: Pick<Building, "h" | "r" | "holes">, id: number, poiType?: PoiType, simple = false): number {
+  return CODE_STYLE[styleFacade(b, id, poiType, simple)] + (poiType === "resto" ? BIT_RESTO : 0);
+}
+
+/** Teinte d'accent d'un bâtiment (0 cyan, 1 bleu-vert, 2 gris-bleu) : trois nuances, toutes sous le seuil du bloom. */
+export function teinteBatiment(id: number): number {
+  return hachage32((Math.imul(id | 0, 0x9e3779b1) ^ 0x1b873593) >>> 0) % 3;
 }

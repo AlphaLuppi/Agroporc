@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { BR } from "./br-regles";
 import { JEU, MODES_SALLE, PARTIE_AUTO, PARTIE_NOUVELLE, type ModeSalle, type ResumePartie } from "./protocole";
 import {
-  accueillante, botsRestantsGlobal, capaciteSalle, choisirPartie, choisirPartieBr, decisionMode, decisionPartie, garderPourReprise, messageSalons, modeDeSalle, partieRoutageDe, type PartieRoutage,
+  accueillante, botsRestantsGlobal, capaciteSalle, choisirPartie, choisirPartieBr, decisionMode, decisionPartie, garderPourReprise, messageSalons, modeDeSalle, partieApercu, partieApercuBr, partieRoutageDe, type PartieRoutage,
 } from "./salons";
 import { ZOMBIES } from "./zombies-vagues";
 
@@ -365,5 +365,34 @@ describe("capacité d'une partie de Battle Royale, bots compris (lot 3a)", () =>
     expect(botsRestantsGlobal(24, [12, 12])).toBe(0);
     expect(botsRestantsGlobal(24, [12, 12, 5])).toBe(0);
     expect(botsRestantsGlobal(24, [12, 0])).toBe(12);
+  });
+});
+
+describe("partieApercuBr (aperçu de la vue Palantir)", () => {
+  const p = (id: string, phase: "lobby" | "decompte" | "vol" | "jeu" | "fin", vivants: number) => ({ id, phase, vivants });
+  it("la sienne si elle est en vol ou en jeu", () => {
+    expect(partieApercuBr([p("br1", "jeu", 3), p("br2", "jeu", 20)], "br1")).toBe("br1");
+    expect(partieApercuBr([p("br1", "vol", 3), p("br2", "jeu", 20)], "br1")).toBe("br1");
+  });
+  it("sinon la partie en cours qui compte le plus de survivants", () => {
+    expect(partieApercuBr([p("br1", "lobby", 0), p("br2", "jeu", 5), p("br3", "vol", 12), p("br4", "fin", 40)], "br1")).toBe("br3");
+  });
+  it("égalité : la première de la liste", () => {
+    expect(partieApercuBr([p("br1", "lobby", 0), p("br2", "jeu", 5), p("br3", "jeu", 5)], "br1")).toBe("br2");
+  });
+  it("aucune partie en cours : null (simulation) ; décompte et fin ne comptent pas", () => {
+    expect(partieApercuBr([p("br1", "lobby", 0), p("br2", "decompte", 8), p("br3", "fin", 1)], "br1")).toBeNull();
+    expect(partieApercuBr([], "br1")).toBeNull();
+  });
+});
+
+describe("(v11) partieApercu des zombies (parties parallèles)", () => {
+  const z = (id: string, phase: "lobby" | "pause" | "manche" | "fin", vivants: number) => ({ id, phase, vivants });
+  it("un spectateur dans un lobby vide voit la partie de zombies en cours la plus peuplée ; la sienne si elle est en cours", () => {
+    expect(partieApercu("zombies", [z("z1", "manche", 2), z("z2", "lobby", 1), z("z3", "pause", 4)], "z2")).toBe("z3");
+    expect(partieApercu("zombies", [z("z1", "manche", 2), z("z2", "pause", 1)], "z2")).toBe("z2");
+  });
+  it("lobby et fin ne comptent pas : null (simulation)", () => {
+    expect(partieApercu("zombies", [z("z1", "lobby", 3), z("z2", "fin", 2)], "z1")).toBeNull();
   });
 });

@@ -478,6 +478,16 @@ export interface ResumePartie {
 /** (v11) Id d'un bot du Battle Royale : "b" + numéro DÉCIMAL (jamais en base 36 : « b » + « r1 » égalerait l'id de partie « br1 »), compteur par salle remis à zéro à chaque partie. */
 export const estIdBot = (s: unknown): s is string => typeof s === "string" && /^b\d+$/.test(s);
 
+// ---------- aperçu pour les spectateurs de la vue Palantir (additif, 2026-10-29, issue #84) ----------
+
+/**
+ * Joueur d'un message `apercu` : [id, pseudo, couleur "#rrggbb", x, y, z en décimètres entiers, drapeaux]. Drapeaux : 1 vivant (zombies :
+ * debout, pas à terre), 2 chute libre, 4 sous voile (Battle Royale).
+ */
+export type JoueurApercuFil = [string, string, string, number, number, number, number];
+/** Ce que le Battle Royale ajoute à l'aperçu : phase, effectifs, zone et avion (tels que les connaît le service). */
+export interface BrApercu { phase: PhaseBr; vivants: number; total: number; zone: ZoneBr | null; avion: AvionBr | null }
+
 // ---------- données publiques ----------
 
 /** Joueur tel que vu par tout le monde (présence + tableau des scores). */
@@ -827,6 +837,13 @@ export type MessageServeur =
    * (absent = aucun). `monstres` = Truck Muche fou, tigre géant et titan des événements. `zombies` = tigres zombies (salle zombies seulement).
    */
   | { t: "snap"; ts: number; j: EtatJoueurSnap[]; vehicules?: VehiculeSnap[]; tigres?: TigreLargueSnap[]; monstres?: MonstresSnap; zombies?: SnapZombies }
+  /**
+   * (additif, jamais en arène) Aperçu d'une partie de zombies ou de Battle Royale, aux seuls spectateurs de la salle (inscrits hors jeu : vue
+   * Palantir) : joueurs `j` (pseudos et couleurs inclus), tigres `z` (le `SnapZombies` tel quel), manche `m`, Battle Royale `br`. `partie` :
+   * id de la partie de Battle Royale d'où vient l'aperçu (ajouté par le serveur, qui relaie entre parties). Cadence : un snap sur 4 en
+   * zombies (5 Hz), sur 3 en Battle Royale (3,3 Hz). `VERSION_PROTOCOLE` inchangé : un client d'avant ignore le type.
+   */
+  | { t: "apercu"; ts: number; mode: ModeSalle; partie?: string; j: JoueurApercuFil[]; z?: SnapZombies; m?: number; br?: BrApercu }
   /**
    * Apparition (ou réapparition) d'un joueur : le client concerné SE TÉLÉPORTE à `p`. `arme` = arme en main. `garder` (v8, zombies : relève,
    * reprise après une coupure) : le client garde SA position et son regard (à moins de `ECART_GARDE_M` de `p`), santé et armes sont remises.

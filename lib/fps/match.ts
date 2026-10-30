@@ -23,6 +23,8 @@
  * 2026-10-28-battle-royale-design.md
  */
 import { MELEE, STATS, degatsPlomb, gerbeRespectee } from "./armes";
+import { APERCU } from "./apercu-source";
+import { construireApercu } from "./apercu-reseau";
 import { segmentsRicochet, type SegmentTir } from "./effets-armes";
 import { ecarterDesCircuits, type Circuit, type VoiturePnj } from "./circulation";
 import { BR, REGLES_SANTE_BR, degatsMeleeBr } from "./br-regles";
@@ -46,7 +48,7 @@ import { PASSE_EN_SUSPENSION, Suspension, type OptionsSuspension } from "./suspe
 import {
   CIBLE_LIVRAISON, CIBLE_TIGRE, CIBLE_TITAN, EQUIPEMENT_DEFAUT, JEU, PLAFONDS, SLOT_DEFAUT, copierEquipement, estIdZombie, estMelee, oeilDe, silhouetteDe,
   type ArmeFeuId, type ArmeId, type ArmeMeleeId, type CauseMort, type EtatJoueurSnap, type Equipement, type InfoMatch, type InfoTueur,
-  type JoueurPublic, type LigneClassement, type LigneStats, type MessageClient, type ModeSalle, type MonstresSnap, type SignalVoix, type Slot, type Vec3, type Zone,
+  type JoueurPublic, type LigneClassement, type LigneStats, type MessageClient, type MessageServeur, type ModeSalle, type MonstresSnap, type SignalVoix, type SnapZombies, type Slot, type Vec3, type Zone,
 } from "./protocole";
 import { BUS_C3, avancerBusC3, busEnSnap, armesEnSnap, ecraseParBus, estSurLeToit, ramasserArmeC3, peutMonterSurBus, creerEtatBusC3, type EtatBusC3, type IntervalleBus } from "./bus-c3";
 import { creerFrappe, degatsImpactFrappe, verifierImpactsFrappe, type FrappeEnCours } from "./frappe-aerienne";
@@ -289,6 +291,13 @@ export class Salle implements ContexteSalle {
   private dernierTicT: number;
   /** compteur des snaps : un sur deux part aux spectateurs (10 Hz) */
   private rangSnap = 0;
+  /** compteur des snaps pour l'aperçu des spectateurs (zombies : un sur 4, Battle Royale : un sur 3) */
+  private rangApercu = 0;
+  /**
+   * (Battle Royale) des spectateurs d'AUTRES parties regardent celle-ci (`partieApercuBr`) : l'aperçu est calculé même sans spectateur chez nous,
+   * le serveur le relaie. Posé par `serveur-fps/src/index.ts`.
+   */
+  relaiApercu = false;
 
   constructor(
     readonly monde: Monde,
@@ -1806,7 +1815,22 @@ export class Salle implements ContexteSalle {
     if (!this.zombies && !this.br && this.rangSnap++ % 2 === 0 && this.nombreJoueurs() > this.nombreEnJeu()) {
       sorties.push({ a: "spectateurs", m: { t: "snap", ts: maintenant, j } });
     }
+    // zombies et Battle Royale : l'aperçu des spectateurs réutilise le snap et les tigres déjà calculés (zéro octet sans spectateur)
+    if ((this.zombies || this.br) && (this.relaiApercu || this.nombreJoueurs() > this.nombreEnJeu())) {
+      const cadence = this.br ? APERCU.brTousLesSnaps : APERCU.zombiesTousLesSnaps;
+      if (this.rangApercu++ % cadence === 0) sorties.push({ a: "spectateurs", m: this.messageApercu(maintenant, j, zombies) });
+    }
     return sorties;
+  }
+
+  /** Message `apercu` de cette salle (zombies ou Battle Royale) d'après le snap `j` et les tigres déjà calculés. */
+  private messageApercu(maintenant: number, j: readonly EtatJoueurSnap[], zombies: SnapZombies | null): MessageServeur {
+    const noms = (id: string): { pseudo: string; couleur: string } | undefined => {
+      const x = this.table.get(id);
+      return x ? { pseudo: x.pseudo, couleur: x.couleur } : undefined;
+    };
+    if (this.br) return construireApercu({ mode: "br", ts: maintenant, snap: j, noms, br: this.br.apercu() });
+    return construireApercu({ mode: "zombies", ts: maintenant, snap: j, noms, zombies, manche: this.zombies?.resume().manche });
   }
 
   /** Instantané sérialisé : p et v au centime, angles au milliradian ; `bouclier`, `accroupi`, `glisse` et `vehicule` seulement s'ils sont non nuls. */

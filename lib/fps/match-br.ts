@@ -665,8 +665,10 @@ export function creerServiceBr(ctx: ContexteSalle, opts: OptionsServiceBr): Serv
       statsDemandeT.delete(j.id);
       const m = membres.get(j.id);
       const sorties: Sortie[] = [];
-      if (ctx.nombreHumains() === 0 && phase !== "lobby") {
-        // plus aucun humain (les bots ne comptent pas) : retour immédiat au lobby, bots retirés, personne à prévenir ni statistiques (le serveur saute le tic d'une salle sans humain)
+      const humainsPartants = partants().filter((x) => x.id !== j.id && !estIdBot(x.id)).length;
+      if (phase !== "lobby" && (ctx.nombreHumains() === 0 || (humainsPartants === 0 && partants().some((x) => estIdBot(x.id)) && !ctx.joueurs().some((o) => !o.bot && o.spectateur && o.id !== j.id)))) {
+        // plus aucun humain (les bots ne comptent pas), ou plus aucun humain admis dans la partie alors qu'elle compte des bots (un visiteur du
+        // Palantir ou du lobby ne garde pas en vie un combat de bots ; un spectateur venu regarder, si : la partie finit `finSansHumainMs` plus tard) : retour immédiat au lobby, bots retirés, personne à prévenir ni statistiques
         return retourLobby(t);
       }
       if (phase === "lobby" || phase === "fin" || !m) {
@@ -722,6 +724,16 @@ export function creerServiceBr(ctx: ContexteSalle, opts: OptionsServiceBr): Serv
 
     etat() {
       return etatA(dernierT);
+    },
+
+    apercu() {
+      const enPartie = phase !== "lobby";
+      const parts = partants();
+      return {
+        phase, vivants: parts.filter((m) => !m.elimine).length, total: parts.length,
+        zone: plan && enPartie ? zoneBrPublique(plan, dernierT) : null,
+        avion: enPartie ? vol.avion() : null,
+      };
     },
 
     resume(): ResumeBr {

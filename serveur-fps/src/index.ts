@@ -29,7 +29,7 @@ import { FenetreMax, LimiteCreation, RegistreParties, Reservations, type Partie 
 import {
   JEU, MODES_SALLE, PARTIE_AUTO, PARTIE_NOUVELLE, VERSIONS_ACCEPTEES, type MessageClient, type MessageServeur, type ModeSalle, type ResumePartie, type ResumePartieBr,
 } from "../../lib/fps/protocole";
-import { botsRestantsGlobal, capaciteSalle, decisionMode, garderPourReprise, messageSalons, modeDeSalle, partieRoutageDe, type PartieRoutage } from "../../lib/fps/salons";
+import { botsRestantsGlobal, capaciteSalle, decisionMode, garderPourReprise, messageSalons, modeDeSalle, partieApercu, partieRoutageDe, type PartieApercu, type PartieRoutage } from "../../lib/fps/salons";
 import { BudgetNavigation, installerNavigationBr, preparerNavigationBr } from "../../lib/fps/nav-bots";
 import { capDeCachette } from "../../lib/fps/tigre-arene";
 import { DEPARTS, construireMondeZombies, donneesZombies } from "../../lib/fps/zombies-carte";
@@ -464,9 +464,25 @@ function envoyer(c: Client, texte: string): void {
  * SALLE), « joueurs » (en jeu) ou « spectateurs » (inscrits hors jeu : vue Palantir, lobby des zombies) selon `salle.inspecter(id).enJeu`, ou l'id
  * d'un client (n'importe quelle salle).
  */
+/** Partie de zombies ou de Battle Royale d'une salle (null pour l'arène) : seules ces parties relaient leur aperçu aux spectateurs des autres. */
+function partieApercuDe(salle: Salle): Partie<Salle> | null {
+  const p = registre.deSalle(salle);
+  return p && p.mode !== "arene" ? p : null;
+}
+
 function diffuser(salle: Salle, sorties: Sortie[]): void {
+  const source = partieApercuDe(salle);
   for (const s of sorties) {
-    const texte = JSON.stringify(s.m);
+    // aperçu d'une partie de BR ou (v11) de zombies : le BR porte l'id de la partie (le bandeau de la vue Palantir le dit) ; relayé aux spectateurs des
+    // autres parties du même mode
+    const m = s.m.t === "apercu" && source?.mode === "br" ? { ...s.m, partie: source.id } : s.m;
+    const texte = JSON.stringify(m);
+    if (m.t === "apercu" && source) {
+      relayerApercu(source, texte);
+      // une partie qui n'est pas en cours (lobby) ne montre pas son propre aperçu vide à ses spectateurs quand ils regardent celle d'une autre partie
+      const regardee = partieApercu(source.mode as "zombies" | "br", apercusParties(source.mode as "zombies" | "br"), source.id);
+      if (regardee && regardee !== source.id) continue;
+    }
     if (s.a === "tous" || s.a === "joueurs" || s.a === "spectateurs") {
       for (const c of clients.values()) {
         if (!c.inscrit || c.salle !== salle || c.id === s.sauf) continue;
@@ -479,6 +495,44 @@ function diffuser(salle: Salle, sorties: Sortie[]): void {
     if (!c) continue;
     envoyer(c, texte);
     if (s.m.t === "erreur") c.ws.close(1008, s.m.code);
+  }
+}
+
+/** Parties d'un mode vues par `partieApercu` (id, phase, joueurs en lice : survivants du BR, joueurs d'une partie de zombies). */
+const apercusParties = (mode: "zombies" | "br"): PartieApercu[] =>
+  registre.liste(mode).map((p) => {
+    if (mode === "zombies") { const r = p.salle.resumeZombies(); return { id: p.id, phase: r?.phase ?? "lobby", vivants: r?.joueurs ?? 0 }; }
+    const r = p.salle.resumeBr();
+    return { id: p.id, phase: r?.phase ?? "lobby", vivants: r?.vivants ?? 0 };
+  });
+
+/**
+ * Un client de zombies ou de Battle Royale dont la partie n'est pas en cours voit l'aperçu de la partie en cours de son mode qui compte le plus de
+ * joueurs en lice (`partieApercu`) : le message de `source` est relayé à ceux de ses spectateurs inscrits hors jeu dans une AUTRE partie du même mode
+ * (v11 : un spectateur du Palantir qui coche les zombies arrive dans un lobby vide et doit voir la partie des autres).
+ */
+function relayerApercu(source: Partie<Salle>, texte: string): void {
+  const mode = source.mode as "zombies" | "br";
+  const parties = apercusParties(mode);
+  for (const c of clients.values()) {
+    if (!c.inscrit || c.salle === source.salle) continue;
+    const sienne = partieApercuDe(c.salle);
+    if (!sienne || sienne.mode !== mode || c.salle.inspecter(c.id)?.enJeu) continue;
+    if (partieApercu(mode, parties, sienne.id) === source.id) envoyer(c, texte);
+  }
+}
+
+/** Pose `relaiApercu` sur les parties qu'au moins un spectateur d'une autre partie du même mode regarde (une fois par seconde). */
+function majRelaisApercu(): void {
+  for (const mode of ["zombies", "br"] as const) {
+    const parties = apercusParties(mode);
+    const regardees = new Set<string>();
+    for (const p of registre.liste(mode)) {
+      if (p.salle.nombreJoueurs() <= p.salle.nombreEnJeu()) continue;
+      const cible = partieApercu(mode, parties, p.id);
+      if (cible && cible !== p.id) regardees.add(cible);
+    }
+    for (const p of registre.liste(mode)) p.salle.relaiApercu = regardees.has(p.id);
   }
 }
 
@@ -810,6 +864,7 @@ const timerSalons = setInterval(() => {
   try {
     // une partie vidée par une déconnexion est refermée ici (une fois par seconde suffit en plus des fermetures immédiates)
     refermerPartiesVides();
+    majRelaisApercu();
     diffuserSalons();
   } catch (e) { console.error("salons:", e); }
 }, 1000);

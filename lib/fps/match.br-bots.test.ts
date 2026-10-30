@@ -462,6 +462,15 @@ describe("annulation, retour au lobby, nettoyage", () => {
     expect(humains(b).map((x) => x.id)).toEqual(["spec"]);
   }, 60_000);
 
+  it("un simple visiteur du lobby (vue Palantir, sans `regarder`) ne garde pas en vie un combat de bots : retour immédiat au lobby", () => {
+    const { b, id } = enJeu({ botsEssai: "agressif" }, { t: "lancerPartie", bots: 3 });
+    b.s.connecter("visiteur", "Zoe", b.t);
+    b.s.deconnecter(id, b.t);
+    expect(phase(b)).toBe("lobby");
+    expect(b.s.nombreBots()).toBe(0);
+    expect(b.stats.parties).toHaveLength(0);
+  });
+
   it("l'humain n'est pas monté au bout de 30 s : retour au lobby annulé, bots retirés (jamais de combat de bots sans humain)", () => {
     const b = banc();
     const [id] = arriver(b, 1);
@@ -478,13 +487,12 @@ describe("annulation, retour au lobby, nettoyage", () => {
     expect(j(b, id).enJeu).toBe(false);
   });
 
-  it("le bilan ramène au lobby : bots retirés, l'humain peut relancer", () => {
+  it("le seul humain qui quitte ramène au lobby : bots retirés, il peut relancer", () => {
     const { b, id } = enJeu({ botsEssai: "agressif", finAffichageMs: 3_000 }, { t: "lancerPartie", bots: 3, difficulte: "goulaf" }, 5);
-    // l'humain quitte la partie en cours : éliminé, puis la partie des bots seuls se termine
+    // le seul humain de la partie la quitte (il reste connecté, dans le lobby) : retour immédiat au lobby, sans bilan ni combat de bots seuls
     envoyer(b, id, { t: "quitter" });
     expect(j(b, id).enJeu).toBe(false);
-    avancerJusque(b, () => phase(b) === "fin", BR.finSansHumainMs + 5_000);
-    avancerJusque(b, () => phase(b) === "lobby", 10_000);
+    expect(phase(b)).toBe("lobby");
     expect(b.s.nombreBots()).toBe(0);
     expect(humains(b)).toHaveLength(1);
     envoyer(b, id, { t: "lancerPartie", bots: 2 });

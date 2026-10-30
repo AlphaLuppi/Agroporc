@@ -58,6 +58,7 @@ function creerFake(): Fake {
   const etat = (): EtatPartieBr => ({ phase: "lobby", hote: "", capacite: BR.joueursMax, minJoueurs: BR.joueursMin, debutT: 0, finT: 0, avion: null, zone: null, vivants: 0, total: 0 });
   f.service = {
     tic: () => { f.appels.push("tic"); return []; },
+    apercu: () => ({ phase: "lobby", vivants: 0, total: 0, zone: null, avion: null }),
     reinitialiser: () => [],
     synchro: (id) => { f.appels.push(`synchro:${id}`); return [{ a: id, m: { t: "br", etat: etat() } }]; },
     admis: () => f.admis,

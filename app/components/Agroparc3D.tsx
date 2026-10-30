@@ -4,8 +4,9 @@ import type { Difficulte } from "@/lib/fps/zombies-vagues";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Chakra_Petch, IBM_Plex_Mono } from "next/font/google";
 import type { Carte, PdjEntry, Plat } from "@/lib/db";
-import type { Poi, SceneData } from "@/lib/agroparc3d/types";
-import type { JoueurAerien, SceneHandle } from "@/lib/agroparc3d/scene";
+import type { DecorOsm, Poi, SceneData } from "@/lib/agroparc3d/types";
+import type { SceneHandle } from "@/lib/agroparc3d/scene";
+import type { ApercuDirect, Bandeau, JoueurAerien } from "@/lib/fps/apercu-source";
 import type { JeuHandle, HudEtat } from "@/lib/fps/jeu";
 import type { HudLive } from "@/lib/fps/jeu-types";
 import { MODES_SALLE, PARTIE_AUTO, PARTIE_NOUVELLE, type ArmeFeuId, type ArmeMeleeId, type ArmePrincipaleId, type ArmeSecondaireId, type ModeSalle, type Slot, type Vec3 } from "@/lib/fps/protocole";
@@ -15,6 +16,7 @@ import { ecrireEquipement, estPrincipale, estSecondaire, lireEquipement } from "
 import { creerRadarFrame } from "@/lib/fps/radar";
 import { nomPersonnage } from "@/lib/characters";
 import { lireCachettes, type Cachette, type FichierCachettes } from "@/lib/agroparc3d/cachettes";
+import { lireDecor } from "@/lib/agroparc3d/decor-osm";
 import { etatRestaurant } from "@/lib/agroparc3d/panneau";
 import { couleurNote, remplissage } from "@/lib/agroparc3d/jauge";
 import { MODE_LABEL, noteMode, trierCarte, type Mode } from "@/lib/carte-tri";
@@ -24,6 +26,7 @@ import { restoParNom } from "@/lib/restaurants";
 import { CLE_CLASSEMENT, messageEnregistre } from "@/lib/tigre-scores";
 import RestoBadge from "./RestoBadge";
 import Arene from "./arene/Arene";
+import BadgeApercu from "./arene/BadgeApercu";
 import ChoixMode from "./arene/ChoixMode";
 import { PARTIE_HALL, flecheReserveeAuChamp, listesDepuisSalons } from "./arene/lobby-modele";
 import { gardeSortieBr } from "@/lib/fps/garde-sortie-br";
@@ -54,6 +57,16 @@ async function fetchCachettes(): Promise<Cachette[]> {
     return r.ok ? lireCachettes((await r.json()) as FichierCachettes) : [];
   } catch {
     return [];
+  }
+}
+
+/** Détails de décor OpenStreetMap (scripts/agroparc/build_decor.py). Indisponibles ou illisibles : le décor se dessine avec les seules règles de scene.json. */
+async function fetchDecor(): Promise<DecorOsm | undefined> {
+  try {
+    const r = await fetch("/agroparc/decor.json");
+    return r.ok ? lireDecor(await r.json()) : undefined;
+  } catch {
+    return undefined;
   }
 }
 
@@ -187,6 +200,8 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
   const [enArene, setEnArene] = useState(false);
   const [cleCanvas, setCleCanvas] = useState(0);
   const [areneOuverte, setAreneOuverte] = useState(false);
+  // aperçu par mode : bandeau « simulation » / « en direct » publié par la scène (null : panneau fermé)
+  const [bandeau, setBandeau] = useState<Bandeau | null>(null);
   const [hudJeu, setHud] = useState<HudEtat | null>(null);
   // dev : état forcé par `window.__arene.forcerHud` (captures des états du HUD sans jouer) ; null = le vrai état du jeu
   const [hudForce, setHudForce] = useState<Partial<HudEtat> | null>(null);
@@ -228,6 +243,12 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
   const regarderApres = useRef<string | null>(null);
   const enAreneRef = useRef(enArene);
   enAreneRef.current = enArene;
+  // aperçu par mode (vue Palantir) : actif quand le panneau « Arène » est ouvert et qu'aucun restaurant n'est choisi ; le mode affiché est la carte cochée
+  const apercuActif = areneOuverte && !selected && !enArene;
+  const modeAffiche: ModeSalle = areneOuverte && !selected ? arene.modeVoulu : "arene";
+  /** mode du cadrage de départ d'une scène (re)créée : celui du lobby si le panneau est ouvert (retour d'une partie) */
+  const modeInitialRef = useRef<ModeSalle>("arene");
+  modeInitialRef.current = modeAffiche;
   const equipementRef = useRef(equipement);
   equipementRef.current = equipement;
   const accroupiBasculeRef = useRef(accroupiBascule);
@@ -550,8 +571,8 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
     let cancelled = false;
     const data = fetch("/agroparc/scene.json")
       .then((r) => { if (!r.ok) throw new Error(`scene.json ${r.status}`); return r.json() as Promise<SceneData>; });
-    Promise.all([data, fetchCachettes()])
-      .then(([d, cachettes]) => { if (!cancelled) setScene({ data: d, cachettes }); })
+    Promise.all([data, fetchCachettes(), fetchDecor()])
+      .then(([d, cachettes, decor]) => { if (!cancelled) setScene({ data: decor ? { ...d, decor } : d, cachettes }); })
       .catch((e: Error) => { if (!cancelled) setError(`Impossible de charger la carte (${e.message}).`); });
     fetchPdj().then((d) => { if (!cancelled) setPdj(d); });
     return () => { cancelled = true; };
@@ -573,12 +594,13 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
         handle = createAgroparcScene(canvasRef.current, labelsRef.current, scene.data, {
           onSelect: (poi) => { setSelected(poi); setAreneOuverte(false); },
           onEvent: journal,
+          onApercu: setBandeau,
           onTigre: (c) => {
             journal("TIGRE", `Tigre débusqué, cachette ${c.palier}, +${c.points}`);
             setGain({ id: Date.now(), points: c.points });
             surTigreRef.current?.(c);
           },
-        }, { cachettes: scene.cachettes });
+        }, { cachettes: scene.cachettes, modeInitial: modeInitialRef.current });
         handleRef.current = handle;
         setReady(true);
       })
@@ -632,27 +654,87 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enArene, scene, cleCanvas]);
 
-  // Spectateurs : les joueurs en jeu apparaissent dans la vue aérienne (marqueur à leur couleur + pseudo).
+  // Aperçu par mode : le panneau « Arène » ouvert, la vue montre la carte du mode coché (transition de caméra) avec les joueurs EN DIRECT
+  // s'il y a une partie, sinon une simulation (faux joueurs). Panneau fermé : le chemin historique (joueurs de l'arène seulement).
   useEffect(() => {
     if (enArene || !ready) return;
+    const h = handleRef.current;
+    if (!h) return;
+    h.apercu.actif(apercuActif);
+    h.apercu.mode(modeAffiche);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enArene, ready, cleCanvas, apercuActif, modeAffiche]);
+
+  useEffect(() => {
+    if (enArene || !ready) return;
+    if (!apercuActif) {
+      // chemin historique : joueurs en jeu de l'arène (marqueur à leur couleur + pseudo)
+      const maj = () => {
+        const h = handleRef.current;
+        if (!h) return;
+        const liste: JoueurAerien[] = [];
+        // le serveur n'envoie plus d'instantané quand personne ne joue : au-delà de 2 s, plus personne
+        if (Date.now() - arene.snapTRef.current < 2000) {
+          for (const e of arene.snapRef.current) {
+            const j = arene.joueursRef.current.find((x) => x.id === e.id);
+            if (e.vivant && j?.enJeu) liste.push({ id: j.id, pseudo: j.pseudo, couleur: j.couleur, p: e.p });
+          }
+        }
+        h.joueurs(liste);
+      };
+      maj();
+      const i = setInterval(maj, 250);
+      return () => { clearInterval(i); handleRef.current?.joueurs([]); };
+    }
+    // aperçu : le direct est envoyé à la scène seulement quand un nouveau paquet est arrivé
+    let dernier = -1, vide = false;
     const maj = () => {
       const h = handleRef.current;
       if (!h) return;
-      const liste: JoueurAerien[] = [];
-      // le serveur n'envoie plus d'instantané quand personne ne joue : au-delà de 2 s, plus personne
-      if (Date.now() - arene.snapTRef.current < 2000) {
-        for (const e of arene.snapRef.current) {
-          const j = arene.joueursRef.current.find((x) => x.id === e.id);
-          if (e.vivant && j?.enJeu) liste.push({ id: j.id, pseudo: j.pseudo, couleur: j.couleur, p: e.p });
+      const a = areneRef.current;
+      const connecte = a.etat === "ouvert";
+      let direct: ApercuDirect | null = null;
+      if (connecte && modeAffiche === a.mode) {
+        if (modeAffiche === "arene") {
+          const t = a.snapTRef.current;
+          if (t === dernier && !vide) return;
+          dernier = t; vide = false;
+          const joueurs: JoueurAerien[] = [];
+          if (Date.now() - t < 2000) {
+            for (const e of a.snapRef.current) {
+              const j = a.joueursRef.current.find((x) => x.id === e.id);
+              if (e.vivant && j?.enJeu) joueurs.push({ id: j.id, pseudo: j.pseudo, couleur: j.couleur, p: e.p });
+            }
+          }
+          direct = { mode: "arene", joueurs, tigres: [], recuT: t, decalageServeurMs: 0 };
+        } else {
+          const d = a.apercuRef.current;
+          if (d && d.mode === modeAffiche) {
+            if (a.apercuTRef.current === dernier && !vide) {
+              // les fenêtres suivent `zombies{etat}`, plus rarement que l'aperçu
+              if (modeAffiche === "zombies") d.fenetres = a.zombies?.fenetres;
+              return;
+            }
+            dernier = a.apercuTRef.current; vide = false;
+            if (modeAffiche === "zombies") d.fenetres = a.zombies?.fenetres;
+            direct = d;
+          }
         }
       }
-      h.joueurs(liste);
+      if (!direct) { if (vide) return; vide = true; dernier = -1; }
+      h.apercu.direct(direct);
+      // une partie est en cours (d'après `salons`) mais aucun aperçu n'arrive : serveur d'avant
+      const s = a.salons;
+      const enCours = modeAffiche === "zombies" ? s?.zombies.phase === "manche" || s?.zombies.phase === "pause"
+        : modeAffiche === "br" ? (s?.parties ?? []).some((p) => p.phase === "vol" || p.phase === "jeu") || s?.br?.phase === "vol" || s?.br?.phase === "jeu"
+        : false;
+      h.apercu.partieEnCours(!!enCours);
     };
     maj();
-    const i = setInterval(maj, 250);
-    return () => { clearInterval(i); handleRef.current?.joueurs([]); };
+    const i = setInterval(maj, 100);
+    return () => { clearInterval(i); handleRef.current?.apercu.direct(null); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enArene, ready, cleCanvas]);
+  }, [enArene, ready, cleCanvas, apercuActif, modeAffiche]);
 
   // Le message du classement s'efface après 6 s.
   useEffect(() => {
@@ -681,7 +763,12 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
         return c ?? null;
       },
       viser: (distance) => handleRef.current?.chasse?.viser(distance),
+      cadrer: (x, z, distance) => handleRef.current?.cadrer(x, z, distance),
+      couches: (etat) => handleRef.current?.couches(etat),
       ecran: () => handleRef.current?.chasse?.ecran() ?? null,
+      apercu: () => handleRef.current?.apercu.etat() ?? null,
+      apercuGraine: (n) => handleRef.current?.apercu.graine(n),
+      apercuAvancer: (s) => handleRef.current?.apercu.avancer(s),
     };
     return () => { delete window.__palantir; };
   }, [ready, scene]);
@@ -869,13 +956,16 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
 
       {!enArene && (<>
       <div className={`${styles.hud} ${styles.hudBl}`} inert={chargement}>
-        <div className={styles.legend}>
-          <span className={styles.kHome}>CBA</span>
-          <span className={styles.kResto}>Restaurants PDJ</span>
-          <span className={styles.kBat}>Bâtiments IGN</span>
-        </div>
+        {bandeau && <BadgeApercu bandeau={bandeau} />}
+        {!(bandeau && bandeau.mode !== "arene") && (
+          <div className={styles.legend}>
+            <span className={styles.kHome}>CBA</span>
+            <span className={styles.kResto}>Restaurants PDJ</span>
+            <span className={styles.kBat}>Bâtiments IGN</span>
+          </div>
+        )}
         <div className={styles.hint}>
-          Glisser : pivoter · Clic droit ou deux doigts : déplacer · Molette : zoom · Flèches : déplacer · Clic sur un restaurant : plat du jour et carte · <b>Échap</b> ou <b>Retour au site</b> pour revenir
+          Glisser : pivoter · Clic droit ou deux doigts : déplacer · Molette : zoom · Flèches : déplacer · {(bandeau?.mode ?? "arene") === "arene" && "Clic sur un restaurant : plat du jour et carte · "}<b>Échap</b> ou <b>Retour au site</b> pour revenir
         </div>
         <div className={styles.ctl}>
           <button type="button" onClick={() => handleRef.current?.spin(1)} aria-label="Pivoter vers la gauche">↺ Pivoter</button>
@@ -1281,8 +1371,18 @@ declare global {
       /** Pose le tigre dans la cachette de rang i (0 = la plus facile). */
       placer(i: number): Cachette | null;
       viser(distance?: number): void;
+      /** Captures : caméra au repos (sans argument) ou sur le point (x, z) à `distance` m, vue figée. */
+      cadrer(x?: number, z?: number, distance?: number): void;
+      /** Mesures : montre ou cache des couches du décor (chaussee, marquages, places, pelouses, haies, arbres, mobilier, taches, reseau). */
+      couches(etat: Record<string, boolean>): void;
       /** Position du tigre à l'écran (px), null s'il est caché ou hors champ. */
       ecran(): { x: number; y: number } | null;
+      /** Aperçu par mode : état (mode, décor, transition, caméra, repères, source, modèle), null avant le chargement de la scène. */
+      apercu(): import("@/lib/agroparc3d/scene").EtatApercu | null;
+      /** Aperçu : recrée la simulation du mode affiché avec la graine `n`. */
+      apercuGraine(n: number): void;
+      /** Aperçu : avance la simulation du mode affiché de `s` secondes (pas de 1/30 s). */
+      apercuAvancer(s: number): void;
     };
   }
 }

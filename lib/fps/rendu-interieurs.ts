@@ -306,7 +306,7 @@ function meuble(p: PieceSynth, pos: number[], col: number[], led: number[], veg:
   }
 }
 
-export function creerRenduInterieurs(scene: THREE.Scene, data: SceneData, pieces: readonly PieceSynth[], options: OptionsInterieurs = {}): RenduInterieurs {
+export function creerRenduInterieurs(scene: THREE.Object3D, data: SceneData, pieces: readonly PieceSynth[], options: OptionsInterieurs = {}): RenduInterieurs {
   const batiments: readonly number[] = options.batiments ?? BATIMENTS_CREUX;
   const sansPlafond = options.sansPlafond === true;
   const racine = new THREE.Group();
