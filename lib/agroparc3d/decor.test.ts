@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { describe, expect, it } from "vitest";
-import { ajouterArbres, ajouterBatiments, buildingGroup, construireDecor, creerEtatDestruction, extrude, type OptionsDecor } from "./decor";
+import { ajouterArbres, ajouterBatiments, buildingGroup, construireDecor, creerAvionFilaire, creerEtatDestruction, extrude, type OptionsDecor } from "./decor";
 import { deriverDecor } from "./decor-donnees";
 import { BIT_RESTO, CODE_STYLE, ENSEIGNE_L_M, LUM_VITRINE, SEUIL_ALLUMEES, INDUSTRIEL_PORTE_L_M, MUR_RIDEAU_CELLULE_M, VITRINE_BAS_M, VITRINE_HAUT_M, estLisse, mursDe, nbEtages } from "./facade";
 import type { Building, DecorOsm, SceneData } from "./types";
@@ -420,5 +420,14 @@ describe("construireDecor (rework de la DA)", () => {
     expect(sh.fragmentShader).toContain("varying vec2 vPelouse;");
     expect(sh.fragmentShader.indexOf("float sH")).toBeLessThan(sh.fragmentShader.indexOf("#include <opaque_fragment>"));
     expect(sh.vertexShader).toContain("vPelouse = (modelMatrix");
+  });
+});
+
+describe("avion filaire (partagé avec l'aperçu du Battle Royale)", () => {
+  it("6 enfants : fuselage, aile, queue, dérive et deux feux de position", () => {
+    const a = creerAvionFilaire();
+    expect(a.groupe.children).toHaveLength(6);
+    expect(a.groupe.children).toContain(a.navLight);
+    expect(a.groupe.children).toContain(a.wingLight);
   });
 });

@@ -9,6 +9,8 @@ import {
   type LigneClassement, type LigneStats, type MessageServeur, type ModeSalle,
 } from "@/lib/fps/protocole";
 import { annoncesBr, annoncesZombies } from "@/lib/fps/hud-modele";
+import { decoderApercu } from "@/lib/fps/apercu-reseau";
+import type { ApercuDirect } from "@/lib/fps/apercu-source";
 import type { JeuEvenement, JeuHandle } from "@/lib/fps/jeu";
 import type { Annonce, Bonus, DerniereMort, EntreeFil, EvenementHud, GainArgent, Salons, StatsBrRecues, UseArene } from "./contrats";
 
@@ -124,6 +126,9 @@ export function useArene(pseudo: string, jeuRef: MutableRefObject<JeuHandle | nu
   const clientRef = useRef<ClientArene | null>(null);
   const snapRef = useRef<EtatJoueurSnap[]>([]);
   const snapTRef = useRef(0);
+  /** (aperçu de la vue Palantir) dernier `apercu` reçu des zombies ou du Battle Royale, décodé ; aucun état React (5 Hz) */
+  const apercuRef = useRef<ApercuDirect | null>(null);
+  const apercuTRef = useRef(0);
   const joueursRef = useRef<JoueurPublic[]>([]);
   const matchRef = useRef<InfoMatch | null>(null);
   const monIdRef = useRef<string | null>(null);
@@ -261,6 +266,7 @@ export function useArene(pseudo: string, jeuRef: MutableRefObject<JeuHandle | nu
             break;
           }
           // changement de salle (ou de partie) confirmé : l'état de l'ancienne ne vaut plus rien (le « bienvenue » et l'état de la nouvelle suivent)
+          apercuRef.current = null;
           partieBrRef.current = m.mode === "br" ? m.partie ?? null : null;
           setPartieBr(partieBrRef.current);
           modeRef.current = m.mode;
@@ -319,6 +325,10 @@ export function useArene(pseudo: string, jeuRef: MutableRefObject<JeuHandle | nu
         case "snap":
           snapRef.current = m.j;
           snapTRef.current = Date.now();
+          break;
+        case "apercu":
+          apercuTRef.current = Date.now();
+          apercuRef.current = decoderApercu(m, apercuTRef.current);
           break;
         case "match":
           // un nouveau match remet les compteurs du serveur à zéro : les anciennes statistiques ne doivent pas s'afficher
@@ -449,7 +459,7 @@ export function useArene(pseudo: string, jeuRef: MutableRefObject<JeuHandle | nu
   }, []);
 
   return {
-    etat, monId, joueurs, match, classement, fil, evenements, derniereMort, erreur, clientRef, snapRef, snapTRef, joueursRef, matchRef, pousserEvenement,
+    etat, monId, joueurs, match, classement, fil, evenements, derniereMort, erreur, clientRef, snapRef, snapTRef, apercuRef, apercuTRef, joueursRef, matchRef, pousserEvenement,
     elsa, annonces, sieges, bonus, killcamInfo,
     stats, statsRef, demanderScores, degatsAuTueur,
     mode, modeVoulu, salons, zombies, argent, gainArgent, choisirMode, lancerPartie,

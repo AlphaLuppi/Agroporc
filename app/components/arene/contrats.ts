@@ -1,6 +1,7 @@
 import type { MutableRefObject } from "react";
 import type { SceneData } from "@/lib/agroparc3d/types";
 import type { ClientArene, EtatConnexion } from "@/lib/fps/reseau";
+import type { ApercuDirect } from "@/lib/fps/apercu-source";
 import type {
   ArmeId, ArmeMeleeId, ArmePrincipaleId, ArmeSecondaireId, ArmeSpecialeId, CauseMort, EtatElsaMsg, EtatJoueurSnap, EtatPartieZombies, InfoMatch, InfoTueur,
   EtatPartieBr, InfoVehicule, JoueurPublic, LigneClassement, LigneStats, LigneStatsBr, MessageServeur, ModeSalle, Zone,
@@ -60,6 +61,8 @@ export interface UseArene {
   erreur: string | null;
   clientRef: MutableRefObject<ClientArene | null>;
   snapRef: MutableRefObject<EtatJoueurSnap[]>; snapTRef: MutableRefObject<number>;
+  /** (aperçu de la vue Palantir) dernier `apercu` des zombies ou du Battle Royale, et sa date de réception (ms) */
+  apercuRef: MutableRefObject<ApercuDirect | null>; apercuTRef: MutableRefObject<number>;
   joueursRef: MutableRefObject<JoueurPublic[]>; matchRef: MutableRefObject<InfoMatch | null>;
   pousserEvenement(e: JeuEvenement): void;
   // ---- v2 ----

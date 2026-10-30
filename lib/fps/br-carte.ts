@@ -319,6 +319,30 @@ function procedural(scene: SceneData): Procedural {
   return p;
 }
 
+/** Bâtiment procédural et son rectangle inscrit, tels que `procedural` les calcule (précalculables hors ligne : cf. `amorcerProcedural`). */
+export interface ProceduralPrecalcule { i: number; rect: Rect }
+
+/** Sélection procédurale complète d'une scène (indices croissants), au format précalculé (pour `scripts/fps/generer_br_procedural.mjs`). */
+export function proceduralPrecalcule(scene: SceneData): ProceduralPrecalcule[] {
+  const p = procedural(scene);
+  return p.indices.map((i) => ({ i, rect: p.rects.get(i)! }));
+}
+
+/** Texte du fichier précalculé (JSON indenté d'un niveau, fin de ligne finale). */
+export const serialiserProceduralPrecalcule = (pre: readonly ProceduralPrecalcule[]): string => JSON.stringify(pre, null, 1) + "\n";
+
+/**
+ * Remplit le cache de `procedural` pour `scene` avec une sélection précalculée HORS LIGNE : la sélection (`candidats` + `choisir`) prend de 150 à
+ * 300 ms à froid, trop pour le navigateur (vue Palantir, aperçu du Battle Royale). Sans effet si le cache est déjà rempli. Un test vérifie que le
+ * précalcul est celui que `procedural` calcule sur le vrai `scene.json`.
+ */
+export function amorcerProcedural(scene: SceneData, pre: readonly ProceduralPrecalcule[]): void {
+  if (cache.has(scene)) return;
+  const pieces: PieceSynth[] = [];
+  for (const { i, rect } of pre) pieces.push(...piecesDeCoque(i, rect, scene.buildings[i].h));
+  cache.set(scene, { indices: pre.map((c) => c.i), rects: new Map(pre.map((c) => [c.i, c.rect])), pieces });
+}
+
 // ---------------------------------------------------------------------------------------------
 // Données de scène et monde
 // ---------------------------------------------------------------------------------------------
@@ -340,6 +364,9 @@ function bornesDe(buildings: readonly Building[]): Boite {
   for (const b of buildings) { x0 = Math.min(x0, b.c[0]); x1 = Math.max(x1, b.c[0]); z0 = Math.min(z0, b.c[1]); z1 = Math.max(z1, b.c[1]); }
   return { x0: x0 - MARGE_BORNES_M, z0: z0 - MARGE_BORNES_M, x1: x1 + MARGE_BORNES_M, z1: z1 + MARGE_BORNES_M };
 }
+
+/** Bornes du monde du Battle Royale d'après la scène d'origine (cadrage de l'aperçu de la vue Palantir). */
+export const bornesBr = (scene: SceneData): Boite => bornesDe(scene.buildings.slice(0, INDEX_PREMIERE_PIECE));
 
 /** Pièces des quatre bâtiments des zombies, sans leurs portes (l'ouverture reste libre). */
 const piecesZombiesSansPortes = (scene: SceneData): PieceSynth[] =>

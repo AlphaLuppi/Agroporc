@@ -8,7 +8,7 @@
 import type { Boite, Monde } from "./collision";
 import type { MemoSante } from "./sante";
 import type {
-  ArmeFeuId, ArmeId, ArmeMeleeId, AvionBr, CauseMort, CoteMur, Equipement, EtatPartieBr, EtatPartieZombies, GenreVoiture, MessageClient, MessageServeur, MonstresSnap,
+  ArmeFeuId, ArmeId, ArmeMeleeId, AvionBr, BrApercu, CauseMort, CoteMur, Equipement, EtatPartieBr, EtatPartieZombies, GenreVoiture, MessageClient, MessageServeur, MonstresSnap,
   PhaseBr, PhaseZombies, PointButin, Posture, Siege, Slot, SnapZombies, TigreLargueSnap, Vec3, VehiculeSnap, Zone,
 } from "./protocole";
 import type { ObstacleVoiture, Tigre } from "./tigre-arene";
@@ -410,6 +410,8 @@ export interface ServiceBr {
   /** (2026-10-29) `regarder` permis : partie en cours et le joueur n'y participe pas (pas admis, ou déjà éliminé) */
   peutRegarder(id: string): boolean;
   etat(): EtatPartieBr;
+  /** (aperçu des spectateurs) phase, effectifs, zone et avion, sans la liste des joueurs de `etat()` */
+  apercu(): BrApercu;
   resume(): ResumeBr;
 }
 
