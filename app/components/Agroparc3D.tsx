@@ -4,7 +4,7 @@ import type { Difficulte } from "@/lib/fps/zombies-vagues";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Chakra_Petch, IBM_Plex_Mono } from "next/font/google";
 import type { Carte, PdjEntry, Plat } from "@/lib/db";
-import type { Poi, SceneData } from "@/lib/agroparc3d/types";
+import type { DecorOsm, Poi, SceneData } from "@/lib/agroparc3d/types";
 import type { SceneHandle } from "@/lib/agroparc3d/scene";
 import type { ApercuDirect, Bandeau, JoueurAerien } from "@/lib/fps/apercu-source";
 import type { JeuHandle, HudEtat } from "@/lib/fps/jeu";
@@ -16,6 +16,7 @@ import { ecrireEquipement, estPrincipale, estSecondaire, lireEquipement } from "
 import { creerRadarFrame } from "@/lib/fps/radar";
 import { nomPersonnage } from "@/lib/characters";
 import { lireCachettes, type Cachette, type FichierCachettes } from "@/lib/agroparc3d/cachettes";
+import { lireDecor } from "@/lib/agroparc3d/decor-osm";
 import { etatRestaurant } from "@/lib/agroparc3d/panneau";
 import { couleurNote, remplissage } from "@/lib/agroparc3d/jauge";
 import { MODE_LABEL, noteMode, trierCarte, type Mode } from "@/lib/carte-tri";
@@ -55,6 +56,16 @@ async function fetchCachettes(): Promise<Cachette[]> {
     return r.ok ? lireCachettes((await r.json()) as FichierCachettes) : [];
   } catch {
     return [];
+  }
+}
+
+/** Détails de décor OpenStreetMap (scripts/agroparc/build_decor.py). Indisponibles ou illisibles : le décor se dessine avec les seules règles de scene.json. */
+async function fetchDecor(): Promise<DecorOsm | undefined> {
+  try {
+    const r = await fetch("/agroparc/decor.json");
+    return r.ok ? lireDecor(await r.json()) : undefined;
+  } catch {
+    return undefined;
   }
 }
 
@@ -513,8 +524,8 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
     let cancelled = false;
     const data = fetch("/agroparc/scene.json")
       .then((r) => { if (!r.ok) throw new Error(`scene.json ${r.status}`); return r.json() as Promise<SceneData>; });
-    Promise.all([data, fetchCachettes()])
-      .then(([d, cachettes]) => { if (!cancelled) setScene({ data: d, cachettes }); })
+    Promise.all([data, fetchCachettes(), fetchDecor()])
+      .then(([d, cachettes, decor]) => { if (!cancelled) setScene({ data: decor ? { ...d, decor } : d, cachettes }); })
       .catch((e: Error) => { if (!cancelled) setError(`Impossible de charger la carte (${e.message}).`); });
     fetchPdj().then((d) => { if (!cancelled) setPdj(d); });
     return () => { cancelled = true; };
@@ -705,6 +716,8 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
         return c ?? null;
       },
       viser: (distance) => handleRef.current?.chasse?.viser(distance),
+      cadrer: (x, z, distance) => handleRef.current?.cadrer(x, z, distance),
+      couches: (etat) => handleRef.current?.couches(etat),
       ecran: () => handleRef.current?.chasse?.ecran() ?? null,
       apercu: () => handleRef.current?.apercu.etat() ?? null,
       apercuGraine: (n) => handleRef.current?.apercu.graine(n),
@@ -1284,6 +1297,10 @@ declare global {
       /** Pose le tigre dans la cachette de rang i (0 = la plus facile). */
       placer(i: number): Cachette | null;
       viser(distance?: number): void;
+      /** Captures : caméra au repos (sans argument) ou sur le point (x, z) à `distance` m, vue figée. */
+      cadrer(x?: number, z?: number, distance?: number): void;
+      /** Mesures : montre ou cache des couches du décor (chaussee, marquages, places, pelouses, haies, arbres, mobilier, taches, reseau). */
+      couches(etat: Record<string, boolean>): void;
       /** Position du tigre à l'écran (px), null s'il est caché ou hors champ. */
       ecran(): { x: number; y: number } | null;
       /** Aperçu par mode : état (mode, décor, transition, caméra, repères, source, modèle), null avant le chargement de la scène. */

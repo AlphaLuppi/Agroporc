@@ -17,7 +17,7 @@ import type { Poi, SceneData, Vec2 } from "./types";
 import type { Cachette } from "./cachettes";
 import { creerTigreCache, type TigreCache } from "./tigre";
 import { placerEtiquette, rectEtiquette, type RectEtiquette } from "./etiquettes";
-import { C, ajouterArbres, ajouterBatiments, ajouterGrille, ajouterReseauSol, creerAvionFilaire, edgesOf } from "./decor";
+import { C, construireDecor, creerAvionFilaire, edgesOf, qualiteParDefaut } from "./decor";
 import {
   CADRAGES, brouillardInterpole, dureeTransition, impulsionBloom, interpolerCadrage, leveDeTransition, poseCadrage, type Pose,
 } from "../fps/apercu-cadrage";
@@ -108,6 +108,13 @@ export interface SceneHandle {
   joueurs(liste: readonly JoueurAerien[]): void;
   /** Chasse au tigre (null sans cachettes). */
   chasse: ChasseHandle | null;
+  /**
+   * Crochet de captures (`window.__palantir.cadrer`) : sans argument, la caméra au repos ; sinon elle regarde le point (x, z) à `distance` m,
+   * dans l'azimut du repos, plongée de 40°. Fige la vue (ni intro, ni rotation automatique).
+   */
+  cadrer(x?: number, z?: number, distance?: number): void;
+  /** Crochet de mesures (`window.__palantir.couches`) : montre ou cache des couches du décor (`userData.couche`) ; les absentes de `etat` ne changent pas. */
+  couches(etat: Record<string, boolean>): void;
   /** Aperçu par mode (panneau « Arène » ouvert). */
   apercu: ApercuHandle;
   dispose(): void;
@@ -184,13 +191,14 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
   controls.target.copy(repos.target);
 
   // ---------- décor (cf. decor.ts) ----------
-  // les bâtiments de l'arène sont dans un groupe : les aperçus des zombies et du Battle Royale posent leurs propres bâtiments à côté et masquent celui-ci
+  // Vue aérienne : à cette distance aucune façade n'est lisible ; en qualité « basse » (tactile, 4 cœurs ou moins), on garde les murs
+  // en un quad sans nuanceur de façade (le coût fragment du détail ne se retire pas autrement).
+  // Les bâtiments de l'arène sont dans un groupe : les aperçus des zombies et du Battle Royale posent leurs propres bâtiments à côté et
+  // masquent celui-ci (le sol, les marquages, la végétation et le mobilier restent communs).
   const decorArene = new THREE.Group();
   scene.add(decorArene);
-  ajouterBatiments(decorArene, data);
-  ajouterReseauSol(scene, data);
-  ajouterGrille(scene);
-  ajouterArbres(scene, data);
+  const qualite = qualiteParDefaut();
+  construireDecor(scene, data, { fantomes: true, detail: qualite !== "basse", qualite, eviter: opts.cachettes?.map((c): Vec2 => [c.x, c.z]), racineBatiments: decorArene });
 
   // ---------- POI markers + labels ----------
   const markers: Marker[] = [];
@@ -510,6 +518,7 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
 
   // ---------- interaction / camera moves ----------
   let idleSince = performance.now();
+  let figee = false;
   const wake = () => { idleSince = performance.now(); controls.autoRotate = false; };
   canvas.addEventListener("pointerdown", wake);
   canvas.addEventListener("wheel", wake, { passive: true });
@@ -690,7 +699,7 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
       const k = Math.min(t / INTRO, 1);
       camera.position.lerpVectors(INTRO_FROM, repos.pos, ease(k));
       if (k >= 1) introDone = true;
-    } else if (!reduced && !transition && performance.now() - idleSince > 9000) {
+    } else if (!reduced && !figee && !transition && performance.now() - idleSince > 9000) {
       controls.autoRotate = true;
     }
     applySpin(dt);
@@ -806,6 +815,26 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
       },
       graine(n) { rendu?.graine(n); },
       avancer(secondes) { rendu?.avancer(secondes); },
+    },
+    cadrer(x, z, distance) {
+      wake();
+      figee = true;
+      introDone = true;
+      transition = null;
+      spinLeft = 0;
+      if (x === undefined || z === undefined) {
+        controls.target.copy(repos.target);
+        camera.position.copy(repos.pos);
+      } else {
+        // azimut du repos, plongée de 40°
+        const az = Math.atan2(REST.dx, REST.dz), d = distance ?? 120, el = (40 * Math.PI) / 180;
+        controls.target.set(x, 0, z);
+        camera.position.set(x + Math.sin(az) * Math.cos(el) * d, Math.sin(el) * d, z + Math.cos(az) * Math.cos(el) * d);
+      }
+      controls.update();
+    },
+    couches(etat) {
+      scene.traverse((o) => { const c = o.userData.couche as string | undefined; if (c && c in etat) o.visible = etat[c]; });
     },
     chasse: tigre && {
       cachette: () => tigre.cachette(),

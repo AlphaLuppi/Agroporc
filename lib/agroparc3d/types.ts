@@ -60,6 +60,34 @@ export interface Poi {
   bh: number;
 }
 
+/**
+ * Détails de décor OpenStreetMap (public/agroparc/decor.json, généré par scripts/agroparc/build_decor.py, issue #83). Même repère que
+ * `SceneData`. Jamais dans `scene.json` : l'ordre de ses bâtiments pilote les indices des zombies, du BR et des cachettes. Les rendus qui n'en
+ * ont pas (fichier absent ou illisible) dérivent tout de `scene.json`.
+ */
+export interface DecorOsm {
+  v: 1;
+  /** pelouses, jardins, parcs, prairies (anneau non fermé) */
+  pelouses: { k: "grass" | "garden" | "park" | "meadow"; r: Vec2[] }[];
+  /** bois, forêts, broussailles (anneau non fermé) */
+  bois: Vec2[][];
+  /** haies (polylignes) */
+  haies: Vec2[][];
+  /** alignements d'arbres (polylignes) */
+  alignements: Vec2[][];
+  lampadaires: Vec2[];
+  /** passages piétons (nœuds `highway=crossing`) */
+  passages: Vec2[];
+  stops: Vec2[];
+  cedez: Vec2[];
+  /** feux tricolores (vide aujourd'hui) */
+  signaux: Vec2[];
+  bancs: Vec2[];
+  corbeilles: Vec2[];
+  velos: Vec2[];
+  portails: Vec2[];
+}
+
 export interface SceneData {
   center: Vec2;
   buildings: Building[];
@@ -83,4 +111,6 @@ export interface SceneData {
    * Absent = scène de l'arène. `estSceneZombies` (minimap.ts) reste faux pour "br".
    */
   modeCarte?: "zombies" | "br";
+  /** Détails de décor OpenStreetMap, posés par le client après chargement de `decor.json` (jamais dans `scene.json`). Absent = repli sur les règles. */
+  decor?: DecorOsm;
 }

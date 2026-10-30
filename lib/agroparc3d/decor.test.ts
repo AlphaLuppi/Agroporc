@@ -2,9 +2,10 @@ import { readFileSync } from "node:fs";
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { describe, expect, it } from "vitest";
-import { ajouterBatiments, buildingGroup, creerAvionFilaire, creerEtatDestruction, extrude } from "./decor";
-import { estLisse, mursDe, nbEtages } from "./facade";
-import type { Building, SceneData } from "./types";
+import { ajouterArbres, ajouterBatiments, buildingGroup, construireDecor, creerAvionFilaire, creerEtatDestruction, extrude, type OptionsDecor } from "./decor";
+import { deriverDecor } from "./decor-donnees";
+import { BIT_RESTO, CODE_STYLE, ENSEIGNE_L_M, LUM_VITRINE, SEUIL_ALLUMEES, INDUSTRIEL_PORTE_L_M, MUR_RIDEAU_CELLULE_M, VITRINE_BAS_M, VITRINE_HAUT_M, estLisse, mursDe, nbEtages } from "./facade";
+import type { Building, DecorOsm, SceneData } from "./types";
 
 const scene = JSON.parse(readFileSync("public/agroparc/scene.json", "utf8")) as SceneData;
 
@@ -170,6 +171,58 @@ describe("ajouterBatiments : détail vrai (arène)", () => {
     expect(sh.fragmentShader.match(/void main\(\) \{/g)).toHaveLength(1);
   });
 
+  it("nuanceur des façades v2 : attribut et varying de style, constantes recopiées de facade.ts, quatre styles", () => {
+    const sh = compiler(facesDe(avec)[0].material as THREE.Material);
+    expect(sh.vertexShader).toContain("attribute float aStyle");
+    expect(sh.vertexShader).toContain("vStyle = aStyle;");
+    expect(sh.fragmentShader).toContain("varying float vStyle;");
+    // teinte de bâtiment : même hachage que `teinteBatiment`
+    expect(sh.fragmentShader).toContain("uint(vBatF + 0.5) * 0x9e3779b1u ^ 0x1b873593u) % 3u");
+    // constantes de facade.ts écrites dans le nuanceur
+    expect(sh.fragmentShader).toContain(`${VITRINE_BAS_M.toFixed(2)} - y, y - ${VITRINE_HAUT_M.toFixed(1)}`);
+    expect(sh.fragmentShader).toContain(`${MUR_RIDEAU_CELLULE_M.toFixed(1)}`);
+    expect(sh.fragmentShader).toContain(`${INDUSTRIEL_PORTE_L_M / 2}.0 :`.replace(".0 :", ".0 : ")); // porte sectionnelle de 4 m
+    expect(sh.fragmentShader).toContain(`ddp - ${(ENSEIGNE_L_M / 2).toFixed(1)}`);
+    for (const motif of ["sty < 0.5", "sty < 1.5", "sty < 2.5", "bardage", "enseigne"]) expect(sh.fragmentShader).toContain(motif);
+    expect(sh.fragmentShader.match(/void main\(\) \{/g)).toHaveLength(1);
+  });
+
+  it("vitrine du rez-de-chaussée : allumée par travée (jamais en bande continue chez les restaurants) et plus douce qu'une fenêtre d'étage", () => {
+    const sh = compiler(facesDe(avec)[0].material as THREE.Material);
+    // plus de « restoF > 0.5 || » : un restaurant n'a pas toute sa vitrine allumée, le hachage de colonne décide aussi
+    expect(sh.fragmentShader).not.toMatch(/allumee = \(restoF > 0\.5 \|\|/);
+    expect(sh.fragmentShader).toContain(`allumee = hc < (restoF > 0.5 ? ${2 * SEUIL_ALLUMEES}u : ${Math.round(1.6 * SEUIL_ALLUMEES)}u)`);
+    expect(sh.fragmentShader).toContain(`lumVerre = ${LUM_VITRINE.toFixed(2)};`);
+    expect(sh.fragmentShader).toContain("chaud * lumVerre");
+    // la part de travées allumées d'un restaurant reste une minorité nette (< 60 %)
+    expect(2 * SEUIL_ALLUMEES / 65536).toBeLessThan(0.6);
+    expect(LUM_VITRINE).toBeLessThan(0.7);
+  });
+
+  it("vue aérienne : le détail de façade se retire en qualité basse (scene.ts)", () => {
+    const src = readFileSync("lib/agroparc3d/scene.ts", "utf8");
+    expect(src).toContain('detail: qualite !== "basse"');
+  });
+
+  it("attribut aStyle : constant par bâtiment, code de codeFacade, drapeau restaurant (+8) sur les restos", () => {
+    const faces = facesDe(avec);
+    const restos = faces[2].geometry.getAttribute("aStyle");
+    expect(restos).toBeDefined();
+    for (let i = 0; i < restos.count; i++) expect(restos.getX(i)).toBe(CODE_STYLE.percee + BIT_RESTO);
+    const ordinaires = faces[0].geometry.getAttribute("aStyle");
+    const vus = new Set<number>();
+    for (let i = 0; i < ordinaires.count; i++) vus.add(ordinaires.getX(i));
+    expect([...vus].every((v) => v >= 0 && v <= 3)).toBe(true);
+    expect(vus.size).toBeGreaterThan(1);
+  });
+
+  it("acrotère : des arêtes en plus pour les bâtiments non lisses, sans draw call de plus", () => {
+    const arêtes = (r: THREE.Object3D) => dessinables(r).filter((x) => (x as THREE.LineSegments).isLineSegments && !(x as THREE.Mesh).isMesh) as THREE.LineSegments[];
+    const plus = arêtes(avec).reduce((n, l) => n + l.geometry.getAttribute("position").count, 0);
+    const moins = arêtes(monter(scene, { destruction: creerEtatDestruction(scene.buildings.length), detail: false })).reduce((n, l) => n + l.geometry.getAttribute("position").count, 0);
+    expect(plus).toBeGreaterThan(moins);
+  });
+
   it("nuanceur des équipements : l'écrasement s'applique après la matrice d'instance", () => {
     const inst = dessinables(avec).find((x) => (x as THREE.InstancedMesh).isInstancedMesh) as THREE.InstancedMesh;
     const sh = compiler(inst.material as THREE.Material);
@@ -186,7 +239,7 @@ describe("ajouterBatiments : détail vrai (arène)", () => {
     for (const o of [...dessinables(racine), inst]) {
       const m = (o as THREE.Mesh).material as THREE.Material;
       const c = m.customProgramCacheKey?.() ?? "";
-      if (c.startsWith("batiment-effondrable-4")) cles.add(c);
+      if (c.startsWith("batiment-effondrable-5")) cles.add(c);
     }
     // faces détaillées, arêtes (= faces de la porte : même code), barricade, champ, équipements (autre largeur de texture : autre clé)
     expect(cles.size).toBe(6);
@@ -258,6 +311,115 @@ describe("(v8) bâtiment effacé (porte ouverte des zombies)", () => {
     expect(data[8]).toBeGreaterThan(1.5);
     e.poser(2, 0);
     expect(data[8]).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// construireDecor : le rework de la DA (issue #83)
+// ---------------------------------------------------------------------------------------------------------------------
+
+describe("construireDecor (rework de la DA)", () => {
+  const decorOsm = JSON.parse(readFileSync("public/agroparc/decor.json", "utf8")) as DecorOsm;
+  const complet: SceneData = { ...scene, decor: decorOsm };
+  const construire = (data: SceneData, opts: OptionsDecor) => { const racine = new THREE.Group(); construireDecor(racine, data, opts); return racine; };
+  const etat = creerEtatDestruction(scene.buildings.length);
+
+  it("arène : au plus 32 draw calls, décor statique (aucun objet animé)", () => {
+    const racine = construire(complet, { fantomes: false, destruction: etat });
+    const n = dessinables(racine).length;
+    console.log(`construireDecor (arène) : ${n} draw calls`);
+    expect(n).toBeLessThanOrEqual(32);
+    expect(n).toBeGreaterThan(20);
+  });
+
+  it("vue aérienne (détail et fantômes) : au plus 32 draw calls", () => {
+    expect(dessinables(construire(complet, { fantomes: true, detail: true })).length).toBeLessThanOrEqual(32);
+  });
+
+  it("sans decor.json : repli sans erreur, règles dérivées de scene.json seulement", () => {
+    const racine = construire(scene, { fantomes: false, destruction: etat });
+    expect(dessinables(racine).length).toBeLessThanOrEqual(32);
+    expect(dessinables(racine).length).toBeGreaterThan(18);
+  });
+
+  it("budget de triangles : au plus 120 000 de plus que la scène d'avant", () => {
+    const tri = (o: THREE.Object3D) => dessinables(o).reduce((n, x) => {
+      const g = (x as THREE.Mesh).geometry as THREE.BufferGeometry;
+      const inst = (x as THREE.InstancedMesh).isInstancedMesh ? (x as THREE.InstancedMesh).count : 1;
+      const base = g.index ? g.index.count / 3 : g.getAttribute("position").count / 3;
+      return n + (((x as THREE.Mesh).isMesh ? base : 0) * inst);
+    }, 0);
+    const apres = tri(construire(complet, { fantomes: false, destruction: etat }));
+    const avant = tri((() => { const r = new THREE.Group(); ajouterBatiments(r, scene, { destruction: etat }); ajouterArbres(r, scene); return r; })());
+    console.log(`triangles : ${avant.toFixed(0)} → ${apres.toFixed(0)}`);
+    expect(apres - avant).toBeLessThanOrEqual(120000);
+  });
+
+  it("ambiance zombies : ni mobilier, ni taches de lumière, ni haies, ni pelouses, ni arbustes dans la boîte de la carte", () => {
+    const boite = { x0: 2, z0: -116, x1: 242, z1: 30 };
+    const dedans = (x: number, z: number) => x >= boite.x0 && x <= boite.x1 && z >= boite.z0 && z <= boite.z1;
+    const d = deriverDecor(complet, { ambiance: "zombies", exclure: [boite] });
+    expect(Object.values(d.mobilier).every((l) => l.length === 0)).toBe(true);
+    for (let i = 0; i < d.haies.length; i += 4) expect(dedans(d.haies[i], d.haies[i + 1])).toBe(false);
+    for (let i = 0; i < d.arbustes.length; i += 2) expect(dedans(d.arbustes[i], d.arbustes[i + 1])).toBe(false);
+    for (let i = 0; i < d.pelouses.length; i += 6) expect(dedans((d.pelouses[i] + d.pelouses[i + 2] + d.pelouses[i + 4]) / 3, (d.pelouses[i + 1] + d.pelouses[i + 3] + d.pelouses[i + 5]) / 3)).toBe(false);
+    for (let i = 0; i < d.places.length; i += 4) expect(dedans(d.places[i], d.places[i + 1])).toBe(false);
+    // les arbres de scene.trees restent (retypés seulement)
+    expect(d.arbres.length).toBe(scene.trees.length);
+    const racine = construire(complet, { fantomes: false, destruction: etat, ambiance: "zombies", exclure: [boite] });
+    expect(dessinables(racine).some((x) => (x as THREE.InstancedMesh).isInstancedMesh && (x as THREE.InstancedMesh).material && ((x as THREE.InstancedMesh).material as THREE.MeshBasicMaterial).blending === THREE.AdditiveBlending)).toBe(false);
+  });
+
+  it("qualité basse : sans taches de lumière, sans haies ni arbustes", () => {
+    const haute = construire(complet, { fantomes: false, destruction: etat, qualite: "haute" });
+    const basse = construire(complet, { fantomes: false, destruction: etat, qualite: "basse" });
+    const additifs = (r: THREE.Object3D) => dessinables(r).filter((x) => ((x as THREE.Mesh).material as THREE.MeshBasicMaterial)?.blending === THREE.AdditiveBlending).length;
+    expect(additifs(haute)).toBe(1);
+    expect(additifs(basse)).toBe(0);
+    expect(dessinables(basse).length).toBeLessThan(dessinables(haute).length);
+    const d = deriverDecor(complet, { qualite: "basse" });
+    expect(d.haies).toEqual([]);
+    expect(d.arbustes).toEqual([]);
+  });
+
+  it("les couches de sol sont sans écriture de profondeur, dans l'ordre : pelouses, chaussée, parkings, marquages, avant les murs", () => {
+    const racine = construire(complet, { fantomes: false, destruction: etat });
+    const ordres = dessinables(racine).filter((x) => ((x as THREE.Mesh).material as THREE.Material)?.depthWrite === false).map((x) => x.renderOrder);
+    expect(ordres).toContain(-3);
+    expect(ordres).toContain(-2);
+    expect(ordres).toContain(-1);
+    // bâtiments (faces : 1, arêtes : 2) passent après toutes les couches de sol
+    const batiments = dessinables(racine).filter((x) => x.renderOrder >= 1 && x.renderOrder <= 2);
+    expect(batiments.length).toBeGreaterThan(5);
+  });
+
+  it("deriverDecor : calcul de moins de 400 ms (cible 60 ms, mesure affichée), déterministe", () => {
+    const frais: SceneData = { ...scene, decor: decorOsm, roads: scene.roads.map((r) => ({ ...r })), trees: scene.trees.map((t) => [...t] as [number, number]), parkings: scene.parkings.map((p) => [...p]), buildings: scene.buildings.map((b) => ({ ...b })) };
+    const t0 = performance.now();
+    const d = deriverDecor(frais, { qualite: "haute" });
+    const ms = performance.now() - t0;
+    console.log(`deriverDecor : ${ms.toFixed(0)} ms (à froid, JIT compris)`);
+    expect(ms).toBeLessThan(400);
+    const d2 = deriverDecor(frais, { qualite: "haute" });
+    expect(d2.voirie).toBe(d.voirie);
+    expect(d2.places).toEqual(d.places);
+  });
+
+  it("compile les nuanceurs modifiés : un seul `void main`, une seule ancre opaque_fragment, façade avant l'écriture de la couleur", () => {
+    const racine = construire(complet, { fantomes: false, destruction: etat });
+    const nuanceurs = dessinables(racine).map((x) => (x as THREE.Mesh).material as THREE.Material).filter((m) => m?.onBeforeCompile && m.onBeforeCompile.toString() !== "() => {}" && m.customProgramCacheKey?.().startsWith("batiment-effondrable"));
+    expect(nuanceurs.length).toBeGreaterThan(3);
+    for (const m of nuanceurs) {
+      const sh = compiler(m);
+      expect(sh.fragmentShader.match(/void main\(\) \{/g)).toHaveLength(1);
+      expect(sh.fragmentShader.match(/#include <opaque_fragment>/g)).toHaveLength(1);
+    }
+    // pelouses : le nuanceur de hachures s'insère avant l'écriture de la couleur
+    const pel = dessinables(racine).find((x) => x.renderOrder === -3) as THREE.Mesh;
+    const sh = compiler(pel.material as THREE.Material);
+    expect(sh.fragmentShader).toContain("varying vec2 vPelouse;");
+    expect(sh.fragmentShader.indexOf("float sH")).toBeLessThan(sh.fragmentShader.indexOf("#include <opaque_fragment>"));
+    expect(sh.vertexShader).toContain("vPelouse = (modelMatrix");
   });
 });
 

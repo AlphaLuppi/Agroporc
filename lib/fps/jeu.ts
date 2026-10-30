@@ -37,9 +37,9 @@
  */
 import * as THREE from "three";
 import type { SceneData } from "../agroparc3d/types";
-import { C, construireDecor, creerEtatDestruction } from "../agroparc3d/decor";
+import { C, construireDecor, creerEtatDestruction, qualiteParDefaut } from "../agroparc3d/decor";
 import { construireMonde, detruireBatiment, normaleImpact, poserBreche, releverBatiment, type Creux, type Monde } from "./collision";
-import { FOCUS_ZOMBIES, PLAFOND_INTERIEUR_M, construireMondeZombies, donneesZombies } from "./zombies-carte";
+import { BORNES_ZOMBIES, FOCUS_ZOMBIES, PLAFOND_INTERIEUR_M, construireMondeZombies, donneesZombies } from "./zombies-carte";
 import { plafondBatimentsCreux } from "./grenades";
 import { creerControleurGrenades, type LancerDemande } from "./jeu-grenades";
 import { creerRenduGrenades } from "./rendu-grenades";
@@ -264,7 +264,9 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   scene.add(decor);
   // bâtiments effondrables (v3) : le tigre robot et le titan les écrasent ; l'effondrement est animé par le nuanceur
   const destruction = creerEtatDestruction(data.buildings.length);
-  construireDecor(decor, data, { fantomes: false, destruction });
+  // décor secondaire (mobilier, haies, pelouses, places) absent de la boîte de la carte des zombies, agrandie de 6 m : ses aménagements maison le remplacent
+  const boiteZ = { x0: BORNES_ZOMBIES.x0 - 6, z0: BORNES_ZOMBIES.z0 - 6, x1: BORNES_ZOMBIES.x1 + 6, z1: BORNES_ZOMBIES.z1 + 6 };
+  construireDecor(decor, data, { fantomes: false, destruction, ambiance: modeZ ? "zombies" : "complete", qualite: qualiteParDefaut(), exclure: modeZ ? [boiteZ] : undefined });
   /** effondrements en cours : id → instant (s, horloge locale) du début */
   const effondrements = new Map<number, number>();
   /** brèches qui s'ouvrent : id → instant du début et cercles de départ et d'arrivée (le rayon grandit en `DUREE_BRECHE_S`) */
