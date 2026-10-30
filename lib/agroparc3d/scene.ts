@@ -121,7 +121,10 @@ export function createAgroparcScene(canvas: HTMLCanvasElement, labelsEl: HTMLEle
   controls.target.copy(repos.target);
 
   // ---------- décor (cf. decor.ts) ----------
-  construireDecor(scene, data, { fantomes: true, detail: true, qualite: qualiteParDefaut(), eviter: opts.cachettes?.map((c): Vec2 => [c.x, c.z]) });
+  // Vue aérienne : à cette distance aucune façade n'est lisible ; en qualité « basse » (tactile, 4 cœurs ou moins), on garde les murs
+  // en un quad sans nuanceur de façade (le coût fragment du détail ne se retire pas autrement).
+  const qualite = qualiteParDefaut();
+  construireDecor(scene, data, { fantomes: true, detail: qualite !== "basse", qualite, eviter: opts.cachettes?.map((c): Vec2 => [c.x, c.z]) });
 
   // ---------- POI markers + labels ----------
   const markers: Marker[] = [];

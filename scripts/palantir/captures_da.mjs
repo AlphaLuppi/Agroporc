@@ -9,6 +9,7 @@
  *   GROUPES=aerien,arene,zombies,br   groupes à jouer (défaut : tous)
  *   VUES=1,5,9                        ne photographie que ces vues (numéros de la spec)
  *   MESURE=1                          mesure aussi la fluidité (60 requestAnimationFrame) aux vues 1, 5 et 9 → <PREFIXE>-fluidite.json
+ *   COEURS=4                          simule 4 cœurs (`navigator.hardwareConcurrency`) : qualité du décor « basse », comme un portable modeste
  *   E2E_URL / E2E_WS                  réutilisent un site / un serveur déjà lancés
  * Pièges : le rendu logiciel est lent (screenshot avec timeout de 120 s, JPEG, deviceScaleFactor 1) ; la téléportation est côté client seulement ;
  * un `next dev` à froid recharge les pages ouvertes (on recommence l'entrée).
@@ -27,6 +28,7 @@ const PREFIXE = process.env.PREFIXE ?? "apres";
 const GROUPES = (process.env.GROUPES ?? "aerien,arene,zombies,br").split(",");
 const VUES_VOULUES = process.env.VUES ? process.env.VUES.split(",").map(Number) : null;
 const MESURE = !!process.env.MESURE;
+const COEURS = process.env.COEURS ? Number(process.env.COEURS) : null;
 const PAGE = "/arene-e2e-introuvable";
 const dormir = (ms) => new Promise((r) => setTimeout(r, ms));
 const portLibre = () => new Promise((ok, ko) => { const s = createServer(); s.once("error", ko); s.listen(0, "127.0.0.1", () => { const { port } = s.address(); s.close(() => ok(port)); }); });
@@ -142,8 +144,8 @@ try {
       PDJ_FPS_AVION_MIN_MS: H, PDJ_FPS_AVION_MAX_MS: H, PDJ_FPS_BUS_MIN_MS: H, PDJ_FPS_BUS_MAX_MS: H, PDJ_FPS_EVT_MIN_MS: H, PDJ_FPS_EVT_MAX_MS: H,
       // zombies : pause longue (aucun tigre), argent en abondance
       PDJ_FPS_ZOMBIES_ARGENT: "50000", PDJ_FPS_ZOMBIES_PAUSE_MS: "600000", PDJ_FPS_ZOMBIES_TOTAL: "12",
-      // Battle Royale : seul, avion longtemps en vol
-      PDJ_FPS_BR_MIN_JOUEURS: "1", PDJ_FPS_BR_DECOMPTE_MS: "3000", PDJ_FPS_BR_VOL_MS: "600000", PDJ_FPS_BR_STATS: join(tmpdir(), `stats-br-da-${port}.json`),
+      // Battle Royale : seul, avion longtemps en vol ; décompte de 30 s au plus mais fini dès que le joueur a rejoint (un client en rendu logiciel est lent : 3 s l'excluaient)
+      PDJ_FPS_BR_MIN_JOUEURS: "1", PDJ_FPS_BR_DECOMPTE_MS: "30000", PDJ_FPS_BR_VOL_MS: "600000", PDJ_FPS_BR_STATS: join(tmpdir(), `stats-br-da-${port}.json`),
     } });
     await attendreHttp(`http://localhost:${port}/sante`, 20000).catch((e) => { throw new Error(e.message + srv.journal.join("")); });
   }
@@ -158,6 +160,7 @@ try {
   nav = await chromium.launch({ args: ["--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"] });
   const nouveauContexte = async (mode) => {
     const ctx = await nav.newContext({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1 });
+    if (COEURS) await ctx.addInitScript((n) => Object.defineProperty(Navigator.prototype, "hardwareConcurrency", { get: () => n, configurable: true }), COEURS);
     await ctx.addInitScript((m) => {
       let verrou = null;
       Object.defineProperty(Document.prototype, "pointerLockElement", { get: () => verrou, configurable: true });
@@ -302,12 +305,30 @@ try {
     }
     throw new Error(`impossible d'entrer en ${mode}`);
   };
-  const regarderDepuis = (page, [x, z], [tx, ty, tz]) => page.evaluate(([x, z, tx, ty, tz]) => {
-    window.__arene.teleporter([x, 0, z]);
-    const e = window.__arene.etat().jeu.oeil;
-    const vx = tx - e[0], vz = tz - e[2], l = Math.hypot(vx, vz);
-    window.__arene.regarder(Math.atan2(-vx, -vz), Math.atan2(ty - e[1], l));
-  }, [x, z, tx, ty, tz]);
+  /**
+   * Va en (x, z) par pas de 9 m (budget de distance du serveur : un saut plus long est refusé et le joueur est ramené en arrière, d'où des
+   * photos prises « avant » et « après » à des endroits différents), attend d'y être, puis regarde (tx, ty, tz).
+   */
+  const regarderDepuis = async (page, [x, z], [tx, ty, tz]) => {
+    let p = await page.evaluate(() => { const e = window.__arene.etat().jeu.oeil; return [e[0], e[2]]; });
+    for (let i = 0; i < 80; i++) {
+      const dx = x - p[0], dz = z - p[1], d = Math.hypot(dx, dz);
+      if (d < 0.5) break;
+      const k = Math.min(1, 9 / d);
+      p = [p[0] + dx * k, p[1] + dz * k];
+      await page.evaluate(([a, b]) => window.__arene.teleporter([a, 0, b]), p);
+      await dormir(700);
+    }
+    await dormir(1500);
+    const e = await page.evaluate(([tx, ty, tz]) => {
+      const e = window.__arene.etat().jeu.oeil;
+      const vx = tx - e[0], vz = tz - e[2], l = Math.hypot(vx, vz);
+      window.__arene.regarder(Math.atan2(-vx, -vz), Math.atan2(ty - e[1], l));
+      return e;
+    }, [tx, ty, tz]);
+    const ecart = Math.hypot(e[0] - x, e[2] - z);
+    if (ecart > 1.5) console.log(`  attention : position atteinte à ${ecart.toFixed(1)} m de la cible demandée`);
+  };
 
   if (GROUPES.includes("arene")) {
     const { ctx, page } = await nouveauContexte("arene");
@@ -350,6 +371,10 @@ try {
   if (GROUPES.includes("br") && veut(12)) {
     const { ctx, page } = await nouveauContexte("br");
     await entrerEnJeu(page, "br");
+    // la photo n'a de sens qu'en jeu (avion ou chute), pas dans le lobby du Battle Royale : on attend la phase de vol
+    const finVol = Date.now() + 90000;
+    while (Date.now() < finVol && !(await page.evaluate(() => { const b = window.__arene?.etat().br; return !!(b?.vol || b?.avion); }).catch(() => false))) await dormir(500);
+    if (!(await page.evaluate(() => { const b = window.__arene?.etat().br; return !!(b?.vol || b?.avion); }).catch(() => false))) console.log("  attention : le Battle Royale n'est pas parti en vol");
     await dormir(4000);
     await photo(page, "12-br-avion");
     console.log("capture 12");

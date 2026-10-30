@@ -4,7 +4,7 @@ import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js
 import { describe, expect, it } from "vitest";
 import { ajouterArbres, ajouterBatiments, buildingGroup, construireDecor, creerEtatDestruction, extrude, type OptionsDecor } from "./decor";
 import { deriverDecor } from "./decor-donnees";
-import { BIT_RESTO, CODE_STYLE, ENSEIGNE_L_M, INDUSTRIEL_PORTE_L_M, MUR_RIDEAU_CELLULE_M, VITRINE_BAS_M, VITRINE_HAUT_M, estLisse, mursDe, nbEtages } from "./facade";
+import { BIT_RESTO, CODE_STYLE, ENSEIGNE_L_M, LUM_VITRINE, SEUIL_ALLUMEES, INDUSTRIEL_PORTE_L_M, MUR_RIDEAU_CELLULE_M, VITRINE_BAS_M, VITRINE_HAUT_M, estLisse, mursDe, nbEtages } from "./facade";
 import type { Building, DecorOsm, SceneData } from "./types";
 
 const scene = JSON.parse(readFileSync("public/agroparc/scene.json", "utf8")) as SceneData;
@@ -185,6 +185,23 @@ describe("ajouterBatiments : détail vrai (arène)", () => {
     expect(sh.fragmentShader).toContain(`ddp - ${(ENSEIGNE_L_M / 2).toFixed(1)}`);
     for (const motif of ["sty < 0.5", "sty < 1.5", "sty < 2.5", "bardage", "enseigne"]) expect(sh.fragmentShader).toContain(motif);
     expect(sh.fragmentShader.match(/void main\(\) \{/g)).toHaveLength(1);
+  });
+
+  it("vitrine du rez-de-chaussée : allumée par travée (jamais en bande continue chez les restaurants) et plus douce qu'une fenêtre d'étage", () => {
+    const sh = compiler(facesDe(avec)[0].material as THREE.Material);
+    // plus de « restoF > 0.5 || » : un restaurant n'a pas toute sa vitrine allumée, le hachage de colonne décide aussi
+    expect(sh.fragmentShader).not.toMatch(/allumee = \(restoF > 0\.5 \|\|/);
+    expect(sh.fragmentShader).toContain(`allumee = hc < (restoF > 0.5 ? ${2 * SEUIL_ALLUMEES}u : ${Math.round(1.6 * SEUIL_ALLUMEES)}u)`);
+    expect(sh.fragmentShader).toContain(`lumVerre = ${LUM_VITRINE.toFixed(2)};`);
+    expect(sh.fragmentShader).toContain("chaud * lumVerre");
+    // la part de travées allumées d'un restaurant reste une minorité nette (< 60 %)
+    expect(2 * SEUIL_ALLUMEES / 65536).toBeLessThan(0.6);
+    expect(LUM_VITRINE).toBeLessThan(0.7);
+  });
+
+  it("vue aérienne : le détail de façade se retire en qualité basse (scene.ts)", () => {
+    const src = readFileSync("lib/agroparc3d/scene.ts", "utf8");
+    expect(src).toContain('detail: qualite !== "basse"');
   });
 
   it("attribut aStyle : constant par bâtiment, code de codeFacade, drapeau restaurant (+8) sur les restos", () => {

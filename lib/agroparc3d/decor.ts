@@ -5,7 +5,7 @@
  */
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
-import { SEUIL_ALLUMEES, FENETRE_H_M, FENETRE_L_M, PAS_COLONNE_M, MARGE_COLONNE_M, PORTE_H_M, PORTE_L_M, ENSEIGNE_H_M, ENSEIGNE_L_M, ENSEIGNE_Y_M, INDUSTRIEL_PORTE_H_M, INDUSTRIEL_PORTE_L_M, MUR_RIDEAU_CELLULE_M, VITRINE_BAS_M, VITRINE_HAUT_M, acrotere, codeFacade, murDePorte, mursDe, nbEtages, placementsSolaires, placementsToit } from "./facade";
+import { LUM_VITRINE, SEUIL_ALLUMEES, FENETRE_H_M, FENETRE_L_M, PAS_COLONNE_M, MARGE_COLONNE_M, PORTE_H_M, PORTE_L_M, ENSEIGNE_H_M, ENSEIGNE_L_M, ENSEIGNE_Y_M, INDUSTRIEL_PORTE_H_M, INDUSTRIEL_PORTE_L_M, MUR_RIDEAU_CELLULE_M, VITRINE_BAS_M, VITRINE_HAUT_M, acrotere, codeFacade, murDePorte, mursDe, nbEtages, placementsSolaires, placementsToit } from "./facade";
 import { deriverDecor, type DecorDerive, type OptionsDerivation } from "./decor-donnees";
 import { ajouterMobilier } from "./decor-mobilier";
 import { ajouterHaies, ajouterPelouses, ajouterVegetation } from "./decor-vegetation";
@@ -325,6 +325,7 @@ if (vMur.z > 0.5) {
   float fen = 0.0;
   float verre = 0.0;
   float allumee = 0.0;
+  float lumVerre = 1.0;
   float bardage = 0.0;
   float reflet = 0.0;
   float pasCol = nCol > 0.5 ? xu / nCol : 1.0;
@@ -347,7 +348,11 @@ if (vMur.z > 0.5) {
       float meneau = 1.0 - smoothstep(0.05 - aa, 0.05 + aa, min(fract(uu / pasCol), 1.0 - fract(uu / pasCol)) * pasCol);
       fen = 1.0 - smoothstep(-aa, aa, d);
       verre = (1.0 - smoothstep(-0.08 - aa, -0.08 + aa, d)) * (1.0 - meneau);
-      allumee = (restoF > 0.5 || hc < ${2 * SEUIL_ALLUMEES}u) ? 1.0 : 0.0;
+      // allumée par travée (hachage par colonne, comme les étages), jamais en bande continue : sinon le bloom sature un aplat jaune
+      // qui noie l'enseigne. Un peu plus de travées allumées chez un restaurant (50 % contre 40 %), mais pas toutes.
+      allumee = hc < (restoF > 0.5 ? ${2 * SEUIL_ALLUMEES}u : ${Math.round(1.6 * SEUIL_ALLUMEES)}u) ? 1.0 : 0.0;
+      // vitrine plus douce que les fenêtres d'étage (sous le seuil du bloom) : la lumière large du rez-de-chaussée ne doit pas écraser l'enseigne
+      lumVerre = ${LUM_VITRINE.toFixed(2)};
     }
   } else if (sty < 1.5) {
     // bandeau : fenêtre continue par étage, meneaux tous les 3 m, allège pleine
@@ -400,7 +405,7 @@ if (vMur.z > 0.5) {
   c += cy * 0.05 * bardage;
   c = mix(c, vec3(0.002, 0.008, 0.014), verre);
   c += cy * 0.05 * reflet * verre * (1.0 - allumee);
-  c = mix(c, chaud, verre * allumee);
+  c = mix(c, chaud * lumVerre, verre * allumee);
   c += cy * 0.2 * (fen - verre) * (1.0 - 0.6 * allumee);
   c = mix(c, vec3(0.006, 0.02, 0.028), interP);
   c += cy * 0.28 * (porte - interP);

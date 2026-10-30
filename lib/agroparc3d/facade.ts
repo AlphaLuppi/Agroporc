@@ -83,6 +83,9 @@ export function estLisse(b: Pick<Building, "h" | "r" | "holes">): boolean {
 /** Seuil du nuanceur : `(hachage & 0xffff) < SEUIL_ALLUMEES`. */
 export const SEUIL_ALLUMEES = Math.round(PART_ALLUMEES * 65536);
 
+/** Luminosité de la vitrine allumée du rez-de-chaussée relativement à une fenêtre d'étage (1) : sous le seuil du bloom, pour laisser l'enseigne seule en accent. */
+export const LUM_VITRINE = 0.55;
+
 /**
  * La fenêtre (étage, colonne) du bâtiment `aBat` est-elle allumée ? Déterministe (≈ 25 %). `mur` distingue les murs d'un même
  * bâtiment (le nuanceur passe `floor(L × 8 + 0,5)` : l'arrondi évite qu'une longueur ronde, interpolée avec une erreur de 1e-7, tombe au hasard d'un côté ou de l'autre de l'entier), pour que les façades ne se répètent pas.
