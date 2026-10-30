@@ -20,13 +20,16 @@ export interface PropsListeParties {
   surRegarder?(id: string | null): void;
   /** créer ma partie ; absent : pas de bouton (déjà proposé ailleurs, ou création impossible) */
   surCreer?(): void;
+  /** (arène) le bouton ouvre un panneau de réglages au lieu de créer d'un clic : état du panneau (`aria-expanded`) et son `id` (`aria-controls`) ; absent : bouton ordinaire */
+  creationOuverte?: boolean;
+  idCreation?: string;
   /** `id` de l'élément qui sert d'étiquette à la section (unique dans la page) */
   idTitre: string;
   /** les regarder n'est possible que si la partie en cours me le permet (Battle Royale : pas admis) */
   peutRegarderLaMienne?: boolean;
 }
 
-export default function ListeParties({ mode, lignes, surRejoindre, surRegarder, surCreer, idTitre, peutRegarderLaMienne = true }: PropsListeParties) {
+export default function ListeParties({ mode, lignes, surRejoindre, surRegarder, surCreer, creationOuverte, idCreation, idTitre, peutRegarderLaMienne = true }: PropsListeParties) {
   return (
     <section className={styles.parties} aria-labelledby={idTitre}>
       <h3 id={idTitre}>Parties</h3>
@@ -46,12 +49,20 @@ export default function ListeParties({ mode, lignes, surRejoindre, surRegarder, 
                 Regarder
               </button>
             )}
+            {l.evenements && <span className={styles.partieEvenements}>Événements : {l.evenements}</span>}
           </li>
         ))}
       </ul>
       {surCreer && (
         <div className={styles.actionsPartie}>
-          <button type="button" className={styles.boutonSecondaire} onClick={surCreer}>{libelleCreation(mode)}</button>
+          <button
+            type="button"
+            className={styles.boutonSecondaire}
+            onClick={surCreer}
+            {...(creationOuverte !== undefined ? { "aria-expanded": creationOuverte, ...(idCreation ? { "aria-controls": idCreation } : {}) } : {})}
+          >
+            {libelleCreation(mode)}
+          </button>
         </div>
       )}
     </section>

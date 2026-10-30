@@ -10,6 +10,8 @@
  *
  * Exceptions au « tout synthétisé » : le moteur de la voiture conduite est un VRAI enregistrement (`/arene/moteur.wav`, boucle de
  * ralenti CC0, cf. public/arene/CREDITS.txt) joué en boucle, dont la vitesse de lecture (donc le régime) suit celle de la voiture (v3 §3) ;
+ * la sirène de la voiture de police (2026-10-30) est un son ORIGINAL du joueur (`/arene/sons/sirene-police.mp3`, `SONS_POLICE`), joué en boucle
+ * en arène et en Battle Royale, avec un repli à deux oscillateurs ;
  * et le mode zombies a ses échantillons (tonnerre, rire du Truck, grenades, micro-ondes, tigre chef, fanfare, annonces parlées), dont le
  * registre et la logique pure (calage du pic, limite de voix, file des annonces) sont dans `sons-echantillons.ts`. Un chargeur commun
  * (`telecharger` : fetch → decodeAudioData, cache par URL, échec silencieux) les sert ; ils passent par la même sortie spatialisée que les
@@ -17,7 +19,8 @@
  */
 import type { ArmeFeuId, ArmeMeleeId, AtoutId } from "./protocole";
 import {
-  ECHANTILLONS, ECHANTILLONS_SIMULTANES_MAX, FileAnnonces, URLS_ZOMBIES, VOIX_ANNONCES, ANNONCES_EN_ATTENTE_MAX, departCale, instantPic, voixLibre,
+  ECHANTILLONS, ECHANTILLONS_SIMULTANES_MAX, FileAnnonces, SONS_POLICE, URLS_ARENE, URLS_ZOMBIES, VOIX_ANNONCES, ANNONCES_EN_ATTENTE_MAX, departCale,
+  instantPic, reglageSirene, voixLibre,
   type IdEchantillon, type IdVoix,
 } from "./sons-echantillons";
 import { ZOMBIES } from "./zombies-vagues";
@@ -107,6 +110,14 @@ export interface Sons {
    * image pendant le survol. `null` l'éteint (fin du survol, killcam, sortie de l'arène).
    */
   avion(position: PositionSon | null): void;
+  /**
+   * (2026-10-30) Sirène de la voiture de la descente de police : le fichier du joueur en boucle (`SONS_POLICE`), ou, tant qu'il n'est pas
+   * décodé (ou s'il ne charge pas), deux oscillateurs 700 ↔ 1100 Hz. Atténuée, filtrée et panoramiquée d'après `position`, Doppler d'après
+   * `vitesseRadiale` (m/s, positive quand la voiture s'éloigne) ; à rappeler à chaque image. `null` l'éteint (fin de la descente, killcam, sortie).
+   */
+  sirenePolice(position: PositionSon | null, vitesseRadiale?: number): void;
+  /** (2026-10-30) Lance le téléchargement des sons communs aux trois modes (la sirène de la police), décodés dès que le contexte audio existe. */
+  prechargerArene(): void;
   /** Cran de la molette de zoom de la lunette. */
   zoom(): void;
   /** Ma balle a frappé la tôle d'une voiture (v3 §4). */
@@ -509,6 +520,11 @@ export function creerSons(): Sons {
   let frottement: { src: AudioBufferSourceNode; gain: GainNode; filtre: BiquadFilterNode } | null = null;
   /** moteur de l'avion : deux oscillateurs désaccordés (battement des hélices) et un souffle, filtrés et panoramiqués par image */
   let avionVoix: { oscs: OscillatorNode[]; souffle: AudioBufferSourceNode; gain: GainNode; filtre: BiquadFilterNode; pan: StereoPannerNode | null } | null = null;
+  /** sirène de la police : le fichier en boucle (`src`) ou son repli (deux oscillateurs : porteuse + LFO) ; `gain` coupe la voix en douceur */
+  let sireneVoix: {
+    echantillon: boolean; sources: AudioScheduledSourceNode[]; src: AudioBufferSourceNode | null;
+    gain: GainNode; filtre: BiquadFilterNode; pan: StereoPannerNode | null;
+  } | null = null;
   /**
    * moteur de la voiture conduite : l'enregistrement en boucle (`echantillon`, vitesse de lecture = régime) ou, à défaut, un oscillateur
    * triangle grave + un grain de bruit (`oscs`), le tout sous un passe-bas qui s'ouvre avec la vitesse
@@ -1184,6 +1200,87 @@ export function creerSons(): Sons {
       a.gain.gain.setTargetAtTime(Math.max(0.02, 0.3 / (1 + d / 120)), now, 0.15);
       a.filtre.frequency.setTargetAtTime(Math.max(260, 2400 / (1 + d / 90)), now, 0.15);
       a.pan?.pan.setTargetAtTime(Math.max(-1, Math.min(1, position.pan)), now, 0.1);
+    },
+    sirenePolice(position, vitesseRadiale = 0) {
+      if (position === null) {
+        if (!sireneVoix) return;
+        const v = sireneVoix;
+        sireneVoix = null;
+        eteindre(v.gain, v.sources, 0.15);
+        return;
+      }
+      if (!sireneVoix && !prete()) return;
+      const c = ctx;
+      if (!c || !master) return;
+      const def = SONS_POLICE.sirene;
+      const fichier = telecharger(def.url);
+      // le repli cède la place au fichier dès qu'il est décodé (à chaud, sans attendre la prochaine descente)
+      if (sireneVoix && !sireneVoix.echantillon && fichier.buf) {
+        const v = sireneVoix;
+        sireneVoix = null;
+        eteindre(v.gain, v.sources, 0.05);
+      }
+      if (!sireneVoix) {
+        const g = c.createGain();
+        g.gain.value = 0.0001;
+        const filtre = c.createBiquadFilter();
+        filtre.type = "lowpass";
+        filtre.Q.value = 0.7;
+        filtre.connect(g);
+        let pan: StereoPannerNode | null = null;
+        if (typeof c.createStereoPanner === "function") {
+          pan = c.createStereoPanner();
+          g.connect(pan);
+          pan.connect(master);
+        } else g.connect(master);
+        const sources: AudioScheduledSourceNode[] = [];
+        let src: AudioBufferSourceNode | null = null;
+        if (fichier.buf) {
+          src = c.createBufferSource();
+          src.buffer = fichier.buf;
+          src.loop = true;
+          // la queue du fichier est à −48 dB : on reboucle avant le fondu, de 0,05 s (attaque) à 9,58 s
+          if ("loopStart" in src) {
+            src.loopStart = def.boucleDebutS;
+            src.loopEnd = Math.min(def.boucleFinS, fichier.buf.duration);
+          }
+          src.connect(filtre);
+          src.start(c.currentTime);
+          sources.push(src);
+        } else {
+          // repli : porteuse en dents de scie balayée entre 700 et 1 100 Hz par un LFO à 0,7 Hz (famille de `sireneFrappe`)
+          const porteuse = c.createOscillator();
+          porteuse.type = "sawtooth";
+          porteuse.frequency.value = 900;
+          const lfo = c.createOscillator();
+          lfo.type = "sine";
+          lfo.frequency.value = 0.7;
+          const profondeur = c.createGain();
+          profondeur.gain.value = 200;
+          lfo.connect(profondeur);
+          profondeur.connect(porteuse.frequency);
+          const doux = c.createGain();
+          doux.gain.value = 0.35;
+          porteuse.connect(doux);
+          doux.connect(filtre);
+          porteuse.start();
+          lfo.start();
+          sources.push(porteuse, lfo);
+        }
+        sireneVoix = { echantillon: !!fichier.buf, sources, src, gain: g, filtre, pan };
+      }
+      const v = sireneVoix;
+      const now = c.currentTime;
+      const r = reglageSirene(position.distance, vitesseRadiale);
+      v.gain.gain.setTargetAtTime(r.gain, now, 0.1);
+      v.filtre.frequency.setTargetAtTime(r.passeBas, now, 0.1);
+      v.pan?.pan.setTargetAtTime(Math.max(-1, Math.min(1, position.pan)), now, 0.1);
+      v.src?.playbackRate?.setTargetAtTime(r.vitesse, now, 0.1);
+    },
+    prechargerArene() {
+      if (fini) return;
+      prete();
+      for (const url of URLS_ARENE) telecharger(url);
     },
     alerte(genre) {
       if (!prete()) return;
@@ -1874,6 +1971,12 @@ export function creerSons(): Sons {
           try { o.stop(); } catch { /* déjà arrêté */ }
         }
         avionVoix = null;
+      }
+      if (sireneVoix) {
+        for (const o of sireneVoix.sources) {
+          try { o.stop(); } catch { /* déjà arrêté */ }
+        }
+        sireneVoix = null;
       }
       if (crissement) {
         try { crissement.src.stop(); } catch { /* déjà arrêté */ }

@@ -17,17 +17,21 @@ import { resolve } from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
 import { lireCachettes, type FichierCachettes } from "../../lib/agroparc3d/cachettes";
 import type { SceneData } from "../../lib/agroparc3d/types";
-import { construireMondeBr } from "../../lib/fps/br-carte";
+import { construireMondeBr, pointsButin } from "../../lib/fps/br-carte";
 import { BR } from "../../lib/fps/br-regles";
 import { classementStats } from "../../lib/fps/br-stats";
 import { admettre, creerEtatFlood, type EtatFlood } from "../../lib/fps/anti-flood";
 import { construireCircuits, flotte } from "../../lib/fps/circulation";
 import { construireMonde, pointsApparition } from "../../lib/fps/collision";
 import { ipClient } from "../../lib/fps/ip-client";
+import { optionsDepuisReglages, type ImposesEnv } from "../../lib/fps/evenements-arene";
 import { Salle, type OptionsSalle, type Sortie } from "../../lib/fps/match";
+import { cheminPourPolice, type OptionsPolice } from "../../lib/fps/match-police";
+import { carteNavigation, copierCarteNavigation } from "../../lib/fps/navigation";
+import { REGLAGES_DEFAUT, normaliserReglages, reglagesEgaux, type ReglagesArene } from "../../lib/fps/reglages-arene";
 import { FenetreMax, LimiteCreation, RegistreParties, Reservations, type Partie } from "../../lib/fps/parties";
 import {
-  JEU, MODES_SALLE, PARTIE_AUTO, PARTIE_NOUVELLE, VERSIONS_ACCEPTEES, type MessageClient, type MessageServeur, type ModeSalle, type ResumePartie, type ResumePartieBr,
+  JEU, MODES_SALLE, PARTIE_AUTO, PARTIE_NOUVELLE, VERSIONS_ACCEPTEES, capacitesAcceptees, type MessageClient, type MessageServeur, type ModeSalle, type ResumePartie, type ResumePartieBr,
 } from "../../lib/fps/protocole";
 import { botsRestantsGlobal, capaciteSalle, decisionMode, garderPourReprise, messageSalons, modeDeSalle, partieApercu, partieRoutageDe, type PartieApercu, type PartieRoutage } from "../../lib/fps/salons";
 import { BudgetNavigation, installerNavigationBr, preparerNavigationBr } from "../../lib/fps/nav-bots";
@@ -102,7 +106,15 @@ function cheminDonnees(nom: string, variable: string): string {
 const fichierScene = cheminDonnees("scene.json", "SCENE_JSON");
 const scene = JSON.parse(readFileSync(fichierScene, "utf8")) as SceneData;
 // points d'apparition de l'arène : calculés une fois sur un monde de référence, partagés en lecture seule (chaque arène construit SON monde, mutable)
-const apparitions = pointsApparition(scene, construireMonde(scene));
+const mondeRefArene = construireMonde(scene);
+const apparitions = pointsApparition(scene, mondeRefArene);
+/**
+ * Dégagement (m) de la grille de navigation des voitures : celui du Truck fou (`DEGAGEMENT_TRUCK_M` de match-evenements.ts), aussi celui de la voiture de police (arène ET
+ * Battle Royale : la grille des bots, à cases de 1,5 m, fait passer une caisse de 4,4 × 1,9 m par des portes de 2 m où elle reste coincée). Calculée UNE fois ici,
+ * avant `listen`, puis COPIÉE dans le monde de chaque salle neuve (`copierCarteNavigation`) : le cache est par monde, une première grille à froid coûte 40 à 430 ms en plein tic.
+ */
+const DEGAGEMENT_VOITURE_M = 1.8;
+carteNavigation(mondeRefArene, DEGAGEMENT_VOITURE_M);
 
 /** Durée (ms) ou compte strictement positif lu dans l'environnement, undefined si absent ou invalide. */
 const dureeEnv = nombreEnv;
@@ -127,6 +139,32 @@ const [elsaX, elsaZ] = positionElsa(scene);
 const evtMin = dureeEnv("PDJ_FPS_EVT_MIN_MS");
 const evtMax = dureeEnv("PDJ_FPS_EVT_MAX_MS");
 const evtType = process.env.PDJ_FPS_EVT_TYPE === "truck" || process.env.PDJ_FPS_EVT_TYPE === "tigre" ? process.env.PDJ_FPS_EVT_TYPE : undefined;
+// Descente de police (2026-10-30) : `PDJ_FPS_POLICE=off` la coupe partout (arène et Battle Royale), intervalle (premier ET entre), durée et PV surchargeables pour les tests
+const policeActive = process.env.PDJ_FPS_POLICE !== "off";
+const policeMin = dureeEnv("PDJ_FPS_POLICE_MIN_MS");
+const policeMax = dureeEnv("PDJ_FPS_POLICE_MAX_MS");
+const policeIntervalle = intervalleEnv(policeMin, policeMax);
+const policeDuree = dureeEnv("PDJ_FPS_POLICE_DUREE_MS");
+const policePv = dureeEnv("PDJ_FPS_POLICE_PV");
+/** Battle Royale, essais : délai fixe du premier essai après le départ de l'avion (remplace aussi les 60 s après le premier atterrissage) */
+const policeBr = dureeEnv("PDJ_FPS_BR_POLICE_MS");
+/**
+ * Réglages d'événements du hall `ar1` (la partie permanente) : `PDJ_FPS_EVT_ACTIFS` (liste CSV d'identifiants ; ABSENTE : tous ; présente mais VIDE : aucun
+ * événement) et `PDJ_FPS_EVT_FREQUENCE` (calme | normal | chaos). Les arènes créées par un joueur ont les leurs (`mode{partie:"nouvelle", reglages}`).
+ */
+const evtActifsEnv = process.env.PDJ_FPS_EVT_ACTIFS;
+const reglagesHall: ReglagesArene = (() => {
+  const r = normaliserReglages({
+    evenements: evtActifsEnv === undefined ? undefined : evtActifsEnv.split(",").map((x) => x.trim()).filter(Boolean),
+    frequence: process.env.PDJ_FPS_EVT_FREQUENCE,
+  });
+  return policeActive ? r : { ...r, evenements: r.evenements.filter((e) => e !== "police") };
+})();
+/** Intervalles fixés par l'environnement : jamais mis à l'échelle par la fréquence (les tests de bout en bout restent déterministes). */
+const imposes: ImposesEnv = {
+  elsa: elsaMin !== undefined || elsaMax !== undefined, avion: avionMin !== undefined || avionMax !== undefined, bus: busMin !== undefined || busMax !== undefined,
+  evenements: evtMin !== undefined || evtMax !== undefined, police: policeIntervalle !== undefined,
+};
 const circuits = construireCircuits();
 const rondPoint = trouverRondPoint(scene) ?? ROND_POINT;
 const options: OptionsSalle = {
@@ -157,9 +195,26 @@ const options: OptionsSalle = {
  */
 let nbCreations = 0;
 const maintenantCreation = (): number => Date.now() + (nbCreations++ % 3) * 17;
-/** Une arène neuve, avec son propre monde (grille de collision à tampon non réentrant, brèches) ; `options`, `circuits`, `cachettes` sont en lecture seule. */
-function creerSalleArene(): Salle {
-  return new Salle(construireMonde(scene), apparitions, Math.random, maintenantCreation(), options);
+/** Compteur des salles d'arène créées : clé de la voiture de police dans le budget de recherches de chemin du serveur. */
+let nbSallesArene = 0;
+/**
+ * Une arène neuve, avec son propre monde (grille de collision à tampon non réentrant, brèches) et SES réglages d'événements (le hall : ceux de l'environnement,
+ * une arène créée par un joueur : les siens) ; `options`, `circuits`, `cachettes` sont en lecture seule. Les routes de départ de la police sont celles des
+ * points d'apparition ; son chemin passe par le budget de recherches du serveur (un A* par 12 ms, toutes parties confondues).
+ */
+function creerSalleArene(config?: unknown): Salle {
+  const reglages = config === undefined ? reglagesHall : normaliserReglages(config);
+  const monde = construireMonde(scene);
+  copierCarteNavigation(mondeRefArene, monde, DEGAGEMENT_VOITURE_M);
+  const cle = `police:ar${++nbSallesArene}`;
+  const police: OptionsPolice | undefined = policeActive
+    ? {
+      points: apparitions, chemin: cheminPourPolice(monde, (t) => budgetNavigationBr.demander(cle, t)),
+      ...(policeIntervalle ? { intervalle: { premier: policeIntervalle, entre: policeIntervalle } } : {}),
+      ...(policePv !== undefined ? { pvMax: policePv } : {}), ...(policeDuree !== undefined ? { dureeMs: policeDuree } : {}),
+    }
+    : undefined;
+  return new Salle(monde, apparitions, Math.random, maintenantCreation(), optionsDepuisReglages(reglages, { ...options, ...(police ? { police } : {}) }, imposes));
 }
 
 // Zombies (v5) : son propre monde MUTABLE (portes qui s'ouvrent), sans Elsa, circulation, voitures ni événements. La grille de navigation des
@@ -190,6 +245,16 @@ const optionsSecret = {
   ...(secretLivraison !== undefined ? { livraisonService: secretLivraison } : {}),
 };
 /**
+ * (2026-10-30, essais) patrouille de police en ambiance des zombies : `PDJ_FPS_ZOMBIES_PATROUILLE=off` la coupe (les e2e déterministes), sinon première
+ * manche éligible (`_PATROUILLE_MANCHE`, 3) et délai du premier passage ET entre deux (`_PATROUILLE_MS`, 0 = dès le début de la manche)
+ */
+const patrouilleManche = dureeEnv("PDJ_FPS_ZOMBIES_PATROUILLE_MANCHE");
+const patrouilleMs = nombreEnvOuZero("PDJ_FPS_ZOMBIES_PATROUILLE_MS");
+const optionsPatrouille = process.env.PDJ_FPS_ZOMBIES_PATROUILLE === "off" ? { patrouille: false as const } : {
+  ...(patrouilleManche !== undefined || patrouilleMs !== undefined
+    ? { patrouille: { ...(patrouilleManche !== undefined ? { manche: patrouilleManche } : {}), ...(patrouilleMs !== undefined ? { delaiMs: patrouilleMs } : {}) } } : {}),
+};
+/**
  * (v11, essais) suspension de la partie par un joueur : durée maximale (5 min), compte à rebours de la levée (3 s ; 0 = levée immédiate, e2e), délai entre
  * deux suspensions d'un joueur (10 s) et pause cumulée par partie (15 min) ; les trois limites ne valent que s'il y a plusieurs humains admis.
  */
@@ -216,6 +281,7 @@ const optionsZombies: OptionsSalle = {
     ...(remontoirsZombies !== undefined ? { remontoirsDepart: remontoirsZombies } : {}),
     ...(bonusZombies.length ? { bonus: bonusZombies } : {}),
     ...(Object.keys(optionsSecret).length ? { secret: optionsSecret } : {}),
+    ...optionsPatrouille,
   },
 };
 const departsZombies = DEPARTS.map((d) => [d[0], d[1]] as [number, number]);
@@ -251,7 +317,11 @@ const botsEssaiBr = process.env.PDJ_FPS_BR_BOTS_ESSAI === "agressif" ? ("agressi
  * parties à la création de la suivante. Elles sont donc calculées ICI, une fois, avant `listen`, sur un monde de référence, puis copiées (`libre` ET `etats`) dans
  * chaque salle BR neuve (`creerSalleBr`). Un seul budget de recherches de chemin pour tout le serveur : au plus un A* par tic, toutes parties confondues.
  */
-const grilleBrReference = preparerNavigationBr(construireMondeBr(scene));
+const mondeRefBr = construireMondeBr(scene);
+const grilleBrReference = preparerNavigationBr(mondeRefBr);
+carteNavigation(mondeRefBr, DEGAGEMENT_VOITURE_M);
+/** Routes de départ de la voiture de police du Battle Royale : le pool `route` des emplacements de butin (hors bâtiments et eau), en (x, z). */
+const pointsRouteBr: [number, number][] = pointsButin(scene, mondeRefBr).filter((p) => p.pool === "route").map((p) => [p.p[0], p.p[2]]);
 const budgetNavigationBr = new BudgetNavigation();
 /** Bots en jeu dans toutes les parties de Battle Royale du serveur. */
 const optionsBr: OptionsSalle = {
@@ -270,6 +340,7 @@ const optionsBr: OptionsSalle = {
     ...(objetsBr !== undefined ? { nbObjets: Math.floor(objetsBr) } : {}),
     ...(finBr !== undefined ? { finAffichageMs: finBr } : {}),
     ...(valideBr !== undefined ? { partieValideMinMs: valideBr } : {}),
+    ...(policeBr !== undefined ? { policeMs: policeBr } : {}),
   },
   // à 10 Hz de snaps et 150 ms d'interpolation, la cible vue par le tireur a plus de retard qu'en arène : fenêtre de rejeu élargie
   rewindMaxMs: BR.rewindMaxMs,
@@ -279,11 +350,21 @@ const optionsBr: OptionsSalle = {
  * Une salle Battle Royale neuve, avec son propre monde (≈ 90 ms et 2 Mo). Le point de départ n'est jamais utilisé (le service place les
  * joueurs dans l'avion) : le centre des bornes du monde.
  */
+let nbSallesBr = 0;
 function creerSalleBr(): Salle {
   const mondeBr = construireMondeBr(scene);
   installerNavigationBr(mondeBr, grilleBrReference);
+  copierCarteNavigation(mondeRefBr, mondeBr, DEGAGEMENT_VOITURE_M);
   const depart: [number, number][] = [[(mondeBr.bornes.x0 + mondeBr.bornes.x1) / 2, (mondeBr.bornes.z0 + mondeBr.bornes.z1) / 2]];
-  return new Salle(mondeBr, depart, Math.random, maintenantCreation(), optionsBr);
+  // descente de police du BR : armée par le service BR (`armer`), jamais seule ; sa voiture cherche ses chemins sur la grille de dégagement 1,8 m
+  const cle = `police:br${++nbSallesBr}`;
+  const police: OptionsPolice | undefined = policeActive
+    ? {
+      points: pointsRouteBr, chemin: cheminPourPolice(mondeBr, (t) => budgetNavigationBr.demander(cle, t)),
+      ...(policePv !== undefined ? { pvMax: policePv } : {}), ...(policeDuree !== undefined ? { dureeMs: policeDuree } : {}),
+    }
+    : undefined;
+  return new Salle(mondeBr, depart, Math.random, maintenantCreation(), { ...optionsBr, ...(police ? { police } : {}) });
 }
 /**
  * Les parties du serveur : `ar1`, `z1` et `br1` permanentes (jamais refermées), les autres créées par `mode{partie:"nouvelle"}` et refermées dès qu'elles
@@ -295,7 +376,7 @@ const entierEnv = (nom: string, defaut: number): number => Math.max(1, Math.floo
 /** Membres humains d'une salle (lobby, spectateurs et sessions coupées compris, bots exclus) : une partie sans humain est refermée et n'est plus tiquée. */
 const humains = (salle: Salle): number => salle.nombreHumains();
 const registre = new RegistreParties<Salle>({
-  fabriques: { arene: creerSalleArene, zombies: creerSalleZombies, br: creerSalleBr },
+  fabriques: { arene: (config) => creerSalleArene(config), zombies: () => creerSalleZombies(), br: () => creerSalleBr() },
   max: { arene: entierEnv("PDJ_FPS_ARENE_PARTIES", 2), zombies: entierEnv("PDJ_FPS_ZOMBIES_PARTIES", 3), br: entierEnv("PDJ_FPS_BR_PARTIES", 4) },
   maxTotal: entierEnv("PDJ_FPS_PARTIES_TOTAL", 6),
   humains,
@@ -356,6 +437,8 @@ interface Client {
   jeton: string;
   /** (v10) version du protocole annoncée au `bonjour` (0 avant) : la salle des zombies exige `VERSION_MIN_ZOMBIES` */
   version: number;
+  /** (2026-10-30) capacités annoncées au `bonjour` (liste blanche `CAPACITES_CONNUES`) : sans `police`, le joueur est invisible pour la descente de police */
+  capacites: string[];
 }
 const clients = new Map<string, Client>();
 
@@ -448,6 +531,7 @@ function reprendre(c: Client, reprise: unknown, pseudo: unknown, maintenant: num
   c.salle = salle;
   c.inscrit = true;
   c.jeton = nouveauJeton();
+  c.salle.definirCapacites(id, c.capacites);
   diffuser(c.salle, avecJeton(c, c.salle.reprendre(id, maintenant, pseudo)));
   console.log(`~ ${c.salle.inspecter(id)?.pseudo} (reprise)`);
   return true;
@@ -573,7 +657,7 @@ function resumePartie(p: Partie<Salle>): ResumePartie {
       ...(r?.botsMax !== undefined ? { botsMax: r.botsMax } : {}), ...(r?.botsRestants !== undefined ? { botsRestants: r.botsRestants } : {}),
     };
   }
-  return { ...base, phase: "arene", capacite: JEU.joueursMax, enJeu: p.salle.nombreEnJeu() };
+  return { ...base, phase: "arene", capacite: JEU.joueursMax, enJeu: p.salle.nombreEnJeu(), ...(p.salle.reglages ? { reglages: p.salle.reglages } : {}) };
 }
 
 /**
@@ -612,8 +696,11 @@ function partiesRoutage(mode: ModeSalle, maintenant: number): PartieRoutage[] {
  * renverrait `erreur{plein}` et la socket serait fermée) : en jeu (`lobby`), salle d'arrivée pleine (`plein`), plus de partie possible ou création trop
  * rapprochée (`limite`). Le pseudo et l'id sont conservés ; la nouvelle salle répond `mode` (écho, avec la partie) puis `bienvenue`.
  */
-function changerMode(c: Client, mode: unknown, partie: unknown, maintenant: number): void {
+function changerMode(c: Client, mode: unknown, partie: unknown, maintenant: number, reglagesBruts?: unknown): void {
   const modeDemande = (MODES_SALLE as readonly unknown[]).includes(mode) ? (mode as ModeSalle) : null;
+  // (2026-10-30) réglages d'événements d'une arène : validés ICI sur la liste fermée (jamais le brut), lus seulement pour une création
+  const demandes: ReglagesArene | null = modeDemande === "arene" && partie === PARTIE_NOUVELLE ? normaliserReglages(reglagesBruts) : null;
+  const reglagesDe = (id: string): ReglagesArene => registre.parId(id)?.salle.reglages ?? REGLAGES_DEFAUT;
   // créer une partie est possible si le registre le permet ET si les limites de création le permettent : sinon le routage par défaut se rabat sur la
   // première partie qui a de la place (au lieu d'un `refus{limite}` sans issue) et `partie:"nouvelle"` explicite est refusé `limite`
   const peutCreer = modeDemande !== null && registre.peutOuvrir(modeDemande)
@@ -622,6 +709,8 @@ function changerMode(c: Client, mode: unknown, partie: unknown, maintenant: numb
     mode, salleActuelle: modeDeSalle(c.salle, SALLES()), enJeu: c.salle.inspecter(c.id)?.enJeu ?? false, joueursCible: 0, version: c.version,
     partie, partieActuelle: registre.deSalle(c.salle)?.id ?? null,
     parties: modeDemande ? partiesRoutage(modeDemande, maintenant) : [], creerPossible: peutCreer,
+    // une arène vide n'est reprise que par qui veut EXACTEMENT ses réglages (ni le hall vide ni une arène personnalisée pas encore refermée pour d'autres réglages)
+    ...(demandes ? { accepteVide: (p: PartieRoutage) => reglagesEgaux(reglagesDe(p.id), demandes) } : {}),
   });
   if (!decision) return;
   if (decision.action === "version") return refuser(c, "version", "Version du protocole incompatible : rechargez la page.");
@@ -631,7 +720,8 @@ function changerMode(c: Client, mode: unknown, partie: unknown, maintenant: numb
   const reserver = (id: string): void => { if (decision.mode === "arene" && partie === PARTIE_AUTO) reservations.reserver(c.id, id, maintenant); };
   if (decision.action === "echo") {
     if (decision.partie) reserver(decision.partie);
-    envoyer(c, JSON.stringify({ t: "mode", mode: decision.mode, ...(decision.partie ? { partie: decision.partie } : {}) } satisfies MessageServeur));
+    const sienne = decision.partie ? registre.parId(decision.partie)?.salle.reglages : null;
+    envoyer(c, JSON.stringify({ t: "mode", mode: decision.mode, ...(decision.partie ? { partie: decision.partie } : {}), ...(sienne ? { reglages: sienne } : {}) } satisfies MessageServeur));
     return;
   }
   let partieCible: Partie<Salle> | null;
@@ -639,7 +729,7 @@ function changerMode(c: Client, mode: unknown, partie: unknown, maintenant: numb
     // une vraie création : plafonds et limites déjà jugés dans `peutCreer` (la décision ne renvoie `nouvelle` que s'il est vrai)
     if (!peutCreer) return refus("limite");
     const debut = performance.now();
-    partieCible = registre.ouvrir(decision.mode);
+    partieCible = registre.ouvrir(decision.mode, decision.mode === "arene" && demandes ? demandes : undefined);
     if (!creationLibre(c, decision.mode)) limiteCreation.noter(partieCible.id, decision.mode, c.id, c.ip, maintenant);
     ignorerTicSuivant = true;
     console.log(`+ partie ${partieCible.id} (${registre.nombre()} en tout, créée en ${Math.round(performance.now() - debut)} ms)`);
@@ -654,8 +744,11 @@ function changerMode(c: Client, mode: unknown, partie: unknown, maintenant: numb
   const depart = ancienne.deconnecter(c.id, maintenant);
   c.salle = cible; // avant de diffuser le départ : le client ne reçoit plus rien de l'ancienne salle
   diffuser(ancienne, depart);
-  const echo: MessageServeur = { t: "mode", mode: decision.mode, partie: partieCible.id };
-  diffuser(cible, avecJeton(c, [{ a: c.id, m: echo }, ...cible.connecter(c.id, pseudo, maintenant)]));
+  // l'écho porte les réglages de la partie rejointe : le client sait ce qui a été appliqué
+  const echo: MessageServeur = { t: "mode", mode: decision.mode, partie: partieCible.id, ...(cible.reglages ? { reglages: cible.reglages } : {}) };
+  const entree = cible.connecter(c.id, pseudo, maintenant);
+  cible.definirCapacites(c.id, c.capacites);
+  diffuser(cible, avecJeton(c, [{ a: c.id, m: echo }, ...entree]));
   refermerPartiesVides();
   diffuserSalons();
 }
@@ -690,8 +783,11 @@ function traiter(c: Client, m: MessageClient, maintenant: number): void {
     if (m.t !== "bonjour") return;
     if (!VERSIONS_ACCEPTEES.includes(m.v)) return refuser(c, "version", "Version du protocole incompatible : rechargez la page.");
     c.version = m.v;
+    // lues AVANT la reprise : une session reprise garde les capacités de sa nouvelle connexion
+    c.capacites = capacitesAcceptees(m.capacites);
     if (reprendre(c, m.reprise, m.pseudo, maintenant)) { diffuserSalons(c); return; }
     const sorties = avecJeton(c, c.salle.connecter(c.id, typeof m.pseudo === "string" ? m.pseudo : "", maintenant));
+    c.salle.definirCapacites(c.id, c.capacites);
     c.inscrit = !sorties.some((s) => s.a === c.id && s.m.t === "erreur");
     diffuser(c.salle, sorties);
     if (c.inscrit) {
@@ -702,7 +798,7 @@ function traiter(c: Client, m: MessageClient, maintenant: number): void {
   }
   if (m.t === "bonjour") return;
   if (m.t !== "ping" && m.t !== "vueScores") c.utileT = maintenant;
-  if (m.t === "mode") return changerMode(c, m.mode, m.partie, maintenant);
+  if (m.t === "mode") return changerMode(c, m.mode, m.partie, maintenant, m.reglages);
   if (m.t === "rejoindre") reservations.liberer(c.id);
   const sorties = c.salle.recevoir(c.id, m, maintenant);
   diffuser(c.salle, m.t === "rejoindre" && c.salle.mode() === "arene" ? avecAlternative(c, sorties, maintenant) : sorties);
@@ -795,7 +891,7 @@ wss.on("connection", (ws, req) => {
   parIp.set(ip, (parIp.get(ip) ?? 0) + 1);
   const c: Client = {
     id: nouvelId(), ws, inscrit: false, vivant: true, pingEnvoyeA: Date.now(), flood: creerEtatFlood(Date.now()), ip, utileT: Date.now(), salle: salleArene,
-    jeton: nouveauJeton(), version: 0,
+    jeton: nouveauJeton(), version: 0, capacites: [],
   };
   clients.set(c.id, c);
   // un client qui ne dit pas « bonjour » dans les 10 s est libéré

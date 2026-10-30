@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   ARMES, ARMES_MELEE, ARMES_PRINCIPALES, ARMES_PRINCIPALES_ZOMBIES, ARMES_SECONDAIRES, ARMES_SECONDAIRES_ZOMBIES, ARMES_SPECIALES, ARMES_UNIQUES, ECHELLE_AVATAR, EQUIPEMENT_DEFAUT, JEU, OEIL_SIEGE, PAS_SNAP_ZOMBIE, PLAFONDS,
-  MODES_SALLE, PARTIE_AUTO, PARTIE_NOUVELLE, SILHOUETTE, SILHOUETTE_ACCROUPIE, SLOTS, VERSIONS_ACCEPTEES, VERSION_MIN_ZOMBIES, VERSION_PROTOCOLE, copierEquipement, decoderZombies, encoderZombies, estIdBot, estIdZombie, estMelee, idZombie,
+  CAPACITE_POLICE, CIBLE_POLICE, MODES_SALLE, PARTIE_AUTO, PARTIE_NOUVELLE, SILHOUETTE, SILHOUETTE_ACCROUPIE, SLOTS, VERSIONS_ACCEPTEES, VERSION_MIN_ZOMBIES, VERSION_PROTOCOLE, capacitesAcceptees, copierEquipement, decoderZombies, encoderZombies, estIdBot, estIdZombie, estMelee, idZombie,
   oeilDe, silhouetteDe, type ZombieSnap,
-  type AvionBr, type CauseMort, type EtatJoueurSnap, type EtatPartieBr, type MessageClient, type MessageServeur, type ModeSalle, type PassageAvion, type TigreLargueSnap,
+  type AvionBr, type CauseMort, type EtatJoueurSnap, type EtatPartieBr, type MessageClient, type MessageServeur, type ModeSalle, type PassageAvion, type TigreLargueSnap, type TypeEvenement,
 } from "./protocole";
 import { STATS } from "./armes";
 
@@ -330,5 +330,60 @@ describe("protocole v8 (Battle Royale)", () => {
     // la chute ne porte ni séquence ni nombre de pas : le serveur avance seul, en temps réel
     const chute = client[1] as Extract<MessageClient, { t: "chute" }>;
     expect(Object.keys(chute).sort()).toEqual(["avance", "lacet", "lateral", "ouvrir", "t", "tangage"]);
+  });
+});
+
+describe("protocole : descente de police et réglages d'arène (2026-10-30, additif)", () => {
+  it("la version reste 11 (les clients v11 déjà en cache ne sont pas cassés : capacités, champs optionnels, nouveau message ignoré)", () => {
+    expect(VERSION_PROTOCOLE).toBe(11);
+    expect([...VERSIONS_ACCEPTEES]).toEqual([8, 9, 10, 11]);
+  });
+
+  it("nouvelle cause de mort `police`, cible réservée `police`, capacité `police` ; aucun id de joueur, de tigre, de bot ni de partie ne peut valoir CIBLE_POLICE", () => {
+    const cause: CauseMort = "police";
+    expect(cause).toBe("police");
+    expect(CIBLE_POLICE).toBe("police");
+    expect(CAPACITE_POLICE).toBe("police");
+    for (const id of ["j1", "t1", "z1", "b1", "ar1", "br1"]) expect(id).not.toBe(CIBLE_POLICE);
+    expect(CIBLE_POLICE).not.toBe("tigre");
+    expect(CIBLE_POLICE).not.toBe("titan");
+  });
+
+  it("`police` n'est pas un `TypeEvenement` : un client d'avant qui recevrait `evenement{type:police}` annoncerait un tigre géant", () => {
+    const types: TypeEvenement[] = ["truck", "tigre"];
+    expect(types).not.toContain("police");
+  });
+
+  it("capacitesAcceptees : liste blanche, dédoublonnée, tout le reste ignoré", () => {
+    expect(capacitesAcceptees(["police"])).toEqual(["police"]);
+    expect(capacitesAcceptees(["police", "police", "x", 3, null, {}, "POLICE"])).toEqual(["police"]);
+    for (const brut of [undefined, null, "police", 1, {}, [], ["x"]]) expect(capacitesAcceptees(brut)).toEqual([]);
+    expect(capacitesAcceptees([...Array.from({ length: 16 }, () => "x"), "police"])).toEqual([]);
+  });
+
+  it("les messages `police`, `mode` avec réglages, `bonjour` avec capacités et le snap avec la voiture survivent à JSON", () => {
+    const reglages = { evenements: ["elsa", "police"], frequence: "calme" } as const;
+    const serveur: MessageServeur[] = [
+      { t: "police", phase: "debut", debutT: 1, finT: 23_001, cible: "j2" },
+      { t: "police", phase: "fin", debutT: 1, finT: 9, raison: "detruite", par: "j3" },
+      { t: "police", phase: "etat", debutT: 1, finT: 23_001 },
+      { t: "mode", mode: "arene", partie: "ar2", reglages },
+      { t: "snap", ts: 1, j: [], monstres: { police: { p: [1, 0, 2], cap: 0.5, v: -3, pv: 700, pvMax: 700, cible: "j2", etat: "fumee", depart: true } } },
+      { t: "salons", arene: { joueurs: 1, enJeu: 1 }, zombies: { phase: "lobby", joueurs: 0, manche: 0 }, listes: { arene: [{ id: "ar2", mode: "arene", phase: "arene", joueurs: 1, capacite: 16, enJeu: 1, reglages }], zombies: [], br: [] } },
+    ];
+    const client: MessageClient[] = [
+      { t: "bonjour", v: 11, pseudo: "Alice", capacites: ["police"] },
+      { t: "mode", mode: "arene", partie: PARTIE_NOUVELLE, reglages },
+      { t: "lancerPartie", bots: 3, police: false },
+    ];
+    for (const m of [...serveur, ...client]) expect(JSON.parse(JSON.stringify(m))).toEqual(m);
+    // un état de partie BR porte le réglage de l'hôte
+    const etat: Pick<EtatPartieBr, "police"> = { police: false };
+    expect(etat.police).toBe(false);
+  });
+
+  it("un patrouille de police des zombies est un effet ponctuel ordinaire (`zevt`)", () => {
+    const m: MessageServeur = { t: "zevt", e: { e: "patrouille", p0: [-300, 0, 40], p1: [300, 0, 40], t0: 1000, finT: 31_000 } };
+    expect(JSON.parse(JSON.stringify(m))).toEqual(m);
   });
 });

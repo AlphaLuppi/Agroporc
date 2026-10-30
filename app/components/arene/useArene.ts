@@ -10,10 +10,11 @@ import {
 } from "@/lib/fps/protocole";
 import { annoncesBr, annoncesZombies } from "@/lib/fps/hud-modele";
 import { decoderApercu } from "@/lib/fps/apercu-reseau";
+import { normaliserReglages, type ReglagesArene } from "@/lib/fps/reglages-arene";
 import type { ApercuDirect } from "@/lib/fps/apercu-source";
 import type { JeuEvenement, JeuHandle } from "@/lib/fps/jeu";
 import type { Annonce, Bonus, DerniereMort, EntreeFil, EvenementHud, GainArgent, Salons, StatsBrRecues, UseArene } from "./contrats";
-import { PARTIE_HALL, TEXTE_ARENE_PLEINE, estBot, estEchoMode, nomAffiche, texteRefus } from "./lobby-modele";
+import { PARTIE_HALL, TEXTE_ARENE_PLEINE, estBot, estEchoMode, messageChoixMode, nomAffiche, reglagesIgnores as serveurIgnoreReglages, texteRefus } from "./lobby-modele";
 
 // Les types de contrat sont dans contrats.ts (partagés avec l'hôte et le HUD) ; réexportés pour les appelants existants.
 export type { DerniereMort, EntreeFil, EvenementHud, UseArene } from "./contrats";
@@ -94,6 +95,10 @@ export function useArene(pseudo: string, jeuRef: MutableRefObject<JeuHandle | nu
   const [enPauseZ, setEnPauseZ] = useState(false);
   /** (v11) arène pleine : id d'une autre arène qui accueille (`refus{rejoindre, plein, alternative}`), pour « Changer d'arène » */
   const [alternativeArene, setAlternativeArene] = useState<string | null>(null);
+  /** (2026-10-30) événements de l'arène rejointe d'après l'écho de `mode`, et réglages demandés à la création en attente de cet écho (pour repérer un serveur d'avant) */
+  const [reglagesArene, setReglagesArene] = useState<ReglagesArene | null>(null);
+  const [reglagesIgnores, setReglagesIgnores] = useState(false);
+  const reglagesDemandesRef = useRef<ReglagesArene | null>(null);
   /**
    * (v11) compteurs d'évènements du choix de partie, lus par l'hôte : `confirmationsMode` augmente quand le serveur a placé le client (écho de `mode`, ou
    * `bienvenue` de la nouvelle salle), `refusMode` quand il a refusé un `mode`, `refusRejoindre` quand une arène pleine a refusé `rejoindre`
@@ -202,21 +207,27 @@ export function useArene(pseudo: string, jeuRef: MutableRefObject<JeuHandle | nu
    * `partie` (v11, les trois modes) : une partie de `salons.listes[mode]`, `PARTIE_NOUVELLE` pour créer la sienne, ou `PARTIE_AUTO` (arène : la plus peuplée
    * qui accueille) ; envoyé même si le mode est déjà celui de la salle.
    */
-  const choisirMode = useCallback((m: ModeSalle, partie?: string) => {
+  const choisirMode = useCallback((m: ModeSalle, partie?: string, reglages?: ReglagesArene) => {
     if (modeVouluRef.current === m && partie === undefined) return;
     modeVouluRef.current = m;
     setModeVoulu(m);
     setErreur(null);
     setAlternativeArene(null);
+    // (2026-10-30) réglages d'événements : seulement pour créer une arène (le serveur les valide encore, liste fermée)
+    const msg = messageChoixMode(m, partie, reglages);
+    reglagesDemandesRef.current = msg.reglages ?? null;
+    setReglagesIgnores(false);
     // une partie nommée est celle qu'on redemandera après une coupure (pas `nouvelle` ni `auto` : le serveur donnera l'id par `mode`)
     if (partie !== undefined && partie !== PARTIE_NOUVELLE && partie !== PARTIE_AUTO) partieVoulueRef.current = partie;
-    clientRef.current?.envoyer(partie !== undefined ? { t: "mode", mode: m, partie } : { t: "mode", mode: m });
+    clientRef.current?.envoyer(msg);
   }, []);
   /** Hôte du lobby des zombies ou du Battle Royale : lance la partie (le serveur ignore le message d'un autre joueur). `bots` : Battle Royale seulement (entier). */
-  const lancerPartie = useCallback((difficulte?: Difficulte, bots?: number) => {
+  const lancerPartie = useCallback((difficulte?: Difficulte, bots?: number, police?: boolean) => {
     const msg: Extract<MessageClient, { t: "lancerPartie" }> = { t: "lancerPartie" };
     if (difficulte) msg.difficulte = difficulte;
     if (bots !== undefined && Number.isInteger(bots) && bots >= 0) msg.bots = bots;
+    // (2026-10-30) Battle Royale : descente de police (absent = activée pour le serveur)
+    if (typeof police === "boolean") msg.police = police;
     clientRef.current?.envoyer(msg);
   }, []);
 
@@ -229,6 +240,15 @@ export function useArene(pseudo: string, jeuRef: MutableRefObject<JeuHandle | nu
   }, []);
 
   useEffect(() => {
+    /** (2026-10-30) l'écho `mode` porte les réglages de l'arène rejointe ; sans eux alors que j'en ai demandé de particuliers, le serveur est d'avant ce réglage */
+    const appliquerReglagesEcho = (m: Extract<MessageServeur, { t: "mode" }>, changement: boolean) => {
+      const demandes = reglagesDemandesRef.current;
+      reglagesDemandesRef.current = null;
+      if (m.mode !== "arene") { setReglagesArene(null); setReglagesIgnores(false); return; }
+      // simple écho sans réglages (demande rejouée) : ceux déjà connus restent
+      if (m.reglages) setReglagesArene(normaliserReglages(m.reglages)); else if (changement) setReglagesArene(null);
+      setReglagesIgnores(serveurIgnoreReglages(demandes, m.reglages));
+    };
     const surMessage = (m: MessageServeur) => {
       switch (m.t) {
         case "bienvenue":
@@ -254,6 +274,9 @@ export function useArene(pseudo: string, jeuRef: MutableRefObject<JeuHandle | nu
             setMode("arene");
             partieRef.current = null;
             setPartie(null);
+            reglagesDemandesRef.current = null;
+            setReglagesArene(null);
+            setReglagesIgnores(false);
             setEnPauseZ(false);
             zombiesRef.current = null;
             setZombies(null);
@@ -276,6 +299,7 @@ export function useArene(pseudo: string, jeuRef: MutableRefObject<JeuHandle | nu
             setModeVoulu(m.mode);
             if (m.partie !== undefined && partieRef.current === null) { partieRef.current = m.partie; setPartie(m.partie); }
             if (m.partie) partieVoulueRef.current = m.partie;
+            appliquerReglagesEcho(m, false);
             setConfirmationsMode((n) => n + 1);
             break;
           }
@@ -287,6 +311,7 @@ export function useArene(pseudo: string, jeuRef: MutableRefObject<JeuHandle | nu
           bienvenueAttendue.current = true;
           setEnPauseZ(false);
           setAlternativeArene(null);
+          appliquerReglagesEcho(m, true);
           modeRef.current = m.mode;
           modeVouluRef.current = m.mode;
           setMode(m.mode);
@@ -328,10 +353,13 @@ export function useArene(pseudo: string, jeuRef: MutableRefObject<JeuHandle | nu
         case "refus":
           // changement de salle refusé (partie pleine, déjà en jeu, plafond de parties) : la carte cochée revient, le message s'affiche dans le panneau
           if (m.action === "mode") {
+            reglagesDemandesRef.current = null;
             const demande = modeVouluRef.current;
             modeVouluRef.current = modeRef.current;
             setModeVoulu(modeRef.current);
-            setErreur(texteRefus("mode", m.raison, demande));
+            // refus de création alors que je suis déjà dans une arène personnalisée : c'est elle qui occupe la place (le hall `ar1` est permanent)
+            const dansArenePerso = modeRef.current === "arene" && partieRef.current !== null && partieRef.current !== "ar1";
+            setErreur(texteRefus("mode", m.raison, demande, dansArenePerso));
             setRefusMode((n) => n + 1);
           } else if (m.action === "lancer") {
             // (v11) lancement refusé (BR : pas assez de joueurs, quota de bots) : jamais silencieux
@@ -409,6 +437,14 @@ export function useArene(pseudo: string, jeuRef: MutableRefObject<JeuHandle | nu
           else if (m.phase === "fin" && m.type === "tigre" && m.raison === "vaincu") annoncer(`${nom(m.par)} a abattu le tigre robot !`, "info");
           else if (m.phase === "fin" && m.type === "tigre") annoncer("Le tigre robot a quitté Agroparc", "info");
           else if (m.phase === "fin" && m.type === "truck") annoncer("Le Truck Muche s'est calmé", "info");
+          break;
+        }
+        case "police": {
+          // le bandeau lit l'état dans le jeu ; ici, le fil des annonces (le début n'a pas d'avertissement : la sirène en tient lieu)
+          const nom = (id?: string) => joueursRef.current.find((x) => x.id === id)?.pseudo ?? "Un agent";
+          if (m.phase === "debut") annoncer("Descente de police !", "info");
+          else if (m.phase === "fin" && m.raison === "detruite") annoncer(`${nom(m.par)} a mis fin à la descente de police`, "info");
+          else if (m.phase === "fin") annoncer("La police est repartie", "info");
           break;
         }
         case "titan": {
@@ -491,6 +527,7 @@ export function useArene(pseudo: string, jeuRef: MutableRefObject<JeuHandle | nu
     stats, statsRef, demanderScores, degatsAuTueur,
     mode, modeVoulu, salons, zombies, argent, gainArgent, choisirMode, lancerPartie,
     br, statsBr, demanderStatsBr,
+    reglagesArene, reglagesIgnores,
     partie, enPauseZ, alternativeArene, confirmationsMode, refusMode, refusRejoindre,
   };
 }

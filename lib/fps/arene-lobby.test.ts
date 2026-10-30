@@ -44,6 +44,7 @@ describe("modèle du lobby", () => {
     expect(libelleCause("epee", "arme", "Lea")).toBe("Épée");
     expect(libelleCause("couteau", "arme", "Lea")).toBe("Couteau");
     expect(libelleCause("epee", "tigre_zombie", "")).toBe("Griffé par un tigre");
+    expect(libelleCause("couteau", "police", "")).toBe("Écrasé par la police");
   });
 
   it("la grille passe en version compacte au-delà de 6 cartes", () => {

@@ -145,6 +145,9 @@ export function libelleFil(arme: ArmeId, cause: CauseMort, par: string): string 
   if (cause === "tigre_robot") return "Déchiqueté par le tigre robot";
   if (cause === "titan") return par ? `Titan tigre de ${par}` : "Titan tigre";
   if (cause === "tigre_zombie") return "Griffé par un tigre";
+  if (cause === "bus_c3") return "Écrasé par le Bus C3";
+  if (cause === "frappe_aerienne") return par ? `Frappe aérienne de ${par}` : "Frappe aérienne";
+  if (cause === "police") return "Écrasé par la police";
   if (cause === "tempete") return "Tué par la tempête";
   if (cause === "abandon") return "A quitté la partie";
   return estMelee(arme) ? MELEE[arme].nomCourt : STATS[arme].nomCourt;

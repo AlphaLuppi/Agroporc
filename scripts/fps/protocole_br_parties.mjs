@@ -27,7 +27,7 @@ if (build.status !== 0) throw new Error(`build de serveur-fps en échec :\n${bui
 const serveur = spawn(process.execPath, ["dist/index.js"], {
   cwd: join(RACINE, "serveur-fps"), stdio: "ignore",
   env: {
-    ...process.env, PORT: String(port), SCENE_JSON: join(RACINE, "public/agroparc/scene.json"), PDJ_FPS_BR_DECOMPTE_MS: "20000", PDJ_FPS_BR_VOL_MS: "60000",
+    ...process.env, PORT: String(port), SCENE_JSON: join(RACINE, "public/agroparc/scene.json"), PDJ_FPS_POLICE: "off", PDJ_FPS_ZOMBIES_PATROUILLE: "off", PDJ_FPS_BR_DECOMPTE_MS: "20000", PDJ_FPS_BR_VOL_MS: "60000",
     PDJ_FPS_CREATION_TIC_MAX_MS: "1000",   // un pic de CPU ne doit pas bloquer les créations du script
     PDJ_FPS_BR_STATS: join(mkdtempSync(join(tmpdir(), "pdj-br-parties-")), "stats-br.json"),
   },

@@ -23,11 +23,12 @@ import { appliquerPartie, classementStats, cleStats, estPseudoCompte, nomDeBase,
 import { echelleDureeZone, etatZone, genererPlanZone, horsZone, zoneBrPublique, type PlanZone } from "./br-zone";
 import type { Monde } from "./collision";
 import type { SceneData } from "../agroparc3d/types";
-import type { BotsBr, ButinBr, ContexteSalle, JoueurSalle, ResumeBr, ServiceBr, Sortie, VolBr } from "./match-contexte";
+import type { AidePoliceBr, BotsBr, ButinBr, ContexteSalle, JoueurSalle, ResumeBr, ServiceBr, ServicePolice, Sortie, VolBr } from "./match-contexte";
 import { creerBotsBr, type AideBots } from "./match-br-bots";
 import type { BudgetNavigation } from "./nav-bots";
 import { creerButinBr } from "./match-br-butin";
 import { creerVolBr } from "./match-br-vol";
+import { POLICE } from "./police";
 import { estDifficulte } from "./zombies-vagues";
 import {
   JEU, estIdBot, type AvionBr, type BilanBr, type CauseMort, type EtatPartieBr, type JoueurBr, type LigneBilanBr, type LigneStatsBr, type MessageClient,
@@ -64,6 +65,13 @@ export interface OptionsServiceBr {
   budgetNavigation?: BudgetNavigation;
   /** injection (tests) : emplacements du butin à la place de `pointsButin(scene, ctx.monde)` */
   points?: readonly PointButin[];
+  /**
+   * (2026-10-30) la descente de police de la salle (créée par `Salle`, qui la passe paresseusement : elle est construite après ce service) ; null ou
+   * absent : pas de police (tests, serveur sans routes). Le service BR l'arme (`armer`), la remet à blanc et arme la seconde.
+   */
+  police?: () => ServicePolice | null;
+  /** essais (`PDJ_FPS_BR_POLICE_MS`) : délai fixe du premier essai de descente après le départ de l'avion ; remplace aussi les 60 s après le premier atterrissage et les 4 vivants minimum */
+  policeMs?: number;
 }
 
 /** Plus grand pas de temps (ms) donné à l'accumulateur de la tempête (un tic en retard ne tue pas d'un coup). */
@@ -141,6 +149,12 @@ export function creerServiceBr(ctx: ContexteSalle, opts: OptionsServiceBr): Serv
   // bots (v11) : la partie compte des bots (jamais comptée dans les statistiques) ; fin anticipée quand plus aucun humain n'est en vie
   let avecBots = false;
   let finSansHumainT: number | null = null;
+  // descente de police (2026-10-30) : réglage de l'hôte, premier atterrissage d'un humain, seconde descente armée, joueurs au départ
+  let policeVoulue = true;
+  let premierAtterrissageHumainT: number | null = null;
+  let secondeArmee = false;
+  let nbJoueursDepart = 0;
+  const police = (): ServicePolice | null => opts.police?.() ?? null;
 
   // ---------------------------------------------------------------------------------------------
   // membres, état
@@ -201,6 +215,8 @@ export function creerServiceBr(ctx: ContexteSalle, opts: OptionsServiceBr): Serv
       ...(annule ? { annule: true as const } : {}),
       ...(phase === "lobby" && conflitDeNoms() ? { conflitNoms: true as const } : {}),
       ...(nonComptee && phase === "fin" ? { nonComptee: true as const } : {}),
+      // le réglage de l'hôte n'arrive qu'avec `lancerPartie` : dans le lobby il est inconnu, ne pas publier la valeur par défaut
+      ...(phase !== "lobby" ? { police: policeVoulue } : {}),
     };
   }
 
@@ -302,6 +318,19 @@ export function creerServiceBr(ctx: ContexteSalle, opts: OptionsServiceBr): Serv
     },
     points: pointsAtterrissage,
   };
+  const aidePolice: AidePoliceBr = {
+    phase: () => phase,
+    zone: (t) => {
+      if (!plan) return null;
+      const e = etatZone(plan, t);
+      return { centre: e.centre, rayon: e.rayon };
+    },
+    vivants,
+    premierAtterrissageT: () => premierAtterrissageHumainT,
+    enVol: (id) => vol.enVol(id),
+    estSpectateur: (id) => !!ctx.joueur(id)?.spectateur,
+    nbJoueursDepart: () => nbJoueursDepart,
+  };
   const bots: BotsBr = opts.bots ?? creerBotsBr(ctx, aideBots, { ...(opts.botsEssai ? { essai: opts.botsEssai } : {}), ...(opts.budgetNavigation ? { budget: opts.budgetNavigation } : {}) });
   const botsRestants = (): number => Math.max(0, Math.floor(opts.botsRestants ? opts.botsRestants() : Infinity));
 
@@ -312,6 +341,10 @@ export function creerServiceBr(ctx: ContexteSalle, opts: OptionsServiceBr): Serv
     // les bots n'existent que le temps d'une partie (le prochain lancement en recrée)
     bots.retirerTous();
     avecBots = false; finSansHumainT = null;
+    // la voiture de police s'arrête (`police{fin}`), le réglage de l'hôte et l'état de la partie sont remis à blanc
+    const pol = police();
+    if (pol) sorties.push(...pol.reinitialiser(t, false));
+    policeVoulue = true; premierAtterrissageHumainT = null; secondeArmee = false; nbJoueursDepart = 0;
     membres.clear();
     vol.reinitialiser();
     butin.reinitialiser();
@@ -343,6 +376,8 @@ export function creerServiceBr(ctx: ContexteSalle, opts: OptionsServiceBr): Serv
     if (humains + n < joueursMin) return refus("bots");
     if (conflitDeNoms()) { immediat = true; return []; }
     annule = false;
+    // descente de police : activée sauf si l'hôte la décoche (une valeur qui n'est pas un booléen vaut « activée »)
+    policeVoulue = typeof msg.police === "boolean" ? msg.police : true;
     if (n > 0) bots.creer(n, estDifficulte(msg.difficulte) ? msg.difficulte : "plat", t);
     avecBots = n > 0; finSansHumainT = null;
     // les bots sont dans la table : la liste est relue APRÈS leur création
@@ -376,6 +411,7 @@ export function creerServiceBr(ctx: ContexteSalle, opts: OptionsServiceBr): Serv
     // même trajectoire (même graine), départ à `t` : les joueurs déjà à bord suivent
     vol.demarrer(bord, ctx.monde.bornes, aleaVol(), t, optionsVol());
     phase = "vol"; debutT = t; finT = 0; volDebutT = t; tempeteT = t; atterrisMax = 0;
+    premierAtterrissageHumainT = null; secondeArmee = false; nbJoueursDepart = bord.length;
     plan = genererPlanZone({
       bornes: ctx.monde.bornes, debutT: t, alea, centresBatiments: centres(), echelle: opts.echelleZone ?? echelleDureeZone(partants().length),
     });
@@ -395,6 +431,21 @@ export function creerServiceBr(ctx: ContexteSalle, opts: OptionsServiceBr): Serv
     }
     phase = "jeu"; debutT = t;
     immediat = true;
+    // descente de police : le premier essai est armé ici (les premiers joueurs ont déjà touché le sol pendant le vol) ; `permis` exige en plus 60 s après le
+    // premier atterrissage d'un humain. Désactivée par l'hôte : plus jamais.
+    const pol = police();
+    if (pol) {
+      if (!policeVoulue) pol.armer(null);
+      else pol.armer(t + (opts.policeMs ?? POLICE.br.premierMinMs + alea() * (POLICE.br.premierMaxMs - POLICE.br.premierMinMs)));
+    }
+  }
+
+  /** Seconde descente : seulement si la partie comptait `secondeJoueursMin` joueurs au départ (bots compris), 3 à 5 min après la FIN de la première ; jamais une troisième. */
+  function armerSeconde(t: number): void {
+    const pol = police();
+    if (!pol || !policeVoulue || secondeArmee || pol.descentes() !== 1 || pol.enCours() || nbJoueursDepart < POLICE.br.secondeJoueursMin) return;
+    secondeArmee = true;
+    pol.armer(t + (opts.policeMs ?? POLICE.br.secondeMinMs + alea() * (POLICE.br.secondeMaxMs - POLICE.br.secondeMinMs)));
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -404,6 +455,13 @@ export function creerServiceBr(ctx: ContexteSalle, opts: OptionsServiceBr): Serv
   /** Garde le plus grand nombre d'atterris vu : `retirer` du sous-service pourrait décompter un joueur mort. */
   function echantillonnerAtterris(): void {
     atterrisMax = Math.max(atterrisMax, vol.atterris());
+    // premier atterrissage d'un HUMAIN (les bots ne comptent pas) : un humain monté, en vie, ni à bord ni en chute a touché le sol
+    if (premierAtterrissageHumainT === null && phase !== "lobby" && phase !== "decompte") {
+      for (const m of membres.values()) {
+        if (!m.admis || !m.monte || m.elimine || estIdBot(m.id) || vol.enVol(m.id)) continue;
+        if (ctx.joueur(m.id)?.vivant) { premierAtterrissageHumainT = dernierT; break; }
+      }
+    }
   }
 
   /** Dégâts de la zone à chaque tic, accumulateur fractionnaire par joueur : les morts ont des instants distincts. */
@@ -492,6 +550,9 @@ export function creerServiceBr(ctx: ContexteSalle, opts: OptionsServiceBr): Serv
     phase = "fin"; debutT = t; finT = t + finAffichageMs;
     // `br{etat}` avec le bilan part tout de suite (il remplace l'état en attente)
     const sorties: Sortie[] = [sortieEtat(t)];
+    // la voiture de police ne roule pas sur l'écran de fin
+    const pol = police();
+    if (pol) sorties.push(...pol.reinitialiser(t, false));
     immediat = false; sale = false; dernierEtatT = t;
     // le palmarès à jour, chacun avec sa ligne (`moi`)
     for (const j of ctx.joueurs()) if (!j.bot) sorties.push({ a: j.id, m: messageStats(j.pseudo) });
@@ -549,6 +610,7 @@ export function creerServiceBr(ctx: ContexteSalle, opts: OptionsServiceBr): Serv
       tempete(t, sorties);
       verifierVictoire(t, sorties);
       verifierFinSansHumain(t, sorties);
+      if (phase === "jeu") armerSeconde(t);
       return emettre(t, sorties, true);
     },
 
@@ -734,6 +796,10 @@ export function creerServiceBr(ctx: ContexteSalle, opts: OptionsServiceBr): Serv
         zone: plan && enPartie ? zoneBrPublique(plan, dernierT) : null,
         avion: enPartie ? vol.avion() : null,
       };
+    },
+
+    aidePolice(): AidePoliceBr {
+      return aidePolice;
     },
 
     resume(): ResumeBr {

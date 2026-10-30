@@ -144,7 +144,7 @@ function piece(parent: THREE.Object3D, g: GeoPiece, m: Materiaux, x = 0, y = 0, 
  * Silhouette d'une voiture (4,4 × 1,9 × 1,5 m, avant = −z) en un seul maillage : châssis, habitacle au pare-brise incliné et reculé,
  * quatre roues, deux phares. Fusionner garde deux appels de dessin par voiture (18 voitures en jeu).
  */
-function geometrieVoiture(): THREE.BufferGeometry {
+export function geometrieVoiture(): THREE.BufferGeometry {
   const { longueur: L, largeur: l } = VOITURE;
   const morceaux: THREE.BufferGeometry[] = [];
   // châssis : de 0,28 à 0,88 m

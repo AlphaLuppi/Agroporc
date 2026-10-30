@@ -142,6 +142,31 @@
   .niveauBots label { min-height: 40px; }
 }
 
+/* événements d'une arène (2026-10-30) : panneau « Créer une arène », ligne d'événements de la liste, cibles tactiles de 40 px */
+.reglagesArene { margin-top: 12px; padding: 10px 12px 12px; border: 1px solid var(--ag-line-strong); background: var(--ag-hud-fond); }
+.reglagesArene h3 { margin: 0 0 4px; font-size: 11px; font-weight: 500; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ag-amber); }
+.groupeReglages { margin: 10px 0 0; padding: 0; min-width: 0; border: 0; }
+.groupeReglages legend { padding: 0; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ag-ink-dim); }
+.optionReglage { display: flex; align-items: center; gap: 10px; min-height: 40px; font-size: 12px; line-height: 1.4; color: var(--ag-ink); cursor: pointer; }
+.optionReglage input { flex-shrink: 0; width: 18px; height: 18px; margin: 0; accent-color: var(--ag-amber); cursor: pointer; }
+.optionReglage input:focus-visible { outline: 2px solid var(--ag-white); outline-offset: 2px; }
+.groupeReglages:disabled .optionReglage { color: var(--ag-ink-dim); cursor: default; }
+.groupeReglages:disabled .optionReglage input { cursor: default; }
+.rangeeReglages { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; margin-top: 6px; }
+.rangeeReglages .boutonSecondaire { min-height: 40px; }
+.resumeReglages { margin: 10px 0 0; font-size: 12px; color: var(--ag-ink); }
+.boutonPrincipal {
+  min-height: 40px; padding: 4px 10px; background: var(--ag-amber); color: var(--ag-ground); border: 1px solid var(--ag-amber); font: inherit; font-size: 11px; font-weight: 700;
+  letter-spacing: 0.12em; text-transform: uppercase; cursor: pointer;
+}
+.boutonPrincipal:hover:not(:disabled), .boutonPrincipal:focus-visible { background: var(--ag-white); border-color: var(--ag-white); }
+.boutonPrincipal:focus-visible { outline: 2px solid var(--ag-white); outline-offset: 2px; }
+.boutonPrincipal:disabled { cursor: default; background: transparent; color: var(--ag-ink-dim); border-color: var(--ag-line-strong); }
+.partieEvenements { flex-basis: 100%; margin-top: -2px; font-size: 11px; color: var(--ag-ink-dim); }
+/* descente de police du lobby Battle Royale : même gabarit que les bots */
+.reglagePolice { margin: 14px 0 0; padding: 8px 12px 10px; min-width: 0; border: 1px solid var(--ag-line-strong); background: var(--ag-hud-fond); }
+.reglagePolice legend { padding: 0 6px; font-size: 11px; font-weight: 500; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ag-amber); }
+
 @media (max-width: 640px) {
   .modesGrille { grid-template-columns: 1fr; }
   .arene { top: auto; bottom: 20px; right: 24px; left: 24px; width: auto; max-height: min(70vh, calc(100vh - 100px)); }

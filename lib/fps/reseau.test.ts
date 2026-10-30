@@ -324,6 +324,8 @@ describe("connecterArene", () => {
     socket().ouvrir();
     expect(socket().types().slice(0, 2)).toEqual(["bonjour", "rejoindre"]);
     expect(JSON.parse(socket().envoyes[0])).toMatchObject({ t: "bonjour", pseudo: "Bob" });
+    // (2026-10-30) le client annonce qu'il sait dessiner la voiture de police et jouer sa sirène : sans cela le serveur l'immunise
+    expect(JSON.parse(socket().envoyes[0]).capacites).toEqual(["police"]);
     expect(etats).toEqual(["connexion", "ouvert"]);
     client.fermer();
   });

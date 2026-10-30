@@ -73,7 +73,7 @@ try {
     const srv = lancer(process.execPath, ["dist/index.js"], { cwd: join(RACINE, "serveur-fps"), env: {
       ...process.env, PORT: String(port), SCENE_JSON: join(RACINE, "public/agroparc/scene.json"),
       PDJ_FPS_AVION_MIN_MS: "3600000", PDJ_FPS_AVION_MAX_MS: "3600000", PDJ_FPS_BUS_MIN_MS: "3600000", PDJ_FPS_BUS_MAX_MS: "3600000",
-      PDJ_FPS_EVT_MIN_MS: "3600000", PDJ_FPS_EVT_MAX_MS: "3600000", PDJ_FPS_ELSA_MIN_MS: "3600000", PDJ_FPS_ELSA_MAX_MS: "3600000",
+      PDJ_FPS_POLICE: "off", PDJ_FPS_ZOMBIES_PATROUILLE: "off", PDJ_FPS_EVT_MIN_MS: "3600000", PDJ_FPS_EVT_MAX_MS: "3600000", PDJ_FPS_ELSA_MIN_MS: "3600000", PDJ_FPS_ELSA_MAX_MS: "3600000",
       PDJ_FPS_ZOMBIES_TOTAL: "60", PDJ_FPS_ZOMBIES_PAUSE_MS: "3000", PDJ_FPS_ZOMBIES_GRIFFE: "1", PDJ_FPS_ZOMBIES_ARGENT: "5000",
       PDJ_FPS_BR_MIN_JOUEURS: "1", PDJ_FPS_BR_DECOMPTE_MS: "8000", PDJ_FPS_BR_VOL_MS: "60000", PDJ_FPS_BR_ZONE_ECHELLE: "0.3", PDJ_FPS_BR_OBJETS: "20",
       PDJ_FPS_BR_STATS: join(mkdtempSync(join(tmpdir(), "pdj-apercus-")), "stats-br.json"),

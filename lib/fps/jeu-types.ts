@@ -211,6 +211,8 @@ export type JeuEvenement =
 export interface EtatMonstresHud {
   evenement: { type: TypeEvenement; phase: "annonce" | "actif"; debutT: number; finT: number } | null;
   tigre: { pv: number; pvMax: number; rage: boolean } | null;
+  /** (2026-10-30) descente de police en cours (voiture présente dans le snap) : fin prévue (horloge serveur), `surMoi` = je suis sa cible, `br` = Battle Royale (ennemi le plus proche) plutôt qu'arène (le meilleur), `depart` = la voiture rentre (plus de cible, plus de décompte) */
+  police?: { finT: number; surMoi: boolean; br: boolean; depart?: boolean } | null;
   /** `dash` : 0..1, 1 = dash prêt (seulement pour le pilote) ; `vitesse` (m/s), `altitude` (m), `cap` (rad, lacet) pour le cockpit */
   titan: { pilote: string; pv: number; pvMax: number; finT: number; dash: number; vitesse: number; altitude: number; cap: number } | null;
 }

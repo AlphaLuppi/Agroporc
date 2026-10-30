@@ -11,7 +11,8 @@
  * largués (avion, tigre sauvage, sort d'invocation) sont des services (`match-elsa.ts`, `match-vehicules.ts`, `match-evenements.ts`,
  * `match-tigres.ts`) qui ne voient la salle que par `ContexteSalle` (`match-contexte.ts`), implémenté ici. Un tir ou un coup d'arme blanche
  * dont la cible est un tigre largué est validé par le service des tigres, un tir sur `CIBLE_TIGRE` ou `CIBLE_TITAN` par celui des
- * événements.
+ * événements. La descente de police (`match-police.ts`, 2026-10-30), construite en dernier, sert l'arène et le Battle Royale : tirs sur `CIBLE_POLICE`,
+ * mort `police` sans kill, voiture dans le snap (`monstres.police`) ; les réglages d'événements d'une arène (`reglages-arene.ts`) ne sont que des options.
  * Avec l'option `zombies` (v6), la salle est celle du mode « zombies tigres » : le service `match-zombies.ts` mène la partie (lobby, manches, argent,
  * achats, tigres), la salle n'y ajoute que l'admission à `rejoindre`, les tirs et coups sur les tigres, la mise à terre à la place de la mort
  * et l'absence de cycle de matchs ; le comportement de l'arène (sans cette option) est inchangé. Sans Elsa, voitures, événements ni tigres largués.
@@ -35,18 +36,21 @@ import type { IntervalleElsa } from "./elsa";
 import { armeDuSlot, couteauTenable, depuisAlias, estPrincipale, estSecondaire, estSlot, meleeDe, normaliserEquipement } from "./equipement";
 import { minutageCoupRapide } from "./coup-rapide";
 import type {
-  ContexteSalle, JoueurSalle, ResumeBr, ResumeZombies, ServiceBr, ServiceElsa, ServiceEvenements, ServiceTigres, ServiceVehicules, ServiceZombies, Sortie,
+  ContexteSalle, JoueurSalle, ResumeBr, ResumeZombies, ServiceBr, ServiceElsa, ServiceEvenements, ServicePolice, ServiceTigres, ServiceVehicules, ServiceZombies, Sortie,
 } from "./match-contexte";
 import { creerServiceBr, type OptionsServiceBr } from "./match-br";
 import { creerServiceElsa } from "./match-elsa";
 import { creerServiceEvenements, type OptionsServiceEvenements } from "./match-evenements";
+import { creerServicePolice, type OptionsPolice } from "./match-police";
+import { reglesArene, reglesBr } from "./police-regles";
+import type { ReglagesArene } from "./reglages-arene";
 import { creerServiceTigres } from "./match-tigres";
 import { creerServiceVehicules } from "./match-vehicules";
 import { EQUIPEMENT_DEPART_ZOMBIES, MAIN_DEPART_ZOMBIES, creerServiceZombies, departPour, type OptionsServiceZombies } from "./match-zombies";
 import { REWIND_MELEE_MS, coupVraisemblable } from "./melee";
 import { PASSE_EN_SUSPENSION, Suspension, type OptionsSuspension } from "./suspension";
 import {
-  CIBLE_LIVRAISON, CIBLE_TIGRE, CIBLE_TITAN, EQUIPEMENT_DEFAUT, JEU, PLAFONDS, SLOT_DEFAUT, copierEquipement, estIdZombie, estMelee, oeilDe, silhouetteDe,
+  CAPACITE_POLICE, CIBLE_LIVRAISON, CIBLE_POLICE, CIBLE_TIGRE, CIBLE_TITAN, EQUIPEMENT_DEFAUT, JEU, PLAFONDS, SLOT_DEFAUT, copierEquipement, estIdZombie, estMelee, oeilDe, silhouetteDe,
   type ArmeFeuId, type ArmeId, type ArmeMeleeId, type CauseMort, type EtatJoueurSnap, type Equipement, type InfoMatch, type InfoTueur,
   type JoueurPublic, type LigneClassement, type LigneStats, type MessageClient, type MessageServeur, type ModeSalle, type MonstresSnap, type SignalVoix, type SnapZombies, type Slot, type Vec3, type Zone,
 } from "./protocole";
@@ -201,8 +205,21 @@ export interface OptionsSalle {
    * `zoneApparition` (sinon `ZONE_APPARITION` autour du rond-point) servent, et intervalle des passages surchargeable.
    */
   tigres?: { cachettes: readonly CachetteTigre[]; intervalle?: IntervalleAvion };
-  /** Bus C3 express (arène seulement) : intervalle des passages surchargeable (tests de bout en bout) */
-  bus?: { intervalle?: IntervalleBus };
+  /**
+   * Bus C3 express (arène seulement) : intervalle des passages surchargeable (tests de bout en bout) ; `false` (case décochée, 2026-10-30) : ni bus ni armes
+   * uniques larguées, mais les frappes aériennes (séries de 5 kills) et les fumigènes restent permis
+   */
+  bus?: false | { intervalle?: IntervalleBus };
+  /**
+   * (2026-10-30) Réglages d'événements de cette arène (`reglages-arene.ts`) : ils sont DÉJÀ traduits en options par `optionsDepuisReglages` ; la salle les garde
+   * pour `resumePartie` (liste des parties) et l'écho `mode`. Absent : une salle sans réglages (tests, zombies, BR).
+   */
+  reglages?: ReglagesArene;
+  /**
+   * (2026-10-30) Descente de police (`match-police.ts`), arène et Battle Royale : routes de départ, chemin, délais. Construite EN DERNIER (ses tirages de
+   * hasard ne décalent aucun autre service). Arène : armée seule à la création ; BR : armée par le service BR (`armer`).
+   */
+  police?: OptionsPolice;
   /** événements (v3) : Truck Muche fou, tigre robot géant, titan tigre */
   evenements?: Omit<OptionsServiceEvenements, "maintenant">;
   /**
@@ -274,8 +291,16 @@ export class Salle implements ContexteSalle {
   private readonly liensVoix = new Map<string, number>();
   /** (v8, BR) instant de mort des joueurs morts (retrait du snap `BR.retraitMortSnapMs` plus tard) */
   private readonly mortT = new Map<string, number>();
-  /** Bus C3 express : arène seulement (null en zombies). */
+  /** Bus C3 express : arène seulement (null en zombies, en BR, ou case « Bus » décochée). */
   private readonly busC3: EtatBusC3 | null;
+  /** (2026-10-30) Descente de police : arène et BR (null sans l'option `police` ou si la case est décochée). */
+  private readonly police: ServicePolice | null;
+  /** (2026-10-30) Réglages d'événements de l'arène (null : salle sans réglages). */
+  readonly reglages: ReglagesArene | null;
+  /** Salle d'arène (ni zombies ni BR) : frappes aériennes et fumigènes y sont permis, même sans bus C3. */
+  private readonly modeArene: boolean;
+  /** (2026-10-30) Capacités annoncées par chaque client (`bonjour.capacites`) : un humain sans `police` est immunisé et jamais ciblé. */
+  private readonly capacites = new Map<string, ReadonlySet<string>>();
   private readonly frappesDisponibles = new Set<string>();
   private frappesEnCours: FrappeEnCours[] = [];
   private nuagesFumee: NuageFumee[] = [];
@@ -339,14 +364,42 @@ export class Salle implements ContexteSalle {
       })
       : null;
     // le tigre géant n'est pas annoncé pendant le survol de l'avion ni tant qu'un tigre sauvage largué vit (spec des tigres, Cohabitation)
-    this.evenements = options.evenements
+    // (2026-10-30) sans type d'événement à tour autorisé (cases décochées), le service n'existe pas ; aucun événement pendant une descente de police
+    this.evenements = options.evenements && !(options.evenements.types?.length === 0 && !options.evenements.forcerType)
       ? creerServiceEvenements(this, {
+        policeEnCours: () => this.police?.enCours() ?? false,
         ...options.evenements, maintenant, ...(this.tigres ? { tigrePermis: () => !this.tigres?.avionOuSauvage() } : {}),
       })
       : null;
     this.zombies = options.zombies ? creerServiceZombies(this, { ...options.zombies, alea }) : null;
-    this.br = options.br ? (options.fabriqueBr ?? creerServiceBr)(this, { ...options.br, alea }) : null;
-    this.busC3 = options.zombies || options.br ? null : creerEtatBusC3(maintenant, this.alea, options.bus?.intervalle);
+    this.br = options.br ? (options.fabriqueBr ?? creerServiceBr)(this, { police: () => this.police, ...options.br, alea }) : null;
+    this.modeArene = !options.zombies && !options.br;
+    this.reglages = options.reglages ?? null;
+    this.busC3 = options.zombies || options.br || options.bus === false ? null : creerEtatBusC3(maintenant, this.alea, options.bus ? options.bus.intervalle : undefined);
+    // EN DERNIER : les services ci-dessus tirent `alea` à leur construction, un tirage inséré avant eux décalerait leur séquence
+    this.police = options.police && this.modeArene
+      ? creerServicePolice(this, {
+        ...options.police, mode: "arene", maintenant, regles: reglesArene(this, (j) => !this.vehicules?.occupation(j.id) && !this.pilote(j.id), this.evenements),
+        autreEvenementEnCours: () => this.evenements?.occupe() ?? false,
+      })
+      : options.police && this.br
+        ? creerServicePolice(this, { ...options.police, mode: "br", regles: reglesBr(this, this.br.aidePolice(), options.br?.policeMs) })
+        : null;
+  }
+
+  /**
+   * (2026-10-30) Capacités annoncées par le client (`bonjour.capacites`, déjà filtrées sur la liste blanche du serveur). Un humain sans la capacité `police`
+   * ne voit pas la voiture : il est immunisé et jamais ciblé. À rappeler après chaque `connecter` (inscription comme changement de partie).
+   */
+  definirCapacites(id: string, capacites: readonly string[]): void {
+    // un `connecter` refusé (salle pleine) ne laisse aucune entrée orpheline
+    if (this.table.has(id)) this.capacites.set(id, new Set(capacites));
+  }
+
+  supportePolice(id: string): boolean {
+    const j = this.table.get(id);
+    if (!j) return false;
+    return j.bot === true || (this.capacites.get(id)?.has(CAPACITE_POLICE) ?? false);
   }
 
   /** (v3) Pilote du titan tigre : invulnérable, ni arme ni voiture ni état à pied. */
@@ -462,7 +515,7 @@ export class Salle implements ContexteSalle {
       tueur.serieMax = Math.max(tueur.serieMax, tueur.serie);
       if (cause === "arme") tueur.killsParArme[arme] = (tueur.killsParArme[arme] ?? 0) + 1;
       // une frappe par tranche de 5 kills d'affilée (5, 10, 15…), arène seulement
-      if (this.busC3 && tueur.serie % 5 === 0 && !this.frappesDisponibles.has(tueur.id)) {
+      if (this.modeArene && tueur.serie % 5 === 0 && !this.frappesDisponibles.has(tueur.id)) {
         this.frappesDisponibles.add(tueur.id);
         sorties.push({
           a: tueur.id,
@@ -751,6 +804,8 @@ export class Salle implements ContexteSalle {
     this.table.delete(id);
     this.suivi.delete(id);
     this.mortT.delete(id);
+    this.capacites.delete(id);
+    this.police?.liberer(id);
     // zombies : le service compte les membres restants (hôte suivant, défaite si c'était le dernier debout) ; le joueur est déjà retiré
     const sortieZombies = this.zombies ? this.zombies.liberer(j, maintenant) : [];
     // BR : idem (éliminé s'il était en partie, hôte suivant, victoire éventuelle) ; `j` est l'objet déjà retiré de la table
@@ -848,7 +903,7 @@ export class Salle implements ContexteSalle {
         return [{ a: "joueurs", m: { t: "frappe", evenement: "lancee", joueur: j.id, cible: msg.cible } }];
       }
       case "lancerFumigene": {
-        if (!this.busC3 || !j.enJeu || !j.vivant || !estVec3(msg.p)) return [];
+        if (!this.modeArene || !j.enJeu || !j.vivant || !estVec3(msg.p)) return [];
         // anti-rafale : un fumigène toutes les 15 s, lâché près du lanceur
         const dernier = this.dernierFumigene.get(j.id);
         if (dernier !== undefined && maintenant - dernier < 15_000) return [];
@@ -971,6 +1026,7 @@ export class Salle implements ContexteSalle {
     if (this.vehicules) sorties.push(...this.vehicules.synchro(j.id));
     if (this.tigres) sorties.push(...this.tigres.synchro(j.id));
     if (this.evenements) sorties.push(...this.evenements.synchro(j.id));
+    if (this.police) sorties.push(...this.police.synchro(j.id));
     return sorties;
   }
 
@@ -1014,7 +1070,7 @@ export class Salle implements ContexteSalle {
     j.memoSante = null;
     j.reentreeT = -Infinity;
     this.presenceSale = true;
-    return [...entree, ...br.synchro(j.id)];
+    return [...entree, ...br.synchro(j.id), ...(this.police ? this.police.synchro(j.id) : [])];
   }
 
   /**
@@ -1033,7 +1089,7 @@ export class Salle implements ContexteSalle {
     j.histo = [];
     j.reapparitionT = null;
     this.presenceSale = true;
-    return [{ a: j.id, m: { t: "spectateur" } }, ...br.synchro(j.id)];
+    return [{ a: j.id, m: { t: "spectateur" } }, ...br.synchro(j.id), ...(this.police ? this.police.synchro(j.id) : [])];
   }
 
   private quitter(j: JoueurSalle, maintenant: number): Sortie[] {
@@ -1316,6 +1372,8 @@ export class Salle implements ContexteSalle {
     /** (v8) distance du plus proche plomb sur chaque tigre touché (ordre de l'arc électrique) */
     const distancesZombies = new Map<string, number>();
     let degatsTruck = 0;
+    /** (2026-10-30) dégâts cumulés sur la voiture de police (corps, sans multiplicateur de zone) */
+    let degatsPolice = 0;
     let premiereTouche: number | null = null;
     const vusZombies = new Set<string>();
     for (const t of touches) {
@@ -1333,6 +1391,14 @@ export class Salle implements ContexteSalle {
         const cu = cumulTigres.get(t.cible);
         if (cu) { cu.degats += degats; if (t.zone === "tete") cu.zone = "tete"; }
         else cumulTigres.set(t.cible, { degats, zone: t.zone });
+        continue;
+      }
+      if (t.cible === CIBLE_POLICE) {
+        // la boîte orientée de la voiture, rejouée sur son historique (à 24 m/s, 100 ms de retard = 2,4 m), et aucun mur plus proche
+        const dist = this.police?.toucher(tir.o, dirs[t.plomb], arme.portee, maintenant, this.rewindMaxMs) ?? null;
+        if (dist === null) continue;
+        plombsVus.add(t.plomb);
+        degatsPolice += degatsPlomb(armeTiree, "corps", dist);
         continue;
       }
       if (t.cible === CIBLE_TIGRE || t.cible === CIBLE_TITAN) {
@@ -1389,11 +1455,12 @@ export class Salle implements ContexteSalle {
     // plombs arrêtés par une voiture (v3 §4) : dégâts de carrosserie, explosion éventuelle
     if (this.vehicules) sorties.push(...this.vehicules.tirVoitures(j, tir.o, dirs, tir.voitures, armeTiree, plombsVus, maintenant));
 
-    if (cumul.size > 0 || cumulMonstres.size > 0 || cumulZombies.size > 0) {
+    if (cumul.size > 0 || cumulMonstres.size > 0 || cumulZombies.size > 0 || degatsPolice > 0) {
       j.touches++;
       if ([...cumul.values(), ...cumulMonstres.values(), ...cumulZombies.values()].some((cu) => cu.zone === "tete")) j.tetes++;
     }
     for (const [cibleId, { degats, zone }] of cumulMonstres) sorties.push(...this.evenements!.blesserMonstre(cibleId, degats, j, zone, maintenant));
+    if (degatsPolice > 0 && this.police) sorties.push(...this.police.blesser(j, degatsPolice, maintenant));
     // le gain d'une touche (+10 $) est unique par tir, quel que soit le nombre de tigres ou de plombs ; (v8) positions prises avant les dégâts
     // (départ de l'arc électrique, même si le premier tigre en meurt)
     let premier = true;
@@ -1576,6 +1643,7 @@ export class Salle implements ContexteSalle {
     if (this.vehicules) sorties.push(...this.vehicules.tic(maintenant));
     if (this.tigres) sorties.push(...this.tigres.tic(maintenant));
     if (this.evenements) sorties.push(...this.evenements.tic(maintenant));
+    if (this.police) sorties.push(...this.police.tic(maintenant));
     if (this.zombies) sorties.push(...this.zombies.tic(maintenant));
     if (this.br) sorties.push(...this.br.tic(maintenant));
 
@@ -1795,15 +1863,18 @@ export class Salle implements ContexteSalle {
     const monstresBase = this.evenements?.snap() ?? null;
     const zombies = this.zombies?.snap() ?? null;
     const bus = this.busC3;
-    const monstres: MonstresSnap | null = bus
+    // arène : frappes et fumigènes même sans bus C3 (case décochée) ; `bus` et `armesLachees` seulement s'il existe
+    let monstres: MonstresSnap | null = this.modeArene
       ? {
         ...(monstresBase ?? {}),
-        bus: busEnSnap(bus),
-        armesLachees: armesEnSnap(bus),
+        ...(bus ? { bus: busEnSnap(bus), armesLachees: armesEnSnap(bus) } : {}),
         fumigenes: nuagesEnSnap(this.nuagesFumee),
         frappes: this.frappesEnCours.map((f) => ({ id: f.id, cible: f.cible, joueur: f.joueur, t0: f.t0, finT: f.finT })),
       }
       : monstresBase;
+    // (2026-10-30) la voiture de la descente de police : arène et Battle Royale (où `monstres` n'existe que pendant une descente)
+    const police = this.police?.snap();
+    if (police) monstres = { ...(monstres ?? {}), police };
     const sorties: Sortie[] = [{
       a: "joueurs",
       m: {
@@ -1871,7 +1942,9 @@ export class Salle implements ContexteSalle {
     this.phase = "entracte";
     this.fin = null;
     this.prochain = maintenant + JEU.entracteMs;
-    return [{ a: "tous", m: { t: "match", match: this.infoMatch(), classement: this.classement() } }];
+    // une descente de police en cours finit : pas de voiture qui roule sur l'écran de classement
+    const police = this.police ? this.police.reinitialiser(maintenant, false) : [];
+    return [...police, { a: "tous", m: { t: "match", match: this.infoMatch(), classement: this.classement() } }];
   }
 
   /** Nouveau match : scores et statistiques à 0, Elsa et véhicules remis à zéro, tout le monde en jeu réapparaît. */
@@ -1885,6 +1958,8 @@ export class Salle implements ContexteSalle {
     if (this.vehicules) sorties.push(...this.vehicules.reinitialiser(maintenant));
     if (this.tigres) sorties.push(...this.tigres.reinitialiser(maintenant));
     if (this.evenements) sorties.push(...this.evenements.reinitialiser(maintenant));
+    // nouveau match : la cadence de la police est celle de la salle, mais jamais de descente dans sa première minute (les kills repartent à 0)
+    if (this.police) sorties.push(...this.police.reinitialiser(maintenant, true));
     this.frappesDisponibles.clear();
     this.frappesEnCours = [];
     this.nuagesFumee = [];

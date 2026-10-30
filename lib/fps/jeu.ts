@@ -70,6 +70,7 @@ import { creerRenduEclairs } from "./rendu-eclairs";
 import { creerRenduMiniTrucks } from "./rendu-mini-trucks";
 import { AMBIANCE, couleurBrouillard, densiteBrouillard, partBrouillard, pointEclairAmbiance, prochainEclairAmbiance, type EtatAmbiance } from "./ambiance-zombies";
 import { objectifZombies } from "./zombies-lore";
+import { lueurPatrouille, positionPatrouille, teinteLueur, vitesseRadialePatrouille, type PlanPatrouille } from "./patrouille-zombies";
 import { ACHATS, NOTES, PACK_A_PUNCH, PORTES_PAYANTES, SECRET_CARTE, achatDeId, fenetreDeId, fenetrePlusProche, idPrisme, pieceDe } from "./zombies-carte";
 import { SECRET, coupsSonnes, dansMidi, heurePendules, type QuoiSecret } from "./zombies-secret";
 import type { SonSecret } from "./sons";
@@ -90,7 +91,7 @@ import { MELEE, STATS, degatsPlomb, delaiRecul, devier, directionsTir, dispersio
 import { tracer, type Cible } from "./tir";
 import { trouverCiblesMelee } from "./melee";
 import {
-  CIBLE_TIGRE, CIBLE_TITAN, JEU, OEIL_SIEGE, OEIL_TITAN, SILHOUETTE, estIdBot, estIdZombie, estMelee, oeilDe,
+  CIBLE_POLICE, CIBLE_TIGRE, CIBLE_TITAN, JEU, OEIL_SIEGE, OEIL_TITAN, SILHOUETTE, estIdBot, estIdZombie, estMelee, oeilDe,
   type ArmeFeuId, type ArmeId, type ArmeMeleeId, type EtatJoueurSnap, type EtatPartieBr, type EtatPartieZombies, type JoueurPublic, type MessageServeur, type RaisonAchat, type Siege, type Slot, type Vec3, type VehiculeSnap, type Zone,
 } from "./protocole";
 import type { EquipementJeu, EtatBrHud, EtatZombiesHud, HudEtat, HudLive, JeuCallbacks, JeuHandle, JeuOptions } from "./jeu-types";
@@ -124,6 +125,7 @@ import { VisibilitePseudos, type JoueurVisible } from "./visibilite";
 import { placeTruck, ROND_POINT, EMPLACEMENTS_VOITURES } from "./zones";
 import { ControleurTitan, MondeMonstres } from "./jeu-monstres";
 import { ECHELLE_TIGRE, TITAN, toucheTigre } from "./monstres";
+import { toucheBoiteOrientee } from "./police";
 import { creerRenduMonstres } from "./rendu-monstres";
 
 // ---------------------------------------------------------------------------------------------
@@ -304,6 +306,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   const sons = creerSons();
   // (zombies) effets échantillonnés et annonces : téléchargés dès l'entrée, décodés au premier geste (pas d'attente au premier chef)
   if (modeZ) sons.prechargerZombies();
+  // (2026-10-30) la sirène de la police sert dans les trois modes (voiture en arène et en Battle Royale, patrouille en zombies) : téléchargée à l'entrée, jamais importée dans le JS
+  sons.prechargerArene();
   const interp = new Interpolateur();
   /** chat vocal de proximité (v3 §5) : activé par l'hôte (menu pause), volumes réglés à chaque image d'après les positions */
   const voix = creerChatVocal((m) => client.envoyer(m));
@@ -323,7 +327,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   const vehicule = new ControleurVehicule(monde);
   // ---------- événements (v3) : Truck Muche fou, tigre robot, titan tigre ----------
   const jm = new MondeMonstres();
-  const rm = creerRenduMonstres(scene);
+  const rm = creerRenduMonstres(scene, { reduit });
   // ---------- mode zombies (v5) : tigres interpolés et dessinés, rugissements, état de la partie ----------
   const mz = new MondeZombies();
   /** (zombies) corps des tigres proches, obstacles du mouvement */
@@ -346,6 +350,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   /** (v8) ambiance des manches du Truck : brouillard, ciel, éclairs d'ambiance, klaxon du Truck (s) */
   let ambianceZ: EtatAmbiance = { truck: false, debutS: null, finS: null };
   let eclairAmbianceDans = 0;
+  /** (2026-10-30) patrouille de police en ambiance : le trajet daté reçu du serveur (null hors passage), sirène et lueur à l'horloge serveur */
+  let patrouilleZ: PlanPatrouille | null = null;
   /** (crochet de dev) ambiance imposée : les messages de la partie ne la lèvent pas */
   let ambianceForcee = false;
   let klaxonTruckZDans = 1.5;
@@ -780,7 +786,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
    * Un tir (aucune dispersion, v2 §13.1 : gerbe fixe pour le pompe), pile dans l'axe de la vue (§13.2.4). `_force` : outil de test (ignore la
    * souris). Renvoie vrai si le tir est parti. Le retour de touche (son, marqueur, giclée) attend le `degats` du serveur (§13.2.1).
    */
-  /** (v3) Monstre touché par le rayon avant `limite` : le tigre, ou le titan d'un autre pilote. */
+  /** (v3) Monstre touché par le rayon avant `limite` : le tigre, le titan d'un autre pilote ou (2026-10-30) la voiture de la descente de police. */
   function toucheMonstre(o: Vec3, d: Vec3, limite: number): { cible: string; zone: Zone; distance: number } | null {
     let r: { cible: string; zone: Zone; distance: number } | null = null;
     const tg = monstresImage.tigre;
@@ -792,6 +798,12 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     if (ti && ti.pilote !== client.id) {
       const h = toucheTigre(o, d, r ? r.distance : limite, ti.p, ti.cap, TITAN.echelle, monde);
       if (h) r = { cible: CIBLE_TITAN, ...h };
+    }
+    // la voiture de police : la même boîte orientée que le serveur (sans sa marge), à sa position interpolée, donc au retard d'affichage de ce que je vois
+    const po = monstresImage.police;
+    if (po && !enReplay) {
+      const dist = toucheBoiteOrientee(o, d, r ? r.distance : limite, po.p, po.cap);
+      if (dist !== null) r = { cible: CIBLE_POLICE, zone: "corps", distance: dist };
     }
     return r;
   }
@@ -1965,6 +1977,10 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
         jm.majEvenement(m);
         if (m.phase === "annonce") sons.alerte(m.type);
         break;
+      case "police":
+        // pas de son ici : la sirène suit la PRÉSENCE de la voiture dans le snap (`majMonstres`), un message perdu ne la laisse pas hurler pour rien
+        jm.majPolice(m);
+        break;
       case "laser":
         jm.ajouterLaser(m);
         sons.laser(positionSon(m.de));
@@ -2078,7 +2094,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
             sons.rireTruck(undefined, 3.2);
           } else sons.manche();
         }
-        if (m.etat.phase === "lobby") { mancheVue = 0; papUtilise = false; noteZ = null; cinematiqueDebutS = null; grenades?.vider(); projectilesZ?.vider(); rEclairs?.vider(); }
+        if (m.etat.phase === "lobby") { mancheVue = 0; papUtilise = false; noteZ = null; cinematiqueDebutS = null; grenades?.vider(); projectilesZ?.vider(); rEclairs?.vider(); patrouilleZ = null; }
         break;
       }
       case "zevt": {
@@ -2129,6 +2145,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
             else if (e.quoi === "rire") sons.rireTruck(positionSon(e.p));
             else sons.klaxonCamion(positionSon(e.p));
             break;
+          // (2026-10-30) une patrouille de police passe hors de la carte : la sirène et la lueur suivent son trajet (`majPatrouilleZ`)
+          case "patrouille": patrouilleZ = { p0: e.p0, p1: e.p1, t0: e.t0, finT: e.finT }; break;
           // (v8) la foudre annonce un petit ou un mini Truck (il naît quand elle frappe) ; le tonnerre part à la frappe
           case "eclair": eclairZ(e.p, (e.dans ?? 0) / 1000); break;
           case "miniTruck": {
@@ -2432,8 +2450,11 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   };
   const surContexte = (e: Event) => e.preventDefault();
   const surVisibilite = () => {
-    if (document.hidden) toutRelacher();
-    else if (evince && !modeZ) reentrer();
+    if (document.hidden) {
+      toutRelacher();
+      // la boucle de jeu ne tourne plus (requestAnimationFrame suspendu) : la sirène de la police ne se tairait jamais ; le prochain frame la recrée
+      sons.sirenePolice(null);
+    } else if (evince && !modeZ) reentrer();
   };
   const surContexteWebGLPerdu = (e: Event) => {
     e.preventDefault();
@@ -2845,6 +2866,9 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       const p = e.genre === "pnj" ? pnj[e.id]?.p : affichees.get(e.id)?.p;
       if (p) sourcesFeux.push({ p, niveau: e.etat });
     }
+    // la voiture de police abîmée fume puis brûle là où elle roule (image précédente : le retard d'une image est invisible) ; UN seul `feux.maj` par image
+    const poAbimee = monstresImage.police;
+    if (poAbimee?.etat && !enReplay) sourcesFeux.push({ p: poAbimee.p, niveau: poAbimee.etat });
     feux.maj(dt, sourcesFeux);
     const liste = [...affichees.values()];
     const couleurs = new Map<number, string>();
@@ -2859,6 +2883,60 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       for (const v of liste) suivreTraces(`v${v.id}`, v.p, v.cap, v.v, dt, 0.8, 1.5, v.id === mienne ? vehicule.derapage() > 0.15 : undefined);
     }
     tracesPneus.maj(dt);
+  }
+
+  /**
+   * (2026-10-30) Patrouille de police des zombies : la sirène suit la position à l'horloge serveur (figée pendant une suspension de la partie, elle
+   * suit), avec le Doppler ; elle se tait hors manche (pause entre manches, défaite, lobby) comme à la fin du trajet.
+   */
+  function majPatrouilleZ() {
+    const ph = partieZ?.phase;
+    const p = patrouilleZ;
+    const ts = client.maintenantServeur();
+    if (p && (ts > p.finT || (ph !== "manche" && ph !== "pause"))) patrouilleZ = null;
+    const pos = patrouilleZ ? positionPatrouille(patrouilleZ, ts) : null;
+    if (patrouilleZ && pos) sons.sirenePolice(positionSon(pos), vitesseRadialePatrouille(patrouilleZ, oeil(), ts));
+    else sons.sirenePolice(null);
+  }
+
+  /** (2026-10-30) Lueur bleu / rouge de la patrouille sur la scène : nulle sans passage, avec mouvement réduit, ou loin de la voiture. */
+  function lueurPatrouilleZ(): { bleu: number; rouge: number } {
+    const p = patrouilleZ;
+    if (!p || reduit) return { bleu: 0, rouge: 0 };
+    const ts = client.maintenantServeur();
+    const pos = positionPatrouille(p, ts);
+    if (!pos) return { bleu: 0, rouge: 0 };
+    const cam = oeil();
+    return lueurPatrouille(Math.hypot(pos[0] - cam[0], pos[2] - cam[2]), ts / 1000);
+  }
+
+  /**
+   * (2026-10-30) Voiture de la descente de police : traces de pneus, sirène et, en Battle Royale, feux (`majMondeDynamique` y sort tôt : sans elle
+   * la voiture abîmée ne fumerait pas). La sirène suit la PRÉSENCE de la voiture dans le snap interpolé, pas le message `police` : elle s'éteint avec elle,
+   * et se tait pendant le rejeu de la killcam, la carte du tueur et quand je suis mort (hors spectateur du Battle Royale, qui l'entend depuis le joueur suivi).
+   */
+  function majPolice(dt: number) {
+    // zombies : pas de voiture, la patrouille d'ambiance a sa propre sirène (une seule voix, jamais deux sources)
+    if (modeZ) { majPatrouilleZ(); return; }
+    const po = monstresImage.police;
+    const muet = enReplay || kc.actif() || (!vivant && !spectateurActif());
+    if (po && !muet) {
+      // Doppler : vitesse de la voiture projetée sur la droite qui la joint à l'écouteur (positive quand elle s'éloigne)
+      const cam = oeil();
+      const dx = po.p[0] - cam[0], dz = po.p[2] - cam[2];
+      const dist = Math.max(Math.hypot(dx, dz), 1);
+      const vr = (po.v * (-Math.sin(po.cap) * dx - Math.cos(po.cap) * dz)) / dist;
+      sons.sirenePolice(positionSon(po.p), vr);
+    } else sons.sirenePolice(null);
+    if (modeZ) return;
+    if (po && !enReplay) suivreTraces("police", po.p, po.cap, po.v, dt, 0.8, 1.5);
+    if (modeBR) {
+      // en Battle Royale `majMondeDynamique` ne passe pas : feux et traces de pneus se mettent à jour ici (jamais les deux chemins dans la même image)
+      sourcesFeux.length = 0;
+      if (po?.etat && !enReplay) sourcesFeux.push({ p: po.p, niveau: po.etat });
+      feux.maj(dt, sourcesFeux);
+      tracesPneus.maj(dt);
+    }
   }
 
   /** (v3) Monstres : interpolés comme les joueurs ; mon titan est à l'état local (sans retard). Pas lourds du tigre et du titan. */
@@ -2879,6 +2957,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
         sons.klaxonCamion(positionSon(tr.p));
       }
     } else klaxonDans = 0.6;
+    majPolice(dt);
     // effondrements en cours (le nuanceur écrase la hauteur), traces d'impact
     for (const [id, t0] of effondrements) {
       const k = Math.min(1, (t - t0) / DUREE_EFFONDREMENT_S);
@@ -3069,10 +3148,18 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     const k = reduit ? flash * 0.25 : flash;
     brouillard.density = densiteBrouillard(ambianceZ, t);
     brouillard.color.setHex(couleurBrouillard(C.ground, part, k * 0.35));
+    // (2026-10-30) lueur de la patrouille de police : un voile bleu ou rouge de 12 % au plus sur le brouillard et les intérieurs, jamais un éclat blanc
+    const lueur = lueurPatrouilleZ();
+    if (lueur.bleu > 0 || lueur.rouge > 0) {
+      const [dr, dg, db] = teinteLueur(lueur);
+      brouillard.color.r = Math.min(1, brouillard.color.r + dr);
+      brouillard.color.g = Math.min(1, brouillard.color.g + dg);
+      brouillard.color.b = Math.min(1, brouillard.color.b + db);
+    }
     couleurFond.copy(brouillard.color);
     renderer.setClearColor(couleurFond, 1);
     post.bloom.strength = bloomBase + 0.25 * k;
-    rInterieurs?.flash(Math.max(k * 0.6, eclatSecret * 0.8));
+    rInterieurs?.flash(Math.max(k * 0.6, eclatSecret * 0.8, lueur.bleu + lueur.rouge));
   }
 
   /**
@@ -3588,8 +3675,11 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     },
     monstres() {
       const ti = monstresImage.titan, tg = monstresImage.tigre, enCours = jm.titan();
+      const po = jm.police(), ps = monstresImage.police;
       return {
         evenement: jm.evenement(),
+        // la cible vient du snap seul (celle d'AUJOURD'HUI : elle change en route et disparaît au retrait), jamais du message `debut`
+        police: po && ps ? { finT: po.finT, surMoi: ps.cible === client.id, br: modeBR, depart: !!ps.depart } : null,
         tigre: tg ? { pv: tg.pv, pvMax: tg.pvMax, rage: !!tg.rage } : null,
         titan: ti && enCours ? {
           pilote: ti.pilote, pv: ti.pv, pvMax: ti.pvMax, finT: enCours.finT,
@@ -3641,6 +3731,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       sons.glisse(false);
       sons.moteur(null);
       sons.avion(null);
+      sons.sirenePolice(null);
       sons.ventChute(null);
       sons.avertissementZone(false);
       sons.dispose();

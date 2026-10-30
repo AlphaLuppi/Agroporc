@@ -14,7 +14,7 @@ import { useDisposition } from "./ReglageTouches";
 import { PSEUDO_MAX } from "./Arene";
 import type { StatsBrRecues } from "./contrats";
 import {
-  CLE_NIVEAU_BOTS, NIVEAUX_BOTS, REGLES_BR, TEXTE_BR, TITRE_REGLES_BR, aideBots, commandesLobbyBR, creationProposee, estBot, etiquetteEtatBR, lignesParties, nomAffiche,
+  CLE_NIVEAU_BOTS, NIVEAUX_BOTS, REGLES_BR, TEXTE_POLICE_BR, TEXTE_BR, TITRE_REGLES_BR, aideBots, commandesLobbyBR, creationProposee, ecrirePoliceBr, estBot, etiquetteEtatBR, lignePoliceBr, lignesParties, lirePoliceBr, nomAffiche,
   partiesVisibles, pseudoCompteBr, reglageBots, situationLobbyBR, texteEffectif, texteNombreBots, type PartieListee,
 } from "./lobby-modele";
 import styles from "./Arene.module.css";
@@ -47,8 +47,11 @@ export interface PropsLobbyBR {
   touches: ConfigTouches;
   reglagesHud?: ReglagesHud;
   surReglagesHud?(r: ReglagesHud): void;
-  /** l'hôte lance la partie ; `bots` (entier) et `difficulte` (niveau des bots) ne sont donnés que si le serveur propose des bots (`botsMax` > 0) */
-  surLancer(difficulte?: Difficulte, bots?: number): void;
+  /**
+   * l'hôte lance la partie ; `bots` (entier) et `difficulte` (niveau des bots) ne sont donnés que si le serveur propose des bots (`botsMax` > 0) ;
+   * `police` (2026-10-30) : la case « Descente de police » de l'hôte (jamais donné par un non-hôte)
+   */
+  surLancer(difficulte?: Difficulte, bots?: number, police?: boolean): void;
   surFermer(): void;
   erreur: string | null;
   tactile: boolean;
@@ -93,6 +96,12 @@ export default function LobbyBR({
     setNiveau(d);
     try { localStorage.setItem(CLE_NIVEAU_BOTS, d); } catch { /* stockage indisponible */ }
   };
+  // (2026-10-30) descente de police : choix de l'hôte, mémorisé dans le navigateur (activée par défaut)
+  const [police, setPolice] = useState<boolean>(() => lirePoliceBr(typeof localStorage === "undefined" ? null : localStorage));
+  const choisirPolice = (v: boolean) => {
+    setPolice(v);
+    ecrirePoliceBr(typeof localStorage === "undefined" ? null : localStorage, v);
+  };
   const humains = joueurs.filter((j) => !estBot(j)).length;
   const reglage = reglageBots({ botsMax, botsRestants, humains, capacite: partie?.capacite ?? BR.joueursMax, choisi: botsChoisis });
   const sit = situationLobbyBR(partie, monId, connecte, salonBr, reglage);
@@ -102,10 +111,14 @@ export default function LobbyBR({
   const monPseudo = joueurs.find((j) => j.id === monId)?.pseudo ?? null;
   const peutLancer = sit.peutLancer && !tactile && !nomTropCourt;
   const lancer = () => {
-    if (!reglage.disponible) surLancer();
-    else if (reglage.valeur > 0) surLancer(niveau, reglage.valeur);
-    else surLancer(undefined, 0);
+    // l'hôte envoie toujours son choix de police (la case lui est montrée dès qu'il peut lancer) ; un non-hôte ne lance rien (le serveur ignore son message)
+    if (!reglage.disponible) surLancer(undefined, undefined, police);
+    else if (reglage.valeur > 0) surLancer(niveau, reglage.valeur, police);
+    else surLancer(undefined, 0, police);
   };
+  const idPolice = `${idPseudo}-police`;
+  const montrerPolice = sit.hote && !sit.enCours && !tactile && connecte;
+  const policeRetenue = !sit.hote && !sit.enCours ? lignePoliceBr(partie?.police) : null;
   const montrerBots = sit.hote && !sit.enCours && reglage.disponible && !tactile && connecte;
   const idBots = `${idPseudo}-bots`;
   const lignes = (parties ? lignesParties("br", parties, partieActuelle) : [])
@@ -242,6 +255,18 @@ export default function LobbyBR({
           )}
         </fieldset>
       )}
+
+      {montrerPolice && (
+        <fieldset className={styles.reglagePolice} aria-describedby={`${idPolice}-aide`}>
+          <legend>Événements</legend>
+          <label className={styles.optionReglage}>
+            <input type="checkbox" checked={police} onChange={(e) => choisirPolice(e.target.checked)} />
+            <span>Descente de police</span>
+          </label>
+          <p id={`${idPolice}-aide`} className={styles.aidePseudo}>{TEXTE_POLICE_BR}</p>
+        </fieldset>
+      )}
+      {policeRetenue && <p className={styles.note}>{policeRetenue}</p>}
 
       <section className={styles.tir} aria-labelledby={`${idPseudo}-regles`}>
         <h3 id={`${idPseudo}-regles`}>{TITRE_REGLES_BR}</h3>

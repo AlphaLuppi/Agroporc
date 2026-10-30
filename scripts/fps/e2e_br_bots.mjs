@@ -214,7 +214,7 @@ try {
       cwd: join(RACINE, "serveur-fps"),
       env: {
         ...process.env, PORT: String(portWs), SCENE_JSON: join(RACINE, "public/agroparc/scene.json"),
-        PDJ_FPS_BR_DECOMPTE_MS: DECOMPTE, PDJ_FPS_BR_VOL_MS: "12000", PDJ_FPS_BR_ALTITUDE: "140", PDJ_FPS_BR_OBJETS: "300", PDJ_FPS_BR_FIN_MS: "20000",
+        PDJ_FPS_POLICE: "off", PDJ_FPS_BR_DECOMPTE_MS: DECOMPTE, PDJ_FPS_BR_VOL_MS: "12000", PDJ_FPS_BR_ALTITUDE: "140", PDJ_FPS_BR_OBJETS: "300", PDJ_FPS_BR_FIN_MS: "20000",
         PDJ_FPS_BR_VALIDE_MS: "5000", PDJ_FPS_BR_STATS: FICHIER_STATS, PDJ_FPS_BR_BOTS_ESSAI: "agressif", PDJ_FPS_CREATION_TIC_MAX_MS: "1000",
       },
     });

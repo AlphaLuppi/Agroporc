@@ -1,17 +1,19 @@
 "use client";
 
-import { useId, type CSSProperties, type ReactNode } from "react";
+import { useId, useState, type CSSProperties, type ReactNode } from "react";
 import type { EtatConnexion } from "@/lib/fps/reseau";
 import { JEU, type ArmeMeleeId, type ArmePrincipaleId, type ArmeSecondaireId, type InfoMatch, type JoueurPublic } from "@/lib/fps/protocole";
+import { libelleReglages, type ReglagesArene as ReglagesAreneChoisis } from "@/lib/fps/reglages-arene";
 import type { ConfigTouches } from "@/lib/fps/touches";
 import type { ReglagesHud } from "@/lib/fps/reglages-hud";
 import ChoixEquipement from "./ChoixEquipement";
 import ReglageInterface from "./hud/ReglageInterface";
 import ListeParties from "./ListeParties";
+import ReglagesEvenementsArene from "./ReglagesArene";
 import { useDisposition } from "./ReglageTouches";
 import type { EquipementChoisi } from "./contrats";
 import {
-  REGLES_TIR, TEXTE_ARMES_SPECIALES, TEXTE_COUTEAU, TITRE_COMMENT_CA_TIRE, commandesLobby, lignesParties, partiesVisibles, type PartieListee,
+  REGLES_TIR, TEXTE_ARMES_SPECIALES, TEXTE_COUTEAU, TEXTE_REGLAGES_IGNORES, TITRE_COMMENT_CA_TIRE, commandesLobby, lignesParties, partiesVisibles, type PartieListee,
 } from "./lobby-modele";
 import styles from "./Arene.module.css";
 
@@ -47,8 +49,15 @@ interface Props {
   partieActuelle?: string | null;
   /** aller dans une autre arène */
   surRejoindrePartie?(id: string): void;
-  /** « Créer une arène » (le serveur en reprend une vide avant d'en ouvrir une de plus ; refus `limite` au plafond) */
-  surCreerPartie?(): void;
+  /**
+   * « Créer cette arène » du panneau de réglages (2026-10-30, « Créer une arène » l'ouvre au lieu de créer d'un clic) : le serveur reprend une arène vide aux
+   * MÊMES réglages avant d'en ouvrir une de plus ; refus `limite` au plafond ou si la création est trop rapprochée
+   */
+  surCreerPartie?(reglages: ReglagesAreneChoisis): void;
+  /** réglages d'événements de l'arène où je suis (liste des parties, sinon écho de `mode`) ; null : le serveur ne les publie pas */
+  reglagesPartie?: ReglagesAreneChoisis | null;
+  /** j'ai demandé des réglages non par défaut et le serveur ne les a pas appliqués (serveur d'avant) */
+  reglagesIgnores?: boolean;
   /** `rejoindre` refusé (arène pleine) : id d'une autre arène qui accueille, proposée par « Changer d'arène » */
   alternative?: string | null;
 }
@@ -62,9 +71,12 @@ function statut(etat: EtatConnexion, monId: string | null): { texte: string; cla
 /** Panneau « Arène » de la vue Palantir : présence, pseudo, équipement (principale + secondaire), règles de tir, réglages d'interface, bouton d'entrée. */
 export default function Arene({
   etat, monId, joueurs, match, pseudo, surPseudo, equipement, surEquipement, touches, reglagesHud, surReglagesHud, surEntrer, surFermer, erreur, tactile, pseudoParDefaut = false, choixMode,
-  parties = null, partieActuelle = null, surRejoindrePartie, surCreerPartie, alternative = null,
+  parties = null, partieActuelle = null, surRejoindrePartie, surCreerPartie, alternative = null, reglagesPartie = null, reglagesIgnores = false,
 }: Props) {
   const idPseudo = useId();
+  // panneau des réglages d'événements : ouvert par « Créer une arène », refermé une fois l'arène demandée
+  const [reglagesOuverts, setReglagesOuverts] = useState(false);
+  const idReglages = `${idPseudo}-reglages`;
   const disposition = useDisposition();
   const s = statut(etat, monId);
   const connecte = etat === "ouvert" && !!monId;
@@ -103,6 +115,8 @@ export default function Arene({
           {match.phase === "entracte" && " · entracte, un nouveau match arrive"}
         </p>
       )}
+      {reglagesPartie && <p className={styles.match}>Événements de cette arène : <b>{libelleReglages(reglagesPartie)}</b></p>}
+      {reglagesIgnores && <p className={styles.avis} role="status">{TEXTE_REGLAGES_IGNORES}</p>}
       {erreur && <p className={styles.erreur} role="alert">{erreur}</p>}
       {alternative && surRejoindrePartie && (
         <div className={styles.actionsPartie}>
@@ -116,8 +130,18 @@ export default function Arene({
           mode="arene"
           lignes={lignes.map((l) => (l.action === "rejoindre" && !surRejoindrePartie ? { ...l, action: null } : l))}
           surRejoindre={(id) => surRejoindrePartie?.(id)}
-          surCreer={surCreerPartie}
+          surCreer={surCreerPartie ? () => setReglagesOuverts((o) => !o) : undefined}
+          creationOuverte={surCreerPartie ? reglagesOuverts : undefined}
+          idCreation={idReglages}
           idTitre={`${idPseudo}-parties`}
+        />
+      )}
+      {montrerParties && surCreerPartie && reglagesOuverts && (
+        <ReglagesEvenementsArene
+          id={idReglages}
+          desactive={!connecte}
+          surCreer={(r) => { setReglagesOuverts(false); surCreerPartie(r); }}
+          surAnnuler={() => setReglagesOuverts(false)}
         />
       )}
 

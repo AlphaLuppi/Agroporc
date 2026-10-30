@@ -504,6 +504,12 @@
   border-color: var(--ag-danger);
 }
 .evtBande[data-type="truck"] { border-color: var(--ag-amber); animation: evtPulse 0.5s ease-in-out infinite alternate; }
+/* (2026-10-30) descente de police : bleu (rouge quand elle me poursuit), la bande garde la mise en page à trois colonnes du Truck */
+.evtAlerte[data-type="police"] { border-color: var(--ag-cyan); box-shadow: 0 0 calc(40 * var(--u)) color-mix(in srgb, var(--ag-cyan) 50%, transparent); }
+.evtAlerte[data-type="police"][data-moi="oui"] { border-color: var(--ag-danger); box-shadow: 0 0 calc(40 * var(--u)) color-mix(in srgb, var(--ag-danger) 55%, transparent); }
+.evtBande[data-type="police"] { border-color: var(--ag-cyan); animation: evtPulse 0.5s ease-in-out infinite alternate; }
+.evtBande[data-type="police"][data-moi="oui"] { border-color: var(--ag-danger); }
+.evtPoliceSous { font-size: max(11px, calc(12 * var(--u))); color: var(--ag-ink); letter-spacing: 0.04em; text-align: center; }
 .evtTitan { top: auto; left: auto; right: calc(24 * var(--u)); bottom: calc(24 * var(--u)); transform: none; width: calc(460 * var(--u)); border-color: var(--ag-amber); }
 .evtTitan[data-moi="oui"] { border-color: var(--ag-amber); box-shadow: 0 0 calc(18 * var(--u)) color-mix(in srgb, var(--ag-amber) 35%, transparent); }
 .evtBandeTitre { font: 600 max(11px, calc(14 * var(--u)))/1 var(--ag-display), var(--ag-mono), monospace; letter-spacing: 0.12em; color: var(--ag-ink); white-space: nowrap; }

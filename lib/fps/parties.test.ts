@@ -194,3 +194,43 @@ describe("réservations de places d'arène", () => {
     expect(r.compter("ar2", 200)).toBe(1);
   });
 });
+
+describe("(2026-10-30) configuration portée par la partie (réglages d'événements d'une arène)", () => {
+  function registreConfig() {
+    const reçues: { mode: ModeSalle; config: unknown }[] = [];
+    const r = new RegistreParties<FausseSalle & { config?: unknown }>({
+      fabriques: {
+        arene: (config) => { reçues.push({ mode: "arene", config }); return { mode: "arene", humains: 0, config }; },
+        zombies: (config) => { reçues.push({ mode: "zombies", config }); return { mode: "zombies", humains: 0, config }; },
+        br: (config) => { reçues.push({ mode: "br", config }); return { mode: "br", humains: 0, config }; },
+      },
+      max: { arene: 2, zombies: 3, br: 4 }, maxTotal: 6, humains: (s) => s.humains, permanentes: ["arene", "zombies", "br"],
+    });
+    return { r, reçues };
+  }
+
+  it("les parties permanentes sont créées sans configuration", () => {
+    const { r, reçues } = registreConfig();
+    expect(reçues).toEqual([{ mode: "arene", config: undefined }, { mode: "zombies", config: undefined }, { mode: "br", config: undefined }]);
+    expect(r.parId("ar1")!.config).toBeUndefined();
+    expect("config" in r.parId("ar1")!).toBe(false);
+  });
+
+  it("`ouvrir(mode, config)` passe la configuration à la fabrique et la garde sur la partie", () => {
+    const { r, reçues } = registreConfig();
+    const reglages = { evenements: ["elsa"], frequence: "calme" };
+    const p = r.ouvrir("arene", reglages);
+    expect(p.id).toBe("ar2");
+    expect(p.config).toBe(reglages);
+    expect(p.salle.config).toBe(reglages);
+    expect(reçues.at(-1)).toEqual({ mode: "arene", config: reglages });
+    expect(r.parId("ar2")!.config).toBe(reglages);
+    expect(r.deSalle(p.salle)!.config).toBe(reglages);
+  });
+
+  it("sans configuration, la partie n'en porte pas", () => {
+    const { r } = registreConfig();
+    const p = r.ouvrir("zombies");
+    expect("config" in p).toBe(false);
+  });
+});

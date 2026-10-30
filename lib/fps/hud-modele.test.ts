@@ -140,6 +140,10 @@ describe("formats français", () => {
     expect(libelleFil("mitrailleuse", "arme", "Lea")).toBe("M. lourde");
     expect(libelleFil("couteau", "arme", "Lea")).toBe("Couteau");
     expect(libelleFil("epee", "arme", "Lea")).toBe("Épée");
+    // (2026-10-30) la police, le bus C3 et la frappe aérienne ont leur libellé (plus de repli sur « Couteau »)
+    expect(libelleFil("couteau", "police", "")).toBe("Écrasé par la police");
+    expect(libelleFil("couteau", "bus_c3", "")).toBe("Écrasé par le Bus C3");
+    expect(libelleFil("couteau", "frappe_aerienne", "Lea")).toBe("Frappe aérienne de Lea");
     expect(libelleFil("couteau", "ecrase_pnj", "")).toBe("Écrasé par la circulation");
     expect(libelleFil("couteau", "ecrase_vehicule", "Lea")).toBe("Renversé par Lea");
   });

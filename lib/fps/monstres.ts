@@ -209,14 +209,17 @@ export function pasTruck(e: EtatVehicule, cible: Vec3 | null, recul: boolean, dt
   return pasVehicule(e, commandesPoursuite(e, vise, recul), dt, monde).etat;
 }
 
-/** Le joueur (pieds en p, cylindre de rayon `rayon`) est-il sous la caisse du Truck lancé ? */
-export function ecraseParTruck(e: EtatVehicule, p: Vec3, rayon: number, marge = 0.2): boolean {
-  if (Math.abs(e.v) < TRUCK_FOU.vitesseEcrase && Math.abs(e.vl ?? 0) < TRUCK_FOU.vitesseEcrase) return false;
-  if (p[1] >= TRUCK_FOU.hauteur) return false;
+/** Dimensions et vitesse minimale d'une caisse qui écrase : celles du Truck fou par défaut, celles de la voiture de police (`ecraseParPolice`). */
+export interface DimsEcrasement { longueur: number; largeur: number; hauteur: number; vitesseEcrase: number }
+
+/** Le joueur (pieds en p, cylindre de rayon `rayon`) est-il sous la caisse du Truck lancé (ou, avec `dims`, de la caisse décrite) ? */
+export function ecraseParTruck(e: EtatVehicule, p: Vec3, rayon: number, marge = 0.2, dims: DimsEcrasement = TRUCK_FOU): boolean {
+  if (Math.abs(e.v) < dims.vitesseEcrase && Math.abs(e.vl ?? 0) < dims.vitesseEcrase) return false;
+  if (p[1] >= dims.hauteur) return false;
   const [fx, fz] = avant(e.cap);
   const dx = p[0] - e.p[0], dz = p[2] - e.p[2];
   const lon = Math.abs(dx * fx + dz * fz), lat = Math.abs(-dx * fz + dz * fx);
-  const ex = Math.max(0, lon - TRUCK_FOU.longueur / 2 - marge), ez = Math.max(0, lat - TRUCK_FOU.largeur / 2 - marge);
+  const ex = Math.max(0, lon - dims.longueur / 2 - marge), ez = Math.max(0, lat - dims.largeur / 2 - marge);
   return ex * ex + ez * ez <= rayon * rayon;
 }
 

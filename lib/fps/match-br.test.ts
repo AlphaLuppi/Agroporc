@@ -200,6 +200,7 @@ function banc(opts: Partial<OptionsServiceBr> = {}): Banc {
     recevoir: () => [],
     nouvelIdBot: () => `b${++compteurBots}`,
     nombreHumains: () => [...table.values()].filter((j) => !j.bot).length,
+    supportePolice: () => true,
   };
   svc = creerServiceBr(ctx, { alea: suite(11), scene, vol, butin, points: [], ...opts });
   return {

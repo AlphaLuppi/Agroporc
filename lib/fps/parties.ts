@@ -13,11 +13,15 @@ import { MODES_SALLE, type ModeSalle } from "./protocole";
 /** Préfixe de l'id d'une partie par mode. */
 export const PREFIXE_PARTIE: Record<ModeSalle, string> = { arene: "ar", zombies: "z", br: "br" };
 
-export interface Partie<S> { id: string; mode: ModeSalle; salle: S; permanente: boolean }
+export interface Partie<S> {
+  id: string; mode: ModeSalle; salle: S; permanente: boolean;
+  /** (2026-10-30) configuration choisie à la création (réglages d'événements d'une arène), passée à la fabrique ; absente pour les parties permanentes */
+  config?: unknown;
+}
 
 export interface OptionsRegistre<S> {
-  /** une salle neuve (avec son monde) par mode */
-  fabriques: Record<ModeSalle, () => S>;
+  /** une salle neuve (avec son monde) par mode ; `config` : celle demandée à la création de la partie (seule l'arène en lit une : ses réglages d'événements) */
+  fabriques: Record<ModeSalle, (config?: unknown) => S>;
   /** parties en même temps par mode, permanente comprise */
   max: Record<ModeSalle, number>;
   /** parties en même temps toutes salles confondues, permanentes comprises (la réserve d'un emplacement par mode peut le dépasser de 3 au plus) */
@@ -37,8 +41,10 @@ export class RegistreParties<S> {
     for (const mode of MODES_SALLE) if (o.permanentes.includes(mode)) this.creer(mode, true);
   }
 
-  private creer(mode: ModeSalle, permanente: boolean): Partie<S> {
-    const partie: Partie<S> = { id: `${PREFIXE_PARTIE[mode]}${++this.compteurs[mode]}`, mode, salle: this.o.fabriques[mode](), permanente };
+  private creer(mode: ModeSalle, permanente: boolean, config?: unknown): Partie<S> {
+    const partie: Partie<S> = {
+      id: `${PREFIXE_PARTIE[mode]}${++this.compteurs[mode]}`, mode, salle: this.o.fabriques[mode](config), permanente, ...(config !== undefined ? { config } : {}),
+    };
     this.parties.push(partie);
     return partie;
   }
@@ -64,10 +70,10 @@ export class RegistreParties<S> {
     return duMode.every((p) => p.permanente);
   }
 
-  /** Ouvre une partie de plus ; lève si `peutOuvrir(mode)` est faux. */
-  ouvrir(mode: ModeSalle): Partie<S> {
+  /** Ouvre une partie de plus (avec sa `config`, portée par la partie) ; lève si `peutOuvrir(mode)` est faux. */
+  ouvrir(mode: ModeSalle, config?: unknown): Partie<S> {
     if (!this.peutOuvrir(mode)) throw new Error(`plus de partie possible en mode ${mode}`);
-    return this.creer(mode, false);
+    return this.creer(mode, false, config);
   }
 
   /** Retire les parties non permanentes sans aucun membre humain ; renvoie les retirées. */

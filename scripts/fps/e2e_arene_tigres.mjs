@@ -405,7 +405,7 @@ try {
       // avion toutes les 4 à 5 s (un seul tigre sauvage à la fois), Elsa, événements (Truck Muche fou, tigre géant) et bus C3 neutralisés
       env: {
         ...process.env, PORT: String(portWs), PDJ_FPS_ELSA_MIN_MS: "600000", PDJ_FPS_ELSA_MAX_MS: "600000",
-        PDJ_FPS_EVT_MIN_MS: "600000", PDJ_FPS_EVT_MAX_MS: "600000", PDJ_FPS_BUS_MIN_MS: "600000", PDJ_FPS_BUS_MAX_MS: "600000",
+        PDJ_FPS_POLICE: "off", PDJ_FPS_EVT_MIN_MS: "600000", PDJ_FPS_EVT_MAX_MS: "600000", PDJ_FPS_BUS_MIN_MS: "600000", PDJ_FPS_BUS_MAX_MS: "600000",
         PDJ_FPS_AVION_MIN_MS: "4000", PDJ_FPS_AVION_MAX_MS: "5000", SCENE_JSON: join(RACINE, "public/agroparc/scene.json"),
       },
     });

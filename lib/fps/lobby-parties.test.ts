@@ -159,7 +159,8 @@ describe("estEchoMode", () => {
 describe("texteRefus", () => {
   it("limite : texte propre à chaque mode ; le Battle Royale garde le sien", () => {
     expect(texteRefus("mode", "limite", "zombies")).toBe(TEXTE_PARTIES_LIMITE);
-    expect(texteRefus("mode", "limite", "arene")).toBe("Trop de parties en cours, rejoignez-en une.");
+    // (2026-10-30) l'arène a son texte : plafond d'arènes ou création trop rapprochée (spec arène-police §7.3)
+    expect(texteRefus("mode", "limite", "arene")).toBe("Plus de place pour une arène de plus, ou création trop rapprochée : rejoignez une arène de la liste.");
     expect(texteRefus("mode", "limite", "br")).toBe(TEXTE_BR_LIMITE);
   });
 

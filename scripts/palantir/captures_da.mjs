@@ -141,7 +141,7 @@ try {
     const srv = lancer(process.execPath, ["dist/index.js"], { cwd: join(RACINE, "serveur-fps"), env: {
       ...process.env, PORT: String(port), SCENE_JSON: join(RACINE, "public/agroparc/scene.json"),
       // arène : ni avion, ni bus, ni événements pendant les captures
-      PDJ_FPS_AVION_MIN_MS: H, PDJ_FPS_AVION_MAX_MS: H, PDJ_FPS_BUS_MIN_MS: H, PDJ_FPS_BUS_MAX_MS: H, PDJ_FPS_EVT_MIN_MS: H, PDJ_FPS_EVT_MAX_MS: H,
+      PDJ_FPS_AVION_MIN_MS: H, PDJ_FPS_AVION_MAX_MS: H, PDJ_FPS_BUS_MIN_MS: H, PDJ_FPS_BUS_MAX_MS: H, PDJ_FPS_POLICE: "off", PDJ_FPS_ZOMBIES_PATROUILLE: "off", PDJ_FPS_EVT_MIN_MS: H, PDJ_FPS_EVT_MAX_MS: H,
       // zombies : pause longue (aucun tigre), argent en abondance
       PDJ_FPS_ZOMBIES_ARGENT: "50000", PDJ_FPS_ZOMBIES_PAUSE_MS: "600000", PDJ_FPS_ZOMBIES_TOTAL: "12",
       // Battle Royale : seul, avion longtemps en vol ; décompte de 30 s au plus mais fini dès que le joueur a rejoint (un client en rendu logiciel est lent : 3 s l'excluaient)

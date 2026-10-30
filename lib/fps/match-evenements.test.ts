@@ -306,3 +306,127 @@ describe("tigre robot géant et titan tigre", () => {
     void TIGRE_ROBOT;
   });
 });
+
+describe("événements paramétrables : types autorisés, temps morts, police", () => {
+  /** types des annonces successives d'une salle (un joueur au loin, alea fixe) */
+  function annonces(opts: Partial<NonNullable<OptionsSalle["evenements"]>>, duree: number, alea: () => number = () => 0.5): string[] {
+    const s = new Salle(vide, POINTS, alea, T0, {
+      evenements: { truck: { x: -60, z: 0 }, centre: { x: 0, z: 0 }, rayonApparition: 60, premier: { minMs: 0, maxMs: 0 }, intervalle: { minMs: 1000, maxMs: 1000 }, pvTigre: 10, ...opts },
+    });
+    s.connecter("a", "JoueurA", T0);
+    s.recevoir("a", { t: "rejoindre", principale: "sniper", secondaire: "pistolet" }, T0);
+    const r = avancer(s, T0, T0 + duree, (t) => { tenir(s, "a", [900, 0, 900]); rafraichir(s, ["a"], t); });
+    return messages(r.sorties, "evenement").filter((m) => m.phase === "annonce").map((m) => m.type);
+  }
+
+  it("`types` limite les événements à tour : un seul type autorisé revient à chaque fois, sans tirage de hasard", () => {
+    expect(annonces({ types: ["tigre"], premier: { minMs: 0, maxMs: 0 } }, 20_000).every((t) => t === "tigre")).toBe(true);
+    const truck = annonces({ types: ["truck"] }, 3 * (EVENEMENTS.annonceMs + TRUCK_FOU.dureeMs + 1000) + 500);
+    expect(truck.length).toBeGreaterThanOrEqual(2);
+    expect(truck.every((t) => t === "truck")).toBe(true);
+  });
+
+  it("deux types autorisés alternent (séquence de la v3 : alea < 0,5 ⇒ Truck d'abord)", () => {
+    const suite = annonces({ types: ["truck", "tigre"] }, 4 * (EVENEMENTS.annonceMs + TRUCK_FOU.dureeMs + 1000), () => 0.2);
+    expect(suite.slice(0, 2)).toEqual(["truck", "tigre"]);
+  });
+
+  it("sans `types`, comportement d'avant : les deux, dans l'ordre de la v3", () => {
+    expect(annonces({}, EVENEMENTS.annonceMs + TRUCK_FOU.dureeMs + 5_000, () => 0.7)[0]).toBe("tigre");
+    expect(annonces({}, EVENEMENTS.annonceMs + TRUCK_FOU.dureeMs + 5_000, () => 0.2)[0]).toBe("truck");
+  });
+
+  it("`types` vide : aucun service, aucune annonce (même avec un joueur en jeu)", () => {
+    expect(annonces({ types: [] }, 60_000)).toEqual([]);
+  });
+
+  it("`forcerType` l'emporte sur `types`", () => {
+    expect(annonces({ types: ["tigre"], forcerType: "truck" }, 2_000)[0]).toBe("truck");
+  });
+
+  it("temps mort : un second délai d'intervalle après la fin d'un événement ; sans `tempsMortP`, aucun tirage de plus", () => {
+    const delaiApresFin = (tempsMortP?: number): number => {
+      const s = new Salle(vide, POINTS, () => 0.5, T0, {
+        evenements: {
+          truck: { x: -60, z: 0 }, centre: { x: 0, z: 0 }, premier: { minMs: 0, maxMs: 0 }, intervalle: { minMs: 3_000, maxMs: 3_000 }, forcerType: "truck",
+          ...(tempsMortP !== undefined ? { tempsMortP } : {}),
+        },
+      });
+      s.connecter("a", "JoueurA", T0);
+      s.recevoir("a", { t: "rejoindre", principale: "sniper", secondaire: "pistolet" }, T0);
+      let finT = 0, annonceT = 0;
+      let t = T0;
+      while (t < T0 + EVENEMENTS.annonceMs + TRUCK_FOU.dureeMs + 30_000) {
+        t += PAS;
+        tenir(s, "a", [900, 0, 900]); rafraichir(s, ["a"], t);
+        for (const m of messages(s.tic(t), "evenement")) {
+          if (m.phase === "fin") finT = t;
+          if (m.phase === "annonce" && finT > 0) annonceT ||= t;
+        }
+      }
+      return annonceT - finT;
+    };
+    const normal = delaiApresFin();
+    const mort = delaiApresFin(1);
+    expect(normal).toBeGreaterThanOrEqual(3_000 - 100);
+    expect(normal).toBeLessThan(3_500);
+    expect(mort).toBeGreaterThanOrEqual(6_000 - 100);
+    expect(mort).toBeLessThan(6_500);
+  });
+
+  it("la salle sans réglages tire exactement le même hasard qu'avant (tempsMortP absent : aucun appel de `alea` en plus à la fin d'un événement)", () => {
+    const comptes = (tempsMortP?: number): number => {
+      let tirages = 0;
+      const s = new Salle(vide, POINTS, () => { tirages++; return 0.5; }, T0, {
+        evenements: {
+          truck: { x: -60, z: 0 }, centre: { x: 0, z: 0 }, premier: { minMs: 0, maxMs: 0 }, intervalle: { minMs: 1000, maxMs: 1000 }, forcerType: "truck",
+          ...(tempsMortP !== undefined ? { tempsMortP } : {}),
+        },
+      });
+      s.connecter("a", "JoueurA", T0);
+      s.recevoir("a", { t: "rejoindre", principale: "sniper", secondaire: "pistolet" }, T0);
+      tirages = 0;
+      avancer(s, T0, T0 + EVENEMENTS.annonceMs + TRUCK_FOU.dureeMs + 600, (t) => { tenir(s, "a", [900, 0, 900]); rafraichir(s, ["a"], t); });
+      return tirages;
+    };
+    expect(comptes(0)).toBe(comptes());
+    expect(comptes(1)).toBeGreaterThan(comptes());
+  });
+
+  it("`policeEnCours` retient l'annonce (réessayée toutes les 5 s) et le type tiré est mémorisé : l'alternance n'est pas faussée", () => {
+    const police = { ok: true };
+    let tirages = 0;
+    const s = new Salle(vide, POINTS, () => { tirages++; return 0.2; }, T0, {
+      evenements: { truck: { x: -60, z: 0 }, centre: { x: 0, z: 0 }, premier: { minMs: 0, maxMs: 0 }, intervalle: { minMs: 1000, maxMs: 1000 }, policeEnCours: () => police.ok },
+    });
+    s.connecter("a", "JoueurA", T0);
+    s.recevoir("a", { t: "rejoindre", principale: "sniper", secondaire: "pistolet" }, T0);
+    tirages = 0;
+    const r1 = avancer(s, T0, T0 + 12_000, (t) => { tenir(s, "a", [900, 0, 900]); rafraichir(s, ["a"], t); });
+    expect(messages(r1.sorties, "evenement")).toEqual([]);
+    // un seul tirage pour le type (0,2 ⇒ Truck), jamais un par réessai
+    expect(tirages).toBe(1);
+    police.ok = false;
+    const r2 = avancer(s, r1.t, r1.t + 5_100, (t) => { tenir(s, "a", [900, 0, 900]); rafraichir(s, ["a"], t); });
+    expect(messages(r2.sorties, "evenement").map((m) => [m.type, m.phase])).toEqual([["truck", "annonce"]]);
+    expect(tirages).toBe(1);
+  });
+
+  it("`occupe()` : vrai de l'annonce à la fin, faux en attente ; `titanEnCours()` faux hors titan", () => {
+    const s = new Salle(vide, POINTS, () => 0.2, T0, {
+      evenements: { truck: { x: -60, z: 0 }, centre: { x: 0, z: 0 }, premier: { minMs: 0, maxMs: 0 }, intervalle: { minMs: 600_000, maxMs: 600_000 }, forcerType: "truck" },
+    });
+    const svc = (s as unknown as { evenements: { occupe(): boolean; titanEnCours(): boolean } }).evenements;
+    s.connecter("a", "JoueurA", T0);
+    s.recevoir("a", { t: "rejoindre", principale: "sniper", secondaire: "pistolet" }, T0);
+    expect(svc.occupe()).toBe(false);
+    let t = T0;
+    const garder = () => { tenir(s, "a", [900, 0, 900]); rafraichir(s, ["a"], t); };
+    t += 100; garder(); s.tic(t);
+    expect(svc.occupe()).toBe(true); // annoncé
+    const r = avancer(s, t, t + EVENEMENTS.annonceMs + TRUCK_FOU.dureeMs + 500, (u) => { t = u; garder(); });
+    expect(messages(r.sorties, "evenement").some((m) => m.phase === "fin")).toBe(true);
+    expect(svc.occupe()).toBe(false);
+    expect(svc.titanEnCours()).toBe(false);
+  });
+});

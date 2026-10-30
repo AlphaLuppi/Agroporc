@@ -1,9 +1,13 @@
 import { COUTEAU, MELEE, STATS } from "@/lib/fps/armes";
 import {
-  ARMES_SPECIALES, JEU, type ArmeMeleeId, type ArmePrincipaleId, type ArmeSecondaireId, type EtatPartieBr, type EtatPartieZombies, type JoueurBr, type MessageServeur,
-  type ModeSalle, type ResumePartie, type ResumePartieBr, type ResumeSalonBr,
+  ARMES_SPECIALES, JEU, PARTIE_NOUVELLE, type ArmeMeleeId, type ArmePrincipaleId, type ArmeSecondaireId, type EtatPartieBr, type EtatPartieZombies, type JoueurBr, type MessageServeur,
+  type MessageClient, type ModeSalle, type ResumePartie, type ResumePartieBr, type ResumeSalonBr,
 } from "@/lib/fps/protocole";
 import { BR } from "@/lib/fps/br-regles";
+import {
+  EVENEMENTS_ARENE, FREQUENCES, LIBELLES_FREQUENCES, estParDefaut, libelleReglages, normaliserReglages,
+  type FrequenceEvenements, type IdEvenementArene, type ReglagesArene,
+} from "@/lib/fps/reglages-arene";
 import { CHUTE_BR } from "@/lib/fps/br-chute";
 import { PALIERS_ZONE } from "@/lib/fps/br-zone";
 import { ZOMBIES, type Difficulte } from "@/lib/fps/zombies-vagues";
@@ -239,6 +243,8 @@ export interface LigneParties {
   enPause: boolean;
   phase: string;
   joueurs: number;
+  /** (2026-10-30) arène : événements et fréquence fixés à sa création (« Tous les événements · Normal »), absent d'un serveur qui ne les publie pas */
+  evenements?: string;
 }
 
 const numeroPartie = (id: string): string => /\d+$/.exec(id)?.[0] ?? id;
@@ -283,7 +289,10 @@ export function lignesParties(mode: ModeSalle, parties: readonly PartieListee[],
     const pleine = enJeu >= capacite;
     const t = `Arène ${numeroPartie(p.id)}`;
     const etat = pleine && !ici ? `Pleine · ${enJeu}/${capacite}` : `${enJeu}/${capacite} en jeu · ${p.joueurs} en ligne`;
-    return { ...base, titre: t, designation: `l'${t.toLowerCase()}`, etat, action: ici || pleine ? null : "rejoindre" };
+    return {
+      ...base, titre: t, designation: `l'${t.toLowerCase()}`, etat, action: ici || pleine ? null : "rejoindre",
+      ...(p.reglages ? { evenements: libelleReglages(normaliserReglages(p.reglages)) } : {}),
+    };
   });
 }
 
@@ -326,6 +335,101 @@ export function estEchoMode(courant: { mode: ModeSalle; partie: string | null },
   return m.partie === courant.partie;
 }
 
+// ---------- réglages des événements d'une arène (2026-10-30) ----------
+// Spec : docs/superpowers/specs/2026-10-30-arene-police-evenements-design.md (§3, §7.3)
+
+/** `localStorage` : derniers réglages choisis dans « Créer une arène » (JSON relu par `normaliserReglages`, jamais cru). */
+export const CLE_REGLAGES_ARENE = "pdj-fps-arene-reglages";
+/** `localStorage` : case « Descente de police » du lobby Battle Royale (absent = activée). */
+export const CLE_POLICE_BR = "pdj-fps-br-police";
+
+/** Ce que la lecture de `localStorage` demande au stockage (le vrai `Storage`, ou un faux dans les tests). */
+type StockageLecture = Pick<Storage, "getItem"> | null | undefined;
+type StockageEcriture = Pick<Storage, "setItem"> | null | undefined;
+
+/** Réglages mémorisés, ou ceux par défaut (tous les événements, « Normal ») : stockage absent, illisible ou corrompu. Ne jette jamais. */
+export function lireReglagesArene(stockage: StockageLecture): ReglagesArene {
+  try {
+    const brut = stockage?.getItem(CLE_REGLAGES_ARENE);
+    return normaliserReglages(brut ? JSON.parse(brut) : null);
+  } catch {
+    return normaliserReglages(null);
+  }
+}
+
+/** Mémorise les réglages choisis (échec silencieux : stockage plein ou interdit). */
+export function ecrireReglagesArene(stockage: StockageEcriture, r: ReglagesArene): void {
+  try { stockage?.setItem(CLE_REGLAGES_ARENE, JSON.stringify({ evenements: r.evenements, frequence: r.frequence })); } catch { /* stockage indisponible */ }
+}
+
+/** Coche ou décoche un événement ; l'ordre canonique est conservé (passe par `normaliserReglages`). */
+export function avecEvenement(r: ReglagesArene, id: IdEvenementArene, coche: boolean): ReglagesArene {
+  const voulus = new Set<IdEvenementArene>(r.evenements);
+  if (coche) voulus.add(id); else voulus.delete(id);
+  return normaliserReglages({ evenements: [...voulus], frequence: r.frequence });
+}
+
+/** « Tout cocher » : tous les événements, la fréquence est gardée. */
+export const tousLesEvenements = (r: ReglagesArene): ReglagesArene => ({ evenements: [...EVENEMENTS_ARENE], frequence: r.frequence });
+/** « Aucun événement » : la fréquence est gardée (elle ne sert à rien tant que rien n'est coché, mais le choix reste là au prochain « Tout cocher »). */
+export const aucunEvenement = (r: ReglagesArene): ReglagesArene => ({ evenements: [], frequence: r.frequence });
+export const avecFrequence = (r: ReglagesArene, frequence: FrequenceEvenements): ReglagesArene => normaliserReglages({ evenements: r.evenements, frequence });
+
+/** Aide de chaque fréquence (sous les radios). */
+export const AIDES_FREQUENCES: Record<FrequenceEvenements, string> = {
+  calme: "événements rares, longues plages tranquilles",
+  normal: "événements espacés, parfois rien pendant plusieurs minutes",
+  chaos: "rythme d'origine : un événement presque en permanence",
+};
+/** Ordre d'affichage des fréquences (celui de `FREQUENCES`) avec leur libellé. */
+export const CHOIX_FREQUENCES: readonly { id: FrequenceEvenements; nom: string; aide: string }[] =
+  FREQUENCES.map((id) => ({ id, nom: LIBELLES_FREQUENCES[id], aide: AIDES_FREQUENCES[id] }));
+
+/** Ligne de résumé des réglages en cours de saisie, sous les cases : « Cette arène : Sans police · Calme ». */
+export const resumeCreation = (r: ReglagesArene): string => `Cette arène : ${libelleReglages(r)}`;
+/** Ce que la fréquence devient quand aucun événement n'est coché. */
+export const TEXTE_FREQUENCE_SANS_EVENEMENT = "La fréquence ne sert à rien tant qu'aucun événement n'est coché.";
+/** Rappel dans le panneau : pas de propriétaire ni de lobby en arène, on ne règle pas une arène existante. */
+export const TEXTE_REGLAGES_FIGES = "Les événements d'une arène sont fixés à sa création : pour d'autres événements, créez une autre arène.";
+/** Réglages non par défaut demandés, mais l'écho `mode` n'en porte pas : le serveur est d'avant ce réglage. */
+export const TEXTE_REGLAGES_IGNORES = "Ce serveur n'applique pas encore les réglages d'événements : cette arène a ses événements d'origine.";
+
+/**
+ * Message `mode` d'un changement de salle ou de partie. Les réglages d'événements ne partent que pour CRÉER une arène (`mode` « arene » + `PARTIE_NOUVELLE`),
+ * déjà normalisés (liste fermée) ; partout ailleurs ils sont écartés, le serveur les ignorerait de toute façon.
+ */
+export function messageChoixMode(mode: ModeSalle, partie?: string, reglages?: ReglagesArene): Extract<MessageClient, { t: "mode" }> {
+  if (mode === "arene" && partie === PARTIE_NOUVELLE && reglages) return { t: "mode", mode, partie, reglages: normaliserReglages(reglages) };
+  return partie !== undefined ? { t: "mode", mode, partie } : { t: "mode", mode };
+}
+
+/** Le serveur a-t-il ignoré les réglages demandés ? `demandes` non par défaut et un écho `mode` qui n'en porte aucun. */
+export function reglagesIgnores(demandes: ReglagesArene | null | undefined, echo: unknown): boolean {
+  return !!demandes && !estParDefaut(demandes) && echo === undefined;
+}
+
+/**
+ * Réglages de MA partie d'arène : ceux de sa ligne de `salons.listes.arene` (à jour, 1 Hz) ou, tant que la liste ne la connaît pas encore (arène à peine créée),
+ * ceux de l'écho `mode`. `null` quand le serveur ne les publie pas.
+ */
+export function reglagesDeMaPartie(parties: readonly PartieListee[] | null | undefined, partieActuelle: string | null, echo: ReglagesArene | null): ReglagesArene | null {
+  const dansListe = partieActuelle ? parties?.find((p) => p.id === partieActuelle)?.reglages : undefined;
+  if (dansListe) return normaliserReglages(dansListe);
+  return echo;
+}
+
+/** Case « Descente de police » du lobby Battle Royale : mémorisée, activée par défaut. */
+export function lirePoliceBr(stockage: StockageLecture): boolean {
+  try { return stockage?.getItem(CLE_POLICE_BR) !== "off"; } catch { return true; }
+}
+export function ecrirePoliceBr(stockage: StockageEcriture, active: boolean): void {
+  try { stockage?.setItem(CLE_POLICE_BR, active ? "on" : "off"); } catch { /* stockage indisponible */ }
+}
+/** Ce que le lobby dit à un non-hôte du réglage retenu par l'hôte ; `null` d'un serveur qui ne le publie pas. */
+export const lignePoliceBr = (police: boolean | undefined): string | null => (police === undefined ? null : `Descente de police : ${police ? "activée" : "désactivée"}`);
+/** Aide de la case de l'hôte. */
+export const TEXTE_POLICE_BR = "Une voiture de police surgit de nulle part (deux fois au plus, dans une grande partie) et fonce sur l'ennemi le plus proche d'elle.";
+
 // ---------- textes des refus du serveur ----------
 
 /** `rejoindre` refusé : 16 agents sont déjà en arène (les spectateurs de la vue 3D ne comptent pas). */
@@ -336,6 +440,10 @@ export const TEXTE_BR_PLEIN = "La salle Battle Royale est pleine (50 joueurs), r
 export const TEXTE_BR_LIMITE = "Trop de parties de Battle Royale en même temps : regardez celle en cours ou attendez la fin d'une partie.";
 /** `mode{arene | zombies, partie:"nouvelle"}` refusé (plafond de parties, délai entre deux créations, serveur chargé). */
 export const TEXTE_PARTIES_LIMITE = "Trop de parties en cours, rejoignez-en une.";
+/** (2026-10-30) `mode{arene, partie:"nouvelle"}` refusé : plafond d'arènes (une seule arène personnalisée tant que le hall existe) ou création trop rapprochée (10 s). */
+export const TEXTE_ARENE_LIMITE = "Plus de place pour une arène de plus, ou création trop rapprochée : rejoignez une arène de la liste.";
+/** Même refus, mais je suis déjà dans une arène personnalisée (`ar2`…) : c'est elle qui occupe la place, il faut d'abord revenir à l'arène principale. */
+export const TEXTE_ARENE_PERSO_LIMITE = "Vous êtes déjà dans une arène personnalisée : retournez à l'arène principale avant d'en créer une autre.";
 /** `lancerPartie` refusé : un seul humain et pas de bot. */
 export const TEXTE_LANCER_BOTS = "Ajoutez des bots (ou attendez un autre joueur) pour lancer la partie.";
 /** `lancerPartie` refusé : le quota de bots du serveur est épuisé. */
@@ -345,11 +453,12 @@ export type ActionRefus = Extract<MessageServeur, { t: "refus" }>["action"];
 export type RaisonRefus = Extract<MessageServeur, { t: "refus" }>["raison"];
 
 /** Texte du refus d'un `monter` / `siege` / `rejoindre` / `mode` / `regarder` / `lancer` par le serveur ; `mode` = la salle concernée (demandée pour `mode`, actuelle pour `rejoindre`). */
-export function texteRefus(action: ActionRefus, raison: RaisonRefus, mode: ModeSalle = "arene"): string {
+export function texteRefus(action: ActionRefus, raison: RaisonRefus, mode: ModeSalle = "arene", dansArenePerso = false): string {
   if (action === "regarder") return "Battle Royale : il n'y a plus de partie en cours à regarder.";
   if (action === "pause") return "Pause indisponible.";
   if (action === "lancer") return raison === "limite" ? TEXTE_LANCER_LIMITE : TEXTE_LANCER_BOTS;
-  if (raison === "limite") return mode === "br" ? TEXTE_BR_LIMITE : TEXTE_PARTIES_LIMITE;
+  if (raison === "limite" && action === "mode" && mode === "arene" && dansArenePerso) return TEXTE_ARENE_PERSO_LIMITE;
+  if (raison === "limite") return mode === "br" ? TEXTE_BR_LIMITE : mode === "arene" ? TEXTE_ARENE_LIMITE : TEXTE_PARTIES_LIMITE;
   if (action === "rejoindre") {
     if (raison === "lobby") return mode === "br" ? "Battle Royale : la partie est lancée sans vous, rejoignez la suivante." : "Partie de zombies : attendez le lancement par l'hôte.";
     return mode === "br" ? TEXTE_BR_PLEIN : TEXTE_ARENE_PLEINE;

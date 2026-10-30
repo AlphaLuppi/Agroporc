@@ -55,6 +55,7 @@ import {
 import {
   ECLAIRS, centreSouffleMini, choisirPointEclair, degatsSouffleMiniJoueur, degatsSouffleMiniTigre, intervalleEclairMs, pointsEclair,
 } from "./zombies-truck";
+import { PATROUILLE, aleaPatrouille, delaiEntrePatrouilles, patrouillePermise, planPatrouille } from "./patrouille-zombies";
 import type { Vec2 } from "../agroparc3d/types";
 
 /** Position arrondie au centimètre (origine d'un coup dans `zombieMort` : quelques octets de moins par mort). */
@@ -124,6 +125,12 @@ export interface OptionsServiceZombies {
    * du Truck où le service s'ouvre (`PDJ_FPS_ZOMBIES_SECRET_LIVRAISON`, 3 par défaut)
    */
   secret?: { etape?: number; periodeMidiMs?: number; livraisonService?: number };
+  /**
+   * (2026-10-30, essais) patrouille de police en ambiance (`patrouille-zombies.ts`) : `false` la coupe (`PDJ_FPS_ZOMBIES_PATROUILLE=off`), sinon
+   * première manche éligible (`PDJ_FPS_ZOMBIES_PATROUILLE_MANCHE`, 3) et délai (ms) du premier passage ET entre deux (`PDJ_FPS_ZOMBIES_PATROUILLE_MS`,
+   * 0 = dès le début de la manche)
+   */
+  patrouille?: false | { manche?: number; delaiMs?: number };
 }
 
 type EtatMembre = JoueurZombies["etat"];
@@ -282,6 +289,16 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     monde: ctx.monde, etapeDepart: opts.secret?.etape, periodeMidiMs: opts.secret?.periodeMidiMs, livraisonService: opts.secret?.livraisonService,
   });
   secret.reinitialiser(0);
+  // (2026-10-30) patrouille de police : générateur PROPRE semé par l'instant du lancement (comme le grand secret, le hasard de la salle n'est pas consommé :
+  // un tirage de plus décalerait bonus, boîtes et apparitions), minuteur armé à l'entrée en manche éligible, jamais pendant une suspension (l'horloge est virtuelle)
+  const patrouilleActive = opts.patrouille !== false;
+  const optsPatrouille = opts.patrouille === false ? undefined : opts.patrouille;
+  let aleaPatrouilleSalle = aleaPatrouille(0);
+  let patrouilleLancees = 0;
+  let patrouilleProchaineT: number | null = null;
+  let patrouilleFinT = 0;
+  let patrouilleMancheVue = 0;
+  let dernierEclairT = -Infinity;
   // diffusion de zombies{etat}
   let immediat = false;
   let sale = false;
@@ -445,6 +462,8 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     seuilBonus = seuilBonusInitial(nbAdmis());
     effets.instakillFinT = 0; effets.doubleFinT = 0; effets.soldesFinT = 0;
     secret.reinitialiser(t);
+    aleaPatrouilleSalle = aleaPatrouille(t);
+    patrouilleLancees = 0; patrouilleProchaineT = null; patrouilleFinT = 0; patrouilleMancheVue = 0; dernierEclairT = -Infinity;
     truck = null; mancheTruck = false; numeroTruck = 0;
     prochaineMancheTruck = opts.mancheTruck !== undefined ? opts.mancheTruck : premiereMancheTruck(alea());
   }
@@ -717,6 +736,7 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       if (p) {
         foudres.push({ p, type: file[indexFile++], t: t + ECLAIRS.foudreMs });
         sorties.push(zev({ e: "eclair", p: [p[0], 0, p[1]], dans: ECLAIRS.foudreMs }));
+        dernierEclairT = t;
         sale = true;
       }
       prochainEclairT = t + intervalleEclairMs(numeroTruck, file.length ? indexFile / file.length : 1);
@@ -1052,6 +1072,34 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       foudres = [];
       sorties.push(...entrerEnPause(t, manche + 1, pauseMs));
     }
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // patrouille de police (ambiance, 2026-10-30)
+  // ---------------------------------------------------------------------------------------------
+
+  /**
+   * Armement et départ de la patrouille (en manche seulement). Armée `premierDelaiMs` après le début de la première manche éligible ; une patrouille échue
+   * pendant une pause ou une manche du Truck attend la manche suivante (minuteur repoussé de ce même délai) ; deux au plus par partie, jamais deux à la fois,
+   * jamais juste après un éclair d'orage. Émet seulement `zevt{patrouille}` : aucun état persistant, rien dans `zombies{etat}`.
+   */
+  function ticPatrouille(t: number, sorties: Sortie[]): void {
+    if (!patrouilleActive || phase !== "manche") return;
+    const mancheMin = optsPatrouille?.manche ?? PATROUILLE.mancheMin;
+    const delaiMs = optsPatrouille?.delaiMs;
+    const premierMs = delaiMs ?? PATROUILLE.premierDelaiMs;
+    if (manche < mancheMin) return;
+    if (patrouilleProchaineT === null) patrouilleProchaineT = t + premierMs;
+    else if (manche !== patrouilleMancheVue && t >= patrouilleProchaineT) patrouilleProchaineT = t + premierMs;
+    patrouilleMancheVue = manche;
+    if (!patrouillePermise({
+      phase, manche, mancheTruck, t, dernierEclairT, lancees: patrouilleLancees, prochaineT: patrouilleProchaineT, finT: patrouilleFinT, mancheMin,
+    })) return;
+    const plan = planPatrouille(ctx.monde.bornes, aleaPatrouilleSalle);
+    patrouilleLancees++;
+    patrouilleFinT = t + plan.dureeMs;
+    patrouilleProchaineT = patrouilleFinT + (delaiMs ?? delaiEntrePatrouilles(aleaPatrouilleSalle));
+    sorties.push(zev({ e: "patrouille", p0: plan.p0, p1: plan.p1, t0: t, finT: patrouilleFinT }));
   }
 
   /** Ce qui avance en manche ET en pause : relèves, éliminations, bonus, planches, boîte, Pack-a-Punch, grand secret, auto-relèves. */
@@ -1823,7 +1871,7 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
       if (phase === "pause" && t >= finT) debuterManche(t, sorties);
       ticGrenades(t, sorties);
       if (phase === "manche" || phase === "pause") { ticProjectiles(t, sorties); ticEffetsArmes(t, sorties); }
-      if (phase === "manche") ticManche(t, dt, sorties);
+      if (phase === "manche") { ticManche(t, dt, sorties); ticPatrouille(t, sorties); }
       else if (phase === "pause") {
         ticSautsMini(t, sorties);
         if (phase === "pause") ticCommun(t, sorties);

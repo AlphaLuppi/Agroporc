@@ -12,8 +12,10 @@
  * 2026-10-23-arene-tigres-design.md (v5 : avion, tigres largués, sort d'invocation),
  * 2026-10-27-arene-zombies-design.md (v6 : mode zombies, épée, deux salles, à côté des tigres largués),
  * 2026-10-28-zombies-bo1-design.md (v7 : zombies façon Black Ops 1, carte intérieure, atouts, Pack-a-Punch, bonus, boîte mobile, planches, Truck),
- * 2026-10-28-battle-royale-design.md (v8 : Battle Royale, troisième salle)
+ * 2026-10-28-battle-royale-design.md (v8 : Battle Royale, troisième salle),
+ * 2026-10-30-arene-police-evenements-design.md (descente de police, réglages d'événements : additif, `VERSION_PROTOCOLE` reste 11)
  */
+import type { ReglagesArene } from "./reglages-arene";
 import type { Difficulte, GenreBonus } from "./zombies-vagues";
 
 /**
@@ -162,7 +164,9 @@ export const SIEGES_PAR_VEHICULE = 4;
  */
 export type CauseMort =
   | "arme" | "ecrase_pnj" | "ecrase_vehicule" | "tigre" | "explosion" | "truck_fou" | "tigre_robot" | "titan" | "tigre_zombie" | "bus_c3" | "frappe_aerienne"
-  | "tempete" | "abandon";
+  | "tempete" | "abandon"
+  /** (2026-10-30) écrasé par la voiture de la descente de police (arène et Battle Royale) : aucun kill crédité */
+  | "police";
 
 /** Voiture de la circulation (`pnj`, indice dans `flotte`) ou voiture conduisible (`vehicule`, id du garage). */
 export type GenreVoiture = "pnj" | "vehicule";
@@ -181,6 +185,22 @@ export type TypeEvenement = "truck" | "tigre";
 /** Cibles réservées des tirs (champ `cible` de `tir.touches` et de `canon.touches`) : le boss et le titan (jamais un id de joueur). */
 export const CIBLE_TIGRE = "tigre";
 export const CIBLE_TITAN = "titan";
+/** (2026-10-30) Cible réservée des tirs sur la voiture de police de la descente (jamais un id de joueur ; la mêlée ne la touche pas). */
+export const CIBLE_POLICE = "police";
+/**
+ * (2026-10-30) Capacité annoncée par un client (`bonjour.capacites`) : il sait dessiner la voiture de police et jouer sa sirène. Le serveur
+ * traite un humain SANS cette capacité comme immunisé et non ciblable (une voiture invisible ne doit tuer personne).
+ */
+export const CAPACITE_POLICE = "police";
+/** Capacités reconnues par le serveur (liste blanche : le reste est ignoré). */
+export const CAPACITES_CONNUES: readonly string[] = [CAPACITE_POLICE];
+/** Capacités retenues d'un `bonjour.capacites` quelconque : les chaînes de la liste blanche, dédoublonnées, 16 éléments examinés au plus ; tout le reste est ignoré. */
+export function capacitesAcceptees(brut: unknown): string[] {
+  if (!Array.isArray(brut)) return [];
+  const r = new Set<string>();
+  for (const c of brut.slice(0, 16)) if (typeof c === "string" && CAPACITES_CONNUES.includes(c)) r.add(c);
+  return [...r];
+}
 /** (v7) Cible réservée des tirs sur le Truck Muche d'une manche de livraison (mode zombies). */
 export const CIBLE_LIVRAISON = "livraison";
 
@@ -328,6 +348,11 @@ export type EvenementZombies =
    * casserole, écran…) ; `k` : avancée (0..1) ; `joueur` : celui qui l'a provoqué
    */
   | { e: "secret"; quoi: string; p: Vec3; i?: number; k?: number; joueur?: string }
+  /**
+   * (2026-10-30) patrouille de police en ambiance : une sirène traverse la carte hors des murs de `p0` à `p1` entre `t0` et `finT` (instants serveur
+   * virtuels : la suspension la fige). Aucune voiture jouable, aucun écrasement. Un client sans ce cas ignore le `zevt`.
+   */
+  | { e: "patrouille"; p0: Vec3; p1: Vec3; t0: number; finT: number }
   | { e: "manche"; numero: number; truck: boolean }
   | { e: "autoReleve"; joueur: string };
 /** Raisons d'un achat refusé (`achat{ok:false}`). */
@@ -438,6 +463,8 @@ export interface EtatPartieBr {
   joueurs?: JoueurBr[];
   bilan?: BilanBr;
   annule?: true; conflitNoms?: true; nonComptee?: true;
+  /** (2026-10-30) réglage « Descente de police » retenu par l'hôte (connu du serveur à partir du lancement seulement : absent dans le lobby et d'un ancien serveur) */
+  police?: boolean;
 }
 /** Résumé de la salle BR dans le message `salons` (compteurs du choix du mode). */
 export interface ResumeSalonBr { phase: PhaseBr; joueurs: number; vivants: number; palier?: number }
@@ -473,6 +500,8 @@ export interface ResumePartie {
   bots?: number; botsMax?: number; botsRestants?: number;
   /** zombies : partie figée par un joueur */
   suspendue?: true;
+  /** (2026-10-30) arène : événements et fréquence fixés à la création de la partie */
+  reglages?: ReglagesArene;
 }
 
 /** (v11) Id d'un bot du Battle Royale : "b" + numéro DÉCIMAL (jamais en base 36 : « b » + « r1 » égalerait l'id de partie « br1 »), compteur par salle remis à zéro à chaque partie. */
@@ -574,9 +603,16 @@ export interface FumigeneSnap { id: string; p: Vec3; debutT: number; finT: numbe
 /** Frappe aérienne en cours. */
 export interface FrappeSnap { id: string; cible: Vec3; joueur: string; t0: number; finT: number }
 
-/** Monstres et éléments dynamiques présents (snap des joueurs en arène). */
+/**
+ * (2026-10-30) Voiture de la descente de police : position, cap, vitesse signée (négative en marche arrière), PV, cible (id du joueur poursuivi), état de carrosserie
+ * (`fumee` ≤ 50 %, `feu` ≤ 20 %) et `depart` (elle se retire vers son point d'apparition : aucun écrasement). Arrondis comme `TruckSnap`.
+ */
+export interface PoliceSnap { p: Vec3; cap: number; v: number; pv: number; pvMax: number; cible?: string; etat?: "fumee" | "feu"; depart?: boolean }
+
+/** Monstres et éléments dynamiques présents (snap des joueurs en arène ; en Battle Royale, seulement `police`). */
 export interface MonstresSnap {
   truck?: TruckSnap;
+  police?: PoliceSnap;
   tigre?: TigreSnap;
   titan?: TitanSnap;
   bus?: BusSnap;
@@ -693,7 +729,7 @@ export type MessageClient =
    * Premier message obligatoire : présence dans la vue Palantir (spectateur). `reprise` (v8) : identifiant et jeton de la session coupée
    * (`bienvenue.jeton`) ; dans les `REPRISE_MS` qui suivent la coupure, le serveur rattache le client à sa partie de zombies, même identifiant.
    */
-  | { t: "bonjour"; v: number; pseudo: string; reprise?: { id: string; jeton: string } }
+  | { t: "bonjour"; v: number; pseudo: string; reprise?: { id: string; jeton: string }; /** (2026-10-30) capacités du client (`CAPACITE_POLICE`) ; absent = client d'avant */ capacites?: string[] }
   /**
    * Entrer dans l'arène. `principale`/`secondaire` = équipement (v2). `arme` = ALIAS v1 : l'arme est rangée dans
    * son slot par catégorie et devient l'arme en main (une spéciale est ignorée).
@@ -748,7 +784,11 @@ export type MessageClient =
    * sinon la salle permanente. (v11) `partie` vaut pour les TROIS modes (id d'une partie de `salons.listes[mode]`, `PARTIE_NOUVELLE`, ou `PARTIE_AUTO`
    * pour l'arène : la plus peuplée qui accueille, sinon une nouvelle).
    */
-  | { t: "mode"; mode: ModeSalle; partie?: string }
+  | {
+    t: "mode"; mode: ModeSalle; partie?: string;
+    /** (2026-10-30) arène seulement, lu avec `partie === PARTIE_NOUVELLE` : événements et fréquence de la nouvelle arène (validés par `normaliserReglages`) */
+    reglages?: ReglagesArene;
+  }
   /**
    * (v11, zombies seulement) Suspendre (`actif: true`) ou lever la suspension (`false`) de la partie : tout membre ADMIS, idempotent. Une suspension fige
    * tout pour tout le monde (horloge virtuelle de la salle). Refus `refus{action:"pause"}`. Un ancien serveur ignore ce message inconnu.
@@ -767,6 +807,8 @@ export type MessageClient =
      * La difficulté règle alors le niveau des bots.
      */
     bots?: number;
+    /** (2026-10-30, BR seulement) descente de police : absent = vrai, tout autre type que booléen est ignoré (vrai) */
+    police?: boolean;
   }
   /**
    * Acheter ou utiliser (zombies) : `id` du catalogue (`mur:<arme>`, `boite:B<n>` (acheter ou prendre l'arme offerte), `atout:<id>`, `pap`,
@@ -937,6 +979,12 @@ export type MessageServeur =
    * l'a achevé). `finT` = fin prévue (horodatage serveur). `etat` = synchronisation privée d'un événement en cours, envoyée à `rejoindre`.
    */
   | { t: "evenement"; type: TypeEvenement; phase: "annonce" | "debut" | "fin" | "etat"; debutT: number; finT: number; raison?: "temps" | "vaincu"; par?: string }
+  /**
+   * (2026-10-30) Descente de police (arène et Battle Royale), adressée aux joueurs : `debut` à l'apparition de la voiture (aucune annonce
+   * préalable : sa sirène est l'avertissement), `fin` à sa disparition (`temps`) ou sa destruction (`detruite`, `par` = le tireur), `etat` =
+   * synchronisation privée d'une descente en cours (arrivant). Ce n'est PAS un `TypeEvenement` : un client d'avant l'ignorerait au lieu d'annoncer un tigre géant.
+   */
+  | { t: "police"; phase: "debut" | "fin" | "etat"; debutT: number; finT: number; cible?: string; raison?: "temps" | "detruite"; par?: string }
   /** Laser des yeux du tigre (v4) : visée affichée tout de suite, impact à `tirT` sur un disque autour de `vers`. */
   | { t: "laser"; de: Vec3; vers: Vec3; rayon: number; tirT: number }
   /**
@@ -970,8 +1018,11 @@ export type MessageServeur =
      */
     listes?: { arene: ResumePartie[]; zombies: ResumePartie[]; br: ResumePartie[] };
   }
-  /** Confirmation du changement de salle (écho de `mode`), suivie du `bienvenue` de la nouvelle salle. `partie` (additif, les trois modes depuis la v11) : id de la partie. */
-  | { t: "mode"; mode: ModeSalle; partie?: string }
+  /**
+   * Confirmation du changement de salle (écho de `mode`), suivie du `bienvenue` de la nouvelle salle. `partie` (additif, les trois modes depuis la v11) : id de la partie.
+   * `reglages` (2026-10-30, arène) : événements de la partie rejointe, pour que le client sache ce qui a été appliqué (absent d'un serveur ancien).
+   */
+  | { t: "mode"; mode: ModeSalle; partie?: string; reglages?: ReglagesArene }
   /**
    * (v11, zombies) Suspension de la partie, diffusée à toute la salle : `actif: true` = figée (`maintenant` = temps virtuel V gelé, `par` / `pseudo` = qui
    * a suspendu, `compte` (ms) = compte à rebours de levée en cours, le jeu est encore figé) ; `actif: false` = repris, `maintenant` = V à la levée. Émis à
