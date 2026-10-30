@@ -9,11 +9,12 @@ import type { Boite, Monde } from "./collision";
 import type { MemoSante } from "./sante";
 import type {
   ArmeFeuId, ArmeId, ArmeMeleeId, AvionBr, CauseMort, CoteMur, Equipement, EtatPartieBr, EtatPartieZombies, GenreVoiture, MessageClient, MessageServeur, MonstresSnap,
-  PhaseBr, PhaseZombies, PointButin, Posture, Siege, Slot, SnapZombies, TigreLargueSnap, Vec3, VehiculeSnap, Zone,
+  ObjetBr, PhaseBr, PhaseZombies, PointButin, Posture, Siege, Slot, SnapZombies, TigreLargueSnap, Vec3, VehiculeSnap, Zone,
 } from "./protocole";
 import type { ObstacleVoiture, Tigre } from "./tigre-arene";
 import type { ExplosionGrenade } from "./grenades";
 import type { StatsTir } from "./armes";
+import type { Difficulte } from "./zombies-vagues";
 
 /**
  * Un message à émettre. `a` : "tous" (tous les inscrits), "joueurs" (en arène), "spectateurs" (inscrits hors arène) ou l'id d'un client ;
@@ -44,6 +45,11 @@ export interface JoueurSalleV2 {
   memoSante: MemoSante | null;
   /** chat vocal activé (v3 §5) : diffusé dans la présence, condition du relais des signaux ; absent = non */
   voix?: boolean;
+  /**
+   * (v11, Battle Royale) bot scripté de la salle (id `b<n>`) : un vrai membre de la table, sans socket, ni voix, ni ping, ni reprise ; jamais hôte, jamais
+   * compté comme humain (`nombreHumains`), exclu de l'éviction d'inactivité. Absent = humain.
+   */
+  bot?: true;
 }
 
 /**
@@ -160,6 +166,23 @@ export interface ContexteSalle {
    * chargeur ET réserve. Le dégainage ne recommence que si l'arme en main change.
    */
   equiper(j: JoueurSalle, equip: Equipement, main: Slot, maintenant: number, ravitaille?: ArmeFeuId | "tout"): Sortie[];
+  // ---- v11 (bots du Battle Royale, `match-br-bots.ts`) ----
+  /**
+   * Ajoute un bot à la table (joueur ET suivi, comme `connecter` : `recevoirEtat` lit toujours `suivi`) : id `b<n>` (`nouvelIdBot`), pseudo rendu unique,
+   * couleur libre. Aucune sortie : l'appelant annonce la `presence`. Le bot n'a ni socket ni reprise ; `diffuser` ignore les messages qui lui sont adressés.
+   */
+  ajouterBot(pseudo: string, maintenant: number): JoueurSalle;
+  /** retire un bot de la table, du suivi et des morts récentes (le nettoyage de `deconnecter` sans la partie réseau) ; sans effet sur un humain */
+  retirerBot(id: string): void;
+  /**
+   * Fait passer un message par la MÊME voie de validation que celui d'un client (cadence, œil, visée, rejeu de latence, dégâts, mort, butin) ; les
+   * bots ne contournent rien. Renvoie les sorties à diffuser (tirs, dégâts, morts, killcam) : l'appelant les rend à `Salle.tic`.
+   */
+  recevoir(id: string, m: MessageClient, maintenant: number): Sortie[];
+  /** prochain id de bot : « b » + numéro DÉCIMAL (jamais en base 36 : `b` + `r1` égalerait l'id de partie `br1`), compteur remis à zéro quand plus aucun bot ne reste */
+  nouvelIdBot(): string;
+  /** membres non-bots (lobby et spectateurs compris) */
+  nombreHumains(): number;
 }
 
 /** Événements de l'arène (v3, `match-evenements.ts` : `creerServiceEvenements(ctx, opts)`) : Truck Muche fou, tigre robot, titan tigre. */
@@ -262,7 +285,7 @@ export interface ServiceTigres {
 }
 
 /** Résumé d'une salle zombies (message `salons`). */
-export interface ResumeZombies { phase: PhaseZombies; joueurs: number; manche: number }
+export interface ResumeZombies { phase: PhaseZombies; joueurs: number; manche: number; /** (v11) la partie est suspendue par un joueur (ajouté par la salle) */ suspendue?: true }
 
 /**
  * Mode zombies (v5, `match-zombies.ts` : `creerServiceZombies(ctx, opts)`) : machine d'états lobby → pause → manche → … → fin, tigres, argent,
@@ -369,7 +392,18 @@ export interface ServiceZombies {
 // ---------- Battle Royale (v8) ----------
 
 /** Résumé d'une salle Battle Royale (message `salons`, `/sante`). */
-export interface ResumeBr { phase: PhaseBr; joueurs: number; vivants: number; palier?: number; /** pseudo de l'hôte (absent : salle vide) */ hote?: string }
+export interface ResumeBr {
+  phase: PhaseBr;
+  /** membres HUMAINS (v11 : les bots n'en sont pas) */
+  joueurs: number;
+  vivants: number; palier?: number;
+  /** pseudo de l'hôte (absent : salle vide) */
+  hote?: string;
+  /** (v11) bots de la partie en cours (absent : aucun) */
+  bots?: number;
+  /** (v11) plafond de bots par partie (`PDJ_FPS_BR_BOTS_MAX`, 0 = coupés) et quota global restant, tous deux calculés par le service */
+  botsMax?: number; botsRestants?: number;
+}
 
 /**
  * Mode Battle Royale (v8, `match-br.ts` : `creerServiceBr(ctx, opts)`) : machine d'états lobby → décompte → vol → jeu → fin, hôte, admission,
@@ -446,4 +480,22 @@ export interface ButinBr {
   /** liste initiale complète + écarts + inventaire */
   synchro(idDest: string): Sortie[];
   reinitialiser(): void;
+  /** (v11, bots) objets actuellement au sol, lecture seule (les cerveaux des bots choisissent leur butin) */
+  objets(): ReadonlyMap<number, ObjetBr>;
+  /** (v11, bots) stocks de soins d'un joueur, lecture seule */
+  stock(id: string): { readonly bandage: number; readonly potion: number };
+}
+
+/**
+ * Bots du Battle Royale (v11, `match-br-bots.ts` : `creerBotsBr(ctx, aide)`). Sous-service de `match-br.ts` comme `VolBr` et `ButinBr` : crée les bots
+ * au lancement, fait tourner leurs cerveaux (20 Hz, phase décalée) et les retire au retour au lobby. Les messages des bots passent par `ctx.recevoir`.
+ */
+export interface BotsBr {
+  /** ajoute `n` bots à la table de la salle (noms uniques, sans chiffre final) ; renvoie ceux qui ont été créés */
+  creer(n: number, difficulte: Difficulte, maintenant: number): JoueurSalle[];
+  /** cerveaux : un pas de décision par bot (décompte : montée à bord ; vol : saut et chute ; jeu : butin, zone, combat) ; renvoie les sorties des messages des bots */
+  tic(maintenant: number): Sortie[];
+  /** tous les bots quittent la table (retour au lobby, dernier humain parti) */
+  retirerTous(): void;
+  nombre(): number;
 }

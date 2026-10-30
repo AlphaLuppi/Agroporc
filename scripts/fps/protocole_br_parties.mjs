@@ -28,6 +28,7 @@ const serveur = spawn(process.execPath, ["dist/index.js"], {
   cwd: join(RACINE, "serveur-fps"), stdio: "ignore",
   env: {
     ...process.env, PORT: String(port), SCENE_JSON: join(RACINE, "public/agroparc/scene.json"), PDJ_FPS_BR_DECOMPTE_MS: "20000", PDJ_FPS_BR_VOL_MS: "60000",
+    PDJ_FPS_CREATION_TIC_MAX_MS: "1000",   // un pic de CPU ne doit pas bloquer les créations du script
     PDJ_FPS_BR_STATS: join(mkdtempSync(join(tmpdir(), "pdj-br-parties-")), "stats-br.json"),
   },
 });
@@ -39,7 +40,7 @@ function client(pseudo) {
   const ws = new WebSocket(URL);
   const c = { ws, pseudo, recus: [], id: null };
   ws.on("message", (d) => { const m = JSON.parse(String(d)); c.recus.push(m); if (m.t === "bienvenue") c.id = m.id; });
-  c.pret = new Promise((r) => ws.on("open", r)).then(() => ws.send(JSON.stringify({ t: "bonjour", v: 10, pseudo })));
+  c.pret = new Promise((r) => ws.on("open", r)).then(() => ws.send(JSON.stringify({ t: "bonjour", v: 11, pseudo })));
   c.envoyer = (m) => ws.send(JSON.stringify(m));
   c.dernier = (t) => [...c.recus].reverse().find((m) => m.t === t);
   c.tous = (t) => c.recus.filter((m) => m.t === t);

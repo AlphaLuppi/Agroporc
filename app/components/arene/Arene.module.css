@@ -119,6 +119,28 @@
 .boutonSecondaire:disabled { cursor: default; color: var(--ag-ink-dim); border-color: var(--ag-line-strong); }
 .actionsPartie { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin-top: 10px; }
 .actionsPartie .boutonSecondaire { min-height: 40px; }
+.badgePause { padding: 0 5px; border: 1px solid var(--ag-amber); color: var(--ag-amber); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; line-height: 1.4; white-space: nowrap; }
+/* parties parallèles (lot 5a) : sur mobile les lignes de la liste passent à la ligne et les boutons restent atteignables au doigt */
+.parties .liste li { flex-wrap: wrap; }
+@media (pointer: coarse), (max-width: 640px) {
+  .parties .boutonSecondaire { min-height: 40px; }
+}
+
+/* bots du Battle Royale (lot 5b) : curseur du nombre et niveau, cibles tactiles de 40 px */
+.reglageBots { margin: 14px 0 0; padding: 8px 12px 10px; min-width: 0; border: 1px solid var(--ag-line-strong); background: var(--ag-hud-fond); }
+.reglageBots legend { padding: 0 6px; font-size: 11px; font-weight: 500; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ag-amber); }
+.ligneBots { display: grid; grid-template-columns: auto minmax(0, 1fr) 3ch; align-items: center; gap: 10px; min-height: 40px; }
+.ligneBots label { font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ag-ink-dim); }
+.ligneBots input[type="range"] { width: 100%; min-height: 40px; margin: 0; accent-color: var(--ag-amber); cursor: pointer; }
+.ligneBots input[type="range"]:disabled { cursor: default; }
+.ligneBots input[type="range"]:focus-visible { outline: 2px solid var(--ag-white); outline-offset: 2px; }
+.ligneBots output { font-variant-numeric: tabular-nums; font-size: 14px; color: var(--ag-ink); text-align: right; }
+.niveauBots { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; }
+.niveauBots label { display: flex; align-items: center; gap: 6px; min-height: 32px; cursor: pointer; }
+.niveauBots input { margin: 0; accent-color: var(--ag-amber); }
+@media (pointer: coarse), (max-width: 640px) {
+  .niveauBots label { min-height: 40px; }
+}
 
 @media (max-width: 640px) {
   .modesGrille { grid-template-columns: 1fr; }

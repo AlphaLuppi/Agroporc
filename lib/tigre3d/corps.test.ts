@@ -39,6 +39,18 @@ describe("corps : locomotion à pieds plantés", () => {
     }
   });
 
+  it("allureMax bride l'allure au trot (le tigre bipède des bots ne galope jamais) sans changer la vitesse ni les pieds plantés", () => {
+    const c = creerCorps();
+    for (let i = 0; i < 240; i++) avancerCorps(c, 1 / 60, { ...course(3.4), allureMax: 1 });
+    expect(c.allure.x).toBeLessThanOrEqual(1 + 1e-6);
+    expect(c.allure.x).toBeGreaterThan(0.99);
+    expect(Math.abs(c.v)).toBeCloseTo(3.4, 1);
+    // sans la consigne, le même tigre galope
+    const g = creerCorps();
+    for (let i = 0; i < 240; i++) avancerCorps(g, 1 / 60, course(3.4));
+    expect(g.allure.x).toBeGreaterThan(1.9);
+  });
+
   it("le corps avance exactement à la vitesse demandée (l'avance est celle des pieds)", () => {
     const m = mesurer(1.2, 2);
     expect(m.avance / 2).toBeCloseTo(1.2, 2);

@@ -17,7 +17,11 @@
  *  8. pendant la pause : achat de la porte D1 (salle de pause) : message `batiments` reçu par les deux, puis du mini Uzi derrière (il remplace le pistolet)
  *  9. manche 2 (v8) : une grenade lancée par une fenêtre tue le tigre qui en arrache les planches (souffle, stock décompté), puis E maintenu
  *     devant une fenêtre abîmée repose une planche (`reparer`, `zevt{planche}`)
+ *  9b. (v11) pause pour tous : Alice suspend (`pauseZ`), Bob reçoit `zpause{actif:true}` et les deux jeux sont gelés ; pendant 3 s ni tigre, ni horloge serveur,
+ *     ni snap, ni `etat` envoyé ne bougent ; Bob lève la suspension (compte à rebours de 0 ms dans cet essai), tout repart sans saut d'horloge
  * 10. partie perdue quand les deux sont à terre, bilan affiché, « Rejouer » ramène au lobby, la salle repasse au lobby
+ * 10b. (v11) parties parallèles : Bob crée sa partie (« Créer ma partie », `z2`), chacun lance la sienne ; elles ne se voient pas (joueurs, hôtes, manches
+ *     indépendants), les listes `salons.listes.zombies` montrent les deux, la partie de Bob est refermée quand il part
  * 11. aucune erreur JavaScript ni `erreur` du serveur, aucune WebSocket coupée en partie
  *
  * Usage : node scripts/fps/e2e_zombies.mjs        (Node 22 ; Playwright : `npm i --no-save playwright` ou PLAYWRIGHT_DIR=/dossier/avec/node_modules)
@@ -97,6 +101,9 @@ const T0 = Date.now();
 const trace = (...a) => { if (process.env.E2E_DEBUG) console.log(`    [${((Date.now() - T0) / 1000).toFixed(1)}s]`, ...a); };
 const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
 const plat = (p) => [p[0], p[2]];
+/** `/sante` du serveur (lu par HTTP : liste des parties, humains, suspension). */
+let urlSante = null;
+const etatSante = () => fetch(urlSante).then((r) => r.json());
 
 function portLibre() {
   return new Promise((ok, ko) => {
@@ -308,6 +315,8 @@ try {
         ...process.env, PORT: String(portWs), SCENE_JSON: join(RACINE, "public/agroparc/scene.json"),
         PDJ_FPS_ZOMBIES_ARGENT: ARGENT, PDJ_FPS_ZOMBIES_TOTAL: TOTAL, PDJ_FPS_ZOMBIES_PAUSE_MS: PAUSE, PDJ_FPS_ZOMBIES_GRIFFE: GRIFFE,
         PDJ_FPS_ZOMBIES_TRUCK: "0",
+        // (v11) compte à rebours de levée nul (9b), disjoncteur de création très haut (10b : un pic de CPU de la machine ne doit pas refuser la création de z2)
+        PDJ_FPS_ZOMBIES_COMPTE_MS: "0", PDJ_FPS_CREATION_TIC_MAX_MS: "1000",
       },
     });
     await attendreHttp(`http://localhost:${portWs}/sante`, 20_000, "serveur-fps").catch((e) => { throw new Error(`${e.message}\n${srv.journal.join("")}`); });
@@ -323,6 +332,7 @@ try {
     });
     await attendreHttp(`${urlNext}${PAGE}`, 240_000, "next dev").catch((e) => { throw new Error(`${e.message}\n${nx.journal.join("").slice(-1500)}`); });
   }
+  urlSante = `${urlWs.replace(/^ws/, "http")}/sante`;
   console.log(`Serveur ${urlWs} · site ${urlNext}${PAGE} · captures ${SORTIE} · griffe ${GRIFFE}\n`);
 
   // --- navigateurs
@@ -828,6 +838,54 @@ try {
     return `${lances} grenade(s) (${stock0} → ${stock1}), tigre ${kill.id} tué par le souffle en ${JSON.stringify(explosion.p.map((x) => +x.toFixed(1)))}, planche reposée à ${planche.fenetre} (${planche.avant} → +1)${gainPlanche ? `, +${gainPlanche.delta} $` : ""}`;
   });
 
+  // ------------------------------------------------------------------ 9b. pause pour tous (v11)
+  // Manche 2, les deux joueurs en vie. Alice suspend la partie par le crochet (le même chemin que le bouton du menu pause) : le serveur fige son horloge
+  // virtuelle, `zpause` part aux deux, les deux jeux se gèlent (`etat().jeu.gele`). Pendant 3 s rien ne doit bouger : ni tigre, ni horloge serveur, ni snap
+  // reçu, ni état envoyé. Bob lève : le compte à rebours est nul dans cet essai (`PDJ_FPS_ZOMBIES_COMPTE_MS=0`), tout repart, sans saut d'horloge.
+  await etape("9b. pause pour tous : Alice suspend, Bob reçoit `zpause`, tigres et horloge figés 3 s, Bob lève, tout repart sans saut d'horloge", async () => {
+    const idA = await A.id();
+    const photo = async (j) => {
+      const s = await j.jeu();
+      return { t: s.tServeur, gele: s.gele, tigres: s.zombies.map((z) => `${z.id}:${z.x.toFixed(2)},${z.z.toFixed(2)}`).sort().join("|"), nb: s.zombies.length };
+    };
+    const avant = await photo(B);
+    verifier(avant.gele === false, "Bob est déjà gelé avant la pause");
+    const tAvant = Date.now();
+    await A.ev(() => window.__arene.pauseZ(true));
+    const zp = await jusqua(async () => B.msgs("zpause", tAvant).find((m) => m.actif === true), { ms: 8000, quoi: () => `zpause{actif:true} reçu par Bob (${B.resume(tAvant)})` });
+    verifier(zp.par === idA && zp.pseudo === "Alice" && typeof zp.maintenant === "number", `zpause inattendu : ${JSON.stringify(zp)}`);
+    await jusqua(async () => (await A.jeu()).gele && (await B.jeu()).gele, { ms: 8000, quoi: async () => `les deux jeux gelés (A ${(await A.jeu()).gele}, B ${(await B.jeu()).gele})` });
+    verifier(await B.page.locator("[data-suspendue='oui']").count() > 0, "le HUD de Bob n'est pas marqué data-suspendue");
+    // on laisse passer les messages déjà en vol, puis on mesure pendant 3 s : rien ne bouge chez personne
+    await dormir(700);
+    const t0 = Date.now();
+    const g0 = [await photo(A), await photo(B)];
+    await dormir(3000);
+    const g1 = [await photo(A), await photo(B)];
+    for (const [i, j] of [A, B].entries()) {
+      verifier(g1[i].t === g0[i].t, `horloge serveur de ${j.nom} : ${g0[i].t} → ${g1[i].t} pendant la pause`);
+      verifier(g1[i].tigres === g0[i].tigres, `les tigres bougent chez ${j.nom} pendant la pause : ${g0[i].tigres} → ${g1[i].tigres}`);
+      verifier(j.msgs("snap", t0).length === 0 && j.msgs("zombies", t0).length === 0, `${j.nom} a reçu ${j.msgs("snap", t0).length} snap(s) et ${j.msgs("zombies", t0).length} zombies{etat} pendant la pause`);
+      verifier(j.envoyesDe("etat", t0).length === 0, `${j.nom} a envoyé ${j.envoyesDe("etat", t0).length} état(s) pendant la pause`);
+    }
+    await A.capture("09b-pause-A-1280");
+    // Bob lève (il n'est pas celui qui a suspendu) : levée immédiate, `zpause{actif:false}` aux deux
+    const tLevee = Date.now();
+    await B.ev(() => window.__arene.pauseZ(false));
+    const lev = await jusqua(async () => A.msgs("zpause", tLevee).find((m) => m.actif === false), { ms: 8000, quoi: () => `zpause{actif:false} reçu par Alice (${A.resume(tLevee)})` });
+    await jusqua(async () => !(await A.jeu()).gele && !(await B.jeu()).gele, { ms: 8000, quoi: "les deux jeux dégelés" });
+    verifier(lev.maintenant === zp.maintenant, `la levée se fait à l'horloge virtuelle gelée : ${lev.maintenant} au lieu de ${zp.maintenant}`);
+    // l'horloge repart de là où elle s'était arrêtée : 2 s plus tard elle n'a pas avancé de la durée de la pause (≈ 6 s réelles)
+    await dormir(2000);
+    const apres = await photo(B);
+    const virtuel = apres.t - g1[1].t;
+    const reel = Date.now() - t0;
+    verifier(virtuel > 500 && virtuel < Date.now() - tLevee + 1500, `horloge serveur de Bob : +${virtuel} ms virtuelles (${reel} ms réelles depuis le gel mesuré, ${Date.now() - tLevee} ms depuis la levée) : saut ou horloge qui ne repart pas`);
+    verifier(B.msgs("snap", tLevee).length > 0 || B.msgs("zombies", tLevee).length > 0, "aucun snap reçu après la levée");
+    await jusqua(async () => B.envoyesDe("etat", tLevee).length > 0, { ms: 5000, quoi: "Bob renvoie des états après la levée" });
+    return `gel de ${(tLevee - tAvant) / 1000} s : horloge ${g0[1].t} figée, ${g1[1].nb} tigre(s) immobile(s) ; levée à l'horloge ${lev.maintenant}, +${virtuel} ms virtuelles après 2 s`;
+  });
+
   // ------------------------------------------------------------------ 10. partie perdue, retour au lobby
   await etape("10. partie perdue quand les deux sont à terre : bilan affiché, « Rejouer » ramène au lobby", async () => {
     // Alice et Bob s'immobilisent ensemble dans l'open space : les tigres de la manche 2 arrivent et les couchent
@@ -855,6 +913,57 @@ try {
     verifier((await A.partie()).joueurs.every((x) => !x.admis && x.etat === "attente"), `joueurs encore admis dans le lobby : ${JSON.stringify((await A.partie()).joueurs)}`);
     await A.capture("10-retour-lobby-A-1280");
     return `phase fin → lobby, bilan : manche ${fin.bilan.manche} en ${(fin.bilan.dureeMs / 1000).toFixed(0)} s`;
+  });
+
+  // ------------------------------------------------------------------ 10b. parties parallèles (v11)
+  // Retour au lobby de la partie permanente `z1` (fin de l'étape 10) : Bob crée SA partie par l'interface (« Créer ma partie ») puis chacun lance la sienne.
+  await etape("10b. parties parallèles : Bob crée sa partie (`z2`), chacun lance la sienne, elles ne se voient pas ; la partie de Bob est refermée quand il part", async () => {
+    const idA = await A.id(), idB = await B.id();
+    verifier((await A.etat()).partie === "z1" && (await B.etat()).partie === "z1", `parties de départ : ${(await A.etat()).partie} / ${(await B.etat()).partie}`);
+    for (const j of joueurs) await j.reduire(false);
+    // Bob : bouton « Créer ma partie » du lobby (liste des parties)
+    const bouton = B.page.getByRole("button", { name: /Créer ma partie/ });
+    await bouton.waitFor({ state: "visible", timeout: 10_000 }).catch(() => { throw new Error("« Créer ma partie » absent du lobby des zombies de Bob"); });
+    await bouton.evaluate((e) => e.click());
+    await jusqua(async () => { const e = await B.etat(); return /^z\d+$/.test(e.partie ?? "") && e.partie !== "z1" && e.zombies?.phase === "lobby"; }, { ms: 15_000, quoi: async () => `Bob dans sa propre partie (partie ${(await B.etat()).partie}, phase ${(await B.etat()).zombies?.phase})` });
+    const zB = (await B.etat()).partie;
+    await jusqua(async () => (await B.partie())?.joueurs?.length === 1 && (await A.partie())?.joueurs?.length === 1, { ms: 10_000, quoi: "chaque lobby ne compte que son joueur" });
+    verifier((await B.partie()).hote === idB && (await A.partie()).hote === idA, "hôtes des deux lobbies");
+    // les deux parties sont listées (un lobby est « Rejoindre »), chez Alice comme chez Bob
+    await jusqua(async () => ((await A.etat()).salons?.listes?.zombies ?? []).length === 2, { ms: 10_000, quoi: async () => `salons.listes.zombies : ${JSON.stringify((await A.etat()).salons?.listes?.zombies)}` });
+    const listeA = (await A.etat()).salons.listes.zombies;
+    verifier(listeA[0].id === "z1" && listeA[1].id === zB && listeA.every((p) => p.capacite === 8 && p.joueurs === 1), `liste des parties : ${JSON.stringify(listeA)}`);
+    const texteA = (await A.page.locator("aside[aria-label='Zombies']").innerText()).replace(/\s+/g, " ");
+    verifier(/parties/i.test(texteA) && /rejoindre/i.test(texteA), `la liste « Parties » n'apparaît pas chez Alice : « ${texteA.slice(0, 220)} »`);
+    await A.page.locator("aside[aria-label='Zombies'] section[aria-labelledby$='-parties']").scrollIntoViewIfNeeded().catch(() => null);
+    await A.capture("10b-lobby-parties-A-1280");
+    // chacun lance la sienne : deux jeux, deux manches indépendantes
+    const depuis = Date.now();
+    await A.page.getByRole("button", { name: /Lancer la partie/ }).evaluate((e) => e.click());
+    await B.page.getByRole("button", { name: /Lancer la partie/ }).evaluate((e) => e.click());
+    for (const j of joueurs) {
+      await jusqua(async () => { const s = await j.jeu(); return s && s.apparu && s.vivant && s.mode === "zombies"; }, { ms: 60_000, quoi: async () => `${j.nom} en jeu (${j.resume(depuis)} ; partie ${JSON.stringify((await j.partie())?.phase)})` });
+    }
+    const pa = await A.partie(), pb = await B.partie();
+    verifier(pa.joueurs.length === 1 && pb.joueurs.length === 1 && pa.joueurs[0].id === idA && pb.joueurs[0].id === idB, `les parties se voient : ${JSON.stringify(pa.joueurs.map((x) => x.id))} / ${JSON.stringify(pb.joueurs.map((x) => x.id))}`);
+    verifier(pa.hote === idA && pb.hote === idB && ["pause", "manche"].includes(pa.phase) && ["pause", "manche"].includes(pb.phase), `phases ${pa.phase}/${pb.phase}, hôtes ${pa.hote}/${pb.hote}`);
+    verifier((await A.jeu()).mode === "zombies" && (await B.jeu()).partie?.joueurs?.length === 1, "le jeu de Bob voit d'autres joueurs que lui");
+    // un tigre de la partie d'Alice n'est jamais dans le snap de Bob : leurs ids sont tirés par salle, mais les positions diffèrent (deux mondes)
+    const sa = await A.jeu(), sb = await B.jeu();
+    verifier(dist(plat(sa.p), CENTRE_COUR) < 15 && dist(plat(sb.p), CENTRE_COUR) < 15, "les deux joueurs devraient apparaître chacun dans l'open space de SA carte");
+    await A.capture("10b-parties-parallele-A-1280");
+    await B.capture("10b-parties-parallele-B-1280");
+    // Bob quitte : sa partie (non permanente, plus aucun humain) est refermée, Alice garde la sienne
+    const pausesBob = (await etatSante()).parties.map((p) => p.id);
+    verifier(pausesBob.includes(zB), `/sante.parties sans ${zB} : ${JSON.stringify(pausesBob)}`);
+    await B.ev(() => window.__arene.quitter());
+    await jusqua(async () => !(await B.jeu()), { ms: 10_000, quoi: "jeu démonté chez Bob" });
+    // le lobby de z2 compte encore Bob parmi ses membres : il change de mode (retour à l'arène, `mode{arene}`), c'est ce départ qui vide z2
+    await B.page.locator("input[type=radio][name$='-mode'][value='arene']").evaluate((e) => e.click());
+    await jusqua(async () => !((await etatSante()).parties.map((p) => p.id)).includes(zB), { ms: 8000, pas: 300, quoi: async () => `${zB} refermée (/sante.parties ${JSON.stringify((await etatSante()).parties.map((p) => p.id))})` });
+    const sante = await etatSante();
+    verifier(sante.parties.find((p) => p.id === "z1")?.humains === 1, `z1 : ${JSON.stringify(sante.parties.find((p) => p.id === "z1"))}`);
+    return `z1 (Alice) et ${zB} (Bob) lancées séparément, ${zB} refermée au départ de Bob`;
   });
 
   // ------------------------------------------------------------------ 11. erreurs

@@ -197,8 +197,9 @@ describe("lobby, lancement, admission", () => {
     expect(envoyer(b, "b", { t: "lancerPartie" })).toEqual([]);
     expect(b.s.resumeBr()!.phase).toBe("lobby");
 
-    const seul = lobby(["a"]);
-    expect(envoyer(seul, "a", { t: "lancerPartie" })).toEqual([]);
+    // seul et sans bots : refus explicite (avec bots, le solo se remplit tout seul : `match.br-bots.test.ts`)
+    const seul = lobby(["a"], { botsMax: 0 });
+    expect(envoyer(seul, "a", { t: "lancerPartie" })).toEqual([{ a: "a", m: { t: "refus", action: "lancer", raison: "bots" } }]);
     expect(seul.s.resumeBr()!.phase).toBe("lobby");
 
     const lance = envoyer(b, "a", { t: "lancerPartie" });

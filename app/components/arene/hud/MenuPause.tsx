@@ -46,20 +46,51 @@ export interface PropsMenuPause {
   mode?: ModeSalle;
   /** (BR) je suis déjà éliminé : quitter n'est plus un abandon */
   elimine?: boolean;
+  /**
+   * (v11, zombies) suspension de la partie : `actif` = figée (par `par`, pseudo), `compteS` = secondes restantes avant la reprise (0 = pas de compte à rebours).
+   * `enPartie` : une partie est en cours (le bouton « mettre en pause » n'existe que là). `refus` : texte d'un refus de pause.
+   */
+  suspension?: { actif: boolean; par: string; compteS: number; enPartie: boolean; refus: string };
+  /** `true` : suspendre pour tous (ou annuler la reprise en cours) ; `false` : reprendre la partie (redemande la souris) */
+  surPauseZ?(actif: boolean): void;
+  /** libellé de la touche de pause des zombies (vide = aucune) */
+  touchePause?: string;
 }
 
 export default function MenuPause(p: PropsMenuPause) {
   const zombies = p.mode === "zombies";
   const br = p.mode === "br";
+  const susp = zombies ? p.suspension : undefined;
+  const suspendue = !!susp?.actif;
   return (
     <div className={styles.pause} onClick={(e) => { if (e.target === e.currentTarget) p.surReprendre(); }}>
       <div className={styles.pausePanneau} role="group" aria-label="Menu pause">
-        <h2>{p.premiereFois ? "Prêt ?" : "Pause"}</h2>
-        <p className={styles.pauseTexte}>{p.premiereFois
+        <h2>{suspendue ? "Partie en pause" : p.premiereFois ? "Prêt ?" : "Pause"}</h2>
+        <p className={styles.pauseTexte}>{suspendue
+          ? `Partie en pause${susp!.par ? ` (par ${susp!.par})` : ""} : tous les joueurs sont figés.`
+          : p.premiereFois
           ? "Cliquez pour prendre la souris et jouer."
           : zombies ? "La partie continue : les tigres ne s'arrêtent pas, vos coéquipiers non plus."
           : br ? "La partie continue : la tempête et les autres joueurs ne s'arrêtent pas." : "La partie continue : vous êtes toujours dans l'arène."}</p>
-        <button type="button" className={styles.reprendre} autoFocus onClick={p.surReprendre}>{p.premiereFois ? "Jouer" : "Reprendre"}</button>
+        {suspendue && susp!.compteS > 0 && (
+          <p className={styles.pauseCompte} role="status" aria-live="polite">Reprise dans {susp!.compteS}…</p>
+        )}
+        {suspendue ? (
+          <>
+            {/* « Reprendre la partie » lève la suspension pour tous ; « Reprendre » ci-dessous ne fait que re-verrouiller la souris */}
+            <button type="button" className={styles.reprendre} autoFocus disabled={susp!.compteS > 0} onClick={() => p.surPauseZ?.(false)}>Reprendre la partie</button>
+            {susp!.compteS > 0 && (
+              <button type="button" className={styles.reprendreSouris} onClick={() => p.surPauseZ?.(true)}>Annuler la reprise</button>
+            )}
+            <button type="button" className={styles.reprendreSouris} onClick={p.surReprendre}>Reprendre la souris</button>
+          </>
+        ) : (
+          <button type="button" className={styles.reprendre} autoFocus onClick={p.surReprendre}>{p.premiereFois ? "Jouer" : "Reprendre"}</button>
+        )}
+        {zombies && !suspendue && !p.premiereFois && susp?.enPartie && (
+          <button type="button" className={styles.pauseTous} onClick={() => p.surPauseZ?.(true)}>Mettre la partie en pause pour tous{p.touchePause ? ` (${p.touchePause})` : ""}</button>
+        )}
+        {susp?.refus && <p className={styles.avertissement} role="alert">{susp.refus}</p>}
         {!zombies && !br && (
           <div className={styles.pauseArmes}>
             <span>Équipement de la prochaine apparition</span>

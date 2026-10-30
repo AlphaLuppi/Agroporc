@@ -6,7 +6,7 @@
  * Chaque action a deux emplacements ; une touche ne sert qu'à une action à la fois, sauf entre contextes qui ne coexistent jamais (`conflit`) :
  * le contexte « mort » (`ACTIONS_MORT` : passer le rejeu de la killcam) et le contexte « en vie » (on ne saute pas pendant qu'on regarde son
  * rejeu, Espace sert aux deux) ; les actions propres à l'arène (`ACTIONS_ARENE` : sort, fumigène, frappe) et celles propres aux zombies
- * (`ACTIONS_ZOMBIES` : grenades, v8), qui ne sont jamais actives ensemble : G invoque le tigre dans l'arène et lance une grenade en zombies.
+ * (`ACTIONS_ZOMBIES` : grenades, v8 ; pause de la partie, v11), qui ne sont jamais actives ensemble : G invoque le tigre dans l'arène et lance une grenade en zombies.
  * Échap n'est jamais assignable : elle libère toujours la souris (menu pause).
  */
 
@@ -18,7 +18,7 @@ export type Action =
   | "carte" | "minimapCoin" | "passer"
   | "zoomLunette" | "parler" | "invoquer"
   | "fumigene" | "frappeAerienne"
-  | "grenade" | "remontoir"
+  | "grenade" | "remontoir" | "pauseZ"
   | "soigner" | "potion" | "lacher" | "spectateurSuivant" | "spectateurPrecedent";
 
 /**
@@ -37,7 +37,7 @@ export const ACTIONS_V1: readonly Action[] = [
 export const ACTIONS_NOUVELLES: readonly Action[] = [
   "armePrincipale", "armeSecondaire", "couteau", "armeSpeciale", "armePrecedente", "couteauRapide",
   "accroupi", "interagir", "siege", "carte", "minimapCoin", "passer", "zoomLunette", "parler", "invoquer",
-  "fumigene", "frappeAerienne", "grenade", "remontoir",
+  "fumigene", "frappeAerienne", "grenade", "remontoir", "pauseZ",
   "soigner", "potion", "lacher", "spectateurSuivant", "spectateurPrecedent",
 ];
 
@@ -49,7 +49,7 @@ export const ACTIONS_NOUVELLES: readonly Action[] = [
 export const ACTIONS_MORT: readonly Action[] = ["passer", "spectateurSuivant", "spectateurPrecedent"];
 /** Actions qui n'existent que dans l'arène (sort du tigre, fumigène, frappe aérienne) ou que dans le mode zombies (grenades, v8). */
 export const ACTIONS_ARENE: readonly Action[] = ["invoquer", "fumigene", "frappeAerienne"];
-export const ACTIONS_ZOMBIES: readonly Action[] = ["grenade", "remontoir"];
+export const ACTIONS_ZOMBIES: readonly Action[] = ["grenade", "remontoir", "pauseZ"];
 type Contexte = "mort" | "vie" | "arene" | "zombies";
 const contexteDe = (a: Action): Contexte =>
   ACTIONS_MORT.includes(a) ? "mort" : ACTIONS_ARENE.includes(a) ? "arene" : ACTIONS_ZOMBIES.includes(a) ? "zombies" : "vie";
@@ -70,7 +70,7 @@ export const ACTIONS: readonly Action[] = [...ACTIONS_V1, ...ACTIONS_NOUVELLES];
 
 /** Actions qui peuvent rester sans touche sans que ce soit un problème (pas d'avertissement dans le menu pause). */
 export const ACTIONS_FACULTATIVES: readonly Action[] = [
-  "minimapCoin", "passer", "zoomLunette", "parler", "fumigene", "frappeAerienne", "remontoir", "soigner", "potion", "lacher", "spectateurSuivant", "spectateurPrecedent",
+  "minimapCoin", "passer", "zoomLunette", "parler", "fumigene", "frappeAerienne", "remontoir", "pauseZ", "soigner", "potion", "lacher", "spectateurSuivant", "spectateurPrecedent",
 ];
 
 export const LIBELLES_ACTIONS: Record<Action, string> = {
@@ -108,6 +108,7 @@ export const LIBELLES_ACTIONS: Record<Action, string> = {
   spectateurPrecedent: "Spectateur : joueur précédent",
   grenade: "Zombies : grenade (maintenir : cuire)",
   remontoir: "Zombies : tigre à remontoir",
+  pauseZ: "Zombies : mettre la partie en pause pour tous / la reprendre",
 };
 
 /** Regroupement du menu pause : chaque action y figure une seule fois. */
@@ -117,7 +118,7 @@ export const GROUPES_ACTIONS: { titre: string; actions: Action[] }[] = [
   { titre: "Équipement", actions: ["armePrincipale", "armeSecondaire", "couteau", "armeSpeciale", "armePrecedente", "couteauRapide"] },
   { titre: "Véhicule", actions: ["interagir", "siege"] },
   { titre: "Battle Royale", actions: ["soigner", "potion", "lacher", "spectateurSuivant", "spectateurPrecedent"] },
-  { titre: "Divers", actions: ["scores", "carte", "minimapCoin", "passer", "parler"] },
+  { titre: "Divers", actions: ["scores", "carte", "minimapCoin", "passer", "parler", "pauseZ"] },
 ];
 
 /** Deux emplacements par action ; `null` = vide. */
@@ -163,6 +164,8 @@ export function touchesParDefaut(): ConfigTouches {
     // (v8, zombies) G comme dans Black Ops ; partagés avec le sort et le fumigène de l'arène (jamais actifs ensemble, cf. `conflit`)
     grenade: ["KeyG", null],
     remontoir: ["KeyB", null],
+    // (v11, zombies) P : suspend la partie pour tout le monde (ou la reprend) ; Échap seul ne suspend qu'en solo
+    pauseZ: ["KeyP", null],
     // Battle Royale (v9) : H, J et U sont libres ; les flèches du spectateur ne gênent pas « gauche » / « droite » (contexte mort)
     soigner: ["KeyH", null],
     potion: ["KeyJ", null],

@@ -6,7 +6,7 @@
  * spectateurs venus regarder) que les joueurs en vie n'entendent jamais (`relaiVoixBr`, appliqué par le serveur).
  * Spec : docs/superpowers/specs/2026-10-23-arene-v3-design.md (§5), 2026-10-29-br-voix-parties-design.md
  */
-import type { JoueurPublic, SignalVoix, Vec3 } from "./protocole";
+import { estIdBot, type JoueurPublic, type SignalVoix, type Vec3 } from "./protocole";
 import type { Stockage } from "./touches";
 
 export const VOIX = {
@@ -67,7 +67,8 @@ export class LiensVoixKillcam {
   surMort(moi: string | null, cible: string, par: string, t: number): boolean {
     if (!moi || !par || par === cible) return false;
     const autre = cible === moi ? par : par === moi ? cible : null;
-    if (!autre) return false;
+    // un bot n'a pas de micro : ni lien de killcam ni offre WebRTC vers `b<n>`
+    if (!autre || estIdBot(autre)) return false;
     this.liens.set(autre, t + LIEN_VOIX_KILLCAM_MS);
     return true;
   }
@@ -137,7 +138,8 @@ export function ciblesVoixBr(
   moi: ParticipantVoixBr, autres: readonly ParticipantVoixBr[], liens: readonly string[], connectes: ReadonlySet<string> = new Set(),
 ): CiblesVoix {
   if (!moi.voix) return { voulus: [], admis: [] };
-  const avecVoix = autres.filter((o) => o.id !== moi.id && o.voix);
+  // (v11) un bot n'a ni micro ni connexion : jamais appelé, même si une présence erronée lui prêtait la voix
+  const avecVoix = autres.filter((o) => o.id !== moi.id && o.voix && !estIdBot(o.id));
   const ids = new Set(avecVoix.map((o) => o.id));
   const lies = liens.filter((id) => ids.has(id));
   const trier = (l: Iterable<string>) => [...new Set(l)].sort();

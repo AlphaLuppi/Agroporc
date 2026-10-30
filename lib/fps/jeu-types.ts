@@ -8,6 +8,8 @@ import type {
   MessageServeur, ModeSalle, ObjetBr, RaisonAchat, Slot, TypeEvenement, Vec3, ZoneBr, Zone,
 } from "./protocole";
 import type { RadarFrame } from "./radar";
+/** Message `refus` du serveur (v11 : `pause`, `lancer`, `alternative`) ; l'évènement du jeu en reprend les champs. */
+type RefusServeur = Extract<MessageServeur, { t: "refus" }>;
 import type { ConfigTouches } from "./touches";
 
 /**
@@ -141,6 +143,15 @@ export interface HudEtat {
   /** (BR) spectateur venu regarder la partie en cours (ni éliminé, ni place) */
   spectateurExterne?: boolean;
 
+  // ---- SUSPENSION DE LA PARTIE (v11, zombies) : optionnels, absents hors du mode "zombies" ----
+  /** la partie est suspendue par un joueur (tout est figé, `suspenduePar` = son pseudo) */
+  suspendue?: boolean;
+  suspenduePar?: string;
+  /** secondes entières restantes du compte à rebours de reprise (le jeu est encore figé), 0 = pas de compte à rebours */
+  compteS?: number;
+  /** texte d'un refus de pause (« Pause indisponible : limite atteinte »), vide sinon ; s'efface seul au bout de 4 s */
+  refusPause?: string;
+
   // ---- COMPATIBILITÉ v1 (shim du lot 0, tous optionnels) ----
   // Champs que le HUD v1 lit encore et que `jeu.ts` v1 émet toujours. La spec HUD (§3.2) les retire de `HudEtat` : le lot J1 cesse
   // de les émettre (les valeurs continues passent dans `HudLive`) et le lot U2a ne les lit plus. NE PAS les utiliser dans du code neuf.
@@ -194,7 +205,7 @@ export type JeuEvenement =
   /** j'ai pris le cadeau d'Elsa */
   | { type: "bonus"; genre: "soin" | "arme"; arme?: ArmeSpecialeId }
   /** le serveur a refusé `monter` / `siege` (message `refus`) : toast « Voiture trop loin », « Voiture pleine »… ; `rejoindre` : arène pleine */
-  | { type: "refus"; action: "monter" | "siege" | "rejoindre" | "mode" | "regarder"; raison: "loin" | "plein" | "deja" | "inconnu" | "mort" | "lobby" | "limite" };
+  | { type: "refus"; action: RefusServeur["action"]; raison: RefusServeur["raison"]; alternative?: string };
 
 /** (v3) État des événements pour le bandeau du HUD (lu à intervalle par `BandeauEvenement`, hors rendu à 60 Hz). */
 export interface EtatMonstresHud {
@@ -312,6 +323,11 @@ export interface JeuHandle {
   accroupiBascule(b: boolean): void;
   /** saute le rejeu de la killcam et passe à la carte du tueur (sans effet hors rejeu) */
   passerKillcam(): void;
+  /**
+   * (v11, zombies) Suspendre la partie pour tout le monde (`true`) ou la reprendre (`false`, et redemande la souris : le clic est le geste voulu).
+   * La suspension n'est effective qu'au `zpause` du serveur ; un refus s'affiche dans `HudEtat.refusPause`. Sans effet hors zombies.
+   */
+  pauseZ?(actif: boolean): void;
   /** Chat vocal de proximité (v3 §5) : `activer` demande le micro (à appeler sur un geste), `mode` appuyer pour parler / micro ouvert. */
   voix: { activer(): Promise<"ok" | "refuse" | "indisponible">; desactiver(): void; mode(m: "appuyer" | "ouvert"): void };
   /** Touches modifiées par le joueur (menu pause), appliquées tout de suite. */

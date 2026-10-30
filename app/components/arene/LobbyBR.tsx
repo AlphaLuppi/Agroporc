@@ -1,17 +1,21 @@
 "use client";
 
-import { useEffect, useId, useRef, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { EtatConnexion } from "@/lib/fps/reseau";
-import type { EtatPartieBr, ResumePartieBr, ResumeSalonBr } from "@/lib/fps/protocole";
+import { BR } from "@/lib/fps/br-regles";
+import type { EtatPartieBr, ResumeSalonBr } from "@/lib/fps/protocole";
 import type { ConfigTouches } from "@/lib/fps/touches";
+import { DIFFICULTES_LISTE, estDifficulte, type Difficulte } from "@/lib/fps/zombies-vagues";
 import type { ReglagesHud } from "@/lib/fps/reglages-hud";
 import ReglageInterface from "./hud/ReglageInterface";
 import TableauStatsBr from "./hud/TableauStatsBr";
+import ListeParties from "./ListeParties";
 import { useDisposition } from "./ReglageTouches";
 import { PSEUDO_MAX } from "./Arene";
 import type { StatsBrRecues } from "./contrats";
 import {
-  REGLES_BR, TEXTE_BR, TITRE_REGLES_BR, commandesLobbyBR, etiquetteEtatBR, lignesPartiesBR, pseudoCompteBr, situationLobbyBR, texteEffectif,
+  CLE_NIVEAU_BOTS, NIVEAUX_BOTS, REGLES_BR, TEXTE_BR, TITRE_REGLES_BR, aideBots, commandesLobbyBR, creationProposee, estBot, etiquetteEtatBR, lignesParties, nomAffiche,
+  partiesVisibles, pseudoCompteBr, reglageBots, situationLobbyBR, texteEffectif, texteNombreBots, type PartieListee,
 } from "./lobby-modele";
 import styles from "./Arene.module.css";
 
@@ -22,6 +26,9 @@ import styles from "./Arene.module.css";
  * Un arrivant en cours de partie peut la regarder en spectateur (« Regarder la partie ») ou créer la sienne (« Créer ma partie ») ; la liste des
  * parties (`parties`, plusieurs peuvent tourner en même temps) permet de passer de l'une à l'autre. Les statistiques sont demandées une seule fois, à
  * l'ouverture du lobby (`surDemanderStats`). Le choix du mode (`choixMode`) est posé par l'hôte du composant au-dessus du lobby.
+ * (v11) Réglage des bots pour l'hôte : nombre (0 à `botsMax` de la partie, borné par la place et le quota de bots du serveur ; 11 par défaut seul dans le lobby,
+ * sinon aucun) et niveau (difficulté, mémorisée) ; « Lancer » reste grisé, avec la raison, tant qu'il n'y a ni autre joueur ni bot. Une partie avec des bots
+ * est de l'entraînement, non comptée ; les bots sont listés avec l'étiquette [BOT].
  * Spec : docs/superpowers/specs/2026-10-28-battle-royale-design.md (« Interface »)
  */
 export interface PropsLobbyBR {
@@ -40,16 +47,16 @@ export interface PropsLobbyBR {
   touches: ConfigTouches;
   reglagesHud?: ReglagesHud;
   surReglagesHud?(r: ReglagesHud): void;
-  /** l'hôte lance la partie */
-  surLancer(): void;
+  /** l'hôte lance la partie ; `bots` (entier) et `difficulte` (niveau des bots) ne sont donnés que si le serveur propose des bots (`botsMax` > 0) */
+  surLancer(difficulte?: Difficulte, bots?: number): void;
   surFermer(): void;
   erreur: string | null;
   tactile: boolean;
   pseudoParDefaut?: boolean;
   /** `ChoixMode` posé sous le titre */
   choixMode?: ReactNode;
-  /** toutes les parties du serveur (`salons.parties`) et la mienne ; absent : serveur d'avant les parties multiples */
-  parties?: readonly ResumePartieBr[] | null;
+  /** toutes les parties de Battle Royale du serveur (`salons.listes.br`, ou `salons.parties` d'un serveur plus ancien) et la mienne ; absent : serveur d'avant les parties multiples */
+  parties?: readonly PartieListee[] | null;
   partieActuelle?: string | null;
   /** aller dans le lobby d'une autre partie */
   surRejoindrePartie?(id: string): void;
@@ -73,16 +80,40 @@ export default function LobbyBR({
   const disposition = useDisposition();
   const s = statut(etat, monId);
   const connecte = etat === "ouvert" && !!monId;
-  const sit = situationLobbyBR(partie, monId, connecte, salonBr);
+  const joueurs = partie?.joueurs ?? [];
+  // (v11) bots : plafonds publiés par le serveur pour ma partie (sinon ceux de n'importe quelle partie : ce sont des réglages du serveur), choix de l'hôte
+  const mienne = parties?.find((p) => p.id === partieActuelle) ?? null;
+  const botsMax = mienne?.botsMax ?? parties?.find((p) => p.botsMax !== undefined)?.botsMax;
+  const botsRestants = mienne?.botsRestants ?? parties?.find((p) => p.botsRestants !== undefined)?.botsRestants;
+  const [botsChoisis, setBotsChoisis] = useState<number | null>(null);
+  const [niveau, setNiveau] = useState<Difficulte>(() => {
+    try { const v = localStorage.getItem(CLE_NIVEAU_BOTS); return estDifficulte(v) ? v : "plat"; } catch { return "plat"; }
+  });
+  const choisirNiveau = (d: Difficulte) => {
+    setNiveau(d);
+    try { localStorage.setItem(CLE_NIVEAU_BOTS, d); } catch { /* stockage indisponible */ }
+  };
+  const humains = joueurs.filter((j) => !estBot(j)).length;
+  const reglage = reglageBots({ botsMax, botsRestants, humains, capacite: partie?.capacite ?? BR.joueursMax, choisi: botsChoisis });
+  const sit = situationLobbyBR(partie, monId, connecte, salonBr, reglage);
   // même règle que le serveur (nettoyerPseudo) : 2 lettres ou chiffres au moins
   const nomTropCourt = Array.from(pseudo.replace(/[^\p{L}\p{N}]/gu, "")).length < 2;
-  const joueurs = partie?.joueurs ?? [];
   const listeConnue = !partie || partie.joueurs !== undefined;
   const monPseudo = joueurs.find((j) => j.id === monId)?.pseudo ?? null;
   const peutLancer = sit.peutLancer && !tactile && !nomTropCourt;
-  const lignesParties = parties ? lignesPartiesBR(parties, partieActuelle) : [];
+  const lancer = () => {
+    if (!reglage.disponible) surLancer();
+    else if (reglage.valeur > 0) surLancer(niveau, reglage.valeur);
+    else surLancer(undefined, 0);
+  };
+  const montrerBots = sit.hote && !sit.enCours && reglage.disponible && !tactile && connecte;
+  const idBots = `${idPseudo}-bots`;
+  const lignes = (parties ? lignesParties("br", parties, partieActuelle) : [])
+    .map((l) => (l.action === "rejoindre" && !surRejoindrePartie ? { ...l, action: null } : l));
   // la liste ne sert que s'il y a un choix à faire : plusieurs parties, ou la mienne déjà lancée
-  const montrerParties = connecte && !tactile && lignesParties.length > 0 && (lignesParties.length > 1 || sit.enCours);
+  const montrerParties = partiesVisibles("br", { connecte, tactile, nbLignes: lignes.length, enCours: sit.enCours });
+  // « Créer ma partie » : déjà dans les actions ci-dessus quand la mienne est lancée ; sinon dans la liste, sauf seul dans mon lobby
+  const creerDansListe = !sit.enCours && !!surCreerPartie && creationProposee("br", lignes);
 
   // les statistiques ne sont demandées qu'à l'ouverture du lobby (une fois), jamais au chargement du site
   const demandees = useRef(false);
@@ -123,27 +154,15 @@ export default function LobbyBR({
         </div>
       )}
       {montrerParties && (
-        <section className={styles.parties} aria-labelledby={`${idPseudo}-parties`}>
-          <h3 id={`${idPseudo}-parties`}>Parties</h3>
-          <ul className={styles.liste}>
-            {lignesParties.map((l) => (
-              <li key={l.id}>
-                <span className={styles.nom}>{l.titre}{l.ici && <em> (vous)</em>}</span>
-                <span className={styles.partieEtat}>{l.etat}</span>
-                {l.action === "rejoindre" && surRejoindrePartie && (
-                  <button type="button" className={styles.boutonSecondaire} onClick={() => surRejoindrePartie(l.id)} aria-label={`Rejoindre la ${l.titre.toLowerCase()}`}>
-                    Rejoindre
-                  </button>
-                )}
-                {l.action === "regarder" && surRegarder && (!l.ici || sit.peutRegarder) && (
-                  <button type="button" className={styles.boutonSecondaire} onClick={() => surRegarder(l.ici ? null : l.id)} aria-label={`Regarder la ${l.titre.toLowerCase()}`}>
-                    Regarder
-                  </button>
-                )}
-              </li>
-            ))}
-          </ul>
-        </section>
+        <ListeParties
+          mode="br"
+          lignes={lignes}
+          surRejoindre={(id) => surRejoindrePartie?.(id)}
+          surRegarder={surRegarder}
+          surCreer={creerDansListe ? surCreerPartie : undefined}
+          idTitre={`${idPseudo}-parties`}
+          peutRegarderLaMienne={sit.peutRegarder}
+        />
       )}
 
       <div className={styles.champ}>
@@ -159,7 +178,7 @@ export default function LobbyBR({
           autoFocus={pseudoParDefaut}
           aria-describedby={`${idPseudo}-aide`}
           onChange={(e) => surPseudo(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter" && peutLancer) surLancer(); }}
+          onKeyDown={(e) => { if (e.key === "Enter" && peutLancer) lancer(); }}
         />
         <p id={`${idPseudo}-aide`} className={styles.aidePseudo}>
           {nomTropCourt
@@ -181,13 +200,47 @@ export default function LobbyBR({
           return (
             <li key={j.id}>
               <i className={styles.puce} style={{ "--couleur": j.couleur } as CSSProperties} aria-hidden="true" />
-              <span className={styles.nom}>{j.pseudo}{j.id === monId && <em> (vous)</em>}</span>
+              <span className={styles.nom}>{nomAffiche(j)}{j.id === monId && <em> (vous)</em>}</span>
               {partie?.hote === j.id && <span className={styles.badgeHote}>hôte</span>}
               {etiquette && <span className={j.admis ? styles.enJeu : styles.spectateur}>{etiquette}</span>}
             </li>
           );
         })}
       </ul>
+      )}
+
+      {montrerBots && (
+        <fieldset className={styles.reglageBots} aria-describedby={`${idBots}-aide`}>
+          <legend>Bots</legend>
+          <div className={styles.ligneBots}>
+            <label htmlFor={idBots}>Nombre de bots</label>
+            <input
+              id={idBots}
+              type="range"
+              min={0}
+              max={reglage.plafond}
+              step={1}
+              value={reglage.valeur}
+              disabled={reglage.plafond === 0}
+              aria-valuetext={texteNombreBots(reglage.valeur)}
+              onChange={(e) => setBotsChoisis(Number(e.target.value))}
+            />
+            <output htmlFor={idBots}>{reglage.valeur}</output>
+          </div>
+          <div id={`${idBots}-aide`}>
+            {aideBots(reglage, botsRestants).map((t) => <p key={t} className={styles.aidePseudo}>{t}</p>)}
+          </div>
+          {reglage.valeur > 0 && (
+            <div className={styles.niveauBots} role="radiogroup" aria-label="Niveau des bots">
+              {DIFFICULTES_LISTE.map((d) => (
+                <label key={d} className={styles.aidePseudo}>
+                  <input type="radio" name={`${idBots}-niveau`} value={d} checked={niveau === d} onChange={() => choisirNiveau(d)} />{" "}
+                  <b>{NIVEAUX_BOTS[d].nom}</b> : {NIVEAUX_BOTS[d].description}
+                </label>
+              ))}
+            </div>
+          )}
+        </fieldset>
       )}
 
       <section className={styles.tir} aria-labelledby={`${idPseudo}-regles`}>
@@ -224,7 +277,7 @@ export default function LobbyBR({
             éliminé ou spectateur, vous parlez avec les autres spectateurs, que les joueurs en vie n&apos;entendent pas.
           </p>
           <div className={styles.pied}>
-            <button type="button" className={styles.entrer} disabled={!peutLancer} onClick={surLancer}>
+            <button type="button" className={styles.entrer} disabled={!peutLancer} onClick={lancer}>
               Lancer la partie
             </button>
           </div>

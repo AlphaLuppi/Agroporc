@@ -5,6 +5,7 @@ import { STATS } from "./armes";
 import { batimentsDetruits } from "./collision";
 import { armeDuSlot } from "./equipement";
 import type { ContexteSalle, JoueurSalle, ServiceZombies, Sortie } from "./match-contexte";
+import { CONTEXTE_SANS_BOTS } from "./contexte-sans-bots";
 import { EQUIPEMENT_DEPART_ZOMBIES, creerServiceZombies, departPour, type OptionsServiceZombies } from "./match-zombies";
 import {
   EQUIPEMENT_DEFAUT, JEU, copierEquipement, decoderZombies, type Equipement, type MessageClient, type MessageServeur, type Slot, type Vec3,
@@ -68,6 +69,7 @@ function banc(opts: Partial<OptionsServiceZombies> = {}): Banc {
   const memorises: string[] = [];
   let svc!: ServiceZombies;
   const ctx: ContexteSalle = {
+    ...CONTEXTE_SANS_BOTS,
     monde, alea: suite(7),
     enPhaseJeu: () => true,
     joueur: (id) => table.get(id),

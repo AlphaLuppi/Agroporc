@@ -7,10 +7,12 @@ import type { EtatPartieZombies } from "@/lib/fps/protocole";
 import type { ConfigTouches } from "@/lib/fps/touches";
 import type { ReglagesHud } from "@/lib/fps/reglages-hud";
 import ReglageInterface from "./hud/ReglageInterface";
+import ListeParties from "./ListeParties";
 import { useDisposition } from "./ReglageTouches";
 import { PSEUDO_MAX } from "./Arene";
 import {
-  REGLES_ZOMBIES, TEXTE_ZOMBIES, TITRE_REGLES_ZOMBIES, commandesLobbyZombies, etiquetteEtatZombies, situationLobbyZombies, texteEffectif,
+  REGLES_ZOMBIES, TEXTE_ZOMBIES, TITRE_REGLES_ZOMBIES, commandesLobbyZombies, creationProposee, etiquetteEtatZombies, lignesParties, partiesVisibles,
+  situationLobbyZombies, texteEffectif, type PartieListee,
 } from "./lobby-modele";
 import styles from "./Arene.module.css";
 
@@ -39,6 +41,15 @@ export interface PropsLobbyZombies {
   pseudoParDefaut?: boolean;
   /** `ChoixMode` posé sous le titre */
   choixMode?: ReactNode;
+  /** (v11) parties de zombies du serveur (`salons.listes.zombies`) et la mienne ; absent : serveur d'avant les parties parallèles (une seule partie) */
+  parties?: readonly PartieListee[] | null;
+  partieActuelle?: string | null;
+  /** aller dans une autre partie (lobby, ou en cours : on entre à la pause suivante entre deux manches) */
+  surRejoindrePartie?(id: string): void;
+  /** créer ma partie (le serveur en reprend une vide avant d'en ouvrir une de plus) */
+  surCreerPartie?(): void;
+  /** la partie où je suis est figée par un joueur (dernier `zpause`) : pastille « en pause » */
+  enPause?: boolean;
 }
 
 function statut(etat: EtatConnexion, monId: string | null): { texte: string; classe: string } {
@@ -49,6 +60,7 @@ function statut(etat: EtatConnexion, monId: string | null): { texte: string; cla
 
 export default function LobbyZombies({
   etat, monId, partie, pseudo, surPseudo, touches, reglagesHud, surReglagesHud, surLancer, surFermer, erreur, tactile, pseudoParDefaut = false, choixMode,
+  parties = null, partieActuelle = null, surRejoindrePartie, surCreerPartie, enPause = false,
 }: PropsLobbyZombies) {
   const idPseudo = useId();
   const disposition = useDisposition();
@@ -69,6 +81,10 @@ export default function LobbyZombies({
     try { localStorage.setItem("pdj-fps-zombies-difficulte", d); } catch { /* stockage indisponible */ }
   };
   const lancer = () => surLancer(difficulte);
+  const lignes = parties ? lignesParties("zombies", parties, partieActuelle) : [];
+  const creationZ = !!surCreerPartie && creationProposee("zombies", lignes);
+  const montrerParties = partiesVisibles("zombies", { connecte, tactile, nbLignes: lignes.length, enCours: sit.enCours, creation: creationZ });
+  const enPauseIci = enPause || lignes.some((l) => l.ici && l.enPause);
 
   return (
     <aside className={styles.arene} aria-label="Zombies">
@@ -84,10 +100,20 @@ export default function LobbyZombies({
           {s.texte}
           {connecte && partie && <> · <b>{sit.joueurs}</b>/{sit.capacite} joueurs</>}
         </span>
+        {enPauseIci && <span className={styles.badgePause}>en pause</span>}
       </p>
       <p className={styles.match}>{TEXTE_ZOMBIES}</p>
       <p className={`${styles.match} ${sit.enCours ? styles.enCours : ""}`} role="status">{sit.message}</p>
       {erreur && <p className={styles.erreur} role="alert">{erreur}</p>}
+      {montrerParties && (
+        <ListeParties
+          mode="zombies"
+          lignes={lignes.map((l) => (l.action === "rejoindre" && !surRejoindrePartie ? { ...l, action: null } : l))}
+          surRejoindre={(id) => surRejoindrePartie?.(id)}
+          surCreer={creationZ ? surCreerPartie : undefined}
+          idTitre={`${idPseudo}-parties`}
+        />
+      )}
 
       <div className={styles.champ}>
         <label htmlFor={idPseudo}>Nom de joueur</label>

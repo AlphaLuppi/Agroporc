@@ -61,6 +61,7 @@ import {
 } from "./jeu-zombies";
 import { sonExplosion, voixDuBonus, type IdVoix } from "./sons-echantillons";
 import { creerRenduZombies, type MortZombie } from "./rendu-zombies";
+import { FabriqueBots, installerCrochetBots } from "./rendu-bots";
 import { collisionsDuMonde, impulsionMort } from "./ragdoll-tigre";
 import { creerRenduInterieurs } from "./rendu-interieurs";
 import { creerRenduObjetsZombies } from "./rendu-objets-zombies";
@@ -89,13 +90,14 @@ import { MELEE, STATS, degatsPlomb, delaiRecul, devier, directionsTir, dispersio
 import { tracer, type Cible } from "./tir";
 import { trouverCiblesMelee } from "./melee";
 import {
-  CIBLE_TIGRE, CIBLE_TITAN, JEU, OEIL_SIEGE, OEIL_TITAN, SILHOUETTE, estIdZombie, estMelee, oeilDe,
+  CIBLE_TIGRE, CIBLE_TITAN, JEU, OEIL_SIEGE, OEIL_TITAN, SILHOUETTE, estIdBot, estIdZombie, estMelee, oeilDe,
   type ArmeFeuId, type ArmeId, type ArmeMeleeId, type EtatJoueurSnap, type EtatPartieBr, type EtatPartieZombies, type JoueurPublic, type MessageServeur, type RaisonAchat, type Siege, type Slot, type Vec3, type VehiculeSnap, type Zone,
 } from "./protocole";
 import type { EquipementJeu, EtatBrHud, EtatZombiesHud, HudEtat, HudLive, JeuCallbacks, JeuHandle, JeuOptions } from "./jeu-types";
 import { ajouterEcho, ajouterPorte, creerRadarFrame, definirElsa, ajouterVoiture, ajouterVoiturePnj, purgerEchos, viderRadarFrame, type RadarFrame } from "./radar";
 import { SuiviRadar, type JoueurRadarEntree } from "./jeu-radar";
 import { Interpolateur, gardePosition, type ClientArene } from "./reseau";
+import { GelPartie, doitAutoSuspendre, texteRefusPause } from "./gel";
 import { codeSouris, indexTouches, lireTouches, stockageNavigateur, type Action, type ConfigTouches } from "./touches";
 import {
   creerArmeEnMain, creerAvatar, creerEffets, creerPostTraitement, type ArmeEnMain, type AvatarJoueur,
@@ -552,6 +554,11 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   // ---------- joueurs distants ----------
   const infos = new Map<string, JoueurPublic>();
   const distants = new Map<string, Distant>();
+  // (Battle Royale) les bots sont des tigres bipèdes armés (`rendu-bots.ts`) : fabrique créée à la première demande, libérée avec le jeu
+  let fabBots: FabriqueBots | null = null;
+  const fabriqueBots = () => (fabBots ??= new FabriqueBots(renderer, undefined, { positionCamera: () => camPos, collisions: collisionsDuMonde(monde) }));
+  // crochet de développement `window.__arene.avatarBot(id, opts)` : pose un bot local pour les captures (`scripts/fps/captures_bots.mjs`)
+  const retirerCrochetBots = process.env.NODE_ENV !== "production" ? installerCrochetBots(scene, fabriqueBots) : () => {};
   /** joueurs interpolés à l'instant du rendu (HORS rejeu) : cibles des tirs, positions des effets */
   let etats = new Map<string, EtatJoueurSnap>();
   /** joueurs dessinés cette image : `etats`, ou le tampon long pendant la killcam */
@@ -584,7 +591,17 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   const vitesseH = () => Math.hypot(moi.v[0], moi.v[2]);
   /** BR : à bord de l'avion, en chute libre ou sous voile (ni arme, ni tir, ni ramassage) */
   const enVolBr = () => modeBR && (vol.phase() !== "sol" || entreeAvionAttendue);
-  const peutAgir = () => apparu && vivant && !enVolBr();
+  /**
+   * (v11, zombies) Gel de la partie suspendue par un joueur (`gel.ts`, PUR) : `dt` nul, ni `etat` envoyé ni action tant que c'est figé. Appliqué dès la
+   * création si un `zpause` est arrivé avant le jeu (pause pendant le chargement 3D).
+   */
+  const gel = new GelPartie();
+  if (modeZ) { gel.depuisMemoire(client.suspension?.()); if (gel.gele) sons.geler(true); }
+  /** (v11) refus d'une pause à afficher dans le menu (texte, jusqu'à quand : horloge réelle du navigateur) */
+  let refusPause = { texte: "", jusqua: 0 };
+  /** (v11) la souris a été prise au moins une fois : la perte de la souris ne suspend (solo) qu'ensuite, jamais pendant le « Prêt ? » du premier lancement */
+  let dejaVerrouille = false;
+  const peutAgir = () => apparu && vivant && !enVolBr() && gel.actionsAutorisees();
   /** killcam en cours : rien de ce que je fais n'a de sens (mort), les effets en direct sont coupés pendant le rejeu */
   const enKillcam = () => kc.actif();
   /** BR : je suis mort, la killcam est passée : je regarde un joueur en vie */
@@ -1359,7 +1376,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   // ---------- messages du serveur ----------
   function creerAvatarDistant(id: string): Distant {
     const pseudo = pseudoDe(id), couleur = couleurDe(id);
-    const avatar = creerAvatar(couleur, pseudo);
+    const avatar = estIdBot(id) || infos.get(id)?.bot ? fabriqueBots().creerAvatarBot(parseInt(couleur.replace("#", ""), 16), pseudo) : creerAvatar(couleur, pseudo);
     scene.add(avatar.group);
     const d = { avatar, pseudo, couleur };
     distants.set(id, d);
@@ -1690,7 +1707,24 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       case "bienvenue":
         majInfos(m.joueurs);
         entracte = !modeBR && m.match.phase === "entracte";
+        // (v11) nouvelle salle ou reconnexion : jamais figé par erreur (un `zpause` suit, suspendue ou non)
+        if (gel.gele) { gel.reinitialiser(); sons.geler(false); }
         break;
+      case "zpause": {
+        // (v11, zombies) suspension de la partie par un joueur : tout est figé jusqu'au `zpause{actif:false}` (horloge serveur figée par reseau.ts)
+        if (!modeZ) break;
+        const etaitGele = gel.gele;
+        gel.appliquer(m, Date.now());
+        if (gel.gele && !etaitGele) {
+          // le gel est posé AVANT de rendre la souris : le menu s'ouvre, une grenade en cuisson reste dans la poche
+          grenades?.annuler();
+          toutRelacher();
+          if (verrouille()) document.exitPointerLock();
+        }
+        sons.geler(gel.gele);
+        emettreHud(true);
+        break;
+      }
       case "presence": {
         majInfos(m.joueurs);
         // Le serveur nous a retiré de l'arène (aucun état reçu pendant trop longtemps : onglet gelé) :
@@ -1895,8 +1929,14 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
         if (vivant) entrerVehicule(m.vehicule, m.siege, { p: m.p, cap: m.cap, v: 0 });
         break;
       case "refus":
+        // (v11) pause refusée : texte dans le menu pause (pas une annonce du fil : `texteRefus` du hook ne connaît pas cette action)
+        if (m.action === "pause") {
+          refusPause = { texte: texteRefusPause(m.raison), jusqua: Date.now() + 4000 };
+          emettreHud(true);
+          break;
+        }
         embarquementFin = 0;
-        cb.evenement({ type: "refus", action: m.action, raison: m.raison });
+        cb.evenement({ type: "refus", action: m.action, raison: m.raison, ...(m.alternative ? { alternative: m.alternative } : {}) });
         // arène pleine (16 agents en jeu) : on ne reste pas devant un rond-point vide à attendre une apparition qui n'arrivera pas ;
         // BR : plus de partie à regarder (elle vient de finir)
         if (m.action === "rejoindre" || m.action === "regarder") cb.sortir();
@@ -2354,7 +2394,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     relacher(codeSouris(e.button));
   };
   const surMouseMove = (e: MouseEvent) => {
-    if (!verrouille()) return;
+    if (!verrouille() || !gel.peutRegarder()) return;
     const dx = borne(e.movementX || 0, -250, 250), dy = borne(e.movementY || 0, -250, 250);
     // à fort zoom, la souris tourne moins vite (même déplacement à l'écran)
     const echelle = Math.tan((fovH * Math.PI) / 360) / Math.tan(Math.PI / 4);
@@ -2377,7 +2417,15 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     molette(e.deltaY > 0 ? 1 : -1);
   };
   const surVerrou = () => {
-    if (!verrouille()) toutRelacher();
+    if (verrouille()) dejaVerrouille = true;
+    else {
+      toutRelacher();
+      // (v11) solo : perdre la souris (Échap, alt-tab) suspend la partie ; à plusieurs, seule la demande explicite (bouton, touche P) le fait
+      if (modeZ && doitAutoSuspendre({
+        zombies: true, phase: partieZ?.phase ?? null, admisCount: partieZ?.joueurs.filter((x) => x.admis).length ?? 1, dejaVerrouille,
+        gele: gel.gele, connecte: client.id !== null, killcam: kc.actif(),
+      })) client.envoyer({ t: "pauseZ", actif: true });
+    }
     emettreHud(true);
   };
   const surContexte = (e: Event) => e.preventDefault();
@@ -2528,6 +2576,9 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       sort: vivant && mondeTigres.aCharge(),
       titan: pilote(),
       ...(modeZ ? {
+        ...gel.hud(Date.now()),
+        // toujours présent : `emettreHud` compare les clés de l'état courant, un champ qui disparaîtrait ne serait jamais vu comme changé
+        refusPause: refusPause.texte && Date.now() < refusPause.jusqua ? refusPause.texte : "",
         mode: "zombies" as const, argent: argentZ, manche: partieZ?.manche ?? 0, restants: mz.restants(), aTerre: aTerreZ, elimine: elimineZ,
         invitePrix: invZ.prix, inviteAssez: invZ.bloque ? true : invZ.assez, reanime: reanimCible !== null || reparFenetre !== null,
       } : {}),
@@ -3103,6 +3154,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
    * d'envoyer sa position (le serveur la suit) : la relève garde ainsi la position du client, sans téléportation.
    */
   function envoyerEtat() {
+    if (!gel.peutEmettreEtat()) return; // (v11) suspendu : le serveur jetterait l'état
     if (!apparu || (!vivant && !(modeZ && aTerreZ && !elimineZ))) return;
     // BR : le serveur simule ma chute (message `chute`) et ignore tout `etat` tant que je suis à bord ou en l'air
     if (enVolBr()) return;
@@ -3232,9 +3284,12 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   function frame(maintenant: number) {
     if (disposed) return;
     raf = requestAnimationFrame(frame);
-    const dt = borne((maintenant - dernierT) / 1000, 0, 0.1);
+    // (v11) partie suspendue : dt nul, donc aussi l'horloge locale `t` et tout ce qui est calé dessus (cuisson de grenade, recharge, animations) ;
+    // `dernierT` avance quand même, pas de grand saut à la reprise
+    const dtBrut = borne((maintenant - dernierT) / 1000, 0, 0.1);
+    const dt = gel.dtEffectif(dtBrut);
     // temps réel de l'image : la chute du BR le suit (le serveur la simule en temps réel), sans le plafond de 0,1 s du jeu
-    const dtReel = borne((maintenant - dernierT) / 1000, 0, 1);
+    const dtReel = gel.gele ? 0 : borne((maintenant - dernierT) / 1000, 0, 1);
     dernierT = maintenant;
     t += dt;
     reconnexion();
@@ -3488,7 +3543,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     live.regenDelai = modeBR || !vivant || pv >= pvMaxMoi() ? 1 : borne((t - dernierDegatT) / regenDelaiS(), 0, 1);
     live.usage = modeBR && usageSoin ? progressionUsage(usageSoin, client.maintenantServeur()) : 0;
     live.reanimation = reanimCible !== null ? borne((t - reanimDebutT) / ZOMBIES.reanimationS, 0, 1) : 0;
-    accHud += dt;
+    // le HUD continue d'être relu figé (compte à rebours de la reprise, fin du texte d'un refus) : cadence en temps réel
+    accHud += dtBrut;
     if (accHud >= ECART_HUD_S) { accHud = 0; emettreHud(); }
   }
   raf = requestAnimationFrame(frame);
@@ -3508,6 +3564,12 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       accroupiBascTenu = false;
     },
     passerKillcam() { if (kc.actif() && kc.phase() === "rejeu") kc.passer(); },
+    pauseZ(actif) {
+      if (!modeZ) return;
+      client.envoyer({ t: "pauseZ", actif });
+      // « Reprendre la partie » : le clic est le geste qui rend la souris, sans attendre la fin du compte à rebours
+      if (!actif) demanderVerrou();
+    },
     voix: {
       activer: () => voix.activer(),
       desactiver() { voix.desactiver(); emettreHud(true); },
@@ -3571,6 +3633,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       canvas.removeEventListener("contextmenu", surContexte);
       canvas.removeEventListener("webglcontextlost", surContexteWebGLPerdu);
       if (!sorti) { sorti = true; client.envoyer({ t: "quitter" }); }
+      gel.reinitialiser();
       if (verrouille()) document.exitPointerLock();
       sons.mur(false);
       sons.glisse(false);
@@ -3584,6 +3647,9 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       visib.vider();
       suiviRadar.vider();
       for (const id of [...distants.keys()]) retirerAvatar(id);
+      retirerCrochetBots();
+      fabBots?.dispose();
+      fabBots = null;
       reanimCible = null; // `quitter` est déjà parti : rien à annoncer au serveur
       dyn.dispose();
       renduTigres.dispose();
@@ -3636,7 +3702,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
           zombies: modeZ ? mz.zombies().slice(0, mz.nombre()).map((v) => ({ id: v.id, x: v.x, z: v.z, type: v.type, griffe: v.griffe, mode: v.mode, cap: v.cap })) : [],
           rugissements: rz ? { pret: rz.pret(), affiches: rz.affiches(), ragdolls: rz.ragdollsActifs() } : null,
           // (v8) dernier état de la partie de zombies et horloge serveur (captures : `simuler` en part)
-          partie: modeZ ? partieZ : null, tServeur: client.maintenantServeur(),
+          partie: modeZ ? partieZ : null, tServeur: client.maintenantServeur(), gele: gel.gele,
           // (v8) grenades en poche et en vol
           grenades: grenades ? {
             frag: stockGrenades("frag"), remontoirs: stockGrenades("remontoir"), cuisson: grenades.cuisson(t * 1000),

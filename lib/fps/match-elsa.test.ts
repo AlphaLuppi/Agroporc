@@ -3,6 +3,7 @@ import { STATS } from "./armes";
 import { ELSA } from "./elsa";
 import { creerServiceElsa } from "./match-elsa";
 import type { ContexteSalle, JoueurSalle, Sortie } from "./match-contexte";
+import { CONTEXTE_SANS_BOTS } from "./contexte-sans-bots";
 import { copierEquipement, EQUIPEMENT_DEFAUT, JEU, type Vec3 } from "./protocole";
 import { construireMonde } from "./collision";
 
@@ -30,6 +31,7 @@ function creerContexte(alea: () => number) {
   const joueurs = new Map<string, JoueurSalle>();
   const etat = { phaseJeu: true };
   const ctx: ContexteSalle = {
+    ...CONTEXTE_SANS_BOTS,
     monde, alea,
     enPhaseJeu: () => etat.phaseJeu,
     joueur: (id) => joueurs.get(id),

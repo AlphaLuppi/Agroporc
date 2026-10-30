@@ -8,7 +8,7 @@ import type { Poi, SceneData } from "@/lib/agroparc3d/types";
 import type { JoueurAerien, SceneHandle } from "@/lib/agroparc3d/scene";
 import type { JeuHandle, HudEtat } from "@/lib/fps/jeu";
 import type { HudLive } from "@/lib/fps/jeu-types";
-import { MODES_SALLE, PARTIE_NOUVELLE, type ArmeFeuId, type ArmeMeleeId, type ArmePrincipaleId, type ArmeSecondaireId, type ModeSalle, type Slot, type Vec3 } from "@/lib/fps/protocole";
+import { MODES_SALLE, PARTIE_AUTO, PARTIE_NOUVELLE, type ArmeFeuId, type ArmeMeleeId, type ArmePrincipaleId, type ArmeSecondaireId, type ModeSalle, type Slot, type Vec3 } from "@/lib/fps/protocole";
 import { donneesZombies } from "@/lib/fps/zombies-carte";
 import { donneesBr } from "@/lib/fps/br-carte";
 import { ecrireEquipement, estPrincipale, estSecondaire, lireEquipement } from "@/lib/fps/equipement";
@@ -25,8 +25,9 @@ import { CLE_CLASSEMENT, messageEnregistre } from "@/lib/tigre-scores";
 import RestoBadge from "./RestoBadge";
 import Arene from "./arene/Arene";
 import ChoixMode from "./arene/ChoixMode";
-import { flecheReserveeAuChamp } from "./arene/lobby-modele";
+import { PARTIE_HALL, flecheReserveeAuChamp, listesDepuisSalons } from "./arene/lobby-modele";
 import { gardeSortieBr } from "@/lib/fps/garde-sortie-br";
+import { armerEntreeAuto, confirmerEntreeAuto, entreeApresContexte, type EntreeAuto } from "@/lib/fps/entree-auto";
 import HudArene from "./arene/HudArene";
 import LobbyZombies from "./arene/LobbyZombies";
 import LobbyBR from "./arene/LobbyBR";
@@ -314,10 +315,37 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
     setCleCanvas((k) => k + 1);
     setEnArene(true);
   };
+  /**
+   * Arène : l'arène n'a ni lobby ni « lancer », tout client atterrit dans le hall `ar1` ; le débordement se décide ici, à l'entrée. Sur un serveur à parties
+   * parallèles on demande d'abord `mode{arene, partie:"auto"}` (la plus peuplée qui accueille, sinon une nouvelle) et le jeu ne se monte (donc `rejoindre` ne
+   * part) qu'une fois le serveur ayant placé le client (`confirmationsMode`). Une arène choisie à la main (« Rejoindre », « Créer une arène », « Changer
+   * d'arène ») n'est pas réévaluée. Serveur d'avant : on entre tout de suite.
+   */
   const entrerArene = () => {
     if (!scene || !arene.monId) return;
-    monterJeu("arene");
+    if (!arene.salons?.listes || areneChoisie.current) { monterJeu("arene"); return; }
+    entreeAuto.current = armerEntreeAuto(areneOuverte);
+    arene.choisirMode("arene", PARTIE_AUTO);
   };
+  /** entrée en attente de la confirmation du serveur (`lib/fps/entree-auto.ts`) : elle ne survit ni au panneau fermé, ni à une coupure, ni à un autre choix de partie */
+  const entreeAuto = useRef<EntreeAuto>(null);
+  const areneChoisie = useRef(false);
+  useEffect(() => {
+    const r = confirmerEntreeAuto(entreeAuto.current, { enArene, mode: arene.mode, monId: arene.monId, areneOuverte });
+    entreeAuto.current = r.entree;
+    if (r.monter) monterJeu("arene");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [arene.confirmationsMode]);
+  // `mode` refusé (toutes les arènes pleines et plus de place pour en créer) : l'entrée en attente est abandonnée, le message d'erreur est dans le panneau
+  useEffect(() => { entreeAuto.current = null; }, [arene.refusMode]);
+  // panneau fermé (Fermer, bouton « Arène », plat ou restaurant ouvert) ou connexion perdue : plus rien n'est attendu
+  useEffect(() => {
+    entreeAuto.current = entreeApresContexte(entreeAuto.current, { areneOuverte, autrePanneau: !!selected, connecte: arene.etat === "ouvert" });
+  }, [areneOuverte, selected, arene.etat]);
+  // arène pleine (`refus{rejoindre, plein}`) : le jeu se referme, le panneau rouvre pour afficher le message et « Changer d'arène »
+  useEffect(() => {
+    if (arene.refusRejoindre > 0) setAreneOuverte(true);
+  }, [arene.refusRejoindre]);
   /**
    * Sortie du jeu. En zombies on revient au lobby de la salle (panneau rouvert) et le jeu ne se remonte pas tout seul tant que le serveur ne
    * nous a pas montré « non admis » (état d'avant la sortie encore en mémoire, fin de partie, reconnexion).
@@ -325,6 +353,7 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
   const quitterArene = () => {
     setCleCanvas((k) => k + 1);
     setEnArene(false);
+    areneChoisie.current = false;
     if (modeJeuRef.current === "zombies") {
       sortieZombies.current = true;
       setAreneOuverte(true);
@@ -358,12 +387,14 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
   const choisirMode = (m: ModeSalle) => {
     // un écran tactile ne joue ni aux zombies ni au Battle Royale : s'il y entrait, il resterait au lobby (voire hôte, sans pouvoir lancer) ou admis sans jamais jouer
     if (tactile && m !== "arene") return;
+    entreeAuto.current = null;
     setModeMemo(m);
     try { localStorage.setItem(CLE_MODE, m); } catch { /* non retenu */ }
     arene.choisirMode(m);
   };
   /** Ouvre ou ferme le panneau « Arène ». À l'ouverture, le mode mémorisé est demandé au serveur (une action du joueur : rien ne part au chargement). */
   const basculerPanneauArene = () => {
+    entreeAuto.current = null;
     setSelected(null);
     if (!areneOuverte && modeMemo !== arene.modeVoulu && !(tactile && modeMemo !== "arene")) arene.choisirMode(modeMemo);
     setAreneOuverte((o) => !o);
@@ -378,7 +409,7 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
   /** Battle Royale : regarde la partie en cours de ma salle (`id` null ou la mienne), ou va d'abord dans la partie `id` puis la regarde. */
   const regarderBr = (id: string | null) => {
     if (!scene || tactile) return;
-    if (id === null || id === arene.partieBr) {
+    if (id === null || id === arene.partie) {
       regarderApres.current = null;
       monterJeu("br", true);
       return;
@@ -386,26 +417,42 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
     regarderApres.current = id;
     arene.choisirMode("br", id);
   };
-  /** Battle Royale : créer ma partie pendant que la mienne est lancée (le serveur reprend une salle vide s'il y en a une). */
-  const creerPartieBr = () => {
+  /** Va dans la partie `id` du mode `m` (« Rejoindre » d'une liste de parties, « Changer d'arène »). Une arène choisie ainsi n'est pas réévaluée à l'entrée. */
+  const rejoindrePartie = (m: ModeSalle, id: string) => {
+    if (tactile && m !== "arene") return;
     regarderApres.current = null;
-    arene.choisirMode("br", PARTIE_NOUVELLE);
+    entreeAuto.current = null;
+    if (m === "arene") areneChoisie.current = true;
+    arene.choisirMode(m, id);
   };
+  /** Crée ma partie dans le mode `m` (le serveur reprend d'abord une partie vide ; refus `limite` au plafond) : « Créer ma partie » / « Créer une arène ». */
+  const creerPartie = (m: ModeSalle) => {
+    if (tactile && m !== "arene") return;
+    regarderApres.current = null;
+    entreeAuto.current = null;
+    if (m === "arene") areneChoisie.current = true;
+    arene.choisirMode(m, PARTIE_NOUVELLE);
+  };
+  /** Battle Royale : créer ma partie pendant que la mienne est lancée (le serveur reprend une salle vide s'il y en a une). */
+  const creerPartieBr = () => creerPartie("br");
   // « Regarder » une autre partie : une fois le serveur nous y a placés et la partie toujours en cours, le jeu se monte en spectateur
   const phaseBr = arene.br?.phase;
   useEffect(() => {
     const voulue = regarderApres.current;
-    if (!voulue || arene.mode !== "br" || arene.partieBr !== voulue || !phaseBr || enArene || !areneOuverte) return;
+    if (!voulue || arene.mode !== "br" || arene.partie !== voulue || !phaseBr || enArene || !areneOuverte) return;
     regarderApres.current = null;
     if (phaseBr === "decompte" || phaseBr === "vol" || phaseBr === "jeu") monterJeu("br", true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [arene.mode, arene.partieBr, phaseBr, enArene, areneOuverte]);
-  /** Hôte du lobby Battle Royale : lance la partie. Le nom tapé part avant : les statistiques sont rattachées au pseudo affiché dans la salle. */
-  const lancerBr = () => {
+  }, [arene.mode, arene.partie, phaseBr, enArene, areneOuverte]);
+  /**
+   * Hôte du lobby Battle Royale : lance la partie. Le nom tapé part avant : les statistiques sont rattachées au pseudo affiché dans la salle. `bots` (entier) et
+   * `difficulte` (niveau des bots) viennent du réglage du lobby ; absents, le serveur remplit seul en solo (`BR.botsSolo` bots) et n'en met aucun à plusieurs.
+   */
+  const lancerBr = (difficulte?: Difficulte, bots?: number) => {
     const nom = pseudoSaisi.trim() || "Agent";
     setPseudoConnecte(nom);
     arene.clientRef.current?.renommer(nom);
-    arene.lancerPartie();
+    arene.lancerPartie(difficulte, bots);
   };
   // Le serveur dit « non admis » (ou lobby) : la sortie est actée, le jeu pourra se remonter à la prochaine admission.
   const moiZ = arene.zombies?.joueurs.find((j) => j.id === arene.monId) ?? null;
@@ -651,12 +698,14 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
         match: dev.current.arene.match, enArene: dev.current.enArene, hud: dev.current.hud, equipement: dev.current.equipement,
         jeu: jeuRef.current?.debug.etat() ?? null,
         mode: dev.current.arene.mode, modeVoulu: dev.current.arene.modeVoulu, salons: dev.current.arene.salons, zombies: dev.current.arene.zombies,
+        // (v11) partie où je suis (`ar1`, `z2`, `br1`…) et, en arène pleine, l'arène proposée à la place
+        partie: dev.current.arene.partie, alternativeArene: dev.current.arene.alternativeArene,
         argent: dev.current.arene.argent,
         // Battle Royale : phase, effectif, zone et avion du dernier `br{etat}`, statistiques, et l'état du jeu local (phase du vol, hauteur, butin proche)
         br: {
           phase: dev.current.arene.br?.phase ?? null, vivants: dev.current.arene.br?.vivants ?? 0, total: dev.current.arene.br?.total ?? 0,
           zone: dev.current.arene.br?.zone ?? null, avion: dev.current.arene.br?.avion ?? null, etat: dev.current.arene.br ?? null,
-          statsBr: dev.current.arene.statsBr ?? null, partie: dev.current.arene.partieBr,
+          statsBr: dev.current.arene.statsBr ?? null, partie: dev.current.arene.partie,
           jeuBr: jeuRef.current?.br?.() ?? null,
           vol: (jeuRef.current?.debug.etat().vol as Record<string, unknown> | null | undefined) ?? null,
           butin: (jeuRef.current?.debug.etat().butin as Record<string, unknown> | null | undefined) ?? null,
@@ -688,9 +737,11 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
         entrerRef.current();
       },
       lancerZombies: () => lancerZombiesRef.current(),
-      lancerBr: () => lancerBrRef.current(),
+      lancerBr: (difficulte, bots) => lancerBrRef.current(difficulte, bots),
       regarderBr: (id) => regarderBrRef.current(id ?? null),
       creerPartieBr: () => creerPartieBrRef.current(),
+      creerPartie: (m) => creerPartieRef.current(m),
+      rejoindrePartie: (m, id) => rejoindrePartieRef.current(m, id),
       // un appui bref sur saut (sans pointer lock) : quitte l'avion, puis ouvre le parachute s'il est répété une seconde plus tard
       sauter: () => {
         const j = jeuRef.current;
@@ -716,6 +767,8 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
       secret: () => jeuRef.current?.debug.secret?.() ?? null,
       eclair: (p, dansS) => jeuRef.current?.debug.eclair(p, dansS) ?? false,
       ambianceTruck: (on) => jeuRef.current?.debug.ambianceTruck(on) ?? false,
+      // (v11) suspension de la partie de zombies, comme le bouton du menu pause ; l'état gelé se lit dans `etat().jeu.gele`
+      pauseZ: (actif) => jeuRef.current?.pauseZ?.(actif),
       forcerHud: (partiel) => setHudForce(partiel ? { ...partiel } : null),
       voix: (mode) => {
         const j = jeuRef.current;
@@ -740,6 +793,10 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
   regarderBrRef.current = regarderBr;
   const creerPartieBrRef = useRef(creerPartieBr);
   creerPartieBrRef.current = creerPartieBr;
+  const creerPartieRef = useRef(creerPartie);
+  creerPartieRef.current = creerPartie;
+  const rejoindrePartieRef = useRef(rejoindrePartie);
+  rejoindrePartieRef.current = rejoindrePartie;
   /** dev : ouvre le lobby des zombies et y demande la salle (le panneau reste ouvert : le jeu se monte à l'admission) */
   const ouvrirZombiesRef = useRef(() => {});
   ouvrirZombiesRef.current = () => { setSelected(null); setAreneOuverte(true); choisirMode("zombies"); };
@@ -842,15 +899,16 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
       {!enArene && areneOuverte && !selected && (() => {
         const choixMode = <ChoixMode mode={arene.modeVoulu} salons={arene.salons} surChoisir={choisirMode} desactive={arene.etat !== "ouvert"} indisponibles={tactile ? ["zombies", "br"] : []} />;
         const pseudoParDefaut = !pseudoSaisi.trim() || pseudoSaisi.trim() === "Agent";
+        const { listes, parallele } = listesDepuisSalons(arene.salons);
         return arene.mode === "br" ? (
           <LobbyBR
             etat={arene.etat}
             monId={arene.monId}
             partie={arene.br ?? null}
-            salonBr={arene.salons?.parties?.find((p) => p.id === arene.partieBr) ?? arene.salons?.br ?? null}
-            parties={arene.salons?.parties ?? null}
-            partieActuelle={arene.partieBr}
-            surRejoindrePartie={(id) => { regarderApres.current = null; arene.choisirMode("br", id); }}
+            salonBr={arene.salons?.parties?.find((p) => p.id === arene.partie) ?? arene.salons?.br ?? null}
+            parties={arene.salons?.parties || parallele ? listes.br : null}
+            partieActuelle={arene.partie}
+            surRejoindrePartie={(id) => rejoindrePartie("br", id)}
             surRegarder={regarderBr}
             surCreerPartie={creerPartieBr}
             statsBr={arene.statsBr ?? null}
@@ -883,6 +941,11 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
             tactile={tactile}
             pseudoParDefaut={pseudoParDefaut}
             choixMode={choixMode}
+            parties={parallele ? listes.zombies : null}
+            partieActuelle={arene.partie}
+            surRejoindrePartie={(id) => rejoindrePartie("zombies", id)}
+            surCreerPartie={() => creerPartie("zombies")}
+            enPause={arene.enPauseZ}
           />
         ) : (
           <Arene
@@ -903,6 +966,11 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
             tactile={tactile}
             pseudoParDefaut={pseudoParDefaut}
             choixMode={choixMode}
+            parties={parallele ? listes.arene : null}
+            partieActuelle={arene.partie ?? (parallele ? PARTIE_HALL : null)}
+            surRejoindrePartie={(id) => rejoindrePartie("arene", id)}
+            surCreerPartie={() => creerPartie("arene")}
+            alternative={arene.alternativeArene}
           />
         );
       })()}
@@ -957,6 +1025,7 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
           scene={sceneHud}
           surLancerFrappe={(cible) => jeuRef.current?.lancerFrappe?.(cible)}
           surLancerFumigene={() => jeuRef.current?.lancerFumigene?.()}
+          surPauseZ={(actif) => jeuRef.current?.pauseZ?.(actif)}
         />
       )}
 
@@ -1152,11 +1221,15 @@ declare global {
       /** Zombies : l'hôte du lobby lance la partie (sans effet pour un autre joueur). */
       lancerZombies(): void;
       /** Battle Royale : l'hôte du lobby renomme le joueur puis lance la partie (sans effet pour un autre joueur). */
-      lancerBr(): void;
+      lancerBr(difficulte?: Difficulte, bots?: number): void;
       /** Battle Royale : regarde la partie en cours de ma salle (sans id), ou va dans la partie `id` puis la regarde. */
       regarderBr(id?: string): void;
       /** Battle Royale : crée ma partie (bouton « Créer ma partie »). */
       creerPartieBr(): void;
+      /** (v11) Crée ma partie dans le mode `mode` (« Créer ma partie », « Créer une arène »). */
+      creerPartie(mode: ModeSalle): void;
+      /** (v11) Va dans la partie `id` du mode `mode` (« Rejoindre » de la liste des parties, « Changer d'arène »). */
+      rejoindrePartie(mode: ModeSalle, id: string): void;
       /** Battle Royale : un appui bref sur la touche de saut (quitte l'avion, puis ouvre le parachute au second appui), sans pointer lock. */
       sauter(): void;
       quitter(): void;
@@ -1192,6 +1265,7 @@ declare global {
       eclair(p: [number, number, number], dansS?: number): boolean;
       /** (zombies, v8) brouillard et ciel d'une manche du Truck allumés ou levés, côté client seulement (captures) */
       ambianceTruck(on: boolean): boolean;
+      pauseZ(actif: boolean): void;
       /** Superpose un état partiel au HUD (base : repos si le jeu n'émet rien) ; `null` rend la main au jeu. */
       forcerHud(partiel: Partial<HudEtat> | null): void;
       /** Active le chat vocal dans ce mode (null : le coupe), comme la case du menu pause. */

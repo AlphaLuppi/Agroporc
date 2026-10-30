@@ -379,7 +379,7 @@ export function grilleNav(monde: Monde): GrilleNav {
 }
 
 /** Case libre la plus proche de (x, z), à 4 cases au plus. -1 sinon. */
-function caseLibre(g: GrilleNav, x: number, z: number): number {
+export function caseLibre(g: GrilleNav, x: number, z: number): number {
   const ci = Math.floor((x - g.x0) / PAS_NAV_M), cj = Math.floor((z - g.z0) / PAS_NAV_M);
   let meilleure = -1, dMin = Infinity;
   for (let r = 0; r <= 4 && meilleure < 0; r++) {
@@ -404,9 +404,20 @@ const VOISINS: ReadonlyArray<readonly [number, number, number]> = [
  * injoignable dans la limite de `NOEUDS_MAX` nœuds.
  */
 export function chercherChemin(g: GrilleNav, x0: number, z0: number, x1: number, z1: number): [number, number][] | null {
+  return chercherCheminBorne(g, x0, z0, x1, z1, NOEUDS_MAX).chemin;
+}
+
+/** Résultat de `chercherCheminBorne` : le chemin (null si introuvable), si la limite de nœuds l'a interrompu, et les nœuds explorés. */
+export interface ResultatChemin { chemin: [number, number][] | null; epuise: boolean; noeuds: number }
+
+/**
+ * Comme `chercherChemin`, avec une limite de nœuds explorés choisie par l'appelant (les bots du BR : 3 000, pour qu'un tic ne dépasse jamais
+ * quelques ms) ; `epuise` distingue « interrompu » de « aucun chemin ».
+ */
+export function chercherCheminBorne(g: GrilleNav, x0: number, z0: number, x1: number, z1: number, noeudsMax: number): ResultatChemin {
   const s = caseLibre(g, x0, z0), b = caseLibre(g, x1, z1);
-  if (s < 0 || b < 0) return null;
-  if (s === b) return [[x1, z1]];
+  if (s < 0 || b < 0) return { chemin: null, epuise: false, noeuds: 0 };
+  if (s === b) return { chemin: [[x1, z1]], epuise: false, noeuds: 0 };
   const tampon = ++g.tampon;
   const bi = b % g.nx, bj = Math.floor(b / g.nx);
   const h = (k: number): number => {
@@ -449,13 +460,13 @@ export function chercherChemin(g: GrilleNav, x0: number, z0: number, x1: number,
   g.g[s] = 0;
   g.parent[s] = -1;
   pousser(h(s), s);
-  let explores = 0, trouve = false;
+  let explores = 0, trouve = false, epuise = false;
   while (tasF.length) {
     const k = extraire();
     if (g.ferme[k] === tampon) continue;
     g.ferme[k] = tampon;
     if (k === b) { trouve = true; break; }
-    if (++explores > NOEUDS_MAX) break;
+    if (++explores > noeudsMax) { epuise = true; break; }
     const i = k % g.nx, j = Math.floor(k / g.nx);
     for (const [di, dj, cout] of VOISINS) {
       const ni = i + di, nj = j + dj;
@@ -471,12 +482,28 @@ export function chercherChemin(g: GrilleNav, x0: number, z0: number, x1: number,
       pousser(ng + h(nk), nk);
     }
   }
-  if (!trouve) return null;
+  if (!trouve) return { chemin: null, epuise, noeuds: Math.min(explores, noeudsMax) };
   const r: [number, number][] = [[x1, z1]];
   for (let k = g.parent[b]; k >= 0 && k !== s; k = g.parent[k]) {
     r.push([g.x0 + ((k % g.nx) + 0.5) * PAS_NAV_M, g.z0 + (Math.floor(k / g.nx) + 0.5) * PAS_NAV_M]);
   }
-  return r.reverse();
+  return { chemin: r.reverse(), epuise: false, noeuds: Math.min(explores, noeudsMax) };
+}
+
+/**
+ * Installe pour `monde` une COPIE de la grille de navigation `modele` (celle d'un monde de même construction, dont la première construction coûte ≈ 430 ms) :
+ * `libre` ET `etats` sont copiés (copier `libre` seul ferait recalculer toutes les plages à la première mise à jour), les tampons de la recherche sont neufs.
+ * Sans effet si `monde` a déjà sa grille ou si les mondes n'ont pas le même nombre de prismes.
+ */
+export function copierGrilleNav(modele: GrilleNav, monde: Monde): GrilleNav | null {
+  if (GRILLES.has(monde) || modele.etats.length !== 4 * monde.prismes.length) return GRILLES.get(monde) ?? null;
+  const n = modele.libre.length;
+  const g: GrilleNav = {
+    x0: modele.x0, z0: modele.z0, nx: modele.nx, nz: modele.nz, libre: modele.libre.slice(), g: new Float64Array(n), parent: new Int32Array(n),
+    vu: new Uint32Array(n), ferme: new Uint32Array(n), tampon: 0, etats: modele.etats.slice(),
+  };
+  GRILLES.set(monde, g);
+  return g;
 }
 
 /** La route de `de` à (x, z) est-elle libre pour le tigre ? Trois rayons parallèles à 0,5 m du sol (axe et flancs). */

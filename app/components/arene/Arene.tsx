@@ -7,9 +7,12 @@ import type { ConfigTouches } from "@/lib/fps/touches";
 import type { ReglagesHud } from "@/lib/fps/reglages-hud";
 import ChoixEquipement from "./ChoixEquipement";
 import ReglageInterface from "./hud/ReglageInterface";
+import ListeParties from "./ListeParties";
 import { useDisposition } from "./ReglageTouches";
 import type { EquipementChoisi } from "./contrats";
-import { REGLES_TIR, TEXTE_ARMES_SPECIALES, TEXTE_COUTEAU, TITRE_COMMENT_CA_TIRE, commandesLobby } from "./lobby-modele";
+import {
+  REGLES_TIR, TEXTE_ARMES_SPECIALES, TEXTE_COUTEAU, TITRE_COMMENT_CA_TIRE, commandesLobby, lignesParties, partiesVisibles, type PartieListee,
+} from "./lobby-modele";
 import styles from "./Arene.module.css";
 
 export const PSEUDO_MAX = 16;
@@ -39,6 +42,15 @@ interface Props {
   pseudoParDefaut?: boolean;
   /** `ChoixMode` posé sous le titre (v5 : choix entre l'arène et les zombies) */
   choixMode?: ReactNode;
+  /** (v11) arènes du serveur (`salons.listes.arene`) et la mienne ; absent : serveur d'avant les parties parallèles (une seule arène, pas de liste) */
+  parties?: readonly PartieListee[] | null;
+  partieActuelle?: string | null;
+  /** aller dans une autre arène */
+  surRejoindrePartie?(id: string): void;
+  /** « Créer une arène » (le serveur en reprend une vide avant d'en ouvrir une de plus ; refus `limite` au plafond) */
+  surCreerPartie?(): void;
+  /** `rejoindre` refusé (arène pleine) : id d'une autre arène qui accueille, proposée par « Changer d'arène » */
+  alternative?: string | null;
 }
 
 function statut(etat: EtatConnexion, monId: string | null): { texte: string; classe: string } {
@@ -50,6 +62,7 @@ function statut(etat: EtatConnexion, monId: string | null): { texte: string; cla
 /** Panneau « Arène » de la vue Palantir : présence, pseudo, équipement (principale + secondaire), règles de tir, réglages d'interface, bouton d'entrée. */
 export default function Arene({
   etat, monId, joueurs, match, pseudo, surPseudo, equipement, surEquipement, touches, reglagesHud, surReglagesHud, surEntrer, surFermer, erreur, tactile, pseudoParDefaut = false, choixMode,
+  parties = null, partieActuelle = null, surRejoindrePartie, surCreerPartie, alternative = null,
 }: Props) {
   const idPseudo = useId();
   const disposition = useDisposition();
@@ -62,7 +75,12 @@ export default function Arene({
   const monPseudo = joueurs.find((j) => j.id === monId)?.pseudo ?? null;
   // l'arène est pleine quand 16 AGENTS sont en jeu (les spectateurs de la vue 3D n'occupent aucune place)
   const arenePleine = enJeu >= JEU.joueursMax && !joueurs.some((j) => j.id === monId && j.enJeu);
-  const peutEntrer = connecte && !tactile && !nomTropCourt && !arenePleine;
+  // serveur à parties parallèles (`parties` fourni) : l'arène où l'on atterrit (le hall `ar1`) peut être pleine alors qu'une autre accueille ; Entrer envoie
+  // `mode{arene, partie:"auto"}` et le serveur décide (autre arène, nouvelle arène, ou `refus{mode}` avec son message). Le blocage ne vaut que sans `parties`.
+  const peutEntrer = connecte && !tactile && !nomTropCourt && (!arenePleine || !!parties);
+  const lignes = parties ? lignesParties("arene", parties, partieActuelle) : [];
+  const montrerParties = partiesVisibles("arene", { connecte, tactile, nbLignes: lignes.length, enCours: false });
+  const titreAlternative = alternative ? lignes.find((l) => l.id === alternative)?.titre ?? "une autre arène" : null;
 
   return (
     <aside className={styles.arene} aria-label="Arène">
@@ -86,6 +104,22 @@ export default function Arene({
         </p>
       )}
       {erreur && <p className={styles.erreur} role="alert">{erreur}</p>}
+      {alternative && surRejoindrePartie && (
+        <div className={styles.actionsPartie}>
+          <button type="button" className={styles.boutonSecondaire} onClick={() => surRejoindrePartie(alternative)} aria-label={`Changer d'arène : ${titreAlternative}`}>
+            Changer d&apos;arène
+          </button>
+        </div>
+      )}
+      {montrerParties && (
+        <ListeParties
+          mode="arene"
+          lignes={lignes.map((l) => (l.action === "rejoindre" && !surRejoindrePartie ? { ...l, action: null } : l))}
+          surRejoindre={(id) => surRejoindrePartie?.(id)}
+          surCreer={surCreerPartie}
+          idTitre={`${idPseudo}-parties`}
+        />
+      )}
 
       <div className={styles.champ}>
         <label htmlFor={idPseudo}>Nom de joueur</label>

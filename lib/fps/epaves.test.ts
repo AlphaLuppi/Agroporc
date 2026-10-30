@@ -6,6 +6,7 @@ import { construireCircuits, etatVoiture, flotte, T0_MS } from "./circulation";
 import { construireMonde } from "./collision";
 import { CARROSSERIE, Carrosseries, degatsSouffle, degatsVoisine, etatCarrosserie, rayonVoiture } from "./epaves";
 import type { ContexteSalle, JoueurSalle, Sortie } from "./match-contexte";
+import { CONTEXTE_SANS_BOTS } from "./contexte-sans-bots";
 import { creerServiceVehicules } from "./match-vehicules";
 import { copierEquipement, EQUIPEMENT_DEFAUT, type CauseMort, type Vec3 } from "./protocole";
 
@@ -98,6 +99,7 @@ function banc(avecCirculation = false) {
   const coups: { cible: string; degats: number; cause: CauseMort }[] = [];
   const morts: { cible: string; par: string | null; cause: CauseMort }[] = [];
   const ctx: ContexteSalle = {
+    ...CONTEXTE_SANS_BOTS,
     monde: mondeVide, alea: () => 0.5, enPhaseJeu: () => true,
     joueur: (id) => joueurs.get(id),
     joueursEnJeu: () => [...joueurs.values()].filter((j) => j.enJeu),

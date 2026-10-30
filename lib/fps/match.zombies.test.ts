@@ -70,7 +70,8 @@ describe("lobby, admission, entrée", () => {
   it("la connexion fait un membre du lobby : bienvenue, présence, `zombies{etat}` à tous ; `phase` jeu et objectif 0", () => {
     const s = salleZ();
     const sorties = s.connecter("a", "Alice", T0);
-    expect(types(sorties)).toEqual(["bienvenue", "presence", "zombies"]);
+    // (v11) `zpause` suit chaque `bienvenue` de la salle des zombies, suspendue ou non
+    expect(types(sorties)).toEqual(["bienvenue", "presence", "zombies", "zpause"]);
     expect(messages(sorties, "bienvenue")[0].match).toMatchObject({ phase: "jeu", objectif: 0, fin: null });
     expect(dernierEtat(sorties)).toMatchObject({ phase: "lobby", hote: "a", capacite: 8 });
     expect(s.resumeZombies()).toEqual({ phase: "lobby", joueurs: 1, manche: 0 });
@@ -350,7 +351,7 @@ describe("mise à terre, inactivité, départs", () => {
     const avant = { p: [...a.p], seq: a.seq, pv: a.pv };
     const sorties = s.reprendre("a", T0 + 1600);
     expect(sorties.every((x) => x.a === "a")).toBe(true);
-    expect(types(sorties)).toEqual(["bienvenue", "zombies", "batiments", "argent", "apparition"]);
+    expect(types(sorties)).toEqual(["bienvenue", "zombies", "batiments", "argent", "apparition", "zpause"]);
     expect(messages(sorties, "bienvenue")[0]).toMatchObject({ id: "a", reprise: true });
     expect(messages(sorties, "argent")[0]).toMatchObject({ solde: 800, delta: 0 });
     expect(messages(sorties, "apparition")[0]).toMatchObject({ garder: true, p: avant.p, pv: avant.pv });

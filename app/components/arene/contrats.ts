@@ -91,12 +91,23 @@ export interface UseArene {
   argent: number;
   gainArgent: GainArgent | null;
   /**
-   * demande à changer de salle (refusée : message dans `erreur`, `modeVoulu` revient à `mode`) ; `partie` (Battle Royale) : une partie de
-   * `salons.parties` ou `PARTIE_NOUVELLE`
+   * demande à changer de salle (refusée : message dans `erreur`, `modeVoulu` revient à `mode`) ; `partie` (v11, les trois modes) : une partie de
+   * `salons.listes[mode]`, `PARTIE_NOUVELLE`, ou `PARTIE_AUTO` (arène : la plus peuplée qui accueille)
    */
   choisirMode(mode: ModeSalle, partie?: string): void;
-  /** hôte du lobby des zombies ou du Battle Royale : lance la partie */
-  lancerPartie(difficulte?: import("@/lib/fps/zombies-vagues").Difficulte): void;
+  /** hôte du lobby des zombies ou du Battle Royale : lance la partie ; `bots` (Battle Royale, entier) : nombre de bots, absent = réglage du serveur */
+  lancerPartie(difficulte?: import("@/lib/fps/zombies-vagues").Difficulte, bots?: number): void;
+  // ---- v11 : parties parallèles ----
+  /** partie où je suis (`ar2`, `z1`, `br3`…), null tant que le serveur ne l'a pas dite (hall d'arrivée, serveur d'avant les parties parallèles) */
+  partie: string | null;
+  /** zombies : la partie où je suis est figée par un joueur (dernier `zpause`) */
+  enPauseZ: boolean;
+  /** arène pleine : id d'une autre arène qui accueille (`refus{rejoindre, plein, alternative}`), sinon null */
+  alternativeArene: string | null;
+  /** compteurs d'évènements du choix de partie : le serveur m'a placé (écho de `mode` ou `bienvenue` de la nouvelle salle) / a refusé un `mode` / a refusé `rejoindre` (arène pleine) */
+  confirmationsMode: number;
+  refusMode: number;
+  refusRejoindre: number;
   // ---- v8 : Battle Royale (optionnels : l'hôte les fournit une fois `useArene` branché) ----
   /** dernier `br{etat}` reçu, null hors de la salle BR ou avant le premier */
   br?: EtatPartieBr | null;
@@ -181,6 +192,8 @@ export interface PropsHudArene {
   surLancerFrappe?(cible: [number, number, number]): void;
   /** Lancer d'un fumigène */
   surLancerFumigene?(): void;
+  /** (v11, zombies) Suspendre la partie pour tous (`true`) ou la reprendre (`false`, redemande aussi la souris) : bouton du menu pause et touche P */
+  surPauseZ?(actif: boolean): void;
 }
 
 /** Props de `ChoixEquipement` (écrit par U1, utilisé par U1 : lobby, et par U2 : écran de mort, killcam, pause). */

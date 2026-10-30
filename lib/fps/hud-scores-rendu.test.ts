@@ -284,6 +284,29 @@ describe("CarteTueur / EcranMort / Killcam (rendu statique)", () => {
     expect(html).toContain("Apparition…");
   });
 
+  it("tueur bot (BR) : pas de ligne de chat vocal vers lui, ni au rejeu ni sur le bandeau du spectateur", () => {
+    const bot: InfoTueur = { ...tueur, id: "b3", pseudo: "Lea [BOT]" };
+    const br = { place: 12, total: 37, suiviId: null, joueurs: [], toucheSuivant: "→", touchePrecedent: "←" };
+    const base = { derniereMort: mort({ par: "Lea [BOT]", tueur: bot }), killcamInfo: bot, br };
+    // micro coupé puis micro actif sans lien : les deux textes qui nommaient le bot
+    for (const voix of ["", "pret"] as const) {
+      const rejeu = ecran(hud({ mode: "br", killcamPhase: "rejeu", voix } as Partial<HudEtat>), base);
+      expect(rejeu).toContain("Lea [BOT]");
+      expect(rejeu).not.toContain("Chat vocal");
+      const carte = ecran(hud({ mode: "br", killcamPhase: "carte", voix } as Partial<HudEtat>), base);
+      expect(carte).not.toContain("Chat vocal");
+      // spectateur : seule la ligne du canal des spectateurs, même si un lien traînait dans le HUD
+      const spect = ecran(hud({ mode: "br", killcamPhase: "", voix, voixLien: "Lea [BOT]" } as Partial<HudEtat>), base);
+      expect(spect).not.toContain("Lea [BOT] vous entend");
+      expect(spect).not.toContain("pour parler à Lea [BOT]");
+    }
+    const coupe = ecran(hud({ mode: "br", killcamPhase: "", voix: "", voixLien: "Lea [BOT]" } as Partial<HudEtat>), base);
+    expect(coupe).toContain("pour parler aux autres spectateurs");
+    // un tueur humain garde sa ligne
+    const humain = ecran(hud({ mode: "br", killcamPhase: "rejeu", voix: "" } as Partial<HudEtat>), { derniereMort: mort(), killcamInfo: tueur, br });
+    expect(humain).toContain("Chat vocal coupé : Échap, puis « Chat vocal », pour parler à Lea");
+  });
+
   it("Killcam seule : légende du rejeu, sans pseudo si le tueur est inconnu", () => {
     const html = renderToStaticMarkup(createElement(Killcam, { phase: "rejeu", progression: 0.5, tueur: null, derniereMort: null, surPasser: rien }));
     expect(html).toContain("vue de");

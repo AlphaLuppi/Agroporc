@@ -1,12 +1,13 @@
 import { COUTEAU, MELEE, STATS } from "@/lib/fps/armes";
 import {
-  ARMES_SPECIALES, JEU, type ArmeMeleeId, type ArmePrincipaleId, type ArmeSecondaireId, type EtatPartieBr, type EtatPartieZombies, type JoueurBr, type ModeSalle,
-  type ResumePartieBr, type ResumeSalonBr,
+  ARMES_SPECIALES, JEU, type ArmeMeleeId, type ArmePrincipaleId, type ArmeSecondaireId, type EtatPartieBr, type EtatPartieZombies, type JoueurBr, type MessageServeur,
+  type ModeSalle, type ResumePartie, type ResumePartieBr, type ResumeSalonBr,
 } from "@/lib/fps/protocole";
 import { BR } from "@/lib/fps/br-regles";
 import { CHUTE_BR } from "@/lib/fps/br-chute";
 import { PALIERS_ZONE } from "@/lib/fps/br-zone";
-import { ZOMBIES } from "@/lib/fps/zombies-vagues";
+import { ZOMBIES, type Difficulte } from "@/lib/fps/zombies-vagues";
+import { SUFFIXE_BOT, estBot, nomAffiche } from "@/lib/fps/classement";
 import { formatArgent, formatDecimal } from "@/lib/fps/hud-modele";
 import type { Salons } from "./contrats";
 import { libelleTouche, type Action, type ConfigTouches } from "@/lib/fps/touches";
@@ -155,6 +156,9 @@ const pluriel = (n: number, mot: string) => `${n} ${mot}${n > 1 ? "s" : ""}`;
 /** Compteur de la carte d'un mode, d'après le message `salons` (tiret tant qu'il n'est pas arrivé). */
 export function compteurMode(mode: ModeSalle, salons: Salons | null | undefined): string {
   if (!salons) return "—";
+  // (v11) plusieurs parties du mode en même temps : « 2 parties · 9 joueurs » (somme des membres humains, lobby compris)
+  const listee = salons.listes?.[mode];
+  if (listee && listee.length > 1) return compteurParties(listee);
   if (mode === "arene") return `${salons.arene.joueurs} en ligne · ${salons.arene.enJeu} en jeu`;
   if (mode === "br") return salons.parties && salons.parties.length > 1 ? compteurPartiesBR(salons.parties) : compteurBR(salons.br);
   const z = salons.zombies;
@@ -175,41 +179,192 @@ export function compteurBR(br: ResumeSalonBr | null | undefined): string {
   return `Partie en cours · ${br.vivants} en vie`;
 }
 
-/** Compteur de la carte Battle Royale quand plusieurs parties tournent : « 2 parties · 17 joueurs ». */
-export function compteurPartiesBR(parties: readonly ResumePartieBr[]): string {
+/** Compteur d'une carte de mode quand plusieurs parties tournent : « 2 parties · 17 joueurs » (membres humains, lobby compris). */
+export function compteurParties(parties: readonly Pick<ResumePartie, "joueurs">[]): string {
   const joueurs = parties.reduce((n, p) => n + p.joueurs, 0);
   return `${pluriel(parties.length, "partie")} · ${pluriel(joueurs, "joueur")}`;
 }
 
-/** Une ligne de la liste des parties du lobby Battle Royale. */
-export interface LignePartieBR {
+/** Idem pour le Battle Royale (nom d'avant les parties de chaque mode). */
+export const compteurPartiesBR = (parties: readonly ResumePartieBr[]): string => compteurParties(parties);
+
+// ---------- parties parallèles (v11) : listes, lignes, routage côté interface ----------
+
+/**
+ * Hall d'arrivée de l'arène : tout client y atterrit et son `mode` d'écho ne porte pas encore de partie connue. Les parties d'arène suivantes s'appellent
+ * `ar2`… (spec `2026-10-29-pause-parties-bots-design.md`, §1.2).
+ */
+export const PARTIE_HALL = "ar1";
+
+/** Une partie de la liste : un `ResumePartie` complet (serveur v11) ou le strict nécessaire (ancien résumé BR de `salons.parties`). */
+export type PartieListee = Pick<ResumePartie, "id" | "phase" | "joueurs"> & Partial<Omit<ResumePartie, "id" | "phase" | "joueurs">>;
+export type ListesParties = Record<ModeSalle, readonly PartieListee[]>;
+
+/**
+ * Parties de chaque mode d'après le message `salons`. Un serveur v11 les donne dans `listes` (`parallele`) ; un ancien serveur n'a qu'une partie par mode
+ * (les champs historiques, permanentes) et, pour le Battle Royale, `parties` : on les met sous la même forme, mais on ne propose ni « Rejoindre » une arène ou
+ * une partie de zombies ni d'en créer (`parallele` faux).
+ */
+export function listesDepuisSalons(salons: Salons | null | undefined): { listes: ListesParties; parallele: boolean } {
+  if (!salons) return { listes: { arene: [], zombies: [], br: [] }, parallele: false };
+  if (salons.listes) return { listes: salons.listes, parallele: true };
+  const br: PartieListee[] = salons.parties
+    ? salons.parties.map((p) => ({ ...p, mode: "br" as const, capacite: BR.joueursMax }))
+    : salons.br ? [{ id: "br1", mode: "br", capacite: BR.joueursMax, ...salons.br }] : [];
+  return {
+    parallele: false,
+    listes: {
+      arene: [{ id: PARTIE_HALL, mode: "arene", phase: "arene", joueurs: salons.arene.joueurs, capacite: JEU.joueursMax, enJeu: salons.arene.enJeu }],
+      zombies: [{ id: "z1", mode: "zombies", phase: salons.zombies.phase, joueurs: salons.zombies.joueurs, capacite: ZOMBIES.joueursMax, manche: salons.zombies.manche }],
+      br,
+    },
+  };
+}
+
+/** Une ligne de la liste des parties d'un mode. */
+export interface LigneParties {
   id: string;
-  /** « Partie de Alice », « Partie vide » */
+  mode: ModeSalle;
+  /** « Partie de Alice », « Partie vide », « Arène 2 » */
   titre: string;
-  /** « Lobby · 3/50 », « En cours · 12 en vie », « Bilan », « Pleine · 50/50 » */
+  /** « la partie de alice », « l'arène 2 » : complément de « Rejoindre … » / « Regarder … » pour les lecteurs d'écran */
+  designation: string;
+  /** « Lobby · 3/8 », « En cours : manche 7 · 3/8 », « 4/16 en jeu · 6 en ligne », « Pleine · 16/16 », « Bilan » */
   etat: string;
   /** c'est ma partie */
   ici: boolean;
-  /** bouton de la ligne : aller dans son lobby, la regarder en spectateur (en y allant d'abord si ce n'est pas la mienne), aucun */
+  /** bouton de la ligne : aller dans la partie, la regarder en spectateur (Battle Royale, en y allant d'abord si ce n'est pas la mienne), aucun */
   action: "rejoindre" | "regarder" | null;
+  /** zombies : la partie est figée par un joueur */
+  enPause: boolean;
+  phase: string;
+  joueurs: number;
+}
+
+const numeroPartie = (id: string): string => /\d+$/.exec(id)?.[0] ?? id;
+
+/**
+ * Lignes de la liste des parties d'un mode (la mienne = `ici`). Zombies : « Rejoindre » une partie au lobby ou EN COURS (on entre à la pause suivante entre deux
+ * manches) ; Battle Royale : une partie au lobby ou au bilan se rejoint, une partie en cours se regarde ; arène : « Rejoindre » tant qu'il reste de la place EN JEU.
+ * Une partie pleine n'a pas de bouton (sauf la mienne, en cours : j'y suis déjà).
+ */
+export function lignesParties(mode: ModeSalle, parties: readonly PartieListee[], partieActuelle: string | null): LigneParties[] {
+  return parties.map((p) => {
+    const ici = p.id === partieActuelle;
+    const capacite = p.capacite ?? (mode === "br" ? BR.joueursMax : mode === "zombies" ? ZOMBIES.joueursMax : JEU.joueursMax);
+    const enPause = !!p.suspendue;
+    const base = { id: p.id, mode, ici, enPause, phase: p.phase as string, joueurs: p.joueurs };
+    const titre = (nom: string) => (p.hote ? `Partie de ${p.hote}` : p.joueurs === 0 ? "Partie vide" : nom);
+    if (mode === "br") {
+      const pleine = p.joueurs >= capacite;
+      const enCours = p.phase === "decompte" || p.phase === "vol" || p.phase === "jeu";
+      const etat = (pleine && !ici ? `Pleine · ${p.joueurs}/${capacite}`
+        : p.phase === "lobby" ? `Lobby · ${p.joueurs}/${capacite}`
+          : p.phase === "fin" ? "Bilan"
+            : p.phase === "decompte" ? "Départ imminent" : `En cours · ${pluriel(p.vivants ?? 0, "survivant")}`)
+        // (v11) entraînement : les bots de la partie (les humains sont déjà dans `joueurs`)
+        + (p.bots && p.phase !== "lobby" ? ` · ${pluriel(p.bots, "bot")}` : "");
+      const action = enCours ? (ici || !pleine ? "regarder" : null) : ici || pleine ? null : "rejoindre";
+      const t = titre(`Partie n°${numeroPartie(p.id)}`);
+      return { ...base, titre: t, designation: `la ${t.toLowerCase()}`, etat, action };
+    }
+    if (mode === "zombies") {
+      const pleine = p.joueurs >= capacite;
+      const t = titre(`Partie n°${numeroPartie(p.id)}`);
+      const effectif = `${p.joueurs}/${capacite}`;
+      const etat = pleine && !ici ? `Pleine · ${effectif}`
+        : p.phase === "lobby" ? `Lobby · ${effectif}`
+          : p.phase === "fin" ? "Bilan"
+            : `En cours : manche ${p.manche ?? 1} · ${effectif}`;
+      return { ...base, titre: t, designation: `la ${t.toLowerCase()}`, etat, action: ici || pleine ? null : "rejoindre" };
+    }
+    // arène : la capacité compte les agents EN JEU (les spectateurs du hall n'occupent aucune place)
+    const enJeu = p.enJeu ?? 0;
+    const pleine = enJeu >= capacite;
+    const t = `Arène ${numeroPartie(p.id)}`;
+    const etat = pleine && !ici ? `Pleine · ${enJeu}/${capacite}` : `${enJeu}/${capacite} en jeu · ${p.joueurs} en ligne`;
+    return { ...base, titre: t, designation: `l'${t.toLowerCase()}`, etat, action: ici || pleine ? null : "rejoindre" };
+  });
+}
+
+/** Lignes du Battle Royale (nom d'avant les parties de chaque mode). */
+export type LignePartieBR = LigneParties;
+export const lignesPartiesBR = (parties: readonly PartieListee[], partieActuelle: string | null): LigneParties[] => lignesParties("br", parties, partieActuelle);
+
+/**
+ * La liste « Parties » n'a de sens que s'il y a un choix à faire : plusieurs parties, ou la mienne déjà lancée (zombies, Battle Royale : on arrive en cours de
+ * partie et on peut créer la sienne). L'arène n'a pas de lancement : sa liste (et « Créer une arène ») est toujours là dès que le serveur gère les parties.
+ * `creation` (`creationProposee`) : « Créer ma partie » est proposé, donc la section l'est aussi, même avec une seule partie au lobby : le routage par défaut
+ * regroupe les arrivants dans le lobby le plus peuplé, et sans ce bouton on ne pourrait jamais se séparer d'un lobby partagé.
+ */
+export function partiesVisibles(mode: ModeSalle, e: { connecte: boolean; tactile: boolean; nbLignes: number; enCours: boolean; creation?: boolean }): boolean {
+  if (!e.connecte || e.tactile || e.nbLignes === 0) return false;
+  return mode === "arene" || e.nbLignes > 1 || e.enCours || !!e.creation;
 }
 
 /**
- * Lignes de la liste des parties (`salons.parties`, la mienne = `ici`). Une partie au lobby ou au bilan se rejoint, une partie en cours se
- * regarde ; une partie pleine n'a pas de bouton (sauf la mienne, en cours : j'y suis déjà).
+ * Proposer « Créer ma partie » ? Toujours en arène (c'est le seul moyen d'en ouvrir une de plus, plafond au serveur). En zombies et Battle Royale, pas
+ * quand je suis seul dans un lobby : une partie de plus ne changerait rien (le serveur reprendrait d'ailleurs une partie vide avant d'en créer).
  */
-export function lignesPartiesBR(parties: readonly ResumePartieBr[], partieActuelle: string | null): LignePartieBR[] {
-  return parties.map((p) => {
-    const ici = p.id === partieActuelle;
-    const pleine = p.joueurs >= BR.joueursMax;
-    const enCours = p.phase === "decompte" || p.phase === "vol" || p.phase === "jeu";
-    const etat = pleine && !ici ? `Pleine · ${p.joueurs}/${BR.joueursMax}`
-      : p.phase === "lobby" ? `Lobby · ${p.joueurs}/${BR.joueursMax}`
-        : p.phase === "fin" ? "Bilan"
-          : p.phase === "decompte" ? "Départ imminent" : `En cours · ${pluriel(p.vivants, "survivant")}`;
-    const action = enCours ? (ici || !pleine ? "regarder" : null) : ici || pleine ? null : "rejoindre";
-    return { id: p.id, titre: p.hote ? `Partie de ${p.hote}` : "Partie vide", etat, ici, action };
-  });
+export function creationProposee(mode: ModeSalle, lignes: readonly LigneParties[]): boolean {
+  if (mode === "arene") return true;
+  const moi = lignes.find((l) => l.ici);
+  return !(moi && moi.phase === "lobby" && moi.joueurs <= 1);
+}
+
+/** Libellé du bouton de création. */
+export const libelleCreation = (mode: ModeSalle): string => (mode === "arene" ? "Créer une arène" : "Créer ma partie");
+
+/**
+ * Le message `mode` reçu est-il le simple écho de ma salle (aucun changement : le serveur n'enverra ni `bienvenue` ni état) ? Mêmes mode et même partie, ou une
+ * partie pas encore connue : l'arène d'arrivée est le hall `ar1`, et un ancien serveur n'envoie pas de partie (sauf le Battle Royale).
+ */
+export function estEchoMode(courant: { mode: ModeSalle; partie: string | null }, m: { mode: ModeSalle; partie?: string }): boolean {
+  if (m.mode !== courant.mode) return false;
+  if (m.partie === undefined) return m.mode !== "br" || courant.partie === null;
+  if (courant.partie === null) return m.mode === "arene" && m.partie === PARTIE_HALL;
+  return m.partie === courant.partie;
+}
+
+// ---------- textes des refus du serveur ----------
+
+/** `rejoindre` refusé : 16 agents sont déjà en arène (les spectateurs de la vue 3D ne comptent pas). */
+export const TEXTE_ARENE_PLEINE = `L'arène est pleine (${JEU.joueursMax} agents en jeu), réessayez dans un instant.`;
+/** `rejoindre` ou `mode` refusé : les 50 places du Battle Royale sont prises. */
+export const TEXTE_BR_PLEIN = "La salle Battle Royale est pleine (50 joueurs), réessayez dans un instant.";
+/** `mode{br, partie:"nouvelle"}` refusé : le serveur a déjà son nombre maximal de parties de Battle Royale. */
+export const TEXTE_BR_LIMITE = "Trop de parties de Battle Royale en même temps : regardez celle en cours ou attendez la fin d'une partie.";
+/** `mode{arene | zombies, partie:"nouvelle"}` refusé (plafond de parties, délai entre deux créations, serveur chargé). */
+export const TEXTE_PARTIES_LIMITE = "Trop de parties en cours, rejoignez-en une.";
+/** `lancerPartie` refusé : un seul humain et pas de bot. */
+export const TEXTE_LANCER_BOTS = "Ajoutez des bots (ou attendez un autre joueur) pour lancer la partie.";
+/** `lancerPartie` refusé : le quota de bots du serveur est épuisé. */
+export const TEXTE_LANCER_LIMITE = "Trop de bots en jeu sur le serveur : réduisez leur nombre ou réessayez dans un instant.";
+
+export type ActionRefus = Extract<MessageServeur, { t: "refus" }>["action"];
+export type RaisonRefus = Extract<MessageServeur, { t: "refus" }>["raison"];
+
+/** Texte du refus d'un `monter` / `siege` / `rejoindre` / `mode` / `regarder` / `lancer` par le serveur ; `mode` = la salle concernée (demandée pour `mode`, actuelle pour `rejoindre`). */
+export function texteRefus(action: ActionRefus, raison: RaisonRefus, mode: ModeSalle = "arene"): string {
+  if (action === "regarder") return "Battle Royale : il n'y a plus de partie en cours à regarder.";
+  if (action === "pause") return "Pause indisponible.";
+  if (action === "lancer") return raison === "limite" ? TEXTE_LANCER_LIMITE : TEXTE_LANCER_BOTS;
+  if (raison === "limite") return mode === "br" ? TEXTE_BR_LIMITE : TEXTE_PARTIES_LIMITE;
+  if (action === "rejoindre") {
+    if (raison === "lobby") return mode === "br" ? "Battle Royale : la partie est lancée sans vous, rejoignez la suivante." : "Partie de zombies : attendez le lancement par l'hôte.";
+    return mode === "br" ? TEXTE_BR_PLEIN : TEXTE_ARENE_PLEINE;
+  }
+  if (action === "mode") {
+    if (raison === "lobby") return "Impossible de changer de mode en pleine partie.";
+    return mode === "br" ? TEXTE_BR_PLEIN : mode === "arene" ? TEXTE_ARENE_PLEINE : "La partie de zombies est pleine.";
+  }
+  switch (raison) {
+    case "loin": return "Voiture trop loin";
+    case "plein": return action === "siege" ? "Place occupée" : "Voiture pleine";
+    case "deja": return "Déjà installé";
+    case "mort": return "Impossible : éliminé";
+    default: return "Voiture introuvable";
+  }
 }
 
 /** Compteur d'une carte de mode choisie impossible sur l'appareil (écran tactile). */
@@ -358,7 +513,7 @@ export interface SituationLobbyBR {
  * qui peut lancer, que dire au joueur. Un arrivant en cours de partie peut la regarder ou créer la sienne : « Partie en cours : 12 en vie · zone palier 3/6 — regardez-la… »
  */
 export function situationLobbyBR(
-  partie: EtatPartieBr | null, monId: string | null, connecte: boolean, salonBr?: ResumeSalonBr | null,
+  partie: EtatPartieBr | null, monId: string | null, connecte: boolean, salonBr?: ResumeSalonBr | null, bots?: ReglageBots | null,
 ): SituationLobbyBR {
   const liste: JoueurBr[] = partie?.joueurs ?? [];
   const joueurs = liste.length > 0 ? liste.length : salonBr?.joueurs ?? 0;
@@ -372,13 +527,14 @@ export function situationLobbyBR(
   const base = { hote, joueurs, capacite: partie.capacite, minJoueurs: partie.minJoueurs };
   if (partie.phase === "lobby") {
     const conflit = !!partie.conflitNoms;
-    const assez = joueurs >= partie.minJoueurs;
+    // (v11) les bots comptent pour le minimum de joueurs (le serveur les crée au lancement, ils ne sont pas dans la liste du lobby)
+    const assez = joueurs + (bots?.valeur ?? 0) >= partie.minJoueurs;
     const moi = liste.find((j) => j.id === monId);
     const avis: string[] = [];
     if (partie.annule) avis.push(TEXTE_DEPART_ANNULE);
     if (moi && !pseudoCompteBr(moi.pseudo)) avis.push(TEXTE_NOM_A_CHOISIR);
     const message = hote
-      ? (!assez ? `Il faut au moins ${partie.minJoueurs} joueurs.` : conflit ? TEXTE_CONFLIT_NOMS : "Vous êtes l'hôte : lancez la partie quand tout le monde est là.")
+      ? (!assez ? messageJoueursManquants(partie.minJoueurs, bots) : conflit ? TEXTE_CONFLIT_NOMS : "Vous êtes l'hôte : lancez la partie quand tout le monde est là.")
       : (conflit ? TEXTE_CONFLIT_NOMS : "En attendant l'hôte…");
     return { ...base, enCours: false, peutRegarder: false, peutLancer: hote && assez && !conflit, message, avis };
   }
@@ -397,6 +553,15 @@ export function situationLobbyBR(
   return { ...base, enCours: true, peutRegarder: true, peutLancer: false, avis: [], message: `Partie en cours : ${detail} — ${TEXTE_REGARDER_OU_CREER}` };
 }
 
+/**
+ * Pourquoi « Lancer » est grisé quand il manque des joueurs : avec des bots possibles, on dit de les ajouter (ou d'attendre un autre joueur) ; quota du serveur
+ * épuisé, de réessayer ; bots coupés, le minimum de joueurs.
+ */
+export function messageJoueursManquants(minJoueurs: number, bots?: ReglageBots | null): string {
+  if (bots?.disponible) return bots.quotaEpuise ? TEXTE_QUOTA_EPUISE : TEXTE_AJOUTER_BOTS;
+  return `Il faut au moins ${minJoueurs} joueurs.`;
+}
+
 /** Ce qu'un arrivant peut faire pendant une partie en cours. */
 export const TEXTE_REGARDER_OU_CREER = "regardez-la en spectateur, créez votre partie ou attendez la suivante.";
 
@@ -405,4 +570,79 @@ export function etiquetteEtatBR(j: Pick<JoueurBr, "admis" | "aBord" | "place">, 
   if (phase === "fin") return j.place === null ? "attente" : j.place === 1 ? "TOP 1" : `#${j.place}`;
   if (phase === "decompte") return j.admis ? (j.aBord ? "à bord" : "admis") : "attente";
   return "";
+}
+
+
+// ---------- bots du Battle Royale (v11) : réglage de l'hôte, étiquette BOT, partie non comptée ----------
+
+export { SUFFIXE_BOT, estBot, nomAffiche };
+
+/** « Lancer » grisé : un seul humain et aucun bot. */
+export const TEXTE_AJOUTER_BOTS = "Ajoutez des bots (ou un autre joueur) pour lancer la partie.";
+/** « Lancer » grisé : seul, et le quota de bots du serveur est épuisé (les autres parties les utilisent). */
+export const TEXTE_QUOTA_EPUISE = "Tous les bots du serveur sont pris par d'autres parties : attendez un autre joueur ou réessayez dans un instant.";
+/** Mention du lobby (et du bilan) d'une partie avec des bots. */
+export const TEXTE_ENTRAINEMENT = "Entraînement : partie non comptée (ni TOP 1, ni éliminations, ni parties dans le palmarès).";
+/** Bilan d'une partie avec des bots. */
+export const TEXTE_NON_COMPTEE_BOTS = "Entraînement : partie non comptée";
+/** Bilan d'une partie jouée à moins de deux joueurs ou trop courte. */
+export const TEXTE_NON_COMPTEE_COURTE = "Partie trop courte : non comptée";
+
+/** Texte du bilan quand le serveur n'a pas compté la partie : les bots (entraînement) ou la durée / le nombre de joueurs. */
+export const texteNonComptee = (avecBots: boolean): string => (avecBots ? TEXTE_NON_COMPTEE_BOTS : TEXTE_NON_COMPTEE_COURTE);
+
+/** Niveau des bots = difficulté existante des zombies (même clé de choix, autres mots). */
+export const NIVEAUX_BOTS: Readonly<Record<Difficulte, { nom: string; description: string }>> = {
+  entree: { nom: "Entrée", description: "bots débutants : réflexes lents, tir imprécis, rafales courtes." },
+  plat: { nom: "Plat du jour", description: "bots normaux." },
+  goulaf: { nom: "Goulaf", description: "bots redoutables : réflexes vifs, tir précis." },
+};
+
+/** Clé `localStorage` du niveau des bots choisi par l'hôte (distincte de celle des zombies). */
+export const CLE_NIVEAU_BOTS = "pdj-fps-br-difficulte";
+
+/**
+ * Réglage « Bots » du lobby, pour l'hôte. `disponible` : le serveur les propose (`botsMax` > 0, publié dans `salons.listes.br` ; absent sur un serveur d'avant les
+ * bots) ; `plafond` : ce que le serveur acceptera (plafond de la partie, place libre avec une place gardée à un arrivant, quota global restant) ;
+ * `valeur` : nombre envoyé ; `quotaEpuise` : des bots sont permis par partie mais plus aucun n'est libre sur le serveur.
+ */
+export interface ReglageBots {
+  disponible: boolean;
+  plafond: number;
+  valeur: number;
+  quotaEpuise: boolean;
+  /** l'hôte a choisi des bots : la partie ne sera pas comptée */
+  entrainement: boolean;
+}
+
+/** Plafond effectif des bots : même calcul que le serveur (`lancerPartie` de `match-br.ts`), pour que le curseur ne propose rien de refusé. */
+export function plafondBots(e: { botsMax?: number; botsRestants?: number; humains: number; capacite: number }): number {
+  const max = Math.floor(e.botsMax ?? 0);
+  if (!(max > 0)) return 0;
+  const place = e.capacite - e.humains - 1;
+  const quota = e.botsRestants === undefined ? Infinity : Math.floor(e.botsRestants);
+  return Math.max(0, Math.min(max, place, quota));
+}
+
+/** Valeur proposée tant que l'hôte n'a rien touché : `BR.botsSolo` seul dans le lobby, aucun bot dès qu'il y a un autre joueur. */
+export const botsParDefaut = (humains: number, plafond: number): number => (humains === 1 ? Math.min(BR.botsSolo, plafond) : 0);
+
+/** Réglage des bots d'après le choix de l'hôte (`null` = n'y a pas touché : défaut selon le nombre d'humains), borné au plafond. */
+export function reglageBots(e: { botsMax?: number; botsRestants?: number; humains: number; capacite: number; choisi: number | null }): ReglageBots {
+  const disponible = (e.botsMax ?? 0) > 0;
+  const plafond = plafondBots(e);
+  const brut = e.choisi === null ? botsParDefaut(e.humains, plafond) : e.choisi;
+  const valeur = Math.max(0, Math.min(plafond, Number.isFinite(brut) ? Math.floor(brut) : 0));
+  return { disponible, plafond, valeur, quotaEpuise: disponible && plafond === 0 && (e.botsRestants ?? Infinity) <= 0, entrainement: valeur > 0 };
+}
+
+/** Texte lu par les lecteurs d'écran pour le curseur : « 11 bots », « aucun bot ». */
+export const texteNombreBots = (n: number): string => (n === 0 ? "aucun bot" : pluriel(n, "bot"));
+
+/** Message sous le curseur : entraînement, quota restant (le serveur le publie), ou rien. */
+export function aideBots(r: ReglageBots, botsRestants?: number): string[] {
+  const l: string[] = [];
+  if (r.entrainement) l.push(TEXTE_ENTRAINEMENT);
+  if (botsRestants !== undefined) l.push(`Bots libres sur le serveur : ${Math.max(0, Math.floor(botsRestants))}.`);
+  return l;
 }

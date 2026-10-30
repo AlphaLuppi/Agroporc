@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { InfoTueur, JoueurPublic } from "@/lib/fps/protocole";
+import { estIdBot, type InfoTueur, type JoueurPublic } from "@/lib/fps/protocole";
 import { ZOMBIES } from "@/lib/fps/zombies-vagues";
 import { formatDecimal, formatSecondes, secondesAvant } from "@/lib/fps/hud-modele";
 import type { HudEtat } from "@/lib/fps/jeu-types";
@@ -108,6 +108,9 @@ export default function EcranMort({
   const phase = hud.killcamPhase;
   // chat vocal avec le tueur le temps de la killcam (lien vocal : plein volume, où qu'il soit)
   const voixKillcam = { etat: hud.voix, lien: hud.voixLien ?? "", touche: toucheDe(touches, "parler", disposition), mode: modeVoix };
+  // un bot n'a pas de micro et le serveur l'exclut des liens de killcam : ni ligne « parler au tueur », ni lien à afficher
+  const tueurBot = estIdBot(killcamInfo?.id ?? derniereMort?.tueur?.id);
+  const voixTueur = tueurBot ? undefined : voixKillcam;
   if (hud.mode === "br" && br) {
     if (phase === "rejeu" || phase === "carte") {
       return (
@@ -119,7 +122,7 @@ export default function EcranMort({
             derniereMort={derniereMort}
             surPasser={surPasserKillcam}
             touchePasser={toucheDe(touches, "passer", disposition)}
-            voix={voixKillcam}
+            voix={voixTueur}
           >
             {phase === "carte" && <CarteEliminationBr derniereMort={derniereMort} killcamInfo={killcamInfo} place={br.place} total={br.total} />}
           </Killcam>
@@ -128,7 +131,7 @@ export default function EcranMort({
     }
     // lien vocal de killcam encore ouvert (connexion établie) : on peut continuer à parler à son tueur
     // sinon le canal des spectateurs (éliminés et spectateurs venus regarder)
-    const voixSpect = hud.voixLien ? texteVoixKillcam(voixKillcam, hud.voixLien) : texteVoixSpectateurs(voixKillcam, hud.voixParlants ?? "");
+    const voixSpect = hud.voixLien && !tueurBot ? texteVoixKillcam(voixKillcam, hud.voixLien) : texteVoixSpectateurs(voixKillcam, hud.voixParlants ?? "");
     return <EcranSpectateur derniereMort={derniereMort} {...br} voix={voixSpect} />;
   }
   const tueurJoueur = joueurs?.find((j) => j.id === killcamInfo?.id) ?? null;
@@ -162,7 +165,7 @@ export default function EcranMort({
           surPasser={surPasserKillcam}
           touchePasser={toucheDe(touches, "passer", disposition)}
           reapparitionDans={hud.reapparitionDans}
-          voix={voixKillcam}
+          voix={voixTueur}
         >
           {phase === "carte" && carte}
           {choix}

@@ -6,6 +6,7 @@ import { BR } from "./br-regles";
 import { resoudre } from "./collision";
 import { Salle, type JoueurSalle, type Sortie } from "./match";
 import type { ServiceBr } from "./match-contexte";
+import { BudgetNavigation, NOEUDS_MAX_BOT } from "./nav-bots";
 import { SILHOUETTE, type MessageClient, type Vec3 } from "./protocole";
 
 /**
@@ -220,5 +221,57 @@ describe("charge BR : 50 joueurs, 600 tics à 60 Hz, états à 30 Hz", () => {
     expect(br.etat().vivants).toBe(N - 8);
     expect(m.plusGrosSnap).toBeLessThanOrEqual(BUDGET_SNAP_OCTETS);
     expect(m.cpu / m.tics).toBeLessThan(BUDGET_TIC_MOYEN_MS);
+  });
+});
+
+describe("charge BR : 1 humain + 15 bots (v11), 600 tics à 60 Hz", () => {
+  /** Salle lancée seul avec 15 bots, tous au sol (humain compris), protection d'atterrissage écoulée. */
+  function salleAvecBots() {
+    const budget = new BudgetNavigation();
+    const monde = construireMondeBr(scene);
+    const depart: [number, number] = [(monde.bornes.x0 + monde.bornes.x1) / 2, (monde.bornes.z0 + monde.bornes.z1) / 2];
+    const s = new Salle(monde, [depart], lcg(42), T0, { br: { scene, dureeVolMs: 15_000, budgetNavigation: budget } });
+    s.connecter("h", "Alice", T0);
+    s.recevoir("h", { t: "lancerPartie", bots: 15 }, T0);
+    let t = T0 + 100;
+    s.recevoir("h", { t: "rejoindre" }, t);
+    const br = (s as unknown as { br: ServiceBr }).br;
+    const humain = () => s.inspecter("h") as JoueurSalle;
+    const bots = () => s.joueurs().filter((x) => x.bot);
+    while (br.etat().phase !== "vol") { t += 100; humain().etatT = t; s.tic(t); }
+    s.recevoir("h", { t: "sauter" }, t);
+    let k = 0;
+    while (br.etat().phase !== "jeu" || humain().posture !== "sol" || bots().some((x) => x.vivant && x.posture !== "sol")) {
+      t += 100;
+      if (++k > 3_000) throw new Error("tous n'ont pas atterri");
+      humain().etatT = t;
+      s.recevoir("h", { t: "chute", lacet: 0, tangage: -1, avance: 1, lateral: 0, ouvrir: false }, t);
+      s.tic(t);
+    }
+    return { s, t, br, humain, bots, budget };
+  }
+
+  it("tic moyen dans le budget, aucun tic de plus de 50 ms, snap dans le budget, tous les états des bots acceptés", () => {
+    const { s, t, br, humain, bots, budget } = salleAvecBots();
+    expect(bots()).toHaveLength(15);
+    let etatsBots = 0;
+    const recevoir = s.recevoir.bind(s);
+    s.recevoir = (id: string, msg: MessageClient, maintenant: number): Sortie[] => {
+      if (msg.t === "etat" && id !== "h") etatsBots++;
+      return recevoir(id, msg, maintenant);
+    };
+    const m = mesurer(s, t, (_k, maintenant) => { humain().etatT = maintenant; });
+    decrire("1 humain + 15 bots", m);
+    expect(m.tics).toBe(600);
+    expect(m.pire).toBeLessThan(50);
+    expect(m.cpu / m.tics).toBeLessThan(BUDGET_TIC_MOYEN_MS);
+    expect(m.plusGrosSnap).toBeLessThanOrEqual(BUDGET_SNAP_OCTETS);
+    // les cerveaux ont réellement tourné : 20 Hz par bot vivant
+    expect(etatsBots).toBeGreaterThan(5 * 15 * 10 * 0.5);
+    expect(br.etat().phase === "jeu" || br.etat().phase === "fin").toBe(true);
+    // navigation (lot 3b) : des chemins cherchés, jamais plus de 3 000 nœuds explorés (≈ quelques ms), au plus un A* par période
+    expect(budget.recherches).toBeGreaterThan(0);
+    expect(budget.noeudsMax).toBeLessThanOrEqual(NOEUDS_MAX_BOT);
+    console.log(`navigation des bots : ${budget.recherches} recherches, plus gros A* ${budget.noeudsMax} nœuds`);
   });
 });

@@ -245,6 +245,11 @@ export interface Sons {
    * avancée (la casserole tinte plus haut à chaque bonne note). Tous synthétisés.
    */
   secret(son: SonSecret, position?: PositionSon, k?: number): void;
+  /**
+   * (v11, zombies) Partie suspendue : le contexte audio du jeu et la voix du navigateur sont mis en veille (rien ne sonne pendant la pause), repris
+   * à la levée. Tant que c'est gelé, ni un geste de l'utilisateur ni `prete()` ne réveillent le contexte. Le chat vocal (son propre contexte) continue.
+   */
+  geler(oui: boolean): void;
   dispose(): void;
 }
 
@@ -686,10 +691,12 @@ export function creerSons(): Sons {
     for (const c of chargements.values()) decoder(c);
   };
 
-  /** Premier geste (clic, touche) : crée le contexte ou le sort de sa veille. */
+  /** (v11) suspension de la partie : le contexte reste en veille tant que c'est vrai */
+  let gele = false;
+  /** Premier geste (clic, touche) : crée le contexte ou le sort de sa veille (jamais pendant une suspension de la partie). */
   const reveiller = () => {
     ouvrir();
-    if (ctx && ctx.state === "suspended") void ctx.resume().catch(() => {});
+    if (!gele && ctx && ctx.state === "suspended") void ctx.resume().catch(() => {});
   };
   const GESTES = ["pointerdown", "keydown", "touchstart"] as const;
   if (typeof window !== "undefined") for (const g of GESTES) window.addEventListener(g, reveiller, { capture: true, passive: true });
@@ -698,7 +705,7 @@ export function creerSons(): Sons {
   const prete = (): boolean => {
     if (fini) return false;
     if (!ctx && typeof navigator !== "undefined" && navigator.userActivation?.hasBeenActive) ouvrir();
-    if (ctx && ctx.state === "suspended") void ctx.resume().catch(() => {});
+    if (!gele && ctx && ctx.state === "suspended") void ctx.resume().catch(() => {});
     return !!ctx && ctx.state === "running" && !!master && !!bruitBuf;
   };
 
@@ -1833,6 +1840,17 @@ export function creerSons(): Sons {
           // la cloche de service du comptoir : ding clair
           for (const [r, g] of [[1, 1], [2.4, 0.4], [4.1, 0.2]] as const) ton(out, t, { dur: 1.6 / r, type: "sine", f0: 2350 * r, gain: 0.07 * g, att: 0.002 });
           break;
+      }
+    },
+    geler(oui) {
+      if (fini || gele === oui) return;
+      gele = oui;
+      if (oui) {
+        if (ctx && ctx.state === "running") void ctx.suspend().catch(() => {});
+        if (typeof window !== "undefined" && "speechSynthesis" in window) { try { window.speechSynthesis.pause(); } catch { /* rien */ } }
+      } else {
+        if (ctx && ctx.state === "suspended") void ctx.resume().catch(() => {});
+        if (typeof window !== "undefined" && "speechSynthesis" in window) { try { window.speechSynthesis.resume(); } catch { /* rien */ } }
       }
     },
     dispose() {
