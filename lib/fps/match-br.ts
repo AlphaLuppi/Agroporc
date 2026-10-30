@@ -23,11 +23,14 @@ import { appliquerPartie, classementStats, cleStats, estPseudoCompte, nomDeBase,
 import { echelleDureeZone, etatZone, genererPlanZone, horsZone, zoneBrPublique, type PlanZone } from "./br-zone";
 import type { Monde } from "./collision";
 import type { SceneData } from "../agroparc3d/types";
-import type { ButinBr, ContexteSalle, JoueurSalle, ResumeBr, ServiceBr, Sortie, VolBr } from "./match-contexte";
+import type { BotsBr, ButinBr, ContexteSalle, JoueurSalle, ResumeBr, ServiceBr, Sortie, VolBr } from "./match-contexte";
+import { creerBotsBr, type AideBots } from "./match-br-bots";
+import type { BudgetNavigation } from "./nav-bots";
 import { creerButinBr } from "./match-br-butin";
 import { creerVolBr } from "./match-br-vol";
+import { estDifficulte } from "./zombies-vagues";
 import {
-  JEU, type AvionBr, type BilanBr, type CauseMort, type EtatPartieBr, type JoueurBr, type LigneBilanBr, type LigneStatsBr, type MessageClient,
+  JEU, estIdBot, type AvionBr, type BilanBr, type CauseMort, type EtatPartieBr, type JoueurBr, type LigneBilanBr, type LigneStatsBr, type MessageClient,
   type PhaseBr, type PointButin, type Vec3,
 } from "./protocole";
 
@@ -46,9 +49,19 @@ export interface OptionsServiceBr {
   altitude?: number; echelleZone?: number; nbObjets?: number;
   /** essais : durée minimale (ms) pour qu'une partie compte dans les statistiques (`BR.partieValideMinMs` par défaut) */
   partieValideMinMs?: number;
-  /** injection (tests, ou salle qui précalcule) : sous-services à la place de `creerVolBr` / `creerButinBr` */
+  /** injection (tests, ou salle qui précalcule) : sous-services à la place de `creerVolBr` / `creerButinBr` / `creerBotsBr` */
   vol?: VolBr;
   butin?: ButinBr;
+  bots?: BotsBr;
+  /**
+   * (v11, bots) plafond de bots par partie (`BR.botsMax` par défaut, 0 = coupés : `lancerPartie.bots` est ignoré) et quota GLOBAL restant (toutes les parties
+   * du serveur, `PDJ_FPS_BR_BOTS_TOTAL` moins les bots déjà en jeu ; absent = illimité). Essai déterministe : `agressif` (graine fixe, les bots cherchent l'humain).
+   */
+  botsMax?: number;
+  botsRestants?: () => number;
+  botsEssai?: "agressif";
+  /** (lot 3b) budget de recherches de chemin partagé par toutes les salles BR du serveur (un A* par tic en tout) ; absent : un budget par salle */
+  budgetNavigation?: BudgetNavigation;
   /** injection (tests) : emplacements du butin à la place de `pointsButin(scene, ctx.monde)` */
   points?: readonly PointButin[];
 }
@@ -100,6 +113,7 @@ export function creerServiceBr(ctx: ContexteSalle, opts: OptionsServiceBr): Serv
   const partieValideMinMs = opts.partieValideMinMs ?? BR.partieValideMinMs;
   const vol: VolBr = opts.vol ?? creerVolBr(ctx);
   const butin: ButinBr = opts.butin ?? creerButinBr(ctx);
+  const botsMax = Math.max(0, Math.floor(opts.botsMax ?? BR.botsMax));
 
   const membres = new Map<string, Membre>();
   const statsDemandeT = new Map<string, number>();
@@ -124,6 +138,9 @@ export function creerServiceBr(ctx: ContexteSalle, opts: OptionsServiceBr): Serv
   let signatureSalle = "";
   // statistiques
   let statsCourantes: StatsBr | null = null;
+  // bots (v11) : la partie compte des bots (jamais comptée dans les statistiques) ; fin anticipée quand plus aucun humain n'est en vie
+  let avecBots = false;
+  let finSansHumainT: number | null = null;
 
   // ---------------------------------------------------------------------------------------------
   // membres, état
@@ -137,7 +154,8 @@ export function creerServiceBr(ctx: ContexteSalle, opts: OptionsServiceBr): Serv
     }
     return m;
   }
-  const hote = (): string => ctx.joueurs()[0]?.id ?? "";
+  /** l'hôte est le premier HUMAIN arrivé (les bots n'existent qu'après le lancement, et ne le sont jamais) */
+  const hote = (): string => ctx.joueurs().find((j) => !j.bot)?.id ?? "";
   const partants = (): Membre[] => [...membres.values()].filter((m) => m.admis);
   const vivants = (): number => partants().filter((m) => !m.elimine).length;
   const enVolOuJeu = (): boolean => phase === "vol" || phase === "jeu";
@@ -146,6 +164,7 @@ export function creerServiceBr(ctx: ContexteSalle, opts: OptionsServiceBr): Serv
   function conflitDeNoms(): boolean {
     const vus = new Set<string>();
     for (const j of ctx.joueurs()) {
+      if (j.bot) continue;
       const base = nomDeBase(j.pseudo);
       if (vus.has(base)) return true;
       vus.add(base);
@@ -265,10 +284,34 @@ export function creerServiceBr(ctx: ContexteSalle, opts: OptionsServiceBr): Serv
     return c;
   }
 
+  // ---- bots (v11) ----
+  /** points d'atterrissage des bots : les emplacements de butin hors toits (aucun toit n'est accessible à pied), mis en cache par tableau d'emplacements */
+  let pointsAtt: { source: readonly PointButin[]; points: PointButin[] } | null = null;
+  const pointsAtterrissage = (): readonly PointButin[] => {
+    const src = emplacements();
+    if (!pointsAtt || pointsAtt.source !== src) pointsAtt = { source: src, points: src.filter((p) => p.pool !== "toit") };
+    return pointsAtt.points;
+  };
+  const aideBots: AideBots = {
+    phase: () => phase, avion: () => vol.avion(), vol, butin,
+    zone: (t) => {
+      if (!plan) return null;
+      const e = etatZone(plan, t);
+      const courant = { centre: e.centre, rayon: e.rayon };
+      return { ...(e.cible ? { centre: e.cible.c, rayon: e.cible.r } : courant), courant, palier: e.palier, phase: e.phase };
+    },
+    points: pointsAtterrissage,
+  };
+  const bots: BotsBr = opts.bots ?? creerBotsBr(ctx, aideBots, { ...(opts.botsEssai ? { essai: opts.botsEssai } : {}), ...(opts.budgetNavigation ? { budget: opts.budgetNavigation } : {}) });
+  const botsRestants = (): number => Math.max(0, Math.floor(opts.botsRestants ? opts.botsRestants() : Infinity));
+
   /** Retour au lobby : tous les joueurs sortent de l'arène, membres remis en attente, sous-services remis à blanc. */
   function retourLobby(t: number, avecAnnulation = false): Sortie[] {
     const sorties: Sortie[] = [];
     for (const j of ctx.joueurs()) if (j.enJeu) sorties.push(...ctx.retirerJoueur(j, t));
+    // les bots n'existent que le temps d'une partie (le prochain lancement en recrée)
+    bots.retirerTous();
+    avecBots = false; finSansHumainT = null;
     membres.clear();
     vol.reinitialiser();
     butin.reinitialiser();
@@ -281,12 +324,29 @@ export function creerServiceBr(ctx: ContexteSalle, opts: OptionsServiceBr): Serv
     return sorties;
   }
 
-  function lancerPartie(j: JoueurSalle, t: number): Sortie[] {
+  /**
+   * Lancement par l'hôte. Ordre : (1) comptes (humains + bots contre `joueursMin`, un humain au moins) : un refus est explicite, `refus{lancer}` ; (2) noms
+   * en conflit parmi les humains ; (3) création des bots ; (4) la liste des membres est RELUE (les bots y sont) ; (5) admission ; (6) objets et durée de
+   * zone calculés sur cette liste.
+   * Bots : `msg.bots` (entier, sinon traité comme absent) borné par le plafond de la partie, par la place libre (`joueursMax` − humains − 1 : un arrivant
+   * garde une place) et par le quota global restant ; absent avec un seul humain, `BR.botsSolo` ; `botsMax` à 0 les coupe.
+   */
+  function lancerPartie(j: JoueurSalle, msg: Extract<MessageClient, { t: "lancerPartie" }>, t: number): Sortie[] {
     if (phase !== "lobby" || hote() !== j.id) return [];
-    const salle = ctx.joueurs();
-    if (salle.length < joueursMin) return [];
+    const refus = (raison: "bots" | "limite"): Sortie[] => [{ a: j.id, m: { t: "refus", action: "lancer", raison } }];
+    const humains = ctx.joueurs().filter((o) => !o.bot).length;
+    const demande = typeof msg.bots === "number" && Number.isInteger(msg.bots) && msg.bots >= 0 ? msg.bots : undefined;
+    const voulus = botsMax <= 0 ? 0 : demande ?? (humains === 1 ? BR.botsSolo : 0);
+    const restants = botsRestants();
+    if (voulus > 0 && restants <= 0) return refus("limite");
+    const n = Math.max(0, Math.min(voulus, botsMax, BR.joueursMax - humains - 1, restants));
+    if (humains + n < joueursMin) return refus("bots");
     if (conflitDeNoms()) { immediat = true; return []; }
     annule = false;
+    if (n > 0) bots.creer(n, estDifficulte(msg.difficulte) ? msg.difficulte : "plat", t);
+    avecBots = n > 0; finSansHumainT = null;
+    // les bots sont dans la table : la liste est relue APRÈS leur création
+    const salle = ctx.joueurs();
     for (const o of salle) {
       const m = membre(o);
       m.admis = true; m.monte = false; m.elimine = null; m.place = null; m.reste = 0;
@@ -310,7 +370,8 @@ export function creerServiceBr(ctx: ContexteSalle, opts: OptionsServiceBr): Serv
 
   function demarrerVol(t: number): Sortie[] {
     const bord = partants().filter((m) => m.monte).map((m) => ctx.joueur(m.id)).filter((j): j is JoueurSalle => !!j);
-    if (bord.length < joueursMin) return retourLobby(t, true);
+    // jamais de combat de bots sans humain : un humain au moins doit être monté (sinon la partie est annulée, il n'a pas fini de charger)
+    if (bord.length < joueursMin || !bord.some((o) => !o.bot)) return retourLobby(t, true);
     const sorties: Sortie[] = [];
     // même trajectoire (même graine), départ à `t` : les joueurs déjà à bord suivent
     vol.demarrer(bord, ctx.monde.bornes, aleaVol(), t, optionsVol());
@@ -326,7 +387,12 @@ export function creerServiceBr(ctx: ContexteSalle, opts: OptionsServiceBr): Serv
 
   /** Fin du vol : l'admission est close, les admis qui n'ont jamais rejoint repartent en attente. */
   function passerEnJeu(t: number): void {
-    for (const m of membres.values()) if (m.admis && !m.monte) m.admis = false;
+    for (const m of [...membres.values()]) {
+      if (!m.admis || m.monte) continue;
+      m.admis = false;
+      // un bot qui n'est jamais monté n'a rien à faire dans la salle
+      if (estIdBot(m.id)) { ctx.retirerBot(m.id); membres.delete(m.id); }
+    }
     phase = "jeu"; debutT = t;
     immediat = true;
   }
@@ -413,21 +479,35 @@ export function creerServiceBr(ctx: ContexteSalle, opts: OptionsServiceBr): Serv
       return {
         id, pseudo: j?.pseudo ?? src.pseudo, couleur: j?.couleur ?? src.couleur, place: i + 1, kills: src.kills, degats: Math.round(src.degats),
         survieS: Math.round((Math.max(0, Math.min(src.tMort, t) - volDebutT)) / 100) / 10,
+        ...(estIdBot(id) ? { bot: true as const } : {}),
       };
     });
     bilan = { vainqueurs: lignes.length > 0 ? [lignes[0].id] : [], dureeMs, lignes };
-    const compte = atterrisMax >= BR.atterrisMin && dureeMs >= partieValideMinMs;
+    // une partie avec des bots est de l'entraînement : jamais comptée
+    const compte = !avecBots && atterrisMax >= BR.atterrisMin && dureeMs >= partieValideMinMs;
     nonComptee = !compte;
     if (compte) {
-      enregistrer({ t, lignes: lignes.filter((l) => estPseudoCompte(l.pseudo)).map((l) => ({ pseudo: l.pseudo, place: l.place, kills: l.kills })) });
+      enregistrer({ t, lignes: lignes.filter((l) => !l.bot && estPseudoCompte(l.pseudo)).map((l) => ({ pseudo: l.pseudo, place: l.place, kills: l.kills })) });
     }
     phase = "fin"; debutT = t; finT = t + finAffichageMs;
     // `br{etat}` avec le bilan part tout de suite (il remplace l'état en attente)
     const sorties: Sortie[] = [sortieEtat(t)];
     immediat = false; sale = false; dernierEtatT = t;
     // le palmarès à jour, chacun avec sa ligne (`moi`)
-    for (const j of ctx.joueurs()) sorties.push({ a: j.id, m: messageStats(j.pseudo) });
+    for (const j of ctx.joueurs()) if (!j.bot) sorties.push({ a: j.id, m: messageStats(j.pseudo) });
     return sorties;
+  }
+
+  /**
+   * Plus aucun humain en vie (tous éliminés, la place de chacun est fixée) : la partie ne se joue plus que pour les bots. Elle se termine
+   * `BR.finSansHumainMs` après la dernière mort humaine (de quoi voir la killcam du dernier), avec bilan et places figées. Sans effet hors partie avec bots.
+   */
+  function verifierFinSansHumain(t: number, sorties: Sortie[]): void {
+    if (!avecBots || !enVolOuJeu()) return;
+    const humains = partants().filter((m) => m.monte && !estIdBot(m.id));
+    if (humains.some((m) => !m.elimine)) { finSansHumainT = null; return; }
+    if (finSansHumainT === null) finSansHumainT = (humains.length > 0 ? Math.max(...humains.map((m) => m.elimine!.tMort)) : t) + BR.finSansHumainMs;
+    if (t >= finSansHumainT) sorties.push(...terminer(t));
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -454,6 +534,8 @@ export function creerServiceBr(ctx: ContexteSalle, opts: OptionsServiceBr): Serv
         return emettre(t, sorties, true);
       }
       if (phase === "decompte") {
+        // les bots montent à bord comme des clients qui ont fini de charger
+        sorties.push(...bots.tic(t));
         if (decompteTermine(t)) sorties.push(...demarrerVol(t));
         return emettre(t, sorties, true);
       }
@@ -461,9 +543,12 @@ export function creerServiceBr(ctx: ContexteSalle, opts: OptionsServiceBr): Serv
       echantillonnerAtterris();
       const avion: AvionBr | null = vol.avion();
       if (phase === "vol" && avion && t >= avion.finT) passerEnJeu(t);
+      // les cerveaux des bots (sur une copie de leur liste) : leurs sorties (tirs, dégâts, morts) sont rendues avec les autres
+      sorties.push(...bots.tic(t));
       sorties.push(...butin.tic(t));
       tempete(t, sorties);
       verifierVictoire(t, sorties);
+      verifierFinSansHumain(t, sorties);
       return emettre(t, sorties, true);
     },
 
@@ -511,7 +596,7 @@ export function creerServiceBr(ctx: ContexteSalle, opts: OptionsServiceBr): Serv
       dernierT = Math.max(dernierT, t);
       switch (msg.t) {
         case "lancerPartie":
-          return emettre(t, lancerPartie(j, t));
+          return emettre(t, lancerPartie(j, msg, t));
         case "sauter": {
           const m = membres.get(j.id);
           if (phase !== "vol" || !m || !m.monte || m.elimine) return [];
@@ -580,8 +665,10 @@ export function creerServiceBr(ctx: ContexteSalle, opts: OptionsServiceBr): Serv
       statsDemandeT.delete(j.id);
       const m = membres.get(j.id);
       const sorties: Sortie[] = [];
-      if (ctx.joueurs().length === 0 && phase !== "lobby") {
-        // salle vide : retour immédiat au lobby, personne à prévenir ni statistiques (le serveur saute le tic d'une salle vide)
+      const humainsPartants = partants().filter((x) => x.id !== j.id && !estIdBot(x.id)).length;
+      if (phase !== "lobby" && (ctx.nombreHumains() === 0 || (humainsPartants === 0 && partants().some((x) => estIdBot(x.id)) && !ctx.joueurs().some((o) => !o.bot && o.spectateur && o.id !== j.id)))) {
+        // plus aucun humain (les bots ne comptent pas), ou plus aucun humain admis dans la partie alors qu'elle compte des bots (un visiteur du
+        // Palantir ou du lobby ne garde pas en vie un combat de bots ; un spectateur venu regarder, si : la partie finit `finSansHumainMs` plus tard) : retour immédiat au lobby, bots retirés, personne à prévenir ni statistiques
         return retourLobby(t);
       }
       if (phase === "lobby" || phase === "fin" || !m) {
@@ -607,6 +694,7 @@ export function creerServiceBr(ctx: ContexteSalle, opts: OptionsServiceBr): Serv
         if (auSol) sorties.push(...butin.lacherALaMort(j, t));
       }
       verifierVictoire(t, sorties);
+      verifierFinSansHumain(t, sorties);
       immediat = true;
       return emettre(t, sorties);
     },
@@ -650,8 +738,13 @@ export function creerServiceBr(ctx: ContexteSalle, opts: OptionsServiceBr): Serv
 
     resume(): ResumeBr {
       const palier = plan && enVolOuJeu() ? etatZone(plan, dernierT).palier : undefined;
-      const h = ctx.joueurs()[0];
-      return { phase, joueurs: ctx.joueurs().length, vivants: vivants(), ...(palier !== undefined ? { palier } : {}), ...(h ? { hote: h.pseudo } : {}) };
+      const h = ctx.joueurs().find((o) => !o.bot);
+      const nb = bots.nombre();
+      return {
+        phase, joueurs: ctx.nombreHumains(), vivants: vivants(), ...(palier !== undefined ? { palier } : {}), ...(h ? { hote: h.pseudo } : {}),
+        ...(nb > 0 ? { bots: nb } : {}),
+        ...(opts.botsMax !== undefined ? { botsMax } : {}), ...(opts.botsRestants ? { botsRestants: botsRestants() } : {}),
+      };
     },
   };
 }

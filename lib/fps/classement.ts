@@ -6,7 +6,7 @@
  * Spec : docs/superpowers/specs/2026-10-23-arene-hud-design.md (§8, §10)
  */
 import { MELEE, STATS, nomArme } from "./armes";
-import { estMelee, type ArmeId, type BilanBr, type JoueurPublic, type JoueurZombies, type LigneClassement, type LigneStats, type LigneStatsBr } from "./protocole";
+import { estIdBot, estMelee, type ArmeId, type BilanBr, type JoueurPublic, type JoueurZombies, type LigneClassement, type LigneStats, type LigneStatsBr } from "./protocole";
 
 /** Colonnes du tableau, de gauche à droite (HUD §8.1). */
 export type ColonneScore = "rang" | "agent" | "k" | "m" | "kd" | "ser" | "prec" | "tete" | "deg" | "arme" | "ping";
@@ -352,6 +352,17 @@ export function formatDureePartie(ms: number): string {
 
 // ---------- bilan et palmarès du Battle Royale (v8) ----------
 
+/** Suffixe affiché derrière le nom d'un bot (jamais dans `pseudo`, qui sert de clé côté serveur). */
+export const SUFFIXE_BOT = " [BOT]";
+
+/** Joueur de la salle BR ou ligne de bilan : un bot se reconnaît à son drapeau `bot` ou à son id `b<n>`. */
+export const estBot = (j: { id: string; bot?: boolean }): boolean => !!j.bot || estIdBot(j.id);
+
+/** Nom à écrire à l'écran : « Tigre [BOT] » pour un bot, le pseudo tel quel sinon (jamais deux fois le suffixe). */
+export function nomAffiche(j: { id: string; pseudo: string; bot?: boolean }): string {
+  return estBot(j) && !j.pseudo.endsWith(SUFFIXE_BOT) ? `${j.pseudo}${SUFFIXE_BOT}` : j.pseudo;
+}
+
 /** Ligne du classement d'une partie de Battle Royale (triée par place). */
 export interface LigneBilanBrAffichee {
   id: string; pseudo: string; couleur: string;
@@ -361,6 +372,8 @@ export interface LigneBilanBrAffichee {
   moi: boolean;
   /** TOP 1 de la partie */
   vainqueur: boolean;
+  /** (v11) bot du Battle Royale : étiquette BOT du bilan (`LigneBilanBr.bot`, ou id `b<n>` pour un serveur qui ne l'aurait pas posé) */
+  bot: boolean;
 }
 
 /** Lignes du bilan par place croissante (à égalité de place, par pseudo). Bilan absent : liste vide. */
@@ -369,7 +382,7 @@ export function lignesBilanBR(bilan: BilanBr | null | undefined, monId: string |
   return bilan.lignes
     .map((l) => ({
       id: l.id, pseudo: l.pseudo, couleur: l.couleur, place: l.place, kills: l.kills, degats: l.degats, survieS: l.survieS,
-      moi: l.id === monId, vainqueur: bilan.vainqueurs.includes(l.id),
+      moi: l.id === monId, vainqueur: bilan.vainqueurs.includes(l.id), bot: !!l.bot || estIdBot(l.id),
     }))
     .sort((a, b) => a.place - b.place || a.pseudo.localeCompare(b.pseudo, "fr"));
 }
@@ -393,7 +406,7 @@ export function resumeFinBr(bilan: BilanBr | null | undefined, monId: string | n
   const vainqueur = lignes.find((l) => l.vainqueur) ?? null;
   const total = lignes.length;
   if (moi?.vainqueur) return { titre: "TOP 1", sousTitre: "Victoire", top1: true, place: moi.place, total, kills: moi.kills };
-  const sousTitre = vainqueur ? `${vainqueur.pseudo} remporte la partie` : "Personne n'a gagné";
+  const sousTitre = vainqueur ? `${nomAffiche(vainqueur)} remporte la partie` : "Personne n'a gagné";
   if (moi) return { titre: `#${moi.place} sur ${total}`, sousTitre, top1: false, place: moi.place, total, kills: moi.kills };
   return { titre: "Partie terminée", sousTitre, top1: false, place: null, total, kills: 0 };
 }

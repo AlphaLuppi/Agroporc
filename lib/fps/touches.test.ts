@@ -82,11 +82,11 @@ describe("touches de l'arène", () => {
     expect(libelleTouche(null)).toBe("—");
   });
 
-  it("actions de l'équipement, du HUD, « passer », de la v3, « invoquer » et du Battle Royale : 10 de la v1 conservées, 22 nouvelles, aucune arme1..4", () => {
+  it("actions de l'équipement, du HUD, « passer », de la v3, « invoquer » et du Battle Royale : 10 de la v1 conservées, 25 nouvelles (dont la pause des zombies, v11), aucune arme1..4", () => {
     expect(ACTIONS_V1).toHaveLength(10);
-    expect(ACTIONS_NOUVELLES).toHaveLength(24);
-    expect(ACTIONS).toHaveLength(34);
-    expect(new Set(ACTIONS).size).toBe(34);
+    expect(ACTIONS_NOUVELLES).toHaveLength(25);
+    expect(ACTIONS).toHaveLength(35);
+    expect(new Set(ACTIONS).size).toBe(35);
     expect(Object.keys(touchesParDefaut()).sort()).toEqual([...ACTIONS].sort());
     expect(Object.keys(LIBELLES_ACTIONS).sort()).toEqual([...ACTIONS].sort());
     expect(ACTIONS as readonly string[]).not.toContain("arme1");
@@ -138,6 +138,31 @@ describe("touches de l'arène", () => {
     expect(r.cfg.frappeAerienne).toEqual(["KeyK", null]);
     expect(r.depossedee).toBeNull();
     expect(assigner(d, "grenade", 1, "KeyB").depossedee).toBe("remontoir");
+  });
+
+  it("(v11) pause de la partie de zombies : P, contexte des zombies (sans conflit avec l'arène), conflit avec les autres actions des zombies et « en vie »", () => {
+    const d = touchesParDefaut();
+    expect(d.pauseZ).toEqual(["KeyP", null]);
+    expect(ACTIONS_ZOMBIES).toContain("pauseZ");
+    expect(conflit("pauseZ", "fumigene")).toBe(false);
+    expect(conflit("pauseZ", "frappeAerienne")).toBe(false);
+    expect(conflit("pauseZ", "grenade")).toBe(true);
+    expect(conflit("pauseZ", "recharger")).toBe(true);
+    expect(conflit("pauseZ", "passer")).toBe(false);
+    // aucune autre action ne prend P par défaut
+    expect(ACTIONS.filter((a) => d[a].includes("KeyP"))).toEqual(["pauseZ"]);
+    // une touche « en vie » sur P dépossède la pause
+    expect(assigner(d, "recharger", 1, "KeyP").cfg.pauseZ).toEqual([null, null]);
+    expect(assigner(d, "grenade", 1, "KeyP").depossedee).toBe("pauseZ");
+  });
+
+  it("(v11) une sauvegarde d'avant la pause des zombies lui donne P ; si P est pris par une action « en vie », elle reste sans touche sans avertissement", () => {
+    const brut = Object.fromEntries(ACTIONS.filter((a) => a !== "pauseZ").map((a) => [a, touchesParDefaut()[a]]));
+    expect(normaliser(brut).pauseZ).toEqual(["KeyP", null]);
+    const prise = normaliser({ ...brut, recharger: ["KeyP", null] });
+    expect(prise.recharger).toEqual(["KeyP", null]);
+    expect(prise.pauseZ).toEqual([null, null]);
+    expect(actionsSansTouche(prise)).not.toContain("pauseZ");
   });
 
   it("(v8) une sauvegarde d'avant les grenades leur donne G et B, même si le sort et le fumigène les ont", () => {
@@ -266,11 +291,11 @@ describe("touches de l'arène", () => {
     });
 
     it("les touches v1 personnalisées sont conservées, arme1..4 sont ignorées", () => {
-      const sauve = { ...v1(), avant: ["KeyZ", null], tir: ["Souris0", "KeyG"], arme1: ["KeyP", null] };
+      const sauve = { ...v1(), avant: ["KeyZ", null], tir: ["Souris0", "KeyG"], arme1: ["KeyN", null] };
       const cfg = lire(sauve);
       expect(cfg.avant).toEqual(["KeyZ", null]);
       expect(cfg.tir).toEqual(["Souris0", "KeyG"]);
-      expect(Object.values(cfg).flat()).not.toContain("KeyP");
+      expect(Object.values(cfg).flat()).not.toContain("KeyN");
       expect("arme1" in cfg).toBe(false);
     });
 

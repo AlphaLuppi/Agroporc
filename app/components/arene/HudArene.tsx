@@ -164,6 +164,13 @@ export default function HudArene(p: PropsHudAreneBr) {
     surReglagesRef.current({ ...r, minimap: { ...r.minimap, coin } });
     afficher(coin === "off" ? "Mini-carte masquée" : `Mini-carte : ${LIBELLES_COINS[coin].toLowerCase()}`);
   });
+  // (v11, zombies) P : suspend la partie pour tous (ou la reprend si elle l'est), seulement en partie et souris prise ; la souris libre passe par le menu pause.
+  // Échap seul ne suspend qu'en solo (décidé par le jeu) : à plusieurs, un alt-tab gèlerait les autres.
+  const enPartieZ = zombies && (partieZ?.phase === "pause" || partieZ?.phase === "manche");
+  const suspendue = zombies && !!hud?.suspendue;
+  const suspendueRef = useRef(false);
+  suspendueRef.current = suspendue;
+  useToucheAppui(verrouille && enPartieZ, p.touches.pauseZ, () => p.surPauseZ?.(!suspendueRef.current));
   // Écran de mort et entracte : la souris est prise, les boutons du sélecteur d'équipement sont inatteignables ; les touches d'arme
   // principale / secondaire passent à l'arme suivante de leur catégorie (l'équipement est celui de la prochaine apparition).
   const equipRef = useRef({ equipement: p.equipement, sur: p.surEquipement });
@@ -227,9 +234,16 @@ export default function HudArene(p: PropsHudAreneBr) {
       data-effets={p.reglagesHud.interface.effets}
       data-taille={reglMap.taille}
       data-tableau={tab ? "oui" : "non"}
+      data-suspendue={suspendue ? "oui" : undefined}
       style={{ "--echelle-hud": p.reglagesHud.interface.echelle } as CSSProperties}
     >
       <ZoneVive message={vive.courant} />
+      {/* (v11) partie suspendue et souris reprise : le menu ne couvre plus l'écran, ce bandeau dit pourquoi tout est figé */}
+      {suspendue && !pause && (
+        <p className={styles.bandeauPause} role="status">
+          Partie en pause{hud.suspenduePar ? ` · ${hud.suspenduePar}` : ""}{(hud.compteS ?? 0) > 0 ? ` · reprise dans ${hud.compteS}…` : t("pauseZ") ? ` · ${t("pauseZ")} pour reprendre` : ""}
+        </p>
+      )}
 
       {combat && hud.pv <= 30 && <div className={styles.sang} aria-hidden="true" />}
       {combat && rupture && <div className={styles.vignetteBouclier} aria-hidden="true" />}
@@ -447,6 +461,8 @@ export default function HudArene(p: PropsHudAreneBr) {
           voix={p.voix} surVoix={p.surVoix} voixErreur={p.voixErreur} toucheParler={t("parler")}
           touches={p.touches} surTouches={p.surTouches} reglagesHud={p.reglagesHud} surReglagesHud={p.surReglagesHud}
           mode={zombies ? "zombies" : br ? "br" : "arene"} elimine={spectateur}
+          suspension={zombies ? { actif: suspendue, par: hud.suspenduePar ?? "", compteS: hud.compteS ?? 0, enPartie: enPartieZ, refus: hud.refusPause ?? "" } : undefined}
+          surPauseZ={p.surPauseZ} touchePause={t("pauseZ")}
         />
       )}
     </div>

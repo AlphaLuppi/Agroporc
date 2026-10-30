@@ -6,6 +6,7 @@ import { construireCircuits, etatVoiture, flotte, T0_MS, type VoiturePnj } from 
 import { ABANDON_MS, SILENCE_CONDUCTEUR_MS } from "./garage";
 import type { CauseMort } from "./protocole";
 import type { ContexteSalle, JoueurSalle, Sortie } from "./match-contexte";
+import { CONTEXTE_SANS_BOTS } from "./contexte-sans-bots";
 import { creerServiceVehicules } from "./match-vehicules";
 import { copierEquipement, EQUIPEMENT_DEFAUT, OEIL_SIEGE, SILHOUETTE, type MessageClient, type Vec3 } from "./protocole";
 import { positionSiege, VEH } from "./vehicule";
@@ -34,6 +35,7 @@ function creerContexte() {
   const etat = { phaseJeu: true };
   const morts: Mort[] = [];
   const ctx: ContexteSalle = {
+    ...CONTEXTE_SANS_BOTS,
     monde, alea: () => 0.5,
     enPhaseJeu: () => etat.phaseJeu,
     joueur: (id) => joueurs.get(id),

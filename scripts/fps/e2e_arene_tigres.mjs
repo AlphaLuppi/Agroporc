@@ -228,21 +228,97 @@ function trouverPiste(longueur = 26) {
 }
 
 /**
+ * Chemin à pied de `de` à `a` (plan XZ) pour `poser` : A* sur une grille de 2 m bornée à la boîte des deux points élargie de 60 m ; les abords
+ * des routes (8 m, voitures PNJ) coûtent 3 fois plus, les cases à moins de 2 m d'un bâtiment 40 fois plus (on ne s'y pose jamais, mais un départ
+ * coincé contre un mur en sort). Simulé hors ligne sur l'anneau d'apparition : toujours un chemin, en 1 s au plus. Renvoie la suite des centres
+ * de cases (sans `de`, `a` en dernier), ou null.
+ * Avec `eviter` ({ c: [x, z], r }), les cases à moins de `r` m de `c` coûtent comme un bâtiment (un tigre tapi s'alerte à 20 m) : le chemin les contourne.
+ */
+const CASE_CHEMIN = 2;
+const COUT_BLOQUE = 40;
+const cacheCases = new Map();
+function coutCase(i, j, eviter = null) {
+  if (eviter && Math.hypot(i * CASE_CHEMIN - eviter.c[0], j * CASE_CHEMIN - eviter.c[1]) <= eviter.r) return COUT_BLOQUE;
+  const k = `${i},${j}`;
+  let c = cacheCases.get(k);
+  if (c === undefined) {
+    const x = i * CASE_CHEMIN, z = j * CASE_CHEMIN;
+    c = distBatiments(x, z) < 2 ? COUT_BLOQUE : distRoutes(x, z) < 8 ? 3 : 1;
+    cacheCases.set(k, c);
+  }
+  return c;
+}
+const caseBloquee = (p, eviter = null) => coutCase(Math.round(p[0] / CASE_CHEMIN), Math.round(p[1] / CASE_CHEMIN), eviter) >= COUT_BLOQUE;
+function cheminAPied(de, a, eviter = null) {
+  const ci = (v) => Math.round(v / CASE_CHEMIN);
+  const [i0, j0, i1, j1] = [ci(de[0]), ci(de[1]), ci(a[0]), ci(a[1])];
+  const marge = 30;
+  const imin = Math.min(i0, i1) - marge, imax = Math.max(i0, i1) + marge, jmin = Math.min(j0, j1) - marge, jmax = Math.max(j0, j1) + marge;
+  const cle = (i, j) => (i - imin) + (j - jmin) * (imax - imin + 1);
+  const g = new Map(), parent = new Map();
+  const tas = [];
+  const pousser = (n) => { tas.push(n); let k = tas.length - 1; while (k > 0) { const p = (k - 1) >> 1; if (tas[p].f <= tas[k].f) break; [tas[p], tas[k]] = [tas[k], tas[p]]; k = p; } };
+  const extraire = () => { const r = tas[0], d = tas.pop(); if (tas.length) { tas[0] = d; let k = 0; for (;;) { const l = 2 * k + 1, rr = l + 1; let m = k; if (l < tas.length && tas[l].f < tas[m].f) m = l; if (rr < tas.length && tas[rr].f < tas[m].f) m = rr; if (m === k) break; [tas[m], tas[k]] = [tas[k], tas[m]]; k = m; } } return r; };
+  const h = (i, j) => Math.hypot(i - i1, j - j1);
+  g.set(cle(i0, j0), 0);
+  pousser({ i: i0, j: j0, f: h(i0, j0) });
+  while (tas.length) {
+    const n = extraire();
+    const kn = cle(n.i, n.j);
+    if (n.i === i1 && n.j === j1) {
+      const res = [];
+      for (let k = kn; k !== undefined && k !== cle(i0, j0); k = parent.get(k)) {
+        const i = (k % (imax - imin + 1)) + imin, j = Math.floor(k / (imax - imin + 1)) + jmin;
+        res.push([i * CASE_CHEMIN, j * CASE_CHEMIN]);
+      }
+      res.reverse();
+      res.push([a[0], a[1]]);
+      return res;
+    }
+    const gn = g.get(kn);
+    if (n.f > gn + h(n.i, n.j) + 1e-9) continue;
+    for (let di = -1; di <= 1; di++) for (let dj = -1; dj <= 1; dj++) {
+      if (!di && !dj) continue;
+      const i = n.i + di, j = n.j + dj;
+      if (i < imin || i > imax || j < jmin || j > jmax) continue;
+      const fin = i === i1 && j === j1;
+      const gg = gn + Math.hypot(di, dj) * (fin ? 1 : coutCase(i, j, eviter));
+      const k = cle(i, j);
+      if (gg < (g.get(k) ?? Infinity)) { g.set(k, gg); parent.set(k, kn); pousser({ i, j, f: gg + h(i, j) }); }
+    }
+  }
+  return null;
+}
+
+/**
  * Pose `j` en `pos` : `teleporter` ne change que la position CLIENT, et le serveur n'accepte un état que s'il reste dans la limite
  * de son budget de distance (v8 : `VITESSE_MAX_H_M_S` × temps écoulé, plafonné à `BUDGET_ARENE_S` = 0,5 s, + 1 m : 10,5 m). Un saut est donc
- * découpé en étapes de 9 m (posées loin des routes : une voiture PNJ tue), chacune attendue chez `autre` (qui voit `j` là où le serveur l'a accepté).
- * Le serveur ne connaît que ces étapes (pas le trajet entre elles) : avec `eviter` (cf. `pointLibre`), aucune n'est posée près de `eviter.c`.
+ * découpé en étapes de 9 m le long d'un chemin à pied (`cheminAPied`, comme e2e_arene_v2.mjs : hors des bâtiments, loin des routes autant que possible : une
+ * voiture PNJ tue), chacune attendue chez `autre` (qui voit `j` là où le serveur l'a accepté). Avec `eviter` (cf. `cheminAPied`), le chemin contourne `eviter.c`.
+ * (Avant, chaque étape était ramenée au point libre le plus proche par `pointLibre` : quand la droite vers la cible traversait une bande de route,
+ * le point libre se trouvait de l'autre côté, derrière le joueur, et la marche oscillait sur place : 19 → 22 → 21 → 20 → 19 m.)
  */
 async function poser(j, autre, pos, tolerance = 2.5, eviter = null) {
   const idJ = await j.id();
   let vu = null;
   const PAS = 9;
-  for (let etape = 0; etape < 60; etape++) {
+  const depart = (await j.jeu()).p;
+  const chemin = (Math.hypot(pos[0] - depart[0], pos[2] - depart[2]) > PAS && cheminAPied([depart[0], depart[2]], [pos[0], pos[2]], eviter)) || [[pos[0], pos[2]]];
+  let idx = 0;
+  /** dernières positions (diagnostic du « n'arrive pas ») */
+  const trace = [];
+  for (let etape = 0; etape < 80; etape++) {
     const moi = (await j.jeu()).p;
-    const reste = Math.hypot(pos[0] - moi[0], pos[2] - moi[2]);
-    const k = reste > PAS ? PAS / reste : 1;
-    let cible = [moi[0] + (pos[0] - moi[0]) * k, pos[1], moi[2] + (pos[2] - moi[2]) * k];
-    if (k < 1) { const [lx, lz] = pointLibre(cible[0], cible[2], eviter); cible = [lx, pos[1], lz]; } // étape intermédiaire : loin des routes
+    trace.push(`${moi[0].toFixed(0)},${moi[2].toFixed(0)}`);
+    const loin = (q) => Math.hypot(q[0] - moi[0], q[1] - moi[2]);
+    let m = idx;
+    while (m + 1 < chemin.length && loin(chemin[m + 1]) <= PAS) m++;
+    while (m > idx && m !== chemin.length - 1 && caseBloquee(chemin[m], eviter)) m--;
+    const fin = m === chemin.length - 1;
+    let cible = fin ? [pos[0], pos[1], pos[2]] : [chemin[m][0], pos[1], chemin[m][1]];
+    const d = Math.hypot(cible[0] - moi[0], cible[2] - moi[2]);
+    const k = d > PAS ? PAS / d : 1;
+    if (k < 1) cible = [moi[0] + (cible[0] - moi[0]) * k, pos[1], moi[2] + (cible[2] - moi[2]) * k]; // hors du chemin : pas en ligne droite
     let accepte = false;
     for (let essai = 0; essai < 3 && !accepte; essai++) {
       await j.teleporter(cible);
@@ -253,12 +329,12 @@ async function poser(j, autre, pos, tolerance = 2.5, eviter = null) {
     }
     if (!accepte) {
       const sj = await j.jeu();
-      const recents = j.recus.filter((r) => ["mort", "apparition", "erreur", "match"].includes(r.t) && Date.now() - r.a < 90_000).map((r) => `${r.t}${r.m.cause ? `:${r.m.cause}` : ""}@-${((Date.now() - r.a) / 1000).toFixed(0)}s`);
+      const recents = j.recus.filter((r) => ["mort", "apparition", "erreur", "match"].includes(r.t) && (r.t !== "apparition" || r.m.id === idJ) && Date.now() - r.a < 90_000).map((r) => `${r.t}${r.m.cause ? `:${r.m.cause}` : ""}@-${((Date.now() - r.a) / 1000).toFixed(0)}s`);
       throw new Error(`${j.nom} ne peut pas être posé en (${cible.map((x) => x.toFixed(1))}) : vu en ${vu ? `${vu.p.map((x) => x.toFixed(1))} (vivant ${vu.vivant})` : "nulle part"} par ${autre.nom} ; ${j.nom} côté client : p ${sj.p.map((x) => x.toFixed(1))}, vivant ${sj.vivant}, pv ${sj.pv} ; messages récents ${recents.join(" ")}`);
     }
-    if (k === 1) return vu;
+    if (k === 1) { idx = m + 1; if (fin) return vu; }
   }
-  throw new Error(`${j.nom} n'arrive pas en (${pos.map((x) => x.toFixed(1))})`);
+  throw new Error(`${j.nom} n'arrive pas en (${pos.map((x) => x.toFixed(1))}) ; dernières positions : ${trace.slice(-12).join(" → ")}${eviter ? ` ; zone évitée ${JSON.stringify(eviter)}` : ""}`);
 }
 
 // ---------------------------------------------------------------------------------------------------------------- étapes

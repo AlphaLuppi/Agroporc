@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 /**
  * Test de bout en bout du mode Battle Royale de l'arène FPS (vue Palantir) : TROIS navigateurs Chromium headless (Alice l'hôte, Bob, Cora) contre un
- * `serveur-fps` local aux durées raccourcies (décompte plafonné, avion 12 s, altitude 140 m, zone à l'échelle 0,3, 300 objets, partie comptée dès
+ * `serveur-fps` local aux durées raccourcies (décompte plafonné, avion 12 s, altitude 140 m, zone à l'échelle 0,5, 300 objets, partie comptée dès
  * quelques secondes, statistiques dans un fichier temporaire) et un `next dev` local, pilotés par `window.__arene`.
  *
  * Scénario (chaque étape imprime OK / ÉCHEC, des captures sont prises en route) :
  *  1. vue 3D (code « myrtille »), les trois cartes de mode, choix du mode « Battle Royale » par les trois joueurs, lobby : liste, badge « hôte », bouton
- *     « Lancer la partie » actif pour l'hôte seulement
+ *     « Lancer la partie » actif pour l'hôte seulement (v11 : seule, Alice peut lancer avec 11 bots ; à zéro bot le bouton se grise et le dit)
  *  2. Bob ne peut pas lancer (le minimum de deux joueurs est testé à l'étape 1), l'hôte lance : décompte écourté quand tous ont rejoint, les trois montent dans l'avion
  *  3. saut (Alice et Bob au milieu du trajet, Cora éjectée à l'arrivée) et atterrissage : message `saut`, entrées `chute`, parachute, message `atterri`,
  *     invulnérabilité d'atterrissage
@@ -25,7 +25,7 @@
  *             faire coïncider avec NEXT_PUBLIC_FPS_WS_URL d'un Next déjà lancé), E2E_PAGE (page qui monte le code « myrtille », défaut une 404 : aucune
  *             lecture de la base), E2E_HEADED=1, E2E_GARDER=1 (laisse les serveurs lancés par le script), E2E_JUSQUA=5 (s'arrête après l'étape 5),
  *             E2E_SEULES=3,4 (ne joue que ces étapes ; la 1 et la 2 sont toujours jouées), E2E_DEBUG=1 (trace des gestes),
- *             E2E_ZONE_ECHELLE (échelle de durée de la zone, défaut 0.3 : la tempête dure ≈ 160 s ; 0.08 ≈ 43 s est trop court sous le rendu
+ *             E2E_ZONE_ECHELLE (échelle de durée de la zone, défaut 0.5 : la tempête dure ≈ 270 s, le 6b (venir regarder) tient même sous un rendu lent ; 0.08 ≈ 43 s est trop court sous le rendu
  *             logiciel), E2E_VALIDE (durée minimale d'une partie comptée, ms, défaut 5000), E2E_DECOMPTE (plafond du décompte, ms, défaut 45000 : il
  *             se termine dès que les trois ont rejoint), E2E_FIN (affichage de la fin avant le retour au lobby, ms, défaut 40000), E2E_STATS (fichier des statistiques du serveur lancé
  *             par le script, défaut <E2E_OUT>/stats-br.json, supprimé au départ).
@@ -54,10 +54,10 @@ const SORTIE = process.env.E2E_OUT ?? join(tmpdir(), "pdj-e2e-br");
 const PAGE = process.env.E2E_PAGE ?? "/arene-e2e-introuvable";
 /**
  * Échelle de durée de la zone. 0,08 (la tempête dure 43 s) laisse à peine le temps d'atterrir : sous le rendu logiciel, l'atterrissage de Bob et d'Alice
- * (≈ 22 s après le décollage) tombe déjà dans le troisième palier, et le duel n'y tient plus. 0,3 donne ≈ 160 s de tempête : atterrir, ramasser une arme
+ * (≈ 22 s après le décollage) tombe déjà dans le troisième palier, et le duel n'y tient plus. 0,5 donne ≈ 270 s de tempête (0,3 ≈ 160 s suffit sur une machine libre, mais la partie finit avant le 6b quand le rendu est lent) : atterrir, ramasser une arme
  * et tuer Bob se font avant la fin de la tempête, qui tue Cora (loin du centre) avant la fermeture totale.
  */
-const ECHELLE_ZONE = process.env.E2E_ZONE_ECHELLE ?? "0.3";
+const ECHELLE_ZONE = process.env.E2E_ZONE_ECHELLE ?? "0.5";
 /** Durée minimale (ms) pour qu'une partie compte dans les statistiques (le serveur a 60 s par défaut). */
 const VALIDE = process.env.E2E_VALIDE ?? "5000";
 const FIN = process.env.E2E_FIN ?? "40000";
@@ -323,7 +323,7 @@ try {
       env: {
         ...process.env, PORT: String(portWs), SCENE_JSON: join(RACINE, "public/agroparc/scene.json"),
         PDJ_FPS_BR_DECOMPTE_MS: DECOMPTE, PDJ_FPS_BR_VOL_MS: "12000", PDJ_FPS_BR_ALTITUDE: "140", PDJ_FPS_BR_ZONE_ECHELLE: ECHELLE_ZONE,
-        PDJ_FPS_BR_OBJETS: "300", PDJ_FPS_BR_VALIDE_MS: VALIDE, PDJ_FPS_BR_FIN_MS: FIN, PDJ_FPS_BR_STATS: FICHIER_STATS,
+        PDJ_FPS_CREATION_TIC_MAX_MS: "1000", PDJ_FPS_BR_OBJETS: "300", PDJ_FPS_BR_VALIDE_MS: VALIDE, PDJ_FPS_BR_FIN_MS: FIN, PDJ_FPS_BR_STATS: FICHIER_STATS,
       },
     });
     await attendreHttp(`http://localhost:${portWs}/sante`, 20_000, "serveur-fps").catch((e) => { throw new Error(`${e.message}\n${srv.journal.join("")}`); });
@@ -402,9 +402,19 @@ try {
     }
     await choisirBr(A);
     idA = await A.id();
-    // seule dans le lobby : le minimum de deux joueurs n'est pas atteint, le bouton reste désactivé
+    // seule dans le lobby : depuis la v11 elle peut lancer avec des bots (11 par défaut, `salons.listes.br` publie `botsMax`) ; à zéro bot le minimum de deux
+    // joueurs n'est pas atteint : le bouton se grise et dit pourquoi (la partie à trois humains de ce script n'a aucun bot)
     const lancerA = A.page.getByRole("button", { name: /Lancer la partie/ });
-    verifier(!(await lancerA.isEnabled()), "le bouton « Lancer la partie » est actif pour un lobby d'un seul joueur");
+    const reglageBots = A.page.locator("aside[aria-label='Battle Royale'] fieldset", { hasText: "Bots" });
+    await reglageBots.waitFor({ state: "visible", timeout: 10_000 }).catch(() => { throw new Error("le réglage « Bots » n'apparaît pas pour Alice seule"); });
+    verifier((await reglageBots.locator("output").first().innerText()).trim() === "11", "11 bots attendus par défaut pour un joueur seul");
+    await jusqua(async () => lancerA.isEnabled(), { ms: 8000, quoi: "bouton « Lancer la partie » actif pour un joueur seul avec 11 bots" });
+    await reglageBots.locator("input[type=range]").evaluate((el) => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(el, "0");
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await jusqua(async () => !(await lancerA.isEnabled()), { ms: 5000, quoi: "le bouton « Lancer la partie » devrait se griser à zéro bot pour un lobby d'un seul joueur" });
+    verifier(/ajoutez des bots/i.test((await A.page.locator("aside[aria-label='Battle Royale']").innerText()).replace(/\s+/g, " ")), "le lobby ne dit pas d'ajouter des bots");
     await choisirBr(B);
     await choisirBr(C);
     idB = await B.id();
@@ -643,13 +653,13 @@ try {
     await jusqua(async () => !(await B.jeu()), { ms: 10_000, quoi: "jeu démonté chez Bob" });
     await B.page.locator("aside[aria-label='Battle Royale']").waitFor({ state: "visible", timeout: 8000 });
     // le lobby propose de regarder ou de créer sa partie, et liste les parties
-    await B.page.getByRole("button", { name: "Créer ma partie" }).waitFor({ state: "visible", timeout: 8000 });
-    verifier(await B.page.getByRole("button", { name: "Regarder la partie" }).isVisible(), "pas de bouton « Regarder la partie » chez Bob");
+    await B.page.getByRole("button", { name: "Créer ma partie", exact: true }).waitFor({ state: "visible", timeout: 8000 });
+    verifier(await B.page.getByRole("button", { name: "Regarder la partie", exact: true }).isVisible(), "pas de bouton « Regarder la partie » chez Bob");
     const premiere = (await B.etat()).br?.partie;
     verifier(premiere === "br1", `partie de Bob avant : ${premiere}`);
     await B.capture("06b-lobby-partie-en-cours-B-1280");
     // nouvelle partie : Bob en est l'hôte, la liste montre les deux parties
-    await B.page.getByRole("button", { name: "Créer ma partie" }).click();
+    await B.page.getByRole("button", { name: "Créer ma partie", exact: true }).click();
     await jusqua(async () => (await B.etat()).br?.partie && (await B.etat()).br.partie !== "br1", { ms: 10_000, quoi: "Bob dans sa nouvelle partie" });
     const nouvelle = (await B.etat()).br.partie;
     await jusqua(async () => (await B.partie())?.hote === idB && (await B.partie())?.phase === "lobby", { ms: 10_000, quoi: "Bob hôte du lobby de sa partie" });
@@ -662,6 +672,12 @@ try {
     // « Regarder » la partie d'Alice : Bob y retourne, puis le jeu se monte en spectateur
     await B.ev((id) => window.__arene.regarderBr(id), "br1");
     await jusqua(async () => (await B.etat()).br?.partie === "br1", { ms: 10_000, quoi: "Bob de retour dans la partie d'Alice" });
+    // le jeu de spectateur se monte sans la souris (nouveau canevas) : le menu pause « Prêt ? JOUER » couvre l'écran « Spectateur » tant qu'on ne le prend pas
+    await jusqua(async () => {
+      if ((await B.jeu())?.verrouille) return true;
+      await B.page.getByRole("button", { name: /^jouer$/i }).first().evaluate((e) => e.click()).catch(() => null);
+      return false;
+    }, { ms: 40_000, quoi: "prise de la souris de Bob spectateur" });
     await B.page.locator("section[aria-label='Spectateur']").waitFor({ state: "visible", timeout: 40_000 }).catch(() => { throw new Error("l'écran « Spectateur » ne s'affiche pas chez Bob venu regarder"); });
     verifier(B.envoyesDe("regarder", depuis).length === 1, `Bob a envoyé ${B.envoyesDe("regarder", depuis).length} regarder`);
     verifier(B.msgs("spectateur", depuis).length === 1, "Bob n'a pas reçu `spectateur`");
@@ -682,7 +698,8 @@ try {
 
   // ------------------------------------------------------------------ 7. tempête
   await etape("7. la tempête : dégâts hors zone sans tueur, mort de Cora par la tempête (cause `tempete`)", async () => {
-    const depuis = Date.now() - 60_000;
+    // depuis le début du script : le `soin{kill}` de l'étape 5 est compté (un seul), quelle que soit la durée des étapes 6 et 6b sous un rendu lent
+    const depuis = 0;
     // Alice se tient près du centre du prochain cercle : elle ne prend pas la tempête
     const garde = async () => {
       const s = await A.jeu();

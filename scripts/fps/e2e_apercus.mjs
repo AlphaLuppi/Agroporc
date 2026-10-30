@@ -49,7 +49,7 @@ function creerBot(url, pseudo) {
     if (m.t === "snap") { const moi = m.j.find((e) => e.id === b.id); if (moi) b.p = moi.p; }
   });
   b.envoyer = (m) => ws.send(JSON.stringify(m));
-  b.pret = new Promise((r) => ws.on("open", r)).then(() => b.envoyer({ t: "bonjour", v: 10, pseudo }));
+  b.pret = new Promise((r) => ws.on("open", r)).then(() => b.envoyer({ t: "bonjour", v: 11, pseudo }));
   b.dernier = (t) => [...b.recus].reverse().find((m) => m.t === t);
   b.vider = () => { b.recus = []; };
   // états à 30 Hz tant que `jeu` ; en chute libre (BR), les entrées de chute

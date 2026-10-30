@@ -6,7 +6,7 @@ import { formatDureePartie, formatSurvie, lignesBilanBR, resumeFinBr } from "@/l
 import { formatNombre, secondesAvant } from "@/lib/fps/hud-modele";
 import type { EtatPartieBr, JoueurPublic } from "@/lib/fps/protocole";
 import type { StatsBrRecues } from "../contrats";
-import { pseudoCompteBr, TEXTE_NOM_A_CHOISIR } from "../lobby-modele";
+import { nomAffiche, pseudoCompteBr, TEXTE_NOM_A_CHOISIR, texteNonComptee } from "../lobby-modele";
 import TableauStatsBr from "./TableauStatsBr";
 import styles from "./FinDePartieBR.module.css";
 
@@ -37,6 +37,8 @@ export default function FinDePartieBR({ partie, monId, statsBr = null, maintenan
   const resume = useMemo(() => resumeFinBr(partie.bilan, monId), [partie.bilan, monId]);
   const moi = lignes.find((l) => l.moi) ?? null;
   const dureeMs = partie.bilan?.dureeMs ?? 0;
+  // (v11) une partie avec des bots est de l'entraînement : jamais comptée, et le dit autrement qu'une partie trop courte
+  const avecBots = useMemo(() => lignes.some((l) => l.bot), [lignes]);
 
   // la souris est rendue (sinon « Rejouer » et « Quitter » ne se cliquent pas)
   useEffect(() => {
@@ -68,7 +70,7 @@ export default function FinDePartieBR({ partie, monId, statsBr = null, maintenan
             </p>
           )}
           {dureeMs > 0 && <p className={styles.duree}>Durée de la partie : {formatDureePartie(dureeMs)}</p>}
-          {partie.nonComptee && <p className={styles.nonComptee} role="status">Partie trop courte : non comptée</p>}
+          {(partie.nonComptee || avecBots) && <p className={styles.nonComptee} role="status">{texteNonComptee(avecBots)}</p>}
           {moi && !pseudoCompteBr(moi.pseudo) && <p className={styles.nonComptee}>{TEXTE_NOM_A_CHOISIR}</p>}
         </header>
 
@@ -90,7 +92,7 @@ export default function FinDePartieBR({ partie, monId, statsBr = null, maintenan
                 <td className={styles.placeCol}>{l.vainqueur ? "TOP 1" : `#${l.place}`}</td>
                 <th scope="row" className={styles.joueurCol}>
                   <i className={styles.pastille} style={{ background: l.couleur }} aria-hidden="true" />
-                  <span className={styles.pseudo}>{l.pseudo}</span>{l.moi && <em> (vous)</em>}
+                  <span className={styles.pseudo}>{nomAffiche(l)}</span>{l.moi && <em> (vous)</em>}
                 </th>
                 <td>{formatNombre(l.kills)}</td>
                 <td>{formatNombre(l.degats)}</td>
@@ -153,7 +155,7 @@ export function TableauPartieBr({ joueurs, monId, vivants, total }: PropsTableau
               <tr key={l.id} data-moi={l.id === monId ? "oui" : "non"}>
                 <th scope="row" className={styles.joueurCol}>
                   <i className={styles.pastille} style={{ background: l.couleur }} aria-hidden="true" />
-                  <span className={styles.pseudo}>{l.pseudo}</span>{l.id === monId && <em> (vous)</em>}
+                  <span className={styles.pseudo}>{nomAffiche(l)}</span>{l.id === monId && <em> (vous)</em>}
                 </th>
                 <td>{formatNombre(l.kills)}</td>
               </tr>

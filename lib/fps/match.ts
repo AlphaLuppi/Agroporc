@@ -44,10 +44,11 @@ import { creerServiceTigres } from "./match-tigres";
 import { creerServiceVehicules } from "./match-vehicules";
 import { EQUIPEMENT_DEPART_ZOMBIES, MAIN_DEPART_ZOMBIES, creerServiceZombies, departPour, type OptionsServiceZombies } from "./match-zombies";
 import { REWIND_MELEE_MS, coupVraisemblable } from "./melee";
+import { PASSE_EN_SUSPENSION, Suspension, type OptionsSuspension } from "./suspension";
 import {
   CIBLE_LIVRAISON, CIBLE_TIGRE, CIBLE_TITAN, EQUIPEMENT_DEFAUT, JEU, PLAFONDS, SLOT_DEFAUT, copierEquipement, estIdZombie, estMelee, oeilDe, silhouetteDe,
   type ArmeFeuId, type ArmeId, type ArmeMeleeId, type CauseMort, type EtatJoueurSnap, type Equipement, type InfoMatch, type InfoTueur,
-  type JoueurPublic, type LigneClassement, type LigneStats, type MessageClient, type MessageServeur, type MonstresSnap, type SignalVoix, type SnapZombies, type Slot, type Vec3, type Zone,
+  type JoueurPublic, type LigneClassement, type LigneStats, type MessageClient, type MessageServeur, type ModeSalle, type MonstresSnap, type SignalVoix, type SnapZombies, type Slot, type Vec3, type Zone,
 } from "./protocole";
 import { BUS_C3, avancerBusC3, busEnSnap, armesEnSnap, ecraseParBus, estSurLeToit, ramasserArmeC3, peutMonterSurBus, creerEtatBusC3, type EtatBusC3, type IntervalleBus } from "./bus-c3";
 import { creerFrappe, degatsImpactFrappe, verifierImpactsFrappe, type FrappeEnCours } from "./frappe-aerienne";
@@ -221,6 +222,8 @@ export interface OptionsSalle {
   /** Fenêtres de compensation de latence (ms) : `REWIND_MAX_MS` / `HISTORIQUE_MS` par défaut, `BR.rewindMaxMs` / `BR.historiqueMs` en BR (snap à 10 Hz). */
   rewindMaxMs?: number;
   historiqueMs?: number;
+  /** (v11, zombies) réglages de la suspension de la partie par un joueur (durée maximale, compte à rebours, délai, pause cumulée) ; `SUSPENSION_DEFAUT` sinon. */
+  suspension?: Partial<OptionsSuspension>;
 }
 
 /** Ce que la salle retient d'un joueur en plus de `JoueurSalle` : l'équipement de la PROCHAINE apparition et le slot d'avant. */
@@ -245,6 +248,14 @@ interface PositionCible { p: Vec3; accroupi: boolean }
 export class Salle implements ContexteSalle {
   private readonly table = new Map<string, JoueurSalle>();
   private readonly suivi = new Map<string, SuiviJoueur>();
+  /**
+   * (v11) Horloge virtuelle de la salle : les cinq points d'entrée (`connecter`, `deconnecter`, `reprendre`, `recevoir`, `tic`) reçoivent l'horloge RÉELLE du
+   * serveur et la convertissent en `reel − décalage` AVANT de la transmettre à quoi que ce soit ; tant qu'un joueur a suspendu la partie de zombies, cette
+   * horloge est figée et `tic` ne fait tourner aucun service (cf. `suspension.ts`). Rien d'autre dans `lib/fps` ne lit l'horloge réelle.
+   */
+  private readonly susp: Suspension;
+  /** (v11) la partie de zombies était en cours à la fin du dernier point d'entrée (lancement et fin de partie : pause cumulée remise à zéro, suspension levée) */
+  private zEnCours = false;
   private readonly apparitions: Vec2[];
   private readonly zone: ZoneApparition | null;
   private readonly elsa: ServiceElsa | null;
@@ -295,6 +306,7 @@ export class Salle implements ContexteSalle {
     maintenant: number,
     options: OptionsSalle = {},
   ) {
+    this.susp = new Suspension(options.suspension);
     this.fin = options.zombies || options.br ? null : maintenant + JEU.dureeMatchMs;
     this.rewindMaxMs = options.rewindMaxMs ?? (options.br ? BR.rewindMaxMs : REWIND_MAX_MS);
     this.historiqueMs = options.historiqueMs ?? (options.br ? BR.historiqueMs : HISTORIQUE_MS);
@@ -435,7 +447,7 @@ export class Salle implements ContexteSalle {
     cible.munSpeciale = 0;
     cible.memoSante = null;
     const tueur = par && par !== cible ? par : null;
-    if (tueur) this.lierVoix(cible.id, tueur.id, maintenant);
+    if (tueur && !tueur.bot && !cible.bot) this.lierVoix(cible.id, tueur.id, maintenant); // un bot n'a pas de micro
     const sorties: Sortie[] = [{
       a: "tous",
       m: {
@@ -480,7 +492,7 @@ export class Salle implements ContexteSalle {
     cible.memoSante = null;
     this.mortT.set(cible.id, maintenant);
     const tueur = par && par !== cible ? par : null;
-    if (tueur) this.lierVoix(cible.id, tueur.id, maintenant);
+    if (tueur && !tueur.bot && !cible.bot) this.lierVoix(cible.id, tueur.id, maintenant); // un bot n'a pas de micro
     const valide = tueur !== null && br.tueurValide(tueur, maintenant);
     const sorties: Sortie[] = [{
       a: "tous",
@@ -599,9 +611,16 @@ export class Salle implements ContexteSalle {
     return { numero: this.numero, fin: this.fin, objectif: this.zombies || this.br ? 0 : JEU.objectifKills, phase: this.phase, prochain: this.prochain };
   }
   /** (v5) Résumé de la partie de zombies (message `salons`, `/sante`) ; null dans l'arène. */
-  resumeZombies(): ResumeZombies | null { return this.zombies ? this.zombies.resume() : null; }
+  resumeZombies(): ResumeZombies | null {
+    if (!this.zombies) return null;
+    return this.susp.active ? { ...this.zombies.resume(), suspendue: true } : this.zombies.resume();
+  }
+  /** (v11) La partie de zombies est suspendue par un joueur (tout est figé). */
+  suspendue(): boolean { return this.susp.active !== null; }
   /** (v8) Résumé de la partie Battle Royale (message `salons`, `/sante`) ; null hors salle BR. */
   resumeBr(): ResumeBr | null { return this.br ? this.br.resume() : null; }
+  /** (v11) Mode de la salle, déduit des options `zombies` / `br` (le registre de parties du serveur en a besoin pour router, sans les connaître). */
+  mode(): ModeSalle { return this.zombies ? "zombies" : this.br ? "br" : "arene"; }
   nombreJoueurs(): number { return this.table.size; }
   nombreEnJeu(): number { let n = 0; for (const j of this.table.values()) if (j.enJeu) n++; return n; }
   /** État interne d'un joueur (lecture seule : tests et supervision). */
@@ -613,6 +632,8 @@ export class Salle implements ContexteSalle {
       id: j.id, pseudo: j.pseudo, couleur: j.couleur, enJeu: j.enJeu, kills: j.kills, morts: j.morts, ping: j.ping,
       ...(j.serie > 0 ? { serie: j.serie } : {}),
       ...(j.voix ? { voix: true } : {}),
+      // (v11) bot du BR : étiquette BOT, ni voix ni ping
+      ...(j.bot ? { bot: true as const } : {}),
       // BR : éliminé ou spectateur venu regarder (canal vocal des spectateurs)
       ...(this.br && j.enJeu && !j.vivant ? { spec: true as const } : {}),
     }));
@@ -643,7 +664,8 @@ export class Salle implements ContexteSalle {
 
   // ---------- connexion ----------
 
-  connecter(id: string, pseudo: string, maintenant: number): Sortie[] {
+  connecter(id: string, pseudo: string, reel: number): Sortie[] {
+    const maintenant = this.susp.virtuel(reel);
     if (this.table.has(id)) return [];
     // la capacité de JEU (16) se contrôle à `rejoindre` : les spectateurs de la vue 3D ne doivent pas la saturer
     // (zombies : la salle entière, lobby compris, est limitée à `ZOMBIES.joueursMax`)
@@ -651,6 +673,26 @@ export class Salle implements ContexteSalle {
     if (this.table.size >= (this.zombies ? ZOMBIES.joueursMax : this.br ? BR.joueursMax : JEU.connexionsMax)) {
       return [{ a: id, m: { t: "erreur", code: "plein", message: "Le serveur de l'arène est saturé, réessayez plus tard." } }];
     }
+    const j = this.nouveauJoueur(id, pseudo, maintenant);
+    const couleur = j.couleur;
+    return [
+      { a: id, m: { t: "bienvenue", id, couleur, joueurs: this.joueursPublics(), match: this.infoMatch(), maintenant } },
+      { a: "tous", sauf: id, m: { t: "presence", joueurs: this.joueursPublics() } },
+      // zombies : le nouvel arrivant entre dans le lobby, tout le monde apprend la nouvelle liste
+      ...(this.zombies ? this.zombies.arrivee(j, maintenant) : []),
+      // BR : idem, le nouvel arrivant entre dans le lobby (en attente si une partie est en cours)
+      ...(this.br ? this.br.arrivee(j, maintenant) : []),
+      // zombies : l'état de la suspension juste après le `bienvenue` (qui cale l'horloge du client), suspendue ou non
+      ...this.sortiesZpauseArrivee(id, reel),
+    ];
+  }
+
+  /**
+   * Fabrique d'un membre de la table : pseudo rendu unique, première couleur libre, équipement de départ (copie propre), compteurs à zéro, ET son
+   * suivi (`recevoirEtat` lit toujours `suivi`). Partagée par `connecter` (humain) et `ajouterBot` : un bot absent de `suivi` ferait lever
+   * `recevoirEtat`. Ne l'ajoute ni à la table ni au suivi : voir `inscrire`.
+   */
+  private nouveauJoueur(id: string, pseudo: string, maintenant: number): JoueurSalle {
     const pris = new Set([...this.table.values()].map((j) => j.pseudo.toLocaleLowerCase("fr")));
     const couleursPrises = new Set([...this.table.values()].map((j) => j.couleur));
     const couleur = PALETTE.find((c) => !couleursPrises.has(c)) ?? couleurAuDela(couleursPrises);
@@ -669,17 +711,39 @@ export class Salle implements ContexteSalle {
     };
     this.table.set(id, j);
     this.suivi.set(id, { prochain: copierEquipement(EQUIPEMENT_DEFAUT), precedent: "principale", budgetH: 0, budgetV: 0, budgetT: maintenant, partiel: false });
-    return [
-      { a: id, m: { t: "bienvenue", id, couleur, joueurs: this.joueursPublics(), match: this.infoMatch(), maintenant } },
-      { a: "tous", sauf: id, m: { t: "presence", joueurs: this.joueursPublics() } },
-      // zombies : le nouvel arrivant entre dans le lobby, tout le monde apprend la nouvelle liste
-      ...(this.zombies ? this.zombies.arrivee(j, maintenant) : []),
-      // BR : idem, le nouvel arrivant entre dans le lobby (en attente si une partie est en cours)
-      ...(this.br ? this.br.arrivee(j, maintenant) : []),
-    ];
+    return j;
   }
 
-  deconnecter(id: string, maintenant: number): Sortie[] {
+  // ---------- bots du Battle Royale (v11) ----------
+
+  /** Compteur des ids de bots, remis à zéro quand plus aucun bot ne reste (un compteur par salle et par partie). */
+  private compteurBots = 0;
+
+  nouvelIdBot(): string { return `b${++this.compteurBots}`; }
+
+  ajouterBot(pseudo: string, maintenant: number): JoueurSalle {
+    const j = this.nouveauJoueur(this.nouvelIdBot(), pseudo, maintenant);
+    j.bot = true;
+    return j;
+  }
+
+  retirerBot(id: string): void {
+    const j = this.table.get(id);
+    if (!j || !j.bot) return;
+    this.table.delete(id);
+    this.suivi.delete(id);
+    this.mortT.delete(id);
+    for (const k of this.liensVoix.keys()) if (k.split("|").includes(id)) this.liensVoix.delete(k);
+    this.presenceSale = true;
+    if (![...this.table.values()].some((o) => o.bot)) this.compteurBots = 0;
+  }
+
+  /** Membres non-bots (lobby et spectateurs compris) : la partie reste ouverte tant qu'il en reste un. */
+  nombreHumains(): number { let n = 0; for (const j of this.table.values()) if (!j.bot) n++; return n; }
+  nombreBots(): number { return this.table.size - this.nombreHumains(); }
+
+  deconnecter(id: string, reel: number): Sortie[] {
+    const maintenant = this.susp.virtuel(reel);
     const j = this.table.get(id);
     if (!j) return [];
     // le siège est libéré AVANT de retirer le joueur (voiture arrêtée, `sieges` diffusé) ; un pilote laisse le titan s'éteindre
@@ -691,7 +755,7 @@ export class Salle implements ContexteSalle {
     const sortieZombies = this.zombies ? this.zombies.liberer(j, maintenant) : [];
     // BR : idem (éliminé s'il était en partie, hôte suivant, victoire éventuelle) ; `j` est l'objet déjà retiré de la table
     const sortieBr = this.br ? this.br.liberer(j, maintenant) : [];
-    return [...liberation, this.presence(), ...sortieZombies, ...sortieBr];
+    return this.apresPoint(reel, [...liberation, this.presence(), ...sortieZombies, ...sortieBr]);
   }
 
   /**
@@ -701,7 +765,8 @@ export class Salle implements ContexteSalle {
    * `pseudo` : celui du `bonjour` de la reconnexion (un renommage fait pendant la coupure n'est pas mis en file par le client) ; s'il diffère,
    * il est appliqué comme un message `pseudo` et la `presence` qui en résulte part à toute la salle.
    */
-  reprendre(id: string, maintenant: number, pseudo?: unknown): Sortie[] {
+  reprendre(id: string, reel: number, pseudo?: unknown): Sortie[] {
+    const maintenant = this.susp.virtuel(reel);
     const j = this.table.get(id);
     if (!j) return [];
     const renomme = typeof pseudo === "string" && pseudo !== j.pseudo ? this.renommer(j, pseudo, maintenant) : [];
@@ -719,14 +784,32 @@ export class Salle implements ContexteSalle {
         },
       });
     }
+    sorties.push(...this.sortiesZpauseArrivee(id, reel));
     return sorties;
   }
 
   // ---------- messages des clients ----------
 
-  recevoir(id: string, msg: MessageClient, maintenant: number): Sortie[] {
+  recevoir(id: string, msg: MessageClient, reel: number): Sortie[] {
     const j = this.table.get(id);
     if (!j || !msg || typeof msg !== "object") return [];
+    if (msg.t === "pauseZ") return this.apresPoint(reel, this.pauseZ(j, msg.actif, reel));
+    // suspendue : liste BLANCHE (le reste est jeté, aucun service ne tourne sans horloge)
+    // exception : l'ARRÊT d'un maintien (`reanimer{cible:null}`, `reparer{fenetre:null}`) passe, car il ne fait que relâcher. Le client le
+    // envoie justement en recevant `zpause{actif:true}` (`toutRelacher`), salle déjà suspendue : jeté, la relève ou la repose tenue côté serveur
+    // survivrait à la suspension et s'achèverait à la levée sans que E soit tenue (il ne lit aucune horloge, `t` n'y sert à rien).
+    if (this.susp.active && PASSE_EN_SUSPENSION[msg.t] !== true && !this.estArretDeMaintien(msg)) return [];
+    return this.apresPoint(reel, this.recevoirJeu(j, msg, this.susp.virtuel(reel)));
+  }
+
+  /** Message qui ne fait que RELÂCHER un maintien de E (relève ou planches) : seul à agir encore salle suspendue en dehors de la liste blanche. */
+  private estArretDeMaintien(msg: MessageClient): boolean {
+    return (msg.t === "reanimer" && typeof msg.cible !== "string") || (msg.t === "reparer" && typeof msg.fenetre !== "string");
+  }
+
+  /** Aiguillage des messages d'un joueur (horloge virtuelle déjà appliquée). */
+  private recevoirJeu(j: JoueurSalle, msg: MessageClient, maintenant: number): Sortie[] {
+    const id = j.id;
     switch (msg.t) {
       case "pseudo": return this.renommer(j, msg.pseudo, maintenant);
       case "rejoindre":
@@ -1471,7 +1554,10 @@ export class Salle implements ContexteSalle {
 
   // ---------- temps ----------
 
-  tic(maintenant: number): Sortie[] {
+  tic(reel: number): Sortie[] {
+    // suspendue : plus rien ne tourne (aucun service, aucune horloge de jeu), seulement le compte à rebours et les plafonds de la suspension
+    if (this.susp.active) return this.ticSuspendue(reel);
+    const maintenant = this.susp.virtuel(reel);
     const dt = Math.max(0, (maintenant - this.dernierTicT) / 1000);
     this.dernierTicT = maintenant;
     const sorties: Sortie[] = [];
@@ -1566,11 +1652,12 @@ export class Salle implements ContexteSalle {
     for (const j of this.table.values()) {
       if (j.enJeu && !j.vivant && j.reapparitionT !== null && maintenant >= j.reapparitionT) {
         sorties.push(this.placer(j, maintenant));
-      } else if (!this.zombies && j.enJeu && j.vivant && maintenant - j.etatT > (this.br ? BR.inactifMs : INACTIF_MS) && !this.br?.enVol(j.id)) {
+      } else if (!this.zombies && !j.bot && j.enJeu && j.vivant && maintenant - j.etatT > (this.br ? BR.inactifMs : INACTIF_MS) && !this.br?.enVol(j.id)) {
         // (v8) pas en zombies : un onglet caché ou une coupure (reprise de 20 s, cf. serveur-fps) ne fait pas perdre la partie ; immobile,
         // le joueur finit à terre sous les griffes comme dans BO1, et une connexion vraiment morte est fermée par le ping du serveur
         // plus aucun état accepté : onglet gelé ou connexion zombie. Sinon il resterait en cible immobile.
-        // (BR : seulement hors vol, le service rafraîchit `etatT` à bord et en chute ; le joueur est éliminé par `liberer`)
+        // (BR : seulement hors vol, le service rafraîchit `etatT` à bord et en chute ; le joueur est éliminé par `liberer`) (v11 : jamais un bot, qui
+        // n'a pas de socket et dont le cerveau n'envoie un `etat` que quand il décide)
         sorties.push(...this.retirerDeLArene(j, maintenant));
         evince = true;
       }
@@ -1591,6 +1678,109 @@ export class Salle implements ContexteSalle {
       if (this.nombreEnJeu() > 0) sorties.push(...this.sortiesSnap(maintenant));
     }
     sorties.push(...this.sortiesScores(maintenant));
+    return this.apresPoint(reel, sorties);
+  }
+
+  // ---------- suspension de la partie de zombies (v11) ----------
+
+  /** Joueurs admis à la partie de zombies (debout, à terre, éliminés en attente de relève ; pas ceux arrivés en cours de manche) : le « seul » de la pause automatique. */
+  private compterAdmis(): number {
+    let n = 0;
+    for (const j of this.table.values()) if (this.zombies!.admis(j.id)) n++;
+    return n;
+  }
+
+  /** Message `zpause` de l'état courant : suspendue (qui, compte à rebours restant) ou non, `maintenant` = horloge virtuelle. */
+  private messageZpause(reel: number): Sortie["m"] {
+    const a = this.susp.active;
+    const maintenant = this.susp.virtuel(reel);
+    if (!a) return { t: "zpause", actif: false, maintenant };
+    return {
+      t: "zpause", actif: true, par: a.par, pseudo: a.pseudo, maintenant,
+      ...(a.compteFinReel !== null ? { compte: Math.max(0, Math.round(a.compteFinReel - reel)) } : {}),
+    };
+  }
+
+  /**
+   * Après un `bienvenue` (connexion, reprise réseau, changement de salle) dans la salle des zombies : `zpause` à ce client, suspendue ou non (un client
+   * gelé dont la socket est tombée ne reste jamais figé), et salle suspendue un instantané ciblé (un joueur en jeu qui revient pendant 5 minutes de pause
+   * ne voit pas une carte vide : le dernier snap n'est diffusé qu'une fois).
+   */
+  private sortiesZpauseArrivee(id: string, reel: number): Sortie[] {
+    if (!this.zombies) return [];
+    const sorties: Sortie[] = [{ a: id, m: this.messageZpause(reel) }];
+    if (this.susp.active && this.table.get(id)?.enJeu) {
+      const snap = this.sortiesSnap(this.susp.virtuel(reel))[0];
+      if (snap) sorties.push({ ...snap, a: id });
+    }
+    return sorties;
+  }
+
+  /** Fin de suspension (demande, compte à rebours, plafond, fin de partie) : budgets de distance remplis, snap au prochain tic, `zpause{actif:false}` à toute la salle. */
+  private sortiesLevee(reel: number): Sortie[] {
+    const maintenant = this.susp.virtuel(reel);
+    const plafondS = this.zombies ? BUDGET_ZOMBIES_S : BUDGET_ARENE_S;
+    // le seau de distance repart plein à la levée : aucun joueur n'est refusé juste après la reprise (une téléportation reste impossible : le plafond est celui du budget)
+    for (const suivi of this.suivi.values()) {
+      suivi.budgetH = VITESSE_MAX_H_M_S * plafondS;
+      suivi.budgetV = VITESSE_MAX_V_M_S * plafondS;
+      suivi.budgetT = maintenant;
+    }
+    this.prochainSnap = maintenant;
+    this.dernierTicT = maintenant;
+    return [{ a: "tous", m: { t: "zpause", actif: false, maintenant } }];
+  }
+
+  /** Tic d'une salle suspendue : le compte à rebours et les plafonds de la suspension, rien d'autre. */
+  private ticSuspendue(reel: number): Sortie[] {
+    const evt = this.susp.tic(reel, this.compterAdmis());
+    if (evt === "leve") return this.sortiesLevee(reel);
+    if (evt === "auto" || evt === "force") return [{ a: "tous", m: this.messageZpause(reel) }];
+    return [];
+  }
+
+  /** `pauseZ` d'un joueur : suspendre / lever / annuler le compte à rebours, avec refus explicites (`refus{pause}`). */
+  private pauseZ(j: JoueurSalle, actif: unknown, reel: number): Sortie[] {
+    if (typeof actif !== "boolean") return [];
+    const refus = (raison: "lobby" | "inconnu" | "limite"): Sortie[] => [{ a: j.id, m: { t: "refus", action: "pause", raison } }];
+    const z = this.zombies;
+    if (!actif && !this.susp.active) return []; // lever ce qui n'est pas suspendu : sans effet (idempotent)
+    if (!z || !z.enCours()) return refus("lobby");
+    if (!z.admis(j.id)) return refus("inconnu");
+    const admis = this.compterAdmis();
+    if (!actif) {
+      const r = this.susp.demanderLevee(reel, admis);
+      if (r === "immediate") return this.sortiesLevee(reel);
+      if (r === "compte") return [{ a: "tous", m: this.messageZpause(reel) }];
+      return [];
+    }
+    const active = this.susp.active;
+    if (active && active.compteFinReel === null) return []; // déjà suspendue (idempotent)
+    // pas avant que tous les admis aient fini de charger : le client n'aurait pas encore de jeu pour appliquer le gel
+    if (!active && [...this.table.values()].some((o) => z.admis(o.id) && !o.enJeu)) return refus("lobby");
+    if (this.susp.peutSuspendre(j.id, reel, admis) === "limite") return refus("limite");
+    // suspension neuve : dernier instantané à l'horloge gelée, puis `zpause` ; annulation du compte à rebours : retour à la suspension pleine
+    const r = this.susp.suspendre(j.id, j.pseudo, reel, admis);
+    if (!r) return [];
+    return [...(active ? [] : this.sortiesSnap(r.v)), { a: "tous", m: this.messageZpause(reel) }];
+  }
+
+  /**
+   * Fin de chaque point d'entrée : lancement et fin d'une partie de zombies (pause cumulée remise à zéro), et suspension levée d'office dès que la
+   * partie n'est plus en cours (un départ qui déclenche la défaite ou le retour au lobby : sinon le bilan et le retour, portés par `tic`, ne partiraient plus).
+   */
+  private apresPoint(reel: number, sorties: Sortie[]): Sortie[] {
+    const z = this.zombies;
+    if (!z) return sorties;
+    const enCours = z.enCours();
+    if (this.susp.active && !enCours) {
+      this.susp.lever(reel);
+      sorties = [...sorties, ...this.sortiesLevee(reel)];
+    }
+    if (enCours !== this.zEnCours) {
+      this.zEnCours = enCours;
+      this.susp.reinitialiserPartie();
+    }
     return sorties;
   }
 

@@ -17,8 +17,13 @@ export interface ClientArene {
   /** Change de pseudo sans se reconnecter ; le nouveau pseudo sert aussi au « bonjour » des reconnexions. */
   renommer(pseudo: string): void;
   readonly id: string | null;
-  /** horloge serveur estimée (ms) : Date.now() + décalage mesuré par ping */
+  /** horloge serveur estimée (ms) : Date.now() + décalage mesuré par ping (VIRTUELLE depuis la v11 : gelée pendant une suspension de la partie de zombies) */
   maintenantServeur(): number;
+  /**
+   * (v11) Dernier `zpause` reçu de la salle courante (remis à zéro à chaque `bienvenue`), `null` sans suspension connue : le jeu, créé APRÈS le message
+   * (pause pendant le chargement 3D), s'en sert pour se figer dès sa création. Absent des faux clients des tests.
+   */
+  suspension?(): { actif: boolean; par?: string; pseudo?: string; maintenant: number; compteFinLocal: number | null } | null;
 }
 
 // ---------- horloge ----------
@@ -38,6 +43,10 @@ export class HorlogeServeur {
   decalage = 0;
   private mesures: { rtt: number; decalage: number }[] = [];
   private precis = false;
+  /** (v11) valeur gelée pendant une suspension de la partie, null sinon */
+  private gele: number | null = null;
+  /** dernière valeur rendue par `maintenant` : l'horloge ne RECULE jamais au gel (le client est en avance d'≈ un demi-RTT sur le `V` du serveur) */
+  private derniere = -Infinity;
 
   /** Première estimation grossière (message « bienvenue », sans RTT) ; écrasée par la 1re mesure de ping. */
   amorcer(serveur: number, local: number): void {
@@ -45,8 +54,40 @@ export class HorlogeServeur {
     this.decalage = serveur - local;
   }
 
+  /**
+   * (v11) Recale sur une horloge serveur qui a changé de sémantique (chaque `bienvenue` : nouvelle salle, reconnexion après une suspension, `maintenant`
+   * est l'horloge VIRTUELLE de la salle) : les anciennes mesures de ping n'ont plus de sens, la prochaine en redonne une précise. Lève aussi le gel.
+   */
+  recaler(serveur: number, local: number): void {
+    this.mesures = [];
+    this.precis = false;
+    this.gele = null;
+    this.derniere = -Infinity;
+    this.decalage = serveur - local;
+  }
+
+  /** (v11) Fige l'horloge à `v` (le `V` d'une suspension) ; jamais en dessous de la dernière valeur rendue. Les pongs sont ignorés tant qu'elle est figée. */
+  figer(v: number): void {
+    this.gele = Math.max(v, this.derniere);
+  }
+
+  /**
+   * (v11) Fin du gel : l'horloge repart de `v` (le `V` du serveur à la levée) + un demi-RTT, sans jamais reculer par rapport à la valeur gelée. Sans effet si
+   * elle n'est pas figée (un `zpause{actif:false}` répété, ou celui qui suit chaque `bienvenue`, ne doit pas défaire une mesure précise).
+   */
+  degeler(v: number, local: number, rttMs: number): void {
+    if (this.gele === null) return;
+    const cible = Math.max(v + rttMs / 2, this.gele);
+    this.recaler(cible, local);
+  }
+
+  get figee(): boolean {
+    return this.gele !== null;
+  }
+
   /** Mesure d'un aller-retour : `t0` envoyé (local), `serveur` lu dans le pong, `recu` = horloge locale à la réception. */
   ajouter(t0: number, serveur: number, recu: number): void {
+    if (this.gele !== null) return; // le pong d'une salle figée donne le même V à tout instant : aucune information sur le décalage
     const rtt = Math.max(0, recu - t0);
     this.mesures.push({ rtt, decalage: serveur + rtt / 2 - recu });
     if (this.mesures.length > MESURES_HORLOGE) this.mesures.shift();
@@ -67,7 +108,10 @@ export class HorlogeServeur {
   }
 
   maintenant(local: number): number {
-    return local + this.decalage;
+    if (this.gele !== null) return this.gele;
+    const v = local + this.decalage;
+    this.derniere = v;
+    return v;
   }
 }
 
@@ -114,6 +158,8 @@ export function connecterArene(
   let id: string | null = null;
   /** (v8) dernière session (id + jeton de `bienvenue`) : la reconnexion demande à la reprendre (`bonjour.reprise`) */
   let session: { id: string; jeton: string } | null = null;
+  /** (v11) dernier `zpause` de la salle courante, avec l'instant LOCAL de fin du compte à rebours */
+  let suspension: ReturnType<NonNullable<ClientArene["suspension"]>> = null;
   let file: string[] = [];
   let tentatives = 0;
   let minuteurReconnexion: ReturnType<typeof setTimeout> | null = null;
@@ -188,7 +234,18 @@ export function connecterArene(
         // un changement de salle renvoie un `bienvenue` sans jeton : la session (et son jeton) reste celle de la connexion
         if (m.jeton) session = { id: m.id, jeton: m.jeton };
         else if (session && session.id !== m.id) session = null;
-        horloge.amorcer(m.maintenant, horlogeLocale());
+        // v11 : `maintenant` est l'horloge VIRTUELLE de la salle, qui diffère de la précédente après une suspension ou un changement de salle
+        horloge.recaler(m.maintenant, horlogeLocale());
+        suspension = null;
+      } else if (m.t === "zpause") {
+        const local = horlogeLocale();
+        if (m.actif) {
+          horloge.figer(m.maintenant);
+          suspension = { actif: true, par: m.par, pseudo: m.pseudo, maintenant: m.maintenant, compteFinLocal: m.compte !== undefined ? local + m.compte : null };
+        } else {
+          horloge.degeler(m.maintenant, local, horloge.rttMin() ?? 0);
+          suspension = null;
+        }
       } else if (m.t === "pong") {
         horloge.ajouter(m.t0, m.maintenant, horlogeLocale());
       } else if (m.t === "erreur" && m.code === "version") {
@@ -243,6 +300,9 @@ export function connecterArene(
     },
     maintenantServeur() {
       return horloge.maintenant(horlogeLocale());
+    },
+    suspension() {
+      return suspension;
     },
   };
 }

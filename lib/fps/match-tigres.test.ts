@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Building, SceneData } from "../agroparc3d/types";
 import { construireMonde } from "./collision";
 import type { ContexteSalle, JoueurSalle, Sortie } from "./match-contexte";
+import { CONTEXTE_SANS_BOTS } from "./contexte-sans-bots";
 import { creerServiceTigres, type OptionsServiceTigres } from "./match-tigres";
 import { copierEquipement, EQUIPEMENT_DEFAUT, type CauseMort, type MessageServeur, type Vec3 } from "./protocole";
 import { TIGRE, TIGRE_ALLIE, hitboxTigre, type CachetteTigre, type ObstacleVoiture } from "./tigre-arene";
@@ -29,6 +30,7 @@ function creerContexte(alea: () => number = () => 0.5) {
   const etat = { phaseJeu: true };
   const coups: Coup[] = [];
   const ctx: ContexteSalle = {
+    ...CONTEXTE_SANS_BOTS,
     monde, alea,
     enPhaseJeu: () => etat.phaseJeu,
     joueur: (id) => joueurs.get(id),

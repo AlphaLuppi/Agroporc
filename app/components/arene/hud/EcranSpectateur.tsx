@@ -4,6 +4,7 @@ import type { CSSProperties } from "react";
 import { nomArme } from "@/lib/fps/armes";
 import { formatMetres, libellePlaceBr } from "@/lib/fps/hud-modele";
 import type { InfoTueur } from "@/lib/fps/protocole";
+import { nomAffiche } from "@/lib/fps/classement";
 import { libelleCause } from "../armesInfo";
 import type { DerniereMort } from "../contrats";
 import styles from "./EcranSpectateur.module.css";
@@ -60,7 +61,7 @@ export interface PropsEcranSpectateur {
   total: number;
   /** joueur suivi (id) et la liste de présence pour son nom ; null = personne à suivre */
   suiviId: string | null;
-  joueurs: readonly { id: string; pseudo: string; couleur: string }[];
+  joueurs: readonly { id: string; pseudo: string; couleur: string; bot?: boolean }[];
   /** touches réelles des actions de spectateur (vides si non assignées) */
   toucheSuivant: string;
   touchePrecedent: string;
@@ -83,7 +84,7 @@ export default function EcranSpectateur({
         {derniereMort && <p className={styles.cause}>{parJoueur ? `Éliminé par ${derniereMort.par || "un joueur"} · ${cause}` : cause}</p>}
         <p className={styles.suivi}>
           {suivi
-            ? <>Vous suivez <i className={styles.pastille} style={{ "--couleur": suivi.couleur } as CSSProperties} aria-hidden="true" /><b>{suivi.pseudo}</b></>
+            ? <>Vous suivez <i className={styles.pastille} style={{ "--couleur": suivi.couleur } as CSSProperties} aria-hidden="true" /><b>{nomAffiche(suivi)}</b></>
             : "Personne à suivre pour l'instant"}
         </p>
         {voix && <p className={styles.suivi}>{voix}</p>}

@@ -53,15 +53,33 @@ Le site (`npm run dev` à la racine) s'y connecte tout seul en dev (`ws://localh
 | `PDJ_FPS_BR_OBJETS` | `clamp(9 × joueurs, 120, 480)` | nombre d'objets du butin |
 | `PDJ_FPS_BR_FIN_MS` | 30 000 | durée d'affichage du bilan avant le retour au lobby |
 | `PDJ_FPS_BR_PARTIES` | 4 | parties de Battle Royale en même temps au plus (salle permanente comprise ; chacune a son monde, ≈ 2 Mo) |
+| `PDJ_FPS_BR_BOTS_MAX` | 20 | bots par partie de Battle Royale (0 = coupés : `lancerPartie.bots` est ignoré, le lobby n'affiche plus le réglage). Seul, sans `bots`, l'hôte reçoit 11 bots (`BR.botsSolo`, aussi pour les clients v8 à v10, qui les voient comme des humanoïdes) ; un lancement refusé répond `refus{lancer, bots}` (pas assez de joueurs) ou `refus{lancer, limite}` (quota épuisé) |
+| `PDJ_FPS_BR_BOTS_TOTAL` | 24 (provisoire, 40 après mesure sur le VPS) | bots toutes parties confondues ; le quota restant est publié dans `salons.listes.br[].botsRestants` |
+| `PDJ_FPS_BR_BOTS_ESSAI` | absent | `agressif` : graine fixe, les bots ne visent que les humains, apparaissent à 20-80 m du premier humain au sol (en vue) avec une mitraillette. Pour les essais déterministes seulement |
+| `PDJ_FPS_ARENE_PARTIES` | 2 | (v11) parties d'arène en même temps au plus (`ar1` permanente comprise) |
+| `PDJ_FPS_ZOMBIES_PARTIES` | 3 | (v11) parties de zombies en même temps au plus (`z1` permanente comprise) |
+| `PDJ_FPS_PARTIES_TOTAL` | 6 | (v11) parties au total, toutes salles confondues, permanentes comprises (provisoire tant que la charge agrégée n'est pas mesurée sur le VPS, 8 ensuite). Une création par mode reste toujours possible tant que le mode est sous son plafond (réserve d'un emplacement par mode : le total n'est dépassé que de cette réserve, 3 au plus) |
+| `PDJ_FPS_CREATION_DELAI_MS` | 10 000 | (v11) délai minimal entre deux créations de partie d'un même client, et fenêtre de `PDJ_FPS_CREATION_RAFALE_IP` (`refus{mode, limite}` sinon) ; non effacé à la fermeture de la socket |
+| `PDJ_FPS_CREATION_RAFALE_IP` | 3 | (v11) créations de partie par adresse IP dans une fenêtre de `PDJ_FPS_CREATION_DELAI_MS`, connexions différentes comprises (une reconnexion ne contourne pas le délai) |
+| `PDJ_FPS_PARTIES_PAR_IP` | 2 | (v11) parties non permanentes ouvertes en même temps par adresse IP ET par mode (plusieurs groupes d'un même bureau jouent ; la partie compte jusqu'à sa fermeture) |
+| `PDJ_FPS_CREATION_TIC_MAX_MS` | 12 | (v11) seuil (ms) d'un tic « lent » pour le disjoncteur de création : construire un monde coûte 17 à 90 ms ; le tic qui suit une création ne compte pas. Les scripts de test le montent à 1000 pour rester déterministes sous charge |
+| `PDJ_FPS_CREATION_TICS_LENTS` | 3 | (v11) aucune création de partie tant qu'au moins ce nombre de secondes distinctes des 10 dernières ont un tic lent (un pic isolé : GC, CPU partagé, ne bloque rien) |
 | `PDJ_FPS_BR_VALIDE_MS` | 60 000 | durée minimale (ms) depuis le départ de l'avion pour qu'une partie compte dans les stats (avec 2 joueurs atterris au moins) |
 | `PDJ_FPS_CONNEXIONS_IP` | 24 | connexions simultanées par adresse IP (le `docker-compose.yml` de prod met 60 : cinquante amis derrière l'IP d'un bureau) |
 | `PDJ_FPS_CONNEXIONS_TOTAL` | 160 | connexions simultanées au total, inscrites ou non |
+| `PDJ_FPS_ZOMBIES_SUSPENSION_MAX_MS` | 300 000 | (v11) durée maximale d'une suspension de la partie par un joueur (levée automatique avec compte à rebours non annulable) ; plusieurs humains admis seulement |
+| `PDJ_FPS_ZOMBIES_COMPTE_MS` | 3 000 | (v11) compte à rebours qui précède la levée d'une suspension quand plusieurs humains sont admis (le jeu reste figé, les joueurs reprennent la souris) ; 0 = levée immédiate (tests de bout en bout) |
+| `PDJ_FPS_ZOMBIES_SUSPENSION_COOLDOWN_MS` | 10 000 | (v11) délai entre deux suspensions d'un même joueur (plusieurs humains admis seulement ; un joueur seul admis en est exempt) |
+| `PDJ_FPS_ZOMBIES_SUSPENSION_TOTAL_MS` | 900 000 | (v11) pause cumulée maximale par partie de zombies, remise à zéro à chaque partie (plusieurs humains admis seulement) |
+| `PDJ_FPS_REPRISE_SUSPENDUE_MS` | 60 000 | (v11) délai de reprise réseau d'un membre coupé dont la salle de zombies est suspendue (20 s sinon, `REPRISE_MS`) : le jeu est figé, sa place est gardée plus longtemps |
 | `PDJ_FPS_ZOMBIES_SECRET` | 0 | (v8) grand secret « Le Menu fantôme » : étape de départ de chaque partie, 1 à 9 (les précédentes sont considérées faites ; 9 = servi, la cloche finit la partie). Solution : `docs/superpowers/specs/2026-10-29-zombies-secret-SOLUTION.md` |
 | `PDJ_FPS_ZOMBIES_SECRET_MIDI_MS` | 300 000 | (v8) tour du cadran des pendules remontées : midi sonne une fois par tour (essais : 20 000) |
 | `PDJ_FPS_ZOMBIES_SECRET_LIVRAISON` | 3 | (v8) première livraison du Truck Muche où le service final du secret s'ouvre (essais : 1) |
 
-`GET /sante` renvoie `{ ok, joueurs, enJeu, match, zombies: { joueurs, enJeu, phase, manche, enSuspens }, br: { joueurs, enJeu, phase, vivants }, ticMaxMs, ticsLents, alerte? }`
-(connectés, joueurs en arène, numéro du match, puis la salle des zombies tigres : 8 membres au plus lobby compris, une seule partie à la fois, `enSuspens` = sessions coupées qui attendent leur reprise, puis le Battle Royale : 50 membres au plus lobby compris).
+`GET /sante` renvoie `{ ok, joueurs, enJeu, match, zombies: { joueurs, enJeu, phase, manche, suspendue, enSuspens }, br: { joueurs, enJeu, phase, vivants, parties }, parties, navigationBots: { recherches, noeudsMax, enAttente }, sallesTiquees, ticMaxMs, ticsLents, alerte? }`
+(connectés, joueurs en arène, numéro du match, puis la salle des zombies tigres : 8 membres au plus lobby compris, `enSuspens` = sessions RÉSEAU coupées qui attendent leur reprise (toutes les parties de zombies ; sans rapport avec la pause d'une partie par un joueur, qui est `suspendue`), puis le Battle Royale : 50 membres au plus lobby compris).
+Les champs plats historiques décrivent les parties permanentes `ar1`, `z1`, `br1` ; `parties` (v11) liste TOUTES les parties de tous les modes : `[{ id, mode, permanente, joueurs, humains, bots, phase, suspendue? }]`, `sallesTiquees` le nombre de salles tiquées au dernier tic.
+`navigationBots` (IA des bots, lot 3b) : recherches de chemin A* depuis le démarrage (UN budget pour toutes les parties de BR : au plus une recherche par période de 12 ms), le plus gros A* en nœuds explorés (borné à 3 000) et les bots qui attendent leur tour ; la grille de navigation du BR et ses composantes connexes sont précalculées AVANT `listen` (≈ 0,5 s de démarrage) puis copiées dans chaque salle BR neuve.
 `ticMaxMs` est la durée du plus long tic (les trois salles et leurs diffusions) de la dernière minute environ, `ticsLents` le nombre de tics de plus de 8 ms depuis le démarrage, `alerte: true`
 (champ absent sinon) si l'un d'eux a dépassé 8 ms dans la dernière minute : c'est le signal à surveiller après un déploiement.
 `GET /stats-br` renvoie `{ lignes }` : le palmarès du Battle Royale (top 50 : TOP 1 décroissant, puis kills, puis parties croissant, puis pseudo), `cache-control: no-store`, `access-control-allow-origin`
@@ -71,6 +89,18 @@ seulement pour une origine autorisée par `ORIGINES`. Limites : messages ≤ 16 
 (le client redemande à entrer) ; pas dans la salle des zombies (v8), où un membre dont la connexion se ferme est gardé 20 s (`REPRISE_MS`) : le client qui revient
 avec l'id et le jeton de son dernier `bienvenue` (`bonjour.reprise`) retrouve sa partie au même id (`bienvenue{reprise}`, sans téléportation). Les tirs sont validés contre les positions de la cible des 300 dernières ms
 (compensation de latence, `positionsCible` dans `lib/fps/match.ts`).
+
+## Parties parallèles (v11)
+
+Chaque mode a PLUSIEURS parties en même temps, chacune avec sa salle et son monde mutable (jamais partagé : brèches, portes achetées, navigation en cache par monde). Registre pur `lib/fps/parties.ts` (`RegistreParties`),
+routage pur `lib/fps/salons.ts` (`decisionPartie`) : ids `ar1`, `ar2`… (arène), `z1`, `z2`… (zombies), `br1`, `br2`… (BR), un compteur par mode, jamais réutilisé. `ar1`, `z1` et `br1` sont permanentes (`ar1` est le hall de tout nouvel
+arrivant : la présence du Palantir y vit et elle tique toujours, Elsa et le bus C3 compris) ; les autres sont créées par `mode{mode, partie:"nouvelle"}` et refermées dès qu'elles n'ont plus de membre humain (après chaque
+`mode`, chaque déconnexion et une fois par seconde). `mode{mode, partie}` : id d'une partie de `salons.listes[mode]`, `"nouvelle"` (reprend d'abord une partie vide qui accueille), `"auto"` (arène : la plus peuplée qui accueille
+EN JEU, sinon une nouvelle ; la place est réservée 5 s) ; sans `partie`, un client déjà dans une partie du mode reçoit l'écho de la sienne, sinon `choisirPartie` choisit. Un `rejoindre` d'arène refusé pour `plein`
+porte `alternative` (id d'une autre arène qui accueille). Les clients d'avant la v11 sont toujours routés vers la partie permanente de l'arène et des zombies. Limites de création (`refus{mode, limite}`) : plafonds par mode et au total,
+délai de 10 s par client et rafale bornée par IP, parties ouvertes par IP et par mode, disjoncteur sur plusieurs tics lents récents ; rien de tout cela pour le Battle Royale des clients v10 (4 parties au plus comme avant). Quand la création est impossible (plafond ou limite), `mode` SANS `partie` se rabat sur la première partie qui a de la place, seul `partie:"nouvelle"` est refusé `limite`. `salons.listes` (v11) liste les parties de chaque mode ; `salons.parties` ne contient QUE les parties BR (clients v10) et les champs `arene`, `zombies`,
+`br` résument les parties permanentes. Reprise réseau : un membre d'une partie de zombies coupé (n'importe laquelle) retrouve SA partie si elle existe encore, sinon il est routé comme un arrivant.
+Spec : `docs/superpowers/specs/2026-10-29-pause-parties-bots-design.md`. Déploiement : voir « Protocole v11 (résumé) ».
 
 ## Trois salles, salons
 
@@ -90,6 +120,30 @@ Chat vocal : le serveur ne relaie `voix` qu'entre deux joueurs en vie (le client
 un joueur en vie n'entend jamais un spectateur, sauf le lien de killcam : une victime et son tueur, pendant `LIEN_VOIX_KILLCAM_MS` (12 s) après la mort (dans l'arène aussi, ce lien passe outre la proximité). Les messages `tir`, `coup` et `degats` portent `ts` (horodatage serveur) et le snap recopie `vise` / `recharge` déclarés dans `etat` : tout est additif, sans changement de version. Les statistiques (clé = pseudo, les pseudos `Agent*` ne comptent pas) s'écrivent dans `PDJ_FPS_BR_STATS` à la fin d'une partie comptée (2 joueurs atterris au moins, `PDJ_FPS_BR_VALIDE_MS` écoulées) :
 écriture atomique asynchrone (fichier temporaire du même dossier, `fsync`, `rename`, une seule à la fois), synchrone seulement à l'arrêt (SIGTERM), fichier illisible renommé `stats-br.json.corrompu-<horodatage>`. Les ids des tigres zombies sont `z<n>` (jamais ceux des tigres largués `t<n>` de l'arène, qui n'existent pas dans cette salle).
 
+## Protocole v11 (résumé)
+
+La v11 (spec `docs/superpowers/specs/2026-10-29-pause-parties-bots-design.md`) apporte trois choses :
+
+* **Pause des zombies** (`pauseZ{actif}` → `zpause{actif, par, pseudo, maintenant, compte?}`) : n'importe quel joueur ADMIS de la partie (debout, à terre, éliminé en attente de relève ; pas pendant le décompte de lancement ni tant qu'un
+  admis charge encore, `refus{pause, lobby}`) la suspend pour tous. `Salle` convertit l'horloge réelle en horloge VIRTUELLE (`tJeu = réel − décalage`, `lib/fps/suspension.ts`) AVANT de la passer au moindre service : suspendue, elle vaut une
+  constante, `Salle.tic` ne tique rien et tout message de jeu est jeté (liste BLANCHE : `pseudo`, `quitter`, `ping`, `vueScores`, `voixActif`, `voix`, `rejoindre`, `pauseZ`). Aucun fichier de jeu n'a été modifié : la garde
+  `suspension.horloge.test.ts` vérifie qu'aucun module serveur de `lib/fps` ne lit l'horloge réelle. N'importe quel admis lève (`pauseZ{false}`) : compte à rebours `PDJ_FPS_ZOMBIES_COMPTE_MS` (3 s, jeu encore figé) annulable
+  UNE fois par suspension par un `pauseZ{true}`, ou levée immédiate si l'admis est seul. Abus (plusieurs humains admis seulement ; un joueur seul en est exempté) : 10 s entre deux suspensions d'un même joueur, 5 min au plus par
+  suspension (levée automatique, compte à rebours non annulable), 15 min cumulées par partie (remises à zéro à chaque partie) ; refus : `refus{pause, limite}` ; `refus{pause, plusieurs}` si l'auto-suspension du joueur seul
+  (Échap, perte du pointer lock) tombe alors que plusieurs humains sont admis. `zpause` est émis à CHAQUE `bienvenue` de la salle des zombies (suspendue ou non : un client gelé qui se reconnecte ou change de salle n'y reste pas),
+  puis, si elle est suspendue, un snap et un `zombies{etat}` ciblés ; `bienvenue.maintenant` et `pong.maintenant` sont l'horloge virtuelle. Tant qu'une salle est suspendue, la reprise RÉSEAU de ses membres coupés passe de 20 à
+  60 s (`PDJ_FPS_REPRISE_SUSPENDUE_MS`). `/sante` : `zombies.suspendue` et `parties[].suspendue` (pause d'un joueur) sont distincts de `zombies.enSuspens` (sessions réseau coupées). Arène et BR n'ont pas de pause.
+* **Parties parallèles** : voir plus haut.
+* **Bots du Battle Royale** (`lib/fps/bots-br.ts`, `match-br-bots.ts`) : de vrais `JoueurSalle` de la `table` (ids `b<n>`, `^b\d+$`, `bot: true` dans la présence et le bilan), qui passent par `Salle.recevoir` comme un client (cadence, œil et direction
+  du tir, rejeu de latence, dégâts, butin, killcam inchangés) mais sans socket, ni voix, ni reprise. L'hôte les règle au lobby : `lancerPartie{difficulte?, bots?}` (`bots` entier 0 à 20, borné par la place et le quota
+  global ; la difficulté Entrée / Plat du jour / Goulaf règle réaction, précision et rafales) ; seul et sans `bots`, il reçoit 11 bots (aussi pour les clients v9 et v10, qui les voient comme des humanoïdes fil de fer). Une partie
+  avec bots est de l'entraînement : jamais comptée (TOP 1, kills, parties). Le vol ne part que si un humain est monté, la partie s'achève 15 s après la mort du dernier humain en vie, les bots sont retirés au retour au lobby et
+  quand la partie se vide. Un seul A\* par période de 12 ms pour tout le serveur (3 000 nœuds au plus), grille de navigation précalculée avant `listen`. `PDJ_FPS_BR_BOTS_ESSAI=agressif` rend les essais déterministes.
+
+**Ordre de déploiement : le serveur d'abord, puis la fusion du client.** Le serveur v11 accepte les clients 8, 9, 10 et 11 (`VERSIONS_ACCEPTEES`) ; la salle des zombies n'est ouverte qu'aux clients v11 (`VERSION_MIN_ZOMBIES = 11` : un client plus
+ancien ne gèlerait pas son horloge pendant une pause, il reçoit `erreur{version}`, « rechargez la page »). Un client v11 devant un serveur plus ancien est refusé de la même façon. Ne JAMAIS `docker compose down -v`. Après le déploiement,
+surveiller `/sante` (`ticMaxMs`, `ticsLents`, `alerte`, `parties`, `navigationBots`) et la mémoire du conteneur (1 vCPU, 512 Mo) avec deux parties de chaque mode, puis ajuster `PDJ_FPS_*_PARTIES`, `PDJ_FPS_PARTIES_TOTAL` et
+`PDJ_FPS_BR_BOTS_*` (les valeurs par défaut sont provisoires tant que `lib/fps/serveur.charge-agregee.test.ts`, à lancer SEUL, n'a pas été confirmé sur le VPS).
 ## Aperçu des spectateurs (vue Palantir, issue #84)
 
 Spec `docs/superpowers/specs/2026-10-29-apercus-modes-design.md`. Le message serveur **`apercu`** (additif, `VERSION_PROTOCOLE` inchangé : un client d'avant l'ignore, un client à
@@ -169,11 +223,17 @@ s'y reconnecterait), un `next dev` pointé dessus (`NEXT_PUBLIC_FPS_WS_URL`) et 
   la vue (direct, bandeau « En direct », retour à la simulation quand il part). Ils lisent `window.__palantir.apercu()` et avancent la simulation par `apercuAvancer` (le rendu logiciel est lent).
 * `node scripts/fps/e2e_arene_v2.mjs` : `PDJ_FPS_ELSA_MIN_MS=6000` / `PDJ_FPS_ELSA_MAX_MS=7000`, avion des tigres et événements repoussés d'une heure ; entrée en arène, vue mutuelle, armes, kill confirmé par le serveur,
   killcam, couteau, épée (un troisième navigateur), glissade, conduite et tir d'un passager, Elsa, mini-carte et tableau des scores.
-* `node scripts/fps/e2e_arene_tigres.mjs` : avion toutes les 4 à 5 s, événements neutralisés ; avion, tigre sauvage et sort d'invocation.
+* `node scripts/fps/e2e_arene_tigres.mjs` : avion toutes les 4 à 5 s, événements neutralisés ; avion, tigre sauvage et sort d'invocation. Étapes 1 à 3 vertes ; l'étape 4 (abattre le tigre) et les suivantes (6, 7) échouent sous le rendu logiciel, déjà avant la v11 (le tigre tue les joueurs plus vite qu'ils ne tirent).
 * `node scripts/fps/e2e_br.mjs` : décompte, vol, chute et tempête raccourcis (`PDJ_FPS_BR_DECOMPTE_MS`, `_VOL_MS`, `_ALTITUDE`, `_ZONE_ECHELLE`, `_OBJETS`, `_VALIDE_MS`, fichier de stats temporaire), trois navigateurs : lobby,
   départ, saut et atterrissage, ramassage, élimination à l'arme blanche, tempête, victoire, TOP 1 persisté (relu par `GET /stats-br`).
-* `node scripts/fps/e2e_zombies.mjs` : `PDJ_FPS_ZOMBIES_ARGENT=3000`, `_TOTAL=3`, `_PAUSE_MS=20000`, `_GRIFFE=5`, `_TRUCK=0` ; choix du mode, lobby, lancement par l'hôte, tigres, kill au pistolet,
-  achats (fusil à pompe, porte D1, mini Uzi), joueur à terre relevé, coups de couteau, fin de manche sans bonus, partie perdue, bilan, retour au lobby.
+* `node scripts/fps/e2e_zombies.mjs` : `PDJ_FPS_ZOMBIES_ARGENT=3000`, `_TOTAL=3`, `_PAUSE_MS=20000`, `_GRIFFE=5`, `_TRUCK=0`, `_COMPTE_MS=0` ; choix du mode, lobby, lancement par l'hôte, tigres, kill au pistolet,
+  achats (fusil à pompe, porte D1, mini Uzi), joueur à terre relevé, coups de couteau, fin de manche sans bonus, grenade et planches, **pause pour tous (9b : tigres, horloge serveur et snaps figés 3 s, levée sans saut d'horloge)**,
+  partie perdue, bilan, retour au lobby, **deux parties parallèles (10b : « Créer ma partie », `z2` lancée à part, refermée quand son joueur part)**.
+* `node scripts/fps/e2e_br_bots.mjs` : Battle Royale SOLO avec 11 bots, un seul navigateur, `PDJ_FPS_BR_BOTS_ESSAI=agressif` (déterministe : les bots apparaissent près du joueur) ; réglage « Bots » du lobby, avion, atterrissage,
+  capture du tigre bipède armé, un bot blesse puis tue le joueur, killcam sur un bot, spectateur, fin 15 s après la mort du dernier humain, bilan « Entraînement : partie non comptée », `GET /stats-br` vide.
+  Sans navigateur, en quelques secondes à une minute : `node scripts/fps/protocole_parties.mjs` (parties parallèles des trois modes, plafonds et réserve par mode, limites de création, pause globale, annulation du compte à rebours, coupure
+  et reprise réseau d'un joueur pendant la pause, plafonds de la pause, joueur seul exempté, BR solo avec bots, quota global de bots, capacité 50, ancien client v10) et `node scripts/fps/protocole_br_parties.mjs` (parties du BR,
+  spectateur venu regarder, relais de la voix). Aucun de ces scripts n'utilise le port 8787. Captures du tigre bipède sans serveur : `node scripts/fps/captures_bots.mjs` (images dans `docs/medias/bots/`).
 
 ## Déploiement (VPS, Docker + Traefik)
 

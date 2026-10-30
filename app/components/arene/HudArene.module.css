@@ -412,6 +412,22 @@
 }
 .reprendre { background: var(--ag-amber); border: 1px solid var(--ag-amber); color: var(--ag-ground); }
 .reprendre:hover, .reprendre:focus-visible { background: var(--ag-white); border-color: var(--ag-white); }
+/* (v11) suspension de la partie de zombies : compte à rebours de la reprise, boutons secondaires, bandeau quand la souris est reprise pendant la pause */
+.pauseCompte { margin: 0 0 14px; font: 700 28px/1.1 var(--ag-display), var(--ag-mono), monospace; letter-spacing: 0.1em; color: var(--ag-white); font-variant-numeric: tabular-nums; }
+.reprendre:disabled { background: var(--ag-line); border-color: var(--ag-line); color: var(--ag-ink-dim); cursor: default; }
+.reprendreSouris, .pauseTous {
+  width: 100%; min-height: 44px; margin-top: 10px; background: transparent; border: 1px solid var(--ag-line-strong); color: var(--ag-ink); font: inherit;
+  font-family: var(--ag-display), var(--ag-mono), monospace; font-weight: 700; font-size: 13px; letter-spacing: 0.1em; text-transform: uppercase; cursor: pointer;
+}
+.reprendreSouris:hover, .reprendreSouris:focus-visible, .pauseTous:hover, .pauseTous:focus-visible { border-color: var(--ag-amber); color: var(--ag-amber); }
+.bandeauPause {
+  position: absolute; z-index: 3; left: 50%; top: calc(88 * var(--u)); transform: translateX(-50%); padding: 8px 16px; background: var(--ag-panel);
+  border: 1px solid var(--ag-amber); color: var(--ag-amber); font: 700 14px/1.2 var(--ag-display), var(--ag-mono), monospace; letter-spacing: 0.14em;
+  text-transform: uppercase; text-shadow: none; pointer-events: none; white-space: nowrap;
+}
+/* suspendue : les animations du HUD (pulsations, fondus) s'arrêtent avec le jeu ; le menu et le bandeau restent lisibles */
+.hud[data-suspendue] * { animation-play-state: paused; }
+.hud[data-suspendue] .pause, .hud[data-suspendue] .pause *, .hud[data-suspendue] .bandeauPause { animation-play-state: running; }
 .quitter { margin-top: 16px; background: transparent; border: 1px solid var(--ag-danger); color: var(--ag-danger); }
 .quitter:hover, .quitter:focus-visible { background: color-mix(in srgb, var(--ag-danger) 14%, transparent); }
 .pauseArmes { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; text-align: left; }

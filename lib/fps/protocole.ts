@@ -35,14 +35,23 @@ import type { Difficulte, GenreBonus } from "./zombies-vagues";
  * purement additifs : champs optionnels et nouveau mode). v10 : inventaire des zombies façon Black Ops 1 (emplacements d'armes GÉNÉRIQUES :
  * deux armes à feu de n'importe quelle catégorie, une troisième avec l'atout Bento `bento`, la nouvelle remplace celle en main ;
  * coup de couteau arme en main, `coup` accepté hors du slot `couteau` ; arme blanche seule interdite à partir de deux armes ; armes à
- * munitions limitées jamais retirées). L'arène et le BR ne changent pas : le serveur accepte 8, 9 et 10, mais la salle des zombies est
- * refusée (`erreur{version}`) aux clients d'avant `VERSION_MIN_ZOMBIES`. Client et serveur se déploient ensemble, le serveur d'abord.
+ * munitions limitées jamais retirées). v11 : suspension de la partie de zombies par un joueur (message `pauseZ`, `zpause`) ; `bienvenue.maintenant` et
+ * `pong.maintenant` sont l'horloge VIRTUELLE de la salle (figée pendant la suspension, décalée du réel ensuite), qu'un client d'avant ne sait pas
+ * geler (`HorlogeServeur.figer` / `recaler`) : tigres et minuteurs sauteraient à la reprise, donc la salle des zombies lui est fermée. Les parties
+ * parallèles et les bots du BR de la même version sont additifs. L'arène et le BR ne changent pas : le serveur accepte 8, 9, 10 et 11, mais la
+ * salle des zombies est refusée (`erreur{version}`) aux clients d'avant `VERSION_MIN_ZOMBIES`. Client et serveur se déploient ensemble, le serveur d'abord.
  */
-export const VERSION_PROTOCOLE = 10;
-/** Versions de client acceptées par le serveur (le 8 sera retiré dans un second temps) : un client v8 ne voit jamais le BR. */
-export const VERSIONS_ACCEPTEES: readonly number[] = [8, 9, 10];
-/** (v10) Version minimale d'un client admis dans la salle des zombies (l'inventaire y a changé de règles). */
-export const VERSION_MIN_ZOMBIES = 10;
+export const VERSION_PROTOCOLE = 11;
+/**
+ * Versions de client acceptées par le serveur (le 8 sera retiré dans un second temps) : un client v8 ne voit jamais le BR. Le 11 est la
+ * version courante (spec `2026-10-29-pause-parties-bots-design.md` : parties parallèles, pause des zombies, bots du BR).
+ */
+export const VERSIONS_ACCEPTEES: readonly number[] = [8, 9, 10, 11];
+/**
+ * (v10) Version minimale d'un client admis dans la salle des zombies (l'inventaire y a changé de règles). (v11) 11 : un client v10 ne gèlerait pas
+ * son horloge pendant une suspension de la partie (`HorlogeServeur.figer`), la salle des zombies lui est fermée (`erreur{version}`).
+ */
+export const VERSION_MIN_ZOMBIES = 11;
 
 export type Vec3 = [number, number, number];
 
@@ -410,7 +419,11 @@ export interface ZoneBr {
   degats: number;
 }
 export interface JoueurBr { id: string; pseudo: string; couleur: string; admis: boolean; vivant: boolean; aBord: boolean; kills: number; place: number | null }
-export interface LigneBilanBr { id: string; pseudo: string; couleur: string; place: number; kills: number; degats: number; survieS: number }
+export interface LigneBilanBr {
+  id: string; pseudo: string; couleur: string; place: number; kills: number; degats: number; survieS: number;
+  /** (v11, additif) bot du Battle Royale (id `b<n>`) : étiquette BOT du bilan */
+  bot?: true;
+}
 export interface BilanBr { vainqueurs: string[]; dureeMs: number; lignes: LigneBilanBr[] }
 /** Ligne des statistiques persistées d'un joueur (clé = pseudo normalisé, cf. br-stats.ts). */
 export interface LigneStatsBr { cle: string; pseudo: string; top1: number; parties: number; kills: number; meilleurePlace: number; derniereT: number }
@@ -433,8 +446,37 @@ export interface ResumeSalonBr { phase: PhaseBr; joueurs: number; vivants: numbe
  * joueurs ont créées pendant une partie en cours. `id` sert à `mode{mode:"br", partie}` ; `hote` = pseudo de l'hôte (absent : salle vide).
  */
 export interface ResumePartieBr extends ResumeSalonBr { id: string; hote?: string }
-/** `mode{mode:"br", partie}` : `PARTIE_NOUVELLE` crée une partie (ou reprend une salle vide au lobby). */
+/** `mode{mode, partie}` : `PARTIE_NOUVELLE` crée une partie (ou reprend une salle vide au lobby), pour les trois modes depuis la v11. */
 export const PARTIE_NOUVELLE = "nouvelle";
+/**
+ * (v11) `mode{mode:"arene", partie:"auto"}` : l'arène n'a ni lobby ni « lancer », donc tout nouveau client atterrit dans `ar1` (hall) et le
+ * débordement se décide à l'action `rejoindre` : le serveur répond `mode{partie}` avec la partie qui accueille la plus peuplée, sinon en crée une.
+ */
+export const PARTIE_AUTO = "auto";
+
+/**
+ * (v11, additif) Une partie parmi celles du serveur (`salons.listes[mode]`, permanente en tête) : ids `ar1`, `ar2`… (arène), `z1`… (zombies),
+ * `br1`… (Battle Royale), compteur par mode, jamais réutilisé. Un id de PARTIE n'est jamais un id de joueur (`j<n>`), de tigre (`t<n>`, `z<n>`) ni de bot (`b<n>`).
+ */
+export interface ResumePartie {
+  id: string; mode: ModeSalle; phase: PhaseZombies | PhaseBr | "arene";
+  /** membres humains (lobby compris) */
+  joueurs: number;
+  /** zombies 8, BR 50, arène 16 (`JEU.joueursMax`, joueurs EN JEU, pas `connexionsMax`) */
+  capacite: number;
+  /** pseudo de l'hôte (zombies, BR) */
+  hote?: string;
+  vivants?: number; palier?: number; manche?: number;
+  /** arène : joueurs en arène */
+  enJeu?: number;
+  /** BR : bots présents, plafond par partie (0 = coupés) et quota global restant */
+  bots?: number; botsMax?: number; botsRestants?: number;
+  /** zombies : partie figée par un joueur */
+  suspendue?: true;
+}
+
+/** (v11) Id d'un bot du Battle Royale : "b" + numéro DÉCIMAL (jamais en base 36 : « b » + « r1 » égalerait l'id de partie « br1 »), compteur par salle remis à zéro à chaque partie. */
+export const estIdBot = (s: unknown): s is string => typeof s === "string" && /^b\d+$/.test(s);
 
 // ---------- aperçu pour les spectateurs de la vue Palantir (additif, 2026-10-29, issue #84) ----------
 
@@ -466,6 +508,8 @@ export interface JoueurPublic {
   voix?: boolean;
   /** (BR, additif) en jeu sans être en vie : éliminé ou spectateur venu regarder ; canal vocal des spectateurs. Absent = non */
   spec?: true;
+  /** (v11, additif) bot du Battle Royale (id `b<n>`) : ni socket, ni voix, ni ping. Absent = humain */
+  bot?: true;
 }
 
 /** Véhicule conduisible occupé par un joueur (dans le snap du joueur). */
@@ -701,16 +745,29 @@ export type MessageClient =
   /**
    * Choisir le mode (v5) : change de salle, refusé (`refus{mode}`) en pleine partie ou si la salle zombies est pleine. `partie` (BR,
    * additif) : id d'une partie de `salons.parties`, ou `PARTIE_NOUVELLE` pour créer la sienne ; absent = la partie au lobby la plus peuplée,
-   * sinon la salle permanente.
+   * sinon la salle permanente. (v11) `partie` vaut pour les TROIS modes (id d'une partie de `salons.listes[mode]`, `PARTIE_NOUVELLE`, ou `PARTIE_AUTO`
+   * pour l'arène : la plus peuplée qui accueille, sinon une nouvelle).
    */
   | { t: "mode"; mode: ModeSalle; partie?: string }
+  /**
+   * (v11, zombies seulement) Suspendre (`actif: true`) ou lever la suspension (`false`) de la partie : tout membre ADMIS, idempotent. Une suspension fige
+   * tout pour tout le monde (horloge virtuelle de la salle). Refus `refus{action:"pause"}`. Un ancien serveur ignore ce message inconnu.
+   */
+  | { t: "pauseZ"; actif: boolean }
   /**
    * (BR, additif) Regarder la partie en cours de sa salle sans y jouer (arrivé après le lancement, ou pas admis) : réponse privée
    * `spectateur`, puis les snaps comme un éliminé ; refus `refus{action:"regarder", raison:"lobby"}` hors décompte, vol et jeu.
    */
   | { t: "regarder" }
   /** Lancer la partie de zombies (hôte du lobby seulement) ; v7 : difficulté choisie (défaut « plat »). */
-  | { t: "lancerPartie"; difficulte?: Difficulte }
+  | {
+    t: "lancerPartie"; difficulte?: Difficulte;
+    /**
+     * (v11, BR seulement) nombre de bots : ENTIER 0..`BR.botsMax` (sinon traité comme absent) ; absent avec un seul humain = `BR.botsSolo` bots.
+     * La difficulté règle alors le niveau des bots.
+     */
+    bots?: number;
+  }
   /**
    * Acheter ou utiliser (zombies) : `id` du catalogue (`mur:<arme>`, `boite:B<n>` (acheter ou prendre l'arme offerte), `atout:<id>`, `pap`,
    * `courant`, portes `D1`…), à ≤ 2,5 m (3 m d'une porte) de l'achat. (v8) `secret:<objet>` (`truffe`, `four`, `cloche`) : E sur un objet du
@@ -771,6 +828,7 @@ export type MessageServeur =
    * Inscription. `jeton` (v8) : secret de reprise de la session (à renvoyer dans `bonjour.reprise` après une coupure) ; `reprise` (v8) : la
    * session coupée a été reprise (même `id`, même salle, partie de zombies en cours conservée) au lieu d'une nouvelle inscription dans l'arène.
    */
+  /** `maintenant` (comme celui de `pong`) est l'horloge VIRTUELLE de la salle depuis la v11 : égale à l'horloge réelle tant qu'aucune suspension n'a eu lieu. */
   | { t: "bienvenue"; id: string; couleur: string; joueurs: JoueurPublic[]; match: InfoMatch; maintenant: number; jeton?: string; reprise?: true }
   /** Liste complète des connectés, renvoyée à chaque changement (arrivée, départ, score, entrée/sortie d'arène). */
   | { t: "presence"; joueurs: JoueurPublic[] }
@@ -836,8 +894,16 @@ export type MessageServeur =
    * `rejoindre` n'est refusé que pour `plein` (16 agents déjà en arène) ou `lobby` (zombies : joueur non admis) ; `mode` pour `plein`
    * (salle zombies pleine) ou `lobby` (déjà en jeu), `limite` (BR : plus de place pour une partie de plus) ; `regarder` pour `lobby` (pas de
    * partie en cours) ou `deja` (déjà en jeu). Privé.
+   * (v11) `pause` : `lobby` (pas en partie, ou pas encore chargé), `inconnu` (non admis), `limite` (délai entre deux suspensions ou plafond de pause),
+   * `plusieurs` (auto-suspension en solo refusée : plusieurs humains sont admis) ; `lancer` : `bots` (pas assez de joueurs) ou `limite` (quota global de bots épuisé) ;
+   * `mode` gagne `limite` pour l'arène et les zombies (plafonds de parties, délai de 10 s entre deux créations, disjoncteur de tic).
    */
-  | { t: "refus"; action: "monter" | "siege" | "rejoindre" | "mode" | "regarder"; raison: "loin" | "plein" | "deja" | "inconnu" | "mort" | "lobby" | "limite" }
+  | {
+    t: "refus"; action: "monter" | "siege" | "rejoindre" | "mode" | "regarder" | "pause" | "lancer";
+    raison: "loin" | "plein" | "deja" | "inconnu" | "mort" | "lobby" | "limite" | "plusieurs" | "bots";
+    /** (v11) `rejoindre` refusé pour `plein` : id d'une partie d'arène qui accueille (le lobby propose « Changer d'arène ») */
+    alternative?: string;
+  }
   /** (BR, additif) Réponse à `regarder` : le destinataire regarde la partie en spectateur (en jeu, jamais en vie, jamais dans le snap). Privé. */
   | { t: "spectateur" }
   /** Le destinataire n'est plus dans un véhicule : il se téléporte à `p` (sortie, expulsion). Privé. */
@@ -898,9 +964,20 @@ export type MessageServeur =
   | {
     t: "salons"; arene: { joueurs: number; enJeu: number }; zombies: { phase: PhaseZombies; joueurs: number; manche: number }; br?: ResumeSalonBr;
     parties?: ResumePartieBr[];
+    /**
+     * (v11, additif) parties de CHAQUE mode, permanente en tête. `arene` / `zombies` / `br` / `parties` ci-dessus restent les champs historiques
+     * (résumés des parties permanentes ; `parties` ne contient QUE du BR : les clients v10 l'interprètent comme tel).
+     */
+    listes?: { arene: ResumePartie[]; zombies: ResumePartie[]; br: ResumePartie[] };
   }
-  /** Confirmation du changement de salle (écho de `mode`), suivie du `bienvenue` de la nouvelle salle. `partie` (BR, additif) : id de la partie. */
+  /** Confirmation du changement de salle (écho de `mode`), suivie du `bienvenue` de la nouvelle salle. `partie` (additif, les trois modes depuis la v11) : id de la partie. */
   | { t: "mode"; mode: ModeSalle; partie?: string }
+  /**
+   * (v11, zombies) Suspension de la partie, diffusée à toute la salle : `actif: true` = figée (`maintenant` = temps virtuel V gelé, `par` / `pseudo` = qui
+   * a suspendu, `compte` (ms) = compte à rebours de levée en cours, le jeu est encore figé) ; `actif: false` = repris, `maintenant` = V à la levée. Émis à
+   * TOUT client juste après chaque `bienvenue` de la salle des zombies (`actif: false` pour une salle non suspendue : le client le traite comme « dégelé »).
+   */
+  | { t: "zpause"; actif: boolean; par?: string; pseudo?: string; maintenant: number; compte?: number }
   /** État de la partie de zombies (aux membres de la salle zombies, à chaque changement, ≤ 5 Hz). */
   | { t: "zombies"; etat: EtatPartieZombies }
   /** Argent du destinataire (zombies) : solde, variation et motif (« touche », « kill », « manche », « achat »…). Privé. */

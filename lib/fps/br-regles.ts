@@ -18,6 +18,11 @@ export const BR = {
   rayonRamassageM: 2.5, reserveChargeursDepart: 2, reserveChargeursMax: 6,
   /** un vivant sans `etat` depuis ce délai, hors vol, est retiré de la partie */
   inactifMs: 20_000,
+  /**
+   * (v11, bots, spec `2026-10-29-pause-parties-bots-design.md`) plafond de bots par partie (`PDJ_FPS_BR_BOTS_MAX`, 0 = coupés), remplissage automatique en
+   * solo quand `lancerPartie.bots` est absent, et délai entre la mort du dernier humain en vie et la fin de la partie (laisse sa killcam)
+   */
+  botsMax: 20, botsSolo: 11, finSansHumainMs: 15_000,
   usage: { bandage: { ms: 3_000, pv: 20, plafondPv: 75, pile: 5 }, potion: { ms: 4_000, bouclier: 50, pile: 3 } },
 } as const;
 

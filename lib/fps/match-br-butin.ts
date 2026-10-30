@@ -288,5 +288,12 @@ export function creerButinBr(ctx: ContexteSalle, opts: OptionsButinBr = {}): But
       enAttente = [];
       prochainId = 1;
     },
+
+    objets: (): ReadonlyMap<number, ObjetBr> => objets,
+
+    stock(id: string): { readonly bandage: number; readonly potion: number } {
+      const i = inventaires.get(id);
+      return { bandage: i?.bandage ?? 0, potion: i?.potion ?? 0 };
+    },
   };
 }

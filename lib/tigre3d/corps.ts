@@ -59,6 +59,11 @@ export interface Consignes {
   vitesseImposee?: number;
   /** Avance de geste pendant cette image (m, vers l'avant des épaules) : root motion d'un clip. */
   avance?: number;
+  /**
+   * Allure continue maximale (0 marche, 1 trot, 2 galop ; défaut 2) : le tigre bipède armé des bots ne galope jamais (les pattes
+   * arrière du galop sont quasi synchrones : saut de lapin sur deux jambes).
+   */
+  allureMax?: number;
   couches: Couche[];
 }
 
@@ -268,7 +273,7 @@ export function avancerCorps(c: Corps, dt: number, k: Consignes): Corps {
   const vitesse = Math.abs(c.v);
 
   // 3. Allure et cadence.
-  amortir(c.allure, allurePourVitesse(vitesse), 5, dt);
+  amortir(c.allure, Math.min(allurePourVitesse(vitesse), k.allureMax ?? 2), 5, dt);
   const R = reglage(c.allure.x, c.reglage);
   const enMouvement = vitesse > 0.03;
   const kv = borne(vitesse / 0.35, 0, 1);

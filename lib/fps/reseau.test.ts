@@ -204,6 +204,82 @@ describe("HorlogeServeur", () => {
   });
 });
 
+describe("HorlogeServeur : suspension de la partie (v11)", () => {
+  it("recaler vide les mesures, remet `precis` à faux (l'amorce redevient possible) et lève le gel", () => {
+    const h = new HorlogeServeur();
+    h.ajouter(0, 5000 + 10, 20); // décalage précis
+    h.figer(9999);
+    h.recaler(50_000, 1000);
+    expect(h.figee).toBe(false);
+    expect(h.decalage).toBe(49_000);
+    expect(h.rttMin()).toBeNull();
+    h.amorcer(60_000, 1000);
+    expect(h.decalage).toBe(59_000);
+  });
+
+  it("figer : l'horloge ne recule jamais (le client est en avance d'un demi-RTT sur V) et ignore les pongs", () => {
+    const h = new HorlogeServeur();
+    h.recaler(10_000, 0); // clock locale 0 → 10000
+    expect(h.maintenant(500)).toBe(10_500); // dernière valeur rendue
+    h.figer(10_480); // V du serveur légèrement en retard sur le client
+    expect(h.figee).toBe(true);
+    expect(h.maintenant(900)).toBe(10_500); // pas de recul
+    expect(h.maintenant(60_000)).toBe(10_500); // gelée
+    // un V plus avancé que la dernière valeur locale est respecté
+    const h2 = new HorlogeServeur();
+    h2.recaler(10_000, 0);
+    expect(h2.maintenant(100)).toBe(10_100);
+    h2.figer(10_300);
+    expect(h2.maintenant(5000)).toBe(10_300);
+    // un pong pendant le gel est ignoré
+    h2.ajouter(5000, 123_456, 5040);
+    expect(h2.maintenant(8000)).toBe(10_300);
+    expect(h2.rttMin()).toBeNull();
+  });
+
+  it("degeler : repart de V + RTT/2 après une longue pause (horloge continue), sans reculer", () => {
+    const h = new HorlogeServeur();
+    h.recaler(10_000, 0);
+    h.maintenant(1000); // 11 000
+    h.figer(10_990); // V (gelé à 11 000 : pas de recul)
+    expect(h.maintenant(601_000)).toBe(11_000);
+    // dix minutes plus tard : le serveur lève, V à la levée = 10 990, RTT 40 ms
+    h.degeler(10_990, 601_000, 40);
+    expect(h.figee).toBe(false);
+    expect(h.maintenant(601_000)).toBe(11_010); // ≥ la valeur gelée, continue
+    expect(h.maintenant(602_000)).toBe(12_010);
+  });
+
+  it("degeler hors gel (zpause{false} répété, ou qui suit chaque bienvenue) ne défait pas une mesure précise", () => {
+    const h = new HorlogeServeur();
+    h.recaler(0, 0);
+    h.ajouter(0, 4000 + 10, 20);
+    const d = h.decalage;
+    h.degeler(1234, 50, 20);
+    expect(h.decalage).toBe(d);
+    expect(h.rttMin()).toBe(20);
+  });
+
+  it("reconnexion après une pause : un nouveau bienvenue recale sur l'horloge virtuelle de la salle", () => {
+    const h = new HorlogeServeur();
+    h.recaler(1_000_000, 100);
+    h.figer(1_000_500);
+    // la socket tombe, le serveur a levé et la salle a un autre décalage : bienvenue.maintenant (virtuel) = 1 000 800
+    h.recaler(1_000_800, 700_000);
+    expect(h.figee).toBe(false);
+    expect(h.maintenant(700_000)).toBe(1_000_800);
+  });
+
+  it("changement de salle : la valeur gelée de l'ancienne salle ne contamine pas la nouvelle", () => {
+    const h = new HorlogeServeur();
+    h.recaler(50_000, 0);
+    h.maintenant(10_000); // 60 000
+    h.recaler(5_000, 10_000); // autre salle, horloge virtuelle bien plus petite
+    h.figer(5_300);
+    expect(h.maintenant(20_000)).toBe(5_300);
+  });
+});
+
 // ---------- connecterArene avec un faux socket ----------
 
 class FauxSocket implements SocketLike {
@@ -259,6 +335,37 @@ describe("connecterArene", () => {
     socket().recevoir({ t: "bienvenue", id: "j7", couleur: "#fff", joueurs: [], maintenant: 100_000 + 7000, match: { numero: 1, fin: null, objectif: 25, phase: "jeu", prochain: null } });
     expect(client.id).toBe("j7");
     expect(client.maintenantServeur()).toBe(107_000);
+    client.fermer();
+  });
+
+  it("(v11) zpause : l'horloge se fige, le message est relayé, la levée la fait repartir sans saut ; un bienvenue ultérieur dégèle", () => {
+    const { client, messages, socket } = demarrer();
+    socket().ouvrir();
+    const match = { numero: 1, fin: null, objectif: 0, phase: "jeu" as const, prochain: null };
+    socket().recevoir({ t: "bienvenue", id: "j7", couleur: "#fff", joueurs: [], maintenant: 100_000, match });
+    vi.advanceTimersByTime(1000);
+    expect(client.maintenantServeur()).toBe(101_000);
+    expect(client.suspension?.()).toBeNull();
+    socket().recevoir({ t: "zpause", actif: true, par: "j8", pseudo: "Bob", maintenant: 100_950, compte: 3000 });
+    expect(messages.at(-1)).toMatchObject({ t: "zpause", actif: true });
+    expect(client.suspension?.()).toMatchObject({ actif: true, par: "j8", maintenant: 100_950, compteFinLocal: Date.now() + 3000 });
+    // 10 minutes : gelée (et jamais en dessous de la dernière valeur rendue), les pongs sont ignorés
+    vi.advanceTimersByTime(600_000);
+    expect(client.maintenantServeur()).toBe(101_000);
+    socket().recevoir({ t: "pong", t0: Date.now() - 40, maintenant: 999_999_999 });
+    expect(client.maintenantServeur()).toBe(101_000);
+    socket().recevoir({ t: "zpause", actif: false, maintenant: 100_950 });
+    expect(client.suspension?.()).toBeNull();
+    expect(client.maintenantServeur()).toBeGreaterThanOrEqual(101_000);
+    expect(client.maintenantServeur()).toBeLessThan(101_100);
+    vi.advanceTimersByTime(1000);
+    expect(client.maintenantServeur()).toBeLessThan(102_100);
+    // suspension, puis le serveur change de salle : le bienvenue dégèle et recale
+    socket().recevoir({ t: "zpause", actif: true, par: "j8", pseudo: "Bob", maintenant: 102_000 });
+    socket().recevoir({ t: "bienvenue", id: "j7", couleur: "#fff", joueurs: [], maintenant: 7_000, match });
+    expect(client.suspension?.()).toBeNull();
+    vi.advanceTimersByTime(500);
+    expect(client.maintenantServeur()).toBe(7_500);
     client.fermer();
   });
 

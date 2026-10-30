@@ -110,6 +110,8 @@ function fauxButin() {
     lacherALaMort(j) { appels.push(`lacher:${j.id}`); return [{ a: "tous", m: { t: "butin", ajoutes: [{ id: 900, genre: "bandage", ref: null, p: j.p }] } }]; },
     synchro(id) { appels.push(`synchro:${id}`); return [{ a: id, m: { t: "butin", ajoutes: [] } }]; },
     reinitialiser() { appels.push("reinitialiser"); },
+    objets: () => new Map(),
+    stock: () => ({ bandage: 0, potion: 0 }),
   };
   return b;
 }
@@ -152,6 +154,7 @@ function banc(opts: Partial<OptionsServiceBr> = {}): Banc {
   const infligees: Banc["infligees"] = [];
   const vol = fauxVol();
   const butin = fauxButin();
+  let compteurBots = 0;
   let svc!: ServiceBr;
   const mourir = (cible: JoueurSalle, par: JoueurSalle | null, cause: CauseMort, t: number): Sortie[] => {
     cible.vivant = false; cible.posture = "mort"; cible.morts++; cible.serie = 0;
@@ -186,6 +189,17 @@ function banc(opts: Partial<OptionsServiceBr> = {}): Banc {
     retirerJoueur: (j) => { j.enJeu = false; j.vivant = false; retires.push(j.id); return []; },
     presence: () => ({ a: "tous", m: { t: "presence", joueurs: [] } }),
     equiper: () => [],
+    // bots (v11) : de vrais membres de la table de ce banc, sans cerveau (les tests des bots sont dans `match.br-bots.test.ts`)
+    ajouterBot: (pseudo, t) => {
+      const j = nouveauJoueur(`b${++compteurBots}`, pseudo, t);
+      j.bot = true;
+      table.set(j.id, j);
+      return j;
+    },
+    retirerBot: (id) => { table.delete(id); },
+    recevoir: () => [],
+    nouvelIdBot: () => `b${++compteurBots}`,
+    nombreHumains: () => [...table.values()].filter((j) => !j.bot).length,
   };
   svc = creerServiceBr(ctx, { alea: suite(11), scene, vol, butin, points: [], ...opts });
   return {
@@ -291,12 +305,13 @@ describe("lobby, hôte, lancement", () => {
     expect(b.svc.enCours()).toBe(true);
   });
 
-  it("refuse de lancer sous le minimum de joueurs (réglable)", () => {
-    const b = banc();
+  it("refuse de lancer sous le minimum de joueurs (réglable), sans bots, par un refus explicite", () => {
+    // sans bots (`botsMax` à 0) : un humain seul n'atteint pas le minimum
+    const b = banc({ botsMax: 0 });
     b.arrive("a", "Alice");
-    expect(b.svc.recevoir(b.j("a"), msg({ t: "lancerPartie" }), T0)).toEqual([]);
+    expect(b.svc.recevoir(b.j("a"), msg({ t: "lancerPartie" }), T0)).toEqual([{ a: "a", m: { t: "refus", action: "lancer", raison: "bots" } }]);
     expect(b.svc.etat().phase).toBe("lobby");
-    const solo = banc({ joueursMin: 1 });
+    const solo = banc({ joueursMin: 1, botsMax: 0 });
     solo.arrive("a", "Alice");
     expect(dernierEtat(solo.svc.recevoir(solo.j("a"), msg({ t: "lancerPartie" }), T0))).toMatchObject({ phase: "decompte", minJoueurs: 1 });
   });
@@ -740,7 +755,7 @@ describe("victoire, places, bilan", () => {
 
   it("en solo (joueursMin 1), la partie ne se termine pas au décollage mais à la mort du joueur", () => {
     const stats = fausseStats();
-    const { b } = enVol(["Alice"], { joueursMin: 1, stats });
+    const { b } = enVol(["Alice"], { joueursMin: 1, botsMax: 0, stats });
     avancer(b, T_VOL + 50, T_VOL + 2_000);
     expect(b.svc.etat().phase).toBe("vol");
     b.atterrit("a");
@@ -895,7 +910,7 @@ describe("retour au lobby, salle vide", () => {
 
   it("le dernier joueur d'une partie en vol part : lobby direct, ni bilan ni statistiques", () => {
     const stats = fausseStats();
-    const { b } = enVol(["Alice"], { joueursMin: 1, stats, partieValideMinMs: 0 });
+    const { b } = enVol(["Alice"], { joueursMin: 1, botsMax: 0, stats, partieValideMinMs: 0 });
     b.atterrit("a");
     const sorties = b.part("a", T_VOL + 1_000);
     expect(b.svc.etat()).toMatchObject({ phase: "lobby", total: 0, avion: null, zone: null });

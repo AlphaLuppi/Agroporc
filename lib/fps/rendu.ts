@@ -290,6 +290,8 @@ interface ModeleArme {
   coupU: number;
   /** arme tenue à deux mains (épée) : la main libre suit la fente du coup au lieu de pendre */
   deuxMains: boolean;
+  /** arme tenue d'une seule main (couteau, fumigène) : sa `garde` n'est qu'un point de repos de la main libre, pas une prise */
+  uneMain: boolean;
   tirer(): void;
   coup(): void;
   recharger(dureeS: number): void;
@@ -1012,6 +1014,7 @@ function creerModeleArme(id: ArmeId, m: Materiaux, devant: boolean): ModeleArme 
     progres: 0,
     coupU: 0,
     deuxMains: id === "epee",
+    uneMain: id === "couteau" || id === "fumigene",
     tirer() {
       tTir = 0;
       surTir();
@@ -1120,6 +1123,45 @@ export function creerModeleArmeMonde(id: ArmeId, couleur: CouleurEntree): { grou
   const modele = creerModeleArme(id, m, false);
   ordonner(modele.group, false, 6);
   return { group: modele.group, dispose() { modele.dispose(); modele.group.removeFromParent(); libererMateriaux(m); } };
+}
+
+/**
+ * (Battle Royale) Arme tenue par un tigre bipède des bots : le modèle de `creerModeleArmeMonde` (mêmes pièces) avec des arêtes de 2 px comme les
+ * avatars, et les points dont l'animation du bot a besoin dans le repère de l'arme (canon vers −z, origine à la poignée, mètres avant échelle) :
+ * `prise` (main arrière), `garde` (main avant ; null pour une arme à une main, la main libre pend), `bouche`. `tirer`, `recharger` et `maj` jouent les
+ * pièces mobiles (culasse, chargeur, pompe) et le flash ; l'échelle ×`ECHELLE_ARME_BOT` est posée par le rendu du bot sur `group`.
+ */
+export interface ArmeBotRendu {
+  group: THREE.Group;
+  prise: Vec3;
+  garde: Vec3 | null;
+  bouche: THREE.Vector3;
+  deuxMains: boolean;
+  /** vrai pour le couteau et le fumigène : `garde` est alors null */
+  uneMain: boolean;
+  tirer(): void;
+  recharger(dureeS: number): void;
+  maj(dt: number): void;
+  dispose(): void;
+}
+export function creerArmeBot(id: ArmeId, couleur: CouleurEntree): ArmeBotRendu {
+  const m = creerMateriaux(new THREE.Color(couleur), false, true);
+  const modele = creerModeleArme(id, m, false);
+  ordonner(modele.group, false, 5);
+  // une arme à une main (couteau, fumigène : leur « garde » est un point de repos de la main libre) laisse l'autre patte pendre ; jamais déduit d'une
+  // distance (la mitrailleuse a 0,545 m entre poignée et garde-main et se tient bien à deux mains)
+  return {
+    group: modele.group,
+    prise: [modele.prise.x, modele.prise.y, modele.prise.z],
+    garde: modele.uneMain ? null : [modele.garde.x, modele.garde.y, modele.garde.z],
+    bouche: modele.bouche.clone(),
+    deuxMains: modele.deuxMains,
+    uneMain: modele.uneMain,
+    tirer: () => modele.tirer(),
+    recharger: (d) => modele.recharger(d),
+    maj: (dt) => modele.maj(dt),
+    dispose() { modele.dispose(); modele.group.removeFromParent(); libererMateriaux(m); },
+  };
 }
 
 /**
