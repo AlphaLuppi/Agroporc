@@ -131,6 +131,7 @@ export function libelleCause(arme: ArmeId, cause: CauseMort, par: string): strin
   if (cause === "tigre_zombie") return "Griffé par un tigre";
   if (cause === "bus_c3") return "Écrasé par le Bus C3";
   if (cause === "frappe_aerienne") return par ? `Frappe aérienne de ${par}` : "Frappe aérienne";
+  if (cause === "police") return "Écrasé par la police";
   if (cause === "tempete") return "Tué par la tempête";
   if (cause === "abandon") return "A quitté la partie";
   return nomArme(arme);

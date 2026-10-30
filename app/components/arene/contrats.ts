@@ -8,6 +8,7 @@ import type {
 } from "@/lib/fps/protocole";
 import type { EtatBrHud, EtatMonstresHud, EtatZombiesHud, HudEtat, HudLive, JeuEvenement } from "@/lib/fps/jeu-types";
 import type { RadarFrame } from "@/lib/fps/radar";
+import type { ReglagesArene } from "@/lib/fps/reglages-arene";
 import type { ReglagesHud } from "@/lib/fps/reglages-hud";
 import type { Action, ConfigTouches } from "@/lib/fps/touches";
 import type { ReglagesVoix } from "@/lib/fps/voix";
@@ -95,11 +96,19 @@ export interface UseArene {
   gainArgent: GainArgent | null;
   /**
    * demande à changer de salle (refusée : message dans `erreur`, `modeVoulu` revient à `mode`) ; `partie` (v11, les trois modes) : une partie de
-   * `salons.listes[mode]`, `PARTIE_NOUVELLE`, ou `PARTIE_AUTO` (arène : la plus peuplée qui accueille)
+   * `salons.listes[mode]`, `PARTIE_NOUVELLE`, ou `PARTIE_AUTO` (arène : la plus peuplée qui accueille) ; `reglages` (2026-10-30, arène + `PARTIE_NOUVELLE`
+   * seulement) : événements et fréquence de la nouvelle arène, fixés à sa création (le serveur les valide et reprend une arène vide aux mêmes réglages)
    */
-  choisirMode(mode: ModeSalle, partie?: string): void;
-  /** hôte du lobby des zombies ou du Battle Royale : lance la partie ; `bots` (Battle Royale, entier) : nombre de bots, absent = réglage du serveur */
-  lancerPartie(difficulte?: import("@/lib/fps/zombies-vagues").Difficulte, bots?: number): void;
+  choisirMode(mode: ModeSalle, partie?: string, reglages?: ReglagesArene): void;
+  /**
+   * hôte du lobby des zombies ou du Battle Royale : lance la partie ; `bots` (Battle Royale, entier) : nombre de bots, absent = réglage du serveur ;
+   * `police` (Battle Royale, 2026-10-30) : descente de police activée (absent = le serveur décide : activée)
+   */
+  lancerPartie(difficulte?: import("@/lib/fps/zombies-vagues").Difficulte, bots?: number, police?: boolean): void;
+  /** (2026-10-30) événements de l'arène où je suis d'après l'écho de `mode` ; null : pas d'écho (hall d'arrivée, serveur d'avant) */
+  reglagesArene: ReglagesArene | null;
+  /** (2026-10-30) j'ai demandé des réglages non par défaut et le dernier écho `mode` n'en portait pas : le serveur ne les applique pas */
+  reglagesIgnores: boolean;
   // ---- v11 : parties parallèles ----
   /** partie où je suis (`ar2`, `z1`, `br3`…), null tant que le serveur ne l'a pas dite (hall d'arrivée, serveur d'avant les parties parallèles) */
   partie: string | null;

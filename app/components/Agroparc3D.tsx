@@ -28,7 +28,8 @@ import RestoBadge from "./RestoBadge";
 import Arene from "./arene/Arene";
 import BadgeApercu from "./arene/BadgeApercu";
 import ChoixMode from "./arene/ChoixMode";
-import { PARTIE_HALL, flecheReserveeAuChamp, listesDepuisSalons } from "./arene/lobby-modele";
+import { PARTIE_HALL, flecheReserveeAuChamp, listesDepuisSalons, reglagesDeMaPartie } from "./arene/lobby-modele";
+import type { ReglagesArene } from "@/lib/fps/reglages-arene";
 import { gardeSortieBr } from "@/lib/fps/garde-sortie-br";
 import { armerEntreeAuto, confirmerEntreeAuto, entreeApresContexte, type EntreeAuto } from "@/lib/fps/entree-auto";
 import HudArene from "./arene/HudArene";
@@ -447,12 +448,12 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
     arene.choisirMode(m, id);
   };
   /** Crée ma partie dans le mode `m` (le serveur reprend d'abord une partie vide ; refus `limite` au plafond) : « Créer ma partie » / « Créer une arène ». */
-  const creerPartie = (m: ModeSalle) => {
+  const creerPartie = (m: ModeSalle, reglages?: ReglagesArene) => {
     if (tactile && m !== "arene") return;
     regarderApres.current = null;
     entreeAuto.current = null;
     if (m === "arene") areneChoisie.current = true;
-    arene.choisirMode(m, PARTIE_NOUVELLE);
+    arene.choisirMode(m, PARTIE_NOUVELLE, m === "arene" ? reglages : undefined);
   };
   /** Battle Royale : créer ma partie pendant que la mienne est lancée (le serveur reprend une salle vide s'il y en a une). */
   const creerPartieBr = () => creerPartie("br");
@@ -469,11 +470,11 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
    * Hôte du lobby Battle Royale : lance la partie. Le nom tapé part avant : les statistiques sont rattachées au pseudo affiché dans la salle. `bots` (entier) et
    * `difficulte` (niveau des bots) viennent du réglage du lobby ; absents, le serveur remplit seul en solo (`BR.botsSolo` bots) et n'en met aucun à plusieurs.
    */
-  const lancerBr = (difficulte?: Difficulte, bots?: number) => {
+  const lancerBr = (difficulte?: Difficulte, bots?: number, police?: boolean) => {
     const nom = pseudoSaisi.trim() || "Agent";
     setPseudoConnecte(nom);
     arene.clientRef.current?.renommer(nom);
-    arene.lancerPartie(difficulte, bots);
+    arene.lancerPartie(difficulte, bots, police);
   };
   // Le serveur dit « non admis » (ou lobby) : la sortie est actée, le jeu pourra se remonter à la prochaine admission.
   const moiZ = arene.zombies?.joueurs.find((j) => j.id === arene.monId) ?? null;
@@ -827,7 +828,7 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
       lancerBr: (difficulte, bots) => lancerBrRef.current(difficulte, bots),
       regarderBr: (id) => regarderBrRef.current(id ?? null),
       creerPartieBr: () => creerPartieBrRef.current(),
-      creerPartie: (m) => creerPartieRef.current(m),
+      creerPartie: (m, reglages) => creerPartieRef.current(m, reglages),
       rejoindrePartie: (m, id) => rejoindrePartieRef.current(m, id),
       // un appui bref sur saut (sans pointer lock) : quitte l'avion, puis ouvre le parachute s'il est répété une seconde plus tard
       sauter: () => {
@@ -1059,8 +1060,10 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
             parties={parallele ? listes.arene : null}
             partieActuelle={arene.partie ?? (parallele ? PARTIE_HALL : null)}
             surRejoindrePartie={(id) => rejoindrePartie("arene", id)}
-            surCreerPartie={() => creerPartie("arene")}
+            surCreerPartie={(reglages) => creerPartie("arene", reglages)}
             alternative={arene.alternativeArene}
+            reglagesPartie={reglagesDeMaPartie(parallele ? listes.arene : null, arene.partie ?? (parallele ? PARTIE_HALL : null), arene.reglagesArene)}
+            reglagesIgnores={arene.reglagesIgnores}
           />
         );
       })()}
@@ -1317,7 +1320,7 @@ declare global {
       /** Battle Royale : crée ma partie (bouton « Créer ma partie »). */
       creerPartieBr(): void;
       /** (v11) Crée ma partie dans le mode `mode` (« Créer ma partie », « Créer une arène »). */
-      creerPartie(mode: ModeSalle): void;
+      creerPartie(mode: ModeSalle, reglages?: ReglagesArene): void;
       /** (v11) Va dans la partie `id` du mode `mode` (« Rejoindre » de la liste des parties, « Changer d'arène »). */
       rejoindrePartie(mode: ModeSalle, id: string): void;
       /** Battle Royale : un appui bref sur la touche de saut (quitte l'avion, puis ouvre le parachute au second appui), sans pointer lock. */

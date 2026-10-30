@@ -63,7 +63,7 @@ try {
     urlWs = `ws://localhost:${port}`;
     const b = spawnSync(process.execPath, ["scripts/build.mjs"], { cwd: join(RACINE, "serveur-fps"), encoding: "utf8" });
     if (b.status !== 0) throw new Error(b.stdout + b.stderr);
-    const srv = lancer(process.execPath, ["dist/index.js"], { cwd: join(RACINE, "serveur-fps"), env: { ...process.env, PORT: String(port), SCENE_JSON: join(RACINE, "public/agroparc/scene.json"), PDJ_FPS_ZOMBIES_ARGENT: "50000", PDJ_FPS_ZOMBIES_PAUSE_MS: process.env.PAUSE ?? "90000", PDJ_FPS_ZOMBIES_TOTAL: "12", PDJ_FPS_ZOMBIES_GRIFFE: "1", ...(process.env.COURANT ? { PDJ_FPS_ZOMBIES_COURANT: "1" } : {}), ...(process.env.SECRET ? { PDJ_FPS_ZOMBIES_SECRET: process.env.SECRET } : {}) } });
+    const srv = lancer(process.execPath, ["dist/index.js"], { cwd: join(RACINE, "serveur-fps"), env: { ...process.env, PORT: String(port), SCENE_JSON: join(RACINE, "public/agroparc/scene.json"), PDJ_FPS_ZOMBIES_ARGENT: "50000", PDJ_FPS_ZOMBIES_PAUSE_MS: process.env.PAUSE ?? "90000", PDJ_FPS_ZOMBIES_TOTAL: "12", PDJ_FPS_ZOMBIES_PATROUILLE: "off", PDJ_FPS_POLICE: "off", PDJ_FPS_ZOMBIES_GRIFFE: "1", ...(process.env.COURANT ? { PDJ_FPS_ZOMBIES_COURANT: "1" } : {}), ...(process.env.SECRET ? { PDJ_FPS_ZOMBIES_SECRET: process.env.SECRET } : {}) } });
     await attendreHttp(`http://localhost:${port}/sante`, 20000).catch((e) => { throw new Error(e.message + srv.journal.join("")); });
   }
   let urlNext = process.env.E2E_URL;

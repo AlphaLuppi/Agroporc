@@ -235,6 +235,39 @@ describe("(v11) parties parallèles : arène", () => {
   });
 });
 
+describe("(2026-10-30) `accepteVide` : une arène vide n'est reprise que pour les mêmes réglages", () => {
+  const ar = (id: string, joueurs: number): PartieRoutage => ({
+    id, mode: "arene", joueurs, enJeu: joueurs, phase: "arene", capacite: JEU.connexionsMax, accueille: accueillante("arene", { phase: "arene", enJeu: joueurs }),
+  });
+  const base = { mode: "arene" as const, partie: PARTIE_NOUVELLE, salleActuelle: "zombies" as const, enJeu: false, creerPossible: true };
+
+  it("sans prédicat : toute partie vide qui accueille est reprise (comportement d'avant)", () => {
+    expect(decisionPartie({ ...base, parties: [ar("ar1", 3), ar("ar2", 0)] })).toEqual({ action: "changer", mode: "arene", partie: "ar2" });
+  });
+
+  it("le prédicat écarte les vides dont les réglages diffèrent : on crée une arène à la place", () => {
+    const parties = [ar("ar1", 0), ar("ar2", 0)];
+    expect(decisionPartie({ ...base, parties, accepteVide: () => false })).toEqual({ action: "changer", mode: "arene", partie: PARTIE_NOUVELLE });
+    // la vide qui convient est reprise, pas la première vide
+    expect(decisionPartie({ ...base, parties, accepteVide: (p) => p.id === "ar2" })).toEqual({ action: "changer", mode: "arene", partie: "ar2" });
+  });
+
+  it("aucune création possible et aucune vide acceptée : `refus{limite}` (le lobby l'explique)", () => {
+    expect(decisionPartie({ ...base, creerPossible: false, parties: [ar("ar1", 0)], accepteVide: () => false })).toEqual({ action: "refus", raison: "limite" });
+  });
+
+  it("une partie occupée n'est jamais « reprise » : le prédicat ne la voit pas", () => {
+    const vus: string[] = [];
+    decisionPartie({ ...base, parties: [ar("ar1", 4), ar("ar2", 0)], accepteVide: (p) => { vus.push(p.id); return true; } });
+    expect(vus).toEqual(["ar2"]);
+  });
+
+  it("`decisionMode` transmet le prédicat", () => {
+    expect(decisionMode({ mode: "arene", salleActuelle: "zombies", enJeu: false, joueursCible: 0, partie: PARTIE_NOUVELLE, creerPossible: true, parties: [ar("ar1", 0)], accepteVide: () => false }))
+      .toEqual({ action: "changer", mode: "arene", partie: PARTIE_NOUVELLE });
+  });
+});
+
 describe("(v11) parties parallèles : zombies", () => {
   const z = (id: string, joueurs: number, phase = "lobby", extra: Partial<PartieRoutage> = {}): PartieRoutage => ({ id, mode: "zombies", joueurs, phase, ...extra });
   const base = { mode: "zombies" as const, salleActuelle: "arene" as const, enJeu: false, creerPossible: true };

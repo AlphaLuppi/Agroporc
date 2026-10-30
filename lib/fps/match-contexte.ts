@@ -9,7 +9,7 @@ import type { Boite, Monde } from "./collision";
 import type { MemoSante } from "./sante";
 import type {
   ArmeFeuId, ArmeId, ArmeMeleeId, AvionBr, BrApercu, CauseMort, CoteMur, Equipement, EtatPartieBr, EtatPartieZombies, GenreVoiture, MessageClient, MessageServeur, MonstresSnap,
-  ObjetBr, PhaseBr, PhaseZombies, PointButin, Posture, Siege, Slot, SnapZombies, TigreLargueSnap, Vec3, VehiculeSnap, Zone,
+  ObjetBr, PhaseBr, PhaseZombies, PointButin, PoliceSnap, Posture, Siege, Slot, SnapZombies, TigreLargueSnap, Vec3, VehiculeSnap, Zone,
 } from "./protocole";
 import type { ObstacleVoiture, Tigre } from "./tigre-arene";
 import type { ExplosionGrenade } from "./grenades";
@@ -183,6 +183,12 @@ export interface ContexteSalle {
   nouvelIdBot(): string;
   /** membres non-bots (lobby et spectateurs compris) */
   nombreHumains(): number;
+  // ---- 2026-10-30 (descente de police) ----
+  /**
+   * Le joueur voit-il la voiture de police ? Vrai pour un bot ; faux pour un humain dont le client n'a pas annoncé la capacité `police`
+   * (`bonjour.capacites`) : il est alors immunisé et jamais choisi pour cible (une voiture invisible ne doit tuer personne).
+   */
+  supportePolice(id: string): boolean;
 }
 
 /** Événements de l'arène (v3, `match-evenements.ts` : `creerServiceEvenements(ctx, opts)`) : Truck Muche fou, tigre robot, titan tigre. */
@@ -206,8 +212,65 @@ export interface ServiceEvenements {
   estPilote(id: string): boolean;
   /** l'événement du tigre géant est annoncé ou en cours (l'avion des tigres largués ne passe pas) */
   tigreGeantEnCours(): boolean;
+  /** (2026-10-30) une annonce, un Truck fou, un tigre géant ou un titan est en cours (la descente de police attend) */
+  occupe(): boolean;
+  /** (2026-10-30) le titan tigre est en cours (aucune descente de police) */
+  titanEnCours(): boolean;
   /** le joueur quitte l'arène (ou se déconnecte) : s'il pilote, le titan s'éteint */
   liberer(j: JoueurSalle, maintenant: number): Sortie[];
+}
+
+/**
+ * Descente de police (2026-10-30, `match-police.ts` : `creerServicePolice(ctx, opts)`), arène et Battle Royale : une voiture de police débarque de nulle
+ * part et fonce sur un joueur (arène : celui qui a le plus de kills ; BR : l'ennemi humain le plus proche), l'écrase, se retire après `POLICE.dureeMs`.
+ * Rare : horloge propre, hors du rythme des événements à tour.
+ */
+export interface ServicePolice {
+  /** minuteur, départ, poursuite, écrasements, retrait ; ne fait rien hors phase de jeu (entracte, podium) */
+  tic(maintenant: number): Sortie[];
+  /** voiture de la descente en cours (position, PV, cible) pour le champ `monstres.police` du snap, undefined sinon */
+  snap(): PoliceSnap | undefined;
+  /** `police{phase:"etat"}` adressé à `idDest` (réponse à `rejoindre`) */
+  synchro(idDest: string): Sortie[];
+  /** Battle Royale : arme le minuteur (premier essai à `t`) ; `null` = plus jamais de descente */
+  armer(t: number | null): void;
+  /**
+   * Retour à blanc : une descente en cours finit par `police{phase:"fin"}` (pas de voiture sur l'écran de classement). `rearmer` : nouveau MATCH
+   * (arène), aucune descente avant `POLICE.premierMatchMs` ; sinon la cadence est celle de la salle et n'est pas touchée. Battle Royale : plus
+   * aucune descente tant que le service BR ne réarme pas.
+   */
+  reinitialiser(t: number, rearmer: boolean): Sortie[];
+  /** une descente est en cours (poursuite ou retrait) */
+  enCours(): boolean;
+  /** nombre de descentes démarrées depuis le dernier retour à blanc (le service BR arme la seconde) */
+  descentes(): number;
+  /**
+   * Revalide un plomb déclaré sur `CIBLE_POLICE` : la boîte orientée de la voiture REJOUÉE sur son historique (`fenetreMs` = `Salle.rewindMaxMs`) doit
+   * être touchée et aucun mur plus proche. Renvoie la distance ou null.
+   */
+  toucher(o: Vec3, d: Vec3, portee: number, maintenant: number, fenetreMs: number): number | null;
+  /** dégâts d'un tir (corps, sans multiplicateur de zone) : `degats` au tireur ; à 0 PV la voiture explose et `police{fin, detruite}` */
+  blesser(tireur: JoueurSalle, degats: number, maintenant: number): Sortie[];
+  /** le joueur quitte la salle : plus de cible ni de marque d'inaccessibilité à son nom */
+  liberer(id: string): void;
+}
+
+/**
+ * Ce que la police voit du service Battle Royale (2026-10-30, `ServiceBr.aidePolice()`, sur le modèle de `AideBots`) : phase, zone courante, vivants, instant
+ * où un humain a touché le sol pour la première fois, vol et spectateurs, taille de la partie au départ.
+ */
+export interface AidePoliceBr {
+  phase(): PhaseBr;
+  /** cercle de la zone COURANTE à l'instant `t` (jamais le cercle visé), null avant le plan de zone */
+  zone(t: number): { centre: [number, number]; rayon: number } | null;
+  vivants(): number;
+  /** premier instant où un HUMAIN touche le sol dans la partie en cours (les bots ne comptent pas), null sinon ; remis à null par le retour au lobby */
+  premierAtterrissageT(): number | null;
+  /** le joueur est à bord de l'avion ou en chute */
+  enVol(id: string): boolean;
+  estSpectateur(id: string): boolean;
+  /** joueurs au départ de la partie, bots compris (la seconde descente demande `POLICE.br.secondeJoueursMin`) */
+  nbJoueursDepart(): number;
 }
 
 /** Elsa (lot S2, `match-elsa.ts` : `creerServiceElsa(ctx, opts)`). */
@@ -447,6 +510,8 @@ export interface ServiceBr {
   /** (aperçu des spectateurs) phase, effectifs, zone et avion, sans la liste des joueurs de `etat()` */
   apercu(): BrApercu;
   resume(): ResumeBr;
+  /** (2026-10-30) ce que la descente de police voit de la partie */
+  aidePolice(): AidePoliceBr;
 }
 
 /** Avion, saut, éjection, chute simulée en temps réel et atterrissage (`match-br-vol.ts` : `creerVolBr(ctx, opts)`). */

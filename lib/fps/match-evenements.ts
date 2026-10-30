@@ -9,6 +9,7 @@
  * Spec : docs/superpowers/specs/2026-10-24-arene-evenements-design.md
  */
 import { batimentsDetruits, batimentsTouches, breches, creuserBatiment, releverBatiments, resoudre, solSous, visible } from "./collision";
+import { choisirType } from "./evenements-arene";
 import { carteNavigation, chemin, pointDeVisee } from "./navigation";
 import type { ContexteSalle, JoueurSalle, ServiceEvenements, Sortie } from "./match-contexte";
 import {
@@ -44,6 +45,18 @@ export interface OptionsServiceEvenements {
    * largué vit (match-tigres.ts) : l'annonce attend alors 5 s et réessaie, le Truck Muche fou n'est pas concerné
    */
   tigrePermis?: () => boolean;
+  /**
+   * (2026-10-30) types d'événements à tour que la partie autorise, dans l'ordre `["truck", "tigre"]` (défaut : les deux) ; vide : le minuteur n'est jamais
+   * armé (`Salle` ne crée alors pas le service). `forcerType` l'emporte.
+   */
+  types?: readonly TypeEvenement[];
+  /**
+   * (2026-10-30) probabilité qu'un événement fini soit suivi d'un temps mort (un second délai d'intervalle) ; absent ou 0 : aucun tirage de `alea` en plus
+   * (une salle sans réglages garde exactement sa séquence de hasard)
+   */
+  tempsMortP?: number;
+  /** une descente de police est en cours : aucun événement n'est annoncé (le type déjà tiré est mémorisé, l'annonce est réessayée toutes les 5 s) */
+  policeEnCours?: () => boolean;
 }
 
 const DT_MAX_S = 0.05;
@@ -136,11 +149,9 @@ export function creerServiceEvenements(ctx: ContexteSalle, opts: OptionsServiceE
   const appuis = (e: EtatMarcheur, echelle: number): [number, number][] =>
     APPUIS_TIGRE.map(([d, a]) => { const q = pointLocal(e.p, e.cap, echelle, d, 0, a); return [q[0], q[2]] as [number, number]; });
 
-  const prochainType = (): TypeEvenement => {
-    if (opts.forcerType) return opts.forcerType;
-    if (dernierType === null) return ctx.alea() < 0.5 ? "truck" : "tigre";
-    return dernierType === "truck" ? "tigre" : "truck";
-  };
+  const types = opts.types ?? ["truck", "tigre"];
+  /** `null` : aucun type autorisé, le minuteur n'est plus jamais armé */
+  const prochainType = (): TypeEvenement | null => opts.forcerType ?? choisirType(types, dernierType, ctx.alea);
   const duree = (type: TypeEvenement) => (type === "truck" ? TRUCK_FOU.dureeMs : TIGRE_ROBOT.dureeMs);
 
   /** Joueur vivant le plus proche de (x, z), sauf le pilote du titan. */
@@ -155,7 +166,9 @@ export function creerServiceEvenements(ctx: ContexteSalle, opts: OptionsServiceE
 
   function finEvenement(type: TypeEvenement, maintenant: number, raison: "temps" | "vaincu", par?: string): Sortie[] {
     const debutT = phase && (phase.k === "truck" || phase.k === "tigre") ? phase.debutT : maintenant;
-    phase = { k: "attente", t: maintenant + delai(intervalle) };
+    // temps mort (réglage de fréquence) : un second délai, des plages sans événement ; aucun tirage sans `tempsMortP`
+    const mort = opts.tempsMortP && ctx.alea() < opts.tempsMortP ? delai(intervalle) : 0;
+    phase = { k: "attente", t: maintenant + delai(intervalle) + mort };
     dernierType = type;
     return [{ a: "tous", m: { t: "evenement", type, phase: "fin", debutT, finT: maintenant, raison, ...(par ? { par } : {}) } }];
   }
@@ -487,15 +500,19 @@ export function creerServiceEvenements(ctx: ContexteSalle, opts: OptionsServiceE
       sorties.push(...ticTitan(maintenant));
       const ph = phase;
       if (ph.k === "attente") {
-        // jamais pendant le titan (un monstre à la fois), ni dans une arène vide, ni le tigre géant à côté d'un tigre largué
+        // jamais pendant le titan (un monstre à la fois), ni dans une arène vide, ni pendant une descente de police, ni le tigre géant à côté d'un tigre largué
         if (maintenant >= ph.t) {
-          const type = titan || !ctx.joueursEnJeu().length ? null : (ph.type ?? prochainType());
-          if (type === null) ph.t = maintenant + 5_000;
-          else if (type === "tigre" && opts.tigrePermis && !opts.tigrePermis()) { ph.t = maintenant + 5_000; ph.type = type; }
+          if (titan || !ctx.joueursEnJeu().length) ph.t = maintenant + 5_000;
           else {
-            const debutT = maintenant + EVENEMENTS.annonceMs;
-            phase = { k: "annonce", type, debutT };
-            sorties.push({ a: "tous", m: { t: "evenement", type, phase: "annonce", debutT, finT: debutT + duree(type) } });
+            const type = ph.type ?? prochainType();
+            if (type === null) ph.t = Infinity;
+            else if (opts.policeEnCours?.()) { ph.t = maintenant + 5_000; ph.type = type; }
+            else if (type === "tigre" && opts.tigrePermis && !opts.tigrePermis()) { ph.t = maintenant + 5_000; ph.type = type; }
+            else {
+              const debutT = maintenant + EVENEMENTS.annonceMs;
+              phase = { k: "annonce", type, debutT };
+              sorties.push({ a: "tous", m: { t: "evenement", type, phase: "annonce", debutT, finT: debutT + duree(type) } });
+            }
           }
         }
       } else if (ph.k === "annonce") {
@@ -593,6 +610,14 @@ export function creerServiceEvenements(ctx: ContexteSalle, opts: OptionsServiceE
 
     tigreGeantEnCours() {
       return phase?.k === "tigre" || (phase?.k === "annonce" && phase.type === "tigre");
+    },
+
+    occupe() {
+      return (phase !== null && phase.k !== "attente") || titan !== null;
+    },
+
+    titanEnCours() {
+      return titan !== null;
     },
 
     liberer(j, maintenant) {

@@ -45,7 +45,7 @@ try {
     const b = spawnSync(process.execPath, ["scripts/build.mjs"], { cwd: join(RACINE, "serveur-fps"), encoding: "utf8" });
     if (b.status !== 0) throw new Error(b.stdout + b.stderr);
     const h = String(3_600_000);
-    const srv = lancer(process.execPath, ["dist/index.js"], { cwd: join(RACINE, "serveur-fps"), env: { ...process.env, PORT: String(port), SCENE_JSON: join(RACINE, "public/agroparc/scene.json"), PDJ_FPS_AVION_MIN_MS: h, PDJ_FPS_AVION_MAX_MS: h, PDJ_FPS_BUS_MIN_MS: h, PDJ_FPS_BUS_MAX_MS: h, PDJ_FPS_EVT_MIN_MS: "600000", PDJ_FPS_EVT_MAX_MS: "600000" } });
+    const srv = lancer(process.execPath, ["dist/index.js"], { cwd: join(RACINE, "serveur-fps"), env: { ...process.env, PORT: String(port), SCENE_JSON: join(RACINE, "public/agroparc/scene.json"), PDJ_FPS_AVION_MIN_MS: h, PDJ_FPS_AVION_MAX_MS: h, PDJ_FPS_BUS_MIN_MS: h, PDJ_FPS_BUS_MAX_MS: h, PDJ_FPS_POLICE: "off", PDJ_FPS_EVT_MIN_MS: "600000", PDJ_FPS_EVT_MAX_MS: "600000" } });
     await attendreHttp(`http://localhost:${port}/sante`, 20000).catch((e) => { throw new Error(e.message + srv.journal.join("")); });
   }
   let urlNext = process.env.E2E_URL;

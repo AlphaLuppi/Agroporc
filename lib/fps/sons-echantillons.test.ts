@@ -2,8 +2,8 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  ANNONCES_EN_ATTENTE_MAX, ECART_ANNONCES_S, ECHANTILLONS, FileAnnonces, IDS_ECHANTILLONS, IDS_VOIX, POIDS_MAX_EFFET, POIDS_MAX_TOTAL, POIDS_MAX_VOIX,
-  RAYON_EXPLOSION_GRENADE_M, URLS_ZOMBIES, VOIX_ANNONCES, departCale, instantPic, sonExplosion, voixDuBonus, voixLibre,
+  ANNONCES_EN_ATTENTE_MAX, ECART_ANNONCES_S, ECHANTILLONS, FileAnnonces, IDS_ECHANTILLONS, IDS_VOIX, POIDS_MAX_EFFET, POIDS_MAX_SIRENE, POIDS_MAX_TOTAL, POIDS_MAX_VOIX,
+  RAYON_EXPLOSION_GRENADE_M, SONS_POLICE, URLS_ARENE, URLS_ZOMBIES, VOIX_ANNONCES, departCale, instantPic, reglageSirene, sonExplosion, voixDuBonus, voixLibre,
 } from "./sons-echantillons";
 import { GENRES_BONUS } from "./zombies-vagues";
 
@@ -145,5 +145,41 @@ describe("sonExplosion", () => {
     expect(sonExplosion(1.6).genre).toBe("pouf");
     expect(sonExplosion(2).force).toBeCloseTo(2 / 6);
     expect(sonExplosion(-1).force).toBe(0);
+  });
+});
+
+describe("(2026-10-30) sirène de la voiture de police", () => {
+  it("le fichier du joueur est livré : MP3, sous le plafond, cité dans les crédits, hors du registre des zombies", () => {
+    const f = fichier(SONS_POLICE.sirene.url);
+    expect(existsSync(f)).toBe(true);
+    expect(statSync(f).size).toBeLessThanOrEqual(POIDS_MAX_SIRENE);
+    expect(estMp3(readFileSync(f))).toBe(true);
+    expect(readFileSync(fichier("/arene/CREDITS.txt"), "utf8")).toContain("sirene-police.mp3");
+    // `URLS_ZOMBIES` et `ECHANTILLONS` sont figés : la sirène a son registre
+    expect(URLS_ZOMBIES).not.toContain(SONS_POLICE.sirene.url);
+    expect(URLS_ARENE).toEqual([SONS_POLICE.sirene.url]);
+  });
+
+  it("la boucle évite l'attaque (début) et le fondu de sortie (fin), dans la durée du fichier (9,84 s)", () => {
+    const { boucleDebutS, boucleFinS } = SONS_POLICE.sirene;
+    expect(boucleDebutS).toBeGreaterThanOrEqual(0.05);
+    expect(boucleFinS).toBeLessThan(9.6);
+    expect(boucleFinS).toBeGreaterThan(boucleDebutS + 5);
+  });
+
+  it("réglage : plus loin, plus faible et plus sourd ; Doppler borné à ±8 % ; entrées douteuses sans NaN", () => {
+    const proche = reglageSirene(5), loin = reglageSirene(300);
+    expect(loin.gain).toBeLessThan(proche.gain);
+    expect(loin.passeBas).toBeLessThan(proche.passeBas);
+    expect(reglageSirene(0).gain).toBeLessThanOrEqual(SONS_POLICE.sirene.gain);
+    expect(reglageSirene(10_000).gain).toBeGreaterThanOrEqual(0.05 * SONS_POLICE.sirene.gain - 1e-9);
+    expect(reglageSirene(10_000).passeBas).toBeGreaterThanOrEqual(900);
+    expect(reglageSirene(50, 0).vitesse).toBe(1);
+    expect(reglageSirene(50, 24).vitesse).toBeLessThan(1); // elle s'éloigne : plus grave
+    expect(reglageSirene(50, -24).vitesse).toBeGreaterThan(1); // elle approche : plus aigu
+    expect(reglageSirene(50, 1e6).vitesse).toBe(0.92);
+    expect(reglageSirene(50, -1e6).vitesse).toBe(1.08);
+    const bizarre = reglageSirene(NaN, Infinity);
+    for (const v of Object.values(bizarre)) expect(Number.isFinite(v)).toBe(true);
   });
 });

@@ -83,6 +83,9 @@ function creerFake(): Fake {
     peutRegarder: () => false,
     etat,
     resume: () => ({ phase: "jeu", joueurs: 3, vivants: 2, palier: 1 }),
+    aidePolice: () => ({
+      phase: () => "jeu", zone: () => null, vivants: () => 2, premierAtterrissageT: () => null, enVol: () => false, estSpectateur: () => false, nbJoueursDepart: () => 0,
+    }),
   };
   return f;
 }

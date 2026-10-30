@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ARMES } from "./protocole";
 import { STATS } from "./armes";
 import { VOIX_TIGRES_MAX, creerSons } from "./sons";
-import { ECART_ANNONCES_S, ECHANTILLONS, URLS_ZOMBIES, VOIX_ANNONCES } from "./sons-echantillons";
+import { ECART_ANNONCES_S, ECHANTILLONS, SONS_POLICE, URLS_ARENE, URLS_ZOMBIES, VOIX_ANNONCES } from "./sons-echantillons";
 import { ZOMBIES } from "./zombies-vagues";
 
 /** Faux contexte audio : compte les sources démarrées / arrêtées et les nœuds créés, sans produire de son. */
@@ -14,11 +14,13 @@ class FauxParam {
   cancelScheduledValues() { return this; }
   setTargetAtTime() { return this; }
 }
-const journal = { demarres: 0, arretes: 0, noeuds: 0, fermes: 0, departs: [] as { t: number; decalage: number; buffer: unknown }[] };
+const journal = { demarres: 0, arretes: 0, noeuds: 0, fermes: 0, departs: [] as { t: number; decalage: number; buffer: unknown; loop: boolean; loopStart: number; loopEnd: number }[] };
 class FauxNoeud {
   type = "";
   buffer: unknown = null;
   loop = false;
+  loopStart = 0;
+  loopEnd = 0;
   frequency = new FauxParam();
   gain = new FauxParam();
   Q = new FauxParam();
@@ -28,7 +30,7 @@ class FauxNoeud {
   ratio = new FauxParam();
   constructor() { journal.noeuds++; }
   connect() { return this; }
-  start(t = 0, decalage = 0) { journal.demarres++; journal.departs.push({ t, decalage, buffer: this.buffer }); }
+  start(t = 0, decalage = 0) { journal.demarres++; journal.departs.push({ t, decalage, buffer: this.buffer, loop: this.loop, loopStart: this.loopStart, loopEnd: this.loopEnd }); }
   stop() { journal.arretes++; }
 }
 class FauxAudioContext {
@@ -508,3 +510,85 @@ describe("sons : échantillons du mode zombies", () => {
   });
 });
 
+
+describe("(2026-10-30) sirène de la voiture de police", () => {
+  afterEach(() => { delete (FauxAudioContext.prototype as unknown as { decodeAudioData?: unknown }).decodeAudioData; });
+  const url = SONS_POLICE.sirene.url;
+
+  it("préchargement : la sirène est demandée une seule fois, sans rien d'autre", () => {
+    const demandes = servirEchantillons({});
+    const sons = creerSons();
+    sons.prechargerArene();
+    sons.prechargerArene();
+    expect(demandes).toEqual([...URLS_ARENE]);
+    sons.dispose();
+  });
+
+  it("fichier chargé : une boucle (début et fin calés sur le fichier) démarrée une fois, suivie à chaque image, éteinte par `null`", async () => {
+    servirEchantillons({ [url]: { duree: 9.84, pic: 0.1 } });
+    const sons = creerSons();
+    sons.prechargerArene();
+    await attendre(); await attendre();
+    journal.departs = [];
+    sons.sirenePolice(null);
+    expect(journal.demarres).toBe(0);
+    sons.sirenePolice({ distance: 250, pan: -1 }, 12);
+    const boucle = journal.departs.filter((d) => (d.buffer as { url?: string } | null)?.url === url);
+    expect(boucle).toHaveLength(1);
+    expect(boucle[0].loop).toBe(true);
+    expect(boucle[0].loopStart).toBeCloseTo(SONS_POLICE.sirene.boucleDebutS, 6);
+    expect(boucle[0].loopEnd).toBeCloseTo(SONS_POLICE.sirene.boucleFinS, 6);
+    const demarres = journal.demarres;
+    for (let i = 0; i < 20; i++) sons.sirenePolice({ distance: 250 - i * 10, pan: 4 }, -20);
+    expect(journal.demarres).toBe(demarres);
+    sons.sirenePolice(null);
+    expect(journal.arretes).toBeGreaterThanOrEqual(1);
+    // une seconde descente repart d'une nouvelle voix
+    sons.sirenePolice({ distance: 100, pan: 0 });
+    expect(journal.demarres).toBe(demarres + 1);
+    const arretes = journal.arretes;
+    sons.dispose();
+    expect(journal.arretes).toBeGreaterThan(arretes);
+  });
+
+  it("fichier absent (404) : le repli à deux oscillateurs sonne, sans planter, puis `null` et `dispose` l'arrêtent", async () => {
+    servirEchantillons({});
+    const sons = creerSons();
+    sons.prechargerArene();
+    await attendre();
+    sons.sirenePolice({ distance: 40, pan: 0 });
+    expect(journal.demarres).toBeGreaterThanOrEqual(2); // porteuse + LFO
+    const demarres = journal.demarres;
+    sons.sirenePolice({ distance: 30, pan: 0.5 });
+    expect(journal.demarres).toBe(demarres);
+    sons.sirenePolice(null);
+    expect(journal.arretes).toBeGreaterThanOrEqual(2);
+    sons.sirenePolice({ distance: 30, pan: 0 });
+    const arretes = journal.arretes;
+    sons.dispose();
+    expect(journal.arretes).toBeGreaterThan(arretes);
+  });
+
+  it("le repli cède la place au fichier dès qu'il est décodé (à chaud)", async () => {
+    servirEchantillons({ [url]: { duree: 9.84, pic: 0.1 } });
+    const sons = creerSons();
+    // pas de préchargement : le premier appel lance le téléchargement et joue le repli
+    sons.sirenePolice({ distance: 60, pan: 0 });
+    const aVide = journal.departs.filter((d) => (d.buffer as { url?: string } | null)?.url === url);
+    expect(aVide).toHaveLength(0);
+    await attendre(); await attendre();
+    sons.sirenePolice({ distance: 55, pan: 0 });
+    const apres = journal.departs.filter((d) => (d.buffer as { url?: string } | null)?.url === url);
+    expect(apres).toHaveLength(1);
+    expect(apres[0].loop).toBe(true);
+    sons.dispose();
+  });
+
+  it("sans contexte audio : aucun effet, aucune erreur", () => {
+    vi.stubGlobal("window", { addEventListener() {}, removeEventListener() {} });
+    vi.stubGlobal("navigator", {});
+    const sons = creerSons();
+    expect(() => { sons.prechargerArene(); sons.sirenePolice({ distance: 10, pan: 0 }, 3); sons.sirenePolice(null); }).not.toThrow();
+    sons.dispose();
+  });
+});

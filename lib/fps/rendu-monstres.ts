@@ -13,7 +13,9 @@ import { chargerModele, creerTigre as creerTigre3D, type ModeleTigre, type Tigre
 import { squelette } from "../tigre3d/squelette";
 import type { LaserAnnonce } from "./jeu-monstres";
 import { ECHELLE_TIGRE, TITAN, TRUCK_FOU } from "./monstres";
-import type { ArmeLacheeSnap, BusSnap, FrappeSnap, FumigeneSnap, MonstresSnap, TigreSnap, TitanSnap, TruckSnap, Vec3 } from "./protocole";
+import { POLICE } from "./police";
+import type { ArmeLacheeSnap, BusSnap, FrappeSnap, FumigeneSnap, MonstresSnap, PoliceSnap, TigreSnap, TitanSnap, TruckSnap, Vec3 } from "./protocole";
+import { geometrieVoiture } from "./rendu-monde";
 import { creerAnimTigreGeant, type AnimTigreGeant } from "./tigre-geant";
 
 export interface RenduMonstres {
@@ -25,6 +27,13 @@ export interface RenduMonstres {
 
 const ORDRE = 5;
 const COULEUR_TRUCK = 0xff8f2e;
+/** Voiture de la descente de police : carrosserie bleu-gris, bande blanc cassé, gyrophares rouge et bleu (leur luminance reste sous le seuil du bloom, 0,24) */
+const COULEUR_POLICE = 0x6f9fd8;
+const COULEUR_POLICE_BANDE = 0xe6edf5;
+const COULEUR_GYRO_ROUGE = 0xff2030;
+const COULEUR_GYRO_BLEU = 0x2a7bff;
+/** Alternances des gyrophares par seconde : au plus 3 (limite des éclairs de WCAG, celle de la lueur des zombies) */
+const GYRO_HZ = 3;
 const COULEUR_TIGRE = 0xff7b1c;
 const COULEUR_RAYURES = 0x2b0d00;
 const COULEUR_YEUX = 0xff2030;
@@ -106,6 +115,71 @@ function creerTruck(parent: THREE.Object3D, aDisposer: { dispose(): void }[]) {
       const alt = Math.floor(tS * 6) % 2 === 0;
       g1.visible = alt;
       g2.visible = !alt;
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Voiture de police (descente de l'arène et du Battle Royale)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * La voiture de la descente de police : la silhouette des voitures de l'arène (`geometrieVoiture`, 4,4 × 1,9 × 1,5 m, avant = −z), livrée bleu-gris
+ * avec une bande blanc cassé sur les flancs, barre de gyrophares sur le toit (rouge et bleu en alternance, `fog: false`, sans halo ni phare
+ * blanc). Le modèle n'est construit qu'à la PREMIÈRE apparition (une descente est rare, la plupart des parties n'en voient aucune). Fumée et
+ * flammes d'une voiture abîmée : `rendu-feux.ts`, alimenté par `jeu.ts` (un seul `feux.maj` par image).
+ */
+function creerPolice(parent: THREE.Object3D, aDisposer: { dispose(): void }[], reduit: boolean) {
+  let group: THREE.Group | null = null;
+  let rouges: THREE.Mesh[] = [];
+  let bleus: THREE.Mesh[] = [];
+  function construire(): THREE.Group {
+    const g = new THREE.Group();
+    g.visible = false;
+    parent.add(g);
+    const m = materiaux(COULEUR_POLICE, aDisposer);
+    const geo = geometrieVoiture();
+    const aretes = new THREE.EdgesGeometry(geo, 12);
+    aDisposer.push(geo, aretes);
+    const faces = new THREE.Mesh(geo, m.fond);
+    const lignes = new THREE.LineSegments(aretes, m.ligne);
+    faces.renderOrder = ORDRE;
+    lignes.renderOrder = ORDRE + 1;
+    g.add(faces, lignes);
+    // bande blanc cassé sur les flancs du châssis (les portières), liseré clair
+    const bande = materiaux(COULEUR_POLICE_BANDE, aDisposer);
+    for (const sx of [-1, 1]) boite(g, bande, 0.04, 0.2, POLICE.longueur * 0.5, sx * (POLICE.largeur / 2 + 0.01), 0.62, 0.1, aDisposer);
+    // barre de gyrophares : socle sombre, un bloc rouge et un bloc bleu de chaque côté
+    const socle = materiaux(0x2a3a52, aDisposer);
+    const hBarre = POLICE.hauteur + 0.04;
+    boite(g, socle, 1.3, 0.12, 0.34, 0, hBarre, 0.2, aDisposer);
+    const feu = (couleur: number, x: number): THREE.Mesh => {
+      const geoF = new THREE.BoxGeometry(0.5, 0.2, 0.3);
+      const mat = new THREE.MeshBasicMaterial({ color: couleur, transparent: true, opacity: 1, depthWrite: false, fog: false });
+      aDisposer.push(geoF, mat);
+      const mesh = new THREE.Mesh(geoF, mat);
+      mesh.position.set(x, hBarre + 0.16, 0.2);
+      mesh.renderOrder = ORDRE + 2;
+      g.add(mesh);
+      return mesh;
+    };
+    rouges = [feu(COULEUR_GYRO_ROUGE, -0.4)];
+    bleus = [feu(COULEUR_GYRO_BLEU, 0.4)];
+    group = g;
+    return g;
+  }
+  return {
+    maj(s: PoliceSnap | undefined, tS: number) {
+      if (!s) { if (group) group.visible = false; return; }
+      const g = group ?? construire();
+      g.visible = true;
+      g.position.set(s.p[0], s.p[1], s.p[2]);
+      g.rotation.y = s.cap;
+      // mouvement réduit : les deux feux restent allumés sans clignoter et la caisse ne tangue pas
+      g.rotation.z = reduit ? 0 : Math.sin(tS * 19) * 0.015 * Math.min(1, Math.abs(s.v) / 12);
+      const alt = Math.floor(tS * GYRO_HZ) % 2 === 0;
+      for (const r of rouges) r.visible = reduit || alt;
+      for (const b of bleus) b.visible = reduit || !alt;
     },
   };
 }
@@ -587,12 +661,14 @@ function creerFrappesRendu(parent: THREE.Object3D, aDisposer: { dispose(): void 
 // Fabrique
 // ---------------------------------------------------------------------------------------------
 
-export function creerRenduMonstres(scene: THREE.Scene): RenduMonstres {
+/** `reduit` (prefers-reduced-motion) : gyrophares fixes et caisse sans tangage pour la voiture de police. */
+export function creerRenduMonstres(scene: THREE.Scene, opts: { reduit?: boolean } = {}): RenduMonstres {
   const racine = new THREE.Group();
   racine.name = "monstres";
   scene.add(racine);
   const aDisposer: { dispose(): void }[] = [];
   const truck = creerTruck(racine, aDisposer);
+  const police = creerPolice(racine, aDisposer, !!opts.reduit);
   const tigre = creerTigre(racine, COULEUR_TIGRE, aDisposer);
   const titan = creerTigre(racine, "#9be9ff", aDisposer);
   const laser = creerLaser(racine, aDisposer);
@@ -605,6 +681,7 @@ export function creerRenduMonstres(scene: THREE.Scene): RenduMonstres {
   return {
     maj(m, lasers, tS, tsServeur, dt, couleur, piloteMoi) {
       truck.maj(m.truck, tS);
+      police.maj(m.police, tS);
       bus.maj(m.bus);
       armesLachees.maj(m.armesLachees, tS);
       fumigenesRendu.maj(m.fumigenes, tsServeur, tS);

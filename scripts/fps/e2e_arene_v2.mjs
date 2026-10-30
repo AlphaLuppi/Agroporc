@@ -407,7 +407,7 @@ try {
       env: {
         ...process.env, PORT: String(portWs), PDJ_FPS_ELSA_MIN_MS: "6000", PDJ_FPS_ELSA_MAX_MS: "7000", SCENE_JSON: join(RACINE, "public/agroparc/scene.json"),
         PDJ_FPS_AVION_MIN_MS: "3600000", PDJ_FPS_AVION_MAX_MS: "3700000", PDJ_FPS_BUS_MIN_MS: "3600000", PDJ_FPS_BUS_MAX_MS: "3700000",
-        PDJ_FPS_EVT_MIN_MS: process.env.E2E_EVT_MIN_MS ?? "3600000", PDJ_FPS_EVT_MAX_MS: process.env.E2E_EVT_MAX_MS ?? "3700000",
+        PDJ_FPS_POLICE: "off", PDJ_FPS_EVT_MIN_MS: process.env.E2E_EVT_MIN_MS ?? "3600000", PDJ_FPS_EVT_MAX_MS: process.env.E2E_EVT_MAX_MS ?? "3700000",
       },
     });
     await attendreHttp(`http://localhost:${portWs}/sante`, 20_000, "serveur-fps").catch((e) => { throw new Error(`${e.message}\n${srv.journal.join("")}`); });

@@ -21,6 +21,14 @@ export interface PropsBandeauEvenement {
 
 const FR = new Intl.NumberFormat("fr-FR");
 
+/** (2026-10-30) La descente de police n'est pas un événement du protocole : bandeau CLIENT, lu dans `etat.police` (voiture présente dans le snap). */
+const TEXTE_POLICE = {
+  titre: "DESCENTE DE POLICE", court: "DESCENTE DE POLICE", icone: "🚓",
+  sousArene: "Elle fonce sur le meilleur", sousBr: "Sauvez-vous", surMoi: "La police est à tes trousses !", repart: "La police repart",
+} as const;
+/** L'alerte plein format ne reste que quelques secondes : la sirène a déjà prévenu, le reste du temps une bande compacte suffit. */
+const ALERTE_POLICE_MS = 4_000;
+
 const TEXTES = {
   truck: { titre: "LE TRUCK MUCHE EST DEVENU FOU !", sous: "Il fonce sur tout le monde. Courez, montez sur un toit !", court: "TRUCK MUCHE FOU", icone: "🚚" },
   tigre: { titre: "ALERTE : TIGRE ROBOT GÉANT", sous: "Celui qui l'achève prend les commandes du TITAN TIGRE", court: "TIGRE ROBOT", icone: "🐯" },
@@ -36,6 +44,9 @@ function BandeauEvenementBrut({ monstres, maintenantServeur, joueurs, monId }: P
   /** consignes du pilote : affichées 8 s à la prise du titan */
   const [aideTitan, setAideTitan] = useState(false);
   const piloteDepuis = useRef<string | null>(null);
+  /** alerte de la police : affichée 4 s à chaque nouvelle descente (clé = sa fin prévue) */
+  const [alertePolice, setAlertePolice] = useState(false);
+  const policeVue = useRef<number | null>(null);
 
   useEffect(() => {
     const id = setInterval(() => {
@@ -54,8 +65,20 @@ function BandeauEvenementBrut({ monstres, maintenantServeur, joueurs, monId }: P
     return () => clearTimeout(m);
   }, [cleTitan]);
 
+  const clePolice = etat?.police ? etat.police.finT : null;
+  useEffect(() => {
+    if (clePolice === null) { policeVue.current = null; setAlertePolice(false); return; }
+    if (policeVue.current === clePolice) return;
+    policeVue.current = clePolice;
+    setAlertePolice(true);
+    const m = setTimeout(() => setAlertePolice(false), ALERTE_POLICE_MS);
+    return () => clearTimeout(m);
+  }, [clePolice]);
+
   if (!etat) return null;
   const ev = etat.evenement;
+  const police = etat.police;
+  const sousPolice = police ? (police.depart ? TEXTE_POLICE.repart : police.surMoi ? TEXTE_POLICE.surMoi : police.br ? TEXTE_POLICE.sousBr : TEXTE_POLICE.sousArene) : "";
   const titan = etat.titan;
   const pseudo = (id: string) => joueurs.find((j) => j.id === id)?.pseudo ?? "Un agent";
 
@@ -84,6 +107,20 @@ function BandeauEvenementBrut({ monstres, maintenantServeur, joueurs, monId }: P
           {ev.type === "tigre"
             ? <span className={styles.evtTemps}>{etat.tigre ? `${FR.format(Math.round(etat.tigre.pv))} PV` : ""}</span>
             : <span className={styles.evtTemps}>{formatSecondes(Math.max(0, ev.finT - maintenant) / 1000)}</span>}
+        </div>
+      )}
+      {police && alertePolice && !police.depart && (
+        <section className={styles.evtAlerte} data-type="police" data-moi={police.surMoi ? "oui" : "non"} role="alert" aria-label={TEXTE_POLICE.titre}>
+          <div className={styles.evtRayures} aria-hidden="true" />
+          <p className={styles.evtTitre}><span aria-hidden="true">{TEXTE_POLICE.icone} </span>{TEXTE_POLICE.titre}</p>
+          <p className={styles.evtSous}>{sousPolice}</p>
+        </section>
+      )}
+      {police && (!alertePolice || police.depart) && (
+        <div className={`${styles.plaque} ${styles.evtBande}`} data-type="police" data-moi={police.surMoi ? "oui" : "non"}>
+          <span className={styles.evtBandeTitre}><span aria-hidden="true">{TEXTE_POLICE.icone} </span>{TEXTE_POLICE.court}</span>
+          <span className={styles.evtPoliceSous}>{sousPolice}</span>
+          {!police.depart && <span className={styles.evtTemps}>{formatSecondes(Math.max(0, police.finT - maintenant) / 1000)}</span>}
         </div>
       )}
       {titan && titan.pilote !== monId && (

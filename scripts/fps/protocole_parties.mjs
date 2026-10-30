@@ -22,7 +22,17 @@
  *      `refus{pause, limite}` quand le cumul est épuisé ; un joueur SEUL en est exempté (suspensions rapprochées, levée immédiate sans compte à rebours) ;
  *  15. (lot 6, serveur à part : une arène / une partie de zombies / une partie de BR de plus, total 3) plafonds de parties : la réserve d'un emplacement par mode laisse
  *      ouvrir `ar2`, `z2` et `br2` au-delà du total, une troisième partie du même mode est refusée (`refus{mode, limite}`).
- * Usage : node scripts/fps/protocole_parties.mjs (Node 22). Spec : docs/superpowers/specs/2026-10-29-pause-parties-bots-design.md
+ *  16. (2026-10-30) réglages d'événements d'une arène : `mode{arene, partie:"nouvelle", reglages}` ⇒ l'écho `mode` et `salons.listes.arene` portent les réglages, `ar1` garde les siens
+ *      (tous les événements, Normal), plafond d'arènes atteint ⇒ `refus{mode, limite}`, réglages invalides (hors liste, doublons, types douteux, fréquence inconnue) normalisés
+ *      par le serveur (jamais d'erreur), `evenements: []` valide ;
+ *  17. (serveur à part, descente de police forcée : 2 s, 12 s de poursuite) joueurs SANS la capacité `police` : l'un tue l'autre, aucune voiture n'apparaît ; joueurs AVEC la capacité :
+ *      le premier kill fait de lui le meilleur, `police{debut}` vise ce joueur, `monstres.police` dans les snaps (700 PV), il est écrasé (`mort{cause:"police"}`, aucun kill crédité),
+ *      puis `police{fin}` ;
+ *  18. (serveur à part) Battle Royale à deux humains sans bot : `lancerPartie{police:false}` ⇒ aucune descente (`etat.police === false` vu des deux joueurs), `{police:true}`
+ *      (`PDJ_FPS_BR_POLICE_MS` court) ⇒ une descente (`police{debut}` sur un des humains, `monstres.police` dans le snap du BR) ;
+ *  19. (serveur à part) patrouille de police des zombies : `zevt{e:"patrouille", p0, p1, t0, finT}` dès le début de la première manche (`PDJ_FPS_ZOMBIES_PATROUILLE_MANCHE=1`, `_MS=0`).
+ * Les scénarios 1 à 15 neutralisent la police et la patrouille (`PDJ_FPS_POLICE=off`, `PDJ_FPS_ZOMBIES_PATROUILLE=off`) : une descente attendue changerait leurs scénarios déterministes.
+ * Usage : node scripts/fps/protocole_parties.mjs (Node 22). Spec : docs/superpowers/specs/2026-10-29-pause-parties-bots-design.md, 2026-10-30-arene-police-evenements-design.md
  */
 import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:net";
@@ -60,6 +70,7 @@ async function lancerServeur(extra = {}) {
       PDJ_FPS_BR_ALTITUDE: "150", PDJ_FPS_BR_FIN_MS: "2000", PDJ_FPS_BR_BOTS_ESSAI: "agressif",
       // disjoncteur de création très haut : un pic de CPU de la machine de test ne doit pas faire échouer le script
       PDJ_FPS_CREATION_TIC_MAX_MS: "1000",
+      PDJ_FPS_POLICE: "off", PDJ_FPS_ZOMBIES_PATROUILLE: "off",
       PDJ_FPS_BR_STATS: join(mkdtempSync(join(tmpdir(), "pdj-parties-")), "stats-br.json"),
       ...extra,
     },
@@ -72,11 +83,11 @@ await lancerServeur();
 
 /** Adresse IP simulée des clients suivants (le serveur lit le dernier `x-forwarded-for`) : un scénario = une adresse, la rafale de créations est par adresse. */
 let ipScenario = "10.0.0.1";
-function client(pseudo, v = V_COURANTE, reprise = undefined) {
+function client(pseudo, v = V_COURANTE, reprise = undefined, capacites = undefined) {
   const ws = new WebSocket(URL, { headers: { "x-forwarded-for": ipScenario } });
   const c = { ws, pseudo, recus: [], id: null, jeton: null };
   ws.on("message", (d) => { const m = JSON.parse(String(d)); c.recus.push(m); if (m.t === "bienvenue") { c.id = m.id; c.jeton = m.jeton ?? c.jeton; } });
-  c.pret = new Promise((r) => ws.on("open", r)).then(() => ws.send(JSON.stringify({ t: "bonjour", v, pseudo, ...(reprise ? { reprise } : {}) })));
+  c.pret = new Promise((r) => ws.on("open", r)).then(() => ws.send(JSON.stringify({ t: "bonjour", v, pseudo, ...(reprise ? { reprise } : {}), ...(capacites ? { capacites } : {}) })));
   c.envoyer = (m) => ws.send(JSON.stringify(m));
   c.dernier = (t) => [...c.recus].reverse().find((m) => m.t === t);
   c.tous = (t) => c.recus.filter((m) => m.t === t);
@@ -91,7 +102,7 @@ async function aller(c, mode, partie) {
   c.envoyer({ t: "mode", mode, ...(partie ? { partie } : {}) });
   return jusqua(() => c.dernier("mode") ?? c.dernier("refus"));
 }
-async function fermer(...cs) { for (const c of cs) c.ws.close(1000); await attendre(150); }
+async function fermer(...cs) { for (const c of cs) { if (c.timer) clearInterval(c.timer); c.ws.close(1000); } await attendre(150); }
 const idsParties = async () => (await sante()).parties.map((p) => p.id);
 async function attendreParties(ids, ms = 3000) {
   const fin = Date.now() + ms;
@@ -676,6 +687,250 @@ const sansSnap = (c) => c.tous("snap").length === 0 && c.tous("zombies").length 
   ok(sans?.t === "mode" && /^z\d+$/.test(sans.partie ?? ""), `sans \`partie\` : routé vers une partie existante (${JSON.stringify(sans)})`);
   await fermer(...Xs);
   ok(await attendreParties(["ar1", "z1", "br1"]), "toutes les parties créées sont refermées");
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------
+// 16 à 19 : événements paramétrables, descente de police, patrouille des zombies (2026-10-30)
+// ---------------------------------------------------------------------------------------------------------------------------------------------
+
+const CAPACITES_POLICE = ["police"];
+/** Demande une arène avec des réglages (le champ `reglages` est omis si `undefined`) et attend l'écho `mode` ou un refus. */
+async function allerAvecReglages(c, reglages) {
+  c.vider();
+  c.envoyer({ t: "mode", mode: "arene", partie: "nouvelle", ...(reglages !== undefined ? { reglages } : {}) });
+  return jusqua(() => c.dernier("mode") ?? c.dernier("refus"));
+}
+const TOUS_LES_EVENEMENTS = ["elsa", "avion", "bus", "truck", "tigre", "police"];
+const ligneArene = (c, id) => (c.dernier("salons")?.listes?.arene ?? []).find((p) => p.id === id);
+
+// ---- 16. réglages d'événements d'une arène ----
+{
+  for (const sv of serveurs) sv.kill();
+  await lancerServeur({ PDJ_FPS_POLICE: "on", PDJ_FPS_CREATION_DELAI_MS: "1", PDJ_FPS_PARTIES_PAR_IP: "10", PDJ_FPS_CREATION_RAFALE_IP: "50" });
+  ipScenario = "10.0.16.1";
+  // O observe la liste des parties sans jamais vider ses messages (`aller` vide ceux de son client)
+  const A = client("Anouk", V_COURANTE, undefined, CAPACITES_POLICE), B = client("Basile"), C = client("Chloe"), O = client("Observatrice");
+  await connecter(A, B, C, O);
+  const reglages = { evenements: ["elsa"], frequence: "calme" };
+  const ma = await allerAvecReglages(A, reglages);
+  ok(ma?.t === "mode" && ma.partie === "ar2" && JSON.stringify(ma.reglages) === JSON.stringify(reglages), `Anouk crée ar2 avec des réglages, écho \`mode\` (${JSON.stringify(ma)})`);
+  ok(!!(await jusqua(() => ligneArene(O, "ar2")?.reglages)), "salons.listes.arene : ar2 est listée avec ses réglages");
+  ok(JSON.stringify(ligneArene(O, "ar2")?.reglages) === JSON.stringify(reglages), `ar2 : ${JSON.stringify(ligneArene(O, "ar2")?.reglages)}`);
+  ok(JSON.stringify(ligneArene(O, "ar1")?.reglages) === JSON.stringify({ evenements: TOUS_LES_EVENEMENTS, frequence: "normal" }), `ar1 garde les réglages par défaut du serveur (${JSON.stringify(ligneArene(O, "ar1")?.reglages)})`);
+  // le hall rejoint sans réglages : l'écho porte les réglages de la partie rejointe
+  const mb = await aller(B, "arene");
+  ok(mb?.t === "mode" && mb.partie !== "ar2" && mb.reglages?.evenements?.length === 6 && mb.reglages.frequence === "normal", `rejoindre le hall : écho avec ses réglages par défaut (${JSON.stringify(mb)})`);
+  // plafond d'arènes (ar1 + ar2) atteint : refus{mode, limite}
+  const rb = await allerAvecReglages(C, { evenements: [], frequence: "chaos" });
+  ok(rb?.t === "refus" && rb.action === "mode" && rb.raison === "limite", `plafond d'arènes atteint : refus{mode, limite} (${JSON.stringify(rb)})`);
+  ok(JSON.stringify(ligneArene(O, "ar2")?.reglages) === JSON.stringify(reglages), "la demande refusée n'a rien changé aux réglages d'ar2");
+  await aller(A, "arene", "ar1");
+  ok(await attendreParties(["ar1", "z1", "br1"]), "ar2 refermée dès qu'elle est vide");
+  // réglages invalides : normalisés (liste fermée, doublons, types douteux), jamais d'erreur ; `evenements: []` = aucun événement
+  const cas = [
+    [{ evenements: ["bidule", "police", "police", 42, null, "elsa"], frequence: "turbo" }, { evenements: ["elsa", "police"], frequence: "normal" }, "hors liste, doublons, types douteux, fréquence inconnue"],
+    [{ evenements: [], frequence: "chaos" }, { evenements: [], frequence: "chaos" }, "aucun événement"],
+    [{ frequence: "calme" }, { evenements: TOUS_LES_EVENEMENTS, frequence: "calme" }, "`evenements` absent = tous"],
+    ["n'importe quoi", { evenements: TOUS_LES_EVENEMENTS, frequence: "normal" }, "réglages qui ne sont pas un objet = défaut"],
+    [{ evenements: "truck", frequence: 3 }, { evenements: TOUS_LES_EVENEMENTS, frequence: "normal" }, "`evenements` qui n'est pas un tableau = tous"],
+  ];
+  for (const [brut, attendu, nom] of cas) {
+    const m = await allerAvecReglages(C, brut);
+    ok(m?.t === "mode" && /^ar\d+$/.test(m.partie ?? "") && JSON.stringify(m.reglages) === JSON.stringify(attendu), `réglages invalides (${nom}) : normalisés par le serveur (${JSON.stringify(m?.reglages ?? m)})`);
+    await aller(C, "arene", "ar1");
+    if (!(await attendreParties(["ar1", "z1", "br1"]))) ok(false, "l'arène du cas précédent n'est pas refermée");
+  }
+  // sans le champ `reglages` (client d'avant) : réglages par défaut
+  const msans = await allerAvecReglages(C, undefined);
+  ok(msans?.t === "mode" && JSON.stringify(msans.reglages) === JSON.stringify({ evenements: TOUS_LES_EVENEMENTS, frequence: "normal" }), `sans \`reglages\` : défaut (${JSON.stringify(msans?.reglages)})`);
+  await fermer(A, B, C, O);
+  ok(await attendreParties(["ar1", "z1", "br1"]), "tout est refermé");
+}
+
+/**
+ * Client « en jeu » dans une arène : il rejoue un `etat` à 20 Hz (sinon l'inactivité l'évince) et marche vers `c.but` à 12 m/s en ligne droite (le serveur ne juge
+ * que le budget de distance, jamais les bâtiments). Une réapparition (`apparition`) le replace où le serveur l'a mis.
+ */
+function animer(c, ap) {
+  c.pos = [...ap.p]; c.vit = [0, 0, 0]; c.but = null; c.lacet = ap.lacet ?? 0; c.tangage = 0; c.seq = 0; c.arme = ap.arme;
+  c.ws.on("message", (d) => {
+    const m = JSON.parse(String(d));
+    if (m.t === "apparition" && m.id === c.id) { c.pos = [...m.p]; c.but = null; c.arme = m.arme; }
+  });
+  c.timer = setInterval(() => {
+    c.vit = [0, 0, 0];
+    if (c.but) {
+      const dx = c.but[0] - c.pos[0], dz = c.but[2] - c.pos[2], l = Math.hypot(dx, dz), pas = 12 * 0.05;
+      if (l <= pas) { c.pos = [...c.but]; c.but = null; }
+      else { c.pos = [c.pos[0] + (dx / l) * pas, c.pos[1], c.pos[2] + (dz / l) * pas]; c.vit = [(dx / l) * 12, 0, (dz / l) * 12]; }
+    }
+    c.envoyer({ t: "etat", seq: ++c.seq, p: c.pos, v: c.vit, lacet: c.lacet, tangage: c.tangage, posture: "sol", mur: 0 });
+  }, 50);
+}
+async function entrerEnArene(c) {
+  c.envoyer({ t: "rejoindre" });
+  const ap = await jusqua(() => c.dernier("apparition"), 8000);
+  if (!ap) return false;
+  animer(c, ap);
+  return true;
+}
+/** Marche jusqu'à `but` (recommence si une réapparition a interrompu la marche). */
+async function marcherVers(c, but, ms = 60000) {
+  const fin = Date.now() + ms;
+  while (Date.now() < fin) {
+    if (Math.hypot(c.pos[0] - but[0], c.pos[2] - but[2]) < 0.3) return true;
+    c.but = [but[0], c.pos[1], but[2]];
+    await jusqua(() => !c.but, 3000);
+  }
+  return false;
+}
+/**
+ * `tireur` tue `victime` à la mitraillette (tirs réels : œil, visée, touches déclarées, validés par le serveur). La victime vient se placer à 6 m du tireur ; huit angles
+ * sont essayés tour à tour (un bâtiment entre eux rendrait les touches refusées). Renvoie le message `mort` ou null.
+ */
+async function tuerAuFusil(tireur, victime) {
+  await attendre(2600);   // protection d'apparition (1,5 s) et dégainage
+  for (let essai = 0; essai < 16; essai++) {
+    const theta = ((essai % 8) * Math.PI) / 4;
+    await marcherVers(victime, [tireur.pos[0] + 6 * Math.cos(theta), 0, tireur.pos[2] + 6 * Math.sin(theta)]);
+    await attendre(1700);   // la victime est de nouveau hors protection si elle venait de réapparaître
+    const o = [tireur.pos[0], tireur.pos[1] + 1.95, tireur.pos[2]];
+    const v = [victime.pos[0] - o[0], victime.pos[1] + 1.05 - o[1], victime.pos[2] - o[2]];
+    const l = Math.hypot(...v), d = v.map((x) => x / l);
+    tireur.lacet = Math.atan2(-d[0], -d[2]); tireur.tangage = Math.asin(d[1]);
+    await attendre(150);
+    const avant = tireur.tous("degats").filter((m) => m.cible === victime.id).length;
+    for (let tir = 0; tir < 14; tir++) {
+      tireur.envoyer({ t: "tir", arme: tireur.arme, o, d: [d], touches: [{ cible: victime.id, zone: "corps", plomb: 0 }] });
+      await attendre(130);
+      const mort = tireur.tous("mort").find((m) => m.cible === victime.id);
+      if (mort) return mort;
+      if (tir === 3 && tireur.tous("degats").filter((m) => m.cible === victime.id).length === avant) break;   // aucune touche : autre angle
+    }
+    const mort = tireur.tous("mort").find((m) => m.cible === victime.id);
+    if (mort) return mort;
+  }
+  return null;
+}
+const snapsPolice = (c) => c.tous("snap").map((m) => m.monstres?.police).filter(Boolean);
+
+// ---- 17. descente de police en arène : capacité, cible, écrasement, fin ----
+{
+  for (const sv of serveurs) sv.kill();
+  const h = "3600000";
+  await lancerServeur({
+    PDJ_FPS_POLICE: "on", PDJ_FPS_POLICE_MIN_MS: "2000", PDJ_FPS_POLICE_MAX_MS: "2000", PDJ_FPS_POLICE_DUREE_MS: "12000",
+    // tout le reste des événements est neutralisé : seule la voiture de police peut tuer sans tireur
+    PDJ_FPS_ELSA_MIN_MS: h, PDJ_FPS_ELSA_MAX_MS: h, PDJ_FPS_AVION_MIN_MS: h, PDJ_FPS_AVION_MAX_MS: h, PDJ_FPS_BUS_MIN_MS: h, PDJ_FPS_BUS_MAX_MS: h, PDJ_FPS_EVT_MIN_MS: h, PDJ_FPS_EVT_MAX_MS: h,
+  });
+  // (a) clients sans la capacité : un kill a lieu (le meilleur existe), mais aucune voiture ne vient (ils ne la verraient pas)
+  ipScenario = "10.0.17.1";
+  {
+    const X = client("Xavier"), Y = client("Yann");
+    await connecter(X, Y);
+    ok((await entrerEnArene(X)) && (await entrerEnArene(Y)), "(sans capacité) Xavier et Yann en arène");
+    const mort = await tuerAuFusil(X, Y);
+    ok(!!mort && mort.par === X.id && mort.cause === "arme", `(sans capacité) Xavier tue Yann au fusil, validé par le serveur (${JSON.stringify(mort && { par: mort.par, cause: mort.cause })})`);
+    await attendre(14000);
+    const vue = [X, Y].some((c) => c.tous("police").length > 0 || snapsPolice(c).length > 0);
+    ok(!vue, "(sans capacité) aucune descente en 14 s (2 s de minuteur, un kill fait) : invisibles pour la police, jamais écrasés");
+    await fermer(X, Y);
+    ok(await attendreParties(["ar1", "z1", "br1"]), "tout est refermé");
+  }
+  // (b) clients avec la capacité : la voiture fonce sur celui qui a le plus de kills
+  ipScenario = "10.0.17.2";
+  {
+    const A = client("Alice", V_COURANTE, undefined, CAPACITES_POLICE), B = client("Bob", V_COURANTE, undefined, CAPACITES_POLICE);
+    await connecter(A, B);
+    ok((await entrerEnArene(A)) && (await entrerEnArene(B)), "(capacité police) Alice et Bob en arène");
+    const mort = await tuerAuFusil(A, B);
+    ok(!!mort && mort.par === A.id, `(capacité police) Alice tue Bob : elle a le plus de kills (${JSON.stringify(mort && { par: mort.par, cause: mort.cause })})`);
+    const debut = await jusqua(() => A.tous("police").find((m) => m.phase === "debut"), 40000);
+    ok(!!debut && debut.cible === A.id && typeof debut.finT === "number" && debut.finT > debut.debutT, `police{debut} vise Alice, la meilleure (${JSON.stringify(debut)})`);
+    ok(!!B.tous("police").find((m) => m.phase === "debut"), "police{debut} reçu aussi par Bob (message adressé à tous les joueurs)");
+    await jusqua(() => snapsPolice(A).length > 3, 4000);
+    const sp = snapsPolice(A);
+    ok(sp.length > 3 && sp.every((p) => Array.isArray(p.p) && p.p.length === 3 && p.pvMax === 700 && p.pv === 700 && typeof p.cap === "number" && typeof p.v === "number"), `monstres.police dans les snaps (${sp.length} vus, 700 PV)`);
+    ok(sp.length > 0 && sp.every((p) => p.cible === undefined || p.cible === A.id || p.cible === B.id) && sp[0].cible === A.id, `la cible du snap est Alice au départ (${sp[0]?.cible})`);
+    const ecrase = await jusqua(() => A.tous("mort").find((m) => m.cible === A.id), 30000);
+    ok(!!ecrase && ecrase.cause === "police" && !ecrase.tueur, `Alice écrasée : mort{cause:"police"}, aucun tueur (${JSON.stringify(ecrase && { cause: ecrase.cause, par: ecrase.par, tueur: ecrase.tueur })})`);
+    const fin = await jusqua(() => A.tous("police").find((m) => m.phase === "fin"), 30000);
+    ok(!!fin && fin.raison === "temps", `police{fin} à la disparition de la voiture (${JSON.stringify(fin)})`);
+    await attendre(300);
+    const apres = A.tous("snap").slice(-3).map((m) => m.monstres?.police).filter(Boolean);
+    ok(apres.length === 0, "plus de voiture dans les snaps après la fin");
+    await fermer(A, B);
+    ok(await attendreParties(["ar1", "z1", "br1"]), "tout est refermé");
+  }
+}
+
+// ---- 18. Battle Royale : réglage « Descente de police » et une descente forcée ----
+{
+  for (const sv of serveurs) sv.kill();
+  await lancerServeur({
+    PDJ_FPS_POLICE: "on", PDJ_FPS_BR_POLICE_MS: "3000", PDJ_FPS_BR_MIN_JOUEURS: "2", PDJ_FPS_BR_BOTS_ESSAI: "",
+  });
+  /** Une partie à deux humains sans bot : lancement par l'hôte, saut, atterrissage, puis `attenteMs` d'observation. */
+  async function partieBr(police, attenteMs, ip) {
+    ipScenario = ip;
+    const H = client("Hana", V_COURANTE, undefined, CAPACITES_POLICE), I = client("Ivan", V_COURANTE, undefined, CAPACITES_POLICE);
+    await connecter(H, I);
+    await aller(H, "br"); await aller(I, "br");
+    H.envoyer({ t: "lancerPartie", bots: 0, ...(police !== undefined ? { police } : {}) });
+    await jusqua(() => H.tous("br").find((m) => m.etat.phase === "decompte"), 8000);
+    const reglage = await jusqua(() => I.dernier("br")?.etat && I.dernier("br").etat.police !== undefined && I.dernier("br").etat.police, 3000);
+    H.envoyer({ t: "rejoindre" }); I.envoyer({ t: "rejoindre" });
+    await jusqua(() => H.dernier("br")?.etat?.phase === "vol", 25000);
+    H.envoyer({ t: "sauter" }); I.envoyer({ t: "sauter" });
+    const [ah, ai] = [await jusqua(() => H.dernier("atterri"), 40000), await jusqua(() => I.dernier("atterri"), 40000)];
+    for (const [c, a] of [[H, ah], [I, ai]]) {
+      if (!a) continue;
+      let seq = 0;
+      c.timer = setInterval(() => c.envoyer({ t: "etat", seq: seq++, p: a.p, v: [0, 0, 0], lacet: 0, tangage: 0, posture: "sol", mur: 0 }), 100);
+    }
+    const debut = await jusqua(() => H.tous("police").find((m) => m.phase === "debut"), attenteMs);
+    await attendre(police === false ? 0 : 1500);
+    return { H, I, debut, lieux: [ah?.p, ai?.p], atterris: !!ah && !!ai, reglageVu: H.dernier("br")?.etat?.police === I.dernier("br")?.etat?.police ? H.dernier("br")?.etat?.police : "?" , reglage };
+  }
+  // (a) police désactivée par l'hôte : rien, même bien après l'atterrissage et le délai d'essai
+  {
+    const r = await partieBr(false, 22000, "10.0.18.1");
+    ok(r.atterris, "(police:false) les deux humains ont atterri");
+    ok(r.reglageVu === false, `(police:false) EtatPartieBr.police === false, vu aussi du non-hôte (${r.reglageVu})`);
+    ok(!r.debut && ![r.H, r.I].some((c) => c.tous("police").length || snapsPolice(c).length), "(police:false) aucune descente de police");
+    await fermer(r.H, r.I);
+    ok(await attendreParties(["ar1", "z1", "br1"]), "(police:false) partie refermée / retour au lobby de br1");
+  }
+  // (b) police activée : une descente (essai à 3 s après l'atterrissage)
+  {
+    const r = await partieBr(true, 50000, "10.0.18.2");
+    ok(r.atterris, "(police:true) les deux humains ont atterri");
+    ok(r.reglageVu === true, `(police:true) EtatPartieBr.police === true (${r.reglageVu})`);
+    ok(!!r.debut && [r.H.id, r.I.id].includes(r.debut.cible), `(police:true) police{debut} sur un des humains (${JSON.stringify(r.debut)}, atterrissages ${JSON.stringify(r.lieux)})`);
+    const sp = snapsPolice(r.H);
+    ok(sp.length > 0 && sp.every((p) => p.pvMax === 700), `(police:true) monstres.police dans le snap du Battle Royale (${sp.length} vus)`);
+    ok(!r.H.tous("mort").some((m) => m.cause === "police" && m.par !== "") , "une mort par la police n'a jamais de tueur crédité");
+    await fermer(r.H, r.I);
+    ok(await attendreParties(["ar1", "z1", "br1"]), "(police:true) tout est refermé");
+  }
+}
+
+// ---- 19. patrouille de police en ambiance des zombies ----
+{
+  for (const sv of serveurs) sv.kill();
+  await lancerServeur({ PDJ_FPS_ZOMBIES_PATROUILLE: "on", PDJ_FPS_ZOMBIES_PATROUILLE_MANCHE: "1", PDJ_FPS_ZOMBIES_PATROUILLE_MS: "0", PDJ_FPS_ZOMBIES_PAUSE_MS: "3000", PDJ_FPS_ZOMBIES_TRUCK: "0" });
+  ipScenario = "10.0.19.1";
+  const Z = client("Zelie");
+  await connecter(Z);
+  await aller(Z, "zombies");
+  Z.envoyer({ t: "lancerPartie" });
+  await jusqua(() => Z.dernier("zombies")?.etat?.phase === "pause");
+  Z.envoyer({ t: "rejoindre" });
+  const pat = await jusqua(() => Z.tous("zevt").find((m) => m.e?.e === "patrouille"), 30000);
+  const e = pat?.e;
+  ok(!!e && [e.p0, e.p1].every((p) => Array.isArray(p) && p.length === 3 && p.every(Number.isFinite)) && e.finT > e.t0, `zevt{patrouille} : plan hors de la carte, finT > t0 (${JSON.stringify(e)})`);
+  await fermer(Z);
+  ok(await attendreParties(["ar1", "z1", "br1"]), "tout est refermé");
 }
 
 for (const s of serveurs) s.kill();

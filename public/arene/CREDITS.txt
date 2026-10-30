@@ -31,3 +31,11 @@ sons/voix/*.mp3 — annonces synthétisées hors ligne par scripts/fps/generer_v
   le son produit n'est pas couvert par la GPL) avec la voix diphone MBROLA « fr1 » (© 1996-2008 Faculté polytechnique de Mons,
   équipe MBROLA, https://github.com/mbrola/mbrola-voices : utilisation et distribution gratuites, la base ne peut être ni vendue
   ni intégrée à un produit vendu), puis voix descendue, compressée et réverbérée par ffmpeg.
+
+---------------------------------------------------------------------------------------------------------------------
+Sirène de la voiture de police (public/arene/sons/sirene-police.mp3), registre dans lib/fps/sons-echantillons.ts (`SONS_POLICE`).
+
+sons/sirene-police.mp3 — son ORIGINAL du joueur, créé sous FL Studio (source : « 3del.wav »), 9,84 s, mono 44,1 kHz. Joué en boucle de
+  0,05 s à 9,58 s (la queue du fichier est un fondu à −48 dB). Servi par la descente de police (arène et Battle Royale) et la
+  patrouille de police des zombies. Pas une génération de scripts/fps/generer_sons.sh : un son remplace par scripts/fps/importer_son.sh.
+  Droits : le joueur (aucune source tierce, aucune licence à reprendre).

@@ -9,6 +9,52 @@ const scene = JSON.parse(readFileSync("public/agroparc/scene.json", "utf8")) as 
 const rect = (x0: number, z0: number, x1: number, z1: number): Building => ({ h: 10, r: [[x0, z0], [x1, z0], [x1, z1], [x0, z1]], c: [(x0 + x1) / 2, (z0 + z1) / 2] });
 const vide = construireMonde({ ...scene, buildings: [rect(-2000, -2000, -1999, -1999), rect(1999, 1999, 2000, 2000)], pois: [] } as SceneData);
 
+describe("MondeMonstres : voiture de police (2026-10-30)", () => {
+  const voiture = (x: number, cap = 0) => ({ p: [x, 0, 0] as [number, number, number], cap, v: 24, pv: 700, pvMax: 700, cible: "j1" });
+
+  it("interpole la voiture entre deux snaps, cap par le plus court chemin, et garde ses champs (cible, état, départ)", () => {
+    const m = new MondeMonstres();
+    m.alimenter(1000, { police: { ...voiture(0, 3), etat: "fumee" } });
+    m.alimenter(1100, { police: { ...voiture(10, -3), etat: "feu", depart: true } });
+    const p = m.a(1050).police!;
+    expect(p.p[0]).toBeCloseTo(5, 6);
+    expect(Math.abs(Math.cos(p.cap) - Math.cos(Math.PI))).toBeLessThan(0.01);
+    expect(p).toMatchObject({ etat: "feu", depart: true, cible: "j1", pv: 700 });
+    expect(m.a(5000).police!.p[0]).toBe(10);
+  });
+
+  it("un snap unique la restitue aussi, et elle disparaît du rendu quand le snap n'en porte plus", () => {
+    const m = new MondeMonstres();
+    m.alimenter(1000, { police: voiture(3) });
+    expect(m.a(1000).police?.p[0]).toBe(3);
+    expect(m.a(0).police?.p[0]).toBe(3);
+    m.alimenter(1100, undefined);
+    expect(m.a(1090).police).toBeUndefined();
+    expect(m.a(1010).police).toBeDefined();
+    expect(m.a(5000).police).toBeUndefined();
+  });
+
+  it("suit le message `police` (début → état → fin) sans dépendre du snap", () => {
+    const m = new MondeMonstres();
+    expect(m.police()).toBeNull();
+    m.majPolice({ t: "police", phase: "debut", debutT: 10, finT: 30, cible: "j2" });
+    expect(m.police()).toEqual({ debutT: 10, finT: 30, cible: "j2" });
+    m.majPolice({ t: "police", phase: "etat", debutT: 10, finT: 31 });
+    expect(m.police()).toEqual({ debutT: 10, finT: 31 });
+    m.majPolice({ t: "police", phase: "fin", debutT: 10, finT: 31, raison: "detruite", par: "j3" });
+    expect(m.police()).toBeNull();
+  });
+
+  it("`reinitialiser` oublie la descente et les snaps", () => {
+    const m = new MondeMonstres();
+    m.alimenter(1000, { police: voiture(3) });
+    m.majPolice({ t: "police", phase: "debut", debutT: 1, finT: 2 });
+    m.reinitialiser();
+    expect(m.police()).toBeNull();
+    expect(m.a(1000).police).toBeUndefined();
+  });
+});
+
 describe("MondeMonstres", () => {
   it("interpole position et cap (par le plus court chemin) entre deux snaps", () => {
     const m = new MondeMonstres();

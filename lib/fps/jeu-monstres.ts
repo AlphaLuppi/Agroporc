@@ -31,11 +31,15 @@ export interface LaserAnnonce { de: Vec3; vers: Vec3; rayon: number; tirT: numbe
 
 export interface TitanEnCours { pilote: string; finT: number }
 
+/** (2026-10-30) Descente de police en cours (message `police`) : `cible` = id du joueur poursuivi au départ. */
+export interface PoliceEnCours { debutT: number; finT: number; cible?: string }
+
 export class MondeMonstres {
   private snaps: { ts: number; m: MonstresSnap | null }[] = [];
   private ev: EvenementEnCours | null = null;
   private lasersEnAttente: LaserAnnonce[] = [];
   private ti: TitanEnCours | null = null;
+  private po: PoliceEnCours | null = null;
 
   /** Un snap reçu (`monstres` absent = aucun monstre). */
   alimenter(ts: number, m: MonstresSnap | undefined): void {
@@ -57,7 +61,9 @@ export class MondeMonstres {
       const tigre = interpoler(A.m?.tigre, B.m?.tigre, k);
       const titan = interpoler(A.m?.titan, B.m?.titan, k);
       const bus = interpoler(A.m?.bus, B.m?.bus, k);
+      const police = interpoler(A.m?.police, B.m?.police, k);
       if (truck) r.truck = truck;
+      if (police) r.police = police;
       if (tigre) r.tigre = tigre;
       if (titan) r.titan = titan;
       if (bus) r.bus = bus;
@@ -101,11 +107,23 @@ export class MondeMonstres {
     return this.ti;
   }
 
+  /**
+   * Message `police` (2026-10-30) : `debut` ou `etat` (arrivant) mémorise la descente, `fin` l'efface. La sirène et le dessin ne dépendent PAS de ce
+   * message mais de la présence de `monstres.police` dans le snap : un message perdu ne laisse ni voiture muette ni sirène fantôme.
+   */
+  majPolice(m: Extract<MessageServeur, { t: "police" }>): void {
+    this.po = m.phase === "fin" ? null : { debutT: m.debutT, finT: m.finT, ...(m.cible ? { cible: m.cible } : {}) };
+  }
+  police(): PoliceEnCours | null {
+    return this.po;
+  }
+
   reinitialiser(): void {
     this.snaps = [];
     this.ev = null;
     this.lasersEnAttente = [];
     this.ti = null;
+    this.po = null;
   }
 }
 

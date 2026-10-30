@@ -126,6 +126,7 @@ export type DecisionMode =
 export function decisionMode(e: {
   mode: unknown; salleActuelle: ModeSalle; enJeu: boolean; joueursCible: number; version?: number;
   partie?: unknown; partieActuelle?: string | null; parties?: readonly PartieRoutage[]; creerPossible?: boolean;
+  accepteVide?: (p: PartieRoutage) => boolean;
 }): DecisionMode | null {
   if (!(MODES_SALLE as readonly unknown[]).includes(e.mode)) return null;
   const mode = e.mode as ModeSalle;
@@ -133,7 +134,7 @@ export function decisionMode(e: {
   if (e.parties) {
     return decisionPartie({
       mode, partie: e.partie, partieActuelle: e.partieActuelle, salleActuelle: e.salleActuelle, enJeu: e.enJeu, parties: e.parties,
-      creerPossible: e.creerPossible ?? false, version: e.version,
+      creerPossible: e.creerPossible ?? false, version: e.version, accepteVide: e.accepteVide,
     });
   }
   if (mode === e.salleActuelle) return { action: "echo", mode };
@@ -152,6 +153,12 @@ export function decisionMode(e: {
 export function decisionPartie(e: {
   mode: ModeSalle; partie?: unknown; partieActuelle?: string | null; salleActuelle: ModeSalle; enJeu: boolean;
   parties: readonly PartieRoutage[]; creerPossible: boolean; version?: number;
+  /**
+   * (2026-10-30) `PARTIE_NOUVELLE` ne reprend une partie VIDE que si ce prédicat l'accepte (défaut : toute partie vide qui accueille). Une arène vide n'est ainsi
+   * reprise que par qui veut EXACTEMENT ses réglages d'événements : jamais `ar1` vide (réglages du serveur) ni une arène personnalisée vide pas encore refermée
+   * pour d'autres réglages.
+   */
+  accepteVide?: (p: PartieRoutage) => boolean;
 }): DecisionMode {
   const { mode, parties } = e;
   const dedans = e.salleActuelle === mode && !!e.partieActuelle;
@@ -168,7 +175,7 @@ export function decisionPartie(e: {
   if (e.partie === PARTIE_NOUVELLE) {
     if (e.enJeu) return { action: "refus", raison: "lobby" };
     // une partie vide qui accueille fait l'affaire : pas de partie de plus
-    const vide = parties.find((p) => p.joueurs === 0 && accueilleDe(mode, p) && p.id !== e.partieActuelle);
+    const vide = parties.find((p) => p.joueurs === 0 && accueilleDe(mode, p) && p.id !== e.partieActuelle && (e.accepteVide?.(p) ?? true));
     if (vide) return { action: "changer", mode, partie: vide.id };
     if (!e.creerPossible) return { action: "refus", raison: "limite" };
     return { action: "changer", mode, partie: PARTIE_NOUVELLE };

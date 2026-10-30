@@ -314,7 +314,7 @@ try {
       env: {
         ...process.env, PORT: String(portWs), SCENE_JSON: join(RACINE, "public/agroparc/scene.json"),
         PDJ_FPS_ZOMBIES_ARGENT: ARGENT, PDJ_FPS_ZOMBIES_TOTAL: TOTAL, PDJ_FPS_ZOMBIES_PAUSE_MS: PAUSE, PDJ_FPS_ZOMBIES_GRIFFE: GRIFFE,
-        PDJ_FPS_ZOMBIES_TRUCK: "0",
+        PDJ_FPS_ZOMBIES_TRUCK: "0", PDJ_FPS_ZOMBIES_PATROUILLE: "off", PDJ_FPS_POLICE: "off",
         // (v11) compte à rebours de levée nul (9b), disjoncteur de création très haut (10b : un pic de CPU de la machine ne doit pas refuser la création de z2)
         PDJ_FPS_ZOMBIES_COMPTE_MS: "0", PDJ_FPS_CREATION_TIC_MAX_MS: "1000",
       },

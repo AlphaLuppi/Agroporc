@@ -46,6 +46,29 @@ export function carteNavigation(monde: Monde, rayon: number, opts: OptionsNav = 
   return carte;
 }
 
+/**
+ * Donne à `monde` (celui d'une salle neuve, construit comme `reference`) une copie de la grille de dégagement `rayon` déjà calculée pour `reference` :
+ * mêmes bornes, mêmes cases, tampon neuf (écrire dans l'une ne change pas l'autre). Le cache de `carteNavigation` est PAR MONDE : calculer la grille d'un
+ * monde de référence avant `listen` ne sert à aucune salle créée ensuite, qui paierait 40 à 430 ms à froid en plein tic (premier Truck fou, première
+ * descente de police) sur un serveur à 1 vCPU partagé par toutes les parties. Une grille déjà en cache pour `monde` est gardée ; des bornes différentes :
+ * calcul à froid (jamais une grille fausse).
+ */
+export function copierCarteNavigation(reference: Monde, monde: Monde, rayon: number, opts: OptionsNav = {}): CarteNav {
+  const tailleMin = opts.taille ?? TAILLE_MIN_M;
+  const ignorer = opts.ignorerPasseTigre === true;
+  const cle = `${rayon}|${tailleMin}|${ignorer ? 1 : 0}`;
+  const deja = cache.get(monde)?.get(cle);
+  if (deja) return deja.carte;
+  const source = carteNavigation(reference, rayon, opts);
+  const a = reference.bornes, b = monde.bornes;
+  if (a.x0 !== b.x0 || a.x1 !== b.x1 || a.z0 !== b.z0 || a.z1 !== b.z1) return carteNavigation(monde, rayon, opts);
+  const carte: CarteNav = { ...source, bloque: source.bloque.slice() };
+  let parCle = cache.get(monde);
+  if (!parCle) { parCle = new Map(); cache.set(monde, parCle); }
+  parCle.set(cle, { carte, rayon, ignorer });
+  return carte;
+}
+
 /** Oublie les grilles du monde (un bâtiment a été détruit ou relevé : porte achetée, nouvelle partie) ; la prochaine demande les recalcule. */
 export function invaliderNavigation(monde: Monde): void {
   cache.delete(monde);

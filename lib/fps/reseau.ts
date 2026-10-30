@@ -7,7 +7,7 @@
  */
 
 import type { EtatJoueurSnap, MessageClient, MessageServeur, Vec3 } from "./protocole";
-import { ECART_GARDE_M, VERSION_PROTOCOLE } from "./protocole";
+import { CAPACITE_POLICE, ECART_GARDE_M, VERSION_PROTOCOLE } from "./protocole";
 
 export type EtatConnexion = "connexion" | "ouvert" | "ferme" | "erreur";
 
@@ -208,7 +208,8 @@ export function connecterArene(
       if (s !== socket) return;
       tentatives = 0;
       // le « bonjour » ouvre toujours la session (en demandant à reprendre la précédente, v8), puis la file accumulée pendant la coupure
-      s.send(JSON.stringify({ t: "bonjour", v: VERSION_PROTOCOLE, pseudo, ...(session ? { reprise: session } : {}) } satisfies MessageClient));
+      // (2026-10-30) `capacites` : ce client dessine la voiture de la descente de police et joue sa sirène ; sans elle le serveur l'immunise (une voiture invisible ne tue personne)
+      s.send(JSON.stringify({ t: "bonjour", v: VERSION_PROTOCOLE, pseudo, capacites: [CAPACITE_POLICE], ...(session ? { reprise: session } : {}) } satisfies MessageClient));
       const attente = file;
       file = [];
       for (const texte of attente) s.send(texte);

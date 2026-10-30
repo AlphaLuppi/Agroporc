@@ -81,6 +81,37 @@ export const URLS_ZOMBIES: readonly string[] = [
   ...IDS_VOIX.map((id) => VOIX_ANNONCES[id].url),
 ];
 
+/**
+ * (2026-10-30) Sirène de la voiture de police (arène, Battle Royale ; la patrouille des zombies la réutilise) : son ORIGINAL du joueur
+ * (FL Studio, 9,84 s), hors de `ECHANTILLONS` (118 848 octets dépassent `POIDS_MAX_EFFET`, aucune ligne dans `generer_sons.sh`, et
+ * `URLS_ZOMBIES` est figé). Jouée en boucle : la queue du fichier est à −48 dB, un raccord brut claquerait. Niveaux mesurés
+ * (`ffmpeg volumedetect`) : sirène soutenue à ≈ −25 dB de 0,05 à 9,6 s, fondu de sortie de 9,6 à ≈ 9,77 s, attaque de 50 ms au début
+ * (les décodeurs MP3 ajoutent un décalage d'encodeur) : on reboucle donc de 0,05 s à 9,58 s, AVANT le fondu.
+ */
+export const SONS_POLICE = {
+  sirene: { url: "/arene/sons/sirene-police.mp3", gain: 0.7, boucleDebutS: 0.05, boucleFinS: 9.58 },
+} as const;
+
+/** Fichiers téléchargés à l'entrée dans une partie, tous modes (arène, Battle Royale, zombies) : la sirène, jamais importée dans le JS. */
+export const URLS_ARENE: readonly string[] = [SONS_POLICE.sirene.url];
+
+/** Poids plafond (octets) de la sirène de la police (le fichier du joueur fait 118 848 octets). */
+export const POIDS_MAX_SIRENE = 130_000;
+
+/**
+ * Réglages de la voix de la sirène à `distance` m, pour une vitesse radiale `vitesseRadiale` m/s (positive quand la source s'éloigne) :
+ * gain (audible à ≈ 300 m, comme le klaxon du Truck fou), passe-bas qui ferme les aigus au loin, vitesse de lecture (Doppler borné à ±8 %).
+ */
+export function reglageSirene(distance: number, vitesseRadiale = 0): { gain: number; passeBas: number; vitesse: number } {
+  const d = Number.isFinite(distance) ? Math.max(distance, 1) : 1;
+  const vr = Number.isFinite(vitesseRadiale) ? vitesseRadiale : 0;
+  return {
+    gain: Math.max(0.05, 1 / (1 + d / 70)) * SONS_POLICE.sirene.gain,
+    passeBas: Math.max(900, 5200 / (1 + d / 120)),
+    vitesse: Math.min(1.08, Math.max(0.92, 1 - vr / 343)),
+  };
+}
+
 /** Poids plafonds (octets) : un effet, une annonce, l'ensemble (tout est téléchargé à l'entrée en zombies). */
 export const POIDS_MAX_EFFET = 80_000;
 export const POIDS_MAX_VOIX = 30_000;

@@ -36,6 +36,14 @@ Le site (`npm run dev` à la racine) s'y connecte tout seul en dev (`ws://localh
 | `PDJ_FPS_BUS_MIN_MS` / `PDJ_FPS_BUS_MAX_MS` | 45 000 / 75 000 | intervalle (ms) entre deux passages du bus C3 express (arène seulement), qui écrase les joueurs à pied sur son trajet. Longs (une heure) pour les tests de bout en bout de l'arène. Une seule des deux sert aux deux bornes |
 | `PDJ_FPS_EVT_MIN_MS` / `PDJ_FPS_EVT_MAX_MS` | 45–70 s puis 70–110 s | délai (ms) avant chaque événement (Truck Muche fou, tigre géant), courts pour les essais |
 | `PDJ_FPS_EVT_TYPE` | alternance | `truck` ou `tigre` : toujours le même événement |
+| `PDJ_FPS_EVT_ACTIFS` | (absente : tous) | (2026-10-30) événements du hall `ar1` : liste CSV parmi `elsa`, `avion`, `bus`, `truck`, `tigre`, `police` (ex. `elsa,police`). Présente mais VIDE : aucun événement. Les arènes créées par un joueur ont leurs propres réglages (`mode{partie:"nouvelle", reglages}`) |
+| `PDJ_FPS_EVT_FREQUENCE` | `normal` | (2026-10-30) rythme des événements du hall : `calme` (intervalles × 3, plus de temps morts), `normal` (× 1,6) ou `chaos` (la cadence historique de la v3). Jamais appliqué à un intervalle fixé par une variable `PDJ_FPS_*_MIN_MS` / `_MAX_MS` |
+| `PDJ_FPS_POLICE` | (actif) | (2026-10-30) `off` coupe la descente de police partout (arène et Battle Royale) ; les scripts de test déterministes la coupent |
+| `PDJ_FPS_POLICE_MIN_MS` / `PDJ_FPS_POLICE_MAX_MS` | 240–420 s puis 300–540 s | (arène) délai avant la première descente (après la création de la salle ou le passage à 2 joueurs en jeu) ET entre deux descentes. Une seule des deux : elle sert aux deux bornes, et à `premier` comme à `entre`. Jamais mis à l'échelle par la fréquence |
+| `PDJ_FPS_POLICE_DUREE_MS` / `PDJ_FPS_POLICE_PV` | 22 000 / 700 | durée de la poursuite (puis retrait de 4 s au plus) et PV de la voiture (essais) |
+| `PDJ_FPS_BR_POLICE_MS` | (absent) | (Battle Royale, essais) délai fixe de l'armement après le départ de l'avion ; la descente n'attend plus que ce délai (60 s au plus) après le premier atterrissage d'un humain et se contente de 2 vivants |
+| `PDJ_FPS_ZOMBIES_PATROUILLE` | (actif) | (2026-10-30) `off` coupe la patrouille de police en ambiance des zombies |
+| `PDJ_FPS_ZOMBIES_PATROUILLE_MANCHE` / `_MS` | 3 / 45 000 puis 240–420 s | (zombies, essais) première manche éligible ; délai du premier passage ET entre deux, `0` = dès le début de la manche |
 | `PDJ_FPS_TIGRE_PV` | 4 000 + 1 500 / joueur | PV imposés au tigre géant des événements (essais), sans effet sur les tigres largués |
 | `PDJ_FPS_TIGRE_ATTAQUE` | au hasard | `laser`, `saut` ou `charge` : attaque spéciale imposée au tigre géant (essais) |
 | `PDJ_FPS_ZOMBIES_ARGENT` | 500 | argent de départ ($) du mode zombies (essais) |
@@ -144,6 +152,29 @@ La v11 (spec `docs/superpowers/specs/2026-10-29-pause-parties-bots-design.md`) a
 ancien ne gèlerait pas son horloge pendant une pause, il reçoit `erreur{version}`, « rechargez la page »). Un client v11 devant un serveur plus ancien est refusé de la même façon. Ne JAMAIS `docker compose down -v`. Après le déploiement,
 surveiller `/sante` (`ticMaxMs`, `ticsLents`, `alerte`, `parties`, `navigationBots`) et la mémoire du conteneur (1 vCPU, 512 Mo) avec deux parties de chaque mode, puis ajuster `PDJ_FPS_*_PARTIES`, `PDJ_FPS_PARTIES_TOTAL` et
 `PDJ_FPS_BR_BOTS_*` (les valeurs par défaut sont provisoires tant que `lib/fps/serveur.charge-agregee.test.ts`, à lancer SEUL, n'a pas été confirmé sur le VPS).
+## Descente de police et événements paramétrables (2026-10-30)
+
+Spec `docs/superpowers/specs/2026-10-30-arene-police-evenements-design.md`, `VERSION_PROTOCOLE` reste **11** (tout est additif).
+
+* **Descente de police** (`lib/fps/match-police.ts`, service PUR de `Salle` construit en dernier ; règles par mode `police-regles.ts`, constantes et cible `police.ts`) : une voiture de police surgit d'un point de route hors de la vue de tout le monde
+  (à 90 m au moins), fonce sur **le joueur qui a le plus de kills** en arène (sans kill dans le match : elle attend un premier kill, 60 s au plus, puis vise le plus proche) et sur **l'ennemi humain le plus proche** en Battle Royale, l'écrase s'il est
+  à pied (cause de mort `police`, aucun kill crédité), se retire après 22 s ou quand elle est détruite à coups de feu (700 PV, cible de tir `police`, boîte orientée rejouée sur son historique). Elle est RARE : une descente toutes les 5 à 9 min en
+  arène (jamais pendant un autre événement ni dans les 20 s qui suivent, ni dans la première minute d'un match), une seule par partie de Battle Royale (deux à partir de 20 joueurs au départ), jamais en vol, jamais avec moins de 4 vivants.
+  Message `police{debut|fin|etat}` et champ de snap `monstres.police` (la police n'est PAS un `TypeEvenement`). **Capacités** : le client à jour annonce `bonjour.capacites: ["police"]` ; un joueur sans la capacité (client d'avant)
+  est immunisé et jamais choisi pour cible, donc l'ordre de déploiement serveur / client est indifférent. La navigation de la voiture (grille de dégagement 1,8 m) est précalculée avant `listen` puis COPIÉE dans chaque monde neuf
+  (`copierCarteNavigation`) ; les recherches de chemin passent par le budget unique du serveur (un A\* par 12 ms, parties confondues).
+* **Réglages d'événements d'une arène** (`reglages-arene.ts`, `evenements-arene.ts`) : le créateur d'une arène choisit au lobby les événements (Elsa, avion et tigres largués, bus C3, Truck Muche fou, tigre robot géant et titan, descente de police) et
+  la fréquence (Calme / Normal / Chaos), envoyés dans `mode{mode:"arene", partie:"nouvelle", reglages}`. Le serveur NORMALISE (jamais d'erreur : liste fermée, doublons retirés, `evenements` absent = tous, `[]` = aucun, fréquence inconnue = `normal`),
+  la partie porte ses réglages (`Partie.config`) jusqu'à sa fermeture et les publie (écho `mode.reglages`, `salons.listes.arene[].reglages`). `ar1` (le hall) a les réglages par défaut du serveur (`PDJ_FPS_EVT_ACTIFS`, `PDJ_FPS_EVT_FREQUENCE`) ;
+  une arène vide n'est reprise que par qui demande EXACTEMENT les mêmes réglages. Décocher `avion` supprime aussi le sort d'invocation, décocher `tigre` le titan, décocher `bus` supprime les armes uniques larguées (les frappes aériennes et
+  les fumigènes continuent). Plafond d'arènes atteint : `refus{mode, limite}`.
+* **Battle Royale** : `lancerPartie{police?}` (hôte, activée par défaut), publié dans `EtatPartieBr.police`.
+* **Zombies** : pas de voiture, une **patrouille** (`patrouille-zombies.ts`) passe en trombe hors de la carte, sirène et lueur bleu/rouge, 2 fois au plus par partie à partir de la manche 3, jamais pendant une manche du Truck Muche, message
+  `zevt{e:"patrouille", p0, p1, t0, finT}` (horloge virtuelle : la pause la fige). Son propre générateur de hasard (le hasard de la salle n'est pas consommé).
+* **Son** : `public/arene/sons/sirene-police.mp3` (son ORIGINAL du joueur, FL Studio ; crédité dans `public/arene/CREDITS.txt`), joué en boucle par le client avec effet Doppler et filtre de distance (`Sons.sirenePolice`).
+
+**Déploiement** : reconstruire et redéployer le serveur AVANT la fusion du client (sans lui, ni réglages d'événements ni police) ; jamais de `docker compose down -v`. À surveiller après le déploiement : `/sante.ticMaxMs` et `alerte` pendant une descente.
+
 ## Aperçu des spectateurs (vue Palantir, issue #84)
 
 Spec `docs/superpowers/specs/2026-10-29-apercus-modes-design.md`. Le message serveur **`apercu`** (additif, `VERSION_PROTOCOLE` inchangé : un client d'avant l'ignore, un client à
@@ -233,7 +264,10 @@ s'y reconnecterait), un `next dev` pointé dessus (`NEXT_PUBLIC_FPS_WS_URL`) et 
   capture du tigre bipède armé, un bot blesse puis tue le joueur, killcam sur un bot, spectateur, fin 15 s après la mort du dernier humain, bilan « Entraînement : partie non comptée », `GET /stats-br` vide.
   Sans navigateur, en quelques secondes à une minute : `node scripts/fps/protocole_parties.mjs` (parties parallèles des trois modes, plafonds et réserve par mode, limites de création, pause globale, annulation du compte à rebours, coupure
   et reprise réseau d'un joueur pendant la pause, plafonds de la pause, joueur seul exempté, BR solo avec bots, quota global de bots, capacité 50, ancien client v10) et `node scripts/fps/protocole_br_parties.mjs` (parties du BR,
-  spectateur venu regarder, relais de la voix). Aucun de ces scripts n'utilise le port 8787. Captures du tigre bipède sans serveur : `node scripts/fps/captures_bots.mjs` (images dans `docs/medias/bots/`).
+  spectateur venu regarder, relais de la voix). `protocole_parties.mjs` couvre aussi (scénarios 16 à 19, 2026-10-30) les réglages d'événements d'une arène (écho, `salons.listes`, plafond, normalisation des réglages invalides), la descente de police
+  forcée par variables d'environnement (client sans la capacité `police` : aucune voiture ; avec : `police{debut}` sur le joueur qui a le plus de kills, `monstres.police` dans les snaps, écrasement sans kill, `police{fin}`), le réglage
+  de police du Battle Royale et la patrouille de police des zombies. Les autres scripts de ce chapitre neutralisent la police (`PDJ_FPS_POLICE=off`) et la patrouille (`PDJ_FPS_ZOMBIES_PATROUILLE=off`).
+  Aucun de ces scripts n'utilise le port 8787. Captures du tigre bipède sans serveur : `node scripts/fps/captures_bots.mjs` (images dans `docs/medias/bots/`).
 
 ## Déploiement (VPS, Docker + Traefik)
 
