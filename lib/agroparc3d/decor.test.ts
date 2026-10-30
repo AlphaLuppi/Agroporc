@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { describe, expect, it } from "vitest";
-import { ajouterBatiments, buildingGroup, creerEtatDestruction, extrude } from "./decor";
+import { ajouterBatiments, buildingGroup, creerAvionFilaire, creerEtatDestruction, extrude } from "./decor";
 import { estLisse, mursDe, nbEtages } from "./facade";
 import type { Building, SceneData } from "./types";
 
@@ -258,5 +258,14 @@ describe("(v8) bâtiment effacé (porte ouverte des zombies)", () => {
     expect(data[8]).toBeGreaterThan(1.5);
     e.poser(2, 0);
     expect(data[8]).toBe(0);
+  });
+});
+
+describe("avion filaire (partagé avec l'aperçu du Battle Royale)", () => {
+  it("6 enfants : fuselage, aile, queue, dérive et deux feux de position", () => {
+    const a = creerAvionFilaire();
+    expect(a.groupe.children).toHaveLength(6);
+    expect(a.groupe.children).toContain(a.navLight);
+    expect(a.groupe.children).toContain(a.wingLight);
   });
 });
