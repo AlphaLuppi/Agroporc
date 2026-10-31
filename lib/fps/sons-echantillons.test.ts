@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   ANNONCES_EN_ATTENTE_MAX, ECART_ANNONCES_S, ECHANTILLONS, FileAnnonces, IDS_ECHANTILLONS, IDS_VOIX, POIDS_MAX_EFFET, POIDS_MAX_SIRENE, POIDS_MAX_TOTAL, POIDS_MAX_VOIX,
-  RAYON_EXPLOSION_GRENADE_M, SONS_POLICE, URLS_ARENE, URLS_ZOMBIES, VOIX_ANNONCES, departCale, instantPic, reglageSirene, sonExplosion, voixDuBonus, voixLibre,
+  RAYON_EXPLOSION_GRENADE_M, SONS_POLICE, SPATIAL_SIRENE, URLS_ARENE, URLS_ZOMBIES, VOIX_ANNONCES, departCale, instantPic, reglageSirene, sonExplosion, voixDuBonus, voixLibre,
 } from "./sons-echantillons";
 import { GENRES_BONUS } from "./zombies-vagues";
 
@@ -167,18 +167,23 @@ describe("(2026-10-30) sirène de la voiture de police", () => {
     expect(boucleFinS).toBeGreaterThan(boucleDebutS + 5);
   });
 
-  it("réglage : plus loin, plus faible et plus sourd ; Doppler borné à ±8 % ; entrées douteuses sans NaN", () => {
-    const proche = reglageSirene(5), loin = reglageSirene(300);
-    expect(loin.gain).toBeLessThan(proche.gain);
+  it("réglage : la sirène suit la voiture (1/d, silence au loin) ; Doppler audible et borné ; entrées douteuses sans NaN", () => {
+    const proche = reglageSirene(5), loin = reglageSirene(120);
+    expect(loin.gain).toBeLessThan(proche.gain / 10); // −20 dB au moins entre 5 et 120 m
     expect(loin.passeBas).toBeLessThan(proche.passeBas);
-    expect(reglageSirene(0).gain).toBeLessThanOrEqual(SONS_POLICE.sirene.gain);
-    expect(reglageSirene(10_000).gain).toBeGreaterThanOrEqual(0.05 * SONS_POLICE.sirene.gain - 1e-9);
-    expect(reglageSirene(10_000).passeBas).toBeGreaterThanOrEqual(900);
+    expect(reglageSirene(0).gain).toBeCloseTo(SONS_POLICE.sirene.gain);
+    expect(reglageSirene(SPATIAL_SIRENE.referenceM * 2).gain).toBeCloseTo(SONS_POLICE.sirene.gain / 2);
+    expect(reglageSirene(SPATIAL_SIRENE.silenceM).gain).toBe(0);
+    expect(reglageSirene(10_000).gain).toBe(0);
+    // le gain ne remonte jamais en s'éloignant
+    let avant = Infinity;
+    for (let d = 0; d <= 250; d += 5) { const g = reglageSirene(d).gain; expect(g).toBeLessThanOrEqual(avant + 1e-12); avant = g; }
+    expect(reglageSirene(10_000).passeBas).toBeGreaterThanOrEqual(700);
     expect(reglageSirene(50, 0).vitesse).toBe(1);
-    expect(reglageSirene(50, 24).vitesse).toBeLessThan(1); // elle s'éloigne : plus grave
-    expect(reglageSirene(50, -24).vitesse).toBeGreaterThan(1); // elle approche : plus aigu
-    expect(reglageSirene(50, 1e6).vitesse).toBe(0.92);
-    expect(reglageSirene(50, -1e6).vitesse).toBe(1.08);
+    expect(reglageSirene(50, -24).vitesse).toBeGreaterThan(1.15); // elle approche : nettement plus aigu
+    expect(reglageSirene(50, 24).vitesse).toBeLessThan(0.88); // elle s'éloigne : nettement plus grave
+    expect(reglageSirene(50, 1e6).vitesse).toBe(SPATIAL_SIRENE.vitesseMin);
+    expect(reglageSirene(50, -1e6).vitesse).toBe(SPATIAL_SIRENE.vitesseMax);
     const bizarre = reglageSirene(NaN, Infinity);
     for (const v of Object.values(bizarre)) expect(Number.isFinite(v)).toBe(true);
   });
