@@ -1272,10 +1272,12 @@ export function creerSons(): Sons {
       const v = sireneVoix;
       const now = c.currentTime;
       const r = reglageSirene(position.distance, vitesseRadiale);
-      v.gain.gain.setTargetAtTime(r.gain, now, 0.1);
-      v.filtre.frequency.setTargetAtTime(r.passeBas, now, 0.1);
-      v.pan?.pan.setTargetAtTime(Math.max(-1, Math.min(1, position.pan)), now, 0.1);
-      v.src?.playbackRate?.setTargetAtTime(r.vitesse, now, 0.1);
+      // position et Doppler appliqués à chaque image : la sirène suit la voiture (gain nul au-delà de `SPATIAL_SIRENE.silenceM`), et le passage
+      // devant l'écouteur fait basculer la hauteur de l'aigu au grave en ≈ 0,2 s (constante de 0,06 s), comme une vraie voiture qui passe
+      v.gain.gain.setTargetAtTime(r.gain, now, 0.08);
+      v.filtre.frequency.setTargetAtTime(r.passeBas, now, 0.08);
+      v.pan?.pan.setTargetAtTime(Math.max(-1, Math.min(1, position.pan)), now, 0.06);
+      v.src?.playbackRate?.setTargetAtTime(r.vitesse, now, 0.06);
     },
     prechargerArene() {
       if (fini) return;

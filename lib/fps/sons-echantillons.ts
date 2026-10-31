@@ -99,16 +99,29 @@ export const URLS_ARENE: readonly string[] = [SONS_POLICE.sirene.url];
 export const POIDS_MAX_SIRENE = 130_000;
 
 /**
+ * Spatialisation de la sirène (2026-10-31) : la voiture s'entend LÀ OÙ ELLE EST. Plein volume jusqu'à `referenceM`, puis en 1/d (−6 dB par doublement
+ * de distance), fondu jusqu'au silence entre `fonduDebutM` et `silenceM` (la carte fait ≈ 400 m : de l'autre bout, on ne l'entend plus). Doppler de jeu :
+ * la vitesse du son est ramenée à `celeriteM_S` pour que le passage s'entende (à 24 m/s : ≈ +19 % en approche, ≈ −14 % en s'éloignant, au lieu de ±7 %).
+ */
+export const SPATIAL_SIRENE = { referenceM: 8, fonduDebutM: 140, silenceM: 210, celeriteM_S: 150, vitesseMin: 0.8, vitesseMax: 1.25 } as const;
+
+/**
  * Réglages de la voix de la sirène à `distance` m, pour une vitesse radiale `vitesseRadiale` m/s (positive quand la source s'éloigne) :
- * gain (audible à ≈ 300 m, comme le klaxon du Truck fou), passe-bas qui ferme les aigus au loin, vitesse de lecture (Doppler borné à ±8 %).
+ * gain (nul au-delà de `SPATIAL_SIRENE.silenceM`), passe-bas qui ferme les aigus au loin, vitesse de lecture (Doppler exagéré, borné).
  */
 export function reglageSirene(distance: number, vitesseRadiale = 0): { gain: number; passeBas: number; vitesse: number } {
-  const d = Number.isFinite(distance) ? Math.max(distance, 1) : 1;
+  const S = SPATIAL_SIRENE;
+  const d = Number.isFinite(distance) ? Math.max(distance, 0) : S.silenceM;
   const vr = Number.isFinite(vitesseRadiale) ? vitesseRadiale : 0;
+  const attenuation = S.referenceM / Math.max(d, S.referenceM);
+  const k = Math.min(1, Math.max(0, (d - S.fonduDebutM) / (S.silenceM - S.fonduDebutM)));
+  const fondu = 1 - k * k * (3 - 2 * k);
+  // source qui s'approche (vr < 0) : plus aigu ; qui s'éloigne : plus grave (formule de l'émetteur mobile, écouteur supposé immobile)
+  const doppler = S.celeriteM_S / Math.max(S.celeriteM_S + vr, 1);
   return {
-    gain: Math.max(0.05, 1 / (1 + d / 70)) * SONS_POLICE.sirene.gain,
-    passeBas: Math.max(900, 5200 / (1 + d / 120)),
-    vitesse: Math.min(1.08, Math.max(0.92, 1 - vr / 343)),
+    gain: attenuation * fondu * SONS_POLICE.sirene.gain,
+    passeBas: Math.max(700, 6000 / (1 + Math.max(d, 1) / 60)),
+    vitesse: Math.min(S.vitesseMax, Math.max(S.vitesseMin, doppler)),
   };
 }
 
