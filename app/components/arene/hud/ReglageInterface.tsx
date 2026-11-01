@@ -67,7 +67,6 @@ export default function ReglageInterface({ reglages, surReglages, replie }: Prop
 
   const corps: ReactNode = (
     <div className={styles.corps}>
-      <p className={styles.aide}>Le changement est immédiat. Grande carte : maintenir la touche de la carte (M par défaut).</p>
       <div className={styles.mini}>
         <SelecteurCoin coin={m.coin} surChange={(coin) => majMinimap({ coin })} idGroupe={`${id}-iface`} />
         <div className={styles.reglagesMini}>

@@ -923,7 +923,7 @@ describe("MenuPause et aide en Battle Royale", () => {
     expect(html).toContain("les spectateurs ne vous parlent pas");
     expect(rendre({ mode: "br", elimine: true })).toContain("parler avec les autres spectateurs (les joueurs en vie ne vous entendent pas)");
     expect(html).not.toContain("Équipement de la prochaine apparition");
-    expect(html).toContain("la tempête et les autres joueurs ne s&#x27;arrêtent pas");
+    expect(html).toContain("La partie continue.");
     expect(html).toContain("compte comme un abandon");
     expect(html).toContain("Quitter la partie");
     expect(rendre({ mode: "br", elimine: true })).not.toContain("abandon");
@@ -1026,5 +1026,31 @@ describe("HudArene en Battle Royale", () => {
     const html = rendre({ ...HUD_BR, mode: "arene" }, { br: null, etatBr: undefined });
     expect(html).not.toContain("Tempête");
     expect(html).not.toContain("EN VIE");
+  });
+  it("barre des armes 3D : à la mort et à l'entracte de l'arène seulement, à la place du sélecteur compact ; jamais en BR ni en zombies, ni en vie", () => {
+    const mort = { ...HUD_BR, mode: "arene" as const, mort: true, killcamPhase: "rejeu" as const, verrouille: true };
+    const arene = (hud: HudEtat, plus: Record<string, unknown> = {}) => rendre(hud, { br: null, etatBr: undefined, ...plus });
+    const html = arene(mort);
+    expect(html).toContain("Armes de la prochaine apparition");
+    expect(html).toContain('data-habillage="killcam"');
+    expect(html).toContain("1 2 3 : arme suivante");
+    // (fusion) le sélecteur de viseur de la barre a ses propres boutons `aria-pressed` : le sélecteur COMPACT, lui, a des boutons nommés d'après les armes
+    expect(html).not.toMatch(/<button[^>]*aria-pressed[^>]*>(Mitraillette|Pompe|Sniper|Pistolet|Couteau)<\/button>/);
+    expect(html).toContain("Viseur");
+    // souris libre (Échap) : la barre reste, sans l'aide « Échap : souris », et le menu pause ne double pas le choix d'équipement
+    const libre = arene({ ...mort, verrouille: false });
+    expect(libre).toContain("Armes de la prochaine apparition");
+    expect(libre).not.toContain("Échap : souris");
+    expect(libre).toContain("Menu pause");
+    expect(libre).not.toContain("Équipement de la prochaine apparition");
+    // entracte : la barre prend la place du sélecteur compact du podium
+    const entracte = arene({ ...HUD_BR, mode: "arene" as const }, { match: { numero: 2, fin: null, objectif: 30, phase: "entracte", prochain: 110_000 } });
+    expect(entracte).toContain("Armes de la prochaine apparition");
+    expect(entracte).toContain('data-habillage="libre"');
+    expect(entracte).not.toMatch(/<button[^>]*aria-pressed[^>]*>(Mitraillette|Pompe|Sniper|Pistolet|Couteau)<\/button>/);
+    // en vie, en BR et en zombies : rien
+    expect(arene({ ...HUD_BR, mode: "arene" as const })).not.toContain("Armes de la prochaine apparition");
+    expect(rendre({ ...HUD_BR, mort: true, killcamPhase: "" })).not.toContain("Armes de la prochaine apparition");
+    expect(arene({ ...mort, mode: "zombies" as const })).not.toContain("Armes de la prochaine apparition");
   });
 });

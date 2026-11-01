@@ -46,6 +46,8 @@ export interface PropsEcranMort {
   joueurs?: readonly Pick<JoueurPublic, "id" | "kills" | "morts">[];
   /** « 1 : arme principale suivante · 2 : … » : la souris est prise, les boutons du sélecteur ne sont pas cliquables (vide : rien) */
   aideEquipement?: string;
+  /** le choix d'équipement est ailleurs (la barre des armes 3D de `HudArene`) : pas de sélecteur compact ici */
+  sansChoixEquipement?: boolean;
   /** (zombies) horodatage serveur de l'élimination d'un joueur à terre (0 = inconnu) */
   terreFinT?: number;
   /** (zombies) horloge serveur du saignement */
@@ -77,7 +79,7 @@ function BarreSaignement({ terreFinT, maintenantServeur }: { terreFinT: number; 
 
 export default function EcranMort({
   hud, derniereMort, killcamInfo, degatsAuTueur, touches, equipement, surEquipement, surPasserKillcam, joueurs, aideEquipement, terreFinT = 0, maintenantServeur, br,
-  modeVoix = "appuyer",
+  modeVoix = "appuyer", sansChoixEquipement = false,
 }: PropsEcranMort) {
   const disposition = useDisposition();
   if (!hud.mort) return null;
@@ -87,7 +89,7 @@ export default function EcranMort({
         <div className={styles.repli}>
           <section className={styles.carte} aria-label="À terre">
             <h2 className={styles.titre} role="status">À terre</h2>
-            <p className={styles.degats}>Un coéquipier peut vous relever : il maintient la touche d&apos;action à moins de {formatDecimal(ZOMBIES.reanimationPortee)} m pendant {ZOMBIES.reanimationS} s.</p>
+            <p className={styles.degats}>Un coéquipier peut vous relever : touche d&apos;action maintenue {ZOMBIES.reanimationS} s à moins de {formatDecimal(ZOMBIES.reanimationPortee)} m.</p>
             {terreFinT > 0 && maintenantServeur ? <BarreSaignement terreFinT={terreFinT} maintenantServeur={maintenantServeur} /> : <p className={styles.reapparition}>Sans relève, vous serez éliminé.</p>}
           </section>
         </div>
@@ -98,7 +100,7 @@ export default function EcranMort({
         <div className={styles.repli}>
           <section className={styles.carte} aria-label="Éliminé">
             <h2 className={styles.titre} role="status">Éliminé</h2>
-            <p className={styles.degats}>Retour à la prochaine pause entre deux manches, avec l&apos;équipement de départ.</p>
+            <p className={styles.degats}>Retour à la prochaine pause, équipement de départ.</p>
           </section>
         </div>
       );
@@ -139,7 +141,7 @@ export default function EcranMort({
   const carte = (
     <CarteTueur tueur={killcamInfo} derniereMort={derniereMort} degatsAuTueur={degatsAuTueur} reapparitionDans={hud.reapparitionDans} kmTueur={km} />
   );
-  const choix = (
+  const choix = sansChoixEquipement ? null : (
     <div className={styles.equipement}>
       <p className={styles.equipementTitre}>Équipement de la prochaine apparition</p>
       {aideEquipement && <p className={styles.equipementAide}>{aideEquipement}</p>}

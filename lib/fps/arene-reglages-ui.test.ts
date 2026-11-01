@@ -175,7 +175,8 @@ describe("panneau « Créer une arène »", () => {
     expect((html.match(/type="radio"/g) ?? []).length).toBe(3);
     expect(/<input type="radio" name="reg-frequence"[^>]*value="calme"[^>]*>/.exec(html)?.[0]).toContain('checked=""');
     expect(/<input type="radio" name="reg-frequence"[^>]*value="normal"[^>]*>/.exec(html)?.[0]).not.toContain("checked");
-    expect(html).toContain("Chaos</b> : rythme d&#x27;origine");
+    expect(html).toContain("Chaos</b>");
+    expect(html).toContain("rythme d&#x27;origine");
   });
 
   it("réglages de départ : décochés, boutons « Tout cocher » / « Aucun événement » selon l'état, résumé en `role=status`", () => {
@@ -184,7 +185,6 @@ describe("panneau « Créer une arène »", () => {
     expect(coche(html, "elsa")).toBe(true);
     expect(html).toContain("Cette arène : Sans police · Calme");
     expect(html).toMatch(/role="status" aria-live="polite">Cette arène/);
-    expect(html).toContain("Ce choix est gardé pour la prochaine arène");
     // tout coché : « Tout cocher » grisé ; rien : « Aucun événement » grisé, fréquence grisée avec son explication
     expect(rendre()).toMatch(/disabled=""[^>]*>Tout cocher/);
     expect(rendre()).not.toMatch(/disabled=""[^>]*>Aucun événement/);
@@ -214,10 +214,10 @@ describe("panneau Arène", () => {
 
   it("l'en-tête dit les événements de MON arène ; rien sans réglages publiés ; le panneau de création reste fermé tant qu'on ne l'ouvre pas", () => {
     const html = rendreA({ parties, partieActuelle: "ar2", reglagesPartie: sansPolice, surCreerPartie: () => {}, surRejoindrePartie: () => {} });
-    expect(html).toContain("Événements de cette arène : <b>Sans police · Calme</b>");
+    expect(html).toContain("Événements : <b>Sans police · Calme</b>");
     expect(html).not.toContain("fixés à sa création");
     expect(html).toContain('aria-expanded="false"');
-    expect(rendreA({ parties, partieActuelle: "ar2", surCreerPartie: () => {} })).not.toContain("Événements de cette arène");
+    expect(rendreA({ parties, partieActuelle: "ar2", surCreerPartie: () => {} })).not.toContain("Événements : <b>");
   });
 
   it("serveur d'avant : message dédié quand les réglages demandés n'ont pas été appliqués", () => {

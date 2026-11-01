@@ -10,6 +10,8 @@
 }
 /* voile : --ag-hud-fond à 0,55 (64 % de 0,86), ce n'est pas du texte */
 .fin::before { content: ""; position: absolute; inset: 0; background: color-mix(in srgb, var(--ag-hud-fond) 64%, transparent); z-index: -1; }
+/* la barre des armes 3D (BarreArmes) occupe le bas de l'écran pendant l'entracte : le contenu lui laisse sa place */
+.fin[data-barre-armes="oui"] { padding-bottom: calc(32 * var(--k) + 156px); }
 .contenu { width: 100%; max-width: calc(1100 * var(--k)); display: flex; flex-direction: column; gap: calc(14 * var(--k)); max-height: 100%; }
 
 .entete { text-align: center; }

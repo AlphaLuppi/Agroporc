@@ -1,4 +1,4 @@
-import type { MutableRefObject } from "react";
+import type { MutableRefObject, ReactNode } from "react";
 import type { SceneData } from "@/lib/agroparc3d/types";
 import type { ClientArene, EtatConnexion } from "@/lib/fps/reseau";
 import type { ApercuDirect } from "@/lib/fps/apercu-source";
@@ -222,4 +222,9 @@ export interface PropsChoixEquipement {
   variante: "lobby" | "compact";
   /** préfixe d'id (deux instances à l'écran : noms de groupes radio distincts) */
   idGroupe: string;
+  /**
+   * Emplacement d'un réglage propre à l'arme (variante « lobby » : sous sa carte, hors de l'étiquette cliquable ; ex. le choix d'un viseur).
+   * Absent ou `null` rendu : rien n'est ajouté, le balisage reste celui d'avant.
+   */
+  renduReglage?(arme: string): ReactNode;
 }

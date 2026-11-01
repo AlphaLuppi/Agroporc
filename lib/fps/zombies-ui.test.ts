@@ -591,7 +591,7 @@ describe("EcranMort en zombies", () => {
     const html = rendre(hud({ mort: true, aTerre: true }), { terreFinT: 45_000, maintenantServeur: () => 13_000 });
     expect(html).toMatch(/role="status"[^>]*>À terre</);
     expect(html).toContain("Un coéquipier peut vous relever");
-    expect(html).toContain("à moins de 2,5 m pendant 3 s");
+    expect(html).toContain("maintenue 3 s à moins de 2,5 m");
     expect(html).toContain(`Éliminé dans <b>32${NBSP}s</b>`);
     expect(html).toContain('role="progressbar"');
     expect(html).toContain('aria-valuenow="71"');
@@ -795,7 +795,7 @@ describe("MenuPause en zombies", () => {
 
   it("la partie continue, pas d'équipement à choisir, « Quitter la partie »", () => {
     const html = rendre("zombies");
-    expect(html).toContain("les tigres ne s&#x27;arrêtent pas");
+    expect(html).toContain("les tigres n&#x27;attendent pas");
     expect(html).not.toContain("Équipement de la prochaine apparition");
     expect(html).toContain("Quitter la partie");
     expect(html).not.toContain("Quitter l&#x27;arène");
@@ -805,7 +805,7 @@ describe("MenuPause en zombies", () => {
     for (const html of [rendre(), rendre("arene")]) {
       expect(html).toContain("Équipement de la prochaine apparition");
       expect(html).toContain("Quitter l&#x27;arène");
-      expect(html).toContain("vous êtes toujours dans l&#x27;arène");
+      expect(html).toContain("La partie continue.");
     }
   });
 });
