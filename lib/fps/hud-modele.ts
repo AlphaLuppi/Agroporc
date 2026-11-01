@@ -370,7 +370,7 @@ export function libelleVague(phase: PhaseZombies, manche: number, restants: numb
 
 /** Motifs d'`argent{motif}` du serveur, lisibles. */
 const MOTIFS_ARGENT: Record<string, string> = {
-  touche: "touche", kill: "kill", tete: "tête", melee: "mêlée", manche: "fin de manche", achat: "achat", depart: "départ", retour: "retour", synchro: "",
+  touche: "touche", kill: "kill", tete: "tête", melee: "mêlée", manche: "fin de manche", achat: "achat", depart: "départ", retour: "retour", synchro: "", dev: "menu dev",
 };
 
 /** « +60 $ · kill », « −950 $ · achat » ; le signe moins est un vrai « − » (U+2212). Vide pour un delta nul. */

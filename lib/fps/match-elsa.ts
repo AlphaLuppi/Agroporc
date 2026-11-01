@@ -95,5 +95,11 @@ export function creerServiceElsa(ctx: ContexteSalle, opts: OptionsServiceElsa): 
     synchro(idDest) {
       return [{ a: idDest, m: { t: "elsa", evenement: "etat", elsa: message() } }];
     },
+
+    forcer(maintenant) {
+      if (etat.offre) return false;
+      etat.prochaineT = Math.min(etat.prochaineT, maintenant);
+      return true;
+    },
   };
 }

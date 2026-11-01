@@ -857,6 +857,8 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
       ambianceTruck: (on) => jeuRef.current?.debug.ambianceTruck(on) ?? false,
       // (v11) suspension de la partie de zombies, comme le bouton du menu pause ; l'état gelé se lit dans `etat().jeu.gele`
       pauseZ: (actif) => jeuRef.current?.pauseZ?.(actif),
+      // menu de développement : même message que le panneau (sans argument : redemande l'état) ; les règles se lisent dans `etat().jeu`
+      reglesDev: (msg) => jeuRef.current?.reglesDev?.(msg),
       forcerHud: (partiel) => setHudForce(partiel ? { ...partiel } : null),
       voix: (mode) => {
         const j = jeuRef.current;
@@ -1119,6 +1121,7 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
           surLancerFrappe={(cible) => jeuRef.current?.lancerFrappe?.(cible)}
           surLancerFumigene={() => jeuRef.current?.lancerFumigene?.()}
           surPauseZ={(actif) => jeuRef.current?.pauseZ?.(actif)}
+          surReglesDev={(msg) => jeuRef.current?.reglesDev?.(msg)}
         />
       )}
 
@@ -1359,6 +1362,7 @@ declare global {
       /** (zombies, v8) brouillard et ciel d'une manche du Truck allumés ou levés, côté client seulement (captures) */
       ambianceTruck(on: boolean): boolean;
       pauseZ(actif: boolean): void;
+      reglesDev(msg?: Parameters<NonNullable<JeuHandle["reglesDev"]>>[0]): void;
       /** Superpose un état partiel au HUD (base : repos si le jeu n'émet rien) ; `null` rend la main au jeu. */
       forcerHud(partiel: Partial<HudEtat> | null): void;
       /** Active le chat vocal dans ce mode (null : le coupe), comme la case du menu pause. */

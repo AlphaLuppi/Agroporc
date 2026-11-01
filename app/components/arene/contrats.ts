@@ -206,6 +206,8 @@ export interface PropsHudArene {
   surLancerFumigene?(): void;
   /** (v11, zombies) Suspendre la partie pour tous (`true`) ou la reprendre (`false`, redemande aussi la souris) : bouton du menu pause et touche P */
   surPauseZ?(actif: boolean): void;
+  /** (menu de développement, touche F9) modifier les règles de la partie ; sans argument : redemande l'état courant (`JeuHandle.reglesDev`) */
+  surReglesDev?(msg?: import("@/lib/fps/regles-dev-envoi").MessageDev): void;
 }
 
 /** Props de `ChoixEquipement` (écrit par U1, utilisé par U1 : lobby, et par U2 : écran de mort, killcam, pause). */

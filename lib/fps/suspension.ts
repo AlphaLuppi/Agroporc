@@ -26,6 +26,7 @@ export const PASSE_EN_SUSPENSION = {
   acheter: false, reparer: false, reanimer: false, monter: false, descendre: false, siege: false, conduite: false, pilotage: false, canon: false,
   invoquer: false, lancerFrappe: false, lancerFumigene: false, lancerGrenade: false, monterBus: false, sauter: false, chute: false, ramasser: false,
   lacher: false, utiliser: false, statsBr: false,
+  reglesDev: false,
 } as const satisfies Record<MessageClient["t"], boolean>;
 
 export interface OptionsSuspension {
