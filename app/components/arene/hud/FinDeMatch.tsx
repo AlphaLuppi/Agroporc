@@ -36,6 +36,8 @@ export interface PropsFinDeMatch {
   toucheScores?: string;
   /** « 1 : arme principale suivante · 2 : … » : la souris est prise, les boutons du sélecteur ne sont pas cliquables (vide : rien) */
   aideEquipement?: string;
+  /** le choix d'équipement est ailleurs (la barre des armes 3D de `HudArene`) : pas de sélecteur compact ici */
+  sansChoixEquipement?: boolean;
 }
 
 /** Compte à rebours qui avance seul : « Prochain match dans 9 s » et sa barre (`match.prochain`, `JEU.entracteMs`). */
@@ -59,7 +61,7 @@ function CompteARebours({ match, maintenantServeur }: { match: InfoMatch | null;
 }
 
 export default function FinDeMatch({
-  joueurs, stats, classement, monId, match, maintenantServeur, equipement, surEquipement, tableauOuvert, toucheScores, aideEquipement,
+  joueurs, stats, classement, monId, match, maintenantServeur, equipement, surEquipement, tableauOuvert, toucheScores, aideEquipement, sansChoixEquipement = false,
 }: PropsFinDeMatch) {
   const lignes = useMemo(() => construireLignes(joueurs, stats, classement), [joueurs, stats, classement]);
   const r = useMemo(() => rangs(lignes), [lignes]);
@@ -80,7 +82,7 @@ export default function FinDeMatch({
   }
 
   return (
-    <section className={styles.fin} aria-label="Fin de match">
+    <section className={styles.fin} aria-label="Fin de match" data-barre-armes={sansChoixEquipement ? "oui" : undefined}>
       <div className={styles.contenu}>
         <header className={styles.entete}>
           <h2 className={styles.titre}>Match terminé</h2>
@@ -129,7 +131,7 @@ export default function FinDeMatch({
 
         <footer className={styles.pied}>
           <CompteARebours match={match} maintenantServeur={maintenantServeur} />
-          <div className={styles.equipement}>
+          {!sansChoixEquipement && <div className={styles.equipement}>
             {aideEquipement && <p className={styles.equipementAide}>{aideEquipement}</p>}
             <ChoixEquipement
               principale={equipement.principale}
@@ -139,7 +141,7 @@ export default function FinDeMatch({
               variante="compact"
               idGroupe="fin"
             />
-          </div>
+          </div>}
         </footer>
       </div>
     </section>

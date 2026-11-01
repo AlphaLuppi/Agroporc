@@ -6,7 +6,8 @@ import type { Action } from "@/lib/fps/touches";
 import { libelleGain, niveauMunitions, syntheseMatch, texteRefusAchat } from "@/lib/fps/hud-modele";
 import { LIBELLES_COINS, coinSuivant } from "@/lib/fps/reglages-hud";
 import { useDisposition } from "./ReglageTouches";
-import { aideChoixEquipement, armeSuivanteDuGroupe, groupePrincipale, groupeSecondaire } from "./lobby-modele";
+import { aideBarreArmes, equipementApresTouche } from "@/lib/fps/barre-armes";
+import BarreArmes from "./BarreArmes";
 import type { PropsHudArene } from "./contrats";
 import AideCommandes, { toucheDe } from "./hud/AideCommandes";
 import AnnoncesElsa from "./hud/AnnoncesElsa";
@@ -171,19 +172,18 @@ export default function HudArene(p: PropsHudAreneBr) {
   const suspendueRef = useRef(false);
   suspendueRef.current = suspendue;
   useToucheAppui(verrouille && enPartieZ, p.touches.pauseZ, () => p.surPauseZ?.(!suspendueRef.current));
-  // Écran de mort et entracte : la souris est prise, les boutons du sélecteur d'équipement sont inatteignables ; les touches d'arme
-  // principale / secondaire passent à l'arme suivante de leur catégorie (l'équipement est celui de la prochaine apparition).
+  // Écran de mort et entracte : la souris est prise, les tuiles de la barre des armes ne sont cliquables qu'après Échap ; les touches d'arme
+  // principale / secondaire / blanche passent à l'arme d'après de leur groupe (l'équipement est celui de la prochaine apparition).
   const equipRef = useRef({ equipement: p.equipement, sur: p.surEquipement });
   equipRef.current = { equipement: p.equipement, sur: p.surEquipement };
   const choixEquipementActif = verrouille && !!hud && !zombies && !br && (hud.mort || match?.phase === "entracte");
-  useToucheAppui(choixEquipementActif, p.touches.armePrincipale, () => {
+  const suivante = (groupe: "principale" | "secondaire" | "melee") => () => {
     const { equipement, sur } = equipRef.current;
-    sur(armeSuivanteDuGroupe(groupePrincipale(), equipement.principale), equipement.secondaire);
-  });
-  useToucheAppui(choixEquipementActif, p.touches.armeSecondaire, () => {
-    const { equipement, sur } = equipRef.current;
-    sur(equipement.principale, armeSuivanteDuGroupe(groupeSecondaire(), equipement.secondaire));
-  });
+    sur(...equipementApresTouche(equipement, groupe));
+  };
+  useToucheAppui(choixEquipementActif, p.touches.armePrincipale, suivante("principale"));
+  useToucheAppui(choixEquipementActif, p.touches.armeSecondaire, suivante("secondaire"));
+  useToucheAppui(choixEquipementActif, p.touches.couteau, suivante("melee"));
 
   if (hud?.verrouille) dejaVerrouille.current = true;
   // Aide des commandes au premier lancement : 12 s après la prise de la souris.
@@ -200,7 +200,6 @@ export default function HudArene(p: PropsHudAreneBr) {
 
   const t = (a: Action) => toucheDe(p.touches, a, disposition);
   const entracte = !zombies && !br && match?.phase === "entracte";
-  const aideEquipement = aideChoixEquipement(t("armePrincipale"), t("armeSecondaire"));
   /** zombies : partie perdue, le bilan occupe l'écran (la souris est rendue, le menu pause ne s'y superpose pas) */
   const finZ = zombies && partieZ?.phase === "fin";
   const pause = !hud.verrouille && !finZ && !finBr;
@@ -209,6 +208,8 @@ export default function HudArene(p: PropsHudAreneBr) {
   /** blocs de lecture d'une partie en cours : joueur vivant ou spectateur */
   const vue = combat || spectateur;
   const couteau = estMelee(hud.arme);
+  /** arène seulement : à la mort et à l'entracte, la barre des armes (3D) remplace le sélecteur compact */
+  const barreArmes = !zombies && !br && (hud.mort || entracte);
   const conduite = hud.vehicule && hud.tireInterdit;
   const inviteRecharge = combat && !hud.titan && !couteau && !hud.tireInterdit && !hud.recharge && ["critique", "vide"].includes(niveauMunitions(hud.munitions, hud.chargeur));
   const reglMap = p.reglagesHud.minimap;
@@ -401,7 +402,7 @@ export default function HudArene(p: PropsHudAreneBr) {
         <EcranMort
           hud={hud} derniereMort={derniereMort} killcamInfo={p.killcamInfo} degatsAuTueur={p.degatsAuTueur}
           touches={p.touches} equipement={p.equipement} surEquipement={p.surEquipement} surPasserKillcam={p.surPasserKillcam}
-          joueurs={joueurs} aideEquipement={aideEquipement} terreFinT={ez?.terreFinT} maintenantServeur={maintenantServeur}
+          joueurs={joueurs} sansChoixEquipement={barreArmes} terreFinT={ez?.terreFinT} maintenantServeur={maintenantServeur}
           br={entreesSpectateur} modeVoix={p.voix.mode}
         />
       )}
@@ -426,7 +427,7 @@ export default function HudArene(p: PropsHudAreneBr) {
       {entracte && !tab && (
         <FinDeMatch
           joueurs={joueurs} stats={p.stats} classement={p.classement} monId={monId} match={match}
-          maintenantServeur={maintenantServeur} equipement={p.equipement} surEquipement={p.surEquipement} aideEquipement={aideEquipement}
+          maintenantServeur={maintenantServeur} equipement={p.equipement} surEquipement={p.surEquipement} sansChoixEquipement={barreArmes}
         />
       )}
       {tab && !finZ && !finBr && (zombies && partieZ ? (
@@ -452,6 +453,15 @@ export default function HudArene(p: PropsHudAreneBr) {
         }}
       />
 
+      {barreArmes && (
+        <BarreArmes
+          equipement={p.equipement}
+          surChoisir={p.surEquipement}
+          habillage={hud.killcamPhase === "rejeu" || hud.killcamPhase === "carte" ? "killcam" : "libre"}
+          aide={pause ? "" : aideBarreArmes(t("armePrincipale"), t("armeSecondaire"), t("couteau"))}
+        />
+      )}
+
       {pause && (
         <MenuPause
           premiereFois={premiereFois} surReprendre={p.surReprendre} surQuitter={p.surQuitter}
@@ -460,7 +470,7 @@ export default function HudArene(p: PropsHudAreneBr) {
           accroupiBascule={p.accroupiBascule} surAccroupiBascule={p.surAccroupiBascule} actionsSansTouche={p.actionsSansTouche}
           voix={p.voix} surVoix={p.surVoix} voixErreur={p.voixErreur} toucheParler={t("parler")}
           touches={p.touches} surTouches={p.surTouches} reglagesHud={p.reglagesHud} surReglagesHud={p.surReglagesHud}
-          mode={zombies ? "zombies" : br ? "br" : "arene"} elimine={spectateur}
+          mode={zombies ? "zombies" : br ? "br" : "arene"} elimine={spectateur} sansEquipement={barreArmes}
           suspension={zombies ? { actif: suspendue, par: hud.suspenduePar ?? "", compteS: hud.compteS ?? 0, enPartie: enPartieZ, refus: hud.refusPause ?? "" } : undefined}
           surPauseZ={p.surPauseZ} touchePause={t("pauseZ")}
         />

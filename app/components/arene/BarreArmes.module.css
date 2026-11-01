@@ -1,0 +1,58 @@
+/*
+ * Barre des armes (écran de mort, entracte) : tuiles à modèle 3D sur un canvas partagé posé SOUS les tuiles (transparentes), tokens --ag-* seulement.
+ * Posée au-dessus de la bande basse de la killcam (8 vh) ou au ras du bas de l'écran ; cibles de 40 px au moins ; texte jamais sous 11 px.
+ */
+.barre {
+  position: absolute; z-index: 7; left: 50%; transform: translateX(-50%); bottom: 12px; width: max-content; max-width: calc(100% - 24px);
+  box-sizing: border-box; padding: 8px 10px 6px; pointer-events: auto; text-shadow: none;
+  background: var(--ag-hud-fond-fort); border: 1px solid var(--ag-cadre);
+  font-family: var(--ag-mono), ui-monospace, monospace; font-size: 12px; color: var(--ag-ink);
+  animation: barreEntree 0.25s ease-out both;
+}
+.barre[data-habillage="killcam"] { bottom: calc(8vh + 12px); }
+@keyframes barreEntree { from { opacity: 0; transform: translate(-50%, 12px); } to { opacity: 1; transform: translate(-50%, 0); } }
+
+.canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; pointer-events: none; z-index: 0; }
+.piste {
+  position: relative; z-index: 1; display: flex; align-items: flex-start; gap: 14px; overflow-x: auto; padding-bottom: 2px;
+  scrollbar-width: thin; scrollbar-color: var(--ag-line-strong) transparent;
+}
+
+.groupe { border: 0; margin: 0; padding: 0; min-width: 0; flex: none; }
+.groupe legend { padding: 0; margin: 0 0 4px; font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ag-ink-dim); }
+.tuiles { display: flex; gap: 6px; }
+
+.tuile {
+  position: relative; display: flex; flex-direction: column; align-items: stretch; gap: 2px; width: 92px; padding: 3px 3px 4px; cursor: pointer; box-sizing: border-box;
+  border: 1px solid var(--ag-line-strong); background: transparent;
+}
+.tuile:hover { border-color: var(--ag-ink-dim); }
+.tuile input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+.tuile:has(input:focus-visible) { outline: 2px solid var(--ag-white); outline-offset: 2px; }
+.vitrine { display: block; height: 56px; }
+.nom { text-align: center; font-size: 11px; line-height: 1.2; letter-spacing: 0.04em; text-transform: uppercase; color: var(--ag-ink); overflow-wrap: anywhere; min-height: 2.4em; display: flex; align-items: center; justify-content: center; }
+.choisie { border-color: var(--ag-amber); box-shadow: inset 0 0 0 1px var(--ag-amber); background: color-mix(in srgb, var(--ag-amber) 10%, transparent); }
+.choisie .nom { color: var(--ag-amber); font-weight: 600; }
+/* l'état choisi ne tient pas qu'à la couleur : coche décorative (l'état coché de la radio est annoncé par le navigateur) */
+.choisie .nom::after { content: " ✓"; content: " ✓" / ""; }
+
+.reglage { margin-top: 4px; }
+.reglage:empty { display: none; }
+.aide { position: relative; z-index: 1; margin: 6px 0 0; font-size: 11px; line-height: 1.3; color: var(--ag-ink-dim); text-align: center; }
+
+/* sans WebGL : tuiles réduites au nom */
+.barre[data-sans3d="oui"] .vitrine { display: none; }
+.barre[data-sans3d="oui"] .canvas { display: none; }
+.barre[data-sans3d="oui"] .tuile { width: auto; min-width: 72px; min-height: 40px; justify-content: center; }
+
+@media (max-width: 720px) {
+  .tuile { width: 76px; }
+  .vitrine { height: 44px; }
+}
+@media (max-height: 600px) {
+  .vitrine { height: 40px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .barre { animation: none; }
+}
+:global([data-effets="reduits"]) .barre { animation: none; }

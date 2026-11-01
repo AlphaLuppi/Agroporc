@@ -11,7 +11,7 @@ import styles from "./ChoixEquipement.module.css";
  * (boutons `aria-pressed` de l'écran de mort, de la killcam, de la pause et de l'entracte). Les armes spéciales (Elsa) n'y figurent pas.
  * Spec : docs/superpowers/specs/2026-10-22-arene-v2-design.md (§2.3, §2.4, §5.17, §6)
  */
-export default function ChoixEquipement({ principale, secondaire, melee = "couteau", surChanger, variante, idGroupe }: PropsChoixEquipement) {
+export default function ChoixEquipement({ principale, secondaire, melee = "couteau", surChanger, variante, idGroupe, renduReglage }: PropsChoixEquipement) {
   const id = useId();
   const groupes = [
     { g: groupePrincipale() as GroupeArmes<string>, choisie: principale as string },
@@ -58,8 +58,8 @@ export default function ChoixEquipement({ principale, secondaire, melee = "coute
             {g.armes.map((info) => {
               const idCarte = `${id}-${idGroupe}-${info.id}`;
               const active = choisie === info.id;
-              return (
-                <label key={info.id} className={`${styles.carte} ${active ? styles.carteChoisie : ""}`}>
+              const carte = (
+                <label key={renduReglage ? undefined : info.id} className={`${styles.carte} ${active ? styles.carteChoisie : ""}`} title={info.description}>
                   <input
                     type="radio"
                     name={`${idGroupe}-${g.cle}`}
@@ -81,6 +81,9 @@ export default function ChoixEquipement({ principale, secondaire, melee = "coute
                   </span>
                 </label>
               );
+              if (!renduReglage) return carte;
+              const reglage = renduReglage(info.id);
+              return reglage ? <div key={info.id} className={styles.avecReglage}>{carte}<div className={styles.reglage}>{reglage}</div></div> : <div key={info.id} className={styles.avecReglage}>{carte}</div>;
             })}
           </div>
         </fieldset>
