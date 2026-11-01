@@ -19,7 +19,8 @@ export type Action =
   | "zoomLunette" | "parler" | "invoquer"
   | "fumigene" | "frappeAerienne"
   | "grenade" | "remontoir" | "pauseZ"
-  | "soigner" | "potion" | "lacher" | "spectateurSuivant" | "spectateurPrecedent";
+  | "soigner" | "potion" | "lacher" | "spectateurSuivant" | "spectateurPrecedent"
+  | "inspecter";
 
 /**
  * Les 10 actions de la v1 qui restent (`arme1..arme4` ont disparu). Leurs touches enregistrées sont relues AVANT celles des
@@ -39,6 +40,7 @@ export const ACTIONS_NOUVELLES: readonly Action[] = [
   "accroupi", "interagir", "siege", "carte", "minimapCoin", "passer", "zoomLunette", "parler", "invoquer",
   "fumigene", "frappeAerienne", "grenade", "remontoir", "pauseZ",
   "soigner", "potion", "lacher", "spectateurSuivant", "spectateurPrecedent",
+  "inspecter",
 ];
 
 /**
@@ -70,7 +72,7 @@ export const ACTIONS: readonly Action[] = [...ACTIONS_V1, ...ACTIONS_NOUVELLES];
 
 /** Actions qui peuvent rester sans touche sans que ce soit un problème (pas d'avertissement dans le menu pause). */
 export const ACTIONS_FACULTATIVES: readonly Action[] = [
-  "minimapCoin", "passer", "zoomLunette", "parler", "fumigene", "frappeAerienne", "remontoir", "pauseZ", "soigner", "potion", "lacher", "spectateurSuivant", "spectateurPrecedent",
+  "minimapCoin", "passer", "zoomLunette", "parler", "fumigene", "frappeAerienne", "remontoir", "pauseZ", "soigner", "potion", "lacher", "spectateurSuivant", "spectateurPrecedent", "inspecter",
 ];
 
 export const LIBELLES_ACTIONS: Record<Action, string> = {
@@ -106,6 +108,7 @@ export const LIBELLES_ACTIONS: Record<Action, string> = {
   lacher: "Battle Royale : lâcher l'arme en main",
   spectateurSuivant: "Spectateur : joueur suivant",
   spectateurPrecedent: "Spectateur : joueur précédent",
+  inspecter: "Inspecter l'arme (tricks du couteau, flancs de l'arme)",
   grenade: "Zombies : grenade (maintenir : cuire)",
   remontoir: "Zombies : tigre à remontoir",
   pauseZ: "Zombies : mettre la partie en pause pour tous / la reprendre",
@@ -115,7 +118,7 @@ export const LIBELLES_ACTIONS: Record<Action, string> = {
 export const GROUPES_ACTIONS: { titre: string; actions: Action[] }[] = [
   { titre: "Déplacement", actions: ["avant", "arriere", "gauche", "droite", "saut", "sprint", "accroupi"] },
   { titre: "Combat", actions: ["tir", "visee", "recharger", "zoomLunette", "invoquer", "fumigene", "frappeAerienne", "grenade", "remontoir"] },
-  { titre: "Équipement", actions: ["armePrincipale", "armeSecondaire", "couteau", "armeSpeciale", "armePrecedente", "couteauRapide"] },
+  { titre: "Équipement", actions: ["armePrincipale", "armeSecondaire", "couteau", "armeSpeciale", "armePrecedente", "couteauRapide", "inspecter"] },
   { titre: "Véhicule", actions: ["interagir", "siege"] },
   { titre: "Battle Royale", actions: ["soigner", "potion", "lacher", "spectateurSuivant", "spectateurPrecedent"] },
   { titre: "Divers", actions: ["scores", "carte", "minimapCoin", "passer", "parler", "pauseZ"] },
@@ -172,6 +175,8 @@ export function touchesParDefaut(): ConfigTouches {
     lacher: ["KeyU", null],
     spectateurSuivant: ["ArrowRight", null],
     spectateurPrecedent: ["ArrowLeft", null],
+    // Y : libre dans tous les contextes (inspection de l'arme en main, client seulement)
+    inspecter: ["KeyY", null],
   };
 }
 

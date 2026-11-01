@@ -6,6 +6,7 @@ import type { ArmeMeleeId, ArmePrincipaleId, ArmeSecondaireId, ModeSalle } from 
 import type { ReglagesVoix } from "@/lib/fps/voix";
 import type { EquipementChoisi } from "../contrats";
 import ChoixEquipement from "../ChoixEquipement";
+import { ListeViseurs } from "../SelecteurViseur";
 import ReglageTouches from "../ReglageTouches";
 import ReglageInterface from "./ReglageInterface";
 import styles from "../HudArene.module.css";
@@ -104,6 +105,7 @@ export default function MenuPause(p: PropsMenuPause) {
             />
           </div>
         )}
+        {br && <ListeViseurs idGroupe="pause-br" />}
         <label className={styles.sens}>
           <span>Nom de joueur</span>
           <input

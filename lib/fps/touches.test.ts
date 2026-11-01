@@ -82,11 +82,11 @@ describe("touches de l'arène", () => {
     expect(libelleTouche(null)).toBe("—");
   });
 
-  it("actions de l'équipement, du HUD, « passer », de la v3, « invoquer » et du Battle Royale : 10 de la v1 conservées, 25 nouvelles (dont la pause des zombies, v11), aucune arme1..4", () => {
+  it("actions de l'équipement, du HUD, « passer », de la v3, « invoquer », du Battle Royale et de l'inspection : 10 de la v1 conservées, les nouvelles (dont la pause des zombies, v11, et `inspecter`), aucune arme1..4", () => {
     expect(ACTIONS_V1).toHaveLength(10);
-    expect(ACTIONS_NOUVELLES).toHaveLength(25);
-    expect(ACTIONS).toHaveLength(35);
-    expect(new Set(ACTIONS).size).toBe(35);
+    expect(ACTIONS_NOUVELLES).toContain("inspecter");
+    expect(ACTIONS).toHaveLength(ACTIONS_V1.length + ACTIONS_NOUVELLES.length);
+    expect(new Set(ACTIONS).size).toBe(ACTIONS.length);
     expect(Object.keys(touchesParDefaut()).sort()).toEqual([...ACTIONS].sort());
     expect(Object.keys(LIBELLES_ACTIONS).sort()).toEqual([...ACTIONS].sort());
     expect(ACTIONS as readonly string[]).not.toContain("arme1");
