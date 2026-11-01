@@ -242,7 +242,7 @@ export interface ServicePolice {
   reinitialiser(t: number, rearmer: boolean): Sortie[];
   /** une descente est en cours (poursuite ou retrait) */
   enCours(): boolean;
-  /** nombre de descentes démarrées depuis le dernier retour à blanc (le service BR arme la seconde) */
+  /** nombre de descentes démarrées depuis le dernier retour à blanc (le service BR arme les suivantes) */
   descentes(): number;
   /**
    * Revalide un plomb déclaré sur `CIBLE_POLICE` : la boîte orientée de la voiture REJOUÉE sur son historique (`fenetreMs` = `Salle.rewindMaxMs`) doit
@@ -269,7 +269,7 @@ export interface AidePoliceBr {
   /** le joueur est à bord de l'avion ou en chute */
   enVol(id: string): boolean;
   estSpectateur(id: string): boolean;
-  /** joueurs au départ de la partie, bots compris (la seconde descente demande `POLICE.br.secondeJoueursMin`) */
+  /** joueurs au départ de la partie, bots compris (la troisième descente demande `POLICE.br.grandePartieJoueursMin`) */
   nbJoueursDepart(): number;
 }
 

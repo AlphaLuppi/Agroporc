@@ -160,6 +160,26 @@ describe("optionsDepuisReglages : traduction des cases en options de salle", () 
     expect(chaos.police!.tempsMortP).toBe(FACTEURS_FREQUENCE.chaos.tempsMort);
   });
 
+  it("la police est nettement plus fréquente que le Truck fou et le tigre géant, à chaque fréquence", () => {
+    const moy = (b: { minMs: number; maxMs: number }) => (b.minMs + b.maxMs) / 2;
+    for (const f of ["calme", "normal", "chaos"] as const) {
+      const police = optionsDepuisReglages(normaliserReglages({ frequence: f }), base()).police!.intervalle!;
+      const evt = echelleIntervalle({ minMs: EVENEMENTS.intervalleMinMs, maxMs: EVENEMENTS.intervalleMaxMs }, f);
+      // intervalle moyen entre deux descentes, temps mort compris, contre celui entre deux événements (leur durée en plus)
+      const tm = FACTEURS_FREQUENCE[f].tempsMort;
+      const cadencePolice = moy(police.entre!) * (1 + tm);
+      const cadenceEvt = moy(evt) * (1 + tm);
+      expect(cadencePolice).toBeLessThan(cadenceEvt * 0.85);
+    }
+  });
+
+  it("« Normal » : premier événement à 1 min 30 environ, descente de police entre 1 min 15 et 2 min 10 après le début", () => {
+    expect(POLICE.premier.minMs).toBeGreaterThanOrEqual(POLICE.premierMatchMs);
+    expect(POLICE.premier.maxMs).toBeLessThanOrEqual(150_000);
+    expect(POLICE.entre.minMs).toBeGreaterThanOrEqual(90_000);
+    expect(POLICE.entre.maxMs).toBeLessThanOrEqual(240_000);
+  });
+
   it("ne modifie pas les options de base", () => {
     const b = base();
     const copie = JSON.stringify(b, (_k, v) => (typeof v === "function" ? "fn" : v));

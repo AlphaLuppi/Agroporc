@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   FILE_VIVE_MAX, INTERVALLE_VIF_MS, NBSP, PIPS, PRIORITE_VIVE, SEUILS_MUNITIONS, SEUILS_PV,
-  cacheLiveVide, delaiVif, etapeRupture, ecrireLive, fileViveVide, formatArgent, formatKills, formatMetres, formatNombre, formatPourcent, formatRang, formatSecondes,
+  annoncesOffreElsa, nomVendeuseOffre, textePriseOffre, texteOffreExpiree, cacheLiveVide, delaiVif, etapeRupture, ecrireLive, fileViveVide, formatArgent, formatKills, formatMetres, formatNombre, formatPourcent, formatRang, formatSecondes,
   formatVitesse, libelleFil, libellePvBas, niveauMunitions, niveauPv, palierFranchi, parseSlots, pips, prendreVif, pousserVif,
   syntheseMatch, texteBonus, texteOffreElsa, type ElementEcrivable, type MessageVif,
 } from "./hud-modele";
+import { STATS } from "./armes";
 import type { JoueurPublic } from "./protocole";
+import { repliqueCommande } from "./vendeuses";
 
 describe("hud-modele : seuils de la spec", () => {
   it("constantes", () => {
@@ -163,6 +165,28 @@ describe("formats français", () => {
     expect(texteOffreElsa("arme", "railgun")).toBe("ARME : RAILGUN, 6 tirs");
     expect(texteBonus("arme", "railgun", "4")).toBe("Railgun · 6 tirs · touche 4");
     expect(texteBonus("arme", "railgun", "")).toBe("Railgun · 6 tirs");
+  });
+  it("textes de la patronne : sa formule du jour = soin complet ET arme", () => {
+    expect(nomVendeuseOffre()).toBe("ELSA");
+    expect(nomVendeuseOffre("patronne")).toBe("LA PATRONNE");
+    expect(texteOffreElsa("arme", "railgun", "patronne")).toBe("FORMULE DU JOUR : SOIN COMPLET + RAILGUN, 6 tirs");
+    expect(texteOffreElsa("arme", undefined, "patronne")).toBe("FORMULE DU JOUR : SOIN COMPLET + ARME SPÉCIALE");
+    expect(texteBonus("arme", "railgun", "4", "patronne")).toBe("Formule du jour : soin complet + Railgun · 6 tirs · touche 4");
+    // sans vendeuse, rien ne change
+    expect(texteOffreElsa("arme", "railgun", undefined)).toBe("ARME : RAILGUN, 6 tirs");
+    expect(textePriseOffre("Lea")).toBe("Lea a pris le cadeau d'Elsa");
+    expect(textePriseOffre("Lea", "patronne")).toBe("Lea a pris la formule du jour de la patronne");
+    expect(texteOffreExpiree()).toBe("Offre d'Elsa expirée");
+    expect(texteOffreExpiree("patronne")).toBe("Formule du jour de la patronne expirée");
+  });
+  it("annonces du fil : Elsa seule, ou la patronne qui l'appelle puis sa formule", () => {
+    expect(annoncesOffreElsa({ id: 1, genre: "soin" })).toEqual(["Elsa : soin complet (PV 100, bouclier 100)"]);
+    expect(annoncesOffreElsa({ id: 3, genre: "arme", arme: "railgun" })).toEqual(["Elsa : Railgun, 6 tirs"]);
+    const p = annoncesOffreElsa({ id: 2, genre: "arme", arme: "minigun", vendeuse: "patronne" });
+    expect(p).toHaveLength(2);
+    expect(p[0]).toMatch(/^La patronne : « .+ »$/);
+    expect(p[0]).toContain(repliqueCommande(2));
+    expect(p[1]).toBe(`Formule du jour : soin complet + ${STATS.minigun.nom}, ${STATS.minigun.chargeur} tir${STATS.minigun.chargeur > 1 ? "s" : ""}`);
   });
 });
 
