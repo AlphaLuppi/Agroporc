@@ -91,3 +91,61 @@
   .marche { animation: none; }
 }
 :global([data-effets="reduits"]) .marche { animation: none; }
+
+/* ---------- replay de fin de match : l'image n'est pas voilée, le classement reste sur le côté ---------- */
+.replay {
+  --k: var(--u, 1px);
+  position: absolute; inset: 0; z-index: 1; box-sizing: border-box; pointer-events: none;
+  font-family: var(--ag-mono), ui-monospace, monospace; color: var(--ag-ink); font-size: max(11px, calc(14 * var(--k))); text-shadow: none;
+}
+/* bandeau du haut : entre les coins du HUD (la mini-carte reste à sa place, nette) */
+.replayHaut {
+  position: absolute; top: calc(32 * var(--k)); left: 50%; transform: translateX(-50%); box-sizing: border-box;
+  width: min(calc(100% - 2 * (264 + 48) * var(--k)), calc(640 * var(--k))); padding: calc(10 * var(--k)) calc(16 * var(--k));
+  display: flex; flex-direction: column; align-items: center; gap: calc(6 * var(--k)); text-align: center;
+  background: var(--ag-hud-fond-fort); border: 1px solid var(--ag-cadre);
+}
+.replayEtiquette { margin: 0; font: 600 max(11px, calc(12 * var(--k)))/1.2 var(--ag-display), var(--ag-mono), monospace; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ag-ink-dim); }
+.replayMoment { min-height: calc(46 * var(--k)); display: flex; flex-direction: column; align-items: center; gap: calc(2 * var(--k)); }
+.replayTitre { margin: 0; font: 700 max(11px, calc(26 * var(--k)))/1.15 var(--ag-display), var(--ag-mono), monospace; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ag-amber); }
+.replayDetail { margin: 0; font: 500 max(11px, calc(14 * var(--k)))/1.3 var(--ag-mono), monospace; color: var(--ag-ink); }
+.replayPoints { margin: 0; padding: 0; list-style: none; display: flex; gap: calc(6 * var(--k)); }
+.replayPoints li { width: calc(22 * var(--k)); height: calc(5 * var(--k)); min-height: 3px; background: var(--ag-line-strong); }
+.replayPoints li[data-etat="fait"] { background: var(--ag-ink-dim); }
+.replayPoints li[data-etat="courant"] { background: var(--ag-amber); }
+.replayBarre { width: 100%; height: calc(4 * var(--k)); min-height: 3px; background: var(--ag-line-strong); }
+.replayBarre i { display: block; height: 100%; background: var(--ag-amber); }
+
+/* classement : coin bas-droit, dans la marge de la mini-carte (qui, par défaut, est en haut à gauche) */
+.replayCote {
+  position: absolute; right: calc(32 * var(--k)); bottom: calc(32 * var(--k)); box-sizing: border-box; width: calc(340 * var(--k)); max-height: 58%;
+  padding: calc(10 * var(--k)) calc(12 * var(--k)); display: flex; flex-direction: column; gap: calc(4 * var(--k)); pointer-events: auto;
+  background: var(--ag-hud-fond-fort); border: 1px solid var(--ag-cadre);
+}
+.replayCote .titreColonne { margin: 0; }
+.replayRaison { margin: 0; color: var(--ag-ink-dim); font-size: max(11px, calc(12 * var(--k))); }
+.replayListe { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+
+.replayBas {
+  position: absolute; left: 50%; bottom: calc(32 * var(--k)); transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: calc(8 * var(--k));
+  padding: calc(8 * var(--k)) calc(14 * var(--k)); background: var(--ag-hud-fond-fort); border: 1px solid var(--ag-cadre); pointer-events: auto;
+}
+.replayBas .compte { font-size: max(11px, calc(13 * var(--k))); }
+.replayBouton, .revoir {
+  min-height: 40px; min-width: 40px; padding: 0 calc(16 * var(--k)); display: inline-flex; align-items: center; gap: calc(10 * var(--k)); cursor: pointer;
+  background: transparent; border: 1px solid var(--ag-cadre); color: var(--ag-white);
+  font: inherit; font-size: max(11px, calc(14 * var(--k))); letter-spacing: 0.14em; text-transform: uppercase;
+}
+.replayBouton:hover, .replayBouton:focus-visible, .revoir:hover, .revoir:focus-visible { border-color: var(--ag-amber); color: var(--ag-amber); }
+.replayBouton:focus-visible, .revoir:focus-visible { outline: 2px solid var(--ag-white); outline-offset: 2px; }
+.replayBouton kbd, .revoir kbd { font: inherit; font-size: max(11px, calc(12 * var(--k))); padding: 1px 6px; border: 1px solid var(--ag-cadre); color: var(--ag-cyan); letter-spacing: 0.06em; }
+
+@media (max-height: 800px) {
+  .replayMoment { min-height: calc(38 * var(--k)); }
+  .replayTitre { font-size: max(11px, calc(20 * var(--k))); }
+  .replayCote { max-height: 50%; }
+}
+@media (max-width: 1000px) {
+  .replayHaut { width: calc(100% - 64 * var(--k)); }
+  .replayCote { width: calc(260 * var(--k)); }
+}

@@ -88,6 +88,16 @@ export interface HudEtat {
   /** −1 hors killcam, sinon progression 0..1 (arrondie à 0,02) */
   killcam: number;
   killcamPhase: "" | "rejeu" | "carte";
+  /**
+   * Replay de fin de match d'arène (additif, absent ailleurs) : "attente" (dernières fenêtres), "lecture" (moment `replayIndex` sur `replayTotal`, titre, détail et
+   * progression 0..1 du moment), "fini" (tout vu : la touche « passer » le revoit). "" ou absent : pas de replay, l'écran de fin reste le podium.
+   */
+  replayPhase?: "" | "attente" | "lecture" | "fini";
+  replayIndex?: number;
+  replayTotal?: number;
+  replayTitre?: string;
+  replayDetail?: string;
+  replayProg?: number;
   /** une charge du sort d'invocation est disponible (tigre sauvage abattu, v3) : icône du sort au HUD */
   sort: boolean;
   /** chat vocal (v3 §5) : "" coupé, "pret" activé micro fermé, "emet" le micro émet */

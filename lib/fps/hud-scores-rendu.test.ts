@@ -191,6 +191,55 @@ describe("FinDeMatch (rendu statique)", () => {
   it("je ne suis pas dans le classement : message sans erreur", () => {
     expect(fin({ monId: "inconnu" })).toContain("Tu n&#x27;as pas joué ce match.");
   });
+
+  describe("replay de fin de match", () => {
+    const lecture = { phase: "lecture" as const, index: 2, total: 3, titre: "Triple kill · Lea", detail: "Lea → Zoe · Sniper · 95 m", progression: 0.4 };
+
+    it("en lecture : le titre du moment et tout le classement (ma ligne en aria-current), sans podium ni choix d'équipement", () => {
+      const html = fin({ replay: lecture, toucheReplay: "Espace" });
+      expect(html).toContain("Triple kill · Lea");
+      expect(html).toContain("Lea → Zoe · Sniper · 95 m");
+      expect(html).toContain("Moment 2 sur 3");
+      expect(html).toContain("lea remporte la partie");
+      // classement complet, première place comprise
+      expect(html).toMatch(/<tr data-id="lea"/);
+      expect(html).toMatch(/<tr data-id="moi" aria-current="true"/);
+      expect(compte(html, /<tr data-id=/g)).toBe(6);
+      expect(html).not.toContain('aria-label="Podium"');
+      expect(html).not.toContain('aria-pressed="true"');
+      // commande « moment suivant » avec sa touche, compte à rebours conservé
+      expect(html).toMatch(/Moment suivant <kbd>Espace<\/kbd>/);
+      expect(html).toMatch(/Prochain match dans <b>9<\/b>/);
+    });
+
+    it("au dernier moment le bouton propose de terminer", () => {
+      expect(fin({ replay: { ...lecture, index: 3 }, toucheReplay: "Espace" })).toContain("Terminer le replay");
+    });
+
+    it("en attente des dernières fenêtres : le classement est déjà là, pas de titre de moment ni de commande", () => {
+      const html = fin({ replay: { phase: "attente", index: 0, total: 0, titre: "", detail: "", progression: 0 } });
+      expect(compte(html, /<tr data-id=/g)).toBe(6);
+      expect(html).toContain("Replay du match");
+      expect(html).not.toContain("Moment suivant");
+    });
+
+    it("replay fini : le podium revient avec « Revoir le replay » et sa touche", () => {
+      const html = fin({ replay: { phase: "fini", index: 0, total: 3, titre: "", detail: "", progression: 0 }, toucheReplay: "Espace" });
+      expect(html).toContain('aria-label="Podium"');
+      expect(html).toMatch(/Revoir le replay <kbd>Espace<\/kbd>/);
+    });
+
+    it("sans replay (phase vide ou rien à rejouer) : l'écran de fin habituel, sans bouton", () => {
+      const html = fin({ replay: { phase: "", index: 0, total: 0, titre: "", detail: "", progression: 0 } });
+      expect(html).toContain('aria-label="Podium"');
+      expect(html).not.toContain("Revoir le replay");
+      expect(fin({ replay: { phase: "fini", index: 0, total: 0, titre: "", detail: "", progression: 0 } })).not.toContain("Revoir le replay");
+    });
+
+    it("Tab maintenu pendant le replay : le tableau complet prime", () => {
+      expect(fin({ replay: lecture, tableauOuvert: true })).toContain('aria-label="Tableau des scores"');
+    });
+  });
 });
 
 describe("CarteTueur / EcranMort / Killcam (rendu statique)", () => {

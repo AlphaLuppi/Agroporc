@@ -38,7 +38,7 @@
 import * as THREE from "three";
 import type { SceneData } from "../agroparc3d/types";
 import { C, construireDecor, creerEtatDestruction, qualiteParDefaut } from "../agroparc3d/decor";
-import { construireMonde, detruireBatiment, normaleImpact, poserBreche, releverBatiment, type Creux, type Monde } from "./collision";
+import { construireMonde, detruireBatiment, lancerRayon, normaleImpact, poserBreche, releverBatiment, type Creux, type Monde } from "./collision";
 import { BORNES_ZOMBIES, FOCUS_ZOMBIES, PLAFOND_INTERIEUR_M, construireMondeZombies, donneesZombies } from "./zombies-carte";
 import { plafondBatimentsCreux } from "./grenades";
 import { creerControleurGrenades, type LancerDemande } from "./jeu-grenades";
@@ -117,6 +117,7 @@ import { TANGAGE_MAX, directionVisee, rotationCamera, tangageDeVue } from "./jeu
 import { ControleurArmes } from "./jeu-equipement";
 import { meleeDe, serialiserSlots } from "./equipement";
 import { ControleurKillcam } from "./jeu-killcam";
+import { ControleurReplayFin } from "./jeu-replay-fin";
 import { MondeJeu } from "./jeu-monde";
 import { ControleurVehicule, commandesDepuisEntrees, recalerOccupants } from "./jeu-vehicule";
 import { CONDUCTEUR_TIRE } from "./garage";
@@ -324,6 +325,9 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   const visib = new VisibilitePseudos(monde);
   const suiviRadar = new SuiviRadar(monde);
   const kc = new ControleurKillcam();
+  /** (arène) replay de fin de match : enregistre les éliminations pendant le match, rejoue les plus beaux moments à l'entracte (cf. replay-fin.ts) */
+  const rf = new ControleurReplayFin({ pseudo: (id) => pseudoDe(id), lancer: (o, d, max) => lancerRayon(monde, o, d, max) });
+  const replayFinPossible = !modeZ && !modeBR;
   const vehicule = new ControleurVehicule(monde);
   // ---------- événements (v3) : Truck Muche fou, tigre robot, titan tigre ----------
   const jm = new MondeMonstres();
@@ -611,7 +615,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   let dejaVerrouille = false;
   const peutAgir = () => apparu && vivant && !enVolBr() && gel.actionsAutorisees();
   /** killcam en cours : rien de ce que je fais n'a de sens (mort), les effets en direct sont coupés pendant le rejeu */
-  const enKillcam = () => kc.actif();
+  const enKillcam = () => kc.actif() || rf.actif();
   /** BR : je suis mort, la killcam est passée : je regarde un joueur en vie */
   const spectateurActif = () => modeBR && apparu && !vivant && !kc.actif();
 
@@ -1434,7 +1438,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   function majSujetVue() {
     let id: string | null = null;
     let e: EtatJoueurSnap | null = null;
-    if (enReplay && kc.phase() === "rejeu") {
+    if (enReplay && kc.phase() === "rejeu" && !rf.actif()) {
       id = kc.tueurId();
       e = kc.tueurRejoue();
     } else if (spectateurActif()) {
@@ -1474,13 +1478,20 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     for (const e of evts) jouerEvenementVue(e, sujetVueId, etatsRendu);
   }
 
+  /** Replay de fin : tirs, coups et dégâts du moment rejoués à leur instant, tous vus « de l'extérieur » (pas de sujet). */
+  function majReplayFin() {
+    if (!rf.actif()) return;
+    for (const e of rf.evenementsAJouer()) jouerEvenementVue(e, "", etatsRendu);
+  }
+
   /** (crochet de test) derniers événements rejoués par la vue empruntée */
   const vueJouees: { quand: "killcam" | "spectateur"; sujet: string; genre: EvenementVue["genre"]; ts: number; id: string; cible: string | null }[] = [];
 
   /** Son à la place de la caméra (vue empruntée). */
   const sonDepuisCam = (p: Vec3): PositionSon => {
     const dx = p[0] - camPos[0], dz = p[2] - camPos[2];
-    return { distance: Math.hypot(dx, p[1] - camPos[1], dz), pan: panSon(camLacet, dx, dz) };
+    // replay de fin : les coups de feu du passé sont atténués (+35 m de distance)
+    return { distance: Math.hypot(dx, p[1] - camPos[1], dz) + (rf.actif() ? 35 : 0), pan: panSon(camLacet, dx, dz) };
   };
 
   /**
@@ -1715,12 +1726,13 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     // tirs, coups, dégâts et morts : journal de la vue empruntée (killcam, spectateur), horodatés au serveur ; inutile en zombies
     if (!modeZ) {
       const ev = evenementVue(m, tsRecu());
-      if (ev) { kc.alimenterEvenement(ev); journalLive.ajouter(ev); }
+      if (ev) { kc.alimenterEvenement(ev); journalLive.ajouter(ev); if (replayFinPossible) rf.evenement(ev); }
     }
     switch (m.t) {
       case "bienvenue":
         majInfos(m.joueurs);
         entracte = !modeBR && m.match.phase === "entracte";
+        rf.arreter();
         // (v11) nouvelle salle ou reconnexion : jamais figé par erreur (un `zpause` suit, suspendue ou non)
         if (gel.gele) { gel.reinitialiser(); sons.geler(false); }
         break;
@@ -1764,10 +1776,13 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       }
       case "match":
         entracte = !modeBR && m.match.phase === "entracte";
+        // replay de fin (arène) : l'entracte lance le choix des moments, le match suivant oublie tout
+        if (replayFinPossible) { if (m.match.phase === "entracte") rf.finDeMatch(); else rf.arreter(); }
         break;
       case "snap": {
         interp.ajouter({ ts: m.ts, j: m.j });
         kc.alimenter(m.ts, m.j, m.vehicules);
+        if (replayFinPossible) rf.alimenter(m.ts, m.j, m.vehicules);
         mondeJeu.alimenterVehicules(m.ts, m.vehicules);
         mondeTigres.alimenter(m.ts, m.tigres);
         jm.alimenter(m.ts, m.monstres);
@@ -1886,6 +1901,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       case "mort": {
         // victime ou tueur : on peut se parler le temps de la killcam (lien vocal, cf. voix.ts)
         liensVoix.surMort(client.id, m.cible, m.par, t * 1000);
+        if (replayFinPossible) rf.surMort(m);
         if (m.cible === client.id) {
           reapparitionFin = t + m.delai / 1000;
           if (modeBR) {
@@ -2388,6 +2404,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     // l'action « passer » (Espace par défaut, remappable) saute le rejeu de la killcam ; elle partage Espace avec « saut », qui ne doit
     // pas partir pendant la mort (sinon un saut en attente suit le joueur à sa réapparition)
     // (pas pendant la première seconde du rejeu : un saut juste après la mort ne doit pas le faire disparaître)
+    // à l'entracte d'une arène avec replay, la même touche passe au moment suivant (ou revoit le replay une fois fini)
+    if (actions?.includes("passer") && rf.disponible()) { e.preventDefault(); if (!e.repeat) rf.suivant(); return; }
     if (actions?.includes("passer") && kc.actif() && kc.phase() === "rejeu") { e.preventDefault(); if (!e.repeat && kc.touchePasserPermise()) kc.passer(); return; }
     // le tableau des scores (Tab par défaut) est géré par l'UI React, qui bloque elle-même le focus
     if (actions && !actions.includes("scores")) e.preventDefault();
@@ -2528,6 +2546,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     const kcActif = kc.actif();
     const phase = kcActif ? kc.phase() : "";
     const progression = kcActif ? kc.progression() : -1;
+    const hr = rf.hud();
     // spectateur BR : la vie du joueur suivi, pas la mienne (0 depuis ma mort)
     const specte = spectateurActif();
     const vie = vieAffichee(specte, specte ? etats.get(suivi.cible() ?? "") : undefined, { pv, bouclier });
@@ -2596,6 +2615,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       voix: !voix.actif() ? "" : voix.emet() ? "emet" : "pret",
       voixParlants: voix.actif() ? voix.parlants().map(pseudoDe).join(" · ") : "",
       killcamPhase: phase === "rejeu" || phase === "carte" ? phase : "",
+      // replay de fin de match (arène) : scalaires seulement, la comparaison du HUD est champ par champ
+      ...(replayFinPossible ? { replayPhase: hr.phase, replayIndex: hr.index, replayTotal: hr.total, replayTitre: hr.titre, replayDetail: hr.detail, replayProg: hr.progression } : {}),
       sort: vivant && mondeTigres.aCharge(),
       titan: pilote(),
       ...(modeZ ? {
@@ -2767,7 +2788,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     for (const id of [...distants.keys()]) {
       if (!etatsRendu.has(id) || (id === client.id && !enReplay) || etatsRendu.get(id)?.titan || id === suiviId) retirerAvatar(id);
     }
-    // pseudos : seulement si le joueur est VU (distance, champ de vision, ligne de vue), jamais pendant le rejeu
+    // pseudos : seulement si le joueur est VU (distance, champ de vision, ligne de vue), jamais pendant le rejeu (sauf, au replay de fin, le tueur et la victime)
+    const acteursRf = rf.acteurs();
     listeVisible.length = 0;
     for (const [id, e] of etatsRendu) {
       if (id === client.id || e.titan) continue;
@@ -2783,7 +2805,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       const e = etatsRendu.get(id);
       if (!e) continue;
       const dist = Math.hypot(e.p[0] - camPos[0], e.p[1] - camPos[1], e.p[2] - camPos[2]);
-      d.avatar.afficherPseudo(enReplay ? 0 : visib.alpha(id), dist);
+      d.avatar.afficherPseudo(enReplay ? (acteursRf.tueur === id || acteursRf.cible === id ? 1 : 0) : visib.alpha(id), dist);
     }
     dyn.afficherPseudoElsa(enReplay ? 0 : visib.alpha("elsa"));
   }
@@ -3390,6 +3412,9 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     if (modeBR && kc.actif() && kc.progression() >= 1) terminerKillcam();
     if (spectateurActif()) suivi.maj(candidatsSuivi());
 
+    // --- replay de fin de match (arène) : attente des dernières fenêtres, puis les moments l'un après l'autre ---
+    if (replayFinPossible) rf.maj(dt);
+
     // --- killcam : machine, rejeu ou carte figée ---
     if (kc.actif()) {
       kc.maj(dt);
@@ -3411,8 +3436,17 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
         }
       }
       enReplay = (phase === "rejeu" || phase === "carte") && camTueurCache !== null;
-    } else if (enReplay) {
+    } else if (!rf.actif() && enReplay) {
       terminerKillcam();
+    }
+    if (rf.actif()) {
+      // replay de fin : mêmes caches que la killcam, mais tous les joueurs (moi compris) sont dessinés et la caméra est cinématique ; il prime sur
+      // la carte du tueur d'un joueur tué par le dernier kill (sa killcam ne finit qu'à sa réapparition)
+      camTueurCache = rf.camera();
+      tempsRejeuCache = rf.tempsServeur();
+      joueursRejouesCache = rf.joueurs();
+      vehiculesRejouesCache = rf.vehicules();
+      enReplay = camTueurCache !== null;
     }
     majSujetVue();
 
@@ -3608,6 +3642,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     // --- joueurs distants, monde dynamique et effets ---
     majDistants(dt);
     majVue();
+    majReplayFin();
     majMondeDynamique(dt);
     majTigres(dt);
     majVoix();
@@ -3616,7 +3651,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     majBr(dt);
     effets.maj(dt);
 
-    porteArme.visible = apparu && (vivant || enReplay || spectateurActif()) && !(info && tireInterdit()) && !pilote() && !enVolBr();
+    porteArme.visible = apparu && !rf.actif() && (vivant || enReplay || spectateurActif()) && !(info && tireInterdit()) && !pilote() && !enVolBr();
     const sv = sujetVue;
     armeMain.maj(dt, sv
       ? { vitesseH: Math.hypot(sv.v[0], sv.v[2]), auSol: sv.posture === "sol", vise: !!sv.vise }
@@ -3652,7 +3687,11 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       accroupiBascule = b;
       accroupiBascTenu = false;
     },
-    passerKillcam() { if (kc.actif() && kc.phase() === "rejeu") kc.passer(); },
+    passerKillcam() {
+      // replay de fin (entracte de l'arène) : moment suivant, ou revoir ; sinon saute le rejeu de la killcam
+      if (rf.disponible()) { rf.suivant(); return; }
+      if (kc.actif() && kc.phase() === "rejeu") kc.passer();
+    },
     pauseZ(actif) {
       if (!modeZ) return;
       client.envoyer({ t: "pauseZ", actif });
@@ -3789,6 +3828,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
           degainage: armes.degainage(ms()), accroupi: moi.accroupi, glisse: !!moi.glisse, regen: regenEnCours(),
           vehicule: info ? { ...info } : null, embarquement: embarquementFin > 0,
           killcam: kc.actif() ? { phase: kc.phase(), progression: kc.progression() } : null,
+          replayFin: rf.hud(), momentsReplay: rf.lesMoments().map((c) => ({ ts: c.marque.ts, tueur: c.marque.tueur, cible: c.marque.cible, score: c.score, final: c.final, multi: c.multi })),
           p: [...moi.p], v: [...moi.v], auSol: moi.auSol, posture: postureDe(moi), mur: coteMurDe(moi),
           lacet, tangage, verrouille: verrouille(), entracte, fov: fovV, oeil: oeil(),
           mode: modeZ ? "zombies" : modeBR ? "br" : "arene", argent: argentZ, manche: partieZ?.manche ?? 0, restants: mz.restants(), aTerre: aTerreZ, elimine: elimineZ,

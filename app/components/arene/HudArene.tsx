@@ -427,6 +427,11 @@ export default function HudArene(p: PropsHudAreneBr) {
         <FinDeMatch
           joueurs={joueurs} stats={p.stats} classement={p.classement} monId={monId} match={match}
           maintenantServeur={maintenantServeur} equipement={p.equipement} surEquipement={p.surEquipement} aideEquipement={aideEquipement}
+          replay={hud.replayPhase ? {
+            phase: hud.replayPhase, index: hud.replayIndex ?? 0, total: hud.replayTotal ?? 0, titre: hud.replayTitre ?? "", detail: hud.replayDetail ?? "",
+            progression: hud.replayProg ?? 0,
+          } : undefined}
+          toucheReplay={t("passer")} surReplay={p.surPasserKillcam}
         />
       )}
       {tab && !finZ && !finBr && (zombies && partieZ ? (
