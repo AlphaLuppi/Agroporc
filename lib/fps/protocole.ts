@@ -1135,7 +1135,8 @@ export const JEU = {
   protectionMs: 1500,
   dureeMatchMs: 8 * 60_000,
   objectifKills: 25,
-  entracteMs: 12_000,
+  /** entracte entre deux matchs : classement + replay des plus beaux moments (4 moments de 5,2 s au plus, `REPLAY_FIN`), puis le podium (12 s avant le replay ; le budget est vérifié par `replay-fin.test.ts`) */
+  entracteMs: 26_000,
   /** joueurs EN ARÈNE ; les spectateurs de la vue 3D ne comptent pas */
   joueursMax: 16,
   /** connexions (spectateurs compris) acceptées par la salle ; au-delà `erreur{plein}` */

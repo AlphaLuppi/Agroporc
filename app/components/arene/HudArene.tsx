@@ -226,7 +226,9 @@ export default function HudArene(p: PropsHudAreneBr) {
   const vue = combat || spectateur;
   const couteau = estMelee(hud.arme);
   /** arène seulement : à la mort et à l'entracte, la barre des armes (3D) remplace le sélecteur compact */
-  const barreArmes = !zombies && !br && (hud.mort || entracte);
+  const replayEnCours = hud.replayPhase === "attente" || hud.replayPhase === "lecture";
+  // (fusion) pendant le replay de fin la commande « Moment suivant » occupe le bas de l'écran : la barre revient avec le podium
+  const barreArmes = !zombies && !br && (hud.mort || entracte) && !replayEnCours;
   const conduite = hud.vehicule && hud.tireInterdit;
   const inviteRecharge = combat && !hud.titan && !couteau && !hud.tireInterdit && !hud.recharge && ["critique", "vide"].includes(niveauMunitions(hud.munitions, hud.chargeur));
   const reglMap = p.reglagesHud.minimap;
@@ -449,6 +451,11 @@ export default function HudArene(p: PropsHudAreneBr) {
         <FinDeMatch
           joueurs={joueurs} stats={p.stats} classement={p.classement} monId={monId} match={match}
           maintenantServeur={maintenantServeur} equipement={p.equipement} surEquipement={p.surEquipement} sansChoixEquipement={barreArmes}
+          replay={hud.replayPhase ? {
+            phase: hud.replayPhase, index: hud.replayIndex ?? 0, total: hud.replayTotal ?? 0, titre: hud.replayTitre ?? "", detail: hud.replayDetail ?? "",
+            progression: hud.replayProg ?? 0,
+          } : undefined}
+          toucheReplay={t("passer")} surReplay={p.surPasserKillcam}
         />
       )}
       {tab && !finZ && !finBr && (zombies && partieZ ? (

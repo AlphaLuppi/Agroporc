@@ -107,7 +107,7 @@ export const LIBELLES_ACTIONS: Record<Action, string> = {
   scores: "Tableau des scores (maintenir)",
   carte: "Grande carte (maintenir)",
   minimapCoin: "Mini-carte : coin suivant",
-  passer: "Passer le rejeu (mort)",
+  passer: "Passer le rejeu (mort, fin de match)",
   zoomLunette: "Lunette : niveau de zoom suivant (molette en lunette)",
   parler: "Chat vocal : appuyer pour parler",
   invoquer: "Invoquer le tigre (sort gagné)",
