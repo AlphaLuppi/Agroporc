@@ -70,6 +70,8 @@ export interface Monde {
   sansParkour?: true;
   /** (zombies) au moins un prisme a un `plafond` : sans lui, `plafondSur` ne coûte rien (arène, vue aérienne) */
   plafonds?: true;
+  /** (menu de développement) multiplicateur de la gravité du joueur (saut, chute, wall-run) ; absent = 1. Posé par le client sur SON monde, jamais par le serveur. */
+  graviteK?: number;
 }
 
 export interface Contact { nx: number; nz: number; profondeur: number; prisme: number }

@@ -9,12 +9,12 @@ import type { Boite, Monde } from "./collision";
 import type { MemoSante } from "./sante";
 import type {
   ArmeFeuId, ArmeId, ArmeMeleeId, AvionBr, BrApercu, CauseMort, CoteMur, Equipement, EtatPartieBr, EtatPartieZombies, GenreVoiture, MessageClient, MessageServeur, MonstresSnap,
-  ObjetBr, PhaseBr, PhaseZombies, PointButin, PoliceSnap, Posture, Siege, Slot, SnapZombies, TigreLargueSnap, Vec3, VehiculeSnap, Zone,
+  ObjetBr, PhaseBr, PhaseZombies, PointButin, PoliceSnap, Posture, Siege, Slot, SnapZombies, TigreLargueSnap, TypeEvenement, Vec3, VehiculeSnap, Zone,
 } from "./protocole";
 import type { ObstacleVoiture, Tigre } from "./tigre-arene";
 import type { ExplosionGrenade } from "./grenades";
 import type { StatsTir } from "./armes";
-import type { Difficulte } from "./zombies-vagues";
+import type { Difficulte, GenreBonus } from "./zombies-vagues";
 
 /**
  * Un message à émettre. `a` : "tous" (tous les inscrits), "joueurs" (en arène), "spectateurs" (inscrits hors arène) ou l'id d'un client ;
@@ -218,6 +218,11 @@ export interface ServiceEvenements {
   titanEnCours(): boolean;
   /** le joueur quitte l'arène (ou se déconnecte) : s'il pilote, le titan s'éteint */
   liberer(j: JoueurSalle, maintenant: number): Sortie[];
+  /**
+   * (menu de développement) avance le prochain événement à tour à maintenant, du type demandé s'il est autorisé ; faux si un événement est annoncé ou
+   * en cours, si le titan vit ou si le type n'est pas autorisé. Ses conditions habituelles (descente de police, tigre largué…) restent.
+   */
+  forcer(maintenant: number, type?: TypeEvenement): boolean;
 }
 
 /**
@@ -253,6 +258,8 @@ export interface ServicePolice {
   blesser(tireur: JoueurSalle, degats: number, maintenant: number): Sortie[];
   /** le joueur quitte la salle : plus de cible ni de marque d'inaccessibilité à son nom */
   liberer(id: string): void;
+  /** (menu de développement) avance le prochain essai de départ à maintenant (Battle Royale : arme le minuteur) ; faux si une descente est en cours. Ses conditions habituelles restent. */
+  forcer(maintenant: number): boolean;
 }
 
 /**
@@ -281,6 +288,8 @@ export interface ServiceElsa {
   reinitialiser(maintenant: number): void;
   /** `elsa{evenement:"etat"}` adressé à `idDest` (réponse à `rejoindre`) */
   synchro(idDest: string): Sortie[];
+  /** (menu de développement) avance la prochaine offre à maintenant ; faux si une offre est déjà posée */
+  forcer(maintenant: number): boolean;
 }
 
 /** Véhicules conduisibles + circulation PNJ (lot S2, `match-vehicules.ts` : `creerServiceVehicules(ctx, opts)`). */
@@ -343,6 +352,8 @@ export interface ServiceTigres {
   charge(id: string): boolean;
   /** donne une charge du sort à un joueur vivant en arène qui n'en a pas (tests de charge et supervision) : `sort{gagne}` */
   accorderCharge(id: string): Sortie[];
+  /** (menu de développement) avance le prochain passage de l'avion à maintenant ; faux si l'avion vole ou si un tigre sauvage vit encore. Ses conditions habituelles restent. */
+  forcer(maintenant: number): boolean;
   /** état interne d'un tigre (tests et supervision) */
   tigre(id: string): Readonly<Tigre> | undefined;
 }
@@ -442,6 +453,12 @@ export interface ServiceZombies {
    * celles du tic. Renvoie la fonction qui retire l'écouteur. Sert aux quêtes et secrets (une grenade qui fait sauter quelque chose).
    */
   ecouterExplosions(f: (e: ExplosionGrenade) => Sortie[] | void): () => void;
+  // ---- menu de développement ----
+  /**
+   * Actions du menu de développement (déjà validées par `Salle`) : `argent` (à chaque joueur admis, hors score de bonus), `courant`, `bonus` (lâché aux pieds de
+   * `j`), `passerManche` (efface les tigres et finit la manche). Renvoie les sorties, ou `null` si l'action n'a pas de sens maintenant (pas en partie, manche du Truck…).
+   */
+  actionDev(j: JoueurSalle, action: { k: "argent"; montant: number } | { k: "courant" } | { k: "bonus"; genre: GenreBonus } | { k: "passerManche" }, maintenant: number): Sortie[] | null;
   /**
    * (v8) Grand secret : un tir validé (œil, directions des plombs) passe aussi par les objets du décor (casseroles, écrans), un coup d'arme
    * blanche par les pendules ; sorties `zevt{secret}` (rien si rien ne réagit).

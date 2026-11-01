@@ -214,7 +214,14 @@ function creerSalleArene(config?: unknown): Salle {
       ...(policePv !== undefined ? { pvMax: policePv } : {}), ...(policeDuree !== undefined ? { dureeMs: policeDuree } : {}),
     }
     : undefined;
-  return new Salle(monde, apparitions, Math.random, maintenantCreation(), optionsDepuisReglages(reglages, { ...options, ...(police ? { police } : {}) }, imposes));
+  const base: OptionsSalle = { ...options, ...(police ? { police } : {}) };
+  return new Salle(monde, apparitions, Math.random, maintenantCreation(), {
+    ...optionsDepuisReglages(reglages, base, imposes),
+    // menu de développement : le hall (`ar1`, sans réglages demandés) se règle par tout joueur en jeu, une arène créée par son hôte ; les cases et la fréquence
+    // d'événements se changent en direct par les mêmes options que celles de la création
+    devLibre: config === undefined,
+    refaireOptions: (r) => optionsDepuisReglages(r, base, imposes),
+  });
 }
 
 // Zombies (v5) : son propre monde MUTABLE (portes qui s'ouvrent), sans Elsa, circulation, voitures ni événements. La grille de navigation des

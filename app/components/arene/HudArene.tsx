@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { JEU, estMelee } from "@/lib/fps/protocole";
 import type { Action } from "@/lib/fps/touches";
+import { REGLES_DEV_DEFAUT } from "@/lib/fps/regles-dev";
 import { libelleGain, niveauMunitions, syntheseMatch, texteRefusAchat } from "@/lib/fps/hud-modele";
 import { LIBELLES_COINS, coinSuivant } from "@/lib/fps/reglages-hud";
 import { useDisposition } from "./ReglageTouches";
@@ -34,6 +35,8 @@ import IconeSort from "./hud/IconeSort";
 import InvitesAction from "./hud/InvitesAction";
 import Lunette from "./hud/Lunette";
 import BlocVoix from "./hud/BlocVoix";
+import MenuDev from "./hud/MenuDev";
+import devStyles from "./hud/MenuDev.module.css";
 import MenuPause from "./hud/MenuPause";
 import MiniMap from "./hud/MiniMap";
 import RetoursTouche from "./hud/RetoursTouche";
@@ -171,6 +174,20 @@ export default function HudArene(p: PropsHudAreneBr) {
   const suspendueRef = useRef(false);
   suspendueRef.current = suspendue;
   useToucheAppui(verrouille && enPartieZ, p.touches.pauseZ, () => p.surPauseZ?.(!suspendueRef.current));
+  // Menu de développement (F9, action `menuDev`) : libère la souris et remplace le menu pause par le panneau des règles en direct ; F9 de nouveau ou « Fermer »
+  // rend la souris. Hors bilan de fin de partie (zombies, Battle Royale), où le menu pause n'existe pas non plus.
+  const [devOuvert, setDevOuvert] = useState(false);
+  const devOuvertRef = useRef(false);
+  devOuvertRef.current = devOuvert;
+  const reprendreRef = useRef(p.surReprendre);
+  reprendreRef.current = p.surReprendre;
+  const fermerDev = useCallback(() => { setDevOuvert(false); reprendreRef.current(); }, []);
+  useToucheAppui(!!hud && !finBr && !(zombies && partieZ?.phase === "fin"), p.touches.menuDev, () => {
+    if (devOuvertRef.current) { fermerDev(); return; }
+    setDevOuvert(true);
+    if (document.pointerLockElement) document.exitPointerLock();
+  });
+  useEffect(() => { if (verrouille) setDevOuvert(false); }, [verrouille]);
   // Écran de mort et entracte : la souris est prise, les boutons du sélecteur d'équipement sont inatteignables ; les touches d'arme
   // principale / secondaire passent à l'arme suivante de leur catégorie (l'équipement est celui de la prochaine apparition).
   const equipRef = useRef({ equipement: p.equipement, sur: p.surEquipement });
@@ -452,7 +469,18 @@ export default function HudArene(p: PropsHudAreneBr) {
         }}
       />
 
-      {pause && (
+      {pause && devOuvert && (
+        <MenuDev
+          mode={zombies ? "zombies" : br ? "br" : "arene"} monId={monId} regles={hud.devRegles ?? REGLES_DEV_DEFAUT} hote={hud.devHote ?? ""}
+          evenements={hud.devEvenements ?? null} refus={hud.devRefus ?? ""} surReglesDev={(m) => p.surReglesDev?.(m)} surFermer={fermerDev}
+        />
+      )}
+      {pause && !devOuvert && p.surReglesDev && (
+        <button type="button" className={devStyles.lien} onClick={() => setDevOuvert(true)}>
+          Règles en direct{t("menuDev") && t("menuDev") !== "—" ? ` (${t("menuDev")})` : ""}
+        </button>
+      )}
+      {pause && !devOuvert && (
         <MenuPause
           premiereFois={premiereFois} surReprendre={p.surReprendre} surQuitter={p.surQuitter}
           equipement={p.equipement} surEquipement={p.surEquipement} pseudo={p.pseudo} surPseudo={p.surPseudo}

@@ -66,6 +66,8 @@ export class ControleurArmes {
   /** (v10, zombies) coup de couteau rapide en cours : début et fin (ms, 0 = aucun) ; ni tir, ni recharge, ni changement d'arme avant la fin */
   private coupDebut = 0;
   private coupFin = 0;
+  /** (menu de développement) munitions infinies : aucun tir ne décompte, les chargeurs et réserves sont remplis à l'activation */
+  private infini = false;
 
   constructor(equip: Equipement, main: Slot = MAIN_INITIALE, opts: OptionsArmes = {}) {
     this.reserveChargeurs = opts.reserveChargeurs !== undefined && opts.reserveChargeurs >= 0 ? Math.floor(opts.reserveChargeurs) : null;
@@ -76,6 +78,13 @@ export class ControleurArmes {
     this.main = this.slotUtilisable(main) ? main : this.slotRepli();
     this.precedent = this.autrePrincipale(this.main);
     this.remplirTout();
+  }
+
+  /** (menu de développement) Active ou coupe les munitions infinies ; à l'activation, tout est rempli (chargeurs et réserves des armes portées). */
+  definirMunitionsInfinies(on: boolean): void {
+    if (on === this.infini) return;
+    this.infini = on;
+    if (on) this.remplirTout();
   }
 
   // ---------- lecture ----------
@@ -255,7 +264,7 @@ export class ControleurArmes {
    */
   tirEffectue(main: "d" | "g" = "d"): void {
     const a = this.armeEnMain();
-    if (estMelee(a)) return;
+    if (estMelee(a) || this.infini) return;
     if (main === "g" && this.akimbo(a)) { this.munG[a] = Math.max(0, (this.munG[a] ?? 0) - 1); return; }
     const reste = Math.max(0, (this.mun[a] ?? 0) - 1);
     if (this.main === "speciale" && reste === 0 && !this.zombies) {

@@ -522,6 +522,14 @@ export function creerServiceEvenements(ctx: ContexteSalle, opts: OptionsServiceE
       return sorties;
     },
 
+    forcer(maintenant, type) {
+      if (titan || (phase && phase.k !== "attente")) return false;
+      if (types.length === 0 && !opts.forcerType) return false;
+      if (type !== undefined && !opts.forcerType && !types.includes(type)) return false;
+      phase = { k: "attente", t: maintenant, ...(type !== undefined ? { type } : {}) };
+      return true;
+    },
+
     reinitialiser(maintenant) {
       const sorties: Sortie[] = [];
       if (titan) sorties.push(...finTitan(maintenant, "temps"));

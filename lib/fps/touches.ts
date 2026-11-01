@@ -19,7 +19,8 @@ export type Action =
   | "zoomLunette" | "parler" | "invoquer"
   | "fumigene" | "frappeAerienne"
   | "grenade" | "remontoir" | "pauseZ"
-  | "soigner" | "potion" | "lacher" | "spectateurSuivant" | "spectateurPrecedent";
+  | "soigner" | "potion" | "lacher" | "spectateurSuivant" | "spectateurPrecedent"
+  | "menuDev";
 
 /**
  * Les 10 actions de la v1 qui restent (`arme1..arme4` ont disparu). Leurs touches enregistrées sont relues AVANT celles des
@@ -39,6 +40,7 @@ export const ACTIONS_NOUVELLES: readonly Action[] = [
   "accroupi", "interagir", "siege", "carte", "minimapCoin", "passer", "zoomLunette", "parler", "invoquer",
   "fumigene", "frappeAerienne", "grenade", "remontoir", "pauseZ",
   "soigner", "potion", "lacher", "spectateurSuivant", "spectateurPrecedent",
+  "menuDev",
 ];
 
 /**
@@ -70,7 +72,7 @@ export const ACTIONS: readonly Action[] = [...ACTIONS_V1, ...ACTIONS_NOUVELLES];
 
 /** Actions qui peuvent rester sans touche sans que ce soit un problème (pas d'avertissement dans le menu pause). */
 export const ACTIONS_FACULTATIVES: readonly Action[] = [
-  "minimapCoin", "passer", "zoomLunette", "parler", "fumigene", "frappeAerienne", "remontoir", "pauseZ", "soigner", "potion", "lacher", "spectateurSuivant", "spectateurPrecedent",
+  "minimapCoin", "passer", "zoomLunette", "parler", "fumigene", "frappeAerienne", "remontoir", "pauseZ", "soigner", "potion", "lacher", "spectateurSuivant", "spectateurPrecedent", "menuDev",
 ];
 
 export const LIBELLES_ACTIONS: Record<Action, string> = {
@@ -109,6 +111,7 @@ export const LIBELLES_ACTIONS: Record<Action, string> = {
   grenade: "Zombies : grenade (maintenir : cuire)",
   remontoir: "Zombies : tigre à remontoir",
   pauseZ: "Zombies : mettre la partie en pause pour tous / la reprendre",
+  menuDev: "Menu de développement : régler les règles de la partie en direct",
 };
 
 /** Regroupement du menu pause : chaque action y figure une seule fois. */
@@ -118,7 +121,7 @@ export const GROUPES_ACTIONS: { titre: string; actions: Action[] }[] = [
   { titre: "Équipement", actions: ["armePrincipale", "armeSecondaire", "couteau", "armeSpeciale", "armePrecedente", "couteauRapide"] },
   { titre: "Véhicule", actions: ["interagir", "siege"] },
   { titre: "Battle Royale", actions: ["soigner", "potion", "lacher", "spectateurSuivant", "spectateurPrecedent"] },
-  { titre: "Divers", actions: ["scores", "carte", "minimapCoin", "passer", "parler", "pauseZ"] },
+  { titre: "Divers", actions: ["scores", "carte", "minimapCoin", "passer", "parler", "pauseZ", "menuDev"] },
 ];
 
 /** Deux emplacements par action ; `null` = vide. */
@@ -172,6 +175,8 @@ export function touchesParDefaut(): ConfigTouches {
     lacher: ["KeyU", null],
     spectateurSuivant: ["ArrowRight", null],
     spectateurPrecedent: ["ArrowLeft", null],
+    // menu de développement : F9 libère la souris et ouvre le panneau des règles en direct
+    menuDev: ["F9", null],
   };
 }
 

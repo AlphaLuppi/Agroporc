@@ -16,6 +16,7 @@
  * 2026-10-30-arene-police-evenements-design.md (descente de police, réglages d'événements : additif, `VERSION_PROTOCOLE` reste 11)
  */
 import type { ReglagesArene } from "./reglages-arene";
+import type { ActionDev, ReglesDev } from "./regles-dev";
 import type { Difficulte, GenreBonus } from "./zombies-vagues";
 
 /**
@@ -800,6 +801,13 @@ export type MessageClient =
    */
   | { t: "pauseZ"; actif: boolean }
   /**
+   * (additif, menu de développement) Modifier les règles de la partie en direct. `regles` : patch des règles (clés connues seulement, valeurs bornées par
+   * le serveur) ; `evenements` : cases et fréquence des événements de l'arène (reconstruit les services d'événements) ; `action` : impulsion (forcer
+   * un événement, argent, courant, bonus, passer la manche, tout réinitialiser). Réservé à l'hôte (tout joueur en jeu dans le hall partagé) ; refus
+   * `refus{action:"reglesDev"}`. Un ancien serveur ignore ce message inconnu.
+   */
+  | { t: "reglesDev"; regles?: Partial<ReglesDev>; evenements?: { evenements?: string[]; frequence?: string }; action?: ActionDev }
+  /**
    * (BR, additif) Regarder la partie en cours de sa salle sans y jouer (arrivé après le lancement, ou pas admis) : réponse privée
    * `spectateur`, puis les snaps comme un éliminé ; refus `refus{action:"regarder", raison:"lobby"}` hors décompte, vol et jeu.
    */
@@ -946,8 +954,8 @@ export type MessageServeur =
    * `mode` gagne `limite` pour l'arène et les zombies (plafonds de parties, délai de 10 s entre deux créations, disjoncteur de tic).
    */
   | {
-    t: "refus"; action: "monter" | "siege" | "rejoindre" | "mode" | "regarder" | "pause" | "lancer";
-    raison: "loin" | "plein" | "deja" | "inconnu" | "mort" | "lobby" | "limite" | "plusieurs" | "bots";
+    t: "refus"; action: "monter" | "siege" | "rejoindre" | "mode" | "regarder" | "pause" | "lancer" | "reglesDev";
+    raison: "loin" | "plein" | "deja" | "inconnu" | "mort" | "lobby" | "limite" | "plusieurs" | "bots" | "hote" | "mode" | "invalide";
     /** (v11) `rejoindre` refusé pour `plein` : id d'une partie d'arène qui accueille (le lobby propose « Changer d'arène ») */
     alternative?: string;
   }
@@ -1034,6 +1042,12 @@ export type MessageServeur =
    * TOUT client juste après chaque `bienvenue` de la salle des zombies (`actif: false` pour une salle non suspendue : le client le traite comme « dégelé »).
    */
   | { t: "zpause"; actif: boolean; par?: string; pseudo?: string; maintenant: number; compte?: number }
+  /**
+   * (additif, menu de développement) Règles de la partie, diffusées à toute la salle à chaque changement et envoyées au seul arrivant en réponse à
+   * `rejoindre` / `regarder`. `hote` : id du joueur qui peut les régler, ou `"*"` (hall partagé : tout joueur en jeu). `evenements` : réglages
+   * d'événements courants (arène seulement). `par` / `annonce` : qui a changé quoi (« Alice : gravité ×0,5 »), absents de la synchronisation d'un arrivant.
+   */
+  | { t: "reglesDev"; regles: ReglesDev; hote: string; evenements?: ReglagesArene; par?: string; annonce?: string }
   /** État de la partie de zombies (aux membres de la salle zombies, à chaque changement, ≤ 5 Hz). */
   | { t: "zombies"; etat: EtatPartieZombies }
   /** Argent du destinataire (zombies) : solde, variation et motif (« touche », « kill », « manche », « achat »…). Privé. */

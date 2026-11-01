@@ -99,6 +99,8 @@ import { ajouterEcho, ajouterPorte, creerRadarFrame, definirElsa, ajouterVoiture
 import { SuiviRadar, type JoueurRadarEntree } from "./jeu-radar";
 import { Interpolateur, gardePosition, type ClientArene } from "./reseau";
 import { GelPartie, doitAutoSuspendre, texteRefusPause } from "./gel";
+import { REGLES_DEV_DEFAUT, texteRefusDev, type ReglesDev } from "./regles-dev";
+import type { ReglagesArene } from "./reglages-arene";
 import { codeSouris, indexTouches, lireTouches, stockageNavigateur, type Action, type ConfigTouches } from "./touches";
 import {
   creerArmeEnMain, creerAvatar, creerEffets, creerPostTraitement, type ArmeEnMain, type AvatarJoueur,
@@ -607,6 +609,11 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   if (modeZ) { gel.depuisMemoire(client.suspension?.()); if (gel.gele) sons.geler(true); }
   /** (v11) refus d'une pause à afficher dans le menu (texte, jusqu'à quand : horloge réelle du navigateur) */
   let refusPause = { texte: "", jusqua: 0 };
+  // ---- menu de développement : règles de la partie, qui peut les régler (`"*"` : tout joueur en jeu), événements d'arène, refus à afficher ----
+  let reglesDev: ReglesDev = REGLES_DEV_DEFAUT;
+  let devHote = "";
+  let devEvenements: ReglagesArene | null = null;
+  let refusDev = { texte: "", jusqua: 0 };
   /** (v11) la souris a été prise au moins une fois : la perte de la souris ne suspend (solo) qu'ensuite, jamais pendant le « Prêt ? » du premier lancement */
   let dejaVerrouille = false;
   const peutAgir = () => apparu && vivant && !enVolBr() && gel.actionsAutorisees();
@@ -1723,7 +1730,20 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
         entracte = !modeBR && m.match.phase === "entracte";
         // (v11) nouvelle salle ou reconnexion : jamais figé par erreur (un `zpause` suit, suspendue ou non)
         if (gel.gele) { gel.reinitialiser(); sons.geler(false); }
+        // (menu de développement) les règles ont pu changer pendant une coupure : on les redemande
+        client.envoyer({ t: "reglesDev" });
         break;
+      case "reglesDev": {
+        // (menu de développement) règles de la partie : gravité sur MON monde, vitesse dans le mouvement, munitions dans le contrôleur d'armes ; l'annonce va au fil
+        reglesDev = m.regles;
+        devHote = m.hote;
+        devEvenements = m.evenements ?? null;
+        monde.graviteK = m.regles.gravite;
+        armes.definirMunitionsInfinies(m.regles.munitionsInfinies);
+        if (m.annonce) annoncer(m.annonce, "info");
+        emettreHud(true);
+        break;
+      }
       case "zpause": {
         // (v11, zombies) suspension de la partie par un joueur : tout est figé jusqu'au `zpause{actif:false}` (horloge serveur figée par reseau.ts)
         if (!modeZ) break;
@@ -1946,6 +1966,11 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
         // (v11) pause refusée : texte dans le menu pause (pas une annonce du fil : `texteRefus` du hook ne connaît pas cette action)
         if (m.action === "pause") {
           refusPause = { texte: texteRefusPause(m.raison), jusqua: Date.now() + 4000 };
+          emettreHud(true);
+          break;
+        }
+        if (m.action === "reglesDev") {
+          refusDev = { texte: texteRefusDev(m.raison), jusqua: Date.now() + 4000 };
           emettreHud(true);
           break;
         }
@@ -2596,6 +2621,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       voix: !voix.actif() ? "" : voix.emet() ? "emet" : "pret",
       voixParlants: voix.actif() ? voix.parlants().map(pseudoDe).join(" · ") : "",
       killcamPhase: phase === "rejeu" || phase === "carte" ? phase : "",
+      // menu de développement : objets stables (remplacés seulement par un message du serveur), `emettreHud` les compare par référence
+      devRegles: reglesDev, devHote, devEvenements, devRefus: refusDev.texte && Date.now() < refusDev.jusqua ? refusDev.texte : "",
       sort: vivant && mondeTigres.aCharge(),
       titan: pilote(),
       ...(modeZ ? {
@@ -3521,7 +3548,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       }
     } else if (apparu) {
       const entreesUtiles: Entrees = actif ? en : { avant: 0, droite: 0, saut: false, sprint: false, accroupi: false, lacet };
-      const mult = vitesseArme(arme) * (vise ? 0.8 : 1);
+      const mult = vitesseArme(arme) * (vise ? 0.8 : 1) * reglesDev.vitesse;
       const obstacles = modeZ ? corpsTigres.maj(mz.zombies(), mz.nombre(), moi.p[0], moi.p[2], PORTEE_CORPS_TIGRES_M) : undefined;
       moi = etape(moi, entreesUtiles, dt, monde, mult, obstacles);
     }
@@ -3641,6 +3668,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
 
   // BR : regarder la partie en cours sans y jouer (réponse `spectateur`), sinon monter dans l'avion
   client.envoyer(modeBR && opts.spectateur ? { t: "regarder" } : { t: "rejoindre", ...choixEquipement() });
+  // (menu de développement) règles courantes de la partie et qui peut les régler (message vide = demande d'état)
+  client.envoyer({ t: "reglesDev" });
   emettreHud(true);
 
   // ---------- poignée ----------
@@ -3654,6 +3683,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       accroupiBascTenu = false;
     },
     passerKillcam() { if (kc.actif() && kc.phase() === "rejeu") kc.passer(); },
+    reglesDev(msg) { client.envoyer({ t: "reglesDev", ...(msg ?? {}) }); },
     pauseZ(actif) {
       if (!modeZ) return;
       client.envoyer({ t: "pauseZ", actif });

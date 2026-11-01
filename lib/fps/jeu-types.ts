@@ -11,6 +11,8 @@ import type { RadarFrame } from "./radar";
 /** Message `refus` du serveur (v11 : `pause`, `lancer`, `alternative`) ; l'évènement du jeu en reprend les champs. */
 type RefusServeur = Extract<MessageServeur, { t: "refus" }>;
 import type { ConfigTouches } from "./touches";
+import type { ReglagesArene } from "./reglages-arene";
+import type { ReglesDev } from "./regles-dev";
 
 /**
  * Scalaires UNIQUEMENT (emettreHud compare champ par champ avec !==) : un objet ou tableau re-rendrait à 15 Hz.
@@ -151,6 +153,16 @@ export interface HudEtat {
   compteS?: number;
   /** texte d'un refus de pause (« Pause indisponible : limite atteinte »), vide sinon ; s'efface seul au bout de 4 s */
   refusPause?: string;
+
+  // ---- MENU DE DÉVELOPPEMENT : optionnels (objets STABLES : remplacés seulement par un message du serveur, jamais recréés à chaque image) ----
+  /** règles courantes de la partie (valeurs par défaut tant que le serveur n'a pas répondu) */
+  devRegles?: ReglesDev;
+  /** qui peut les régler : `"*"` = tout joueur en jeu (hall partagé), sinon l'id de l'hôte ; "" avant la réponse du serveur */
+  devHote?: string;
+  /** événements de l'arène (cases cochées, fréquence), null hors arène */
+  devEvenements?: ReglagesArene | null;
+  /** texte du dernier refus du serveur, vide sinon ; s'efface seul au bout de 4 s */
+  devRefus?: string;
 
   // ---- COMPATIBILITÉ v1 (shim du lot 0, tous optionnels) ----
   // Champs que le HUD v1 lit encore et que `jeu.ts` v1 émet toujours. La spec HUD (§3.2) les retire de `HudEtat` : le lot J1 cesse
@@ -330,6 +342,11 @@ export interface JeuHandle {
    * La suspension n'est effective qu'au `zpause` du serveur ; un refus s'affiche dans `HudEtat.refusPause`. Sans effet hors zombies.
    */
   pauseZ?(actif: boolean): void;
+  /**
+   * (menu de développement) Modifie les règles de la partie (`regles`, `evenements`, `action`) ; sans argument, redemande l'état courant (à l'ouverture du menu).
+   * Le serveur valide, borne, applique et annonce ; l'état revient dans `HudEtat.devRegles`. Réservé à l'hôte (tout joueur en jeu dans le hall).
+   */
+  reglesDev?(msg?: Omit<Extract<import("./protocole").MessageClient, { t: "reglesDev" }>, "t">): void;
   /** Chat vocal de proximité (v3 §5) : `activer` demande le micro (à appeler sur un geste), `mode` appuyer pour parler / micro ouvert. */
   voix: { activer(): Promise<"ok" | "refuse" | "indisponible">; desactiver(): void; mode(m: "appuyer" | "ouvert"): void };
   /** Touches modifiées par le joueur (menu pause), appliquées tout de suite. */

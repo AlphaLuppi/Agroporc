@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  ACTIONS, ACTIONS_MORT, ACTIONS_NOUVELLES, ACTIONS_V1, ACTIONS_ZOMBIES, CLE_TOUCHES, GROUPES_ACTIONS, LIBELLES_ACTIONS, actionsSansTouche, assigner, conflit,
+  ACTIONS, ACTIONS_FACULTATIVES, ACTIONS_MORT, ACTIONS_NOUVELLES, ACTIONS_V1, ACTIONS_ZOMBIES, CLE_TOUCHES, GROUPES_ACTIONS, LIBELLES_ACTIONS, actionsSansTouche, assigner, conflit,
   ecrireTouches, estParDefaut, indexTouches, libelleTouche, lireTouches, normaliser, touchesParDefaut, type Action, type Stockage,
 } from "./touches";
 
@@ -82,14 +82,21 @@ describe("touches de l'arène", () => {
     expect(libelleTouche(null)).toBe("—");
   });
 
-  it("actions de l'équipement, du HUD, « passer », de la v3, « invoquer » et du Battle Royale : 10 de la v1 conservées, 25 nouvelles (dont la pause des zombies, v11), aucune arme1..4", () => {
+  it("actions de l'équipement, du HUD, « passer », de la v3, « invoquer » et du Battle Royale : 10 de la v1 conservées, 26 nouvelles (dont la pause des zombies, v11, et le menu de développement), aucune arme1..4", () => {
     expect(ACTIONS_V1).toHaveLength(10);
-    expect(ACTIONS_NOUVELLES).toHaveLength(25);
-    expect(ACTIONS).toHaveLength(35);
-    expect(new Set(ACTIONS).size).toBe(35);
+    expect(ACTIONS_NOUVELLES).toHaveLength(26);
+    expect(ACTIONS).toHaveLength(36);
+    expect(new Set(ACTIONS).size).toBe(36);
     expect(Object.keys(touchesParDefaut()).sort()).toEqual([...ACTIONS].sort());
     expect(Object.keys(LIBELLES_ACTIONS).sort()).toEqual([...ACTIONS].sort());
     expect(ACTIONS as readonly string[]).not.toContain("arme1");
+  });
+
+  it("menu de développement : F9 par défaut, facultatif, sans conflit avec une autre action", () => {
+    const d = touchesParDefaut();
+    expect(d.menuDev).toEqual(["F9", null]);
+    expect(ACTIONS_FACULTATIVES).toContain("menuDev");
+    expect(Object.entries(d).filter(([a, t]) => a !== "menuDev" && t.includes("F9"))).toEqual([]);
   });
 
   it("défauts de la spec : accroupi sur C (jamais Ctrl gauche), équipement, véhicule, grande carte", () => {

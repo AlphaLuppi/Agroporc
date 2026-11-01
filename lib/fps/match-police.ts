@@ -319,6 +319,12 @@ export function creerServicePolice(ctx: ContexteSalle, opts: OptionsServicePolic
       phase = attente(t ?? Infinity);
     },
 
+    forcer(t) {
+      if (phase && phase.k !== "attente") return false;
+      phase = attente(t);
+      return true;
+    },
+
     reinitialiser(t, rearmer) {
       const sorties: Sortie[] = [];
       const ph = phase;
