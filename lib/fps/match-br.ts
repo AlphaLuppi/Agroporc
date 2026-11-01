@@ -67,7 +67,7 @@ export interface OptionsServiceBr {
   points?: readonly PointButin[];
   /**
    * (2026-10-30) la descente de police de la salle (créée par `Salle`, qui la passe paresseusement : elle est construite après ce service) ; null ou
-   * absent : pas de police (tests, serveur sans routes). Le service BR l'arme (`armer`), la remet à blanc et arme la seconde.
+   * absent : pas de police (tests, serveur sans routes). Le service BR l'arme (`armer`), la remet à blanc et arme les suivantes.
    */
   police?: () => ServicePolice | null;
   /** essais (`PDJ_FPS_BR_POLICE_MS`) : délai fixe du premier essai de descente après le départ de l'avion ; remplace aussi les 60 s après le premier atterrissage et les 4 vivants minimum */
@@ -149,10 +149,11 @@ export function creerServiceBr(ctx: ContexteSalle, opts: OptionsServiceBr): Serv
   // bots (v11) : la partie compte des bots (jamais comptée dans les statistiques) ; fin anticipée quand plus aucun humain n'est en vie
   let avecBots = false;
   let finSansHumainT: number | null = null;
-  // descente de police (2026-10-30) : réglage de l'hôte, premier atterrissage d'un humain, seconde descente armée, joueurs au départ
+  // descente de police (2026-10-30) : réglage de l'hôte, premier atterrissage d'un humain, descentes suivantes armées, joueurs au départ
   let policeVoulue = true;
   let premierAtterrissageHumainT: number | null = null;
-  let secondeArmee = false;
+  /** nombre de descentes déjà faites quand la suivante a été armée (une seule armement par descente finie) */
+  let suivanteArmeeApres = 0;
   let nbJoueursDepart = 0;
   const police = (): ServicePolice | null => opts.police?.() ?? null;
 
@@ -344,7 +345,7 @@ export function creerServiceBr(ctx: ContexteSalle, opts: OptionsServiceBr): Serv
     // la voiture de police s'arrête (`police{fin}`), le réglage de l'hôte et l'état de la partie sont remis à blanc
     const pol = police();
     if (pol) sorties.push(...pol.reinitialiser(t, false));
-    policeVoulue = true; premierAtterrissageHumainT = null; secondeArmee = false; nbJoueursDepart = 0;
+    policeVoulue = true; premierAtterrissageHumainT = null; suivanteArmeeApres = 0; nbJoueursDepart = 0;
     membres.clear();
     vol.reinitialiser();
     butin.reinitialiser();
@@ -411,7 +412,7 @@ export function creerServiceBr(ctx: ContexteSalle, opts: OptionsServiceBr): Serv
     // même trajectoire (même graine), départ à `t` : les joueurs déjà à bord suivent
     vol.demarrer(bord, ctx.monde.bornes, aleaVol(), t, optionsVol());
     phase = "vol"; debutT = t; finT = 0; volDebutT = t; tempeteT = t; atterrisMax = 0;
-    premierAtterrissageHumainT = null; secondeArmee = false; nbJoueursDepart = bord.length;
+    premierAtterrissageHumainT = null; suivanteArmeeApres = 0; nbJoueursDepart = bord.length;
     plan = genererPlanZone({
       bornes: ctx.monde.bornes, debutT: t, alea, centresBatiments: centres(), echelle: opts.echelleZone ?? echelleDureeZone(partants().length),
     });
@@ -440,12 +441,18 @@ export function creerServiceBr(ctx: ContexteSalle, opts: OptionsServiceBr): Serv
     }
   }
 
-  /** Seconde descente : seulement si la partie comptait `secondeJoueursMin` joueurs au départ (bots compris), 3 à 5 min après la FIN de la première ; jamais une troisième. */
-  function armerSeconde(t: number): void {
+  /**
+   * Descente suivante : une fois la précédente finie, tant que la partie n'a pas eu son quota (`POLICE.br.max`, `maxGrande` à `grandePartieJoueursMin` partants,
+   * bots compris), `suivanteMinMs`…`suivanteMaxMs` après sa FIN ; un seul armement par descente.
+   */
+  function armerSuivante(t: number): void {
     const pol = police();
-    if (!pol || !policeVoulue || secondeArmee || pol.descentes() !== 1 || pol.enCours() || nbJoueursDepart < POLICE.br.secondeJoueursMin) return;
-    secondeArmee = true;
-    pol.armer(t + (opts.policeMs ?? POLICE.br.secondeMinMs + alea() * (POLICE.br.secondeMaxMs - POLICE.br.secondeMinMs)));
+    if (!pol || !policeVoulue || pol.enCours()) return;
+    const faites = pol.descentes();
+    const quota = nbJoueursDepart >= POLICE.br.grandePartieJoueursMin ? POLICE.br.maxGrande : POLICE.br.max;
+    if (faites < 1 || faites >= quota || suivanteArmeeApres >= faites) return;
+    suivanteArmeeApres = faites;
+    pol.armer(t + (opts.policeMs ?? POLICE.br.suivanteMinMs + alea() * (POLICE.br.suivanteMaxMs - POLICE.br.suivanteMinMs)));
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -610,7 +617,7 @@ export function creerServiceBr(ctx: ContexteSalle, opts: OptionsServiceBr): Serv
       tempete(t, sorties);
       verifierVictoire(t, sorties);
       verifierFinSansHumain(t, sorties);
-      if (phase === "jeu") armerSeconde(t);
+      if (phase === "jeu") armerSuivante(t);
       return emettre(t, sorties, true);
     },
 

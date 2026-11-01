@@ -117,7 +117,7 @@ export function useMessagesVifs(p: EntreesMessagesVifs): { toast: string | null;
   useEffect(() => {
     if (!bonus || bonus.id === dernierBonus.current) return;
     dernierBonus.current = bonus.id;
-    const texte = texteBonus(bonus.genre, bonus.arme, toucheSpeciale);
+    const texte = texteBonus(bonus.genre, bonus.arme, toucheSpeciale, bonus.vendeuse);
     afficherToast(texte);
     pousser(texte, PRIORITE_VIVE.bouclier);
   }, [bonus, toucheSpeciale, afficherToast, pousser]);

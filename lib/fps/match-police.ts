@@ -1,7 +1,7 @@
 /**
  * Service « descente de police » de la salle (PUR) : une voiture de police débarque de nulle part, fonce sur un joueur (arène : celui qui a le plus de
  * kills ; Battle Royale : l'ennemi humain le plus proche), l'écrase s'il est à pied (`ctx.tuer(…, "police")`, aucun kill crédité), se retire après
- * `POLICE.dureeMs` ou quand elle est détruite à coups de feu (700 PV, `tir.touches` sur `CIBLE_POLICE`, revalidés sur sa boîte orientée REJOUÉE sur son
+ * `POLICE.dureeMs` ou quand elle est détruite à coups de feu (1 100 PV, `tir.touches` sur `CIBLE_POLICE`, revalidés sur sa boîte orientée REJOUÉE sur son
  * historique : à 24 m/s elle parcourt 2,4 m en 100 ms). Physique des voitures conduisibles (dérapage compris), chemin A* sur la grille de dégagement du
  * Truck fou, marche arrière quand elle est bloquée : la poursuite est celle du Truck muche fou (`match-evenements.ts`), autrement réglée.
  * Le service ne décide ni QUAND ni QUI cibler : il reçoit des `ReglesPolice` (`police-regles.ts`, deux fabriques). Il appartient à `Salle`, construit EN

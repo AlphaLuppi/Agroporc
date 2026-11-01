@@ -3,11 +3,11 @@
 import { memo, useEffect, useRef, useState } from "react";
 import type { EtatElsaMsg } from "@/lib/fps/protocole";
 import type { RadarFrame } from "@/lib/fps/radar";
-import { formatMetres, formatSecondes, texteOffreElsa } from "@/lib/fps/hud-modele";
+import { formatMetres, formatSecondes, nomVendeuseOffre, texteOffreElsa } from "@/lib/fps/hud-modele";
 import styles from "../HudArene.module.css";
 
 /**
- * Bandeau du cadeau d'Elsa (§5.8) : non modal, grand pendant 4 s (entrée par le haut) puis replié en puce sous la barre de match
+ * Bandeau du cadeau d'Elsa ou de la formule du jour de la patronne (§5.8) : non modal, grand pendant 4 s (entrée par le haut) puis replié en puce sous la barre de match
  * (« ELSA 340 m · 27 s ») jusqu'au ramassage ou à l'expiration ; replié d'emblée si la fenêtre fait moins de 800 px de haut. Contenu en texte
  * (« SOIN COMPLET : PV 100 + BOUCLIER 100 » ou « ARME : RAILGUN, 6 tirs »), flèche vers Elsa (`--elsa-angle` écrite hors React d'après
  * `radar().elsa`, distance arrondie à 10 m) et barre de temps lue sur `offre.finT` (jamais une durée codée en dur).
@@ -67,7 +67,8 @@ function AnnoncesElsaBrutes({ elsa, maintenantServeur, radar }: PropsAnnoncesEls
   const restantMs = Math.max(0, finT - maintenant.current());
   if (base.current.id !== offre.id) base.current = { id: offre.id, ms: Math.max(1, restantMs) };
   const part = Math.max(0, Math.min(1, restantMs / base.current.ms));
-  const texte = texteOffreElsa(offre.genre, offre.arme);
+  const texte = texteOffreElsa(offre.genre, offre.arme, offre.vendeuse);
+  const nom = nomVendeuseOffre(offre.vendeuse);
   const genreMarque = offre.genre === "soin" ? "+" : "★";
 
   if (replie) {
@@ -75,7 +76,7 @@ function AnnoncesElsaBrutes({ elsa, maintenantServeur, radar }: PropsAnnoncesEls
       <div className={`${styles.plaque} ${styles.elsaPuce}`} data-genre={offre.genre}>
         <span ref={fleche} className={styles.elsaFleche} aria-hidden="true">➤</span>
         <span className={styles.elsaPuceTexte}>
-          ELSA <span ref={distance} />
+          {nom} <span ref={distance} />
           {" · "}{formatSecondes(restantMs / 1000)}
           <span className={styles.srSeul}> : {texte}</span>
         </span>
@@ -83,9 +84,9 @@ function AnnoncesElsaBrutes({ elsa, maintenantServeur, radar }: PropsAnnoncesEls
     );
   }
   return (
-    <section className={`${styles.plaque} ${styles.elsa}`} data-genre={offre.genre} aria-label="Cadeau d'Elsa">
+    <section className={`${styles.plaque} ${styles.elsa}`} data-genre={offre.genre} aria-label={offre.vendeuse === "patronne" ? "Formule du jour de la patronne" : "Cadeau d'Elsa"}>
       <div className={styles.elsaTete}>
-        <b>ELSA · TRUCK MUCHE</b>
+        <b>{nom} · TRUCK MUCHE</b>
         <span className={styles.elsaDistance}>
           <span ref={fleche} className={styles.elsaFleche} aria-hidden="true">➤</span>
           <span ref={distance} />

@@ -244,53 +244,31 @@ describe("aidePolice : ce que la police voit du service BR", () => {
   });
 });
 
-describe("seconde descente : seulement à 20 joueurs ou plus au départ, jamais une troisième", () => {
-  it("`POLICE.br` : une seconde descente est réservée aux grandes parties (20 joueurs), 3 à 5 min après la fin de la première, maximum 2", () => {
-    expect(POLICE.br.secondeJoueursMin).toBe(20);
-    expect(POLICE.br.secondeMinMs).toBe(180_000);
-    expect(POLICE.br.secondeMaxMs).toBe(300_000);
+describe("descentes suivantes : deux par partie, trois à 20 partants ou plus, jamais davantage", () => {
+  it("`POLICE.br` : deux descentes par partie (une de plus qu'avant), trois à partir de 20 partants, la suivante 2 min 30 à 4 min après la fin de la précédente", () => {
     expect(POLICE.br.max).toBe(2);
-    expect(BR.joueursMax).toBeGreaterThanOrEqual(POLICE.br.secondeJoueursMin);
+    expect(POLICE.br.maxGrande).toBe(3);
+    expect(POLICE.br.grandePartieJoueursMin).toBe(20);
+    expect(POLICE.br.suivanteMinMs).toBe(150_000);
+    expect(POLICE.br.suivanteMaxMs).toBe(240_000);
+    expect(BR.joueursMax).toBeGreaterThanOrEqual(POLICE.br.grandePartieJoueursMin);
   });
 
-  it("à 20 joueurs au départ, la seconde descente est armée après la fin de la première, une seule fois", () => {
+  /** Fausse police : `descentes` / `enCours` pilotés par le test, chaque `armer` est consigné. */
+  function fausse() {
     const armes: (number | null)[] = [];
-    let descentes = 0, enCours = false;
-    const faussePolice = {
+    const etat = { descentes: 0, enCours: false };
+    const police = {
       armer: (t: number | null) => { armes.push(t); },
-      descentes: () => descentes, enCours: () => enCours,
+      descentes: () => etat.descentes, enCours: () => etat.enCours,
       reinitialiser: () => [], tic: () => [], snap: () => undefined, synchro: () => [], toucher: () => null, blesser: () => [], liberer: () => {},
     } as unknown as ServicePolice;
-    const grande = banc({ police: () => faussePolice, nbObjets: 10 }, {}, false);
-    for (let k = 0; k < 20; k++) grande.s.connecter(`g${k}`, `Joueur${String.fromCharCode(65 + k)}`, grande.t);
-    envoyer(grande, "g0", { t: "lancerPartie", bots: 0 });
-    grande.t += 100;
-    for (let k = 0; k < 20; k++) envoyer(grande, `g${k}`, { t: "rejoindre" });
-    avancerJusque(grande, () => phase(grande) === "jeu", 60_000);
-    expect(armes).toHaveLength(1);
-    expect(armes[0]).toBeGreaterThan(grande.t - 1);
-    // la première descente a eu lieu et est finie : la seconde est armée 3 à 5 min plus tard
-    descentes = 1; enCours = true;
-    avancer(grande, 1_000);
-    expect(armes).toHaveLength(1);
-    enCours = false;
-    avancer(grande, 1_000);
-    expect(armes).toHaveLength(2);
-    expect(armes[1]! - grande.t).toBeGreaterThanOrEqual(POLICE.br.secondeMinMs - 2_000);
-    expect(armes[1]! - grande.t).toBeLessThanOrEqual(POLICE.br.secondeMaxMs);
-    // jamais une troisième : même après une deuxième descente
-    descentes = 2;
-    avancer(grande, 5_000);
-    expect(armes).toHaveLength(2);
-  });
+    return { armes, etat, police };
+  }
 
-  it("à 2 joueurs au départ, aucune seconde descente n'est armée", () => {
-    const armes: (number | null)[] = [];
-    const faussePolice = {
-      armer: (t: number | null) => { armes.push(t); }, descentes: () => 1, enCours: () => false,
-      reinitialiser: () => [], tic: () => [], snap: () => undefined, synchro: () => [], toucher: () => null, blesser: () => [], liberer: () => {},
-    } as unknown as ServicePolice;
-    const b = banc({ police: () => faussePolice }, {}, false);
+  it("à 2 joueurs au départ, la deuxième descente est armée après la fin de la première, une seule fois, jamais une troisième", () => {
+    const { armes, etat, police } = fausse();
+    const b = banc({ police: () => police }, {}, false);
     b.s.connecter("j1", "Alice", b.t);
     b.s.connecter("j2", "Bob", b.t);
     envoyer(b, "j1", { t: "lancerPartie", bots: 0 });
@@ -298,8 +276,62 @@ describe("seconde descente : seulement à 20 joueurs ou plus au départ, jamais 
     envoyer(b, "j1", { t: "rejoindre" });
     envoyer(b, "j2", { t: "rejoindre" });
     avancerJusque(b, () => phase(b) === "jeu", 60_000);
-    avancer(b, 10_000);
     expect(armes).toHaveLength(1);
+    // première descente en cours : rien n'est armé
+    etat.descentes = 1; etat.enCours = true;
+    avancer(b, 2_000);
+    expect(armes).toHaveLength(1);
+    // finie : la suivante est armée 2 min 30 à 4 min plus tard, une seule fois
+    etat.enCours = false;
+    avancer(b, 1_000);
+    expect(armes).toHaveLength(2);
+    expect(armes[1]! - b.t).toBeGreaterThanOrEqual(POLICE.br.suivanteMinMs - 2_000);
+    expect(armes[1]! - b.t).toBeLessThanOrEqual(POLICE.br.suivanteMaxMs);
+    avancer(b, 5_000);
+    expect(armes).toHaveLength(2);
+    // la deuxième faite : pas de troisième à 2 joueurs
+    etat.descentes = 2;
+    avancer(b, 5_000);
+    expect(armes).toHaveLength(2);
+  });
+
+  it("à 20 joueurs au départ, une troisième descente est armée après la fin de la deuxième, jamais une quatrième", () => {
+    const { armes, etat, police } = fausse();
+    const grande = banc({ police: () => police, nbObjets: 10 }, {}, false);
+    for (let k = 0; k < 20; k++) grande.s.connecter(`g${k}`, `Joueur${String.fromCharCode(65 + k)}`, grande.t);
+    envoyer(grande, "g0", { t: "lancerPartie", bots: 0 });
+    grande.t += 100;
+    for (let k = 0; k < 20; k++) envoyer(grande, `g${k}`, { t: "rejoindre" });
+    avancerJusque(grande, () => phase(grande) === "jeu", 60_000);
+    expect(armes).toHaveLength(1);
+    expect(armes[0]).toBeGreaterThan(grande.t - 1);
+    for (const faites of [1, 2]) {
+      etat.descentes = faites; etat.enCours = true;
+      avancer(grande, 1_000);
+      expect(armes).toHaveLength(faites);
+      etat.enCours = false;
+      avancer(grande, 1_000);
+      expect(armes).toHaveLength(faites + 1);
+      expect(armes[faites]! - grande.t).toBeGreaterThanOrEqual(POLICE.br.suivanteMinMs - 2_000);
+      expect(armes[faites]! - grande.t).toBeLessThanOrEqual(POLICE.br.suivanteMaxMs);
+    }
+    etat.descentes = 3;
+    avancer(grande, 5_000);
+    expect(armes).toHaveLength(3);
+  });
+
+  it("l'hôte qui décoche la police : aucune descente suivante n'est armée", () => {
+    const { armes, etat, police } = fausse();
+    const b = banc({ police: () => police }, {}, false);
+    b.s.connecter("j1", "Alice", b.t);
+    b.s.connecter("j2", "Bob", b.t);
+    envoyer(b, "j1", { t: "lancerPartie", bots: 0, police: false });
+    b.t += 100;
+    envoyer(b, "j1", { t: "rejoindre" });
+    envoyer(b, "j2", { t: "rejoindre" });
+    avancerJusque(b, () => phase(b) === "jeu", 60_000);
+    etat.descentes = 1;
+    avancer(b, 10_000);
+    expect(armes.filter((t) => t !== null)).toHaveLength(0);
   });
 });
-

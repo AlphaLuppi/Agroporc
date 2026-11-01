@@ -3,12 +3,11 @@
 import type { Difficulte } from "@/lib/fps/zombies-vagues";
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from "react";
 import { connecterArene, urlArene, type ClientArene, type EtatConnexion } from "@/lib/fps/reseau";
-import { STATS } from "@/lib/fps/armes";
 import {
-  JEU, type ArmeSpecialeId, type EtatElsaMsg, type EtatJoueurSnap, type EtatPartieBr, type EtatPartieZombies, type InfoMatch, type InfoTueur, type InfoVehicule, type JoueurPublic,
+  JEU, type EtatElsaMsg, type EtatJoueurSnap, type EtatPartieBr, type EtatPartieZombies, type InfoMatch, type InfoTueur, type InfoVehicule, type JoueurPublic,
   type LigneClassement, type LigneStats, type MessageClient, type MessageServeur, type ModeSalle, PARTIE_AUTO, PARTIE_NOUVELLE,
 } from "@/lib/fps/protocole";
-import { annoncesBr, annoncesZombies } from "@/lib/fps/hud-modele";
+import { annoncesBr, annoncesOffreElsa, annoncesZombies, textePriseOffre, texteOffreExpiree } from "@/lib/fps/hud-modele";
 import { decoderApercu } from "@/lib/fps/apercu-reseau";
 import { normaliserReglages, type ReglagesArene } from "@/lib/fps/reglages-arene";
 import type { ApercuDirect } from "@/lib/fps/apercu-source";
@@ -40,14 +39,6 @@ export type UseAreneBr = UseArene & {
 
 /** (v11) Tueur de la killcam avec l'étiquette BOT quand c'est un bot du Battle Royale (le `pseudo` du serveur reste la clé, seul l'affichage change). */
 const tueurAffiche = (t: InfoTueur | null | undefined): InfoTueur | null => (t ? { ...t, pseudo: nomAffiche(t) } : null);
-
-/** Contenu d'une offre d'Elsa pour le fil : « soin complet (PV 100, bouclier 100) », « Railgun, 6 tirs ». */
-function contenuOffre(genre: "soin" | "arme", arme?: ArmeSpecialeId): string {
-  if (genre === "soin") return "soin complet (PV 100, bouclier 100)";
-  if (!arme) return "arme spéciale";
-  const tirs = STATS[arme].chargeur;
-  return `${STATS[arme].nom}, ${tirs} tir${tirs > 1 ? "s" : ""}`;
-}
 
 // Les textes des refus (`texteRefus`, `TEXTE_ARENE_PLEINE`…) sont dans lobby-modele.ts (purs, testés) ; ré-exportés pour les appelants existants.
 export { TEXTE_ARENE_PLEINE, TEXTE_BR_LIMITE, TEXTE_BR_PLEIN } from "./lobby-modele";
@@ -131,6 +122,8 @@ export function useArene(pseudo: string, jeuRef: MutableRefObject<JeuHandle | nu
   const pseudoRef = useRef(pseudo);
   pseudoRef.current = pseudo;
   const statsRef = useRef<Map<string, LigneStats>>(STATS_VIDES);
+  /** vendeuse de la dernière offre annoncée (pour dire de qui l'offre expire : le message d'expiration ne porte plus l'offre) */
+  const vendeuseOffreRef = useRef<"patronne" | undefined>(undefined);
   /** dégâts que j'ai infligés à chaque cible pendant ma vie (cumul des `confirme`) ; remis à zéro à mon apparition */
   const degatsParCible = useRef(new Map<string, number>());
   const scoresOuvert = useRef(false);
@@ -166,7 +159,7 @@ export function useArene(pseudo: string, jeuRef: MutableRefObject<JeuHandle | nu
       }
       case "bonus": {
         const id = ++compteur.current;
-        setBonus({ id, genre: e.genre, arme: e.arme });
+        setBonus({ id, genre: e.genre, arme: e.arme, ...(e.vendeuse ? { vendeuse: e.vendeuse } : {}) });
         apres(DUREE_BONUS_MS, () => setBonus((b) => (b?.id === id ? null : b)));
         return;
       }
@@ -420,14 +413,16 @@ export function useArene(pseudo: string, jeuRef: MutableRefObject<JeuHandle | nu
         }
         case "elsa":
           setElsa(m.elsa);
-          if (m.evenement === "apparue" && m.elsa.offre) annoncer(`Elsa : ${contenuOffre(m.elsa.offre.genre, m.elsa.offre.arme)}`, "elsa");
-          else if (m.evenement === "expiree") annoncer("Offre d'Elsa expirée", "elsa");
+          if (m.evenement === "apparue" && m.elsa.offre) {
+            vendeuseOffreRef.current = m.elsa.offre.vendeuse;
+            for (const t of annoncesOffreElsa(m.elsa.offre)) annoncer(t, "elsa");
+          } else if (m.evenement === "expiree") annoncer(texteOffreExpiree(vendeuseOffreRef.current), "elsa");
           break;
         case "ramassage":
           // le bénéficiaire a son toast (événement `bonus`) ; les autres lisent qui a pris le cadeau
           if (m.par !== monIdRef.current) {
             const j = joueursRef.current.find((x) => x.id === m.par);
-            annoncer(`${j?.pseudo ?? "Un agent"} a pris le cadeau d'Elsa`, "elsa");
+            annoncer(textePriseOffre(j?.pseudo ?? "Un agent", m.vendeuse), "elsa");
           }
           break;
         case "evenement": {

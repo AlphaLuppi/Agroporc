@@ -16,15 +16,15 @@ import { VEH, pasVehicule, type EtatVehicule } from "./vehicule";
 export const POLICE = {
   /** la caisse de la voiture de police est celle d'une voiture conduisible : la physique de `pasVehicule` est inchangée (24 m/s au plus) */
   longueur: VEH.longueur, largeur: VEH.largeur, hauteur: VEH.hauteur,
-  pvMax: 700, fumeeFrac: 0.5, feuFrac: 0.2,
-  /** poursuite puis retrait vers le point d'apparition (aucun écrasement pendant le retrait) */
-  dureeMs: 22_000, departMs: 4_000,
+  pvMax: 1_100, fumeeFrac: 0.5, feuFrac: 0.2,
+  /** poursuite puis retrait vers le point d'apparition (aucun écrasement pendant le retrait) ; 45 s (22 s d'abord : trop courte pour qu'on la voie arriver) */
+  dureeMs: 45_000, departMs: 4_000,
   /** en dessous de cette vitesse (m/s) elle n'écrase personne ; marge (m) de la boîte d'écrasement ; au-dessus de cette hauteur de pieds, on est hors d'atteinte (toit de bus, de bâtiment) */
   vitesseEcrase: 4, margeEcrase: 0.2, hauteurMaxCibleM: 2.2,
   changementCibleMs: 2_000, cheminMs: 1_200, bloqueMs: 900, reculMs: 1_100, reessaiMs: 5_000, vitesseDepart: 14,
   /** points de départ : distance minimale à tous les joueurs, plage de distance à la cible, distance idéale, plafond de points testés à vue (coût borné) */
   departMinM: 90, departMaxM: 240, departIdealM: 160, departCibleMinM: 110, candidatsVueMax: 24,
-  joueursMin: 2, margeApresEvenementMs: 20_000,
+  joueursMin: 2, margeApresEvenementMs: 12_000,
   /** aucune descente dans la première minute d'un match (arène : les kills repartent à 0) */
   premierMatchMs: 60_000,
   /** arène : délai maximal d'attente d'un premier kill avant de se rabattre sur le plus proche */
@@ -33,12 +33,21 @@ export const POLICE = {
   noeudsMax: 12_000, inaccessibleMs: 10_000, sansCibleMs: 3_000,
   /** marge (m) de la boîte orientée de touche, en plus du rejeu de latence */
   marges: { toucheM: 0.8 },
-  /** arène : délais après la création de la salle (ou le passage à 2 joueurs en jeu), puis après la fin d'une descente (« Normal ») */
-  premier: { minMs: 240_000, maxMs: 420_000 },
-  entre: { minMs: 300_000, maxMs: 540_000 },
-  plancherMs: 150_000,
-  /** Battle Royale : armement, conditions, seconde descente */
-  br: { apresAtterrissageMs: 60_000, premierMinMs: 90_000, premierMaxMs: 240_000, vivantsMin: 4, secondeJoueursMin: 20, secondeMinMs: 180_000, secondeMaxMs: 300_000, max: 2 },
+  /**
+   * arène : délais après la création de la salle (ou le passage à 2 joueurs en jeu), puis après la fin d'une descente (« Normal »). Plus fréquente que le
+   * Truck fou et le tigre géant (`EVENEMENTS` : 160 à 256 s entre deux événements en « Normal ») : retour du joueur, « il y a plus souvent le Truck fou que ça ».
+   */
+  premier: { minMs: 75_000, maxMs: 130_000 },
+  entre: { minMs: 100_000, maxMs: 200_000 },
+  plancherMs: 60_000,
+  /**
+   * Battle Royale : armement, conditions, descentes suivantes. Deux descentes par partie, trois à partir de `grandePartieJoueursMin` partants (une de plus
+   * qu'avant : 1 puis 2), la suivante `suivanteMinMs`…`suivanteMaxMs` après la FIN de la précédente.
+   */
+  br: {
+    apresAtterrissageMs: 60_000, premierMinMs: 75_000, premierMaxMs: 180_000, vivantsMin: 4,
+    grandePartieJoueursMin: 20, suivanteMinMs: 150_000, suivanteMaxMs: 240_000, max: 2, maxGrande: 3,
+  },
 } as const;
 
 /** Un joueur que la voiture peut viser : position (pieds), kills du match, humain (un bot n'est qu'un mannequin d'entraînement). */

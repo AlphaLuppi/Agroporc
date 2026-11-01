@@ -103,20 +103,51 @@ describe("avancerElsa", () => {
   });
   it("répartition 40 % soin / 60 % arme sur 10 000 tirages (± 3 %), armes uniformes", () => {
     const alea = aleaGraine(2024);
-    let soins = 0;
+    let soins = 0, elsa = 0, patronne = 0;
     const armes: Record<string, number> = {};
     const e = creerElsa(0, 0, 0, alea);
     for (let k = 0; k < 10_000; k++) {
       e.offre = null;
       e.prochaineT = 0;
       const o = avancerElsa(e, 0, alea, true)!.offre;
+      // la formule de la patronne (une offre sur trois) est à part : toujours une arme
+      if (o.vendeuse === "patronne") { patronne++; continue; }
+      elsa++;
       if (o.genre === "soin") soins++;
       else armes[o.arme!] = (armes[o.arme!] ?? 0) + 1;
     }
-    expect(soins / 10_000).toBeGreaterThan(0.37);
-    expect(soins / 10_000).toBeLessThan(0.43);
+    expect(patronne / 10_000).toBeGreaterThan(0.32);
+    expect(patronne / 10_000).toBeLessThan(0.35);
+    expect(soins / elsa).toBeGreaterThan(0.37);
+    expect(soins / elsa).toBeLessThan(0.43);
     expect(Object.keys(armes).sort()).toEqual([...ARMES_SPECIALES].sort());
-    for (const n of Object.values(armes)) expect(n / (10_000 - soins)).toBeGreaterThan(0.3);
+    for (const n of Object.values(armes)) expect(n / (elsa - soins)).toBeGreaterThan(0.3);
+  });
+  it("la formule de la patronne (offres 2, 5, 8…) : toujours une arme, sans tirage de hasard de plus", () => {
+    // un alea qui compte ses appels : la patronne ne consomme pas plus que la tirée d'Elsa quand le genre est « arme »
+    let appels = 0;
+    const alea = () => { appels++; return 0.9; }; // 0,9 : genre arme, dernière arme
+    const e = creerElsa(0, 0, 0, alea);
+    const offres = [];
+    for (let k = 0; k < 6; k++) {
+      e.offre = null;
+      e.prochaineT = 0;
+      const avant = appels;
+      offres.push({ o: avancerElsa(e, 0, alea, true)!.offre, tirages: appels - avant });
+    }
+    expect(offres.map((x) => x.o.vendeuse)).toEqual([undefined, "patronne", undefined, undefined, "patronne", undefined]);
+    for (const { o } of offres) { expect(o.genre).toBe("arme"); expect(ARMES_SPECIALES).toContain(o.arme); }
+    // soin tiré (alea 0,1) pour une offre de la patronne : l'arme dérive de l'identifiant, pas d'un tirage
+    let n = 0;
+    const alea2 = () => { n++; return 0.1; };
+    const e2 = creerElsa(0, 0, 0, alea2);
+    e2.compteur = 1;
+    e2.prochaineT = 0;
+    const avant = n;
+    const o2 = avancerElsa(e2, 0, alea2, true)!.offre;
+    expect(o2).toMatchObject({ id: 2, genre: "arme", vendeuse: "patronne" });
+    expect(o2.arme).toBe(ARMES_SPECIALES[2 % ARMES_SPECIALES.length]);
+    expect(n - avant).toBe(1); // le seul tirage du genre
   });
   it("déterministe pour une même graine", () => {
     const suite = (g: number) => {

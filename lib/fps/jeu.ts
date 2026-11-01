@@ -1916,7 +1916,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       case "ramassage":
         if (m.par === client.id) {
           sons.ramassage(m.genre);
-          cb.evenement({ type: "bonus", genre: m.genre, arme: m.arme });
+          cb.evenement({ type: "bonus", genre: m.genre, arme: m.arme, ...(m.vendeuse ? { vendeuse: m.vendeuse } : {}) });
         }
         break;
       case "sieges":
@@ -2877,7 +2877,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       if (pilote) couleurs.set(v.id, couleurDe(pilote));
     }
     dyn.majVoituresJoueurs(liste, couleurs);
-    dyn.majElsa(mondeJeu.elsa(), t);
+    // le Truck Muche fou est parti en tournée avec ses deux conductrices : plus personne au passe-plat du Truck garé
+    dyn.majElsa(mondeJeu.elsa(), t, client.maintenantServeur(), monstresImage.truck !== undefined);
     if (!enReplay) {
       const mienne = vehicule.estConducteur() ? vehicule.actif()?.vehicule : undefined;
       for (const v of liste) suivreTraces(`v${v.id}`, v.p, v.cap, v.v, dt, 0.8, 1.5, v.id === mienne ? vehicule.derapage() > 0.15 : undefined);

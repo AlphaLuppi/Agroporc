@@ -621,8 +621,13 @@ export interface MonstresSnap {
   frappes?: FrappeSnap[];
 }
 
-/** Cadeau d'Elsa. `arme` seulement pour le genre "arme". */
-export interface OffreElsa { id: number; genre: "soin" | "arme"; arme?: ArmeSpecialeId; finT: number }
+/** Les deux vendeuses du Truck Muche : Elsa (qui prépare et sert) et la patronne (qui prend la commande). */
+export type VendeuseId = "elsa" | "patronne";
+/**
+ * Cadeau du Truck Muche. `arme` seulement pour le genre "arme". `vendeuse: "patronne"` (additif ; absent = Elsa) : la « formule du jour » de la patronne =
+ * soin complet ET arme spéciale (genre "arme" pour qu'un client plus ancien, qui ignore ce champ, voie au moins l'arme).
+ */
+export interface OffreElsa { id: number; genre: "soin" | "arme"; arme?: ArmeSpecialeId; finT: number; vendeuse?: "patronne" }
 /** Elsa : position fixe, offre en cours ou null. `finT` = horodatage serveur (ms). */
 export interface EtatElsaMsg { x: number; z: number; offre: OffreElsa | null }
 
@@ -926,7 +931,7 @@ export type MessageServeur =
   /** Elsa : offre apparue, prise ou expirée ; état complet à chaque fois. `etat` = synchronisation privée envoyée à `rejoindre`. */
   | { t: "elsa"; evenement: "etat" | "apparue" | "prise" | "expiree"; elsa: EtatElsaMsg }
   /** Un joueur a pris le cadeau d'Elsa (annonce pour tous). */
-  | { t: "ramassage"; offre: number; par: string; genre: "soin" | "arme"; arme?: ArmeSpecialeId }
+  | { t: "ramassage"; offre: number; par: string; genre: "soin" | "arme"; arme?: ArmeSpecialeId; vendeuse?: "patronne" }
   /** Occupation des sièges de tous les véhicules (au changement, et à `rejoindre` au seul joueur concerné). */
   | { t: "sieges"; vehicules: InfoVehicule[] }
   /** Réponse à `monter` / `siege` acceptés : siège attribué et état de la voiture à rejoindre. Privé. */

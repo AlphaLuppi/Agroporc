@@ -5,6 +5,7 @@
  */
 import { STATS } from "./armes";
 import { ARMES_SPECIALES, type ArmeSpecialeId, type Vec3 } from "./protocole";
+import { vendeuseDeOffre } from "./vendeuses";
 
 export const ELSA = {
   intervalleMinMs: 20_000, intervalleMaxMs: 50_000, dureeOffreMs: 40_000,
@@ -12,7 +13,11 @@ export const ELSA = {
 } as const;
 /** Intervalle entre deux offres, surchargeable (tests de bout en bout : `PDJ_FPS_ELSA_MIN_MS` / `PDJ_FPS_ELSA_MAX_MS` lus par serveur-fps). */
 export interface IntervalleElsa { minMs: number; maxMs: number }
-export interface Offre { id: number; genre: "soin" | "arme"; arme?: ArmeSpecialeId; finT: number }
+/**
+ * Une offre du Truck Muche. `vendeuse: "patronne"` : la formule du jour de la patronne (une offre sur trois, `vendeuseDeOffre`) = soin complet ET arme
+ * spéciale ; genre "arme" toujours, pour qu'un client qui ignore ce champ voie au moins l'arme. Absent : une offre d'Elsa (soin OU arme).
+ */
+export interface Offre { id: number; genre: "soin" | "arme"; arme?: ArmeSpecialeId; finT: number; vendeuse?: "patronne" }
 export interface EtatElsa { x: number; z: number; prochaineT: number; offre: Offre | null; compteur: number }
 export type EvenementElsa = { type: "apparue"; offre: Offre } | { type: "expiree"; offre: Offre } | null;
 
@@ -43,6 +48,12 @@ export function avancerElsa(e: EtatElsa, maintenant: number, alea: () => number,
   const genre = alea() < ELSA.probaSoin ? "soin" : "arme";
   const offre: Offre = { id: ++e.compteur, genre, finT: maintenant + ELSA.dureeOffreMs };
   if (genre === "arme") offre.arme = ARMES_SPECIALES[Math.min(ARMES_SPECIALES.length - 1, Math.floor(alea() * ARMES_SPECIALES.length))];
+  // la formule de la patronne : aucun tirage de plus (la séquence de hasard des autres services ne bouge pas), l'arme dérive de l'identifiant
+  if (vendeuseDeOffre(offre.id) === "patronne") {
+    offre.genre = "arme";
+    offre.arme ??= ARMES_SPECIALES[offre.id % ARMES_SPECIALES.length];
+    offre.vendeuse = "patronne";
+  }
   e.offre = offre;
   return { type: "apparue", offre };
 }

@@ -203,7 +203,7 @@ export type JeuEvenement =
   /** j'ai pris des dégâts ; `angle` relatif à ma vue (0 = devant, + = à droite) */
   | { type: "degat"; par: string; degats: number; angle: number }
   /** j'ai pris le cadeau d'Elsa */
-  | { type: "bonus"; genre: "soin" | "arme"; arme?: ArmeSpecialeId }
+  | { type: "bonus"; genre: "soin" | "arme"; arme?: ArmeSpecialeId; vendeuse?: "patronne" }
   /** le serveur a refusé `monter` / `siege` (message `refus`) : toast « Voiture trop loin », « Voiture pleine »… ; `rejoindre` : arène pleine */
   | { type: "refus"; action: RefusServeur["action"]; raison: RefusServeur["raison"]; alternative?: string };
 

@@ -39,7 +39,7 @@ export interface DerniereMort { par: string; parCouleur: string; arme: ArmeId; c
 /** Fil d'annonces du HUD (4 au plus, 8 s chacune). `tigre` : largage et tigre abattu (v3), aussi affichés en toast. `zone` : phases de la tempête (Battle Royale, v8). */
 export interface Annonce { id: number; texte: string; genre: "elsa" | "info" | "tigre" | "zone" }
 /** Toast de bonus (j'ai pris le cadeau d'Elsa). */
-export interface Bonus { id: number; genre: "soin" | "arme"; arme?: ArmeSpecialeId }
+export interface Bonus { id: number; genre: "soin" | "arme"; arme?: ArmeSpecialeId; vendeuse?: "patronne" }
 /**
  * Repère d'Elsa écrit à ~10 Hz par `JeuCallbacks.repere`, lu par rAF (pas de re-render). `elsaDistance < 0` = pas d'offre.
  * @deprecated la spec HUD (§3.1) le remplace par `JeuHandle.radar()` (`RadarFrame.elsa`) ; conservé pour la compilation de l'hôte.
