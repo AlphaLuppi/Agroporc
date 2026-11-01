@@ -8,6 +8,7 @@ import { STATS } from "./armes";
 import { BR } from "./br-regles";
 import { visible, type Monde } from "./collision";
 import { estPrincipale, estSecondaire, estSpecialeOuUnique } from "./equipement";
+import { GRENADES_JOUEURS } from "./grenades";
 import {
   copierEquipement,
   type ArmeFeuId, type ClasseMunitions, type Equipement, type GenreObjetBr, type ObjetBr, type PoolButin, type PointButin, type Rarete, type Slot, type Vec3,
@@ -39,8 +40,8 @@ export const POIDS_RARETE_PAR_POOL: Record<PoolButin, [number, number, number, n
 /** Part des objets posés dans chaque pool (somme = 1). */
 export const REPARTITION_POOLS: Record<PoolButin, number> = { interieur: 0.45, toit: 0.10, facade: 0.30, route: 0.15 };
 
-/** Genre d'un objet tiré : arme 46 %, munitions 24 %, bandage 18 %, potion de bouclier 12 %. */
-export const POIDS_GENRES: readonly (readonly [GenreObjetBr, number])[] = [["arme", 46], ["munitions", 24], ["bandage", 18], ["potion", 12]];
+/** Genre d'un objet tiré : arme 42 %, munitions 22 %, bandage 16 %, potion de bouclier 10 %, grenade 10 % (lot tactique). */
+export const POIDS_GENRES: readonly (readonly [GenreObjetBr, number])[] = [["arme", 42], ["munitions", 22], ["bandage", 16], ["potion", 10], ["grenade", 10]];
 
 /** Distance minimale entre deux objets posés (m, en 3D). */
 export const ESPACEMENT_BUTIN_M = 1.8;
@@ -230,8 +231,8 @@ export interface ResultatRamassage {
   lache?: { genre: GenreObjetBr; ref: ObjetBr["ref"] }[];
   /** chargeurs de réserve à ajouter à l'arme (boîte de munitions, ou même arme ramassée une seconde fois : +1 chargeur) */
   ajoutMunitions?: { arme: ArmeFeuId; chargeurs: number };
-  /** NOUVEAUX totaux des soins (et non des écarts), présents pour un bandage ou une potion */
-  soins?: Partial<Record<"bandage" | "potion", number>>;
+  /** NOUVEAUX totaux des soins et des grenades (et non des écarts), présents pour un bandage, une potion ou une grenade */
+  soins?: Partial<Record<"bandage" | "potion" | "grenade", number>>;
   /** soins qui ne tiennent pas dans la pile : quantité restée sur l'objet au sol (absent : l'objet est entièrement ramassé) */
   reste?: number;
 }
@@ -246,7 +247,7 @@ const REFUS = (raison: "inutile" | "inconnu"): ResultatRamassage => ({ ok: false
  *  - munitions : +2 chargeurs pour l'arme de la classe portée (principale, sinon secondaire), sinon refus `inutile` ;
  *  - bandage / potion : dans la pile (5 / 3), `qte` (1 par défaut) en tenant compte de la place restante.
  */
-export function appliquerRamassage(equip: Readonly<Equipement>, soins: Readonly<{ bandage: number; potion: number }>, objet: ObjetBr): ResultatRamassage {
+export function appliquerRamassage(equip: Readonly<Equipement>, soins: Readonly<{ bandage: number; potion: number; grenade?: number }>, objet: ObjetBr): ResultatRamassage {
   const eq = copierEquipement(equip);
   switch (objet.genre) {
     case "arme": return ramasserArme(eq, objet.ref);
@@ -260,11 +261,13 @@ export function appliquerRamassage(equip: Readonly<Equipement>, soins: Readonly<
     }
     case "bandage": return ramasserSoin(eq, "bandage", soins.bandage, BR.usage.bandage.pile, objet.qte);
     case "potion": return ramasserSoin(eq, "potion", soins.potion, BR.usage.potion.pile, objet.qte);
+    // (lot tactique) la grenade se range comme un soin : une pile de `GRENADES_JOUEURS.pile`, `qte` pour un reste ou un sac lâché
+    case "grenade": return ramasserSoin(eq, "grenade", soins.grenade ?? 0, GRENADES_JOUEURS.pile, objet.qte);
     default: return REFUS("inconnu");
   }
 }
 
-function ramasserSoin(eq: Equipement, genre: "bandage" | "potion", stock: number, pile: number, qte: number | undefined): ResultatRamassage {
+function ramasserSoin(eq: Equipement, genre: "bandage" | "potion" | "grenade", stock: number, pile: number, qte: number | undefined): ResultatRamassage {
   const n = qte !== undefined && Number.isFinite(qte) && qte >= 1 ? Math.floor(qte) : 1;
   const place = Math.max(0, pile - Math.max(0, Math.floor(stock)));
   if (place === 0) return REFUS("inutile");

@@ -15,7 +15,7 @@
  * Partagé client (tir) et serveur (validation).
  * Spec : docs/superpowers/specs/2026-10-22-arene-v2-design.md (§4 et §13.1), 2026-10-23-arene-v3-design.md (§1)
  */
-import { estMelee, type ArmeFeuId, type ArmeId, type ArmeMeleeId, type Vec3, type Zone } from "./protocole";
+import { ARMES_UNIQUES, estMelee, type ArmeFeuId, type ArmeId, type ArmeMeleeId, type Vec3, type Zone } from "./protocole";
 
 export type CategorieArme = "principale" | "secondaire" | "speciale" | "unique";
 
@@ -481,7 +481,7 @@ export const STATS: Record<ArmeFeuId, Arme> = {
   },
   lance_grenades: {
     id: "lance_grenades", nom: "Lance-grenades", nomCourt: "L-grenade", categorie: "unique",
-    description: "Arme unique larguée par le bus C3 : grenades explosives infligeant 110 dégâts à l'impact.",
+    description: "Arme unique larguée par le bus C3 : un obus explose au premier contact (souffle de 4,5 m, jusqu'à 130 dégâts).",
     degats: 110, multTete: 1.3, plombs: 1, gerbe: 0,
     cadenceS: 0.65, auto: false, chargeur: 6, rechargeS: 0, sansRecharge: true,
     dispersion: { base: 0.005, mouvement: 0.02, air: 0.04, parTir: 0.015, max: 0.06, retourS: 0.5, viseur: 0.003 },
@@ -493,7 +493,7 @@ export const STATS: Record<ArmeFeuId, Arme> = {
   },
   bazooka: {
     id: "bazooka", nom: "Bazooka", nomCourt: "Bazooka", categorie: "unique",
-    description: "Arme lourde unique larguée par le bus C3 : roquette dévastatrice tuant en un coup direct.",
+    description: "Arme lourde unique larguée par le bus C3 : roquette dévastatrice (souffle de 5,5 m), un coup direct tue même sous bouclier plein.",
     degats: 160, multTete: 1.5, plombs: 1, gerbe: 0,
     cadenceS: 1.4, auto: false, chargeur: 3, rechargeS: 0, sansRecharge: true,
     dispersion: { base: 0.002, mouvement: 0.015, air: 0.03, parTir: 0.02, max: 0.05, retourS: 0.6, viseur: 0.001 },
@@ -505,7 +505,7 @@ export const STATS: Record<ArmeFeuId, Arme> = {
   },
   fumigene: {
     id: "fumigene", nom: "Fumigène", nomCourt: "Fumigène", categorie: "unique",
-    description: "Grenade fumigène : déploie un écran de fumée opaque masquant les déplacements.",
+    description: "Bidon fumigène : lancé en cloche, il déploie 1,2 s plus tard un écran de fumée opaque masquant les déplacements.",
     degats: 15, multTete: 1, plombs: 1, gerbe: 0,
     cadenceS: 1.0, auto: false, chargeur: 3, rechargeS: 0, sansRecharge: true,
     dispersion: { base: 0.01, mouvement: 0.02, air: 0.03, parTir: 0.01, max: 0.05, retourS: 0.4, viseur: 0.005 },
@@ -562,7 +562,8 @@ export function statsTir(arme: ArmeFeuId, o: { zombies?: boolean; ameliore?: boo
     const zooms = niveauxZoom(arme);
     return {
       cadenceS: a.cadenceS, auto: a.auto, viseur: zooms.length ? "lunette" : "fer", zooms, zoomDefaut: niveauZoomDefaut(arme),
-      akimbo: false, projectile: false, souffle: false, ricochets: 0,
+      // (lot tactique) les armes uniques du bus C3 tirent un projectile (obus, roquette, bidon), pas une balle instantanée
+      akimbo: false, projectile: (ARMES_UNIQUES as readonly string[]).includes(arme), souffle: false, ricochets: 0,
     };
   }
   const p = profilZombie(arme, o.ameliore === true);

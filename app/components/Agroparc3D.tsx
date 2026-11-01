@@ -1118,6 +1118,7 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
           scene={sceneHud}
           surLancerFrappe={(cible) => jeuRef.current?.lancerFrappe?.(cible)}
           surLancerFumigene={() => jeuRef.current?.lancerFumigene?.()}
+          ciblageFrappe={() => jeuRef.current?.ciblageFrappe?.() ?? null}
           surPauseZ={(actif) => jeuRef.current?.pauseZ?.(actif)}
         />
       )}

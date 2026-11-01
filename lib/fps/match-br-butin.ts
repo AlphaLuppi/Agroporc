@@ -31,6 +31,8 @@ type Soin = "bandage" | "potion";
 interface Inventaire {
   bandage: number;
   potion: number;
+  /** (lot tactique) grenades à fragmentation du sac */
+  grenade: number;
   usage: { objet: Soin; finT: number } | null;
 }
 
@@ -61,13 +63,13 @@ export function creerButinBr(ctx: ContexteSalle, opts: OptionsButinBr = {}): But
 
   const inv = (id: string): Inventaire => {
     let i = inventaires.get(id);
-    if (!i) { i = { bandage: 0, potion: 0, usage: null }; inventaires.set(id, i); }
+    if (!i) { i = { bandage: 0, potion: 0, grenade: 0, usage: null }; inventaires.set(id, i); }
     return i;
   };
 
   const messageInventaire = (id: string): Sortie => {
     const i = inv(id);
-    return { a: id, m: { t: "inventaire", bandage: i.bandage, potion: i.potion, usage: i.usage ? { objet: i.usage.objet, finT: i.usage.finT } : null } };
+    return { a: id, m: { t: "inventaire", bandage: i.bandage, potion: i.potion, ...(i.grenade > 0 ? { grenade: i.grenade } : {}), usage: i.usage ? { objet: i.usage.objet, finT: i.usage.finT } : null } };
   };
 
   /** Pose un objet aux pieds de `j` (dispersé, à moins de 1,5 m) et le renvoie. */
@@ -135,6 +137,7 @@ export function creerButinBr(ctx: ContexteSalle, opts: OptionsButinBr = {}): But
     if (r.soins) {
       if (r.soins.bandage !== undefined) stock.bandage = r.soins.bandage;
       if (r.soins.potion !== undefined) stock.potion = r.soins.potion;
+      if (r.soins.grenade !== undefined) stock.grenade = r.soins.grenade;
       sorties.push(messageInventaire(j.id));
     }
 
@@ -266,8 +269,10 @@ export function creerButinBr(ctx: ContexteSalle, opts: OptionsButinBr = {}): But
       const i = inv(j.id);
       if (i.bandage > 0) ajoutes.push(copie(lacherObjet(j, "bandage", null, t, i.bandage)));
       if (i.potion > 0) ajoutes.push(copie(lacherObjet(j, "potion", null, t, i.potion)));
+      if (i.grenade > 0) ajoutes.push(copie(lacherObjet(j, "grenade", null, t, i.grenade)));
       i.bandage = 0;
       i.potion = 0;
+      i.grenade = 0;
       i.usage = null;
       const sorties: Sortie[] = [messageInventaire(j.id)];
       if (ajoutes.length > 0) sorties.unshift({ a: "tous", m: { t: "butin", ajoutes } });
@@ -291,9 +296,16 @@ export function creerButinBr(ctx: ContexteSalle, opts: OptionsButinBr = {}): But
 
     objets: (): ReadonlyMap<number, ObjetBr> => objets,
 
-    stock(id: string): { readonly bandage: number; readonly potion: number } {
+    stock(id: string): { readonly bandage: number; readonly potion: number; readonly grenade: number } {
       const i = inventaires.get(id);
-      return { bandage: i?.bandage ?? 0, potion: i?.potion ?? 0 };
+      return { bandage: i?.bandage ?? 0, potion: i?.potion ?? 0, grenade: i?.grenade ?? 0 };
+    },
+
+    retirerGrenade(j: JoueurSalle): Sortie[] {
+      const i = inventaires.get(j.id);
+      if (!i || i.grenade <= 0) return [];
+      i.grenade--;
+      return [messageInventaire(j.id)];
     },
   };
 }

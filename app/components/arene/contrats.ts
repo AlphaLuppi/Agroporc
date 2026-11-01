@@ -204,6 +204,8 @@ export interface PropsHudArene {
   surLancerFrappe?(cible: [number, number, number]): void;
   /** Lancer d'un fumigène */
   surLancerFumigene?(): void;
+  /** (lot tactique, arène) réticule du ciblage de la frappe aérienne en mètres du monde (lu à chaque image par la grande carte), null hors ciblage */
+  ciblageFrappe?(): { x: number; z: number } | null;
   /** (v11, zombies) Suspendre la partie pour tous (`true`) ou la reprendre (`false`, redemande aussi la souris) : bouton du menu pause et touche P */
   surPauseZ?(actif: boolean): void;
 }

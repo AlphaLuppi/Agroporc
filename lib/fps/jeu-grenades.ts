@@ -159,7 +159,8 @@ export function creerControleurGrenades(monde: Monde, plafond?: Plafond): Contro
       return vues.map((v) => {
         const ms = Math.min(t, v.explosionT) - v.t0;
         const prof = GRENADES[v.genre];
-        const meche = prof.attractionM > 0 ? Math.max(0, t - v.poseT) / prof.mecheMs : (t - (v.explosionT - prof.mecheMs)) / prof.mecheMs;
+        // (obus et roquette à percussion : pas de mèche)
+        const meche = prof.mecheMs <= 0 ? 1 : prof.attractionM > 0 ? Math.max(0, t - v.poseT) / prof.mecheMs : (t - (v.explosionT - prof.mecheMs)) / prof.mecheMs;
         const posee = t >= v.poseT;
         const trainee: Vec3[] = [];
         if (!posee) for (let k = 0; k < TRAINEE_POINTS && ms - k * TRAINEE_PAS_MS >= 0; k++) trainee.push(positionTrajectoire(v.traj, ms - k * TRAINEE_PAS_MS));

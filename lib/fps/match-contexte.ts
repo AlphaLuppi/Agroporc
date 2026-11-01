@@ -8,7 +8,7 @@
 import type { Boite, Monde } from "./collision";
 import type { MemoSante } from "./sante";
 import type {
-  ArmeFeuId, ArmeId, ArmeMeleeId, AvionBr, BrApercu, CauseMort, CoteMur, Equipement, EtatPartieBr, EtatPartieZombies, GenreVoiture, MessageClient, MessageServeur, MonstresSnap,
+  ArmeFeuId, ArmeId, ArmeMeleeId, ArmeUniqueId, AvionBr, BrApercu, CauseMort, CoteMur, Equipement, EtatPartieBr, EtatPartieZombies, GenreVoiture, MessageClient, MessageServeur, MonstresSnap,
   ObjetBr, PhaseBr, PhaseZombies, PointButin, PoliceSnap, Posture, Siege, Slot, SnapZombies, TigreLargueSnap, Vec3, VehiculeSnap, Zone,
 } from "./protocole";
 import type { ObstacleVoiture, Tigre } from "./tigre-arene";
@@ -189,6 +189,35 @@ export interface ContexteSalle {
    * (`bonjour.capacites`) : il est alors immunisé et jamais choisi pour cible (une voiture invisible ne doit tuer personne).
    */
   supportePolice(id: string): boolean;
+}
+
+/**
+ * Grenades de l'arène et du Battle Royale (lot tactique, `match-grenades.ts` : `creerServiceGrenades(ctx, opts)`) : grenade à fragmentation de la touche
+ * G (2 par vie en arène, ramassées en BR), projectiles des armes uniques du bus C3 (obus du lance-grenades, roquette du bazooka, bidon du fumigène) et
+ * fumigène de la touche B. La trajectoire est calculée une fois par le serveur (`preparerLancer`) et diffusée dans `grenade` ; le souffle blesse les joueurs
+ * en vue du centre, le kill est crédité au lanceur (cause `grenade`), ses propres dégâts comptent. Le zombies a le sien (`match-zombies.ts`).
+ */
+export interface ServiceGrenades {
+  /** explosions arrivées à échéance, contact des obus et roquettes avec un joueur, stock modifié (`stockGrenades`) */
+  tic(maintenant: number): Sortie[];
+  /** `lancerGrenade{frag}` dont l'œil et la visée sont déjà validés : stock, cadence, joueur debout, hors véhicule */
+  lancer(j: JoueurSalle, o: Vec3, d: Vec3, cuissonMs: unknown, maintenant: number): Sortie[];
+  /** tir d'une arme unique (œil et direction déjà validés, munition déjà comptée) : le projectile part */
+  tirerUnique(j: JoueurSalle, arme: ArmeUniqueId, o: Vec3, d: Vec3, maintenant: number): Sortie[];
+  /** fumigène de la touche B (arène) : un bidon part, un toutes les 15 s par joueur */
+  lancerFumigene(j: JoueurSalle, o: Vec3, d: Vec3, maintenant: number): Sortie[];
+  /** (arène) le joueur vient d'apparaître : `parVie` grenades, annoncées à son prochain tic */
+  apparu(j: JoueurSalle): void;
+  /** grenades en poche (arène : service ; Battle Royale : le sac du butin) */
+  stock(id: string): number;
+  /** le joueur est mort ou sorti : plus de grenade en poche (la cuisson en cours est perdue côté client) */
+  perdu(id: string): void;
+  /** nouveau match / retour au lobby : plus aucun projectile ni stock */
+  reinitialiser(): void;
+  /** projectiles en vol, adressés à `idDest` (arrivée en cours de partie) */
+  synchro(idDest: string): Sortie[];
+  /** projectiles en vol (tests et supervision) */
+  enVol(): number;
 }
 
 /** Événements de l'arène (v3, `match-evenements.ts` : `creerServiceEvenements(ctx, opts)`) : Truck Muche fou, tigre robot, titan tigre. */
@@ -512,6 +541,9 @@ export interface ServiceBr {
   resume(): ResumeBr;
   /** (2026-10-30) ce que la descente de police voit de la partie */
   aidePolice(): AidePoliceBr;
+  /** (lot tactique) grenades du sac du joueur et lancer d'une (renvoie l'`inventaire` privé) ; absents d'un faux service de test = aucune grenade */
+  stockGrenades?(id: string): number;
+  retirerGrenade?(j: JoueurSalle): Sortie[];
 }
 
 /** Avion, saut, éjection, chute simulée en temps réel et atterrissage (`match-br-vol.ts` : `creerVolBr(ctx, opts)`). */
@@ -550,7 +582,9 @@ export interface ButinBr {
   /** (v11, bots) objets actuellement au sol, lecture seule (les cerveaux des bots choisissent leur butin) */
   objets(): ReadonlyMap<number, ObjetBr>;
   /** (v11, bots) stocks de soins d'un joueur, lecture seule */
-  stock(id: string): { readonly bandage: number; readonly potion: number };
+  stock(id: string): { readonly bandage: number; readonly potion: number; readonly grenade: number };
+  /** (lot tactique) une grenade de moins dans le sac (lancer) ; renvoie l'`inventaire` privé, [] s'il n'y en avait plus */
+  retirerGrenade(j: JoueurSalle): Sortie[];
 }
 
 /**

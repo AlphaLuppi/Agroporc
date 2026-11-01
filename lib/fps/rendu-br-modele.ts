@@ -30,7 +30,7 @@ export const couleurRarete = (r: Rarete): number => COULEUR_RARETE[r];
  */
 export function rareteObjet(o: Pick<ObjetBr, "genre" | "ref">): Rarete {
   if (o.genre === "arme" && o.ref) return raretePourArme(o.ref as ArmeFeuId | "epee");
-  if (o.genre === "potion") return "peu_commun";
+  if (o.genre === "potion" || o.genre === "grenade") return "peu_commun";
   return "commun";
 }
 

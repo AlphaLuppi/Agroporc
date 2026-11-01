@@ -802,6 +802,15 @@ export function creerServiceBr(ctx: ContexteSalle, opts: OptionsServiceBr): Serv
       return aidePolice;
     },
 
+    // (lot tactique) les grenades du sac vivent dans le butin ; une grenade ne se lance qu'en jeu (le vol et le lobby n'ont pas de sac utile)
+    stockGrenades(id: string): number {
+      return phase === "jeu" ? butin.stock(id).grenade : 0;
+    },
+
+    retirerGrenade(j: JoueurSalle): Sortie[] {
+      return butin.retirerGrenade(j);
+    },
+
     resume(): ResumeBr {
       const palier = plan && enVolOuJeu() ? etatZone(plan, dernierT).palier : undefined;
       const h = ctx.joueurs().find((o) => !o.bot);

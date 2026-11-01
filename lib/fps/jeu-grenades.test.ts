@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { SceneData } from "../agroparc3d/types";
-import { BIP_CUISSON_MS, GRENADES, preparerLancer, vitesseLancer } from "./grenades";
+import { BIP_CUISSON_MS, GRENADES, positionTrajectoire, preparerLancer, vitesseLancer } from "./grenades";
 import { EXPLOSION_MAX_MS, PREDICTION_MAX_MS, creerControleurGrenades } from "./jeu-grenades";
 import type { Vec3 } from "./protocole";
 import { construireMonde } from "./collision";
@@ -83,5 +83,39 @@ describe("grenades à dessiner", () => {
     expect(chocs.length).toBe(l.traj.rebonds.length);
     expect(chocs.length).toBeGreaterThan(0);
     expect(c.rebonds(l.poseT, l.explosionT)).toEqual([]);
+  });
+});
+
+describe("(lot tactique) projectiles des armes uniques et fumigène", () => {
+  it("un obus ou une roquette (percussion) se dessine du tir à l'impact, sans mèche NaN, et le message d'explosion le retire", () => {
+    const c = creerControleurGrenades(monde);
+    for (const genre of ["obus", "roquette"] as const) {
+      const l = preparerLancer(monde, genre, O, vitesseLancer(genre, D), 5_000, 0);
+      expect(l.explosionT).toBeGreaterThan(5_000);
+      c.recevoir({ id: 7, par: "b", genre, o: O, v: l.v, t0: l.t0, explosionT: l.explosionT }, "a");
+      const vol = c.affichees(5_000 + (l.explosionT - 5_000) / 2);
+      expect(vol).toHaveLength(1);
+      expect(vol[0].genre).toBe(genre);
+      expect(Number.isFinite(vol[0].mecheEcoulee)).toBe(true);
+      expect(vol[0].p.every(Number.isFinite)).toBe(true);
+      expect(c.exploser(7)?.genre).toBe(genre);
+      expect(c.affichees(5_000)).toHaveLength(0);
+    }
+  });
+
+  it("la roquette va plus loin que l'obus avant de retomber (mêmes trajectoires que le serveur : même moteur)", () => {
+    const r = preparerLancer(monde, "roquette", O, vitesseLancer("roquette", D), 0, 0);
+    const o = preparerLancer(monde, "obus", O, vitesseLancer("obus", D), 0, 0);
+    const finR = positionTrajectoire(r.traj, r.explosionT - r.t0), finO = positionTrajectoire(o.traj, o.explosionT - o.t0);
+    expect(Math.abs(finR[2])).toBeGreaterThan(Math.abs(finO[2]));
+  });
+
+  it("le bidon fumigène part, rebondit et disparaît 1,2 s après le lancer", () => {
+    const c = creerControleurGrenades(monde);
+    const p = c.predire("fumi", O, D, 1_000, 0, "a");
+    expect(p.explosionT).toBe(1_000 + GRENADES.fumi.mecheMs);
+    expect(c.enAttente("fumi")).toBe(1);
+    expect(c.affichees(1_500)).toHaveLength(1);
+    expect(c.affichees(1_000 + GRENADES.fumi.mecheMs + EXPLOSION_MAX_MS + 1)).toHaveLength(0);
   });
 });

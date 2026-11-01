@@ -78,7 +78,8 @@ describe("(v8) Pack-a-Punch qui change l'arme", () => {
       expect(st.cadenceS).toBe(STATS[a].cadenceS);
       expect(st.auto).toBe(STATS[a].auto);
       expect(st.akimbo).toBe(false);
-      expect(st.projectile).toBe(false);
+      // (lot tactique) les armes uniques du bus C3 sont les seules à tirer un projectile dans l'arène
+      expect(st.projectile).toBe(a === "lance_grenades" || a === "bazooka" || a === "fumigene");
       expect(st.souffle).toBe(false);
       expect(st.ricochets).toBe(0);
       expect(st.viseur).toBe(a === "sniper" ? "lunette" : "fer");

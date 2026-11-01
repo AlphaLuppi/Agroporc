@@ -85,23 +85,90 @@ export function creerModeleRemontoir(): ModeleGrenade {
   return { group: g, dispose() { g.removeFromParent(); for (const x of geos) x.dispose(); for (const x of mats) x.dispose(); } };
 }
 
+/**
+ * (lot tactique) Obus du lance-grenades (≈ 25 cm, laiton et ogive olive) : le nez vers +z, la traînée de la grenade derrière. Origine au centre.
+ */
+export function creerModeleObus(): ModeleGrenade {
+  const g = new THREE.Group();
+  const laiton = new THREE.MeshBasicMaterial({ color: 0xd9a441 });
+  const olive = new THREE.MeshBasicMaterial({ color: 0x5d6b2f });
+  const geos: THREE.BufferGeometry[] = [new THREE.CylinderGeometry(0.045, 0.045, 0.16, 10), new THREE.ConeGeometry(0.045, 0.1, 10)];
+  const corps = new THREE.Mesh(geos[0], laiton); corps.rotation.x = Math.PI / 2;
+  const ogive = new THREE.Mesh(geos[1], olive); ogive.rotation.x = Math.PI / 2; ogive.position.z = 0.13;
+  g.add(corps, ogive);
+  for (const m of [laiton, olive]) sansHalo(m);
+  return { group: g, dispose() { g.removeFromParent(); for (const x of geos) x.dispose(); laiton.dispose(); olive.dispose(); } };
+}
+
+/**
+ * (lot tactique) Roquette du bazooka (≈ 70 cm) : tube gris, ogive rouge, quatre ailerons et jet de flamme orange à l'arrière (enfant `flamme`, qui
+ * vacille). Le nez vers +z.
+ */
+export function creerModeleRoquette(): ModeleGrenade {
+  const g = new THREE.Group();
+  const gris = new THREE.MeshBasicMaterial({ color: 0x8c9199 });
+  const rouge = new THREE.MeshBasicMaterial({ color: 0xd8342a });
+  const flammeMat = new THREE.MeshBasicMaterial({ color: 0xffa13a, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false });
+  const geos: THREE.BufferGeometry[] = [
+    new THREE.CylinderGeometry(0.05, 0.05, 0.5, 10), new THREE.ConeGeometry(0.05, 0.14, 10), new THREE.BoxGeometry(0.2, 0.01, 0.1), new THREE.ConeGeometry(0.045, 0.32, 8),
+  ];
+  const tube = new THREE.Mesh(geos[0], gris); tube.rotation.x = Math.PI / 2;
+  const nez = new THREE.Mesh(geos[1], rouge); nez.rotation.x = Math.PI / 2; nez.position.z = 0.32;
+  g.add(tube, nez);
+  for (const rz of [0, Math.PI / 2]) {
+    const aileron = new THREE.Mesh(geos[2], gris); aileron.position.z = -0.2; aileron.rotation.z = rz; g.add(aileron);
+  }
+  const flamme = new THREE.Mesh(geos[3], flammeMat); flamme.name = "flamme"; flamme.rotation.x = -Math.PI / 2; flamme.position.z = -0.42;
+  g.add(flamme);
+  for (const m of [gris, rouge, flammeMat]) sansHalo(m);
+  return { group: g, dispose() { g.removeFromParent(); for (const x of geos) x.dispose(); gris.dispose(); rouge.dispose(); flammeMat.dispose(); } };
+}
+
+/** (lot tactique) Bidon fumigène (≈ 15 cm) : cylindre gris-bleu, bague claire, goupille. Origine au centre. */
+export function creerModeleFumigene(): ModeleGrenade {
+  const g = new THREE.Group();
+  const gris = new THREE.MeshBasicMaterial({ color: 0x7a8794 });
+  const clair = new THREE.MeshBasicMaterial({ color: 0xe6edf2 });
+  const geos: THREE.BufferGeometry[] = [new THREE.CylinderGeometry(0.04, 0.04, 0.14, 12), new THREE.CylinderGeometry(0.042, 0.042, 0.03, 12), new THREE.TorusGeometry(0.02, 0.004, 4, 10)];
+  const corps = new THREE.Mesh(geos[0], gris);
+  const bague = new THREE.Mesh(geos[1], clair); bague.position.y = 0.04;
+  const anneau = new THREE.Mesh(geos[2], clair); anneau.position.set(0.03, 0.09, 0);
+  g.add(corps, bague, anneau);
+  for (const m of [gris, clair]) sansHalo(m);
+  return { group: g, dispose() { g.removeFromParent(); for (const x of geos) x.dispose(); gris.dispose(); clair.dispose(); } };
+}
+
 export interface RenduGrenades {
   /** place les grenades de l'image (`t` : horloge locale en s, pour les animations) */
   maj(liste: readonly GrenadeAffichee[], t: number): void;
   dispose(): void;
 }
 
-interface Emplacement { modele: ModeleGrenade; trainee: THREE.Line; positions: Float32Array; cle?: THREE.Object3D; cymbales?: THREE.Object3D[] }
+interface Emplacement { modele: ModeleGrenade; trainee: THREE.Line; positions: Float32Array; cle?: THREE.Object3D; cymbales?: THREE.Object3D[]; flamme?: THREE.Object3D }
+
+/** Modèles en réserve par genre (les projectiles d'armes sont moins nombreux : un obus par tir, un tir par seconde au plus). */
+const RESERVE_PAR_GENRE: Readonly<Record<GenreGrenade, number>> = { frag: RESERVE_GRENADES, remontoir: RESERVE_GRENADES, obus: 6, roquette: 4, fumi: 6 };
+const GENRES_RENDUS: readonly GenreGrenade[] = ["frag", "remontoir", "obus", "roquette", "fumi"];
+
+function creerModele(genre: GenreGrenade): ModeleGrenade {
+  switch (genre) {
+    case "frag": return creerModeleFrag();
+    case "remontoir": return creerModeleRemontoir();
+    case "obus": return creerModeleObus();
+    case "roquette": return creerModeleRoquette();
+    case "fumi": return creerModeleFumigene();
+  }
+}
 
 export function creerRenduGrenades(scene: THREE.Object3D): RenduGrenades {
   const racine = new THREE.Group();
   racine.name = "grenades";
   scene.add(racine);
   const matTrainee = new THREE.LineBasicMaterial({ color: 0xfff2d0, transparent: true, opacity: 0.45, blending: THREE.AdditiveBlending, depthWrite: false });
-  const reserve: Record<GenreGrenade, Emplacement[]> = { frag: [], remontoir: [] };
-  for (const genre of ["frag", "remontoir"] as const) {
-    for (let i = 0; i < RESERVE_GRENADES; i++) {
-      const modele = genre === "frag" ? creerModeleFrag() : creerModeleRemontoir();
+  const reserve: Record<GenreGrenade, Emplacement[]> = { frag: [], remontoir: [], obus: [], roquette: [], fumi: [] };
+  for (const genre of GENRES_RENDUS) {
+    for (let i = 0; i < RESERVE_PAR_GENRE[genre]; i++) {
+      const modele = creerModele(genre);
       modele.group.visible = false;
       racine.add(modele.group);
       const positions = new Float32Array(TRAINEE_POINTS * 3);
@@ -116,13 +183,14 @@ export function creerRenduGrenades(scene: THREE.Object3D): RenduGrenades {
         e.cle = modele.group.getObjectByName("cle") ?? undefined;
         e.cymbales = ["cymbaleG", "cymbaleD"].map((n) => modele.group.getObjectByName(n)).filter((o): o is THREE.Object3D => !!o);
       }
+      if (genre === "roquette") e.flamme = modele.group.getObjectByName("flamme") ?? undefined;
       reserve[genre].push(e);
     }
   }
 
   return {
     maj(liste, t) {
-      const pris: Record<GenreGrenade, number> = { frag: 0, remontoir: 0 };
+      const pris: Record<GenreGrenade, number> = { frag: 0, remontoir: 0, obus: 0, roquette: 0, fumi: 0 };
       for (const g of liste) {
         const e = reserve[g.genre][pris[g.genre]];
         if (!e) continue;
@@ -136,6 +204,18 @@ export function creerRenduGrenades(scene: THREE.Object3D): RenduGrenades {
           // elle tourne en vol, se couche une fois posée
           if (vole) { grp.rotation.x = t * 14 + g.id; grp.rotation.z = t * 9; }
           else { grp.rotation.set(Math.PI / 2, (g.id * 1.7) % (Math.PI * 2), 0); }
+        } else if (g.genre === "obus" || g.genre === "roquette") {
+          // projectile : le nez dans le sens du vol (lacet puis tangage), la flamme de la roquette qui vacille
+          grp.position.set(g.p[0], g.p[1], g.p[2]);
+          const dy = g.p[1] - g.avant[1];
+          grp.rotation.order = "YXZ";
+          if (Math.hypot(dx, dy, dz) > 1e-5) grp.rotation.set(-Math.atan2(dy, Math.hypot(dx, dz)), Math.atan2(dx, dz), 0);
+          if (e.flamme) e.flamme.scale.set(1, 0.8 + 0.5 * Math.abs(Math.sin(t * 40 + g.id)), 1);
+        } else if (g.genre === "fumi") {
+          // le bidon culbute en vol et se couche une fois posé
+          grp.position.set(g.p[0], g.p[1], g.p[2]);
+          if (vole) { grp.rotation.x = t * 9 + g.id; grp.rotation.z = t * 6; }
+          else grp.rotation.set(Math.PI / 2, (g.id * 1.3) % (Math.PI * 2), 0);
         } else {
           // le remontoir vole en culbutant, puis se pose debout, tourné vers où il allait, et claque des cymbales (de plus en plus vite)
           grp.position.set(g.p[0], g.p[1] - 0.15, g.p[2]);
@@ -160,8 +240,8 @@ export function creerRenduGrenades(scene: THREE.Object3D): RenduGrenades {
           e.trainee.visible = true;
         } else e.trainee.visible = false;
       }
-      for (const genre of ["frag", "remontoir"] as const) {
-        for (let i = pris[genre]; i < RESERVE_GRENADES; i++) {
+      for (const genre of GENRES_RENDUS) {
+        for (let i = pris[genre]; i < RESERVE_PAR_GENRE[genre]; i++) {
           const e = reserve[genre][i];
           if (!e.modele.group.visible && !e.trainee.visible) break;
           e.modele.group.visible = false;
@@ -170,7 +250,7 @@ export function creerRenduGrenades(scene: THREE.Object3D): RenduGrenades {
       }
     },
     dispose() {
-      for (const genre of ["frag", "remontoir"] as const) {
+      for (const genre of GENRES_RENDUS) {
         for (const e of reserve[genre]) { e.modele.dispose(); e.trainee.geometry.dispose(); }
       }
       matTrainee.dispose();

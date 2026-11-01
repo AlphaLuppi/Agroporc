@@ -166,7 +166,9 @@ export type CauseMort =
   | "arme" | "ecrase_pnj" | "ecrase_vehicule" | "tigre" | "explosion" | "truck_fou" | "tigre_robot" | "titan" | "tigre_zombie" | "bus_c3" | "frappe_aerienne"
   | "tempete" | "abandon"
   /** (2026-10-30) écrasé par la voiture de la descente de police (arène et Battle Royale) : aucun kill crédité */
-  | "police";
+  | "police"
+  /** (lot tactique) souffle d'une grenade, d'un obus de lance-grenades ou d'une roquette de bazooka (arène et Battle Royale) : kill crédité au lanceur, auto-dégâts possibles */
+  | "grenade";
 
 /** Voiture de la circulation (`pnj`, indice dans `flotte`) ou voiture conduisible (`vehicule`, id du garage). */
 export type GenreVoiture = "pnj" | "vehicule";
@@ -221,7 +223,9 @@ export type AtoutId = "gratin" | "expresso" | "ristretto" | "pausecafe" | "bento
  * (v8) Genre d'une grenade : à fragmentation (mèche de 3,5 s, cuisson possible) ou « tigre à remontoir » (la Monkey Bomb de BO1 : attire les
  * tigres puis saute). Cf. `GRENADES` de lib/fps/grenades.ts.
  */
-export type GenreGrenade = "frag" | "remontoir";
+export type GenreGrenade = "frag" | "remontoir"
+  /** (lot tactique) projectiles des armes uniques du bus C3 (obus du lance-grenades, roquette du bazooka, bidon du fumigène) et fumigène lancé à la main (touche B) */
+  | "obus" | "roquette" | "fumi";
 /**
  * (v7) Boîte mystère : fermée, armes qui défilent (`tirage`), arme offerte au joueur `pour` (`offre`), envolée vers un autre emplacement.
  * (v8) `arme` peut être "remontoir" : trois tigres à remontoir (grenade spéciale) au lieu d'une arme.
@@ -422,7 +426,9 @@ export type PhaseBr = "lobby" | "decompte" | "vol" | "jeu" | "fin";
 export type Rarete = "commun" | "peu_commun" | "rare" | "legendaire";
 /** Classe de munitions : une boîte donne des chargeurs à l'arme portée de la classe (principale, sinon secondaire). */
 export type ClasseMunitions = "legeres" | "moyennes" | "cartouches";
-export type GenreObjetBr = "arme" | "munitions" | "bandage" | "potion";
+export type GenreObjetBr = "arme" | "munitions" | "bandage" | "potion"
+  /** (lot tactique) grenade à fragmentation ramassable : pile de 4, `qte` comme les soins */
+  | "grenade";
 export type PoolButin = "interieur" | "toit" | "facade" | "route";
 /** Emplacement de butin possible (`pointsButin` de br-carte.ts) ; `p` = au sol (ou sur le toit), en mètres. */
 export interface PointButin { p: Vec3; pool: PoolButin }
@@ -1063,6 +1069,13 @@ export type MessageServeur =
    * est déterministe (`preparerLancer` de lib/fps/grenades.ts sur le même monde) : le client la recalcule et la dessine.
    */
   | { t: "grenade"; id: number; par: string; genre: GenreGrenade; o: Vec3; v: Vec3; t0: number; explosionT: number }
+  /**
+   * (lot tactique, arène et Battle Royale) Une grenade, un obus ou une roquette explose en `p` (à tous les joueurs en partie) : le client retire le projectile,
+   * dessine l'explosion et joue le souffle. Les dégâts sont déjà dans les `degats` / `mort` du serveur. Additif : un client d'avant ignore le type.
+   */
+  | { t: "grenadeExplose"; id: number; genre: GenreGrenade; p: Vec3; rayon: number; par: string }
+  /** (lot tactique, arène et Battle Royale) Privé : mes grenades à fragmentation en poche (apparition, lancer ; en BR, le total du sac aussi dans `inventaire.grenade`). */
+  | { t: "stockGrenades"; n: number }
   /** Frappe aérienne : disponible (série de 5 kills), lancée (coordonnées ciblées), perdue. */
   | { t: "frappe"; evenement: "disponible" | "lancee" | "perdue"; joueur: string; cible?: Vec3; serie?: number }
   /** Fumigène activé en un point. */
@@ -1083,7 +1096,7 @@ export type MessageServeur =
   /** Privé : réponse à `ramasser`. */
   | { t: "ramasse"; ok: boolean; id: number; raison?: "inutile" | "loin" | "inconnu" }
   /** Privé : stock de soins et usage en cours (`finT` = horodatage serveur). */
-  | { t: "inventaire"; bandage: number; potion: number; usage: { objet: "bandage" | "potion"; finT: number } | null }
+  | { t: "inventaire"; bandage: number; potion: number; /** (lot tactique) grenades du sac, absent d'un serveur d'avant */ grenade?: number; usage: { objet: "bandage" | "potion"; finT: number } | null }
   /** Privé : PV et bouclier après un soin (le client ne prend pas la hausse pour de la régénération). */
   | { t: "soin"; pv: number; bouclier: number; motif: "kill" | "bandage" | "potion" }
   /** Statistiques persistées : top 25 et ma ligne ; réponse privée à `statsBr`, diffusé à tous en fin de partie. */
