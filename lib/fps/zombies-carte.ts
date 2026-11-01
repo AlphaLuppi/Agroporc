@@ -1051,6 +1051,8 @@ export function construireMondeZombies(scene: SceneData): Monde {
     if (t === "porte" && i >= INDEX_PREMIERE_PIECE && pieces[i - INDEX_PREMIERE_PIECE]?.batiment !== undefined) p.plafond = HAUTEUR_PORTE_INTERIEURE;
     if (t && HAUTEUR_REELLE.has(t)) return;
     p.h = HAUTEUR_MURS_ZOMBIES; p.hOrigine = HAUTEUR_MURS_ZOMBIES;
+    // les toits sont hors d'atteinte (murs de 40 m, sans parkour) : pas d'équipement de toit solide, client et serveur pareil
+    delete p.toit;
   });
   monde.sansParkour = true;
   monde.plafonds = true;
