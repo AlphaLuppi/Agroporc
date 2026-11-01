@@ -3,6 +3,8 @@
 import { useId } from "react";
 import { choixApresChangement, groupeMelee, groupePrincipale, groupeSecondaire, largeurBarre, noteSur10, type GroupeArmes } from "./lobby-modele";
 import type { PropsChoixEquipement } from "./contrats";
+import type { ArmeFeuId } from "@/lib/fps/protocole";
+import SelecteurViseur from "./SelecteurViseur";
 import styles from "./ChoixEquipement.module.css";
 
 /**
@@ -42,6 +44,7 @@ export default function ChoixEquipement({ principale, secondaire, melee = "coute
                   </button>
                 ))}
               </span>
+              {g.cle !== "melee" && <SelecteurViseur arme={choisie as ArmeFeuId} idGroupe={`${idGroupe}-${g.cle}`} />}
             </div>
           );
         })}
@@ -83,6 +86,7 @@ export default function ChoixEquipement({ principale, secondaire, melee = "coute
               );
             })}
           </div>
+          {g.cle !== "melee" && <SelecteurViseur arme={choisie as ArmeFeuId} idGroupe={`${idGroupe}-${g.cle}`} />}
         </fieldset>
       ))}
     </div>

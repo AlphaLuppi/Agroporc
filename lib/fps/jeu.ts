@@ -103,6 +103,7 @@ import { Interpolateur, gardePosition, type ClientArene } from "./reseau";
 import { GelPartie, doitAutoSuspendre, texteRefusPause } from "./gel";
 import { REGLES_DEV_DEFAUT, texteRefusDev, type ReglesDev } from "./regles-dev";
 import type { ReglagesArene } from "./reglages-arene";
+import { EVENEMENT_VISEURS, avecViseur, grossissement, lireViseurs, viseurChoisi, type ViseursChoisis } from "./viseurs";
 import { codeSouris, indexTouches, lireTouches, stockageNavigateur, type Action, type ConfigTouches } from "./touches";
 import {
   creerArmeEnMain, creerAvatar, creerEffets, creerPostTraitement, type ArmeEnMain, type AvatarJoueur,
@@ -680,7 +681,16 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   const prochainDe = (a: ArmeId) => Math.max(prochains.get(a) ?? 0, delaiApparitionT);
 
   /** (v8) L'arme telle qu'elle tire : cadence, automatique, viseur, lunette, paire akimbo, projectile, souffle, ricochets (Pack-a-Punch compris). */
-  const statsMoi = (a: ArmeFeuId): StatsTir => statsTir(a, { zombies: modeZ, ameliore: armes.amelioree(a) });
+  const statsMoi = (a: ArmeFeuId): StatsTir => {
+    const st = statsTir(a, { zombies: modeZ, ameliore: armes.amelioree(a) });
+    // arène et Battle Royale : le viseur que le joueur a posé sur cette arme (lib/fps/viseurs.ts) ; zombies : le viseur de l'arme gratinée
+    return modeZ ? st : avecViseur(st, a, viseursChoisis[a]);
+  };
+  /** Viseurs posés par le joueur (mémorisés, relus quand le menu les change) ; confort local, jamais envoyés au serveur. */
+  let viseursChoisis: ViseursChoisis = lireViseurs(stockageNavigateur());
+  const surViseurs = () => { viseursChoisis = lireViseurs(stockageNavigateur()); };
+  /** Grossissement de la lunette posée sur l'arme en main (0 : aucune ; la lunette du sniper et des armes gratinées n'en dépend pas) pour la longueur du tube. */
+  const grossissementMain = (a: ArmeFeuId): number => (modeZ ? 0 : grossissement(viseurChoisi(viseursChoisis, a)));
   /** (v8) Paire akimbo en main : pas de visée, le clic droit tire de la main gauche. */
   const akimboEnMain = (): boolean => { const a = armeFeu(); return !!a && armes.akimbo(a); };
   /** Lunette réellement active : visée tenue, arme à lunette sortie (sniper, ou arme améliorée à lunette), pas en rechargement ni en killcam. */
@@ -705,6 +715,17 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     if (j === i) return;
     niveauZoom.set(a, j);
     sons.zoom();
+  }
+
+  /**
+   * Touche `inspecter` : montre l'arme en main (tricks du couteau, flancs d'une arme à feu, cf. `inspection.ts`). Rappuyer la coupe. Refusée
+   * mort, en véhicule, en visée, en rechargement, pendant le dégainage ou un coup, et en vue empruntée (rejeu, spectateur).
+   */
+  function inspecterArme() {
+    if (armeMain.inspection) { armeMain.annulerInspection(); return; }
+    if (!peutAgir() || enKillcam() || enReplay || sujetVue || pilote() || tireInterdit() || viseMaintenu) return;
+    if (armes.rechargeEnCours() || armes.degainage(ms()) || armes.coupEnCours(ms())) return;
+    armeMain.inspecter();
   }
 
   function demarrerRecharge() {
@@ -859,6 +880,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     if (pilote()) return tirerCanon();
     if (!peutAgir() || entracte || enKillcam() || tireInterdit()) return false;
     if (armes.degainage(ms()) || armes.coupEnCours(ms())) return false;
+    // un tir coupe l'inspection AVANT de lire la bouche (sinon la traçante partirait de l'arme encore tournée)
+    armeMain.annulerInspection();
     const arme = armes.armeEnMain();
     if (estMelee(arme)) return main === "g" ? false : coupMelee(arme);
     const a = STATS[arme];
@@ -2479,6 +2502,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
           break;
         }
         case "armePrecedente": if (peutChangerArme()) apresChangementArme(armes.rapide(ms())); break;
+        case "inspecter": inspecterArme(); break;
         // (v10) zombies : coup de couteau sans lâcher l'arme ; arène : on prend le couteau (rappuyer : retour)
         case "couteauRapide":
           if (modeZ) coupRapide();
@@ -2601,6 +2625,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     cb.sortir();
   };
 
+  window.addEventListener(EVENEMENT_VISEURS, surViseurs);
   window.addEventListener("keydown", surKeyDown);
   window.addEventListener("keyup", surKeyUp);
   window.addEventListener("blur", toutRelacher);
@@ -3596,7 +3621,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       armeMain.ameliorer(armes.amelioree(enMain));
       // (v8) paire akimbo et organe de visée de l'arme améliorée
       const stEnMain = estMelee(enMain) ? null : statsMoi(enMain);
-      armeMain.regler({ paire: !!stEnMain?.akimbo, viseur: stEnMain?.viseur ?? "fer" });
+      armeMain.regler({ paire: !!stEnMain?.akimbo, viseur: stEnMain?.viseur ?? "fer", grossissement: estMelee(enMain) ? 0 : grossissementMain(enMain) });
     }
     if (embarquementFin > 0 && t >= embarquementFin) embarquementFin = 0;
 
@@ -3776,7 +3801,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     const sv = sujetVue;
     armeMain.maj(dt, sv
       ? { vitesseH: Math.hypot(sv.v[0], sv.v[2]), auSol: sv.posture === "sol", vise: !!sv.vise }
-      : { vitesseH: vh, auSol: moi.auSol, vise: vise && !enReplay });
+      : { vitesseH: vh, auSol: moi.auSol, vise: vise && !enReplay, sprint: actionActive("sprint") && vh > 1 });
 
     remplirRadar(dt);
     post.rendre();
@@ -3873,6 +3898,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       disposed = true;
       cancelAnimationFrame(raf);
       ro.disconnect();
+      window.removeEventListener(EVENEMENT_VISEURS, surViseurs);
       window.removeEventListener("keydown", surKeyDown);
       window.removeEventListener("keyup", surKeyUp);
       window.removeEventListener("blur", toutRelacher);

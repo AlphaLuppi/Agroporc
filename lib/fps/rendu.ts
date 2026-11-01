@@ -30,6 +30,7 @@ import { LineSegments2 } from "three/examples/jsm/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/examples/jsm/lines/LineSegmentsGeometry.js";
 import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 import { MELEE, type Viseur } from "./armes";
+import { inspectionFinie, poseInspection, poseNeutre, type PoseInspection } from "./inspection";
 import { ECHELLE_AVATAR, estMelee, silhouetteDe, type ArmeFeuId, type ArmeId, type ArmeMeleeId, type EtatJoueurSnap, type Vec3 } from "./protocole";
 import { creerParachute, type ParachuteFilDeFer } from "./rendu-avion";
 import { LARGEUR_MIN_M, TRACEURS, dureeVie, etatTraceur, instantImpact, largeurMonde, type ParamsTraceur } from "./traceurs";
@@ -76,6 +77,8 @@ export interface ContexteArmeEnMain {
   auSol: boolean;
   /** clic droit maintenu */
   vise: boolean;
+  /** course à plein régime (coupe l'inspection de l'arme) ; absent = non */
+  sprint?: boolean;
 }
 
 export interface ArmeEnMain {
@@ -97,7 +100,17 @@ export interface ArmeEnMain {
   /** (v7, zombies) arme passée au Pack-a-Punch : camouflage animé (arêtes qui changent de teinte ; v8 : zébrures qui ondulent sur les faces) */
   ameliorer(oui: boolean): void;
   /** (v8, zombies) paire akimbo (seconde arme à gauche) et organe de visée posé sur l'arme ; sans effet s'ils n'ont pas changé */
-  regler(o: { paire: boolean; viseur: Viseur }): void;
+  regler(o: { paire: boolean; viseur: Viseur; grossissement?: number }): void;
+  /**
+   * Inspection de l'arme (touche `inspecter`) : tricks du couteau, moulinet de l'épée, flancs d'une arme à feu (chronologie PURE de
+   * `inspection.ts`). Refusée pendant un rechargement, un coup rapide ou une paire akimbo ; coupée par un tir, un coup, une visée, un rechargement,
+   * un changement d'arme ou le sprint. Renvoie vrai si elle démarre.
+   */
+  inspecter(): boolean;
+  /** Coupe l'inspection tout de suite (l'arme revient à sa place sans transition : appelé avant un tir). */
+  annulerInspection(): void;
+  /** Inspection en cours. */
+  readonly inspection: boolean;
   maj(dt: number, ctx: ContexteArmeEnMain): void;
   /** Avancement du rechargement : 0 = rien, ]0,1[ = en cours. */
   readonly progresRecharge: number;
@@ -1216,6 +1229,14 @@ export function creerArmeEnMain(idInitial: ArmeId, couleur: CouleurEntree = COUL
   let viseur: Viseur = "fer";
   let pieceViseur: THREE.Group | null = null;
   let masqueEnVisee = id === "sniper";
+  // ---- inspection de l'arme : avancement (s, −1 = aucune), pose courante (calculée une fois par image) ----
+  let tInsp = -1;
+  let poseInsp: PoseInspection = poseNeutre();
+  const _pm = new THREE.Vector3(), _eInsp = new THREE.Euler(), _pivotInsp = new THREE.Vector3();
+  /** grossissement de la lunette posée (0 = pas une lunette de l'arène) : longueur du tube */
+  let grossi = 0;
+  /** décalage vertical (m) de l'arme en visée pour que l'organe de visée (point rouge, holo) tombe sur l'axe de la caméra */
+  let decalageAds = 0;
   ordonner(group, true, 1000);
 
   const coudeD = new THREE.Vector3(0.2, -0.34, 0.5), coudeG = new THREE.Vector3(-0.25, -0.3, 0.5);
@@ -1239,10 +1260,44 @@ export function creerArmeEnMain(idInitial: ArmeId, couleur: CouleurEntree = COUL
   const orienterBrasG = () => {
     if (lame && lame.group.visible && sortieLame > 0.5) orienterBras(brasG, _main.copy(lame.prise).applyQuaternion(lame.group.quaternion).add(lame.group.position), coudeG);
     else if (modeleG) orienterBras(brasG, _main.copy(modeleG.prise).add(modeleG.group.position), coudeGPaire);
-    else orienterBras(brasG, modele.garde, coudeG);
+    else orienterBras(brasG, pointModele(modele.garde, !modele.uneMain), coudeG);
   };
   orienterBras(brasD, modele.prise, coudeD);
   orienterBrasG();
+
+  /** Point du repère de l'arme tel qu'il est vu pendant l'inspection (l'arme tourne autour de sa prise) ; inchangé hors inspection. */
+  function pointModele(v: THREE.Vector3, suit: boolean): THREE.Vector3 {
+    return tInsp >= 0 && suit ? _pm.copy(v).applyMatrix4(modele.group.matrix) : v;
+  }
+  function remettreArme(): void {
+    modele.group.position.set(0, 0, 0);
+    modele.group.quaternion.identity();
+    modele.group.updateMatrix();
+  }
+  function finInspection(): void {
+    if (tInsp < 0) return;
+    // le décalage des bras posé à l'image précédente est retiré tout de suite : un tir de cette image part de l'arme à sa place
+    const e = poseInsp.ensemble;
+    group.position.x -= e.x; group.position.y -= e.y; group.position.z -= e.z;
+    group.rotation.x -= e.rx; group.rotation.y -= e.ry; group.rotation.z -= e.rz;
+    tInsp = -1;
+    poseInsp = poseNeutre();
+    remettreArme();
+  }
+  /** Avance l'inspection et tourne l'arme seule autour de sa prise (la main arrière reste sur la poignée). */
+  function majInspection(dt: number): void {
+    if (tInsp < 0) return;
+    tInsp += dt;
+    if (inspectionFinie(id, tInsp)) { finInspection(); return; }
+    poseInsp = poseInspection(id, tInsp);
+    const a = poseInsp.arme;
+    _eInsp.set(a.rx, a.ry, a.rz, a.ordre);
+    modele.group.quaternion.setFromEuler(_eInsp);
+    _pivotInsp.copy(modele.prise).applyQuaternion(modele.group.quaternion);
+    modele.group.position.copy(modele.prise).sub(_pivotInsp);
+    modele.group.position.x += a.x; modele.group.position.y += a.y; modele.group.position.z += a.z;
+    modele.group.updateMatrix();
+  }
 
   /** Écart (m, repère du groupe) entre l'arme droite et l'arme gauche d'une paire : le miroir de la position de repos. */
   const ecartPaire = () => -2 * pl.repos[0];
@@ -1262,31 +1317,39 @@ export function creerArmeEnMain(idInitial: ArmeId, couleur: CouleurEntree = COUL
   /** Pièce de visée sur le dessus de l'arme (au-dessus de sa boîte englobante, entre la poignée et la bouche). */
   function poserViseur(): void {
     if (pieceViseur) { pieceViseur.removeFromParent(); pieceViseur = null; }
+    decalageAds = 0;
+    let hautVisee = 0;
     if (viseur === "fer" || estMelee(id) || id === "sniper") { ordonner(group, true, 1000); return; }
     // boîte dans le repère du modèle (la pièce en est l'enfant) : `setFromObject` la donnerait dans le monde, caméra et porte-arme compris.
     // Le dessus de l'arme sous l'empreinte de la pièce seulement : la boîte entière (éclair de bouche caché, guidon arrière) la faisait
     // flotter 5 à 8 cm au-dessus de la carcasse
     const z = (modele.prise.z + modele.bouche.z) / 2;
-    const demi = viseur === "lunette" || viseur === "thermique" ? 0.09 : 0.03;
+    // tube de la lunette : plus long et plus gros à fort grossissement
+    const tube = viseur === "lunette" || viseur === "thermique" ? (grossi >= 4 ? 0.26 : 0.18) : 0;
+    const demi = tube ? tube / 2 : 0.03;
     const y = boiteLocale(modele.group, [z - demi, z + demi]).max.y + 0.004;
     const g = new THREE.Group();
     g.position.set(0, y, z);
     if (viseur === "point_rouge") {
       piece(g, geoBoite(0.03, 0.03, 0.035), m, 0, 0.015, 0);
       piece(g, geoBoite(0.02, 0.02, 0.004), m, 0, 0.018, -0.018);
+      hautVisee = 0.018;
     } else if (viseur === "holo") {
       piece(g, geoBoite(0.04, 0.012, 0.06), m, 0, 0.006, 0);
       piece(g, geoBoite(0.004, 0.035, 0.004), m, 0.018, 0.03, -0.025);
       piece(g, geoBoite(0.004, 0.035, 0.004), m, -0.018, 0.03, -0.025);
       piece(g, geoBoite(0.04, 0.004, 0.004), m, 0, 0.047, -0.025);
+      hautVisee = 0.03;
     } else {
       // lunette (et lunette thermique) : tube et deux colliers
-      piece(g, geoCyl(0.022, 0.18), m, 0, 0.035, 0);
-      piece(g, geoCyl(0.028, 0.03), m, 0, 0.035, -0.09);
+      piece(g, geoCyl(grossi >= 4 ? 0.026 : 0.022, tube), m, 0, 0.035, 0);
+      piece(g, geoCyl(0.028, 0.03), m, 0, 0.035, -tube / 2);
       for (const dz of [-0.04, 0.04]) piece(g, geoBoite(0.012, 0.03, 0.012), m, 0, 0.012, dz);
     }
     modele.group.add(g);
     pieceViseur = g;
+    // en visée, l'arme descend (ou monte) un peu pour que le point lumineux du viseur optique tombe sur l'axe de la caméra, là où le HUD le dessine
+    if (hautVisee > 0) decalageAds = borne(-(pl.vise[1] + modele.group.position.y + y + hautVisee), -0.03, 0.03);
     ordonner(group, true, 1000);
   }
 
@@ -1347,12 +1410,14 @@ export function creerArmeEnMain(idInitial: ArmeId, couleur: CouleurEntree = COUL
     group,
     get progresRecharge() { return modele.progres; },
     tirer(main) {
+      finInspection();
       if (main === "g" && modeleG) modeleG.tirer();
       else modele.tirer();
       recul = Math.min(recul + 0.6, 1.3);
     },
-    coup() { modele.coup(); },
+    coup() { finInspection(); modele.coup(); },
     coupRapide(impactS, dureeS, arme) {
+      finInspection();
       if (estMelee(id)) { modele.coup(); return; }
       if (lameId !== arme) {
         lame?.dispose();
@@ -1367,6 +1432,7 @@ export function creerArmeEnMain(idInitial: ArmeId, couleur: CouleurEntree = COUL
     },
     changer(arme) {
       if (arme === id) return;
+      finInspection();
       modele.dispose();
       id = arme;
       pl = PLACEMENT[id];
@@ -1380,7 +1446,14 @@ export function creerArmeEnMain(idInitial: ArmeId, couleur: CouleurEntree = COUL
       recul = 0;
       reculV = 0;
     },
-    recharger(dureeS) { modele.recharger(dureeS); modeleG?.recharger(dureeS); },
+    recharger(dureeS) { finInspection(); modele.recharger(dureeS); modeleG?.recharger(dureeS); },
+    inspecter() {
+      if (tInsp >= 0 || tRapide >= 0 || paire || modele.progres > 0 || lame?.group.visible) return false;
+      tInsp = 0;
+      return true;
+    },
+    annulerInspection() { finInspection(); },
+    get inspection() { return tInsp >= 0; },
     ameliorer(oui) {
       if (oui === amelioree) return;
       amelioree = oui;
@@ -1396,7 +1469,8 @@ export function creerArmeEnMain(idInitial: ArmeId, couleur: CouleurEntree = COUL
     regler(o) {
       const p = o.paire && !estMelee(id);
       if (p !== paire) { paire = p; poserPaire(); }
-      if (o.viseur !== viseur) { viseur = o.viseur; poserViseur(); }
+      const g = o.grossissement ?? 0;
+      if (o.viseur !== viseur || g !== grossi) { viseur = o.viseur; grossi = g; poserViseur(); }
       masqueEnVisee = id === "sniper" || o.viseur === "lunette" || o.viseur === "thermique";
     },
     maj(dt, ctx) {
@@ -1413,7 +1487,10 @@ export function creerArmeEnMain(idInitial: ArmeId, couleur: CouleurEntree = COUL
       }
       modele.maj(dt);
       modeleG?.maj(dt);
-      orienterBras(brasD, modele.prise, coudeD);
+      // l'inspection cède dès qu'on vise, qu'on court ou qu'on recharge (le tir, le coup et le changement d'arme la coupent à l'appel)
+      if (tInsp >= 0 && (ctx.vise || ctx.sprint || modele.progres > 0)) finInspection();
+      majInspection(dt);
+      orienterBras(brasD, pointModele(modele.prise, true), coudeD);
       orienterBrasG();
 
       ads += ((ctx.vise ? 1 : 0) - ads) * (1 - Math.exp(-dt * (masqueEnVisee ? 14 : 12)));
@@ -1436,10 +1513,16 @@ export function creerArmeEnMain(idInitial: ArmeId, couleur: CouleurEntree = COUL
       const by = -Math.abs(Math.cos(phase)) * 0.014 * amp + Math.sin(tAcc * 1.7) * 0.0015 * (1 - ads) + 0.02 * air * (1 - ads);
       group.position.set(
         melange(pl.repos[0], pl.vise[0], ads) + bx,
-        melange(pl.repos[1], pl.vise[1], ads) + by - 0.1 * plongee,
+        melange(pl.repos[1], pl.vise[1] + decalageAds, ads) + by - 0.1 * plongee,
         melange(pl.repos[2], pl.vise[2], ads) + recul * pl.reculZ,
       );
       group.rotation.set(recul * pl.reculRot + 0.15 * plongee, pl.lacet * (1 - ads), Math.sin(phase) * 0.015 * amp - 0.25 * plongee);
+      if (tInsp >= 0) {
+        // l'arme et les bras montent vers le centre et s'inclinent (la rotation de l'arme seule est déjà posée par `majInspection`)
+        const e = poseInsp.ensemble;
+        group.position.x += e.x; group.position.y += e.y; group.position.z += e.z;
+        group.rotation.x += e.rx; group.rotation.y += e.ry; group.rotation.z += e.rz;
+      }
       majCoupRapide(dt);
       // Une lunette remplit l'écran (HUD) : l'arme s'efface quand on vise (le sniper, et une arme améliorée à lunette).
       group.visible = !masqueEnVisee || ads < 0.85;

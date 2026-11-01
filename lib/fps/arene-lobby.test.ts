@@ -15,6 +15,7 @@ import { libelleCause } from "../../app/components/arene/armesInfo";
 import { ARMES, ARMES_MELEE, ARMES_PRINCIPALES, ARMES_SECONDAIRES, ARMES_SPECIALES, JEU, type EtatPartieBr, type InfoMatch, type JoueurBr, type JoueurPublic } from "./protocole";
 import { REGLAGES_HUD_DEFAUT } from "./reglages-hud";
 import { touchesParDefaut } from "./touches";
+import { viseursDisponibles } from "./viseurs";
 
 describe("modèle du lobby", () => {
   it("deux groupes : les principales et les secondaires, jamais les armes spéciales", () => {
@@ -135,7 +136,8 @@ describe("ChoixEquipement", () => {
     const nb = NB_ARMES;
     expect(html.match(/role="img"/g)).toHaveLength(nb * 4);
     expect(html.match(/aria-label="(Dégâts|Cadence|Portée|Contrôle|Course) (10|[1-9]) sur 10"/g)).toHaveLength(nb * 4);
-    expect(html.match(/aria-labelledby=/g)).toHaveLength(nb);
+    // + le sélecteur de viseur de la mitraillette et du pistolet (lib/fps/viseurs.ts), qui s'étiquette lui aussi par aria-labelledby
+    expect(html.match(/aria-labelledby=/g)).toHaveLength(nb + 2);
     expect(html.match(/aria-describedby=/g)).toHaveLength(nb);
     expect(html).not.toContain("Précision");
   });
@@ -143,10 +145,12 @@ describe("ChoixEquipement", () => {
   it("compact : des boutons aria-pressed, un seul pressé par groupe, 40 px et plus au CSS", () => {
     const html = rendu("compact", "sniper", "mini_uzi");
     expect(html).not.toContain("<fieldset");
-    expect(html.match(/role="group"/g)).toHaveLength(3);
-    expect(html.match(/<button/g)).toHaveLength(NB_ARMES);
-    expect(html.match(/aria-pressed="true"/g)).toHaveLength(3);
-    expect(html.match(/aria-pressed="false"/g)).toHaveLength(NB_ARMES - 3);
+    // le sniper n'a pas de choix de viseur (lunette intégrée), le mini Uzi en a un : un groupe de plus, « Aucun » pressé
+    const viseurs = viseursDisponibles("mini_uzi").length;
+    expect(html.match(/role="group"/g)).toHaveLength(3 + 1);
+    expect(html.match(/<button/g)).toHaveLength(NB_ARMES + viseurs);
+    expect(html.match(/aria-pressed="true"/g)).toHaveLength(3 + 1);
+    expect(html.match(/aria-pressed="false"/g)).toHaveLength(NB_ARMES - 3 + viseurs - 1);
     expect(html).toContain(">Sniper<");
     expect(html).toContain(">Mini Uzi<");
   });
