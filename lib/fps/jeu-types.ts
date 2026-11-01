@@ -107,8 +107,17 @@ export interface HudEtat {
   titan: boolean;
   /** Le joueur local est immergé dans un nuage de fumigène */
   dansFumee?: boolean;
-  /** Une frappe aérienne est disponible (série de 5 kills) */
+  /** Une frappe aérienne est en poche (message `frappe{disponible}` du serveur, série de 5 kills) : le HUD l'annonce avec sa touche */
   frappeDisponible?: boolean;
+  /** (lot tactique, arène) le ciblage de la frappe est ouvert : la grande carte s'affiche avec le réticule de `JeuHandle.ciblageFrappe()` */
+  ciblageFrappe?: boolean;
+  /** (arène) la touche de frappe vient d'être pressée sans frappe en poche : le HUD rappelle combien de kills manquent (2,5 s) */
+  frappeRefusee?: boolean;
+  /** (arène) secondes avant le prochain fumigène de la touche B (0 = prêt) */
+  fumigeneS?: number;
+  /** (lot tactique, arène et Battle Royale) grenades à fragmentation en poche, et mèche de la cuisson en cours (0 à 1, -1 = aucune) */
+  grenades?: number;
+  grenadeCuisson?: number;
 
   // ---- MODE ZOMBIES (v5) : tous optionnels, absents en arène (les littéraux `HudEtat` existants restent valides) ----
   /** mode de la salle : "arene" ou "zombies" */
@@ -363,6 +372,8 @@ export interface JeuHandle {
   br?(): EtatBrHud;
   /** Déclenche une frappe aérienne sur le point au sol spécifié. */
   lancerFrappe?(cible: Vec3): void;
+  /** (lot tactique, arène) réticule du ciblage de la frappe aérienne en mètres du monde (la grande carte le dessine), null hors ciblage */
+  ciblageFrappe?(): { x: number; z: number } | null;
   /** Lance un fumigène devant le joueur. */
   lancerFumigene?(): void;
   /** Monte sur le Bus C3 s'il est à portée. */

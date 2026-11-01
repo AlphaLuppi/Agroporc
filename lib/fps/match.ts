@@ -33,10 +33,11 @@ import type { Monde } from "./collision";
 import { couleurJoueur } from "./couleurs";
 import type { IntervalleAvion } from "./avion";
 import type { IntervalleElsa } from "./elsa";
-import { armeDuSlot, couteauTenable, depuisAlias, estPrincipale, estSecondaire, estSlot, meleeDe, normaliserEquipement } from "./equipement";
+import { armeDuSlot, couteauTenable, depuisAlias, estPrincipale, estSecondaire, estSlot, estUnique, meleeDe, normaliserEquipement } from "./equipement";
+import { creerServiceGrenades } from "./match-grenades";
 import { minutageCoupRapide } from "./coup-rapide";
 import type {
-  ContexteSalle, JoueurSalle, ResumeBr, ResumeZombies, ServiceBr, ServiceElsa, ServiceEvenements, ServicePolice, ServiceTigres, ServiceVehicules, ServiceZombies, Sortie,
+  ContexteSalle, JoueurSalle, ResumeBr, ResumeZombies, ServiceBr, ServiceElsa, ServiceEvenements, ServiceGrenades, ServicePolice, ServiceTigres, ServiceVehicules, ServiceZombies, Sortie,
 } from "./match-contexte";
 import { creerServiceBr, type OptionsServiceBr } from "./match-br";
 import { creerServiceElsa } from "./match-elsa";
@@ -332,8 +333,8 @@ export class Salle implements ContexteSalle {
   private nuagesFumee: NuageFumee[] = [];
   private compteurFrappes = 0;
   private compteurFumigenes = 0;
-  /** Dernier fumigène lancé par joueur (anti-rafale). */
-  private readonly dernierFumigene = new Map<string, number>();
+  /** (lot tactique) Grenades, obus, roquettes et fumigènes lancés : arène et Battle Royale (null en zombies, qui a les siennes). */
+  private readonly grenades: ServiceGrenades | null;
   private numero = 1;
   private phase: "jeu" | "entracte" = "jeu";
   private fin: number | null;
@@ -391,8 +392,21 @@ export class Salle implements ContexteSalle {
     this.devLibre = options.devLibre === true;
     this.refaireOptions = options.refaireOptions ?? null;
     this.busC3 = this.creerBus(options, maintenant);
+    // (lot tactique) grenades de l'arène et du Battle Royale ; aucun tirage de `alea`, sa place dans la construction est sans effet sur les autres services
+    this.grenades = this.creerGrenades(options);
     // EN DERNIER : les services ci-dessus tirent `alea` à leur construction, un tirage inséré avant eux décalerait leur séquence
     this.police = this.creerPolice(options, maintenant);
+  }
+
+  private creerGrenades(options: OptionsSalle): ServiceGrenades | null {
+    const br = this.br;
+    return options.zombies
+      ? null
+      : creerServiceGrenades(this, {
+        mode: br ? "br" : "arene",
+        ...(br ? { stockBr: (id: string) => br.stockGrenades?.(id) ?? 0, retirerBr: (j: JoueurSalle) => br.retirerGrenade?.(j) ?? [] } : {}),
+        creerNuage: (p, t) => this.poserNuage(p, t),
+      });
   }
 
   // ---------- construction des services d'événements (aussi refaite en direct par le menu de développement) ----------
@@ -715,6 +729,7 @@ export class Salle implements ContexteSalle {
     cible.morts++;
     cible.serie = 0;
     this.frappesDisponibles.delete(cible.id);
+    this.grenades?.perdu(cible.id);
     cible.reapparitionT = maintenant + this.regles.reapparitionMs;
     cible.equip.speciale = null; // sur la COPIE du joueur (EQUIPEMENT_DEFAUT est figé)
     cible.munSpeciale = 0;
@@ -1026,6 +1041,7 @@ export class Salle implements ContexteSalle {
     this.mortT.delete(id);
     this.capacites.delete(id);
     this.police?.liberer(id);
+    this.grenades?.perdu(id);
     // zombies : le service compte les membres restants (hôte suivant, défaite si c'était le dernier debout) ; le joueur est déjà retiré
     const sortieZombies = this.zombies ? this.zombies.liberer(j, maintenant) : [];
     // BR : idem (éliminé s'il était en partie, hôte suivant, victoire éventuelle) ; `j` est l'objet déjà retiré de la table
@@ -1105,9 +1121,15 @@ export class Salle implements ContexteSalle {
         return this.zombies ? this.zombies.recevoir(j, msg, maintenant) : [];
       case "lancerGrenade": {
         // (v8, zombies) l'œil et la direction sont validés comme ceux d'un tir ; le service juge le stock et la cadence
-        if (!this.zombies || !j.enJeu || !j.vivant || !estVec3(msg.o) || !estVec3(msg.d)) return [];
+        if (!j.enJeu || !j.vivant || !estVec3(msg.o) || !estVec3(msg.d)) return [];
+        if (this.zombies) {
+          const dirs = this.validerVisee(j, msg.o, [msg.d], maintenant);
+          return dirs ? this.zombies.recevoir(j, { ...msg, d: dirs[0] }, maintenant) : [];
+        }
+        // (lot tactique) arène et Battle Royale : seule la grenade à fragmentation, ni au volant, ni en vol, ni aux commandes du titan
+        if (!this.grenades || msg.genre !== "frag" || this.pilote(j.id) || this.br?.enVol(j.id) || this.vehicules?.occupation(j.id)) return [];
         const dirs = this.validerVisee(j, msg.o, [msg.d], maintenant);
-        return dirs ? this.zombies.recevoir(j, { ...msg, d: dirs[0] }, maintenant) : [];
+        return dirs ? this.grenades.lancer(j, msg.o, dirs[0], msg.cuissonMs, maintenant) : [];
       }
       // (v9, BR) le service juge : saut de l'avion, entrées de la chute, ramassage, lâcher, soins, statistiques
       case "sauter": case "chute": case "ramasser": case "lacher": case "utiliser": case "statsBr":
@@ -1128,15 +1150,17 @@ export class Salle implements ContexteSalle {
         return [{ a: "joueurs", m: { t: "frappe", evenement: "lancee", joueur: j.id, cible: msg.cible } }];
       }
       case "lancerFumigene": {
-        if (!this.modeArene || !j.enJeu || !j.vivant || !estVec3(msg.p)) return [];
-        // anti-rafale : un fumigène toutes les 15 s, lâché près du lanceur
-        const dernier = this.dernierFumigene.get(j.id);
-        if (dernier !== undefined && maintenant - dernier < 15_000) return [];
-        if (Math.hypot(msg.p[0] - j.p[0], msg.p[1] - j.p[1], msg.p[2] - j.p[2]) > 5) return [];
-        this.dernierFumigene.set(j.id, maintenant);
-        const nuage = creerNuageFumee(`fum_${++this.compteurFumigenes}`, msg.p, maintenant);
-        this.nuagesFumee.push(nuage);
-        return [{ a: "joueurs", m: { t: "fumigene", id: nuage.id, p: nuage.p, debutT: nuage.debutT, finT: nuage.finT } }];
+        // (lot tactique) le bidon part en cloche dans la direction `v` (un toutes les 15 s, cf. `ServiceGrenades.lancerFumigene`), le nuage s'ouvre 1,2 s
+        // plus tard là où il retombe ; avant, le nuage naissait dans la tête du lanceur sans qu'aucun bidon ne soit visible
+        if (!this.grenades || !this.modeArene || !j.enJeu || !j.vivant || this.pilote(j.id) || this.vehicules?.occupation(j.id)) return [];
+        // le bidon part près du lanceur (5 m au plus, comme l'ancien nuage posé d'emblée)
+        if (!estVec3(msg.p) || !estVec3(msg.v) || Math.hypot(msg.p[0] - j.p[0], msg.p[1] - j.p[1], msg.p[2] - j.p[2]) > 5) return [];
+        // la direction du client si elle suit la visée connue du serveur, sinon cette visée (jamais une direction arbitraire : pas de tir dans le dos)
+        const cosT = Math.cos(j.tangage);
+        const visee: Vec3 = [-Math.sin(j.lacet) * cosT, Math.sin(j.tangage), -Math.cos(j.lacet) * cosT];
+        const l = Math.hypot(msg.v[0], msg.v[1], msg.v[2]);
+        const dir = l < 1e-6 ? visee : this.validerVisee(j, msg.p, [[msg.v[0] / l, msg.v[1] / l, msg.v[2] / l]], maintenant)?.[0] ?? visee;
+        return this.grenades.lancerFumigene(j, msg.p, dir, maintenant);
       }
       case "monterBus": {
         if (!this.busC3 || !j.enJeu || !j.vivant || !peutMonterSurBus(j.p, this.busC3.p)) return [];
@@ -1152,6 +1176,13 @@ export class Salle implements ContexteSalle {
       case "ping": return estNombre(msg.t0) ? [{ a: id, m: { t: "pong", t0: msg.t0, maintenant } }] : [];
       default: return []; // "bonjour" : déjà traité par connecter
     }
+  }
+
+  /** Nuage de fumée posé en `p` (fumigène retombé) : tenu par la salle (snap, radar, brouillard) ; renvoie le message `fumigene` à tous les joueurs. */
+  private poserNuage(p: Vec3, maintenant: number): Sortie[] {
+    const nuage = creerNuageFumee(`fum_${++this.compteurFumigenes}`, p, maintenant);
+    this.nuagesFumee.push(nuage);
+    return [{ a: "joueurs", m: { t: "fumigene", id: nuage.id, p: nuage.p, debutT: nuage.debutT, finT: nuage.finT } }];
   }
 
   // ---------- chat vocal (v3 §5) : le serveur ne fait que relayer la signalisation WebRTC ----------
@@ -1252,6 +1283,7 @@ export class Salle implements ContexteSalle {
     if (this.tigres) sorties.push(...this.tigres.synchro(j.id));
     if (this.evenements) sorties.push(...this.evenements.synchro(j.id));
     if (this.police) sorties.push(...this.police.synchro(j.id));
+    if (this.grenades) sorties.push(...this.grenades.synchro(j.id));
     return sorties;
   }
 
@@ -1569,6 +1601,9 @@ export class Salle implements ContexteSalle {
     // arme spéciale : une munition de moins ; à 0, l'arme disparaît et le joueur retombe sur le slot précédent (v10 : pas en zombies, où
     // l'Arme 3 est un emplacement ordinaire et où le client compte toutes les munitions)
     if (j.main === "speciale" && !this.zombies) sorties.push(...this.consommerSpeciale(j, maintenant));
+    // (lot tactique) armes uniques du bus C3 : lance-grenades, bazooka et fumigène tirent un PROJECTILE (obus, roquette, bidon) qui explose au contact ou
+    // libère son nuage ; avant, ils tiraient comme un fusil (balle instantanée sans rien à l'écran) et le souffle n'existait pas
+    if (this.grenades && estUnique(armeTiree)) return [...sorties, ...this.grenades.tirerUnique(j, armeTiree, tir.o, dirs[0], maintenant)];
     // (v8, zombies) le grand secret voit passer chaque tir validé (objets du décor)
     if (this.zombies) sorties.push(...this.zombies.tirSecret(j, armeTiree, tir.o, dirs, maintenant));
     // (v8, zombies) projectile ou souffle : le service résout tout le tir (aucune touche déclarée n'est lue)
@@ -1872,6 +1907,7 @@ export class Salle implements ContexteSalle {
     if (this.tigres) sorties.push(...this.tigres.tic(maintenant));
     if (this.evenements) sorties.push(...this.evenements.tic(maintenant));
     if (this.police) sorties.push(...this.police.tic(maintenant));
+    if (this.grenades) sorties.push(...this.grenades.tic(maintenant));
     if (this.zombies) sorties.push(...this.zombies.tic(maintenant));
     if (this.br) sorties.push(...this.br.tic(maintenant));
     // (menu de développement) la partie de zombies / BR vient de finir : règles par défaut
@@ -2195,7 +2231,7 @@ export class Salle implements ContexteSalle {
     this.frappesDisponibles.clear();
     this.frappesEnCours = [];
     this.nuagesFumee = [];
-    this.dernierFumigene.clear();
+    this.grenades?.reinitialiser();
     for (const j of this.table.values()) {
       j.kills = 0;
       j.morts = 0;
@@ -2258,6 +2294,7 @@ export class Salle implements ContexteSalle {
     j.vivant = true;
     j.protegeJusqua = restaure ? 0 : maintenant + JEU.protectionMs;
     j.reapparitionT = null;
+    this.grenades?.apparu(j); // 2 grenades à chaque vie
     j.etatT = maintenant;
     j.histo = [];
     if (suivi) suivi.precedent = j.main === "principale" ? "secondaire" : "principale";

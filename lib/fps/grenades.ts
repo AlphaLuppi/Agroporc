@@ -16,7 +16,7 @@
  */
 import { dedans } from "../agroparc3d/cachettes";
 import { lancerRayon, normaleImpact, visible, type Monde } from "./collision";
-import type { GenreGrenade, Vec3 } from "./protocole";
+import type { ArmeUniqueId, GenreGrenade, Vec3 } from "./protocole";
 
 /** Profil balistique et explosif d'un genre de grenade. */
 export interface ProfilGrenade {
@@ -50,6 +50,11 @@ export interface ProfilGrenade {
   attractionM: number;
   /** durée de vol simulée au plus (ms) pour un objet qui n'explose qu'une fois posé */
   volMaxMs: number;
+  /**
+   * (lot tactique) dégâts du souffle sur un JOUEUR (arène et Battle Royale, 100 PV + 100 de bouclier) : linéaires de `centre` à `bord` sur `rayonM` ;
+   * absent = ce genre ne blesse aucun joueur (remontoir, fumigène)
+   */
+  joueurs?: { centre: number; bord: number };
 }
 
 export const GRENADES: Readonly<Record<GenreGrenade, Readonly<ProfilGrenade>>> = {
@@ -57,7 +62,7 @@ export const GRENADES: Readonly<Record<GenreGrenade, Readonly<ProfilGrenade>>> =
   frag: {
     vitesse: 19, bonusHaut: 3, gravite: 18, rebond: 0.38, frottement: 0.72, roulement: 7, rayonObjet: 0.08, vitesseArret: 0.4,
     mecheMs: 3_500, cuisson: true, percussion: false, rayonM: 6.5, degatsCentre: 600, degatsBord: 150, degatsLanceurMax: 45,
-    attractionM: 0, volMaxMs: 3_500,
+    attractionM: 0, volMaxMs: 3_500, joueurs: { centre: 200, bord: 40 },
   },
   // « tigre à remontoir » : la Monkey Bomb de BO1 en peluche mécanique. Lancé moins fort, il roule peu, joue des cymbales 8 s en attirant
   // tous les tigres à 40 m (BO1 : point d'intérêt de 1 536 u.), puis saute avec eux
@@ -66,14 +71,57 @@ export const GRENADES: Readonly<Record<GenreGrenade, Readonly<ProfilGrenade>>> =
     mecheMs: 8_000, cuisson: false, percussion: false, rayonM: 6.5, degatsCentre: 1_200, degatsBord: 400, degatsLanceurMax: 45,
     attractionM: 40, volMaxMs: 4_000,
   },
+  // (lot tactique) obus du lance-grenades du bus C3 : tendu, explose au premier contact (mur, sol, joueur), souffle de 4,5 m
+  obus: {
+    vitesse: 42, bonusHaut: 1.2, gravite: 14, rebond: 0, frottement: 0, roulement: 0, rayonObjet: 0.1, vitesseArret: 0.4,
+    mecheMs: 0, cuisson: false, percussion: true, rayonM: 4.5, degatsCentre: 130, degatsBord: 30, degatsLanceurMax: 130,
+    attractionM: 0, volMaxMs: 4_000, joueurs: { centre: 130, bord: 30 },
+  },
+  // roquette du bazooka : presque droite et rapide, souffle de 5,5 m, un coup direct tue même sous un bouclier plein
+  roquette: {
+    vitesse: 70, bonusHaut: 0.4, gravite: 3, rebond: 0, frottement: 0, roulement: 0, rayonObjet: 0.12, vitesseArret: 0.4,
+    mecheMs: 0, cuisson: false, percussion: true, rayonM: 5.5, degatsCentre: 200, degatsBord: 50, degatsLanceurMax: 200,
+    attractionM: 0, volMaxMs: 4_500, joueurs: { centre: 200, bord: 50 },
+  },
+  // bidon fumigène (arme unique ou touche B) : rebondit, libère son nuage 1,2 s après le lancer, ne blesse personne
+  fumi: {
+    vitesse: 22, bonusHaut: 2.5, gravite: 18, rebond: 0.4, frottement: 0.75, roulement: 6, rayonObjet: 0.07, vitesseArret: 0.4,
+    mecheMs: 1_200, cuisson: false, percussion: false, rayonM: 0, degatsCentre: 0, degatsBord: 0, degatsLanceurMax: 0,
+    attractionM: 0, volMaxMs: 1_200,
+  },
 };
 
-export const GENRES_GRENADE: readonly GenreGrenade[] = ["frag", "remontoir"];
+/** Les genres de la poche du joueur de zombies (touches G et B) ; les autres sont des projectiles d'armes ou le fumigène (lot tactique). */
+export type GenrePoche = "frag" | "remontoir";
+export const GENRES_GRENADE: readonly GenrePoche[] = ["frag", "remontoir"];
+/** Tous les genres, dans l'ordre du rendu. */
+export const TOUS_GENRES_GRENADE: readonly GenreGrenade[] = ["frag", "remontoir", "obus", "roquette", "fumi"];
 /** Noms affichés (HUD, invites). */
-export const NOMS_GRENADES: Readonly<Record<GenreGrenade, string>> = { frag: "Grenade", remontoir: "Tigre à remontoir" };
+export const NOMS_GRENADES: Readonly<Record<GenreGrenade, string>> = {
+  frag: "Grenade", remontoir: "Tigre à remontoir", obus: "Obus", roquette: "Roquette", fumi: "Fumigène",
+};
+/** (lot tactique) Projectile que tire chaque arme unique du bus C3. */
+export const GENRE_DE_L_UNIQUE: Readonly<Record<ArmeUniqueId, GenreGrenade>> = { lance_grenades: "obus", bazooka: "roquette", fumigene: "fumi" };
+/** Projectile à percussion : explose au premier contact (obus, roquette). */
+export const estPercussion = (g: GenreGrenade): boolean => GRENADES[g].percussion;
 /** Ce que la boîte mystère offre à la place d'une arme. */
 export const NOM_REMONTOIRS = "Tigres à remontoir ×3";
-export const estGenreGrenade = (g: unknown): g is GenreGrenade => g === "frag" || g === "remontoir";
+/** Genre qu'un joueur lance de sa poche (le service des zombies n'accepte que ceux-là dans `lancerGrenade`). */
+export const estGenreGrenade = (g: unknown): g is GenrePoche => g === "frag" || g === "remontoir";
+
+/**
+ * (lot tactique) Grenades à fragmentation en arène et en Battle Royale. Arène : `parVie` grenades à chaque apparition (rendues à la réapparition,
+ * rien ne se cumule d'une vie à l'autre). Battle Royale : ramassées dans le butin, `pile` au plus dans le sac.
+ */
+export const GRENADES_JOUEURS = { parVie: 2, pile: 4 } as const;
+
+/** (lot tactique) Dégâts du souffle sur un joueur à `distance` (m) du centre : 0 hors du rayon ou pour un genre qui ne blesse aucun joueur. */
+export function degatsGrenadeJoueur(genre: GenreGrenade, distance: number): number {
+  const p = GRENADES[genre];
+  if (!p.joueurs || !(distance <= p.rayonM)) return 0;
+  const k = Math.max(0, distance) / p.rayonM;
+  return Math.round(p.joueurs.centre + (p.joueurs.bord - p.joueurs.centre) * k);
+}
 
 /** Inventaire (BO1) : grenades par manche et maximum, remontoirs reçus de la boîte (et maximum). */
 export const INVENTAIRE_GRENADES = { fragParManche: 2, fragMax: 4, remontoirBoite: 3, remontoirMax: 3 } as const;

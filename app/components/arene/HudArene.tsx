@@ -54,6 +54,7 @@ import { useMessagesVifs } from "./hud/useMessagesVifs";
 import { useRetoursTouche } from "./hud/useRetoursTouche";
 import { useRupture } from "./hud/useRupture";
 import { useToucheAppui, useToucheMaintenue } from "./hud/useToucheMaintenue";
+import BlocTactique from "./hud/BlocTactique";
 import styles from "./HudArene.module.css";
 
 const CLE_AIDE = "pdj-fps-aide-vue";
@@ -109,7 +110,6 @@ export default function HudArene(p: PropsHudAreneBr) {
   const verrouille = !!hud?.verrouille;
   const tab = useToucheMaintenue(verrouille, p.touches.scores);
   const carteMaintenue = useToucheMaintenue(verrouille, p.touches.carte);
-  const [carteForcee, setCarteForcee] = useState(false);
   useEffect(() => {
     vueScoresRef.current(tab);
   }, [tab]);
@@ -149,13 +149,11 @@ export default function HudArene(p: PropsHudAreneBr) {
     toucheSpeciale: toucheDe(p.touches, "armeSpeciale", disposition), pousser: vive.pousser, refusAchat,
   });
   const synthese = useMemo(() => syntheseMatch(joueurs, monId, match?.objectif ?? JEU.objectifKills), [joueurs, monId, match?.objectif]);
-  // la frappe aérienne n'existe que dans l'arène (en zombies, une grenade enchaîne vite 5 kills sans rien débloquer ; en Battle Royale,
-  // la série de la présence ne compte pas)
-  const frappeDisponible = !zombies && !br && (synthese.serie >= 5 || !!hud?.frappeDisponible);
-
-  useToucheAppui(verrouille && frappeDisponible, p.touches.frappeAerienne, () => {
-    setCarteForcee((prev) => !prev);
-  });
+  // la frappe aérienne n'existe que dans l'arène. Lot tactique : la frappe en poche vient du serveur (`hud.frappeDisponible`, message `frappe{disponible}`), plus
+  // de la série de la présence (elle restait « disponible » après usage, et dès 6 kills sans rien en poche) ; la touche K est lue par le jeu, qui ouvre le
+  // ciblage (`hud.ciblageFrappe`) : un clic sur la carte n'arrive jamais sous le pointer lock
+  const frappeDisponible = !zombies && !br && !!hud?.frappeDisponible;
+  const ciblageFrappe = !zombies && !br && !!hud?.ciblageFrappe;
   // Coin suivant de la mini-carte (action « minimapCoin ») : réglage enregistré par l'hôte + toast « Mini-carte : bas-gauche »
   const reglagesRef = useRef(p.reglagesHud);
   reglagesRef.current = p.reglagesHud;
@@ -374,10 +372,11 @@ export default function HudArene(p: PropsHudAreneBr) {
             argent={ez?.argent ?? hud.argent ?? 0} gain={gainTexte} cleGain={ez?.gain?.n ?? 0} gainPositif={(ez?.gain?.delta ?? 0) > 0} refus={refusTexte}
           />
         )}
-        {combat && frappeDisponible && !hud.titan && (
-          <div className={styles.banniereFrappe}>
-            ⚡ FRAPPE AÉRIENNE ({t("carte") || "M"})
-          </div>
+        {combat && !zombies && !br && !hud.titan && (
+          <BlocTactique
+            frappeDispo={frappeDisponible} serie={synthese.serie} toucheFrappe={t("frappeAerienne")} frappeRefusee={!!hud.frappeRefusee}
+            fumigeneS={hud.fumigeneS ?? 0} toucheFumigene={t("fumigene")}
+          />
         )}
         {combat && hud.sort && !hud.titan && <IconeSort touche={t("invoquer")} />}
         {combat && br && !enVol && (
@@ -405,7 +404,10 @@ export default function HudArene(p: PropsHudAreneBr) {
             {...(zombies ? {
               grenades: ez?.grenades ?? 0, remontoirs: ez?.remontoirs ?? 0, cuisson: ez?.cuisson ?? null, toucheGrenade: t("grenade"), toucheRemontoir: t("remontoir"),
               zombies: true, toucheCoupRapide: t("couteauRapide"),
-            } : {})}
+            } : {
+              // (lot tactique) arène et Battle Royale : grenades à fragmentation en poche et mèche de la cuisson
+              grenades: hud.grenades ?? 0, cuisson: (hud.grenadeCuisson ?? -1) >= 0 ? hud.grenadeCuisson : null, toucheGrenade: t("grenade"),
+            })}
           />
         )}
       </CoinHud>
@@ -459,14 +461,13 @@ export default function HudArene(p: PropsHudAreneBr) {
       <GrandeCarte
         scene={p.scene ?? null}
         radar={radar}
-        visible={(carteMaintenue || carteForcee) && (!hud.mort || spectateur) && !pause}
+        visible={(carteMaintenue || ciblageFrappe) && (!hud.mort || spectateur) && !pause}
         toucheCarte={t("carte") || "M"}
         effetsReduits={effetsReduits}
-        frappeDisponible={frappeDisponible}
-        surLancerFrappe={(cible) => {
-          p.surLancerFrappe?.(cible);
-          setCarteForcee(false);
-        }}
+        ciblage={p.ciblageFrappe}
+        ciblageOuvert={ciblageFrappe}
+        toucheFrappe={t("frappeAerienne") || "K"}
+        toucheTir={t("tir") || "clic gauche"}
       />
 
       {pause && devOuvert && (

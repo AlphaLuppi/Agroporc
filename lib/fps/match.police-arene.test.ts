@@ -114,7 +114,10 @@ describe("bus C3 décoché : frappes aériennes et fumigènes continuent", () =>
     const s = sansBus();
     tenir(s, { a: [0, 0, 0], b: [20, 0, 0] }, T0);
     const out = s.recevoir("a", { t: "lancerFumigene", p: [1, 0, 1], v: [0, 0, 0] }, T0 + 100);
-    expect(messages(out, "fumigene")).toHaveLength(1);
+    // (lot tactique) le bidon part d'abord (`grenade`), le nuage s'ouvre 1,2 s plus tard là où il retombe
+    expect(messages(out, "grenade")).toHaveLength(1);
+    const apres = avancer(s, T0 + 100, T0 + 1_600, (t) => tenir(s, { a: [0, 0, 0], b: [20, 0, 0] }, t));
+    expect(messages(apres.sorties, "fumigene")).toHaveLength(1);
   });
 
   it("une série de 5 kills donne toujours sa frappe aérienne", () => {

@@ -57,6 +57,7 @@ const COULEUR_MUNITIONS = 0xffd479;
 const COULEUR_BANDAGE = 0xf2f6fa;
 const COULEUR_CROIX = 0xff6a5a;
 const COULEUR_POTION = 0x6fd2ff;
+const COULEUR_GRENADE = 0x9fcf5a;
 /** Halo au sol d'un objet : rayon (m) du disque unité. */
 const RAYON_HALO_M = 0.9;
 /** Taille (m) d'un modèle d'arme posé : le modèle tenu en main est à l'échelle 1, on le pose un peu plus grand pour qu'il se lise à 10 m. */
@@ -101,8 +102,12 @@ export function creerRenduBr(scene: THREE.Scene): RenduBr {
   })(), 20));
   const geoFlacon = garder(aretes(new THREE.CylinderGeometry(0.1, 0.1, 0.22, 8), 20));
   const geoGoulot = garder(aretes(boite(0.06, 0.1, 0.06, 0, 0.16, 0), 20));
+  // (lot tactique) grenade à fragmentation posée : corps ovoïde et goupille en fil de fer olive
+  const geoGrenade = garder(aretes(new THREE.SphereGeometry(0.12, 8, 6), 20));
+  const geoGoupille = garder(aretes(boite(0.05, 0.1, 0.05, 0, 0.14, 0), 20));
   const ligne = (hex: number) => garder(new THREE.LineBasicMaterial({ color: hex, transparent: true, opacity: 0.95 }));
   const matMunitions = ligne(COULEUR_MUNITIONS), matBandage = ligne(COULEUR_BANDAGE), matCroix = ligne(COULEUR_CROIX), matPotion = ligne(COULEUR_POTION);
+  const matGrenade = ligne(COULEUR_GRENADE);
 
   /** Groupe d'un objet de butin : l'arme du registre, ou une petite forme en fil de fer pour les munitions et les soins. */
   function creerModele(o: ObjetBr): ModeleObjet {
@@ -122,6 +127,7 @@ export function creerRenduBr(scene: THREE.Scene): RenduBr {
     };
     if (o.genre === "munitions") ajout(geoMunitions[o.ref === "moyennes" ? "moyennes" : o.ref === "cartouches" ? "cartouches" : "legeres"], matMunitions);
     else if (o.genre === "bandage") { ajout(geoBandage, matBandage); ajout(geoCroix, matCroix); }
+    else if (o.genre === "grenade") { ajout(geoGrenade, matGrenade, 0.1); ajout(geoGoupille, matGrenade, 0.1); }
     else { ajout(geoFlacon, matPotion); ajout(geoGoulot, matPotion); }
     groupe.scale.setScalar(echelleQuantite(o.qte));
     return { groupe, dispose() { groupe.removeFromParent(); } };

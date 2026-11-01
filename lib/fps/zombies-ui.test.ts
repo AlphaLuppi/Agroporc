@@ -275,7 +275,8 @@ describe("modèle du lobby des zombies", () => {
     const z = commandesLobbyZombies(touchesParDefaut());
     expect(z.find((c) => c.libelle.startsWith("Acheter"))?.touches).toBe("E");
     expect(z.some((c) => /voiture/i.test(c.libelle))).toBe(false);
-    expect(z.length).toBe(commandes(touchesParDefaut(), null).length - 3);
+    // l'aide de l'arène en partie compte trois lignes tactiques de plus (grenade, fumigène, frappe aérienne : lot tactique)
+    expect(z.length).toBe(commandes(touchesParDefaut(), null).length - 6);
     expect(z.at(-1)).toEqual({ touches: "G", libelle: "Grenade (maintenir : cuire la mèche)" });
   });
 

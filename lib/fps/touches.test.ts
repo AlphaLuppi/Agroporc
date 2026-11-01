@@ -113,38 +113,73 @@ describe("touches de l'arène", () => {
     expect(d.siege).toEqual(["KeyF", null]);
     expect(d.carte).toEqual(["KeyM", null]);
     expect(d.minimapCoin).toEqual([null, null]);
-    expect(d.invoquer).toEqual(["KeyG", null]);
+    // (lot tactique) G est la grenade dans les trois modes : le sort d'invocation de l'arène est sur Y
+    expect(d.invoquer).toEqual(["KeyY", null]);
+    expect(d.grenade).toEqual(["KeyG", null]);
     // T reste au chat vocal : le sort du tigre ne partage aucune touche avec « parler »
     expect(d.parler).toEqual(["KeyT", null]);
   });
 
-  it("une sauvegarde qui a déjà mis G ailleurs laisse « invoquer » sans touche, signalé dans le menu pause", () => {
-    const cfg = normaliser({ ...touchesParDefaut(), recharger: ["KeyG", null], invoquer: undefined });
-    expect(cfg.recharger).toEqual(["KeyG", null]);
+  it("une sauvegarde qui a déjà mis Y ailleurs laisse « invoquer » sans touche, signalé dans le menu pause", () => {
+    const cfg = normaliser({ ...touchesParDefaut(), recharger: ["KeyY", null], invoquer: undefined });
+    expect(cfg.recharger).toEqual(["KeyY", null]);
     expect(cfg.invoquer).toEqual([null, null]);
     expect(actionsSansTouche(cfg)).toContain("invoquer");
   });
 
-  it("(v8) grenades des zombies : G et B, partagés avec le sort et le fumigène de l'arène, jamais avec une action « en vie »", () => {
+  it("(lot tactique) grenade : G dans tous les modes, une action « en vie » ; le tigre à remontoir (B) reste aux zombies", () => {
     const d = touchesParDefaut();
     expect(d.grenade).toEqual(["KeyG", null]);
     expect(d.remontoir).toEqual(["KeyB", null]);
-    expect(conflit("grenade", "invoquer")).toBe(false);
+    expect(ACTIONS_ZOMBIES).not.toContain("grenade");
+    // la grenade existe en arène et en Battle Royale : elle se dispute les touches avec le sort, le fumigène et la frappe de l'arène
+    expect(conflit("grenade", "invoquer")).toBe(true);
+    expect(conflit("grenade", "fumigene")).toBe(true);
+    expect(conflit("grenade", "frappeAerienne")).toBe(true);
     expect(conflit("remontoir", "fumigene")).toBe(false);
     expect(conflit("grenade", "remontoir")).toBe(true);
     expect(conflit("grenade", "recharger")).toBe(true);
     expect(conflit("invoquer", "recharger")).toBe(true);
     expect(conflit("passer", "grenade")).toBe(false);
-    expect(indexTouches(d).get("KeyG")).toEqual(["invoquer", "grenade"]);
-    // une touche « en vie » sur G dépossède les deux modes
+    expect(indexTouches(d).get("KeyG")).toEqual(["grenade"]);
+    expect(indexTouches(d).get("KeyY")).toEqual(["invoquer"]);
+    // une touche « en vie » sur G dépossède la grenade
     const { cfg } = assigner(d, "recharger", 1, "KeyG");
-    expect(cfg.invoquer).toEqual([null, null]);
     expect(cfg.grenade).toEqual([null, null]);
-    // la grenade sur une touche de l'arène ne la lui prend pas ; sur une touche des zombies, si
+    // la grenade sur la touche du sort la lui prend (même mode) ; sur une touche des zombies aussi
     const r = assigner(d, "grenade", 1, "KeyK");
-    expect(r.cfg.frappeAerienne).toEqual(["KeyK", null]);
-    expect(r.depossedee).toBeNull();
-    expect(assigner(d, "grenade", 1, "KeyB").depossedee).toBe("remontoir");
+    expect(r.cfg.frappeAerienne).toEqual([null, null]);
+    expect(r.depossedee).toBe("frappeAerienne");
+    // B : le fumigène de l'arène ET le remontoir des zombies perdent leur touche (la grenade est active dans les deux modes)
+    const b = assigner(d, "grenade", 1, "KeyB").cfg;
+    expect(b.fumigene).toEqual([null, null]);
+    expect(b.remontoir).toEqual([null, null]);
+  });
+
+  it("(lot tactique) une sauvegarde qui avait G au sort d'invocation garde G à la grenade et rend Y au sort", () => {
+    const cfg = normaliser({ ...touchesParDefaut(), invoquer: ["KeyG", null], grenade: ["KeyG", null] });
+    expect(cfg.grenade).toEqual(["KeyG", null]);
+    expect(cfg.invoquer).toEqual(["KeyY", null]);
+    expect(actionsSansTouche(cfg)).toEqual([]);
+    // sauvegarde où le sort avait G et où Y est pris : le sort reste sans touche, signalé
+    const pris = normaliser({ ...touchesParDefaut(), invoquer: ["KeyG", null], grenade: ["KeyG", null], recharger: ["KeyY", null] });
+    expect(pris.invoquer).toEqual([null, null]);
+    expect(actionsSansTouche(pris)).toContain("invoquer");
+  });
+
+  it("(lot tactique) chaque touche tactique (grenade, fumigène, frappe, sort) a une touche, un libellé et sa place dans le menu des commandes", () => {
+    const d = touchesParDefaut();
+    for (const a of ["grenade", "fumigene", "frappeAerienne", "invoquer"] as const) {
+      expect(d[a][0], a).not.toBeNull();
+      expect(LIBELLES_ACTIONS[a].length, a).toBeGreaterThan(0);
+      expect(GROUPES_ACTIONS.flatMap((g) => g.actions), a).toContain(a);
+    }
+    // aucune des touches tactiques ne partage un défaut avec une autre action active en même temps
+    for (const a of ["grenade", "fumigene", "frappeAerienne", "invoquer"] as const) {
+      const code = d[a][0]!;
+      const autres = ACTIONS.filter((b) => b !== a && d[b].includes(code) && conflit(a, b));
+      expect(autres, `${a} (${code})`).toEqual([]);
+    }
   });
 
   it("(v11) pause de la partie de zombies : P, contexte des zombies (sans conflit avec l'arène), conflit avec les autres actions des zombies et « en vie »", () => {
@@ -172,10 +207,10 @@ describe("touches de l'arène", () => {
     expect(actionsSansTouche(prise)).not.toContain("pauseZ");
   });
 
-  it("(v8) une sauvegarde d'avant les grenades leur donne G et B, même si le sort et le fumigène les ont", () => {
-    const brut = Object.fromEntries(ACTIONS.filter((a) => !ACTIONS_ZOMBIES.includes(a)).map((a) => [a, touchesParDefaut()[a]]));
+  it("(v8) une sauvegarde d'avant les grenades leur donne G et B (B : le tigre à remontoir des zombies, qui partage B avec le fumigène)", () => {
+    const brut = Object.fromEntries(ACTIONS.filter((a) => !ACTIONS_ZOMBIES.includes(a) && a !== "grenade").map((a) => [a, touchesParDefaut()[a]]));
     const cfg = normaliser(brut);
-    expect(cfg.invoquer).toEqual(["KeyG", null]);
+    expect(cfg.invoquer).toEqual(["KeyY", null]);
     expect(cfg.grenade).toEqual(["KeyG", null]);
     expect(cfg.remontoir).toEqual(["KeyB", null]);
     expect(actionsSansTouche(cfg)).toEqual([]);

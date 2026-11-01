@@ -40,7 +40,9 @@ import type { SceneData } from "../agroparc3d/types";
 import { C, construireDecor, creerEtatDestruction, qualiteParDefaut } from "../agroparc3d/decor";
 import { construireMonde, detruireBatiment, normaleImpact, poserBreche, releverBatiment, type Creux, type Monde } from "./collision";
 import { BORNES_ZOMBIES, FOCUS_ZOMBIES, PLAFOND_INTERIEUR_M, construireMondeZombies, donneesZombies } from "./zombies-carte";
-import { plafondBatimentsCreux } from "./grenades";
+import { GENRE_DE_L_UNIQUE, plafondBatimentsCreux } from "./grenades";
+import { ZONE_CARTE } from "./minimap";
+import { decisionToucheFrappe, demarrerCiblage, deplacerCiblage, type PointCiblage, type ZoneCiblage } from "./ciblage-frappe";
 import { creerControleurGrenades, type LancerDemande } from "./jeu-grenades";
 import { creerRenduGrenades } from "./rendu-grenades";
 import { CorpsTigres } from "./corps-tigres";
@@ -117,7 +119,7 @@ import { creerSons, type PositionSon } from "./sons";
 import { angleRelatif, anglesVers, fovVerticalDeg, lissage, panSon } from "./vue";
 import { TANGAGE_MAX, directionVisee, rotationCamera, tangageDeVue } from "./jeu-visee";
 import { ControleurArmes } from "./jeu-equipement";
-import { meleeDe, serialiserSlots } from "./equipement";
+import { estUnique, meleeDe, serialiserSlots } from "./equipement";
 import { ControleurKillcam } from "./jeu-killcam";
 import { MondeJeu } from "./jeu-monde";
 import { ControleurVehicule, commandesDepuisEntrees, recalerOccupants } from "./jeu-vehicule";
@@ -360,8 +362,21 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   const brouillard = scene.fog as THREE.FogExp2;
   const couleurFond = new THREE.Color();
   // (v8) grenades : la main du joueur (cuisson), les grenades prédites et diffusées (trajectoires du serveur), leur rendu
-  const grenades = modeZ ? creerControleurGrenades(monde, plafondBatimentsCreux(monde, PLAFOND_INTERIEUR_M)) : null;
-  const rGrenades = modeZ ? creerRenduGrenades(scene) : null;
+  // (lot tactique) arène et Battle Royale aussi : grenade de la touche G, obus / roquette / bidon des armes uniques du bus C3, fumigène de la touche B
+  // (aucun faux plafond hors zombies, comme le serveur)
+  const grenades = creerControleurGrenades(monde, modeZ ? plafondBatimentsCreux(monde, PLAFOND_INTERIEUR_M) : undefined);
+  const rGrenades = creerRenduGrenades(scene);
+  /** (arène, Battle Royale) grenades à fragmentation en poche : `stockGrenades` (arène) ou `inventaire.grenade` (sac du Battle Royale) */
+  let stockG = 0;
+  /** (arène) prochain fumigène de la touche B permis (horloge locale, s) : le serveur n'en accepte qu'un toutes les 15 s */
+  let fumigeneProchainT = 0;
+  /**
+   * (arène) frappe aérienne en poche (message `frappe{disponible}` du serveur, effacé à la mort ou au lancer) et ciblage ouvert : réticule en mètres du
+   * monde, déplacé par la souris prise (cf. `ciblage-frappe.ts` : un clic sur la carte n'arrive jamais sous le pointer lock). Le HUD lit les deux.
+   */
+  let frappeDispo = false;
+  let ciblage: PointCiblage | null = null;
+  const zoneCiblage: ZoneCiblage = ZONE_CARTE(data, "arene");
   // (v8) armes : projectiles d'arme (prédits et diffusés), arcs, bourrasques, givre ; flammes des tigres en feu (sources de `feux`)
   const projectilesZ = modeZ ? creerControleurProjectiles(monde, plafondBatimentsCreux(monde, PLAFOND_INTERIEUR_M)) : null;
   const rEffetsArmes = modeZ ? creerRenduEffetsArmes(scene) : null;
@@ -887,7 +902,11 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     if (st.projectile || st.souffle) {
       client.envoyer({ t: "tir", arme, o, d: [dirs[0]], touches: [], ...(gauche ? { main: "g" as const } : {}) });
       // même origine que le serveur (l'œil) : la trajectoire prédite est celle qu'il calculera
-      if (st.projectile) projectilesZ?.predire(arme, amelioreeZ, o, dirs[0], client.maintenantServeur(), client.id ?? "");
+      if (estUnique(arme)) {
+        // (lot tactique) arme unique du bus C3 : obus, roquette ou bidon fumigène, vu en vol dès le tir (même trajectoire que le serveur)
+        grenades.predire(GENRE_DE_L_UNIQUE[arme], o, dirs[0], client.maintenantServeur(), 0, client.id ?? "");
+        secousse = Math.max(secousse, arme === "bazooka" ? 0.08 : 0.04);
+      } else if (st.projectile) projectilesZ?.predire(arme, amelioreeZ, o, dirs[0], client.maintenantServeur(), client.id ?? "");
       else {
         rEffetsArmes?.souffle(depart, dirs[0], profilZ?.souffle?.portee ?? a.portee);
         secousse = Math.max(secousse, 0.05);
@@ -1133,7 +1152,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   /** L'objet à portée (≤ 2,5 m) et le texte de l'invite « [E] … » ; null hors BR, en vol, mort ou sans objet. */
   function inviteBr(): InviteRamassage | null {
     if (!modeBR || !peutAgir() || enKillcam()) return null;
-    return inviteRamassage(butin, moi.p, armes.equipement(), { bandage: bandages, potion: potions }, monde);
+    return inviteRamassage(butin, moi.p, armes.equipement(), { bandage: bandages, potion: potions, grenade: stockG }, monde);
   }
 
   /** E en BR : ramasse l'objet le plus proche (le serveur est juge : distance, pile, arme compatible) ; refus local si cela ne servirait à rien. */
@@ -1238,28 +1257,80 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   }
 
   function lancerFrappe(cible: Vec3) {
-    if (modeBR || !peutAgir() || enKillcam() || entracte) return;
+    if (modeBR || modeZ || !peutAgir() || enKillcam() || entracte) return;
     client.envoyer({ t: "lancerFrappe", cible });
+    frappeDispo = false;
     sons.sireneFrappe();
   }
 
+  /** Peut-on cibler une frappe : en vie, à pied, pas de rejeu ni d'entracte (même condition que le lancer, plus le volant et le titan). */
+  const peutCiblerFrappe = () => !modeBR && !modeZ && peutAgir() && !enKillcam() && !entracte && !vehicule.actif() && !pilote();
+  /** Ferme le ciblage sans lancer (annulation, mort, perte de la souris, entracte). */
+  function fermerCiblageFrappe() {
+    if (!ciblage) return;
+    ciblage = null;
+    emettreHud(true);
+  }
+  /** Touche de frappe (K) : ouvre le ciblage (réticule sous mes pieds), le ferme, ou dit pourquoi rien ne se passe. */
+  function toucheFrappe() {
+    if (modeBR || modeZ) return;
+    const d = decisionToucheFrappe({ dispo: frappeDispo, ciblageOuvert: ciblage !== null, peutAgir: peutCiblerFrappe() });
+    if (d === "annuler") { fermerCiblageFrappe(); return; }
+    if (d === "ouvrir") {
+      ciblage = demarrerCiblage(zoneCiblage, moi.p);
+      tirMaintenu = false;
+      viseMaintenu = false;
+      emettreHud(true);
+      return;
+    }
+    if (d === "indisponible") { sons.achat(false); evenementFrappeRefusee(); }
+  }
+  /** Le tir (clic gauche) valide le ciblage : la frappe part sur le réticule. */
+  function validerCiblageFrappe() {
+    if (!ciblage) return;
+    const c = ciblage;
+    ciblage = null;
+    lancerFrappe([c.x, 0, c.z]);
+    emettreHud(true);
+  }
+  /** Touche de frappe pressée sans frappe en poche : un toast du HUD (« encore n kills d'affilée ») plutôt qu'un silence. */
+  let frappeRefuseeT = -Infinity;
+  function evenementFrappeRefusee() { frappeRefuseeT = t; emettreHud(true); }
+
+  /** Délai (s) entre deux fumigènes de la touche B : le serveur n'en accepte qu'un toutes les 15 s (`FUMIGENE_B_MS`). */
+  const DELAI_FUMIGENE_S = 15;
+  /** Secondes avant le prochain fumigène de la touche B (0 = prêt), pour le HUD. */
+  const fumigeneRestantS = () => Math.max(0, fumigeneProchainT - t);
+
+  /**
+   * Fumigène (touche B, arène) : un bidon part en cloche dans la direction de la visée (visible en vol, prédit tout de suite avec la trajectoire du
+   * serveur), le nuage s'ouvre 1,2 s plus tard là où il retombe. Un seul toutes les 15 s ; avant, le nuage naissait dans la tête du lanceur.
+   */
   function lancerFumigene() {
-    if (modeBR || !peutAgir() || enKillcam() || entracte || vehicule.actif() || pilote()) return;
+    if (modeBR || modeZ || !peutAgir() || enKillcam() || entracte || vehicule.actif() || pilote()) return;
+    if (fumigeneRestantS() > 0) { sons.achat(false); return; }
+    fumigeneProchainT = t + DELAI_FUMIGENE_S;
     const o = oeil();
     const dir = directionVisee(lacet, tangage, 0);
-    const v: Vec3 = [dir[0] * 18, dir[1] * 18 + 4, dir[2] * 18];
-    client.envoyer({ t: "lancerFumigene", p: [o[0], o[1], o[2]], v });
+    client.envoyer({ t: "lancerFumigene", p: [o[0], o[1], o[2]], v: [dir[0] * 18, dir[1] * 18, dir[2] * 18] });
+    grenades.predire("fumi", [o[0], o[1], o[2]], dir, client.maintenantServeur(), 0, client.id ?? "");
     sons.fumigene();
   }
 
-  // ---------- grenades (v8, zombies) ----------
-  /** Ce qu'il me reste (dernier `zombies{etat}`, moins mes lancers pas encore confirmés). */
+  // ---------- grenades (v8, zombies ; lot tactique : arène et Battle Royale) ----------
+  /** Ce qu'il me reste (zombies : dernier `zombies{etat}` ; arène et Battle Royale : `stockG`), moins mes lancers pas encore confirmés. */
   function stockGrenades(genre: "frag" | "remontoir"): number {
-    const z = partieZ?.joueurs.find((x) => x.id === client.id);
-    const n = genre === "frag" ? z?.grenades ?? 0 : z?.remontoirs ?? 0;
-    return Math.max(0, n - (grenades?.enAttente(genre) ?? 0));
+    let n: number;
+    if (modeZ) {
+      const z = partieZ?.joueurs.find((x) => x.id === client.id);
+      n = genre === "frag" ? z?.grenades ?? 0 : z?.remontoirs ?? 0;
+    } else n = genre === "frag" ? stockG : 0;
+    return Math.max(0, n - grenades.enAttente(genre));
   }
-  const peutLancerGrenade = () => modeZ && peutAgir() && !aTerreZ && !elimineZ && !enKillcam();
+  /** Zombies : debout et en partie ; arène et Battle Royale : en vie, à pied (ni au volant, ni aux commandes du titan, ni en vol), hors entracte. */
+  const peutLancerGrenade = () => (modeZ
+    ? peutAgir() && !aTerreZ && !elimineZ && !enKillcam()
+    : peutAgir() && !enKillcam() && !entracte && !vehicule.actif() && !pilote());
   /** Lancer parti : message au serveur (œil, visée, cuisson), prédiction locale dessinée tout de suite, son. */
   function envoyerGrenade(d: LancerDemande) {
     if (!grenades) return;
@@ -1288,7 +1359,9 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     if (c.lancer && peutLancerGrenade()) envoyerGrenade(c.lancer);
     const ts = client.maintenantServeur();
     const liste = grenades.affichees(ts);
-    rGrenades.maj(liste, t);
+    // pendant le rejeu de la killcam rien du présent ne se superpose au passé (arène : les projectiles d'aujourd'hui ne volent pas dans le rejeu d'hier)
+    rGrenades.maj(enReplay ? [] : liste, t);
+    if (enReplay) { rebondsVusT = ts; return; }
     for (const r of grenades.rebonds(rebondsVusT, ts)) sons.grenadeRebond(r.force, positionSon(r.p));
     rebondsVusT = ts;
     if (t - cymbalesT > 0.32) {
@@ -1677,6 +1750,11 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     viseMaintenu = false;
     tirMaintenu = false;
     accroupiBascTenu = false;
+    // la frappe en poche et le ciblage ouvert sont perdus avec la vie (le serveur efface aussi la frappe)
+    frappeDispo = false;
+    ciblage = null;
+    stockG = modeBR ? stockG : 0;
+    grenades.annuler();
     // l'occupant d'un véhicule en est éjecté à sa mort
     vehicule.sortir();
     embarquementFin = 0;
@@ -1784,6 +1862,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       }
       case "match":
         entracte = !modeBR && m.match.phase === "entracte";
+        if (entracte) { frappeDispo = false; ciblage = null; } // nouveau match : plus de frappe en poche
         break;
       case "snap": {
         interp.ajouter({ ts: m.ts, j: m.j });
@@ -2259,8 +2338,18 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
         sons.klaxonBus();
         break;
       case "frappe":
+        if (m.evenement === "disponible") {
+          // (lot tactique) la série de 5 kills est atteinte : la frappe est en poche, le HUD le dit et donne la touche (avant : rien ne la mémorisait côté client,
+          // le HUD devinait d'après la série de la présence, et la sirène retentissait ici comme pour un lancer)
+          if (m.joueur === client.id) { frappeDispo = true; sons.bonus(true); emettreHud(true); }
+          break;
+        }
+        if (m.evenement === "perdue") {
+          if (m.joueur === client.id) { frappeDispo = false; ciblage = null; emettreHud(true); }
+          break;
+        }
         sons.sireneFrappe();
-        if (m.evenement === "lancee" && m.joueur === client.id) sons.alerte("tigre");
+        if (m.joueur === client.id) { frappeDispo = false; ciblage = null; sons.alerte("tigre"); emettreHud(true); }
         break;
       case "fumigene":
         sons.fumigene();
@@ -2278,8 +2367,24 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
         break;
       }
       case "ramassageArme":
-        if (m.id === client.id) sons.ramassage("arme");
+        // (lot tactique) `m.id` est l'id de l'arme au sol, `m.par` le pseudo du ramasseur : l'ancien test `m.id === client.id` ne jouait jamais le son
+        if (m.par === pseudoDe(client.id ?? "")) sons.ramassage("arme");
         break;
+      case "stockGrenades":
+        // arène : mes grenades à fragmentation (rendues à chaque apparition, comptées à chaque lancer)
+        stockG = m.n;
+        break;
+      case "grenadeExplose": {
+        // (lot tactique) arène et Battle Royale : le projectile disparaît, l'explosion se dessine et s'entend ; un bidon fumigène n'explose pas (son nuage arrive par `fumigene`)
+        grenades.exploser(m.id);
+        if (m.genre === "fumi" || enReplay) break;
+        ajouterEcho(radarFrame, m.p[0], m.p[2], false);
+        feux.explosion(m.p);
+        sons.grenadeExplosion(positionSon(m.p));
+        const dE = Math.hypot(m.p[0] - moi.p[0], m.p[1] - moi.p[1], m.p[2] - moi.p[2]);
+        if (vivant && dE < m.rayon * 3) secousse = Math.max(secousse, 0.08 * (1 - dE / (m.rayon * 3)) * (Math.random() < 0.5 ? -1 : 1));
+        break;
+      }
       // ---- Battle Royale (v8) ----
       case "br": {
         if (!modeBR) break;
@@ -2331,6 +2436,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
         if (!modeBR) break;
         bandages = m.bandage;
         potions = m.potion;
+        stockG = m.grenade ?? 0;
         if (m.usage && usageSoin?.objet !== m.usage.objet) sons.usageSoin(m.usage.objet, "debut");
         usageSoin = m.usage ? { objet: m.usage.objet, finT: m.usage.finT } : null;
         break;
@@ -2358,10 +2464,13 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
         case "sprint": dashDemande = true; break;
         case "recharger": demarrerRecharge(); break;
         case "tir":
+          if (ciblage) { validerCiblageFrappe(); break; } // frappe aérienne : le tir valide le réticule
           if (vivant) { tirMaintenu = true; tirPresse = t; tirConsomme = false; }
           else if (spectateurActif()) suivreSpectateur("suivant");
           break;
-        case "visee": viseMaintenu = !estMelee(armes.armeEnMain()); visePresse = t; viseConsomme = false; break; // pas de visée avec une arme blanche
+        case "visee":
+          if (ciblage) { fermerCiblageFrappe(); break; }
+          viseMaintenu = !estMelee(armes.armeEnMain()); visePresse = t; viseConsomme = false; break; // pas de visée avec une arme blanche
         case "accroupi": if (accroupiBascule) accroupiBascTenu = !accroupiBascTenu; break;
         case "armePrincipale": case "armeSecondaire": case "couteau": case "armeSpeciale": {
           // (v10, zombies) à partir de deux armes, l'arme blanche ne se tient plus seule : la touche 3 prend l'Arme 3
@@ -2380,9 +2489,11 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
         case "passer": if (kc.actif() && kc.touchePasserPermise()) kc.passer(); break;
         case "invoquer": if (!modeZ) invoquer(); break;
         case "fumigene": if (!modeZ) lancerFumigene(); break;
-        case "frappeAerienne": break;
+        // (lot tactique) K ouvre le ciblage de la frappe aérienne (avant : `break` vide, la touche ne faisait rien)
+        case "frappeAerienne": toucheFrappe(); break;
         // (v8) zombies : G tire la goupille (maintenir : cuire), B lance le tigre à remontoir
-        case "grenade": if (modeZ) presserGrenade("frag"); break;
+        // (lot tactique) G lance aussi une grenade en arène et en Battle Royale ; le sort d'invocation de l'arène a quitté G (touche Y)
+        case "grenade": presserGrenade("frag"); break;
         case "remontoir": if (modeZ) presserGrenade("remontoir"); break;
         case "zoomLunette": if (lunetteActive()) changerZoom(1, true); break;
         case "parler": voix.parler(true); break;
@@ -2423,6 +2534,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     relacher(e.code);
   };
   const toutRelacher = () => {
+    if (ciblage) { ciblage = null; } // souris perdue (Échap, alt-tab) : le ciblage s'abandonne, la frappe reste en poche
     appuyees.clear();
     tirMaintenu = false;
     viseMaintenu = false;
@@ -2441,6 +2553,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   const surMouseMove = (e: MouseEvent) => {
     if (!verrouille() || !gel.peutRegarder()) return;
     const dx = borne(e.movementX || 0, -250, 250), dy = borne(e.movementY || 0, -250, 250);
+    // ciblage de la frappe aérienne : la souris déplace le réticule de la grande carte, la caméra reste où elle est
+    if (ciblage) { ciblage = deplacerCiblage(ciblage, dx, dy, zoneCiblage); return; }
     // à fort zoom, la souris tourne moins vite (même déplacement à l'écran)
     const echelle = Math.tan((fovH * Math.PI) / 360) / Math.tan(Math.PI / 4);
     const s = SENS_RAD_PX * sensibilite * echelle;
@@ -2625,6 +2739,18 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       devRegles: reglesDev, devHote, devEvenements, devRefus: refusDev.texte && Date.now() < refusDev.jusqua ? refusDev.texte : "",
       sort: vivant && mondeTigres.aCharge(),
       titan: pilote(),
+      // (lot tactique) arène et Battle Royale : grenades en poche et mèche de la cuisson (0 à 1, arrondie à 0,1 ; -1 hors cuisson) ; arène : frappe
+      // aérienne en poche, ciblage ouvert, rappel d'une touche pressée sans frappe, secondes avant le prochain fumigène (touche B)
+      ...(!modeZ ? {
+        grenades: vivant ? stockGrenades("frag") : 0,
+        grenadeCuisson: ((c) => (c === null ? -1 : Math.round(c * 10) / 10))(grenades.cuisson(t * 1000)),
+      } : {}),
+      ...(!modeZ && !modeBR ? {
+        frappeDisponible: vivant && frappeDispo,
+        ciblageFrappe: ciblage !== null,
+        frappeRefusee: t - frappeRefuseeT < 2.5,
+        fumigeneS: vivant ? Math.ceil(fumigeneRestantS()) : 0,
+      } : {}),
       ...(modeZ ? {
         ...gel.hud(Date.now()),
         // toujours présent : `emettreHud` compare les clés de l'état courant, un champ qui disparaîtrait ne serait jamais vu comme changé
@@ -3641,6 +3767,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     majVoix();
     majMonstres(dt);
     majZombies(dt);
+    if (!modeZ) majGrenades();
+    if (ciblage && !peutCiblerFrappe()) fermerCiblageFrappe(); // monté dans une voiture, tué, entracte… : le ciblage se referme
     majBr(dt);
     effets.maj(dt);
 
@@ -3736,6 +3864,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
     },
     suivreSpectateur(sens) { suivreSpectateur(sens); },
     lancerFrappe(cible) { lancerFrappe(cible); },
+    ciblageFrappe() { return ciblage; },
     lancerFumigene() { lancerFumigene(); },
     monterBus() { monterBus(); },
     touches(cfg: ConfigTouches) { config = cfg; index = indexTouches(cfg); toutRelacher(); },

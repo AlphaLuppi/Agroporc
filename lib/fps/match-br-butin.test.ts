@@ -272,6 +272,31 @@ describe("ramasser", () => {
     expect(msgs(b.butin.synchro("b"), "inventaire")[0]).toMatchObject({ bandage: 0, potion: 0 });
   });
 
+  it("(lot tactique) grenades : pile de 4, inventaire privé, une de moins à chaque lancer, lâchées à la mort sous forme de tas", () => {
+    const b = banc({ nb: 480 });
+    for (let k = 0; k < 4; k++) {
+      const s = b.prendre("a", trouver(b, genre("grenade")));
+      expect(msgs(s, "inventaire")[0]).toMatchObject({ grenade: k + 1 });
+      expect(s.find((x) => x.m.t === "inventaire")!.a).toBe("a");
+    }
+    expect(msgs(b.prendre("a", trouver(b, genre("grenade"))), "ramasse")[0]).toMatchObject({ ok: false, raison: "inutile" });
+    expect(b.butin.stock("a").grenade).toBe(4);
+    expect(b.butin.stock("b").grenade).toBe(0);
+    // lancer : le sac diminue, le message d'inventaire n'annonce plus `grenade` à zéro
+    const j = b.j("a");
+    expect(msgs(b.butin.retirerGrenade(j), "inventaire")[0]).toMatchObject({ grenade: 3 });
+    for (let k = 0; k < 3; k++) b.butin.retirerGrenade(j);
+    expect(b.butin.stock("a").grenade).toBe(0);
+    expect(b.butin.retirerGrenade(j)).toEqual([]);
+    expect(msgs(b.butin.synchro("a"), "inventaire")[0]).not.toHaveProperty("grenade");
+    // un sac de 3 tombe en un tas de 3 à la mort
+    for (let k = 0; k < 3; k++) b.prendre("a", trouver(b, genre("grenade")));
+    j.p = [10, 0, 10];
+    b.butin.lacherALaMort(j, T0);
+    expect(b.sol().find((o) => o.genre === "grenade" && o.qte === 3)).toBeDefined();
+    expect(b.butin.stock("a").grenade).toBe(0);
+  });
+
   it("un tas de soins lâché à la mort ne tient pas toujours dans la pile : le reste reste au sol sous un nouvel id", () => {
     const b = banc({ nb: 480 });
     const mort = b.j("b");

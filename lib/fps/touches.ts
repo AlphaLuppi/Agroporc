@@ -6,7 +6,8 @@
  * Chaque action a deux emplacements ; une touche ne sert qu'à une action à la fois, sauf entre contextes qui ne coexistent jamais (`conflit`) :
  * le contexte « mort » (`ACTIONS_MORT` : passer le rejeu de la killcam) et le contexte « en vie » (on ne saute pas pendant qu'on regarde son
  * rejeu, Espace sert aux deux) ; les actions propres à l'arène (`ACTIONS_ARENE` : sort, fumigène, frappe) et celles propres aux zombies
- * (`ACTIONS_ZOMBIES` : grenades, v8 ; pause de la partie, v11), qui ne sont jamais actives ensemble : G invoque le tigre dans l'arène et lance une grenade en zombies.
+ * (`ACTIONS_ZOMBIES` : tigre à remontoir, v8 ; pause de la partie, v11), qui ne sont jamais actives ensemble : B lance le fumigène dans l'arène et le tigre à
+ * remontoir en zombies. G lance la grenade dans les trois modes (action « en vie », lot tactique) ; le sort d'invocation de l'arène est sur Y.
  * Échap n'est jamais assignable : elle libère toujours la souris (menu pause).
  */
 
@@ -37,8 +38,9 @@ export const ACTIONS_V1: readonly Action[] = [
  */
 export const ACTIONS_NOUVELLES: readonly Action[] = [
   "armePrincipale", "armeSecondaire", "couteau", "armeSpeciale", "armePrecedente", "couteauRapide",
-  "accroupi", "interagir", "siege", "carte", "minimapCoin", "passer", "zoomLunette", "parler", "invoquer",
-  "fumigene", "frappeAerienne", "grenade", "remontoir", "pauseZ",
+  // (lot tactique) `grenade` passe AVANT `invoquer` : G est la grenade partout, une sauvegarde qui donnait G au sort le lui laisse et le sort prend Y
+  "accroupi", "interagir", "siege", "carte", "minimapCoin", "passer", "zoomLunette", "parler", "grenade", "invoquer",
+  "fumigene", "frappeAerienne", "remontoir", "pauseZ",
   "soigner", "potion", "lacher", "spectateurSuivant", "spectateurPrecedent",
   "menuDev",
 ];
@@ -49,9 +51,17 @@ export const ACTIONS_NOUVELLES: readonly Action[] = [
  * précédent / suivant » (mort), sans conflit puisque les deux ne sont jamais actives ensemble.
  */
 export const ACTIONS_MORT: readonly Action[] = ["passer", "spectateurSuivant", "spectateurPrecedent"];
-/** Actions qui n'existent que dans l'arène (sort du tigre, fumigène, frappe aérienne) ou que dans le mode zombies (grenades, v8). */
+/**
+ * Actions qui n'existent que dans l'arène (sort du tigre, fumigène, frappe aérienne) ou que dans le mode zombies (tigre à remontoir, pause de la partie).
+ * (lot tactique) `grenade` n'est plus propre aux zombies : G lance une grenade en arène, en Battle Royale et en zombies, c'est une action « en vie ».
+ */
 export const ACTIONS_ARENE: readonly Action[] = ["invoquer", "fumigene", "frappeAerienne"];
-export const ACTIONS_ZOMBIES: readonly Action[] = ["grenade", "remontoir", "pauseZ"];
+export const ACTIONS_ZOMBIES: readonly Action[] = ["remontoir", "pauseZ"];
+/**
+ * Actions dont les touches enregistrées, toutes perdues au profit d'une action prioritaire (`ACTIONS` donne l'ordre), reprennent leurs touches par
+ * défaut libres plutôt que de rester vides : le sort d'invocation a cédé G à la grenade, une sauvegarde qui l'y avait laissé ne le perd pas.
+ */
+const REPLI_PAR_DEFAUT: readonly Action[] = ["invoquer"];
 type Contexte = "mort" | "vie" | "arene" | "zombies";
 const contexteDe = (a: Action): Contexte =>
   ACTIONS_MORT.includes(a) ? "mort" : ACTIONS_ARENE.includes(a) ? "arene" : ACTIONS_ZOMBIES.includes(a) ? "zombies" : "vie";
@@ -101,14 +111,14 @@ export const LIBELLES_ACTIONS: Record<Action, string> = {
   zoomLunette: "Lunette : niveau de zoom suivant (molette en lunette)",
   parler: "Chat vocal : appuyer pour parler",
   invoquer: "Invoquer le tigre (sort gagné)",
-  fumigene: "Lancer un fumigène",
-  frappeAerienne: "Cibler la frappe aérienne (série de 5)",
+  fumigene: "Lancer un fumigène (un toutes les 15 s)",
+  frappeAerienne: "Frappe aérienne : ouvrir le ciblage (série de 5 kills)",
   soigner: "Battle Royale : utiliser un bandage",
   potion: "Battle Royale : boire une potion de bouclier",
   lacher: "Battle Royale : lâcher l'arme en main",
   spectateurSuivant: "Spectateur : joueur suivant",
   spectateurPrecedent: "Spectateur : joueur précédent",
-  grenade: "Zombies : grenade (maintenir : cuire)",
+  grenade: "Grenade (maintenir : cuire)",
   remontoir: "Zombies : tigre à remontoir",
   pauseZ: "Zombies : mettre la partie en pause pour tous / la reprendre",
   menuDev: "Menu de développement : régler les règles de la partie en direct",
@@ -160,11 +170,12 @@ export function touchesParDefaut(): ConfigTouches {
     // clic milieu : la molette, elle, change d'arme hors lunette et de zoom en lunette
     zoomLunette: ["Souris1", "KeyX"],
     parler: ["KeyT", null],
-    // G et non T : T appuie pour parler au chat vocal (v3 de l'arène)
-    invoquer: ["KeyG", null],
+    // Y et non T : T appuie pour parler au chat vocal (v3 de l'arène) ; non G (lot tactique) : G est la grenade dans tous les modes
+    invoquer: ["KeyY", null],
     fumigene: ["KeyB", null],
     frappeAerienne: ["KeyK", null],
-    // (v8, zombies) G comme dans Black Ops ; partagés avec le sort et le fumigène de l'arène (jamais actifs ensemble, cf. `conflit`)
+    // G comme dans Black Ops (zombies, v8), puis en arène et en Battle Royale (lot tactique) ; B : le tigre à remontoir des zombies, qui partage B avec le
+    // fumigène de l'arène (jamais actifs ensemble, cf. `conflit`)
     grenade: ["KeyG", null],
     remontoir: ["KeyB", null],
     // (v11, zombies) P : suspend la partie pour tout le monde (ou la reprend) ; Échap seul ne suspend qu'en solo
@@ -215,6 +226,12 @@ export function normaliser(brut: unknown): ConfigTouches {
       prendre(c, a);
       return c;
     }) as Emplacements;
+    // dépossédée de toutes ses touches par une action prioritaire : retour à ses touches par défaut encore libres
+    if (valide && REPLI_PAR_DEFAUT.includes(a) && res[a].every((c) => c === null) && lu.some((c) => c !== null)) {
+      const libres = defaut[a].filter((c): c is string => c !== null && !prise(c, a));
+      res[a] = [libres[0] ?? null, libres[1] ?? null];
+      for (const c of libres) prendre(c, a);
+    }
   }
   return res;
 }

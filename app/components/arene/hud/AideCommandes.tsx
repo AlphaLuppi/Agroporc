@@ -37,6 +37,7 @@ export function commandes(cfg: ConfigTouches, d: ReadonlyMap<string, string> | n
       [t("accroupi"), "S'accroupir (en sprint : glissade)"],
       [t("recharger"), "Recharger"],
       [[t("armePrincipale"), t("armeSecondaire"), t("couteau"), t("armeSpeciale")].filter(Boolean).join(" "), "Changer d'arme (la 3e touche : couteau ou épée)"],
+      [t("grenade"), "Grenade (maintenir : cuire la mèche)"],
       [t("soigner"), "Utiliser un bandage"],
       [t("potion"), "Boire une potion de bouclier"],
       [t("lacher"), "Lâcher l'arme en main"],
@@ -62,6 +63,9 @@ export function commandes(cfg: ConfigTouches, d: ReadonlyMap<string, string> | n
       : [
         [[t("armePrincipale"), t("armeSecondaire"), t("couteau"), t("armeSpeciale")].filter(Boolean).join(" "), "Changer d'arme (la 3e touche : couteau ou épée)"],
         [t("couteauRapide"), "Arme blanche rapide (rappuyer : retour)"],
+        [t("grenade"), "Grenade (maintenir : cuire la mèche)"],
+        [t("fumigene"), "Fumigène (un toutes les 15 s)"],
+        [t("frappeAerienne"), "Frappe aérienne après 5 kills d'affilée : viser sur la carte, tirer pour lancer"],
       ] as [string, string][]),
     mode === "zombies"
       ? [t("interagir"), "Acheter, ouvrir une porte, réanimer un coéquipier (maintenir)"]

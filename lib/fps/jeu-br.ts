@@ -326,6 +326,7 @@ export function libelleObjetBr(o: ObjetBr): string {
     case "munitions": return NOMS_CLASSE[o.ref as ClasseMunitions] ?? "Munitions";
     case "bandage": return o.qte && o.qte > 1 ? `Bandage ×${o.qte}` : "Bandage";
     case "potion": return o.qte && o.qte > 1 ? `Potion de bouclier ×${o.qte}` : "Potion de bouclier";
+    case "grenade": return o.qte && o.qte > 1 ? `Grenade ×${o.qte}` : "Grenade";
   }
 }
 
@@ -345,7 +346,7 @@ function raisonRefus(o: ObjetBr, r: ResultatRamassage): string {
  * (même règle que le serveur, `ramassageAccessible`).
  */
 export function inviteRamassage(
-  butin: Pick<ButinClient, "pourDessin">, p: Vec3, equip: Readonly<Equipement>, soins: Readonly<{ bandage: number; potion: number }>,
+  butin: Pick<ButinClient, "pourDessin">, p: Vec3, equip: Readonly<Equipement>, soins: Readonly<{ bandage: number; potion: number; grenade?: number }>,
   monde?: Monde,
 ): InviteRamassage | null {
   let meilleur: ObjetBr | null = null, dMin = Infinity;
