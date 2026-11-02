@@ -298,7 +298,7 @@ describe("FilEliminations", () => {
     expect(pnj).toContain('data-picto="voiture"');
     expect(pnj).toContain("<b>Max</b>");
     const voiture = rendre([e({ cause: "ecrase_vehicule" })]);
-    expect(voiture).toContain('aria-label="Renversé par Lea"');
+    expect(voiture).toContain('aria-label="Renversé"');
     expect(voiture).toContain("<b>Lea</b>");
   });
 

@@ -161,6 +161,13 @@ export function libelleFil(arme: ArmeId, cause: CauseMort, par: string): string 
  */
 export function nomPictoFil(arme: ArmeId, cause: CauseMort, par: string): string {
   if (cause === "arme") return estMelee(arme) ? MELEE[arme].nom : STATS[arme]?.nom ?? String(arme);
+  // le pseudo du tueur est lu juste avant le pictogramme : le nom de la cause ne le répète pas
+  if (par) {
+    if (cause === "ecrase_vehicule") return "Renversé";
+    if (cause === "explosion") return "Explosion de voiture";
+    if (cause === "titan") return "Titan tigre";
+    if (cause === "frappe_aerienne") return "Frappe aérienne";
+  }
   return libelleFil(arme, cause, par);
 }
 

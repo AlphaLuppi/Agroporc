@@ -2405,7 +2405,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
           break;
         }
         sons.sireneFrappe();
-        if (m.joueur === client.id) { frappeDispo = false; ciblage = null; sons.alerte("tigre"); emettreHud(true); }
+        if (m.joueur === client.id) { frappeDispo = false; ciblage = null; emettreHud(true); }
         break;
       case "fumigene":
         sons.fumigene();

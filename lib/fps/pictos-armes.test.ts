@@ -61,5 +61,10 @@ describe("pictogrammes du fil des éliminations", () => {
     expect(nomPictoFil("couteau", "police", "")).toBe("Écrasé par la police");
     expect(nomPictoFil("couteau", "tigre", "Lea")).toBe("Tigre");
     expect(nomPictoFil("couteau", "tempete", "")).toBe("Tué par la tempête");
+    // avec un tueur, son pseudo est déjà lu avant le pictogramme : pas de répétition
+    expect(nomPictoFil("couteau", "ecrase_vehicule", "Lea")).toBe("Renversé");
+    expect(nomPictoFil("couteau", "frappe_aerienne", "Lea")).toBe("Frappe aérienne");
+    expect(nomPictoFil("couteau", "titan", "Lea")).toBe("Titan tigre");
+    expect(nomPictoFil("couteau", "explosion", "Lea")).toBe("Explosion de voiture");
   });
 });
