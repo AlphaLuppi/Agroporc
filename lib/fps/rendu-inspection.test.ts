@@ -115,12 +115,13 @@ describe("viseur posé et visée", () => {
     arme.dispose();
     return y;
   }
-  it("l'arme se recale d'au plus 3 cm pour que le point lumineux tombe sur l'axe", () => {
+  it("l'arme se recale de quelques centimètres au plus pour que la fenêtre du viseur tombe sur l'axe", () => {
+    // (le centrage exact de la fenêtre, arme par arme, est vérifié par rendu-viseurs.test.ts)
     for (const id of ["mitraillette", "fusil_assaut", "pistolet"] as const) {
       const fer = hauteurEnVisee("fer", id);
       for (const v of ["point_rouge", "holo"] as const) {
         const e = Math.abs(hauteurEnVisee(v, id) - fer);
-        expect(e, `${id} ${v}`).toBeLessThanOrEqual(0.03 + 1e-9);
+        expect(e, `${id} ${v}`).toBeLessThanOrEqual(0.05);
       }
     }
   });
@@ -128,7 +129,7 @@ describe("viseur posé et visée", () => {
     const longueur = (grossissement: number) => {
       const arme = creerArmeEnMain("fusil_assaut");
       arme.regler({ paire: false, viseur: "lunette", grossissement });
-      const piece = modeleDe(arme).children[modeleDe(arme).children.length - 1];
+      const piece = arme.fenetreViseur!.piece!;
       const boite = new THREE.Box3().setFromObject(piece);
       arme.dispose();
       return boite.max.z - boite.min.z;
@@ -137,11 +138,16 @@ describe("viseur posé et visée", () => {
   });
   it("changer le grossissement repose la pièce (une seule à la fois)", () => {
     const arme = creerArmeEnMain("fusil_assaut");
-    const n0 = modeleDe(arme).children.length;
+    // la pièce se pose sur le porte-pièces du modèle (elle suit l'inclinaison du rechargement)
+    const porte = () => modeleDe(arme).children[0];
+    const n0 = porte().children.length;
     arme.regler({ paire: false, viseur: "lunette", grossissement: 2 });
+    expect(porte().children.length).toBe(n0 + 1);
     arme.regler({ paire: false, viseur: "lunette", grossissement: 4 });
+    expect(porte().children.length).toBe(n0 + 1);
     arme.regler({ paire: false, viseur: "fer" });
-    expect(modeleDe(arme).children.length).toBe(n0);
+    expect(porte().children.length).toBe(n0);
+    expect(arme.fenetreViseur).toBeNull();
     arme.dispose();
   });
 });

@@ -114,9 +114,35 @@ export interface ArmeEnMain {
   maj(dt: number, ctx: ContexteArmeEnMain): void;
   /** Avancement du rechargement : 0 = rien, ]0,1[ = en cours. */
   readonly progresRecharge: number;
+  /** Avancement de la mise en joue (0 = au repos, 1 = en visée), lissé. */
+  readonly ads: number;
+  /** Fenêtre de l'organe de visée optique de l'arme en main (posé ou intégré, cf. `FenetreViseur`) ; null pour la mire métallique. */
+  readonly fenetreViseur: FenetreViseur | null;
   /** Bouche du canon en coordonnées monde (pour une traçante partant de l'arme) ; pointe de la lame pour le couteau ; `g` = arme gauche. */
   positionBouche(out: THREE.Vector3, main?: "g"): THREE.Vector3;
   dispose(): void;
+}
+
+/**
+ * Ouverture d'un viseur optique de l'arme en main (point rouge, holographique, lunette posée, lunette intégrée du sniper). Les viseurs
+ * sont CREUX : en visée, l'œil (origine de la caméra) regarde par cette ouverture sans qu'aucune face (boîtier, cadre, carcasse, mire
+ * métallique, bras) ne la masque ; seule la vitre, très transparente, est dedans. Cotes dans le repère de `repere`.
+ */
+export interface FenetreViseur {
+  /** objet qui porte les cotes : la pièce de visée posée, ou le porte-pièces du modèle pour la lunette intégrée du sniper */
+  repere: THREE.Object3D;
+  /** pièce de visée posée sur l'arme ; null pour la lunette intégrée */
+  piece: THREE.Group | null;
+  /** centre de l'ouverture, sur son plan AVANT (tout le viseur est derrière ce plan) */
+  centre: THREE.Vector3;
+  /** demi-largeur et demi-hauteur de l'ouverture (m) ; ronde : `demiL` = `demiH` = rayon */
+  demiL: number;
+  demiH: number;
+  ronde: boolean;
+  /** vitre (seule face admise dans l'ouverture) ; null sans vitre */
+  vitre: THREE.Mesh | null;
+  /** dessous de l'embase (y) et son empreinte [x0, x1] × [z0, z1] ; null pour la lunette intégrée */
+  embase: { y: number; x0: number; x1: number; z0: number; z1: number } | null;
 }
 
 export interface Effets {
@@ -199,6 +225,15 @@ const geoBoite = (w: number, h: number, d: number, oy = 0) =>
 const geoCyl = (r: number, len: number, seg = 8) =>
   enCache(`c${r},${len},${seg}`, () => { const g = new THREE.CylinderGeometry(r, r, len, seg, 1, false); g.rotateX(Math.PI / 2); return g; });
 const geoIco = (r: number, detail = 1) => enCache(`i${r},${detail}`, () => new THREE.IcosahedronGeometry(r, detail));
+/**
+ * Tube OUVERT d'axe z (lunettes creuses), centré : ni fond ni bouchon, et ses faces planes sont à `r` au moins de l'axe (polygone
+ * circonscrit au cercle de rayon `r`) : un rayon qui passe à moins de `r` de l'axe ne touche aucune face.
+ */
+const geoTube = (r: number, len: number, seg = 12) =>
+  enCache(`t${r},${len},${seg}`, () => { const R = r / Math.cos(Math.PI / seg); const g = new THREE.CylinderGeometry(R, R, len, seg, 1, true); g.rotateX(Math.PI / 2); return g; });
+/** Anneau plat dans le plan xy (bague d'oculaire ou d'objectif), centré : son trou contient le disque de rayon `rInt`. */
+const geoAnneau = (rInt: number, rExt: number, seg = 16) =>
+  enCache(`a${rInt},${rExt},${seg}`, () => new THREE.RingGeometry(rInt / Math.cos(Math.PI / seg), rExt, seg, 1));
 /** Tronc de cône d'axe z (tuyères) : rayon `rArriere` côté +z, `rAvant` côté −z, centré. */
 const geoCone = (rArriere: number, rAvant: number, len: number, seg = 10) =>
   enCache(`k${rArriere},${rAvant},${len},${seg}`, () => { const g = new THREE.CylinderGeometry(rArriere, rAvant, len, seg, 1, true); g.rotateX(Math.PI / 2); return g; });
@@ -292,6 +327,15 @@ function ordonner(racine: THREE.Object3D, devant: boolean, base: number): void {
 
 interface ModeleArme {
   group: THREE.Group;
+  /** enfant de `group` qui porte les pièces (inclinaison du rechargement, coup) : l'organe de visée s'y pose et le suit */
+  inner: THREE.Group;
+  /** z (repère de l'arme) du milieu de l'organe de visée posé dessus ; null = à mi-chemin entre la poignée et la bouche */
+  siegeViseur: number | null;
+  /**
+   * Lunette intégrée au modèle (sniper) : centre de l'ouverture de son objectif (plan avant) et rayon de l'ouverture, repère de `inner`.
+   * La lunette est CREUSE (tube ouvert, bagues) : en visée, l'œil regarde à travers sans toucher une face.
+   */
+  lunette: { centre: THREE.Vector3; rayon: number } | null;
   /** main arrière (poignée), main avant (garde-main ; bouge avec la pompe), bouche : repère de l'arme */
   prise: THREE.Vector3;
   garde: THREE.Vector3;
@@ -367,6 +411,10 @@ function creerModeleArme(id: ArmeId, m: Materiaux, devant: boolean): ModeleArme 
   let anim: (tTir: number, p: number, dt: number) => void = () => {};
   /** Tir : réaction propre à l'arme en plus du flash (rotation du fût du minigun…). */
   let surTir: () => void = () => {};
+  let siegeViseur: number | null = null;
+  let lunette: ModeleArme["lunette"] = null;
+  /** Pièce de la mire métallique (guidon, hausse, poignée de transport) : repliée quand un viseur optique est posé sur l'arme (cf. `poserViseur`). */
+  const mire = (g: THREE.Group) => { g.userData.mire = true; return g; };
 
   switch (id) {
     case "pistolet": {
@@ -375,8 +423,8 @@ function creerModeleArme(id: ArmeId, m: Materiaux, devant: boolean): ModeleArme 
       piece(inner, geoCyl(0.009, 0.03), m, 0, 0.03, -0.177);
       piece(inner, geoBoite(0.03, 0.095, 0.045), m, 0, -0.065, 0, -0.2);
       piece(inner, geoBoite(0.018, 0.004, 0.045), m, 0, -0.016, -0.04);
-      piece(inner, geoBoite(0.006, 0.01, 0.01), m, 0, 0.053, -0.145);
-      piece(inner, geoBoite(0.016, 0.008, 0.01), m, 0, 0.053, 0.012);
+      mire(piece(inner, geoBoite(0.006, 0.01, 0.01), m, 0, 0.053, -0.145));
+      mire(piece(inner, geoBoite(0.016, 0.008, 0.01), m, 0, 0.053, 0.012));
       const chargeur = piece(inner, geoBoite(0.026, 0.04, 0.036), m, 0, -0.115, 0.012, -0.2);
       prise.set(0, -0.045, 0);
       garde.set(-0.02, -0.075, 0.005);
@@ -398,10 +446,12 @@ function creerModeleArme(id: ArmeId, m: Materiaux, devant: boolean): ModeleArme 
       piece(inner, geoCyl(0.02, 0.12), m, 0, 0.012, -0.4);
       piece(inner, geoCyl(0.009, 0.05), m, 0, 0.012, -0.47);
       piece(inner, geoBoite(0.014, 0.016, 0.22), m, 0, 0.046, -0.14);
-      piece(inner, geoBoite(0.006, 0.014, 0.01), m, 0, 0.058, -0.4);
+      mire(piece(inner, geoBoite(0.006, 0.014, 0.01), m, 0, 0.058, -0.4));
       piece(inner, geoBoite(0.034, 0.1, 0.04), m, 0, -0.085, 0, -0.2);
       piece(inner, geoBoite(0.018, 0.004, 0.05), m, 0, -0.04, -0.06);
       const chargeur = piece(inner, geoBoite(0.03, 0.15, 0.045), m, 0, -0.12, -0.14, 0.12);
+      // l'organe de visée se pose sur le rail du carter
+      siegeViseur = -0.14;
       const culasse = piece(inner, geoBoite(0.012, 0.014, 0.05), m, 0.03, 0.03, -0.04);
       piece(inner, geoBoite(0.02, 0.02, 0.2), m, 0, 0.012, 0.2);
       piece(inner, geoBoite(0.025, 0.085, 0.02), m, 0, -0.02, 0.3);
@@ -423,7 +473,7 @@ function creerModeleArme(id: ArmeId, m: Materiaux, devant: boolean): ModeleArme 
       piece(inner, geoBoite(0.045, 0.07, 0.16), m, 0, 0, -0.05);
       piece(inner, geoCyl(0.014, 0.62), m, 0, 0.022, -0.45);
       piece(inner, geoCyl(0.013, 0.45), m, 0, -0.03, -0.38);
-      piece(inner, geoBoite(0.006, 0.012, 0.01), m, 0, 0.042, -0.76);
+      mire(piece(inner, geoBoite(0.006, 0.012, 0.01), m, 0, 0.042, -0.76));
       piece(inner, geoBoite(0.04, 0.09, 0.3), m, 0, -0.02, 0.23, -0.1);
       piece(inner, geoBoite(0.03, 0.08, 0.035), m, 0, -0.07, 0.07, -0.15);
       piece(inner, geoBoite(0.018, 0.004, 0.05), m, 0, -0.04, -0.01);
@@ -459,12 +509,28 @@ function creerModeleArme(id: ArmeId, m: Materiaux, devant: boolean): ModeleArme 
       piece(inner, geoCyl(0.011, 0.62), m, 0, 0.015, -0.6);
       piece(inner, geoCyl(0.019, 0.06), m, 0, 0.015, -0.93);
       piece(inner, geoBoite(0.04, 0.045, 0.26), m, 0, -0.01, -0.42);
-      piece(inner, geoCyl(0.026, 0.3), m, 0, 0.085, -0.12);
-      piece(inner, geoCyl(0.034, 0.06), m, 0, 0.085, -0.29);
-      piece(inner, geoCyl(0.03, 0.05), m, 0, 0.085, 0.065);
-      piece(inner, geoBoite(0.012, 0.04, 0.016), m, 0, 0.058, -0.03);
-      piece(inner, geoBoite(0.012, 0.04, 0.016), m, 0, 0.058, -0.2);
+      const yL = 0.085, rL = 0.022;
+      if (devant) {
+        // Lunette CREUSE (arme en main) : tube ouvert, cloche d'objectif et cloche d'oculaire ouvertes, bagues plates aux deux bouts ;
+        // l'ouverture de l'objectif (rayon 0,022) borne le champ et rien ne passe devant l'œil en visée (les colliers s'arrêtent sous le tube)
+        piece(inner, geoTube(0.024, 0.3), m, 0, yL, -0.12);
+        piece(inner, geoCone(0.024 / Math.cos(Math.PI / 12), 0.034, 0.06, 12), m, 0, yL, -0.29);
+        piece(inner, geoAnneau(rL, 0.036), m, 0, yL, -0.32);
+        piece(inner, geoCone(0.03, 0.024 / Math.cos(Math.PI / 12), 0.05, 12), m, 0, yL, 0.065);
+        piece(inner, geoAnneau(rL, 0.032), m, 0, yL, 0.09);
+        piece(inner, geoBoite(0.012, 0.02, 0.016), m, 0, 0.048, -0.03);
+        piece(inner, geoBoite(0.012, 0.02, 0.016), m, 0, 0.048, -0.2);
+      } else {
+        // vue de l'extérieur (avatars, bots, armes posées dans le monde) : lunette pleine, sans quoi on la verrait par transparence
+        // (faces d'un seul côté, bagues tournées vers l'oculaire)
+        piece(inner, geoCyl(0.026, 0.3), m, 0, yL, -0.12);
+        piece(inner, geoCyl(0.034, 0.06), m, 0, yL, -0.29);
+        piece(inner, geoCyl(0.03, 0.05), m, 0, yL, 0.065);
+        piece(inner, geoBoite(0.012, 0.04, 0.016), m, 0, 0.058, -0.03);
+        piece(inner, geoBoite(0.012, 0.04, 0.016), m, 0, 0.058, -0.2);
+      }
       piece(inner, geoBoite(0.012, 0.012, 0.02), m, 0, 0.117, -0.12);
+      lunette = { centre: new THREE.Vector3(0, yL, -0.32), rayon: rL };
       piece(inner, geoBoite(0.044, 0.1, 0.3), m, 0, -0.025, 0.3, -0.06);
       piece(inner, geoBoite(0.04, 0.04, 0.14), m, 0, 0.045, 0.3);
       piece(inner, geoBoite(0.03, 0.09, 0.04), m, 0, -0.08, 0.1, -0.25);
@@ -502,9 +568,11 @@ function creerModeleArme(id: ArmeId, m: Materiaux, devant: boolean): ModeleArme 
       piece(inner, geoBoite(0.046, 0.05, 0.2), m, 0, -0.012, -0.38);
       piece(inner, geoCyl(0.011, 0.16), m, 0, 0.012, -0.58);
       piece(inner, geoCyl(0.017, 0.045, 6), m, 0, 0.012, -0.68);
-      piece(inner, geoBoite(0.014, 0.03, 0.014), m, 0, 0.045, -0.54);
+      mire(piece(inner, geoBoite(0.014, 0.03, 0.014), m, 0, 0.045, -0.54));
       piece(inner, geoBoite(0.02, 0.024, 0.2), m, 0, 0.052, -0.12);
-      piece(inner, geoBoite(0.012, 0.016, 0.014), m, 0, 0.075, 0);
+      mire(piece(inner, geoBoite(0.012, 0.016, 0.014), m, 0, 0.075, 0));
+      // l'organe de visée se pose sur le rail
+      siegeViseur = -0.12;
       piece(inner, geoBoite(0.034, 0.1, 0.04), m, 0, -0.085, 0.005, -0.2);
       piece(inner, geoBoite(0.018, 0.004, 0.05), m, 0, -0.04, -0.055);
       const chargeur = piece(inner, geoBoite(0.03, 0.16, 0.05), m, 0, -0.13, -0.14, 0.3);
@@ -533,8 +601,10 @@ function creerModeleArme(id: ArmeId, m: Materiaux, devant: boolean): ModeleArme 
       piece(inner, geoCyl(0.02, 0.05, 6), m, 0, 0.01, -0.865);
       piece(inner, geoBoite(0.01, 0.1, 0.01), m, 0.045, -0.07, -0.62, 0, 0, 0.45);
       piece(inner, geoBoite(0.01, 0.1, 0.01), m, -0.045, -0.07, -0.62, 0, 0, -0.45);
-      piece(inner, geoBoite(0.016, 0.05, 0.2), m, 0, 0.07, -0.18);
-      piece(inner, geoBoite(0.012, 0.016, 0.014), m, 0, 0.1, -0.5);
+      mire(piece(inner, geoBoite(0.016, 0.05, 0.2), m, 0, 0.07, -0.18));
+      mire(piece(inner, geoBoite(0.012, 0.016, 0.014), m, 0, 0.1, -0.5));
+      // l'organe de visée se pose sur l'avant du carter, devant le capot (qui s'ouvre au rechargement)
+      siegeViseur = -0.29;
       piece(inner, geoBoite(0.034, 0.1, 0.04), m, 0, -0.085, 0.04, -0.2);
       piece(inner, geoBoite(0.018, 0.004, 0.05), m, 0, -0.045, -0.02);
       piece(inner, geoBoite(0.045, 0.095, 0.3), m, 0, -0.02, 0.38, -0.08);
@@ -596,7 +666,7 @@ function creerModeleArme(id: ArmeId, m: Materiaux, devant: boolean): ModeleArme 
         for (const u of [0.3, 0.5, 0.7]) piece(inner, geoBoite(0.02, 0.006, 0.012), m, 0, 0.058 * k, -0.1 * k - lc * u);
         piece(inner, geoBoite(0.026, 0.024, 0.05), m, 0, 0.036 * k, -0.1 * k - lc - 0.03);
       }
-      piece(inner, geoBoite(0.006, 0.014, 0.01), m, 0, 0.056 * k, -0.1 * k - lc - 0.01);
+      mire(piece(inner, geoBoite(0.006, 0.014, 0.01), m, 0, 0.056 * k, -0.1 * k - lc - 0.01));
       const chien = piece(inner, geoBoite(0.01, 0.03, 0.014), m, 0, 0.062 * k, 0.025, 0.4);
       piece(inner, geoBoite(0.034 * k, 0.11 * k, 0.05 * k), m, 0, -0.075 * k, 0.03, -0.3);
       piece(inner, geoBoite(0.018, 0.004, 0.045), m, 0, -0.016, -0.04);
@@ -625,8 +695,8 @@ function creerModeleArme(id: ArmeId, m: Materiaux, devant: boolean): ModeleArme 
       piece(inner, geoBoite(0.032, 0.09, 0.044), m, 0, -0.075, -0.01, -0.12);
       const chargeur = piece(inner, geoBoite(0.024, 0.09, 0.034), m, 0, -0.165, -0.005, -0.12);
       piece(inner, geoBoite(0.018, 0.004, 0.045), m, 0, -0.04, -0.07);
-      piece(inner, geoBoite(0.006, 0.014, 0.01), m, 0, 0.042, -0.15);
-      piece(inner, geoBoite(0.014, 0.016, 0.01), m, 0, 0.042, 0.02);
+      mire(piece(inner, geoBoite(0.006, 0.014, 0.01), m, 0, 0.042, -0.15));
+      mire(piece(inner, geoBoite(0.014, 0.016, 0.01), m, 0, 0.042, 0.02));
       piece(inner, geoBoite(0.005, 0.005, 0.16), m, 0.022, 0.0, 0.16);
       piece(inner, geoBoite(0.005, 0.005, 0.16), m, -0.022, 0.0, 0.16);
       piece(inner, geoBoite(0.05, 0.005, 0.005), m, 0, 0.0, 0.24);
@@ -654,6 +724,8 @@ function creerModeleArme(id: ArmeId, m: Materiaux, devant: boolean): ModeleArme 
       for (const z of [-0.38, -0.55, -0.72, -0.89]) piece(bobines, geoCyl(0.052, 0.035, 10), m, 0, 0.005, z);
       piece(inner, geoCyl(0.012, 0.62), m, 0, 0.005, -0.62);
       piece(inner, geoBoite(0.04, 0.03, 0.18), m, 0, 0.065, -0.05);
+      // la lunette (thermique, arme gratinée des zombies) se pose sur le radiateur dorsal
+      siegeViseur = -0.05;
       piece(inner, geoBoite(0.03, 0.09, 0.04), m, 0, -0.08, 0.05, -0.2);
       piece(inner, geoBoite(0.018, 0.004, 0.05), m, 0, -0.04, -0.01);
       piece(inner, geoBoite(0.045, 0.1, 0.28), m, 0, -0.02, 0.27, -0.06);
@@ -768,7 +840,7 @@ function creerModeleArme(id: ArmeId, m: Materiaux, devant: boolean): ModeleArme 
       inner.add(canons);
       for (const x of [-0.016, 0.016]) piece(canons, geoCyl(0.015, 0.4), m, x, 0, -0.2);
       piece(canons, geoBoite(0.05, 0.012, 0.36), m, 0, -0.018, -0.2);
-      piece(canons, geoBoite(0.006, 0.01, 0.01), m, 0, 0.02, -0.38);
+      mire(piece(canons, geoBoite(0.006, 0.01, 0.01), m, 0, 0.02, -0.38));
       piece(inner, geoBoite(0.05, 0.06, 0.12), m, 0, -0.005, 0);
       piece(inner, geoBoite(0.03, 0.09, 0.04), m, 0, -0.07, 0.07, -0.25);
       piece(inner, geoBoite(0.04, 0.07, 0.1), m, 0, -0.02, 0.15, -0.15);
@@ -796,6 +868,8 @@ function creerModeleArme(id: ArmeId, m: Materiaux, devant: boolean): ModeleArme 
       inner.add(machoire);
       piece(machoire, geoBoite(0.056, 0.028, 0.34), m, 0, 0.014, -0.17);
       piece(machoire, geoBoite(0.04, 0.012, 0.03), m, 0, 0.034, -0.32);
+      // l'organe de visée (holographique de l'arme gratinée) se pose sur la mâchoire
+      siegeViseur = -0.13;
       piece(inner, geoCyl(0.011, 0.3), m, 0, 0.005, -0.45);
       piece(inner, geoCyl(0.017, 0.04, 6), m, 0, 0.005, -0.61);
       piece(inner, geoBoite(0.034, 0.1, 0.04), m, 0, -0.08, 0.02, -0.2);
@@ -855,7 +929,7 @@ function creerModeleArme(id: ArmeId, m: Materiaux, devant: boolean): ModeleArme 
       piece(hublot, geoCyl(0.06, 0.08, 8), m);
       piece(hublot, geoCyl(0.04, 0.09, 8), m);
       for (let i = 0; i < 4; i++) piece(hublot, geoBoite(0.006, 0.08, 0.07), m, 0, 0, 0, 0, 0, (i * Math.PI) / 4);
-      piece(inner, geoBoite(0.006, 0.012, 0.01), m, 0, 0.04, -0.68);
+      mire(piece(inner, geoBoite(0.006, 0.012, 0.01), m, 0, 0.04, -0.68));
       piece(inner, geoBoite(0.03, 0.08, 0.035), m, 0, -0.07, 0.05, -0.15);
       piece(inner, geoBoite(0.042, 0.09, 0.28), m, 0, -0.02, 0.2, -0.1);
       prise.set(0, -0.07, 0.05);
@@ -969,7 +1043,7 @@ function creerModeleArme(id: ArmeId, m: Materiaux, devant: boolean): ModeleArme 
       piece(inner, geoBoite(0.032, 0.09, 0.04), m, 0, -0.06, 0.0, -0.2);
       const batterie = piece(inner, geoBoite(0.05, 0.035, 0.06), m, 0, -0.12, 0.01);
       piece(inner, geoBoite(0.016, 0.004, 0.04), m, 0, -0.014, -0.04);
-      piece(inner, geoBoite(0.006, 0.012, 0.01), m, 0, 0.056, -0.12);
+      mire(piece(inner, geoBoite(0.006, 0.012, 0.01), m, 0, 0.056, -0.12));
       prise.set(0, -0.05, 0.0);
       garde.set(-0.02, -0.08, 0.01);
       bouche.set(0, 0.02, -0.27);
@@ -1023,7 +1097,7 @@ function creerModeleArme(id: ArmeId, m: Materiaux, devant: boolean): ModeleArme 
   let sensCoup = -1;
 
   const modele: ModeleArme = {
-    group, prise, garde, bouche, porte,
+    group, inner, prise, garde, bouche, porte, siegeViseur, lunette,
     progres: 0,
     coupU: 0,
     deuxMains: id === "epee",
@@ -1128,6 +1202,114 @@ const PLACEMENT: Record<ArmeId, PlacementArme> = {
 const COULEUR_ARME_PAR_DEFAUT = 0xbfefff;
 
 /**
+ * Viseurs optiques CREUX posés sur l'arme en main. Chaque pièce est un cadre (ou un tube ouvert) autour d'une fenêtre VIDE : en visée, l'œil
+ * regarde par la fenêtre sans qu'aucune face ne la masque (l'arme en main est dessinée par-dessus tout, sans test de profondeur : une face sur
+ * la ligne de visée cacherait la cible, même derrière la fenêtre). Tout le viseur est DERRIÈRE le plan avant de la fenêtre, où le cône de l'œil
+ * se resserre : seul ce qui est devant (le reste de l'arme) peut gêner, et la rehausse s'en charge (`rehausseViseur`). Cotes (m) dans le repère
+ * de la pièce : origine au dessous de l'embase, au milieu de sa longueur ; fenêtre à `hauteurFenetre` (+ rehausse), plan avant à −longueur/2.
+ */
+interface PlanViseur {
+  /** demi-ouverture de la fenêtre (rayon pour une lunette) */
+  demiL: number;
+  demiH: number;
+  /** hauteur du centre de la fenêtre au-dessus du dessous de l'embase, sans rehausse */
+  hauteurFenetre: number;
+  /** longueur de la pièce (z) : le plan avant de la fenêtre est à −longueur/2 */
+  longueur: number;
+  /** largeur et longueur de l'empreinte de l'embase sur l'arme */
+  largeur: number;
+  empreinte: number;
+  /** hauteur (sans rehausse) du point le plus bas du corps hors de l'embase (cloches et bagues d'une lunette) */
+  basCorps: number;
+}
+/** Point rouge : boîtier en cadre (montants autour d'une fenêtre de 24 × 20 mm, profond de 22 mm) sur une embase de 6 mm. Holographique : embase basse et longue, fenêtre de 34 × 26 mm à l'avant, capot. */
+const CREUX_VISEURS: Record<"point_rouge" | "holo", PlanViseur> = {
+  point_rouge: { demiL: 0.012, demiH: 0.01, hauteurFenetre: 0.02, longueur: 0.036, largeur: 0.03, empreinte: 0.036, basCorps: 0 },
+  holo: { demiL: 0.017, demiH: 0.013, hauteurFenetre: 0.023, longueur: 0.06, largeur: 0.042, empreinte: 0.06, basCorps: 0 },
+};
+/** Facettes des tubes et cloches de lunette (le polygone est circonscrit à l'ouverture). */
+const SEG_LUNETTE = 12;
+/** Lunette posée (×2, ×4 ; 0 = celle d'une arme gratinée des zombies) : tube ouvert, ouverture de 18 mm de rayon (22 mm à ×4), colliers sur une platine. */
+function planLunette(grossi: number): PlanViseur {
+  const fort = grossi >= 4;
+  const r = fort ? 0.022 : 0.018, longueur = fort ? 0.26 : 0.18;
+  const hauteurFenetre = 0.012 + r / Math.cos(Math.PI / SEG_LUNETTE);
+  // la bague d'objectif (rayon r + 9 mm) est la pièce la plus basse hors de la platine
+  return { demiL: r, demiH: r, hauteurFenetre, longueur, largeur: 0.024, empreinte: 0.55 * longueur, basCorps: hauteurFenetre - r - 0.009 };
+}
+/** Une lunette s'efface en visée à 0,85 (HUD plein écran) ; elle est en place dès 0,8 : la fin de la transition regarde dans le tube creux. */
+const ADS_LUNETTE_EN_PLACE = 0.8;
+/** Recul en visée derrière un viseur optique (part du recul hors visée), cf. `maj` de l'arme en main. */
+const RECUL_EN_VISEE = 0.5;
+/** Plus fort recul de l'arme en main (`tirer` le plafonne) : la rehausse d'un viseur vaut aussi l'arme rapprochée de l'œil d'autant. */
+const RECUL_MAX = 1.3;
+/** Pas de la rehausse d'un viseur (m) : cotes en nombre fini dans le cache des géométries. */
+const PAS_REHAUSSE = 0.0005;
+/** Opacité de la vitre d'un viseur (seule face dans la fenêtre) : un reflet, jamais un écran. */
+const OPACITE_VITRE = 0.08;
+
+/**
+ * Pose dans `g` les pièces du viseur `viseur` (plan `plan`, embase rehaussée de `rehausse`), avec les matériaux de l'arme (le camouflage
+ * du Pack-a-Punch les habille comme le reste), et rend la vitre (point rouge, holo) : matériau et géométrie propres, presque transparents,
+ * sans écriture de profondeur ni texture, à libérer par l'appelant ; null pour une lunette (le HUD prend le relais en visée).
+ */
+function construireViseur(g: THREE.Group, viseur: Viseur, plan: PlanViseur, rehausse: number, m: Materiaux): THREE.Mesh | null {
+  const L = plan.longueur, avant = -L / 2;
+  const vitreEn = (larg: number, haut: number, y: number, z: number, couleur: number): THREE.Mesh => {
+    const mat = new THREE.MeshBasicMaterial({ color: couleur, transparent: true, opacity: OPACITE_VITRE, depthTest: false, depthWrite: false, side: THREE.DoubleSide });
+    const v = new THREE.Mesh(new THREE.PlaneGeometry(larg, haut), mat);
+    v.position.set(0, y, z);
+    v.userData.vitre = true;
+    g.add(v);
+    return v;
+  };
+  if (viseur === "point_rouge") {
+    const { demiL: dl, demiH: dh } = plan, cadre = 0.004, prof = 0.022;
+    const hs = 0.006 + rehausse, zc = avant + prof / 2, cy = hs + cadre + dh;
+    piece(g, geoBoite(plan.largeur, hs, L), m, 0, hs / 2, 0);
+    // cadre : traverses basse et haute, montants ; la fenêtre entre eux reste vide
+    piece(g, geoBoite(2 * (dl + cadre), cadre, prof), m, 0, hs + cadre / 2, zc);
+    piece(g, geoBoite(2 * (dl + cadre), cadre, prof), m, 0, cy + dh + cadre / 2, zc);
+    for (const sx of [-1, 1]) piece(g, geoBoite(cadre, 2 * dh, prof), m, sx * (dl + cadre / 2), cy, zc);
+    // diode sous la fenêtre, derrière le cadre ; molette de réglage sur le flanc droit
+    piece(g, geoBoite(0.008, cadre, 0.006), m, 0, hs + cadre / 2, avant + prof + 0.005);
+    piece(g, geoBoite(0.006, 0.01, 0.01), m, dl + cadre + 0.003, cy - 0.002, zc + 0.004);
+    return vitreEn(2 * dl, 2 * dh, cy, avant + 0.006, 0x9fdcff);
+  }
+  if (viseur === "holo") {
+    const { demiL: dl, demiH: dh } = plan, cadre = 0.004, prof = 0.014, levre = 0.002;
+    const hs = 0.008 + rehausse, zc = avant + prof / 2, cy = hs + levre + dh;
+    piece(g, geoBoite(plan.largeur, hs, L), m, 0, hs / 2, 0);
+    piece(g, geoBoite(plan.largeur, levre, prof), m, 0, hs + levre / 2, zc);
+    for (const sx of [-1, 1]) piece(g, geoBoite(cadre, 2 * dh + 2 * levre, prof), m, sx * (dl + cadre / 2), hs + levre + dh, zc);
+    piece(g, geoBoite(2 * (dl + cadre), cadre, prof), m, 0, cy + dh + cadre / 2, zc);
+    // boutons sur les flancs de l'embase, sous la fenêtre
+    for (const sx of [-1, 1]) piece(g, geoBoite(0.004, 0.006, 0.01), m, sx * (plan.largeur / 2 + 0.002), hs - 0.004, 0.012);
+    return vitreEn(2 * dl, 2 * dh, cy, zc, 0x9ffff0);
+  }
+  // lunette (et lunette thermique) : tube OUVERT, cloches et bagues plates aux deux bouts, colliers sur une platine. L'ouverture de
+  // l'objectif (rayon `demiL`, à l'avant) borne le champ ; tube, cloches et bagues sont tous à ce rayon au moins de l'axe.
+  const r = plan.demiL, R = r / Math.cos(Math.PI / SEG_LUNETTE), cy = plan.hauteurFenetre + rehausse;
+  const cloAv = 0.035, cloAr = 0.03;
+  piece(g, geoBoite(plan.largeur, 0.004, plan.empreinte), m, 0, 0.002, 0);
+  for (const zc of [-0.2 * L, 0.2 * L]) {
+    const h = cy - R - 0.004;
+    piece(g, geoBoite(0.012, h, 0.014), m, 0, 0.004 + h / 2, zc);
+    piece(g, geoAnneau(R, R + 0.004, SEG_LUNETTE), m, 0, cy, zc);
+  }
+  piece(g, geoTube(r, L - cloAv - cloAr, SEG_LUNETTE), m, 0, cy, (cloAv - cloAr) / 2);
+  piece(g, geoCone(R, r + 0.008, cloAv, SEG_LUNETTE), m, 0, cy, avant + cloAv / 2);
+  piece(g, geoAnneau(r, r + 0.009), m, 0, cy, avant);
+  piece(g, geoCone(r + 0.006, R, cloAr, SEG_LUNETTE), m, 0, cy, L / 2 - cloAr / 2);
+  piece(g, geoAnneau(r, r + 0.007), m, 0, cy, L / 2);
+  // tourelles (hausse au-dessus, dérive à droite) ; la thermique a son boîtier de pile à gauche
+  piece(g, geoBoite(0.012, 0.01, 0.014), m, 0, cy + R + 0.005, -0.02);
+  piece(g, geoBoite(0.01, 0.012, 0.014), m, R + 0.005, cy, -0.02);
+  if (viseur === "thermique") piece(g, geoBoite(0.012, 0.018, 0.045), m, -R - 0.006, cy, 0.02);
+  return null;
+}
+
+/**
  * (v7, zombies) Modèle d'arme posé dans le monde (mur acheté, boîte mystère, Pack-a-Punch) : arêtes de la couleur donnée, faces sombres,
  * dessiné avec le reste de la scène. Échelle 1 (≈ taille réelle) ; à libérer avec `dispose`.
  */
@@ -1214,12 +1396,14 @@ export function creerArmeEnMain(idInitial: ArmeId, couleur: CouleurEntree = COUL
   group.rotation.y = pl.lacet;
 
   // Avant-bras : posés d'abord, donc dessinés sous l'arme. La main avant suit la garde (pompe).
-  const brasD = new THREE.Group(), brasG = new THREE.Group();
-  for (const b of [brasD, brasG]) {
+  const creerBras = (): THREE.Group => {
+    const b = new THREE.Group();
     piece(b, geoBoite(0.075, 0.55, 0.075, -0.275), m);
     piece(b, geoBoite(0.09, 0.09, 0.1), m, 0, -0.03, 0);
-    group.add(b);
-  }
+    return b;
+  };
+  const brasD = creerBras(), brasG = creerBras();
+  group.add(brasD, brasG);
   let modele = creerModeleArme(id, m, true);
   group.add(modele.group);
   /** (v8, zombies) seconde arme d'une paire akimbo (main gauche), posée en miroir du côté gauche de l'écran */
@@ -1235,8 +1419,14 @@ export function creerArmeEnMain(idInitial: ArmeId, couleur: CouleurEntree = COUL
   const _pm = new THREE.Vector3(), _eInsp = new THREE.Euler(), _pivotInsp = new THREE.Vector3();
   /** grossissement de la lunette posée (0 = pas une lunette de l'arène) : longueur du tube */
   let grossi = 0;
-  /** décalage vertical (m) de l'arme en visée pour que l'organe de visée (point rouge, holo) tombe sur l'axe de la caméra */
-  let decalageAds = 0;
+  /** fenêtre du viseur optique (null : mire métallique) et vitre posée (matériau et géométrie propres, libérés avec la pièce) */
+  let fenetre: FenetreViseur | null = null;
+  let vitre: THREE.Mesh | null = null;
+  /**
+   * Décalage (m, repère caméra) de l'arme en visée, en x et en y : le centre de la fenêtre du viseur optique tombe EXACTEMENT sur l'axe de
+   * la caméra, là où le HUD dessine le point. Nul pour la mire métallique ; sans effet hors visée (mélangé par `ads`).
+   */
+  const decalageAds = new THREE.Vector2();
   ordonner(group, true, 1000);
 
   const coudeD = new THREE.Vector3(0.2, -0.34, 0.5), coudeG = new THREE.Vector3(-0.25, -0.3, 0.5);
@@ -1314,43 +1504,129 @@ export function creerArmeEnMain(idInitial: ArmeId, couleur: CouleurEntree = COUL
     orienterBrasG();
   }
 
-  /** Pièce de visée sur le dessus de l'arme (au-dessus de sa boîte englobante, entre la poignée et la bouche). */
-  function poserViseur(): void {
+  function retirerViseur(): void {
     if (pieceViseur) { pieceViseur.removeFromParent(); pieceViseur = null; }
-    decalageAds = 0;
-    let hautVisee = 0;
-    if (viseur === "fer" || estMelee(id) || id === "sniper") { ordonner(group, true, 1000); return; }
-    // boîte dans le repère du modèle (la pièce en est l'enfant) : `setFromObject` la donnerait dans le monde, caméra et porte-arme compris.
-    // Le dessus de l'arme sous l'empreinte de la pièce seulement : la boîte entière (éclair de bouche caché, guidon arrière) la faisait
-    // flotter 5 à 8 cm au-dessus de la carcasse
-    const z = (modele.prise.z + modele.bouche.z) / 2;
-    // tube de la lunette : plus long et plus gros à fort grossissement
-    const tube = viseur === "lunette" || viseur === "thermique" ? (grossi >= 4 ? 0.26 : 0.18) : 0;
-    const demi = tube ? tube / 2 : 0.03;
-    const y = boiteLocale(modele.group, [z - demi, z + demi]).max.y + 0.004;
+    if (vitre) { vitre.geometry.dispose(); (vitre.material as THREE.Material).dispose(); vitre = null; }
+    fenetre = null;
+    decalageAds.set(0, 0);
+  }
+
+  /**
+   * Organe de visée optique CREUX posé sur le dessus de l'arme (cf. `CREUX_VISEURS`) : embase sur la carcasse sous son empreinte, rehaussée
+   * juste assez pour que le cône de l'œil à travers la fenêtre ne touche rien de l'arme ni des bras (`rehausseViseur`), mire métallique repliée,
+   * puis décalage de visée exact (`decalageAds`). Le sniper garde sa lunette intégrée (creuse elle aussi) : seul le décalage est calculé.
+   */
+  function poserViseur(): void {
+    retirerViseur();
+    const optique = viseur !== "fer" && !estMelee(id);
+    modele.group.traverse((o) => { if (o.userData.mire) o.visible = !optique; });
+    if (modele.lunette) {
+      fenetre = { repere: modele.inner, piece: null, centre: modele.lunette.centre.clone(), demiL: modele.lunette.rayon, demiH: modele.lunette.rayon, ronde: true, vitre: null, embase: null };
+      caleFenetre();
+      ordonner(group, true, 1000);
+      return;
+    }
+    if (!optique) { ordonner(group, true, 1000); return; }
+    const lunetteTube = viseur === "lunette" || viseur === "thermique";
+    const plan = lunetteTube ? planLunette(grossi) : CREUX_VISEURS[viseur as "point_rouge" | "holo"];
+    const z = modele.siegeViseur ?? (modele.prise.z + modele.bouche.z) / 2;
+    // Mesures sur une COPIE de l'arme et des bras à la pose de repos, jamais sur l'arme en main : celle-ci peut être en plein rechargement
+    // (capot de la mitrailleuse ouvert, barillet sorti, mâchoire, pompe), en inspection ou en coup, et la pièce resterait mal posée
+    // jusqu'au prochain changement d'arme ou de viseur (regler en pleine pause du BR, fin de killcam sur la même arme)
+    const repos = new THREE.Group();
+    const copie = creerModeleArme(id, m, true);
+    repos.add(copie.group);
+    copie.group.traverse((o) => { if (o.userData.mire) o.visible = false; });
+    let copieG: ModeleArme | null = null;
+    const bD = creerBras(), bG = creerBras();
+    repos.add(bD, bG);
+    orienterBras(bD, copie.prise, coudeD);
+    if (paire && !estMelee(id)) {
+      copieG = creerModeleArme(id, m, true);
+      copieG.group.position.set(ecartPaire(), 0, 0);
+      copieG.group.rotation.y = -2 * pl.lacet;
+      repos.add(copieG.group);
+      orienterBras(bG, _main.copy(copieG.prise).add(copieG.group.position), coudeGPaire);
+    } else orienterBras(bG, copie.garde, coudeG);
+    // le dessus de l'arme sous l'empreinte de la pièce seulement (mire repliée) : ni l'éclair de bouche caché ni un guidon ailleurs ne la soulèvent
+    const y = boiteLocale(copie.inner, [z - plan.empreinte / 2, z + plan.empreinte / 2]).max.y + 0.0005;
+    // fenêtre sans rehausse, repère du groupe (= celui de `inner` au repos)
+    const c = new THREE.Vector3(0, y + plan.hauteurFenetre, z - plan.longueur / 2);
+    // rehausse : le cône de l'œil passe au-dessus de l'arme, à sa place en visée comme au plus fort du recul (l'arme rapprochée de l'œil,
+    // cf. `RECUL_MAX`), et le corps du viseur (le tube d'une lunette, plus long que son embase) aussi
+    const dessus = plan.longueur > plan.empreinte ? boiteLocale(copie.inner, [z - plan.longueur / 2, z + plan.longueur / 2]).max.y + 0.001 : y;
+    const oeil = -pl.vise[2], oeilRecul = oeil - RECUL_MAX * RECUL_EN_VISEE * pl.reculZ;
+    const brute = Math.max(
+      rehausseViseur(repos, c, plan.demiL, plan.demiH, oeil),
+      rehausseViseur(repos, c, plan.demiL, plan.demiH, oeilRecul),
+      dessus - (y + plan.basCorps),
+    );
+    // arrondie au demi-millimètre supérieur : les cotes des pièces (géométries du cache du module, jamais libérées) restent en nombre fini
+    const rehausse = Math.ceil(brute / PAS_REHAUSSE - 1e-6) * PAS_REHAUSSE;
+    copie.dispose();
+    copieG?.dispose();
+
     const g = new THREE.Group();
     g.position.set(0, y, z);
-    if (viseur === "point_rouge") {
-      piece(g, geoBoite(0.03, 0.03, 0.035), m, 0, 0.015, 0);
-      piece(g, geoBoite(0.02, 0.02, 0.004), m, 0, 0.018, -0.018);
-      hautVisee = 0.018;
-    } else if (viseur === "holo") {
-      piece(g, geoBoite(0.04, 0.012, 0.06), m, 0, 0.006, 0);
-      piece(g, geoBoite(0.004, 0.035, 0.004), m, 0.018, 0.03, -0.025);
-      piece(g, geoBoite(0.004, 0.035, 0.004), m, -0.018, 0.03, -0.025);
-      piece(g, geoBoite(0.04, 0.004, 0.004), m, 0, 0.047, -0.025);
-      hautVisee = 0.03;
-    } else {
-      // lunette (et lunette thermique) : tube et deux colliers
-      piece(g, geoCyl(grossi >= 4 ? 0.026 : 0.022, tube), m, 0, 0.035, 0);
-      piece(g, geoCyl(0.028, 0.03), m, 0, 0.035, -tube / 2);
-      for (const dz of [-0.04, 0.04]) piece(g, geoBoite(0.012, 0.03, 0.012), m, 0, 0.012, dz);
-    }
-    modele.group.add(g);
+    vitre = construireViseur(g, viseur, plan, rehausse, m);
+    modele.inner.add(g);
     pieceViseur = g;
-    // en visée, l'arme descend (ou monte) un peu pour que le point lumineux du viseur optique tombe sur l'axe de la caméra, là où le HUD le dessine
-    if (hautVisee > 0) decalageAds = borne(-(pl.vise[1] + modele.group.position.y + y + hautVisee), -0.03, 0.03);
+    fenetre = {
+      repere: g, piece: g, centre: new THREE.Vector3(0, plan.hauteurFenetre + rehausse, -plan.longueur / 2),
+      demiL: plan.demiL, demiH: plan.demiH, ronde: lunetteTube, vitre,
+      embase: { y: 0, x0: -plan.largeur / 2, x1: plan.largeur / 2, z0: -plan.empreinte / 2, z1: plan.empreinte / 2 },
+    };
+    caleFenetre();
     ordonner(group, true, 1000);
+  }
+
+  /** Décalage de visée : le centre de la fenêtre (repère du groupe, arme au repos) sur l'axe de la caméra, sans borne. */
+  function caleFenetre(): void {
+    if (!fenetre) return;
+    const c = fenetre.centre.clone();
+    if (fenetre.piece) c.add(fenetre.piece.position);
+    decalageAds.set(-(pl.vise[0] + c.x), -(pl.vise[1] + c.y));
+  }
+
+  /**
+   * Rehausse (m) qu'il faut sous la fenêtre `c` (centre du plan avant, repère de `racine` : la copie au repos de l'arme et des bras, posée
+   * comme dans le groupe ; demi-ouverture `demiL` × `demiH`) pour que les rayons
+   * de l'œil (en visée : à la hauteur du centre, en z = `oeilZ`) à travers toute l'ouverture passent au-dessus de chaque maillage visible de
+   * l'arme et des bras. Le cône s'élargit devant la fenêtre (proportionnel à la distance de l'œil) et se resserre derrière : un sommet P
+   * gêne si P.y + demiH × (oeilZ − P.z) / d dépasse le centre (d = distance œil → fenêtre). Calcul sur les sommets (contrainte linéaire : son
+   * maximum sur une pièce convexe est à un sommet), pièces retenues par leur boîte quand elle croise la largeur du cône.
+   */
+  function rehausseViseur(racine: THREE.Object3D, c: THREE.Vector3, demiL: number, demiH: number, oeilZ: number): number {
+    const MARGE = 0.002;
+    const d = oeilZ - c.z;
+    if (d <= 0.01) return 0;
+    racine.updateWorldMatrix(true, true);
+    const inverse = racine.matrixWorld.clone().invert();
+    const rel = new THREE.Matrix4(), boite = new THREE.Box3(), p = new THREE.Vector3();
+    let besoin = 0;
+    const visible = (o: THREE.Object3D): boolean => {
+      for (let q: THREE.Object3D | null = o; q && q !== racine; q = q.parent) if (!q.visible) return false;
+      return true;
+    };
+    racine.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (!mesh.isMesh || !visible(o)) return;
+      const geo = mesh.geometry as THREE.BufferGeometry;
+      const pos = geo.attributes.position;
+      if (!pos) return;
+      if (!geo.boundingBox) geo.computeBoundingBox();
+      rel.multiplyMatrices(inverse, o.matrixWorld);
+      boite.copy(geo.boundingBox!).applyMatrix4(rel);
+      if (boite.min.z >= oeilZ) return;
+      const k = (oeilZ - boite.min.z) / d;
+      if (boite.max.x < c.x - demiL * k - MARGE || boite.min.x > c.x + demiL * k + MARGE) return;
+      for (let i = 0; i < pos.count; i++) {
+        p.fromBufferAttribute(pos, i).applyMatrix4(rel);
+        if (p.z >= oeilZ) continue;
+        besoin = Math.max(besoin, p.y + demiH * ((oeilZ - p.z) / d) + MARGE - c.y);
+      }
+    });
+    return besoin;
   }
 
   // (v7) camouflage du Pack-a-Punch. (v8) plus marqué : les faces reçoivent une texture de zébrures magenta, turquoise et ambre qui ondule
@@ -1409,11 +1685,13 @@ export function creerArmeEnMain(idInitial: ArmeId, couleur: CouleurEntree = COUL
   return {
     group,
     get progresRecharge() { return modele.progres; },
+    get ads() { return ads; },
+    get fenetreViseur() { return fenetre; },
     tirer(main) {
       finInspection();
       if (main === "g" && modeleG) modeleG.tirer();
       else modele.tirer();
-      recul = Math.min(recul + 0.6, 1.3);
+      recul = Math.min(recul + 0.6, RECUL_MAX);
     },
     coup() { finInspection(); modele.coup(); },
     coupRapide(impactS, dureeS, arme) {
@@ -1440,9 +1718,10 @@ export function creerArmeEnMain(idInitial: ArmeId, couleur: CouleurEntree = COUL
       group.add(modele.group);
       masqueEnVisee = id === "sniper";
       poserPaire();
-      poserViseur();
+      // bras posés sur la nouvelle arme AVANT le viseur : la rehausse du viseur tient compte des mains
       orienterBras(brasD, modele.prise, coudeD);
       orienterBrasG();
+      poserViseur();
       recul = 0;
       reculV = 0;
     },
@@ -1468,9 +1747,11 @@ export function creerArmeEnMain(idInitial: ArmeId, couleur: CouleurEntree = COUL
     },
     regler(o) {
       const p = o.paire && !estMelee(id);
-      if (p !== paire) { paire = p; poserPaire(); }
+      const autrePaire = p !== paire;
+      if (autrePaire) { paire = p; poserPaire(); }
       const g = o.grossissement ?? 0;
-      if (o.viseur !== viseur || g !== grossi) { viseur = o.viseur; grossi = g; poserViseur(); }
+      // la paire change aussi la rehausse (arme et bras gauches) : le viseur est reposé
+      if (o.viseur !== viseur || g !== grossi || (autrePaire && pieceViseur)) { viseur = o.viseur; grossi = g; poserViseur(); }
       masqueEnVisee = id === "sniper" || o.viseur === "lunette" || o.viseur === "thermique";
     },
     maj(dt, ctx) {
@@ -1494,6 +1775,9 @@ export function creerArmeEnMain(idInitial: ArmeId, couleur: CouleurEntree = COUL
       orienterBrasG();
 
       ads += ((ctx.vise ? 1 : 0) - ads) * (1 - Math.exp(-dt * (masqueEnVisee ? 14 : 12)));
+      // une lunette (masquée au profit du HUD plein écran à 0,85) est en place dès `ADS_LUNETTE_EN_PLACE` : la fin de la transition montre
+      // l'œil dans l'axe du tube creux, jamais une arme encore de biais
+      const adsPose = masqueEnVisee ? Math.min(1, ads / ADS_LUNETTE_EN_PLACE) : ads;
       const vit = ctx.auSol ? ctx.vitesseH : 0;
       if (vit > 0.5) phase += dt * (6 + vit * 0.9);
       amp += (borne(vit / 9) * (1 - 0.85 * ads) - amp) * (1 - Math.exp(-dt * 8));
@@ -1509,14 +1793,26 @@ export function creerArmeEnMain(idInitial: ArmeId, couleur: CouleurEntree = COUL
 
       const p = modele.progres;
       const plongee = p > 0 ? Math.pow(Math.sin(Math.PI * Math.min(p, 1)), 0.7) : 0;
+      // Recul derrière un viseur optique : moitié moindre en visée, et l'arme bascule autour de l'ŒIL (origine de la caméra) et non de sa
+      // poignée : tout tourne d'un bloc avec la ligne de visée, la fenêtre monte un instant mais la bouche n'entre jamais dedans (la rehausse
+      // tient compte de l'arme rapprochée au plus fort du recul). Mire métallique : recul inchangé.
+      const optiqueVise = fenetre ? adsPose : 0;
+      const kRecul = 1 - (1 - RECUL_EN_VISEE) * optiqueVise;
+      const angleRecul = recul * pl.reculRot * kRecul;
       const bx = Math.sin(phase) * 0.012 * amp;
-      const by = -Math.abs(Math.cos(phase)) * 0.014 * amp + Math.sin(tAcc * 1.7) * 0.0015 * (1 - ads) + 0.02 * air * (1 - ads);
+      const by = -Math.abs(Math.cos(phase)) * 0.014 * amp + Math.sin(tAcc * 1.7) * 0.0015 * (1 - adsPose) + 0.02 * air * (1 - adsPose);
       group.position.set(
-        melange(pl.repos[0], pl.vise[0], ads) + bx,
-        melange(pl.repos[1], pl.vise[1] + decalageAds, ads) + by - 0.1 * plongee,
-        melange(pl.repos[2], pl.vise[2], ads) + recul * pl.reculZ,
+        melange(pl.repos[0], pl.vise[0] + decalageAds.x, adsPose) + bx,
+        melange(pl.repos[1], pl.vise[1] + decalageAds.y, adsPose) + by - 0.1 * plongee,
+        melange(pl.repos[2], pl.vise[2], adsPose) + recul * pl.reculZ * kRecul,
       );
-      group.rotation.set(recul * pl.reculRot + 0.15 * plongee, pl.lacet * (1 - ads), Math.sin(phase) * 0.015 * amp - 0.25 * plongee);
+      if (optiqueVise > 0 && angleRecul !== 0) {
+        // rotation d'axe x autour de l'œil : la position tourne avec l'arme (en plein, à pleine visée)
+        const cy = group.position.y, cz = group.position.z, co = Math.cos(angleRecul), si = Math.sin(angleRecul);
+        group.position.y += optiqueVise * (cy * co - cz * si - cy);
+        group.position.z += optiqueVise * (cy * si + cz * co - cz);
+      }
+      group.rotation.set(angleRecul + 0.15 * plongee, pl.lacet * (1 - adsPose), Math.sin(phase) * 0.015 * amp - 0.25 * plongee);
       if (tInsp >= 0) {
         // l'arme et les bras montent vers le centre et s'inclinent (la rotation de l'arme seule est déjà posée par `majInspection`)
         const e = poseInsp.ensemble;
@@ -1538,6 +1834,7 @@ export function creerArmeEnMain(idInitial: ArmeId, couleur: CouleurEntree = COUL
       modele.dispose();
       modeleG?.dispose();
       lame?.dispose();
+      retirerViseur();
       group.removeFromParent();
       texCamo?.dispose();
       libererMateriaux(m);

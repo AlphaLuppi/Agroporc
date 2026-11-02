@@ -147,7 +147,7 @@ describe("(v8) organe de visée posé sur l'arme améliorée", () => {
     const modele = modeleDe(arme);
     expect(boiteLocale(modele).max.y).toBeLessThan(0.3);
     arme.regler({ paire: false, viseur: "point_rouge" });
-    const piece = modele.children[modele.children.length - 1];
+    const piece = arme.fenetreViseur!.piece!;
     // la pièce part du dessus de la carcasse SOUS elle (repère du modèle), à quelques millimètres près : ni l'éclair de bouche caché ni un
     // guidon ailleurs sur l'arme ne la soulèvent (elle flottait 7 cm au-dessus)
     piece.visible = false;
@@ -170,7 +170,7 @@ describe("(v8) organe de visée posé sur la carcasse, pas au-dessus", () => {
       const arme = creerArmeEnMain(id);
       const modele = modeleDe(arme);
       arme.regler({ paire: false, viseur });
-      const piece = modele.children[modele.children.length - 1];
+      const piece = arme.fenetreViseur!.piece!;
       piece.visible = false;
       // empreinte de la pièce : 3 cm de part et d'autre, 9 cm pour le tube d'une lunette
       const z = piece.position.z, demi = viseur === "lunette" ? 0.09 : 0.03;
