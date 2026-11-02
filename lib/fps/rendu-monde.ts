@@ -544,7 +544,8 @@ export function creerMondeDynamique(scene: THREE.Scene, o: { nbPnj: number; nbVe
   suivre({ dispose: () => libererPiece(geoTruck) });
   const mTruck = creerMateriaux(new THREE.Color(COULEUR_TRUCK));
   suivre({ dispose: () => libererMateriaux(mTruck) });
-  piece(truck, geoTruck, mTruck);
+  const corpsTruck = piece(truck, geoTruck, mTruck);
+  let enseigneTruck: THREE.Mesh | null = null;
   const texEnseigne = textureEnseigne();
   if (texEnseigne) {
     suivre(texEnseigne);
@@ -555,6 +556,7 @@ export function creerMondeDynamique(scene: THREE.Scene, o: { nbPnj: number; nbVe
     enseigne.position.set(TRUCK.largeur / 2 - 0.2, TRUCK.hauteur + 0.35, TRUCK.fenetreZ);
     enseigne.renderOrder = ORDRE_BASE + 1;
     truck.add(enseigne);
+    enseigneTruck = enseigne;
   }
 
   // ---- les deux vendeuses, DEDANS, face au passe-plat : Elsa (côté porte arrière) et la patronne (côté cabine) ----
@@ -709,6 +711,9 @@ export function creerMondeDynamique(scene: THREE.Scene, o: { nbPnj: number; nbVe
       // le truck ne bouge pas (la position du message est le point de service, déjà connu)
       tournee = enTournee;
       figures.elsa.racine.visible = figures.patronne.racine.visible = !enTournee;
+      // le Truck fou part du stand avec le même modèle : le Truck garé s'efface (sinon deux camions superposés qui scintillent, puis un double resté sur place)
+      corpsTruck.visible = !enTournee;
+      if (enseigneTruck) enseigneTruck.visible = !enTournee;
       const offre = msg?.offre ?? null;
       const vendeuse: VendeuseId | null = offre ? offre.vendeuse ?? "elsa" : null;
       // scénario de l'offre : le même chez tous les clients (graine = identifiant), daté depuis son apparition

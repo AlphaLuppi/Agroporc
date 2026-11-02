@@ -35,6 +35,7 @@ import type { IntervalleAvion } from "./avion";
 import type { IntervalleElsa } from "./elsa";
 import { armeDuSlot, couteauTenable, depuisAlias, estPrincipale, estSecondaire, estSlot, estUnique, meleeDe, normaliserEquipement } from "./equipement";
 import { creerServiceGrenades } from "./match-grenades";
+import { degatsGrenadeJoueur, souffleAtteint } from "./grenades";
 import { minutageCoupRapide } from "./coup-rapide";
 import type {
   ContexteSalle, JoueurSalle, ResumeBr, ResumeZombies, ServiceBr, ServiceElsa, ServiceEvenements, ServiceGrenades, ServicePolice, ServiceTigres, ServiceVehicules, ServiceZombies, Sortie,
@@ -56,7 +57,7 @@ import { REWIND_MELEE_MS, coupVraisemblable } from "./melee";
 import { PASSE_EN_SUSPENSION, Suspension, type OptionsSuspension } from "./suspension";
 import {
   CAPACITE_POLICE, CIBLE_LIVRAISON, CIBLE_POLICE, CIBLE_TIGRE, CIBLE_TITAN, EQUIPEMENT_DEFAUT, JEU, PLAFONDS, SLOT_DEFAUT, copierEquipement, estIdZombie, estMelee, oeilDe, silhouetteDe,
-  type ArmeFeuId, type ArmeId, type ArmeMeleeId, type CauseMort, type EtatJoueurSnap, type Equipement, type InfoMatch, type InfoTueur,
+  type ArmeFeuId, type ArmeId, type ArmeMeleeId, type CauseMort, type EtatJoueurSnap, type Equipement, type GenreGrenade, type InfoMatch, type InfoTueur,
   type JoueurPublic, type LigneClassement, type LigneStats, type MessageClient, type MessageServeur, type ModeSalle, type MonstresSnap, type SignalVoix, type SnapZombies, type Slot, type Vec3, type Zone,
 } from "./protocole";
 import { BUS_C3, avancerBusC3, busEnSnap, armesEnSnap, ecraseParBus, estSurLeToit, ramasserArmeC3, peutMonterSurBus, creerEtatBusC3, type EtatBusC3, type IntervalleBus } from "./bus-c3";
@@ -461,6 +462,37 @@ export class Salle implements ContexteSalle {
     if (this.table.has(id)) this.capacites.set(id, new Set(capacites));
   }
 
+  /**
+   * (lot tactique) Souffle d'une explosion de grenade / obus / roquette sur ce qui n'est pas un joueur : tigres largués (sauf le tigre allié du lanceur),
+   * tigre robot et titan (distance à leur forme), voiture de police, voitures. Mêmes dégâts qu'à un joueur (`degatsGrenadeJoueur` à la distance de leur
+   * surface), l'explosion doit être en vue du centre pour les cibles posées au sol. Les kills et dégâts sont crédités à `par`.
+   */
+  souffleSurCibles(c: Vec3, genre: GenreGrenade, par: JoueurSalle, maintenant: number): Sortie[] {
+    if (this.phase !== "jeu") return [];
+    const sorties: Sortie[] = [];
+    const degatsA = (d: number) => degatsGrenadeJoueur(genre, Math.max(0, d));
+    for (const tg of this.tigres?.snap() ?? []) {
+      if (tg.genre === "allie" && tg.lanceur === par.id) continue;
+      if (tg.etat === "descente") continue;
+      const centre: Vec3 = [tg.p[0], tg.p[1] + 0.6, tg.p[2]];
+      const dg = degatsA(Math.hypot(centre[0] - c[0], centre[1] - c[1], centre[2] - c[2]) - 0.8);
+      if (dg > 0 && souffleAtteint(this.monde, c, centre)) sorties.push(...this.tigres!.blesser(tg.id, dg, par, "corps", maintenant));
+    }
+    for (const cible of [CIBLE_TIGRE, CIBLE_TITAN]) {
+      const d = this.evenements?.distanceMonstre(cible, c) ?? null;
+      if (d === null) continue;
+      const dg = degatsA(d);
+      if (dg > 0) sorties.push(...this.evenements!.blesserMonstre(cible, dg, par, "corps", maintenant));
+    }
+    const pol = this.police?.snap();
+    if (pol && !pol.depart) {
+      const dg = degatsA(Math.hypot(pol.p[0] - c[0], pol.p[1] + 0.6 - c[1], pol.p[2] - c[2]) - 2.2);
+      if (dg > 0 && souffleAtteint(this.monde, c, [pol.p[0], pol.p[1] + 0.6, pol.p[2]])) sorties.push(...this.police!.blesser(par, dg, maintenant));
+    }
+    if (this.vehicules) sorties.push(...this.vehicules.soufflerVoitures(c, degatsA, par, maintenant));
+    return sorties;
+  }
+
   supportePolice(id: string): boolean {
     const j = this.table.get(id);
     if (!j) return false;
@@ -496,15 +528,15 @@ export class Salle implements ContexteSalle {
    * puis règles (bornées, limitées à celles du mode), événements de l'arène (services reconstruits) et action. Diffuse l'état et une annonce (« Alice : gravité
    * ×0,5 ») à toute la salle ; rien si rien n'a changé. Refus privé `refus{reglesDev, raison}`.
    */
-  private recevoirReglesDev(j: JoueurSalle, msg: Extract<MessageClient, { t: "reglesDev" }>, maintenant: number): Sortie[] {
+  private recevoirReglesDev(j: JoueurSalle, msg: Extract<MessageClient, { t: "reglesDev" }>, maintenant: number, reel: number = maintenant): Sortie[] {
     // message vide : le client demande l'état courant (à son entrée dans la partie et à chaque reconnexion), ouvert à tout membre, sans anti-rafale
     if (msg.regles === undefined && msg.evenements === undefined && msg.action === undefined) return [this.messageReglesDev(j.id)];
     const refus = (raison: "hote" | "lobby" | "limite" | "mode" | "invalide"): Sortie[] => [{ a: j.id, m: { t: "refus", action: "reglesDev", raison } }];
     const auth = autoriseDev({ hallLibre: this.devLibre, estHote: this.hoteDevId() === j.id, enJeu: j.enJeu });
     if (auth !== true) return refus(auth);
     const dernier = this.dernierDevT.get(j.id);
-    if (dernier !== undefined && maintenant - dernier < INTERVALLE_DEV_MS) return refus("limite");
-    this.dernierDevT.set(j.id, maintenant);
+    if (dernier !== undefined && reel - dernier < INTERVALLE_DEV_MS) return refus("limite");
+    this.dernierDevT.set(j.id, reel);
     const mode = this.mode();
     let action: ActionDev | null = null;
     if (msg.action !== undefined) {
@@ -1089,6 +1121,9 @@ export class Salle implements ContexteSalle {
     const j = this.table.get(id);
     if (!j || !msg || typeof msg !== "object") return [];
     if (msg.t === "pauseZ") return this.apresPoint(reel, this.pauseZ(j, msg.actif, reel));
+    // menu de développement : passe aussi salle suspendue (solo en zombies, Échap suspend et le menu s'ouvre ensuite). Les actions lisent l'horloge
+    // virtuelle gelée (rien ne tourne tant que la suspension dure, tout repart de là), l'anti-rafale lit l'horloge RÉELLE : gelée, il bloquerait tout.
+    if (msg.t === "reglesDev") return this.apresPoint(reel, this.recevoirReglesDev(j, msg, this.susp.virtuel(reel), reel));
     // suspendue : liste BLANCHE (le reste est jeté, aucun service ne tourne sans horloge)
     // exception : l'ARRÊT d'un maintien (`reanimer{cible:null}`, `reparer{fenetre:null}`) passe, car il ne fait que relâcher. Le client le
     // envoie justement en recevant `zpause{actif:true}` (`toutRelacher`), salle déjà suspendue : jeté, la relève ou la repose tenue côté serveur

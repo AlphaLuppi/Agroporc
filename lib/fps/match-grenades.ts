@@ -91,6 +91,8 @@ export function creerServiceGrenades(ctx: ContexteSalle, opts: OptionsServiceGre
       if (degats <= 0 || !souffleAtteint(ctx.monde, c, [h.p[0], h.p[1] + 0.3, h.p[2]])) continue;
       sorties.push(...ctx.infliger(h, degats, par, "grenade", "corps", "couteau", t, c));
     }
+    // tout ce qui n'est pas un joueur (tigres, tigre robot, titan, police, voitures) : la salle sait où ils sont, elle applique le même souffle
+    if (par) sorties.push(...(ctx.souffleSurCibles?.(c, v.lancer.genre, par, t) ?? []));
     // une explosion qui tue plusieurs joueurs : une seule présence (la dernière, qui a tous les scores), avant la fin de match éventuelle
     let presence: Sortie | null = null;
     const res: Sortie[] = [];

@@ -241,10 +241,17 @@ describe("événements de l'arène en direct", () => {
     expect(refusDe(dev(s, "a", { action: { k: "forcer", evenement: "elsa" } }, T0 + 3000))).toMatchObject({ raison: "invalide" });
   });
 
-  it("forcer la police avance son essai de départ", () => {
-    const s = salleArene({}, ["a", "b"], normaliserReglages({ evenements: ["police"] }));
-    const r = dev(s, "a", { action: { k: "forcer", evenement: "police" } }, T0 + 1000);
+  it("forcer la police : refus tant qu'il n'y a personne à viser ; ensuite elle part malgré les conditions de rareté (un seul joueur, aucun kill)", () => {
+    const s = salleArene({}, ["a"], normaliserReglages({ evenements: ["police"] }));
+    // « a » n'a pas annoncé la capacité police : immunisé et non ciblable, donc aucune descente possible (pas d'annonce sans voiture)
+    expect(refusDe(dev(s, "a", { action: { k: "forcer", evenement: "police" } }, T0 + 10_000))).toMatchObject({ raison: "invalide" });
+    s.definirCapacites("a", ["police"]);
+    // près de la route (un point de départ existe à plus de 90 m, hors de vue)
+    j(s, "a").p = [0, 0, 150];
+    const r = dev(s, "a", { action: { k: "forcer", evenement: "police" } }, T0 + 11_000);
     expect(messages(r, "reglesDev")[0].annonce).toContain("la police");
+    const { sorties } = avancer(s, T0 + 11_000, T0 + 13_000);
+    expect(messages(sorties, "police").some((m) => m.phase === "debut")).toBe(true);
   });
 
   it("une action hors du mode (argent en arène) est refusée « mode »", () => {

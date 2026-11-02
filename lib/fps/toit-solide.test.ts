@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 import { placementsSolaires, placementsToit } from "../agroparc3d/facade";
 import type { SceneData } from "../agroparc3d/types";
 import { construireMondeBr } from "./br-carte";
-import { creuserBatiment, construireMonde, detruireBatiment, lancerRayon, normaleImpact, releverBatiments, resoudre, solSous, type Monde } from "./collision";
+import { PENTE_COUPE_BRECHE, creuserBatiment, construireMonde, detruireBatiment, lancerRayon, normaleImpact, releverBatiments, resoudre, solSous, type Monde } from "./collision";
 import { etape, etatInitial, type Entrees } from "./mouvement";
 import { equipementsSolides, type EquipementSolide } from "./toit-solide";
 import { PAS_NAV_M, grilleNav } from "./tigre-arene";
@@ -188,6 +188,24 @@ describe("équipements solides : destruction", () => {
     // brèche au pied de l'équipement (rayon 2 m, sous le seuil d'effondrement total) : il tombe
     const r = creuserBatiment(monde, id, cx, cz, 2);
     if (r === "breche") expect(lancerRayon(monde, [cx - 4, y, cz], [1, 0, 0], 4)).toBe(Infinity);
+  });
+
+  it("la découpe visible d'une brèche est un cône : un équipement masqué par le nuanceur (rayon + hauteur / pente) n'est plus solide, au-delà il reste", () => {
+    const monde = construireMonde(scene);
+    const { id, e } = trouver("clim");
+    const [cx, cz] = centre(e);
+    const y = e.base + 0.5;
+    const visible = 2 + e.base / PENTE_COUPE_BRECHE;
+    // brèche de 2 m centrée à (visible − 1,5) m de la clim : son centre est dans le cône visible mais bien hors du cercle au sol
+    const r = creuserBatiment(monde, id, cx - (visible - 1.5), cz, 2);
+    if (r === "breche") {
+      expect(Math.hypot(visible - 1.5, 0)).toBeGreaterThan(2);
+      expect(lancerRayon(monde, [cx - 4, y, cz], [1, 0, 0], 4)).toBe(Infinity);
+    }
+    releverBatiments(monde);
+    // brèche à (visible + 3) m : hors du cône, la clim reste
+    creuserBatiment(monde, id, cx - (visible + 3), cz, 2);
+    expect(lancerRayon(monde, [cx - 4, y, cz], [1, 0, 0], 4)).toBeLessThan(4);
   });
 });
 

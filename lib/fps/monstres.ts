@@ -143,6 +143,19 @@ export function formeZombie(type: number): readonly SphereForme[] {
   return type === 4 ? FORME_MINI_TRUCK : FORME_TIGRE;
 }
 
+/**
+ * Distance (m) du point `c` à la surface de la forme posée en (p, cap) à l'échelle `echelle` : la plus courte des distances aux sphères, retranchée de leur
+ * rayon (0 si `c` est dans l'une d'elles). Sert au souffle des explosions sur un monstre.
+ */
+export function distanceForme(c: Vec3, p: Vec3, cap: number, echelle: number, forme: readonly SphereForme[] = FORME_TIGRE): number {
+  let meilleur = Infinity;
+  for (const s of forme) {
+    const o = pointLocal(p, cap, echelle, s.d, s.h, s.a);
+    meilleur = Math.min(meilleur, Math.hypot(c[0] - o[0], c[1] - o[1], c[2] - o[2]) - s.r * echelle);
+  }
+  return Math.max(0, meilleur);
+}
+
 /** Plus petit t ≥ 0 où le rayon (o, d normalisé) entre dans la sphère, Infinity sinon. */
 function rayonSphere(o: Vec3, d: Vec3, c: Vec3, r: number): number {
   const wx = o[0] - c[0], wy = o[1] - c[1], wz = o[2] - c[2];

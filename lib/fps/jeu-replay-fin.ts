@@ -11,7 +11,7 @@ import type { EtatJoueurSnap, MessageServeur, VehiculeSnap, Vec3 } from "./proto
 import { Interpolateur } from "./reseau";
 import { InterpolateurVehicules } from "./interpolation-vehicules";
 import {
-  CameraCinemato, EnregistreurReplay, REPLAY_FIN, axeDuel, choisirMoments, titreMoment, type Clip, type Lancer, type PoseCamera,
+  CameraCinemato, EnregistreurReplay, REPLAY_FIN, axeDuel, choisirMoments, MARGE_FIN_ENTRACTE_MS, tenirDansLeTemps, titreMoment, type Clip, type Lancer, type PoseCamera,
 } from "./replay-fin";
 import type { EvenementVue } from "./vue-joueur";
 
@@ -36,6 +36,8 @@ export interface OptionsReplayFin {
   pseudo(id: string): string;
   /** premier obstacle d'un rayon (distance, ≥ `max` si rien) : ramène la caméra devant les murs ; sans : la caméra traverse */
   lancer?: Lancer;
+  /** ms réels avant le match suivant (horloge serveur) ; absent ou null = inconnu. Les moments sont réduits pour tenir, le dernier kill gardé. */
+  tempsRestantMs?(): number | null;
 }
 
 type Mort = Extract<MessageServeur, { t: "mort" }>;
@@ -134,7 +136,8 @@ export class ControleurReplayFin {
       this.attenteMs += ms;
       if (this.enreg.enAttente() === 0 || this.attenteMs >= REPLAY_FIN.attenteMaxMs) {
         this.enreg.terminer();
-        this.moments = choisirMoments(this.enreg.lesClips());
+        const restant = this.opts.tempsRestantMs?.();
+        this.moments = tenirDansLeTemps(choisirMoments(this.enreg.lesClips()), restant == null ? null : restant - MARGE_FIN_ENTRACTE_MS);
         if (!this.moments.length) { this.arreter(); return; }
         this.ph = "lecture";
         this.charger(0);

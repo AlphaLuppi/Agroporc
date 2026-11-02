@@ -9,7 +9,7 @@ import type { Boite, Monde } from "./collision";
 import type { MemoSante } from "./sante";
 import type {
   ArmeFeuId, ArmeId, ArmeMeleeId, ArmeUniqueId, AvionBr, BrApercu, CauseMort, CoteMur, Equipement, EtatPartieBr, EtatPartieZombies, GenreVoiture, MessageClient, MessageServeur, MonstresSnap,
-  ObjetBr, PhaseBr, PhaseZombies, PointButin, PoliceSnap, Posture, Siege, Slot, SnapZombies, TigreLargueSnap, TypeEvenement, Vec3, VehiculeSnap, Zone,
+  GenreGrenade, ObjetBr, PhaseBr, PhaseZombies, PointButin, PoliceSnap, Posture, Siege, Slot, SnapZombies, TigreLargueSnap, TypeEvenement, Vec3, VehiculeSnap, Zone,
 } from "./protocole";
 import type { ObstacleVoiture, Tigre } from "./tigre-arene";
 import type { ExplosionGrenade } from "./grenades";
@@ -189,6 +189,12 @@ export interface ContexteSalle {
    * (`bonjour.capacites`) : il est alors immunisé et jamais choisi pour cible (une voiture invisible ne doit tuer personne).
    */
   supportePolice(id: string): boolean;
+  // ---- lot tactique (souffle des explosions) ----
+  /**
+   * Souffle d'une explosion de genre `genre` centrée en `c` sur tout ce qui n'est pas un joueur : tigres largués, tigre robot, titan, voiture de police,
+   * voitures (les joueurs sont traités par le service des grenades). Crédit des dégâts et des kills à `par`. Absent d'un contexte qui n'a pas de telles cibles.
+   */
+  souffleSurCibles?(c: Vec3, genre: GenreGrenade, par: JoueurSalle, maintenant: number): Sortie[];
 }
 
 /**
@@ -234,6 +240,8 @@ export interface ServiceEvenements {
    * renvoie la zone et la distance, ou null si le rayon le manque.
    */
   toucheMonstre(cible: string, o: Vec3, d: Vec3, portee: number): { zone: Zone; distance: number } | null;
+  /** distance (m) d'un point à la surface du tigre robot (CIBLE_TIGRE) ou du titan (CIBLE_TITAN), null s'il n'existe pas : souffle des explosions */
+  distanceMonstre(cible: string, c: Vec3): number | null;
   /** dégâts cumulés d'un tir sur un monstre : `degats` au tireur, mort du tigre (titan pour `par`) ou destruction du titan */
   blesserMonstre(cible: string, degats: number, par: JoueurSalle, zone: Zone, maintenant: number): Sortie[];
   /** `pilotage` / `canon` du pilote ; les autres types renvoient [] */
@@ -350,6 +358,11 @@ export interface ServiceVehicules {
     j: JoueurSalle, o: Vec3, dirs: readonly Vec3[], declarations: readonly { genre: GenreVoiture; id: number; plomb: number }[] | undefined,
     arme: ArmeFeuId, plombsPris: ReadonlySet<number>, maintenant: number,
   ): Sortie[];
+  /**
+   * (lot tactique) Souffle d'une explosion en `c` sur les voitures (PNJ et conduisibles) : `degats(distance)` selon la distance du centre à la caisse (0 =
+   * rien) ; une voiture à 0 explose en cascade (occupants tués, crédit à `par`). Renvoie les sorties (états des voitures, explosions).
+   */
+  soufflerVoitures(c: Vec3, degats: (distance: number) => number, par: JoueurSalle, maintenant: number): Sortie[];
   /** voitures conduisibles (vitesse mesurée, conducteur) et PNJ à l'instant donné : obstacles et chocs des tigres */
   voitures(maintenant: number): ObstacleVoiture[];
 }

@@ -230,7 +230,7 @@ export function texteRefusDev(raison: string): string {
     case "lobby": return "Les règles se règlent une fois en partie.";
     case "limite": return "Trop vite : réessayez dans un instant.";
     case "mode": return "Ce réglage n'existe pas dans ce mode.";
-    case "invalide": return "Impossible maintenant (événement absent ou déjà en cours, pas en manche…).";
+    case "invalide": return "Impossible maintenant (événement absent, déjà en cours ou retenu par un autre ; police : il faut quelqu'un à viser ; zombies : pas en manche…).";
     default: return "Réglage refusé.";
   }
 }

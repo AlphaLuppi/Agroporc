@@ -1,5 +1,5 @@
 /**
- * Inspection de l'arme en main (touche `inspecter`, Y par défaut) : chronologie PURE (ni three ni horloge, le temps `t` est fourni) de ce que
+ * Inspection de l'arme en main (touche `inspecter`, I par défaut) : chronologie PURE (ni three ni horloge, le temps `t` est fourni) de ce que
  * fait l'arme vue depuis la caméra. Le couteau enchaîne des tricks de couteau papillon (ouverture en vrille, lancer-rattraper, moulinet de poignet),
  * l'épée un moulinet dans le plan de l'écran, une arme de poing regarde son flanc droit puis gauche et fait un tour de gunspin, une arme longue
  * montre ses deux flancs puis se penche sur la culasse. Client seulement : aucun message, les autres joueurs ne la voient pas.

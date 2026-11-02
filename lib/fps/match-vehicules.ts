@@ -31,6 +31,8 @@ export interface OptionsServiceVehicules {
 /** Une touche de voiture est cherchée sur la caisse rejouée de 0 à `REWIND_VOITURE_MS` en arrière, par pas de `PAS_REWIND_VOITURE_MS`. */
 const REWIND_VOITURE_MS = 300;
 const PAS_REWIND_VOITURE_MS = 50;
+/** Demi-longueur (m) d'une caisse de voiture : retranchée de la distance d'un souffle à son centre. */
+const DEMI_CAISSE_M = 2.2;
 /** Hauteur (m) du centre d'une explosion au-dessus du sol (souffle et ligne de vue). */
 const Y_EXPLOSION = 0.9;
 /** Réaction en chaîne : au plus ce nombre d'explosions par tir (12 PNJ + 6 voitures, borne de sûreté). */
@@ -317,6 +319,23 @@ export function creerServiceVehicules(ctx: ContexteSalle, opts: OptionsServiceVe
         }
       }
       return r;
+    },
+
+    soufflerVoitures(c, degats, par, maintenant) {
+      if (!ctx.enPhaseJeu()) return [];
+      const sorties: Sortie[] = [];
+      let change = false;
+      for (const v of toutesLesVoitures(maintenant)) {
+        // distance du centre de l'explosion au centre de la caisse, moins sa demi-longueur (la caisse est un volume, pas un point)
+        const d = Math.max(0, Math.hypot(v.p[0] - c[0], v.p[1] + 0.7 - c[1], v.p[2] - c[2]) - DEMI_CAISSE_M);
+        const dg = degats(d);
+        if (dg <= 0 || !visible(ctx.monde, c, [v.p[0], v.p[1] + 0.7, v.p[2]])) continue;
+        const r = carrosseries.toucher(v.ref, dg, maintenant, v);
+        change ||= r.change;
+        if (r.detruite) sorties.push(...exploser(v, par, par.arme as ArmeFeuId, maintenant));
+      }
+      if (change) sorties.push(messageVoitures("tous"));
+      return sorties;
     },
 
     tirVoitures(j, o, dirs, declarations, arme, plombsPris, maintenant) {

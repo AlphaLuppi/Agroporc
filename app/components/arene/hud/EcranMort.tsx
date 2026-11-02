@@ -139,7 +139,7 @@ export default function EcranMort({
   const tueurJoueur = joueurs?.find((j) => j.id === killcamInfo?.id) ?? null;
   const km = tueurJoueur ? { kills: tueurJoueur.kills, morts: tueurJoueur.morts } : null;
   const carte = (
-    <CarteTueur tueur={killcamInfo} derniereMort={derniereMort} degatsAuTueur={degatsAuTueur} reapparitionDans={hud.reapparitionDans} kmTueur={km} />
+    <CarteTueur tueur={killcamInfo} derniereMort={derniereMort} degatsAuTueur={degatsAuTueur} reapparitionDans={hud.reapparitionDans} reapparitionDelai={hud.reapparitionDelai} kmTueur={km} />
   );
   const choix = sansChoixEquipement ? null : (
     <div className={styles.equipement}>

@@ -111,8 +111,8 @@ export const LIBELLES_ACTIONS: Record<Action, string> = {
   zoomLunette: "Lunette : niveau de zoom suivant (molette en lunette)",
   parler: "Chat vocal : appuyer pour parler",
   invoquer: "Invoquer le tigre (sort gagné)",
-  fumigene: "Lancer un fumigène (un toutes les 15 s)",
-  frappeAerienne: "Frappe aérienne : ouvrir le ciblage (série de 5 kills)",
+  fumigene: "Arène : lancer un fumigène (un toutes les 15 s)",
+  frappeAerienne: "Arène : frappe aérienne, ouvrir le ciblage (série de 5 kills)",
   soigner: "Battle Royale : utiliser un bandage",
   potion: "Battle Royale : boire une potion de bouclier",
   lacher: "Battle Royale : lâcher l'arme en main",
@@ -187,8 +187,8 @@ export function touchesParDefaut(): ConfigTouches {
     lacher: ["KeyU", null],
     spectateurSuivant: ["ArrowRight", null],
     spectateurPrecedent: ["ArrowLeft", null],
-    // menu de développement : F9 libère la souris et ouvre le panneau des règles en direct
-    menuDev: ["F9", null],
+    // menu de développement : F9 libère la souris et ouvre le panneau des règles en direct ; ² / ` en second (sur un Mac, F9 seul est une touche média)
+    menuDev: ["F9", "Backquote"],
     // I comme « inspecter » (inspection de l'arme en main, client seulement) : libre dans tous les contextes (Y est le sort d'invocation)
     inspecter: ["KeyI", null],
   };

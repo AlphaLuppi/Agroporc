@@ -25,7 +25,7 @@
  *             faire coïncider avec NEXT_PUBLIC_FPS_WS_URL d'un Next déjà lancé), E2E_PAGE (page qui monte le code « myrtille », défaut une 404 : aucune
  *             lecture de la base), E2E_HEADED=1, E2E_GARDER=1 (laisse les serveurs lancés par le script), E2E_JUSQUA=5 (s'arrête après l'étape 5),
  *             E2E_SEULES=3,4 (ne joue que ces étapes ; la 1 et la 2 sont toujours jouées), E2E_DEBUG=1 (trace des gestes),
- *             E2E_ZONE_ECHELLE (échelle de durée de la zone, défaut 0.5 : la tempête dure ≈ 270 s, le 6b (venir regarder) tient même sous un rendu lent ; 0.08 ≈ 43 s est trop court sous le rendu
+ *             E2E_ZONE_ECHELLE (échelle de durée de la zone, défaut 0.7 depuis la relecture du 2026-11-02 : à 0.5 la partie finissait pendant le 6b dès que la machine était chargée ; la tempête dure ≈ 380 s, le 6b (venir regarder) tient même sous un rendu lent ; 0.08 ≈ 43 s est trop court sous le rendu
  *             logiciel), E2E_VALIDE (durée minimale d'une partie comptée, ms, défaut 5000), E2E_DECOMPTE (plafond du décompte, ms, défaut 45000 : il
  *             se termine dès que les trois ont rejoint), E2E_FIN (affichage de la fin avant le retour au lobby, ms, défaut 40000), E2E_STATS (fichier des statistiques du serveur lancé
  *             par le script, défaut <E2E_OUT>/stats-br.json, supprimé au départ).
@@ -57,7 +57,7 @@ const PAGE = process.env.E2E_PAGE ?? "/arene-e2e-introuvable";
  * (≈ 22 s après le décollage) tombe déjà dans le troisième palier, et le duel n'y tient plus. 0,5 donne ≈ 270 s de tempête (0,3 ≈ 160 s suffit sur une machine libre, mais la partie finit avant le 6b quand le rendu est lent) : atterrir, ramasser une arme
  * et tuer Bob se font avant la fin de la tempête, qui tue Cora (loin du centre) avant la fermeture totale.
  */
-const ECHELLE_ZONE = process.env.E2E_ZONE_ECHELLE ?? "0.5";
+const ECHELLE_ZONE = process.env.E2E_ZONE_ECHELLE ?? "0.7";
 /** Durée minimale (ms) pour qu'une partie compte dans les statistiques (le serveur a 60 s par défaut). */
 const VALIDE = process.env.E2E_VALIDE ?? "5000";
 const FIN = process.env.E2E_FIN ?? "40000";
@@ -221,7 +221,17 @@ async function aller(j, observateurs, pos, tolerance = 2.5) {
     let accepte = false;
     for (let essai = 0; essai < 3 && !accepte; essai++) {
       await j.teleporter([cible[0], 0, cible[1]]);
-      accepte = await jusqua(async () => { const d = await vu(); return !!d && dist(plat(d.p), cible) < tolerance; }, { ms: 8000, quoi: "" }).then(() => true, () => false);
+      // posé = vu là où on l'a voulu, ou là où le client l'a repoussé (une étape intermédiaire qui tombe dans un bâtiment plein : la collision le ressort de
+      // quelques mètres, le serveur accepte cette position et l'étape suivante repart de là)
+      accepte = await jusqua(async () => {
+        const d = await vu();
+        if (!d) return false;
+        if (dist(plat(d.p), cible) < tolerance) return true;
+        const sj = await j.jeu().catch(() => null);
+        const client = sj?.p ? plat(sj.p) : null;
+        // seulement pour une étape intermédiaire : l'étape finale doit arriver exactement là où on l'a demandé
+        return k < 1 && !!client && dist(plat(d.p), client) < tolerance && dist(client, cible) < 10;
+      }, { ms: 8000, quoi: "" }).then(() => true, () => false);
     }
     if (!accepte) {
       const sj = await j.jeu();
@@ -257,13 +267,15 @@ function objetsAuSol(j) {
 }
 
 /**
- * Un point où se tenir près de `c` : 0,8 m à côté de l'objet posé AU SOL le plus proche (il est libre pour un joueur : le tirage le vérifie). Poser un
+ * Un point où se tenir près de `c` : l'objet posé AU SOL le plus proche (son point est libre pour un joueur : le tirage le vérifie). Poser un
  * joueur au centre exact d'un cercle l'enterrerait parfois dans un bâtiment plein, dont la collision le repousserait ailleurs.
  */
 function pointLibrePres(j, c) {
   const sols = [...objetsAuSol(j).values()].filter((o) => o.p[1] <= 0.6).sort((a, b) => dist(plat(a.p), c) - dist(plat(b.p), c));
   verifier(sols.length > 0, "aucun objet au sol pour trouver un point libre");
-  return [sols[0].p[0] + 0.8, sols[0].p[2]];
+  // sur l'objet même : un décalage de 0,8 m pouvait envoyer le joueur dans le mur d'un bâtiment plein quand l'objet est posé contre une façade
+  // (le joueur y était repoussé de plusieurs mètres et n'était jamais « posé » : l'étape 5 échouait une fois sur deux, et les suivantes avec elle)
+  return [sols[0].p[0], sols[0].p[2]];
 }
 
 // ---------------------------------------------------------------------------------------------------------------- statistiques
@@ -654,7 +666,8 @@ try {
     await B.page.locator("aside[aria-label='Battle Royale']").waitFor({ state: "visible", timeout: 8000 });
     // le lobby propose de regarder ou de créer sa partie, et liste les parties
     await B.page.getByRole("button", { name: "Créer ma partie", exact: true }).waitFor({ state: "visible", timeout: 8000 });
-    verifier(await B.page.getByRole("button", { name: "Regarder la partie", exact: true }).isVisible(), "pas de bouton « Regarder la partie » chez Bob");
+    // les parties en cours arrivent par `salons` (1 Hz) : le bouton peut suivre « Créer ma partie » de quelques instants
+    await B.page.getByRole("button", { name: "Regarder la partie", exact: true }).waitFor({ state: "visible", timeout: 8000 }).catch(() => { throw new Error("pas de bouton « Regarder la partie » chez Bob"); });
     const premiere = (await B.etat()).br?.partie;
     verifier(premiere === "br1", `partie de Bob avant : ${premiere}`);
     await B.capture("06b-lobby-partie-en-cours-B-1280");

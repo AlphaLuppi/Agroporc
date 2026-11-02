@@ -42,6 +42,8 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+/** PV de la voiture de police au départ (`POLICE.pvMax` de lib/fps/police.ts : 700 avant le lot « police plus longue », 1 100 depuis). */
+const PV_POLICE = 1100;
 const RACINE = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const require = createRequire(join(RACINE, "serveur-fps/package.json"));
 const WebSocket = require("ws");
@@ -850,7 +852,7 @@ const snapsPolice = (c) => c.tous("snap").map((m) => m.monstres?.police).filter(
     ok(!!B.tous("police").find((m) => m.phase === "debut"), "police{debut} reçu aussi par Bob (message adressé à tous les joueurs)");
     await jusqua(() => snapsPolice(A).length > 3, 4000);
     const sp = snapsPolice(A);
-    ok(sp.length > 3 && sp.every((p) => Array.isArray(p.p) && p.p.length === 3 && p.pvMax === 700 && p.pv === 700 && typeof p.cap === "number" && typeof p.v === "number"), `monstres.police dans les snaps (${sp.length} vus, 700 PV)`);
+    ok(sp.length > 3 && sp.every((p) => Array.isArray(p.p) && p.p.length === 3 && p.pvMax === PV_POLICE && p.pv === PV_POLICE && typeof p.cap === "number" && typeof p.v === "number"), `monstres.police dans les snaps (${sp.length} vus, ${PV_POLICE} PV)`);
     ok(sp.length > 0 && sp.every((p) => p.cible === undefined || p.cible === A.id || p.cible === B.id) && sp[0].cible === A.id, `la cible du snap est Alice au départ (${sp[0]?.cible})`);
     const ecrase = await jusqua(() => A.tous("mort").find((m) => m.cible === A.id), 30000);
     ok(!!ecrase && ecrase.cause === "police" && !ecrase.tueur, `Alice écrasée : mort{cause:"police"}, aucun tueur (${JSON.stringify(ecrase && { cause: ecrase.cause, par: ecrase.par, tueur: ecrase.tueur })})`);
@@ -908,7 +910,7 @@ const snapsPolice = (c) => c.tous("snap").map((m) => m.monstres?.police).filter(
     ok(r.reglageVu === true, `(police:true) EtatPartieBr.police === true (${r.reglageVu})`);
     ok(!!r.debut && [r.H.id, r.I.id].includes(r.debut.cible), `(police:true) police{debut} sur un des humains (${JSON.stringify(r.debut)}, atterrissages ${JSON.stringify(r.lieux)})`);
     const sp = snapsPolice(r.H);
-    ok(sp.length > 0 && sp.every((p) => p.pvMax === 700), `(police:true) monstres.police dans le snap du Battle Royale (${sp.length} vus)`);
+    ok(sp.length > 0 && sp.every((p) => p.pvMax === PV_POLICE), `(police:true) monstres.police dans le snap du Battle Royale (${sp.length} vus)`);
     ok(!r.H.tous("mort").some((m) => m.cause === "police" && m.par !== "") , "une mort par la police n'a jamais de tueur crédité");
     await fermer(r.H, r.I);
     ok(await attendreParties(["ar1", "z1", "br1"]), "(police:true) tout est refermé");

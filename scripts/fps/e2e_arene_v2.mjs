@@ -574,8 +574,8 @@ try {
           if (obs.auto) [...document.querySelectorAll("button")].find((x) => /passer/i.test(x.textContent ?? ""))?.click();
         }
         const carte = document.querySelector('section[aria-label="Carte du tueur"]');
-        // la carte peut apparaître avant que le nom du tueur soit rendu (le bouton « Passer » agit dans la même image) : on garde sa version complète
-        if (carte && (!obs.carte || !/ par /i.test(` ${obs.carte.texte} `))) obs.carte = { texte: (carte.textContent ?? "").replace(/\s+/g, " ").trim(), t: obs.carte?.t ?? performance.now() };
+        // la carte peut apparaître avant que le nom du tueur soit rendu (le bouton « Passer » agit dans la même image) : on garde sa version complète (« Éliminé par » + nom ; le titre n'a pas d'espace avant le nom depuis les menus allégés) et on ne la remplace pas par la version dégradée « Éliminé » qui suit quand la réapparition arrive avant le rendu logiciel
+        if (carte && (!obs.carte || !/Éliminé par/i.test(obs.carte.texte))) obs.carte = { texte: (carte.textContent ?? "").replace(/\s+/g, " ").trim(), t: obs.carte?.t ?? performance.now() };
       };
       new MutationObserver(lire).observe(document.body, { subtree: true, childList: true, characterData: true, attributes: true });
     });
@@ -859,8 +859,8 @@ try {
     // A regarde Elsa (caisse tournante et faisceau vertical) ; le HUD affiche le cadeau et la flèche
     await A.ev(([ex, ez]) => { const j = window.__arene.etat().jeu; window.__arene.regarder(Math.atan2(-(ex - j.p[0]), -(ez - j.p[2])), 0.05); }, ELSA);
     await dormir(900);
-    const hud = await A.page.locator('section[aria-label="Cadeau d\'Elsa"]').first().innerText({ timeout: 4000 }).catch(() => "");
-    verifier(/Elsa/i.test(hud), "le HUD n'affiche pas le cadeau d'Elsa");
+    const hud = await A.page.locator('section[aria-label="Cadeau d\'Elsa"], section[aria-label="Formule du jour de la patronne"]').first().innerText({ timeout: 4000 }).catch(() => "");
+    verifier(/Elsa|patronne/i.test(hud), "le HUD n'affiche pas le cadeau d'Elsa");
     await A.capture("09-elsa-offre-A-1920");
     const depuis = Date.now();
     await poser(A, B, [ELSA[0], 0, ELSA[1]]);

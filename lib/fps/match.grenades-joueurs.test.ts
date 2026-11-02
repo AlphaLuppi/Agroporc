@@ -3,7 +3,7 @@
  * protection d'apparition), armes uniques du bus C3 qui tirent un PROJECTILE (obus, roquette, bidon) au lieu d'une balle instantanée, fumigène de la touche B.
  */
 import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Building, SceneData, Vec2 } from "../agroparc3d/types";
 import { construireMonde } from "./collision";
 import { GRENADES, GRENADES_JOUEURS, positionTrajectoire, trajectoireDuMessage } from "./grenades";
@@ -320,5 +320,70 @@ describe("arrivée en cours de partie", () => {
     s.connecter("c", "Cora", T0 + 200);
     const out = s.recevoir("c", { t: "rejoindre", principale: "sniper", secondaire: "pistolet" }, T0 + 200);
     expect(out.filter((x) => x.a === "c" && x.m.t === "grenade")).toHaveLength(1);
+  });
+});
+
+describe("souffle sur ce qui n'est pas un joueur (tigres, monstres, police, voitures)", () => {
+  /** Salle d'arène dont les services de cibles sont remplacés par des doublures qui notent les dégâts reçus. */
+  function avecCibles() {
+    const s = salle(["a", "b"]);
+    tenir(s, { a: [0, 0, 0], b: [300, 0, 300] }, T0);
+    const recus: Record<string, { cible: string; degats: number }[]> = { tigres: [], monstres: [], police: [], voitures: [] };
+    const interne = s as unknown as Record<string, unknown>;
+    interne.tigres = {
+      snap: () => [
+        { id: "t1", genre: "sauvage", p: [10, 0, 0], cap: 0, etat: "attaque", pose: "debout", pv: 100 },
+        { id: "t2", genre: "allie", lanceur: "a", p: [10, 0, 1], cap: 0, etat: "suivi", pose: "debout", pv: 100 },
+        { id: "t3", genre: "allie", lanceur: "b", p: [11, 0, 0], cap: 0, etat: "suivi", pose: "debout", pv: 100 },
+        { id: "t4", genre: "sauvage", p: [60, 0, 0], cap: 0, etat: "attaque", pose: "debout", pv: 100 },
+      ],
+      blesser: (id: string, degats: number) => { recus.tigres.push({ cible: id, degats }); return []; },
+    };
+    interne.evenements = {
+      distanceMonstre: (cible: string) => (cible === "tigre" ? 2 : null),
+      blesserMonstre: (cible: string, degats: number) => { recus.monstres.push({ cible, degats }); return []; },
+    };
+    interne.police = {
+      snap: () => ({ p: [10, 0, -5], cap: 0, v: 0, pv: 700, pvMax: 700 }),
+      blesser: (_par: unknown, degats: number) => { recus.police.push({ cible: "police", degats }); return []; },
+    };
+    interne.vehicules = {
+      soufflerVoitures: (_c: Vec3, degats: (d: number) => number) => { recus.voitures.push({ cible: "voiture", degats: degats(1) }); return []; },
+    };
+    return { s, recus };
+  }
+
+  it("la grenade blesse les tigres largués à portée (pas le tigre allié du lanceur), le tigre robot, la police et les voitures", () => {
+    const { s, recus } = avecCibles();
+    s.souffleSurCibles([10, 0.9, 0], "frag", j(s, "a"), T0 + 1000);
+    // t1 au centre ; t3 (allié d'un AUTRE joueur) à 1 m ; t2 (allié du lanceur) épargné ; t4 à 50 m hors rayon
+    const ids = recus.tigres.map((r) => r.cible).sort();
+    expect(ids).toEqual(["t1", "t3"]);
+    expect(recus.tigres.find((r) => r.cible === "t1")!.degats).toBeGreaterThan(100);
+    expect(recus.monstres).toEqual([{ cible: "tigre", degats: expect.any(Number) }]);
+    expect(recus.monstres[0].degats).toBeGreaterThan(0);
+    expect(recus.police).toHaveLength(1);
+    expect(recus.voitures).toHaveLength(1);
+    expect(recus.voitures[0].degats).toBeGreaterThan(0);
+  });
+
+  it("le fumigène ne blesse rien ; hors phase de jeu, rien non plus", () => {
+    const { s, recus } = avecCibles();
+    s.souffleSurCibles([10, 0.9, 0], "fumi", j(s, "a"), T0 + 1000);
+    expect(recus.tigres).toEqual([]);
+    expect(recus.monstres).toEqual([]);
+    expect(recus.police).toEqual([]);
+  });
+
+  it("une explosion de grenade réelle (mèche écoulée) appelle ce souffle avec le lanceur", () => {
+    const s = salle(["a", "b"]);
+    const espion = vi.spyOn(s, "souffleSurCibles");
+    tenir(s, { a: [0, 0, 0], b: [300, 0, 300] }, T0);
+    s.tic(T0 + PAS);
+    const g = messages(lancer(s, "a", T0 + 100), "grenade")[0];
+    avancer(s, T0 + 100, g.explosionT + 100, (t) => tenir(s, { a: [0, 0, 0], b: [300, 0, 300] }, t));
+    expect(espion).toHaveBeenCalledTimes(1);
+    expect(espion.mock.calls[0][1]).toBe("frag");
+    expect(espion.mock.calls[0][2].id).toBe("a");
   });
 });

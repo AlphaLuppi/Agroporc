@@ -148,6 +148,18 @@ export function distanceCamera(rayon: number, fovDeg: number, aspect: number): n
   return marge * Math.max(vertical, horizontal);
 }
 
+/**
+ * Distance de la caméra pour une arme dans une tuile large et basse : l'arme tourne autour de l'axe vertical, donc c'est son rayon HORIZONTAL (`rayonH`,
+ * demi-diagonale de son emprise au sol) qui doit tenir dans la largeur, et sa demi-hauteur (`demiY`, plus l'inclinaison de la vitrine) dans la hauteur.
+ * La sphère englobante d'`distanceCamera` réduisait un fusil à 40 % de la largeur d'une tuile de 92 × 56 px.
+ */
+export function distanceCameraTuile(rayonH: number, demiY: number, fovDeg: number, aspect: number, inclinaison = 0): number {
+  const t = Math.tan((fovDeg * Math.PI) / 360);
+  const horizontal = rayonH / (t * Math.max(0.2, aspect));
+  const vertical = (demiY + rayonH * Math.abs(Math.sin(inclinaison))) / t;
+  return 1.12 * Math.max(horizontal, vertical);
+}
+
 // ---------- découpage dans le canvas partagé ----------
 
 export interface Rect { x: number; y: number; w: number; h: number }

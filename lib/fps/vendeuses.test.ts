@@ -299,8 +299,9 @@ describe("comptoir du Truck garé", () => {
 
   it("l'autre se tourne vers celle qui parle, du bon côté", () => {
     const parle = { parle: "patronne", sert: null, offre: true } as const;
-    expect(poseComptoir("elsa", parle, 0, -1).tete[1]).toBeLessThan(0);
-    expect(poseComptoir("elsa", parle, 0, 1).tete[1]).toBeGreaterThan(0);
+    // rotation.y > 0 tourne le visage (−z local) vers −x : une voisine à droite (+x) demande un angle négatif
+    expect(poseComptoir("elsa", parle, 0, -1).tete[1]).toBeGreaterThan(0);
+    expect(poseComptoir("elsa", parle, 0, 1).tete[1]).toBeLessThan(0);
   });
 
   it("la patronne gesticule seulement quand elle parle", () => {

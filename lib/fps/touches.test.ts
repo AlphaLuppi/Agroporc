@@ -95,9 +95,10 @@ describe("touches de l'arène", () => {
 
   it("menu de développement : F9 par défaut, facultatif, sans conflit avec une autre action", () => {
     const d = touchesParDefaut();
-    expect(d.menuDev).toEqual(["F9", null]);
+    expect(d.menuDev).toEqual(["F9", "Backquote"]);
     expect(ACTIONS_FACULTATIVES).toContain("menuDev");
     expect(Object.entries(d).filter(([a, t]) => a !== "menuDev" && t.includes("F9"))).toEqual([]);
+    expect(Object.entries(d).filter(([a, t]) => a !== "menuDev" && t.includes("Backquote"))).toEqual([]);
   });
 
   it("défauts de la spec : accroupi sur C (jamais Ctrl gauche), équipement, véhicule, grande carte", () => {

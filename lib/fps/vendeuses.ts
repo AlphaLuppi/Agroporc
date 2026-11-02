@@ -341,7 +341,7 @@ const PLAN: V3 = [0, 0.1, -0.72];
 /**
  * Pose d'une vendeuse au comptoir (debout, face au passe-plat). Elsa prépare (les mains pétrissent sur le plan de travail), sauf quand elle sert : elle
  * lève un bras et fait signe. La patronne, poings sur les hanches, gesticule quand elle parle ; quand c'est elle qui sert (sa formule), elle fait signe.
- * `tS` : horloge locale en secondes ; `voisine` : de quel côté (en x de la figure) se trouve l'autre vendeuse (−1 gauche, +1 droite), pour tourner la tête vers elle.
+ * `tS` : horloge locale en secondes ; `voisine` : de quel côté (en x de la figure) se trouve l'autre vendeuse (−1 gauche, +1 droite, en x local), pour tourner la tête vers elle.
  */
 export function poseComptoir(qui: VendeuseId, etat: EtatComptoir, tS: number, voisine: -1 | 1): PoseFigure {
   const parle = etat.parle === qui;
@@ -349,7 +349,7 @@ export function poseComptoir(qui: VendeuseId, etat: EtatComptoir, tS: number, vo
   const respire = 0.012 * Math.sin(tS * 1.7);
   const tete: V3 = [0.04 * Math.sin(tS * 0.9), 0.35 * Math.sin(tS * 0.55), 0];
   // l'autre parle : on se tourne vers elle
-  if (etat.parle && etat.parle !== qui) tete[1] = 0.6 * voisine;
+  if (etat.parle && etat.parle !== qui) tete[1] = -0.6 * voisine; // rotation.y > 0 tourne le visage (−z) vers −x : le côté de la voisine (+x) demande un angle négatif
   const signe: V3 = [0.4, 0.95, -0.15 + 0.12 * Math.sin(tS * 3.1)];
   if (qui === "elsa") {
     const petrit = (cote: -1 | 1): V3 => [cote * 0.14 + 0.06 * Math.sin(tS * 2.1 + cote), PLAN[1] + 0.02 * Math.sin(tS * 4.2), PLAN[2] + 0.07 * Math.cos(tS * 2.1 + cote)];

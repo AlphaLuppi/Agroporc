@@ -164,10 +164,22 @@ function dansSolide(p: Prisme, x: number, z: number): boolean {
   return dansEmprise(p, x, z) && !dansCreux(p.creux, x, z);
 }
 
-/** L'équipement `e` du bâtiment `p` est là : le bâtiment est debout et aucune brèche ne couvre le centre de l'équipement. */
+/**
+ * Pente de la découpe d'une brèche dans le nuanceur de destruction (`coupe = (distance − rayon) × 1,15` dans `decor.ts`) : au niveau du toit, le décor est
+ * masqué jusqu'à `rayon + hauteur / 1,15` du centre de la brèche (la découpe est un cône, pas un cylindre).
+ */
+export const PENTE_COUPE_BRECHE = 1.15;
+
+/**
+ * L'équipement `e` du bâtiment `p` est là : le bâtiment est debout et la brèche ne le recouvre pas. Le rayon compté est celui de la découpe VISIBLE (cône
+ * du nuanceur au niveau du toit), pas seulement le cercle au sol : sinon une clim masquée à l'écran restait solide, arrêtait les balles et les pas.
+ */
 function equipementPresent(p: Prisme, e: Prisme): boolean {
   if (p.h <= 0) return false;
-  return !p.creux || !dansCreux(p.creux, (e.boite.x0 + e.boite.x1) / 2, (e.boite.z0 + e.boite.z1) / 2);
+  const c = p.creux;
+  if (!c) return true;
+  const rayonVisible = c.r + (e.base ?? p.hOrigine) / PENTE_COUPE_BRECHE;
+  return !dansCreux({ x: c.x, z: c.z, r: rayonVisible }, (e.boite.x0 + e.boite.x1) / 2, (e.boite.z0 + e.boite.z1) / 2);
 }
 
 const tamponSol: number[] = [];

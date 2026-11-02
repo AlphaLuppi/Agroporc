@@ -7,7 +7,7 @@
  * serveur, les bots et les zombies construisent donc exactement le même monde, sans rien ajouter à la liste des prismes (index des
  * bâtiments, des pièces des zombies et du BR inchangés).
  */
-import { DIMENSIONS, SOLAIRE_INCLINAISON, placementsSolaires, placementsToit, type Equipement } from "../agroparc3d/facade";
+import { DIMENSIONS, placementsSolaires, placementsToit, type Equipement } from "../agroparc3d/facade";
 import type { Building, Vec2 } from "../agroparc3d/types";
 
 /** Boîte de collision d'un équipement : rectangle tourné au sol, de `base` (le toit) à `haut`. */
@@ -20,12 +20,17 @@ export interface EquipementSolide {
   haut: number;
 }
 
-/** Hauteur de collision d'un panneau solaire incliné (m) : son pied est relevé de 0,4 m, son bord haut monte de moitié de profondeur × sin(incl). */
-export const HAUTEUR_SOLAIRE_M = 0.4 + (DIMENSIONS.solaire[2] / 2) * Math.sin(SOLAIRE_INCLINAISON) + DIMENSIONS.solaire[1] * Math.cos(SOLAIRE_INCLINAISON);
+/**
+ * Hauteur de collision d'un panneau solaire incliné (m). Le panneau est dessiné comme une plaque inclinée autour de son centre (à 0,4 m du toit) : son
+ * bord bas est à ≈ 0,06 m et son bord haut à ≈ 0,85 m. Une boîte pleine à 0,85 m laissait un joueur se poser en l'air au-dessus du bord bas et arrêtait
+ * des balles rasantes sur du vide ; on prend la hauteur du CENTRE de la plaque (plus son épaisseur) : obstacle franchissable d'un saut, jamais un mur
+ * invisible de près d'un mètre. Le bord haut est un peu franchissable : écart assumé de la collision au dessin.
+ */
+export const HAUTEUR_SOLAIRE_M = 0.4 + DIMENSIONS.solaire[1] / 2;
 
 /** Boîte d'un équipement posé sur un toit à la hauteur `h`. Rotation autour de y comme `decor.ts` (quaternion d'axe y : x' = x cos + z sin, z' = −x sin + z cos). */
 export function equipementSolide(e: Equipement, h: number): EquipementSolide {
-  // un panneau incliné occupe une profondeur au sol de sz cos(incl) + sy sin(incl) et monte à `HAUTEUR_SOLAIRE_M`
+  // un panneau incliné occupe une profondeur au sol de sz cos(incl) + sy sin(incl) et est plafonné à `HAUTEUR_SOLAIRE_M`
   const profondeur = e.incl ? e.sz * Math.cos(e.incl) + e.sy * Math.sin(e.incl) : e.sz;
   const hauteur = e.incl ? HAUTEUR_SOLAIRE_M : e.sy;
   const c = Math.cos(e.rot), s = Math.sin(e.rot);

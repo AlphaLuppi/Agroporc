@@ -182,18 +182,6 @@ export default function Arene({
 
       <ChoixEquipement principale={equipement.principale} secondaire={equipement.secondaire} melee={equipement.melee} surChanger={surEquipement} variante="lobby" idGroupe="lobby" />
 
-      <ul className={styles.liste} aria-label="Agents en ligne">
-        {trie.length === 0 && <li className={styles.vide}>Personne pour l&apos;instant.</li>}
-        {trie.map((j) => (
-          <li key={j.id}>
-            <i className={styles.puce} style={{ "--couleur": j.couleur } as CSSProperties} aria-hidden="true" />
-            <span className={styles.nom}>{j.pseudo}{j.id === monId && <em> (vous)</em>}</span>
-            {j.enJeu ? <span className={styles.enJeu}>en jeu</span> : <span className={styles.spectateur}>spectateur</span>}
-            <span className={styles.kd} title="Kills / morts">{j.kills}/{j.morts}</span>
-          </li>
-        ))}
-      </ul>
-
       <ReglageInterface reglages={reglagesHud} surReglages={surReglagesHud} replie />
 
       {tactile ? (

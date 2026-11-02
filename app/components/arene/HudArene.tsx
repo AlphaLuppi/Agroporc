@@ -193,7 +193,8 @@ export default function HudArene(p: PropsHudAreneBr) {
   // principale / secondaire / blanche passent à l'arme d'après de leur groupe (l'équipement est celui de la prochaine apparition).
   const equipRef = useRef({ equipement: p.equipement, sur: p.surEquipement });
   equipRef.current = { equipement: p.equipement, sur: p.surEquipement };
-  const choixEquipementActif = verrouille && !!hud && !zombies && !br && (hud.mort || match?.phase === "entracte");
+  // (pas pendant le replay de fin : la barre est masquée, un changement serait invisible)
+  const choixEquipementActif = verrouille && !!hud && !zombies && !br && (hud.mort || match?.phase === "entracte") && hud.replayPhase !== "attente" && hud.replayPhase !== "lecture";
   const suivante = (groupe: "principale" | "secondaire" | "melee") => () => {
     const { equipement, sur } = equipRef.current;
     sur(...equipementApresTouche(equipement, groupe));
@@ -379,7 +380,7 @@ export default function HudArene(p: PropsHudAreneBr) {
         )}
         {combat && !zombies && !br && !hud.titan && (
           <BlocTactique
-            frappeDispo={frappeDisponible} serie={synthese.serie} toucheFrappe={t("frappeAerienne")} frappeRefusee={!!hud.frappeRefusee}
+            frappeDispo={frappeDisponible} serie={synthese.serie} toucheFrappe={t("frappeAerienne")} frappeRefusee={!!hud.frappeRefusee} frappeImpossible={!!hud.frappeImpossible}
             fumigeneS={hud.fumigeneS ?? 0} toucheFumigene={t("fumigene")}
           />
         )}

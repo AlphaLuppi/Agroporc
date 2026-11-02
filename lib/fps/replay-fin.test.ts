@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  BONUS_DERNIER_KILL, CAMERA_REPLAY, CameraCinemato, EnregistreurReplay, REPLAY_FIN, axeDuel, choisirMoments, estKillReplay, noteMoment, octetsClip, titreMoment,
+  BONUS_DERNIER_KILL, CAMERA_REPLAY, CameraCinemato, EnregistreurReplay, REPLAY_FIN, axeDuel, choisirMoments, estKillReplay, noteMoment, octetsClip, tenirDansLeTemps, titreMoment,
   type Clip, type MarqueMort,
 } from "./replay-fin";
 import type { ArmeId, CauseMort, EtatJoueurSnap, Vec3, Zone } from "./protocole";
@@ -39,6 +39,25 @@ describe("estKillReplay", () => {
     expect(estKillReplay({ cible: "b", par: "", cause: "ecrase_pnj" })).toBe(false);
     expect(estKillReplay({ cible: "b", par: "b", cause: "arme" })).toBe(false);
     expect(estKillReplay({ cible: "b", par: "a", cause: "police" })).toBe(false);
+  });
+  it("la grenade et le titan sont des kills imputés au lanceur / au pilote", () => {
+    expect(estKillReplay({ cible: "b", par: "a", cause: "grenade" })).toBe(true);
+    expect(estKillReplay({ cible: "b", par: "a", cause: "titan" })).toBe(true);
+    expect(estKillReplay({ cible: "a", par: "a", cause: "grenade" })).toBe(false);
+  });
+});
+
+describe("noteMoment, kills explosifs", () => {
+  const n = (cause: CauseMort) => noteMoment({ marque: { ts: 0, tueur: "a", cible: "b", arme: "pistolet", cause, zone: "corps", distance: 10 }, multi: 1, serie: 1 });
+  it("la grenade et le titan valent un bonus comme l'explosion", () => {
+    expect(n("grenade")).toBe(n("explosion"));
+    expect(n("titan")).toBe(n("explosion"));
+    expect(n("grenade")).toBeGreaterThan(10);
+  });
+  it("titreMoment les nomme", () => {
+    const pseudo = (id: string) => id;
+    expect(titreMoment({ marque: { ts: 0, tueur: "a", cible: "b", arme: "pistolet", cause: "grenade", zone: "corps", distance: 10 }, multi: 1, serie: 1, final: true }, pseudo).titre).toBe("Grenade · a");
+    expect(titreMoment({ marque: { ts: 0, tueur: "a", cible: "b", arme: "pistolet", cause: "titan", zone: "corps", distance: 10 }, multi: 1, serie: 1, final: false }, pseudo).titre).toBe("Titan · a");
   });
 });
 
@@ -402,5 +421,21 @@ describe("CameraCinemato", () => {
   it("axeDuel : 0 sans l'un des deux", () => {
     expect(axeDuel(null, tueur)).toBe(0);
     expect(axeDuel(victime, tueur)).toBeCloseTo(Math.PI / 2);
+  });
+});
+
+describe("tenirDansLeTemps", () => {
+  const c = (ts: number, extra: ExtraClip = {}) => clip(ts, { debut: ts - 4000, fin: ts + 1200, ...extra });
+  const moments = () => [c(10_000, { score: 40 }), c(20_000, { score: 12 }), c(30_000, { score: 25 }), c(40_000, { score: 11, final: true })];
+  it("budget inconnu ou assez grand : rien ne change", () => {
+    expect(tenirDansLeTemps(moments(), null)).toHaveLength(4);
+    expect(tenirDansLeTemps(moments(), 100_000)).toHaveLength(4);
+  });
+  it("retire les moins notés, garde toujours le dernier kill, ordre chronologique", () => {
+    const r = tenirDansLeTemps(moments(), 2 * 5200);
+    expect(r.map((x) => x.marque.ts)).toEqual([10_000, 40_000]);
+    expect(r.some((x) => x.final)).toBe(true);
+    const seul = tenirDansLeTemps(moments(), 100);
+    expect(seul.map((x) => x.marque.ts)).toEqual([40_000]);
   });
 });

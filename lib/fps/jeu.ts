@@ -331,7 +331,12 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   const suiviRadar = new SuiviRadar(monde);
   const kc = new ControleurKillcam();
   /** (arène) replay de fin de match : enregistre les éliminations pendant le match, rejoue les plus beaux moments à l'entracte (cf. replay-fin.ts) */
-  const rf = new ControleurReplayFin({ pseudo: (id) => pseudoDe(id), lancer: (o, d, max) => lancerRayon(monde, o, d, max) });
+  const rf = new ControleurReplayFin({
+    pseudo: (id) => pseudoDe(id), lancer: (o, d, max) => lancerRayon(monde, o, d, max),
+    tempsRestantMs: () => (prochainMatchTs == null ? null : prochainMatchTs - client.maintenantServeur()),
+  });
+  /** horodatage serveur du prochain match pendant l'entracte (replay de fin : durée bornée) */
+  let prochainMatchTs: number | null = null;
   const replayFinPossible = !modeZ && !modeBR;
   const vehicule = new ControleurVehicule(monde);
   // ---------- événements (v3) : Truck Muche fou, tigre robot, titan tigre ----------
@@ -448,6 +453,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   let fovH = FOV_H;
   let fovV = 60;
   let reapparitionFin = 0;
+  /** durée totale (s) du délai de réapparition annoncé par le dernier message `mort` qui me concerne */
+  let reapparitionDelaiS = 0;
   let mortT = 0;
   let mortSigne = 1;
   let entracte = false;
@@ -1311,6 +1318,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       return;
     }
     if (d === "indisponible") { sons.achat(false); evenementFrappeRefusee(); }
+    // frappe en poche mais ciblage impossible (au volant, aux commandes du titan, figé) : un toast plutôt qu'un silence
+    if (d === "impossible") { sons.achat(false); frappeImpossibleT = t; emettreHud(true); }
   }
   /** Le tir (clic gauche) valide le ciblage : la frappe part sur le réticule. */
   function validerCiblageFrappe() {
@@ -1322,6 +1331,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
   }
   /** Touche de frappe pressée sans frappe en poche : un toast du HUD (« encore n kills d'affilée ») plutôt qu'un silence. */
   let frappeRefuseeT = -Infinity;
+  let frappeImpossibleT = -Infinity;
   function evenementFrappeRefusee() { frappeRefuseeT = t; emettreHud(true); }
 
   /** Délai (s) entre deux fumigènes de la touche B : le serveur n'en accepte qu'un toutes les 15 s (`FUMIGENE_B_MS`). */
@@ -1628,6 +1638,9 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
           depart = avatar ? avatar.positionBouche() : e.o;
           sons.tir(e.arme, sonDepuisCam(e.o));
         }
+        // projectile (obus, roquette, bidon, arbalète…) ou bourrasque : pas de traçante instantanée, le rejeu ne ment pas par un laser (comme le tir vu en direct)
+        const stVue = statsTir(e.arme, { zombies: modeZ, ameliore: e.ameliore === true });
+        if (stVue.projectile || stVue.souffle) return;
         for (const d of e.d) {
           const portee = Math.min(a.portee, PORTEE_EFFETS_M);
           const imp = tracerEffets(e.o, d, portee, liste, e.id);
@@ -1776,6 +1789,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
    */
   function tomber() {
     vivant = false;
+    // une inspection en cours ne se rejoue pas dans la killcam (le même ArmeEnMain sert au rejeu du tueur) ni à la réapparition
+    armeMain.annulerInspection();
     coupRapideEnAttente = null;
     pv = 0;
     bouclier = 0;
@@ -1840,6 +1855,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       case "bienvenue":
         majInfos(m.joueurs);
         entracte = !modeBR && m.match.phase === "entracte";
+        prochainMatchTs = m.match.prochain ?? null;
         rf.arreter();
         // (v11) nouvelle salle ou reconnexion : jamais figé par erreur (un `zpause` suit, suspendue ou non)
         if (gel.gele) { gel.reinitialiser(); sons.geler(false); }
@@ -2026,6 +2042,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
         if (replayFinPossible) rf.surMort(m);
         if (m.cible === client.id) {
           reapparitionFin = t + m.delai / 1000;
+          reapparitionDelaiS = m.delai / 1000;
           if (modeBR) {
             // mort définitive : killcam (tueur) puis spectateur ; place provisoire = joueurs en vie avant ma mort
             placeBr = partieBr?.vivants ?? null;
@@ -2757,6 +2774,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
       mur: !!moi.mur && vivant,
       // BR avant la première apparition : ni mort ni spectateur (l'apparition suit `rejoindre` de quelques ms)
       mort: !vivant && !(modeBR && !apparu),
+      reapparitionDelai: vivant ? 0 : reapparitionDelaiS,
       reapparitionDans: vivant ? 0 : Math.max(0, Math.round((reapparitionFin - t) * 10) / 10),
       // BR : invulnérable en l'air sans minuteur, puis `protectionAtterrissageMs` après l'atterrissage
       protege: protege && vivant && !enVolBr(),
@@ -2795,6 +2813,7 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
         frappeDisponible: vivant && frappeDispo,
         ciblageFrappe: ciblage !== null,
         frappeRefusee: t - frappeRefuseeT < 2.5,
+        frappeImpossible: t - frappeImpossibleT < 2.5,
         fumigeneS: vivant ? Math.ceil(fumigeneRestantS()) : 0,
       } : {}),
       ...(modeZ ? {

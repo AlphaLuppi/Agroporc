@@ -5,7 +5,7 @@ import * as THREE from "three";
 import { STATS } from "./armes";
 import { ARMES_MELEE } from "./protocole";
 import {
-  ETAT_TUILE_INITIAL, VITRINE, aideBarreArmes, armeSuivante, armesDeLaBarre, aspectTuile, cadrageGl, choixApres, distanceCamera, equipementApresTouche, groupesBarre,
+  ETAT_TUILE_INITIAL, VITRINE, aideBarreArmes, armeSuivante, armesDeLaBarre, aspectTuile, cadrageGl, choixApres, distanceCamera, distanceCameraTuile, equipementApresTouche, groupesBarre,
   lacetTuile, pasTuile, rectVisible, tailleRelative, tuileVoisine, type ChoixBarre,
 } from "./barre-armes";
 import { boiteDesFaces } from "./rendu-armes-apercu";
@@ -125,6 +125,21 @@ describe("vitrine animée", () => {
     const large = distanceCamera(0.5, 28, 1.6), etroite = distanceCamera(0.5, 28, 0.5);
     expect(large).toBeGreaterThan(0.5 / Math.sin((28 * Math.PI) / 360) - 1e-9);
     expect(etroite).toBeGreaterThan(large);
+  });
+
+  it("distance pour une tuile large et basse : l'arme (plate) remplit la largeur, bien plus près que la sphère englobante", () => {
+    const aspect = 92 / 56, fov = 28;
+    // fusil : emprise au sol de rayon 0,5, haut de 0,25 en tout
+    const d = distanceCameraTuile(0.5, 0.125, fov, aspect);
+    const t = Math.tan((fov * Math.PI) / 360);
+    const largeurVisible = 2 * d * t * aspect;
+    // l'arme (diamètre 1 au sol) occupe l'essentiel de la largeur, jamais plus
+    expect(1 / largeurVisible).toBeGreaterThan(0.8);
+    expect(1 / largeurVisible).toBeLessThanOrEqual(1);
+    expect(d).toBeLessThan(distanceCamera(0.5, fov, aspect));
+    // une arme haute (pistolet de profil) est limitée par la hauteur
+    const haut = distanceCameraTuile(0.3, 0.5, fov, aspect);
+    expect(haut).toBeGreaterThan(distanceCameraTuile(0.3, 0.05, fov, aspect));
   });
 });
 

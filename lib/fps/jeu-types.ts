@@ -62,6 +62,8 @@ export interface HudEtat {
   mur: boolean;
   mort: boolean;
   reapparitionDans: number;
+  /** durée totale du délai de réapparition en cours (s ; celui du message `mort`, réglable par le menu de développement), 0 hors mort */
+  reapparitionDelai: number;
   protege: boolean;
   /** s de protection d'apparition restantes (pas de 0,5), 0 hors protection */
   protegeRestant: number;
@@ -123,6 +125,8 @@ export interface HudEtat {
   ciblageFrappe?: boolean;
   /** (arène) la touche de frappe vient d'être pressée sans frappe en poche : le HUD rappelle combien de kills manquent (2,5 s) */
   frappeRefusee?: boolean;
+  /** la touche de frappe a été pressée frappe en poche mais ciblage impossible (véhicule, titan…) : toast de 2,5 s */
+  frappeImpossible?: boolean;
   /** (arène) secondes avant le prochain fumigène de la touche B (0 = prêt) */
   fumigeneS?: number;
   /** (lot tactique, arène et Battle Royale) grenades à fragmentation en poche, et mèche de la cuisson en cours (0 à 1, -1 = aucune) */

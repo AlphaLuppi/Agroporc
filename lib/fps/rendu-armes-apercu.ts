@@ -9,7 +9,7 @@ import * as THREE from "three";
 import { creerArmeBot, type ArmeBotRendu } from "./rendu";
 import type { ArmeId } from "./protocole";
 import {
-  ETAT_TUILE_INITIAL, VITRINE, aspectTuile, cadrageGl, distanceCamera, lacetTuile, pasTuile, rectVisible, tailleRelative, type EtatTuile, type Rect,
+  ETAT_TUILE_INITIAL, VITRINE, aspectTuile, cadrageGl, distanceCameraTuile, lacetTuile, pasTuile, rectVisible, tailleRelative, type EtatTuile, type Rect,
 } from "./barre-armes";
 
 /** Une tuile suivie par la vitrine : l'élément qui donne le rectangle, et son état d'interaction. */
@@ -35,6 +35,9 @@ interface Modele {
   pivot: THREE.Group;
   rayon: number;
   longueur: number;
+  /** demi-diagonale de l'emprise au sol (rayon de rotation autour de l'axe vertical) et demi-hauteur, en unités du modèle */
+  rayonH: number;
+  demiY: number;
 }
 
 const FOV = 28;
@@ -71,6 +74,11 @@ export function creerVitrine(canvas: HTMLCanvasElement, conteneur: HTMLElement, 
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.setClearColor(0x000000, 0);
   renderer.autoClear = false;
+  // Les arêtes épaisses (`LineMaterial`) règlent leur épaisseur d'après la taille du tampon du renderer ; ici chaque tuile n'est qu'un viewport du
+  // canvas partagé : la taille « du tampon » est celle de la tuile en cours de dessin, sinon les traits sont trop fins et anisotropes.
+  let tailleTuile: [number, number] | null = null;
+  const tailleNative = renderer.getDrawingBufferSize.bind(renderer);
+  renderer.getDrawingBufferSize = (cible: THREE.Vector2) => (tailleTuile ? cible.set(tailleTuile[0], tailleTuile[1]) : tailleNative(cible));
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(FOV, 1, 0.01, 20);
   const cyan = couleurJeton(conteneur, "--ag-cyan", 0x9be9ff);
@@ -100,7 +108,7 @@ export function creerVitrine(canvas: HTMLCanvasElement, conteneur: HTMLElement, 
     scene.add(pivot);
     const longueur = Math.max(taille.x, taille.y, taille.z, 0.05);
     // rayon de la sphère englobante : la diagonale tient dans la tuile quel que soit l'angle
-    m = { arme, pivot, rayon: Math.max(taille.length() / 2, 0.05), longueur };
+    m = { arme, pivot, rayon: Math.max(taille.length() / 2, 0.05), longueur, rayonH: Math.max(Math.hypot(taille.x, taille.z) / 2, 0.05), demiY: Math.max(taille.y / 2, 0.01) };
     modeles.set(cle, m);
     longueurMax = Math.max(longueurMax, longueur);
     return m;
@@ -134,17 +142,22 @@ export function creerVitrine(canvas: HTMLCanvasElement, conteneur: HTMLElement, 
       for (const autre of modeles.values()) autre.pivot.visible = false;
       m.pivot.visible = true;
       m.pivot.rotation.set(VITRINE.tangage, lacetTuile(e, rang * VITRINE.dephasage), 0, "YXZ");
-      m.pivot.scale.setScalar(e.echelle * tailleRelative(m.longueur, longueurMax) / m.rayon * 0.5);
+      // l'emprise au sol de l'arme tient dans la largeur de la tuile (rayon horizontal 0,5 × sa taille relative), sa hauteur dans la hauteur
+      const rel = tailleRelative(m.longueur, longueurMax);
+      const echelle = (0.5 * rel) / m.rayonH;
+      m.pivot.scale.setScalar(e.echelle * echelle);
       const g = cadrageGl(rect, visible, boiteCanvas);
       camera.aspect = aspectTuile(rect);
       camera.updateProjectionMatrix();
-      // la sphère englobante normalisée (rayon 0,5 après l'échelle) tient dans la tuile
-      camera.position.set(0, 0, distanceCamera(0.5 * 1.15, FOV, camera.aspect));
+      camera.position.set(0, 0, distanceCameraTuile(0.5 * rel, m.demiY * echelle, FOV, camera.aspect, VITRINE.tangage));
       camera.lookAt(0, 0, 0);
       renderer.setViewport(g.viewport.x, g.viewport.y, g.viewport.w, g.viewport.h);
       renderer.setScissor(g.scissor.x, g.scissor.y, g.scissor.w, g.scissor.h);
+      const pr = renderer.getPixelRatio();
+      tailleTuile = [Math.max(1, rect.w * pr), Math.max(1, rect.h * pr)];
       renderer.render(scene, camera);
     }
+    tailleTuile = null;
   };
 
   const boucle = (maintenant: number) => {

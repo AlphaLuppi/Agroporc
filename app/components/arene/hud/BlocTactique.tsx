@@ -17,12 +17,14 @@ export interface PropsBlocTactique {
   toucheFrappe: string;
   /** la touche vient d'être pressée sans frappe : le rappel « encore n kills » s'affiche en plus */
   frappeRefusee: boolean;
+  /** touche pressée frappe prête mais ciblage impossible (au volant, aux commandes du titan) */
+  frappeImpossible?: boolean;
   /** secondes avant le prochain fumigène (0 = prêt) */
   fumigeneS: number;
   toucheFumigene: string;
 }
 
-function BlocTactiqueBrut({ frappeDispo, serie, toucheFrappe, frappeRefusee, fumigeneS, toucheFumigene }: PropsBlocTactique) {
+function BlocTactiqueBrut({ frappeDispo, serie, toucheFrappe, frappeRefusee, frappeImpossible, fumigeneS, toucheFumigene }: PropsBlocTactique) {
   const fait = KILLS_PAR_FRAPPE - killsAvantFrappe(serie);
   return (
     <section className={styles.bloc} aria-label="Équipement tactique">
@@ -39,6 +41,9 @@ function BlocTactiqueBrut({ frappeDispo, serie, toucheFrappe, frappeRefusee, fum
           <b className={styles.etat}>{fumigeneS <= 0 ? "PRÊT" : `${fumigeneS} s`}</b>
         </li>
       </ul>
+      {frappeImpossible && frappeDispo && (
+        <p className={styles.rappel} role="status">Frappe impossible depuis un véhicule ou le titan : descendez d&apos;abord.</p>
+      )}
       {frappeRefusee && !frappeDispo && (
         <p className={styles.rappel} role="status">{texteFrappe(false, serie, toucheFrappe)}</p>
       )}

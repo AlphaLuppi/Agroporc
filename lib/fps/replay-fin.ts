@@ -79,7 +79,7 @@ export interface Clip {
 }
 
 /** Causes d'une mort qui est un kill de joueur à joueur (les autres n'ont pas de tueur à suivre). */
-const CAUSES_KILL: readonly CauseMort[] = ["arme", "ecrase_vehicule", "explosion", "frappe_aerienne", "tigre"];
+const CAUSES_KILL: readonly CauseMort[] = ["arme", "ecrase_vehicule", "explosion", "frappe_aerienne", "tigre", "grenade", "titan"];
 
 /** Mort replayable : un tueur, qui n'est pas la victime, une cause qui lui est imputable. */
 export function estKillReplay(m: { cible: string; par: string; cause: CauseMort }): boolean {
@@ -95,7 +95,7 @@ export function noteMoment(c: Pick<Clip, "marque" | "multi" | "serie">): number 
   // tir de loin : rien sous 40 m, puis 0,4 point par mètre, plafonné à 30 (≈ 115 m)
   if (m.cause === "arme" && !estMelee(m.arme)) n += Math.min(30, Math.max(0, (m.distance - 40) * 0.4));
   if (m.cause === "ecrase_vehicule") n += 14;
-  if (m.cause === "explosion" || m.cause === "frappe_aerienne" || m.cause === "tigre") n += 10;
+  if (m.cause === "explosion" || m.cause === "grenade" || m.cause === "frappe_aerienne" || m.cause === "tigre" || m.cause === "titan") n += 10;
   n += Math.max(0, c.multi - 1) * 30;
   // série : rien avant 4 kills de suite, puis 3 points par kill, plafonné
   n += Math.min(20, Math.max(0, c.serie - 3) * 3);
@@ -282,6 +282,27 @@ export function choisirMoments(clips: readonly Clip[], max: number = REPLAY_FIN.
   return choisis.sort((a, b) => a.marque.ts - b.marque.ts);
 }
 
+/** Marge gardée avant le match suivant (ms) : le replay ne doit pas courir jusqu'à la dernière image de l'entracte. */
+export const MARGE_FIN_ENTRACTE_MS = 1500;
+
+/**
+ * Réduit les moments à ce qui tient dans `budgetMs` (temps réel restant avant le match suivant). Le dernier kill du match est toujours gardé ;
+ * les autres partent du moins noté au plus noté jusqu'à tenir. Ordre chronologique conservé. Budget inconnu ou infini : rien ne change.
+ */
+export function tenirDansLeTemps(moments: readonly Clip[], budgetMs: number | null | undefined): Clip[] {
+  if (budgetMs == null || !Number.isFinite(budgetMs)) return [...moments];
+  const duree = (c: Clip) => c.fin - c.debut;
+  const gardes = [...moments];
+  let total = gardes.reduce((n, c) => n + duree(c), 0);
+  const ordreRetrait = [...gardes].filter((c) => !c.final).sort((a, b) => a.score - b.score || a.marque.ts - b.marque.ts);
+  for (const c of ordreRetrait) {
+    if (total <= budgetMs) break;
+    gardes.splice(gardes.indexOf(c), 1);
+    total -= duree(c);
+  }
+  return gardes;
+}
+
 const NOMS_SERIE = ["", "", "Double kill", "Triple kill", "Quadruple kill"];
 
 /** Titre et détail d'un moment (`pseudo` : id → pseudo). Le titre suit la meilleure raison de rejouer ce moment. */
@@ -298,6 +319,8 @@ export function titreMoment(c: Pick<Clip, "marque" | "multi" | "serie" | "final"
   else if (m.cause === "arme" && m.zone === "tete" && m.arme === "sniper") libelle = "Headshot au sniper";
   else if (m.cause === "ecrase_vehicule") libelle = "Écrasé";
   else if (m.cause === "explosion" || m.cause === "frappe_aerienne") libelle = "Explosion";
+  else if (m.cause === "grenade") libelle = "Grenade";
+  else if (m.cause === "titan") libelle = "Titan";
   else if (m.cause === "tigre") libelle = "Tigre allié";
   else if (c.serie >= 5) libelle = `Série de ${c.serie}`;
   else if (c.final) libelle = "Dernier kill du match";
