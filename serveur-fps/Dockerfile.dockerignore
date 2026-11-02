@@ -4,6 +4,7 @@
 !serveur-fps
 !lib/fps
 !lib/agroparc3d
+!lib/repliques-lasso.ts
 !public/agroparc/scene.json
 !public/agroparc/cachettes.json
 **/node_modules
