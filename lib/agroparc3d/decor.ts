@@ -492,7 +492,15 @@ if (vBreche.w > 0.0) {
   mat.customProgramCacheKey = () => `batiment-effondrable-5-${n}-${etat ? "d" : "-"}${o.facade ? "f" : "-"}${o.instance ? "i" : "-"}${o.motif ?? "-"}`;
 }
 
-/** Équipements de toit : une boîte unitaire instanciée (clim, édicules, antennes) et ses arêtes, un tirage par bâtiment. */
+/** Teinte de face de chaque équipement de toit (dessus ; les flancs la multiplient par 0,4 à 0,78). Luminance du dessus < 0,24 : sous le seuil du bloom. */
+const TEINTE_EQUIPEMENT: Record<"clim" | "edicule" | "antenne" | "solaire", number> = {
+  clim: 0x173a4a,
+  edicule: 0x193e50,
+  antenne: 0x234c5e,
+  solaire: 0x12384f,
+};
+
+/** Équipements de toit SOLIDES (collision : `lib/fps/toit-solide.ts`) : une boîte unitaire instanciée aux faces pleines (clim, édicules, antennes, panneaux) et ses arêtes, un tirage par bâtiment. */
 function ajouterEquipementsToit(scene: THREE.Object3D, data: SceneData, etat?: EtatDestruction): void {
   const liste: { id: number; h: number; e: ReturnType<typeof placementsToit>[number] }[] = [];
   data.buildings.forEach((b, id) => {
@@ -516,8 +524,16 @@ function ajouterEquipementsToit(scene: THREE.Object3D, data: SceneData, etat?: E
     ids[i] = id;
   });
   if (etat) boite.setAttribute("aBat", new THREE.InstancedBufferAttribute(ids, 1));
-  const mesh = new THREE.InstancedMesh(boite, new THREE.MeshBasicMaterial({ color: 0x0b1820, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 2 }), n);
-  matrices.forEach((m, i) => mesh.setMatrixAt(i, m));
+  // faces PLEINES (ces équipements sont solides pour le jeu, `lib/fps/toit-solide.ts`) : un ton par type, plus clair sur le dessus que sur les
+  // flancs pour que le volume se lise, tout sous le seuil du bloom ; les arêtes cyan restent par-dessus
+  const nuances = [0.78, 0.78, 1, 0.4, 0.58, 0.58]; // +x, −x, +y, −y, +z, −z (ordre des faces de BoxGeometry, 4 sommets chacune)
+  boite.setAttribute("color", new THREE.BufferAttribute(new Float32Array(nuances.flatMap((v) => [v, v, v, v, v, v, v, v, v, v, v, v])), 3));
+  const mesh = new THREE.InstancedMesh(boite, new THREE.MeshBasicMaterial({ color: 0xffffff, vertexColors: true, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 2 }), n);
+  const teinte = new THREE.Color();
+  matrices.forEach((m, i) => {
+    mesh.setMatrixAt(i, m);
+    mesh.setColorAt(i, teinte.set(TEINTE_EQUIPEMENT[liste[i].e.type]));
+  });
   mesh.instanceMatrix.needsUpdate = true;
   mesh.renderOrder = 1;
   // arêtes : les 12 arêtes de chaque boîte, posées en coordonnées du monde (même nuanceur que les arêtes des bâtiments)
@@ -538,7 +554,7 @@ function ajouterEquipementsToit(scene: THREE.Object3D, data: SceneData, etat?: E
   const gl = new THREE.BufferGeometry();
   gl.setAttribute("position", new THREE.BufferAttribute(pos, 3));
   if (etat) gl.setAttribute("aBat", new THREE.BufferAttribute(aBat, 1));
-  const aretes = new THREE.LineSegments(gl, new THREE.LineBasicMaterial({ color: C.cyan, transparent: true, opacity: 0.55 }));
+  const aretes = new THREE.LineSegments(gl, new THREE.LineBasicMaterial({ color: C.cyan, transparent: true, opacity: 0.8 }));
   aretes.renderOrder = 2;
   if (etat) {
     brancherShader(mesh.material as THREE.Material, { etat, instance: true });

@@ -20,6 +20,8 @@ export interface PropsCarteTueur {
   degatsAuTueur: number;
   /** s avant la réapparition */
   reapparitionDans: number;
+  /** durée totale du délai de réapparition (s) du message `mort` : réglable par le menu de développement ; absent = `JEU.delaiReapparitionMs` */
+  reapparitionDelai?: number;
   /** K et M du tueur dans le match (présence), s'ils sont connus */
   kmTueur?: { kills: number; morts: number } | null;
 }
@@ -40,7 +42,7 @@ function Jauge({ nom, valeur, max, bouclier }: { nom: string; valeur: number; ma
   );
 }
 
-export default function CarteTueur({ tueur, derniereMort, degatsAuTueur, reapparitionDans, kmTueur }: PropsCarteTueur) {
+export default function CarteTueur({ tueur, derniereMort, degatsAuTueur, reapparitionDans, reapparitionDelai, kmTueur }: PropsCarteTueur) {
   const cause = derniereMort?.cause ?? "arme";
   // tueur joueur : un tir d'arme, avec ou sans photographie (le tueur a pu quitter la partie)
   const parJoueurArme = cause === "arme" && (tueur !== null || derniereMort !== null);
@@ -48,7 +50,7 @@ export default function CarteTueur({ tueur, derniereMort, degatsAuTueur, reappar
   const couleur = tueur?.couleur ?? derniereMort?.parCouleur;
   const arme = tueur?.arme ?? derniereMort?.arme;
   const tete = derniereMort?.zone === "tete";
-  const delai = JEU.delaiReapparitionMs / 1000;
+  const delai = reapparitionDelai && reapparitionDelai > 0 ? reapparitionDelai : JEU.delaiReapparitionMs / 1000;
   const part = Math.min(1, Math.max(0, 1 - reapparitionDans / delai));
   const degats = Math.round(degatsAuTueur);
 

@@ -293,6 +293,12 @@ export function creerServiceTigres(ctx: ContexteSalle, opts: OptionsServiceTigre
       return charges.has(id);
     },
 
+    forcer(maintenant) {
+      if (avion.passage !== null || sauvageEnVie()) return false;
+      avion.prochaineT = Math.min(avion.prochaineT, maintenant);
+      return true;
+    },
+
     accorderCharge(id) {
       const j = ctx.joueur(id);
       if (!j || !j.enJeu || !j.vivant || charges.has(id)) return [];

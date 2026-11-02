@@ -323,6 +323,20 @@ describe("suspension : tout est figé", () => {
     expect(messages(s.recevoir("a", { t: "ping", t0: 5 }, T0 + 9000), "pong")[0].maintenant).toBe(T0 + 3050);
   });
 
+  it("le menu de développement agit salle suspendue (solo : Échap suspend, puis le menu s'ouvre), sans que l'anti-rafale se fige avec l'horloge", () => {
+    const s = partie(["a"]);
+    avancer(s, T0 + 50, T0 + 3000);
+    s.recevoir("a", { t: "pauseZ", actif: true }, T0 + 3050);
+    const r1 = s.recevoir("a", { t: "reglesDev", action: { k: "argent", montant: 1000 } }, T0 + 4000);
+    expect(messages(r1, "refus")).toEqual([]);
+    expect(messages(r1, "reglesDev").some((m) => m.annonce)).toBe(true);
+    expect(messages(r1, "argent")).toMatchObject([{ delta: 1000, motif: "dev" }]);
+    // l'horloge virtuelle est gelée : un second réglage 400 ms réelles plus tard passe quand même
+    const r2 = s.recevoir("a", { t: "reglesDev", action: { k: "argent", montant: 500 } }, T0 + 4400);
+    expect(messages(r2, "refus")).toEqual([]);
+    expect(messages(r2, "argent")).toMatchObject([{ delta: 500, motif: "dev" }]);
+  });
+
   it("le budget de distance repart plein à la levée mais une téléportation reste impossible", () => {
     const s = partie(["a", "b"]);
     avancer(s, T0 + 50, T0 + 3000);

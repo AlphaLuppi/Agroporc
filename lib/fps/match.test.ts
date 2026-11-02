@@ -496,6 +496,8 @@ describe("matchs", () => {
     expect(m[0].match).toMatchObject({ numero: 1, phase: "entracte", fin: null, prochain: t + 750 + JEU.entracteMs });
     expect(m[0].classement.map((l) => [l.id, l.kills, l.morts])).toEqual([["a", JEU.objectifKills, 0], ["b", 0, 1]]);
     // la fin est annoncée avant l'éventuelle présence : l'ordre des messages importe peu, mais une seule fin
+    // un client envoie ses états en continu, même pendant l'entracte (replay de fin compris, JEU.entracteMs > INACTIF_MS) : sans quoi le serveur l'évince
+    j(s, "a").etatT = t + 750 + JEU.entracteMs - 200;
     expect(s.tic(t + 750 + JEU.entracteMs - 50).filter((x) => x.m.t === "match")).toEqual([]);
     const debut = s.tic(t + 750 + JEU.entracteMs);
     const nouveau = messages(debut, "match")[0];

@@ -1,0 +1,46 @@
+/* Menu de développement (F9) : mêmes tokens `--ag-*` que le menu pause, panneau plus dense. */
+.fond { position: absolute; z-index: 5; inset: 0; display: flex; pointer-events: auto; background: color-mix(in srgb, var(--ag-ground) 62%, transparent); padding: max(16px, 6vh) 16px 16px; overflow-y: auto; cursor: pointer; text-shadow: none; }
+.panneau {
+  width: min(420px, 100%); padding: 18px 20px 20px; background: var(--ag-panel); border: 1px solid var(--ag-line); backdrop-filter: blur(6px);
+  cursor: default; box-sizing: border-box; text-align: left; margin: auto;
+}
+.panneau h2 { margin: 0; font-family: var(--ag-display), var(--ag-mono), monospace; font-size: 22px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ag-amber); }
+.sous { margin: 4px 0 8px; font-size: 12px; line-height: 1.4; color: var(--ag-ink-dim); }
+.refus { margin: 6px 0 0; padding: 6px 10px; border: 1px solid var(--ag-danger); color: var(--ag-danger); font-size: 12px; line-height: 1.4; }
+.groupe { margin: 12px 0 0; padding: 6px 12px 10px; border: 1px solid var(--ag-line-strong); min-width: 0; }
+.groupe legend { padding: 0 6px; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ag-ink-dim); }
+.groupe:disabled { color: var(--ag-ink-dim); }
+.ligne { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+.ligne span { font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ag-ink-dim); }
+.ligne b { color: var(--ag-amber); font-weight: 500; margin-left: 6px; font-variant-numeric: tabular-nums; }
+.ligne input { width: 100%; accent-color: var(--ag-amber); min-height: 24px; }
+.case { display: flex; align-items: center; gap: 10px; min-height: 36px; cursor: pointer; font-size: 12px; color: var(--ag-ink); }
+.case input { width: 18px; height: 18px; accent-color: var(--ag-amber); cursor: pointer; }
+.liste { margin: 4px 0 0; padding: 0; list-style: none; }
+.liste li { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.choix { display: flex; flex-wrap: wrap; column-gap: 18px; margin-top: 4px; padding-top: 6px; border-top: 1px solid var(--ag-line); }
+.boutons { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.petit {
+  min-height: 32px; padding: 0 10px; background: transparent; border: 1px solid var(--ag-line-strong); color: var(--ag-ink); font: inherit; font-size: 11px;
+  letter-spacing: 0.08em; text-transform: uppercase; cursor: pointer;
+}
+.petit:hover, .petit:focus-visible { border-color: var(--ag-amber); color: var(--ag-amber); }
+.petit:disabled { color: var(--ag-ink-dim); border-color: var(--ag-line); cursor: default; }
+.pied { display: flex; gap: 10px; margin-top: 16px; }
+.principal, .secondaire {
+  flex: 1; min-height: 44px; font: inherit; font-family: var(--ag-display), var(--ag-mono), monospace; font-weight: 700; font-size: 13px;
+  letter-spacing: 0.12em; text-transform: uppercase; cursor: pointer;
+}
+.principal { background: var(--ag-amber); border: 1px solid var(--ag-amber); color: var(--ag-ground); }
+.principal:hover, .principal:focus-visible { background: var(--ag-white); border-color: var(--ag-white); }
+.secondaire { background: transparent; border: 1px solid var(--ag-line-strong); color: var(--ag-ink); }
+.secondaire:hover:not(:disabled), .secondaire:focus-visible { border-color: var(--ag-amber); color: var(--ag-amber); }
+.secondaire:disabled { color: var(--ag-ink-dim); cursor: default; }
+.fond button:focus-visible, .fond input:focus-visible { outline: 2px solid var(--ag-white); outline-offset: 2px; }
+
+/* lien discret du menu pause vers ce panneau */
+.lien {
+  position: absolute; z-index: 5; right: 16px; bottom: 16px; min-height: 36px; padding: 0 12px; background: var(--ag-panel); border: 1px solid var(--ag-line-strong);
+  color: var(--ag-ink-dim); font: inherit; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; cursor: pointer; pointer-events: auto; text-shadow: none;
+}
+.lien:hover, .lien:focus-visible { border-color: var(--ag-amber); color: var(--ag-amber); outline: none; }

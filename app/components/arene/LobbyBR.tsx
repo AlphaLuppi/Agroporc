@@ -13,6 +13,7 @@ import ListeParties from "./ListeParties";
 import { useDisposition } from "./ReglageTouches";
 import { PSEUDO_MAX } from "./Arene";
 import type { StatsBrRecues } from "./contrats";
+import AideLobby, { ListeCommandes, ListeRegles } from "./AideLobby";
 import {
   CLE_NIVEAU_BOTS, NIVEAUX_BOTS, REGLES_BR, TEXTE_POLICE_BR, TEXTE_BR, TITRE_REGLES_BR, aideBots, commandesLobbyBR, creationProposee, ecrirePoliceBr, estBot, etiquetteEtatBR, lignePoliceBr, lignesParties, lirePoliceBr, nomAffiche,
   partiesVisibles, pseudoCompteBr, reglageBots, situationLobbyBR, texteEffectif, texteNombreBots, type PartieListee,
@@ -72,7 +73,7 @@ export interface PropsLobbyBR {
 function statut(etat: EtatConnexion, monId: string | null): { texte: string; classe: string } {
   if (etat === "ouvert" && monId) return { texte: "Connecté", classe: styles.ok };
   if (etat === "ouvert" || etat === "connexion") return { texte: "Connexion…", classe: styles.attente };
-  return { texte: "Serveur injoignable, nouvelle tentative…", classe: styles.ko };
+  return { texte: "Serveur injoignable", classe: styles.ko };
 }
 
 export default function LobbyBR({
@@ -110,13 +111,20 @@ export default function LobbyBR({
   const listeConnue = !partie || partie.joueurs !== undefined;
   const monPseudo = joueurs.find((j) => j.id === monId)?.pseudo ?? null;
   const peutLancer = sit.peutLancer && !tactile && !nomTropCourt;
+  // l'aide du champ n'apparaît que s'il y a quelque chose à corriger ou à savoir
+  const aidePseudo = nomTropCourt
+    ? "Au moins 2 lettres ou chiffres."
+    : monPseudo && monPseudo !== pseudo.trim()
+      ? <>Déjà pris : vous serez <b>{monPseudo}</b>.</>
+      : monPseudo && !pseudoCompteBr(monPseudo)
+        ? "Les TOP 1 comptent sous un nom choisi : « Agent » ne compte pas."
+        : null;
   const lancer = () => {
     // l'hôte envoie toujours son choix de police (la case lui est montrée dès qu'il peut lancer) ; un non-hôte ne lance rien (le serveur ignore son message)
     if (!reglage.disponible) surLancer(undefined, undefined, police);
     else if (reglage.valeur > 0) surLancer(niveau, reglage.valeur, police);
     else surLancer(undefined, 0, police);
   };
-  const idPolice = `${idPseudo}-police`;
   const montrerPolice = sit.hote && !sit.enCours && !tactile && connecte;
   const policeRetenue = !sit.hote && !sit.enCours ? lignePoliceBr(partie?.police) : null;
   const montrerBots = sit.hote && !sit.enCours && reglage.disponible && !tactile && connecte;
@@ -153,7 +161,6 @@ export default function LobbyBR({
           {connecte && partie && <> · <b>{sit.joueurs}</b>/{sit.capacite} joueurs</>}
         </span>
       </p>
-      <p className={styles.match}>{TEXTE_BR}</p>
       <p className={`${styles.match} ${sit.enCours ? styles.enCours : ""}`} role="status">{sit.message}</p>
       {sit.avis.map((a) => <p key={a} className={styles.avis}>{a}</p>)}
       {erreur && <p className={styles.erreur} role="alert">{erreur}</p>}
@@ -185,23 +192,15 @@ export default function LobbyBR({
           type="text"
           value={pseudo}
           maxLength={PSEUDO_MAX}
-          placeholder="Ton nom dans la partie"
+          placeholder="Votre nom"
           autoComplete="off"
           spellCheck={false}
           autoFocus={pseudoParDefaut}
-          aria-describedby={`${idPseudo}-aide`}
+          aria-describedby={aidePseudo ? `${idPseudo}-aide` : undefined}
           onChange={(e) => surPseudo(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter" && peutLancer) lancer(); }}
         />
-        <p id={`${idPseudo}-aide`} className={styles.aidePseudo}>
-          {nomTropCourt
-            ? "Au moins 2 lettres ou chiffres."
-            : monPseudo && monPseudo !== pseudo.trim()
-              ? <>Déjà pris : vous apparaîtrez comme <b>{monPseudo}</b>.</>
-              : monPseudo && !pseudoCompteBr(monPseudo)
-                ? "Vos statistiques sont rattachées au nom de joueur : « Agent » ne compte pas."
-                : "Vos TOP 1 sont comptés sous ce nom : gardez-le d'une partie à l'autre."}
-        </p>
+        {aidePseudo && <p id={`${idPseudo}-aide`} className={styles.aidePseudo}>{aidePseudo}</p>}
       </div>
 
       {/* en vol et en jeu le serveur n'envoie plus la liste : le statut ci-dessus donne l'effectif, pas de liste vide trompeuse */}
@@ -244,41 +243,33 @@ export default function LobbyBR({
             {aideBots(reglage, botsRestants).map((t) => <p key={t} className={styles.aidePseudo}>{t}</p>)}
           </div>
           {reglage.valeur > 0 && (
-            <div className={styles.niveauBots} role="radiogroup" aria-label="Niveau des bots">
+            <div className={styles.segmentsNiveau} role="radiogroup" aria-label="Niveau des bots" aria-describedby={`${idBots}-niveau-aide`}>
               {DIFFICULTES_LISTE.map((d) => (
-                <label key={d} className={styles.aidePseudo}>
-                  <input type="radio" name={`${idBots}-niveau`} value={d} checked={niveau === d} onChange={() => choisirNiveau(d)} />{" "}
-                  <b>{NIVEAUX_BOTS[d].nom}</b> : {NIVEAUX_BOTS[d].description}
+                <label key={d} className={styles.segmentNiveau} title={NIVEAUX_BOTS[d].description}>
+                  <input type="radio" name={`${idBots}-niveau`} value={d} checked={niveau === d} onChange={() => choisirNiveau(d)} />
+                  {NIVEAUX_BOTS[d].nom}
                 </label>
               ))}
+              <p id={`${idBots}-niveau-aide`} className={styles.aidePseudo}>{NIVEAUX_BOTS[niveau].description}</p>
             </div>
           )}
         </fieldset>
       )}
 
       {montrerPolice && (
-        <fieldset className={styles.reglagePolice} aria-describedby={`${idPolice}-aide`}>
+        <fieldset className={styles.reglagePolice}>
           <legend>Événements</legend>
-          <label className={styles.optionReglage}>
+          <label className={styles.optionReglage} title={TEXTE_POLICE_BR}>
             <input type="checkbox" checked={police} onChange={(e) => choisirPolice(e.target.checked)} />
             <span>Descente de police</span>
           </label>
-          <p id={`${idPolice}-aide`} className={styles.aidePseudo}>{TEXTE_POLICE_BR}</p>
         </fieldset>
       )}
       {policeRetenue && <p className={styles.note}>{policeRetenue}</p>}
 
-      <section className={styles.tir} aria-labelledby={`${idPseudo}-regles`}>
-        <h3 id={`${idPseudo}-regles`}>{TITRE_REGLES_BR}</h3>
-        <ul>
-          {REGLES_BR.map((r) => <li key={r}>{r}</li>)}
-        </ul>
-      </section>
-
       <details className={styles.palmares}>
         <summary>Palmarès · TOP 1</summary>
         <div className={styles.palmaresCorps}>
-          <p className={styles.palmaresAide}>Les TOP 1 sont rattachés au nom de joueur. Ma ligne est surlignée.</p>
           <TableauStatsBr lignes={statsBr?.lignes ?? null} moi={statsBr?.moi ?? null} />
         </div>
       </details>
@@ -289,18 +280,12 @@ export default function LobbyBR({
         <p className={styles.tactile}>Le Battle Royale se joue au clavier et à la souris.</p>
       ) : (
         <>
-          <dl className={styles.commandes} aria-label="Commandes">
-            {commandesLobbyBR(touches, disposition).filter((c) => c.touches).map((c) => (
-              <div key={c.libelle}>
-                <dt><kbd>{c.touches}</kbd></dt>
-                <dd>{c.libelle}</dd>
-              </div>
-            ))}
-          </dl>
-          <p className={styles.astuce}>
-            Toutes les touches se changent en partie : Échap puis « Touches ». Chat vocal (Échap, puis « Chat vocal ») : en vie, vous entendez les joueurs proches ;
-            éliminé ou spectateur, vous parlez avec les autres spectateurs, que les joueurs en vie n&apos;entendent pas.
-          </p>
+          <AideLobby>
+            <p>{TEXTE_BR}</p>
+            <ListeRegles titre={TITRE_REGLES_BR} regles={REGLES_BR} />
+            <ListeCommandes commandes={commandesLobbyBR(touches, disposition).filter((c) => c.touches)} />
+            <p>Touches modifiables en partie : Échap, puis « Touches ». Chat vocal : Échap, puis « Chat vocal » (proches en vie ; spectateurs entre eux).</p>
+          </AideLobby>
           <div className={styles.pied}>
             <button type="button" className={styles.entrer} disabled={!peutLancer} onClick={lancer}>
               Lancer la partie

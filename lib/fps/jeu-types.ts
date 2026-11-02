@@ -11,6 +11,8 @@ import type { RadarFrame } from "./radar";
 /** Message `refus` du serveur (v11 : `pause`, `lancer`, `alternative`) ; l'évènement du jeu en reprend les champs. */
 type RefusServeur = Extract<MessageServeur, { t: "refus" }>;
 import type { ConfigTouches } from "./touches";
+import type { ReglagesArene } from "./reglages-arene";
+import type { ReglesDev } from "./regles-dev";
 
 /**
  * Scalaires UNIQUEMENT (emettreHud compare champ par champ avec !==) : un objet ou tableau re-rendrait à 15 Hz.
@@ -60,6 +62,8 @@ export interface HudEtat {
   mur: boolean;
   mort: boolean;
   reapparitionDans: number;
+  /** durée totale du délai de réapparition en cours (s ; celui du message `mort`, réglable par le menu de développement), 0 hors mort */
+  reapparitionDelai: number;
   protege: boolean;
   /** s de protection d'apparition restantes (pas de 0,5), 0 hors protection */
   protegeRestant: number;
@@ -88,6 +92,16 @@ export interface HudEtat {
   /** −1 hors killcam, sinon progression 0..1 (arrondie à 0,02) */
   killcam: number;
   killcamPhase: "" | "rejeu" | "carte";
+  /**
+   * Replay de fin de match d'arène (additif, absent ailleurs) : "attente" (dernières fenêtres), "lecture" (moment `replayIndex` sur `replayTotal`, titre, détail et
+   * progression 0..1 du moment), "fini" (tout vu : la touche « passer » le revoit). "" ou absent : pas de replay, l'écran de fin reste le podium.
+   */
+  replayPhase?: "" | "attente" | "lecture" | "fini";
+  replayIndex?: number;
+  replayTotal?: number;
+  replayTitre?: string;
+  replayDetail?: string;
+  replayProg?: number;
   /** une charge du sort d'invocation est disponible (tigre sauvage abattu, v3) : icône du sort au HUD */
   sort: boolean;
   /** chat vocal (v3 §5) : "" coupé, "pret" activé micro fermé, "emet" le micro émet */
@@ -105,8 +119,19 @@ export interface HudEtat {
   titan: boolean;
   /** Le joueur local est immergé dans un nuage de fumigène */
   dansFumee?: boolean;
-  /** Une frappe aérienne est disponible (série de 5 kills) */
+  /** Une frappe aérienne est en poche (message `frappe{disponible}` du serveur, série de 5 kills) : le HUD l'annonce avec sa touche */
   frappeDisponible?: boolean;
+  /** (lot tactique, arène) le ciblage de la frappe est ouvert : la grande carte s'affiche avec le réticule de `JeuHandle.ciblageFrappe()` */
+  ciblageFrappe?: boolean;
+  /** (arène) la touche de frappe vient d'être pressée sans frappe en poche : le HUD rappelle combien de kills manquent (2,5 s) */
+  frappeRefusee?: boolean;
+  /** la touche de frappe a été pressée frappe en poche mais ciblage impossible (véhicule, titan…) : toast de 2,5 s */
+  frappeImpossible?: boolean;
+  /** (arène) secondes avant le prochain fumigène de la touche B (0 = prêt) */
+  fumigeneS?: number;
+  /** (lot tactique, arène et Battle Royale) grenades à fragmentation en poche, et mèche de la cuisson en cours (0 à 1, -1 = aucune) */
+  grenades?: number;
+  grenadeCuisson?: number;
 
   // ---- MODE ZOMBIES (v5) : tous optionnels, absents en arène (les littéraux `HudEtat` existants restent valides) ----
   /** mode de la salle : "arene" ou "zombies" */
@@ -151,6 +176,16 @@ export interface HudEtat {
   compteS?: number;
   /** texte d'un refus de pause (« Pause indisponible : limite atteinte »), vide sinon ; s'efface seul au bout de 4 s */
   refusPause?: string;
+
+  // ---- MENU DE DÉVELOPPEMENT : optionnels (objets STABLES : remplacés seulement par un message du serveur, jamais recréés à chaque image) ----
+  /** règles courantes de la partie (valeurs par défaut tant que le serveur n'a pas répondu) */
+  devRegles?: ReglesDev;
+  /** qui peut les régler : `"*"` = tout joueur en jeu (hall partagé), sinon l'id de l'hôte ; "" avant la réponse du serveur */
+  devHote?: string;
+  /** événements de l'arène (cases cochées, fréquence), null hors arène */
+  devEvenements?: ReglagesArene | null;
+  /** texte du dernier refus du serveur, vide sinon ; s'efface seul au bout de 4 s */
+  devRefus?: string;
 
   // ---- COMPATIBILITÉ v1 (shim du lot 0, tous optionnels) ----
   // Champs que le HUD v1 lit encore et que `jeu.ts` v1 émet toujours. La spec HUD (§3.2) les retire de `HudEtat` : le lot J1 cesse
@@ -203,7 +238,7 @@ export type JeuEvenement =
   /** j'ai pris des dégâts ; `angle` relatif à ma vue (0 = devant, + = à droite) */
   | { type: "degat"; par: string; degats: number; angle: number }
   /** j'ai pris le cadeau d'Elsa */
-  | { type: "bonus"; genre: "soin" | "arme"; arme?: ArmeSpecialeId }
+  | { type: "bonus"; genre: "soin" | "arme"; arme?: ArmeSpecialeId; vendeuse?: "patronne" }
   /** le serveur a refusé `monter` / `siege` (message `refus`) : toast « Voiture trop loin », « Voiture pleine »… ; `rejoindre` : arène pleine */
   | { type: "refus"; action: RefusServeur["action"]; raison: RefusServeur["raison"]; alternative?: string };
 
@@ -330,6 +365,11 @@ export interface JeuHandle {
    * La suspension n'est effective qu'au `zpause` du serveur ; un refus s'affiche dans `HudEtat.refusPause`. Sans effet hors zombies.
    */
   pauseZ?(actif: boolean): void;
+  /**
+   * (menu de développement) Modifie les règles de la partie (`regles`, `evenements`, `action`) ; sans argument, redemande l'état courant (à l'ouverture du menu).
+   * Le serveur valide, borne, applique et annonce ; l'état revient dans `HudEtat.devRegles`. Réservé à l'hôte (tout joueur en jeu dans le hall).
+   */
+  reglesDev?(msg?: Omit<Extract<import("./protocole").MessageClient, { t: "reglesDev" }>, "t">): void;
   /** Chat vocal de proximité (v3 §5) : `activer` demande le micro (à appeler sur un geste), `mode` appuyer pour parler / micro ouvert. */
   voix: { activer(): Promise<"ok" | "refuse" | "indisponible">; desactiver(): void; mode(m: "appuyer" | "ouvert"): void };
   /** Touches modifiées par le joueur (menu pause), appliquées tout de suite. */
@@ -346,6 +386,8 @@ export interface JeuHandle {
   br?(): EtatBrHud;
   /** Déclenche une frappe aérienne sur le point au sol spécifié. */
   lancerFrappe?(cible: Vec3): void;
+  /** (lot tactique, arène) réticule du ciblage de la frappe aérienne en mètres du monde (la grande carte le dessine), null hors ciblage */
+  ciblageFrappe?(): { x: number; z: number } | null;
   /** Lance un fumigène devant le joueur. */
   lancerFumigene?(): void;
   /** Monte sur le Bus C3 s'il est à portée. */

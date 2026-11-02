@@ -9,8 +9,8 @@ import styles from "./Arene.module.css";
 /**
  * Choix du mode de jeu en tête du panneau « Arène » de la vue Palantir : trois cartes radio natives (Arène, Zombies tigres, Battle Royale) (flèches du clavier, un seul arrêt de
  * tabulation), chacune avec le nombre de joueurs de sa salle (message `salons`, tiret tant qu'il n'est pas arrivé). Le mode coché est celui
- * qui est DEMANDÉ : il revient en arrière si le serveur refuse le changement. Le lobby du mode confirmé s'affiche dessous. Les cartes passent à la ligne
- * (`auto-fit`, 150 px au moins) ; `indisponibles` y range les modes qu'un écran tactile ne peut pas jouer (zombies et Battle Royale).
+ * qui est DEMANDÉ : il revient en arrière si le serveur refuse le changement. Le lobby du mode confirmé s'affiche dessous. Une carte = un nom et un effectif
+ * (la phrase de présentation est en infobulle et lue par les lecteurs d'écran) ; les cartes passent à la ligne (`auto-fit`, 110 px au moins) ; `indisponibles` y range les modes qu'un écran tactile ne peut pas jouer (zombies et Battle Royale).
  * Spec : docs/superpowers/specs/2026-10-27-arene-zombies-design.md (« HUD et écrans »)
  */
 export interface PropsChoixMode {
@@ -48,7 +48,7 @@ export default function ChoixMode({ mode, salons = null, surChoisir, desactive =
           const coche = c.mode === mode;
           const ferme = indisponibles.includes(c.mode);
           return (
-            <label key={c.mode} className={`${styles.carteMode} ${coche ? styles.carteModeChoisie : ""} ${ferme ? styles.carteModeFermee : ""}`}>
+            <label key={c.mode} className={`${styles.carteMode} ${coche ? styles.carteModeChoisie : ""} ${ferme ? styles.carteModeFermee : ""}`} title={c.description}>
               <input
                 type="radio"
                 name={`${id}-mode`}
@@ -61,7 +61,8 @@ export default function ChoixMode({ mode, salons = null, surChoisir, desactive =
               />
               <span id={`${id}-${c.mode}-nom`} className={styles.carteModeNom}>{c.titre}</span>
               <span id={`${id}-${c.mode}-nb`} className={styles.carteModeCompteur}>{ferme ? TEXTE_MODE_INDISPONIBLE : compteurMode(c.mode, salons)}</span>
-              <span id={`${id}-${c.mode}-desc`} className={styles.carteModeDesc}>{c.description}</span>
+              {/* la phrase de présentation est lue par les lecteurs d'écran et s'affiche en infobulle : la carte ne montre que son nom et son effectif */}
+              <span id={`${id}-${c.mode}-desc`} className={styles.srSeul}>{c.description}</span>
             </label>
           );
         })}

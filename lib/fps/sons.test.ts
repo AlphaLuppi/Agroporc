@@ -8,13 +8,15 @@ import { ZOMBIES } from "./zombies-vagues";
 /** Faux contexte audio : compte les sources démarrées / arrêtées et les nœuds créés, sans produire de son. */
 class FauxParam {
   value = 0;
-  setValueAtTime() { return this; }
+  /** dernière valeur posée par `setValueAtTime` (la vitesse de lecture d'un échantillon) */
+  posee = NaN;
+  setValueAtTime(v?: number) { if (v !== undefined) this.posee = v; return this; }
   linearRampToValueAtTime() { return this; }
   exponentialRampToValueAtTime() { return this; }
   cancelScheduledValues() { return this; }
   setTargetAtTime() { return this; }
 }
-const journal = { demarres: 0, arretes: 0, noeuds: 0, fermes: 0, departs: [] as { t: number; decalage: number; buffer: unknown; loop: boolean; loopStart: number; loopEnd: number }[] };
+const journal = { demarres: 0, arretes: 0, noeuds: 0, fermes: 0, departs: [] as { t: number; decalage: number; buffer: unknown; loop: boolean; loopStart: number; loopEnd: number; vitesse: number }[] };
 class FauxNoeud {
   type = "";
   buffer: unknown = null;
@@ -30,7 +32,7 @@ class FauxNoeud {
   ratio = new FauxParam();
   constructor() { journal.noeuds++; }
   connect() { return this; }
-  start(t = 0, decalage = 0) { journal.demarres++; journal.departs.push({ t, decalage, buffer: this.buffer, loop: this.loop, loopStart: this.loopStart, loopEnd: this.loopEnd }); }
+  start(t = 0, decalage = 0) { journal.demarres++; journal.departs.push({ t, decalage, buffer: this.buffer, loop: this.loop, loopStart: this.loopStart, loopEnd: this.loopEnd, vitesse: this.playbackRate.posee }); }
   stop() { journal.arretes++; }
 }
 class FauxAudioContext {
@@ -510,6 +512,71 @@ describe("sons : échantillons du mode zombies", () => {
   });
 });
 
+
+describe("(2026-11-02) un seul rugissement : le fichier du joueur", () => {
+  afterEach(() => { delete (FauxAudioContext.prototype as unknown as { decodeAudioData?: unknown }).decodeAudioData; });
+  const url = ECHANTILLONS.rugissementTigre.url;
+  const vitessesDe = () => journal.departs.filter((d) => (d.buffer as { url?: string } | null)?.url === url).map((d) => d.vitesse);
+
+  it("préchargé dans tous les modes (arène et BR : `prechargerArene`, zombies : `prechargerZombies`), une seule demande", () => {
+    expect(URLS_ARENE).toContain(url);
+    expect(URLS_ZOMBIES).toContain(url);
+    const demandes = servirEchantillons({});
+    const sons = creerSons();
+    sons.prechargerArene();
+    sons.prechargerZombies();
+    expect(demandes.filter((u) => u === url)).toHaveLength(1);
+    sons.dispose();
+  });
+
+  it("fichier chargé : tigres largués, tigres des zombies (mort comprise), chef, tigre géant lisent TOUS ce fichier, sans synthèse", async () => {
+    servirEchantillons({ [url]: { duree: 1.25, pic: 0.2 } });
+    const sons = creerSons();
+    sons.prechargerArene();
+    await attendre(); await attendre();
+    journal.departs = [];
+    const avant = journal.demarres;
+    sons.rugissement({ distance: 20, pan: 0 });
+    expect(vitessesDe()).toHaveLength(1);
+    expect(journal.demarres - avant).toBe(1); // une seule source : aucun oscillateur du repli
+    FauxAudioContext.derniere!.currentTime = 5;
+    expect(sons.rugissementTigre({ distance: 20, pan: 0 })).toBe(true);
+    expect(sons.rugissementTigre({ distance: 20, pan: 0 }, true)).toBe(true);
+    expect(sons.grognementChef({ distance: 8, pan: 0 })).toBe(true);
+    sons.alerte("tigre");
+    const v = vitessesDe();
+    expect(v).toHaveLength(5);
+    // tigre ordinaire ≈ 1, cri de mort plus aigu, chef plus grave, tigre géant le plus grave
+    expect(v[0]).toBeGreaterThan(0.9); expect(v[0]).toBeLessThan(1.1);
+    expect(v[2]).toBeGreaterThan(1.15);
+    expect(v[3]).toBeLessThan(0.9);
+    expect(v[4]).toBeLessThan(0.65);
+    sons.dispose();
+  });
+
+  it("limites de voix respectées : au plus 4 lectures du fichier en même temps", async () => {
+    servirEchantillons({ [url]: { duree: 1.25, pic: 0.2 } });
+    const sons = creerSons();
+    sons.prechargerArene();
+    await attendre(); await attendre();
+    journal.departs = [];
+    for (let i = 0; i < 8; i++) sons.rugissement({ distance: 20, pan: 0 });
+    expect(vitessesDe()).toHaveLength(ECHANTILLONS.rugissementTigre.voixMax);
+    sons.dispose();
+  });
+
+  it("fichier absent (404) : le rugissement synthétisé reste le repli", async () => {
+    servirEchantillons({});
+    const sons = creerSons();
+    sons.prechargerArene();
+    await attendre();
+    const avant = journal.demarres;
+    sons.rugissement({ distance: 20, pan: 0 });
+    expect(journal.demarres - avant).toBeGreaterThan(1);
+    expect(sons.grognementChef()).toBe(true);
+    sons.dispose();
+  });
+});
 
 describe("(2026-10-30) sirène de la voiture de police", () => {
   afterEach(() => { delete (FauxAudioContext.prototype as unknown as { decodeAudioData?: unknown }).decodeAudioData; });

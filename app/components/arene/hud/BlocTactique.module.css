@@ -1,0 +1,24 @@
+/* Équipement tactique de l'arène : frappe aérienne et fumigène (tokens --ag-* seulement, dimensions en --u comme le reste du HUD). */
+.bloc { display: flex; flex-direction: column; gap: calc(4 * var(--u, 1px)); margin-bottom: calc(6 * var(--u, 1px)); pointer-events: none; }
+.liste { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: calc(3 * var(--u, 1px)); }
+.ligne {
+  display: grid; grid-template-columns: auto 1fr auto; align-items: baseline; gap: calc(8 * var(--u, 1px));
+  padding: calc(4 * var(--u, 1px)) calc(10 * var(--u, 1px)); min-width: calc(210 * var(--u, 1px));
+  background: var(--ag-hud-fond-fort); border: 1px solid var(--ag-cadre); border-left-width: calc(3 * var(--u, 1px));
+  font-family: var(--ag-display), var(--ag-mono), monospace; font-weight: 700; letter-spacing: 0.08em;
+  font-size: max(11px, calc(12 * var(--u, 1px))); color: var(--ag-ink-dim); font-variant-numeric: tabular-nums;
+}
+.ligne[data-etat="pret"] { border-color: var(--ag-danger); color: var(--ag-white); animation: pulseTactique 0.9s infinite alternate; }
+.ligne[data-alerte="oui"] { border-color: var(--ag-amber); }
+.touche { color: var(--ag-cyan); min-width: calc(24 * var(--u, 1px)); }
+.nom { min-width: 0; }
+.etat { color: inherit; text-align: right; }
+.ligne[data-etat="pret"] .etat { color: var(--ag-danger); }
+.rappel {
+  margin: 0; padding: calc(3 * var(--u, 1px)) calc(10 * var(--u, 1px)); background: var(--ag-hud-fond-fort); border: 1px solid var(--ag-amber);
+  color: var(--ag-amber); font-family: var(--ag-display), var(--ag-mono), monospace; font-weight: 600; letter-spacing: 0.06em;
+  font-size: max(11px, calc(11 * var(--u, 1px)));
+}
+.srSeul { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+@keyframes pulseTactique { from { box-shadow: 0 0 0 transparent; } to { box-shadow: 0 0 calc(10 * var(--u, 1px)) color-mix(in srgb, var(--ag-danger) 70%, transparent); } }
+@media (prefers-reduced-motion: reduce) { .ligne[data-etat="pret"] { animation: none; } }

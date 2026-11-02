@@ -1,4 +1,4 @@
-import type { MutableRefObject } from "react";
+import type { MutableRefObject, ReactNode } from "react";
 import type { SceneData } from "@/lib/agroparc3d/types";
 import type { ClientArene, EtatConnexion } from "@/lib/fps/reseau";
 import type { ApercuDirect } from "@/lib/fps/apercu-source";
@@ -39,7 +39,7 @@ export interface DerniereMort { par: string; parCouleur: string; arme: ArmeId; c
 /** Fil d'annonces du HUD (4 au plus, 8 s chacune). `tigre` : largage et tigre abattu (v3), aussi affichés en toast. `zone` : phases de la tempête (Battle Royale, v8). */
 export interface Annonce { id: number; texte: string; genre: "elsa" | "info" | "tigre" | "zone" }
 /** Toast de bonus (j'ai pris le cadeau d'Elsa). */
-export interface Bonus { id: number; genre: "soin" | "arme"; arme?: ArmeSpecialeId }
+export interface Bonus { id: number; genre: "soin" | "arme"; arme?: ArmeSpecialeId; vendeuse?: "patronne" }
 /**
  * Repère d'Elsa écrit à ~10 Hz par `JeuCallbacks.repere`, lu par rAF (pas de re-render). `elsaDistance < 0` = pas d'offre.
  * @deprecated la spec HUD (§3.1) le remplace par `JeuHandle.radar()` (`RadarFrame.elsa`) ; conservé pour la compilation de l'hôte.
@@ -204,8 +204,12 @@ export interface PropsHudArene {
   surLancerFrappe?(cible: [number, number, number]): void;
   /** Lancer d'un fumigène */
   surLancerFumigene?(): void;
+  /** (lot tactique, arène) réticule du ciblage de la frappe aérienne en mètres du monde (lu à chaque image par la grande carte), null hors ciblage */
+  ciblageFrappe?(): { x: number; z: number } | null;
   /** (v11, zombies) Suspendre la partie pour tous (`true`) ou la reprendre (`false`, redemande aussi la souris) : bouton du menu pause et touche P */
   surPauseZ?(actif: boolean): void;
+  /** (menu de développement, touche F9) modifier les règles de la partie ; sans argument : redemande l'état courant (`JeuHandle.reglesDev`) */
+  surReglesDev?(msg?: import("@/lib/fps/regles-dev-envoi").MessageDev): void;
 }
 
 /** Props de `ChoixEquipement` (écrit par U1, utilisé par U1 : lobby, et par U2 : écran de mort, killcam, pause). */
@@ -218,4 +222,9 @@ export interface PropsChoixEquipement {
   variante: "lobby" | "compact";
   /** préfixe d'id (deux instances à l'écran : noms de groupes radio distincts) */
   idGroupe: string;
+  /**
+   * Emplacement d'un réglage propre à l'arme (variante « lobby » : sous sa carte, hors de l'étiquette cliquable ; ex. le choix d'un viseur).
+   * Absent ou `null` rendu : rien n'est ajouté, le balisage reste celui d'avant.
+   */
+  renduReglage?(arme: string): ReactNode;
 }

@@ -13,10 +13,9 @@ sons/tonnerre.mp3 — extrait de 5 s (16,6 s → 21,6 s) de « thunder_big.flac 
 
 sons/rire-truck.mp3 — « VOXLaff_EvilLaugh_OS_01 », descendu d'une quarte, écho ajouté.
 sons/fanfare-bonus.mp3 — « UIMisc_Powerup_OS_01 ».
-sons/grognement-chef.mp3 — « CREAHmn_GiantEffort_OS_01 », descendu, coupé à 1,8 s.
 sons/griffe-chef.mp3 — « CREAHmn_OgreEffort_OS_01 », ralenti et descendu. PROVISOIRE : à remplacer par le son fourni par le
   joueur (scripts/fps/importer_son.sh <son.mp4> public/arene/sons/griffe-chef.mp3), avec ici son origine et sa licence.
-  Ces quatre sons : "Oculus Audio Pack 01" by Oculus VR, LLC (https://developers.meta.com/vr/downloads/package/oculus-audio-pack-1/),
+  Ces trois sons : "Oculus Audio Pack 01" by Oculus VR, LLC (https://developers.meta.com/vr/downloads/package/oculus-audio-pack-1/),
   licensed under CC BY 4.0. Files renamed to the UCS naming convention; OGG previews transcoded from the original WAVs.
   Copie : https://github.com/facebookincubator/Meta-open-sound (corpora/oculus-audio-pack). Modifiés comme indiqué, mono, normalisés.
 
@@ -39,3 +38,13 @@ sons/sirene-police.mp3 — son ORIGINAL du joueur, créé sous FL Studio (source
   0,05 s à 9,58 s (la queue du fichier est un fondu à −48 dB). Servi par la descente de police (arène et Battle Royale) et la
   patrouille de police des zombies. Pas une génération de scripts/fps/generer_sons.sh : un son remplace par scripts/fps/importer_son.sh.
   Droits : le joueur (aucune source tierce, aucune licence à reprendre).
+
+---------------------------------------------------------------------------------------------------------------------
+Rugissement des tigres (public/arene/sons/rugissement-tigre.mp3), registre dans lib/fps/sons-echantillons.ts (`ECHANTILLONS.rugissementTigre`).
+
+sons/rugissement-tigre.mp3 — extrait de 1,25 s (mono, 44,1 kHz, crête −1 dBFS) du YouTube Short « RAAAAH Sound Effect »
+  (https://www.youtube.com/shorts/ZzUPtExOJ0g), fourni par le joueur et importé avec scripts/fps/importer_son.sh. LICENCE INCONNUE :
+  utilisé sur demande du joueur pour ce site PRIVÉ ; à remplacer avant toute diffusion publique. C'est LE rugissement de tous les tigres
+  (tigres largués, tigres des zombies et leur cri de mort, chef, tigre géant, sort d'invocation) : seule la vitesse de lecture change
+  (plus grave pour le chef et le tigre géant, plus aigu pour le cri de mort). Remplace « grognement-chef.mp3 » (Oculus Audio Pack),
+  retiré. Le rugissement synthétisé de sons.ts ne sert plus que de repli tant que le fichier n'est pas chargé.

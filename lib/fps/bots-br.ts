@@ -309,6 +309,7 @@ export function prioriteButin(o: ObjetBr, moi: EtatBotPublic): number {
   }
   if (o.genre === "bandage") return moi.pv < 60 && moi.bandage < 5 ? 5 : moi.bandage < 2 ? 2 : 0;
   if (o.genre === "potion") return moi.potion < 2 ? 3 : 0;
+  // (lot tactique) les bots ne lancent pas de grenade : ils ne les ramassent pas
   return 0;
 }
 

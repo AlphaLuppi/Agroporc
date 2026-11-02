@@ -1,7 +1,7 @@
 /**
  * Service « descente de police » de la salle (PUR) : une voiture de police débarque de nulle part, fonce sur un joueur (arène : celui qui a le plus de
  * kills ; Battle Royale : l'ennemi humain le plus proche), l'écrase s'il est à pied (`ctx.tuer(…, "police")`, aucun kill crédité), se retire après
- * `POLICE.dureeMs` ou quand elle est détruite à coups de feu (700 PV, `tir.touches` sur `CIBLE_POLICE`, revalidés sur sa boîte orientée REJOUÉE sur son
+ * `POLICE.dureeMs` ou quand elle est détruite à coups de feu (1 100 PV, `tir.touches` sur `CIBLE_POLICE`, revalidés sur sa boîte orientée REJOUÉE sur son
  * historique : à 24 m/s elle parcourt 2,4 m en 100 ms). Physique des voitures conduisibles (dérapage compris), chemin A* sur la grille de dégagement du
  * Truck fou, marche arrière quand elle est bloquée : la poursuite est celle du Truck muche fou (`match-evenements.ts`), autrement réglée.
  * Le service ne décide ni QUAND ni QUI cibler : il reçoit des `ReglesPolice` (`police-regles.ts`, deux fabriques). Il appartient à `Salle`, construit EN
@@ -65,7 +65,7 @@ const VISEE_DIRECTE_M = 30;
 
 type Phase =
   /** `t` : prochain essai ; `echeanceT` : instant où le minuteur est échu (attente d'un premier kill en arène) ; `essais` : départs ratés d'affilée */
-  | { k: "attente"; t: number; echeanceT: number; essais: number }
+  | { k: "attente"; t: number; echeanceT: number; essais: number; forcee?: true }
   | {
     k: "course"; debutT: number; finT: number; e: EtatVehicule; depart: Vec2; cible: string | null; cibleT: number; bloqueDepuis: number | null; reculJusqua: number;
     ch: Vec2[] | null; chT: number; pv: number; sansCandidatDepuis: number | null;
@@ -143,7 +143,8 @@ export function creerServicePolice(ctx: ContexteSalle, opts: OptionsServicePolic
     const points = regles.pointPermis ? opts.points.filter((p) => regles.pointPermis!(p[0], p[1], t)) : opts.points;
     // Battle Royale : une cible sans chemin depuis la route (joueur dans un bâtiment creux, cour fermée…) est écartée AVANT de lancer la course ; la descente
     // ne démarre, et ne consomme son quota, que si `permis` tient encore sans elle. Arène : aucun bâtiment creux, la poursuite révise seule.
-    while (cands.length > 0 && regles.permis(t, { candidats: cands, echeanceT: ph.echeanceT })) {
+    // `forcee` (menu de développement) : les conditions de rareté de `permis` (nombre de joueurs, premier kill, délai après l'atterrissage…) ne comptent pas
+    while (cands.length > 0 && (ph.forcee || regles.permis(t, { candidats: cands, echeanceT: ph.echeanceT }))) {
       // cible provisoire (la plus proche du centre de la carte) : elle ne sert qu'à choisir le point de départ ; la cible retenue est ensuite choisie depuis ce point
       const provisoire = ctx.joueur(regles.choisirCible(cands, centre, null) ?? "");
       if (!provisoire) break;
@@ -317,6 +318,15 @@ export function creerServicePolice(ctx: ContexteSalle, opts: OptionsServicePolic
     armer(t) {
       if (phase && phase.k !== "attente") return;
       phase = attente(t ?? Infinity);
+    },
+
+    forcer(t) {
+      if (phase && phase.k !== "attente") return false;
+      // une descente ne peut pas partir sans cible ni pendant un autre événement : refus (le menu l'explique) plutôt qu'une annonce sans voiture
+      if (arene && opts.autreEvenementEnCours?.()) return false;
+      if (candidats(t).length === 0) return false;
+      phase = { k: "attente", t, echeanceT: t, essais: 0, forcee: true };
+      return true;
     },
 
     reinitialiser(t, rearmer) {

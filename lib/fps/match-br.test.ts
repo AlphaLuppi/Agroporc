@@ -111,7 +111,8 @@ function fauxButin() {
     synchro(id) { appels.push(`synchro:${id}`); return [{ a: id, m: { t: "butin", ajoutes: [] } }]; },
     reinitialiser() { appels.push("reinitialiser"); },
     objets: () => new Map(),
-    stock: () => ({ bandage: 0, potion: 0 }),
+    stock: () => ({ bandage: 0, potion: 0, grenade: 0 }),
+    retirerGrenade: () => [],
   };
   return b;
 }

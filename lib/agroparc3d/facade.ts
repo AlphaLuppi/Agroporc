@@ -2,7 +2,8 @@
  * Façades des bâtiments d'Agroparc (arène FPS) : fonctions PURES, sans three ni DOM.
  * `decor.ts` s'en sert pour construire les murs (un quad par arête) et le nuanceur qui dessine
  * étages, fenêtres, corniche et porte reprend les mêmes constantes et le même hachage.
- * Rendu seulement : aucune collision ne dépend de ce module.
+ * Rendu, sauf les équipements de toit (`placementsToit`, `placementsSolaires`, `DIMENSIONS`) : leurs tirages sont aussi la source des boîtes de
+ * collision de `lib/fps/toit-solide.ts`. Ne PAS changer ces tirages sans le savoir : l'arène et le BR changeraient de monde.
  */
 import { hachage32, mulberry32 } from "./hasard";
 import type { Building, PoiType, Vec2 } from "./types";

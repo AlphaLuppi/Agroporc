@@ -1,5 +1,5 @@
 /**
- * Rendu des monstres des événements (three, v3) : Truck Muche fou (caisse orange, gyrophares), tigre robot géant (le VRAI tigre 3D du
+ * Rendu des monstres des événements (three, v3) : Truck Muche fou (le modèle du Truck garé, Elsa et la patronne aux commandes), tigre robot géant (le VRAI tigre 3D du
  * thème Tigre, `public/tigre/tigre.glb`, à l'échelle `ECHELLE_TIGRE` : pelage rayé assombri en métal, maillage lumineux par-dessus, yeux
  * rouges incandescents, démarche du moteur `lib/tigre3d/corps.ts` via `tigre-geant.ts`, rugissement au coup de patte ; tant que le modèle
  * n'est pas chargé, ou s'il ne charge pas, un robot en boîtes le remplace), titan tigre (même tigre plus petit, aux couleurs du pilote), visée du laser
@@ -12,10 +12,12 @@ import * as THREE from "three";
 import { chargerModele, creerTigre as creerTigre3D, type ModeleTigre, type Tigre } from "../tigre3d/modele";
 import { squelette } from "../tigre3d/squelette";
 import type { LaserAnnonce } from "./jeu-monstres";
-import { ECHELLE_TIGRE, TITAN, TRUCK_FOU } from "./monstres";
+import { ECHELLE_TIGRE, TITAN, TRUCK_FOU, enrouler } from "./monstres";
 import { POLICE } from "./police";
 import type { ArmeLacheeSnap, BusSnap, FrappeSnap, FumigeneSnap, MonstresSnap, PoliceSnap, TigreSnap, TitanSnap, TruckSnap, Vec3 } from "./protocole";
-import { geometrieVoiture } from "./rendu-monde";
+import { creerModeleTruckMuche, geometrieVoiture, type ModeleTruckMuche } from "./rendu-monde";
+import { COULEURS_VENDEUSES, creerFigure, creerHabitacle, poserAssise, type Figure, type Habitacle } from "./rendu-vendeuses";
+import { CABINE, braquage, poseConducteuse, posePatronne } from "./vendeuses";
 import { creerAnimTigreGeant, type AnimTigreGeant } from "./tigre-geant";
 
 export interface RenduMonstres {
@@ -83,38 +85,67 @@ function lumiere(parent: THREE.Object3D, couleur: number, w: number, h: number, 
 // Truck Muche
 // ---------------------------------------------------------------------------------------------
 
+/**
+ * Le Truck Muche fou : le MÊME modèle que le Truck garé d'Elsa (`creerModeleTruckMuche`, enseigne comprise), roues qui tournent, sans gyrophares, cabine
+ * ouverte : Elsa conduit (mains au volant, qui tourne avec le virage) et la patronne, assise à côté, désigne la route. Elles se penchent dans les virages
+ * (vitesse de lacet tirée du cap des snaps), tout vient de `vendeuses.ts` (PUR). Deux phares jaunes rageurs à l'avant. Le modèle, les figures et l'habitacle
+ * se construisent avec la première apparition du Truck fou (un événement rare), pas au chargement de la partie.
+ */
 function creerTruck(parent: THREE.Object3D, aDisposer: { dispose(): void }[]) {
   const group = new THREE.Group();
   group.visible = false;
   parent.add(group);
-  const m = materiaux(COULEUR_TRUCK, aDisposer);
-  const L = TRUCK_FOU.longueur, l = TRUCK_FOU.largeur, H = TRUCK_FOU.hauteur;
-  // caisse de food truck (arrière) et cabine (avant, −z) plus basse
-  boite(group, m, l, H - 0.6, L * 0.68, 0, 0.6 + (H - 0.6) / 2, L * 0.16, aDisposer);
-  boite(group, m, l - 0.1, 1.6, L * 0.3, 0, 0.6 + 0.8, -L * 0.34, aDisposer);
-  // comptoir et auvent (le côté droit du truck)
-  boite(group, m, 0.15, 0.9, L * 0.4, l / 2 + 0.05, 1.9, L * 0.16, aDisposer);
-  boite(group, m, 0.9, 0.08, L * 0.5, l / 2 + 0.45, 2.75, L * 0.16, aDisposer);
-  // roues
-  for (const sx of [-1, 1]) for (const sz of [-1, 1]) boite(group, m, 0.35, 0.9, 0.9, sx * (l / 2 - 0.1), 0.45, sz * (L / 2 - 1.1), aDisposer);
-  // gyrophares sur le toit
-  const g1 = lumiere(group, 0xff2030, 0.5, 0.3, 0.5, -0.6, H + 0.15, -0.2, aDisposer);
-  const g2 = lumiere(group, 0x2a7bff, 0.5, 0.3, 0.5, 0.6, H + 0.15, -0.2, aDisposer);
-  // phares avant (rageurs)
-  lumiere(group, 0xfff1a0, 0.5, 0.25, 0.1, -0.8, 1.0, -L / 2 - 0.02, aDisposer);
-  lumiere(group, 0xfff1a0, 0.5, 0.25, 0.1, 0.8, 1.0, -L / 2 - 0.02, aDisposer);
+  let rig: { modele: ModeleTruckMuche; elsa: Figure; patronne: Figure; habitacle: Habitacle } | null = null;
+  /** cap du snap précédent (null tant que le Truck est caché) et vitesse de lacet lissée (rad/s, + = à gauche) */
+  let capPrec: number | null = null;
+  let lacet = 0;
+
+  function construire(): NonNullable<typeof rig> {
+    const modele = creerModeleTruckMuche({ roues: true, cabineOuverte: true });
+    // faces sous les arêtes, comme les autres monstres : les pièces du modèle n'ont pas d'ordre de dessin propre
+    modele.group.traverse((o) => {
+      if (o.renderOrder !== 0) return;
+      if ((o as THREE.Mesh).isMesh) o.renderOrder = ORDRE;
+      else if ((o as THREE.LineSegments).isLineSegments) o.renderOrder = ORDRE + 1;
+    });
+    group.add(modele.group);
+    const habitacle = creerHabitacle(modele.group, COULEURS_VENDEUSES.elsa);
+    const elsa = creerFigure(modele.group, { vendeuse: "elsa", echelle: CABINE.echelle });
+    const patronne = creerFigure(modele.group, { vendeuse: "patronne", echelle: CABINE.echelle });
+    poserAssise(elsa, CABINE.volant.x);
+    poserAssise(patronne, CABINE.assise.x);
+    // phares jaunes rageurs (aucun gyrophare)
+    lumiere(group, 0xfff1a0, 0.5, 0.25, 0.1, -0.8, 1.0, -TRUCK_FOU.longueur / 2 - 0.02, aDisposer);
+    lumiere(group, 0xfff1a0, 0.5, 0.25, 0.1, 0.8, 1.0, -TRUCK_FOU.longueur / 2 - 0.02, aDisposer);
+    return { modele, elsa, patronne, habitacle };
+  }
+
   return {
     group,
-    maj(s: TruckSnap | undefined, tS: number) {
-      if (!s) { group.visible = false; return; }
+    maj(s: TruckSnap | undefined, tS: number, dt: number) {
+      if (!s) { group.visible = false; capPrec = null; return; }
       group.visible = true;
+      rig ??= construire();
       group.position.set(s.p[0], s.p[1], s.p[2]);
       group.rotation.y = s.cap;
       // il tangue, il est fou
       group.rotation.z = Math.sin(tS * 17) * 0.03 * Math.min(1, Math.abs(s.v) / 10);
-      const alt = Math.floor(tS * 6) % 2 === 0;
-      g1.visible = alt;
-      g2.visible = !alt;
+      // vitesse de lacet lissée : le volant et les corps suivent le virage sans à-coups d'un snap à l'autre
+      if (capPrec !== null && dt > 0) lacet += (Math.max(-3, Math.min(3, enrouler(s.cap - capPrec) / dt)) - lacet) * Math.min(1, dt * 8);
+      capPrec = s.cap;
+      const entrees = { v: s.v, lacet, tS };
+      rig.elsa.appliquer(poseConducteuse(entrees));
+      rig.patronne.appliquer(posePatronne(entrees));
+      rig.habitacle.braquer(braquage(lacet));
+      for (const roue of rig.modele.roues) roue.rotation.x -= (s.v * dt) / rig.modele.rayonRoue;
+    },
+    dispose() {
+      if (!rig) return;
+      rig.elsa.dispose();
+      rig.patronne.dispose();
+      rig.habitacle.dispose();
+      rig.modele.dispose();
+      rig = null;
     },
   };
 }
@@ -680,7 +711,7 @@ export function creerRenduMonstres(scene: THREE.Scene, opts: { reduit?: boolean 
   let couleurTitan = "";
   return {
     maj(m, lasers, tS, tsServeur, dt, couleur, piloteMoi) {
-      truck.maj(m.truck, tS);
+      truck.maj(m.truck, tS, dt);
       police.maj(m.police, tS);
       bus.maj(m.bus);
       armesLachees.maj(m.armesLachees, tS);
@@ -697,6 +728,7 @@ export function creerRenduMonstres(scene: THREE.Scene, opts: { reduit?: boolean 
       explosions.lancer(p, rayon);
     },
     dispose() {
+      truck.dispose();
       tigre.detruire();
       titan.detruire();
       scene.remove(racine);

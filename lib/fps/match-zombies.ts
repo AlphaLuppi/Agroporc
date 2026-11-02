@@ -2174,6 +2174,46 @@ export function creerServiceZombies(ctx: ContexteSalle, opts: OptionsServiceZomb
     grenadesEnVol() {
       return grenades.length;
     },
+
+    // menu de développement : jamais un gain compté pour le seuil de bonus (pas de `crediter`), jamais de points pour les tigres effacés
+    actionDev(j, action, t) {
+      const enPartie = phase === "manche" || phase === "pause";
+      switch (action.k) {
+        case "argent": {
+          if (!enPartie) return null;
+          const sorties: Sortie[] = [];
+          for (const c of ctx.joueurs()) {
+            const m = membre(c.id);
+            if (!m.admis || !c.enJeu) continue;
+            m.argent += action.montant;
+            m.gagne += action.montant;
+            sorties.push(sortieArgent(c, action.montant, "dev"));
+          }
+          sale = true;
+          return emettre(t, sorties);
+        }
+        case "courant": {
+          if (!enPartie || courant) return null;
+          courant = true;
+          immediat = true;
+          return emettre(t, [zev({ e: "courant" })]);
+        }
+        case "bonus": {
+          if (phase !== "manche" || !peutJouer(j)) return null;
+          const sorties: Sortie[] = [];
+          lacher(action.genre, j.p, t, sorties);
+          return emettre(t, sorties);
+        }
+        case "passerManche": {
+          // une manche du Truck a sa propre fin (livraison, explosion du Truck) : la couper laisserait le Truck sans manche
+          if (phase !== "manche" || mancheTruck) return null;
+          const sorties: Sortie[] = [];
+          for (const z of [...simu.liste()]) sorties.push(...tuerTigre(z.id, j, t, "nuke", false));
+          indexFile = file.length;
+          return emettre(t, sorties);
+        }
+      }
+    },
   };
   return service;
 }

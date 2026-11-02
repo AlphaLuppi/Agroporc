@@ -11,6 +11,7 @@ import {
 } from "./protocole";
 import type { EtatBrHud, EtatZombiesHud, HudLive } from "./jeu-types";
 import type { Stockage } from "./touches";
+import { repliqueCommande } from "./vendeuses";
 import { PORTES_PAYANTES } from "./zombies-carte";
 
 /** Espace insécable (avant m, s, km/h, %). */
@@ -148,24 +149,67 @@ export function libelleFil(arme: ArmeId, cause: CauseMort, par: string): string 
   if (cause === "bus_c3") return "Écrasé par le Bus C3";
   if (cause === "frappe_aerienne") return par ? `Frappe aérienne de ${par}` : "Frappe aérienne";
   if (cause === "police") return "Écrasé par la police";
+  if (cause === "grenade") return par ? "Grenade" : "Sauté par sa grenade";
   if (cause === "tempete") return "Tué par la tempête";
   if (cause === "abandon") return "A quitté la partie";
   return estMelee(arme) ? MELEE[arme].nomCourt : STATS[arme].nomCourt;
 }
 
-/** Texte du contenu d'une offre d'Elsa (bandeau et annonce). */
-export function texteOffreElsa(genre: "soin" | "arme", arme?: ArmeSpecialeId): string {
+/**
+ * Nom lisible du pictogramme d'une ligne du fil (`role="img"`, `aria-label` et info-bulle) : le nom COMPLET de l'arme (« Fusil d'assaut »),
+ * sinon le libellé de la cause (`libelleFil`). Le fil ne montre plus de nom d'arme écrit : ce nom reste donc pour les lecteurs d'écran et le survol.
+ */
+export function nomPictoFil(arme: ArmeId, cause: CauseMort, par: string): string {
+  if (cause === "arme") return estMelee(arme) ? MELEE[arme].nom : STATS[arme]?.nom ?? String(arme);
+  // le pseudo du tueur est lu juste avant le pictogramme : le nom de la cause ne le répète pas
+  if (par) {
+    if (cause === "ecrase_vehicule") return "Renversé";
+    if (cause === "explosion") return "Explosion de voiture";
+    if (cause === "titan") return "Titan tigre";
+    if (cause === "frappe_aerienne") return "Frappe aérienne";
+  }
+  return libelleFil(arme, cause, par);
+}
+
+/** Nom du Truck Muche qui sert l'offre : « ELSA » ou « LA PATRONNE » (`vendeuse: "patronne"` : sa formule du jour). */
+export function nomVendeuseOffre(vendeuse?: "patronne"): string {
+  return vendeuse === "patronne" ? "LA PATRONNE" : "ELSA";
+}
+/** Texte du contenu d'une offre du Truck Muche (bandeau et annonce) ; la formule du jour de la patronne = soin complet ET arme spéciale. */
+export function texteOffreElsa(genre: "soin" | "arme", arme?: ArmeSpecialeId, vendeuse?: "patronne"): string {
+  if (vendeuse === "patronne") {
+    const tirs = arme ? STATS[arme].chargeur : 0;
+    return `FORMULE DU JOUR : SOIN COMPLET + ${arme ? `${STATS[arme].nom.toUpperCase()}, ${tirs} tir${tirs > 1 ? "s" : ""}` : "ARME SPÉCIALE"}`;
+  }
   if (genre === "soin") return "SOIN COMPLET : PV 100 + BOUCLIER 100";
   if (!arme) return "ARME SPÉCIALE";
   const tirs = STATS[arme].chargeur;
   return `ARME : ${STATS[arme].nom.toUpperCase()}, ${tirs} tir${tirs > 1 ? "s" : ""}`;
 }
+/**
+ * Annonces du fil quand une offre du Truck Muche apparaît : Elsa seule (« Elsa : soin complet… »), ou la patronne qui appelle Elsa (« Oh Elsa, prépare-moi
+ * ça ! », réplique tirée de l'identifiant de l'offre, la même que dans la bulle du Truck) puis sa formule du jour.
+ */
+export function annoncesOffreElsa(offre: { id: number; genre: "soin" | "arme"; arme?: ArmeSpecialeId; vendeuse?: "patronne" }): string[] {
+  const tirs = offre.arme ? STATS[offre.arme].chargeur : 0;
+  const arme = offre.arme ? `${STATS[offre.arme].nom}, ${tirs} tir${tirs > 1 ? "s" : ""}` : "arme spéciale";
+  if (offre.vendeuse === "patronne") return [`La patronne : « ${repliqueCommande(offre.id)} »`, `Formule du jour : soin complet + ${arme}`];
+  return [`Elsa : ${offre.genre === "soin" ? "soin complet (PV 100, bouclier 100)" : arme}`];
+}
+/** Annonce du fil quand l'offre expire sans preneur. */
+export const texteOffreExpiree = (vendeuse?: "patronne"): string => (vendeuse === "patronne" ? "Formule du jour de la patronne expirée" : "Offre d'Elsa expirée");
+/** Annonce du fil quand `pseudo` a pris l'offre. */
+export const textePriseOffre = (pseudo: string, vendeuse?: "patronne"): string =>
+  vendeuse === "patronne" ? `${pseudo} a pris la formule du jour de la patronne` : `${pseudo} a pris le cadeau d'Elsa`;
+
 /** Texte du toast quand j'ai pris le cadeau : « Bouclier 100 », « Railgun · 6 tirs · touche 4 ». */
-export function texteBonus(genre: "soin" | "arme", arme: ArmeSpecialeId | undefined, touche: string): string {
+export function texteBonus(genre: "soin" | "arme", arme: ArmeSpecialeId | undefined, touche: string, vendeuse?: "patronne"): string {
   if (genre === "soin") return "Soin complet : PV 100, bouclier 100";
   if (!arme) return "Arme spéciale";
   const tirs = STATS[arme].chargeur;
-  return `${STATS[arme].nom} · ${tirs} tir${tirs > 1 ? "s" : ""}${touche ? ` · touche ${touche}` : ""}`;
+  const armeTexte = `${STATS[arme].nom} · ${tirs} tir${tirs > 1 ? "s" : ""}${touche ? ` · touche ${touche}` : ""}`;
+  // la formule du jour de la patronne : le soin complet vient avec l'arme
+  return vendeuse === "patronne" ? `Formule du jour : soin complet + ${armeTexte}` : armeTexte;
 }
 
 // ---------- synthèse du match (barre du haut) ----------
@@ -370,7 +414,7 @@ export function libelleVague(phase: PhaseZombies, manche: number, restants: numb
 
 /** Motifs d'`argent{motif}` du serveur, lisibles. */
 const MOTIFS_ARGENT: Record<string, string> = {
-  touche: "touche", kill: "kill", tete: "tête", melee: "mêlée", manche: "fin de manche", achat: "achat", depart: "départ", retour: "retour", synchro: "",
+  touche: "touche", kill: "kill", tete: "tête", melee: "mêlée", manche: "fin de manche", achat: "achat", depart: "départ", retour: "retour", synchro: "", dev: "menu dev",
 };
 
 /** « +60 $ · kill », « −950 $ · achat » ; le signe moins est un vrai « − » (U+2212). Vide pour un delta nul. */

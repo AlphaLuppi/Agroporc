@@ -1,6 +1,6 @@
 /**
  * Service Elsa de la salle (PUR) : apparition / expiration de l'offre, ramassage automatique par le premier joueur à portée (soin
- * complet ou arme spéciale), messages `elsa`, `ramassage`, `equipement`. Ne voit la salle que par `ContexteSalle`.
+ * complet ou arme spéciale ; la formule du jour de la patronne donne les deux), messages `elsa`, `ramassage`, `equipement`. Ne voit la salle que par `ContexteSalle`.
  * Spec : docs/superpowers/specs/2026-10-22-arene-v2-design.md (§2.7, §5.19, §6.1bis)
  */
 import { avancerElsa, munitionsOffertes, peutRamasser, prendre, reinitialiserElsa, intervalleAleatoire } from "./elsa";
@@ -40,7 +40,9 @@ export function creerServiceElsa(ctx: ContexteSalle, opts: OptionsServiceElsa): 
 
   const message = (): EtatElsaMsg => ({
     x: etat.x, z: etat.z,
-    offre: etat.offre ? { id: etat.offre.id, genre: etat.offre.genre, ...(etat.offre.arme ? { arme: etat.offre.arme } : {}), finT: etat.offre.finT } : null,
+    offre: etat.offre
+      ? { id: etat.offre.id, genre: etat.offre.genre, ...(etat.offre.arme ? { arme: etat.offre.arme } : {}), finT: etat.offre.finT, ...(etat.offre.vendeuse ? { vendeuse: etat.offre.vendeuse } : {}) }
+      : null,
   });
   const aPied = opts.aPied ?? (() => true);
 
@@ -67,7 +69,7 @@ export function creerServiceElsa(ctx: ContexteSalle, opts: OptionsServiceElsa): 
       sorties.push({ a: "tous", m: { t: "elsa", evenement: "prise", elsa: message() } });
       sorties.push({
         a: "tous",
-        m: { t: "ramassage", offre: offre.id, par: j.id, genre: offre.genre, ...(offre.arme ? { arme: offre.arme } : {}) },
+        m: { t: "ramassage", offre: offre.id, par: j.id, genre: offre.genre, ...(offre.arme ? { arme: offre.arme } : {}), ...(offre.vendeuse ? { vendeuse: offre.vendeuse } : {}) },
       });
       if (offre.genre === "arme" && offre.arme) {
         // l'arme spéciale remplace la précédente et passe en main ; elle sort avec le délai de dégainage normal
@@ -79,6 +81,8 @@ export function creerServiceElsa(ctx: ContexteSalle, opts: OptionsServiceElsa): 
         delete j.cadenceArme[offre.arme];
         j.sortieJusqua = maintenant + JEU.degainageMs;
         sorties.push({ a: j.id, m: { t: "equipement", equip: { ...j.equip }, main: j.main, munSpeciale: j.munSpeciale } });
+        // la formule du jour de la patronne ajoute le soin complet à l'arme (le snap suivant porte les nouveaux PV et bouclier)
+        if (offre.vendeuse === "patronne") soinComplet(j);
       } else {
         // PV et bouclier à 100 (le snap suivant porte les nouvelles valeurs)
         soinComplet(j);
@@ -94,6 +98,12 @@ export function creerServiceElsa(ctx: ContexteSalle, opts: OptionsServiceElsa): 
 
     synchro(idDest) {
       return [{ a: idDest, m: { t: "elsa", evenement: "etat", elsa: message() } }];
+    },
+
+    forcer(maintenant) {
+      if (etat.offre) return false;
+      etat.prochaineT = Math.min(etat.prochaineT, maintenant);
+      return true;
     },
   };
 }

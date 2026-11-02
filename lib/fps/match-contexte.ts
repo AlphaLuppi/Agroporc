@@ -8,13 +8,13 @@
 import type { Boite, Monde } from "./collision";
 import type { MemoSante } from "./sante";
 import type {
-  ArmeFeuId, ArmeId, ArmeMeleeId, AvionBr, BrApercu, CauseMort, CoteMur, Equipement, EtatPartieBr, EtatPartieZombies, GenreVoiture, MessageClient, MessageServeur, MonstresSnap,
-  ObjetBr, PhaseBr, PhaseZombies, PointButin, PoliceSnap, Posture, Siege, Slot, SnapZombies, TigreLargueSnap, Vec3, VehiculeSnap, Zone,
+  ArmeFeuId, ArmeId, ArmeMeleeId, ArmeUniqueId, AvionBr, BrApercu, CauseMort, CoteMur, Equipement, EtatPartieBr, EtatPartieZombies, GenreVoiture, MessageClient, MessageServeur, MonstresSnap,
+  GenreGrenade, ObjetBr, PhaseBr, PhaseZombies, PointButin, PoliceSnap, Posture, Siege, Slot, SnapZombies, TigreLargueSnap, TypeEvenement, Vec3, VehiculeSnap, Zone,
 } from "./protocole";
 import type { ObstacleVoiture, Tigre } from "./tigre-arene";
 import type { ExplosionGrenade } from "./grenades";
 import type { StatsTir } from "./armes";
-import type { Difficulte } from "./zombies-vagues";
+import type { Difficulte, GenreBonus } from "./zombies-vagues";
 
 /**
  * Un message à émettre. `a` : "tous" (tous les inscrits), "joueurs" (en arène), "spectateurs" (inscrits hors arène) ou l'id d'un client ;
@@ -189,6 +189,41 @@ export interface ContexteSalle {
    * (`bonjour.capacites`) : il est alors immunisé et jamais choisi pour cible (une voiture invisible ne doit tuer personne).
    */
   supportePolice(id: string): boolean;
+  // ---- lot tactique (souffle des explosions) ----
+  /**
+   * Souffle d'une explosion de genre `genre` centrée en `c` sur tout ce qui n'est pas un joueur : tigres largués, tigre robot, titan, voiture de police,
+   * voitures (les joueurs sont traités par le service des grenades). Crédit des dégâts et des kills à `par`. Absent d'un contexte qui n'a pas de telles cibles.
+   */
+  souffleSurCibles?(c: Vec3, genre: GenreGrenade, par: JoueurSalle, maintenant: number): Sortie[];
+}
+
+/**
+ * Grenades de l'arène et du Battle Royale (lot tactique, `match-grenades.ts` : `creerServiceGrenades(ctx, opts)`) : grenade à fragmentation de la touche
+ * G (2 par vie en arène, ramassées en BR), projectiles des armes uniques du bus C3 (obus du lance-grenades, roquette du bazooka, bidon du fumigène) et
+ * fumigène de la touche B. La trajectoire est calculée une fois par le serveur (`preparerLancer`) et diffusée dans `grenade` ; le souffle blesse les joueurs
+ * en vue du centre, le kill est crédité au lanceur (cause `grenade`), ses propres dégâts comptent. Le zombies a le sien (`match-zombies.ts`).
+ */
+export interface ServiceGrenades {
+  /** explosions arrivées à échéance, contact des obus et roquettes avec un joueur, stock modifié (`stockGrenades`) */
+  tic(maintenant: number): Sortie[];
+  /** `lancerGrenade{frag}` dont l'œil et la visée sont déjà validés : stock, cadence, joueur debout, hors véhicule */
+  lancer(j: JoueurSalle, o: Vec3, d: Vec3, cuissonMs: unknown, maintenant: number): Sortie[];
+  /** tir d'une arme unique (œil et direction déjà validés, munition déjà comptée) : le projectile part */
+  tirerUnique(j: JoueurSalle, arme: ArmeUniqueId, o: Vec3, d: Vec3, maintenant: number): Sortie[];
+  /** fumigène de la touche B (arène) : un bidon part, un toutes les 15 s par joueur */
+  lancerFumigene(j: JoueurSalle, o: Vec3, d: Vec3, maintenant: number): Sortie[];
+  /** (arène) le joueur vient d'apparaître : `parVie` grenades, annoncées à son prochain tic */
+  apparu(j: JoueurSalle): void;
+  /** grenades en poche (arène : service ; Battle Royale : le sac du butin) */
+  stock(id: string): number;
+  /** le joueur est mort ou sorti : plus de grenade en poche (la cuisson en cours est perdue côté client) */
+  perdu(id: string): void;
+  /** nouveau match / retour au lobby : plus aucun projectile ni stock */
+  reinitialiser(): void;
+  /** projectiles en vol, adressés à `idDest` (arrivée en cours de partie) */
+  synchro(idDest: string): Sortie[];
+  /** projectiles en vol (tests et supervision) */
+  enVol(): number;
 }
 
 /** Événements de l'arène (v3, `match-evenements.ts` : `creerServiceEvenements(ctx, opts)`) : Truck Muche fou, tigre robot, titan tigre. */
@@ -205,6 +240,8 @@ export interface ServiceEvenements {
    * renvoie la zone et la distance, ou null si le rayon le manque.
    */
   toucheMonstre(cible: string, o: Vec3, d: Vec3, portee: number): { zone: Zone; distance: number } | null;
+  /** distance (m) d'un point à la surface du tigre robot (CIBLE_TIGRE) ou du titan (CIBLE_TITAN), null s'il n'existe pas : souffle des explosions */
+  distanceMonstre(cible: string, c: Vec3): number | null;
   /** dégâts cumulés d'un tir sur un monstre : `degats` au tireur, mort du tigre (titan pour `par`) ou destruction du titan */
   blesserMonstre(cible: string, degats: number, par: JoueurSalle, zone: Zone, maintenant: number): Sortie[];
   /** `pilotage` / `canon` du pilote ; les autres types renvoient [] */
@@ -218,6 +255,11 @@ export interface ServiceEvenements {
   titanEnCours(): boolean;
   /** le joueur quitte l'arène (ou se déconnecte) : s'il pilote, le titan s'éteint */
   liberer(j: JoueurSalle, maintenant: number): Sortie[];
+  /**
+   * (menu de développement) avance le prochain événement à tour à maintenant, du type demandé s'il est autorisé ; faux si un événement est annoncé ou
+   * en cours, si le titan vit ou si le type n'est pas autorisé. Ses conditions habituelles (descente de police, tigre largué…) restent.
+   */
+  forcer(maintenant: number, type?: TypeEvenement): boolean;
 }
 
 /**
@@ -242,7 +284,7 @@ export interface ServicePolice {
   reinitialiser(t: number, rearmer: boolean): Sortie[];
   /** une descente est en cours (poursuite ou retrait) */
   enCours(): boolean;
-  /** nombre de descentes démarrées depuis le dernier retour à blanc (le service BR arme la seconde) */
+  /** nombre de descentes démarrées depuis le dernier retour à blanc (le service BR arme les suivantes) */
   descentes(): number;
   /**
    * Revalide un plomb déclaré sur `CIBLE_POLICE` : la boîte orientée de la voiture REJOUÉE sur son historique (`fenetreMs` = `Salle.rewindMaxMs`) doit
@@ -253,6 +295,8 @@ export interface ServicePolice {
   blesser(tireur: JoueurSalle, degats: number, maintenant: number): Sortie[];
   /** le joueur quitte la salle : plus de cible ni de marque d'inaccessibilité à son nom */
   liberer(id: string): void;
+  /** (menu de développement) avance le prochain essai de départ à maintenant (Battle Royale : arme le minuteur) ; faux si une descente est en cours. Ses conditions habituelles restent. */
+  forcer(maintenant: number): boolean;
 }
 
 /**
@@ -269,7 +313,7 @@ export interface AidePoliceBr {
   /** le joueur est à bord de l'avion ou en chute */
   enVol(id: string): boolean;
   estSpectateur(id: string): boolean;
-  /** joueurs au départ de la partie, bots compris (la seconde descente demande `POLICE.br.secondeJoueursMin`) */
+  /** joueurs au départ de la partie, bots compris (la troisième descente demande `POLICE.br.grandePartieJoueursMin`) */
   nbJoueursDepart(): number;
 }
 
@@ -281,6 +325,8 @@ export interface ServiceElsa {
   reinitialiser(maintenant: number): void;
   /** `elsa{evenement:"etat"}` adressé à `idDest` (réponse à `rejoindre`) */
   synchro(idDest: string): Sortie[];
+  /** (menu de développement) avance la prochaine offre à maintenant ; faux si une offre est déjà posée */
+  forcer(maintenant: number): boolean;
 }
 
 /** Véhicules conduisibles + circulation PNJ (lot S2, `match-vehicules.ts` : `creerServiceVehicules(ctx, opts)`). */
@@ -312,6 +358,11 @@ export interface ServiceVehicules {
     j: JoueurSalle, o: Vec3, dirs: readonly Vec3[], declarations: readonly { genre: GenreVoiture; id: number; plomb: number }[] | undefined,
     arme: ArmeFeuId, plombsPris: ReadonlySet<number>, maintenant: number,
   ): Sortie[];
+  /**
+   * (lot tactique) Souffle d'une explosion en `c` sur les voitures (PNJ et conduisibles) : `degats(distance)` selon la distance du centre à la caisse (0 =
+   * rien) ; une voiture à 0 explose en cascade (occupants tués, crédit à `par`). Renvoie les sorties (états des voitures, explosions).
+   */
+  soufflerVoitures(c: Vec3, degats: (distance: number) => number, par: JoueurSalle, maintenant: number): Sortie[];
   /** voitures conduisibles (vitesse mesurée, conducteur) et PNJ à l'instant donné : obstacles et chocs des tigres */
   voitures(maintenant: number): ObstacleVoiture[];
 }
@@ -343,6 +394,8 @@ export interface ServiceTigres {
   charge(id: string): boolean;
   /** donne une charge du sort à un joueur vivant en arène qui n'en a pas (tests de charge et supervision) : `sort{gagne}` */
   accorderCharge(id: string): Sortie[];
+  /** (menu de développement) avance le prochain passage de l'avion à maintenant ; faux si l'avion vole ou si un tigre sauvage vit encore. Ses conditions habituelles restent. */
+  forcer(maintenant: number): boolean;
   /** état interne d'un tigre (tests et supervision) */
   tigre(id: string): Readonly<Tigre> | undefined;
 }
@@ -442,6 +495,12 @@ export interface ServiceZombies {
    * celles du tic. Renvoie la fonction qui retire l'écouteur. Sert aux quêtes et secrets (une grenade qui fait sauter quelque chose).
    */
   ecouterExplosions(f: (e: ExplosionGrenade) => Sortie[] | void): () => void;
+  // ---- menu de développement ----
+  /**
+   * Actions du menu de développement (déjà validées par `Salle`) : `argent` (à chaque joueur admis, hors score de bonus), `courant`, `bonus` (lâché aux pieds de
+   * `j`), `passerManche` (efface les tigres et finit la manche). Renvoie les sorties, ou `null` si l'action n'a pas de sens maintenant (pas en partie, manche du Truck…).
+   */
+  actionDev(j: JoueurSalle, action: { k: "argent"; montant: number } | { k: "courant" } | { k: "bonus"; genre: GenreBonus } | { k: "passerManche" }, maintenant: number): Sortie[] | null;
   /**
    * (v8) Grand secret : un tir validé (œil, directions des plombs) passe aussi par les objets du décor (casseroles, écrans), un coup d'arme
    * blanche par les pendules ; sorties `zevt{secret}` (rien si rien ne réagit).
@@ -512,6 +571,9 @@ export interface ServiceBr {
   resume(): ResumeBr;
   /** (2026-10-30) ce que la descente de police voit de la partie */
   aidePolice(): AidePoliceBr;
+  /** (lot tactique) grenades du sac du joueur et lancer d'une (renvoie l'`inventaire` privé) ; absents d'un faux service de test = aucune grenade */
+  stockGrenades?(id: string): number;
+  retirerGrenade?(j: JoueurSalle): Sortie[];
 }
 
 /** Avion, saut, éjection, chute simulée en temps réel et atterrissage (`match-br-vol.ts` : `creerVolBr(ctx, opts)`). */
@@ -550,7 +612,9 @@ export interface ButinBr {
   /** (v11, bots) objets actuellement au sol, lecture seule (les cerveaux des bots choisissent leur butin) */
   objets(): ReadonlyMap<number, ObjetBr>;
   /** (v11, bots) stocks de soins d'un joueur, lecture seule */
-  stock(id: string): { readonly bandage: number; readonly potion: number };
+  stock(id: string): { readonly bandage: number; readonly potion: number; readonly grenade: number };
+  /** (lot tactique) une grenade de moins dans le sac (lancer) ; renvoie l'`inventaire` privé, [] s'il n'y en avait plus */
+  retirerGrenade(j: JoueurSalle): Sortie[];
 }
 
 /**

@@ -49,9 +49,11 @@ attaque Agroparc ! » (`useArene.ts:408`) et rugirait (`sons.alerte`, défaut ti
 
 ### 1.3 Rareté : horloge propre, jamais dans l'alternance
 
-La police a son minuteur, **hors** du rythme des événements à tour (Truck fou / tigre géant) : arène, une descente toutes les 5 à 9 min environ
-(« Normal »), la première 4 à 7 min après la création de la salle OU après le moment où la salle compte deux joueurs en jeu (une salle restée vide
-des heures n'a pas un minuteur échu : §4.2, « Armement ») ; BR, une seule par partie (deux au plus, §5). Elle occupe le créneau « un
+La police a son minuteur, **hors** du rythme des événements à tour (Truck fou / tigre géant) : arène, une descente toutes les 1 min 40 à 3 min 20
+(« Normal »), la première 1 min 15 à 2 min 10 après la création de la salle OU après le moment où la salle compte deux joueurs en jeu (une salle restée vide
+des heures n'a pas un minuteur échu : §4.2, « Armement ») ; BR, deux par partie (trois à partir de 20 partants, §5). **Retour du joueur (2026-11-02)** : la
+descente était trop rare et trop courte (« il y a plus souvent le Truck fou que ça ») ; elle est maintenant plus fréquente que les événements à tour
+(160 à 256 s entre deux d'entre eux en « Normal », `EVENEMENTS`) et dure 45 s au lieu de 22 s (§4.1). Elle occupe le créneau « un
 événement à la fois » (§4.2, « Exclusivité ») mais ne modifie ni `dernierType` ni les intervalles des autres événements.
 
 ### 1.4 Réglages d'arène : fixés à la création, par le créateur
@@ -164,7 +166,7 @@ export function optionsDepuisReglages(r: ReglagesArene, base: OptionsSalle, impo
   type déjà tiré est MÉMORISÉ dans `ph.type` et l'annonce est réessayée toutes les 5 s, exactement comme `tigrePermis` (sans mémoriser, chaque réessai
   retirerait un type et fausserait l'alternance). Équité police / événements : les deux réessaient toutes les 5 s, `evenements.tic` passe AVANT
   `police.tic` et chaque démarrage est atomique dans un tic ; la police attend en plus `margeApresEvenementMs`, donc un événement échu juste après une
-  descente passe d'abord (aucune famine : l'intervalle des événements, ≥ 70 s même en Chaos, laisse toujours une fenêtre de 20 s libre à la police).
+  descente passe d'abord (aucune famine : l'intervalle des événements, ≥ 100 s même en Chaos depuis le 2026-11-02, laisse toujours une fenêtre de 12 s libre à la police : `margeApresEvenementMs`, 12 s depuis le 2026-11-02).
   Si `types` est vide, le service n'est PAS créé (`this.evenements = null`) ; le titan dépend du tigre : décocher `tigre` le désactive aussi.
 - Le constructeur de `Salle` (`match.ts:326-349`) crée chaque service seulement si son option est présente ; `bus` : `this.busC3 = options.bus === false || zombies || br ? null : …`
   (`OptionsSalle.bus?: false | { intervalle }`). **Le service de police est construit EN DERNIER** (après `busC3`) : `creerEtatBusC3` et les autres services tirent
@@ -204,20 +206,24 @@ export function optionsDepuisReglages(r: ReglagesArene, base: OptionsSalle, impo
 ```ts
 export const POLICE = {
   longueur: VEH.longueur, largeur: VEH.largeur, hauteur: VEH.hauteur,   // 4,4 × 1,9 × 1,5 : la physique de pasVehicule est inchangée (24 m/s)
-  pvMax: 700, fumeeFrac: 0.5, feuFrac: 0.2,
-  dureeMs: 22_000, departMs: 4_000,                // poursuite puis retrait vers le point d'apparition (aucun écrasement pendant le retrait)
+  pvMax: 1_100, fumeeFrac: 0.5, feuFrac: 0.2,      // 700 à l'origine : la poursuite double, la voiture tient de quoi être poursuivie à son tour
+  dureeMs: 45_000, departMs: 4_000,                // poursuite (22 s à l'origine) puis retrait vers le point d'apparition (aucun écrasement pendant le retrait)
   vitesseEcrase: 4, margeEcrase: 0.2, hauteurMaxCibleM: 2.2,
   changementCibleMs: 2_000, cheminMs: 1_200, bloqueMs: 900, reculMs: 1_100, reessaiMs: 5_000, vitesseDepart: 14,
   departMinM: 90, departMaxM: 240, departIdealM: 160, candidatsVueMax: 24,   // plafond de points testés à vue (coût : §4.1, « Départ »)
-  joueursMin: 2, margeApresEvenementMs: 20_000,
+  joueursMin: 2, margeApresEvenementMs: 12_000,
   premierMatchMs: 60_000,                          // aucune descente dans la première minute d'un match (arène : les kills repartent à 0)
   attendreLeaderMs: 60_000,                        // arène : délai maximal d'attente d'un premier kill avant de se rabattre sur le plus proche
   noeudsMax: 12_000, inaccessibleMs: 10_000,       // A* borné ; cible sans chemin écartée 10 s
   marges: { toucheM: 0.8 },                        // marge (m) de la boîte orientée de touche, en plus du rejeu de latence (§4.2)
-  premier: { minMs: 240_000, maxMs: 420_000 },     // après la création de la salle OU le passage à 2 joueurs en jeu (arène)
-  entre:   { minMs: 300_000, maxMs: 540_000 },     // après la fin d'une descente (arène, Normal)
-  plancherMs: 150_000,
-  br: { apresAtterrissageMs: 60_000, premierMinMs: 90_000, premierMaxMs: 240_000, vivantsMin: 4, secondeJoueursMin: 20, secondeMinMs: 180_000, secondeMaxMs: 300_000, max: 2 },
+  premier: { minMs: 75_000, maxMs: 130_000 },      // après la création de la salle OU le passage à 2 joueurs en jeu (arène) ; jamais avant `premierMatchMs`
+  entre:   { minMs: 100_000, maxMs: 200_000 },     // après la fin d'une descente (arène, Normal) ; 240-420 s et 300-540 s à l'origine
+  plancherMs: 60_000,                              // plancher d'un délai après mise à l'échelle (Chaos × 0,7)
+  br: {
+    apresAtterrissageMs: 60_000, premierMinMs: 75_000, premierMaxMs: 180_000, vivantsMin: 4,
+    grandePartieJoueursMin: 20, suivanteMinMs: 150_000, suivanteMaxMs: 240_000,   // la suivante, après la FIN de la précédente
+    max: 2, maxGrande: 3,                                                       // deux descentes par partie, trois à 20 partants ou plus (une de plus qu'avant : 1 puis 2)
+  },
 } as const;
 export interface CandidatPolice { id: string; p: Vec3; kills: number; humain: boolean }
 export function choisirCibleArene(c: readonly CandidatPolice[], voiture: Vec3, courante: string | null): string | null;
@@ -237,7 +243,7 @@ export function etatCarrosserie(pv: number): "fumee" | "feu" | undefined;
   `aPied(j)` que celle injectée à Elsa et aux tigres (`!vehicules?.occupation(j.id) && !evenements?.estPilote(j.id)`) : le service ne voit pas `vehicules`.
 - **Inaccessible** : si l'A* vers la cible renvoie `null` (cible sans chemin pour une voiture : intérieur d'un bâtiment creux du BR, cour fermée, plateforme), elle est écartée `inaccessibleMs` (10 s) et la
   cible suivante est choisie ; plus aucun candidat joignable depuis 3 s ⇒ `retrait`. Sans cette règle un joueur du BR qui fouille un bâtiment (la majorité, pendant la fouille) arrête la voiture contre un mur
-  pendant 22 s. En BR, `permis` exige au moins un candidat humain dont le chemin n'est pas connu comme impossible.
+  pendant toute la poursuite. En BR, `permis` exige au moins un candidat humain dont le chemin n'est pas connu comme impossible.
 - **Cible, BR** (`choisirCibleBr`) : le candidat **humain** le plus proche DE LA VOITURE ; s'il n'existe aucun humain éligible, le bot le plus proche. Justification : un bot n'est qu'un mannequin
   d'entraînement, la voiture n'a de sens que pour un humain ; les bots sur son chemin restent écrasables (l'écrasement s'applique à tout joueur à pied). Éligibles BR : vivant, au sol (ni à bord
   de l'avion ni en chute : `!vol.enVol`), non spectateur, hors invulnérabilité d'atterrissage (`protegeJusqua` vaut `Infinity` en vol et en chute puis `t + 5 s` à l'atterrissage : le filtre
@@ -296,7 +302,7 @@ export interface ServicePolice {
   à 60 Hz, élaguée au-delà de `fenetreMs`, comme `positions()` de `match-tigres.ts`) ; `toucher` accepte le plomb si la boîte orientée (4,4 × 1,9 × 1,5 + `marges.toucheM` 0,8 m) d'UNE position de la fenêtre est
   touchée (même règle OU que `Salle.positionsCible`) et qu'aucun mur n'est plus proche (`lancerRayon`) ; `fenetreMs` est `Salle.rewindMaxMs` (300 ms en arène, `BR.rewindMaxMs` en BR : snaps à 10 Hz). Test : un
   plomb tiré sur la position de la voiture 200 ms plus tôt à 24 m/s touche ; 700 ms plus tôt non.
-- **Destruction** : 700 PV (`pvMax`). Les tirs arrivent par `tir.touches[]` avec `cible: CIBLE_POLICE`, revalidés par `toucher` (ci-dessus) ; dégâts = dégâts de l'arme au corps (`degatsPlomb(arme, "corps", distance)`),
+- **Destruction** : 1 100 PV (`pvMax`). Les tirs arrivent par `tir.touches[]` avec `cible: CIBLE_POLICE`, revalidés par `toucher` (ci-dessus) ; dégâts = dégâts de l'arme au corps (`degatsPlomb(arme, "corps", distance)`),
   **sans** multiplicateur de zone ; cumulés par tir puis appliqués par `blesser` comme `blesserMonstre`. `etatCarrosserie` : fumée ≤ 50 %, feu ≤ 20 % (champ `etat` du snap, rendu par `rendu-feux.ts`). À 0 PV :
   `explosionMonstre{p, rayon: 5}`, `police{phase:"fin", raison:"detruite", par}`, la voiture disparaît ; aucun dégât de souffle, aucun kill, aucun point (pas d'exploit de score) ; fil d'annonce « X a mis fin à
   la descente de police ». Les tirs sur la police ne passent que si la voiture est la première chose touchée (même règle que le tigre géant). La mêlée ne la touche pas.
@@ -361,7 +367,7 @@ budget A* ni la cadence 20 Hz.
   `t = maintenant + alea(premierMinMs…premierMaxMs)` (90 à 240 s, bornes de `POLICE.br` ; `PDJ_FPS_BR_POLICE_MS` pour les essais) ET `permis` exige en plus `premierAtterrissageT() !== null` et
   `t ≥ premierAtterrissageT() + apresAtterrissageMs` (60 s). `premierAtterrissageT` = premier instant où un HUMAIN touche le sol (le service BR le note quand `vol.atterris()` passe de 0 à plus de 0 sans compter les
   bots, remis à `null` par `retourLobby`). Les points de départ hors zone courante ou à moins de 60 m d'un joueur (zones étroites des derniers paliers) rendent la descente impossible : elle n'a simplement pas lieu,
-  sans erreur (un essai toutes les 5 s, coût borné : §4.1) ; elle ne consomme pas son quota `max` tant qu'elle n'a pas démarré. **Une seconde** n'est armée que si la partie comptait ≥ `secondeJoueursMin` (20) joueurs au départ (bots compris), `secondeMinMs`…`secondeMaxMs` (3 à 5 min) après la FIN de la première ; jamais une troisième.
+  sans erreur (un essai toutes les 5 s, coût borné : §4.1) ; elle ne consomme pas son quota `max` tant qu'elle n'a pas démarré. **Les suivantes** : une fois la précédente finie, la suivante est armée `suivanteMinMs`…`suivanteMaxMs` (2 min 30 à 4 min) après sa FIN, tant que la partie n'a pas son quota : `max` (2) descentes, `maxGrande` (3) si elle comptait ≥ `grandePartieJoueursMin` (20) joueurs au départ (bots compris) ; un seul armement par descente finie (`armerSuivante` de `match-br.ts`).
 - **Pas d'annonce préalable** : message `police{debut}` + sirène. Bandeau court pour tous (« Descente de police ») ; la cible voit « La police est à tes trousses ! » (`cible === moi`).
 - **Mort** : `ctx.tuer(j, null, "police", t)` → `mourirBr` : aucun kill crédité, aucun +50 PV, place classée par l'instant de mort ; le tueur de la killcam est absent, donc la carte seule puis le spectateur
   (comportement existant des morts sans tueur). `verifierVictoire` voit la mort au tic suivant. Une partie avec bots reste « non comptée » comme avant.
@@ -550,3 +556,49 @@ Revue adverse de la première rédaction contre le code (`match.ts`, `match-even
 Points examinés et conformes au code, laissés tels quels : cohabitation avion / tigre géant (`tigrePermis`), bus C3 découplé de `modeArene`, budget du snap (une clé `monstres.police` seulement pendant une descente), horloge
 virtuelle (aucune suspension en arène et BR, la patrouille des zombies lit `maintenantServeur` figé en pause), routage v8 à v10 vers les parties permanentes, `tuer` sans tueur (killcam déjà gérée pour le Truck fou), BR sans
 véhicules (la voiture n'est pas un véhicule de `vehicules`), `VERSION_PROTOCOLE` inchangé grâce aux capacités, spectateurs (la voiture et la sirène ne les concernent que s'ils sont « en jeu »).
+
+
+---
+
+## 8. Retours du 2026-11-02 : Truck fou et vendeuses du Truck Muche
+
+Lot « événements » des retours du joueur (la cadence de la police est dans §1.3, §4.1 et §5).
+
+### 8.1 Cadence des événements à tour
+
+`EVENEMENTS` (`monstres.ts`) : premier événement 55 à 85 s (45 à 70 s à l'origine), puis 100 à 160 s entre deux (70 à 110 s à l'origine), multipliés par le facteur de fréquence
+(`FACTEURS_FREQUENCE.intervalle`, « Normal » = 1,6). La police (100 à 200 s « Normal ») est ainsi nettement plus fréquente que le Truck fou et le tigre géant, à chaque fréquence
+(`evenements-arene.test.ts`). `TRUCK_FOU` prend les dimensions du Truck Muche garé (`TRUCK` de `zones.ts` : 7,4 × 2,4 × 3,2 m, test de parité) : la boîte d'écrasement est celle du modèle dessiné.
+
+### 8.2 Le Truck fou est le Truck Muche, Elsa et la patronne aux commandes
+
+- **Modèle** : `creerModeleTruckMuche({ roues: true, cabineOuverte: true })` de `rendu-monde.ts`, le MÊME que le Truck garé (enseigne comprise, couleur ambre), sans gyrophares (deux phares jaunes seulement).
+  `cabineOuverte` remplace le bloc plein de la cabine par un habitacle (toit, tableau de bord à 1,5 m, bas de portières, montants) dont le pare-brise et les vitres sont vides : on voit les deux conductrices.
+- **Figures** : `rendu-vendeuses.ts` (`creerFigure`, `creerHabitacle`, `poserAssise`) ; la figure d'Elsa est celle de la v2 (toque, couette), la patronne est distincte (corps plus large, chignon, lunettes, tablier, rose `0xff7fb0`).
+  Outils filaires communs dans `rendu-filaire.ts` (extraits de `rendu-monde.ts`). Assises à `CABINE.echelle` = 0,85 (sous le toit à 2,5 m, toque comprise) : Elsa conduit à gauche (x = −0,55), la patronne à droite.
+- **Poses (PUR, `vendeuses.ts`, testé)** : `ikBras` (cinématique inverse à deux segments, le coude vers un indice), `versRepereTorse` (la main arrive au même point du monde que le torse soit penché ou non),
+  `poseConducteuse` (penchée en avant, deux mains sur le volant à 9 h et 3 h qui tournent avec le braquage, tête qui regarde la route et compense le roulis, secousses du moteur),
+  `posePatronne` (une main au tableau de bord, l'autre qui désigne la route toutes les 5,5 s, regarde Elsa entre deux gestes). Braquage = lacet × 0,55 (±0,9 rad), roulis = −0,012 · v · lacet (±0,22 rad : poussées vers
+  l'extérieur du virage). Le lacet vient de la dérivée lissée du cap des snaps (`creerTruck` de `rendu-monstres.ts`, aucun champ de protocole de plus). Roues qui tournent à la vitesse signée.
+- Construit à la première apparition du Truck fou (un événement rare). Pendant qu'il roule, le Truck garé n'a plus de vendeuses au passe-plat (`majElsa(…, enTournee)`).
+
+### 8.3 Deux vendeuses au Truck garé
+
+- **Au passe-plat** : Elsa (z = centre + 0,55) et la patronne (z = centre − 0,55), le cadeau entre elles ; poses `poseComptoir` (Elsa pétrit à deux mains, la patronne poings sur les hanches ; celle qui sert fait signe du bras ;
+  l'autre se tourne vers celle qui parle ; la patronne gesticule en parlant). Une étiquette « Elsa » et une « Patronne ».
+- **Offres** : `vendeuseDeOffre(id)` = la patronne pour une offre sur trois (2ᵉ, 5ᵉ, 8ᵉ…), Elsa sinon : dérivé de l'identifiant, AUCUN tirage de hasard de plus (la séquence des autres services ne bouge pas). L'offre d'Elsa est inchangée (soin
+  complet 40 % / arme spéciale 60 %). **La formule du jour de la patronne** = soin complet (PV 100 + bouclier 100) ET arme spéciale (`match-elsa.ts` : l'arme comme d'habitude, puis `soinComplet`) ; l'arme d'une formule dont le genre
+  tiré était « soin » dérive de l'identifiant. Une formule ne dure pas moins qu'une offre (40 s).
+- **Protocole (additif, `VERSION_PROTOCOLE` inchangé)** : `OffreElsa.vendeuse?: "patronne"` (absent = Elsa) et `ramassage.vendeuse?: "patronne"`. La formule garde `genre: "arme"` + `arme` : un client plus ancien, qui ignore le champ, voit une arme (et ne reçoit
+  pas moins que ce qu'il croit).
+- **Répliques (PUR, `vendeuses.ts`)** : listes `REPLIQUES_VENDEUSES` (commande de la patronne : « Oh Elsa, prépare-moi ça ! »…, réponses d'Elsa, pressions, service d'Elsa, service de la patronne, ambiance). `scenarioOffre(id, vendeuse)` date
+  les lignes depuis l'apparition de l'offre (graine = identifiant : le même chez tous les clients, aucun message de plus) : la patronne appelle Elsa (≈ 0,5 s), Elsa répond, la patronne la presse, c'est servi par la vendeuse de l'offre, puis elles se
+  répondent jusqu'à l'expiration. Jamais deux fois la même réplique de suite par la même vendeuse, bulles de 3,2 s qui ne se chevauchent pas. Datation client : `offre.finT − 40 s` contre l'horloge du serveur (`majElsa(msg, tS, tsServeur)`).
+- **Affichage** : bulle au-dessus de la vendeuse qui parle (sprite à taille constante à l'écran, 3 × la plaque des pseudos, masquée au-delà de 45 m et par les bâtiments), fil d'annonces du HUD (« La patronne : « Oh Elsa, prépare-moi ça ! » » puis
+  « Formule du jour : soin complet + Railgun, 6 tirs »), bandeau « LA PATRONNE · TRUCK MUCHE », cadeau rose pour la formule, toast « Formule du jour : soin complet + … ». `hud-modele.ts` : `annoncesOffreElsa`, `texteOffreElsa`, `texteBonus`, `textePriseOffre`, `texteOffreExpiree`.
+
+### 8.4 Tests
+
+`vendeuses.test.ts` (répliques, scénario, cinématique inverse, cabine, comptoir), `rendu-vendeuses.test.ts` et `rendu-truck-fou.test.ts` (three sans rendu : les mains arrivent où la pose les veut, les conductrices sont dans la cabine,
+les mains sont sur le volant à tout braquage, les roues tournent dans le bon sens, aucun gyrophare, bulles visibles pendant la réplique seulement), `elsa.test.ts` / `match-elsa.test.ts` (formule de la patronne), `hud-modele.test.ts`,
+`police.test.ts`, `evenements-arene.test.ts`, `match.police-br.test.ts` (descentes suivantes).

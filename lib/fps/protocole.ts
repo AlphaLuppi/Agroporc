@@ -16,6 +16,7 @@
  * 2026-10-30-arene-police-evenements-design.md (descente de police, réglages d'événements : additif, `VERSION_PROTOCOLE` reste 11)
  */
 import type { ReglagesArene } from "./reglages-arene";
+import type { ActionDev, ReglesDev } from "./regles-dev";
 import type { Difficulte, GenreBonus } from "./zombies-vagues";
 
 /**
@@ -162,11 +163,15 @@ export const SIEGES_PAR_VEHICULE = 4;
  * "tigre_zombie" : coup d'un tigre zombie du mode zombies. (v8, Battle Royale) "tempete" : dégâts de la zone, aucun kill crédité ; "abandon" :
  * le joueur a quitté la partie en cours (éliminé).
  */
-export type CauseMort =
-  | "arme" | "ecrase_pnj" | "ecrase_vehicule" | "tigre" | "explosion" | "truck_fou" | "tigre_robot" | "titan" | "tigre_zombie" | "bus_c3" | "frappe_aerienne"
-  | "tempete" | "abandon"
+export const CAUSES_MORT = [
+  "arme", "ecrase_pnj", "ecrase_vehicule", "tigre", "explosion", "truck_fou", "tigre_robot", "titan", "tigre_zombie", "bus_c3", "frappe_aerienne",
+  "tempete", "abandon",
   /** (2026-10-30) écrasé par la voiture de la descente de police (arène et Battle Royale) : aucun kill crédité */
-  | "police";
+  "police",
+  /** (lot tactique) souffle d'une grenade, d'un obus de lance-grenades ou d'une roquette de bazooka (arène et Battle Royale) : kill crédité au lanceur, auto-dégâts possibles */
+  "grenade",
+] as const;
+export type CauseMort = (typeof CAUSES_MORT)[number];
 
 /** Voiture de la circulation (`pnj`, indice dans `flotte`) ou voiture conduisible (`vehicule`, id du garage). */
 export type GenreVoiture = "pnj" | "vehicule";
@@ -221,7 +226,9 @@ export type AtoutId = "gratin" | "expresso" | "ristretto" | "pausecafe" | "bento
  * (v8) Genre d'une grenade : à fragmentation (mèche de 3,5 s, cuisson possible) ou « tigre à remontoir » (la Monkey Bomb de BO1 : attire les
  * tigres puis saute). Cf. `GRENADES` de lib/fps/grenades.ts.
  */
-export type GenreGrenade = "frag" | "remontoir";
+export type GenreGrenade = "frag" | "remontoir"
+  /** (lot tactique) projectiles des armes uniques du bus C3 (obus du lance-grenades, roquette du bazooka, bidon du fumigène) et fumigène lancé à la main (touche B) */
+  | "obus" | "roquette" | "fumi";
 /**
  * (v7) Boîte mystère : fermée, armes qui défilent (`tirage`), arme offerte au joueur `pour` (`offre`), envolée vers un autre emplacement.
  * (v8) `arme` peut être "remontoir" : trois tigres à remontoir (grenade spéciale) au lieu d'une arme.
@@ -422,7 +429,9 @@ export type PhaseBr = "lobby" | "decompte" | "vol" | "jeu" | "fin";
 export type Rarete = "commun" | "peu_commun" | "rare" | "legendaire";
 /** Classe de munitions : une boîte donne des chargeurs à l'arme portée de la classe (principale, sinon secondaire). */
 export type ClasseMunitions = "legeres" | "moyennes" | "cartouches";
-export type GenreObjetBr = "arme" | "munitions" | "bandage" | "potion";
+export type GenreObjetBr = "arme" | "munitions" | "bandage" | "potion"
+  /** (lot tactique) grenade à fragmentation ramassable : pile de 4, `qte` comme les soins */
+  | "grenade";
 export type PoolButin = "interieur" | "toit" | "facade" | "route";
 /** Emplacement de butin possible (`pointsButin` de br-carte.ts) ; `p` = au sol (ou sur le toit), en mètres. */
 export interface PointButin { p: Vec3; pool: PoolButin }
@@ -621,8 +630,13 @@ export interface MonstresSnap {
   frappes?: FrappeSnap[];
 }
 
-/** Cadeau d'Elsa. `arme` seulement pour le genre "arme". */
-export interface OffreElsa { id: number; genre: "soin" | "arme"; arme?: ArmeSpecialeId; finT: number }
+/** Les deux vendeuses du Truck Muche : Elsa (qui prépare et sert) et la patronne (qui prend la commande). */
+export type VendeuseId = "elsa" | "patronne";
+/**
+ * Cadeau du Truck Muche. `arme` seulement pour le genre "arme". `vendeuse: "patronne"` (additif ; absent = Elsa) : la « formule du jour » de la patronne =
+ * soin complet ET arme spéciale (genre "arme" pour qu'un client plus ancien, qui ignore ce champ, voie au moins l'arme).
+ */
+export interface OffreElsa { id: number; genre: "soin" | "arme"; arme?: ArmeSpecialeId; finT: number; vendeuse?: "patronne" }
 /** Elsa : position fixe, offre en cours ou null. `finT` = horodatage serveur (ms). */
 export interface EtatElsaMsg { x: number; z: number; offre: OffreElsa | null }
 
@@ -795,6 +809,13 @@ export type MessageClient =
    */
   | { t: "pauseZ"; actif: boolean }
   /**
+   * (additif, menu de développement) Modifier les règles de la partie en direct. `regles` : patch des règles (clés connues seulement, valeurs bornées par
+   * le serveur) ; `evenements` : cases et fréquence des événements de l'arène (reconstruit les services d'événements) ; `action` : impulsion (forcer
+   * un événement, argent, courant, bonus, passer la manche, tout réinitialiser). Réservé à l'hôte (tout joueur en jeu dans le hall partagé) ; refus
+   * `refus{action:"reglesDev"}`. Un ancien serveur ignore ce message inconnu.
+   */
+  | { t: "reglesDev"; regles?: Partial<ReglesDev>; evenements?: { evenements?: string[]; frequence?: string }; action?: ActionDev }
+  /**
    * (BR, additif) Regarder la partie en cours de sa salle sans y jouer (arrivé après le lancement, ou pas admis) : réponse privée
    * `spectateur`, puis les snaps comme un éliminé ; refus `refus{action:"regarder", raison:"lobby"}` hors décompte, vol et jeu.
    */
@@ -926,7 +947,7 @@ export type MessageServeur =
   /** Elsa : offre apparue, prise ou expirée ; état complet à chaque fois. `etat` = synchronisation privée envoyée à `rejoindre`. */
   | { t: "elsa"; evenement: "etat" | "apparue" | "prise" | "expiree"; elsa: EtatElsaMsg }
   /** Un joueur a pris le cadeau d'Elsa (annonce pour tous). */
-  | { t: "ramassage"; offre: number; par: string; genre: "soin" | "arme"; arme?: ArmeSpecialeId }
+  | { t: "ramassage"; offre: number; par: string; genre: "soin" | "arme"; arme?: ArmeSpecialeId; vendeuse?: "patronne" }
   /** Occupation des sièges de tous les véhicules (au changement, et à `rejoindre` au seul joueur concerné). */
   | { t: "sieges"; vehicules: InfoVehicule[] }
   /** Réponse à `monter` / `siege` acceptés : siège attribué et état de la voiture à rejoindre. Privé. */
@@ -941,8 +962,8 @@ export type MessageServeur =
    * `mode` gagne `limite` pour l'arène et les zombies (plafonds de parties, délai de 10 s entre deux créations, disjoncteur de tic).
    */
   | {
-    t: "refus"; action: "monter" | "siege" | "rejoindre" | "mode" | "regarder" | "pause" | "lancer";
-    raison: "loin" | "plein" | "deja" | "inconnu" | "mort" | "lobby" | "limite" | "plusieurs" | "bots";
+    t: "refus"; action: "monter" | "siege" | "rejoindre" | "mode" | "regarder" | "pause" | "lancer" | "reglesDev";
+    raison: "loin" | "plein" | "deja" | "inconnu" | "mort" | "lobby" | "limite" | "plusieurs" | "bots" | "hote" | "mode" | "invalide";
     /** (v11) `rejoindre` refusé pour `plein` : id d'une partie d'arène qui accueille (le lobby propose « Changer d'arène ») */
     alternative?: string;
   }
@@ -1029,6 +1050,12 @@ export type MessageServeur =
    * TOUT client juste après chaque `bienvenue` de la salle des zombies (`actif: false` pour une salle non suspendue : le client le traite comme « dégelé »).
    */
   | { t: "zpause"; actif: boolean; par?: string; pseudo?: string; maintenant: number; compte?: number }
+  /**
+   * (additif, menu de développement) Règles de la partie, diffusées à toute la salle à chaque changement et envoyées au seul arrivant en réponse à
+   * `rejoindre` / `regarder`. `hote` : id du joueur qui peut les régler, ou `"*"` (hall partagé : tout joueur en jeu). `evenements` : réglages
+   * d'événements courants (arène seulement). `par` / `annonce` : qui a changé quoi (« Alice : gravité ×0,5 »), absents de la synchronisation d'un arrivant.
+   */
+  | { t: "reglesDev"; regles: ReglesDev; hote: string; evenements?: ReglagesArene; par?: string; annonce?: string }
   /** État de la partie de zombies (aux membres de la salle zombies, à chaque changement, ≤ 5 Hz). */
   | { t: "zombies"; etat: EtatPartieZombies }
   /** Argent du destinataire (zombies) : solde, variation et motif (« touche », « kill », « manche », « achat »…). Privé. */
@@ -1063,6 +1090,13 @@ export type MessageServeur =
    * est déterministe (`preparerLancer` de lib/fps/grenades.ts sur le même monde) : le client la recalcule et la dessine.
    */
   | { t: "grenade"; id: number; par: string; genre: GenreGrenade; o: Vec3; v: Vec3; t0: number; explosionT: number }
+  /**
+   * (lot tactique, arène et Battle Royale) Une grenade, un obus ou une roquette explose en `p` (à tous les joueurs en partie) : le client retire le projectile,
+   * dessine l'explosion et joue le souffle. Les dégâts sont déjà dans les `degats` / `mort` du serveur. Additif : un client d'avant ignore le type.
+   */
+  | { t: "grenadeExplose"; id: number; genre: GenreGrenade; p: Vec3; rayon: number; par: string }
+  /** (lot tactique, arène et Battle Royale) Privé : mes grenades à fragmentation en poche (apparition, lancer ; en BR, le total du sac aussi dans `inventaire.grenade`). */
+  | { t: "stockGrenades"; n: number }
   /** Frappe aérienne : disponible (série de 5 kills), lancée (coordonnées ciblées), perdue. */
   | { t: "frappe"; evenement: "disponible" | "lancee" | "perdue"; joueur: string; cible?: Vec3; serie?: number }
   /** Fumigène activé en un point. */
@@ -1083,7 +1117,7 @@ export type MessageServeur =
   /** Privé : réponse à `ramasser`. */
   | { t: "ramasse"; ok: boolean; id: number; raison?: "inutile" | "loin" | "inconnu" }
   /** Privé : stock de soins et usage en cours (`finT` = horodatage serveur). */
-  | { t: "inventaire"; bandage: number; potion: number; usage: { objet: "bandage" | "potion"; finT: number } | null }
+  | { t: "inventaire"; bandage: number; potion: number; /** (lot tactique) grenades du sac, absent d'un serveur d'avant */ grenade?: number; usage: { objet: "bandage" | "potion"; finT: number } | null }
   /** Privé : PV et bouclier après un soin (le client ne prend pas la hausse pour de la régénération). */
   | { t: "soin"; pv: number; bouclier: number; motif: "kill" | "bandage" | "potion" }
   /** Statistiques persistées : top 25 et ma ligne ; réponse privée à `statsBr`, diffusé à tous en fin de partie. */
@@ -1103,7 +1137,8 @@ export const JEU = {
   protectionMs: 1500,
   dureeMatchMs: 8 * 60_000,
   objectifKills: 25,
-  entracteMs: 12_000,
+  /** entracte entre deux matchs : classement + replay des plus beaux moments (4 moments de 5,2 s au plus, `REPLAY_FIN`), puis le podium (12 s avant le replay ; le budget est vérifié par `replay-fin.test.ts`) */
+  entracteMs: 26_000,
   /** joueurs EN ARÈNE ; les spectateurs de la vue 3D ne comptent pas */
   joueursMax: 16,
   /** connexions (spectateurs compris) acceptées par la salle ; au-delà `erreur{plein}` */

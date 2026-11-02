@@ -18,7 +18,10 @@ import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import type { EtatElsaMsg, EtatVoitureMsg, VehiculeSnap, Vec3 } from "./protocole";
 import { VOITURE, type EtatVoiture } from "./circulation";
+import { ORDRE_BASE, boite, creerMateriaux, enPiece, libererMateriaux, libererPiece, nu, piece, type GeoPiece, type Materiaux } from "./rendu-filaire";
 import { hauteurPlaquePx } from "./visibilite";
+import { CABINE, DUREE_OFFRE_MS, ligneActive, poseComptoir, scenarioOffre, type EtatComptoir, type LigneVendeuse, type VendeuseId } from "./vendeuses";
+import { COULEURS_VENDEUSES, creerFigure } from "./rendu-vendeuses";
 import { TRUCK, versMondeTruck, type PlaceTruck } from "./zones";
 
 export interface MondeDynamique {
@@ -28,8 +31,8 @@ export interface MondeDynamique {
   majEpaves(etats: Iterable<EtatVoitureMsg>): void;
   /** Voitures conduisibles (interpolées) ; `couleurs` : couleur du conducteur par id de véhicule si occupé. */
   majVoituresJoueurs(vehicules: readonly VehiculeSnap[], couleurs: ReadonlyMap<number, string>): void;
-  /** Elsa (toujours là) + caisse et faisceau quand `elsa.offre` ; `tS` en secondes pour l'animation. */
-  majElsa(elsa: EtatElsaMsg | null, tS: number): void;
+  /** Les deux vendeuses (toujours là) + caisse et faisceau quand `elsa.offre` ; `tS` en secondes pour l'animation, `tsServeur` (ms) date les répliques de l'offre ; `enTournee` : le Truck fou roule avec elles, le passe-plat est vide. */
+  majElsa(elsa: EtatElsaMsg | null, tS: number, tsServeur?: number, enTournee?: boolean): void;
   /** Étiquette « Elsa » : position monde de la tête (pour VisibilitePseudos) et réglage d'alpha. */
   elsaTete(): Vec3;
   afficherPseudoElsa(alpha: number): void;
@@ -40,8 +43,6 @@ export interface MondeDynamique {
 // Constantes
 // ---------------------------------------------------------------------------------------------
 
-/** Ordre de dessin des faces ; les arêtes sont à +1 (comme les avatars : après les bâtiments, qui les occultent). */
-const ORDRE_BASE = 5;
 const ORDRE_FAISCEAU = 9;
 const ORDRE_PSEUDO = 10;
 /** Angle d'or (degrés) : mêmes teintes que `flotte` (circulation.ts) pour le même indice de voiture. */
@@ -50,12 +51,17 @@ const ANGLE_OR_DEG = 137.508;
 const COULEUR_VOITURE_LIBRE = "#b9c4d0";
 /** Carcasse calcinée d'une épave : rouille éteinte. */
 const COULEUR_EPAVE = "#7a5a46";
-const COULEUR_ELSA = 0xffb35c;
 const COULEUR_CADEAU_SOIN = 0x5cff9c;
 const COULEUR_CADEAU_ARME = 0xffd24d;
+/** la formule du jour de la patronne : la couleur de la patronne */
+const COULEUR_CADEAU_FORMULE = 0xff7fb0;
 /** Elsa : échelle (spec §2.7), debout sur le plancher du truck. Étiquette au-dessus du toit (sinon le truck la cache). */
 const ECHELLE_ELSA = 0.9;
 const Y_PSEUDO_ELSA = TRUCK.hauteur + 1.1;
+/** Les deux vendeuses se tiennent de part et d'autre du centre du passe-plat (m), le cadeau entre elles. */
+const ECART_VENDEUSES_M = 0.55;
+/** Distance (m) sous laquelle les bulles de répliques s'affichent. */
+const PORTEE_BULLE_M = 45;
 /**
  * Point de visibilité de l'étiquette (VisibilitePseudos) : dans l'ouverture du passe-plat, juste DEHORS (Elsa elle-même est dans le prisme
  * du truck, toujours « cachée » pour un rayon). Local (x hors du flanc, y au niveau de sa tête).
@@ -74,67 +80,6 @@ const borne = (x: number, a = 0, b = 1) => Math.min(b, Math.max(a, x));
 // ---------------------------------------------------------------------------------------------
 // Outils filaires
 // ---------------------------------------------------------------------------------------------
-
-/** Géométrie des faces + arêtes : un seul `Mesh` et un seul `LineSegments` par objet, même fusionné. */
-interface GeoPiece { geo: THREE.BufferGeometry; aretes: THREE.BufferGeometry }
-
-function enPiece(geo: THREE.BufferGeometry): GeoPiece {
-  return { geo, aretes: new THREE.EdgesGeometry(geo, 12) };
-}
-
-function libererPiece(g: GeoPiece): void {
-  g.geo.dispose();
-  g.aretes.dispose();
-}
-
-/** Boîte w×h×d dont le centre est en (x, y, z). */
-function boite(w: number, h: number, d: number, x = 0, y = 0, z = 0): THREE.BufferGeometry {
-  const g = new THREE.BoxGeometry(w, h, d);
-  g.translate(x, y, z);
-  return g;
-}
-
-/** Garde le seul attribut `position` (+ index) : tous les morceaux fusionnés doivent avoir les mêmes attributs. */
-function nu(g: THREE.BufferGeometry): THREE.BufferGeometry {
-  g.deleteAttribute("normal");
-  g.deleteAttribute("uv");
-  return g;
-}
-
-interface Materiaux { ligne: THREE.LineBasicMaterial; fond: THREE.MeshBasicMaterial }
-
-/** Arêtes lumineuses + faces sombres (profondeur testée, les faces écrivent la profondeur : elles masquent les arêtes cachées). */
-function creerMateriaux(couleur: THREE.Color): Materiaux {
-  const ligne = new THREE.LineBasicMaterial({ color: couleur, transparent: true, opacity: 0.95, depthWrite: false });
-  const fond = new THREE.MeshBasicMaterial({
-    color: couleur.clone().multiplyScalar(0.09),
-    transparent: true,
-    opacity: 1,
-    depthWrite: true,
-    polygonOffset: true,
-    polygonOffsetFactor: 1,
-    polygonOffsetUnits: 2,
-  });
-  return { ligne, fond };
-}
-
-function libererMateriaux(m: Materiaux): void {
-  m.ligne.dispose();
-  m.fond.dispose();
-}
-
-/** Pièce filaire (faces + arêtes) posée dans `parent`, avec les ordres de dessin des avatars. */
-function piece(parent: THREE.Object3D, g: GeoPiece, m: Materiaux, x = 0, y = 0, z = 0): THREE.Group {
-  const grp = new THREE.Group();
-  grp.position.set(x, y, z);
-  const faces = new THREE.Mesh(g.geo, m.fond);
-  const aretes = new THREE.LineSegments(g.aretes, m.ligne);
-  faces.renderOrder = ORDRE_BASE;
-  aretes.renderOrder = ORDRE_BASE + 1;
-  grp.add(faces, aretes);
-  parent.add(grp);
-  return grp;
-}
 
 // ---------------------------------------------------------------------------------------------
 // Voitures
@@ -213,8 +158,8 @@ function couleurPnj(i: number): string {
 // Elsa
 // ---------------------------------------------------------------------------------------------
 
-/** Plaque « Elsa » : sombre, bordée et écrite de la couleur d'Elsa (même style que les pseudos des avatars). */
-function texturePseudoElsa(): { tex: THREE.CanvasTexture | null; ratio: number } {
+/** Plaque d'une vendeuse (« Elsa », « Patronne ») : sombre, bordée et écrite de sa couleur (même style que les pseudos des avatars). */
+function texturePseudo(nom: string, couleur: number): { tex: THREE.CanvasTexture | null; ratio: number } {
   const L = 384, H = 72;
   const ratio = L / H;
   // pas de canevas hors navigateur (tests de fumée sous Node) : l'étiquette reste sans texture
@@ -223,7 +168,7 @@ function texturePseudoElsa(): { tex: THREE.CanvasTexture | null; ratio: number }
   cv.width = L;
   cv.height = H;
   const ctx = cv.getContext("2d");
-  const css = `#${new THREE.Color(COULEUR_ELSA).getHexString()}`;
+  const css = `#${new THREE.Color(couleur).getHexString()}`;
   if (ctx) {
     ctx.fillStyle = "rgba(4, 6, 10, 0.78)";
     ctx.beginPath();
@@ -236,12 +181,60 @@ function texturePseudoElsa(): { tex: THREE.CanvasTexture | null; ratio: number }
     ctx.fillStyle = css;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText("Elsa", L / 2, H / 2 + 2);
+    ctx.fillText(nom, L / 2, H / 2 + 2);
   }
   const tex = new THREE.CanvasTexture(cv);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = 4;
   return { tex, ratio };
+}
+
+/**
+ * Bulle de réplique d'une vendeuse : une plaque sombre bordée de sa couleur, texte sur une ou deux lignes (retour à la ligne au dernier espace avant 26
+ * caractères). La texture est redessinée à chaque nouvelle réplique (`ecrire`). Hors navigateur (tests sous Node), aucune texture.
+ */
+function creerBulle(couleur: number): { tex: THREE.CanvasTexture | null; ratio: number; ecrire(texte: string): void } {
+  const L = 560, H = 120;
+  const ratio = L / H;
+  if (typeof document === "undefined") return { tex: null, ratio, ecrire() {} };
+  const cv = document.createElement("canvas");
+  cv.width = L;
+  cv.height = H;
+  const ctx = cv.getContext("2d");
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  const css = `#${new THREE.Color(couleur).getHexString()}`;
+  let ecrite = "";
+  return {
+    tex, ratio,
+    ecrire(texte) {
+      if (!ctx || texte === ecrite) return;
+      ecrite = texte;
+      ctx.clearRect(0, 0, L, H);
+      ctx.fillStyle = "rgba(4, 6, 10, 0.82)";
+      ctx.beginPath();
+      ctx.roundRect(3, 3, L - 6, H - 6, 16);
+      ctx.fill();
+      ctx.strokeStyle = css;
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      // une ou deux lignes
+      const mots = texte.split(" ");
+      const lignes: string[] = [];
+      let courante = "";
+      for (const mot of mots) {
+        if (courante && (courante + " " + mot).length > 26) { lignes.push(courante); courante = mot; } else courante = courante ? `${courante} ${mot}` : mot;
+      }
+      if (courante) lignes.push(courante);
+      ctx.font = `600 ${lignes.length > 1 ? 34 : 40}px "Chakra Petch", "IBM Plex Mono", ui-monospace, system-ui, sans-serif`;
+      ctx.fillStyle = "#f2f6fa";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      lignes.slice(0, 2).forEach((l, i, a) => ctx.fillText(l, L / 2, H / 2 + (i - (a.length - 1) / 2) * 42 + 2));
+      tex.needsUpdate = true;
+    },
+  };
 }
 
 /** Faisceau vertical : cylindre ouvert, dégradé de luminosité du sol (vif) vers le haut (éteint) par couleurs de sommets, mélange additif. */
@@ -280,8 +273,10 @@ function geometrieAnneau(): THREE.BufferGeometry {
 /**
  * Le Truck Muche en repère local (avant = −z, droite = +x, origine au sol au centre) : châssis, cabine, caisse en PANNEAUX minces (on voit
  * dedans par le passe-plat ouvert du flanc droit), comptoir, volet relevé en auvent, roues et enseigne. Un seul maillage fusionné.
+ * `cabineOuverte` (le Truck fou) : la cabine n'est plus un bloc plein mais un habitacle — toit, tableau de bord, bas de portières, montants — dont le
+ * pare-brise et les vitres sont vides : on voit Elsa et la patronne conduire.
  */
-function geometrieTruck(avecRoues = true): THREE.BufferGeometry {
+function geometrieTruck(avecRoues = true, cabineOuverte = false): THREE.BufferGeometry {
   const { longueur: L, largeur: l, hauteur: H, cabine, hauteurCabine, plancher, comptoir, linteau, fenetreZ, fenetreLargeur } = TRUCK;
   const e = 0.06; // épaisseur des panneaux
   const z0 = -L / 2 + cabine, z1 = L / 2; // caisse
@@ -291,7 +286,18 @@ function geometrieTruck(avecRoues = true): THREE.BufferGeometry {
   const b = (w: number, h: number, d: number, x: number, y: number, z: number) => m.push(nu(boite(w, h, d, x, y, z)));
   // châssis plein sous le plancher, cabine
   b(l, plancher - 0.35, L, 0, (plancher + 0.35) / 2, 0);
-  b(l, hauteurCabine - plancher, cabine, 0, (plancher + hauteurCabine) / 2, -L / 2 + cabine / 2);
+  if (!cabineOuverte) b(l, hauteurCabine - plancher, cabine, 0, (plancher + hauteurCabine) / 2, -L / 2 + cabine / 2);
+  else {
+    const zc0 = -L / 2, yBas = 1.45, yDash = CABINE.tableauY;
+    // toit, tableau de bord (jusqu'à 1,5 m, sous le pare-brise), bas des portières, montants avant et arrière
+    b(l, e, cabine, 0, hauteurCabine - e / 2, zc0 + cabine / 2);
+    b(l, yDash - plancher, 0.5, 0, (plancher + yDash) / 2, zc0 + 0.25);
+    for (const sx of [-1, 1]) {
+      b(e, yBas - plancher, cabine, sx * (l / 2 - e / 2), (plancher + yBas) / 2, zc0 + cabine / 2);
+      b(0.12, hauteurCabine - yDash, 0.12, sx * (l / 2 - 0.06), (yDash + hauteurCabine) / 2, zc0 + 0.06);
+      b(0.12, hauteurCabine - yBas, 0.12, sx * (l / 2 - 0.06), (yBas + hauteurCabine) / 2, zc0 + cabine - 0.06);
+    }
+  }
   // caisse : toit, flanc gauche, cloison avant, porte arrière
   b(l, e, lc, 0, H - e / 2, zc);
   b(e, H - plancher, lc, -l / 2 + e / 2, (plancher + H) / 2, zc);
@@ -321,11 +327,13 @@ function geometrieTruck(avecRoues = true): THREE.BufferGeometry {
       m.push(nu(r));
     }
   }
-  // pare-brise : un cadre incliné à l'avant de la cabine
-  const pb = boite(l - 0.3, 0.9, 0.05, 0, 0, 0);
-  pb.rotateX(-0.35);
-  pb.translate(0, hauteurCabine - 0.55, -L / 2 - 0.08);
-  m.push(nu(pb));
+  // pare-brise : un cadre incliné à l'avant de la cabine (cabine ouverte : vitre vide, on voit à travers)
+  if (!cabineOuverte) {
+    const pb = boite(l - 0.3, 0.9, 0.05, 0, 0, 0);
+    pb.rotateX(-0.35);
+    pb.translate(0, hauteurCabine - 0.55, -L / 2 - 0.08);
+    m.push(nu(pb));
+  }
   const fusion = mergeGeometries(m, false);
   for (const g of m) g.dispose();
   if (!fusion) throw new Error("rendu-monde : fusion du truck impossible");
@@ -344,6 +352,8 @@ export interface OptionsModeleTruck {
   enseigne?: boolean;
   /** longueur (m, du repère du modèle) des faisceaux des phares */
   longueurFaisceau?: number;
+  /** cabine ouverte (pare-brise et vitres vides) : le Truck fou, où les vendeuses conduisent */
+  cabineOuverte?: boolean;
 }
 /** Le Truck Muche seul (`creerModeleTruckMuche`) : groupe, matériaux, roues (vides sans l'option) et rayon d'une roue, phares. */
 export interface ModeleTruckMuche {
@@ -386,7 +396,7 @@ function textureHalo(): THREE.Texture {
 export function creerModeleTruckMuche(o: OptionsModeleTruck = {}): ModeleTruckMuche {
   const group = new THREE.Group();
   const aLiberer: { dispose(): void }[] = [];
-  const geo = enPiece(geometrieTruck(!o.roues));
+  const geo = enPiece(geometrieTruck(!o.roues, !!o.cabineOuverte));
   const m = creerMateriaux(new THREE.Color(o.couleur ?? COULEUR_TRUCK));
   group.add(new THREE.Mesh(geo.geo, m.fond), new THREE.LineSegments(geo.aretes, m.ligne));
   const tex = o.enseigne === false ? null : textureEnseigne();
@@ -534,7 +544,8 @@ export function creerMondeDynamique(scene: THREE.Scene, o: { nbPnj: number; nbVe
   suivre({ dispose: () => libererPiece(geoTruck) });
   const mTruck = creerMateriaux(new THREE.Color(COULEUR_TRUCK));
   suivre({ dispose: () => libererMateriaux(mTruck) });
-  piece(truck, geoTruck, mTruck);
+  const corpsTruck = piece(truck, geoTruck, mTruck);
+  let enseigneTruck: THREE.Mesh | null = null;
   const texEnseigne = textureEnseigne();
   if (texEnseigne) {
     suivre(texEnseigne);
@@ -545,99 +556,60 @@ export function creerMondeDynamique(scene: THREE.Scene, o: { nbPnj: number; nbVe
     enseigne.position.set(TRUCK.largeur / 2 - 0.2, TRUCK.hauteur + 0.35, TRUCK.fenetreZ);
     enseigne.renderOrder = ORDRE_BASE + 1;
     truck.add(enseigne);
+    enseigneTruck = enseigne;
   }
 
-  // ---- Elsa : petit personnage fil de fer ambre, debout sur le plancher, face au passe-plat ----
-  const elsa = new THREE.Group();
-  elsa.position.set(TRUCK.largeur / 2 - TRUCK.retraitElsa, TRUCK.plancher, TRUCK.fenetreZ);
-  // l'avant d'Elsa est −z : un quart de tour la tourne vers +x (le passe-plat)
-  elsa.rotation.y = -Math.PI / 2;
-  truck.add(elsa);
-  const corpsElsa = new THREE.Group();
-  corpsElsa.scale.setScalar(ECHELLE_ELSA);
-  elsa.add(corpsElsa);
+  // ---- les deux vendeuses, DEDANS, face au passe-plat : Elsa (côté porte arrière) et la patronne (côté cabine) ----
+  // Le comptoir est à +x du truck ; une figure regarde −z, un quart de tour la tourne vers +x. La patronne est à gauche d'Elsa, Elsa à sa droite (voisine = ±1 pour la tête).
+  const xFigures = TRUCK.largeur / 2 - TRUCK.retraitElsa;
+  const zElsa = TRUCK.fenetreZ + ECART_VENDEUSES_M, zPatronne = TRUCK.fenetreZ - ECART_VENDEUSES_M;
+  const figures = { elsa: creerFigure(truck, { vendeuse: "elsa", echelle: ECHELLE_ELSA }), patronne: creerFigure(truck, { vendeuse: "patronne", echelle: ECHELLE_ELSA }) };
+  figures.elsa.racine.position.set(xFigures, TRUCK.plancher, zElsa);
+  figures.patronne.racine.position.set(xFigures, TRUCK.plancher, zPatronne);
+  for (const f of Object.values(figures)) f.racine.rotation.y = -Math.PI / 2;
+  suivre({ dispose: () => { figures.elsa.dispose(); figures.patronne.dispose(); } });
 
-  const mElsa = creerMateriaux(new THREE.Color(COULEUR_ELSA));
-  const piecesElsa = {
-    bassin: enPiece(nu(boite(0.38, 0.18, 0.24))),
-    cuisse: enPiece(nu(boite(0.15, 0.43, 0.16, 0, -0.215, 0))),
-    mollet: enPiece(nu(boite(0.12, 0.43, 0.13, 0, -0.215, 0))),
-    pied: enPiece(nu(boite(0.12, 0.07, 0.26))),
-    torse: enPiece(nu(boite(0.46, 0.48, 0.26, 0, 0.24, 0))),
-    tete: enPiece(new THREE.IcosahedronGeometry(0.18, 1)),
-    visiere: enPiece(nu(boite(0.2, 0.05, 0.05))),
-    toque: enPiece(nu(new THREE.CylinderGeometry(0.15, 0.12, 0.24, 8, 1, false))),
-    brasHaut: enPiece(nu(boite(0.1, 0.35, 0.1, 0, -0.175, 0))),
-    brasBas: enPiece(nu(boite(0.08, 0.35, 0.08, 0, -0.175, 0))),
-    main: enPiece(nu(boite(0.09, 0.09, 0.09))),
-    queue: enPiece(nu(boite(0.07, 0.22, 0.07, 0, -0.11, 0))),
-  };
-  for (const p of Object.values(piecesElsa)) suivre({ dispose: () => libererPiece(p) });
-  suivre({ dispose: () => libererMateriaux(mElsa) });
-
-  const corps = new THREE.Group(); // hanches à 0,9 m
-  corps.position.y = 0.9;
-  corpsElsa.add(corps);
-  piece(corps, piecesElsa.bassin, mElsa);
-  for (const x of [-0.1, 0.1]) {
-    const hanche = new THREE.Group();
-    hanche.position.set(x, 0, 0);
-    corps.add(hanche);
-    piece(hanche, piecesElsa.cuisse, mElsa);
-    const genou = new THREE.Group();
-    genou.position.y = -0.43;
-    hanche.add(genou);
-    piece(genou, piecesElsa.mollet, mElsa);
-    piece(genou, piecesElsa.pied, mElsa, 0, -0.43, -0.06);
-  }
-  const torse = new THREE.Group();
-  torse.position.y = 0.08;
-  corps.add(torse);
-  piece(torse, piecesElsa.torse, mElsa, 0, 0, 0);
-  const tete = new THREE.Group();
-  tete.position.y = 0.46;
-  torse.add(tete);
-  piece(tete, piecesElsa.tete, mElsa, 0, 0.17, 0);
-  piece(tete, piecesElsa.visiere, mElsa, 0, 0.19, -0.17);
-  piece(tete, piecesElsa.toque, mElsa, 0, 0.45, 0); // toque de cuisinière : c'est la cuisine du Truck Muche
-  piece(tete, piecesElsa.queue, mElsa, 0, 0.28, 0.2); // couette
-  const bras = (cote: number) => {
-    const epaule = new THREE.Group();
-    epaule.position.set(cote * 0.27, 0.42, 0);
-    torse.add(epaule);
-    piece(epaule, piecesElsa.brasHaut, mElsa);
-    const coude = new THREE.Group();
-    coude.position.y = -0.35;
-    epaule.add(coude);
-    piece(coude, piecesElsa.brasBas, mElsa);
-    piece(coude, piecesElsa.main, mElsa, 0, -0.38, 0);
-    return { epaule, coude };
-  };
-  const brasD = bras(1), brasG = bras(-1);
-
-  // Étiquette : sprite à taille constante à l'écran, masquée par les bâtiments, alpha réglé par la visibilité (VisibilitePseudos).
-  const { tex, ratio } = texturePseudoElsa();
-  if (tex) suivre(tex);
-  const matPseudo = suivre(new THREE.SpriteMaterial({ map: tex ?? undefined, transparent: true, opacity: 0, depthWrite: false, depthTest: true, toneMapped: false }));
-  const etiquette = new THREE.Sprite(matPseudo);
-  etiquette.position.y = Y_PSEUDO_ELSA;
-  etiquette.renderOrder = ORDRE_PSEUDO;
-  etiquette.frustumCulled = false;
-  etiquette.visible = false;
+  // Étiquettes : sprites à taille constante à l'écran, masqués par les bâtiments, alpha réglé par la visibilité (VisibilitePseudos).
+  // Enfants du truck et non des figures (elles tournent) : au-dessus du toit, à l'aplomb de chacune.
   const _pw = new THREE.Vector3(), _pc = new THREE.Vector3();
-  etiquette.onBeforeRender = (renderer, _scene, camera) => {
-    const cam = camera as THREE.PerspectiveCamera;
-    etiquette.getWorldPosition(_pw);
-    _pc.setFromMatrixPosition(cam.matrixWorld);
-    const d = Math.max(_pw.distanceTo(_pc), 0.5);
-    const hPx = (renderer.domElement as HTMLCanvasElement).clientHeight || 800;
-    const h = (hauteurPlaquePx(d) / hPx) * 2 * d * Math.tan(((cam.fov || 90) * Math.PI) / 360);
-    etiquette.scale.set(h * ratio, h, 1);
-    etiquette.updateMatrixWorld();
+  /** sprite de taille constante à l'écran : `facteur` × la hauteur de plaque des pseudos ; au-delà de `porteeM` il s'efface (échelle nulle) */
+  const creerSprite = (tex: THREE.CanvasTexture | null, ratio: number, x: number, y: number, z: number, facteur: number, porteeM: number) => {
+    if (tex) suivre(tex);
+    const mat = suivre(new THREE.SpriteMaterial({ map: tex ?? undefined, transparent: true, opacity: 0, depthWrite: false, depthTest: true, toneMapped: false }));
+    const sprite = new THREE.Sprite(mat);
+    sprite.position.set(x, y, z);
+    sprite.renderOrder = ORDRE_PSEUDO;
+    sprite.frustumCulled = false;
+    sprite.visible = false;
+    sprite.onBeforeRender = (renderer, _scene, camera) => {
+      const cam = camera as THREE.PerspectiveCamera;
+      sprite.getWorldPosition(_pw);
+      _pc.setFromMatrixPosition(cam.matrixWorld);
+      const d = Math.max(_pw.distanceTo(_pc), 0.5);
+      const hPx = (renderer.domElement as HTMLCanvasElement).clientHeight || 800;
+      const h = d > porteeM ? 1e-4 : (hauteurPlaquePx(d) * facteur / hPx) * 2 * d * Math.tan(((cam.fov || 90) * Math.PI) / 360);
+      sprite.scale.set(h * ratio, h, 1);
+      sprite.updateMatrixWorld();
+    };
+    truck.add(sprite);
+    return { sprite, mat };
   };
-  // enfant du truck et non d'Elsa (elle tourne) : au-dessus du toit, à l'aplomb d'Elsa
-  etiquette.position.set(TRUCK.largeur / 2 - TRUCK.retraitElsa, Y_PSEUDO_ELSA, TRUCK.fenetreZ);
-  truck.add(etiquette);
+  const etiquettes = (["elsa", "patronne"] as const).map((qui) => {
+    const { tex, ratio } = texturePseudo(qui === "elsa" ? "Elsa" : "Patronne", COULEURS_VENDEUSES[qui]);
+    return creerSprite(tex, ratio, xFigures, Y_PSEUDO_ELSA, qui === "elsa" ? zElsa : zPatronne, 1, Infinity);
+  });
+  // Bulles de répliques (une par vendeuse, au-dessus de son étiquette), visibles à moins de PORTEE_BULLE_M
+  const bulles = (["elsa", "patronne"] as const).map((qui) => {
+    const b = creerBulle(COULEURS_VENDEUSES[qui]);
+    const sp = creerSprite(b.tex, b.ratio, xFigures, Y_PSEUDO_ELSA + 0.95, qui === "elsa" ? zElsa : zPatronne, 3.1, PORTEE_BULLE_M);
+    sp.mat.opacity = 1;
+    return { ecrire: b.ecrire, sprite: sp.sprite };
+  });
+  const bulleDe = { elsa: bulles[0], patronne: bulles[1] };
+  /** scénario de l'offre affichée (le même chez tous les clients) */
+  let scenario: { id: number; lignes: LigneVendeuse[] } | null = null;
+  /** le Truck fou roule avec Elsa et la patronne : le passe-plat est vide */
+  let tournee = false;
 
   // ---- cadeau : caisse tournante sur le comptoir ; faisceau additif de 60 m (profondeur testée) et anneau de ramassage au point de service ----
   const cadeau = new THREE.Group();
@@ -680,12 +652,12 @@ export function creerMondeDynamique(scene: THREE.Scene, o: { nbPnj: number; nbVe
     f.frustumCulled = false; // la boîte englobante de 60 m ne doit pas faire disparaître le faisceau quand le pied sort du champ
     cadeau.add(f);
   }
-  /** genre de l'offre dont la couleur est appliquée (évite de recolorer à chaque image) */
-  let genreApplique: "soin" | "arme" | null = null;
-  const colorerCadeau = (genre: "soin" | "arme") => {
+  /** genre de l'offre dont la couleur est appliquée (évite de recolorer à chaque image) ; la formule de la patronne a sa couleur */
+  let genreApplique: "soin" | "arme" | "formule" | null = null;
+  const colorerCadeau = (genre: "soin" | "arme" | "formule") => {
     if (genre === genreApplique) return;
     genreApplique = genre;
-    const c = genre === "soin" ? COULEUR_CADEAU_SOIN : COULEUR_CADEAU_ARME;
+    const c = genre === "soin" ? COULEUR_CADEAU_SOIN : genre === "formule" ? COULEUR_CADEAU_FORMULE : COULEUR_CADEAU_ARME;
     mCadeau.ligne.color.set(c);
     mCadeau.fond.color.set(c).multiplyScalar(0.09);
     matFaisceauInt.color.set(c);
@@ -735,30 +707,34 @@ export function creerMondeDynamique(scene: THREE.Scene, o: { nbPnj: number; nbVe
       }
     },
 
-    majElsa(msg, tS) {
-      // Elsa et son truck ne bougent pas (la position du message est le point de service, déjà connu)
+    majElsa(msg, tS, tsServeur, enTournee = false) {
+      // le truck ne bouge pas (la position du message est le point de service, déjà connu)
+      tournee = enTournee;
+      figures.elsa.racine.visible = figures.patronne.racine.visible = !enTournee;
+      // le Truck fou part du stand avec le même modèle : le Truck garé s'efface (sinon deux camions superposés qui scintillent, puis un double resté sur place)
+      corpsTruck.visible = !enTournee;
+      if (enseigneTruck) enseigneTruck.visible = !enTournee;
       const offre = msg?.offre ?? null;
-
-      // Elsa respire, tourne la tête et, quand elle a un cadeau, salue du bras droit.
-      corps.position.y = 0.9 + 0.012 * Math.sin(tS * 1.7);
-      tete.rotation.y = 0.35 * Math.sin(tS * 0.55);
-      tete.rotation.x = 0.04 * Math.sin(tS * 0.9);
-      brasG.epaule.rotation.z = -0.08 - 0.03 * Math.sin(tS * 1.3);
-      brasG.coude.rotation.x = -0.1;
-      if (offre) {
-        brasD.epaule.rotation.z = 2.75 + 0.12 * Math.sin(tS * 3.1);
-        brasD.coude.rotation.z = 0.45 * Math.sin(tS * 7);
-        brasD.coude.rotation.x = 0;
-      } else {
-        brasD.epaule.rotation.z = 0.08 + 0.03 * Math.sin(tS * 1.3 + 1);
-        brasD.coude.rotation.z = 0;
-        brasD.coude.rotation.x = -0.1;
+      const vendeuse: VendeuseId | null = offre ? offre.vendeuse ?? "elsa" : null;
+      // scénario de l'offre : le même chez tous les clients (graine = identifiant), daté depuis son apparition
+      if (!offre) scenario = null;
+      else if (scenario?.id !== offre.id) scenario = { id: offre.id, lignes: scenarioOffre(offre.id, vendeuse!) };
+      const age = offre && tsServeur !== undefined ? tsServeur - (offre.finT - DUREE_OFFRE_MS) : null;
+      const ligne = scenario && age !== null ? ligneActive(scenario.lignes, age) : null;
+      const etat: EtatComptoir = { parle: ligne?.qui ?? null, sert: vendeuse, offre: !!offre };
+      figures.elsa.appliquer(poseComptoir("elsa", etat, tS, -1));
+      figures.patronne.appliquer(poseComptoir("patronne", etat, tS, 1));
+      for (const qui of ["elsa", "patronne"] as const) {
+        const b = bulleDe[qui];
+        const dit = ligne?.qui === qui;
+        if (dit) b.ecrire(ligne.texte);
+        b.sprite.visible = dit && !enTournee;
       }
 
       cadeau.visible = !!offre;
       caisseComptoir.visible = !!offre;
       if (!offre) return;
-      colorerCadeau(offre.genre);
+      colorerCadeau(vendeuse === "patronne" ? "formule" : offre.genre);
       caisse.position.y = TRUCK.comptoir + 0.32 + 0.06 * Math.sin(tS * 2.2);
       caisse.rotation.y = tS * 1.2;
       caisse.rotation.x = 0.18 * Math.sin(tS * 0.8);
@@ -774,9 +750,11 @@ export function creerMondeDynamique(scene: THREE.Scene, o: { nbPnj: number; nbVe
     },
 
     afficherPseudoElsa(alpha) {
-      const a = borne(alpha);
-      matPseudo.opacity = a;
-      etiquette.visible = a > 0.01;
+      const a = tournee ? 0 : borne(alpha);
+      for (const e of etiquettes) {
+        e.mat.opacity = a;
+        e.sprite.visible = a > 0.01;
+      }
     },
 
     dispose() {

@@ -4,13 +4,12 @@
 .lobby { display: flex; flex-direction: column; gap: 14px; margin-top: 14px; }
 .groupe { border: 0; padding: 0; margin: 0; min-width: 0; }
 .groupe legend { padding: 0; margin-bottom: 6px; font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ag-ink-dim); }
-.grille { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-/* plus de 6 cartes : grille serrée, sans description (le nom et les barres suffisent) */
+.grille { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+/* plus de 6 cartes : même grille, barres plus serrées (le nom et les barres suffisent) */
 .grilleCompacte { grid-template-columns: repeat(3, 1fr); }
-.grilleCompacte .carteDesc { display: none; }
 
 .carte {
-  position: relative; display: flex; flex-direction: column; gap: 6px; padding: 10px; cursor: pointer; min-width: 0;
+  position: relative; display: flex; flex-direction: column; gap: 4px; padding: 7px 8px; cursor: pointer; min-width: 0; min-height: 40px;
   border: 1px solid var(--ag-line-strong); background: var(--ag-hud-fond);
 }
 .carte:hover { border-color: var(--ag-ink-dim); }
@@ -21,7 +20,8 @@
 .carteChoisie .carteNom { color: var(--ag-amber); }
 /* l'état choisi ne tient pas qu'à la couleur : coche décorative (l'état « coché » de la radio est annoncé par le navigateur) */
 .carteChoisie .carteNom::after { content: " ✓"; content: " ✓" / ""; }
-.carteDesc { font-size: 11px; line-height: 1.4; color: var(--ag-ink-dim); }
+/* la description reste lue par les lecteurs d'écran (aria-describedby) et s'affiche en infobulle ; plus de paragraphe par carte */
+.carteDesc { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .barres { display: flex; flex-direction: column; gap: 3px; margin-top: auto; padding-top: 4px; }
 .barre { display: flex; align-items: center; gap: 6px; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ag-ink-dim); }
 .barre > span { flex: 0 0 10ch; white-space: nowrap; } /* « CONTRÔLE » et « DÉGÂTS » avec l'espacement des lettres */
@@ -46,5 +46,8 @@
 
 @media (max-width: 480px) {
   .grille, .grilleCompacte { grid-template-columns: 1fr 1fr; }
-  .carteDesc { display: none; }
 }
+/* emplacement facultatif d'un réglage propre à l'arme (ex. viseur) : sous sa carte, hors de l'étiquette cliquable */
+.avecReglage { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.avecReglage > label { flex: 1; }
+.reglage:empty { display: none; }

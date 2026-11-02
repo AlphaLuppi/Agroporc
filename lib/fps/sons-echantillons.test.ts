@@ -157,7 +157,7 @@ describe("(2026-10-30) sirène de la voiture de police", () => {
     expect(readFileSync(fichier("/arene/CREDITS.txt"), "utf8")).toContain("sirene-police.mp3");
     // `URLS_ZOMBIES` et `ECHANTILLONS` sont figés : la sirène a son registre
     expect(URLS_ZOMBIES).not.toContain(SONS_POLICE.sirene.url);
-    expect(URLS_ARENE).toEqual([SONS_POLICE.sirene.url]);
+    expect(URLS_ARENE).toEqual([SONS_POLICE.sirene.url, ECHANTILLONS.rugissementTigre.url]);
   });
 
   it("la boucle évite l'attaque (début) et le fondu de sortie (fin), dans la durée du fichier (9,84 s)", () => {

@@ -57,7 +57,7 @@ function stockageFaux(initial: Record<string, string> = {}): Stockage & { magasi
 const HUD: HudEtat = {
   pv: 100, bouclier: 0, arme: "pistolet", slot: "secondaire", slots: "secondaire:pistolet:12:12:60|couteau:couteau:0:0", equipSuivant: "mitraillette|pistolet",
   munitions: 12, chargeur: 12, reserve: 60, recharge: false, degainage: false, vise: false, lunette: false, zoomX: 0, zoomNiveau: -1, zoomNiveaux: 0, viseur: "fer", ameliorees: "", munitionsG: -1, ecartViseur: 0,
-  distanceVisee: -1, mur: false, mort: false, reapparitionDans: 0, protege: false, protegeRestant: 0, verrouille: true, connecte: true, entracte: false, accroupi: false,
+  distanceVisee: -1, mur: false, mort: false, reapparitionDans: 0, reapparitionDelai: 0, protege: false, protegeRestant: 0, verrouille: true, connecte: true, entracte: false, accroupi: false,
   glisse: false, regen: false, bonusVitesse: 1, invite: "", inviteDetail: "", vehicule: false, vehiculeId: -1, siege: -1, tireInterdit: false, embarquement: false,
   killcam: -1, killcamPhase: "", sort: false, voix: "", voixParlants: "", titan: false, mode: "zombies", argent: 500, manche: 3, restants: 12, aTerre: false, elimine: false,
   invitePrix: 0, inviteAssez: true, reanime: false,
@@ -275,7 +275,8 @@ describe("modèle du lobby des zombies", () => {
     const z = commandesLobbyZombies(touchesParDefaut());
     expect(z.find((c) => c.libelle.startsWith("Acheter"))?.touches).toBe("E");
     expect(z.some((c) => /voiture/i.test(c.libelle))).toBe(false);
-    expect(z.length).toBe(commandes(touchesParDefaut(), null).length - 3);
+    // l'aide de l'arène en partie compte trois lignes tactiques de plus (grenade, fumigène, frappe aérienne : lot tactique)
+    expect(z.length).toBe(commandes(touchesParDefaut(), null).length - 6);
     expect(z.at(-1)).toEqual({ touches: "G", libelle: "Grenade (maintenir : cuire la mèche)" });
   });
 
@@ -590,7 +591,7 @@ describe("EcranMort en zombies", () => {
     const html = rendre(hud({ mort: true, aTerre: true }), { terreFinT: 45_000, maintenantServeur: () => 13_000 });
     expect(html).toMatch(/role="status"[^>]*>À terre</);
     expect(html).toContain("Un coéquipier peut vous relever");
-    expect(html).toContain("à moins de 2,5 m pendant 3 s");
+    expect(html).toContain("maintenue 3 s à moins de 2,5 m");
     expect(html).toContain(`Éliminé dans <b>32${NBSP}s</b>`);
     expect(html).toContain('role="progressbar"');
     expect(html).toContain('aria-valuenow="71"');
@@ -794,7 +795,7 @@ describe("MenuPause en zombies", () => {
 
   it("la partie continue, pas d'équipement à choisir, « Quitter la partie »", () => {
     const html = rendre("zombies");
-    expect(html).toContain("les tigres ne s&#x27;arrêtent pas");
+    expect(html).toContain("les tigres n&#x27;attendent pas");
     expect(html).not.toContain("Équipement de la prochaine apparition");
     expect(html).toContain("Quitter la partie");
     expect(html).not.toContain("Quitter l&#x27;arène");
@@ -804,7 +805,7 @@ describe("MenuPause en zombies", () => {
     for (const html of [rendre(), rendre("arene")]) {
       expect(html).toContain("Équipement de la prochaine apparition");
       expect(html).toContain("Quitter l&#x27;arène");
-      expect(html).toContain("vous êtes toujours dans l&#x27;arène");
+      expect(html).toContain("La partie continue.");
     }
   });
 });

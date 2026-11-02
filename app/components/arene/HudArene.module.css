@@ -256,7 +256,10 @@
   font-size: max(11px, calc(14 * var(--u))); white-space: nowrap; animation: filEntree 0.3s ease; text-shadow: none;
 }
 .fil b { font-weight: 600; color: var(--ag-ink); overflow: hidden; text-overflow: ellipsis; }
-.filArme { margin: 0 calc(4 * var(--u)); font-size: max(11px, calc(12 * var(--u))); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ag-ink-dim); }
+.filArme { display: inline-flex; align-items: center; gap: calc(3 * var(--u)); margin: 0 calc(4 * var(--u)); color: var(--ag-ink); }
+/* pictogramme d'arme ou de cause (silhouette `currentColor`, largeur selon l'arme via `aspect-ratio`) : ~18u de haut, 14 px au moins */
+.filPicto { display: block; flex: 0 0 auto; height: max(14px, calc(18 * var(--u))); width: auto; fill: currentColor; overflow: visible; }
+.filTete { color: var(--ag-amber); height: max(12px, calc(15 * var(--u))); }
 .filMoi { background: color-mix(in srgb, var(--ag-amber) 14%, var(--ag-hud-fond)) !important; border-right-color: var(--ag-amber) !important; }
 .filAnnonce { justify-content: flex-end; color: var(--ag-ink); border-right-color: var(--ag-amber) !important; white-space: normal !important; text-align: right; }
 .filAnnonce[data-genre="info"] { border-right-color: var(--ag-cyan) !important; }

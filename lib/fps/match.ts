@@ -33,17 +33,23 @@ import type { Monde } from "./collision";
 import { couleurJoueur } from "./couleurs";
 import type { IntervalleAvion } from "./avion";
 import type { IntervalleElsa } from "./elsa";
-import { armeDuSlot, couteauTenable, depuisAlias, estPrincipale, estSecondaire, estSlot, meleeDe, normaliserEquipement } from "./equipement";
+import { armeDuSlot, couteauTenable, depuisAlias, estPrincipale, estSecondaire, estSlot, estUnique, meleeDe, normaliserEquipement } from "./equipement";
+import { creerServiceGrenades } from "./match-grenades";
+import { degatsGrenadeJoueur, souffleAtteint } from "./grenades";
 import { minutageCoupRapide } from "./coup-rapide";
 import type {
-  ContexteSalle, JoueurSalle, ResumeBr, ResumeZombies, ServiceBr, ServiceElsa, ServiceEvenements, ServicePolice, ServiceTigres, ServiceVehicules, ServiceZombies, Sortie,
+  ContexteSalle, JoueurSalle, ResumeBr, ResumeZombies, ServiceBr, ServiceElsa, ServiceEvenements, ServiceGrenades, ServicePolice, ServiceTigres, ServiceVehicules, ServiceZombies, Sortie,
 } from "./match-contexte";
 import { creerServiceBr, type OptionsServiceBr } from "./match-br";
 import { creerServiceElsa } from "./match-elsa";
 import { creerServiceEvenements, type OptionsServiceEvenements } from "./match-evenements";
 import { creerServicePolice, type OptionsPolice } from "./match-police";
 import { reglesArene, reglesBr } from "./police-regles";
-import type { ReglagesArene } from "./reglages-arene";
+import { normaliserReglages, reglagesEgaux, type IdEvenementArene, type ReglagesArene } from "./reglages-arene";
+import {
+  INTERVALLE_DEV_MS, REGLES_DEV_DEFAUT, actionPermise, annonceDev, autoriseDev, differencesDev, differencesEvenements, libelleAction, limiterAuMode,
+  multBudgetVitesse, normaliserActionDev, normaliserReglesDev, reglesDevEgales, type ActionDev, type ReglesDev,
+} from "./regles-dev";
 import { creerServiceTigres } from "./match-tigres";
 import { creerServiceVehicules } from "./match-vehicules";
 import { EQUIPEMENT_DEPART_ZOMBIES, MAIN_DEPART_ZOMBIES, creerServiceZombies, departPour, type OptionsServiceZombies } from "./match-zombies";
@@ -51,7 +57,7 @@ import { REWIND_MELEE_MS, coupVraisemblable } from "./melee";
 import { PASSE_EN_SUSPENSION, Suspension, type OptionsSuspension } from "./suspension";
 import {
   CAPACITE_POLICE, CIBLE_LIVRAISON, CIBLE_POLICE, CIBLE_TIGRE, CIBLE_TITAN, EQUIPEMENT_DEFAUT, JEU, PLAFONDS, SLOT_DEFAUT, copierEquipement, estIdZombie, estMelee, oeilDe, silhouetteDe,
-  type ArmeFeuId, type ArmeId, type ArmeMeleeId, type CauseMort, type EtatJoueurSnap, type Equipement, type InfoMatch, type InfoTueur,
+  type ArmeFeuId, type ArmeId, type ArmeMeleeId, type CauseMort, type EtatJoueurSnap, type Equipement, type GenreGrenade, type InfoMatch, type InfoTueur,
   type JoueurPublic, type LigneClassement, type LigneStats, type MessageClient, type MessageServeur, type ModeSalle, type MonstresSnap, type SignalVoix, type SnapZombies, type Slot, type Vec3, type Zone,
 } from "./protocole";
 import { BUS_C3, avancerBusC3, busEnSnap, armesEnSnap, ecraseParBus, estSurLeToit, ramasserArmeC3, peutMonterSurBus, creerEtatBusC3, type EtatBusC3, type IntervalleBus } from "./bus-c3";
@@ -241,6 +247,16 @@ export interface OptionsSalle {
   historiqueMs?: number;
   /** (v11, zombies) réglages de la suspension de la partie par un joueur (durée maximale, compte à rebours, délai, pause cumulée) ; `SUSPENSION_DEFAUT` sinon. */
   suspension?: Partial<OptionsSuspension>;
+  /**
+   * (menu de développement) hall partagé : tout joueur EN JEU peut modifier les règles en direct ; absent, seul l'hôte de la partie (le premier humain arrivé)
+   * le peut. Posé par `serveur-fps` pour la partie permanente `ar1`.
+   */
+  devLibre?: boolean;
+  /**
+   * (menu de développement, arène) options complètes d'une arène pour de nouveaux réglages d'événements (cases et fréquence), construites par le serveur
+   * (`optionsDepuisReglages`) : un changement en direct reconstruit les services d'événements. Absent : les événements ne se règlent pas en direct.
+   */
+  refaireOptions?: (r: ReglagesArene) => OptionsSalle;
 }
 
 /** Ce que la salle retient d'un joueur en plus de `JoueurSalle` : l'équipement de la PROCHAINE apparition et le slot d'avant. */
@@ -275,10 +291,10 @@ export class Salle implements ContexteSalle {
   private zEnCours = false;
   private readonly apparitions: Vec2[];
   private readonly zone: ZoneApparition | null;
-  private readonly elsa: ServiceElsa | null;
+  private elsa: ServiceElsa | null;
   private readonly vehicules: ServiceVehicules | null;
-  private readonly tigres: ServiceTigres | null;
-  private readonly evenements: ServiceEvenements | null;
+  private tigres: ServiceTigres | null;
+  private evenements: ServiceEvenements | null;
   private readonly zombies: ServiceZombies | null;
   /** (v8) Service Battle Royale ; null en arène et en zombies. */
   private readonly br: ServiceBr | null;
@@ -292,11 +308,23 @@ export class Salle implements ContexteSalle {
   /** (v8, BR) instant de mort des joueurs morts (retrait du snap `BR.retraitMortSnapMs` plus tard) */
   private readonly mortT = new Map<string, number>();
   /** Bus C3 express : arène seulement (null en zombies, en BR, ou case « Bus » décochée). */
-  private readonly busC3: EtatBusC3 | null;
+  private busC3: EtatBusC3 | null;
   /** (2026-10-30) Descente de police : arène et BR (null sans l'option `police` ou si la case est décochée). */
-  private readonly police: ServicePolice | null;
-  /** (2026-10-30) Réglages d'événements de l'arène (null : salle sans réglages). */
-  readonly reglages: ReglagesArene | null;
+  private police: ServicePolice | null;
+  /** (2026-10-30) Réglages d'événements de l'arène (null : salle sans réglages) ; (menu de développement) peuvent changer en direct. */
+  private reglagesCourants: ReglagesArene | null;
+  /** Réglages d'événements d'origine de la partie (retour des règles par défaut). */
+  private readonly reglagesOrigine: ReglagesArene | null;
+  get reglages(): ReglagesArene | null { return this.reglagesCourants; }
+  // ---- menu de développement ----
+  /** règles courantes (par défaut hors réglage de l'hôte) */
+  private regles: ReglesDev = { ...REGLES_DEV_DEFAUT };
+  private readonly devLibre: boolean;
+  private readonly refaireOptions: ((r: ReglagesArene) => OptionsSalle) | null;
+  /** dernier message de développement reçu par joueur (anti-rafale) */
+  private readonly dernierDevT = new Map<string, number>();
+  /** une partie de zombies / Battle Royale était en cours au dernier tic (le retour au lobby ramène les règles par défaut) */
+  private enPartieDev = false;
   /** Salle d'arène (ni zombies ni BR) : frappes aériennes et fumigènes y sont permis, même sans bus C3. */
   private readonly modeArene: boolean;
   /** (2026-10-30) Capacités annoncées par chaque client (`bonjour.capacites`) : un humain sans `police` est immunisé et jamais ciblé. */
@@ -306,8 +334,8 @@ export class Salle implements ContexteSalle {
   private nuagesFumee: NuageFumee[] = [];
   private compteurFrappes = 0;
   private compteurFumigenes = 0;
-  /** Dernier fumigène lancé par joueur (anti-rafale). */
-  private readonly dernierFumigene = new Map<string, number>();
+  /** (lot tactique) Grenades, obus, roquettes et fumigènes lancés : arène et Battle Royale (null en zombies, qui a les siennes). */
+  private readonly grenades: ServiceGrenades | null;
   private numero = 1;
   private phase: "jeu" | "entracte" = "jeu";
   private fin: number | null;
@@ -348,36 +376,74 @@ export class Salle implements ContexteSalle {
     if (options.circulation) reservoir = ecarterDesCircuits(reservoir, options.circulation.circuits);
     this.apparitions = reservoir;
     // Elsa ne donne rien à un occupant de véhicule (sa position est celle du siège) ; le minuteur d'offres s'arme dès la création de la salle
-    this.elsa = options.elsa
-      ? creerServiceElsa(this, { ...options.elsa, maintenant, aPied: (j) => !this.vehicules?.occupation(j.id) && !this.evenements?.estPilote(j.id) })
-      : null;
+    this.elsa = this.creerElsa(options, maintenant);
     this.vehicules = options.vehicules || options.circulation
       ? creerServiceVehicules(this, { vehicules: options.vehicules, circulation: options.circulation, maintenant })
       : null;
     // les tigres largués ne ciblent ni ne frappent un occupant de véhicule ni le pilote du titan, et voient les voitures (obstacles, chocs)
+    this.tigres = this.creerTigres(options, maintenant);
+    // le tigre géant n'est pas annoncé pendant le survol de l'avion ni tant qu'un tigre sauvage largué vit (spec des tigres, Cohabitation)
+    // (2026-10-30) sans type d'événement à tour autorisé (cases décochées), le service n'existe pas ; aucun événement pendant une descente de police
+    this.evenements = this.creerEvenements(options, maintenant);
+    this.zombies = options.zombies ? creerServiceZombies(this, { ...options.zombies, alea }) : null;
+    this.br = options.br ? (options.fabriqueBr ?? creerServiceBr)(this, { police: () => this.police, ...options.br, alea }) : null;
+    this.modeArene = !options.zombies && !options.br;
+    this.reglagesCourants = options.reglages ?? null;
+    this.reglagesOrigine = options.reglages ?? null;
+    this.devLibre = options.devLibre === true;
+    this.refaireOptions = options.refaireOptions ?? null;
+    this.busC3 = this.creerBus(options, maintenant);
+    // (lot tactique) grenades de l'arène et du Battle Royale ; aucun tirage de `alea`, sa place dans la construction est sans effet sur les autres services
+    this.grenades = this.creerGrenades(options);
+    // EN DERNIER : les services ci-dessus tirent `alea` à leur construction, un tirage inséré avant eux décalerait leur séquence
+    this.police = this.creerPolice(options, maintenant);
+  }
+
+  private creerGrenades(options: OptionsSalle): ServiceGrenades | null {
+    const br = this.br;
+    return options.zombies
+      ? null
+      : creerServiceGrenades(this, {
+        mode: br ? "br" : "arene",
+        ...(br ? { stockBr: (id: string) => br.stockGrenades?.(id) ?? 0, retirerBr: (j: JoueurSalle) => br.retirerGrenade?.(j) ?? [] } : {}),
+        creerNuage: (p, t) => this.poserNuage(p, t),
+      });
+  }
+
+  // ---------- construction des services d'événements (aussi refaite en direct par le menu de développement) ----------
+
+  private creerElsa(options: OptionsSalle, maintenant: number): ServiceElsa | null {
+    return options.elsa
+      ? creerServiceElsa(this, { ...options.elsa, maintenant, aPied: (j) => !this.vehicules?.occupation(j.id) && !this.evenements?.estPilote(j.id) })
+      : null;
+  }
+
+  private creerTigres(options: OptionsSalle, maintenant: number): ServiceTigres | null {
     const anneau = this.zone ?? { centre: ROND_POINT.centre, ...ZONE_APPARITION };
-    this.tigres = options.tigres
+    return options.tigres
       ? creerServiceTigres(this, {
         cachettes: options.tigres.cachettes, anneau, intervalle: options.tigres.intervalle, maintenant,
         aPied: (j) => !this.vehicules?.occupation(j.id) && !this.pilote(j.id), voitures: (t) => this.vehicules?.voitures?.(t) ?? [],
         evenementTigre: () => this.evenements?.tigreGeantEnCours() ?? false,
       })
       : null;
-    // le tigre géant n'est pas annoncé pendant le survol de l'avion ni tant qu'un tigre sauvage largué vit (spec des tigres, Cohabitation)
-    // (2026-10-30) sans type d'événement à tour autorisé (cases décochées), le service n'existe pas ; aucun événement pendant une descente de police
-    this.evenements = options.evenements && !(options.evenements.types?.length === 0 && !options.evenements.forcerType)
+  }
+
+  private creerEvenements(options: OptionsSalle, maintenant: number): ServiceEvenements | null {
+    return options.evenements && !(options.evenements.types?.length === 0 && !options.evenements.forcerType)
       ? creerServiceEvenements(this, {
         policeEnCours: () => this.police?.enCours() ?? false,
         ...options.evenements, maintenant, ...(this.tigres ? { tigrePermis: () => !this.tigres?.avionOuSauvage() } : {}),
       })
       : null;
-    this.zombies = options.zombies ? creerServiceZombies(this, { ...options.zombies, alea }) : null;
-    this.br = options.br ? (options.fabriqueBr ?? creerServiceBr)(this, { police: () => this.police, ...options.br, alea }) : null;
-    this.modeArene = !options.zombies && !options.br;
-    this.reglages = options.reglages ?? null;
-    this.busC3 = options.zombies || options.br || options.bus === false ? null : creerEtatBusC3(maintenant, this.alea, options.bus ? options.bus.intervalle : undefined);
-    // EN DERNIER : les services ci-dessus tirent `alea` à leur construction, un tirage inséré avant eux décalerait leur séquence
-    this.police = options.police && this.modeArene
+  }
+
+  private creerBus(options: OptionsSalle, maintenant: number): EtatBusC3 | null {
+    return options.zombies || options.br || options.bus === false ? null : creerEtatBusC3(maintenant, this.alea, options.bus ? options.bus.intervalle : undefined);
+  }
+
+  private creerPolice(options: OptionsSalle, maintenant: number): ServicePolice | null {
+    return options.police && this.modeArene
       ? creerServicePolice(this, {
         ...options.police, mode: "arene", maintenant, regles: reglesArene(this, (j) => !this.vehicules?.occupation(j.id) && !this.pilote(j.id), this.evenements),
         autreEvenementEnCours: () => this.evenements?.occupe() ?? false,
@@ -396,11 +462,209 @@ export class Salle implements ContexteSalle {
     if (this.table.has(id)) this.capacites.set(id, new Set(capacites));
   }
 
+  /**
+   * (lot tactique) Souffle d'une explosion de grenade / obus / roquette sur ce qui n'est pas un joueur : tigres largués (sauf le tigre allié du lanceur),
+   * tigre robot et titan (distance à leur forme), voiture de police, voitures. Mêmes dégâts qu'à un joueur (`degatsGrenadeJoueur` à la distance de leur
+   * surface), l'explosion doit être en vue du centre pour les cibles posées au sol. Les kills et dégâts sont crédités à `par`.
+   */
+  souffleSurCibles(c: Vec3, genre: GenreGrenade, par: JoueurSalle, maintenant: number): Sortie[] {
+    if (this.phase !== "jeu") return [];
+    const sorties: Sortie[] = [];
+    const degatsA = (d: number) => degatsGrenadeJoueur(genre, Math.max(0, d));
+    for (const tg of this.tigres?.snap() ?? []) {
+      if (tg.genre === "allie" && tg.lanceur === par.id) continue;
+      if (tg.etat === "descente") continue;
+      const centre: Vec3 = [tg.p[0], tg.p[1] + 0.6, tg.p[2]];
+      const dg = degatsA(Math.hypot(centre[0] - c[0], centre[1] - c[1], centre[2] - c[2]) - 0.8);
+      if (dg > 0 && souffleAtteint(this.monde, c, centre)) sorties.push(...this.tigres!.blesser(tg.id, dg, par, "corps", maintenant));
+    }
+    for (const cible of [CIBLE_TIGRE, CIBLE_TITAN]) {
+      const d = this.evenements?.distanceMonstre(cible, c) ?? null;
+      if (d === null) continue;
+      const dg = degatsA(d);
+      if (dg > 0) sorties.push(...this.evenements!.blesserMonstre(cible, dg, par, "corps", maintenant));
+    }
+    const pol = this.police?.snap();
+    if (pol && !pol.depart) {
+      const dg = degatsA(Math.hypot(pol.p[0] - c[0], pol.p[1] + 0.6 - c[1], pol.p[2] - c[2]) - 2.2);
+      if (dg > 0 && souffleAtteint(this.monde, c, [pol.p[0], pol.p[1] + 0.6, pol.p[2]])) sorties.push(...this.police!.blesser(par, dg, maintenant));
+    }
+    if (this.vehicules) sorties.push(...this.vehicules.soufflerVoitures(c, degatsA, par, maintenant));
+    return sorties;
+  }
+
   supportePolice(id: string): boolean {
     const j = this.table.get(id);
     if (!j) return false;
     return j.bot === true || (this.capacites.get(id)?.has(CAPACITE_POLICE) ?? false);
   }
+
+  // ---------- menu de développement : règles modifiables en direct ----------
+
+  /** Règles courantes de la partie (lecture seule : tests et supervision). */
+  reglesDev(): Readonly<ReglesDev> { return this.regles; }
+
+  /** Qui peut régler : `"*"` dans le hall partagé (tout joueur en jeu), sinon l'id du premier humain arrivé (l'hôte), "" si la salle n'a que des bots. */
+  private hoteDevId(): string {
+    if (this.devLibre) return "*";
+    for (const j of this.table.values()) if (!j.bot) return j.id;
+    return "";
+  }
+
+  /** Message `reglesDev` de l'état courant ; `a` : "tous" ou un id ; `par` / `annonce` : qui a changé quoi. */
+  private messageReglesDev(a: string, par?: string, annonce?: string): Sortie {
+    return {
+      a,
+      m: {
+        t: "reglesDev", regles: { ...this.regles }, hote: this.hoteDevId(),
+        ...(this.modeArene && this.reglagesCourants ? { evenements: { evenements: [...this.reglagesCourants.evenements], frequence: this.reglagesCourants.frequence } } : {}),
+        ...(par ? { par } : {}), ...(annonce ? { annonce } : {}),
+      },
+    };
+  }
+
+  /**
+   * `reglesDev` d'un joueur : autorisation (hall partagé : tout joueur en jeu ; sinon l'hôte), anti-rafale, validation de l'action AVANT tout changement,
+   * puis règles (bornées, limitées à celles du mode), événements de l'arène (services reconstruits) et action. Diffuse l'état et une annonce (« Alice : gravité
+   * ×0,5 ») à toute la salle ; rien si rien n'a changé. Refus privé `refus{reglesDev, raison}`.
+   */
+  private recevoirReglesDev(j: JoueurSalle, msg: Extract<MessageClient, { t: "reglesDev" }>, maintenant: number, reel: number = maintenant): Sortie[] {
+    // message vide : le client demande l'état courant (à son entrée dans la partie et à chaque reconnexion), ouvert à tout membre, sans anti-rafale
+    if (msg.regles === undefined && msg.evenements === undefined && msg.action === undefined) return [this.messageReglesDev(j.id)];
+    const refus = (raison: "hote" | "lobby" | "limite" | "mode" | "invalide"): Sortie[] => [{ a: j.id, m: { t: "refus", action: "reglesDev", raison } }];
+    const auth = autoriseDev({ hallLibre: this.devLibre, estHote: this.hoteDevId() === j.id, enJeu: j.enJeu });
+    if (auth !== true) return refus(auth);
+    const dernier = this.dernierDevT.get(j.id);
+    if (dernier !== undefined && reel - dernier < INTERVALLE_DEV_MS) return refus("limite");
+    this.dernierDevT.set(j.id, reel);
+    const mode = this.mode();
+    let action: ActionDev | null = null;
+    if (msg.action !== undefined) {
+      action = normaliserActionDev(msg.action);
+      if (!action) return refus("invalide");
+      if (!actionPermise(mode, action)) return refus("mode");
+    }
+    const sorties: Sortie[] = [];
+    const changements: string[] = [];
+
+    if (action?.k === "reinitialiser") {
+      changements.push(...this.revenirAuxReglesDevOrigine(maintenant, sorties));
+    } else {
+      if (msg.regles !== undefined) {
+        const voulues = limiterAuMode(mode, normaliserReglesDev(msg.regles, this.regles), this.regles);
+        changements.push(...differencesDev(this.regles, voulues));
+        this.regles = voulues;
+      }
+      if (msg.evenements !== undefined && this.modeArene && this.refaireOptions && this.reglagesCourants) {
+        const voulus = normaliserReglages({
+          evenements: Array.isArray(msg.evenements.evenements) ? msg.evenements.evenements : this.reglagesCourants.evenements,
+          frequence: msg.evenements.frequence ?? this.reglagesCourants.frequence,
+        });
+        if (!reglagesEgaux(voulus, this.reglagesCourants)) {
+          changements.push(...differencesEvenements(this.reglagesCourants, voulus));
+          sorties.push(...this.appliquerEvenements(voulus, maintenant));
+        }
+      }
+      if (action) {
+        if (!this.appliquerActionDev(j, action, maintenant, sorties)) return changements.length || sorties.length ? this.diffuserReglesDev(j, changements, sorties) : refus("invalide");
+        changements.push(libelleAction(action));
+      }
+    }
+    return this.diffuserReglesDev(j, changements, sorties);
+  }
+
+  /** Les sorties des services, puis l'état des règles et l'annonce à toute la salle ; l'état seul, au demandeur, si rien n'a changé. */
+  private diffuserReglesDev(j: JoueurSalle, changements: readonly string[], sorties: Sortie[]): Sortie[] {
+    if (changements.length === 0) return sorties.length ? sorties : [this.messageReglesDev(j.id)];
+    sorties.push(this.messageReglesDev("tous", j.pseudo, annonceDev(j.pseudo, changements)));
+    return sorties;
+  }
+
+  /** Une action ponctuelle ; faux si elle n'a pas de sens maintenant (événement absent ou déjà en cours, pas en partie…). Les sorties s'ajoutent à `sorties`. */
+  private appliquerActionDev(j: JoueurSalle, a: ActionDev, maintenant: number, sorties: Sortie[]): boolean {
+    switch (a.k) {
+      case "forcer": return this.forcerEvenement(a.evenement, maintenant);
+      case "argent": case "courant": case "bonus": case "passerManche": {
+        const r = this.zombies?.actionDev(j, a, maintenant);
+        if (!r) return false;
+        sorties.push(...r);
+        return true;
+      }
+      case "reinitialiser": return true;
+    }
+  }
+
+  /** Avance le minuteur d'un événement à maintenant (ses conditions habituelles restent) ; faux s'il n'existe pas dans cette partie ou s'il est déjà en cours. */
+  private forcerEvenement(e: IdEvenementArene, maintenant: number): boolean {
+    switch (e) {
+      case "elsa": return this.elsa?.forcer(maintenant) ?? false;
+      case "avion": return this.tigres?.forcer(maintenant) ?? false;
+      case "bus": {
+        const bus = this.busC3;
+        if (!bus || bus.phase !== "attente") return false;
+        bus.prochaineT = Math.min(bus.prochaineT, maintenant);
+        return true;
+      }
+      case "truck": case "tigre": return this.evenements?.forcer(maintenant, e) ?? false;
+      case "police": return this.police?.forcer(maintenant) ?? false;
+    }
+  }
+
+  /**
+   * Nouveaux réglages d'événements EN DIRECT (arène) : les services Elsa, avion/tigres, événements, police et le bus sont arrêtés proprement (leurs
+   * messages de fin partent) puis reconstruits depuis les options du serveur ; les minuteurs repartent de maintenant. Aucun effet sans `refaireOptions`.
+   */
+  private appliquerEvenements(r: ReglagesArene, maintenant: number): Sortie[] {
+    if (!this.modeArene || !this.refaireOptions) return [];
+    const options = this.refaireOptions(r);
+    const sorties: Sortie[] = [];
+    // arrêt propre : l'événement en cours finit (bâtiments relevés), les charges du sort sont perdues, l'offre d'Elsa disparaît, la voiture de police se retire
+    if (this.evenements) sorties.push(...this.evenements.reinitialiser(maintenant));
+    if (this.tigres) sorties.push(...this.tigres.reinitialiser(maintenant));
+    if (this.elsa) { this.elsa.reinitialiser(maintenant); sorties.push(...this.elsa.tic(maintenant)); }
+    if (this.police) sorties.push(...this.police.reinitialiser(maintenant, false));
+    if (this.busC3 && this.busC3.phase !== "attente") sorties.push({ a: "joueurs", m: { t: "busC3", evenement: "fin" } });
+    this.elsa = this.creerElsa(options, maintenant);
+    this.tigres = this.creerTigres(options, maintenant);
+    this.evenements = this.creerEvenements(options, maintenant);
+    this.busC3 = this.creerBus(options, maintenant);
+    this.police = this.creerPolice(options, maintenant);
+    this.reglagesCourants = options.reglages ?? r;
+    return sorties;
+  }
+
+  /** Règles et événements d'origine ; renvoie les libellés de ce qui change (vide si tout y était déjà). Les sorties des services s'ajoutent à `sorties`. */
+  private revenirAuxReglesDevOrigine(maintenant: number, sorties: Sortie[]): string[] {
+    const changements = differencesDev(this.regles, REGLES_DEV_DEFAUT);
+    this.regles = { ...REGLES_DEV_DEFAUT };
+    if (this.reglagesOrigine && this.reglagesCourants && !reglagesEgaux(this.reglagesOrigine, this.reglagesCourants)) {
+      changements.push(...differencesEvenements(this.reglagesCourants, this.reglagesOrigine));
+      sorties.push(...this.appliquerEvenements(this.reglagesOrigine, maintenant));
+    }
+    return changements;
+  }
+
+  /**
+   * Retour des règles par défaut hors demande d'un joueur (nouveau match, retour au lobby, partie vide) : annoncé à ceux qui sont là seulement si quelque
+   * chose changeait.
+   */
+  private reinitialiserReglesDev(maintenant: number, motif: string): Sortie[] {
+    const sorties: Sortie[] = [];
+    const changements = this.revenirAuxReglesDevOrigine(maintenant, sorties);
+    if (changements.length) sorties.push(this.messageReglesDev("tous", undefined, motif));
+    return sorties;
+  }
+
+  /** Zombies / Battle Royale : la partie vient de finir et la salle revient au lobby, les règles reviennent aux valeurs par défaut. */
+  private verifierRetourLobbyDev(maintenant: number): Sortie[] {
+    const enPartie = this.zombies ? this.zombies.enCours() : this.br ? this.br.resume().phase !== "lobby" : false;
+    const etait = this.enPartieDev;
+    this.enPartieDev = enPartie;
+    return etait && !enPartie ? this.reinitialiserReglesDev(maintenant, "Retour au lobby : règles par défaut") : [];
+  }
+
+  /** Vitesse horizontale maximale acceptée (m/s) : élargie par la vitesse réglée (le mouvement est autoritaire côté client). */
+  private vitesseMaxH(): number { return VITESSE_MAX_H_M_S * multBudgetVitesse(this.regles); }
 
   /** (v3) Pilote du titan tigre : invulnérable, ni arme ni voiture ni état à pied. */
   private pilote(id: string): boolean {
@@ -436,6 +700,8 @@ export class Salle implements ContexteSalle {
    */
   infliger(cible: JoueurSalle, degats: number, par: JoueurSalle | null, cause: CauseMort, zone: Zone, arme: ArmeId, maintenant: number, src?: Vec3): Sortie[] {
     if (!cible.enJeu || !cible.vivant || this.pilote(cible.id)) return [];
+    // (menu de développement) multiplicateur des dégâts d'arme ; les écrasements, la tempête, les griffes des zombies restent ce qu'ils sont
+    if (cause === "arme" && this.regles.degats !== 1) degats = Math.max(1, Math.round(degats * this.regles.degats));
     const r = appliquerDegats(cible, degats, maintenant);
     if (r.absorbe + r.subi <= 0) return [];
     if (par && par !== cible) par.degats += r.absorbe + r.subi;
@@ -495,7 +761,8 @@ export class Salle implements ContexteSalle {
     cible.morts++;
     cible.serie = 0;
     this.frappesDisponibles.delete(cible.id);
-    cible.reapparitionT = maintenant + JEU.delaiReapparitionMs;
+    this.grenades?.perdu(cible.id);
+    cible.reapparitionT = maintenant + this.regles.reapparitionMs;
     cible.equip.speciale = null; // sur la COPIE du joueur (EQUIPEMENT_DEFAUT est figé)
     cible.munSpeciale = 0;
     cible.memoSante = null;
@@ -505,7 +772,7 @@ export class Salle implements ContexteSalle {
       a: "tous",
       m: {
         t: "mort", cible: cible.id, par: tueur?.id ?? "", arme: cause === "arme" ? arme : "couteau", cause, zone, ts: maintenant,
-        delai: JEU.delaiReapparitionMs, ...(tueur ? { tueur: this.infoTueur(tueur, cible) } : {}),
+        delai: this.regles.reapparitionMs, ...(tueur ? { tueur: this.infoTueur(tueur, cible) } : {}),
       },
     }];
     if (this.vehicules) sorties.push(...this.vehicules.liberer(cible, maintenant));
@@ -806,11 +1073,16 @@ export class Salle implements ContexteSalle {
     this.mortT.delete(id);
     this.capacites.delete(id);
     this.police?.liberer(id);
+    this.grenades?.perdu(id);
     // zombies : le service compte les membres restants (hôte suivant, défaite si c'était le dernier debout) ; le joueur est déjà retiré
     const sortieZombies = this.zombies ? this.zombies.liberer(j, maintenant) : [];
     // BR : idem (éliminé s'il était en partie, hôte suivant, victoire éventuelle) ; `j` est l'objet déjà retiré de la table
     const sortieBr = this.br ? this.br.liberer(j, maintenant) : [];
-    return this.apresPoint(reel, [...liberation, this.presence(), ...sortieZombies, ...sortieBr]);
+    this.dernierDevT.delete(id);
+    // (menu de développement) partie vide : règles par défaut (le hall et les parties permanentes ne se referment pas) ; un nouvel hôte n'est pas diffusé,
+    // le menu redemande l'état à chaque ouverture
+    const sortiesDev = this.nombreHumains() === 0 ? this.reinitialiserReglesDev(maintenant, "") : [];
+    return this.apresPoint(reel, [...liberation, this.presence(), ...sortieZombies, ...sortieBr, ...sortiesDev]);
   }
 
   /**
@@ -849,6 +1121,9 @@ export class Salle implements ContexteSalle {
     const j = this.table.get(id);
     if (!j || !msg || typeof msg !== "object") return [];
     if (msg.t === "pauseZ") return this.apresPoint(reel, this.pauseZ(j, msg.actif, reel));
+    // menu de développement : passe aussi salle suspendue (solo en zombies, Échap suspend et le menu s'ouvre ensuite). Les actions lisent l'horloge
+    // virtuelle gelée (rien ne tourne tant que la suspension dure, tout repart de là), l'anti-rafale lit l'horloge RÉELLE : gelée, il bloquerait tout.
+    if (msg.t === "reglesDev") return this.apresPoint(reel, this.recevoirReglesDev(j, msg, this.susp.virtuel(reel), reel));
     // suspendue : liste BLANCHE (le reste est jeté, aucun service ne tourne sans horloge)
     // exception : l'ARRÊT d'un maintien (`reanimer{cible:null}`, `reparer{fenetre:null}`) passe, car il ne fait que relâcher. Le client le
     // envoie justement en recevant `zpause{actif:true}` (`toutRelacher`), salle déjà suspendue : jeté, la relève ou la repose tenue côté serveur
@@ -871,6 +1146,7 @@ export class Salle implements ContexteSalle {
         return this.zombies ? this.rejoindreZombies(j, maintenant) : this.br ? this.rejoindreBr(j, maintenant) : this.rejoindre(j, msg, maintenant);
       case "quitter": return this.quitter(j, maintenant);
       case "regarder": return this.br ? this.regarderBr(j) : [];
+      case "reglesDev": return this.recevoirReglesDev(j, msg, maintenant);
       case "arme": if (!this.zombies && !this.br) this.choisir(j, { arme: msg.arme }); return [];
       case "equiper": if (!this.zombies && !this.br) this.choisir(j, msg); return [];
       case "lancerPartie":
@@ -880,9 +1156,15 @@ export class Salle implements ContexteSalle {
         return this.zombies ? this.zombies.recevoir(j, msg, maintenant) : [];
       case "lancerGrenade": {
         // (v8, zombies) l'œil et la direction sont validés comme ceux d'un tir ; le service juge le stock et la cadence
-        if (!this.zombies || !j.enJeu || !j.vivant || !estVec3(msg.o) || !estVec3(msg.d)) return [];
+        if (!j.enJeu || !j.vivant || !estVec3(msg.o) || !estVec3(msg.d)) return [];
+        if (this.zombies) {
+          const dirs = this.validerVisee(j, msg.o, [msg.d], maintenant);
+          return dirs ? this.zombies.recevoir(j, { ...msg, d: dirs[0] }, maintenant) : [];
+        }
+        // (lot tactique) arène et Battle Royale : seule la grenade à fragmentation, ni au volant, ni en vol, ni aux commandes du titan
+        if (!this.grenades || msg.genre !== "frag" || this.pilote(j.id) || this.br?.enVol(j.id) || this.vehicules?.occupation(j.id)) return [];
         const dirs = this.validerVisee(j, msg.o, [msg.d], maintenant);
-        return dirs ? this.zombies.recevoir(j, { ...msg, d: dirs[0] }, maintenant) : [];
+        return dirs ? this.grenades.lancer(j, msg.o, dirs[0], msg.cuissonMs, maintenant) : [];
       }
       // (v9, BR) le service juge : saut de l'avion, entrées de la chute, ramassage, lâcher, soins, statistiques
       case "sauter": case "chute": case "ramasser": case "lacher": case "utiliser": case "statsBr":
@@ -903,15 +1185,17 @@ export class Salle implements ContexteSalle {
         return [{ a: "joueurs", m: { t: "frappe", evenement: "lancee", joueur: j.id, cible: msg.cible } }];
       }
       case "lancerFumigene": {
-        if (!this.modeArene || !j.enJeu || !j.vivant || !estVec3(msg.p)) return [];
-        // anti-rafale : un fumigène toutes les 15 s, lâché près du lanceur
-        const dernier = this.dernierFumigene.get(j.id);
-        if (dernier !== undefined && maintenant - dernier < 15_000) return [];
-        if (Math.hypot(msg.p[0] - j.p[0], msg.p[1] - j.p[1], msg.p[2] - j.p[2]) > 5) return [];
-        this.dernierFumigene.set(j.id, maintenant);
-        const nuage = creerNuageFumee(`fum_${++this.compteurFumigenes}`, msg.p, maintenant);
-        this.nuagesFumee.push(nuage);
-        return [{ a: "joueurs", m: { t: "fumigene", id: nuage.id, p: nuage.p, debutT: nuage.debutT, finT: nuage.finT } }];
+        // (lot tactique) le bidon part en cloche dans la direction `v` (un toutes les 15 s, cf. `ServiceGrenades.lancerFumigene`), le nuage s'ouvre 1,2 s
+        // plus tard là où il retombe ; avant, le nuage naissait dans la tête du lanceur sans qu'aucun bidon ne soit visible
+        if (!this.grenades || !this.modeArene || !j.enJeu || !j.vivant || this.pilote(j.id) || this.vehicules?.occupation(j.id)) return [];
+        // le bidon part près du lanceur (5 m au plus, comme l'ancien nuage posé d'emblée)
+        if (!estVec3(msg.p) || !estVec3(msg.v) || Math.hypot(msg.p[0] - j.p[0], msg.p[1] - j.p[1], msg.p[2] - j.p[2]) > 5) return [];
+        // la direction du client si elle suit la visée connue du serveur, sinon cette visée (jamais une direction arbitraire : pas de tir dans le dos)
+        const cosT = Math.cos(j.tangage);
+        const visee: Vec3 = [-Math.sin(j.lacet) * cosT, Math.sin(j.tangage), -Math.cos(j.lacet) * cosT];
+        const l = Math.hypot(msg.v[0], msg.v[1], msg.v[2]);
+        const dir = l < 1e-6 ? visee : this.validerVisee(j, msg.p, [[msg.v[0] / l, msg.v[1] / l, msg.v[2] / l]], maintenant)?.[0] ?? visee;
+        return this.grenades.lancerFumigene(j, msg.p, dir, maintenant);
       }
       case "monterBus": {
         if (!this.busC3 || !j.enJeu || !j.vivant || !peutMonterSurBus(j.p, this.busC3.p)) return [];
@@ -927,6 +1211,13 @@ export class Salle implements ContexteSalle {
       case "ping": return estNombre(msg.t0) ? [{ a: id, m: { t: "pong", t0: msg.t0, maintenant } }] : [];
       default: return []; // "bonjour" : déjà traité par connecter
     }
+  }
+
+  /** Nuage de fumée posé en `p` (fumigène retombé) : tenu par la salle (snap, radar, brouillard) ; renvoie le message `fumigene` à tous les joueurs. */
+  private poserNuage(p: Vec3, maintenant: number): Sortie[] {
+    const nuage = creerNuageFumee(`fum_${++this.compteurFumigenes}`, p, maintenant);
+    this.nuagesFumee.push(nuage);
+    return [{ a: "joueurs", m: { t: "fumigene", id: nuage.id, p: nuage.p, debutT: nuage.debutT, finT: nuage.finT } }];
   }
 
   // ---------- chat vocal (v3 §5) : le serveur ne fait que relayer la signalisation WebRTC ----------
@@ -1027,6 +1318,7 @@ export class Salle implements ContexteSalle {
     if (this.tigres) sorties.push(...this.tigres.synchro(j.id));
     if (this.evenements) sorties.push(...this.evenements.synchro(j.id));
     if (this.police) sorties.push(...this.police.synchro(j.id));
+    if (this.grenades) sorties.push(...this.grenades.synchro(j.id));
     return sorties;
   }
 
@@ -1115,7 +1407,7 @@ export class Salle implements ContexteSalle {
     j.memoSante = j.vivant ? memoriserSante(j, maintenant) : null;
     // un mort garde son délai de réapparition (sans le raccourcir en quittant) ; un vivant doit attendre le même délai avant de revenir
     j.reentreeT = j.vivant
-      ? maintenant + JEU.delaiReapparitionMs
+      ? maintenant + this.regles.reapparitionMs
       : j.enJeu && j.reapparitionT !== null ? j.reapparitionT : -Infinity;
     const liberation = [...(this.vehicules ? this.vehicules.liberer(j, maintenant) : []), ...(this.evenements ? this.evenements.liberer(j, maintenant) : [])];
     j.enJeu = false;
@@ -1192,7 +1484,8 @@ export class Salle implements ContexteSalle {
     const plafondS = this.zombies ? BUDGET_ZOMBIES_S : BUDGET_ARENE_S;
     const dtB = Math.max(0, (maintenant - suivi.budgetT) / 1000);
     suivi.budgetT = maintenant;
-    suivi.budgetH = Math.min(VITESSE_MAX_H_M_S * plafondS, suivi.budgetH + VITESSE_MAX_H_M_S * dtB);
+    const vMaxH = this.vitesseMaxH();
+    suivi.budgetH = Math.min(vMaxH * plafondS, suivi.budgetH + vMaxH * dtB);
     suivi.budgetV = Math.min(VITESSE_MAX_V_M_S * plafondS, suivi.budgetV + VITESSE_MAX_V_M_S * dtB);
     const permisH = Math.max(0, suivi.budgetH + MARGE_ETAT_H_M), permisV = Math.max(0, suivi.budgetV + MARGE_ETAT_V_M);
     const dh = Math.hypot(e.p[0] - j.p[0], e.p[2] - j.p[2]);
@@ -1215,7 +1508,8 @@ export class Salle implements ContexteSalle {
     j.p = p;
     // vitesse bornée comme la position : un `v` gonflé agrandirait sa propre hitbox et sa tolérance d'œil
     const vh = Math.hypot(e.v[0], e.v[2]);
-    const k = vh > VITESSE_DECLAREE_MAX_H_M_S ? VITESSE_DECLAREE_MAX_H_M_S / vh : 1;
+    const vDecl = VITESSE_DECLAREE_MAX_H_M_S * multBudgetVitesse(this.regles);
+    const k = vh > vDecl ? vDecl / vh : 1;
     j.v = [e.v[0] * k, Math.max(-VITESSE_MAX_V_M_S, Math.min(VITESSE_MAX_V_M_S, e.v[1])), e.v[2] * k];
     j.lacet = e.lacet;
     j.tangage = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, e.tangage));
@@ -1342,6 +1636,9 @@ export class Salle implements ContexteSalle {
     // arme spéciale : une munition de moins ; à 0, l'arme disparaît et le joueur retombe sur le slot précédent (v10 : pas en zombies, où
     // l'Arme 3 est un emplacement ordinaire et où le client compte toutes les munitions)
     if (j.main === "speciale" && !this.zombies) sorties.push(...this.consommerSpeciale(j, maintenant));
+    // (lot tactique) armes uniques du bus C3 : lance-grenades, bazooka et fumigène tirent un PROJECTILE (obus, roquette, bidon) qui explose au contact ou
+    // libère son nuage ; avant, ils tiraient comme un fusil (balle instantanée sans rien à l'écran) et le souffle n'existait pas
+    if (this.grenades && estUnique(armeTiree)) return [...sorties, ...this.grenades.tirerUnique(j, armeTiree, tir.o, dirs[0], maintenant)];
     // (v8, zombies) le grand secret voit passer chaque tir validé (objets du décor)
     if (this.zombies) sorties.push(...this.zombies.tirSecret(j, armeTiree, tir.o, dirs, maintenant));
     // (v8, zombies) projectile ou souffle : le service résout tout le tir (aucune touche déclarée n'est lue)
@@ -1470,7 +1767,7 @@ export class Salle implements ContexteSalle {
       if (p) touchesEffets.push({ cible: cibleId, p });
     }
     for (const [cibleId, { degats, zone }] of cumulZombies) {
-      sorties.push(...this.zombies!.blesser(cibleId, degats, j, zone, maintenant, { arme: armeTiree, gain: premier, src: tir.o }));
+      sorties.push(...this.zombies!.blesser(cibleId, this.regles.degats !== 1 ? degats * this.regles.degats : degats, j, zone, maintenant, { arme: armeTiree, gain: premier, src: tir.o }));
       premier = false;
     }
     if (this.zombies && touchesEffets.length) sorties.push(...this.zombies.effetsTir(j, armeTiree, touchesEffets, maintenant));
@@ -1500,6 +1797,7 @@ export class Salle implements ContexteSalle {
 
   /** Une munition de l'arme spéciale tirée ; à 0 elle est retirée, retour au slot précédent et message `equipement` au joueur. */
   private consommerSpeciale(j: JoueurSalle, maintenant: number): Sortie[] {
+    if (this.regles.munitionsInfinies) return []; // (menu de développement)
     j.munSpeciale = Math.max(0, j.munSpeciale - 1);
     if (j.munSpeciale > 0) return [];
     j.equip.speciale = null;
@@ -1638,14 +1936,17 @@ export class Salle implements ContexteSalle {
     }
     // régénération : +20 PV/s après 5 s sans dégât (le bouclier ne se régénère pas)
     // (v7, zombies : 60 PV/s après 3 s, jusqu'à 250 PV avec le Gratin) (v8, BR : aucune régénération)
-    for (const j of this.table.values()) if (j.enJeu && j.vivant) regenerer(j, maintenant, dt, this.zombies?.sante(j) ?? (this.br ? REGLES_SANTE_BR : undefined));
+    if (this.regles.regeneration || !this.modeArene) for (const j of this.table.values()) if (j.enJeu && j.vivant) regenerer(j, maintenant, dt, this.zombies?.sante(j) ?? (this.br ? REGLES_SANTE_BR : undefined));
     if (this.elsa) sorties.push(...this.elsa.tic(maintenant));
     if (this.vehicules) sorties.push(...this.vehicules.tic(maintenant));
     if (this.tigres) sorties.push(...this.tigres.tic(maintenant));
     if (this.evenements) sorties.push(...this.evenements.tic(maintenant));
     if (this.police) sorties.push(...this.police.tic(maintenant));
+    if (this.grenades) sorties.push(...this.grenades.tic(maintenant));
     if (this.zombies) sorties.push(...this.zombies.tic(maintenant));
     if (this.br) sorties.push(...this.br.tic(maintenant));
+    // (menu de développement) la partie de zombies / BR vient de finir : règles par défaut
+    if (this.zombies || this.br) sorties.push(...this.verifierRetourLobbyDev(maintenant));
 
     // Bus C3 express (arène seulement)
     const bus = this.busC3;
@@ -1790,7 +2091,7 @@ export class Salle implements ContexteSalle {
     const plafondS = this.zombies ? BUDGET_ZOMBIES_S : BUDGET_ARENE_S;
     // le seau de distance repart plein à la levée : aucun joueur n'est refusé juste après la reprise (une téléportation reste impossible : le plafond est celui du budget)
     for (const suivi of this.suivi.values()) {
-      suivi.budgetH = VITESSE_MAX_H_M_S * plafondS;
+      suivi.budgetH = this.vitesseMaxH() * plafondS;
       suivi.budgetV = VITESSE_MAX_V_M_S * plafondS;
       suivi.budgetT = maintenant;
     }
@@ -1954,6 +2255,8 @@ export class Salle implements ContexteSalle {
     this.fin = maintenant + JEU.dureeMatchMs;
     this.prochain = null;
     const sorties: Sortie[] = [];
+    // (menu de développement) nouveau match : règles et événements d'origine, AVANT la remise à zéro des services (ceux de la partie, éventuellement reconstruits)
+    sorties.push(...this.reinitialiserReglesDev(maintenant, "Nouveau match : règles par défaut"));
     this.elsa?.reinitialiser(maintenant);
     if (this.vehicules) sorties.push(...this.vehicules.reinitialiser(maintenant));
     if (this.tigres) sorties.push(...this.tigres.reinitialiser(maintenant));
@@ -1963,7 +2266,7 @@ export class Salle implements ContexteSalle {
     this.frappesDisponibles.clear();
     this.frappesEnCours = [];
     this.nuagesFumee = [];
-    this.dernierFumigene.clear();
+    this.grenades?.reinitialiser();
     for (const j of this.table.values()) {
       j.kills = 0;
       j.morts = 0;
@@ -2026,6 +2329,7 @@ export class Salle implements ContexteSalle {
     j.vivant = true;
     j.protegeJusqua = restaure ? 0 : maintenant + JEU.protectionMs;
     j.reapparitionT = null;
+    this.grenades?.apparu(j); // 2 grenades à chaque vie
     j.etatT = maintenant;
     j.histo = [];
     if (suivi) suivi.precedent = j.main === "principale" ? "secondaire" : "principale";

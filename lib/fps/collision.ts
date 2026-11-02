@@ -15,6 +15,7 @@ import { dedans, distSegment } from "../agroparc3d/cachettes";
 import type { SceneData, Vec2 } from "../agroparc3d/types";
 import type { Vec3 } from "./protocole";
 import { obstacleTruck } from "./zones";
+import { equipementsSolides } from "./toit-solide";
 
 export interface Boite { x0: number; z0: number; x1: number; z1: number }
 
@@ -34,6 +35,18 @@ export interface Prisme {
    * La tête du joueur ne monte pas au-dessus (`plafondSur`). Indépendant de `h` : il reste quand le prisme est détruit (porte achetée).
    */
   plafond?: number;
+  /**
+   * Hauteur (m) du dessous du prisme : 0 (défaut) pour un bâtiment, le toit pour un équipement de toit (`toit`). Les tests de hauteur
+   * de `rayonPrisme` ne jouent que sur [base, h].
+   */
+  base?: number;
+  /**
+   * Équipements de toit SOLIDES du bâtiment (clim, édicule, antenne, panneaux solaires ; `toit-solide.ts`, mêmes tirages que le décor) :
+   * sous-prismes posés sur le toit (`base` = hauteur du bâtiment). Ils bloquent les joueurs, les bots et les balles, et portent le joueur
+   * qui saute dessus ; ils disparaissent avec le bâtiment (`h = 0`) ou quand une brèche couvre leur centre (`equipementPresent`).
+   * Absents de la carte des zombies (toits hors d'atteinte).
+   */
+  toit?: Prisme[];
 }
 /** Brèche d'un bâtiment : cercle (m) au sol. */
 export interface Creux { x: number; z: number; r: number }
@@ -57,6 +70,8 @@ export interface Monde {
   sansParkour?: true;
   /** (zombies) au moins un prisme a un `plafond` : sans lui, `plafondSur` ne coûte rien (arène, vue aérienne) */
   plafonds?: true;
+  /** (menu de développement) multiplicateur de la gravité du joueur (saut, chute, wall-run) ; absent = 1. Posé par le client sur SON monde, jamais par le serveur. */
+  graviteK?: number;
 }
 
 export interface Contact { nx: number; nz: number; profondeur: number; prisme: number }
@@ -83,9 +98,14 @@ function boiteDe(pts: Vec2[]): Boite {
 }
 
 export function construireMonde(data: SceneData): Monde {
-  const prismes: Prisme[] = data.buildings.map((b) => {
+  const prismes: Prisme[] = data.buildings.map((b, i) => {
     const p: Prisme = { anneau: b.r, trous: b.holes ?? [], h: b.h, hOrigine: b.h, boite: boiteDe(b.r), creux: null };
     if (b.type === "champ" || b.type === "fenetre") p.passeTigre = true;
+    // équipements de toit : mêmes tirages que le décor (index du bâtiment dans `data.buildings`), rangés dans leur bâtiment
+    const toit = equipementsSolides(b, i).map((e): Prisme => ({
+      anneau: e.anneau, trous: [], h: e.haut, hOrigine: e.haut, base: e.base, boite: { x0: e.x0, z0: e.z0, x1: e.x1, z1: e.z1 }, creux: null,
+    }));
+    if (toit.length) p.toit = toit;
     return p;
   });
   // le Truck Muche garé (v3 §2) est un obstacle comme un bâtiment : on ne le traverse pas, il arrête les balles, on peut monter dessus ;
@@ -144,6 +164,24 @@ function dansSolide(p: Prisme, x: number, z: number): boolean {
   return dansEmprise(p, x, z) && !dansCreux(p.creux, x, z);
 }
 
+/**
+ * Pente de la découpe d'une brèche dans le nuanceur de destruction (`coupe = (distance − rayon) × 1,15` dans `decor.ts`) : au niveau du toit, le décor est
+ * masqué jusqu'à `rayon + hauteur / 1,15` du centre de la brèche (la découpe est un cône, pas un cylindre).
+ */
+export const PENTE_COUPE_BRECHE = 1.15;
+
+/**
+ * L'équipement `e` du bâtiment `p` est là : le bâtiment est debout et la brèche ne le recouvre pas. Le rayon compté est celui de la découpe VISIBLE (cône
+ * du nuanceur au niveau du toit), pas seulement le cercle au sol : sinon une clim masquée à l'écran restait solide, arrêtait les balles et les pas.
+ */
+function equipementPresent(p: Prisme, e: Prisme): boolean {
+  if (p.h <= 0) return false;
+  const c = p.creux;
+  if (!c) return true;
+  const rayonVisible = c.r + (e.base ?? p.hOrigine) / PENTE_COUPE_BRECHE;
+  return !dansCreux({ x: c.x, z: c.z, r: rayonVisible }, (e.boite.x0 + e.boite.x1) / 2, (e.boite.z0 + e.boite.z1) / 2);
+}
+
 const tamponSol: number[] = [];
 
 /** Hauteur du sol sous (x, z) pour des pieds à y : le toit le plus haut ≤ y + tolerance, sinon 0. */
@@ -152,6 +190,10 @@ export function solSous(m: Monde, x: number, z: number, y: number, tolerance: nu
   for (const id of candidats(m, x, z, x, z, tamponSol)) {
     const p = m.prismes[id];
     if (p.h > sol && p.h <= y + tolerance && dansSolide(p, x, z)) sol = p.h;
+    // le dessus d'un équipement de toit porte le joueur qui y saute
+    if (p.toit) for (const e of p.toit) {
+      if (e.h > sol && e.h <= y + tolerance && dansEmprise(e, x, z) && equipementPresent(p, e)) sol = e.h;
+    }
   }
   return sol;
 }
@@ -284,7 +326,17 @@ export function resoudre(m: Monde, p: Vec3, rayon: number, _hauteur: number, ign
     let bouge = false;
     for (const id of liste) {
       const pr = m.prismes[id];
-      if (y >= pr.h - MARGE_TOIT_M) continue;
+      if (y >= pr.h - MARGE_TOIT_M) {
+        // au-dessus du toit : seuls les équipements de toit arrêtent (le contact porte l'index du bâtiment)
+        if (pr.toit) for (const e of pr.toit) {
+          if (y < (e.base ?? 0) - MARGE_TOIT_M || y >= e.h - MARGE_TOIT_M || !equipementPresent(pr, e)) continue;
+          if (!pousser(e, x, z, rayon)) continue;
+          x = correction.x; z = correction.z;
+          noter({ nx: correction.nx, nz: correction.nz, profondeur: correction.profondeur, prisme: id });
+          bouge = true;
+        }
+        continue;
+      }
       if (ignorerPasseTigre && pr.passeTigre) continue;
       if (!pousser(pr, x, z, rayon)) continue;
       x = correction.x; z = correction.z;
@@ -333,7 +385,8 @@ export function distanceCapsule(c: Capsule, x: number, z: number, sortie: Contac
  */
 function rayonPrisme(p: Prisme, ox: number, oy: number, oz: number, dx: number, dy: number, dz: number, max: number): number {
   let meilleur = Infinity;
-  if (oy < p.h && dansSolide(p, ox, oz)) return 0;
+  const base = p.base ?? 0;
+  if (oy < p.h && oy >= base && dansSolide(p, ox, oz)) return 0;
   if (dy < 0 && oy > p.h) {
     const t = (p.h - oy) / dy;
     if (t <= max && dansSolide(p, ox + dx * t, oz + dz * t)) meilleur = t;
@@ -349,7 +402,7 @@ function rayonPrisme(p: Prisme, ox: number, oy: number, oz: number, dx: number, 
       const u = ((ax - ox) * dz - (az - oz) * dx) / den;
       if (u < 0 || u > 1) continue;
       const yy = oy + dy * t;
-      if (yy < 0 || yy > p.h) continue;
+      if (yy < base || yy > p.h) continue;
       if (dansCreux(p.creux, ox + dx * t, oz + dz * t)) continue;
       meilleur = t;
     }
@@ -414,8 +467,14 @@ export function lancerRayon(m: Monde, o: Vec3, d: Vec3, max: number): number {
       if (g.marques[id] === tampon) continue;
       g.marques[id] = tampon;
       if (m.prismes[id].passeTigre) continue; // champ passe-tigres : transparent aux balles et aux regards
-      const t = rayonPrisme(m.prismes[id], ox, oy, oz, dx, dy, dz, max);
+      const pr = m.prismes[id];
+      const t = rayonPrisme(pr, ox, oy, oz, dx, dy, dz, max);
       if (t < meilleur) meilleur = t;
+      if (pr.toit) for (const e of pr.toit) {
+        if (!equipementPresent(pr, e)) continue;
+        const te = rayonPrisme(e, ox, oy, oz, dx, dy, dz, max);
+        if (te < meilleur) meilleur = te;
+      }
     }
     const sortie = Math.min(tX, tZ);
     if (meilleur <= sortie || sortie >= tmax) break;
@@ -618,6 +677,20 @@ export function normaleImpact(m: Monde, pt: Vec3, de: Vec3): Vec3 {
   for (const id of candidats(m, pt[0] - 1, pt[2] - 1, pt[0] + 1, pt[2] + 1, tamponNormale)) {
     const p = m.prismes[id];
     if (p.h === 0) continue;
+    // équipement de toit touché : dessus → vers le haut, sinon la normale de son flanc le plus proche (au-dessus du toit, jamais celle du mur du bâtiment)
+    if (p.toit) for (const e of p.toit) {
+      if (pt[1] < (e.base ?? 0) - 0.06 || pt[1] > e.h + 0.06 || !equipementPresent(p, e)) continue;
+      if (dansEmprise(e, pt[0], pt[2]) && pt[1] >= e.h - 0.06) return [0, 1, 0];
+      for (let i = 0, j = e.anneau.length - 1; i < e.anneau.length; j = i++) {
+        const ax = e.anneau[j][0], az = e.anneau[j][1], ex = e.anneau[i][0] - ax, ez = e.anneau[i][1] - az, l2 = ex * ex + ez * ez;
+        const k = Math.max(0, Math.min(1, ((pt[0] - ax) * ex + (pt[2] - az) * ez) / l2));
+        if (Math.hypot(pt[0] - (ax + ex * k), pt[2] - (az + ez * k)) > 0.15) continue;
+        const l = Math.sqrt(l2);
+        let nx = -ez / l, nz = ex / l;
+        if (nx * (de[0] - pt[0]) + nz * (de[2] - pt[2]) < 0) { nx = -nx; nz = -nz; }
+        return [nx + 0, 0, nz + 0];
+      }
+    }
     if (pt[1] >= p.h - 0.06 && dansSolide(p, pt[0], pt[2])) return [0, 1, 0];
     const tester = (anneau: Vec2[]) => {
       for (let i = 0, j = anneau.length - 1; i < anneau.length; j = i++) {

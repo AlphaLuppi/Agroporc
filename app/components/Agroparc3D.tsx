@@ -131,7 +131,7 @@ const HUD_REPOS: HudEtat = {
   pv: 100, bouclier: 0, arme: "fusil_assaut", slot: "principale",
   slots: "principale:fusil_assaut:30:30:-1|secondaire:pistolet:12:12:-1|couteau:couteau:0:0",
   equipSuivant: "fusil_assaut|pistolet", munitions: 30, chargeur: 30, reserve: -1, recharge: false, degainage: false,
-  vise: false, lunette: false, zoomX: 0, zoomNiveau: -1, zoomNiveaux: 0, viseur: "fer", ameliorees: "", munitionsG: -1, ecartViseur: 0, distanceVisee: -1, mur: false, mort: false, reapparitionDans: 0, protege: false,
+  vise: false, lunette: false, zoomX: 0, zoomNiveau: -1, zoomNiveaux: 0, viseur: "fer", ameliorees: "", munitionsG: -1, ecartViseur: 0, distanceVisee: -1, mur: false, mort: false, reapparitionDans: 0, reapparitionDelai: 0, protege: false,
   protegeRestant: 0, verrouille: true, connecte: true, entracte: false, accroupi: false, glisse: false, regen: false,
   bonusVitesse: 1, invite: "", inviteDetail: "", vehicule: false, vehiculeId: -1, siege: -1, tireInterdit: false,
   embarquement: false, killcam: -1, killcamPhase: "", sort: false, voix: "", voixParlants: "", titan: false,
@@ -857,6 +857,8 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
       ambianceTruck: (on) => jeuRef.current?.debug.ambianceTruck(on) ?? false,
       // (v11) suspension de la partie de zombies, comme le bouton du menu pause ; l'état gelé se lit dans `etat().jeu.gele`
       pauseZ: (actif) => jeuRef.current?.pauseZ?.(actif),
+      // menu de développement : même message que le panneau (sans argument : redemande l'état) ; les règles se lisent dans `etat().jeu`
+      reglesDev: (msg) => jeuRef.current?.reglesDev?.(msg),
       forcerHud: (partiel) => setHudForce(partiel ? { ...partiel } : null),
       voix: (mode) => {
         const j = jeuRef.current;
@@ -1118,7 +1120,9 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
           scene={sceneHud}
           surLancerFrappe={(cible) => jeuRef.current?.lancerFrappe?.(cible)}
           surLancerFumigene={() => jeuRef.current?.lancerFumigene?.()}
+          ciblageFrappe={() => jeuRef.current?.ciblageFrappe?.() ?? null}
           surPauseZ={(actif) => jeuRef.current?.pauseZ?.(actif)}
+          surReglesDev={(msg) => jeuRef.current?.reglesDev?.(msg)}
         />
       )}
 
@@ -1359,6 +1363,7 @@ declare global {
       /** (zombies, v8) brouillard et ciel d'une manche du Truck allumés ou levés, côté client seulement (captures) */
       ambianceTruck(on: boolean): boolean;
       pauseZ(actif: boolean): void;
+      reglesDev(msg?: Parameters<NonNullable<JeuHandle["reglesDev"]>>[0]): void;
       /** Superpose un état partiel au HUD (base : repos si le jeu n'émet rien) ; `null` rend la main au jeu. */
       forcerHud(partiel: Partial<HudEtat> | null): void;
       /** Active le chat vocal dans ce mode (null : le coupe), comme la case du menu pause. */

@@ -482,7 +482,7 @@ function pasMur(s: EtatMouvement, en: Entrees, front: boolean, dt: number, m: Mo
   mur.t += dt;
   s.v[0] = tdx * vitesse - mur.nx * MOUV.murCollage;
   s.v[2] = tdz * vitesse - mur.nz * MOUV.murCollage;
-  s.v[1] -= MOUV.murGravite * dt;
+  s.v[1] -= MOUV.murGravite * (m.graviteK ?? 1) * dt;
 
   // Déplacement + sol éventuel.
   const yAvant = s.p[1];
@@ -638,7 +638,7 @@ function pasLibre(s: EtatMouvement, front: boolean, dt: number, m: Monde, mult: 
     }
   }
   if (saute) s.auSol = false;
-  if (!s.auSol) v[1] = Math.max(-MOUV.chuteMax, v[1] - MOUV.gravite * dt);
+  if (!s.auSol) v[1] = Math.max(-MOUV.chuteMax, v[1] - MOUV.gravite * (m.graviteK ?? 1) * dt);
 
   // Déplacement.
   const yAvant = s.p[1], x0 = s.p[0], z0 = s.p[2];

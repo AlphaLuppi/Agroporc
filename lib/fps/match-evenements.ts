@@ -14,7 +14,7 @@ import { carteNavigation, chemin, pointDeVisee } from "./navigation";
 import type { ContexteSalle, JoueurSalle, ServiceEvenements, Sortie } from "./match-contexte";
 import {
   EVENEMENTS, TIGRE_ROBOT, TITAN, TRUCK_FOU, capVers, foncer, hauteurSaut, pointLocal, dansCoupDePatte, ecraseParTruck, enrouler, oeilTitan, pasTigre, pasTruck,
-  pvTigre, sousLeTigre, toucheTigre, yeuxTigre, ECHELLE_TIGRE, type EtatMarcheur,
+  distanceForme, pvTigre, sousLeTigre, toucheTigre, yeuxTigre, ECHELLE_TIGRE, type EtatMarcheur,
 } from "./monstres";
 import {
   CIBLE_TIGRE, CIBLE_TITAN, JEU, SILHOUETTE, type MessageClient, type MonstresSnap, type TypeEvenement, type Vec3,
@@ -522,6 +522,17 @@ export function creerServiceEvenements(ctx: ContexteSalle, opts: OptionsServiceE
       return sorties;
     },
 
+    forcer(maintenant, type) {
+      if (titan || (phase && phase.k !== "attente")) return false;
+      // une annonce retenue (police en cours, tigre sauvage largué) ne partirait pas : refus plutôt qu'un lancement qui n'a pas lieu
+      if (opts.policeEnCours?.()) return false;
+      if ((type === "tigre" || opts.forcerType === "tigre") && opts.tigrePermis && !opts.tigrePermis()) return false;
+      if (types.length === 0 && !opts.forcerType) return false;
+      if (type !== undefined && !opts.forcerType && !types.includes(type)) return false;
+      phase = { k: "attente", t: maintenant, ...(type !== undefined ? { type } : {}) };
+      return true;
+    },
+
     reinitialiser(maintenant) {
       const sorties: Sortie[] = [];
       if (titan) sorties.push(...finTitan(maintenant, "temps"));
@@ -570,6 +581,12 @@ export function creerServiceEvenements(ctx: ContexteSalle, opts: OptionsServiceE
     toucheMonstre(cible, o, d, portee) {
       if (cible === CIBLE_TIGRE && phase?.k === "tigre") return toucheTigre(o, d, portee, phase.e.p, phase.e.cap, ECHELLE_TIGRE, ctx.monde, MARGE_TOUCHE_M);
       if (cible === CIBLE_TITAN && titan) return toucheTigre(o, d, portee, titan.e.p, titan.e.cap, TITAN.echelle, ctx.monde, MARGE_TOUCHE_M);
+      return null;
+    },
+
+    distanceMonstre(cible, c) {
+      if (cible === CIBLE_TIGRE && phase?.k === "tigre") return distanceForme(c, phase.e.p, phase.e.cap, ECHELLE_TIGRE);
+      if (cible === CIBLE_TITAN && titan) return distanceForme(c, titan.e.p, titan.e.cap, TITAN.echelle);
       return null;
     },
 

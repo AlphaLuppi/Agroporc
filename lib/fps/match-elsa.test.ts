@@ -304,6 +304,60 @@ describe("synchro et réinitialisation", () => {
   });
 });
 
+describe("la patronne et sa formule du jour", () => {
+  it("la deuxième offre est celle de la patronne : l'offre annonce la vendeuse, le message de ramassage aussi", () => {
+    const { ctx, ajouter } = creerContexte(suite(0.1));
+    const elsa = creerServiceElsa(ctx, { x: X, z: Z, intervalle: INTERVALLE, maintenant: 0 });
+    const a = ajouter(joueur("a", [X + 1, 0, Z]));
+    const premiere = elsa.tic(1000);
+    const o1 = premiere.find((x) => x.m.t === "elsa" && x.m.evenement === "apparue");
+    if (o1?.m.t === "elsa") expect(o1.m.elsa.offre).not.toHaveProperty("vendeuse");
+    a.pv = 10; a.bouclier = 0;
+    const s = elsa.tic(2000);
+    const apparue = s.find((x) => x.m.t === "elsa" && x.m.evenement === "apparue");
+    if (apparue?.m.t === "elsa") expect(apparue.m.elsa.offre).toMatchObject({ id: 2, genre: "arme", vendeuse: "patronne" });
+    const rama = s.find((x) => x.m.t === "ramassage");
+    expect(rama?.m).toMatchObject({ t: "ramassage", offre: 2, par: "a", genre: "arme", vendeuse: "patronne" });
+  });
+
+  it("la formule donne l'arme spéciale ET le soin complet (PV et bouclier à 100)", () => {
+    const { ctx, ajouter } = creerContexte(suite(0.1));
+    const elsa = creerServiceElsa(ctx, { x: X, z: Z, intervalle: INTERVALLE, maintenant: 0 });
+    const a = ajouter(joueur("a", [X + 1, 0, Z]));
+    elsa.tic(1000); // offre 1 : celle d'Elsa (un soin, ici)
+    a.pv = 10; a.bouclier = 0; a.regenAcc = 0.5;
+    const s = elsa.tic(2000);
+    expect(types(s)).toEqual(["elsa:apparue", "elsa:prise", "ramassage", "equipement"]);
+    expect(a.equip.speciale).not.toBeNull();
+    expect(a.munSpeciale).toBe(STATS[a.equip.speciale!].chargeur);
+    expect(a.main).toBe("speciale");
+    expect(a.pv).toBe(JEU.pvMax);
+    expect(a.bouclier).toBe(JEU.bouclierMax);
+    expect(a.regenAcc).toBe(0);
+  });
+
+  it("une offre d'Elsa ne soigne pas en plus d'une arme (seule la formule de la patronne donne les deux)", () => {
+    const { ctx, ajouter } = creerContexte(suite(0.9, 0.5)); // arme
+    const elsa = creerServiceElsa(ctx, { x: X, z: Z, intervalle: INTERVALLE, maintenant: 0 });
+    const a = ajouter(joueur("a", [X + 1, 0, Z], { pv: 10, bouclier: 0 }));
+    elsa.tic(1000);
+    expect(a.equip.speciale).not.toBeNull();
+    expect(a.pv).toBe(10);
+  });
+
+  it("le message d'état (synchro) porte la vendeuse tant que l'offre de la patronne est là", () => {
+    const { ctx, ajouter } = creerContexte(suite(0.1));
+    const elsa = creerServiceElsa(ctx, { x: X, z: Z, intervalle: INTERVALLE, maintenant: 0 });
+    const a = ajouter(joueur("a", [X + 1, 0, Z]));
+    elsa.tic(1000);
+    a.p = [500, 0, 500]; // hors de portée : l'offre 2 reste affichée
+    elsa.tic(2000);
+    const sync = elsa.synchro("a");
+    expect(sync).toHaveLength(1);
+    if (sync[0].m.t === "elsa") expect(sync[0].m.elsa.offre).toMatchObject({ id: 2, vendeuse: "patronne", genre: "arme" });
+  });
+});
+
 describe("répartition du contenu", () => {
   it("≈ 40 % soin / 60 % arme sur 2 000 offres, les 3 armes spéciales sortent", () => {
     let graine = 12345;
@@ -311,12 +365,14 @@ describe("répartition du contenu", () => {
     const { ctx, ajouter } = creerContexte(alea);
     ajouter(joueur("a", [500, 0, 500]));
     const elsa = creerServiceElsa(ctx, { x: X, z: Z, intervalle: { minMs: 1, maxMs: 1 }, maintenant: 0 });
-    let soins = 0, armes = 0;
+    let soins = 0, armes = 0, formules = 0;
     const vues = new Set<string>();
     // cycle : apparition à t, expiration 40 s plus tard, nouvelle échéance 1 ms après
-    for (let t = 1; soins + armes < 2000; t += ELSA.dureeOffreMs + 1) {
+    for (let t = 1; soins + armes + formules < 2000; t += ELSA.dureeOffreMs + 1) {
       for (const s of elsa.tic(t)) {
         if (s.m.t === "elsa" && s.m.evenement === "apparue" && s.m.elsa.offre) {
+          // les formules de la patronne (une offre sur trois, toujours une arme) sont comptées à part
+          if (s.m.elsa.offre.vendeuse === "patronne") { formules++; vues.add(s.m.elsa.offre.arme ?? ""); continue; }
           if (s.m.elsa.offre.genre === "soin") soins++; else { armes++; vues.add(s.m.elsa.offre.arme ?? ""); }
         }
       }
@@ -324,6 +380,8 @@ describe("répartition du contenu", () => {
     }
     expect(soins / (soins + armes)).toBeGreaterThan(0.36);
     expect(soins / (soins + armes)).toBeLessThan(0.44);
+    expect(formules / (soins + armes + formules)).toBeGreaterThan(0.31);
+    expect(formules / (soins + armes + formules)).toBeLessThan(0.36);
     expect([...vues].sort()).toEqual(["magnum_dore", "minigun", "railgun"]);
   });
 });

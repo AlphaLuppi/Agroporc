@@ -7,6 +7,8 @@ import {
   POLICE, choisirCibleArene, choisirCibleBr, choisirDepart, ecraseParPolice, etatCarrosserie, pasPolice, toucheBoiteOrientee, type CandidatPolice,
 } from "./police";
 import { SILHOUETTE, type Vec3 } from "./protocole";
+import { TRUCK_FOU } from "./monstres";
+import { TRUCK } from "./zones";
 import type { EtatVehicule } from "./vehicule";
 
 const scene = JSON.parse(readFileSync("public/agroparc/scene.json", "utf8")) as SceneData;
@@ -262,5 +264,18 @@ describe("copierCarteNavigation : la grille de référence copiée dans un monde
     const c = copierCarteNavigation(a, b, 1.8);
     expect(c.nx).toBe(carteNavigation(b, 1.8).nx);
     expect(c).toBe(carteNavigation(b, 1.8));
+  });
+});
+
+describe("constantes : une poursuite longue, des PV à sa mesure", () => {
+  it("la poursuite dure 45 s (le double d'avant) et la voiture encaisse de quoi tenir une bonne partie de ce temps", () => {
+    expect(POLICE.dureeMs).toBe(45_000);
+    expect(POLICE.pvMax).toBeGreaterThanOrEqual(1_000);
+  });
+
+  it("le Truck fou a la caisse du Truck Muche garé (même modèle dessiné, même boîte d'écrasement)", () => {
+    expect(TRUCK_FOU.longueur).toBe(TRUCK.longueur);
+    expect(TRUCK_FOU.largeur).toBe(TRUCK.largeur);
+    expect(TRUCK_FOU.hauteur).toBe(TRUCK.hauteur);
   });
 });

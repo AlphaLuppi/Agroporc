@@ -17,7 +17,7 @@ import type { MessageClient } from "./protocole";
 /**
  * LISTE BLANCHE des messages du client qui agissent encore salle suspendue (`true`) ; tout le reste est jeté. Une liste blanche et non noire : un message
  * ajouté un jour ferait tourner un service sans horloge, le `satisfies` oblige à choisir pour chaque nouveau type. `rejoindre` passe (un chargement qui
- * finit), `pauseZ` est traité à part. Exception hors liste, dans `Salle.recevoir` : les ARRÊTS de maintien (`reanimer{cible:null}`, `reparer{fenetre:null}`),
+ * finit), `pauseZ` est traité à part, `reglesDev` aussi (menu de développement ouvert depuis la suspension automatique d'un joueur seul : ses actions lisent l'horloge virtuelle gelée, voir `Salle.recevoir`). Exception hors liste, dans `Salle.recevoir` : les ARRÊTS de maintien (`reanimer{cible:null}`, `reparer{fenetre:null}`),
  * que le client envoie en relâchant E à la réception de `zpause{actif:true}` (salle déjà suspendue) ; ils ne font que relâcher, sans horloge.
  */
 export const PASSE_EN_SUSPENSION = {
@@ -26,6 +26,7 @@ export const PASSE_EN_SUSPENSION = {
   acheter: false, reparer: false, reanimer: false, monter: false, descendre: false, siege: false, conduite: false, pilotage: false, canon: false,
   invoquer: false, lancerFrappe: false, lancerFumigene: false, lancerGrenade: false, monterBus: false, sauter: false, chute: false, ramasser: false,
   lacher: false, utiliser: false, statsBr: false,
+  reglesDev: true,
 } as const satisfies Record<MessageClient["t"], boolean>;
 
 export interface OptionsSuspension {

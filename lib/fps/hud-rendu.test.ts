@@ -266,14 +266,24 @@ describe("FilEliminations", () => {
     expect(rendre([])).toBe("");
   });
 
-  it("ligne d'arme : pseudos en texte, arme en nom court, tête marquée en texte", () => {
+  it("ligne d'arme : pseudos en texte, arme en pictogramme (jamais le nom écrit), tête marquée par un crâne", () => {
     const html = rendre([e({ tete: true })]);
     expect(html).toContain("<b>Lea</b>");
     expect(html).toContain("<b>Max</b>");
-    expect(html).toContain("Fusil");
-    expect(html).toContain("◎");
+    // le nom de l'arme n'est que dans le pictogramme : aria-label et info-bulle, jamais en texte de la ligne
+    expect(html).toContain('data-picto="fusil_assaut"');
+    expect(html).toContain('role="img" aria-label="Fusil d&#x27;assaut"');
+    expect(html).toContain("<title>Fusil d&#x27;assaut</title>");
+    expect(html.replace(/<svg[\s\S]*?<\/svg>/g, "")).not.toMatch(/Fusil|◎/);
+    expect(html).toContain('data-picto="tete"');
     expect(html).toContain('aria-label="tir à la tête"');
     expect(html).toContain('aria-live="off"');
+  });
+
+  it("sans tir à la tête : pas de crâne ; un pictogramme par arme, celui de l'arme tenue", () => {
+    expect(rendre([e({})])).not.toContain('data-picto="tete"');
+    expect(rendre([e({ arme: "sniper" })])).toContain('data-picto="sniper"');
+    expect(rendre([e({ arme: "epee" })])).toContain('data-picto="epee"');
   });
 
   it("la couleur du serveur n'est jamais appliquée au texte (pastille seulement)", () => {
@@ -282,12 +292,14 @@ describe("FilEliminations", () => {
     expect(html).toContain("background:#112233");
   });
 
-  it("mort par circulation ou voiture : cause en toutes lettres", () => {
+  it("mort par circulation ou voiture : emblème de la cause, nom en aria-label", () => {
     const pnj = rendre([e({ cause: "ecrase_pnj", par: "", arme: "couteau" })]);
-    expect(pnj).toContain("Écrasé par la circulation");
+    expect(pnj).toContain('aria-label="Écrasé par la circulation"');
+    expect(pnj).toContain('data-picto="voiture"');
     expect(pnj).toContain("<b>Max</b>");
     const voiture = rendre([e({ cause: "ecrase_vehicule" })]);
-    expect(voiture).toContain("Renversé par Lea");
+    expect(voiture).toContain('aria-label="Renversé"');
+    expect(voiture).toContain("<b>Lea</b>");
   });
 
   it("mes lignes sont marquées ; annonces et éliminations par ordre d'arrivée", () => {
@@ -741,10 +753,12 @@ describe("FilEliminations : tempête, abandon, annonces de zone (BR)", () => {
   const e = (plus: Record<string, unknown>) => ({ id: 1, par: "", parCouleur: "", cible: "Marc", cibleCouleur: "#abcdef", arme: "couteau", cause: "tempete", tete: false, moi: false, ...plus });
   const rendre = (fil: unknown[], annonces: unknown[] = []) => renderToStaticMarkup(createElement(FilEliminations, { fil, annonces } as never));
 
-  it("mort par la tempête et abandon en toutes lettres, sans nom de tueur", () => {
+  it("mort par la tempête et abandon : emblème et nom en aria-label, sans nom de tueur", () => {
     const html = rendre([e({}), e({ id: 2, cause: "abandon", cible: "Zoé" })]);
-    expect(html).toContain("Tué par la tempête");
-    expect(html).toContain("A quitté la partie");
+    expect(html).toContain('aria-label="Tué par la tempête"');
+    expect(html).toContain('aria-label="A quitté la partie"');
+    expect(html).toContain('data-picto="tempete"');
+    expect(html).toContain('data-picto="abandon"');
     expect(html).toContain("<b>Marc</b>");
   });
 
@@ -923,7 +937,7 @@ describe("MenuPause et aide en Battle Royale", () => {
     expect(html).toContain("les spectateurs ne vous parlent pas");
     expect(rendre({ mode: "br", elimine: true })).toContain("parler avec les autres spectateurs (les joueurs en vie ne vous entendent pas)");
     expect(html).not.toContain("Équipement de la prochaine apparition");
-    expect(html).toContain("la tempête et les autres joueurs ne s&#x27;arrêtent pas");
+    expect(html).toContain("La partie continue.");
     expect(html).toContain("compte comme un abandon");
     expect(html).toContain("Quitter la partie");
     expect(rendre({ mode: "br", elimine: true })).not.toContain("abandon");
@@ -947,7 +961,7 @@ describe("MenuPause et aide en Battle Royale", () => {
 const HUD_BR: HudEtat = {
   pv: 100, bouclier: 0, arme: "couteau", slot: "couteau", slots: "couteau:couteau:0:0", equipSuivant: "mitraillette|pistolet",
   munitions: 0, munitionsG: 0, chargeur: 0, reserve: -1, recharge: false, degainage: false, vise: false, viseur: "fer", ameliorees: "", lunette: false, zoomX: 0, zoomNiveau: -1, zoomNiveaux: 0, ecartViseur: 0,
-  distanceVisee: -1, mur: false, mort: false, reapparitionDans: 0, protege: false, protegeRestant: 0, verrouille: true, connecte: true, entracte: false, accroupi: false,
+  distanceVisee: -1, mur: false, mort: false, reapparitionDans: 0, reapparitionDelai: 0, protege: false, protegeRestant: 0, verrouille: true, connecte: true, entracte: false, accroupi: false,
   glisse: false, regen: false, bonusVitesse: 1.3, invite: "", inviteDetail: "", vehicule: false, vehiculeId: -1, siege: -1, tireInterdit: false, embarquement: false,
   killcam: -1, killcamPhase: "", sort: false, voix: "", voixParlants: "", titan: false, mode: "br", phaseVol: "sol", altitude: 0, vitesseChute: 0, bandages: 3, potions: 1,
   usageSoin: "", horsZone: false, spectateur: false, spectateurCible: "",
@@ -1026,5 +1040,31 @@ describe("HudArene en Battle Royale", () => {
     const html = rendre({ ...HUD_BR, mode: "arene" }, { br: null, etatBr: undefined });
     expect(html).not.toContain("Tempête");
     expect(html).not.toContain("EN VIE");
+  });
+  it("barre des armes 3D : à la mort et à l'entracte de l'arène seulement, à la place du sélecteur compact ; jamais en BR ni en zombies, ni en vie", () => {
+    const mort = { ...HUD_BR, mode: "arene" as const, mort: true, killcamPhase: "rejeu" as const, verrouille: true };
+    const arene = (hud: HudEtat, plus: Record<string, unknown> = {}) => rendre(hud, { br: null, etatBr: undefined, ...plus });
+    const html = arene(mort);
+    expect(html).toContain("Armes de la prochaine apparition");
+    expect(html).toContain('data-habillage="killcam"');
+    expect(html).toContain("1 2 3 : arme suivante");
+    // (fusion) le sélecteur de viseur de la barre a ses propres boutons `aria-pressed` : le sélecteur COMPACT, lui, a des boutons nommés d'après les armes
+    expect(html).not.toMatch(/<button[^>]*aria-pressed[^>]*>(Mitraillette|Pompe|Sniper|Pistolet|Couteau)<\/button>/);
+    expect(html).toContain("Viseur");
+    // souris libre (Échap) : la barre reste, sans l'aide « Échap : souris », et le menu pause ne double pas le choix d'équipement
+    const libre = arene({ ...mort, verrouille: false });
+    expect(libre).toContain("Armes de la prochaine apparition");
+    expect(libre).not.toContain("Échap : souris");
+    expect(libre).toContain("Menu pause");
+    expect(libre).not.toContain("Équipement de la prochaine apparition");
+    // entracte : la barre prend la place du sélecteur compact du podium
+    const entracte = arene({ ...HUD_BR, mode: "arene" as const }, { match: { numero: 2, fin: null, objectif: 30, phase: "entracte", prochain: 110_000 } });
+    expect(entracte).toContain("Armes de la prochaine apparition");
+    expect(entracte).toContain('data-habillage="libre"');
+    expect(entracte).not.toMatch(/<button[^>]*aria-pressed[^>]*>(Mitraillette|Pompe|Sniper|Pistolet|Couteau)<\/button>/);
+    // en vie, en BR et en zombies : rien
+    expect(arene({ ...HUD_BR, mode: "arene" as const })).not.toContain("Armes de la prochaine apparition");
+    expect(rendre({ ...HUD_BR, mort: true, killcamPhase: "" })).not.toContain("Armes de la prochaine apparition");
+    expect(arene({ ...mort, mode: "zombies" as const })).not.toContain("Armes de la prochaine apparition");
   });
 });

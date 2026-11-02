@@ -12,6 +12,8 @@ COPY serveur-fps/scripts ./scripts
 COPY serveur-fps/src ./src
 COPY lib/fps /depot/lib/fps
 COPY lib/agroparc3d /depot/lib/agroparc3d
+# tirage des répliques (sans dépendance), partagé avec le lasso du thème Tigre : importé par lib/fps/vendeuses.ts
+COPY lib/repliques-lasso.ts /depot/lib/repliques-lasso.ts
 RUN npm run typecheck && npm run build
 
 # ---- 2. exécution : Node seul, aucun node_modules, utilisateur non-root ----

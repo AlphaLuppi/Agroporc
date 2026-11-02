@@ -11,6 +11,7 @@ import CarteBilan from "./CarteBilan";
 import Distinctions from "./Distinctions";
 import LigneScore, { CLASSE_COLONNE } from "./LigneScore";
 import Podium from "./Podium";
+import ReplayFin, { type ReplayFinHud } from "./ReplayFin";
 import TableauScores from "./TableauScores";
 import styles from "./FinDeMatch.module.css";
 import tableau from "./TableauScores.module.css";
@@ -36,6 +37,16 @@ export interface PropsFinDeMatch {
   toucheScores?: string;
   /** « 1 : arme principale suivante · 2 : … » : la souris est prise, les boutons du sélecteur ne sont pas cliquables (vide : rien) */
   aideEquipement?: string;
+  /** le choix d'équipement est ailleurs (la barre des armes 3D de `HudArene`) : pas de sélecteur compact ici */
+  sansChoixEquipement?: boolean;
+  /**
+   * Replay de fin de match (additif) : "attente" / "lecture" remplacent le podium par la disposition réduite (image libre, classement sur le côté) ;
+   * "fini" garde le podium et propose de revoir. Absent ou "" : écran de fin habituel.
+   */
+  replay?: { phase: "" | "attente" | "lecture" | "fini"; index: number; total: number; titre: string; detail: string; progression: number };
+  /** libellé de la touche « passer » (Espace par défaut) et son action : moment suivant, ou revoir quand c'est fini */
+  toucheReplay?: string;
+  surReplay?(): void;
 }
 
 /** Compte à rebours qui avance seul : « Prochain match dans 9 s » et sa barre (`match.prochain`, `JEU.entracteMs`). */
@@ -59,7 +70,8 @@ function CompteARebours({ match, maintenantServeur }: { match: InfoMatch | null;
 }
 
 export default function FinDeMatch({
-  joueurs, stats, classement, monId, match, maintenantServeur, equipement, surEquipement, tableauOuvert, toucheScores, aideEquipement,
+  joueurs, stats, classement, monId, match, maintenantServeur, equipement, surEquipement, tableauOuvert, toucheScores, aideEquipement, sansChoixEquipement = false,
+  replay, toucheReplay = "", surReplay,
 }: PropsFinDeMatch) {
   const lignes = useMemo(() => construireLignes(joueurs, stats, classement), [joueurs, stats, classement]);
   const r = useMemo(() => rangs(lignes), [lignes]);
@@ -79,8 +91,17 @@ export default function FinDeMatch({
     );
   }
 
+  if (replay && (replay.phase === "attente" || replay.phase === "lecture")) {
+    return (
+      <ReplayFin
+        replay={replay as ReplayFinHud} lignes={lignes} rangs={r} monId={monId} objectif={objectif} touche={toucheReplay} surSuivant={surReplay}
+        compte={<CompteARebours match={match} maintenantServeur={maintenantServeur} />}
+      />
+    );
+  }
+
   return (
-    <section className={styles.fin} aria-label="Fin de match">
+    <section className={styles.fin} aria-label="Fin de match" data-barre-armes={sansChoixEquipement ? "oui" : undefined}>
       <div className={styles.contenu}>
         <header className={styles.entete}>
           <h2 className={styles.titre}>Match terminé</h2>
@@ -129,7 +150,12 @@ export default function FinDeMatch({
 
         <footer className={styles.pied}>
           <CompteARebours match={match} maintenantServeur={maintenantServeur} />
-          <div className={styles.equipement}>
+          {replay?.phase === "fini" && replay.total > 0 && (
+            <button type="button" className={styles.revoir} onClick={surReplay}>
+              Revoir le replay {toucheReplay && <kbd>{toucheReplay}</kbd>}
+            </button>
+          )}
+          {!sansChoixEquipement && <div className={styles.equipement}>
             {aideEquipement && <p className={styles.equipementAide}>{aideEquipement}</p>}
             <ChoixEquipement
               principale={equipement.principale}
@@ -139,7 +165,7 @@ export default function FinDeMatch({
               variante="compact"
               idGroupe="fin"
             />
-          </div>
+          </div>}
         </footer>
       </div>
     </section>

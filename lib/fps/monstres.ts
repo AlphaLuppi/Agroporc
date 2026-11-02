@@ -15,16 +15,16 @@ import { pasVehicule, type CommandesVehicule, type EtatVehicule } from "./vehicu
 
 export const EVENEMENTS = {
   /** délai avant le premier événement d'un match, puis entre la fin d'un événement et l'annonce du suivant (ms) */
-  premierMinMs: 45_000, premierMaxMs: 70_000,
-  intervalleMinMs: 70_000, intervalleMaxMs: 110_000,
+  premierMinMs: 55_000, premierMaxMs: 85_000,
+  intervalleMinMs: 100_000, intervalleMaxMs: 160_000,
   /** durée du bandeau d'annonce avant le début (ms) */
   annonceMs: 4_000,
 } as const;
 
 export const TRUCK_FOU = {
   dureeMs: 25_000,
-  /** caisse dessinée et mortelle (m) : plus grande qu'une voiture */
-  longueur: 6, largeur: 2.6, hauteur: 3.2,
+  /** caisse dessinée et mortelle (m) : celle du Truck Muche garé (`TRUCK` de zones.ts, test de parité), plus grande qu'une voiture */
+  longueur: 7.4, largeur: 2.4, hauteur: 3.2,
   /** en dessous de cette vitesse (m/s), le Truck n'écrase personne */
   vitesseEcrase: 4,
   /** nouvelle cible au plus tôt après ce délai (ms) */
@@ -141,6 +141,19 @@ export const FORME_MINI_TRUCK: readonly SphereForme[] = [
 /** Forme de touche d'un ennemi du mode zombies selon son type (4 : mini Truck, sinon le tigre). */
 export function formeZombie(type: number): readonly SphereForme[] {
   return type === 4 ? FORME_MINI_TRUCK : FORME_TIGRE;
+}
+
+/**
+ * Distance (m) du point `c` à la surface de la forme posée en (p, cap) à l'échelle `echelle` : la plus courte des distances aux sphères, retranchée de leur
+ * rayon (0 si `c` est dans l'une d'elles). Sert au souffle des explosions sur un monstre.
+ */
+export function distanceForme(c: Vec3, p: Vec3, cap: number, echelle: number, forme: readonly SphereForme[] = FORME_TIGRE): number {
+  let meilleur = Infinity;
+  for (const s of forme) {
+    const o = pointLocal(p, cap, echelle, s.d, s.h, s.a);
+    meilleur = Math.min(meilleur, Math.hypot(c[0] - o[0], c[1] - o[1], c[2] - o[2]) - s.r * echelle);
+  }
+  return Math.max(0, meilleur);
 }
 
 /** Plus petit t ≥ 0 où le rayon (o, d normalisé) entre dans la sphère, Infinity sinon. */

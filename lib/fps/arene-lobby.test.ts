@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import Arene from "../../app/components/arene/Arene";
 import LobbyBR from "../../app/components/arene/LobbyBR";
 import ChoixEquipement from "../../app/components/arene/ChoixEquipement";
+import ChoixMode from "../../app/components/arene/ChoixMode";
 import {
   BONUS_COUTEAU_POURCENT, BONUS_EPEE_POURCENT, CARTES_MAX_DETAILLEES, REGLES_TIR, TEXTE_ARMES_SPECIALES, TEXTE_COUTEAU, commandesLobby, groupePrincipale,
   groupeSecondaire, groupeMelee, choixApresChangement, largeurBarre, noteSur10, toucheDe, armeSuivanteDuGroupe, aideChoixEquipement,
@@ -15,6 +16,7 @@ import { libelleCause } from "../../app/components/arene/armesInfo";
 import { ARMES, ARMES_MELEE, ARMES_PRINCIPALES, ARMES_SECONDAIRES, ARMES_SPECIALES, JEU, type EtatPartieBr, type InfoMatch, type JoueurBr, type JoueurPublic } from "./protocole";
 import { REGLAGES_HUD_DEFAUT } from "./reglages-hud";
 import { touchesParDefaut } from "./touches";
+import { viseursDisponibles } from "./viseurs";
 
 describe("modèle du lobby", () => {
   it("deux groupes : les principales et les secondaires, jamais les armes spéciales", () => {
@@ -135,7 +137,8 @@ describe("ChoixEquipement", () => {
     const nb = NB_ARMES;
     expect(html.match(/role="img"/g)).toHaveLength(nb * 4);
     expect(html.match(/aria-label="(Dégâts|Cadence|Portée|Contrôle|Course) (10|[1-9]) sur 10"/g)).toHaveLength(nb * 4);
-    expect(html.match(/aria-labelledby=/g)).toHaveLength(nb);
+    // + le sélecteur de viseur de la mitraillette et du pistolet (lib/fps/viseurs.ts), qui s'étiquette lui aussi par aria-labelledby
+    expect(html.match(/aria-labelledby=/g)).toHaveLength(nb + 2);
     expect(html.match(/aria-describedby=/g)).toHaveLength(nb);
     expect(html).not.toContain("Précision");
   });
@@ -143,10 +146,12 @@ describe("ChoixEquipement", () => {
   it("compact : des boutons aria-pressed, un seul pressé par groupe, 40 px et plus au CSS", () => {
     const html = rendu("compact", "sniper", "mini_uzi");
     expect(html).not.toContain("<fieldset");
-    expect(html.match(/role="group"/g)).toHaveLength(3);
-    expect(html.match(/<button/g)).toHaveLength(NB_ARMES);
-    expect(html.match(/aria-pressed="true"/g)).toHaveLength(3);
-    expect(html.match(/aria-pressed="false"/g)).toHaveLength(NB_ARMES - 3);
+    // le sniper n'a pas de choix de viseur (lunette intégrée), le mini Uzi en a un : un groupe de plus, « Aucun » pressé
+    const viseurs = viseursDisponibles("mini_uzi").length;
+    expect(html.match(/role="group"/g)).toHaveLength(3 + 1);
+    expect(html.match(/<button/g)).toHaveLength(NB_ARMES + viseurs);
+    expect(html.match(/aria-pressed="true"/g)).toHaveLength(3 + 1);
+    expect(html.match(/aria-pressed="false"/g)).toHaveLength(NB_ARMES - 3 + viseurs - 1);
     expect(html).toContain(">Sniper<");
     expect(html).toContain(">Mini Uzi<");
   });
@@ -158,6 +163,24 @@ describe("ChoixEquipement", () => {
     expect(html.match(/aria-label="Course (10|[1-9]) sur 10"/g)).toHaveLength(ARMES_MELEE.length);
     expect(html).toContain(">Épée<");
     expect(html).toContain(">Couteau<");
+  });
+
+  it("lobby : description en infobulle et lue par les lecteurs d'écran seulement (plus de paragraphe par carte) ; emplacement facultatif d'un réglage par arme", () => {
+    const html = rendu("lobby", "pompe", "revolver");
+    expect(html).toContain('title="');
+    expect(html.match(/aria-describedby=/g)).toHaveLength(NB_ARMES);
+    // sans `renduReglage`, aucun conteneur ajouté
+    expect(html).not.toContain("avecReglage");
+    const vus: string[] = [];
+    const avec = renderToStaticMarkup(createElement(ChoixEquipement, {
+      principale: "pompe", secondaire: "revolver", surChanger: () => {}, variante: "lobby", idGroupe: "test",
+      renduReglage: (arme) => { vus.push(arme); return arme === "pompe" ? createElement("select", { "aria-label": "Viseur" }) : null; },
+    }));
+    expect(vus).toHaveLength(NB_ARMES);
+    expect(avec.match(/<select/g)).toHaveLength(1);
+    // le réglage est hors de l'étiquette cliquable de la carte
+    expect(avec).toMatch(/<\/label><div class="[^"]*reglage[^"]*"><select/);
+    expect(avec.match(/type="radio"/g)).toHaveLength(NB_ARMES);
   });
 
   it("changer un groupe garde les deux autres (principale, secondaire, arme blanche)", () => {
@@ -204,6 +227,27 @@ describe("Arene (lobby)", () => {
     expect(html).toContain("la balle ne chute pas");
     expect(cochee(html, "fusil_assaut")).toBe(true);
     expect(cochee(html, "revolver")).toBe(true);
+  });
+
+  it("lobby allégé : explications, règles et commandes dans une « Aide » repliée ; ni note de couteau ni aide du nom hors de l'aide", () => {
+    const html = rendu();
+    const aide = /<details class="[^"]*aideLobby[^"]*"><summary>Aide<\/summary>([\s\S]*?)<\/details>/.exec(html);
+    expect(aide).not.toBeNull();
+    expect(aide![0]).not.toContain(" open");
+    for (const t of ["Arme blanche : toujours équipée", "Comment ça tire", "offertes par Elsa", "<kbd>W A S D</kbd>"]) expect(aide![1]).toContain(t);
+    // rien de tout cela en dehors de l'aide
+    const dehors = html.replace(aide![0], "");
+    for (const t of ["Arme blanche : toujours équipée", "Comment ça tire", "offertes par Elsa", "<kbd>", "Affiché au-dessus"]) expect(dehors).not.toContain(t);
+    // un nom correct n'a pas de ligne d'aide ; un nom trop court a la sienne, reliée au champ
+    expect(dehors).not.toContain("-aide");
+  });
+
+  it("choix du mode : un nom et un effectif par carte, la présentation en infobulle", () => {
+    const html = renderToStaticMarkup(createElement(ChoixMode, { mode: "arene", salons: null, surChoisir: () => {} }));
+    expect(html.match(/type="radio"/g)).toHaveLength(3);
+    expect(html).toContain('title="Chacun pour soi');
+    expect(html).not.toContain("carteModeDesc");
+    expect(html).toContain("Zombies tigres");
   });
 
   it("l'aide des commandes vient des touches (aucune liste « Z Q S D » en dur)", () => {
@@ -468,7 +512,7 @@ describe("LobbyBR", () => {
     expect(html).not.toMatch(/vocal de proximité/i);
     expect(html).not.toContain("Équipement");
     expect(html).toContain("<kbd>H</kbd>");
-    expect(html).toContain("les joueurs en vie n&#x27;entendent pas");
+    expect(html).toContain("spectateurs entre eux");
   });
 
   it("partie en cours : « Regarder la partie » et « Créer ma partie » ; liste des parties avec leurs boutons", () => {
