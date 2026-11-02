@@ -16,6 +16,8 @@
 # lib/fps/sons-echantillons.ts) et le fait tomber au contact de la griffe (`ZOMBIES.griffeArmeS`). Remplacer le fichier suffit,
 # sans toucher au code. Penser à mettre à jour public/arene/CREDITS.txt (origine et licence du son).
 set -euo pipefail
+# Locale neutre : en locale française, awk et printf écrivent « 1,001 » et ffmpeg refuse le filtre (point décimal attendu).
+export LC_ALL=C
 
 if [ $# -lt 2 ]; then
   sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'

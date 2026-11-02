@@ -19,7 +19,7 @@
  */
 import type { ArmeFeuId, ArmeMeleeId, AtoutId } from "./protocole";
 import {
-  ECHANTILLONS, ECHANTILLONS_SIMULTANES_MAX, FileAnnonces, SONS_POLICE, URLS_ARENE, URLS_ZOMBIES, VOIX_ANNONCES, ANNONCES_EN_ATTENTE_MAX, departCale,
+  ECHANTILLONS, ECHANTILLONS_SIMULTANES_MAX, FileAnnonces, SONS_POLICE, URLS_ARENE, URLS_ZOMBIES, VOIX_ANNONCES, ANNONCES_EN_ATTENTE_MAX, departCale, vitesseRugissement,
   instantPic, reglageSirene, voixLibre,
   type IdEchantillon, type IdVoix,
 } from "./sons-echantillons";
@@ -1111,6 +1111,9 @@ export function creerSons(): Sons {
     },
     rugissement(position) {
       if (!prete()) return;
+      // LE rugissement (fichier du joueur) ; la synthèse ci-dessous n'est que le repli tant qu'il n'est pas chargé
+      const r = jouerEchantillon("rugissementTigre", position, { vitesse: vitesseRugissement("tigre", Math.random()) });
+      if (r !== "absent") return;
       const out = sortie(position);
       const t = ctx!.currentTime + 0.001;
       const v = 0.9 + Math.random() * 0.2;
@@ -1295,7 +1298,8 @@ export function creerSons(): Sons {
         }
         return;
       }
-      // rugissement : grave qui monte puis retombe, grain de bruit, harmonique métallique
+      // rugissement du tigre géant : LE rugissement, très grave pour la taille ; repli synthétisé : grave qui monte puis retombe, grain de bruit, harmonique métallique
+      if (jouerEchantillon("rugissementTigre", undefined, { vitesse: vitesseRugissement("geant", Math.random()) }) !== "absent") return;
       ton(master!, t, { dur: 1.3, type: "sawtooth", f0: 70, f1: 45, gain: 0.35, att: 0.15 });
       ton(master!, t, { dur: 1.1, type: "square", f0: 140, f1: 95, gain: 0.08, att: 0.2 });
       bruit(master!, t, { dur: 1.2, type: "lowpass", f0: 900, f1: 200, q: 1.5, gain: 0.5, att: 0.2 });
@@ -1382,6 +1386,10 @@ export function creerSons(): Sons {
       const t = ctx!.currentTime + 0.001;
       voixTigres = voixTigres.filter((fin) => fin > t);
       if (voixTigres.length >= VOIX_TIGRES_MAX) return false;
+      // LE rugissement (fichier du joueur) : plus aigu et bref pour le cri de mort ; le repli synthétisé n'est joué que sans fichier chargé
+      const r = jouerEchantillon("rugissementTigre", position, { vitesse: vitesseRugissement(mort ? "mort" : "tigre", Math.random()) });
+      if (r === "plein") return false;
+      if (r !== "absent") { voixTigres.push(r); return true; }
       const dur = mort ? 0.7 : 1.0;
       voixTigres.push(t + dur);
       const out = sortie(position);
@@ -1657,7 +1665,8 @@ export function creerSons(): Sons {
       const t = ctx!.currentTime + 0.001;
       voixTigres = voixTigres.filter((fin) => fin > t);
       if (voixTigres.length >= VOIX_TIGRES_MAX) return false;
-      const r = jouerEchantillon("grognementChef", position, { vitesse: 0.92 + Math.random() * 0.16 });
+      // le chef rugit comme les autres, en plus grave et plus long ; sans fichier chargé : le rugissement synthétisé
+      const r = jouerEchantillon("rugissementTigre", position, { vitesse: vitesseRugissement("chef", Math.random()) });
       if (r === "absent") return api.rugissementTigre(position);
       if (r === "plein") return false;
       voixTigres.push(r);

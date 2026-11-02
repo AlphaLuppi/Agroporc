@@ -42,8 +42,9 @@ imp "$SRC/kenney-voiceover-explosions/impactmetal-light-000.ogg" rebond-grenade.
 # Fanfare d'un bonus ramassé : montée « power-up » d'Oculus
 imp "$SRC/oculus-audio-pack-meta/UIMisc_Powerup_OS_01.ogg" fanfare-bonus.mp3 "" 1.8
 
-# Grognement du tigre chef : effort de géant d'Oculus, plus grave
-imp "$SRC/oculus-audio-pack-meta/CREAHmn_GiantEffort_OS_01.ogg" grognement-chef.mp3 "rubberband=pitch=0.7,atrim=0:1.8" 1.8
+# Rugissement de tous les tigres : rugissement-tigre.mp3 est un son DU JOUEUR (extrait d'un YouTube Short, licence inconnue, site privé),
+# importé à la main : scripts/fps/importer_son.sh "<son.wav>" public/arene/sons/rugissement-tigre.mp3 (origine dans CREDITS.txt).
+# Rien à générer ici ; l'ancien grognement du chef (Oculus) est retiré.
 
 # Coup de patte du tigre chef (son PROVISOIRE, à remplacer par celui du joueur avec importer_son.sh) : effort d'ogre ralenti et grave
 # (il monte jusqu'au coup, qui tombe vers 0,5 s), sur un claquement sourd

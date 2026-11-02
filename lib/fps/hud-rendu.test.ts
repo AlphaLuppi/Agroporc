@@ -266,14 +266,24 @@ describe("FilEliminations", () => {
     expect(rendre([])).toBe("");
   });
 
-  it("ligne d'arme : pseudos en texte, arme en nom court, tête marquée en texte", () => {
+  it("ligne d'arme : pseudos en texte, arme en pictogramme (jamais le nom écrit), tête marquée par un crâne", () => {
     const html = rendre([e({ tete: true })]);
     expect(html).toContain("<b>Lea</b>");
     expect(html).toContain("<b>Max</b>");
-    expect(html).toContain("Fusil");
-    expect(html).toContain("◎");
+    // le nom de l'arme n'est que dans le pictogramme : aria-label et info-bulle, jamais en texte de la ligne
+    expect(html).toContain('data-picto="fusil_assaut"');
+    expect(html).toContain('role="img" aria-label="Fusil d&#x27;assaut"');
+    expect(html).toContain("<title>Fusil d&#x27;assaut</title>");
+    expect(html.replace(/<svg[\s\S]*?<\/svg>/g, "")).not.toMatch(/Fusil|◎/);
+    expect(html).toContain('data-picto="tete"');
     expect(html).toContain('aria-label="tir à la tête"');
     expect(html).toContain('aria-live="off"');
+  });
+
+  it("sans tir à la tête : pas de crâne ; un pictogramme par arme, celui de l'arme tenue", () => {
+    expect(rendre([e({})])).not.toContain('data-picto="tete"');
+    expect(rendre([e({ arme: "sniper" })])).toContain('data-picto="sniper"');
+    expect(rendre([e({ arme: "epee" })])).toContain('data-picto="epee"');
   });
 
   it("la couleur du serveur n'est jamais appliquée au texte (pastille seulement)", () => {
@@ -282,12 +292,14 @@ describe("FilEliminations", () => {
     expect(html).toContain("background:#112233");
   });
 
-  it("mort par circulation ou voiture : cause en toutes lettres", () => {
+  it("mort par circulation ou voiture : emblème de la cause, nom en aria-label", () => {
     const pnj = rendre([e({ cause: "ecrase_pnj", par: "", arme: "couteau" })]);
-    expect(pnj).toContain("Écrasé par la circulation");
+    expect(pnj).toContain('aria-label="Écrasé par la circulation"');
+    expect(pnj).toContain('data-picto="voiture"');
     expect(pnj).toContain("<b>Max</b>");
     const voiture = rendre([e({ cause: "ecrase_vehicule" })]);
-    expect(voiture).toContain("Renversé par Lea");
+    expect(voiture).toContain('aria-label="Renversé par Lea"');
+    expect(voiture).toContain("<b>Lea</b>");
   });
 
   it("mes lignes sont marquées ; annonces et éliminations par ordre d'arrivée", () => {
@@ -741,10 +753,12 @@ describe("FilEliminations : tempête, abandon, annonces de zone (BR)", () => {
   const e = (plus: Record<string, unknown>) => ({ id: 1, par: "", parCouleur: "", cible: "Marc", cibleCouleur: "#abcdef", arme: "couteau", cause: "tempete", tete: false, moi: false, ...plus });
   const rendre = (fil: unknown[], annonces: unknown[] = []) => renderToStaticMarkup(createElement(FilEliminations, { fil, annonces } as never));
 
-  it("mort par la tempête et abandon en toutes lettres, sans nom de tueur", () => {
+  it("mort par la tempête et abandon : emblème et nom en aria-label, sans nom de tueur", () => {
     const html = rendre([e({}), e({ id: 2, cause: "abandon", cible: "Zoé" })]);
-    expect(html).toContain("Tué par la tempête");
-    expect(html).toContain("A quitté la partie");
+    expect(html).toContain('aria-label="Tué par la tempête"');
+    expect(html).toContain('aria-label="A quitté la partie"');
+    expect(html).toContain('data-picto="tempete"');
+    expect(html).toContain('data-picto="abandon"');
     expect(html).toContain("<b>Marc</b>");
   });
 

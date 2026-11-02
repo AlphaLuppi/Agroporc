@@ -12,7 +12,7 @@ import type { GenreBonus } from "./zombies-vagues";
 /** Effets échantillonnés, chacun avec un repli synthétisé dans `sons.ts` tant que le fichier n'est pas chargé (ou s'il manque). */
 export type IdEchantillon =
   | "tonnerre" | "rireTruck" | "explosionGrenade" | "rebondGrenade" | "fanfareBonus"
-  | "grognementChef" | "griffeChef" | "microOndesCuisson" | "microOndesBip";
+  | "rugissementTigre" | "griffeChef" | "microOndesCuisson" | "microOndesBip";
 
 export interface DefEchantillon {
   /** chemin servi par Next (public/…) */
@@ -32,8 +32,12 @@ export const ECHANTILLONS: Readonly<Record<IdEchantillon, DefEchantillon>> = {
   rebondGrenade: { url: "/arene/sons/rebond-grenade.mp3", gain: 0.5, voixMax: 4 },
   /** bonus ramassé (montée « power-up »), avant l'annonce parlée */
   fanfareBonus: { url: "/arene/sons/fanfare-bonus.mp3", gain: 0.45, voixMax: 2 },
-  /** rugissement du tigre chef (le gros tigre rouge à toque) */
-  grognementChef: { url: "/arene/sons/grognement-chef.mp3", gain: 0.85, voixMax: 2 },
+  /**
+   * LE rugissement de tous les tigres (2026-11-02, demande du joueur) : tigres largués, tigres des zombies (cri de mort compris), chef,
+   * tigre géant, sort d'invocation. 1,25 s mono, son fourni par le joueur (cf. CREDITS.txt). Les variantes sont des vitesses de lecture
+   * (`VITESSES_RUGISSEMENT`), jamais un autre fichier. Repli synthétisé de `sons.ts` tant qu'il n'est pas chargé.
+   */
+  rugissementTigre: { url: "/arene/sons/rugissement-tigre.mp3", gain: 0.9, voixMax: 4 },
   /** coup de patte du tigre chef : son du joueur (retour 16), provisoirement un effort d'ogre ralenti ; pic calé sur le contact */
   griffeChef: { url: "/arene/sons/griffe-chef.mp3", gain: 0.9, voixMax: 3 },
   /** micro-ondes Gratinator (Pack-a-Punch) : porte qui claque + bourdonnement de cuisson (3,4 s) */
@@ -41,6 +45,14 @@ export const ECHANTILLONS: Readonly<Record<IdEchantillon, DefEchantillon>> = {
   /** trois bips à 1 kHz de fin de cuisson, loquet de la porte */
   microOndesBip: { url: "/arene/sons/microondes-bip.mp3", gain: 0.55, voixMax: 1 },
 };
+
+/**
+ * Vitesses de lecture (hauteur ET durée) du rugissement unique selon qui rugit : un tigre ordinaire ± 8 % (`variation` tirée par l'appelant
+ * dans [0, 1[), le cri de mort plus aigu et bref, le chef grave et long, le tigre géant et le titan très graves (la taille s'entend).
+ */
+export const VITESSES_RUGISSEMENT = { tigre: 1, mort: 1.3, chef: 0.82, geant: 0.55 } as const;
+export type GenreRugissement = keyof typeof VITESSES_RUGISSEMENT;
+export const vitesseRugissement = (genre: GenreRugissement, variation = 0.5): number => VITESSES_RUGISSEMENT[genre] * (0.92 + 0.16 * Math.min(Math.max(variation, 0), 1));
 
 export const IDS_ECHANTILLONS = Object.keys(ECHANTILLONS) as IdEchantillon[];
 
@@ -92,8 +104,11 @@ export const SONS_POLICE = {
   sirene: { url: "/arene/sons/sirene-police.mp3", gain: 0.7, boucleDebutS: 0.05, boucleFinS: 9.58 },
 } as const;
 
-/** Fichiers téléchargés à l'entrée dans une partie, tous modes (arène, Battle Royale, zombies) : la sirène, jamais importée dans le JS. */
-export const URLS_ARENE: readonly string[] = [SONS_POLICE.sirene.url];
+/**
+ * Fichiers téléchargés à l'entrée dans une partie, tous modes (arène, Battle Royale, zombies) : la sirène et le rugissement des tigres
+ * (tigres largués, tigre géant, sort d'invocation : l'arène en a besoin comme les zombies), jamais importés dans le JS.
+ */
+export const URLS_ARENE: readonly string[] = [SONS_POLICE.sirene.url, ECHANTILLONS.rugissementTigre.url];
 
 /** Poids plafond (octets) de la sirène de la police (le fichier du joueur fait 118 848 octets). */
 export const POIDS_MAX_SIRENE = 130_000;

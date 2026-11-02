@@ -810,7 +810,7 @@ try {
     // B ne riposte pas : le tigre (15 dégâts par seconde) l'élimine en 7 s environ, avant la fin de ses 30 s
     const mort = await jusqua(() => B.msgs("mort", depuis).find((m) => m.cible === idB) ?? null, { ms: 30_000, quoi: `mort de B (${B.resume(depuis)})` });
     verifier(mort.cause === "tigre" && mort.par === idA, `mort de B : cause ${mort.cause}, par ${mort.par}`);
-    await jusqua(async () => /Tigre/.test(await A.ev(() => document.querySelector("ul[aria-label='Éliminations']")?.textContent ?? "")), { ms: 3000, quoi: "ligne « Tigre » au fil de A" });
+    await jusqua(async () => await A.ev(() => !!document.querySelector("ul[aria-label='Éliminations'] svg[data-picto='patte'][aria-label='Tigre']")), { ms: 3000, quoi: "ligne « Tigre » au fil de A" });
     await A.capture("10-fil-kill-tigre-A-1920");
     const coups = B.msgs("degats", depuis).filter((m) => m.cible === idB && m.par === idA);
     return `${coups.length} coups de patte de ${coup.degats} dégâts, B éliminé, cause tigre, kill crédité à A`;

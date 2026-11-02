@@ -163,13 +163,15 @@ export const SIEGES_PAR_VEHICULE = 4;
  * "tigre_zombie" : coup d'un tigre zombie du mode zombies. (v8, Battle Royale) "tempete" : dégâts de la zone, aucun kill crédité ; "abandon" :
  * le joueur a quitté la partie en cours (éliminé).
  */
-export type CauseMort =
-  | "arme" | "ecrase_pnj" | "ecrase_vehicule" | "tigre" | "explosion" | "truck_fou" | "tigre_robot" | "titan" | "tigre_zombie" | "bus_c3" | "frappe_aerienne"
-  | "tempete" | "abandon"
+export const CAUSES_MORT = [
+  "arme", "ecrase_pnj", "ecrase_vehicule", "tigre", "explosion", "truck_fou", "tigre_robot", "titan", "tigre_zombie", "bus_c3", "frappe_aerienne",
+  "tempete", "abandon",
   /** (2026-10-30) écrasé par la voiture de la descente de police (arène et Battle Royale) : aucun kill crédité */
-  | "police"
+  "police",
   /** (lot tactique) souffle d'une grenade, d'un obus de lance-grenades ou d'une roquette de bazooka (arène et Battle Royale) : kill crédité au lanceur, auto-dégâts possibles */
-  | "grenade";
+  "grenade",
+] as const;
+export type CauseMort = (typeof CAUSES_MORT)[number];
 
 /** Voiture de la circulation (`pnj`, indice dans `flotte`) ou voiture conduisible (`vehicule`, id du garage). */
 export type GenreVoiture = "pnj" | "vehicule";

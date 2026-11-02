@@ -155,6 +155,15 @@ export function libelleFil(arme: ArmeId, cause: CauseMort, par: string): string 
   return estMelee(arme) ? MELEE[arme].nomCourt : STATS[arme].nomCourt;
 }
 
+/**
+ * Nom lisible du pictogramme d'une ligne du fil (`role="img"`, `aria-label` et info-bulle) : le nom COMPLET de l'arme (« Fusil d'assaut »),
+ * sinon le libellé de la cause (`libelleFil`). Le fil ne montre plus de nom d'arme écrit : ce nom reste donc pour les lecteurs d'écran et le survol.
+ */
+export function nomPictoFil(arme: ArmeId, cause: CauseMort, par: string): string {
+  if (cause === "arme") return estMelee(arme) ? MELEE[arme].nom : STATS[arme]?.nom ?? String(arme);
+  return libelleFil(arme, cause, par);
+}
+
 /** Nom du Truck Muche qui sert l'offre : « ELSA » ou « LA PATRONNE » (`vendeuse: "patronne"` : sa formule du jour). */
 export function nomVendeuseOffre(vendeuse?: "patronne"): string {
   return vendeuse === "patronne" ? "LA PATRONNE" : "ELSA";
