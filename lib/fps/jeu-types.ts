@@ -68,6 +68,8 @@ export interface HudEtat {
   /** s de protection d'apparition restantes (pas de 0,5), 0 hors protection */
   protegeRestant: number;
   verrouille: boolean;
+  /** (arène) souris rendue par le jeu à ma mort ou à l'entracte (souris-mort.ts) : curseur libre SANS menu pause ; réapparu, invite « Cliquez pour reprendre » */
+  sourisRendue?: boolean;
   connecte: boolean;
   entracte: boolean;
   accroupi: boolean;
@@ -354,6 +356,8 @@ export interface JeuHandle {
   recevoir(m: MessageServeur): void;
   /** Redemande la souris (bouton « Reprendre » du menu pause). */
   verrouiller(): void;
+  /** (menu de développement) ouvert ou fermé par le HUD : ouvert, le jeu ne prend plus aucune touche souris libre (souris-mort.ts) */
+  menuDev?(ouvert: boolean): void;
   /** Sensibilité de la souris (1 = défaut). */
   sensibilite(x: number): void;
   /** accroupi : true = bascule, false = maintenir */

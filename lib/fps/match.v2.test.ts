@@ -1324,3 +1324,74 @@ describe("débit par client", () => {
     expect(acceptes).toBeGreaterThanOrEqual(24); // aucun tir de la rafale n'est perdu
   });
 });
+
+// ---------- swap cancel (quickswap.ts) ----------
+
+describe("swap cancel côté serveur", () => {
+  it("tir accepté juste après un swap cancel, refusé juste après un changement simple", () => {
+    const { s, t } = duel({}, { principale: "fusil_assaut", secondaire: "pistolet" });
+    // swap cancel : principale → secondaire → principale en 60 ms, tir 130 ms après le retour
+    s.recevoir("a", { t: "main", slot: "secondaire" }, t);
+    s.recevoir("a", { t: "main", slot: "principale" }, t + 60);
+    expect(j(s, "a")).toMatchObject({ main: "principale", arme: "fusil_assaut" });
+    expect(j(s, "a").sortieJusqua).toBeLessThanOrEqual(t + 60 + 120);
+    expect(tirer(s, "a", "b", t + 60 + 130, { declarer: false }).length).toBeGreaterThan(0);
+    // changement simple : refusé 130 ms après
+    const u = t + 5000;
+    s.recevoir("a", { t: "main", slot: "secondaire" }, u);
+    expect(tirer(s, "a", "b", u + 130, { declarer: false })).toEqual([]);
+    expect(tirer(s, "a", "b", u + JEU.degainageMs, { declarer: false }).length).toBeGreaterThan(0);
+  });
+
+  it("un aller-retour ne saute pas un dégainage en cours ; pas d'annulation en chaîne", () => {
+    const { s, t } = duel({}, { principale: "fusil_assaut", secondaire: "pistolet" });
+    s.recevoir("a", { t: "main", slot: "secondaire" }, t); // pistolet prêt à t + 350
+    s.recevoir("a", { t: "main", slot: "principale" }, t + 500); // changement simple (le premier est fini, marge comprise) : fusil prêt à t + 850
+    s.recevoir("a", { t: "main", slot: "couteau" }, t + 600);
+    s.recevoir("a", { t: "main", slot: "principale" }, t + 610); // annulation : jamais avant t + 850
+    expect(j(s, "a").sortieJusqua).toBe(t + 850);
+    s.recevoir("a", { t: "main", slot: "couteau" }, t + 620); // changement simple
+    expect(j(s, "a").sortieJusqua).toBe(t + 620 + JEU.degainageMs);
+    // marge du serveur : un retour 30 ms après la fin nominale (gigue entre les deux `main`) est encore une annulation
+    s.recevoir("a", { t: "main", slot: "principale" }, t + 620 + JEU.degainageMs + 30);
+    expect(j(s, "a").sortieJusqua).toBeLessThanOrEqual(t + 620 + JEU.degainageMs + 30 + 120);
+  });
+
+  it("anti-triche : après un tir accepté avec la nouvelle arme, revenir à l'ancienne n'est plus un swap cancel", () => {
+    const { s, t } = duel({}, { principale: "fusil_assaut", secondaire: "pistolet" });
+    s.recevoir("a", { t: "main", slot: "secondaire" }, t);
+    // tir du pistolet accepté dès la tolérance de dégainage (t + 245), avant la fin nominale
+    expect(tirer(s, "a", "b", t + 245, { declarer: false }).length).toBeGreaterThan(0);
+    expect(j(s, "a").changementArme ?? null).toBeNull();
+    s.recevoir("a", { t: "main", slot: "principale" }, t + 260);
+    // dégainage complet : le fusil n'est pas prêt avant t + 260 + 350 (avec la tolérance, refusé à t + 400)
+    expect(j(s, "a").sortieJusqua).toBe(t + 260 + JEU.degainageMs);
+    expect(tirer(s, "a", "b", t + 400, { declarer: false })).toEqual([]);
+  });
+
+  it("gigue réseau : un retour qui arrive jusqu'à 120 ms après la fin nominale reste un swap cancel", () => {
+    const { s, t } = duel({}, { principale: "fusil_assaut", secondaire: "pistolet" });
+    s.recevoir("a", { t: "main", slot: "secondaire" }, t);
+    s.recevoir("a", { t: "main", slot: "principale" }, t + JEU.degainageMs + 100);
+    expect(j(s, "a").sortieJusqua).toBeLessThanOrEqual(t + JEU.degainageMs + 100 + 120);
+  });
+
+  it("dégainage imposé (achat, spéciale épuisée) : plus de swap cancel vers l'arme d'avant", () => {
+    const { s, t } = duel({}, { principale: "fusil_assaut", secondaire: "pistolet" });
+    s.recevoir("a", { t: "main", slot: "secondaire" }, t);
+    const ja = j(s, "a");
+    s.equiper(ja, { ...ja.equip, secondaire: "revolver" }, "secondaire", t);
+    expect(ja.changementArme ?? null).toBeNull();
+    s.recevoir("a", { t: "main", slot: "principale" }, t + 50);
+    expect(ja.sortieJusqua).toBe(t + 50 + JEU.degainageMs);
+  });
+
+  it("cas limite de l'e2e : retour 60 ms après, tir 43 ms après le retour : le dégainage ne le refuse pas", () => {
+    const { s, t } = duel({}, { principale: "fusil_assaut", secondaire: "pistolet" });
+    s.recevoir("a", { t: "main", slot: "secondaire" }, t);
+    s.recevoir("a", { t: "main", slot: "principale" }, t + 60);
+    // prêt à t + 60 + 80 ; accepté dès 105 ms avant (tolérance de dégainage) : t + 103 passe
+    expect(tirer(s, "a", "b", t + 103, { declarer: false }).length).toBeGreaterThan(0);
+  });
+});
+

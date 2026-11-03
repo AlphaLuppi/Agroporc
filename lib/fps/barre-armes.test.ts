@@ -66,9 +66,9 @@ describe("choix et cycle des touches", () => {
   });
 
   it("aide : touches réelles du joueur, jamais de touche absente", () => {
-    expect(aideBarreArmes("1", "2", "3")).toBe("1 2 3 : arme suivante · Échap : souris");
-    expect(aideBarreArmes("&", "—", "non assignée")).toBe("& : arme suivante · Échap : souris");
-    expect(aideBarreArmes("", "", "")).toBe("Échap : souris");
+    expect(aideBarreArmes("1", "2", "3")).toBe("1 2 3 : arme suivante · Échap : menu");
+    expect(aideBarreArmes("&", "—", "non assignée")).toBe("& : arme suivante · Échap : menu");
+    expect(aideBarreArmes("", "", "")).toBe("Échap : menu");
   });
 });
 
@@ -180,7 +180,7 @@ describe("modèles 3D de la vitrine", () => {
 });
 
 describe("BarreArmes (rendu serveur)", () => {
-  const html = renderToStaticMarkup(createElement(BarreArmes, { equipement: { principale: "pompe", secondaire: "revolver", melee: "epee" }, surChoisir: () => {}, aide: "1 2 3 : arme suivante · Échap : souris" }));
+  const html = renderToStaticMarkup(createElement(BarreArmes, { equipement: { principale: "pompe", secondaire: "revolver", melee: "epee" }, surChoisir: () => {}, aide: "1 2 3 : arme suivante · Échap : menu" }));
 
   it("une radio native par arme dans trois groupes nommés, la choisie cochée", () => {
     const nb = groupesBarre(base).reduce((n, g) => n + g.tuiles.length, 0);
@@ -190,7 +190,7 @@ describe("BarreArmes (rendu serveur)", () => {
     expect(html).toContain(">Principale<");
     expect(html).toContain(">Blanche<");
     expect(html).toContain("Armes de la prochaine apparition");
-    expect(html).toContain("Échap : souris");
+    expect(html).toContain("Échap : menu");
   });
 
   it("la 3D est décorative : canvas et vitrines masqués aux lecteurs d'écran, le nom de l'arme reste lu", () => {

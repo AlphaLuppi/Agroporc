@@ -14,6 +14,7 @@ import type {
 import type { ObstacleVoiture, Tigre } from "./tigre-arene";
 import type { ExplosionGrenade } from "./grenades";
 import type { StatsTir } from "./armes";
+import type { EtatChangement } from "./quickswap";
 import type { Difficulte, GenreBonus } from "./zombies-vagues";
 
 /**
@@ -31,6 +32,8 @@ export interface JoueurSalleV2 {
   munSpeciale: number;
   /** pas de tir ni de recharge avant (maintenant + degainageMs ; le serveur tolère 30 %) */
   sortieJusqua: number;
+  /** changement d'arme en cours (`quickswap.ts` : reconnaît le retour à l'arme quittée, swap cancel) ; absent = aucun */
+  changementArme?: EtatChangement | null;
   /** remplace `prochainTir` : prochain tir permis, par arme (couteau compris) */
   cadenceArme: Partial<Record<ArmeId | `${ArmeId}:g`, number>>;
   bouclier: number;

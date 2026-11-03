@@ -8,6 +8,7 @@ import { libelleGain, niveauMunitions, syntheseMatch, texteRefusAchat } from "@/
 import { LIBELLES_COINS, coinSuivant } from "@/lib/fps/reglages-hud";
 import { useDisposition } from "./ReglageTouches";
 import { aideBarreArmes, equipementApresTouche } from "@/lib/fps/barre-armes";
+import { inviteReprise } from "@/lib/fps/souris-mort";
 import BarreArmes from "./BarreArmes";
 import SelecteurViseur from "./SelecteurViseur";
 import { ARMES_A_VISEUR } from "@/lib/fps/viseurs";
@@ -109,10 +110,15 @@ export default function HudArene(p: PropsHudAreneBr) {
   const refKmh = useRef<HTMLElement | null>(null);
   useHudLive(p.live, { anneauRecharge: refAnneau, barreRecharge: refBarre, tempsRecharge: refTemps, traitRegen: refRegen, vitesse: refVitesse, kmh: refKmh }, !!hud);
 
-  // Tab = scores et M = grande carte, seulement souris prise (menu pause ouvert, il garde sa navigation au clavier)
+  // Tab = scores et M = grande carte, seulement souris prise (menu pause ouvert, il garde sa navigation au clavier) ou rendue par le jeu à la mort
+  // (souris-mort.ts : le clavier marche encore, la souris clique la barre des armes)
   const verrouille = !!hud?.verrouille;
-  const tab = useToucheMaintenue(verrouille, p.touches.scores);
-  const carteMaintenue = useToucheMaintenue(verrouille, p.touches.carte);
+  const sourisRendue = !!hud?.sourisRendue && !verrouille;
+  // Menu de développement (déclaré ici : ouvert, il garde le clavier, même souris rendue à la mort)
+  const [devOuvert, setDevOuvert] = useState(false);
+  const clavier = verrouille || (sourisRendue && !devOuvert);
+  const tab = useToucheMaintenue(clavier, p.touches.scores);
+  const carteMaintenue = useToucheMaintenue(clavier, p.touches.carte);
   useEffect(() => {
     vueScoresRef.current(tab);
   }, [tab]);
@@ -162,7 +168,7 @@ export default function HudArene(p: PropsHudAreneBr) {
   reglagesRef.current = p.reglagesHud;
   const surReglagesRef = useRef(p.surReglagesHud);
   surReglagesRef.current = p.surReglagesHud;
-  useToucheAppui(verrouille, p.touches.minimapCoin, () => {
+  useToucheAppui(clavier, p.touches.minimapCoin, () => {
     const r = reglagesRef.current;
     const coin = coinSuivant(r.minimap.coin);
     surReglagesRef.current({ ...r, minimap: { ...r.minimap, coin } });
@@ -177,7 +183,6 @@ export default function HudArene(p: PropsHudAreneBr) {
   useToucheAppui(verrouille && enPartieZ, p.touches.pauseZ, () => p.surPauseZ?.(!suspendueRef.current));
   // Menu de développement (F9, action `menuDev`) : libère la souris et remplace le menu pause par le panneau des règles en direct ; F9 de nouveau ou « Fermer »
   // rend la souris. Hors bilan de fin de partie (zombies, Battle Royale), où le menu pause n'existe pas non plus.
-  const [devOuvert, setDevOuvert] = useState(false);
   const devOuvertRef = useRef(false);
   devOuvertRef.current = devOuvert;
   const reprendreRef = useRef(p.surReprendre);
@@ -189,12 +194,16 @@ export default function HudArene(p: PropsHudAreneBr) {
     if (document.pointerLockElement) document.exitPointerLock();
   });
   useEffect(() => { if (verrouille) setDevOuvert(false); }, [verrouille]);
-  // Écran de mort et entracte : la souris est prise, les tuiles de la barre des armes ne sont cliquables qu'après Échap ; les touches d'arme
+  // le jeu lui laisse le clavier tant qu'il est ouvert (souris rendue à la mort : ni Espace, ni reprise de la souris dessous)
+  const menuDevRef = useRef(p.surMenuDev);
+  menuDevRef.current = p.surMenuDev;
+  useEffect(() => { menuDevRef.current?.(devOuvert); }, [devOuvert]);
+  // Écran de mort et entracte : la souris est rendue par le jeu (souris-mort.ts), les tuiles de la barre des armes se cliquent ; les touches d'arme
   // principale / secondaire / blanche passent à l'arme d'après de leur groupe (l'équipement est celui de la prochaine apparition).
   const equipRef = useRef({ equipement: p.equipement, sur: p.surEquipement });
   equipRef.current = { equipement: p.equipement, sur: p.surEquipement };
   // (pas pendant le replay de fin : la barre est masquée, un changement serait invisible)
-  const choixEquipementActif = verrouille && !!hud && !zombies && !br && (hud.mort || match?.phase === "entracte") && hud.replayPhase !== "attente" && hud.replayPhase !== "lecture";
+  const choixEquipementActif = clavier && !!hud && !zombies && !br && (hud.mort || match?.phase === "entracte") && hud.replayPhase !== "attente" && hud.replayPhase !== "lecture";
   const suivante = (groupe: "principale" | "secondaire" | "melee") => () => {
     const { equipement, sur } = equipRef.current;
     sur(...equipementApresTouche(equipement, groupe));
@@ -220,7 +229,11 @@ export default function HudArene(p: PropsHudAreneBr) {
   const entracte = !zombies && !br && match?.phase === "entracte";
   /** zombies : partie perdue, le bilan occupe l'écran (la souris est rendue, le menu pause ne s'y superpose pas) */
   const finZ = zombies && partieZ?.phase === "fin";
-  const pause = !hud.verrouille && !finZ && !finBr;
+  // souris rendue par le jeu à la mort ou à l'entracte (arène) : pas une pause, l'écran de mort et la barre des armes restent seuls ; F9 ouvre quand même
+  // le menu de développement
+  const pause = !hud.verrouille && (!sourisRendue || devOuvert) && !finZ && !finBr;
+  /** réapparu souris rendue : un clic ou une touche de jeu la reprend (geste exigé par `requestPointerLock`) ; invite discrète plutôt que le menu pause */
+  const reprise = !pause && inviteReprise({ sourisRendue, mort: hud.mort, entracte: !zombies && !br && match?.phase === "entracte", verrouille: hud.verrouille });
   const premiereFois = pause && !dejaVerrouille.current;
   const combat = !hud.mort && !entracte && !finZ && !finBr;
   /** blocs de lecture d'une partie en cours : joueur vivant ou spectateur */
@@ -230,6 +243,9 @@ export default function HudArene(p: PropsHudAreneBr) {
   const replayEnCours = hud.replayPhase === "attente" || hud.replayPhase === "lecture";
   // (fusion) pendant le replay de fin la commande « Moment suivant » occupe le bas de l'écran : la barre revient avec le podium
   const barreArmes = !zombies && !br && (hud.mort || entracte) && !replayEnCours;
+  // menu pause (Échap pendant la mort) ou menu de développement ouvert : la barre (z-index plus haut) en masquerait le bas ; le menu pause reprend alors
+  // le choix d'équipement, la barre revient à sa fermeture
+  const barreVisible = barreArmes && !pause;
   const conduite = hud.vehicule && hud.tireInterdit;
   const inviteRecharge = combat && !hud.titan && !couteau && !hud.tireInterdit && !hud.recharge && ["critique", "vide"].includes(niveauMunitions(hud.munitions, hud.chargeur));
   const reglMap = p.reglagesHud.minimap;
@@ -309,7 +325,7 @@ export default function HudArene(p: PropsHudAreneBr) {
           <InvitesAction
             invite={hud.invite} inviteDetail={hud.inviteDetail} toucheInteragir={t("interagir")}
             inviteRecharge={inviteRecharge} toucheRecharger={t("recharger")}
-            assez={hud.inviteAssez} reanime={hud.reanime} refReanim={refReanim}
+            assez={hud.inviteAssez} reanime={hud.reanime} refReanim={refReanim} conduite={!!conduite}
           />
           {toast && <ToastCentre texte={toast} />}
           <div className={styles.milieu}>
@@ -419,6 +435,7 @@ export default function HudArene(p: PropsHudAreneBr) {
       </CoinHud>
 
       {!hud.connecte && <p className={`${styles.plaque} ${styles.reseau}`} role="status">Connexion perdue, reconnexion…</p>}
+      {reprise && <p className={`${styles.plaque} ${styles.reprise}`} role="status">Cliquez pour reprendre</p>}
       {!aideVue && hud.verrouille && !hud.mort && <AideCommandes touches={p.touches} disposition={disposition} mode={zombies ? "zombies" : br ? "br" : "arene"} />}
 
       {/* mort : rejeu puis carte du tueur (EcranMort), sous le menu pause ; zombies : « À terre » puis « Éliminé » */}
@@ -492,12 +509,12 @@ export default function HudArene(p: PropsHudAreneBr) {
           Règles en direct{t("menuDev") && t("menuDev") !== "—" ? ` (${t("menuDev")})` : ""}
         </button>
       )}
-      {barreArmes && (
+      {barreVisible && (
         <BarreArmes
           equipement={p.equipement}
           surChoisir={p.surEquipement}
           habillage={hud.killcamPhase === "rejeu" || hud.killcamPhase === "carte" ? "killcam" : "libre"}
-          aide={pause ? "" : aideBarreArmes(t("armePrincipale"), t("armeSecondaire"), t("couteau"))}
+          aide={aideBarreArmes(t("armePrincipale"), t("armeSecondaire"), t("couteau"))}
           reglageArme={(arme) => (ARMES_A_VISEUR as readonly string[]).includes(arme) ? <SelecteurViseur arme={arme as ArmeFeuId} idGroupe="barre" /> : null}
         />
       )}
@@ -510,7 +527,7 @@ export default function HudArene(p: PropsHudAreneBr) {
           accroupiBascule={p.accroupiBascule} surAccroupiBascule={p.surAccroupiBascule} actionsSansTouche={p.actionsSansTouche}
           voix={p.voix} surVoix={p.surVoix} voixErreur={p.voixErreur} toucheParler={t("parler")}
           touches={p.touches} surTouches={p.surTouches} reglagesHud={p.reglagesHud} surReglagesHud={p.surReglagesHud}
-          mode={zombies ? "zombies" : br ? "br" : "arene"} elimine={spectateur} sansEquipement={barreArmes}
+          mode={zombies ? "zombies" : br ? "br" : "arene"} elimine={spectateur} sansEquipement={barreVisible}
           suspension={zombies ? { actif: suspendue, par: hud.suspenduePar ?? "", compteS: hud.compteS ?? 0, enPartie: enPartieZ, refus: hud.refusPause ?? "" } : undefined}
           surPauseZ={p.surPauseZ} touchePause={t("pauseZ")}
         />

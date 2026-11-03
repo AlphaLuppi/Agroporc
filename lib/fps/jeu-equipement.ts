@@ -7,12 +7,15 @@
  * (v10, zombies) Inventaire façon Black Ops 1 : emplacements d'armes génériques ; l'arme blanche ne se prend plus seule à partir de deux armes
  * à feu (`couteauTenable`) ; coup de couteau rapide arme en main (`coupRapide`, minutage selon le poids de l'arme, coup-rapide.ts) ; une arme à
  * munitions limitées (railgun, minigun, magnum, bazooka) reste dans son emplacement, vide, jusqu'aux Munitions max.
+ * Changement en deux temps et swap cancel façon Call of Duty (quickswap.ts) : revenir à l'arme qu'on vient de quitter pendant le changement
+ * l'annule (arme prête en 50 à 120 ms) ; quitter une arme après l'insertion du chargeur (75 % du rechargement) garde le rechargement.
  * Spec : docs/superpowers/specs/2026-10-22-arene-v2-design.md (§2.4, §5.13), 2026-10-29-zombies-inventaire-design.md (v10)
  */
 import { JEU, copierEquipement, estMelee, type ArmeFeuId, type ArmeId, type Equipement, type MessageServeur, type Slot } from "./protocole";
 import { STATS, chargeurZombie, statsTir } from "./armes";
 import { armeDuSlot, couteauTenable, estArmeFeu, estSlot, meleeDe, slotDeLArme, slotVoisin, type LigneSlot } from "./equipement";
 import { minutageCoupRapide } from "./coup-rapide";
+import { changerArme, chargeurInsere, poseSortie, type AnimSortie, type EtatChangement } from "./quickswap";
 import { BR } from "./br-regles";
 
 /** Slot en main quand l'appelant n'en donne pas : on entre dans l'arène avec la principale (v2 : `mainSuivante` = principale). */
@@ -51,9 +54,14 @@ export class ControleurArmes {
   /** pas de tir ni de recharge avant cet instant */
   private sortieFin = 0;
   private sortieDebut = 0;
+  /** changement d'arme en cours (reconnaît le retour à l'arme quittée : swap cancel) et animation de l'arme en main */
+  private changement: EtatChangement | null = null;
+  private anim: AnimSortie | null = null;
   /** recharge en cours : début et fin (0 = aucune) */
   private rechargeDebut = 0;
   private rechargeFin = 0;
+  /** rechargements interrompus avant d'être acquis (`rechargesInterrompues`) */
+  private nInterrompues = 0;
   /** dernier instant vu (pour les actions sans `t`, comme `tirEffectue`) */
   private dernierT = 0;
   /** (v7) profil zombies et réserve d'une arme améliorée */
@@ -193,15 +201,43 @@ export class ControleurArmes {
 
   // ---------- changement d'arme ----------
 
-  /** Change de slot (refus si vide ou identique) : annule la recharge, `sortieFin = t + degainageMs`, mémorise le précédent. */
+  /**
+   * Change de slot (refus si vide ou identique) : `sortieFin = t + degainageMs` (rengainer puis dégainer), mémorise le précédent. Retour à
+   * l'arme qu'on vient de quitter pendant le changement : swap cancel (`changerArme`). La recharge est annulée, sauf si le chargeur était
+   * déjà inséré (`chargeurInsere`) : le rechargement est alors acquis (reload cancel).
+   */
   equiper(slot: Slot, t: number): boolean {
     this.dernierT = t;
     if (!estSlot(slot) || slot === this.main || !this.slotUtilisable(slot) || this.coupEnCours(t)) return false;
+    const armeDepuis = this.armeEnMain();
+    const armeVers = armeDuSlot(this.equip, slot) ?? meleeDe(this.equip);
+    const r = changerArme(this.changement, { depuis: this.main, armeDepuis, vers: slot, armeVers, t, pretActuel: this.sortieFin });
+    // arme dessinée à cet instant (l'arme quittée d'un changement précédent peut encore descendre) : départ de l'animation, sans saut
+    const visible = this.poseArme(t);
+    if (this.rechargeEnCours() && chargeurInsere(this.rechargeProgression(t))) this.completerRecharge();
     this.precedent = this.main;
     this.main = slot;
     this.annulerRecharge();
-    this.debuterSortie(t);
+    this.changement = r.changement;
+    this.sortieDebut = t;
+    this.sortieFin = r.pret;
+    this.anim = r.annule
+      ? { genre: "retour", debut: t, fin: r.pret, depart: visible.abaissement }
+      : { genre: "changement", debut: t, fin: r.pret, armeQuittee: visible.arme, depart: visible.abaissement };
     return true;
+  }
+
+  /** Dernier changement annulé par un retour à l'arme quittée (swap cancel) : vrai pendant la remontée. */
+  annulationEnCours(t: number): boolean { return this.anim?.genre === "retour" && t < this.anim.fin; }
+
+  /**
+   * Arme à dessiner en main et son abaissement (0 = en joue, 1 = hors champ) : pendant un changement, l'arme quittée descend puis la nouvelle
+   * monte ; après une annulation, l'arme d'origine remonte d'où elle est.
+   */
+  poseArme(t: number): { arme: ArmeId; abaissement: number } {
+    const p = poseSortie(this.anim, t);
+    const arme = p.quittee && this.anim?.genre === "changement" ? this.anim.armeQuittee : this.armeEnMain();
+    return { arme, abaissement: p.abaissement };
   }
 
   /** Slot suivant / précédent portant une arme (saute la spéciale vide ; en zombies, l'arme blanche à partir de deux armes), cyclique. */
@@ -295,6 +331,13 @@ export class ControleurArmes {
   majRecharge(t: number): boolean {
     this.dernierT = t;
     if (!this.rechargeEnCours() || t < this.rechargeFin) return false;
+    this.completerRecharge();
+    this.annulerRecharge();
+    return true;
+  }
+
+  /** Remplit le chargeur de l'arme en main (les deux d'une paire), en puisant dans la réserve si elle est limitée ; la recharge est alors finie. */
+  private completerRecharge(): void {
     const a = this.armeEnMain();
     if (!estMelee(a)) {
       // (v8) une paire akimbo recharge ses deux chargeurs, la main droite d'abord
@@ -309,8 +352,9 @@ export class ControleurArmes {
         }
       }
     }
-    this.annulerRecharge();
-    return true;
+    // rechargement acquis : il n'est plus « en cours » (ne compte pas comme interrompu)
+    this.rechargeDebut = 0;
+    this.rechargeFin = 0;
   }
 
   /** 0..1, 0 = aucune recharge en cours. */
@@ -352,6 +396,8 @@ export class ControleurArmes {
       this.annulerRecharge();
       this.sortieFin = 0;
       this.sortieDebut = 0;
+      this.changement = null;
+      this.anim = null;
       this.coupDebut = 0;
       this.coupFin = 0;
       this.precedent = this.autrePrincipale(this.main);
@@ -441,15 +487,27 @@ export class ControleurArmes {
     return n * this.cap(a) * (this.akimbo(a) ? 2 : 1);
   }
 
+  /** Dégainage imposé (changement venu du serveur, spéciale épuisée) : aucune annulation possible, l'arme monte seule. */
   private debuterSortie(t: number): void {
     this.sortieDebut = t;
     this.sortieFin = t + JEU.degainageMs;
+    this.changement = null;
+    this.anim = { genre: "sortie", debut: t, fin: this.sortieFin };
   }
 
+  /** Arrête la recharge en cours ; si elle n'était pas finie (chargeur non rempli), le compte des rechargements interrompus avance. */
   private annulerRecharge(): void {
+    if (this.rechargeFin > 0) this.nInterrompues++;
     this.rechargeDebut = 0;
     this.rechargeFin = 0;
   }
+
+  /**
+   * Nombre de rechargements interrompus avant d'avoir rempli le chargeur (changement d'arme avant l'insertion, mort, spéciale retirée…) :
+   * le rendu coupe l'animation de rechargement quand il change (sinon, après un swap cancel, le modèle de l'arme, jamais reconstruit, finirait
+   * de remettre un chargeur que le contrôleur n'a pas rempli).
+   */
+  get rechargesInterrompues(): number { return this.nInterrompues; }
 
   private retirerSpeciale(t: number): void {
     const a = this.equip.speciale;

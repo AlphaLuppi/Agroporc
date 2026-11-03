@@ -5,7 +5,7 @@ import styles from "../HudArene.module.css";
 
 /**
  * Viseur STATIQUE (v2 §13.1 : aucune dispersion, le tir part exactement de l'axe de la vue) : quatre traits fixes et un point. Cyan quand
- * le joueur est protégé. Conducteur : `( + )` gris et libellé « CONDUITE : TIR IMPOSSIBLE ». Couteau : petit chevron de portée.
+ * le joueur est protégé. Conducteur (vue à la 3ᵉ personne) : libellé « CONDUITE : TIR IMPOSSIBLE » seul, au-dessus de la voiture. Couteau : petit chevron de portée.
  * Sniper sans lunette (v3 §1) : cercle de dispersion de rayon `ecart` (part de la demi-hauteur de l'écran), les traits s'écartent sur lui.
  * Rechargement : anneau de progression autour du viseur (`--recharge` écrite en rAF sur cet élément par `useHudLive`, hors React).
  * (v8, zombies) En visée avec une arme améliorée à viseur optique : point rouge (point lumineux et halo) ou viseur holographique (cercle
@@ -30,8 +30,8 @@ export interface PropsViseur {
 function ViseurBrut({ protege, conduite, couteau, recharge, refAnneau, ecart = 0, optique = null }: PropsViseur) {
   if (conduite) {
     return (
+      // au volant la vue passe à la 3ᵉ personne (caméra de poursuite) : pas de mire au centre, la voiture y est ; le libellé reste, au-dessus d'elle
       <div className={styles.viseurConduite}>
-        <span className={styles.viseurParentheses} aria-hidden="true">( + )</span>
         <p className={styles.libelleConduite}>CONDUITE : TIR IMPOSSIBLE</p>
       </div>
     );

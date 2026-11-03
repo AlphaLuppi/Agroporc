@@ -31,13 +31,15 @@ export interface PropsInvitesAction {
   reanime?: boolean;
   /** (zombies) barre de la relève : sa variable `--reanim` est écrite en rAF par `useProgressionReanimation` */
   refReanim?: RefObject<HTMLSpanElement | null>;
+  /** conducteur (vue à la 3ᵉ personne) : l'invite passe au-dessus de la voiture, qui occupe le bas du centre de l'écran */
+  conduite?: boolean;
 }
 
 function Touche({ libelle }: { libelle: string }) {
   return libelle ? <kbd>{libelle}</kbd> : null;
 }
 
-function InvitesBrutes({ invite, inviteDetail, toucheInteragir, inviteRecharge, toucheRecharger, assez = true, reanime = false, refReanim }: PropsInvitesAction) {
+function InvitesBrutes({ invite, inviteDetail, toucheInteragir, inviteRecharge, toucheRecharger, assez = true, reanime = false, refReanim, conduite = false }: PropsInvitesAction) {
   if (invite === "acheter" || invite === "porte" || invite === "boite" || invite === "soin" || invite === "atout" || invite === "pap"
     || invite === "courant" || invite === "note") {
     const manque = manqueInvite(inviteDetail, assez);
@@ -76,7 +78,7 @@ function InvitesBrutes({ invite, inviteDetail, toucheInteragir, inviteRecharge, 
   }
   if (invite === "monter" || invite === "descendre") {
     return (
-      <p className={`${styles.plaque} ${styles.invite}`}>
+      <p className={`${styles.plaque} ${styles.invite}`} data-conduite={conduite ? "oui" : undefined}>
         <Touche libelle={toucheInteragir} /> {invite === "monter" ? "Monter" : "Descendre"}
         {invite === "monter" && inviteDetail ? ` (${inviteDetail})` : ""}
         {!toucheInteragir && <span className={styles.inviteSansTouche}> (touche non assignée)</span>}

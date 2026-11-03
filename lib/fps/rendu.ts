@@ -79,6 +79,11 @@ export interface ContexteArmeEnMain {
   vise: boolean;
   /** course à plein régime (coupe l'inspection de l'arme) ; absent = non */
   sprint?: boolean;
+  /**
+   * Changement d'arme (`poseArme` du contrôleur, quickswap.ts) : 0 = en joue, 1 = hors champ, sous l'écran ; l'arme descend en basculant vers
+   * l'avant. Coupe l'inspection. Absent = 0.
+   */
+  abaissement?: number;
 }
 
 export interface ArmeEnMain {
@@ -97,6 +102,11 @@ export interface ArmeEnMain {
   changer(arme: ArmeId): void;
   /** Lance l'animation de rechargement sur `dureeS` secondes. */
   recharger(dureeS: number): void;
+  /**
+   * Coupe l'animation de rechargement (rechargement interrompu par un changement d'arme avant l'insertion du chargeur) : sans elle, après un
+   * swap cancel, le modèle (jamais reconstruit) finirait de remettre un chargeur que le contrôleur n'a pas rempli.
+   */
+  annulerRecharge(): void;
   /** (v7, zombies) arme passée au Pack-a-Punch : camouflage animé (arêtes qui changent de teinte ; v8 : zébrures qui ondulent sur les faces) */
   ameliorer(oui: boolean): void;
   /** (v8, zombies) paire akimbo (seconde arme à gauche) et organe de visée posé sur l'arme ; sans effet s'ils n'ont pas changé */
@@ -126,7 +136,7 @@ export interface ArmeEnMain {
 /**
  * Ouverture d'un viseur optique de l'arme en main (point rouge, holographique, lunette posée, lunette intégrée du sniper). Les viseurs
  * sont CREUX : en visée, l'œil (origine de la caméra) regarde par cette ouverture sans qu'aucune face (boîtier, cadre, carcasse, mire
- * métallique, bras) ne la masque ; seule la vitre, très transparente, est dedans. Cotes dans le repère de `repere`.
+ * métallique, bras) ne la masque ; la fenêtre est entièrement vide (aucune vitre). Cotes dans le repère de `repere`.
  */
 export interface FenetreViseur {
   /** objet qui porte les cotes : la pièce de visée posée, ou le porte-pièces du modèle pour la lunette intégrée du sniper */
@@ -352,6 +362,8 @@ interface ModeleArme {
   tirer(): void;
   coup(): void;
   recharger(dureeS: number): void;
+  /** Coupe l'animation de rechargement (rechargement interrompu) : les pièces reviennent aussitôt à leur place. */
+  annulerRecharge(): void;
   maj(dt: number): void;
   dispose(): void;
 }
@@ -1116,6 +1128,7 @@ function creerModeleArme(id: ArmeId, m: Materiaux, devant: boolean): ModeleArme 
       dureeRech = Math.max(dureeS, 0.3);
       tRech = 0;
     },
+    annulerRecharge() { tRech = -1; modele.progres = 0; },
     maj(dt) {
       tTir += dt;
       if (flashT > 0) { flashT -= dt; if (flashT <= 0) flash.visible = false; }
@@ -1245,24 +1258,14 @@ const RECUL_EN_VISEE = 0.5;
 const RECUL_MAX = 1.3;
 /** Pas de la rehausse d'un viseur (m) : cotes en nombre fini dans le cache des géométries. */
 const PAS_REHAUSSE = 0.0005;
-/** Opacité de la vitre d'un viseur (seule face dans la fenêtre) : un reflet, jamais un écran. */
-const OPACITE_VITRE = 0.08;
 
 /**
  * Pose dans `g` les pièces du viseur `viseur` (plan `plan`, embase rehaussée de `rehausse`), avec les matériaux de l'arme (le camouflage
- * du Pack-a-Punch les habille comme le reste), et rend la vitre (point rouge, holo) : matériau et géométrie propres, presque transparents,
- * sans écriture de profondeur ni texture, à libérer par l'appelant ; null pour une lunette (le HUD prend le relais en visée).
+ * du Pack-a-Punch les habille comme le reste), et rend la vitre : toujours null, la fenêtre reste ENTIÈREMENT vide (aucun voile teinté : on vise
+ * directement par l'ouverture, le point ou le cercle du HUD au centre).
  */
 function construireViseur(g: THREE.Group, viseur: Viseur, plan: PlanViseur, rehausse: number, m: Materiaux): THREE.Mesh | null {
   const L = plan.longueur, avant = -L / 2;
-  const vitreEn = (larg: number, haut: number, y: number, z: number, couleur: number): THREE.Mesh => {
-    const mat = new THREE.MeshBasicMaterial({ color: couleur, transparent: true, opacity: OPACITE_VITRE, depthTest: false, depthWrite: false, side: THREE.DoubleSide });
-    const v = new THREE.Mesh(new THREE.PlaneGeometry(larg, haut), mat);
-    v.position.set(0, y, z);
-    v.userData.vitre = true;
-    g.add(v);
-    return v;
-  };
   if (viseur === "point_rouge") {
     const { demiL: dl, demiH: dh } = plan, cadre = 0.004, prof = 0.022;
     const hs = 0.006 + rehausse, zc = avant + prof / 2, cy = hs + cadre + dh;
@@ -1274,7 +1277,7 @@ function construireViseur(g: THREE.Group, viseur: Viseur, plan: PlanViseur, reha
     // diode sous la fenêtre, derrière le cadre ; molette de réglage sur le flanc droit
     piece(g, geoBoite(0.008, cadre, 0.006), m, 0, hs + cadre / 2, avant + prof + 0.005);
     piece(g, geoBoite(0.006, 0.01, 0.01), m, dl + cadre + 0.003, cy - 0.002, zc + 0.004);
-    return vitreEn(2 * dl, 2 * dh, cy, avant + 0.006, 0x9fdcff);
+    return null;
   }
   if (viseur === "holo") {
     const { demiL: dl, demiH: dh } = plan, cadre = 0.004, prof = 0.014, levre = 0.002;
@@ -1285,7 +1288,7 @@ function construireViseur(g: THREE.Group, viseur: Viseur, plan: PlanViseur, reha
     piece(g, geoBoite(2 * (dl + cadre), cadre, prof), m, 0, cy + dh + cadre / 2, zc);
     // boutons sur les flancs de l'embase, sous la fenêtre
     for (const sx of [-1, 1]) piece(g, geoBoite(0.004, 0.006, 0.01), m, sx * (plan.largeur / 2 + 0.002), hs - 0.004, 0.012);
-    return vitreEn(2 * dl, 2 * dh, cy, zc, 0x9ffff0);
+    return null;
   }
   // lunette (et lunette thermique) : tube OUVERT, cloches et bagues plates aux deux bouts, colliers sur une platine. L'ouverture de
   // l'objectif (rayon `demiL`, à l'avant) borne le champ ; tube, cloches et bagues sont tous à ce rayon au moins de l'axe.
@@ -1639,6 +1642,8 @@ export function creerArmeEnMain(idInitial: ArmeId, couleur: CouleurEntree = COUL
   // Ressort amorti du recul.
   let recul = 0, reculV = 0, ads = 0, phase = 0, amp = 0, air = 0, tAcc = 0;
   const RAIDEUR = 260, AMORTISSEMENT = 21;
+  /** changement d'arme, arme tout en bas (`ctx.abaissement` = 1) : descente (m) et bascule vers l'avant (rad), hors du champ de la caméra */
+  const DESCENTE_CHANGEMENT_M = 0.42, BASCULE_CHANGEMENT_RAD = 0.7;
   const _bouche = new THREE.Vector3();
 
   /**
@@ -1726,6 +1731,7 @@ export function creerArmeEnMain(idInitial: ArmeId, couleur: CouleurEntree = COUL
       reculV = 0;
     },
     recharger(dureeS) { finInspection(); modele.recharger(dureeS); modeleG?.recharger(dureeS); },
+    annulerRecharge() { modele.annulerRecharge(); modeleG?.annulerRecharge(); },
     inspecter() {
       if (tInsp >= 0 || tRapide >= 0 || paire || modele.progres > 0 || lame?.group.visible) return false;
       tInsp = 0;
@@ -1769,7 +1775,8 @@ export function creerArmeEnMain(idInitial: ArmeId, couleur: CouleurEntree = COUL
       modele.maj(dt);
       modeleG?.maj(dt);
       // l'inspection cède dès qu'on vise, qu'on court ou qu'on recharge (le tir, le coup et le changement d'arme la coupent à l'appel)
-      if (tInsp >= 0 && (ctx.vise || ctx.sprint || modele.progres > 0)) finInspection();
+      const baisse = borne(ctx.abaissement ?? 0);
+      if (tInsp >= 0 && (ctx.vise || ctx.sprint || modele.progres > 0 || baisse > 0)) finInspection();
       majInspection(dt);
       orienterBras(brasD, pointModele(modele.prise, true), coudeD);
       orienterBrasG();
@@ -1818,6 +1825,12 @@ export function creerArmeEnMain(idInitial: ArmeId, couleur: CouleurEntree = COUL
         const e = poseInsp.ensemble;
         group.position.x += e.x; group.position.y += e.y; group.position.z += e.z;
         group.rotation.x += e.rx; group.rotation.y += e.ry; group.rotation.z += e.rz;
+      }
+      if (baisse > 0) {
+        // changement d'arme : l'arme quittée plonge sous l'écran, la nouvelle en remonte (hors visée : un changement coupe la mise en joue)
+        group.position.y -= DESCENTE_CHANGEMENT_M * baisse;
+        group.position.z += 0.08 * baisse;
+        group.rotation.x -= BASCULE_CHANGEMENT_RAD * baisse;
       }
       majCoupRapide(dt);
       // Une lunette remplit l'écran (HUD) : l'arme s'efface quand on vise (le sniper, et une arme améliorée à lunette).
@@ -1929,7 +1942,11 @@ const POSE_ACCROUPI = { hancheG: 1.15, hancheD: 1.05, genouG: -2.25, genouD: -2.
 /** Glissade : assis au ras du sol, une jambe repliée sous soi, l'autre tendue devant, buste rejeté en arrière. */
 const POSE_GLISSADE = { hancheG: 1.35, hancheD: 1.45, genouG: -2.65, genouD: -0.15, bassin: 0.22, buste: 0.5 };
 /** Assis dans un véhicule : cuisses à l'horizontale, jambes verticales, buste droit. */
-const POSE_ASSIS = { hancheG: 1.45, hancheD: 1.45, genouG: -1.45, genouD: -1.45, bassin: 0.4, buste: 0 };
+/**
+ * Assis dans une voiture : bassin bas, cuisses un peu relevées, jambes allongées vers le pédalier ; la tête reste sous le toit (1,5 m, testé
+ * dans `rendu-avatar-assis.test.ts` : avant, elle en sortait et se voyait en plein centre de la caméra de poursuite du conducteur).
+ */
+const POSE_ASSIS = { hancheG: 1.6, hancheD: 1.6, genouG: -0.5, genouD: -0.5, bassin: 0.22, buste: 0 };
 const BASSIN_DEBOUT = 0.9;
 /** Mains posées sur le volant, repère du buste (la pose assise ne tient aucune arme). */
 const MAIN_VOLANT_G = new THREE.Vector3(-0.13, -0.3, -0.42);

@@ -147,6 +147,8 @@ export interface PropsHudArene {
   pseudo: string;
   surPseudo(v: string): void;
   surReprendre(): void;
+  /** menu de développement ouvert ou fermé : le jeu lui laisse le clavier (`JeuHandle.menuDev`) */
+  surMenuDev?(ouvert: boolean): void;
   surQuitter(): void;
   // ---- v2 ----
   /** équipement de la prochaine apparition (remplace `surChoisirArme`) */
