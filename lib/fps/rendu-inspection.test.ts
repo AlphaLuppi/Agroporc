@@ -151,3 +151,20 @@ describe("viseur posé et visée", () => {
     arme.dispose();
   });
 });
+
+describe("changement d'arme en deux temps (quickswap.ts)", () => {
+  it("l'abaissement descend l'arme sous l'écran en la basculant, et coupe l'inspection", () => {
+    const arme = creerArmeEnMain("fusil_assaut");
+    jouer(arme, 0.2);
+    const y0 = arme.group.position.y, rx0 = arme.group.rotation.x;
+    arme.maj(PAS, { ...REPOS, abaissement: 1 });
+    expect(arme.group.position.y).toBeLessThan(y0 - 0.35);
+    expect(arme.group.rotation.x).toBeLessThan(rx0 - 0.5);
+    arme.maj(PAS, { ...REPOS, abaissement: 0 });
+    expect(arme.group.position.y).toBeCloseTo(y0, 2);
+    expect(arme.inspecter()).toBe(true);
+    arme.maj(PAS, { ...REPOS, abaissement: 0.2 });
+    expect(arme.inspection).toBe(false);
+    arme.dispose();
+  });
+});

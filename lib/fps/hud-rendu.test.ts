@@ -322,10 +322,10 @@ describe("Viseur, Lunette, RetoursTouche", () => {
     expect(html).not.toContain("--ecart");
   });
 
-  it("conducteur : ( + ) et libellé écrit ; couteau : chevron", () => {
+  it("conducteur (3ᵉ personne) : libellé écrit, sans mire ; couteau : chevron", () => {
     const rendre = (p: Record<string, unknown>) => renderToStaticMarkup(createElement(Viseur, { protege: false, conduite: false, couteau: false, recharge: false, refAnneau: refDiv, ...p } as never));
     const c = rendre({ conduite: true });
-    expect(c).toContain("( + )");
+    expect(c).not.toContain("( + )");
     expect(c).toContain("CONDUITE : TIR IMPOSSIBLE");
     expect(rendre({ couteau: true })).toContain("chevronPortee");
   });
@@ -376,6 +376,12 @@ describe("InvitesAction", () => {
     expect(rendre({ invite: "monter", inviteDetail: "2/4" })).toMatch(/<kbd>E<\/kbd> Monter \(2\/4\)/);
     expect(rendre({ invite: "descendre" })).toMatch(/<kbd>E<\/kbd> Descendre/);
     expect(rendre({ invite: "monter", inviteDetail: "2/4", toucheInteragir: "" })).toContain("touche non assignée");
+  });
+
+  it("conducteur (vue à la 3ᵉ personne) : l'invite est marquée pour passer au-dessus de la voiture ; sinon à sa place habituelle", () => {
+    expect(rendre({ invite: "descendre", conduite: true })).toContain('data-conduite="oui"');
+    expect(rendre({ invite: "descendre" })).not.toContain("data-conduite");
+    expect(rendre({ invite: "monter", inviteDetail: "1/4" })).not.toContain("data-conduite");
   });
 
   it("recharger quand le chargeur est critique, sinon rien", () => {
@@ -1051,12 +1057,12 @@ describe("HudArene en Battle Royale", () => {
     // (fusion) le sélecteur de viseur de la barre a ses propres boutons `aria-pressed` : le sélecteur COMPACT, lui, a des boutons nommés d'après les armes
     expect(html).not.toMatch(/<button[^>]*aria-pressed[^>]*>(Mitraillette|Pompe|Sniper|Pistolet|Couteau)<\/button>/);
     expect(html).toContain("Viseur");
-    // souris libre (Échap) : la barre reste, sans l'aide « Échap : souris », et le menu pause ne double pas le choix d'équipement
+    // vrai menu pause (Échap) pendant la mort : la barre, au-dessus de lui, en masquerait le bas (chat vocal, réglages) ; elle s'efface et le menu
+    // reprend le choix d'équipement, la barre revient à sa fermeture
     const libre = arene({ ...mort, verrouille: false });
-    expect(libre).toContain("Armes de la prochaine apparition");
-    expect(libre).not.toContain("Échap : souris");
+    expect(libre).not.toContain("Armes de la prochaine apparition");
     expect(libre).toContain("Menu pause");
-    expect(libre).not.toContain("Équipement de la prochaine apparition");
+    expect(libre).toContain("Équipement de la prochaine apparition");
     // entracte : la barre prend la place du sélecteur compact du podium
     const entracte = arene({ ...HUD_BR, mode: "arene" as const }, { match: { numero: 2, fin: null, objectif: 30, phase: "entracte", prochain: 110_000 } });
     expect(entracte).toContain("Armes de la prochaine apparition");
@@ -1066,5 +1072,28 @@ describe("HudArene en Battle Royale", () => {
     expect(arene({ ...HUD_BR, mode: "arene" as const })).not.toContain("Armes de la prochaine apparition");
     expect(rendre({ ...HUD_BR, mort: true, killcamPhase: "" })).not.toContain("Armes de la prochaine apparition");
     expect(arene({ ...mort, mode: "zombies" as const })).not.toContain("Armes de la prochaine apparition");
+  });
+  it("souris rendue par le jeu à la mort (souris-mort.ts) : écran de mort et barre cliquable, sans menu pause ; réapparu, invite de reprise", () => {
+    const arene = (hud: HudEtat, plus: Record<string, unknown> = {}) => rendre(hud, { br: null, etatBr: undefined, ...plus });
+    const mort = { ...HUD_BR, mode: "arene" as const, mort: true, killcamPhase: "rejeu" as const, killcam: 0.3, verrouille: false, sourisRendue: true };
+    const html = arene(mort, { derniereMort: { par: "Marc", parCouleur: "#ccbbaa", arme: "pompe", cause: "arme", zone: "corps", tueur: null } });
+    expect(html).toContain("Armes de la prochaine apparition");
+    expect(html).toMatch(/<input[^>]*type="radio"/); // tuiles radio natives : cliquables
+    expect(html).toContain("1 2 3 : arme suivante · Échap : menu");
+    expect(html).not.toContain("Menu pause");
+    expect(html).not.toContain("Cliquez pour reprendre");
+    // carte du tueur : toujours pas de menu pause
+    expect(arene({ ...mort, killcamPhase: "carte", killcam: 0.9, reapparitionDans: 2 })).not.toContain("Menu pause");
+    // entracte : podium et barre, sans menu pause
+    const entracte = arene({ ...HUD_BR, mode: "arene" as const, verrouille: false, sourisRendue: true }, { match: { numero: 2, fin: null, objectif: 30, phase: "entracte", prochain: 110_000 } });
+    expect(entracte).toContain("Armes de la prochaine apparition");
+    expect(entracte).not.toContain("Menu pause");
+    // réapparu, souris pas encore reprise : invite discrète, ni menu pause ni barre
+    const reapparu = arene({ ...HUD_BR, mode: "arene" as const, verrouille: false, sourisRendue: true });
+    expect(reapparu).toContain("Cliquez pour reprendre");
+    expect(reapparu).not.toContain("Menu pause");
+    expect(reapparu).not.toContain("Armes de la prochaine apparition");
+    // souris reprise : plus d'invite
+    expect(arene({ ...HUD_BR, mode: "arene" as const, verrouille: true, sourisRendue: false })).not.toContain("Cliquez pour reprendre");
   });
 });

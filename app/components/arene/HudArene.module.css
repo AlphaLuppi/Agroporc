@@ -118,10 +118,9 @@
   -webkit-mask: radial-gradient(circle, transparent calc(50% - 4px), var(--ag-ground) calc(50% - 3px));
   mask: radial-gradient(circle, transparent calc(50% - 4px), var(--ag-ground) calc(50% - 3px));
 }
-/* conducteur : ( + ) gris et libellé */
-.viseurConduite { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; gap: calc(10 * var(--u)); }
-.viseurParentheses { font: 500 max(11px, calc(22 * var(--u)))/1 var(--ag-mono), monospace; color: var(--ag-ink-dim); letter-spacing: 0.1em; }
-.libelleConduite { margin: calc(24 * var(--u)) 0 0; padding: calc(3 * var(--u)) calc(10 * var(--u)); background: var(--ag-hud-fond); font-size: max(11px, calc(12 * var(--u))); letter-spacing: 0.14em; color: var(--ag-ink-dim); white-space: nowrap; }
+/* conducteur (vue à la 3e personne) : libellé seul, au-dessus de la voiture et de l’invite « Descendre » (à l’arrêt, la voiture descend jusqu’à 77 % de la hauteur) */
+.viseurConduite { position: absolute; left: 50%; top: 32%; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; gap: calc(10 * var(--u)); }
+.libelleConduite { margin: 0; padding: calc(3 * var(--u)) calc(10 * var(--u)); background: var(--ag-hud-fond); font-size: max(11px, calc(12 * var(--u))); letter-spacing: 0.14em; color: var(--ag-ink-dim); white-space: nowrap; }
 
 /* ---------- lunette (§5.3) : cache noir en cercle de 39 vmin, blocs de coin sur noir plein ---------- */
 .lunette { position: absolute; inset: 0; background: radial-gradient(circle at 50% 50%, transparent 0, transparent 39vmin, var(--ag-ground) 39.4vmin); }
@@ -241,6 +240,7 @@
   position: absolute; z-index: 7; left: 50%; top: 62%; transform: translateX(-50%); margin: 0; padding: calc(4 * var(--u)) calc(14 * var(--u)); min-height: calc(28 * var(--u));
   display: flex; align-items: center; gap: calc(8 * var(--u)); font-size: max(11px, calc(16 * var(--u))); letter-spacing: 0.06em; white-space: nowrap;
 }
+.invite[data-conduite="oui"] { top: 38%; } /* conducteur : au-dessus du toit de la voiture (vue à la 3e personne) */
 .inviteDanger { border-color: var(--ag-danger); color: var(--ag-danger); font-weight: 600; letter-spacing: 0.12em; }
 .inviteSansTouche { color: var(--ag-ink-dim); }
 .toast {
@@ -395,6 +395,8 @@
 
 /* ---------- connexion, aide du premier lancement ---------- */
 .reseau { position: absolute; z-index: 6; top: calc(96 * var(--u)); left: 50%; transform: translateX(-50%); margin: 0; padding: calc(6 * var(--u)) calc(12 * var(--u)); font-size: max(11px, calc(14 * var(--u))); border-color: var(--ag-danger); color: var(--ag-danger); }
+/* réapparu souris rendue (souris-mort.ts) : invite discrète sous le viseur, le clic traverse le HUD jusqu'au jeu */
+.reprise { position: absolute; z-index: 6; top: calc(50% + 72 * var(--u)); left: 50%; transform: translateX(-50%); margin: 0; padding: calc(6 * var(--u)) calc(14 * var(--u)); font-size: max(11px, calc(14 * var(--u))); color: var(--ag-ink); white-space: nowrap; }
 .aide { position: absolute; z-index: 4; left: 50%; bottom: calc(110 * var(--u)); transform: translateX(-50%); width: min(calc(700 * var(--u)), 56vw); padding: calc(10 * var(--u)) calc(14 * var(--u)); animation: filEntree 0.5s ease; text-shadow: none; }
 .aideListe { display: grid; grid-template-columns: 1fr 1fr; gap: calc(4 * var(--u)) calc(18 * var(--u)); font-size: max(11px, calc(12 * var(--u))); color: var(--ag-ink); }
 .aideListe p { margin: 0; }

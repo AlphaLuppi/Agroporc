@@ -188,11 +188,12 @@ export function cadrageGl(tuile: Rect, visible: Rect, canvas: Rect): { viewport:
 export const aspectTuile = (r: Rect): number => (r.h > 0 ? Math.max(0.2, r.w / r.h) : 1);
 
 /**
- * Ligne d'aide sous la barre quand la souris est prise : les touches réelles du joueur (jamais « 1 2 3 » écrit en dur) ; les touches sans
+ * Ligne d'aide sous la barre (mort, entracte, souris prise ou rendue par le jeu) : les touches réelles du joueur (jamais « 1 2 3 » écrit en dur) ; les touches sans
  * assignation (« non assignée », « — », vide) sont écartées.
  */
 export function aideBarreArmes(touchePrincipale: string, toucheSecondaire: string, toucheBlanche: string): string {
   const touches = [touchePrincipale, toucheSecondaire, toucheBlanche].filter((t) => t && t !== "—" && t !== "non assignée");
-  const cliquer = "Échap : souris";
+  // la souris est rendue par le jeu à la mort et à l'entracte (souris-mort.ts) : les tuiles se cliquent, Échap ouvre le menu pause
+  const cliquer = "Échap : menu";
   return touches.length === 0 ? cliquer : `${touches.join(" ")} : arme suivante · ${cliquer}`;
 }

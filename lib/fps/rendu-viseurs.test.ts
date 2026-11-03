@@ -170,19 +170,13 @@ describe("viseurs creux de l'arme en main", () => {
     }
   });
 
-  it.each(CAS.map((c) => [nom(c), c] as const))("%s : fenêtre centrée sur l'axe, vitre presque transparente", (_n, c) => {
+  it.each(CAS.map((c) => [nom(c), c] as const))("%s : fenêtre centrée sur l'axe et entièrement vide", (_n, c) => {
     const { arme, f } = enJoue(c);
     const centre = f.repere.localToWorld(f.centre.clone());
     expect(Math.hypot(centre.x, centre.y), nom(c)).toBeLessThan(0.002);
     expect(centre.z).toBeLessThan(-0.05);
-    if (f.vitre) {
-      const mat = f.vitre.material as THREE.MeshBasicMaterial;
-      expect(mat.transparent).toBe(true);
-      expect(mat.opacity).toBeLessThanOrEqual(0.1);
-      expect(mat.depthWrite).toBe(false);
-      expect(mat.map).toBeNull();
-      expect(descendDe(f.vitre, f.piece)).toBe(true);
-    }
+    // aucune vitre : la fenêtre est entièrement vide, rien ne teinte la vue
+    expect(f.vitre).toBeNull();
     arme.dispose();
   });
 

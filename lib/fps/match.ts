@@ -37,6 +37,7 @@ import { armeDuSlot, couteauTenable, depuisAlias, estPrincipale, estSecondaire, 
 import { creerServiceGrenades } from "./match-grenades";
 import { degatsGrenadeJoueur, souffleAtteint } from "./grenades";
 import { minutageCoupRapide } from "./coup-rapide";
+import { CHANGEMENT_ARME, changerArme } from "./quickswap";
 import type {
   ContexteSalle, JoueurSalle, ResumeBr, ResumeZombies, ServiceBr, ServiceElsa, ServiceEvenements, ServiceGrenades, ServicePolice, ServiceTigres, ServiceVehicules, ServiceZombies, Sortie,
 } from "./match-contexte";
@@ -870,6 +871,7 @@ export class Salle implements ContexteSalle {
     j.arme = armeDuSlot(j.equip, j.main) ?? armeDuSlot(j.equip, "couteau") ?? j.equip.secondaire;
     j.munSpeciale = j.equip.speciale ? opts.munSpeciale ?? 0 : 0;
     j.sortieJusqua = maintenant;
+    j.changementArme = null;
     j.cadenceArme = {};
     j.prochainTir = -Infinity;
     j.pv = opts.pv;
@@ -918,7 +920,10 @@ export class Salle implements ContexteSalle {
     j.equip = copierEquipement(equip);
     j.main = main;
     j.arme = arme;
-    if (change) j.sortieJusqua = maintenant + JEU.degainageMs;
+    if (change) {
+      j.sortieJusqua = maintenant + JEU.degainageMs;
+      j.changementArme = null; // dégainage imposé (achat, boîte) : pas de swap cancel par-dessus (comme `debuterSortie` du client)
+    }
     return [{
       a: j.id,
       m: { t: "equipement", equip: copierEquipement(j.equip), main: j.main, munSpeciale: j.munSpeciale, ...(ravitaille ? { ravitaille } : {}) },
@@ -1423,7 +1428,8 @@ export class Salle implements ContexteSalle {
   }
 
   /**
-   * Changement d'arme en main : le slot doit porter une arme (la spéciale, des munitions) ; aucun tir ni recharge pendant `degainageMs`.
+   * Changement d'arme en main : le slot doit porter une arme (la spéciale, des munitions) ; aucun tir ni recharge pendant `degainageMs`, sauf
+   * retour à l'arme qu'on vient de quitter pendant le changement (swap cancel, `changerArme` de quickswap.ts : 50 à 120 ms).
    * (v10, zombies) l'Arme 3 est un emplacement ordinaire (munitions comptées par le client) ; l'arme blanche seule est refusée à partir de deux
    * armes à feu.
    */
@@ -1434,9 +1440,14 @@ export class Salle implements ContexteSalle {
     if (this.zombies && slot === "couteau" && !couteauTenable(j.equip)) return [];
     const suivi = this.suivi.get(j.id);
     if (suivi) suivi.precedent = j.main;
+    // swap cancel (quickswap.ts) : un retour à l'arme qu'on vient de quitter pendant le changement la rend prête plus tôt (même règle que le client)
+    const r = changerArme(j.changementArme ?? null, {
+      depuis: j.main, armeDepuis: j.arme, vers: slot, armeVers: arme, t: maintenant, pretActuel: j.sortieJusqua, margeMs: CHANGEMENT_ARME.margeServeurMs,
+    });
     j.main = slot;
     j.arme = arme;
-    j.sortieJusqua = maintenant + JEU.degainageMs;
+    j.sortieJusqua = r.pret;
+    j.changementArme = r.changement;
     this.br?.surDegats(j, "arme", maintenant); // BR : changer d'arme interrompt l'usage d'un soin
     return [];
   }
@@ -1591,6 +1602,8 @@ export class Salle implements ContexteSalle {
   /**
    * Cadence par arme (un aller-retour d'arme ne contourne pas la cadence du sniper). 85 % de l'intervalle nominal ; crédit de rafale pour
    * la gigue réseau : un demi-intervalle (une fois), ou pour une arme automatique `max(3 intervalles, 200 ms)`. Vrai et cadence avancée si le tir passe.
+   * Un tir ou un coup qui passe efface aussi le changement d'arme en cours (quickswap.ts) : on ne peut plus revenir à l'arme quittée en swap
+   * cancel après s'être servi de la nouvelle (sinon : sniper → revolver → sniper en 245 ms au lieu de 490, avec un client modifié).
    */
   private cadenceOk(j: JoueurSalle, arme: ArmeId | `${ArmeId}:g`, cadenceS: number, auto: boolean, maintenant: number): boolean {
     const intervalle = cadenceS * 1000 * TOLERANCE_CADENCE;
@@ -1598,6 +1611,7 @@ export class Salle implements ContexteSalle {
     if (maintenant < prochain) return false;
     const credit = auto ? Math.max(CREDIT_RAFALE_AUTO * intervalle, CREDIT_RAFALE_AUTO_MS) : CREDIT_RAFALE * intervalle;
     j.cadenceArme[arme] = Math.max(prochain, maintenant - credit) + intervalle;
+    j.changementArme = null;
     return true;
   }
 
@@ -1809,6 +1823,7 @@ export class Salle implements ContexteSalle {
     j.main = retour;
     j.arme = armeDuSlot(j.equip, retour) ?? j.equip.principale;
     j.sortieJusqua = maintenant + JEU.degainageMs;
+    j.changementArme = null; // spéciale épuisée : dégainage imposé, sans swap cancel
     return [{ a: j.id, m: { t: "equipement", equip: copierEquipement(j.equip), main: j.main, munSpeciale: 0 } }];
   }
 
@@ -2320,6 +2335,7 @@ export class Salle implements ContexteSalle {
     j.arme = armeDuSlot(j.equip, j.main) ?? j.equip.secondaire;
     j.munSpeciale = 0;
     j.sortieJusqua = maintenant;
+    j.changementArme = null;
     j.cadenceArme = {};
     j.prochainTir = -Infinity;
     // une rentrée qui restaure la santé d'un joueur sorti en vie n'est pas une vraie réapparition : pas de protection (pas d'échappatoire)

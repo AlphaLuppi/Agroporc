@@ -613,3 +613,145 @@ describe("ControleurArmes.ajouterReserve (boîtes de munitions du Battle Royale)
     expect(c.reserveDe("pistolet")).toBe(2 * CAP);
   });
 });
+
+describe("ControleurArmes : swap cancel et reload cancel (quickswap.ts)", () => {
+  it("aller-retour rapide : l'arme d'origine est prête en 50 à 120 ms au lieu de 350", () => {
+    const c = new ControleurArmes(equip());
+    expect(c.equiper("secondaire", 1000)).toBe(true);
+    expect(c.rapide(1080)).toBe(true); // Q : retour au fusil d'assaut
+    expect(c.armeEnMain()).toBe("fusil_assaut");
+    expect(c.annulationEnCours(1080)).toBe(true);
+    expect(c.peutTirer(1080 + 49)).toBe(false);
+    expect(c.peutTirer(1080 + 120)).toBe(true);
+    expect(c.degainageProgression(1080)).toBe(0);
+    expect(c.degainageProgression(1080 + 120)).toBe(1);
+  });
+
+  it("la molette et les touches 1 / 2 / 3 annulent aussi ; un changement vers une troisième arme non", () => {
+    const c = new ControleurArmes(equip());
+    c.equiper("secondaire", 1000);
+    c.equiper("principale", 1100);
+    expect(c.peutTirer(1100 + 120)).toBe(true);
+    const d = new ControleurArmes(equip());
+    d.equiper("secondaire", 1000);
+    d.equiper("couteau", 1400); // pistolet sorti
+    d.equiper("secondaire", 1450); // retour à l'arme quittée (pistolet) : annulation
+    expect(d.peutTirer(1450 + 120)).toBe(true);
+    // pistolet quitté avant d'être sorti : l'aller-retour ne le rend pas prêt avant la fin de son dégainage (anti-triche)
+    const f = new ControleurArmes(equip());
+    f.equiper("secondaire", 1000);
+    f.equiper("couteau", 1100);
+    f.equiper("secondaire", 1150);
+    expect(f.peutTirer(1000 + DEG - 1)).toBe(false);
+    expect(f.peutTirer(1000 + DEG)).toBe(true);
+    const e = new ControleurArmes(equip());
+    e.equiper("secondaire", 1000);
+    e.equiper("couteau", 1100); // troisième arme : changement simple
+    expect(e.degainage(1100 + DEG - 1)).toBe(true);
+  });
+
+  it("pas d'annulation après la fin du changement : un nouveau dégainage complet", () => {
+    const c = new ControleurArmes(equip());
+    c.equiper("secondaire", 1000);
+    c.rapide(1000 + DEG);
+    expect(c.peutTirer(1000 + DEG + DEG - 1)).toBe(false);
+    expect(c.peutTirer(1000 + DEG + DEG)).toBe(true);
+  });
+
+  it("poseArme : l'arme quittée descend puis la nouvelle monte ; en swap cancel l'arme d'origine remonte d'où elle est", () => {
+    const c = new ControleurArmes(equip());
+    c.equiper("secondaire", 1000);
+    expect(c.poseArme(1070).arme).toBe("fusil_assaut");
+    expect(c.poseArme(1200).arme).toBe("pistolet");
+    expect(c.poseArme(1000 + DEG)).toEqual({ arme: "pistolet", abaissement: 0 });
+    const avant = c.poseArme(1100).abaissement;
+    c.rapide(1100);
+    const apres = c.poseArme(1100);
+    expect(apres.arme).toBe("fusil_assaut");
+    expect(apres.abaissement).toBeCloseTo(avant, 5);
+    expect(c.poseArme(1100 + 120).abaissement).toBe(0);
+  });
+
+  it("reload cancel : quitter l'arme après l'insertion du chargeur (75 %) garde le rechargement ; avant, il est perdu", () => {
+    const duree = STATS.fusil_assaut.rechargeS * 1000;
+    const c = new ControleurArmes(equip());
+    let t = tirer(c, 5, 0);
+    expect(c.demarrerRecharge(t)).toBe(true);
+    c.equiper("secondaire", t + duree * 0.8);
+    c.rapide(t + duree * 0.8 + 30);
+    expect(c.armeEnMain()).toBe("fusil_assaut");
+    expect(c.munitions()).toBe(STATS.fusil_assaut.chargeur);
+    expect(c.rechargeEnCours()).toBe(false);
+    const d = new ControleurArmes(equip());
+    t = tirer(d, 5, 0);
+    d.demarrerRecharge(t);
+    d.equiper("secondaire", t + duree * 0.7);
+    d.rapide(t + duree * 0.7 + 30);
+    expect(d.munitions()).toBe(STATS.fusil_assaut.chargeur - 5);
+  });
+
+  it("reload cancel avec réserve limitée (zombies) : le chargeur puise dans la réserve", () => {
+    const duree = STATS.pistolet.rechargeS * 1000;
+    const c = new ControleurArmes({ principale: "fusil_assaut", secondaire: "pistolet", speciale: null }, "secondaire", { reserveChargeurs: 1 });
+    const t = tirer(c, 3, 0);
+    const reserve = c.reserveDe("pistolet");
+    c.demarrerRecharge(t);
+    c.equiper("principale", t + duree * 0.9);
+    expect(c.munitionsDe("pistolet")).toBe(STATS.pistolet.chargeur);
+    expect(c.reserveDe("pistolet")).toBe(reserve - 3);
+  });
+
+  it("pas de changement pendant un coup de couteau rapide ; une apparition efface le changement en cours", () => {
+    const c = new ControleurArmes(equip());
+    c.equiper("secondaire", 1000);
+    c.appliquerServeur({ t: "apparition", id: "a", p: [0, 0, 0], lacet: 0, arme: "pistolet", pv: 100, bouclier: 0, equip: equip(), main: "secondaire", munSpeciale: 0 }, 1050);
+    expect(c.equiper("principale", 1060)).toBe(true);
+    expect(c.degainage(1060 + DEG - 1)).toBe(true); // pas d'annulation : l'apparition a remis le changement à zéro
+  });
+
+  it("changements enchaînés (molette rapide) : l'arme visible repart de sa hauteur, jamais remontée d'un coup en joue", () => {
+    const c = new ControleurArmes(equip());
+    c.equiper("secondaire", 1000); // fusil → pistolet
+    const a = c.poseArme(1070); // le fusil descend
+    expect(a.arme).toBe("fusil_assaut");
+    expect(a.abaissement).toBeGreaterThan(0.2);
+    c.equiper("couteau", 1070); // pistolet → couteau alors que le fusil est encore à mi-hauteur
+    const b = c.poseArme(1070);
+    expect(b.arme).toBe("fusil_assaut");
+    expect(b.abaissement).toBeCloseTo(a.abaissement, 5);
+    // il continue de descendre puis le couteau monte
+    expect(c.poseArme(1150).abaissement).toBeGreaterThan(a.abaissement);
+    expect(c.poseArme(1070 + DEG).arme).toBe("couteau");
+    // pendant que la nouvelle arme monte : elle redescend d'où elle est
+    const d = new ControleurArmes(equip());
+    d.equiper("secondaire", 1000);
+    const monte = d.poseArme(1250);
+    expect(monte.arme).toBe("pistolet");
+    d.equiper("couteau", 1250);
+    expect(d.poseArme(1250)).toEqual({ arme: "pistolet", abaissement: monte.abaissement });
+  });
+
+  it("rechargement interrompu avant l'insertion : compté (le rendu coupe l'animation) ; acquis ou fini : non", () => {
+    const duree = STATS.fusil_assaut.rechargeS * 1000;
+    const c = new ControleurArmes(equip());
+    let t = tirer(c, 5, 0);
+    const n0 = c.rechargesInterrompues;
+    c.demarrerRecharge(t);
+    c.equiper("secondaire", t + duree * 0.3);
+    c.rapide(t + duree * 0.3 + 30); // swap cancel : même arme, même modèle, rechargement perdu
+    expect(c.rechargesInterrompues).toBe(n0 + 1);
+    expect(c.rechargeEnCours()).toBe(false);
+    // après l'insertion : acquis, pas interrompu
+    t = t + duree * 0.3 + 30 + 1000;
+    c.demarrerRecharge(t);
+    c.equiper("secondaire", t + duree * 0.8);
+    expect(c.rechargesInterrompues).toBe(n0 + 1);
+    // rechargement mené à son terme : pas interrompu
+    c.equiper("principale", t + duree * 0.8 + DEG);
+    t = tirer(c, 2, t + duree * 0.8 + 2 * DEG);
+    c.demarrerRecharge(t);
+    expect(c.majRecharge(t + duree + 1)).toBe(true);
+    expect(c.rechargesInterrompues).toBe(n0 + 1);
+  });
+});
+

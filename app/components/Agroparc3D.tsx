@@ -1088,6 +1088,7 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
           pseudo={pseudoSaisi}
           surPseudo={saisirPseudo}
           surReprendre={() => jeuRef.current?.verrouiller()}
+          surMenuDev={(ouvert) => jeuRef.current?.menuDev?.(ouvert)}
           surQuitter={quitterArene}
           actionsSansTouche={actionsSansTouche(touches)}
           equipement={equipement}

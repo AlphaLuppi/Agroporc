@@ -80,6 +80,7 @@ export function creerServiceElsa(ctx: ContexteSalle, opts: OptionsServiceElsa): 
         j.arme = offre.arme;
         delete j.cadenceArme[offre.arme];
         j.sortieJusqua = maintenant + JEU.degainageMs;
+        j.changementArme = null; // dégainage imposé : pas de swap cancel par-dessus
         sorties.push({ a: j.id, m: { t: "equipement", equip: { ...j.equip }, main: j.main, munSpeciale: j.munSpeciale } });
         // la formule du jour de la patronne ajoute le soin complet à l'arme (le snap suivant porte les nouveaux PV et bouclier)
         if (offre.vendeuse === "patronne") soinComplet(j);
