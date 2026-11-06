@@ -41,6 +41,11 @@ import { actionsSansTouche, ecrireTouches, lireTouches, stockageNavigateur, type
 import { ecrireReglagesVoix, lireReglagesVoix, type ReglagesVoix } from "@/lib/fps/voix";
 import { useReglagesHud } from "./arene/hud/useReglagesHud";
 import { CLASSEMENT_INDISPONIBLE, EnregistrerScore, PanneauClassement } from "./ClassementTigre";
+import type { ConfigMatch, HudRocket as EtatHudRocket, JeuRocketHandle, ReglagesRocket } from "@/lib/rocket/contrat";
+import { configInitiale, configPourLancer, ecrireConfig } from "@/lib/rocket/lobby";
+import { ecrireReglages, lireReglages } from "@/lib/rocket/reglages";
+import HudRocketUi from "./rocket/HudRocket";
+import LobbyRocket from "./rocket/LobbyRocket";
 import styles from "./Agroparc3D.module.css";
 
 const display = Chakra_Petch({ subsets: ["latin"], weight: ["400", "600", "700"], variable: "--ag-display", display: "swap" });
@@ -189,7 +194,7 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
   const [message, setMessage] = useState<{ id: number; texte: string } | null>(null);
   const ouvrirClassement = (v: boolean) => {
     setClassementOuvert(v);
-    if (v) setSelected(null);
+    if (v) { setSelected(null); setRocketOuvert(false); }
     try { localStorage.setItem(CLE_CLASSEMENT, v ? "1" : "0"); } catch { /* stockage indisponible : état non retenu */ }
   };
   // Mode choisi sur le site : les jauges le suivent, la vue ne le modifie pas.
@@ -220,6 +225,22 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
   // mini-map et taille de l'interface (clés `pdj-fps-minimap` et `pdj-fps-hud`), réglables au lobby comme en pause
   const [reglagesHud, setReglagesHud] = useReglagesHud();
   const [tactile, setTactile] = useState(false);
+  // ---------- Rocket Muche (jeu local, sans serveur) ----------
+  // Même principe que l'arène : canvas NEUF à chaque entrée / sortie (`cleCanvas`), la vue aérienne est détruite pendant la partie.
+  const [rocketOuvert, setRocketOuvert] = useState(false);
+  const [enRocket, setEnRocket] = useState(false);
+  const [configRocket, setConfigRocket] = useState<ConfigMatch>(() => configInitiale(stockageNavigateur(), pseudoInitial()));
+  const [reglagesRocket, setReglagesRocket] = useState<ReglagesRocket>(() => lireReglages(stockageNavigateur()));
+  const [hudRocket, setHudRocket] = useState<EtatHudRocket | null>(null);
+  const [manette, setManette] = useState(false);
+  const [erreurRocket, setErreurRocket] = useState<string | null>(null);
+  const jeuRocketRef = useRef<JeuRocketHandle | null>(null);
+  /** configuration (graine comprise) du match lancé : lue par l'effet qui monte le jeu */
+  const configLanceeRef = useRef<ConfigMatch>(configRocket);
+  const reglagesRocketRef = useRef(reglagesRocket);
+  reglagesRocketRef.current = reglagesRocket;
+  const enRocketRef = useRef(enRocket);
+  enRocketRef.current = enRocket;
   // mode de jeu mémorisé : présélectionne la carte du choix du mode (v5) ; le panneau l'envoie à son ouverture
   const [modeMemo, setModeMemo] = useState<ModeSalle>(modeInitial);
   const jeuRef = useRef<JeuHandle | null>(null);
@@ -262,6 +283,18 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
   useEffect(() => {
     setTactile(matchMedia("(pointer: coarse)").matches && !matchMedia("(any-pointer: fine)").matches);
   }, []);
+  // Rocket Muche : une manette branchée lève la restriction du tactile (la Gamepad API ne la signale qu'après un premier appui sur un bouton)
+  useEffect(() => {
+    const lire = () => setManette(Array.from(navigator.getGamepads?.() ?? []).some((g) => !!g?.connected));
+    lire();
+    window.addEventListener("gamepadconnected", lire);
+    window.addEventListener("gamepaddisconnected", lire);
+    return () => { window.removeEventListener("gamepadconnected", lire); window.removeEventListener("gamepaddisconnected", lire); };
+  }, []);
+  // un seul panneau à droite : « Arène » ou un restaurant ouvert referme celui de Rocket Muche
+  useEffect(() => {
+    if (areneOuverte || selected) setRocketOuvert(false);
+  }, [areneOuverte, selected]);
   // Le pseudo saisi part au serveur après une courte pause de frappe (message « pseudo », sans
   // reconnexion : possible aussi en pleine partie, depuis le menu pause).
   useEffect(() => {
@@ -391,6 +424,51 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
   };
   const quitterRef = useRef(quitterArene);
   quitterRef.current = quitterArene;
+
+  // ---------- Rocket Muche ----------
+  /** Ouvre ou ferme le panneau « Rocket Muche » (il referme « Arène », le classement et le restaurant choisi). */
+  const basculerPanneauRocket = () => {
+    entreeAuto.current = null;
+    setSelected(null);
+    setAreneOuverte(false);
+    setErreurRocket(null);
+    setRocketOuvert((o) => !o);
+  };
+  /** Charge d'avance three et le jeu quand le joueur survole « Lancer » : le lancement attend moins. Sans effet s'ils sont déjà chargés. */
+  const precharger = () => { void import("@/lib/rocket/jeu").catch(() => { /* le lancement montrera l'erreur */ }); };
+  /** « Lancer » : config normalisée avec une graine neuve (mémorisée sans elle), canvas neuf, panneau fermé, vue aérienne détruite. */
+  const lancerRocket = () => {
+    if (!scene || enRocket) return;
+    const config = configPourLancer(configRocket, Math.random());
+    ecrireConfig(config, stockageNavigateur());
+    configLanceeRef.current = config;
+    setConfigRocket({ ...config });
+    setErreurRocket(null);
+    setSelected(null);
+    setAreneOuverte(false);
+    setRocketOuvert(false);
+    setCleCanvas((k) => k + 1);
+    setEnRocket(true);
+  };
+  /** Sortie de la partie (menu pause, écran de fin, échec du démarrage) : vue aérienne recréée, panneau Rocket rouvert. */
+  const quitterRocket = () => {
+    setCleCanvas((k) => k + 1);
+    setEnRocket(false);
+    setRocketOuvert(true);
+  };
+  /** Sort de la partie ET referme le panneau (retour à la vue Agroparc). */
+  const quitterRocketEtFermer = () => {
+    quitterRocket();
+    setRocketOuvert(false);
+  };
+  const quitterRocketRef = useRef(quitterRocket);
+  quitterRocketRef.current = quitterRocket;
+  /** Réglages de Rocket Muche : appliqués en direct au jeu, mémorisés (`pdj-rocket-reglages`). */
+  const reglerRocket = (r: ReglagesRocket) => {
+    setReglagesRocket(r);
+    jeuRocketRef.current?.reglages(r);
+    ecrireReglages(r, stockageNavigateur());
+  };
   /**
    * Zombies et Battle Royale : le jeu n'a pas pu se monter alors que nous sommes admis à la partie. Sans `rejoindre` il n'y a pas de message `quitter` qui vaille
    * (le serveur ne retire que les joueurs en jeu) : l'admis resterait un « fantôme debout » qui empêche la défaite. On quitte la salle, une fois
@@ -515,15 +593,15 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
   useEffect(() => {
     if (basculeVue.current) rootRef.current?.focus({ preventScroll: true });
     basculeVue.current = true;
-  }, [enArene]);
+  }, [enArene, enRocket]);
 
   // Échap ferme la vue, sauf dans un champ de saisie (le champ gère alors Échap lui-même).
   const fermerRef = useRef(onClose);
   fermerRef.current = onClose;
   useEffect(() => {
     const surTouche = (e: KeyboardEvent) => {
-      // En arène, Échap libère la souris (menu pause) : il ne ferme jamais la vue.
-      if (e.key !== "Escape" || e.defaultPrevented || enAreneRef.current || dansUnChamp(e.target)) return;
+      // En arène, Échap libère la souris (menu pause) : il ne ferme jamais la vue ; dans Rocket Muche le jeu l'écoute lui-même (pause).
+      if (e.key !== "Escape" || e.defaultPrevented || enAreneRef.current || enRocketRef.current || dansUnChamp(e.target)) return;
       e.preventDefault();
       fermerRef.current?.();
     };
@@ -581,7 +659,7 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
 
   useEffect(() => {
     // En arène, c'est lib/fps/jeu.ts qui dessine : la vue aérienne est détruite puis recréée à la sortie.
-    if (!scene || enArene || !canvasRef.current || !labelsRef.current) return;
+    if (!scene || enArene || enRocket || !canvasRef.current || !labelsRef.current) return;
     let handle: SceneHandle | null = null;
     let cancelled = false;
     import("@/lib/agroparc3d/scene")
@@ -593,7 +671,7 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
           setEvents((evs) => [...evs, { id: now.getTime() + Math.random(), time, tag, text }].slice(-3));
         };
         handle = createAgroparcScene(canvasRef.current, labelsRef.current, scene.data, {
-          onSelect: (poi) => { setSelected(poi); setAreneOuverte(false); },
+          onSelect: (poi) => { setSelected(poi); setAreneOuverte(false); setRocketOuvert(false); },
           onEvent: journal,
           onApercu: setBandeau,
           onTigre: (c) => {
@@ -607,7 +685,7 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
       })
       .catch((e: Error) => setError(`Le rendu 3D n'a pas pu démarrer (${e.message}). WebGL est-il activé ?`));
     return () => { cancelled = true; handle?.dispose(); handleRef.current = null; };
-  }, [scene, enArene, cleCanvas]);
+  }, [scene, enArene, enRocket, cleCanvas]);
 
   // Partie FPS sur le canvas neuf ; three et le jeu ne sont chargés qu'à la première entrée.
   useEffect(() => {
@@ -655,19 +733,50 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enArene, scene, cleCanvas]);
 
+  // Partie de Rocket Muche sur le canvas neuf : three et le jeu ne sont chargés qu'au lancement (jamais dans le premier chargement du menu).
+  useEffect(() => {
+    if (!enRocket || !scene || !canvasRef.current) return;
+    const canvas = canvasRef.current;
+    let jeu: JeuRocketHandle | null = null;
+    let annule = false;
+    import("@/lib/rocket/jeu")
+      .then(({ creerJeuRocket }) => {
+        if (annule) return;
+        jeu = creerJeuRocket(canvas, scene.data, {
+          config: configLanceeRef.current,
+          reglages: reglagesRocketRef.current,
+          hud: (h) => { if (!annule) setHudRocket(h); },
+          sortir: () => { if (!annule) quitterRocketRef.current(); },
+          erreur: (texte) => { if (!annule) { setErreurRocket(texte); quitterRocketRef.current(); } },
+        });
+        jeuRocketRef.current = jeu;
+      })
+      .catch((e: Error) => {
+        if (annule) return;
+        setErreurRocket(`Rocket Muche n'a pas pu démarrer (${e.message}). WebGL est-il activé ?`);
+        quitterRocketRef.current();
+      });
+    return () => {
+      annule = true;
+      jeu?.dispose();
+      if (jeuRocketRef.current === jeu) jeuRocketRef.current = null;
+      setHudRocket(null);
+    };
+  }, [enRocket, scene, cleCanvas]);
+
   // Aperçu par mode : le panneau « Arène » ouvert, la vue montre la carte du mode coché (transition de caméra) avec les joueurs EN DIRECT
   // s'il y a une partie, sinon une simulation (faux joueurs). Panneau fermé : le chemin historique (joueurs de l'arène seulement).
   useEffect(() => {
-    if (enArene || !ready) return;
+    if (enArene || enRocket || !ready) return;
     const h = handleRef.current;
     if (!h) return;
     h.apercu.actif(apercuActif);
     h.apercu.mode(modeAffiche);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enArene, ready, cleCanvas, apercuActif, modeAffiche]);
+  }, [enArene, enRocket, ready, cleCanvas, apercuActif, modeAffiche]);
 
   useEffect(() => {
-    if (enArene || !ready) return;
+    if (enArene || enRocket || !ready) return;
     if (!apercuActif) {
       // chemin historique : joueurs en jeu de l'arène (marqueur à leur couleur + pseudo)
       const maj = () => {
@@ -735,7 +844,7 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
     const i = setInterval(maj, 100);
     return () => { clearInterval(i); handleRef.current?.apercu.direct(null); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enArene, ready, cleCanvas, apercuActif, modeAffiche]);
+  }, [enArene, enRocket, ready, cleCanvas, apercuActif, modeAffiche]);
 
   // Le message du classement s'efface après 6 s.
   useEffect(() => {
@@ -911,13 +1020,13 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
   const etat = selected ? etatRestaurant(selected, pdj, new Date().toLocaleDateString("en-CA")) : null;
 
   return (
-    <div ref={rootRef} tabIndex={-1} className={`${styles.root} ${display.variable} ${mono.variable}`} role="dialog" aria-modal="true" aria-label="Agroparc en 3D" data-arene={enArene ? "actif" : undefined}>
+    <div ref={rootRef} tabIndex={-1} className={`${styles.root} ${display.variable} ${mono.variable}`} role="dialog" aria-modal="true" aria-label="Agroparc en 3D" data-arene={enArene || enRocket ? "actif" : undefined}>
       <canvas key={cleCanvas} ref={canvasRef} className={styles.canvas} />
       <div ref={labelsRef} className={styles.labels} />
-      {!enArene && <div className={styles.vignette} />}
+      {!enArene && !enRocket && <div className={styles.vignette} />}
 
       {/* Tant que l'écran de chargement / d'erreur recouvre le HUD, ses boutons ne sont pas atteignables au clavier. */}
-      {!enArene && (<>
+      {!enArene && !enRocket && (<>
       <header className={`${styles.hud} ${styles.hudTl}`} inert={chargement}>
         <h1 className={styles.title}>Agroporc x Palantir</h1>
         <p className={styles.score} aria-live="polite">
@@ -939,11 +1048,21 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
               surEchec={() => setMessage({ id: Date.now(), texte: CLASSEMENT_INDISPONIBLE })}
             />
           )}
-          <button type="button" className={styles.action} aria-expanded={classementOuvert && !selected && !areneOuverte} onClick={() => { setAreneOuverte(false); ouvrirClassement(!(classementOuvert && !selected && !areneOuverte)); }}>
+          <button type="button" className={styles.action} aria-expanded={classementOuvert && !selected && !areneOuverte && !rocketOuvert} onClick={() => { setAreneOuverte(false); setRocketOuvert(false); ouvrirClassement(!(classementOuvert && !selected && !areneOuverte && !rocketOuvert)); }}>
             Classement
           </button>
-          <button type="button" className={styles.action} aria-expanded={areneOuverte} onClick={basculerPanneauArene}>
+          <button type="button" className={styles.action} aria-expanded={areneOuverte} onClick={() => { setRocketOuvert(false); basculerPanneauArene(); }}>
             Arène{arene.etat === "ouvert" && arene.joueurs.length > 0 && ` · ${arene.joueurs.length} en ligne`}
+          </button>
+          <button
+            type="button"
+            className={styles.action}
+            aria-expanded={rocketOuvert}
+            disabled={tactile && !manette}
+            title={tactile && !manette ? "Rocket Muche se joue au clavier ou à la manette" : "Football en voitures-fusées sur le Parking Sud, contre des bots"}
+            onClick={basculerPanneauRocket}
+          >
+            Rocket Muche
           </button>
         </div>
         {message && <p key={message.id} className={styles.message} role="status">{message.texte}</p>}
@@ -957,7 +1076,7 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
       )}
       </>)}
 
-      {!enArene && (<>
+      {!enArene && !enRocket && (<>
       <div className={`${styles.hud} ${styles.hudBl}`} inert={chargement}>
         {bandeau && <BadgeApercu bandeau={bandeau} />}
         {!(bandeau && bandeau.mode !== "arene") && (
@@ -989,7 +1108,7 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
 
       {/* Un seul panneau à droite : le restaurant choisi passe devant le classement, qui reste ouvert derrière. Le choix du mode est posé en tête du
           lobby du mode CONFIRMÉ par le serveur (la carte cochée est celle qui est demandée). */}
-      {!enArene && areneOuverte && !selected && (() => {
+      {!enArene && !enRocket && areneOuverte && !selected && (() => {
         const choixMode = <ChoixMode mode={arene.modeVoulu} salons={arene.salons} surChoisir={choisirMode} desactive={arene.etat !== "ouvert"} indisponibles={tactile ? ["zombies", "br"] : []} />;
         const pseudoParDefaut = !pseudoSaisi.trim() || pseudoSaisi.trim() === "Agent";
         const { listes, parallele } = listesDepuisSalons(arene.salons);
@@ -1070,6 +1189,35 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
         );
       })()}
 
+      {!enArene && !enRocket && rocketOuvert && !selected && !areneOuverte && (
+        <LobbyRocket
+          config={configRocket}
+          surConfig={setConfigRocket}
+          reglages={reglagesRocket}
+          surReglages={reglerRocket}
+          surLancer={lancerRocket}
+          surFermer={() => setRocketOuvert(false)}
+          tactile={tactile}
+          manette={manette}
+          erreur={erreurRocket}
+          pseudoParDefaut={!configRocket.nomJoueur.trim() || configRocket.nomJoueur.trim() === "Agent"}
+          surPrechargement={precharger}
+        />
+      )}
+
+      {enRocket && (
+        <HudRocketUi
+          hud={hudRocket}
+          reglages={reglagesRocket}
+          surReglages={reglerRocket}
+          surReprendre={() => jeuRocketRef.current?.pause(false)}
+          surRecommencer={() => jeuRocketRef.current?.recommencer()}
+          surQuitter={quitterRocket}
+          surQuitterVue={quitterRocketEtFermer}
+          surPause={() => jeuRocketRef.current?.pause(true)}
+        />
+      )}
+
       {enArene && (
         <HudArene
           hud={hud}
@@ -1127,11 +1275,11 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
         />
       )}
 
-      {!enArene && classementOuvert && !selected && !areneOuverte && (
+      {!enArene && !enRocket && classementOuvert && !selected && !areneOuverte && !rocketOuvert && (
         <PanneauClassement version={versionClassement} surFermer={() => ouvrirClassement(false)} />
       )}
 
-      {!enArene && selected && etat && (
+      {!enArene && !enRocket && selected && etat && (
         <aside className={styles.panel} aria-live="polite">
           <p className={`${styles.eyebrow} ${styles.panelHead}`}>
             <span>{[etat.kind === "plat" ? "Plat du jour" : "Restaurant", pdj?.date && fmtDate(pdj.date, false)].filter(Boolean).join(" · ")}</span>

@@ -1,0 +1,104 @@
+import { describe, expect, it } from "vitest";
+import type { LigneClassement, ResultatMatch, StatsVoiture } from "./contrat";
+import {
+  GRADUATIONS_BOOST, annonceBut, annonceFin, chronoUrgent, classementParEquipe, equipeMiseEnAvant, formaterChrono, graduationsAllumees, libelleChrono, ligneMvp,
+  titreResultat, vitesseAffichee,
+} from "./hud-modele";
+
+const noms = { bleue: "Les Trèfles", orange: "Les Tigres" };
+const stats = (points: number): StatsVoiture => ({ buts: 0, passes: 0, arrets: 0, tirs: 0, demolitions: 0, demolie: 0, touches: 0, points });
+const ligne = (id: number, equipe: "bleue" | "orange", points: number): LigneClassement => ({ id, nom: `J${id}`, equipe, humain: id === 0, stats: stats(points) });
+const resultat = (vainqueur: ResultatMatch["vainqueur"], over: Partial<ResultatMatch> = {}): ResultatMatch => ({
+  vainqueur, score: { bleue: 2, orange: 1 }, prolongation: false, equipeJoueur: "bleue",
+  classement: [ligne(0, "bleue", 300), ligne(1, "orange", 120)], mvp: 0, ...over,
+});
+
+describe("minuteur", () => {
+  it("formate en m:ss, arrondi à la seconde supérieure", () => {
+    expect(formaterChrono(300)).toBe("5:00");
+    expect(formaterChrono(299.2)).toBe("5:00");
+    expect(formaterChrono(61)).toBe("1:01");
+    expect(formaterChrono(9.01)).toBe("0:10");
+    expect(formaterChrono(0)).toBe("0:00");
+  });
+  it("valeurs absurdes : 0:00", () => {
+    expect(formaterChrono(-5)).toBe("0:00");
+    expect(formaterChrono(Number.NaN)).toBe("0:00");
+  });
+  it("prolongation à la place du temps", () => {
+    expect(libelleChrono({ tempsRestant: 0, prolongation: true })).toBe("PROLONGATION");
+    expect(libelleChrono({ tempsRestant: 125, prolongation: false })).toBe("2:05");
+  });
+  it("ambre sous 30 s seulement, ni en prolongation ni à 0 ni à la fin", () => {
+    expect(chronoUrgent({ tempsRestant: 30, prolongation: false, phase: "enJeu" })).toBe(true);
+    expect(chronoUrgent({ tempsRestant: 31, prolongation: false, phase: "enJeu" })).toBe(false);
+    expect(chronoUrgent({ tempsRestant: 0, prolongation: false, phase: "enJeu" })).toBe(false);
+    expect(chronoUrgent({ tempsRestant: 10, prolongation: true, phase: "enJeu" })).toBe(false);
+    expect(chronoUrgent({ tempsRestant: 10, prolongation: false, phase: "fini" })).toBe(false);
+  });
+});
+
+describe("jauge de boost", () => {
+  it("allume une graduation par point, bornée à 0..100", () => {
+    expect(GRADUATIONS_BOOST).toBe(100);
+    expect(graduationsAllumees(0)).toBe(0);
+    expect(graduationsAllumees(33.33)).toBe(33);
+    expect(graduationsAllumees(33.5)).toBe(34);
+    expect(graduationsAllumees(100)).toBe(100);
+    expect(graduationsAllumees(140)).toBe(100);
+    expect(graduationsAllumees(-3)).toBe(0);
+    expect(graduationsAllumees(Number.NaN)).toBe(0);
+  });
+  it("vitesse arrondie, jamais négative", () => {
+    expect(vitesseAffichee(82.6)).toBe(83);
+    expect(vitesseAffichee(-4)).toBe(0);
+    expect(vitesseAffichee(Number.POSITIVE_INFINITY)).toBe(0);
+  });
+});
+
+describe("classement par équipe", () => {
+  it("trie chaque équipe par points décroissants, id croissant à égalité", () => {
+    const c = classementParEquipe([ligne(3, "orange", 50), ligne(1, "bleue", 100), ligne(0, "bleue", 100), ligne(2, "orange", 80), ligne(4, "bleue", 10)]);
+    expect(c.bleue.map((l) => l.id)).toEqual([0, 1, 4]);
+    expect(c.orange.map((l) => l.id)).toEqual([2, 3]);
+  });
+  it("ne modifie pas l'entrée", () => {
+    const entree = [ligne(1, "bleue", 5), ligne(0, "bleue", 50)];
+    classementParEquipe(entree);
+    expect(entree.map((l) => l.id)).toEqual([1, 0]);
+  });
+});
+
+describe("annonces vocales", () => {
+  it("annonce le but de l'équipe dont le score a augmenté", () => {
+    expect(annonceBut({ bleue: 0, orange: 0 }, { bleue: 1, orange: 0 }, noms)).toBe("But pour Les Trèfles. Les Trèfles 1, Les Tigres 0.");
+    expect(annonceBut({ bleue: 1, orange: 0 }, { bleue: 1, orange: 1 }, noms)).toBe("But pour Les Tigres. Les Trèfles 1, Les Tigres 1.");
+  });
+  it("rien quand le score ne monte pas (remise à zéro d'un match relancé comprise)", () => {
+    expect(annonceBut({ bleue: 2, orange: 1 }, { bleue: 2, orange: 1 }, noms)).toBeNull();
+    expect(annonceBut({ bleue: 2, orange: 1 }, { bleue: 0, orange: 0 }, noms)).toBeNull();
+  });
+  it("annonce la fin du match", () => {
+    expect(annonceFin(resultat("bleue"), noms)).toBe("Match terminé : Victoire. Les Trèfles 2 - 1 Les Tigres.");
+    expect(annonceFin(resultat("orange"), noms)).toBe("Match terminé : Défaite. Les Trèfles 2 - 1 Les Tigres.");
+  });
+});
+
+describe("résultat", () => {
+  it("victoire, défaite et égalité du point de vue du joueur", () => {
+    expect(titreResultat(resultat("bleue"), noms)).toEqual({ issue: "victoire", titre: "Victoire !", sousTitre: "Les Trèfles 2 - 1 Les Tigres" });
+    expect(titreResultat(resultat("orange"), noms).issue).toBe("defaite");
+    expect(titreResultat(resultat("orange", { equipeJoueur: "orange" }), noms).issue).toBe("victoire");
+    expect(titreResultat(resultat(null), noms)).toMatchObject({ issue: "egalite", titre: "Égalité" });
+  });
+  it("mentionne la prolongation", () => {
+    expect(titreResultat(resultat("bleue", { prolongation: true }), noms).sousTitre).toContain("après prolongation");
+  });
+  it("MVP et équipe mise en avant", () => {
+    expect(ligneMvp(resultat("bleue"))?.nom).toBe("J0");
+    expect(ligneMvp(resultat("bleue", { mvp: null }))).toBeNull();
+    expect(ligneMvp(resultat("bleue", { mvp: 99 }))).toBeNull();
+    expect(equipeMiseEnAvant(resultat("orange"))).toBe("orange");
+    expect(equipeMiseEnAvant(resultat(null, { equipeJoueur: "orange" }))).toBe("orange");
+  });
+});

@@ -1,0 +1,232 @@
+/* Rocket Muche : lobby, HUD, pause, fin de match. Tokens --ag-* de la vue Palantir (définis sur sa racine, hérités) plus les deux équipes
+   --ag-equipe-bleue / --ag-equipe-orange. Contrastes AA sur les plaques sombres, cibles cliquables ≥ 40 px, mouvement réduit respecté. */
+
+/* l'équipe d'un élément (data-equipe) fixe --equipe, utilisée par bordures, pastilles et textes (sélecteurs énumérés : un module CSS exige une classe locale) */
+.pastilleEquipe[data-equipe="bleue"],
+.scoreEquipe[data-equipe="bleue"],
+.banniere[data-equipe="bleue"],
+.fil li[data-equipe="bleue"],
+.jauge[data-equipe="bleue"],
+.mvp[data-equipe="bleue"],
+.dialogueFin[data-equipe="bleue"],
+.scoreFin span[data-equipe="bleue"],
+.tableau tbody[data-equipe="bleue"] { --equipe: var(--ag-equipe-bleue); }
+.pastilleEquipe[data-equipe="orange"],
+.scoreEquipe[data-equipe="orange"],
+.banniere[data-equipe="orange"],
+.fil li[data-equipe="orange"],
+.jauge[data-equipe="orange"],
+.mvp[data-equipe="orange"],
+.dialogueFin[data-equipe="orange"],
+.scoreFin span[data-equipe="orange"],
+.tableau tbody[data-equipe="orange"] { --equipe: var(--ag-equipe-orange); }
+
+.reserveLecteurs { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+
+/* ---------- lobby (même gabarit que le panneau « Arène ») ---------- */
+.lobby {
+  position: absolute; z-index: 4; right: 24px; top: 72px; width: min(380px, calc(100vw - 48px));
+  background: var(--ag-panel); border: 1px solid var(--ag-line); backdrop-filter: blur(6px);
+  padding: 18px 20px 20px; box-sizing: border-box; animation: lobbyIn 0.35s ease;
+  max-height: calc(100vh - 92px); overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--ag-line) transparent;
+}
+@keyframes lobbyIn { from { opacity: 0; transform: translateX(24px); } }
+.entete { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 0 0 6px; }
+.sur { margin: 0; font-size: 10px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--ag-ink-dim); }
+.fermer {
+  min-height: 40px; background: none; border: 1px solid var(--ag-line-strong); color: var(--ag-ink-dim); font: inherit; font-size: 10px;
+  letter-spacing: 0.14em; text-transform: uppercase; padding: 0 12px; cursor: pointer; flex-shrink: 0;
+}
+.fermer:hover, .fermer:focus-visible { color: var(--ag-ink); border-color: var(--ag-ink-dim); }
+.fermer:focus-visible { outline: 2px solid var(--ag-white); outline-offset: 2px; }
+.titre {
+  font-family: var(--ag-display), var(--ag-mono), monospace; font-weight: 600; font-size: 22px; margin: 0 0 10px;
+  color: var(--ag-amber); letter-spacing: 0.04em; text-transform: uppercase;
+}
+.statut { display: flex; align-items: flex-start; gap: 8px; margin: 0 0 6px; font-size: 12px; line-height: 1.5; color: var(--ag-ink); }
+.pastille { display: inline-block; width: 8px; height: 8px; margin-top: 6px; border-radius: 50%; flex-shrink: 0; background: var(--ag-ink-dim); }
+.pastille[data-etat="ok"] { background: var(--ag-ok); box-shadow: 0 0 8px var(--ag-ok); }
+.erreur { margin: 6px 0; padding: 6px 10px; font-size: 12px; color: var(--ag-danger); border: 1px solid var(--ag-danger); background: color-mix(in srgb, var(--ag-danger) 10%, var(--ag-ground)); }
+.tactile { margin: 10px 0 0; padding: 10px; border: 1px dashed var(--ag-line-strong); color: var(--ag-ink); font-size: 12px; line-height: 1.5; }
+
+.champ { display: flex; flex-direction: column; gap: 4px; margin-top: 14px; }
+.champ label { font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ag-ink-dim); }
+.champ input {
+  min-height: 40px; box-sizing: border-box; background: var(--ag-ground); border: 1px solid var(--ag-line-strong);
+  color: var(--ag-ink); font: inherit; font-size: 14px; padding: 0 10px;
+}
+.champ input::placeholder { color: var(--ag-ink-dim); }
+.champ input:focus-visible { outline: 2px solid var(--ag-white); outline-offset: 1px; border-color: var(--ag-cyan); }
+
+/* radios natifs présentés en segments : l'input couvre toute la cible (flèches du clavier, clic) et reste invisible */
+.segments { display: flex; flex-wrap: wrap; gap: 6px; margin: 14px 0 0; padding: 0; border: 0; min-width: 0; }
+.segments legend { padding: 0; margin-bottom: 4px; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ag-ink-dim); }
+.segment {
+  position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 40px; padding: 0 12px; box-sizing: border-box;
+  cursor: pointer; font-size: 12px; border: 1px solid var(--ag-line-strong); background: var(--ag-hud-fond); color: var(--ag-ink);
+}
+.segment input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+.segment:hover { border-color: var(--ag-ink-dim); }
+.segment:has(input:focus-visible) { outline: 2px solid var(--ag-white); outline-offset: 2px; }
+.segment:has(input:checked) { border-color: var(--ag-amber); color: var(--ag-amber); box-shadow: inset 0 0 0 1px var(--ag-amber); font-weight: 600; }
+/* l'état choisi ne tient pas qu'à la couleur : coche décorative (l'état coché de la radio est annoncé par le navigateur) */
+.segment:has(input:checked)::before { content: "✓"; content: "✓" / ""; }
+.pastilleEquipe { display: inline-block; width: 10px; height: 10px; flex-shrink: 0; background: var(--equipe); box-shadow: 0 0 8px var(--equipe); }
+
+.repli { margin-top: 14px; border: 1px solid var(--ag-line-strong); background: var(--ag-hud-fond); }
+.repli summary { min-height: 40px; box-sizing: border-box; display: flex; align-items: center; padding: 0 12px; cursor: pointer; font-size: 11px; font-weight: 500; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ag-ink-dim); }
+.repli summary:hover { color: var(--ag-ink); }
+.repli summary:focus-visible { outline: 2px solid var(--ag-white); outline-offset: -2px; }
+.corpsRepli { padding: 0 12px 12px; max-height: 320px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--ag-line) transparent; }
+
+.pied { position: sticky; bottom: -20px; margin: 14px -20px -20px; padding: 10px 20px 20px; background: var(--ag-ground); border-top: 1px solid var(--ag-line); }
+.lancer {
+  width: 100%; min-height: 46px; margin: 0; background: var(--ag-amber); color: var(--ag-ground); border: 1px solid var(--ag-amber);
+  font-family: var(--ag-display), var(--ag-mono), monospace; font-weight: 700; font-size: 14px; letter-spacing: 0.14em; text-transform: uppercase; cursor: pointer;
+}
+.lancer span { font-weight: 500; letter-spacing: 0.06em; }
+.lancer:hover:not(:disabled), .lancer:focus-visible { background: var(--ag-white); border-color: var(--ag-white); }
+.lancer:focus-visible { outline: 2px solid var(--ag-white); outline-offset: 2px; }
+.lancer:disabled { cursor: default; background: transparent; color: var(--ag-ink-dim); border-color: var(--ag-line-strong); }
+
+/* ---------- réglages (lobby replié et pause) ---------- */
+.reglages { display: flex; flex-direction: column; gap: 4px; }
+.groupe { margin: 10px 0 0; padding: 0; min-width: 0; border: 0; }
+.groupe legend { padding: 0; margin-bottom: 4px; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ag-amber); }
+.curseur { display: grid; grid-template-columns: minmax(0, 1fr) 7ch; grid-template-areas: "libelle valeur" "piste piste" "aide aide"; align-items: center; column-gap: 10px; padding: 2px 0; }
+.curseur label { grid-area: libelle; font-size: 11px; color: var(--ag-ink); }
+.curseur output { grid-area: valeur; font-variant-numeric: tabular-nums; font-size: 13px; color: var(--ag-ink); text-align: right; }
+.curseur input[type="range"] { grid-area: piste; width: 100%; min-height: 40px; margin: 0; accent-color: var(--ag-amber); cursor: pointer; }
+.curseur input[type="range"]:focus-visible { outline: 2px solid var(--ag-white); outline-offset: 2px; }
+.aideCurseur { grid-area: aide; margin-top: -6px; font-size: 10px; line-height: 1.4; color: var(--ag-ink-dim); }
+.caseAcocher { display: flex; align-items: center; gap: 10px; min-height: 40px; font-size: 12px; line-height: 1.4; color: var(--ag-ink); cursor: pointer; }
+.caseAcocher input { flex-shrink: 0; width: 18px; height: 18px; margin: 0; accent-color: var(--ag-amber); cursor: pointer; }
+.caseAcocher input:focus-visible { outline: 2px solid var(--ag-white); outline-offset: 2px; }
+
+.commandes { margin: 4px 0 0; display: flex; flex-direction: column; gap: 6px; }
+.commandes > div { display: grid; grid-template-columns: 14ch 1fr; gap: 8px; align-items: baseline; font-size: 12px; line-height: 1.4; }
+.commandes dt, .commandes dd { margin: 0; }
+.commandes dd { color: var(--ag-ink-dim); }
+.commandes kbd { font: inherit; font-weight: 500; color: var(--ag-cyan); overflow-wrap: anywhere; }
+
+/* ---------- boutons ---------- */
+.boutonPrincipal, .boutonSecondaire, .boutonDanger, .boutonDiscret {
+  min-height: 44px; padding: 4px 14px; box-sizing: border-box; font: inherit; font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; cursor: pointer; border: 1px solid;
+}
+.boutonPrincipal { background: var(--ag-amber); color: var(--ag-ground); border-color: var(--ag-amber); font-weight: 700; }
+.boutonPrincipal:hover, .boutonPrincipal:focus-visible { background: var(--ag-white); border-color: var(--ag-white); }
+.boutonSecondaire { background: transparent; color: var(--ag-amber); border-color: var(--ag-amber); }
+.boutonSecondaire:hover, .boutonSecondaire:focus-visible { background: var(--ag-amber); color: var(--ag-ground); }
+.boutonDanger { background: transparent; color: var(--ag-danger); border-color: var(--ag-danger); }
+.boutonDanger:hover, .boutonDanger:focus-visible { background: var(--ag-danger); color: var(--ag-ground); }
+.boutonDiscret { background: transparent; color: var(--ag-ink-dim); border-color: var(--ag-line-strong); }
+.boutonDiscret:hover:not(:disabled), .boutonDiscret:focus-visible { color: var(--ag-ink); border-color: var(--ag-ink-dim); }
+.boutonDiscret:disabled { cursor: default; opacity: 1; color: var(--ag-ink-dim); border-style: dashed; }
+.boutonPrincipal:focus-visible, .boutonSecondaire:focus-visible, .boutonDanger:focus-visible, .boutonDiscret:focus-visible { outline: 2px solid var(--ag-white); outline-offset: 2px; }
+
+/* ---------- HUD de la partie ---------- */
+.hud { position: absolute; inset: 0; z-index: 3; pointer-events: none; overflow: hidden; font-variant-numeric: tabular-nums; color: var(--ag-white); }
+.hud button, .hud [role="dialog"] { pointer-events: auto; }
+.chargement { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); margin: 0; padding: 10px 18px; font-size: 13px; letter-spacing: 0.16em; text-transform: uppercase; background: var(--ag-hud-fond); border: 1px solid var(--ag-line-strong); color: var(--ag-ink); }
+
+.tableauScore { position: absolute; left: 50%; top: 14px; transform: translateX(-50%); display: grid; grid-template-columns: minmax(96px, 1fr) auto minmax(96px, 1fr); align-items: stretch; gap: 2px; }
+.scoreEquipe { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 4px 14px 6px; min-width: 96px; background: var(--ag-hud-fond); border-bottom: 3px solid var(--equipe); }
+.points { font-family: var(--ag-display), var(--ag-mono), monospace; font-weight: 700; font-size: 38px; line-height: 1; color: var(--equipe); text-shadow: 0 0 14px color-mix(in srgb, var(--equipe) 55%, transparent); }
+.nomEquipe { margin-top: 2px; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ag-ink); white-space: nowrap; }
+.chrono { display: flex; align-items: center; justify-content: center; min-width: 110px; padding: 0 16px; background: var(--ag-hud-fond-fort); font-family: var(--ag-display), var(--ag-mono), monospace; font-weight: 700; font-size: 28px; letter-spacing: 0.06em; color: var(--ag-white); }
+.chrono[data-urgent="oui"] { color: var(--ag-amber); }
+.chrono[data-prolongation="oui"] { font-size: 15px; letter-spacing: 0.14em; color: var(--ag-amber); }
+.boutonPause { position: absolute; right: 16px; top: 14px; min-height: 40px; padding: 0 14px; background: var(--ag-hud-fond); border: 1px solid var(--ag-line-strong); color: var(--ag-ink); font: inherit; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; cursor: pointer; }
+.boutonPause:hover, .boutonPause:focus-visible { border-color: var(--ag-amber); color: var(--ag-amber); }
+.boutonPause:focus-visible { outline: 2px solid var(--ag-white); outline-offset: 2px; }
+
+.banniere { position: absolute; left: 50%; top: 34%; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; animation: banniereIn 0.28s ease-out both; }
+.texteBanniere { font-family: var(--ag-display), var(--ag-mono), monospace; font-weight: 700; font-size: clamp(34px, 7vw, 76px); line-height: 1; letter-spacing: 0.08em; text-transform: uppercase; color: var(--equipe, var(--ag-white)); text-shadow: 0 0 24px color-mix(in srgb, var(--equipe, var(--ag-white)) 60%, transparent), 0 2px 0 var(--ag-ground); }
+.banniere[data-decompte="oui"] .texteBanniere { font-size: clamp(64px, 14vw, 150px); }
+.sousBanniere { padding: 3px 12px; font-size: clamp(12px, 1.6vw, 16px); letter-spacing: 0.14em; text-transform: uppercase; color: var(--ag-white); background: var(--ag-hud-fond); }
+@keyframes banniereIn { from { opacity: 0; transform: translate(-50%, -50%) scale(1.35); } }
+
+.demolie { position: absolute; left: 50%; bottom: 22%; transform: translateX(-50%); margin: 0; padding: 8px 18px; font-size: 14px; letter-spacing: 0.12em; text-transform: uppercase; background: var(--ag-hud-fond-fort); border: 1px solid var(--ag-danger); color: var(--ag-danger); }
+
+.fil { position: absolute; left: 16px; bottom: 16px; margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 3px; max-width: min(46vw, 420px); }
+.fil li { padding: 3px 10px; font-size: 12px; line-height: 1.4; background: var(--ag-hud-fond); border-left: 3px solid var(--equipe, var(--ag-line-strong)); color: var(--ag-ink); animation: filIn 0.2s ease-out both; }
+@keyframes filIn { from { opacity: 0; transform: translateX(-12px); } }
+
+.indicateurs { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); display: flex; gap: 8px; }
+.indicateur { padding: 3px 10px; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; background: var(--ag-hud-fond); border: 1px solid var(--ag-line-strong); color: var(--ag-ink-dim); white-space: nowrap; }
+.indicateur b { font-weight: 700; color: var(--ag-white); }
+.indicateur[data-etat="balle"] b { color: var(--ag-cyan); }
+
+.cadran { position: absolute; right: 18px; bottom: 14px; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.vitesse { margin: 0; font-size: 12px; letter-spacing: 0.08em; color: var(--ag-ink); text-shadow: 0 0 6px var(--ag-ground); }
+.vitesse b { font-size: 18px; font-weight: 700; color: var(--ag-white); }
+.vitesse[data-supersonique="oui"] b, .supersonique { color: var(--ag-cyan); }
+.jauge { position: relative; width: 132px; height: 132px; }
+.jauge svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.traitPlein, .traitVide { stroke-width: 1.7; stroke-linecap: butt; }
+.traitPlein { stroke: var(--equipe); }
+.jauge[data-vide="oui"] .traitVide { stroke: var(--ag-line-strong); }
+.traitVide { stroke: var(--ag-line); }
+.valeurJauge { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-family: var(--ag-display), var(--ag-mono), monospace; font-weight: 700; font-size: 38px; color: var(--ag-white); text-shadow: 0 0 10px color-mix(in srgb, var(--equipe) 50%, transparent), 0 0 3px var(--ag-ground); }
+
+.aideBreve { position: absolute; left: 50%; bottom: 62px; transform: translateX(-50%); width: min(520px, calc(100vw - 32px)); padding: 10px 14px; background: var(--ag-hud-fond-fort); border: 1px solid var(--ag-line-strong); }
+.aideBreve .commandes > div { grid-template-columns: 16ch 1fr; }
+.tableauJeu { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(640px, calc(100vw - 32px)); padding: 14px 16px; background: var(--ag-hud-fond-fort); border: 1px solid var(--ag-line-strong); }
+
+/* ---------- tableau des statistiques ---------- */
+.tableau { width: 100%; border-collapse: collapse; font-size: 12px; }
+.tableau thead th { padding: 0 6px 6px; text-align: right; font-size: 10px; font-weight: 500; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ag-ink-dim); border-bottom: 1px solid var(--ag-line-strong); }
+.tableau thead th.colJoueur { text-align: left; }
+.tableau td, .tableau tbody th[scope="row"] { padding: 6px 6px; border-top: 1px solid var(--ag-line); color: var(--ag-ink); font-weight: 400; }
+.tableau tbody th[scope="row"] { text-align: left; }
+.tableau td.colChiffre { text-align: right; }
+.tableau tr[data-humain="oui"] td, .tableau tr[data-humain="oui"] th[scope="row"] { color: var(--ag-white); font-weight: 700; }
+.ligneEquipe th { padding: 8px 6px 4px; text-align: left; font-size: 11px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--equipe); border-top: 0; }
+
+/* ---------- dialogues (pause, fin) ---------- */
+.voile { position: absolute; inset: 0; z-index: 5; display: flex; align-items: center; justify-content: center; padding: 16px; box-sizing: border-box; background: rgba(4, 6, 10, 0.72); pointer-events: auto; }
+.dialogue { width: min(420px, 100%); max-height: calc(100vh - 32px); box-sizing: border-box; display: flex; flex-direction: column; gap: 12px; padding: 20px; background: var(--ag-hud-fond-fort); border: 1px solid var(--ag-line-strong); overflow: hidden; animation: lobbyIn 0.25s ease; }
+.dialogueFin { width: min(620px, 100%); border-top: 3px solid var(--equipe, var(--ag-amber)); }
+.titreDialogue { margin: 0; font-family: var(--ag-display), var(--ag-mono), monospace; font-weight: 700; font-size: 22px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ag-amber); }
+.menu { display: flex; flex-direction: column; gap: 8px; }
+.noteDialogue { margin: 0; font-size: 11px; line-height: 1.5; color: var(--ag-ink-dim); }
+.defilement { overflow-y: auto; min-height: 0; scrollbar-width: thin; scrollbar-color: var(--ag-line) transparent; }
+.boutons { display: flex; flex-wrap: wrap; gap: 8px; }
+.boutons > button { flex: 1 1 140px; }
+
+.titreFin { margin: 0; font-family: var(--ag-display), var(--ag-mono), monospace; font-weight: 700; font-size: clamp(34px, 6vw, 52px); line-height: 1; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ag-white); }
+.dialogueFin[data-issue="victoire"] .titreFin { color: var(--ag-amber); text-shadow: 0 0 22px rgba(255, 179, 92, 0.45); }
+.dialogueFin[data-issue="defaite"] .titreFin { color: var(--ag-ink); }
+.scoreFin { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; margin: 0; font-size: 13px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ag-ink); }
+.scoreFin b { font-family: var(--ag-display), var(--ag-mono), monospace; font-size: 34px; color: var(--equipe); margin-right: 4px; }
+.tiret { color: var(--ag-ink-dim); }
+.prolongFin { margin: 0; font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ag-amber); }
+.mvp { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin: 0; padding: 8px 12px; background: var(--ag-hud-fond); border-left: 3px solid var(--equipe); font-size: 13px; color: var(--ag-ink); }
+.mvp b { color: var(--ag-white); }
+.mvpEtiquette { font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ag-ink-dim); }
+
+/* ---------- fenêtres étroites ---------- */
+@media (min-width: 641px) and (max-width: 900px) {
+  .aideBreve { width: min(520px, calc(100vw - 300px)); }
+  .fil { max-width: min(40vw, 420px); }
+}
+
+/* ---------- petits écrans ---------- */
+@media (max-width: 640px) {
+  .boutonPause { top: 78px; right: 12px; }
+  .lobby { top: auto; bottom: 20px; right: 24px; left: 24px; width: auto; max-height: min(70vh, calc(100vh - 100px)); }
+  .points { font-size: 28px; }
+  .chrono { font-size: 22px; min-width: 84px; padding: 0 10px; }
+  .scoreEquipe { min-width: 70px; padding: 4px 8px 6px; }
+  .nomEquipe { font-size: 9px; letter-spacing: 0.08em; }
+  .jauge { width: 104px; height: 104px; }
+  .valeurJauge { font-size: 28px; }
+  .indicateurs { bottom: 150px; }
+  .fil { max-width: 56vw; }
+  .commandes > div { grid-template-columns: 11ch 1fr; }
+}
+
+/* ---------- mouvement réduit : ni apparition animée, ni zoom de bannière ---------- */
+@media (prefers-reduced-motion: reduce) {
+  .lobby, .banniere, .fil li, .dialogue { animation: none; }
+}
