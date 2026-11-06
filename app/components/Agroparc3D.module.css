@@ -19,6 +19,9 @@
   --ag-hud-fond: rgba(4, 6, 10, 0.86); /* toute plaque qui porte du texte < 24u */
   --ag-hud-fond-fort: rgba(4, 6, 10, 0.94); /* tableau, carte du tueur, fin de match */
   --ag-cadre: var(--ag-ink-dim); /* contours ESSENTIELS (mini-map, plaques) ; --ag-line-strong reste aux filets décoratifs */
+  /* Rocket Muche : les deux équipes (Les Trèfles / Les Tigres). Texte clair sur plaque sombre : ≥ 7:1 sur --ag-hud-fond. */
+  --ag-equipe-bleue: #5ab4ff;
+  --ag-equipe-orange: #ff8a3d;
   position: fixed;
   inset: 0;
   z-index: 1000;

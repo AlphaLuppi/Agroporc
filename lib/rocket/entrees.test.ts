@@ -1,0 +1,297 @@
+import { describe, expect, it, vi } from "vitest";
+import { LIAISONS_DEFAUT, REGLAGES_DEFAUT, type LiaisonsTouches } from "./contrat";
+import {
+  manetteDepuisGamepad,
+  BOUTON_MANETTE,
+  RAYON_REGARD_SOURIS_PX,
+  creerSourceEntrees,
+  entreesDepuisClavier,
+  entreesDepuisManette,
+  entreesJoueurNulles,
+  fusionnerEntrees,
+  stickAvecZoneMorte,
+  type ManetteLue,
+} from "./entrees";
+
+const clavier = (codes: string[], depl: [number, number] = [0, 0]) => entreesDepuisClavier({ touches: new Set(codes), deplacementSouris: depl }, LIAISONS_DEFAUT);
+
+function manette(opts: { axes?: number[]; boutons?: Record<number, number | boolean> } = {}) {
+  const boutons = Array.from({ length: 17 }, () => ({ pressed: false, value: 0 }));
+  for (const [i, v] of Object.entries(opts.boutons ?? {})) boutons[Number(i)] = typeof v === "boolean" ? { pressed: v, value: v ? 1 : 0 } : { pressed: v > 0.5, value: v };
+  return { axes: opts.axes ?? [0, 0, 0, 0], boutons };
+}
+const REGL = { zoneMorteManette: 0.12, inverserTangageManette: false };
+
+describe("clavier : positions physiques", () => {
+  it("rien d'enfoncé : entrées nulles", () => {
+    expect(clavier([])).toEqual(entreesJoueurNulles());
+  });
+  it("W accélère, S recule, et les flèches font pareil", () => {
+    expect(clavier(["KeyW"]).voiture.accel).toBe(1);
+    expect(clavier(["ArrowUp"]).voiture.accel).toBe(1);
+    expect(clavier(["KeyS"]).voiture.accel).toBe(-1);
+    expect(clavier(["ArrowDown"]).voiture.accel).toBe(-1);
+  });
+  it("les codes sont des positions : KeyW est la touche Z d'un clavier AZERTY, aucune lettre n'est lue", () => {
+    // un clavier AZERTY envoie code "KeyW" pour la touche étiquetée Z : le jeu ne regarde jamais `key`
+    expect(clavier(["KeyZ"]).voiture.accel).toBe(0);
+    expect(clavier(["KeyW"]).voiture.accel).toBe(1);
+  });
+  it("deux touches opposées s'annulent", () => {
+    expect(clavier(["KeyW", "KeyS"]).voiture.accel).toBe(0);
+    expect(clavier(["KeyA", "KeyD"]).voiture.direction).toBe(0);
+    expect(clavier(["KeyQ", "KeyE"]).voiture.roulis).toBe(0);
+  });
+  it("signes : droite = +1, gauche = -1 ; E penche à droite ; en l'air S = nez en haut (tangage +1), W = nez en bas", () => {
+    expect(clavier(["KeyD"]).voiture.direction).toBe(1);
+    expect(clavier(["ArrowLeft"]).voiture.direction).toBe(-1);
+    expect(clavier(["KeyE"]).voiture.roulis).toBe(1);
+    expect(clavier(["KeyQ"]).voiture.roulis).toBe(-1);
+    expect(clavier(["KeyS"]).voiture.tangage).toBe(1);
+    expect(clavier(["KeyW"]).voiture.tangage).toBe(-1);
+  });
+  it("boutons : saut Espace, boost Maj ou clic gauche, dérapage C ou Ctrl", () => {
+    expect(clavier(["Space"]).voiture.saut).toBe(true);
+    expect(clavier(["ShiftLeft"]).voiture.boost).toBe(true);
+    expect(clavier(["Souris0"]).voiture.boost).toBe(true);
+    expect(clavier(["KeyC"]).voiture.derapage).toBe(true);
+    expect(clavier(["ControlLeft"]).voiture.derapage).toBe(true);
+    expect(clavier(["KeyA"]).voiture.saut).toBe(false);
+  });
+  it("caméra et divers : ball cam (Y ou clic droit), vue arrière V, klaxon H, pause Échap", () => {
+    expect(clavier(["KeyY"]).basculerBalleCam).toBe(true);
+    expect(clavier(["Souris2"]).basculerBalleCam).toBe(true);
+    expect(clavier(["KeyV"]).arriere).toBe(true);
+    expect(clavier(["KeyH"]).klaxon).toBe(true);
+    expect(clavier(["Escape"]).pause).toBe(true);
+  });
+  it("les liaisons personnalisées sont suivies", () => {
+    const l: LiaisonsTouches = { ...LIAISONS_DEFAUT, saut: ["KeyJ"], boost: ["KeyK"] };
+    const e = entreesDepuisClavier({ touches: new Set(["KeyJ", "KeyK", "Space"]), deplacementSouris: [0, 0] }, l);
+    expect(e.voiture.saut).toBe(true);
+    expect(e.voiture.boost).toBe(true);
+    expect(entreesDepuisClavier({ touches: new Set(["Space"]), deplacementSouris: [0, 0] }, l).voiture.saut).toBe(false);
+  });
+  it("regard libre : seulement avec le bouton du milieu, borné à [-1, 1], haut de l'écran = regarder en haut", () => {
+    expect(clavier([], [100, 0]).regard).toEqual([0, 0]);
+    expect(clavier(["Souris1"], [RAYON_REGARD_SOURIS_PX / 2, 0]).regard[0]).toBeCloseTo(0.5, 6);
+    expect(clavier(["Souris1"], [10 * RAYON_REGARD_SOURIS_PX, 0]).regard[0]).toBe(1);
+    expect(clavier(["Souris1"], [0, -RAYON_REGARD_SOURIS_PX]).regard[1]).toBe(1);
+  });
+});
+
+describe("manette", () => {
+  it("zone morte radiale : rien sous le seuil, direction conservée au-delà, courbe quadratique, plein à fond", () => {
+    expect(stickAvecZoneMorte(0.1, 0.05, 0.12)).toEqual([0, 0]);
+    const [x, y] = stickAvecZoneMorte(0.6, 0.3, 0.12);
+    expect(y / x).toBeCloseTo(0.5, 6);
+    expect(x).toBeGreaterThan(0);
+    expect(x).toBeLessThan(0.6);
+    const [px, py] = stickAvecZoneMorte(1, 0, 0.12);
+    expect(px).toBeCloseTo(1, 6);
+    expect(py).toBe(0);
+    // quadratique : la moitié de la course utile donne un quart
+    const mi = stickAvecZoneMorte(0.12 + 0.88 * 0.5, 0, 0.12)[0];
+    expect(mi).toBeCloseTo(0.25 * 1, 2);
+    expect(stickAvecZoneMorte(0.7071, 0.7071, 0.12)[0]).toBeLessThanOrEqual(1);
+  });
+  it("gâchettes analogiques : RT - LT", () => {
+    expect(entreesDepuisManette(manette({ boutons: { 7: 0.6 } }), REGL).voiture.accel).toBeCloseTo(0.6, 6);
+    expect(entreesDepuisManette(manette({ boutons: { 6: 1 } }), REGL).voiture.accel).toBe(-1);
+    expect(entreesDepuisManette(manette({ boutons: { 7: 0.5, 6: 0.5 } }), REGL).voiture.accel).toBeCloseTo(0, 6);
+  });
+  it("un bouton numérique (pressed sans value) compte pour 1", () => {
+    const m = manette();
+    m.boutons[7] = { pressed: true, value: 0 };
+    expect(entreesDepuisManette(m, REGL).voiture.accel).toBe(1);
+  });
+  it("stick gauche : volant et tangage (haut du stick = nez en bas, comme RL) ; l'inversion retourne le tangage", () => {
+    const e = entreesDepuisManette(manette({ axes: [0.8, -0.6, 0, 0] }), REGL);
+    expect(e.voiture.direction).toBeGreaterThan(0.3);
+    expect(e.voiture.tangage).toBeLessThan(-0.1);
+    expect(entreesDepuisManette(manette({ axes: [1, 0, 0, 0] }), REGL).voiture.direction).toBeCloseTo(1, 6);
+    // diagonale pleine : la direction est conservée et l'amplitude plafonnée à 1
+    const d = entreesDepuisManette(manette({ axes: [1, -1, 0, 0] }), REGL).voiture;
+    expect(Math.hypot(d.direction, d.tangage)).toBeLessThanOrEqual(1 + 1e-9);
+    const inv = entreesDepuisManette(manette({ axes: [0, -1, 0, 0] }), { ...REGL, inverserTangageManette: true });
+    expect(inv.voiture.tangage).toBeGreaterThan(0);
+  });
+  it("boutons : A saut, B boost, X dérapage, Y ball cam, LB/RB roulis, R3 arrière, Start pause, croix haut klaxon", () => {
+    const e = entreesDepuisManette(manette({ boutons: { [BOUTON_MANETTE.a]: true, [BOUTON_MANETTE.b]: true, [BOUTON_MANETTE.x]: true, [BOUTON_MANETTE.y]: true, [BOUTON_MANETTE.rb]: true, [BOUTON_MANETTE.r3]: true, [BOUTON_MANETTE.start]: true, [BOUTON_MANETTE.haut]: true } }), REGL);
+    expect(e.voiture).toMatchObject({ saut: true, boost: true, derapage: true, roulis: 1 });
+    expect(e).toMatchObject({ basculerBalleCam: true, arriere: true, pause: true, klaxon: true });
+    expect(entreesDepuisManette(manette({ boutons: { [BOUTON_MANETTE.lb]: true } }), REGL).voiture.roulis).toBe(-1);
+  });
+  it("stick droit : regard libre, haut = regarder en haut", () => {
+    const droite = entreesDepuisManette(manette({ axes: [0, 0, 1, 0] }), REGL);
+    expect(droite.regard[0]).toBeCloseTo(1, 6);
+    const haut = entreesDepuisManette(manette({ axes: [0, 0, 0, -1] }), REGL);
+    expect(haut.regard[1]).toBeCloseTo(1, 6);
+  });
+  it("axes manquants ou NaN : jamais de NaN", () => {
+    const e = entreesDepuisManette({ axes: [NaN], boutons: [] }, REGL);
+    expect(Object.values(e.voiture).every((v) => typeof v === "boolean" || Number.isFinite(v))).toBe(true);
+    expect(e.regard.every(Number.isFinite)).toBe(true);
+  });
+});
+
+describe("fusion", () => {
+  it("l'axe le plus fort l'emporte, les boutons font un OU", () => {
+    const a = clavier(["KeyW", "Space"]);
+    const b = entreesDepuisManette(manette({ boutons: { 7: 0.4, [BOUTON_MANETTE.b]: true }, axes: [-0.9, 0, 0, 0] }), REGL);
+    const f = fusionnerEntrees(a, b);
+    expect(f.voiture.accel).toBe(1);
+    expect(f.voiture.direction).toBeLessThan(-0.3);
+    expect(f.voiture.saut).toBe(true);
+    expect(f.voiture.boost).toBe(true);
+    expect(fusionnerEntrees(entreesJoueurNulles(), entreesJoueurNulles())).toEqual(entreesJoueurNulles());
+  });
+});
+
+describe("source branchée sur une cible d'événements", () => {
+  function evt(type: string, props: Record<string, unknown>): Event {
+    return Object.assign(new Event(type, { cancelable: true }), props);
+  }
+  function creer(lire?: () => (ManetteLue | null)[]) {
+    const cible = new EventTarget() as unknown as Window;
+    const src = creerSourceEntrees(cible, () => LIAISONS_DEFAUT, () => REGLAGES_DEFAUT(), lire ?? (() => []));
+    return { cible, src };
+  }
+
+  it("suit les touches enfoncées puis relâchées", () => {
+    const { cible, src } = creer();
+    cible.dispatchEvent(evt("keydown", { code: "KeyW" }));
+    cible.dispatchEvent(evt("keydown", { code: "KeyD" }));
+    expect(src.echantillonner().voiture).toMatchObject({ accel: 1, direction: 1 });
+    cible.dispatchEvent(evt("keyup", { code: "KeyW" }));
+    expect(src.echantillonner().voiture).toMatchObject({ accel: 0, direction: 1 });
+  });
+
+  it("un appui plus court qu'une image est rendu une fois", () => {
+    const { cible, src } = creer();
+    cible.dispatchEvent(evt("keydown", { code: "Space" }));
+    cible.dispatchEvent(evt("keyup", { code: "Space" }));
+    expect(src.echantillonner().voiture.saut).toBe(true);
+    expect(src.echantillonner().voiture.saut).toBe(false);
+  });
+
+  it("souris : boutons ajoutés aux touches, contextmenu bloqué, levier de regard borné et remis à zéro", () => {
+    const { cible, src } = creer();
+    cible.dispatchEvent(evt("mousedown", { button: 0 }));
+    expect(src.echantillonner().voiture.boost).toBe(true);
+    cible.dispatchEvent(evt("mouseup", { button: 0 }));
+    expect(src.echantillonner().voiture.boost).toBe(false);
+    const ctx = evt("contextmenu", {});
+    cible.dispatchEvent(ctx);
+    expect(ctx.defaultPrevented).toBe(true);
+    cible.dispatchEvent(evt("mousedown", { button: 1 }));
+    cible.dispatchEvent(evt("mousemove", { movementX: 1000, movementY: 0 }));
+    expect(src.echantillonner().regard[0]).toBe(1);
+    cible.dispatchEvent(evt("mouseup", { button: 1 }));
+    expect(src.echantillonner().regard).toEqual([0, 0]);
+  });
+
+  it("la racine de la vue (dialog porteur de data-arene) ne vole pas les touches ni la souris, un vrai dialogue de menu si", () => {
+    const { cible, src } = creer();
+    // mini-DOM : `closest` n'évalue que le sélecteur de cibleInteractive, appliqué à une chaîne d'ancêtres
+    type Noeud = { tagName: string; role?: string; arene?: boolean; parent?: Noeud };
+    const fabrique = (n: Noeud) => ({
+      tagName: n.tagName,
+      closest: (sel: string) => {
+        const exclut = sel.includes('[role="dialog"]:not([data-arene])');
+        for (let c: Noeud | undefined = n; c; c = c.parent) {
+          if (c.role === "dialog" && (!exclut || !c.arene)) return c;
+          if (c.role === "menu") return c;
+        }
+        return null;
+      },
+    });
+    const racine: Noeud = { tagName: "DIV", role: "dialog", arene: true };
+    const canvas: Noeud = { tagName: "CANVAS", parent: racine };
+    const dialoguePause: Noeud = { tagName: "DIV", role: "dialog", parent: racine };
+    const contenuPause: Noeud = { tagName: "P", parent: dialoguePause };
+    const tirer = (type: string, props: Record<string, unknown>, n: Noeud) => {
+      const e = evt(type, props);
+      Object.defineProperty(e, "target", { get: () => fabrique(n), configurable: true });
+      cible.dispatchEvent(e);
+    };
+    tirer("keydown", { code: "KeyW" }, racine);
+    expect(src.echantillonner().voiture.accel).toBe(1);
+    tirer("keyup", { code: "KeyW" }, racine);
+    tirer("mousedown", { button: 0 }, canvas);
+    expect(src.echantillonner().voiture.boost).toBe(true);
+    tirer("mouseup", { button: 0 }, canvas);
+    tirer("keydown", { code: "KeyS" }, contenuPause);
+    expect(src.echantillonner().voiture.accel).toBe(0);
+  });
+
+  it("n'avale pas les touches d'un bouton ou d'un champ (menu pause), bloque Espace sinon", () => {
+    const { cible, src } = creer();
+    const surBouton = evt("keydown", { code: "Space" });
+    // `target` n'est posé par dispatchEvent que sur la cible elle-même : on le simule par un getter
+    Object.defineProperty(surBouton, "target", { get: () => ({ tagName: "BUTTON" }), configurable: true });
+    cible.dispatchEvent(surBouton);
+    expect(surBouton.defaultPrevented).toBe(false);
+    expect(src.echantillonner().voiture.saut).toBe(false);
+    const libre = evt("keydown", { code: "Space" });
+    cible.dispatchEvent(libre);
+    expect(libre.defaultPrevented).toBe(true);
+    expect(src.echantillonner().voiture.saut).toBe(true);
+  });
+
+  it("perte de focus : tout est relâché", () => {
+    const { cible, src } = creer();
+    cible.dispatchEvent(evt("keydown", { code: "KeyW" }));
+    cible.dispatchEvent(new Event("blur"));
+    expect(src.echantillonner().voiture.accel).toBe(0);
+  });
+
+  it("manette : fusionnée avec le clavier, boutons exposés, vibration appelée seulement si l'actionneur existe", () => {
+    const playEffect = vi.fn(() => Promise.resolve());
+    const pad: ManetteLue = { ...manette({ boutons: { 7: 1, 9: true } }), connected: true, mapping: "standard", vibrationActuator: { playEffect } };
+    const { cible, src } = creer(() => [null, pad]);
+    cible.dispatchEvent(evt("keydown", { code: "KeyD" }));
+    expect(src.manetteConnectee()).toBe(true);
+    const e = src.echantillonner();
+    expect(e.voiture.accel).toBe(1);
+    expect(e.voiture.direction).toBe(1);
+    expect(src.boutonManette(BOUTON_MANETTE.start)).toBe(true);
+    expect(src.boutonManette(BOUTON_MANETTE.b)).toBe(false);
+    src.vibrer(0.5, 120);
+    expect(playEffect).toHaveBeenCalledTimes(1);
+    const sans = creer(() => []);
+    expect(sans.src.manetteConnectee()).toBe(false);
+    expect(() => sans.src.vibrer(1, 100)).not.toThrow();
+  });
+
+  it("une manette au mapping non standard est ignorée", () => {
+    const pad: ManetteLue = { ...manette({ boutons: { 7: 1 } }), connected: true, mapping: "" };
+    const { src } = creer(() => [pad]);
+    expect(src.manetteConnectee()).toBe(false);
+    expect(src.echantillonner().voiture.accel).toBe(0);
+  });
+
+  it("dispose retire les écouteurs", () => {
+    const { cible, src } = creer();
+    src.dispose();
+    cible.dispatchEvent(evt("keydown", { code: "KeyW" }));
+    expect(src.echantillonner().voiture.accel).toBe(0);
+  });
+});
+
+describe("manette du navigateur (Gamepad)", () => {
+  it("adapte `buttons` en `boutons` : RT accélère, A saute, B boost", () => {
+    const btn = (pressed: boolean, value = pressed ? 1 : 0) => ({ pressed, touched: pressed, value });
+    const buttons = Array.from({ length: 17 }, () => btn(false));
+    buttons[7] = btn(true, 0.8); buttons[0] = btn(true); buttons[1] = btn(true);
+    const g = { axes: [0.6, 0, 0, 0], buttons, connected: true, mapping: "standard", id: "pad", index: 0, timestamp: 0 } as unknown as Gamepad;
+    const m = manetteDepuisGamepad(g);
+    expect(m).not.toBeNull();
+    const e = entreesDepuisManette(m!, REGLAGES_DEFAUT()).voiture;
+    expect(e.accel).toBeCloseTo(0.8);
+    expect(e.saut).toBe(true);
+    expect(e.boost).toBe(true);
+    expect(e.direction).toBeGreaterThan(0);
+    expect(manetteDepuisGamepad(null)).toBeNull();
+  });
+});

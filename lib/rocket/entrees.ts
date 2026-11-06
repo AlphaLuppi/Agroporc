@@ -1,0 +1,337 @@
+/**
+ * Rocket Muche : entrées du joueur humain (clavier + souris + manette).
+ *
+ * Deux parties :
+ *  - des fonctions PURES (`entreesDepuisClavier`, `entreesDepuisManette`, `fusionnerEntrees`) testées sous Node ;
+ *  - `creerSourceEntrees`, qui branche les écouteurs sur la fenêtre et lit `navigator.getGamepads()` (seul morceau qui touche le DOM).
+ *
+ * Les touches sont lues par `KeyboardEvent.code` (positions PHYSIQUES) : la disposition par défaut W/A/S/D devient Z/Q/S/D sur un clavier
+ * AZERTY sans rien changer. Les boutons de la souris sont ajoutés aux touches sous les codes `Souris0` (gauche), `Souris1` (milieu),
+ * `Souris2` (droit). Spec : docs/superpowers/specs/2026-11-06-rocket-agroparc-design.md § 8.
+ *
+ * Disposition par défaut (cf. `LIAISONS_DEFAUT` du contrat) :
+ *  - W / ↑ gaz, S / ↓ frein et marche arrière ; en l'air W = nez en bas, S = nez en haut ;
+ *  - A / ← et D / → : volant au sol, lacet en l'air ; avec le dérapage tenu en l'air, ils font rouler la voiture (air roll libre) ;
+ *  - Espace : saut (second appui = double saut, ou flip si une direction est tenue) ;
+ *  - Maj gauche ou clic gauche : boost ; C ou Ctrl gauche : dérapage (frein à main) / air roll libre ;
+ *  - Q / E : roulis gauche / droite ; Y ou clic droit : ball cam ; V : vue arrière (tenue) ; H : klaxon ; Échap : pause ;
+ *  - bouton du milieu tenu + déplacement de la souris : regard libre (`deplacementSouris` porte alors le levier virtuel, voir plus bas).
+ *
+ * Manette (mapping « standard » de la Gamepad API) : RT / LT gaz et frein (analogiques), stick gauche (volant au sol, tangage et lacet
+ * en l'air), A saut, B boost, X dérapage / air roll libre, Y ball cam, LB / RB roulis, stick droit regard libre, R3 vue arrière,
+ * Start pause, croix haut klaxon.
+ */
+import {
+  ENTREES_NULLES,
+  type EntreesJoueur,
+  type EntreesVoiture,
+  type InstantaneClavier,
+  type InstantaneManette,
+  type LiaisonsTouches,
+  type ReglagesRocket,
+  type SourceEntrees,
+} from "./contrat";
+
+/** Entrées d'un joueur qui ne touche à rien. */
+export function entreesJoueurNulles(): EntreesJoueur {
+  return { voiture: ENTREES_NULLES(), basculerBalleCam: false, regard: [0, 0], arriere: false, klaxon: false, pause: false };
+}
+
+const borne = (x: number, min = -1, max = 1): number => (x < min ? min : x > max ? max : x);
+
+/** Rayon (px) de déplacement de la souris, bouton du milieu tenu, qui pousse le levier de regard libre à fond. */
+export const RAYON_REGARD_SOURIS_PX = 220;
+
+// ============================================================================================================================
+// Clavier / souris
+// ============================================================================================================================
+
+/** Vrai si l'une des touches de l'action est enfoncée. */
+function tenue(touches: ReadonlySet<string>, codes: readonly string[]): boolean {
+  for (const c of codes) if (touches.has(c)) return true;
+  return false;
+}
+/** +1 / -1 / 0 : deux touches opposées tenues ensemble s'annulent. */
+const axe = (touches: ReadonlySet<string>, positif: readonly string[], negatif: readonly string[]): number =>
+  (tenue(touches, positif) ? 1 : 0) - (tenue(touches, negatif) ? 1 : 0);
+
+/**
+ * Clavier / souris → entrées (pure). Convention de signe du contrat : tangage +1 = nez en haut, direction et lacet +1 = à droite,
+ * roulis +1 = penche à droite. Les touches de gaz remplissent à la fois le gaz (`accel`) et le tangage (`tangage = -accel`) : la voiture
+ * n'utilise que celui qui convient (sol : gaz ; air : tangage). Le volant sert aussi de lacet en l'air (`lacet` reste à 0 : la voiture
+ * le prend dans `direction`).
+ *
+ * Regard libre : si le bouton du milieu (`Souris1`) est tenu, `deplacementSouris` est le levier virtuel déjà intégré par la source,
+ * en pixels depuis l'appui, converti en [-1, 1] ; il vaut `[0, 0]` sinon (le retour au centre est lissé par la caméra).
+ */
+export function entreesDepuisClavier(i: InstantaneClavier, l: Readonly<LiaisonsTouches>): EntreesJoueur {
+  const t = i.touches;
+  const accel = axe(t, l.accelerer, l.reculer);
+  const voiture: EntreesVoiture = {
+    accel,
+    direction: axe(t, l.droite, l.gauche),
+    tangage: 0 - accel,
+    lacet: 0,
+    roulis: axe(t, l.rouleDroite, l.rouleGauche),
+    saut: tenue(t, l.saut),
+    boost: tenue(t, l.boost),
+    derapage: tenue(t, l.derapage),
+  };
+  const regardActif = t.has("Souris1");
+  return {
+    voiture,
+    basculerBalleCam: tenue(t, l.balleCam),
+    regard: regardActif
+      ? [borne(i.deplacementSouris[0] / RAYON_REGARD_SOURIS_PX), borne(0 - i.deplacementSouris[1] / RAYON_REGARD_SOURIS_PX)]
+      : [0, 0],
+    arriere: tenue(t, l.arriere),
+    klaxon: tenue(t, l.klaxon),
+    pause: tenue(t, l.pause),
+  };
+}
+
+// ============================================================================================================================
+// Manette
+// ============================================================================================================================
+
+/** Indices du mapping « standard » de la Gamepad API. */
+export const BOUTON_MANETTE = { a: 0, b: 1, x: 2, y: 3, lb: 4, rb: 5, lt: 6, rt: 7, retour: 8, start: 9, r3: 11, haut: 12 } as const;
+
+/**
+ * Zone morte RADIALE puis courbe quadratique sur le stick `(x, y)` : sous `zoneMorte` rien ; au-delà, l'amplitude est ramenée à
+ * [0, 1], élevée au carré (précision au centre, pleine course au bord) et la direction du stick est conservée. Pure.
+ */
+export function stickAvecZoneMorte(x: number, y: number, zoneMorte: number): [number, number] {
+  const norme = Math.hypot(x, y);
+  const z = borne(zoneMorte, 0, 0.9);
+  if (norme <= z || norme < 1e-9) return [0, 0];
+  const a = borne((norme - z) / (1 - z), 0, 1);
+  const k = (a * a) / norme;
+  return [x * k, y * k];
+}
+
+const axeManette = (m: InstantaneManette, i: number): number => {
+  const v = m.axes[i];
+  return typeof v === "number" && Number.isFinite(v) ? v : 0;
+};
+/** Valeur analogique d'une gâchette ou d'un bouton, dans [0, 1] (un bouton binaire donne 0 ou 1). */
+const boutonManette = (m: InstantaneManette, i: number): number => {
+  const b = m.boutons[i];
+  if (!b) return 0;
+  const v = borne(Number.isFinite(b.value) ? b.value : 0, 0, 1);
+  if (b.pressed && v === 0) return 1;
+  return v < 0.05 ? 0 : v;
+};
+const presse = (m: InstantaneManette, i: number): boolean => !!m.boutons[i]?.pressed;
+
+/**
+ * Manette → entrées (pure). RT - LT donne le gaz analogique ; le stick gauche donne le volant (X) et le tangage (Y : vers le haut =
+ * nez en bas, comme Rocket League, sauf `inverserTangageManette`) ; le stick droit donne le regard libre (haut = regarder vers le haut).
+ */
+export function entreesDepuisManette(m: InstantaneManette, r: Pick<ReglagesRocket, "zoneMorteManette" | "inverserTangageManette">): EntreesJoueur {
+  const [gx, gy] = stickAvecZoneMorte(axeManette(m, 0), axeManette(m, 1), r.zoneMorteManette);
+  const [dx, dy] = stickAvecZoneMorte(axeManette(m, 2), axeManette(m, 3), r.zoneMorteManette);
+  const signeTangage = r.inverserTangageManette ? -1 : 1;
+  const voiture: EntreesVoiture = {
+    accel: borne(boutonManette(m, BOUTON_MANETTE.rt) - boutonManette(m, BOUTON_MANETTE.lt)),
+    direction: gx,
+    tangage: borne(gy * signeTangage),
+    lacet: 0,
+    roulis: (presse(m, BOUTON_MANETTE.rb) ? 1 : 0) - (presse(m, BOUTON_MANETTE.lb) ? 1 : 0),
+    saut: presse(m, BOUTON_MANETTE.a),
+    boost: presse(m, BOUTON_MANETTE.b),
+    derapage: presse(m, BOUTON_MANETTE.x),
+  };
+  return {
+    voiture,
+    basculerBalleCam: presse(m, BOUTON_MANETTE.y),
+    regard: [dx, 0 - dy],
+    arriere: presse(m, BOUTON_MANETTE.r3),
+    klaxon: presse(m, BOUTON_MANETTE.haut),
+    pause: presse(m, BOUTON_MANETTE.start),
+  };
+}
+
+// ============================================================================================================================
+// Fusion
+// ============================================================================================================================
+
+/** L'axe de plus grande amplitude l'emporte (clavier et manette branchés ensemble ne se gênent pas). */
+const plusFort = (a: number, b: number): number => (Math.abs(b) > Math.abs(a) ? b : a);
+
+/** Combine deux sources : la plus forte l'emporte pour chaque axe, OU logique pour les boutons. */
+export function fusionnerEntrees(a: EntreesJoueur, b: EntreesJoueur): EntreesJoueur {
+  return {
+    voiture: {
+      accel: plusFort(a.voiture.accel, b.voiture.accel),
+      direction: plusFort(a.voiture.direction, b.voiture.direction),
+      tangage: plusFort(a.voiture.tangage, b.voiture.tangage),
+      lacet: plusFort(a.voiture.lacet, b.voiture.lacet),
+      roulis: plusFort(a.voiture.roulis, b.voiture.roulis),
+      saut: a.voiture.saut || b.voiture.saut,
+      boost: a.voiture.boost || b.voiture.boost,
+      derapage: a.voiture.derapage || b.voiture.derapage,
+    },
+    basculerBalleCam: a.basculerBalleCam || b.basculerBalleCam,
+    regard: [plusFort(a.regard[0], b.regard[0]), plusFort(a.regard[1], b.regard[1])],
+    arriere: a.arriere || b.arriere,
+    klaxon: a.klaxon || b.klaxon,
+    pause: a.pause || b.pause,
+  };
+}
+
+// ============================================================================================================================
+// Source (DOM)
+// ============================================================================================================================
+
+/** Ce que la source lit d'une manette (sous-ensemble de `Gamepad`, injectable en test). */
+export interface ManetteLue extends InstantaneManette {
+  connected?: boolean;
+  mapping?: string;
+  vibrationActuator?: {
+    playEffect(type: "dual-rumble", params: { startDelay?: number; duration: number; weakMagnitude: number; strongMagnitude: number }): Promise<unknown> | unknown;
+  } | null;
+}
+
+/**
+ * `Gamepad` du navigateur → `ManetteLue` : le navigateur expose `buttons`, le contrat lit `boutons`. Sans cette adaptation, la première
+ * image avec une vraie manette branchée lirait `undefined[7]` et lèverait une exception dans la boucle.
+ */
+export function manetteDepuisGamepad(g: Gamepad | null): ManetteLue | null {
+  if (!g) return null;
+  return { axes: g.axes, boutons: g.buttons, connected: g.connected, mapping: g.mapping, vibrationActuator: (g as unknown as ManetteLue).vibrationActuator ?? null };
+}
+
+/** Source d'entrées + quelques accès supplémentaires pour `jeu.ts` (pause à la manette, boutons du menu). */
+export interface SourceEntreesEtendue extends SourceEntrees {
+  /** vrai si le bouton `index` de la manette (mapping standard) est enfoncé à cet instant */
+  boutonManette(index: number): boolean;
+}
+
+/** Cible d'un événement qui ne doit PAS être volée au navigateur (champ de saisie, bouton, lien, boîte de dialogue du menu pause). */
+function cibleInteractive(t: EventTarget | null): boolean {
+  const el = t as (Partial<HTMLElement> & { closest?: (s: string) => Element | null }) | null;
+  if (!el || typeof el.tagName !== "string") return false;
+  const tag = el.tagName.toLowerCase();
+  if (tag === "input" || tag === "textarea" || tag === "select" || tag === "button" || tag === "a" || tag === "summary") return true;
+  if (el.isContentEditable) return true;
+  // la racine de la vue Palantir est elle-même un `role="dialog"` (porteur de `data-arene`) qui contient le canvas : elle n'est pas un
+  // dialogue du menu. Seuls les vrais dialogues (pause, fin) et menus volent les touches.
+  return typeof el.closest === "function" && !!el.closest('[role="dialog"]:not([data-arene]), [role="menu"]');
+}
+
+/** Touches dont l'action par défaut du navigateur (défilement, focus, menu) gênerait le jeu. */
+const TOUCHES_BLOQUEES = new Set(["Space", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Tab", "ControlLeft", "ControlRight"]);
+
+/**
+ * Branche les écouteurs sur `cible` (la fenêtre). `liaisons` et `reglages` sont relus à chaque échantillon (le menu de réglages peut
+ * les changer en pleine partie). Une touche pressée ENTRE deux échantillons est mémorisée jusqu'au prochain : un appui plus court
+ * qu'une image (rendu logiciel à 5 images/s) n'est jamais perdu. `lireManettes` est injectable pour les tests.
+ */
+export function creerSourceEntrees(
+  cible: Window,
+  liaisons: () => Readonly<LiaisonsTouches>,
+  reglages: () => Readonly<ReglagesRocket>,
+  lireManettes: () => readonly (ManetteLue | null)[] = () =>
+    (typeof navigator !== "undefined" && typeof navigator.getGamepads === "function" ? Array.from(navigator.getGamepads(), manetteDepuisGamepad) : []),
+): SourceEntreesEtendue {
+  const enfoncees = new Set<string>();
+  /** touches pressées depuis le dernier échantillon (même relâchées depuis) */
+  const memoire = new Set<string>();
+  /** levier virtuel du regard libre : déplacement cumulé de la souris (px) depuis l'appui du bouton du milieu */
+  const levier: [number, number] = [0, 0];
+
+  const presser = (code: string) => { enfoncees.add(code); memoire.add(code); };
+  const relacherCode = (code: string) => { enfoncees.delete(code); if (code === "Souris1") { levier[0] = 0; levier[1] = 0; } };
+
+  const surKeyDown = (e: Event) => {
+    const k = e as KeyboardEvent;
+    if (cibleInteractive(k.target)) return;
+    presser(k.code);
+    if (!k.metaKey && (TOUCHES_BLOQUEES.has(k.code) || utilisee(k.code))) k.preventDefault();
+  };
+  const surKeyUp = (e: Event) => {
+    const k = e as KeyboardEvent;
+    relacherCode(k.code);
+  };
+  const surMouseDown = (e: Event) => {
+    const m = e as MouseEvent;
+    if (cibleInteractive(m.target)) return;
+    presser(`Souris${m.button}`);
+    // le bouton du milieu déclencherait le défilement automatique du navigateur
+    if (m.button === 1) m.preventDefault();
+  };
+  const surMouseUp = (e: Event) => { relacherCode(`Souris${(e as MouseEvent).button}`); };
+  const surMouseMove = (e: Event) => {
+    if (!enfoncees.has("Souris1")) return;
+    const m = e as MouseEvent;
+    levier[0] += m.movementX || 0;
+    levier[1] += m.movementY || 0;
+    const n = Math.hypot(levier[0], levier[1]);
+    if (n > RAYON_REGARD_SOURIS_PX) { levier[0] *= RAYON_REGARD_SOURIS_PX / n; levier[1] *= RAYON_REGARD_SOURIS_PX / n; }
+  };
+  const surContexte = (e: Event) => { e.preventDefault(); };
+  const surPerteFocus = () => { enfoncees.clear(); memoire.clear(); levier[0] = 0; levier[1] = 0; };
+  const surManette = () => { /* connectée() relit navigator à chaque appel */ };
+
+  /** `code` est-il lié à une action ? (pour ne bloquer que les touches du jeu) */
+  function utilisee(code: string): boolean {
+    const l = liaisons();
+    for (const k of Object.keys(l) as (keyof LiaisonsTouches)[]) if (l[k].includes(code)) return true;
+    return false;
+  }
+
+  function manette(): ManetteLue | null {
+    const liste = lireManettes();
+    for (const g of liste) if (g && g.connected !== false && (g.mapping === undefined || g.mapping === "standard")) return g;
+    return null;
+  }
+
+  cible.addEventListener("keydown", surKeyDown);
+  cible.addEventListener("keyup", surKeyUp);
+  cible.addEventListener("mousedown", surMouseDown);
+  cible.addEventListener("mouseup", surMouseUp);
+  cible.addEventListener("mousemove", surMouseMove);
+  cible.addEventListener("contextmenu", surContexte);
+  cible.addEventListener("blur", surPerteFocus);
+  cible.addEventListener("gamepadconnected", surManette);
+  cible.addEventListener("gamepaddisconnected", surManette);
+
+  return {
+    echantillonner() {
+      const touches = new Set<string>(enfoncees);
+      for (const c of memoire) touches.add(c);
+      // les touches mémorisées ont vécu leur image : celles qui sont encore tenues restent dans `enfoncees`
+      memoire.clear();
+      const clavier = entreesDepuisClavier({ touches, deplacementSouris: [levier[0], levier[1]] }, liaisons());
+      const pad = manette();
+      return pad ? fusionnerEntrees(clavier, entreesDepuisManette(pad, reglages())) : clavier;
+    },
+    manetteConnectee() { return manette() !== null; },
+    boutonManette(index) { const p = manette(); return !!p && presse(p, index); },
+    relacher() { surPerteFocus(); },
+    vibrer(intensite, dureeMs) {
+      const pad = manette();
+      const act = pad?.vibrationActuator;
+      if (!act) return;
+      const i = borne(intensite, 0, 1);
+      try {
+        const r = act.playEffect("dual-rumble", { startDelay: 0, duration: Math.max(1, Math.round(dureeMs)), weakMagnitude: i * 0.7, strongMagnitude: i });
+        if (r && typeof (r as Promise<unknown>).catch === "function") (r as Promise<unknown>).catch(() => {});
+      } catch { /* vibration refusée : sans importance */ }
+    },
+    dispose() {
+      cible.removeEventListener("keydown", surKeyDown);
+      cible.removeEventListener("keyup", surKeyUp);
+      cible.removeEventListener("mousedown", surMouseDown);
+      cible.removeEventListener("mouseup", surMouseUp);
+      cible.removeEventListener("mousemove", surMouseMove);
+      cible.removeEventListener("contextmenu", surContexte);
+      cible.removeEventListener("blur", surPerteFocus);
+      cible.removeEventListener("gamepadconnected", surManette);
+      cible.removeEventListener("gamepaddisconnected", surManette);
+      enfoncees.clear();
+      memoire.clear();
+    },
+  };
+}
