@@ -2440,7 +2440,8 @@ export function lancerJeu(canvas: HTMLCanvasElement, sceneBrute: SceneData, clie
           effets.eclaboussure(c, "#ff8a1c");
           effets.eclaboussure([c[0], 1.4, c[2]], "#ffd9a0");
         }
-        if (fx.rugissement) sons.rugissementTigre(positionSon(c), true);
+        // un tigre abattu sur dix crie (retour du joueur : un cri par mort, c'était trop de bruit)
+        if (fx.rugissement && rugissements.criMort(t, Math.random)) sons.rugissementTigre(positionSon(c), true);
         if (m.par === client.id) sons.kill();
         mortZombie(m);
         break;
