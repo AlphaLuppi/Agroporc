@@ -357,9 +357,23 @@ export function tigreAffiche(cam: Vec3, regardX: number, regardZ: number, x: num
   return (dx * regardX + dz * regardZ) / l > -MARGE_DEVANT_M;
 }
 
-/** Rugissements espacés : un tigre proche (≤ 60 m) rugit de temps en temps, plus souvent quand il y en a beaucoup. */
+/**
+ * Rugissements espacés : de temps en temps, UN tigre proche (≤ 60 m) rugit, toutes les 6 à 12 s quel que soit le nombre de tigres
+ * (retour du joueur 2026-11-06 : quand ils rugissaient tous, c'était usant ; une horde ne rugit pas plus souvent).
+ */
+export const RUGISSEMENT = {
+  /** Écart entre deux rugissements d'ambiance, en secondes : min + aléa × étendue. */
+  intervalleMinS: 6,
+  intervalleEtendueS: 6,
+  /** Part des tigres abattus qui poussent un cri de mort (1 sur 10). */
+  partCriMort: 0.1,
+  /** Écart minimal entre deux cris de mort, en secondes (une nuke ou une grenade ne fait pas un chœur). */
+  ecartCriMortS: 1.5,
+} as const;
+
 export class Rugissements {
-  private reste = 2;
+  private reste = 3;
+  private dernierCri = -Infinity;
 
   /** Id du tigre qui rugit à cette image, ou null. `alea` ∈ [0, 1[ (injecté). */
   maj(dt: number, zombies: readonly ZombieVue[], n: number, cam: Vec3, alea: () => number): number | null {
@@ -367,10 +381,16 @@ export class Rugissements {
     if (this.reste > 0) return null;
     const proches: number[] = [];
     for (let i = 0; i < n; i++) if (Math.hypot(zombies[i].x - cam[0], zombies[i].z - cam[2]) <= 60) proches.push(i);
-    // prochain rugissement : 1,5 à 4 s, divisé par le nombre de tigres proches (au plus 3)
-    this.reste = (1.5 + alea() * 2.5) / Math.min(3, Math.max(1, proches.length));
+    this.reste = RUGISSEMENT.intervalleMinS + alea() * RUGISSEMENT.intervalleEtendueS;
     if (!proches.length) return null;
     return zombies[proches[Math.min(proches.length - 1, Math.floor(alea() * proches.length))]].id;
+  }
+
+  /** Le tigre abattu à l'instant `t` (s) pousse-t-il un cri de mort ? Un sur dix, jamais deux à moins de `ecartCriMortS`. */
+  criMort(t: number, alea: () => number): boolean {
+    if (t - this.dernierCri < RUGISSEMENT.ecartCriMortS || alea() >= RUGISSEMENT.partCriMort) return false;
+    this.dernierCri = t;
+    return true;
   }
 }
 

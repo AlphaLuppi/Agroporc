@@ -5,7 +5,7 @@ import type { SceneData } from "../agroparc3d/types";
 import { MELEE, STATS } from "./armes";
 import { formatArgent } from "./hud-modele";
 import {
-  CAPACITE_ZOMBIES, DISTANCE_AFFICHAGE_M, INVITE_VIDE, MondeZombies, effetsMortZombie, Rugissements, TAMPON_ZOMBIES_MS, animerCetteImage, decisionMaintien, inviteZombies, objetSecretProche,
+  CAPACITE_ZOMBIES, DISTANCE_AFFICHAGE_M, INVITE_VIDE, MondeZombies, effetsMortZombie, RUGISSEMENT, Rugissements, TAMPON_ZOMBIES_MS, animerCetteImage, decisionMaintien, inviteZombies, objetSecretProche,
   periodeAnimation, segmentsPortesFermees, sonGriffe, tigreAffiche, trouverZombieTouche, trouverZombiesMelee, type EntreeInvite, type PartieInvite, type ZombieVue,
 } from "./jeu-zombies";
 import { FORME_TIGRE, pointLocal, toucheTigre } from "./monstres";
@@ -271,23 +271,38 @@ describe("affichage", () => {
     expect(tigreAffiche(cam, 1, 0, 30, 20)).toBe(true);
   });
 
-  it("rugissements : espacés de 0,5 à 4 s, seulement par un tigre à moins de 60 m, jamais sans tigre proche", () => {
+  it("rugissements : un seul tigre toutes les 6 à 12 s, même en horde, seulement à moins de 60 m, jamais sans tigre proche", () => {
     const r = new Rugissements();
-    const proche = [vue(5, 10, 0), vue(6, 200, 0)];
+    const horde = [vue(5, 10, 0), vue(6, 200, 0), ...Array.from({ length: 10 }, (_, i) => vue(10 + i, 5 + i, 3))];
     const cam: Vec3 = [0, 1.7, 0];
     let t = 0;
     const evts: { t: number; id: number }[] = [];
     const alea = aleaGraine(3);
-    for (let i = 0; i < 60 * 40; i++) {
+    for (let i = 0; i < 60 * 120; i++) {
       t += 1 / 60;
-      const id = r.maj(1 / 60, proche, 2, cam, alea);
+      const id = r.maj(1 / 60, horde, horde.length, cam, alea);
       if (id !== null) evts.push({ t, id });
     }
-    expect(evts.length).toBeGreaterThan(5);
-    expect(evts.every((e) => e.id === 5)).toBe(true);
-    for (let i = 1; i < evts.length; i++) expect(evts[i].t - evts[i - 1].t).toBeGreaterThan(0.45);
+    expect(evts.length).toBeGreaterThanOrEqual(9);
+    expect(evts.length).toBeLessThanOrEqual(20);
+    expect(evts.every((e) => e.id !== 6)).toBe(true);
+    for (let i = 1; i < evts.length; i++) expect(evts[i].t - evts[i - 1].t).toBeGreaterThan(RUGISSEMENT.intervalleMinS - 0.05);
     const seul = new Rugissements();
     for (let i = 0; i < 600; i++) expect(seul.maj(1 / 60, [vue(6, 200, 0)], 1, cam, alea)).toBeNull();
+  });
+
+  it("cris de mort : environ un tigre abattu sur dix, jamais deux à moins de 1,5 s", () => {
+    const r = new Rugissements();
+    const alea = aleaGraine(7);
+    const cris: number[] = [];
+    for (let i = 0; i < 2000; i++) if (r.criMort(i * 2, alea)) cris.push(i * 2);
+    expect(cris.length).toBeGreaterThan(140);
+    expect(cris.length).toBeLessThan(260);
+    // nuke : 24 tigres abattus dans la même image, un cri au plus
+    const nuke = new Rugissements();
+    let n = 0;
+    for (let i = 0; i < 24; i++) if (nuke.criMort(100, () => 0)) n++;
+    expect(n).toBe(1);
   });
 });
 
