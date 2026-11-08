@@ -846,6 +846,26 @@ describe("match : but, fin et revanche", () => {
     expect(sc.salle.humains()).toBe(2);
   });
 
+  it("la fin du match et le retour au salon comptent comme activité (un long match ne fait pas dissoudre le salon revenu)", () => {
+    const sc = duoEnMatch();
+    jouerJusquALaFin(sc);
+    expect(sc.salle.activiteMs()).toBeGreaterThan(5000);
+    const finMs = sc.salle.activiteMs();
+    sc.avancer(RESEAU.revancheMs + 500);
+    expect(sc.salle.phase).toBe("salon");
+    expect(sc.salle.activiteMs()).toBeGreaterThan(finMs);
+  });
+
+  it("restituerCompteurs : les compteurs d'un instantané non parti sont portés par le suivant", () => {
+    const sc = duoEnMatch();
+    const premier = snaps(sc.avancer(300), 2);
+    expect(premier.length).toBeGreaterThan(0);
+    sc.salle.restituerCompteurs(2, -90, 7);
+    const suivant = snaps(sc.avancer(300), 2)[0];
+    expect(suivant.avance).toBe(-90);
+    expect(suivant.manquees).toBeGreaterThanOrEqual(7);
+  });
+
   it("retourSalon : hôte seulement, phase fin seulement", () => {
     const sc = duoEnMatch();
     expect(messages(sc.envoyer(1, { t: "retourSalon" }), "refus")[0].raison).toBe("phase");
@@ -942,6 +962,15 @@ describe("présence : coupure, reprise, bot", () => {
     const ordre = s.map((x) => ("snap" in x ? "snap" : x.msg.t));
     expect(ordre.indexOf("salon")).toBeLessThan(ordre.indexOf("debut"));
     expect(ordre.indexOf("debut")).toBeLessThan(ordre.indexOf("snap"));
+  });
+
+  it("reprise pendant l'écran de fin : salon, debut, instantané final (phase « fini ») puis fin", () => {
+    const sc = duoEnMatch();
+    jouerJusquALaFin(sc);
+    const s = sc.salle.reprendre(1, sc.t);
+    const ordre = s.map((x) => ("snap" in x ? "snap" : x.msg.t));
+    expect(ordre).toEqual(["salon", "debut", "snap", "fin"]);
+    expect(snaps(s, 1)[0].etat.phase).toBe("fini");
   });
 
   it("prise de relais : reprendre alors que l'ancienne socket est encore « connectée » renvoie l'état complet", () => {
@@ -1084,5 +1113,203 @@ describe("aEcheance et phases", () => {
     sc.envoyer(2, { t: "pret" });
     sc.avancer(500);
     expect(sc.salle.mesures().pas).toBeGreaterThan(p2);
+  });
+});
+
+// ============================================================================================================================
+// Jouabilité réseau : rejeu des entrées tardives et entrées futures des autres humains
+// ============================================================================================================================
+
+describe("rejeu serveur d'une entrée arrivée en retard (spec § 4.5 bis)", () => {
+  const octetsMonde = (sc: Scene): number[] => Array.from(encoderEtat(extraireEtat(sc.salle.monde() as never)));
+  const variees = (n: number, depuis = 0): EntreesQuantifiees[] => Array.from({ length: n }, (_, k) => { const i = k + depuis; return Q({ accel: 127, direction: i < 12 ? 90 : -60, boost: i % 7 < 4, saut: i === 5 }); });
+  /** les 24 entrées d'un bloc, en deux trames de 12 (une trame ne porte pas plus de `entreesMaxParTrame`) */
+  const envoyer24 = (sc: Scene, joueur: number, T: number): void => {
+    sc.entrees(joueur, { tickDebut: T, entrees: variees(12) });
+    sc.entrees(joueur, { tickDebut: T + 12, entrees: variees(12, 12) });
+  };
+
+  /** deux salles jumelles, décompte et coup d'envoi passés, avec de la place derrière le dernier événement important */
+  function jumelles(): [Scene, Scene] {
+    const a = duoEnMatch(), b = duoEnMatch();
+    a.avancer(4200); b.avancer(4200);
+    expect(a.salle.monde()!.tick).toBe(b.salle.monde()!.tick);
+    return [a, b];
+  }
+
+  it("une entrée qui arrive 24 ticks trop tard donne EXACTEMENT le monde qu'une entrée à l'heure (octet à octet)", () => {
+    const [aTemps, enRetard] = jumelles();
+    const T = aTemps.salle.monde()!.tick;
+    envoyer24(aTemps, 1, T);
+    aTemps.avancer(200); enRetard.avancer(200);
+    expect(enRetard.salle.monde()!.tick).toBeGreaterThanOrEqual(T + 24);
+    // sans l'entrée, les deux mondes ont divergé (l'une répète du neutre)
+    expect(octetsMonde(aTemps)).not.toEqual(octetsMonde(enRetard));
+    envoyer24(enRetard, 1, T);
+    aTemps.avancer(400); enRetard.avancer(400);
+    expect(enRetard.salle.monde()!.tick).toBe(aTemps.salle.monde()!.tick);
+    expect(octetsMonde(enRetard)).toEqual(octetsMonde(aTemps));
+    expect(enRetard.salle.mesures().rewinds).toBe(1);
+    expect(enRetard.salle.mesures().rewindTicks).toBeGreaterThanOrEqual(24);
+    expect(aTemps.salle.mesures().rewinds).toBe(0);
+  });
+
+  it("le rejeu se fait au tic suivant, pas dans le gestionnaire de message ; plusieurs trames tardives dans le même intervalle = un seul rejeu", () => {
+    const [, sc] = jumelles();
+    const T = sc.salle.monde()!.tick;
+    sc.avancer(200);
+    const avant = octetsMonde(sc);
+    sc.entrees(1, { tickDebut: T, entrees: variees(12) });
+    sc.entrees(1, { tickDebut: T + 12, entrees: variees(12) });
+    expect(octetsMonde(sc)).toEqual(avant);
+    expect(sc.salle.mesures().rewinds).toBe(0);
+    sc.avancer(10);
+    expect(sc.salle.mesures().rewinds).toBe(1);
+  });
+
+  it("une entrée tardive identique à ce qui a été appliqué (répétition correcte) ne déclenche aucun rejeu", () => {
+    const [, sc] = jumelles();
+    const T = sc.salle.monde()!.tick;
+    sc.entrees(1, { tickDebut: T, entrees: [Q({ accel: 127, boost: true })] });
+    sc.avancer(100); // le tick T est joué avec l'entrée vraie, les suivants la répètent
+    const t1 = sc.salle.monde()!.tick;
+    sc.entrees(1, { tickDebut: T + 3, entrees: Array.from({ length: 4 }, () => Q({ accel: 127, boost: true })) });
+    sc.avancer(50);
+    expect(sc.salle.monde()!.tick).toBeGreaterThan(t1);
+    expect(sc.salle.mesures().rewinds).toBe(0);
+    expect(sc.salle.mesures().rewindsRefuses).toBe(0);
+  });
+
+  it("au-delà de la fenêtre (rewindMaxTicks) l'entrée n'est ni rejouée ni refusée : l'ancienne règle s'applique", () => {
+    const [, sc] = jumelles();
+    const T = sc.salle.monde()!.tick;
+    sc.avancer(1000);
+    sc.entrees(1, { tickDebut: T, entrees: variees(8) });
+    sc.avancer(50);
+    expect(sc.salle.mesures().rewinds).toBe(0);
+    expect(sc.salle.mesures().rewindsRefuses).toBe(0);
+    expect(sc.salle.mesures().entreesTardives).toBeGreaterThanOrEqual(8);
+  });
+
+  it("jamais à travers un événement important : un but dans la fenêtre refuse le rejeu et laisse le monde intact", () => {
+    const [a, b] = jumelles();
+    for (const sc of [a, b]) {
+      sc.envoyer(1, { t: "dev", action: "balle", p: [0, 2, 56], v: [0, 0, 0] });
+      sc.avancer(100);
+    }
+    expect(messages(a.journal, "ev").some((m) => m.evenements.some((x) => x.e.t === "but"))).toBe(true);
+    const T = a.salle.monde()!.tick - 20;
+    b.entrees(1, { tickDebut: T, entrees: variees(10) });
+    a.avancer(50); b.avancer(50);
+    expect(b.salle.mesures().rewinds).toBe(0);
+    expect(b.salle.mesures().rewindsRefuses).toBe(1);
+    expect(b.salle.monde()!.tick).toBe(a.salle.monde()!.tick);
+    // le monde n'a pas été remplacé par un rejeu : le but est toujours là, une seule fois
+    expect(b.salle.monde()!.score).toEqual(a.salle.monde()!.score);
+    expect(messages(b.journal, "ev").flatMap((m) => m.evenements).filter((x) => x.e.t === "but")).toHaveLength(1);
+  });
+
+  it("l'entrée du joueur coupé ou d'un bot n'est jamais remplacée ; une trame d'un autre humain ne rejoue que sa voiture", () => {
+    const [aTemps, enRetard] = jumelles();
+    const T = aTemps.salle.monde()!.tick;
+    envoyer24(aTemps, 2, T);
+    aTemps.avancer(200); enRetard.avancer(200);
+    envoyer24(enRetard, 2, T);
+    aTemps.avancer(300); enRetard.avancer(300);
+    expect(octetsMonde(enRetard)).toEqual(octetsMonde(aTemps));
+    expect(enRetard.salle.mesures().rewinds).toBe(1);
+  });
+
+  it("deux salles identiques, mêmes messages tardifs : sorties identiques (déterminisme du rejeu)", () => {
+    const [a, b] = jumelles();
+    const T = a.salle.monde()!.tick;
+    for (const sc of [a, b]) { sc.avancer(150); sc.entrees(1, { tickDebut: T + 2, entrees: variees(16) }); sc.avancer(300); }
+    expect(octetsMonde(a)).toEqual(octetsMonde(b));
+    const sa = snaps(a.journal, 1).at(-1)!, sb = snaps(b.journal, 1).at(-1)!;
+    expect(Array.from(encoderSnap(sa))).toEqual(Array.from(encoderSnap(sb)));
+  });
+
+  it("après un rejeu, les instantanés suivants portent l'état corrigé et snap.entrees la dernière entrée appliquée", () => {
+    const [aTemps, enRetard] = jumelles();
+    const T = aTemps.salle.monde()!.tick;
+    envoyer24(aTemps, 1, T);
+    aTemps.avancer(200); enRetard.avancer(200);
+    envoyer24(enRetard, 1, T);
+    const moi = voitureDe(enRetard, 1);
+    const sB = snaps(enRetard.avancer(100), 1).at(-1)!;
+    const sA = snaps(aTemps.avancer(100), 1).at(-1)!;
+    expect(sB.tick).toBe(sA.tick);
+    expect(sB.etat.voitures[moi].p).toEqual(sA.etat.voitures[moi].p);
+    expect(sB.entrees[moi]).toEqual(sA.entrees[moi]);
+  });
+
+  function voitureDe(sc: Scene, joueur: number): number {
+    return messages(sc.journal, "debut", joueur).at(-1)!.moi;
+  }
+});
+
+describe("entrées futures des autres humains dans l'instantané", () => {
+  const voitureDe = (sc: Scene, joueur: number): number => messages(sc.journal, "debut", joueur).at(-1)!.moi;
+
+  it("chaque humain reçoit les entrées DÉJÀ reçues des autres pour les ticks à venir, jamais les siennes", () => {
+    const sc = duoEnMatch();
+    sc.avancer(3300);
+    const tick = sc.salle.monde()!.tick;
+    const alice = voitureDe(sc, 1), bob = voitureDe(sc, 2);
+    sc.entrees(1, { tickDebut: tick, entrees: Array.from({ length: 12 }, (_, i) => Q({ accel: 100 + i, boost: i >= 4 })) });
+    sc.entrees(2, { tickDebut: tick, entrees: gaz(12) });
+    const s = sc.jusqua((x) => snaps(x, 2).length > 0);
+    const pourBob = snaps(s, 2)[0];
+    const pourAlice = snaps(s, 1)[0];
+    expect(pourBob.futurs).toBeDefined();
+    const f = pourBob.futurs![alice];
+    // la liste commence au tick de l'instantané : seuls les ticks reçus et pas encore joués y figurent, contigus
+    expect(f.length).toBeGreaterThan(0);
+    for (let k = 0; k < f.length; k++) {
+      const attendu = pourBob.tick + k - tick;
+      if (attendu >= 0 && attendu < 12) expect(f[k]).toMatchObject({ accel: 100 + attendu, boost: attendu >= 4 });
+    }
+    expect(pourBob.futurs![bob]).toEqual([]);
+    expect(pourAlice.futurs![alice]).toEqual([]);
+    expect(pourAlice.futurs![bob].length).toBeGreaterThan(0);
+  });
+
+  it("pas de liste pour un bot, un joueur coupé ou une voiture sans avance ; aucun champ `futurs` quand rien n'est connu", () => {
+    const sc = soloEnMatch();
+    sc.avancer(3300);
+    const s = snaps(sc.avancer(60), 1);
+    expect(s.length).toBeGreaterThan(0);
+    for (const x of s) expect(x.futurs).toBeUndefined();
+    const duo = duoEnMatch();
+    duo.avancer(3300);
+    const t = duo.salle.monde()!.tick;
+    duo.entrees(2, { tickDebut: t + 3, entrees: gaz(6) });
+    duo.salle.retirer(2, duo.t, true);
+    const sorties = duo.avancer(40);
+    for (const x of snaps(sorties, 1)) expect(x.futurs === undefined || x.futurs.every((l) => l.length === 0)).toBe(true);
+  });
+
+  it("les entrées futures sont au plus futursMaxTicks par voiture et s'arrêtent au premier trou", () => {
+    const sc = duoEnMatch();
+    sc.avancer(3300);
+    const tick = sc.salle.monde()!.tick;
+    const alice = voitureDe(sc, 1);
+    sc.entrees(1, { tickDebut: tick + 1, entrees: gaz(12) });
+    sc.entrees(1, { tickDebut: tick + 14, entrees: gaz(6) }); // trou au tick + 13
+    const s = snaps(sc.jusqua((x) => snaps(x, 2).length > 0), 2)[0];
+    const f = s.futurs![alice];
+    expect(f.length).toBeLessThanOrEqual(RESEAU.futursMaxTicks);
+    expect(f.length).toBe(Math.max(0, tick + 13 - s.tick));
+  });
+
+  it("l'instantané encodé puis décodé conserve les entrées futures", () => {
+    const sc = duoEnMatch();
+    sc.avancer(3300);
+    const tick = sc.salle.monde()!.tick;
+    sc.entrees(1, { tickDebut: tick, entrees: Array.from({ length: 12 }, (_, i) => Q({ accel: 127, direction: i < 5 ? 0 : 40, saut: i === 7 })) });
+    const s = snaps(sc.jusqua((x) => snaps(x, 2).length > 0), 2)[0];
+    expect(s.futurs).toBeDefined();
+    const d = decoderSnap(encoderSnap(s))!;
+    expect(d.futurs).toEqual(s.futurs);
   });
 });

@@ -744,6 +744,48 @@ const SB = await lancerServeur({ PDJ_ROCKET_CONNEXIONS_IP: "6", PDJ_ROCKET_SALLE
   ok(C.every((c) => !c.fermeture), "les six premières restent ouvertes");
   for (const c of C) c.fermer();
   await attendre(200);
+  // trame trop grande sur une connexion REFUSÉE par le plafond : sans écouteur d'erreur posé avant le refus, le processus tombait (arène comprise)
+  {
+    const IPP = "192.0.2.88";
+    const pleins = [];
+    for (let i = 0; i < 6; i++) { const c = client(SB, `P${i}`, { ip: IPP }); pleins.push(c); await c.ouvert; }
+    await attendre(100);
+    const gros = client(SB, "Gros", { ip: IPP, bonjour: false });
+    await gros.ouvert;
+    try { gros.ws.send(Buffer.alloc(20_000)); } catch { /* déjà fermée */ }
+    await jusqua(() => gros.fermeture, 2000);
+    await attendre(300);
+    const vivant = await fetch(`${SB.http}/sante`).then((r) => r.ok, () => false);
+    ok(vivant && SB.proc.exitCode === null, "trame de 20 Ko sur une connexion refusée (plafond) : le serveur survit (/sante répond)");
+    for (const c of pleins) c.fermer();
+    await attendre(200);
+  }
+
+  // reprise par jeton VALIDE : l'anti-énumération des codes d'une adresse (voisin de NAT) ne la bloque pas
+  {
+    const IPV = "198.51.100.50";
+    const V = client(SB, "Vic", { ip: IPV }), W = client(SB, "Wendy", { ip: "198.51.100.51" });
+    await accueilli(V, W);
+    V.envoyer({ t: "creer", reglages: REGLAGES });
+    const sv = await V.attendre((m) => m.t === "salon" && m.salon);
+    W.envoyer({ t: "rejoindre", code: sv.salon.code });
+    await W.attendre((m) => m.t === "session");
+    V.envoyer({ t: "lancer" });
+    await V.attendre((m) => m.t === "debut");
+    const reprise = { code: V.code, joueur: V.id, jeton: V.jeton };
+    V.couper();
+    await attendre(200);
+    const voisin = client(SB, "Voisin", { ip: IPV });
+    await accueilli(voisin);
+    for (let i = 0; i < RESEAU.essaisCodeParMinute + 2; i++) { voisin.envoyer({ t: "rejoindre", code: alpha[i % 20] + "XXZ" }); await attendre(40); }
+    ok(!!(await voisin.attendre((m) => m.t === "refus" && m.raison === "limite", 2000)), "le voisin de la même adresse atteint la limite d'essais de codes");
+    const V2 = client(SB, "Vic", { ip: IPV, reprise });
+    await V2.ouvert;
+    const rv = await V2.attendre((m) => m.t === "reprise", 3000);
+    ok(rv?.code === reprise.code, `reprise par jeton valide malgré la limite d'essais de l'adresse (reprise.code = ${rv?.code})`);
+    for (const c of [V2, W, voisin]) c.fermer();
+    await attendre(200);
+  }
   // origine refusée
   const hs = await sante(SB);
   ok(typeof hs.connexions === "number", `/sante.rocket.connexions = ${hs.connexions}`);

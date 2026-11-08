@@ -168,6 +168,7 @@ export default function HudRocketUi({ hud, reglages, surReglages, surReprendre, 
           surQuitterVue={surQuitterVue}
           manette={hud.manette}
           enLigne={!!enLigne}
+          etatConnexion={enLigne?.reseau?.etat}
         />
       )}
       {hud.resultat && (

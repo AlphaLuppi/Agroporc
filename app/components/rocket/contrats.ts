@@ -87,6 +87,8 @@ export interface PropsMenuPauseRocket {
   manette: boolean;
   /** EN LIGNE : le jeu continue pendant le menu (pas de pause, pas de « Recommencer ») */
   enLigne?: boolean;
+  /** EN LIGNE : état de la connexion ; hors « ouverte », le menu ne promet ni partie qui continue ni bot */
+  etatConnexion?: HudReseau["etat"];
 }
 
 /** Écran de fin de match. */

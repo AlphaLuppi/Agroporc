@@ -113,6 +113,16 @@ describe("registre Rocket : trouver et anti-énumération", () => {
     // une autre adresse n'est pas affectée
     expect(r.trouver(s.code, "autre", 3000).ok).toBe(true);
   });
+  it("salle(code) lit sans compter ni subir l'anti-énumération (reprise par jeton valide)", () => {
+    const { r } = registre({ essaisCodeParMinute: 2 });
+    const s = creerOk(r);
+    const faux = s.code === "BCDF" ? "CCCD" : "BCDF";
+    for (let i = 0; i < 5; i++) r.trouver(faux, "ip", 1000);
+    expect(r.trouver(s.code, "ip", 2000)).toEqual({ ok: false, raison: "limite" });
+    expect(r.salle(` ${s.code.toLowerCase()} `)).toBe(s);
+    expect(r.salle(faux)).toBeNull();
+    expect(r.salle("zz")).toBeNull();
+  });
   it("la fenêtre glisse : une minute plus tard, l'adresse retrouve ses essais", () => {
     const { r } = registre({ essaisCodeParMinute: 3 });
     const s = creerOk(r);

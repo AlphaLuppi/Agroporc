@@ -93,6 +93,11 @@ export const creerRegistreRocket: CreerRegistreRocket = (opts) => {
       return { ok: true, salle };
     },
 
+    salle(code) {
+      const c = normaliserCode(code);
+      return c === null ? null : salles.get(c) ?? null;
+    },
+
     lister() {
       const liste: ResumeSalle[] = [];
       for (const s of salles.values()) {

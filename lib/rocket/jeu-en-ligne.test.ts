@@ -3,7 +3,7 @@ import { ENTREES_NULLES, type EntreesVoiture, type EvenementMatch, type MondeRoc
 import type { HudReseau, PredicteurRocket, ResultatAvance, TrameEntrees } from "./reseau/protocole";
 import {
   ECART_HUD_RESEAU_MS, ENTREES_NEUTRES, choisirSource, construireHudReseau, creerCanalDegrade, creerEmetteurHudReseau, creerSourceEnLigne, creerSuiviPresence, creerSuiviRevanche,
-  entreesEffectives, etatCommandes,
+  entreesEffectives, etatCommandes, bornerEvenements, PERISSABLES_MAX,
 } from "./jeu-en-ligne";
 
 const plein = (): EntreesVoiture => ({ accel: 1, direction: -0.5, tangage: 0.25, lacet: 0, roulis: 0.1, saut: true, boost: true, derapage: true });
@@ -58,6 +58,31 @@ function faussePrediction(over: Partial<{ resultat: Partial<ResultatAvance>; tra
   } as unknown as PredicteurRocket;
   return { p, monde, affiche, appels };
 }
+
+describe("file d'événements d'un onglet masqué", () => {
+  const touche = (n: number): EvenementMatch => ({ t: "toucheBalle", idVoiture: n, force: 1 });
+  const but: EvenementMatch = { t: "but", equipe: "bleue", idMarqueur: 0, idPasse: null, vitesseKmh: 80 };
+  it("bornerEvenements garde les durables et les périssables les plus récents, dans l'ordre", () => {
+    const liste: EvenementMatch[] = [touche(0), but, ...Array.from({ length: 100 }, (_, i) => touche(i + 1)), { t: "fin", vainqueur: "bleue" }];
+    const out = bornerEvenements(liste);
+    expect(out.filter((e) => e.t === "toucheBalle")).toHaveLength(PERISSABLES_MAX);
+    expect(out[0]).toBe(but);
+    expect(out.at(-1)).toEqual({ t: "fin", vainqueur: "bleue" });
+    expect((out.filter((e) => e.t === "toucheBalle").at(-1) as { idVoiture: number }).idVoiture).toBe(100);
+  });
+  it("sous le plafond, la file est rendue intacte", () => {
+    expect(bornerEvenements([touche(0), but])).toEqual([touche(0), but]);
+  });
+  it("sans avancer (onglet masqué), la file de la source ne grossit pas sans limite et garde les buts", () => {
+    const { p } = faussePrediction({ filtre: (evs) => evs.map((x) => x.e) });
+    const s = creerSourceEnLigne({ predicteur: p, envoyerTrame: () => {} });
+    s.recevoirEvenements([{ tick: 1, e: but }]);
+    for (let i = 0; i < 1000; i++) s.recevoirEvenements([{ tick: 2 + i, e: touche(i) }]);
+    const evs = s.avancer(0.016, plein(), 0).evenements;
+    expect(evs.length).toBeLessThanOrEqual(2 * PERISSABLES_MAX + 1);
+    expect(evs).toContain(but);
+  });
+});
 
 describe("source en ligne", () => {
   it("lit le monde prédit pour la physique et le monde affiché pour le rendu", () => {

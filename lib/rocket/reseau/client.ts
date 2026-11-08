@@ -89,6 +89,8 @@ export function creerClientRocket(opts: OptionsClientRocket): ClientRocketEtendu
   let dejaOuverte = false;
   /** le `bienvenue` de la socket courante est arrivé (sinon la fermeture est celle d'un serveur qui ne parle pas Rocket) */
   let bienvenueRecu = false;
+  /** un `bienvenue` est arrivé au moins une fois sur ce client (jamais remis à zéro) */
+  let bienvenueDejaRecu = false;
   let rttBrut = 0;
   let enMatch = false;
   let minuteurPing: unknown = null;
@@ -194,6 +196,7 @@ export function creerClientRocket(opts: OptionsClientRocket): ClientRocketEtendu
     switch (m.t) {
       case "bienvenue":
         bienvenueRecu = true;
+        bienvenueDejaRecu = true;
         break;
       case "session":
         session = { code: m.code, joueur: m.joueur, jeton: m.jeton };
@@ -245,14 +248,16 @@ export function creerClientRocket(opts: OptionsClientRocket): ClientRocketEtendu
   /** La socket s'est fermée (ou n'a jamais pu s'ouvrir) : décide entre reconnexion, refus et fermeture. */
   function surPerte(code: number, ouverteIci: boolean): void {
     if (ferme) { if (etat !== "refusee") changerEtat("fermee"); return; }
-    if (code === CODE_VERSION || (ouverteIci && !bienvenueRecu && code !== CODE_BONJOUR)) {
+    // codes explicites d'abord : un serveur plein (1013) ferme juste après la poignée de main, avant tout `bienvenue`
+    if (code === CODE_TROP_DE_CONNEXIONS) { ferme = true; raison = "plein"; changerEtat("refusee"); return; }
+    // un `bienvenue` déjà reçu un jour prouve que le serveur parle Rocket : une socket de reprise qui tombe avant le sien n'est pas une erreur de version
+    if (code === CODE_VERSION || (ouverteIci && !bienvenueRecu && !bienvenueDejaRecu && code !== CODE_BONJOUR)) {
       // un serveur d'arène non mis à jour (ou une page périmée) ferme avant tout `bienvenue` de Rocket
       ferme = true;
       raison = "version";
       changerEtat("refusee");
       return;
     }
-    if (code === CODE_TROP_DE_CONNEXIONS) { ferme = true; raison = "plein"; changerEtat("refusee"); return; }
     if (code === CODE_REMPLACE) { ferme = true; raison = "remplacee"; changerEtat("fermee"); return; }
     if (code === CODE_FLOOD) { ferme = true; raison = "coupure"; changerEtat("fermee"); return; }
     if (!dejaOuverte) {

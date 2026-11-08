@@ -12,6 +12,10 @@
  *  - fin : `fin{resultat}`, vote de revanche (unanime → nouveau match ; refus ou `revancheMs` sans accord → salon).
  * Coupure : le joueur reste `coupe` pendant `repriseMs` (entrées neutres), puis un bot prend sa voiture. Départ volontaire : bot immédiat.
  *
+ * Jouabilité réseau (spec § 4.5 bis) : une entrée vraie arrivée en retard (au plus `rewindMaxTicks` ticks) qui diffère de la répétition appliquée est
+ * REJOUÉE au tic suivant depuis un point de contrôle (jamais à travers un événement important) ; chaque instantané joint les entrées déjà reçues
+ * des ticks à venir des autres humains (`futurs`).
+ *
  * La salle ne connaît AUCUN jeton de reprise : le module serveur (`rocket.ts`) les gère et appelle `reprendre`.
  *
  * Spec : docs/superpowers/specs/2026-11-08-rocket-en-ligne-design.md (§ 4, § 6). Contrat : `protocole.ts`.
@@ -24,8 +28,8 @@ import { creerArene } from "../arene";
 import { creerCerveau } from "../bots";
 import { NOMS_BOTS, pasMonde, resultatMatch } from "../match";
 import { graineBot, creerMondeEnLigne } from "./monde-ligne";
-import { dequantifierEntreesDans, extraireEtat, quantifierEntreesDans } from "./serialisation";
-import { AVANCE_INCONNUE, RESEAU, REGLAGES_SALON_DEFAUT, echelleDuMonde } from "./protocole";
+import { dequantifierEntreesDans, extraireEtat, quantifierEntreesDans, restaurerEtat } from "./serialisation";
+import { AVANCE_INCONNUE, RESEAU, REGLAGES_SALON_DEFAUT, echelleDuMonde, entreesQuantifieesEgales } from "./protocole";
 import type {
   CreerSalleRocket, EntreesQuantifiees, EtatMondeReseau, EtatSalon, JoueurSalon, MessageClient, MessageServeur, MesuresSalle, OptionsSalleRocket, PhaseSalle, RaisonRefus,
   ReglagesSalon, ResultatRejoindre, ResumeSalle, SalleRocket, SnapRocket, SortieSalle, TrameEntrees, TypeMessageClient, VoitureStatique,
@@ -53,6 +57,9 @@ function copierQ(a: EntreesQuantifiees, b: Readonly<EntreesQuantifiees>): void {
 function viderQ(a: EntreesQuantifiees): void {
   a.accel = 0; a.direction = 0; a.tangage = 0; a.lacet = 0; a.roulis = 0; a.saut = false; a.boost = false; a.derapage = false;
 }
+/** Historique des entrées APPLIQUÉES, par tick (anneau de lignes de n voitures) : de quoi rejouer une fenêtre de `rewindMaxTicks` + une grille. */
+const HIST_TICKS = 96;
+
 const clamp = (x: number, min: number, max: number): number => (x < min ? min : x > max ? max : x);
 
 // ============================================================================================================================
@@ -124,6 +131,18 @@ interface MatchSalle {
   dernierFlushMs: number;
   /** message `fin` mémorisé (renvoyé à un joueur qui reprend en phase « fin ») */
   fin: Extract<MessageServeur, { t: "fin" }> | null;
+  // ---- rejeu d'une entrée arrivée en retard (spec § 4.5 bis) ----
+  /** entrées appliquées à chaque tick : ligne `tick % HIST_TICKS`, colonne = voiture ; `histTick[ligne]` : tick stocké (−1 : vide) */
+  histApp: EntreesQuantifiees[];
+  histTick: Int32Array;
+  /** points de contrôle de l'état (grille de `cadenceSnapTicks`), du plus ancien au plus récent */
+  points: { tick: number; etat: EtatMondeReseau }[];
+  /** plus récent tick exécuté qui a produit un événement important (−1 : aucun) */
+  dernierImportant: number;
+  /** plus ancien tick dont une entrée vraie est arrivée alors qu'une autre avait été appliquée (Infinity : rien à rejouer) */
+  retardDepuis: number;
+  /** monde de travail du rejeu (créé à la première utilisation) */
+  travail: MondeRocket | null;
 }
 
 // ============================================================================================================================
@@ -153,6 +172,9 @@ class SalleImpl implements SalleRocket {
   private repetees = 0;
   private tardives = 0;
   private abandonneMs = 0;
+  private rewinds = 0;
+  private rewindsRefuses = 0;
+  private rewindTicks = 0;
 
   constructor(opts: OptionsSalleRocket) {
     this.opts = opts;
@@ -191,12 +213,19 @@ class SalleImpl implements SalleRocket {
   enMatch(): boolean { return this.phaseCourante === "chargement" || this.phaseCourante === "match"; }
   aEcheance(): boolean { return this.phaseCourante !== "salon" && this.joueurs.length > 0; }
   activiteMs(): number { return this.activite; }
+
+  restituerCompteurs(joueur: number, avance: number, manquees: number): void {
+    const j = this.joueurs.find((x) => x.id === joueur);
+    if (!j) return;
+    if (avance !== AVANCE_INCONNUE && (j.avanceMin === null || avance < j.avanceMin)) j.avanceMin = avance;
+    j.manquees = Math.min(255, j.manquees + manquees);
+  }
   monde(): Readonly<MondeRocket> | null { return this.match ? this.match.monde : null; }
 
   mesures(): MesuresSalle {
     return {
       phase: this.phaseCourante, humains: this.joueurs.length, pas: this.pasTotal, entreesRepetees: this.repetees, entreesTardives: this.tardives,
-      tempsAbandonneMs: this.abandonneMs,
+      tempsAbandonneMs: this.abandonneMs, rewinds: this.rewinds, rewindsRefuses: this.rewindsRefuses, rewindTicks: this.rewindTicks,
     };
   }
 
@@ -315,8 +344,9 @@ class SalleImpl implements SalleRocket {
     const m = this.match;
     if (!m) return out;
     out.push(this.msgDebut(j));
-    if (this.phaseCourante === "match") out.push({ a: j.id, snap: this.construireSnap(j, extraireEtat(m.monde)) });
-    else if (this.phaseCourante === "fin" && m.fin) out.push({ a: j.id, msg: m.fin });
+    // en phase « fin » aussi : sans état final, le client repris afficherait un monde neuf (0-0, décompte) sous l'écran de résultat
+    if (this.phaseCourante === "match" || this.phaseCourante === "fin") out.push({ a: j.id, snap: this.construireSnap(j, extraireEtat(m.monde), null) });
+    if (this.phaseCourante === "fin" && m.fin) out.push({ a: j.id, msg: m.fin });
     return out;
   }
 
@@ -518,9 +548,21 @@ class SalleImpl implements SalleRocket {
       // vue pour la première fois : au-delà du plus grand tick reçu, ou un trou encore à venir que cette copie comble
       const premiere = k > j.watermark || (k >= tick && j.marque[k % n] !== k);
       if (k < tick) {
+        if (premiere) {
+          this.tardives++;
+          j.avanceMin = Math.min(j.avanceMin ?? 127, Math.max(-127, k - tick));
+        }
+        // Entrée en retard encore dans la fenêtre de rejeu : mémorisée (la salle l'a remplacée par une répétition) et, si elle diffère de ce
+        // qui a été appliqué, le rejeu aura lieu au prochain tic.
+        if (k >= tick - RESEAU.rewindMaxTicks && j.marque[k % n] !== k) {
+          const s5 = k % n;
+          j.axes[s5 * 5] = q.accel; j.axes[s5 * 5 + 1] = q.direction; j.axes[s5 * 5 + 2] = q.tangage; j.axes[s5 * 5 + 3] = q.lacet; j.axes[s5 * 5 + 4] = q.roulis;
+          j.boutons[s5] = (q.saut ? 1 : 0) | (q.boost ? 2 : 0) | (q.derapage ? 4 : 0);
+          j.marque[s5] = k;
+          const ligne = k % HIST_TICKS;
+          if (m.histTick[ligne] === k && !entreesQuantifieesEgales(m.histApp[ligne * m.statiques.length + j.voiture], q)) m.retardDepuis = Math.min(m.retardDepuis, k);
+        }
         if (!premiere) continue;
-        this.tardives++;
-        j.avanceMin = Math.min(j.avanceMin ?? 127, Math.max(-127, k - tick));
       } else {
         if (j.marque[k % n] === k) continue;
         const s = k % n;
@@ -570,6 +612,8 @@ class SalleImpl implements SalleRocket {
       numero: this.numeroMatch, config, statiques, monde, pilotes, cerveaux,
       appliquees: statiques.map(neutre), reelles: statiques.map(() => ENTREES_NULLES()), reste: 0, dernierMs: ms, tampon: [], tamponImportant: false,
       dernierFlushMs: ms, fin: null,
+      histApp: new Array<EntreesQuantifiees>(HIST_TICKS * statiques.length).fill(null as never).map(neutre), histTick: new Int32Array(HIST_TICKS).fill(-1),
+      points: [], dernierImportant: -1, retardDepuis: Infinity, travail: null,
     };
     this.phaseCourante = "chargement";
     this.debutPhaseMs = ms;
@@ -620,6 +664,8 @@ class SalleImpl implements SalleRocket {
     this.transfererHote();
     this.phaseCourante = "salon";
     this.debutPhaseMs = this.horloge;
+    // le retour au salon est une activité : sinon un salon revenu d'un long match (activité vieille de dix minutes) serait dissous aussitôt
+    this.activite = this.horloge;
     this.match = null;
     for (const j of this.joueurs) { j.vote = null; j.charge = false; j.voiture = -1; }
     if (this.joueurs.length > 0) out.push(this.salon());
@@ -631,6 +677,7 @@ class SalleImpl implements SalleRocket {
     m.fin = { t: "fin", tick: m.monde.tick, resultat: resultatMatch(m.monde) };
     this.phaseCourante = "fin";
     this.debutPhaseMs = ms;
+    this.activite = ms;
     for (const j of this.joueurs) j.vote = null;
     out.push({ a: "tous", msg: m.fin });
     out.push(this.salon());
@@ -675,6 +722,7 @@ class SalleImpl implements SalleRocket {
     const monde = m.monde;
     const dtS = Math.max(0, ms - m.dernierMs) / 1000;
     m.dernierMs = Math.max(m.dernierMs, ms); // une horloge qui reculerait ne rejoue jamais le même temps
+    this.rejouerTardives(m);
     m.reste += dtS * echelleDuMonde(monde.phase);
     if (m.reste > RESEAU.imageMaxServeurS) {
       // calage de plus de `imageMaxServeurS` : le surplus est abandonné ET compté
@@ -723,16 +771,89 @@ class SalleImpl implements SalleRocket {
         if (c) quantifierEntreesDans(q, c.decider(monde, monde.voitures[i], PAS_S)); else viderQ(q);
       }
       dequantifierEntreesDans(m.reelles[i], q);
+      copierQ(m.histApp[(tick % HIST_TICKS) * n + i], q);
     }
+    m.histTick[tick % HIST_TICKS] = tick;
     const evs = pasMonde(monde, m.reelles);
     let important = false;
     for (const e of evs) {
       m.tampon.push({ tick, e });
       if (EVENEMENTS_IMPORTANTS.has(e.t)) important = true;
     }
-    if (important) m.tamponImportant = true;
+    if (important) { m.tamponImportant = true; m.dernierImportant = tick; }
     // instantané : sur la grille de 6 ticks (en rattrapage, seulement ceux des 6 derniers pas) ou hors grille sur événement important
-    if (important || (monde.tick % RESEAU.cadenceSnapTicks === 0 && restants < RESEAU.cadenceSnapTicks)) this.emettreSnaps(out);
+    const grille = monde.tick % RESEAU.cadenceSnapTicks === 0 && restants < RESEAU.cadenceSnapTicks;
+    if (grille) this.noterPoint(m);
+    if (important || grille) this.emettreSnaps(out);
+  }
+
+  /** Point de contrôle de l'état sur la grille des instantanés (l'objet est partagé avec les instantanés : il n'est plus jamais modifié). */
+  private noterPoint(m: MatchSalle): void {
+    m.points.push({ tick: m.monde.tick, etat: extraireEtat(m.monde) });
+    if (m.points.length > RESEAU.rewindPointsMax) m.points.shift();
+  }
+
+  /**
+   * Rejeu d'une entrée arrivée en retard (spec § 4.5 bis) : au lieu de garder la répétition de la dernière entrée connue, la salle repart du
+   * point de contrôle précédant le tick de l'entrée tardive et rejoue jusqu'au tick courant avec les entrées VRAIES connues (les entrées
+   * appliquées à l'époque ailleurs, y compris les décisions des bots : leurs cerveaux ne sont pas rejoués). Le rejeu se fait dans un monde de
+   * travail ; il est refusé (rien n'est changé) si un événement important s'est produit ou se produit dans la fenêtre, si le point de contrôle
+   * ou l'historique manquent. Aucun événement n'est réémis : les instantanés suivants portent la correction.
+   */
+  private rejouerTardives(m: MatchSalle): void {
+    const depuis = m.retardDepuis;
+    if (depuis === Infinity) return;
+    m.retardDepuis = Infinity;
+    const monde = m.monde;
+    const fin = monde.tick;
+    let point: { tick: number; etat: EtatMondeReseau } | null = null;
+    for (const p of m.points) if (p.tick <= depuis && (!point || p.tick > point.tick)) point = p;
+    if (!point || fin - point.tick > HIST_TICKS - 1 || m.dernierImportant >= point.tick || fin <= depuis) { this.rewindsRefuses++; return; }
+    const n = monde.voitures.length;
+    for (let t = point.tick; t < fin; t++) if (m.histTick[t % HIST_TICKS] !== t) { this.rewindsRefuses++; return; }
+    const w = (m.travail ??= creerMondeEnLigne(m.config, m.statiques, -1, arene()));
+    restaurerEtat(point.etat, w);
+    const q = neutre();
+    const nouveaux: { tick: number; etat: EtatMondeReseau }[] = [];
+    for (let t = point.tick; t < fin; t++) {
+      const ligne = (t % HIST_TICKS) * n;
+      for (let i = 0; i < n; i++) {
+        const j = m.pilotes[i];
+        const reel = j && j.connecte && j.marque[t % RESEAU.tamponEntrees] === t;
+        if (reel) {
+          const sl = t % RESEAU.tamponEntrees;
+          q.accel = j.axes[sl * 5]; q.direction = j.axes[sl * 5 + 1]; q.tangage = j.axes[sl * 5 + 2]; q.lacet = j.axes[sl * 5 + 3]; q.roulis = j.axes[sl * 5 + 4];
+          const b = j.boutons[sl];
+          q.saut = (b & 1) !== 0; q.boost = (b & 2) !== 0; q.derapage = (b & 4) !== 0;
+          dequantifierEntreesDans(m.reelles[i], q);
+        } else {
+          dequantifierEntreesDans(m.reelles[i], m.histApp[ligne + i]);
+        }
+      }
+      for (const e of pasMonde(w, m.reelles)) if (EVENEMENTS_IMPORTANTS.has(e.t)) { this.rewindsRefuses++; return; }
+      if (w.tick % RESEAU.cadenceSnapTicks === 0) nouveaux.push({ tick: w.tick, etat: extraireEtat(w) });
+    }
+    if (w.tick !== fin) { this.rewindsRefuses++; return; }
+    // adoption : le monde autoritaire prend l'état rejoué, l'historique et les points de contrôle intermédiaires suivent
+    restaurerEtat(extraireEtat(w), monde);
+    for (let t = point.tick; t < fin; t++) {
+      const j0 = t % RESEAU.tamponEntrees;
+      for (let i = 0; i < n; i++) {
+        const j = m.pilotes[i];
+        if (!j || !j.connecte || j.marque[j0] !== t) continue;
+        const h = m.histApp[(t % HIST_TICKS) * n + i];
+        h.accel = j.axes[j0 * 5]; h.direction = j.axes[j0 * 5 + 1]; h.tangage = j.axes[j0 * 5 + 2]; h.lacet = j.axes[j0 * 5 + 3]; h.roulis = j.axes[j0 * 5 + 4];
+        const b = j.boutons[j0];
+        h.saut = (b & 1) !== 0; h.boost = (b & 2) !== 0; h.derapage = (b & 4) !== 0;
+      }
+    }
+    for (let i = 0; i < n; i++) copierQ(m.appliquees[i], m.histApp[((fin - 1) % HIST_TICKS) * n + i]);
+    for (const p of nouveaux) {
+      const e = m.points.find((x) => x.tick === p.tick);
+      if (e) e.etat = p.etat;
+    }
+    this.rewinds++;
+    this.rewindTicks += fin - point.tick;
   }
 
   private viderTampon(ms: number, out: SortieSalle[]): void {
@@ -746,13 +867,37 @@ class SalleImpl implements SalleRocket {
 
   // ---- instantanés ------------------------------------------------------------------------------------------------------
 
-  private construireSnap(j: Joueur, etat: EtatMondeReseau): SnapRocket {
+  /**
+   * Entrées déjà reçues des humains connectés pour les ticks `monde.tick`, `monde.tick + 1`… (contiguës, au plus `futursMaxTicks`) : listes vides
+   * pour les bots, les coupés et les voitures sans avance. Calculées une fois par émission et partagées (le receveur n'en reçoit pas pour sa voiture).
+   */
+  private construireFuturs(m: MatchSalle): EntreesQuantifiees[][] {
+    const tick = m.monde.tick;
+    const nt = RESEAU.tamponEntrees;
+    return m.pilotes.map((j) => {
+      const liste: EntreesQuantifiees[] = [];
+      if (!j || !j.connecte) return liste;
+      for (let k = tick; k < tick + RESEAU.futursMaxTicks; k++) {
+        const sl = k % nt;
+        if (j.marque[sl] !== k) break;
+        const b = j.boutons[sl];
+        liste.push({
+          accel: j.axes[sl * 5], direction: j.axes[sl * 5 + 1], tangage: j.axes[sl * 5 + 2], lacet: j.axes[sl * 5 + 3], roulis: j.axes[sl * 5 + 4],
+          saut: (b & 1) !== 0, boost: (b & 2) !== 0, derapage: (b & 4) !== 0,
+        });
+      }
+      return liste;
+    });
+  }
+
+  private construireSnap(j: Joueur, etat: EtatMondeReseau, futurs: EntreesQuantifiees[][] | null): SnapRocket {
     const m = this.match!;
-    const s = {
+    const s: SnapRocket = {
       tick: m.monde.tick, ralenti: echelleDuMonde(m.monde.phase) !== 1, numero: m.numero, nbVoitures: m.monde.voitures.length,
       entreesRecuesJusqua: j.watermark, avance: j.avanceMin === null ? AVANCE_INCONNUE : j.avanceMin, manquees: j.manquees,
       entrees: m.appliquees.map((q) => ({ ...q })), etat,
     };
+    if (futurs && futurs.some((l, i) => l.length > 0 && i !== j.voiture)) s.futurs = futurs.map((l, i) => (i === j.voiture ? [] : l));
     j.avanceMin = null;
     j.manquees = 0;
     return s;
@@ -762,10 +907,15 @@ class SalleImpl implements SalleRocket {
   private emettreSnaps(out: SortieSalle[]): void {
     const m = this.match!;
     let etat: EtatMondeReseau | null = null;
+    let futurs: EntreesQuantifiees[][] | null = null;
     for (const j of this.joueurs) {
       if (!j.connecte || j.voiture < 0) continue;
-      etat ??= extraireEtat(m.monde);
-      out.push({ a: j.id, snap: this.construireSnap(j, etat) });
+      if (!etat) {
+        const dernier = m.points[m.points.length - 1];
+        etat = dernier && dernier.tick === m.monde.tick ? dernier.etat : extraireEtat(m.monde);
+        futurs = this.construireFuturs(m);
+      }
+      out.push({ a: j.id, snap: this.construireSnap(j, etat, futurs) });
     }
   }
 }

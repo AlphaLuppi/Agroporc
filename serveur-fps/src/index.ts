@@ -901,6 +901,8 @@ http.on("upgrade", (req, socket, head) => {
 });
 
 wss.on("connection", (ws, req) => {
+  // avant tout `return` : une trame trop grande sur une connexion refusée émettrait 'error' sans écouteur et ferait tomber le processus
+  ws.on("error", () => ws.terminate());
   const ip = ipClient(req.headers["x-forwarded-for"], req.socket.remoteAddress);
   if (clients.size >= CONNEXIONS_TOTAL_MAX || (parIp.get(ip) ?? 0) >= CONNEXIONS_PAR_IP_MAX) {
     ws.close(1013, "trop de connexions");
@@ -937,7 +939,6 @@ wss.on("connection", (ws, req) => {
     else parIp.set(c.ip, n);
     fermer(c, code);
   });
-  ws.on("error", () => ws.terminate());
 });
 
 /** Membre d'un lobby (zombies ou Battle Royale) qui attend l'hôte avec au moins un autre joueur : jamais recyclé pour inactivité. */

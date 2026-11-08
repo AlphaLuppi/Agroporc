@@ -220,6 +220,8 @@
 .info { margin: 6px 0; padding: 6px 10px; font-size: 12px; color: var(--ag-ink); border: 1px solid var(--ag-line-strong); background: var(--ag-hud-fond); }
 
 .pied2 { display: flex; flex-direction: column; gap: 8px; margin: 14px 0 0; }
+/* « Lancer la partie » et « Quitter le salon » restent visibles quand le salon dépasse la hauteur du panneau (720 px de haut : réglages sous le pli) */
+.piedCollant { position: sticky; bottom: -20px; margin: 14px -20px -20px; padding: 10px 20px 20px; background: var(--ag-ground); border-top: 1px solid var(--ag-line); z-index: 1; }
 .creer { margin-top: 14px; }
 .formCode { margin: 0; }
 .ligneCode { display: flex; gap: 8px; }

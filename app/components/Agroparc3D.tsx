@@ -253,10 +253,19 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
   reglagesRocketRef.current = reglagesRocket;
   const enRocketRef = useRef(enRocket);
   enRocketRef.current = enRocket;
-  const ligneActif = modeRocket === "ligne" && (rocketOuvert || enRocket);
+  // la connexion en ligne survit à la fermeture du panneau tant que le joueur est dans un salon : « Fermer », Échap, « Arène » ou « Classement » ne
+  // doivent pas lui faire quitter la partie sans le dire (seuls « Quitter le salon » et « Quitter la partie » sont des départs)
+  const [dansSalonRocket, setDansSalonRocket] = useState(false);
+  const dansSalonRocketRef = useRef(dansSalonRocket);
+  dansSalonRocketRef.current = dansSalonRocket;
+  const rocketOuvertRef = useRef(rocketOuvert);
+  rocketOuvertRef.current = rocketOuvert;
+  const ligneActif = modeRocket === "ligne" && (rocketOuvert || enRocket || dansSalonRocket);
   const salonRocket = useSalonRocket({ actif: ligneActif, nom: configRocket.nomJoueur, listeVisible: rocketOuvert && !enRocket });
   const salonRocketRef = useRef(salonRocket);
   salonRocketRef.current = salonRocket;
+  const auSalonRocket = salonRocket.etat.salon !== null;
+  useEffect(() => { setDansSalonRocket(auSalonRocket); }, [auSalonRocket]);
   // mode de jeu mémorisé : présélectionne la carte du choix du mode (v5) ; le panneau l'envoie à son ouverture
   const [modeMemo, setModeMemo] = useState<ModeSalle>(modeInitial);
   const jeuRef = useRef<JeuHandle | null>(null);
@@ -643,6 +652,8 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
       // En arène, Échap libère la souris (menu pause) : il ne ferme jamais la vue ; dans Rocket Muche le jeu l'écoute lui-même (pause).
       if (e.key !== "Escape" || e.defaultPrevented || enAreneRef.current || enRocketRef.current || dansUnChamp(e.target)) return;
       e.preventDefault();
+      // dans un salon en ligne, Échap replie le panneau (le salon reste ouvert) au lieu de fermer toute la vue, et donc la connexion
+      if (rocketOuvertRef.current && dansSalonRocketRef.current) { setRocketOuvert(false); return; }
       fermerRef.current?.();
     };
     window.addEventListener("keydown", surTouche);
@@ -1131,7 +1142,7 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
             className={styles.action}
             aria-expanded={rocketOuvert}
             disabled={tactile && !manette}
-            title={tactile && !manette ? "Rocket Muche se joue au clavier ou à la manette" : "Football en voitures-fusées sur le Parking Sud, contre des bots"}
+            title={tactile && !manette ? "Rocket Muche se joue au clavier ou à la manette" : "Football en voitures-fusées sur le Parking Sud, contre des bots ou en ligne"}
             onClick={basculerPanneauRocket}
           >
             Rocket Muche
@@ -1315,7 +1326,8 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
             moi: debutRocketRef.current.moi,
             enLigne: {
               reseau: hudReseauRocket,
-              humains: debutRocketRef.current.voitures.filter((v) => v.humain).length,
+              // humains encore dans le salon (un joueur parti n'est plus attendu au vote) ; repli sur le `debut` initial avant le premier `salon`
+              humains: salonRocket.etat.salon?.joueurs.length ?? debutRocketRef.current.voitures.filter((v) => v.humain).length,
               hote: !!salonRocket.etat.salon?.joueurs.find((j) => j.id === salonRocket.etat.joueur)?.hote,
               surRetourSalon: () => salonRocket.actions.retourSalon(),
             },

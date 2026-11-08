@@ -117,6 +117,29 @@ export const RESEAU = {
   imageMaxEnLigneS: 0.25,
   /** lissage visuel des corrections : constante de temps de l'exponentielle (s), écart au-delà duquel on ne lisse pas (m) */
   lissageTauS: 0.06,
+  /**
+   * (additif, jouabilité réseau) constantes de temps du lissage des voitures des AUTRES et de la balle : leur état prédit repose sur des entrées
+   * inconnues (extrapolées), leur correction est donc plus fréquente et plus grande que celle de ma voiture ; un glissement plus long la rend
+   * moins visible. Purement visuel : la physique prédite n'en dépend jamais. `lissageGrandeCorrectionM` : au-delà de cet écart la constante de
+   * temps croît (jusqu'à `lissageFacteurGrandeCorrection` fois) pour que le glissement ne dépasse pas une vitesse supportable.
+   */
+  lissageTauAutresS: 0.15,
+  lissageTauBalleS: 0.1,
+  lissageGrandeCorrectionM: 0.5,
+  lissageFacteurGrandeCorrection: 2.5,
+  /**
+   * (additif) entrées déjà reçues mais pas encore exécutées des autres HUMAINS, jointes à chaque instantané (au plus ce nombre de ticks par voiture) :
+   * le client rejoue avec les vraies entrées jusqu'à cet horizon, l'extrapolation ne commence qu'après.
+   */
+  futursMaxTicks: 12,
+  /** (additif) garder MA voiture prédite quand l'instantané décrit une fenêtre où le serveur l'a jouée avec une entrée répétée (`manquees` > 0) */
+  conservationManquees: true as boolean,
+  /**
+   * (additif) rejeu serveur d'une entrée arrivée en retard : au plus ce nombre de ticks en arrière (≈ 400 ms : le délai de retransmission d'un paquet TCP perdu), depuis un point de contrôle
+   * de l'état tous les `cadenceSnapTicks` (au plus `rewindPointsMax` conservés) ; jamais à travers un événement important.
+   */
+  rewindMaxTicks: 48,
+  rewindPointsMax: 14,
   seuilTeleportVoitureM: 4,
   seuilTeleportBalleM: 8,
   /**
@@ -289,6 +312,11 @@ export interface SnapRocket {
   /** ticks de la fenêtre exécutés sans entrée vraie de ce joueur (répétée ou neutre), saturé à 255 : retour direct de l'adaptation de la marge */
   manquees: number;
   entrees: EntreesQuantifiees[];
+  /**
+   * (additif) pour chaque voiture, les entrées des ticks `tick`, `tick + 1`… que le serveur a DÉJÀ reçues (voitures d'autres humains
+   * seulement ; vide pour moi, un bot ou un humain sans avance), au plus `RESEAU.futursMaxTicks`. Absent = aucune information.
+   */
+  futurs?: EntreesQuantifiees[][];
   etat: EtatMondeReseau;
   /** présent après `decoderSnap` : octets exacts de la section `etat` (comparés bit à bit à l'état prédit, cf. `octetsEtatEgaux`) */
   octetsEtat?: Uint8Array;
@@ -482,6 +510,10 @@ export interface MesuresSalle {
   entreesRepetees: number;
   entreesTardives: number;
   tempsAbandonneMs: number;
+  /** (additif) rejeux serveur appliqués / refusés (hors fenêtre, événement important, point de contrôle absent), ticks rejoués au total */
+  rewinds?: number;
+  rewindsRefuses?: number;
+  rewindTicks?: number;
 }
 
 /**
@@ -526,6 +558,11 @@ export interface SalleRocket {
   aEcheance(): boolean;
   /** dernière activité utile (ms) pour expirer un salon oublié */
   activiteMs(): number;
+  /**
+   * un instantané n'a pas pu partir (contre-pression, socket absente) : ses compteurs `avance` (pire cas) et `manquees` sont restitués au joueur,
+   * pour que le suivant les porte (sinon l'horloge du client ne verrait jamais le pire cas d'une congestion)
+   */
+  restituerCompteurs(joueur: number, avance: number, manquees: number): void;
   mesures(): MesuresSalle;
   /** accès aux tests : le monde autoritaire courant (null hors match) */
   monde(): Readonly<MondeRocket> | null;
@@ -621,6 +658,8 @@ export interface StatsPrediction {
   profondeurMax: number;
   ecartMaxM: number;
   resyncs: number;
+  /** (additif) instantanés dont j'ai gardé MA voiture prédite parce que le serveur l'avait jouée avec une entrée répétée (`manquees` > 0) */
+  conservations?: number;
   /** durée du dernier / du plus long rollback (ms) */
   dernierRollbackMs: number;
   maxRollbackMs: number;
@@ -655,6 +694,10 @@ export interface ResultatSnap {
   ecartM: number;
   /** l'état serveur a été adopté sans rejouer (retard trop grand, ou premier instantané) */
   resync: boolean;
+  /** (additif, diagnostic) décomposition de `ecartM` d'un rollback : ma voiture, les autres voitures (le plus grand), la balle (m) */
+  ecartMoiM?: number;
+  ecartAutresM?: number;
+  ecartBalleM?: number;
 }
 
 /**
@@ -861,6 +904,8 @@ export interface RegistreRocket {
    * les salles. `code` : forme invalide ; `inconnue` : forme valide mais aucune salle (compte comme essai raté).
    */
   trouver(code: string, ip: string, maintenantMs: number): ResultatTrouver;
+  /** lecture par code SANS anti-énumération (reprise par jeton valide : la preuve est déjà faite, un voisin de NAT ne doit pas la bloquer) ; null si la salle n'existe pas */
+  salle(code: string): SalleRocket | null;
   /** salles en phase « salon », visibles et non pleines */
   lister(): ResumeSalle[];
   /** salles à servir dans la boucle du serveur : celles dont `aEcheance()` est vrai (jamais seulement « match en cours ») */

@@ -14,7 +14,7 @@ import { PLOTS } from "../contrat";
 import type { Equipe, EntreesVoiture, EtatVoiture, MondeRocket, PhaseMatch, Vec3 } from "../contrat";
 import type { InterneMatch, MondeMatch } from "../match";
 import { affecter, affecterBase } from "../vec";
-import { RESEAU, TRAME_ENTREES, TRAME_SNAP } from "./protocole";
+import { entreesQuantifieesEgales, RESEAU, TRAME_ENTREES, TRAME_SNAP } from "./protocole";
 import type {
   DecoderEtat, DecoderSnap, DecoderTrameEntrees, DequantifierEntrees, EncoderEtat, EncoderSnap, EncoderTrameEntrees, EntreesQuantifiees,
   EtatMondeReseau, EtatVoitureReseau, ExtraireEtat, QuantifierEntrees, RestaurerEtat, SnapRocket, TrameEntrees, TypeDeTrame,
@@ -406,14 +406,34 @@ export const decoderTrameEntrees: DecoderTrameEntrees = (octets) => {
   }
 };
 
+/** drapeaux de l'en-tête d'un instantané : 1 = ralenti de la célébration, 2 = section des entrées futures (`futurs`) après les entrées appliquées */
+const DRAPEAU_RALENTI = 1, DRAPEAU_FUTURS = 2;
+
 export const encoderSnap: EncoderSnap = (s) => {
   const n = s.nbVoitures;
   if (s.entrees.length !== n || s.etat.voitures.length !== n) throw new RangeError("encoderSnap : nbVoitures incohérent avec les entrées ou l'état");
+  const futurs = s.futurs && s.futurs.some((l) => l && l.length > 0) ? s.futurs : null;
+  if (futurs && futurs.length !== n) throw new RangeError("encoderSnap : `futurs` doit avoir une liste par voiture");
   return enOctets((w) => {
-    w.u8(TRAME_SNAP); w.u8(s.numero & 255); w.u8(n); w.u8(s.ralenti ? 1 : 0);
+    w.u8(TRAME_SNAP); w.u8(s.numero & 255); w.u8(n); w.u8((s.ralenti ? DRAPEAU_RALENTI : 0) | (futurs ? DRAPEAU_FUTURS : 0));
     w.u32(s.tick >>> 0); w.i32(s.entreesRecuesJusqua | 0);
     w.i8(s.avance < -128 ? -128 : s.avance > 127 ? 127 : s.avance | 0); w.u8(s.manquees < 0 ? 0 : s.manquees > 255 ? 255 : s.manquees | 0);
     for (const q of s.entrees) ecrireEntree(w, q);
+    if (futurs) {
+      // par voiture : nombre d'entrées, puis pour chacune un octet 0 (identique à la précédente, la première étant comparée à l'entrée appliquée)
+      // ou 1 suivi de l'entrée complète
+      for (let i = 0; i < n; i++) {
+        const liste = futurs[i] ?? [];
+        const m = Math.min(liste.length, RESEAU.futursMaxTicks);
+        w.u8(m);
+        let prec: Readonly<EntreesQuantifiees> = s.entrees[i];
+        for (let k = 0; k < m; k++) {
+          if (entreesQuantifieesEgales(liste[k], prec)) w.u8(0);
+          else { w.u8(1); ecrireEntree(w, liste[k]); }
+          prec = liste[k];
+        }
+      }
+    }
     ecrireEtat(w, s.etat);
   });
 };
@@ -425,7 +445,7 @@ export const decoderSnap: DecoderSnap = (octets) => {
     if (r.u8() !== TRAME_SNAP) return null;
     const numero = r.u8(), nbVoitures = r.u8(), drapeaux = r.u8();
     const tick = r.u32(), entreesRecuesJusqua = r.i32(), avance = r.i8(), manquees = r.u8();
-    if (!r.ok || nbVoitures < 1 || nbVoitures > VOITURES_MAX || drapeaux > 1) return null;
+    if (!r.ok || nbVoitures < 1 || nbVoitures > VOITURES_MAX || drapeaux > (DRAPEAU_RALENTI | DRAPEAU_FUTURS)) return null;
     if (octets.length < ENTETE_SNAP + nbVoitures * OCTETS_ENTREE) return null;
     const entrees: EntreesQuantifiees[] = [];
     for (let i = 0; i < nbVoitures; i++) {
@@ -433,11 +453,35 @@ export const decoderSnap: DecoderSnap = (octets) => {
       if (!q) return null;
       entrees.push(q);
     }
+    let futurs: EntreesQuantifiees[][] | undefined;
+    if (drapeaux & DRAPEAU_FUTURS) {
+      futurs = [];
+      for (let i = 0; i < nbVoitures; i++) {
+        const m = r.u8();
+        if (!r.ok || m > RESEAU.futursMaxTicks) return null;
+        const liste: EntreesQuantifiees[] = [];
+        let prec: EntreesQuantifiees = entrees[i];
+        for (let k = 0; k < m; k++) {
+          const marque = r.u8();
+          if (!r.ok || marque > 1) return null;
+          if (marque === 0) liste.push({ ...prec });
+          else {
+            const q = lireEntree(r);
+            if (!q) return null;
+            liste.push(q);
+          }
+          prec = liste[k];
+        }
+        futurs.push(liste);
+      }
+    }
     // copie de la section `etat` : le tampon reçu peut être réutilisé par l'appelant
     const octetsEtat = octets.slice(r.pos);
     const etat = lireEtat(new Lecteur(octetsEtat));
     if (!etat || etat.voitures.length !== nbVoitures) return null;
-    return { tick, ralenti: drapeaux === 1, numero, nbVoitures, entreesRecuesJusqua, avance, manquees, entrees, etat, octetsEtat };
+    const snap: SnapRocket = { tick, ralenti: (drapeaux & DRAPEAU_RALENTI) !== 0, numero, nbVoitures, entreesRecuesJusqua, avance, manquees, entrees, etat, octetsEtat };
+    if (futurs) snap.futurs = futurs;
+    return snap;
   } catch {
     return null;
   }

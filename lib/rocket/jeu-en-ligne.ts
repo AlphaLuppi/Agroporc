@@ -64,6 +64,25 @@ export const entreesEffectives = (brutes: Readonly<EntreesVoiture>, commandes: H
 // 3. Source en ligne
 // ============================================================================================================================
 
+/** Événements qu'un onglet masqué ne doit jamais perdre (score, remise en jeu, fin) ; tous les autres (sons, particules, boost…) sont périssables. */
+const EVENEMENTS_DURABLES: ReadonlySet<EvenementMatch["t"]> = new Set(["but", "demolition", "coupDEnvoi", "reapparition", "prolongation", "chronoZero", "fin", "decompte"]);
+/** Nombre d'événements périssables gardés en attente quand `requestAnimationFrame` est suspendu (onglet masqué) alors que la socket continue d'en livrer. */
+export const PERISSABLES_MAX = 48;
+
+/** Borne la file d'événements : les durables sont tous gardés, seuls les `PERISSABLES_MAX` périssables les plus récents le sont ; l'ordre est conservé. */
+export function bornerEvenements(liste: readonly EvenementMatch[], perissablesMax: number = PERISSABLES_MAX): EvenementMatch[] {
+  let aGarder = 0;
+  for (const e of liste) if (!EVENEMENTS_DURABLES.has(e.t)) aGarder++;
+  if (aGarder <= perissablesMax) return liste.slice();
+  let aJeter = aGarder - perissablesMax;
+  const out: EvenementMatch[] = [];
+  for (const e of liste) {
+    if (!EVENEMENTS_DURABLES.has(e.t) && aJeter > 0) { aJeter--; continue; }
+    out.push(e);
+  }
+  return out;
+}
+
 export interface DepsSourceEnLigne {
   predicteur: PredicteurRocket;
   /** envoie une trame d'entrées (le client réseau) */
@@ -99,7 +118,11 @@ export function creerSourceEnLigne(deps: DepsSourceEnLigne): SourceMonde & {
     recevoirSnap: (snap, t) => predicteur.recevoirSnap(snap, t),
     recevoirEvenements(evs) {
       const aJouer = predicteur.filtrerEvenements(evs);
-      if (aJouer.length > 0) enAttente.push(...aJouer);
+      if (aJouer.length > 0) {
+        enAttente.push(...aJouer);
+        // onglet masqué : la socket livre, la boucle d'images ne vide plus la file ; au retour, on ne rejoue que le récent et les durables
+        if (enAttente.length > 2 * PERISSABLES_MAX) enAttente = bornerEvenements(enAttente);
+      }
     },
     etatAutoritaire: () => predicteur.etatAutoritaire(),
     pret: () => predicteur.pret,

@@ -459,6 +459,25 @@ describe("refus et fermetures définitives", () => {
     vi.advanceTimersByTime(60_000);
     expect(SocketFausse.toutes).toHaveLength(1);
   });
+  it("serveur plein (1013) juste après l'ouverture, avant tout bienvenue : « plein » et non « version »", () => {
+    const c = creer();
+    c.connecter();
+    derniere().ouvrir();
+    derniere().couper(CODE_TROP_DE_CONNEXIONS);
+    expect(c.etat()).toBe("refusee");
+    expect(c.raisonFermeture()).toBe("plein");
+  });
+  it("une socket de reprise qui tombe avant son bienvenue reste une coupure à reprendre (pas une erreur de version)", () => {
+    const { c, s } = connecte();
+    s.couper(1006);
+    expect(c.etat()).toBe("reconnexion");
+    vi.advanceTimersByTime(60_000);
+    const nouvelle = derniere();
+    nouvelle.ouvrir();
+    nouvelle.couper(1006);
+    expect(c.etat()).toBe("reconnexion");
+    expect(c.raisonFermeture()).not.toBe("version");
+  });
   it("socket remplacée par une reprise ailleurs (4004) : fermée, pas de reconnexion qui volerait la place", () => {
     const { c, s } = connecte();
     s.couper(CODE_REMPLACE);

@@ -322,6 +322,82 @@ describe("instantanés", () => {
   });
 });
 
+describe("instantanés : entrées futures des autres humains (`futurs`)", () => {
+  const E = (o: Partial<EntreesQuantifiees> = {}): EntreesQuantifiees => ({ ...ENTREES_QUANTIFIEES_NULLES(), ...o });
+  function snapFuturs(format: Format, futurs?: EntreesQuantifiees[][]): SnapRocket {
+    const m = creerMonde(cfg({ format }), arene);
+    avancer(m, 300, generateurEntrees(9, m.voitures.length));
+    const s: SnapRocket = {
+      tick: m.tick, ralenti: false, numero: 3, nbVoitures: m.voitures.length, entreesRecuesJusqua: m.tick, avance: 4, manquees: 0,
+      entrees: m.voitures.map((_, i) => E({ accel: 10 * i, boost: i === 1 })), etat: extraireEtat(m),
+    };
+    if (futurs) s.futurs = futurs;
+    return s;
+  }
+  it("aller-retour : listes par voiture, entrées identiques à la précédente codées sur un octet", () => {
+    const s = snapFuturs("1v1", [
+      [],
+      [E({ accel: 10, boost: true }), E({ accel: 10, boost: true }), E({ accel: 127, boost: true, saut: true }), E({ accel: 127, boost: true, saut: true }), E({ direction: -127 })],
+    ]);
+    const o = encoderSnap(s);
+    const d = decoderSnap(o)!;
+    expect(d.futurs).toEqual(s.futurs);
+    const { octetsEtat, futurs, ...reste } = d;
+    const { futurs: f0, ...attendu } = s;
+    expect(reste).toEqual(attendu);
+    expect(octetsEtatEgaux(octetsEtat!, encoderEtat(s.etat))).toBe(true);
+    void futurs; void f0;
+    // taille : 2 octets de compteurs + 5 entrées pour la voiture 1 (deux identiques à l'entrée appliquée, une répétée, deux complètes de 7 octets)
+    const sans = encoderSnap({ ...s, futurs: undefined });
+    expect(o.length - sans.length).toBe(2 + 1 + 1 + 7 + 1 + 7);
+  });
+  it("sans entrée future, la trame est identique à l'ancien format (aucun octet de plus)", () => {
+    const s = snapFuturs("2v2");
+    const sansListe = encoderSnap({ ...s, futurs: [[], [], [], []] });
+    expect(Array.from(sansListe)).toEqual(Array.from(encoderSnap(s)));
+    expect(decoderSnap(sansListe)!.futurs).toBeUndefined();
+  });
+  it("3v3 : douze entrées toutes différentes pour cinq voitures restent sous 3 ko avec l'état", () => {
+    const liste = (k: number): EntreesQuantifiees[] => Array.from({ length: RESEAU.futursMaxTicks }, (_, i) => E({ accel: i * 10 + k, direction: i, saut: i % 2 === 0 }));
+    const s = snapFuturs("3v3", [[], liste(1), liste(2), liste(3), liste(4), liste(5)]);
+    const o = encoderSnap(s);
+    expect(o.length).toBeLessThanOrEqual(3000 + 5 * (1 + RESEAU.futursMaxTicks * 7));
+    expect(decoderSnap(o)!.futurs).toEqual(s.futurs);
+  });
+  it("l'encodeur refuse une liste par voiture manquante ; la liste est tronquée à futursMaxTicks", () => {
+    expect(() => encoderSnap(snapFuturs("1v1", [[E()]]))).toThrow();
+    const trop = Array.from({ length: RESEAU.futursMaxTicks + 5 }, (_, i) => E({ accel: i }));
+    const d = decoderSnap(encoderSnap(snapFuturs("1v1", [[], trop])))!;
+    expect(d.futurs![1]).toHaveLength(RESEAU.futursMaxTicks);
+  });
+  it("trames corrompues : compteur trop grand, marque inconnue, troncature, drapeau inconnu : null, jamais de levée", () => {
+    const s = snapFuturs("1v1", [[], [E({ accel: 5 }), E({ accel: 6 })]]);
+    const o = encoderSnap(s);
+    for (let k = 0; k < o.length; k++) expect(decoderSnap(o.slice(0, k))).toBeNull();
+    expect(decoderSnap(new Uint8Array([...o, 1]))).toBeNull();
+    const base = 14 + 6 * 2; // début de la section des futurs
+    const compteur = o.slice(); compteur[base + 1] = RESEAU.futursMaxTicks + 1;
+    expect(decoderSnap(compteur)).toBeNull();
+    const marque = o.slice(); marque[base + 2] = 2;
+    expect(decoderSnap(marque)).toBeNull();
+    const drapeau = o.slice(); drapeau[3] = 4;
+    expect(decoderSnap(drapeau)).toBeNull();
+    const rng = creerRng(11);
+    for (let i = 0; i < 1500; i++) {
+      const c = o.slice();
+      c[Math.floor(tirer(rng) * c.length)] = Math.floor(tirer(rng) * 256);
+      expect(() => decoderSnap(c)).not.toThrow();
+    }
+  });
+  it("le drapeau ralenti et les futurs cohabitent", () => {
+    const s = snapFuturs("1v1", [[], [E({ accel: 5 })]]);
+    s.ralenti = true;
+    const d = decoderSnap(encoderSnap(s))!;
+    expect(d.ralenti).toBe(true);
+    expect(d.futurs).toEqual(s.futurs);
+  });
+});
+
 describe("décodeurs : trames malformées", () => {
   it("1 000 trames aléatoires : jamais de levée, toujours null (type 1, type 2, n'importe quoi)", () => {
     const rng = creerRng(42);

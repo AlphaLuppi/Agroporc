@@ -706,11 +706,14 @@ describe("prédicteur : monde affiché", () => {
       const precBrut = b.client.monde.precedent.voitures[autre].p;
       for (let c = 0; c < 3; c++) expect(precAff[c] - precBrut[c]).toBeCloseTo(apres[c] - brut[c], 9);
       void avantPrec;
-      // décroissance exponentielle de constante 60 ms
+      // décroissance exponentielle de la constante des AUTRES voitures (plus longue que la mienne), allongée pour une grande correction
+      const g = RESEAU.lissageGrandeCorrectionM;
+      const k = ecartBrut <= g ? 0 : Math.min(1, (ecartBrut - g) / g);
+      const tau = RESEAU.lissageTauAutresS * 1000 * (1 + (RESEAU.lissageFacteurGrandeCorrection - 1) * k);
       const dec = (ms: number) => { const p = b.client.mondeAffiche(b.t + ms).voitures[autre].p; return Math.hypot(p[0] - brut[0], p[1] - brut[1], p[2] - brut[2]); };
-      expect(dec(60)).toBeCloseTo(ecartBrut * Math.exp(-1), 6);
-      expect(dec(300)).toBeLessThan(ecartBrut * 0.01);
-      expect(b.client.mondeAffiche(b.t + 2000)).toBe(b.client.monde);
+      expect(dec(tau)).toBeCloseTo(ecartBrut * Math.exp(-1), 6);
+      expect(dec(5 * tau)).toBeLessThan(ecartBrut * 0.01);
+      expect(b.client.mondeAffiche(b.t + 3000)).toBe(b.client.monde);
     });
 
     it("au-delà du seuil de téléportation (4 m), la correction est franche : aucun lissage", () => {
@@ -786,5 +789,121 @@ describe("prédicteur : déterminisme du banc", () => {
     const joues = b.client.monde.tick - t0;
     expect(joues).toBeGreaterThan(1200 * 0.94);
     expect(joues).toBeLessThan(1200 * 1.06);
+  });
+});
+
+describe("prédicteur : entrées futures des autres, ma voiture conservée, lissage par source", () => {
+  /** banc adopté, instantané le plus récent en main, adversaire neutre jusque-là (donc instantané EXACT) */
+  function bancExact() {
+    const b = bancEnJeu({ manuel: true });
+    b.client.recevoirSnap(b.file[b.file.length - 1], b.t);
+    b.client.avancer(0, BRUTES(), b.t);
+    b.file.length = 0;
+    b.jouer(300);
+    const snap = b.file[b.file.length - 1];
+    expect(snap.tick).toBeLessThan(b.client.monde.tick - 3);
+    return { b, snap, autre: 1 - b.moi };
+  }
+  /** rejeu de référence : état serveur, mes entrées vraies, entrées de l'autre voiture par tick */
+  function reference(b: Banc, snap: SnapRocket, jusqua: number, autre: number, entreeAutre: (k: number) => EntreesQuantifiees) {
+    const ref = creerMondeEnLigne(b.config, b.statiques, b.moi);
+    restaurerEtat(snap.etat, ref);
+    for (let k = snap.tick; k < jusqua; k++) {
+      pasMonde(ref, ref.voitures.map((_, i) => dequantifierEntrees(i === b.moi ? (b.miennes.get(k) ?? NEUTRE()) : i === autre ? entreeAutre(k) : NEUTRE())), PAS_S);
+    }
+    return ref;
+  }
+
+  it("un instantané EXACT dont les entrées futures diffèrent de ce qui a été joué déclenche quand même le rejeu, avec les vraies entrées", () => {
+    const { b, snap, autre } = bancExact();
+    const tickLocal = b.client.monde.tick;
+    const avecFuturs: SnapRocket = { ...snap, futurs: b.statiques.map((_, i) => (i === autre ? Array.from({ length: 6 }, (_, k) => (k < 3 ? NEUTRE() : GAZ())) : [])) };
+    b.client.recevoirSnap(avecFuturs, b.t);
+    const r = b.client.avancer(0, BRUTES(), b.t);
+    expect(r.snap?.rollback).toBe(true);
+    expect(r.snap?.profondeur).toBe(tickLocal - snap.tick);
+    const ref = reference(b, snap, tickLocal, autre, (k) => (k < snap.tick + 3 ? NEUTRE() : GAZ()));
+    expect(extraireEtat(b.client.monde)).toEqual(extraireEtat(ref));
+    // sans les entrées futures, la prédiction (neutre) est différente : elles ont bien servi
+    const sansFuturs = reference(b, snap, tickLocal, autre, () => NEUTRE());
+    expect(extraireEtat(b.client.monde)).not.toEqual(extraireEtat(sansFuturs));
+  });
+
+  it("le même instantané exact SANS entrées futures reste exact : aucun rollback, aucun rejeu", () => {
+    const { b, snap } = bancExact();
+    b.client.recevoirSnap(snap, b.t);
+    const r = b.client.avancer(0, BRUTES(), b.t);
+    expect(r.snap).toMatchObject({ rollback: false, resync: false });
+    expect(b.client.stats().snapsExacts).toBeGreaterThan(0);
+  });
+
+  it("au-delà de l'horizon connu, la dernière entrée future est tenue (extrapolation) ; l'instantané suivant la rejoue sans nouveau rollback si elle était juste", () => {
+    const { b, snap, autre } = bancExact();
+    const tickLocal = b.client.monde.tick;
+    const fut = b.statiques.map((_, i) => (i === autre ? [GAZ(), GAZ()] : []));
+    b.client.recevoirSnap({ ...snap, futurs: fut }, b.t);
+    b.client.avancer(0, BRUTES(), b.t);
+    const ref = reference(b, snap, tickLocal, autre, () => GAZ());
+    expect(extraireEtat(b.client.monde)).toEqual(extraireEtat(ref));
+    // le même contenu une seconde fois (instantané suivant, état serveur identique à l'état prédit) : plus rien à rejouer
+    const etat = b.client.etatAutoritaire();
+    expect(etat?.tick).toBe(snap.tick);
+  });
+
+  it("manquées dans la fenêtre : ma voiture prédite est gardée, le reste vient du serveur ; sans manquée, le même écart est corrigé", () => {
+    const { b, snap } = bancExact();
+    const decale = (manquees: number): SnapRocket => {
+      const etat = { ...snap.etat, voitures: snap.etat.voitures.map((v, i) => (i === b.moi ? { ...v, p: [v.p[0] + 3, v.p[1], v.p[2]] as [number, number, number] } : v)) };
+      return { ...snap, manquees, octetsEtat: undefined, etat };
+    };
+    const monPos = b.client.monde.voitures[b.moi].p.slice();
+    b.client.recevoirSnap(decale(5), b.t);
+    const r = b.client.avancer(0, BRUTES(), b.t);
+    expect(r.snap).toMatchObject({ rollback: false, resync: false });
+    expect(b.client.stats().conservations).toBe(1);
+    const apres = b.client.monde.voitures[b.moi].p;
+    for (let c = 0; c < 3; c++) expect(apres[c]).toBeCloseTo(monPos[c], 9);
+    // l'état autoritaire exposé au HUD reste celui du serveur
+    expect(b.client.etatAutoritaire()?.voitures[b.moi].p[0]).toBeCloseTo(snap.etat.voitures[b.moi].p[0] + 3, 9);
+    // sans manquée, le serveur a raison : ma voiture est corrigée de ~3 m (sous le seuil de téléportation de 4 m)
+    const b2 = bancExact();
+    b2.b.client.recevoirSnap({ ...(() => { const e = { ...b2.snap.etat, voitures: b2.snap.etat.voitures.map((v, i) => (i === b2.b.moi ? { ...v, p: [v.p[0] + 3, v.p[1], v.p[2]] as [number, number, number] } : v)) }; return { ...b2.snap, manquees: 0, octetsEtat: undefined, etat: e }; })() }, b2.b.t);
+    const r2 = b2.b.client.avancer(0, BRUTES(), b2.b.t);
+    expect(r2.snap?.rollback).toBe(true);
+    expect(r2.snap?.ecartMoiM).toBeGreaterThan(2);
+    expect(b2.b.client.stats().conservations).toBe(0);
+  });
+
+  it("la conservation est désactivable (RESEAU.conservationManquees) et n'agit jamais si le serveur a démoli ma voiture", () => {
+    const { b, snap } = bancExact();
+    const R = RESEAU as unknown as Record<string, boolean>;
+    R.conservationManquees = false;
+    try {
+      const etat = { ...snap.etat, voitures: snap.etat.voitures.map((v, i) => (i === b.moi ? { ...v, p: [v.p[0] + 1, v.p[1], v.p[2]] as [number, number, number] } : v)) };
+      b.client.recevoirSnap({ ...snap, manquees: 5, octetsEtat: undefined, etat }, b.t);
+      expect(b.client.avancer(0, BRUTES(), b.t).snap?.rollback).toBe(true);
+      expect(b.client.stats().conservations).toBe(0);
+    } finally { R.conservationManquees = true; }
+    const c = bancExact();
+    const etat2 = { ...c.snap.etat, voitures: c.snap.etat.voitures.map((v, i) => (i === c.b.moi ? { ...v, demolie: true } : v)) };
+    c.b.client.recevoirSnap({ ...c.snap, manquees: 5, octetsEtat: undefined, etat: etat2 }, c.b.t);
+    c.b.client.avancer(0, BRUTES(), c.b.t);
+    expect(c.b.client.stats().conservations).toBe(0);
+  });
+
+  it("le glissement est plus lent pour les autres voitures (constante plus longue) que pour la mienne, et la balle a la sienne", () => {
+    const tauMoi = RESEAU.lissageTauS, tauAutres = RESEAU.lissageTauAutresS;
+    expect(tauAutres).toBeGreaterThan(tauMoi);
+    const { b, snap, autre } = bancExact();
+    // petite correction de ma voiture (0,2 m < seuil de grande correction) : décroissance en lissageTauS
+    const etat = { ...snap.etat, voitures: snap.etat.voitures.map((v, i) => (i === b.moi ? { ...v, p: [v.p[0] + 0.2, v.p[1], v.p[2]] as [number, number, number] } : v)) };
+    b.client.recevoirSnap({ ...snap, manquees: 0, octetsEtat: undefined, etat }, b.t);
+    expect(b.client.avancer(0, BRUTES(), b.t).snap?.rollback).toBe(true);
+    const brut = b.client.monde.voitures[b.moi].p;
+    const dec = (ms: number): number => { const p = b.client.mondeAffiche(b.t + ms).voitures[b.moi].p; return Math.hypot(p[0] - brut[0], p[1] - brut[1], p[2] - brut[2]); };
+    const d0 = dec(0);
+    expect(d0).toBeGreaterThan(0.05);
+    expect(dec(tauMoi * 1000)).toBeCloseTo(d0 * Math.exp(-1), 6);
+    void autre;
   });
 });

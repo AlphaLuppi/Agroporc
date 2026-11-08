@@ -620,9 +620,11 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
     predicteur = creerPredicteur({ horloge, debut: m, arene });
     sourceMonde = fabriquerSource(predicteur);
     monde = predicteur.monde;
-    suiviPresence.reinitialiser();
-    suiviRevanche.reinitialiser();
+    // ni les absents ni le vote de revanche ne sont remis à zéro : une reprise pendant l'écran de fin reçoit `salon` (vote) AVANT ce `debut`, et le
+    // message `presence` d'un joueur coupé n'est envoyé qu'une fois ; `suiviRevanche` se recale à chaque `salon` de toute façon
     emetteurReseau.reinitialiser();
+    // un menu pause resté ouvert (Échap à l'écran de fin, chrono tombé à zéro) ne doit pas s'ouvrir seul sur le match suivant
+    pause(false);
     resultatServeur = null;
     resultatCache = null;
     tFini = null;
@@ -727,8 +729,8 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
     klaxonPrecedent = entree.klaxon;
     // la manette met en pause et reprend elle-même ; au clavier Échap n'entre que dans `surKeyDown`
     const start = sourceOk.boutonManette(BOUTON_MANETTE.start);
-    // en ligne Start n'ouvre pas de menu : la partie continue, le choix de quitter se fait à la souris ou avec « retour »
-    if (start && !startPrecedent && !enLigne) pause(!enPause);
+    // en ligne Start ouvre aussi le menu (qui ne gèle rien : commandes neutres, la partie continue) : seul chemin à la manette pour quitter pendant le match
+    if (start && !startPrecedent) pause(!enPause);
     startPrecedent = start;
     const retour = sourceOk.boutonManette(BOUTON_MANETTE.retour);
     if (retour && !retourPrecedent && (enPause || monde.phase === "fini")) opts.sortir();

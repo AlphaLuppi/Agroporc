@@ -141,12 +141,14 @@ export function creerServeurRocket(options: OptionsServeurRocket): ServeurRocket
   function refuser(c: Connexion, action: TypeMessageClient, raison: RaisonRefus): void {
     envoyer(c, { t: "refus", action, raison });
   }
-  function envoyerSnap(c: Connexion, octets: Uint8Array): void {
-    if (c.ws.readyState !== c.ws.OPEN || saturee(c)) return;
+  /** Rend faux si l'instantané n'est pas parti (socket fermée, saturée ou en contre-pression) : ses compteurs d'adaptation sont alors restitués. */
+  function envoyerSnap(c: Connexion, octets: Uint8Array): boolean {
+    if (c.ws.readyState !== c.ws.OPEN || saturee(c)) return false;
     // un instantané est complet : un client en retard n'a besoin que du suivant
-    if (c.ws.bufferedAmount > RESEAU.bufferSauteSnapOctets) { mesures.snapsSautes++; return; }
+    if (c.ws.bufferedAmount > RESEAU.bufferSauteSnapOctets) { mesures.snapsSautes++; return false; }
     mesures.octetsEmis += octets.byteLength;
     c.ws.send(octets);
+    return true;
   }
   function erreurEtFermer(c: Connexion, code: Extract<MessageServeur, { t: "erreur" }>["code"], message: string, codeFermeture: number): void {
     envoyer(c, { t: "erreur", code, message });
@@ -218,7 +220,8 @@ export function creerServeurRocket(options: OptionsServeurRocket): ServeurRocket
     for (const s of sorties) {
       if ("snap" in s) {
         const c = parJoueur.get(s.a);
-        if (c && c.salle === salle) envoyerSnap(c, encoderSnap(s.snap));
+        const parti = !!c && c.salle === salle && envoyerSnap(c, encoderSnap(s.snap));
+        if (!parti && c && c.salle === salle) salle.restituerCompteurs(s.a, s.snap.avance, s.snap.manquees);
         continue;
       }
       const m = s.msg;
@@ -249,10 +252,11 @@ export function creerServeurRocket(options: OptionsServeurRocket): ServeurRocket
     if (m.reprise) {
       const { code, joueur, jeton } = m.reprise;
       if (jetonValide(code, joueur, jeton)) {
-        const r = registre.trouver(code, c.ip, maintenantMs);
-        if (r.ok && presentDansLaSalle(r.salle, joueur)) reprise = { salle: r.salle, ancienne: parJoueur.get(joueur) };
-        // salle refermée, ou joueur remplacé par un bot : plus de reprise possible (une simple limite d'essais ne révoque rien)
-        else if (r.ok || r.raison === "inconnue") revoquerJeton(code, joueur);
+        // lecture sans compteur d'essais : le jeton, 128 bits, prouve déjà le droit à la place (l'anti-énumération vise les codes saisis à la main)
+        const salleReprise = registre.salle(code);
+        if (salleReprise && presentDansLaSalle(salleReprise, joueur)) reprise = { salle: salleReprise, ancienne: parJoueur.get(joueur) };
+        // salle refermée, ou joueur remplacé par un bot : plus de reprise possible
+        else revoquerJeton(code, joueur);
       }
     }
     if (reprise && m.reprise) {
@@ -336,8 +340,10 @@ export function creerServeurRocket(options: OptionsServeurRocket): ServeurRocket
       default: {
         const salle = c.salle;
         if (!salle) return refuser(c, m.t, "inconnue");
-        // plafond de matchs simultanés : seul un lancement depuis le salon en ouvre un (la revanche reste dans la salle qui l'occupait déjà)
+        // plafond de matchs simultanés : un lancement depuis le salon en ouvre un, et un « oui » de revanche peut en rouvrir un (une salle en phase
+        // « fin » ne compte pas dans `nombreMatchs`) ; au plafond, le vote est refusé et la salle peut retourner au salon
         if (m.t === "lancer" && salle.phase === "salon" && registre.nombreMatchs() >= matchsMax) return refuser(c, "lancer", "limite");
+        if (m.t === "revanche" && m.oui && salle.phase === "fin" && registre.nombreMatchs() >= matchsMax) return refuser(c, "revanche", "limite");
         diffuser(salle, salle.recevoir(c.joueur, m, maintenantMs));
       }
     }
@@ -389,6 +395,8 @@ export function creerServeurRocket(options: OptionsServeurRocket): ServeurRocket
   // ------------------------------------------------------------------------------------------------------------------------------
 
   wss.on("connection", (ws, req) => {
+    // avant tout `return` : une trame trop grande sur une connexion refusée émettrait 'error' sans écouteur et ferait tomber le processus
+    ws.on("error", () => ws.terminate());
     const ip = ipClient(req.headers["x-forwarded-for"], req.socket.remoteAddress);
     if (connexions.size >= connexionsTotalMax || (parIp.get(ip) ?? 0) >= connexionsParIpMax) {
       ws.close(CODE_TROP_DE_CONNEXIONS, "trop de connexions");
@@ -427,7 +435,6 @@ export function creerServeurRocket(options: OptionsServeurRocket): ServeurRocket
         retirerDeLaSalle(c, horloge(), code !== CODE_DEPART_VOLONTAIRE);
       } catch (e) { console.error("rocket close:", e); }
     });
-    ws.on("error", () => ws.terminate());
   });
 
   // ------------------------------------------------------------------------------------------------------------------------------

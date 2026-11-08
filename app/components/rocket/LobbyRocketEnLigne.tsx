@@ -140,6 +140,17 @@ export default function LobbyRocketEnLigne({
   useEffect(() => () => { if (minuteurCopie.current) clearTimeout(minuteurCopie.current); }, []);
 
   const ecran = ecranLobby(etat);
+  // un changement d'écran (accueil, salon, chargement) démonte le bouton cliqué : le focus tomberait sur <body>, derrière le dialogue
+  // modal ; il est rendu au titre, qui l'annonce aux lecteurs d'écran. Un focus déjà ailleurs (la radio du mode, un champ) n'est jamais volé.
+  const asideRef = useRef<HTMLElement>(null);
+  const titreRef = useRef<HTMLHeadingElement>(null);
+  const ecranPrecedent = useRef(ecran);
+  useEffect(() => {
+    if (ecranPrecedent.current === ecran) return;
+    ecranPrecedent.current = ecran;
+    const actif = document.activeElement;
+    if (!actif || actif === document.body) titreRef.current?.focus({ preventScroll: true });
+  }, [ecran]);
   const conn = libelleConnexion(etat.connexion, etat.fermeture);
   const bloqueTactile = tactile && !manette;
   const vue = etat.salon ? vueSalon(etat.salon, etat.joueur) : null;
@@ -208,7 +219,7 @@ export default function LobbyRocketEnLigne({
                   type="text"
                   value={codeSaisi}
                   maxLength={4}
-                  placeholder="ABCD"
+                  placeholder="BCDF"
                   autoComplete="off"
                   autoCapitalize="characters"
                   spellCheck={false}
@@ -217,7 +228,7 @@ export default function LobbyRocketEnLigne({
                 />
                 <button type="submit" className={styles.boutonSecondaire} disabled={!code || bloqueTactile || occupe}>Rejoindre</button>
               </div>
-              <span id={`${id}-aide-code`} className={styles.aideCode}>Quatre lettres, communiquées par l&apos;hôte.</span>
+              <span id={`${id}-aide-code`} className={styles.aideCode}>Quatre consonnes, sans voyelle, communiquées par l&apos;hôte.</span>
             </div>
           </form>
 
@@ -307,7 +318,7 @@ export default function LobbyRocketEnLigne({
         {vue.noteBots && <p className={styles.noteBots}>{vue.noteBots}</p>}
 
         {enSalon && (
-          <div className={styles.pied2}>
+          <div className={`${styles.pied2} ${styles.piedCollant}`}>
             {vue.estHote ? (
               <>
                 <button type="button" className={styles.lancer} disabled={!vue.lancable || bloqueTactile} aria-describedby={vue.raisonNonLancable ? `${id}-raison` : undefined} onClick={actions.lancer}>
@@ -326,12 +337,12 @@ export default function LobbyRocketEnLigne({
   })();
 
   return (
-    <aside className={styles.lobby} aria-label="Rocket Muche en ligne">
+    <aside ref={asideRef} className={styles.lobby} aria-label="Rocket Muche en ligne">
       <p className={styles.entete}>
         <span className={styles.sur}>Football en voitures</span>
         <button type="button" className={styles.fermer} onClick={surFermer}>Fermer</button>
       </p>
-      <h2 className={styles.titre}>Rocket Muche</h2>
+      <h2 ref={titreRef} tabIndex={-1} className={styles.titre} style={{ outline: "none" }}>Rocket Muche</h2>
       <p className={styles.statut} role="status">
         <i className={styles.pastille} data-etat={conn.gravite === "ok" ? "ok" : conn.gravite === "erreur" ? "erreur" : undefined} aria-hidden="true" />
         <span>En ligne · {conn.texte}</span>

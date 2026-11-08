@@ -65,6 +65,8 @@ export function useSalonRocket({ actif, nom, listeVisible }: OptionsSalonRocket)
   const nomRef = useRef(nom);
   nomRef.current = nom;
   const snapRef = useRef<SnapRocket | null>(null);
+  /** numéro du match en cours (message `debut`) : un instantané d'un autre match est périmé et ne doit jamais devenir le premier du jeu */
+  const numeroMatchRef = useRef<number | null>(null);
   /** connexion courante : client, nom envoyé au `bonjour`, désabonnement, promesse de disponibilité */
   const connexion = useRef<{ client: ClientRocketEtendu | null; nom: string; stop: () => void; annule: boolean; pret: Promise<ClientRocketEtendu | null> } | null>(null);
 
@@ -83,10 +85,13 @@ export function useSalonRocket({ actif, nom, listeVisible }: OptionsSalonRocket)
       const stopEcoute = client.ecouter({
         message: (m) => {
           modifier((e) => appliquerMessage(e, m));
+          // un instantané du match précédent ne doit pas survivre à la fin du match, à un nouveau `debut` ni à la sortie du salon
+          if (m.t === "debut") { snapRef.current = null; numeroMatchRef.current = m.numero; }
+          else if (m.t === "fin" || (m.t === "salon" && (m.salon === null || m.salon.phase === "salon"))) { snapRef.current = null; numeroMatchRef.current = null; }
           if (m.t === "session") ecrireReprise({ code: m.code, joueur: m.joueur, jeton: m.jeton }, Date.now(), stockageSession());
           else if ((m.t === "salon" && m.salon === null) || (m.t === "reprise" && m.code === null)) effacerReprise(stockageSession());
         },
-        snap: (s) => { snapRef.current = s; },
+        snap: (s) => { if (numeroMatchRef.current !== null && s.numero === (numeroMatchRef.current & 255)) snapRef.current = s; },
         etat: (ce) => {
           modifier((e) => appliquerConnexion(e, ce, client.raisonFermeture()));
           if (ce === "ouverte") client.envoyer({ t: "lister" });
@@ -119,6 +124,7 @@ export function useSalonRocket({ actif, nom, listeVisible }: OptionsSalonRocket)
     return () => {
       fermer();
       snapRef.current = null;
+      numeroMatchRef.current = null;
       setEtat(etatLobbyInitial());
     };
   }, [actif, ouvrir, fermer]);
@@ -150,6 +156,7 @@ export function useSalonRocket({ actif, nom, listeVisible }: OptionsSalonRocket)
     if (avecNom && connexion.current && connexion.current.nom !== nomPropre && etatRef.current.salon === null) {
       fermer();
       snapRef.current = null;
+      numeroMatchRef.current = null;
       modifier((e) => ({ ...e, connexion: "connexion", parties: null }));
       ouvrir(nomPropre);
       void connexion.current?.pret.then((c) => c?.envoyer(m));
@@ -165,6 +172,8 @@ export function useSalonRocket({ actif, nom, listeVisible }: OptionsSalonRocket)
     rejoindre(code, equipe) { modifier((e) => attendre(e, "rejoindre")); envoyer({ t: "rejoindre", code, ...(equipe ? { equipe } : {}) }, true); },
     quitter() {
       effacerReprise(stockageSession());
+      snapRef.current = null;
+      numeroMatchRef.current = null;
       modifier((e) => quitterSalonLocalement(e));
       envoyer({ t: "quitter" });
       envoyer({ t: "lister" });
@@ -189,7 +198,7 @@ export function useSalonRocket({ actif, nom, listeVisible }: OptionsSalonRocket)
   const prendreSnap = useCallback((): SnapRocket | null => {
     const s = snapRef.current;
     snapRef.current = null;
-    return s;
+    return s && numeroMatchRef.current !== null && s.numero === (numeroMatchRef.current & 255) ? s : null;
   }, []);
 
   return { etat, actions, clientRef, prendreSnap };

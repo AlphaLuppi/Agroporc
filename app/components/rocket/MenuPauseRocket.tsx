@@ -22,7 +22,8 @@ const TITRES: Record<Vue, string> = { menu: "Pause", reglages: "Réglages", aide
  * Échap relâchée reprend la partie, ou revient au menu depuis Réglages / Aide. On n'agit qu'au relâchement d'un Échap dont on a vu
  * l'appui : l'Échap qui vient d'ouvrir ce menu et que l'on relâche peu après ne le referme donc pas.
  */
-export default function MenuPauseRocket({ reglages, surReglages, surReprendre, surRecommencer, surQuitter, surQuitterVue, manette, enLigne = false }: PropsMenuPauseRocket) {
+export default function MenuPauseRocket({ reglages, surReglages, surReprendre, surRecommencer, surQuitter, surQuitterVue, manette, enLigne = false, etatConnexion }: PropsMenuPauseRocket) {
+  const connexionPerdue = enLigne && etatConnexion !== undefined && etatConnexion !== "ouverte";
   const idTitre = useId();
   const [vue, setVue] = useState<Vue>("menu");
   const racine = useRef<HTMLDivElement>(null);
@@ -61,7 +62,12 @@ export default function MenuPauseRocket({ reglages, surReglages, surReprendre, s
               <button type="button" className={styles.boutonDanger} onClick={surQuitter}>{enLigne ? "Quitter la partie" : "Quitter"}</button>
               <button type="button" className={styles.boutonDiscret} onClick={surQuitterVue}>Quitter vers Agroparc</button>
             </div>
-            {enLigne ? (
+            {connexionPerdue ? (
+              <>
+                <p className={styles.bandeauEnLigne} role="status">Connexion perdue, reconnexion en cours… Vos commandes sont suspendues.</p>
+                <p className={styles.noteDialogue}>La partie reprend si la connexion revient dans les 20 secondes. Échap reprend les commandes.</p>
+              </>
+            ) : enLigne ? (
               <>
                 <p className={styles.bandeauEnLigne} role="status">Le jeu continue en ligne. Vos commandes sont suspendues.</p>
                 <p className={styles.noteDialogue}>Échap reprend la partie. Quitter la partie confie votre voiture à un bot.</p>
