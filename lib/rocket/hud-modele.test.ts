@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { LigneClassement, ResultatMatch, StatsVoiture } from "./contrat";
 import {
-  GRADUATIONS_BOOST, annonceBut, annonceFin, chronoUrgent, classementParEquipe, equipeMiseEnAvant, formaterChrono, graduationsAllumees, libelleChrono, ligneMvp,
-  titreResultat, vitesseAffichee,
+  FORMES_QUALITE, GRADUATIONS_BOOST, annonceBut, annonceFin, chronoUrgent, classementParEquipe, equipeMiseEnAvant, estMoi, formaterChrono, graduationsAllumees, libelleAbsent,
+  libelleChrono, libelleCommandes, libellePastilleReseau, libelleRevanche, ligneMvp, resultatPourEquipe, titreResultat, vitesseAffichee,
 } from "./hud-modele";
 
 const noms = { bleue: "Les Trèfles", orange: "Les Tigres" };
@@ -100,5 +100,55 @@ describe("résultat", () => {
     expect(ligneMvp(resultat("bleue", { mvp: 99 }))).toBeNull();
     expect(equipeMiseEnAvant(resultat("orange"))).toBe("orange");
     expect(equipeMiseEnAvant(resultat(null, { equipeJoueur: "orange" }))).toBe("orange");
+  });
+});
+
+describe("mode en ligne : identité et résultat", () => {
+  it("« moi » : l'id de ma voiture en ligne, le drapeau `humain` hors ligne", () => {
+    const l = (id: number, humain: boolean) => ({ id, humain });
+    expect(estMoi(l(0, true))).toBe(true);
+    expect(estMoi(l(1, false))).toBe(false);
+    // en ligne deux humains : seule ma voiture est « moi »
+    expect(estMoi(l(0, true), 3)).toBe(false);
+    expect(estMoi(l(3, true), 3)).toBe(true);
+    expect(estMoi(l(3, false), 3)).toBe(true);
+    expect(estMoi(l(0, false), 0)).toBe(true);
+  });
+  it("le résultat brut du serveur est relu du point de vue de chaque équipe", () => {
+    const brut = resultat("orange", { equipeJoueur: "bleue" });
+    const pourOrange = resultatPourEquipe(brut, "orange");
+    expect(titreResultat(brut, noms).issue).toBe("defaite");
+    expect(titreResultat(pourOrange, noms).issue).toBe("victoire");
+    expect(annonceFin(pourOrange, noms)).toContain("Victoire");
+    expect(brut.equipeJoueur).toBe("bleue");
+    expect(resultatPourEquipe(resultat(null), "orange")).toMatchObject({ equipeJoueur: "orange", vainqueur: null });
+  });
+});
+
+describe("mode en ligne : pastille réseau", () => {
+  it("ping et qualité écrits ; les états sans mesure disent ce qui se passe", () => {
+    expect(libellePastilleReseau({ etat: "ouverte", rttMs: 42.4, qualite: "bonne" })).toBe("42 ms · Bonne");
+    expect(libellePastilleReseau({ etat: "ouverte", rttMs: 190, qualite: "mauvaise" })).toBe("190 ms · Mauvaise");
+    expect(libellePastilleReseau({ etat: "ouverte", rttMs: 0, qualite: "bonne" })).toBe("Mesure du ping…");
+    expect(libellePastilleReseau({ etat: "reconnexion", rttMs: 50, qualite: "bonne" })).toBe("Reconnexion…");
+    expect(libellePastilleReseau({ etat: "fermee", rttMs: 0, qualite: "mauvaise" })).toBe("Connexion perdue");
+    expect(libellePastilleReseau({ etat: "refusee", rttMs: 0, qualite: "mauvaise" })).toBe("Connexion refusée");
+    expect(libellePastilleReseau({ etat: "connexion", rttMs: 0, qualite: "bonne" })).toBe("Connexion…");
+  });
+  it("chaque qualité a sa forme propre (jamais la couleur seule)", () => {
+    expect(new Set(Object.values(FORMES_QUALITE)).size).toBe(3);
+  });
+  it("commandes suspendues : dites seulement quand elles le sont", () => {
+    expect(libelleCommandes("actives")).toBeNull();
+    expect(libelleCommandes("menu")).toContain("menu");
+    expect(libelleCommandes("masque")).toContain("onglet masqué");
+  });
+  it("joueur coupé : compte à rebours arrondi au-dessus, jamais négatif", () => {
+    expect(libelleAbsent({ joueur: 1, nom: "Léa", restantMs: 13_200 })).toBe("Léa : connexion perdue, reprise possible dans 14 s");
+    expect(libelleAbsent({ joueur: 1, nom: "Léa", restantMs: -50 })).toContain("dans 0 s");
+  });
+  it("bouton de revanche : le compte n'apparaît qu'avec un premier vote", () => {
+    expect(libelleRevanche(0, 2)).toBe("Revanche");
+    expect(libelleRevanche(1, 2)).toBe("Revanche · 1/2");
   });
 });

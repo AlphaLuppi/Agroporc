@@ -3,12 +3,14 @@
 import { useEffect, useRef, useState } from "react";
 import type { BanniereHud, HudRocket as EtatHud } from "@/lib/rocket/contrat";
 import {
-  GRADUATIONS_BOOST, annonceBut, annonceFin, chronoUrgent, graduationsAllumees, libelleChrono, vitesseAffichee,
+  GRADUATIONS_BOOST, annonceBut, annonceFin, chronoUrgent, graduationsAllumees, libelleChrono, resultatPourEquipe, vitesseAffichee,
 } from "@/lib/rocket/hud-modele";
+import { resumeRevanche } from "@/lib/rocket/reseau/lobby-en-ligne";
 import { COMMANDES_BREVES, commandesRocket } from "@/lib/rocket/lobby";
 import { useDispositionRocket } from "./useDispositionRocket";
 import type { PropsHudRocket } from "./contrats";
 import FinRocket from "./FinRocket";
+import HudReseauRocket from "./HudReseauRocket";
 import ListeCommandesRocket from "./ListeCommandesRocket";
 import MenuPauseRocket from "./MenuPauseRocket";
 import TableauRocket from "./TableauRocket";
@@ -69,8 +71,9 @@ function banniereAffichee(hud: EtatHud): BanniereHud | null {
  * vitesse ; centre : bannière ; bas gauche : fil des évènements ; en bas : ball cam, manette, aide des touches (8 premières secondes) ;
  * Tab : tableau ; démolie : décompte de réapparition. Le menu pause et l'écran de fin sont des dialogues modaux montés par-dessus.
  * Tout est décoratif pour la souris (`pointer-events: none`) sauf les boutons et les dialogues.
+ * En ligne (`enLigne`, `moi`) : pastille réseau, « (vous)» par l'id de ma voiture, menu pause qui ne gèle rien, revanche à la fin.
  */
-export default function HudRocketUi({ hud, reglages, surReglages, surReprendre, surRecommencer, surQuitter, surQuitterVue, surPause }: PropsHudRocket) {
+export default function HudRocketUi({ hud, reglages, surReglages, surReprendre, surRecommencer, surQuitter, surQuitterVue, surPause, moi, enLigne }: PropsHudRocket) {
   const annonce = useAnnonce(hud);
   const disposition = useDispositionRocket();
 
@@ -88,6 +91,7 @@ export default function HudRocketUi({ hud, reglages, surReglages, surReprendre, 
   const enPartie = hud.phase !== "fini" && !hud.resultat;
   const afficherTableau = hud.classement.length > 0 && !hud.resultat && !hud.enPause;
   const aide = hud.aide && !hud.enPause && !hud.resultat;
+  const revanche = enLigne ? resumeRevanche(enLigne.reseau?.revanche, enLigne.humains, moi ?? null) : null;
 
   return (
     <div className={styles.hud} data-phase={hud.phase}>
@@ -106,6 +110,8 @@ export default function HudRocketUi({ hud, reglages, surReglages, surReprendre, 
           <span className={styles.nomEquipe}>{noms.orange}</span>
         </div>
       </div>
+
+      {enLigne && <HudReseauRocket reseau={enLigne.reseau} />}
 
       {surPause && enPartie && !hud.enPause && (
         <button type="button" className={styles.boutonPause} onClick={surPause}>Pause</button>
@@ -148,7 +154,7 @@ export default function HudRocketUi({ hud, reglages, surReglages, surReprendre, 
 
       {afficherTableau && (
         <div className={styles.tableauJeu}>
-          <TableauRocket lignes={hud.classement} nomsEquipes={noms} equipeJoueur={hud.equipeJoueur} legende="Classement des joueurs" />
+          <TableauRocket lignes={hud.classement} nomsEquipes={noms} equipeJoueur={hud.equipeJoueur} legende="Classement des joueurs" moi={moi} />
         </div>
       )}
 
@@ -161,9 +167,20 @@ export default function HudRocketUi({ hud, reglages, surReglages, surReprendre, 
           surQuitter={surQuitter}
           surQuitterVue={surQuitterVue}
           manette={hud.manette}
+          enLigne={!!enLigne}
         />
       )}
-      {hud.resultat && <FinRocket resultat={hud.resultat} nomsEquipes={noms} surRejouer={surRecommencer} surQuitter={surQuitter} />}
+      {hud.resultat && (
+        <FinRocket
+          // le serveur envoie son résultat brut : chaque client le relit pour SON équipe
+          resultat={enLigne ? resultatPourEquipe(hud.resultat, hud.equipeJoueur) : hud.resultat}
+          nomsEquipes={noms}
+          surRejouer={surRecommencer}
+          surQuitter={surQuitter}
+          moi={moi}
+          enLigne={enLigne && revanche ? { oui: revanche.oui, attendus: revanche.attendus, aVote: revanche.aVote, restantS: revanche.restantS, hote: enLigne.hote, surRetourSalon: enLigne.surRetourSalon } : undefined}
+        />
+      )}
     </div>
   );
 }

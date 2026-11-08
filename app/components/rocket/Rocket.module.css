@@ -205,6 +205,77 @@
 .mvp b { color: var(--ag-white); }
 .mvpEtiquette { font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ag-ink-dim); }
 
+/* ---------- mode en ligne : panneau, lobby, HUD réseau ---------- */
+/* Le panneau reprend l'emplacement du lobby local (même gabarit) et y loge le commutateur Hors ligne / En ligne au-dessus du lobby choisi.
+   Le lobby, lui, redevient un élément de flux dans le panneau (le sélecteur `.panneau > aside` l'emporte sur `.lobby`). */
+.panneau {
+  position: absolute; z-index: 4; right: 24px; top: 72px; width: min(380px, calc(100vw - 48px)); box-sizing: border-box;
+  display: flex; flex-direction: column; max-height: calc(100vh - 92px);
+}
+.panneau > aside { position: static; width: auto; max-height: none; min-height: 0; flex: 1 1 auto; overflow-y: auto; animation: none; }
+.basculeMode { display: flex; gap: 6px; margin: 0; padding: 8px 20px; min-width: 0; border: 1px solid var(--ag-line); border-bottom: 0; background: var(--ag-panel); box-sizing: border-box; flex: 0 0 auto; }
+.basculeMode .segment { flex: 1 1 0; }
+
+.pastille[data-etat="erreur"] { background: var(--ag-danger); box-shadow: 0 0 8px var(--ag-danger); }
+.info { margin: 6px 0; padding: 6px 10px; font-size: 12px; color: var(--ag-ink); border: 1px solid var(--ag-line-strong); background: var(--ag-hud-fond); }
+
+.pied2 { display: flex; flex-direction: column; gap: 8px; margin: 14px 0 0; }
+.creer { margin-top: 14px; }
+.formCode { margin: 0; }
+.ligneCode { display: flex; gap: 8px; }
+.ligneCode input { flex: 1 1 auto; min-width: 0; letter-spacing: 0.3em; text-transform: uppercase; font-family: var(--ag-display), var(--ag-mono), monospace; font-weight: 700; font-size: 18px; text-align: center; }
+.ligneCode button { flex: 0 0 auto; }
+.aideCode { font-size: 10px; line-height: 1.4; color: var(--ag-ink-dim); }
+
+.listeParties { margin-top: 18px; }
+.enteteListe { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.sousTitre { margin: 0; font-size: 10px; font-weight: 500; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ag-ink-dim); }
+.vide { margin: 8px 0 0; font-size: 12px; line-height: 1.5; color: var(--ag-ink-dim); }
+.partiesOuvertes { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.partiesOuvertes li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 6px 8px; border: 1px solid var(--ag-line-strong); background: var(--ag-hud-fond); }
+.codePartie { font-family: var(--ag-display), var(--ag-mono), monospace; font-weight: 700; font-size: 16px; letter-spacing: 0.14em; color: var(--ag-amber); }
+.detailPartie { display: flex; flex-direction: column; min-width: 0; font-size: 11px; line-height: 1.4; color: var(--ag-ink-dim); }
+.detailPartie b { font-size: 12px; font-weight: 600; color: var(--ag-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.partiesOuvertes button { min-height: 40px; padding: 0 12px; font-size: 11px; }
+.partiesOuvertes button:disabled { cursor: default; color: var(--ag-ink-dim); border-color: var(--ag-line-strong); background: transparent; }
+
+.blocCode { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin-top: 10px; }
+.codeSalon { margin: 0; font-size: 12px; color: var(--ag-ink); }
+.codeSalon strong { display: block; font-family: var(--ag-display), var(--ag-mono), monospace; font-weight: 700; font-size: 44px; line-height: 1; letter-spacing: 0.22em; color: var(--ag-amber); text-shadow: 0 0 18px rgba(255, 179, 92, 0.35); user-select: all; }
+.copie { font-size: 11px; color: var(--ag-ok); }
+
+.equipes { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 14px; }
+.colonneEquipe { --equipe: var(--ag-line-strong); display: flex; flex-direction: column; gap: 6px; padding: 8px; border: 1px solid var(--ag-line-strong); border-top: 3px solid var(--equipe); background: var(--ag-hud-fond); min-width: 0; }
+.colonneEquipe[data-equipe="bleue"] { --equipe: var(--ag-equipe-bleue); }
+.colonneEquipe[data-equipe="orange"] { --equipe: var(--ag-equipe-orange); }
+.titreEquipe { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 11px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--equipe); }
+.joueursEquipe { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; flex: 1 1 auto; }
+.joueursEquipe li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; min-height: 28px; font-size: 12px; color: var(--ag-ink); }
+.nomJoueur { font-weight: 600; color: var(--ag-white); overflow-wrap: anywhere; }
+.etiquette { padding: 1px 6px; font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; border: 1px solid var(--ag-line-strong); color: var(--ag-ink-dim); }
+.etiquette[data-etat="alerte"] { color: var(--ag-danger); border-color: var(--ag-danger); }
+.placeLibre { font-style: italic; color: var(--ag-ink-dim); }
+.colonneEquipe .boutonDiscret { min-height: 40px; padding: 2px 8px; font-size: 10px; letter-spacing: 0.08em; }
+
+.resume { margin: 12px 0 0; font-size: 12px; line-height: 1.5; color: var(--ag-ink); }
+.noteBots { margin: 4px 0 0; font-size: 11px; line-height: 1.5; color: var(--ag-ink-dim); }
+.raison { margin: 0; font-size: 11px; line-height: 1.5; color: var(--ag-ink-dim); }
+.attenteHote { margin: 0; padding: 10px; border: 1px dashed var(--ag-line-strong); font-size: 12px; text-align: center; color: var(--ag-ink); }
+.chargementLigne { margin: 12px 0 0; padding: 10px 12px; font-size: 13px; letter-spacing: 0.08em; border: 1px solid var(--ag-line-strong); background: var(--ag-hud-fond); color: var(--ag-ink); }
+
+/* HUD réseau : pastille discrète sous le bouton Pause, bandeaux des joueurs coupés au centre haut */
+.reseau { position: absolute; right: 16px; top: 62px; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; max-width: min(320px, 60vw); }
+.pastilleReseau { display: inline-flex; align-items: center; gap: 8px; margin: 0; padding: 4px 10px; font-size: 11px; letter-spacing: 0.06em; background: var(--ag-hud-fond); border: 1px solid var(--ag-line-strong); color: var(--ag-ink); }
+.pastilleReseau[data-qualite="bonne"] .formeReseau { color: var(--ag-ok); }
+.pastilleReseau[data-qualite="moyenne"] .formeReseau { color: var(--ag-amber); }
+.pastilleReseau[data-qualite="mauvaise"] .formeReseau, .pastilleReseau[data-qualite="aucune"] .formeReseau { color: var(--ag-danger); }
+.formeReseau { font-size: 10px; letter-spacing: 0.1em; }
+.messagesReseau { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.alerteReseau { margin: 0; padding: 4px 10px; font-size: 12px; line-height: 1.4; text-align: right; background: var(--ag-hud-fond-fort); border: 1px solid var(--ag-danger); color: var(--ag-white); }
+.bandeauEnLigne { margin: 0; padding: 8px 10px; font-size: 12px; line-height: 1.5; border: 1px solid var(--ag-amber); background: var(--ag-hud-fond); color: var(--ag-ink); }
+.statutRevanche { margin: 0; min-height: 1.5em; font-size: 12px; line-height: 1.5; color: var(--ag-ink); }
+.compteRevanche { font-variant-numeric: tabular-nums; }
+
 /* ---------- fenêtres étroites ---------- */
 @media (min-width: 641px) and (max-width: 900px) {
   .aideBreve { width: min(520px, calc(100vw - 300px)); }
@@ -215,6 +286,9 @@
 @media (max-width: 640px) {
   .boutonPause { top: 78px; right: 12px; }
   .lobby { top: auto; bottom: 20px; right: 24px; left: 24px; width: auto; max-height: min(70vh, calc(100vh - 100px)); }
+  .panneau { top: auto; bottom: 20px; right: 24px; left: 24px; width: auto; max-height: min(78vh, calc(100vh - 100px)); }
+  .equipes { grid-template-columns: 1fr; }
+  .reseau { top: 124px; right: 12px; }
   .points { font-size: 28px; }
   .chrono { font-size: 22px; min-width: 84px; padding: 0 10px; }
   .scoreEquipe { min-width: 70px; padding: 4px 8px 6px; }
@@ -228,5 +302,5 @@
 
 /* ---------- mouvement réduit : ni apparition animée, ni zoom de bannière ---------- */
 @media (prefers-reduced-motion: reduce) {
-  .lobby, .banniere, .fil li, .dialogue { animation: none; }
+  .lobby, .banniere, .fil li, .dialogue, .panneau > aside { animation: none; }
 }

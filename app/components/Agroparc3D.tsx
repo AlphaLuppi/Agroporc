@@ -44,8 +44,12 @@ import { CLASSEMENT_INDISPONIBLE, EnregistrerScore, PanneauClassement } from "./
 import type { ConfigMatch, HudRocket as EtatHudRocket, JeuRocketHandle, ReglagesRocket } from "@/lib/rocket/contrat";
 import { configInitiale, configPourLancer, ecrireConfig } from "@/lib/rocket/lobby";
 import { ecrireReglages, lireReglages } from "@/lib/rocket/reglages";
+import { ecrireModeRocket, ecrireReglagesSalon, lireModeRocket, lireReglagesSalon, sansRenduActif, type DebutRocket, type ModeRocket } from "@/lib/rocket/reseau/lobby-en-ligne";
+import type { HudReseau, ReglagesSalon } from "@/lib/rocket/reseau/protocole";
 import HudRocketUi from "./rocket/HudRocket";
 import LobbyRocket from "./rocket/LobbyRocket";
+import PanneauRocket from "./rocket/PanneauRocket";
+import { useSalonRocket } from "./rocket/useSalonRocket";
 import styles from "./Agroparc3D.module.css";
 
 const display = Chakra_Petch({ subsets: ["latin"], weight: ["400", "600", "700"], variable: "--ag-display", display: "swap" });
@@ -235,12 +239,24 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
   const [manette, setManette] = useState(false);
   const [erreurRocket, setErreurRocket] = useState<string | null>(null);
   const jeuRocketRef = useRef<JeuRocketHandle | null>(null);
+  // Rocket Muche EN LIGNE : commutateur Hors ligne / En ligne (mémorisé), réglages d'hôte, réseau du HUD ; le hook ne se connecte que si « En ligne » est choisi
+  const [modeRocket, setModeRocket] = useState<ModeRocket>(() => lireModeRocket(stockageNavigateur()));
+  const [reglagesSalonRocket, setReglagesSalonRocket] = useState<ReglagesSalon>(() => lireReglagesSalon(stockageNavigateur()));
+  const [hudReseauRocket, setHudReseauRocket] = useState<HudReseau | null>(null);
+  /** `debut` du match en ligne lancé : lu par l'effet qui monte le jeu (qui ne se crée qu'à sa réception) */
+  const debutRocketRef = useRef<DebutRocket | null>(null);
+  /** la partie en cours est une partie en ligne (l'effet de sortie s'y limite) */
+  const enRocketLigneRef = useRef(false);
   /** configuration (graine comprise) du match lancé : lue par l'effet qui monte le jeu */
   const configLanceeRef = useRef<ConfigMatch>(configRocket);
   const reglagesRocketRef = useRef(reglagesRocket);
   reglagesRocketRef.current = reglagesRocket;
   const enRocketRef = useRef(enRocket);
   enRocketRef.current = enRocket;
+  const ligneActif = modeRocket === "ligne" && (rocketOuvert || enRocket);
+  const salonRocket = useSalonRocket({ actif: ligneActif, nom: configRocket.nomJoueur, listeVisible: rocketOuvert && !enRocket });
+  const salonRocketRef = useRef(salonRocket);
+  salonRocketRef.current = salonRocket;
   // mode de jeu mémorisé : présélectionne la carte du choix du mode (v5) ; le panneau l'envoie à son ouverture
   const [modeMemo, setModeMemo] = useState<ModeSalle>(modeInitial);
   const jeuRef = useRef<JeuHandle | null>(null);
@@ -450,8 +466,26 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
     setCleCanvas((k) => k + 1);
     setEnRocket(true);
   };
+  /**
+   * Le match en ligne démarre (message `debut`, jamais avant : la vue aérienne n'est détruite qu'à ce moment) : canvas neuf, panneau fermé.
+   * Le jeu est créé par l'effet ci-dessous, avec `debut`, le client réseau et le dernier instantané reçu pendant le chargement.
+   */
+  const lancerRocketEnLigne = (debut: DebutRocket) => {
+    if (!scene || enRocketRef.current) return;
+    debutRocketRef.current = debut;
+    enRocketLigneRef.current = true;
+    configLanceeRef.current = debut.config;
+    setErreurRocket(null);
+    setSelected(null);
+    setAreneOuverte(false);
+    setRocketOuvert(false);
+    setCleCanvas((k) => k + 1);
+    setEnRocket(true);
+  };
   /** Sortie de la partie (menu pause, écran de fin, échec du démarrage) : vue aérienne recréée, panneau Rocket rouvert. */
   const quitterRocket = () => {
+    enRocketLigneRef.current = false;
+    debutRocketRef.current = null;
     setCleCanvas((k) => k + 1);
     setEnRocket(false);
     setRocketOuvert(true);
@@ -461,8 +495,14 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
     quitterRocket();
     setRocketOuvert(false);
   };
-  const quitterRocketRef = useRef(quitterRocket);
-  quitterRocketRef.current = quitterRocket;
+  /** Départ VOLONTAIRE ou forcé : en ligne, on le dit au serveur (un bot prend la voiture) avant de rendre la vue aérienne. */
+  const sortirRocket = (fermerPanneau = false) => {
+    if (enRocketLigneRef.current) salonRocketRef.current.actions.quitter();
+    if (fermerPanneau) quitterRocketEtFermer();
+    else quitterRocket();
+  };
+  const quitterRocketRef = useRef(sortirRocket);
+  quitterRocketRef.current = sortirRocket;
   /** Réglages de Rocket Muche : appliqués en direct au jeu, mémorisés (`pdj-rocket-reglages`). */
   const reglerRocket = (r: ReglagesRocket) => {
     setReglagesRocket(r);
@@ -742,12 +782,25 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
     import("@/lib/rocket/jeu")
       .then(({ creerJeuRocket }) => {
         if (annule) return;
+        const salon = salonRocketRef.current;
+        const debut = enRocketLigneRef.current ? debutRocketRef.current : null;
+        const client = salon.clientRef.current;
         jeu = creerJeuRocket(canvas, scene.data, {
           config: configLanceeRef.current,
           reglages: reglagesRocketRef.current,
           hud: (h) => { if (!annule) setHudRocket(h); },
           sortir: () => { if (!annule) quitterRocketRef.current(); },
           erreur: (texte) => { if (!annule) { setErreurRocket(texte); quitterRocketRef.current(); } },
+          // partie EN LIGNE : le jeu écoute lui-même le client (instantanés, événements, secondes `debut`), le HUD réseau remonte par `hudReseau`
+          ...(debut && client ? {
+            enLigne: {
+              client,
+              debut,
+              snapEnAttente: salon.prendreSnap(),
+              sansRendu: sansRenduActif(stockageNavigateur(), process.env.NODE_ENV === "production"),
+              hudReseau: (h: HudReseau) => { if (!annule) setHudReseauRocket(h); },
+            },
+          } : {}),
         });
         jeuRocketRef.current = jeu;
       })
@@ -761,8 +814,27 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
       jeu?.dispose();
       if (jeuRocketRef.current === jeu) jeuRocketRef.current = null;
       setHudRocket(null);
+      setHudReseauRocket(null);
     };
   }, [enRocket, scene, cleCanvas]);
+
+  // Rocket Muche EN LIGNE : le match démarre à la réception de `debut` (il ne se relance pas à une seconde `debut`, revanche ou reprise : le jeu
+  // la traite lui-même) ; il s'arrête quand le serveur renvoie le salon à l'état « salon » ou le ferme (retour au salon de l'hôte, salon expiré).
+  const debutEnLigne = salonRocket.etat.debut;
+  useEffect(() => {
+    if (!ligneActif || !scene) return;
+    if (debutEnLigne && !enRocketRef.current) lancerRocketEnLigne(debutEnLigne);
+    else if (!debutEnLigne && enRocketRef.current && enRocketLigneRef.current) {
+      // pas de message `quitter` : on reste dans le salon (retour au salon) ou il n'existe plus
+      enRocketLigneRef.current = false;
+      debutRocketRef.current = null;
+      setCleCanvas((k) => k + 1);
+      setEnRocket(false);
+      setRocketOuvert(true);
+    }
+    // `lancerRocketEnLigne` se recrée à chaque rendu : seuls le `debut` reçu et l'état de la vue comptent ici
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debutEnLigne, ligneActif, scene]);
 
   // Aperçu par mode : le panneau « Arène » ouvert, la vue montre la carte du mode coché (transition de caméra) avec les joueurs EN DIRECT
   // s'il y a une partie, sinon une simulation (faux joueurs). Panneau fermé : le chemin historique (joueurs de l'arène seulement).
@@ -1190,19 +1262,43 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
       })()}
 
       {!enArene && !enRocket && rocketOuvert && !selected && !areneOuverte && (
-        <LobbyRocket
-          config={configRocket}
-          surConfig={setConfigRocket}
-          reglages={reglagesRocket}
-          surReglages={reglerRocket}
-          surLancer={lancerRocket}
-          surFermer={() => setRocketOuvert(false)}
-          tactile={tactile}
-          manette={manette}
-          erreur={erreurRocket}
-          pseudoParDefaut={!configRocket.nomJoueur.trim() || configRocket.nomJoueur.trim() === "Agent"}
-          surPrechargement={precharger}
-        />
+        <PanneauRocket
+          mode={modeRocket}
+          surMode={(m) => { setModeRocket(m); ecrireModeRocket(m, stockageNavigateur()); }}
+          enLigne={{
+            etat: salonRocket.etat,
+            // le nom saisi est retenu dès qu'on crée ou rejoint une partie (comme au lancement d'une partie hors ligne)
+            actions: {
+              ...salonRocket.actions,
+              creer: (r) => { ecrireConfig(configRocket, stockageNavigateur()); salonRocket.actions.creer(r); },
+              rejoindre: (code, equipe) => { ecrireConfig(configRocket, stockageNavigateur()); salonRocket.actions.rejoindre(code, equipe); },
+            },
+            nom: configRocket.nomJoueur,
+            surNom: (nom) => setConfigRocket((c) => ({ ...c, nomJoueur: nom })),
+            reglages: reglagesSalonRocket,
+            surReglages: (r) => { setReglagesSalonRocket(r); ecrireReglagesSalon(r, stockageNavigateur()); },
+            surFermer: () => setRocketOuvert(false),
+            tactile,
+            manette,
+            erreur: erreurRocket,
+            pseudoParDefaut: !configRocket.nomJoueur.trim() || configRocket.nomJoueur.trim() === "Agent",
+            surPrechargement: precharger,
+          }}
+        >
+          <LobbyRocket
+            config={configRocket}
+            surConfig={setConfigRocket}
+            reglages={reglagesRocket}
+            surReglages={reglerRocket}
+            surLancer={lancerRocket}
+            surFermer={() => setRocketOuvert(false)}
+            tactile={tactile}
+            manette={manette}
+            erreur={erreurRocket}
+            pseudoParDefaut={!configRocket.nomJoueur.trim() || configRocket.nomJoueur.trim() === "Agent"}
+            surPrechargement={precharger}
+          />
+        </PanneauRocket>
       )}
 
       {enRocket && (
@@ -1212,9 +1308,18 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
           surReglages={reglerRocket}
           surReprendre={() => jeuRocketRef.current?.pause(false)}
           surRecommencer={() => jeuRocketRef.current?.recommencer()}
-          surQuitter={quitterRocket}
-          surQuitterVue={quitterRocketEtFermer}
+          surQuitter={() => sortirRocket()}
+          surQuitterVue={() => sortirRocket(true)}
           surPause={() => jeuRocketRef.current?.pause(true)}
+          {...(enRocketLigneRef.current && debutRocketRef.current ? {
+            moi: debutRocketRef.current.moi,
+            enLigne: {
+              reseau: hudReseauRocket,
+              humains: debutRocketRef.current.voitures.filter((v) => v.humain).length,
+              hote: !!salonRocket.etat.salon?.joueurs.find((j) => j.id === salonRocket.etat.joueur)?.hote,
+              surRetourSalon: () => salonRocket.actions.retourSalon(),
+            },
+          } : {})}
         />
       )}
 

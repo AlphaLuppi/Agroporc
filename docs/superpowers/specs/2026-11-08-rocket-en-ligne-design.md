@@ -1,0 +1,451 @@
+# Rocket Muche en ligne : jouer contre une autre personne
+
+Statut : spec d'architecture (2026-11-08, révisée après deux critiques adversariales : § 14), branche `claude/rocket-en-ligne`. Contrat de code : `lib/rocket/reseau/protocole.ts` (messages, constantes, signatures des modules : source de vérité des quatre lots). Spec du mode local : `2026-11-06-rocket-agroparc-design.md` (reste vraie ; ce document la prolonge, il ne la remplace pas). **En cas de divergence entre un commentaire de code et ce document, ce document prime ; entre ce document et `protocole.ts` sur un type ou une constante, `protocole.ts` prime.**
+
+Demande de l'utilisateur : « il faut que le mode rocket league soit jouable en ligne contre une autre personne ».
+
+## 0. Résumé et décisions
+
+- **Serveur autoritaire.** `serveur-fps` exécute le vrai `pasMonde` (`lib/rocket/match.ts`, pur) à 120 Hz. Les clients n'envoient que leurs **entrées numérotées par tick**. Les bots (formats 2v2 / 3v3 complétés, ou remplaçant un joueur parti) tournent sur le serveur.
+- **Client prédictif avec rollback du monde entier** (façon Rocket League) : à chaque instantané (au plus un rollback par image, instantanés coalescés), le client repart de l'état serveur au tick N et rejoue jusqu'à son tick courant avec ses propres entrées (historique) et, pour les autres voitures, leurs dernières entrées connues. Le rollback est le **cas nominal** dès que quelqu'un change d'entrée (pas une exception) : le budget CPU est dimensionné pour 20 rollbacks/s. Les corrections visuelles s'effacent en ~150 ms.
+- **Transport** : chemin WebSocket séparé `/rocket` sur le même serveur HTTP, protocole propre (`VERSION_ROCKET = 1`). `lib/fps/protocole.ts`, `VERSION_PROTOCOLE` (11), `ModeSalle` et `ChoixMode` ne sont pas touchés (un test de `ui-rocket.test.ts` interdit même le mot « rocket » dans `lib/fps/protocole.ts`). Une seule trame texte JSON pour le lobby, deux trames binaires pour le temps réel (entrées, instantanés), toutes deux marquées du numéro du match.
+- **Salons** : code de 4 lettres + liste des parties ouvertes ; l'hôte règle format (1v1 par défaut), durée, niveau des bots ; chacun choisit son équipe ; l'hôte lance quand 2 humains sont présents. Pas de pause en ligne. Coupure : reprise 20 s par jeton (émis par le serveur HTTP, indépendant de toute graine), ensuite un bot. Fin : écran de fin, vote de revanche.
+- **Aucun changement du moteur de jeu** (`match.ts`, `voiture.ts`, `balle.ts`, `contacts.ts`, `bots.ts`, `contrat.ts` restent tels quels) : tout le réseau est dans `lib/rocket/reseau/` et dans les adaptateurs `jeu.ts` / UI. Le mode local contre bots reste intact.
+- **Rien du mode en ligne dans le premier chargement de la page du menu** : le client réseau, la prédiction et le lobby en ligne passent par `import()` à l'ouverture de l'onglet « En ligne » / au lancement.
+- **Le serveur déployé doit être reconstruit et redéployé AVANT la fusion du client** (nouveau chemin `/rocket` ; l'arène n'est pas affectée, cf. § 11).
+
+### Non-objectifs (v1 en ligne)
+
+Spectateurs, chat, classement en ligne, matchmaking automatique, salons privés protégés par mot de passe (le code suffit), anti-triche au-delà de l'autorité du serveur, passage en WebRTC / UDP (le transport est abstrait pour le permettre : `SocketRocket`, trames autonomes), compensation de latence côté serveur (aucun rewind en v1 : le serveur applique les entrées au tick courant, le ressenti vient de la prédiction client ; le rewind borné est la réponse prévue si la mesure de § 10 l'exige, cf. § 14 netcode 1 et 12), voiture personnalisée, pause.
+
+## 1. Vérifications faites avant d'écrire (sur le code, lecture + sondes jetables)
+
+| Affirmation à vérifier | Résultat |
+|---|---|
+| Le moteur tourne sous Node tel quel | Oui : bundle esbuild `platform=node` de `match.ts` + `bots.ts` exécuté sans erreur (`lib/rocket/*` n'importe que `contrat`, `vec` et ses voisins ; `three` et `SceneData` sont des `import type`). |
+| Coût d'un `pasMonde` avec bots all-star qui pilotent toutes les voitures (24 000 pas) | 1v1 : 31 µs en moyenne ; 2v2 : 48 µs ; 3v3 : 50 µs ; maximum isolé 2,5 à 4,9 ms (JIT à froid, contacts). Un match 3v3 coûte donc ≈ 6 ms/s de CPU serveur (0,6 % d'un vCPU), un 1v1 ≈ 3,7 ms/s. |
+| L'état caché `interne` (`InterneMatch`, propriété du monde, délais à `-Infinity`) | Existe (`match.ts:67-92`), consommé par les cadences de touches, arrêts, tirs et par la fin de match (`chronoZeroEmis`, `graceBalleS`). `JSON.stringify` le transforme en `null`. Sur 3 000 pas après suppression de `interne`, l'empreinte n'a pas divergé (les stats non plus) : **la physique n'en dépend pas, les événements et la conclusion du chrono si**. Décision : il est sérialisé en entier (le codage binaire conserve `-Infinity`). |
+| La physique lit-elle `humain` / `idHumain` ? | Non : `grep` sur `match.ts`, `voiture.ts`, `balle.ts`, `contacts.ts`, `bots.ts`, `arene.ts` : seuls `creerMonde` (l'unique humain = slot 0 de `equipeJoueur`) et `resultatMatch` (recopie dans le classement) les lisent. Plusieurs humains = `creerMondeEnLigne` impose `humain`/`nom` après `creerMonde`, sans toucher au moteur. |
+| Les cerveaux de bots sont-ils restaurables ? | Non (état privé, `WeakMap` de prévisions indexée par l'identité de l'objet balle, divergence mesurée au pas 823 sur un jumeau qui voit des copies du monde). **Conséquence directe : les bots ne tournent QUE sur le serveur**, dans un monde unique et persistant (cache de prévisions valide). Le client ne simule jamais un cerveau : il répète la dernière entrée connue de chaque autre voiture. |
+| Le plot d'id i est `PLOTS[i]` | Oui (`PLOTS = BRUT_PLOTS.map(([x, z, gros], id) => …)`) : un plot se désigne par son index. |
+| Le typecheck de `serveur-fps` accepte `lib/rocket/*` | **Non en l'état** : `contrat.ts(1141): TS2304 HTMLCanvasElement` (lib ES2022 sans DOM) et, dans Docker où `three` n'est pas installé, `TS2307` sur `import type * as THREE from "three"`. Sonde : avec deux stubs de types (un `paths` pour `three`, une `interface HTMLCanvasElement {}` globale), `tsc --noEmit -p` passe (code 0), y compris avec `protocole.ts`. Décision : stubs dans `serveur-fps/`, `contrat.ts` n'est pas modifié (§ 8.4). |
+| `verifyClient` de `ws` fonctionne-t-il en `noServer` ? | Oui (`websocket-server.js`, `handleUpgrade` l'appelle dans tous les modes) : le filtre d'origine de l'arène (`ORIGINES`) est conservé tel quel quand on passe en `noServer` ; la carte serveur qui disait l'inverse se trompait. |
+| `ws` désactive-t-il Nagle ? | Oui (`socket.setNoDelay()` dans `websocket.js`) : pas de délai de 40 ms sur les petites trames. |
+| `protocole.ts` compile | `npx tsc --noEmit` avec le `tsconfig.json` racine (fichier isolé, `wt-fusion/` hors de portée) : 0 erreur ; avec la config de `serveur-fps` + stubs : 0 erreur. |
+
+Mesures de la cartographie reprises sans les rejouer : `copierMonde` 67 µs (1v1) à 213 µs (3v3) médian ; rollback chaud de 20 pas 0,7 ms (1v1) / 2,4 ms (3v3) médian, p99 3 à 4 ms ; JSON du monde 5 ko (1v1) / 10,7 ko (3v3), d'où le codage binaire (§ 3.4).
+
+## 2. Vue d'ensemble
+
+```
+ Navigateur A                              serveur-fps (Node 22, 1 vCPU)                     Navigateur B
+ ┌──────────────────────┐                  ┌──────────────────────────────────┐             ┌──────────────────────┐
+ │ clavier / manette    │                  │ http : /sante, /stats-br         │             │                      │
+ │  → entrées quantifiées│   wss /rocket    │ upgrade /rocket → ServeurRocket  │  wss /rocket│  (idem)              │
+ │ Predicteur (monde    │ ───────────────► │  limiteur, plafonds, ping        │ ◄────────── │                      │
+ │  prédit, rollback,   │  trame entrées   │  RegistreRocket (codes, liste)   │             │                      │
+ │  lissage)            │ ◄─────────────── │   └ SalleRocket (PURE)           │ ───────────►│                      │
+ │ HorlogeRocket        │  snap 20 Hz      │      monde autoritaire 120 Hz    │  snap 20 Hz │                      │
+ │ rendu / sons / HUD   │  ev, pong…       │      bots (cerveaux serveur)     │             │                      │
+ └──────────────────────┘                  └──────────────────────────────────┘             └──────────────────────┘
+```
+
+Boucle d'un tick, vue du client : lire les entrées → quantifier → les jouer dans le monde prédit (`pasMonde`) → les noter dans l'historique → envoyer (≤ 100 trames/s) ; à l'arrivée d'un instantané, comparer et au besoin rejouer.
+
+Vue du serveur : à chaque réveil du minuteur (8 ms), verser le temps réel dans l'accumulateur de la salle, exécuter les pas dus : entrées de chaque humain pour ce tick (ou répétition), décision des bots, `pasMonde`, collecte des événements ; tous les 6 ticks, un instantané complet par joueur.
+
+## 3. Transport et protocole
+
+### 3.1 Routage et version
+
+- `serveur-fps/src/index.ts` : les deux `WebSocketServer` sont en `noServer: true` ; un unique écouteur `http.on("upgrade")` aiguille sur le chemin : `/rocket` → `ServeurRocket.upgrade`, tout le reste → l'arène (comportement historique, y compris pour les clients en cache qui se connectent sur `/`). Chemin inconnu : `socket.destroy()` n'est PAS utilisé pour l'arène (elle accepte tout chemin aujourd'hui, c'est conservé).
+- Traefik : aucune règle de chemin dans le routeur existant (`rule: Host(...)`, cf. `serveur-fps/README.md`), donc `/rocket` arrive tel quel. Aucun changement d'infrastructure.
+- URL client : `urlRocket()` (`client.ts`) = `NEXT_PUBLIC_ROCKET_WS_URL`, sinon la base de `NEXT_PUBLIC_FPS_WS_URL`, sinon `ws://localhost:8787` en local, sinon `wss://pdj-fps.toam.tech`, + `/rocket`.
+- Poignée de main : le premier message est `bonjour{v, nom, reprise?}` dans les 10 s (`RESEAU.bonjourMs`), sinon fermeture `4003`. `v ≠ VERSION_ROCKET` → `erreur{version}` puis `4001` (« rechargez la page »).
+
+### 3.2 Messages (détail dans `protocole.ts`)
+
+Texte JSON, `t` discriminant, 4 096 octets au plus :
+
+| Sens | Message | Quand | Taille |
+|---|---|---|---|
+| C→S | `bonjour` | 1er message ; `reprise{code, joueur, jeton}` après coupure | ~80 o |
+| C→S | `lister`, `creer{reglages}`, `rejoindre{code, equipe?}`, `quitter`, `equipe`, `reglages`, `lancer`, `retourSalon`, `revanche{oui}` | actions du lobby | 30-150 o |
+| C→S | `pret` | la scène est chargée (phase « chargement ») ; l'horloge ne peut être calée qu'avec le premier instantané, après `pret` | 12 o |
+| C→S | `ping{c}` | toutes les 500 ms en match, 2 s au salon | 20 o |
+| C→S | `klaxon` | touche H (1 par 2 s par joueur) | 15 o |
+| C→S | `dev{action…}` | essais seulement (`PDJ_ROCKET_DEV=1`) | 80 o |
+| S→C | `bienvenue{v, joueur, maintenantMs}` | après `bonjour` (aucun jeton ici : il n'existe pas encore de salon) | 60 o |
+| S→C | `session{code, joueur, jeton}` | après un `creer` / `rejoindre` réussi ; jeton `crypto.randomBytes(16)` lié à (salle, joueur) | 90 o |
+| S→C | `reprise{code \| null}` | réponse à `bonjour.reprise`, toujours émise après `bienvenue` ; `null` = refusée | 30 o |
+| S→C | `liste{parties[]}` | réponse à `lister` | ~60 o par salle |
+| S→C | `salon{salon, raison?}` | à chaque changement de l'état du salon (joueurs, réglages, phase, revanche) ; `salon: null` + `raison` (`quitte` accusé de `quitter`, `expire`, `ferme`, `expulse`) quand on n'est plus dans un salon | 300-600 o |
+| S→C | `debut{config, voitures[], moi, numero}` | un match démarre | 0,8-1,5 ko |
+| S→C | `ev{evenements[]}` | événements des pas écoulés, regroupés au plus toutes les 16 ms | 40-400 o, quelques par seconde |
+| S→C | `pong{c, tick, ralenti}` | réponse à `ping` ; `tick` fractionnaire (`monde.tick` + fraction du pas), −1 hors phase « match » | 50 o |
+| S→C | `fin{tick, resultat}` | phase « fini » atteinte | ~1 ko |
+| S→C | `presence{joueur, etat}` | joueur coupé / revenu / remplacé par un bot / parti | 60 o |
+| S→C | `refus{action, raison}`, `erreur{code, message}` | refus métier / erreur de protocole (`message` comme l'arène) | 60-120 o |
+
+Binaire, premier octet = type :
+
+- **Trame d'entrées** (C→S, type 1) : type (u8), `numero` du match (u8), `tickDebut` (u32), `snapRecu` (u32), nombre d'entrées (u8), puis 6 octets par entrée (5 axes int8, 1 octet de bits `saut`/`boost`/`derapage`). Typiquement 2 entrées neuves + 3 redondantes = 11 + 30 = **41 octets**, au plus 100 par seconde : ≈ 2,5 à 4 ko/s montants. Le serveur écarte une trame dont le `numero` n'est pas celui du match courant.
+- **Instantané** (S→C, type 2) : en-tête 14 octets (type, `numero`, `nbVoitures`, drapeaux dont `ralenti`, tick u32, `entreesRecuesJusqua` i32, `avance` i8, `manquees` u8), entrées appliquées (6 octets par voiture), puis la section `etat`. Le décodeur n'a besoin d'aucun état externe ; le client refuse un instantané dont `numero` ou `nbVoitures` diffèrent du `debut` courant. Lecture et écriture par `DataView`, petit-boutiste (l'en-tête de 14 octets + 6 × n désalignerait des `Float64Array` sur le même tampon).
+
+### 3.3 Cadences
+
+| Flux | Cadence |
+|---|---|
+| Physique serveur et client | 120 Hz (pas fixe `PAS_S`) |
+| Minuteur serveur de Rocket | 8 ms, un pas par réveil en régime normal ; l'accumulateur rattrape jusqu'à 60 pas par salle (budget de 120 pas pour toutes les salles d'un réveil, ≈ 6 ms) ; temps versé plafonné à 0,5 s par réveil, le temps abandonné au-delà est compté dans `/sante` |
+| Instantanés | tous les 6 ticks : 20 Hz (10 Hz seulement si le ralenti de la célébration était réactivé, § 5.5), plus un instantané hors grille sur événement important |
+| Entrées C→S | au plus une trame toutes les 10 ms (≈ 60/s à 60 images/s) |
+| Événements S→C | regroupés par fenêtre de 16 ms, uniquement quand il y en a |
+| Ping applicatif (horloge) | 500 ms (match), 2 s (salon) |
+| Ping protocolaire serveur (vivacité) | 5 s, socket coupée après 10 s sans pong |
+
+### 3.4 Tailles estimées de l'instantané (codage binaire, doubles IEEE conservés)
+
+Par voiture (champs de `EtatVoitureReseau`) : 33 doubles (p, v, w, base 9, boost, boostDepuis, reapparitionDans, normaleSurface 3, saut 2, flip 4, redressement 1, deux ticks de délai) = 264 o + indicateurs (booléens, `rouesContact`) 3 o + 8 compteurs de stats en u32 = 32 o + `interne` (4 doubles) = 32 o ≈ **330 o**. Balle ≈ 95 o. Global ≈ 70 o. Plots : 34 bits d'état + un double par plot inactif ≈ 55 o. Entrées appliquées 6 o par voiture.
+
+| Format | Instantané | Flux descendant par client à 20 Hz | Total serveur sortant (tous clients) |
+|---|---|---|---|
+| 1v1 (2 voitures) | ≈ 0,9 ko | 18 ko/s (0,15 Mbit/s) | 36 ko/s |
+| 2v2 | ≈ 1,6 ko | 32 ko/s | 128 ko/s |
+| 3v3 (6 voitures) | ≈ 2,3 ko | 46 ko/s (0,37 Mbit/s) | 276 ko/s (2,2 Mbit/s) |
+
+Pourquoi des doubles complets (et pas des flottants 32 bits) : l'égalité octet à octet entre l'état prédit et l'état serveur (§ 5.3) évite le rollback quand la prédiction est exacte (voitures immobiles, entrées de tout le monde inchangées sur la fenêtre RTT) ; la quantification de l'état la rendrait toujours fausse. Elle reste une optimisation opportuniste, pas le cas nominal : un adversaire ou un bot qui change d'entrée dans la fenêtre rend l'état prédit différent (§ 5.3). Le prix (≈ 2 ko) est acceptable. Réduire en `float32` reste possible plus tard (le rollback tolère l'erreur).
+
+### 3.5 Pertes, latence et ce que la redondance apporte vraiment
+
+WebSocket = TCP : pas de perte ni de réordonnancement, mais des **rafales de retard** (retransmission : tout arrive d'un coup après 200-400 ms). La redondance de 3 entrées anciennes par trame est donc surtout une assurance contre une trame jetée par l'anti-flood et le préalable à un transport non fiable (DataChannel) ; son coût est de 18 octets par trame. Le vrai traitement d'un retard est : le serveur répète la dernière entrée connue (jusqu'à 60 ticks puis entrées neutres) ; une entrée arrivée après son tick n'est pas appliquée (comptée `entreesTardives`) mais, si c'est la plus récente connue, elle devient la « dernière entrée connue » (une rafale ne laisse pas la voiture sur une entrée périmée) ; l'instantané suivant rapporte `manquees` (ticks exécutés sans entrée vraie) et `avance` (pire cas de la fenêtre), ce qui **fait grandir la marge d'avance du client** (§ 5.1) ; le rollback absorbe l'écart. Un retard TCP isolé de 300 ms produit une correction visible au rétablissement : attendu. Une perte de 1 à 2 % (Wi-Fi, 4G) en produit plusieurs par minute : c'est mesuré sans exclure les rafales (§ 10) et la décision d'un rewind serveur borné en dépend (§ 14, netcode 12).
+
+## 4. Serveur autoritaire
+
+### 4.1 Boucle
+
+`ServeurRocket` (serveur-fps) possède UN `setInterval(8 ms)`. À chaque réveil, pour chaque salle `registre.actives()` (= celles dont `aEcheance()` est vrai : **toute phase hors « salon »** avec un humain connecté ou en reprise, car le passage chargement → match après 15 s, le vote de revanche de 45 s et la reprise de 20 s n'existent que dans `tic`) : `salle.tic(maintenantMs, budgetPas)` (horloge monotone `performance.now()`), puis encodage et envoi des `SortieSalle`. Le budget de pas du réveil (`pasMaxTotalParReveil` = 120) est réparti entre les salles dans l'ordre de leur retard ; ce qui n'est pas exécuté reste dans l'accumulateur de la salle. `registre.nettoyer` tourne à chaque seconde. Une salle sans humain connecté ni en reprise n'est pas tiquée. Ce minuteur est **distinct** de `timerTic` de l'arène (60 Hz) : `noterTic` des salles FPS et le disjoncteur de création de parties (`ticRecent`) ne voient pas Rocket ; Rocket a sa propre mesure (`ticMaxMs`, `ticsLents` > 4 ms, dans `/sante.rocket` ; mesurée par `rocket.ts`, la salle pure n'a pas d'horloge CPU). Pas de `worker_threads` en v1 (le conteneur n'a qu'un vCPU partagé avec l'arène, le BR et les zombies : le gain d'un thread est nul sans second cœur, et le quota CFS de Docker gèle de toute façon tout le processus) ; seuil de décision : `ticMaxMs` > 8 ms ou `tempsAbandonneMs` > 0 sous charge réelle.
+
+### 4.2 Le tic d'une salle en match
+
+1. `dt = min(maintenant − dernier, imageMaxServeurS)` (0,5 s) ; `reste += dt × echelleDuMonde(monde.phase)` (1 en v1 ; le ralenti est désactivé, cf. § 5.5) ; `pas = min(floor(reste / PAS_S), pasMaxRattrapage (60), budgetPas)` ; le surplus dû à un calage de plus de `imageMaxServeurS` est abandonné ET COMPTÉ (`tempsAbandonneMs`, `/sante`) ; le surplus dû au budget reste dans `reste` (rattrapé au réveil suivant).
+2. Pour chaque pas : pour chaque voiture, l'entrée du tick `monde.tick` : humain connecté → entrée reçue pour ce tick, sinon dernière connue (≤ 60 répétitions puis neutre, compté `entreesRepetees` et `manquees` du joueur) ; humain coupé → entrée neutre ; bot (ou humain remplacé) → `cerveau.decider(monde, voiture, PAS_S)` **puis `dequantifierEntrees(quantifierEntrees(sortie))`** : les bots jouent des entrées quantifiées comme les humains, sans quoi serveur et client (qui rejoue `snap.entrees`, quantifiées) simuleraient des nombres différents pour leurs voitures et aucun rollback ne convergerait exactement ; **dans l'ordre des ids de voitures** (`entrees[i]` ↔ `voitures[i]`, ordre imposé par le moteur). Chaque entrée est une entrée **dequantifiée** (jamais un réel venu du réseau tel quel), mémorisée comme « dernière entrée appliquée » de la voiture. (Le jeu local contre bots, lui, ne quantifie pas : rien ne change hors ligne.)
+3. `evs = pasMonde(monde, entrees)`, évènements empilés avec le tick du pas (`tick` avant exécution).
+4. Si `monde.tick % cadenceSnapTicks === 0`, ou si un événement important vient d'arriver (but, démolition, début / fin de phase), un instantané par humain connecté (`avance`, `manquees` et `entreesRecuesJusqua` propres au joueur, remis à zéro à chaque émission). Un instantané hors grille de 6 ticks n'a pas d'homologue dans l'anneau du prédicteur : le client fait alors toujours un rollback (cas rare, accepté).
+5. Les événements s'accumulent et partent dans un message `ev` (≤ 1 par 16 ms). Ceux des voitures qui n'ont pas de joueur humain sont envoyés à tous ; ceux d'une voiture humaine sont envoyés à tous aussi (le client du joueur concerné filtre les événements de **sa** voiture que sa prédiction a déjà joués : § 5.5).
+6. Phase « fini » : message `fin` avec `resultatMatch(monde)`, salle en phase « fin » (revanche), l'accumulateur s'arrête.
+
+Aucune compensation de latence : un coup de balle est jugé sur l'état serveur au tick courant. Les deux joueurs ont la même autorité ; le ressenti vient de la prédiction.
+
+### 4.3 Entrées d'un joueur côté serveur
+
+- Anneau de `tamponEntrees` = 256 entrées indexé par `tick mod 256` + marqueur de tick pour ne pas lire une case périmée.
+- Une trame est lue dans l'ordre ; une entrée de tick `k` est acceptée si `monde.tick ≤ k ≤ monde.tick + avanceMaxEntreesTicks (60)` et non déjà reçue ; `k < monde.tick` → `entreesTardives++` (ignorée) ; `k` trop grand → écartée (client déréglé ou tricheur).
+- **Retour de contrôle** (deux champs de chaque instantané, § 5.1) : `avance` = minimum, sur les entrées reçues pour la PREMIÈRE fois depuis l'instantané précédent (pas leurs copies redondantes), de `(tick de l'entrée) − (monde.tick à l'arrivée)`, borné à [−127, 127] ; `AVANCE_INCONNUE` (−128) si aucune entrée n'est arrivée. Il mesure donc le paquet le plus **lent** de la fenêtre. `manquees` = nombre de ticks exécutés dans la fenêtre sans entrée vraie du joueur (répétée ou neutre). L'ancienne définition (plus grand tick reçu − tick) mesurait le paquet le plus rapide et ne voyait jamais les entrées tardives du milieu d'une trame.
+- Une entrée arrivée après son tick (`k < monde.tick`) est comptée (`entreesTardives`) mais jamais appliquée ; si son tick est le plus grand jamais reçu, elle remplace « la dernière entrée connue » (répétée aux ticks suivants).
+- `entreesRecuesJusqua = −1` (rien reçu) ne produit aucun `avance` (sentinelle −128), et l'horloge l'ignore.
+- Pas de rewind serveur en v1 : voir § 14 (netcode 1 et 12) pour le seuil de décision.
+
+### 4.4 Bots
+
+Un cerveau par voiture non humaine, graine `graineBot(graineMatch, idVoiture)` (même formule que `jeu.ts` local), niveau = `reglages.niveauBots`. Remplacer un humain parti = créer le cerveau à ce moment (graine dérivée, niveau de la salle) : la voiture garde son état physique, son nom et ses stats. Tous les cerveaux appartiennent à la salle, vivent dans le monde persistant du serveur (aucune copie du monde), donc leurs caches (`previsions`) restent valides.
+
+## 5. Client : horloge, prédiction, rollback, lissage
+
+### 5.1 Horloge (`horloge.ts`) et cadence
+
+Le client joue en **avance** sur le serveur de (demi-RTT + marge) pour que ses entrées arrivent avant d'être exécutées.
+
+- `ping{c}` / `pong{c, tick, ralenti}` toutes les 500 ms : `rtt = recu − c`. RTT filtré = minimum des 8 dernières mesures (optimiste sous gigue, d'où le plancher de marge ci-dessous) ; gigue = écart moyen absolu des 16 dernières. Un `pong.tick` < 0 (salle hors phase « match », donc pendant tout le chargement) nourrit le RTT mais jamais l'estimation du tick. Le tick du `pong` est fractionnaire (le serveur ajoute la fraction du pas en cours) : sans cela l'erreur est de ±1 tick (8 ms) entre deux réveils du minuteur.
+- Chaque instantané est aussi un échantillon : « le tick du serveur à sa réception ≈ `snap.tick + (rtt/2) × 0,12 × echelle` ». On garde sur une fenêtre glissante de 2 s l'échantillon dont le retard apparent est le plus faible (le moins retardé par le réseau). En v1 `echelle` vaut toujours 1 (pas de ralenti, § 5.5) ; si un changement d'échelle était réactivé, l'ancienne référence serait gardée jusqu'au premier nouvel échantillon (jamais de `NaN` : la prédiction ne s'arrête pas).
+- `tickServeurEstime(t)` = échantillon de référence + `(t − t_ref) × 0,12 × echelle` (en ticks par ms). `tickCible(t)` = estimé + `rtt/2 × 0,12 × echelle` + `marge`, l'avance totale sur le serveur étant plafonnée à `avanceMaxEntreesTicks − 8` (un RTT de plus d'une seconde et demie ne jette pas silencieusement toutes les entrées : le HUD passe à « mauvaise »).
+- `signalerAvance(avance, manquees)` (UN appel par instantané REÇU, même coalescé) : `manquees` > 0 → marge +1 (+2 si ≥ 4) ; sinon `avance` < 2 → +1 ; décroissance de 1 seulement après 40 instantanés (2 s) consécutifs sans manquée et avec `avance` > 8 ; `avance` = −128 ignoré. **Plancher** : `ceil(2 × gigue en ticks)`. Bornes 1 à 24. Cible : les entrées arrivent 4 ticks (33 ms) avant leur exécution, tolérance [2, 8]. La marge réagit donc à l'entrée la plus tardive, pas à la plus rapide.
+- Cadence : `écart = tickCible − tickLocal` ; `facteur = 1 + clamp(écart × 0,01, ±0,05)` (5 ticks d'écart saturent à ±5 %). Si `|écart| > 24 ticks` (200 ms) : **resync franc**, dans les deux sens (§ 5.3 bis) : client en retard → `resync "avant"` ; client en avance → `resync "arriere"`, facteur 0 (il attend, il ne recule jamais).
+- Onglet masqué : `requestAnimationFrame` s'arrête, donc plus d'entrées envoyées (le serveur répète la dernière puis neutre, 60 ticks) et plus de ping applicatif utile ; la vivacité de la socket ne dépend PAS de lui (ping protocolaire `ws.ping` traité hors JS, § 7). Au retour, le client **adopte l'état serveur** : resync « avant » depuis le dernier instantané, entrée courante tenue pour les ticks sans historique, aucune rafale de trames périmées (une trame porte 12 entrées au plus). Pendant qu'il est masqué ou que le menu est ouvert, les commandes sont neutres (le HUD réseau l'indique : `commandes`).
+
+### 5.2 Entrées locales
+
+Chaque pas : `quantifierEntrees(brut)` puis `dequantifierEntrees` pour la simulation locale ; la forme quantifiée est mémorisée dans l'historique (anneau de 512 ticks) et envoyée. Le client et le serveur simulent ainsi exactement les mêmes nombres. Le tick d'une entrée = `monde.tick` du monde prédit avant le pas.
+
+### 5.3 Instantané reçu : comparer, puis rejouer
+
+**Coalescence.** `recevoirSnap` n'exécute rien : il nourrit l'horloge (échantillon, `signalerAvance`, pour CHAQUE instantané) et ne garde que le plus récent en attente. `avancer` applique l'instantané en attente au début de l'image, **au plus un rollback par image**, avant toute simulation (jamais dans le gestionnaire `onmessage`). Une rafale de retard TCP (six instantanés d'un coup) coûte donc un seul rejeu, depuis le plus récent. Le jeu en file `snapEnAttente` (un seul) au chargement, par le même mécanisme.
+
+**Anneau de comparaison.** À chaque tick multiple de 6 de la chronologie COURANTE le prédicteur mémorise `encoderEtat(extraireEtat(monde))` (≈ 2 ko), dans un anneau de 64 **indexé par tick exact** (marqueur de tick, pas par « multiple de 6 »). Un rollback **réenregistre** les ticks multiples de 6 qu'il rejoue : sinon l'instantané suivant comparerait l'ancienne trajectoire à la vérité (rollback inutile ou, pire, absence de rollback sur une trajectoire fausse). Un instantané hors grille n'a pas d'homologue : rollback.
+
+À la réception de l'instantané de tick N (au début de l'image suivante) :
+
+1. **Test d'exactitude** (optimisation opportuniste) : si l'état encodé du monde prédit au tick N égale **octet à octet** la section `etat` reçue (`octetsEtatEgaux`), on mémorise seulement les entrées des autres voitures (`snap.entrees`), aucun rollback, coût ≈ 10 µs. Il réussit quand rien n'a changé dans la fenêtre RTT : voitures à l'arrêt, avant le coup d'envoi, entrées figées. **Ce n'est pas le cas nominal** : les bots pilotent en continu, un humain change d'entrée plusieurs fois par seconde, et l'état prédit au tick N a utilisé, pour les autres voitures, leur entrée connue il y a un RTT. Le rollback à chaque instantané (20/s) est donc le régime normal, même entre deux Chrome. Entre moteurs JS différents l'égalité est de plus plus rare (§ 12).
+2. **Rollback** sinon : sauvegarder les positions affichées (voitures, balle), `restaurerEtat(snap.etat, monde)` (écriture sur place), puis pour `k = N … tickLocal − 1` : entrées de MA voiture = `historique[k]` (écriture unique par tick : ce qui a été envoyé n'est jamais réécrit ; la dernière connue si le tick manque), des autres = `snap.entrees[i]` (leur entrée appliquée au pas N−1, répétée) ; `pasMonde` ; les événements produits sont **jetés** (déjà joués ou venus du serveur). Profondeur typique = RTT en ticks + marge : 60 ms → 11 ; 150 ms → 22 ; 300 ms → 40. Coût mesuré 0,7 ms (1v1) à 2,4 ms (3v3) pour 20 pas, p99 3 à 4 ms ; 40 pas en 3v3 = 4,7 ms médian, 8 ms p99. À 20 par seconde c'est 1 à 10 % d'un cœur, **dimensionné pour le cas nominal** ; sur un portable bas de gamme (3 à 5 fois plus lent, JIT à froid) un rollback 3v3 profond peut approcher une image : d'où la limite d'un seul par image, `profondeurMaxRollback`, et la mesure CPU bridé 4× du plan de tests (non bloquante, chiffres consignés).
+3. Si `tickLocal < N` (client en retard sur le serveur) : état serveur adopté, aucun rejeu, resync de l'horloge. Si la profondeur dépasse `profondeurMaxRollback` (180 ticks = 1,5 s) : état adopté, rejeu abandonné, `resyncs++`.
+4. `precedent` est recopié à la restauration (pas d'interpolation d'affichage parasite) ; les décalages de lissage s'appliquent aussi à `precedent` et à la base d'orientation.
+
+**5.3 bis. Resynchronisation franche, dans les deux sens** (`|écart| > 24` ticks, ou image très longue plafonnée à `imageMaxEnLigneS`).
+- **Client en retard** (onglet masqué qui revient, machine bloquée) : restaurer le dernier instantané, rejouer jusqu'à `min(tickCible, N + profondeurMaxRollback)` avec, pour chaque tick sans historique, l'entrée COURANTE tenue (inscrite dans l'historique, donc cohérente pour les rollbacks suivants) ; le plafond `pasMaxParImageEnLigne` (30 pas) ne s'applique pas à ce rejeu unique (mesuré, un seul par image). La trame d'entrées suivante couvre au plus 12 ticks : les ticks plus anciens ne sont jamais envoyés, le serveur les a répétés (aucun « trou » à gérer : une trame est toujours un bloc contigu terminé au tick le plus récent).
+- **Client en avance** (écart < −24, horloge corrigée vers le bas) : il n'existe qu'un état par 6 ticks pour reculer, et les entrées de ces ticks sont déjà parties au serveur. Le client **ne recule pas** : facteur de cadence 0 jusqu'à ce que `tickCible` rattrape `tickLocal`. Les entrées déjà envoyées gardent leur valeur dans l'historique (écriture unique). Coût : un gel visible d'au plus quelques dizaines de ms, rare.
+- Couvert par `prediction.test.ts` et `horloge.test.ts` (les deux sens, image de 250 ms, historique à trous).
+
+Pour les voitures des autres joueurs et celles des bots, la prédiction est de l'**extrapolation** avec leur dernière entrée connue sur toute la profondeur : c'est le choix de Rocket League. Une erreur de prévision (un adversaire change de direction) se corrige à l'instantané suivant ; la correction visuelle des voitures adverses est donc **permanente**, ce qui rend le lissage de 60 ms critique.
+
+### 5.4 Lissage visuel
+
+Au rollback, pour chaque voiture et la balle : `écart = ancienneAffichée − nouvellePosition`. Si l'écart dépasse `seuilTeleportVoitureM` (4 m) ou `seuilTeleportBalleM` (8 m) : correction franche. Sinon l'écart est ajouté à un décalage visuel qui décroît en `exp(−t / 0,06 s)` (95 % effacé en 180 ms). L'orientation est lissée de la même façon (mélange des vecteurs de base puis réorthonormalisation) avec le même poids. `mondeAffiche(t)` rend le monde prédit avec ces décalages appliqués (copie superficielle des seules voitures / balle modifiées) : `jeu.ts`, la caméra, le rendu et les sons lisent ce monde, jamais le monde prédit brut, dont la physique n'est jamais perturbée par l'affichage.
+
+### 5.5 Événements
+
+- **Mes événements de voiture** (`saut`, `doubleSaut`, `flip`, `atterrissage`, `choc`, `boost`, `supersonique`, et `toucheBalle`, `plot`, `bump` de MA voiture) : joués **immédiatement** depuis la prédiction (ils sont renvoyés par `avancer` seulement pour un tick jamais encore simulé, `hautEmis`), jamais rejoués par un rollback. Le son de ma frappe de balle ne doit pas suivre l'image d'un aller-retour complet (RTT + marge + 16 ms de regroupement : 150 ms à 100 ms de RTT). **Déduplication** : à l'arrivée d'un événement serveur de même type et de même voiture, `filtrerEvenements` l'apparie au premier événement local non apparié à ±6 ticks (une fois chacun) et le retire. Un événement prédit jamais confirmé a déjà été joué (accepté, rare) ; un événement serveur de ma voiture non prédit est joué à l'arrivée.
+- **Tout le reste** vient du serveur (`ev`) et est joué à la réception : but, démolition, réapparition, rebond au décor, plotRecharge, décompte, coup d'envoi, prolongation, chrono zéro, fin, klaxon, et les événements de voiture des AUTRES joueurs. `filtrerEvenements` mémorise aussi le dernier tick reçu pour ignorer un doublon ; cette mémoire est **remise à zéro à chaque `debut`** (revanche, reprise).
+- **HUD et score** : le score, la phase et les bannières viennent des événements et de l'état autoritaire (`etatAutoritaire()`), pas du monde prédit, pour qu'un but mal prédit ne s'affiche pas. Le chronomètre s'extrapole depuis l'état autoritaire.
+- **Ralenti de la célébration : désactivé en ligne (v1).** `RESEAU.echelleCelebration = 1`. Le ralenti changeait deux fois par but la correspondance tick ↔ temps (rupture d'horloge, fenêtre d'échantillons vidée, prédiction arrêtée jusqu'à l'instantané suivant) pour un gain cosmétique. La célébration dure `MATCH.celebrationS` en temps réel. Le champ `ralenti` du format et la gestion de l'échelle par l'horloge restent (testés, toujours faux en v1) : remettre `MATCH.ralentiCelebration` suffit à les réactiver, au prix de ce travail.
+
+### 5.6 Cas limites
+
+- Démolition / but / fin prédits à tort (un adversaire joue autrement, évalué avec son entrée vieille d'un RTT) : le monde PRÉDIT peut basculer (`v.demolie` fige ma voiture : `pasVoiture` sort aussitôt) mais le monde AFFICHÉ ne montre ces décisions qu'une fois confirmées par l'état autoritaire ou un événement serveur (garde de phase de `mondeAffiche`) ; la caméra lit le monde affiché et ne perd donc pas la voiture. Résidu : ma voiture prédite démolie à tort ignore mes entrées jusqu'au rollback suivant (≤ RTT + 50 ms), car bloquer la démolition demanderait un crochet dans `match.ts` (hors v1).
+- Coup d'envoi : toutes les voitures sont figées pendant le décompte de 3 s ; le client attend le premier instantané (aucune prédiction avant), puis la cadence se cale. Pendant la phase « chargement » le serveur ne tique pas, n'émet aucun instantané et répond `pong.tick = −1` : l'horloge ne peut donc se caler qu'après `pret`, et `pret` signifie seulement « scène chargée ».
+- Reconnexion : à la reprise le serveur renvoie `salon`, `session`, `debut` et un instantané ; le prédicteur est recréé (historique perdu), les événements déjà vus sont oubliés (mémoire remise à zéro).
+
+## 6. Machine d'états de la salle serveur
+
+Phases : `salon` → `chargement` → `match` → `fin` → (`chargement` si revanche acceptée | `salon`). La salle est détruite quand plus aucun humain n'est présent.
+
+| État | Entrée | Messages acceptés (de qui) | Sortie / transitions |
+|---|---|---|---|
+| `salon` | création ; retour de `fin` | `rejoindre`, `quitter`, `equipe`, `reglages` (hôte), `lancer` (hôte), `ping`, `klaxon` ignoré | `lancer` accepté si ≥ 2 humains (`humainsMin`) et chacun dans une équipe ayant de la place → `chargement` |
+| `chargement` | `lancer` accepté, ou revanche | `pret`, `quitter`, `ping` | message `debut` envoyé à chacun ; monde créé (phase `decompte`, **pas encore avancé**) ; quand tous les humains connectés ont envoyé `pret`, ou après 15 s **servi par `tic`** (donc la salle doit tiquer en phase « chargement » : `aEcheance()`) : `match` (l'accumulateur démarre, le décompte de 3 s tourne) |
+| `match` | fin du chargement | entrées, `ping`, `klaxon`, `quitter`, `dev` | phase du monde `fini` → `fin` + message `fin` |
+| `fin` | monde fini | `revanche{oui}`, `retourSalon` (hôte), `quitter`, `ping` | tous les humains connectés votent oui → nouveau match (même répartition, nouvelle graine dérivée de la graine de salle) → `chargement` ; un vote non, `retourSalon`, ou 45 s sans accord (servi par `tic` : la salle tique en phase « fin ») → `salon` |
+
+Détails :
+
+- **Équipes** : à `rejoindre` sans équipe, la moins remplie (en 1v1, l'opposée de l'hôte). `equipe{e}` refusé `equipe-pleine` si l'équipe a déjà `joueursParEquipe(format)` humains. Un `reglages{format}` plus petit que le nombre d'humains d'une équipe est refusé `format`. Le résumé public (`liste`) ne montre que les salons en phase `salon`, `visible`, non pleins.
+- **Bots** : à `debut`, les places non prises par un humain reçoivent un bot (niveau `niveauBots`, un seul niveau pour alliés et adversaires). Noms de bots de `NOMS_BOTS`.
+- **Lancement** : `lancer` exige `humains ≥ humainsMin` (2 ; réglable à 1 en essai). 2 humains dans la même équipe contre des bots est permis.
+- **Déconnexion en `salon`** : le joueur est retiré. Hôte parti : le plus ancien devient hôte. Salle vide : fermée.
+- **Coupure en `chargement` / `match` / `fin`** : le joueur reste dans la salle `coupe` pendant `repriseMs` (20 s) ; sa voiture reçoit des entrées neutres (elle roule sur son élan puis s'arrête) ; message `presence{etat:"coupe", restantMs}`. S'il revient (nouveau `bonjour` avec `reprise{code, joueur, jeton}`, jeton comparé en temps constant par `rocket.ts`, qui seul connaît les jetons) : `presence{etat:"revenu"}`, `salon`, `session`, `debut`, instantané. **Prise de relais** : si l'ancienne socket du joueur est encore « connectée » côté serveur (socket à moitié ouverte après une veille ou un changement de réseau), le jeton valide la ferme (`CODE_REMPLACE` = 4004, compté `socketsRemplacees`) et prend sa place ; une socket réellement morte est détectée par le ping protocolaire (toutes les 5 s, coupée après 10 s sans pong). Reprise refusée (code inconnu, salon refermé, jeton faux, joueur déjà remplacé) : `reprise{code:null}`, le client oublie la reprise. Au bout de 20 s : un bot prend la voiture (`presence{etat:"bot"}`, nom conservé). Départ volontaire (`quitter`, fermeture normale `1000`) : bot immédiat, aucune reprise.
+- **Plus aucun humain connecté** pendant 20 s : salle fermée. Un humain seul contre des bots continue.
+- **Revanche** : seuls les humains présents votent ; un humain coupé compte non. Le salon revient dans l'état `salon` avec les mêmes joueurs et réglages.
+- **Expiration** : un `salon` sans activité depuis 10 minutes est refermé (`nettoyer`) ; ses joueurs encore connectés reçoivent `salon{null, "expire"}`. `quitter` est acquitté par `salon{null, "quitte"}`.
+
+## 7. Sécurité, abus, ressources
+
+- **Validation des entrées** : le serveur ne simule que des `EntreesQuantifiees` décodées d'un format fixe (5 int8 clampés à [−127, 127], 3 bits), puis `dequantifierEntrees` : jamais de réel du réseau, donc jamais de `NaN` ni de valeur hors [−1, 1] dans `pasVoiture` (qui ne clampe pas, `voiture.ts:299`). Trame malformée, trop courte, ou comptant plus de 12 entrées : écartée.
+- **Bornes de tick** : refus d'une entrée plus de 120 ticks (1 s) en avance du monde ; ancienneté comptée. Aucune entrée n'ouvre une action autre que celles du joueur (sa seule voiture). Le client plafonne lui-même son avance (§ 5.1) : un RTT d'une seconde et plus ne fait pas rejeter toutes ses entrées en silence.
+- **Autorité** : positions, vitesses, boost, score et chrono sont calculés par le serveur ; un client modifié ne peut que jouer des entrées légales. Pas de téléportation, pas de vitesse supérieure.
+- **Messages texte** : JSON de 4 096 octets au plus (`maxPayload` de la WebSocket Rocket, plus petit que les 16 ko de l'arène), `t` dans une liste fermée, champs validés par le module pur `validation.ts` (`lireMessageClient`, `nettoyerNom`, fuzzé, lot SERVEUR) : `format` ∈ {1v1, 2v2, 3v3}, `dureeS` dans la liste du lobby, `niveauBots` connu, `visible` booléen, `equipe` ∈ {bleue, orange}, `c` fini, code normalisé, nom de 1 à 20 points de code sans caractère de contrôle NI de formatage Unicode (U+202E, U+200B… : usurpation de nom). La salle valide le FOND (hôte, phase, bornes). Le reste est ignoré sans erreur.
+- **Vivacité et contre-pression** : ping PROTOCOLAIRE (`ws.ping()`) toutes les 5 s, socket coupée après 10 s sans pong (le navigateur y répond hors JS : un onglet masqué n'est PAS coupé, contrairement à un seuil sur le `ping` applicatif ; aucune inactivité de jeu n'est détectée, un joueur masqué envoie simplement des entrées neutres). Émission : si `ws.bufferedAmount` dépasse 64 Ko l'instantané est sauté (ils sont complets ; compté `snapsSautes`), s'il dépasse 256 Ko la socket est terminée (comme l'arène à 512 Ko) : un client qui ne lit pas ne fait pas croître la mémoire du conteneur de 512 Mo partagé avec l'arène.
+- **Anti-flood** (`limiteur.ts`, PUR, trois seaux à jetons par connexion) : entrées 120/s (rafale 240) ; ping 5/s (rafale 10) ; actions du lobby 10/s (rafale 30). L'excédent est jeté ; plus de 400 messages bruts en une seconde coupe la socket (`4002`). Le seau des entrées est distinct pour qu'un flot de messages de lobby ne prive pas la physique, et inversement. `lib/fps/anti-flood.ts` n'est pas modifié (ses types de flux sont une liste blanche figée de l'arène).
+- **Plafonds** (variables d'environnement, valeurs par défaut) : `PDJ_ROCKET_CONNEXIONS_IP` = 12, `PDJ_ROCKET_CONNEXIONS_TOTAL` = 40 (refus `1013` au-delà, comme l'arène), `PDJ_ROCKET_SALLES_MAX` = 8, `PDJ_ROCKET_MATCHS_MAX` = 6 (un `lancer` au-delà répond `refus{limite}`), `PDJ_ROCKET_SALLES_IP` = 4 salles créées par IP simultanément. Le site est utilisé derrière UNE adresse NAT de bureau : des plafonds par IP de 6 / 2 / 10 bloqueraient trois paires de collègues. **L'adresse vient de `ipClient` de `lib/fps/ip-client.ts`** (dernier élément de `x-forwarded-for`, le seul que Traefik a ajouté ; le premier est forgeable) : `rocket.ts` l'importe, il ne le réécrit pas. Un utilisateur du site tient deux sockets (arène + Rocket) : les compteurs de Rocket sont distincts de ceux de l'arène, aucun n'affame l'autre. Limite assumée (site privé) : les plafonds globaux (8 salles, 6 matchs) se saturent avec quelques IP.
+- **Énumération des codes** : 160 000 codes ; 20 essais de code erroné par minute et par IP (`trouver(code, ip, maintenantMs)` compte, `refus{code}` puis jetés) ; un code libéré n'est pas réattribué pendant 60 s (`retirer(code, maintenantMs)`). Les codes sortent d'un générateur semé par `crypto`, mais un code n'est de toute façon pas un secret : l'accès à une voiture exige le jeton de reprise.
+- **Jeton de reprise** : `crypto.randomBytes(16)` (32 caractères hexadécimaux), tiré par `rocket.ts` à chaque `creer` / `rejoindre` réussi, stocké dans `rocket.ts` (la salle pure n'en connaît aucun, aucune graine n'en dérive), lié à (code, joueur), comparé en temps constant (`timingSafeEqual`), détruit avec le joueur ou la salle. Il part dans le message `session`.
+- **CPU (1 vCPU partagé avec l'arène)** : 6 matchs 3v3 simultanés ≈ 36 ms/s de pas + encodage des instantanés (6 clients × 20 Hz × ~30 µs ≈ 4 ms/s par match) ≈ 6 % d'un vCPU **pour Rocket seul** (la charge de l'arène, du BR et des zombies s'y ajoute : c'est le CPU de tout le conteneur qui compte, d'où la surveillance) ; un réveil de 8 ms exécute au plus 120 pas au total (≈ 6 ms) même en rattrapage. Le tic de l'arène (60 Hz, jusqu'à 2 ms pour 50 joueurs de BR) et celui de Rocket s'entrelacent sans que l'un dépasse l'autre de plus de 8 ms ; `/sante.rocket.ticMaxMs`, `ticsLents` et `tempsAbandonneMs` les surveillent. Mémoire : un monde 3v3 ≈ 30 ko, un anneau d'entrées 256 × 6 o par joueur, un anneau d'instantanés côté client 64 × 2 ko.
+- **Parties sans humain** : jamais tiquées, jamais conservées.
+- **Données personnelles** : le nom est celui que le joueur donne (valeur par défaut : pseudo d'arène ou « Agent ») ; rien n'est persisté côté serveur.
+
+## 8. Intégration dans `serveur-fps`
+
+### 8.1 Fichiers
+
+- `serveur-fps/src/rocket.ts` (nouveau) : `creerServeurRocket(options)` → `ServeurRocket` : `WebSocketServer({ noServer: true, maxPayload: 4096, verifyClient })`, plafonds de connexions (adresse par `ipClient`), `bonjour` (version, reprise), jetons de reprise (`crypto`) et message `session`, routage des messages vers `RegistreRocket` / `SalleRocket` après `lireMessageClient`, limiteur, ping protocolaire, contre-pression, minuteur 8 ms avec budget de pas, encodage et envoi, mesure de `ticMaxMs`, `sante()`, `arreter()`. Il importe `../../lib/rocket/reseau/{protocole,salle,registre,limiteur,validation,serialisation}` et `../../lib/fps/ip-client`. Il est le SEUL à connaître les jetons et à fermer l'ancienne socket d'une reprise.
+- `serveur-fps/src/index.ts` : câblage minimal (< 25 lignes) : `noServer: true` sur le `wss` de l'arène, écouteur `upgrade` qui aiguille `/rocket`, `rocket: rocketServeur.sante()` dans `/sante`, `rocketServeur.arreter()` dans `arreter()`. `ORIGINES` est partagé. Une connexion `/rocket` n'entre dans aucun compteur de l'arène.
+- `serveur-fps/docker-compose.yml` : les variables `PDJ_ROCKET_*` ont des valeurs par défaut, le fichier n'a besoin de rien ; seuls des exemples commentés sont ajoutés (lot SERVEUR).
+- Variables : `PDJ_ROCKET=off` (désactive entièrement le chemin : `upgrade` répond 404), `PDJ_ROCKET_DEV=1`, `PDJ_ROCKET_HUMAINS_MIN`, `PDJ_ROCKET_DUREE_S` (remplace la durée du match : essais), `PDJ_ROCKET_CHARGEMENT_MS`, `PDJ_ROCKET_REPRISE_MS`, `PDJ_ROCKET_REVANCHE_MS`, plus les plafonds du § 7.
+
+### 8.2 `/sante`
+
+Un bloc `rocket: { salles, matchs, joueurs, connexions, ticMaxMs, ticsLents, entreesTardives, entreesRepetees, octetsEmis, octetsRecus }` est AJOUTÉ ; les champs plats historiques (utilisés par le `HEALTHCHECK` Docker et tous les e2e) ne bougent pas.
+
+### 8.3 Build et conteneur
+
+- `serveur-fps/Dockerfile` : `COPY lib/rocket /depot/lib/rocket` (le dossier contient aussi des fichiers de rendu que le bundle n'importe pas : esbuild et `tsc` ne suivent que les imports). `serveur-fps/Dockerfile.dockerignore` : ajouter `!lib/rocket` (liste blanche).
+- esbuild : inchangé (un seul point d'entrée `src/index.ts`, `rocket.ts` y est importé).
+- Conteneur : inchangé (1 vCPU, 512 Mo). Rocket n'a pas besoin de `scene.json`.
+
+### 8.4 Typecheck : deux stubs, aucune modification de `contrat.ts`
+
+`serveur-fps/tsconfig.json` : `"baseUrl": "."`, `"paths": { "three": ["./src/stubs/three.d.ts"] }` ; `serveur-fps/src/stubs/three.d.ts` (`export type Group = object;`) et `serveur-fps/src/stubs/dom.d.ts` (`declare global { interface HTMLCanvasElement {} } export {};`). Vérifié par sonde : `tsc --noEmit` passe pour un fichier qui importe `match.ts` et `protocole.ts` avec ces deux stubs et sans eux échoue (TS2304). Le `tsconfig.json` racine exclut déjà `serveur-fps`. Avantage : le moteur de jeu et son contrat ne sont pas touchés par un travail serveur.
+
+### 8.5 README et déploiement
+
+`serveur-fps/README.md` : section « Rocket Muche en ligne » : chemin, variables, `/sante.rocket`, plafonds, rappel de ne jamais `docker compose down -v`.
+
+## 9. Interface
+
+### 9.1 Parcours
+
+Panneau « Rocket Muche » de la vue Palantir : un commutateur **Hors ligne / En ligne** au-dessus du lobby (`PanneauRocket` dans `Agroparc3D.tsx`, composant affiché à la place de `LobbyRocket` uniquement quand « En ligne » est choisi ; `LobbyRocket` n'est pas modifié, ses tests de rendu restent verts). Le choix est mémorisé (`localStorage` `pdj-rocket-mode`). Rien du réseau n'est chargé tant que « En ligne » n'est pas sélectionné.
+
+Lobby en ligne (`LobbyRocketEnLigne`) :
+
+1. **Sans salon** : champ « Nom » (prérempli), bouton **Créer une partie**, champ « Code de la partie » (4 lettres, majuscules forcées) + **Rejoindre**, liste « Parties ouvertes » (code, hôte, format, durée, `n/places`, bouton Rejoindre), rafraîchie toutes les 3 s tant que le panneau est visible.
+2. **Dans un salon** : code en grand (copiable, bouton « Copier le lien » : l'URL du site avec `?rocket=CODE` n'est PAS gérée en v1 : aucun paramètre d'URL n'est lu aujourd'hui, voir § 12) ; deux colonnes d'équipes (Les Trèfles / Les Tigres) listant les joueurs, bouton « Passer dans cette équipe » ; pour l'hôte : format (radios natives, 1v1 par défaut), durée, niveau des bots, case « Visible dans la liste » ; pour tous : un résumé « Vous contre 1 joueur » ; **Lancer la partie** (hôte, grisé avec la raison tant qu'il manque un humain) ; « Quitter le salon ».
+3. **Chargement** : « Chargement… 1/2 prêts ».
+4. **Match** : le HUD du mode local + `HudReseauRocket` (voir ci-dessous). Le jeu (`import("@/lib/rocket/jeu")`, préchargé dès le clic « Créer / Rejoindre ») n'est CRÉÉ qu'à la réception de `debut` : `debut` est obligatoire dans les options et la vue aérienne est détruite à ce moment (`enRocket` passe à vrai à `debut`, pas au clic) ; les 15 s de chargement suffisent.
+5. **Fin** : écran de fin du mode local ; « Rejouer » devient **Revanche** (avec « 1/2 ») et « Retour au salon » ; les stats de tous les joueurs.
+
+Menu pause en ligne : Échap ouvre le menu **sans geler** le jeu (bandeau « Le jeu continue en ligne. Vos commandes sont suspendues. »), « Reprendre », réglages caméra / touches, « Quitter la partie » (un bot prend votre voiture). Pendant que le menu est ouvert (dialogue à focus piégé, `cibleInteractive` coupe le clavier) ou que l'onglet est masqué, les entrées envoyées sont **neutres** et `HudReseau.commandes` vaut `menu` / `masque` (pastille « Commandes suspendues »). Pas de pause sur perte de focus ni sur Start de la manette.
+Reprise après rechargement : le hook écrit `{code, joueur, jeton, coupeA}` dans `sessionStorage` (`CLE_REPRISE`) à chaque `session` ; en rouvrant l'onglet « En ligne » dans les 20 s qui suivent une coupure ou un rechargement, la reprise est tentée seule. Au-delà, la place est celle d'un bot : documenté, pas une promesse. (Aller retaper « myrtille » demande rarement moins de quelques secondes : la reprise vise surtout les coupures de socket, gérées sans recharger la page.)
+
+### 9.2 HUD réseau (`HudReseauRocket`, ≤ 5 Hz)
+
+Pastille discrète en haut à droite : ping en ms et qualité (`qualiteReseau`), « Commandes suspendues » (menu, onglet masqué), « Reconnexion… » après coupure ; elle est alimentée par `OptionsJeuRocketEnLigne.hudReseau` (≤ 5 Hz et à chaque changement d'état), seul chemin vers React en production ; bandeau « Adversaire déconnecté, reprise dans 14 s » ; en fin, état de la revanche. Toujours texte + forme (pas de couleur seule), `aria-live="polite"` pour les messages, tokens `--ag-*`, cibles ≥ 40 px.
+
+### 9.3 Contrat DOM pour les essais de bout en bout
+
+Libellés et attributs sur lesquels s'appuie `scripts/rocket/e2e_rocket_en_ligne.mjs` (le lot CLIENT les respecte à la lettre) : radio nommée « En ligne » ; bouton « Créer une partie » ; champ d'étiquette « Code de la partie » ; bouton « Rejoindre » du champ de code (nom accessible exactement « Rejoindre ») ; chaque ligne de la liste « Parties ouvertes » a un bouton de nom accessible `Rejoindre la partie ABCD` (`aria-label`), donc `getByRole("button", { name: "Rejoindre", exact: true })` ne désigne que le bouton du champ ; élément `[data-rocket-code]` dont le texte est le code ; `[data-rocket-joueur]` pour chaque ligne de joueur du salon ; bouton « Lancer la partie » ; élément `[data-rocket-reseau]` du HUD réseau (attributs `data-ping`, `data-etat`, `data-commandes`) ; bouton « Revanche » ; radios de format « 1v1 », « 2v2 », « 3v3 » (`<input>` stylés : l'essai les clique par `evaluate(e => e.click())`, comme `e2e_rocket.mjs`). Le rafraîchissement de la liste (3 s) garde des clés stables, ne vole jamais le focus et n'est pas dans une région `aria-live`. `sansRendu` : drapeau `localStorage[CLE_SANS_RENDU]` posé par `addInitScript`, lu seulement hors production.
+
+### 9.4 Intégration à `jeu.ts`
+
+`jeu.ts` reste le seul module qui touche `three`. Il gagne une source de monde pluggable : la boucle appelle `sourceMonde.avancer(dt, entrees)` (local : `avancerAccumulateur` + `pasUnique` actuels ; en ligne : le prédicteur), lit `sourceMonde.mondeAffiche()` pour le rendu, la caméra et les sons, et branche les événements (`traiter`). `contrat.ts` n'est pas modifié : `creerJeuRocket(canvas, scene, opts: OptionsJeuRocketAvecLigne)` (`protocole.ts` : `OptionsJeuRocket & { enLigne?: OptionsJeuRocketEnLigne }`) ; absent = comportement actuel inchangé. Le logiciel du choix de source vit dans un module interne PUR testable (`lib/rocket/jeu-en-ligne.ts` + `jeu-en-ligne.test.ts`) car `jeu.ts` (DOM, WebGL) ne l'est pas ; la non-régression du mode local est la porte d'acceptation `node scripts/rocket/e2e_rocket.mjs` (sans modification) en plus de `npx vitest run lib/rocket`.
+
+En ligne : les cerveaux locaux (`creerCerveaux`, `jeu.ts:171`) ne sont jamais créés ; pause, `blur`, `visibilitychange`, Start de la manette ne gèlent rien (mais l'onglet masqué et le menu rendent les entrées neutres) ; `recommencer()` envoie `revanche{oui:true}` ; `sortir()` envoie `quitter`. Le crochet `window.__rocket` est conservé (en ligne, `monde()` = monde prédit) et `window.__rocketReseau` (`CrochetRocketReseau`) est ajouté hors production. **Identité de « moi »** : « (vous) » du tableau des scores est calculé par l'id de ma voiture (`debut.moi`) et non plus par `humain` (deux humains en ligne) : `TableauRocket`, `FinRocket` et `HudRocket` reçoivent une prop optionnelle `moi?: number`, absente en local (le comportement `l.humain` reste).
+
+**Une seconde `debut`** (revanche, reprise) arrive sur un jeu déjà créé : `jeu.ts` écoute le client lui-même (`ecouter`), recrée le prédicteur et remet la mémoire d'événements à zéro, renderer conservé, puis envoie `pret`. C'est `jeu.ts` qui envoie TOUJOURS `pret` (après la création de la scène la première fois, tout de suite ensuite).
+
+Chargement : le salon passe en `chargement` ; le hook reçoit `debut`, importe `jeu.ts` (préchargé au clic « Créer / Rejoindre ») et crée le jeu ; les instantanés arrivés pendant la création sont réduits au dernier (`snapEnAttente`). La page ne devient une partie qu'à `debut`.
+
+## 10. Plan de tests
+
+Tests unitaires (`npx vitest run lib/rocket`, Node 20 suffit) :
+
+| Lot | Fichier | Contenu |
+|---|---|---|
+| SALLE | `serialisation.test.ts` | aller-retour exact `extraireEtat → encoderEtat → decoderEtat` (égalité profonde, y compris `-Infinity`, `NaN` absent, `dernierBut` null / plein) ; **continuité** : un monde restauré depuis un état poursuit 3 000 pas à l'identique (empreinte ET état binaire) de l'original, mêmes entrées, 1v1 / 2v2 / 3v3 ; quantification (idempotente, bornes, non finis) ; trames tronquées / malformées → null sans lever ; fuzz de 1 000 trames aléatoires |
+| SALLE | `monde-ligne.test.ts` | deux humains, noms, `idHumain`, ordre des voitures, identique à `creerMonde` côté physique |
+| SALLE | `salle.test.ts` | toute la machine d'états (§ 6) en pur : lobby (équipes, réglages, lancement refusé), chargement (`pret`, **un joueur qui ne dit jamais `pret` : le match démarre à `chargementMaxMs` par `tic`**), match (entrées reçues / répétées / tardives / trop avancées, **entrée tardive la plus récente devenue « dernière connue »**, `avance` = pire cas de fenêtre et `manquees` sur des trames d'ordre mélangé, sentinelle −128, bots **quantifiés**, instantanés à la bonne cadence, trame d'un autre `numero` écartée, budget de pas partagé et temps abandonné compté), but (échelle 1), fin, revanche (unanime / refus / **expiration à 45 s sans autre message**), coupure + reprise, coupure + bot, départ volontaire, hôte transféré, `aEcheance()` vrai en chargement et en fin, `dev` refusé sans option ; `pong` à `tick` fractionnaire et −1 hors match ; déterminisme : deux salles identiques, mêmes messages et horloges, mêmes sorties octet à octet. **Serveur/client sur une voiture de bot** : le monde d'un client qui rejoue `snap.entrees` reste égal octet à octet à celui de la salle en présence d'un bot |
+| PREDICTION | `horloge.test.ts` | convergence ±1 tick avec gigue ±20 ms, **marge qui grandit sur `manquees` même quand `avance` (paquet rapide) est bon**, plancher 2 × gigue, décroissance lente, `avance` = −128 ignoré, horloge locale grossière (résolution 100 ms), `pong.tick < 0` ignoré, resync « avant » et « arrière » (facteur 0), changement de `ralenti` sans NaN |
+| PREDICTION | `prediction.test.ts` | exactitude seulement quand rien ne bouge ; rollback exact quand une entrée adverse change (état final = état serveur) ; **un seul rollback par `avancer` malgré six instantanés en rafale** ; **anneau réenregistré pendant un rejeu** (pas de rollback inutile ni manqué au snap suivant) ; instantané hors grille ; événements locaux jamais dupliqués, `toucheBalle` / `plot` / `bump` locaux joués tout de suite et appariés ±6 ticks au serveur ; **garde de phase** (démolition / but prédits à tort jamais affichés, voiture jamais perdue par la caméra) ; lissage (décroissance, seuil de téléportation, `precedent`) ; historique à trous ; resync dans les deux sens ; profondeur max ; `filtrerEvenements` remis à zéro par un nouveau prédicteur ; instantané d'un autre `numero` ignoré |
+| PREDICTION | `simulation-reseau.test.ts` | **deux clients simulés** (prédicteurs + horloges) contre une `SalleRocket` pure par un transport simulé (`outils-reseau.ts` : latence 20-150 ms, gigue, perte 0-5 % avec retransmission TCP simulée, blocage en tête de file, réordonnancement exclu, rafale de retard de 300 ms) : sur 60 s de jeu entrées pseudo-aléatoires, le monde prédit de chaque client **converge** vers l'état serveur (écart de position < 5 cm après un instantané exact), aucun événement de voiture locale dupliqué, rollback < 5 ms de moyenne. **Critères qui détectent les entrées tardives** (l'ancien « avance dans [2, 8] » ne le faisait pas) : `manquees` ≈ 0 en régime établi sans perte ; **nombre de corrections de plus de 0,5 m par minute, rafales comprises, rapporté à 0 %, 1 % et 2 % de perte** (non exclu), seuil de jouabilité consigné en § 14 (netcode 12) ; jamais > 4 m hors rafale ; rafale de six instantanés = un gel < 1 image ; onglet masqué 5 s puis retour (resync « avant », pas de rafale d'entrées périmées) ; calage serveur de 400 ms (pas de dérive) |
+| SERVEUR | `registre.test.ts`, `limiteur.test.ts` | codes uniques et alphabet, plafonds, liste, nettoyage (renvoie les salles retirées), `actives()` = salles à échéance (chargement, fin), anti-énumération par IP avec horloge passée, code non réattribué 60 s ; seaux, rafale, coupure |
+| SERVEUR | `validation.test.ts` | `lireMessageClient` : chaque type valide accepté, chaque champ manquant / mal typé / hors liste → null (`format` indéfini, `dureeS` inconnue, `visible` non booléen, `c` NaN…), `nettoyerNom` (contrôles, U+202E, U+200B, espaces, points de code), fuzz de 5 000 objets aléatoires sans levée |
+| CLIENT | `client.test.ts` | socket factice : `bonjour`, ping, décodage (sans état externe), reconnexion avec reprise (attentes 0,5 / 1 / 2 / 2 s), `reprise{null}` oubliée, `erreur{version}` → état « refusée » (y compris celle d'un serveur d'arène non mis à jour, champ `message`), message `session` mémorisé ; `lobby-en-ligne.test.ts` : modèle de vue du salon (`salon: null`) ; `hud-modele.test.ts` : ajouts du HUD ; `jeu-en-ligne.test.ts` : choix de la source, commandes neutres (menu, onglet masqué), « (vous) » par `moi` |
+| CLIENT | `ui-rocket.test.ts` (étendu) | **liste blanche explicite** : `Agroparc3D.tsx` et les composants peuvent importer statiquement, de `lib/rocket/reseau/`, SEULEMENT `lobby-en-ligne` et `protocole` ; jamais `client`, `serialisation`, `salle`, `registre`, `horloge`, `prediction`, `monde-ligne`, `limiteur`, `validation`, `outils-reseau` ni `three` (le client réseau est chargé par `import()` dans l'effet du hook ; `LobbyRocketEnLigne` par `next/dynamic` depuis `PanneauRocket`) ; `LobbyRocket` inchangé |
+
+Sans navigateur : `node scripts/rocket/protocole_rocket.mjs` (SERVEUR) lance le vrai `serveur-fps` sur un port libre et fait jouer deux clients WebSocket nus (`ws`) : création, liste, rejoindre, équipes, lancement, ~20 s de match avec entrées scriptées, vérification que les instantanés arrivent à 20 Hz (±10 %), `manquees` nul et `avance` dans la fourchette, un but forcé (`dev`), fin, revanche, coupure + reprise, **prise de relais d'une socket encore ouverte (ancienne socket fermée 4004)**, coupure + bot, **un joueur qui ne dit jamais `pret` (match après 15 s)**, **fin sans accord (retour au salon à 45 s)**, **client qui ne lit pas (instantanés sautés puis socket terminée)**, plafonds, flood, version erronée, trame malformée, trame d'un autre `numero`. Les scripts `.mjs` ne peuvent pas importer le TypeScript : ils **compilent à la volée** `serialisation.ts` (et ce qu'il importe) avec `esbuild` (devDependency de `serveur-fps`, `bundle`, `platform: "node"`, `format: "esm"`, sortie dans un dossier temporaire hors du dépôt) puis l'importent ; ils utilisent `encoderTrameEntrees`, `decoderSnap`, `quantifierEntrees` et `typeDeTrame`.
+
+**Déterminisme entre moteurs** (non démontré, point 13 des critiques) : `node scripts/rocket/determinisme_moteurs.mjs` (SERVEUR, même compilation esbuild) bundle `creerMondeEnLigne` + `pasMonde` (sans bots), exécute 3 000 pas d'entrées scriptées à graine fixe sous Node 22 puis dans Chromium, Firefox et WebKit de Playwright (ceux qui sont installés, `PLAYWRIGHT_DIR`), compare `empreinteMonde` et l'écart de position maximal à Node. Résultat consigné en § 12. Tant qu'il n'est pas vert pour un moteur, l'hypothèse « rollback à chaque instantané » est la seule garantie sur ce moteur.
+
+Bout en bout : `node scripts/rocket/e2e_rocket_en_ligne.mjs` (SERVEUR) lance `serveur-fps` (`PDJ_ROCKET_DEV=1`, `PDJ_ROCKET_DUREE_S=20`, `PDJ_FPS_POLICE=off` et neutralisations de l'arène) et `next dev` sur des ports libres (jamais 8787), puis DEUX Chromium headless : « myrtille » → Rocket Muche → En ligne (`CLE_SANS_RENDU` posée par `addInitScript`) ; A crée, B rejoint par code puis par la liste ; équipes, lancement ; 3 s de décompte ; A accélère (entrées par `__rocketReseau.entrees`), B voit la voiture de A bouger ; but forcé par `dev` ; score identique chez les deux ; fin à 20 s ; revanche ; départ de B → bot ; reprise (`__rocketReseau.couper()`) ; captures. Rendu logiciel (SwiftShader) : fenêtres de 640×360, `sansRendu` pour les étapes de simulation, jamais d'attente de fluidité. Étapes de réseau dégradé : `__rocketReseau.latence(60, 60)`, `retenir(300)` (rafale, aucun gel de plus d'une image mesuré), `masquer(true/false)` (retour sans rafale, resync). Pièges de `next dev` repris de `e2e_rocket.mjs` : échauffement à froid, captures écrites hors du dépôt puis copiées, aucun fichier du projet modifié pendant l'essai.
+
+Charge : un test `salle.charge.test.ts` (SALLE, à lancer SEUL) : 6 salles 3v3 simulées 60 s, tic moyen < 1 ms, instantané ≤ 3 ko. Mesure CPU du rollback à 4× plus lent (`--cpu-throttling` de Chromium ou boucle à vide, consignée, non bloquante).
+
+## 11. Déploiement
+
+1. Fusionner le code serveur + lots purs ; construire `serveur-fps` sur le VPS (`docker build -f serveur-fps/Dockerfile`) et redéployer. L'arène n'est pas affectée (même version de protocole, mêmes tests). Vérifier `/sante` : le bloc `rocket` existe, `ticMaxMs` reste < 8.
+2. Fusionner ensuite le client (Vercel). Un client déployé avant le serveur n'a aucun effet néfaste mais ne se comporte PAS comme un « serveur indisponible » : l'ancien serveur accepte les WebSockets sur n'importe quel chemin (§ 3.1), donc le client Rocket se connecte à l'ARÈNE sur `/rocket`, envoie `bonjour{v:1}` et reçoit `erreur{code:"version", message}` puis la fermeture 1008. Le client traite tout `erreur{version}` (et toute fermeture avant un `bienvenue` de Rocket) comme « serveur pas à jour ou page périmée : rechargez ; si cela persiste, le serveur n'est pas encore déployé » (état `refusee`). Cette connexion passagère entre dans le compteur par IP de l'arène le temps de la fermeture. Le mode local est intact.
+3. Interrupteur de secours : `PDJ_ROCKET=off` dans l'environnement du conteneur désactive le chemin sans toucher l'arène.
+4. Ne JAMAIS `docker compose down -v` (volume des stats du BR).
+5. Mettre à jour `CLAUDE.md` (section Rocket Muche) à la fin de l'intégration.
+
+## 12. Points ouverts et risques
+
+- **Prédiction d'événements de phase** : traité par la garde de phase de `mondeAffiche` (§ 5.6) ; résidu : la voiture prédite démolie à tort ignore mes entrées jusqu'au rollback suivant (≤ RTT + 50 ms).
+- **Déterminisme entre moteurs** : non démontré. Le chemin chaud utilise `Math.hypot`, `Math.exp`, `Math.log`, `Math.sqrt`, `Math.atan2`, `Math.sin`/`cos` (38 occurrences dans `voiture.ts`, `balle.ts`, `vec.ts`, `contacts.ts`, `match.ts`, `arene.ts`), et les rebonds contre la SDF ou les flips peuvent amplifier un écart d'un ulp ; Node 22 et un Chrome plus récent n'ont pas forcément la même implémentation de `hypot`/`pow`. Aucune conclusion « l'écart reste ≪ 1 mm » n'est donc affirmée : `scripts/rocket/determinisme_moteurs.mjs` la mesure (§ 10). En attendant, le rollback à chaque instantané est de toute façon le cas nominal (§ 5.3). Autre piège : `performance.now()` est arrondi à 100 ms avec Firefox `privacy.resistFingerprinting` : RTT et horloge deviennent grossiers, la gigue mesurée explose et le plancher de marge (2 × gigue) l'absorbe au prix de latence.
+- **Résultat mesuré du déterminisme (2026-11-08, `determinisme_moteurs.mjs`)** : NÉGATIF entre Node (20 comme 22) et Chromium. Seuls `sqrt` et `hypot` coïncident bit à bit ; `exp`, `log`, `pow`, `atan2`, `sin`, `cos`, `acos`, `asin` et `tanh` diffèrent. En boucle ouverte (2v2, 3 000 pas) l'empreinte diverge dès le pas ~450 mais l'écart de position reste de 1,5e-10 m ; en boucle fermée (chaque voiture poursuit la balle) il monte à 3,7 m. Le rollback à chaque instantané exact est donc INDISPENSABLE, pas seulement nominal. Piste non explorée : `sin`/`cos`/`atan2`/`exp`/`pow` maison dans le chemin chaud (touche le moteur).
+- **Crochet `__rocketReseau.dev(a)`** (ajouté à l'intégration, hors production) : envoie l'action `dev` au serveur (but forcé, chrono) ; sans `PDJ_ROCKET_DEV=1` le serveur refuse, aucun effet local.
+- **Ralenti de la célébration** : désactivé en ligne (§ 5.5), à réactiver seulement avec une horloge qui garde l'ancienne référence jusqu'au nouvel échantillon.
+- **Rafales TCP et perte** : une coupure de 300 ms se voit à son retour ; 1 à 2 % de perte (Wi-Fi, 4G) bloquent les entrées suivantes de 200 ms ou plus (blocage en tête de file) qui arrivent ensuite en rafale, « tardives ». La marge adaptative (`manquees`) en absorbe une partie. Seuil de jouabilité : voir § 14 netcode 12 ; au-delà, deux options : rewind serveur borné (≈ 250 ms, replay avec les entrées de bots enregistrées par tick) ou WebRTC DataChannel non fiable (le protocole est autonome par trame : entrées redondantes, instantanés complets, `numero` dans chaque trame).
+- **CPU du rollback en 3v3 sur machine faible** : 40 pas = 4,7 ms médian (8 ms p99), payé jusqu'à 20 fois par seconde (cas nominal) ; un seul rollback par image, plafond `profondeurMaxRollback`, rendu en qualité basse. Mesurer sur un portable bas de gamme (mesure bridée 4× du plan de tests).
+- **Lien d'invitation** : aucun paramètre d'URL n'est lu par `Agroparc3D.tsx` aujourd'hui (le code secret « myrtille » ouvre la vue) ; v1 = copier le code (4 lettres). Un lien `?rocket=CODE` demanderait que la vue s'ouvre seule : hors périmètre.
+- **Humains multiples sur `idHumain`/`humain`** : géré hors moteur (`creerMondeEnLigne`) ; `resultatMatch.equipeJoueur` vaut l'équipe de l'observateur : le serveur envoie son `resultat` brut et le client recalcule `titreResultat` pour son équipe (`hud-modele.ts`).
+- **Vie privée / site privé** : même hypothèse que le reste (accès restreint) ; un salon `visible` expose le nom de l'hôte.
+- **Deux sockets par utilisateur** (arène `ar1` ouverte par la vue Palantir + Rocket) : acceptées, compteurs séparés. Fermer la socket de l'arène pendant Rocket est possible plus tard (`useArene`), non fait pour ne pas toucher à l'arène.
+
+## 13. Découpage en lots d'implémentation (4 agents en parallèle, fichiers DISJOINTS)
+
+Règle d'or : **chaque fichier appartient à un seul lot**. Ne modifiez pas le fichier d'un autre lot ; en cas de besoin, supposez le contrat de `protocole.ts` et demandez un changement à l'orchestrateur. `lib/rocket/reseau/protocole.ts`, `lib/rocket/contrat.ts` et tout le moteur (`match.ts`, `voiture.ts`, `balle.ts`, `contacts.ts`, `bots.ts`, `arene.ts`, `vec.ts`) sont **en lecture seule** pour tous. Ne touchez pas à `wt-fusion/`. Français partout, pas d'emoji, aucun `Math.random` ni horloge globale dans les modules purs.
+
+**Séquencement en deux phases** (`protocole.ts` ne contient que des CONSTANTES et des TYPES de fonctions : « travailler contre la signature » ne fait pas tourner un test). Le dépôt contient des **amorces** (`serialisation.ts`, `monde-ligne.ts`, `salle.ts`, `horloge.ts`, `prediction.ts`, `registre.ts`, `limiteur.ts`, `validation.ts`) : signatures typées qui lèvent une erreur ; elles font compiler `tsc` et résoudre les imports, rien de plus. Chaque lot REMPLACE ses amorces en entier.
+- **Phase 1** (en parallèle) : SALLE livre `serialisation.ts` + `monde-ligne.ts` (puis `salle.ts`) ; PREDICTION écrit `horloge.ts` (et `prediction.ts`, dont les tests exécutables attendent `serialisation.ts` réel) ; SERVEUR écrit `limiteur.ts`, `registre.ts` (il injecte `creerSalle` : aucune dépendance à `salle.ts`), `validation.ts` et les stubs de typecheck ; CLIENT écrit `lobby-en-ligne.ts`, `client.ts` (tests avec trames fabriquées à la main ou par `serialisation.ts` une fois livré) et l'UI.
+- **Phase 2** (après livraison de `serialisation.ts` et `salle.ts`) : `simulation-reseau.test.ts`, `rocket.ts` de bout en bout, `protocole_rocket.mjs`, `jeu.ts` branché au vrai prédicteur, e2e. Un test qui dépend d'un module encore en amorce est écrit mais marqué `it.skip("attend <lot>")` et relancé à l'arrivée.
+
+### Lot SALLE (pur, serveur-agnostique)
+
+Possède : `lib/rocket/reseau/salle.ts`, `salle.test.ts`, `salle.charge.test.ts`, `serialisation.ts`, `serialisation.test.ts`, `monde-ligne.ts`, `monde-ligne.test.ts` (les trois premiers existent en amorce).
+Exporte : `creerSalleRocket` (`CreerSalleRocket`), `extraireEtat`, `restaurerEtat`, `encoderEtat`, `decoderEtat`, `encoderTrameEntrees`, `decoderTrameEntrees`, `encoderSnap`, `decoderSnap`, `typeDeTrame`, `quantifierEntrees`, `dequantifierEntrees`, `creerMondeEnLigne`, `graineBot` (signatures de `protocole.ts`).
+Suppose des autres : rien (il consomme `match.ts`, `bots.ts`, `contrat.ts`). Tests de salle sans socket ni horloge globale. Ne dépend pas de `registre.ts` (le registre dépend de la salle).
+Attention : bots quantifiés avant `pasMonde` (§ 4.2) ; `avance` / `manquees` / dernière entrée connue (§ 4.3) ; `aEcheance()` ; `pong` fractionnaire ; aucun jeton dans la salle ; `pasMonde` attend `entrees[i]` ↔ `voitures[i]` dans l'ordre ; restaurer `interne` (propriété cachée `MondeMatch.interne`) ; `restaurerEtat` écrit sur place et recopie `precedent` ; l'encodage conserve `-Infinity` (Float64) ; tout décodeur renvoie null au lieu de lever. Aucune allocation superflue dans `tic` (appelé 125 fois par seconde).
+
+### Lot PREDICTION (pur, client)
+
+Possède : `lib/rocket/reseau/horloge.ts`, `horloge.test.ts`, `prediction.ts`, `prediction.test.ts`, `simulation-reseau.test.ts`, `outils-reseau.ts` (transport simulé : latence, gigue, perte avec retransmission, blocage en tête de file, rafale de retard ; pur, déterministe par graine). `horloge.ts` et `prediction.ts` existent en amorce.
+Exporte : `creerHorloge`, `creerPredicteur` (signatures de `protocole.ts`).
+Suppose : de SALLE, `extraireEtat` / `restaurerEtat` / `encoderEtat` / `quantifierEntrees` / `dequantifierEntrees` / `creerMondeEnLigne` et `creerSalleRocket` (pour `simulation-reseau.test.ts`, écrit en dernier). N'importe ni `three` ni le DOM.
+Attention : aucune horloge globale (l'heure est un argument) ; `mondeAffiche` n'altère jamais le monde prédit (copie superficielle, garde de phase) ; un rollback par `avancer`, anneau indexé par tick exact et réenregistré au rejeu, historique en écriture unique, resync dans les deux sens (§ 5.3 bis) ; événements locaux sans doublon (appariement ±6 ticks) ; coût du rollback mesuré dans un test non bloquant.
+
+### Lot SERVEUR (hébergement, build, essais)
+
+Possède : `serveur-fps/src/rocket.ts`, `serveur-fps/src/stubs/three.d.ts`, `serveur-fps/src/stubs/dom.d.ts`, `serveur-fps/tsconfig.json`, `serveur-fps/Dockerfile`, `serveur-fps/Dockerfile.dockerignore`, `serveur-fps/docker-compose.yml` (exemples commentés), `serveur-fps/README.md`, `serveur-fps/src/index.ts` (câblage minimal uniquement : `noServer`, `upgrade`, `/sante`, `arreter`), `lib/rocket/reseau/registre.ts`, `registre.test.ts`, `limiteur.ts`, `limiteur.test.ts`, `validation.ts`, `validation.test.ts` (les trois modules existent en amorce), `scripts/rocket/protocole_rocket.mjs`, `scripts/rocket/determinisme_moteurs.mjs`, `scripts/rocket/e2e_rocket_en_ligne.mjs`.
+Exporte : `creerServeurRocket` (`ServeurRocket`), `creerRegistreRocket`, `creerLimiteur`, `admettreRocket`, `lireMessageClient`, `nettoyerNom`.
+Suppose : de SALLE, `creerSalleRocket`, `encoderSnap`, `decoderSnap`, `encoderTrameEntrees`, `decoderTrameEntrees`, `quantifierEntrees`, `typeDeTrame` ; de CLIENT, le contrat DOM du § 9.3 et `window.__rocketReseau` pour l'e2e (écrit en dernier). `npm run typecheck` et `npm run build` de `serveur-fps` doivent passer ; vérifier que l'arène est INTACTE (`node scripts/fps/protocole_parties.mjs` et `protocole_br_parties.mjs` verts, `curl /sante` identique plus le bloc `rocket`).
+Attention : `rocket.ts` importe `ipClient` de `lib/fps/ip-client.ts` (non modifié) et mesure `ticMaxMs` lui-même ; jetons `crypto`, ping protocolaire, contre-pression, budget de pas, `CODE_REMPLACE` (§ 6, 7) ; ne pas modifier `lib/fps/*` ; ne jamais lancer sur 8787 ; neutraliser les événements de l'arène dans les scripts déterministes (`PDJ_FPS_POLICE=off`, `PDJ_FPS_ZOMBIES_PATROUILLE=off`, intervalles d'Elsa / d'avion / de bus longs).
+
+### Lot CLIENT / UI
+
+Possède : `lib/rocket/reseau/client.ts`, `client.test.ts`, `lobby-en-ligne.ts`, `lobby-en-ligne.test.ts`, `lib/rocket/jeu.ts` (source de monde pluggable, crochet `__rocketReseau`, pause désactivée en ligne), `lib/rocket/jeu-en-ligne.ts` + `jeu-en-ligne.test.ts` (logique PURE du mode en ligne importée par `jeu.ts`, donc dans le même morceau chargé à la demande), `lib/rocket/hud-modele.ts` + `hud-modele.test.ts` (ajouts additifs), `lib/rocket/ui-rocket.test.ts` (extensions, liste blanche), `app/components/rocket/` (`LobbyRocketEnLigne.tsx`, `PanneauRocket.tsx`, `HudReseauRocket.tsx`, `useSalonRocket.ts`, ajouts OPTIONNELS à `HudRocket.tsx`, `TableauRocket.tsx`, `FinRocket.tsx`, `MenuPauseRocket.tsx`, `contrats.ts`), `app/components/Agroparc3D.tsx`.
+Exporte : `creerClientRocket`, `urlRocket`, modèle de vue du salon.
+Suppose : de PREDICTION, `creerHorloge` / `creerPredicteur` ; de SALLE, `decoderSnap`, `encoderTrameEntrees`, `quantifierEntrees`, `creerMondeEnLigne`. N'importe pas `salle.ts` ni `registre.ts`.
+Attention : le mode local reste strictement identique (aucune régression : tests de `lib/rocket` verts, `e2e_rocket.mjs` vert sans modification, `LobbyRocket` non modifié ; `contrat.ts` NON modifié : types dans `protocole.ts`) ; jamais d'import statique de `client` / `serialisation` / `prediction` hors `jeu.ts` et du hook (par `import()`) ; commandes neutres menu / onglet masqué ; reprise `sessionStorage` ; nom limité à 16 dans le champ ; `Agroparc3D.tsx` n'importe aucun module de `lib/rocket/reseau/` en statique (tout par `import()` ou par types), `lib/rocket/ui-rocket.test.ts` reste vert ; les ajouts aux composants existants sont des props optionnelles ; lobby en ligne : radios natives, libellés du § 9.3, `prefers-reduced-motion`, tokens `--ag-*`, cibles ≥ 40 px ; jamais de `window.alert`.
+
+### Après les quatre lots (orchestrateur)
+
+Revue croisée, `npx vitest run lib/rocket` (aucune amorce restante : `grep -l "AMORCE" lib/rocket/reseau/*.ts` vide), `npm run typecheck` de `serveur-fps`, `npx tsc --noEmit` racine (avec `wt-fusion/` temporairement exclu de `tsconfig.json`, puis RESTAURÉ), les deux scripts d'essai, mise à jour de `CLAUDE.md` et de la mémoire du projet, déploiement du § 11.
+
+## 14. Critiques et réponses
+
+Deux revues adversariales (lentille netcode : 19 points ; lentille intégration : 27 points) ont été vérifiées dans le code (`match.ts`, `voiture.ts`, `contrat.ts`, `jeu.ts`, `ui-rocket.test.ts`, `serveur-fps/src/index.ts`, `lib/fps/ip-client.ts`, `TableauRocket.tsx`, `LobbyRocket.tsx`, `Agroparc3D.tsx`). **Retenu** = défaut réel, spec et contrat (`protocole.ts`) corrigés ; **partiel** = défaut réel, réponse plus modeste que celle proposée ; **rejeté** = raison donnée. Aucun changement du moteur de jeu ni de `contrat.ts`.
+
+### Netcode
+
+| # | Verdict | Réponse |
+|---|---|---|
+| 1 | **Retenu** (partiel sur le rewind) | `avance` mesurait le paquet le plus rapide : défaut réel de conception. Nouveau retour : `avance` = pire cas de la fenêtre (entrées vues pour la première fois seulement), `manquees` (u8), plancher de marge `ceil(2 × gigue)`, croissance dès `manquees` > 0, décroissance lente (§ 4.3, § 5.1). Une entrée tardive récente devient « dernière entrée connue ». **Rewind serveur rejeté en v1** : il exige de rejouer avec les entrées de bots ENREGISTRÉES par tick (les cerveaux ne sont pas restaurables), de corriger des événements (but) déjà envoyés, et sa nécessité n'est pas mesurée ; décision différée au seuil du point 12. |
+| 2 | **Retenu** | « Zéro rollback » était faux dès qu'un bot ou un adversaire change d'entrée : le rollback par instantané est le cas nominal (§ 0, § 3.4, § 5.3). Un seul rollback par image, dans `avancer` (jamais dans `onmessage`), CPU dimensionné pour 20/s, mesure 4× plus lent. |
+| 3 | **Retenu** | Coalescence côté client (`recevoirSnap` ne garde que le dernier, `snapEnAttente` unique) ; côté serveur, saut des instantanés au-delà de 64 Ko en attente, coupure à 256 Ko (§ 5.3, § 7, `RESEAU.buffer*`). |
+| 4 | **Retenu** | Anneau indexé par tick exact, réenregistré pendant le rejeu ; instantané hors grille = rollback (§ 5.3). |
+| 5 | **Retenu** | Défaut réel : `snap.entrees` quantifiées contre un serveur qui simulait les réels du cerveau. Le serveur applique `dequantifierEntrees(quantifierEntrees(decider(…)))` (§ 4.2) ; test serveur/client sur une voiture de bot (§ 10). |
+| 6 | **Retenu** | `toucheBalle`, `plot`, `bump` de MA voiture sont prédits et joués tout de suite, appariés à ±6 ticks au serveur (§ 5.5, `ResultatAvance`). `demolition`, `but`, `reapparition` restent serveur (conséquence visible, pas un simple son). |
+| 7 | **Retenu** (partiel) | Garde de phase dans `mondeAffiche` : `demolie`, `phase`, `score` non confirmés ne s'affichent pas ; la caméra lit le monde affiché. Résidu documenté : la voiture prédite démolie ignore mes entrées jusqu'au prochain rollback (≤ RTT + 50 ms), car l'empêcher demanderait un crochet dans `match.ts` (hors périmètre). |
+| 8 | **Retenu** | Deux sens spécifiés (§ 5.3 bis) : en retard = rollback depuis le dernier instantané avec entrée courante tenue ; en avance = facteur 0, jamais de retour en arrière ; trames toujours contiguës et terminées au tick le plus récent (pas de « trous »). `cadence` rend `resync: "avant" \| "arriere" \| null`. |
+| 9 | **Retenu** | Vivacité par ping protocolaire (5 s / 10 s), pas par le `ping` applicatif ; aucun seuil d'inactivité de jeu ; au retour d'un onglet masqué, adoption de l'état serveur, pas de rafale (§ 5.1, § 7). Entrées neutres pendant le masquage (`HudReseau.commandes`). |
+| 10 | **Retenu** | Jeton valide = prise de relais, ancienne socket fermée `CODE_REMPLACE` (4004) ; détection d'une socket morte par ping protocolaire (§ 6). |
+| 11 | **Retenu** (partiel) | Plafond de calage 0,1 → 0,5 s, rattrapage 12 → 60 pas/salle avec budget 120 pas/réveil, temps abandonné compté dans `/sante` (§ 4.2, § 4.1). `worker_thread` rejeté pour la v1 (1 vCPU partagé : pas de second cœur à gagner, le quota CFS gèle tout le processus) avec seuil de décision (`ticMaxMs` > 8 ms ou `tempsAbandonneMs` > 0). Le « 6 % d'un vCPU » est reformulé « pour Rocket seul » (§ 7). |
+| 12 | **Retenu** (partiel) | Le test mesure désormais le nombre de corrections > 0,5 m par minute, rafales comprises, à 0, 1 et 2 % de perte, et la marge adaptative absorbe une partie du blocage en tête de file (point 1). **Décision différée aux chiffres** : le seuil de jouabilité (≤ 6 corrections > 0,5 m par minute à 1 % de perte) est consigné ici ; s'il est dépassé le rewind serveur borné devient un lot v1.1 (§ 12). |
+| 13 | **Retenu** | Conclusion « écart ≪ 1 mm » retirée ; `scripts/rocket/determinisme_moteurs.mjs` (Node + Chromium / Firefox / WebKit, 3 000 pas, `empreinteMonde` et écart de position) ; `performance.now` grossier couvert par le plancher de marge `2 × gigue` (§ 10, § 12). |
+| 14 | **Retenu** | Ralenti désactivé en ligne (`echelleCelebration = 1`), format conservé (`ralenti` toujours faux), horloge qui garde l'ancienne référence si l'échelle changeait un jour (§ 5.1, § 5.5). |
+| 15 | **Retenu** | `numero` (u8) dans les deux trames, `nbVoitures` dans l'instantané, `decoderSnap(octets)` sans état externe, DataView petit-boutiste (§ 3.2). Le nombre d'octets passe de 11 à 14 (instantané) et de 9 à 11 (entrées). |
+| 16 | **Retenu** | `pret` = scène chargée seulement ; `pong.tick = −1` hors phase « match » et l'horloge n'en tire que le RTT (§ 5.1, § 5.6, § 3.2). |
+| 17 | **Retenu** | `pong.tick` fractionnaire (`monde.tick` + fraction du pas) (§ 3.2, § 5.1). |
+| 18 | **Partiel** | Retenus : offsets de lissage aussi sur `precedent` et la base (§ 5.4 par § 5.3 point 4), DataView / endianness, avance max portée à 120 ticks et plafonnée côté client, mémoire d'événements remise à zéro à chaque `debut` et reprise. **Rejeté** : normaliser `-0` à l'encodage, qui modifierait l'état restauré (un `atan2(-0, x)` peut différer) pour gagner un taux d'égalité déjà marginal (le rollback est nominal). |
+| 19 | **Retenu** | `CrochetRocketReseau.latence(sortant, entrant)`, `retenir(ms)`, `masquer(b)` ; tests de rafale, onglet masqué, relais de socket, calage serveur, voiture de bot, trois moteurs ajoutés (§ 10) ; critères `manquees` et corrections > 0,5 m/min à la place de « avance dans [2, 8] ». |
+
+### Intégration
+
+| # | Verdict | Réponse |
+|---|---|---|
+| 1 | **Retenu** | Défaut réel : trois échéances n'existent que dans `tic`. `SalleRocket.aEcheance()` (toute phase hors salon avec un humain connecté ou en reprise) ; `registre.actives()` en est le filtre ; `enMatch()` (chargement ou match) ne sert qu'à `matchsMax`. Tests dédiés (joueur sans `pret`, fin sans accord, § 10). |
+| 2 | **Retenu** | Jeton hors de `bienvenue` et hors de la salle : message `session{code, joueur, jeton}` émis par `rocket.ts` après `creer` / `rejoindre`, `crypto.randomBytes(16)`, comparaison en temps constant ; `jetonReprise` retiré de `SalleRocket`. Le registre est semé par `crypto` mais un code n'est pas un secret (§ 7). |
+| 3 | **Retenu** | `contrat.ts` reste en lecture seule : `OptionsJeuRocketAvecLigne = OptionsJeuRocket & { enLigne? }` dans `protocole.ts` ; « moi » par prop optionnelle `moi?: number` de `TableauRocket` / `FinRocket` / `HudRocket` (§ 9.4). |
+| 4 | **Retenu** | Séquencement en deux phases et amorces typées (`serialisation`, `monde-ligne`, `salle`, `horloge`, `prediction`, `registre`, `limiteur`, `validation`) pour que `tsc` et les imports se résolvent (§ 13). |
+| 5 | **Retenu** | `OptionsJeuRocketEnLigne.hudReseau(h)` (§ 9.2). |
+| 6 | **Retenu** | Liste blanche explicite (`lobby-en-ligne`, `protocole`) ; `PanneauRocket` statique, `LobbyRocketEnLigne` par `next/dynamic`, client réseau par `import()` dans le hook (§ 10, § 13). |
+| 7 | **Retenu** | Seul `import("@/lib/rocket/jeu")` est préchargé au clic ; le jeu est créé à `debut`, qui fait passer `enRocket` à vrai (§ 9.1, § 9.4). |
+| 8 | **Retenu** | Voir netcode 2. |
+| 9 | **Retenu** | Raisonnement de déploiement corrigé : l'ancien serveur répond `erreur{version, message}` ; champ renommé `message` ; état « refusée » et message dédié ; compteur par IP de l'arène noté (§ 11). |
+| 10 | **Retenu** | Voir netcode 3. |
+| 11 | **Retenu** | Module pur `validation.ts` (`lireMessageClient`, `nettoyerNom`) avec fuzz, assigné au lot SERVEUR ; `rocket.ts` n'est testé que par les scripts (inévitable : socket et minuteur) (§ 7, § 10). |
+| 12 | **Retenu** | `reprise{code: string \| null}`, `salon{salon: null, raison}` (accusé de `quitter`, expiration, fermeture, expulsion) ; `salon` nullable. |
+| 13 | **Retenu** | `trouver(code, ip, maintenantMs)` → `ResultatTrouver`, `retirer(code, maintenantMs)`, `nettoyer` rend les salles retirées. |
+| 14 | **Retenu** | Plafonds par IP relevés (12 connexions, 4 salles, 20 essais de code par minute) ; `ipClient` de `lib/fps/ip-client.ts` imposé ; `docker-compose.yml` ajouté au lot SERVEUR (§ 7, § 8.1). |
+| 15 | **Retenu** | Compilation à la volée par `esbuild` dans les scripts ; liste « Suppose » du lot SERVEUR complétée (§ 10, § 13). |
+| 16 | **Retenu** | `CLE_SANS_RENDU` (`localStorage`, lue hors production seulement), posée par `addInitScript` (§ 9.3). |
+| 17 | **Retenu** | `aria-label="Rejoindre la partie ABCD"` sur les lignes, `exact: true` dans l'essai, rafraîchissement sans vol de focus ni `aria-live`, radios cliquées par `evaluate`, pièges de `next dev` repris (§ 9.3, § 10). |
+| 18 | **Retenu** | Seconde `debut` gérée par `jeu.ts` qui écoute le client, recrée le prédicteur, envoie toujours `pret` ; cerveaux locaux jamais créés en ligne (§ 9.4). |
+| 19 | **Retenu** | « (vous) » par `debut.moi` (§ 9.4). |
+| 20 | **Retenu** | Budget `pasMaxTotalParReveil` = 120 partagé entre salles (§ 4.1, § 4.2). |
+| 21 | **Retenu** | `AVANCE_INCONNUE` = −128, ignoré par l'horloge (§ 4.3). |
+| 22 | **Retenu** | `ticMaxMs` quitte `MesuresSalle` (remplacé par `tempsAbandonneMs`), mesuré par `rocket.ts` (§ 4.1). |
+| 23 | **Retenu** | `hud-modele.test.ts`, `jeu-en-ligne.ts` + test (logique pure de `jeu.ts`) attribués au lot CLIENT ; `e2e_rocket.mjs` imposé comme porte d'acceptation de la non-régression locale (§ 9.4, § 13). |
+| 24 | **Retenu** (partiel) | Le serveur nettoie les caractères de formatage Unicode (U+202E…) en plus des contrôles ; limites 16 (champ) / 20 (serveur) conservées : l'écart n'est pas un défaut, le serveur est la borne de sécurité. |
+| 25 | **Retenu** | Entrées neutres menu ouvert / onglet masqué et pastille « Commandes suspendues » (`HudReseau.commandes`) (§ 9.1). |
+| 26 | **Partiel** | Reprise après rechargement tentée seule via `sessionStorage` (`CLE_REPRISE`) si l'onglet est rouvert dans les 20 s ; au-delà, la place est un bot (documenté, ce n'est pas le cas d'usage principal : les coupures de socket se reprennent sans recharger) (§ 9.1). |
+| 27 | **Rejeté** (noté) | Plafonds globaux de 8 salles / 6 matchs saturables par quelques IP : acceptable pour un site privé ; la limite est écrite en § 7 et visible dans `/sante.rocket`. |

@@ -244,6 +244,43 @@ Contrat complet et commenté : `lib/fps/protocole.ts` (ne change qu'avec le clie
   leur arme en main (le conducteur non) ; les voitures PNJ (12 sur 4 circuits, 9 m/s) tuent à pied, instant de test propre à chaque joueur ; Elsa est à (−120 ; 39) près du Truck Muche.
 * **Capacité** : voir plus haut ; `rejoindre` refusé (`refus{plein}`) au-delà de 16 joueurs en arène, `quitter` puis `rejoindre` ne contourne ni la réapparition (4 s) ni la santé (mémorisée 60 s).
 
+## Rocket Muche en ligne (chemin `/rocket`)
+
+Rocket Muche (mode « Rocket League » de la vue Palantir, `lib/rocket/`) se joue aussi à deux en ligne. Spec : `docs/superpowers/specs/2026-11-08-rocket-en-ligne-design.md` ; contrat :
+`lib/rocket/reseau/protocole.ts` (`VERSION_ROCKET = 1`, indépendante de `VERSION_PROTOCOLE` de l'arène, qui n'est PAS touchée).
+
+* **Chemin** : un seul écouteur HTTP `upgrade` (`src/index.ts`) aiguille par chemin : `/rocket` va à `src/rocket.ts` (`creerServeurRocket`), tout le reste à l'arène exactement comme avant (le filtre `ORIGINES` est partagé).
+  Traefik n'a rien de nouveau à savoir (la règle est `Host(...)` seulement).
+* **Ce que fait `src/rocket.ts`** : plafonds de connexions (adresse par `ipClient`, dernier `x-forwarded-for`), `bonjour` dans les 10 s (version, reprise), jetons de reprise (`crypto.randomBytes(16)`, comparés en temps
+  constant ; une reprise valide ferme l'ancienne socket `4004`), routage vers `lib/rocket/reseau/{registre,salle,validation,limiteur,serialisation}`, boucle de jeu à 8 ms avec budget de 120 pas partagé entre les salles
+  (physique à 120 Hz, instantanés à 20 Hz), contre-pression (instantanés sautés au-delà de 64 Ko en attente, socket coupée à 256 Ko), ping PROTOCOLAIRE toutes les 5 s (coupée après 10 s sans pong),
+  anti-flood à trois seaux (entrées, ping, actions ; plus de 400 messages bruts par seconde : `4002`), mesure du coût d'un réveil (`ticMaxMs`).
+  Rien n'est persisté. Un client qui se ferme avec `1000` quitte (un bot prend sa voiture) ; toute autre fermeture (rechargement compris) laisse 20 s à la reprise.
+* **Variables** (toutes facultatives) :
+
+| Variable | Défaut | Rôle |
+| --- | --- | --- |
+| `PDJ_ROCKET` | actif | `off` coupe le chemin (`upgrade` répond 404), l'arène n'est pas affectée |
+| `PDJ_ROCKET_CONNEXIONS_IP` | `12` | connexions Rocket par adresse (refus `1013` au-delà) |
+| `PDJ_ROCKET_CONNEXIONS_TOTAL` | `40` | connexions Rocket au total |
+| `PDJ_ROCKET_SALLES_MAX` | `8` | salons ouverts en même temps |
+| `PDJ_ROCKET_MATCHS_MAX` | `6` | matchs simultanés (`lancer` au-delà : `refus{limite}`) |
+| `PDJ_ROCKET_SALLES_IP` | `4` | salons créés par adresse, simultanément |
+| `PDJ_ROCKET_DEV` | — | `1` : actions `dev` acceptées (but forcé, chrono), essais seulement |
+| `PDJ_ROCKET_HUMAINS_MIN` | `2` | humains nécessaires pour `lancer` (`1` pour jouer seul contre des bots en essai) |
+| `PDJ_ROCKET_DUREE_S` | — | remplace la durée de chaque match (essais) |
+| `PDJ_ROCKET_CHARGEMENT_MS` / `_REPRISE_MS` / `_REVANCHE_MS` | 15 000 / 20 000 / 45 000 | délais de chargement, de reprise et de vote de la revanche (essais) |
+
+* **`/sante.rocket`** (bloc AJOUTÉ ; les champs plats historiques utilisés par le `HEALTHCHECK` et les e2e ne bougent pas) : `salles`, `matchs`, `joueurs`, `connexions`, `ticMaxMs` (dernière minute), `ticsLents` (réveil > 4 ms),
+  `entreesTardives`, `entreesRepetees`, `octetsEmis`, `octetsRecus`, `snapsSautes`, `tempsAbandonneMs`, `socketsRemplacees`. Seuil de décision (spec § 4.1) : `ticMaxMs` > 8 ou `tempsAbandonneMs` > 0 sous charge réelle.
+* **Build** : le Dockerfile copie `lib/rocket` (liste blanche `!lib/rocket` dans `Dockerfile.dockerignore`) ; `tsconfig.json` redirige `three` vers `src/stubs/three.d.ts` et `src/stubs/dom.d.ts` déclare
+  `HTMLCanvasElement` (le contrat du moteur les mentionne dans des types de rendu ; le serveur n'importe jamais `three` ni le DOM).
+* **Essais sans navigateur** : `node scripts/rocket/protocole_rocket.mjs` (serveur lancé sur des ports libres, clients `ws` nus : lobby, match, reprise, prise de relais `4004`, contre-pression, plafonds, flood) et `node scripts/rocket/determinisme_moteurs.mjs [--strict]` (écart de la physique entre Node et les navigateurs de Playwright).
+* **Déploiement** : reconstruire et redéployer ce serveur AVANT la fusion du client Rocket en ligne (sinon le client se connecte à l'ARÈNE sur `/rocket` et reçoit `erreur{version}`, cf. spec § 11). Jamais `docker compose down -v`.
+* **Client Next** : l'URL du serveur Rocket est `NEXT_PUBLIC_ROCKET_WS_URL`, à défaut `NEXT_PUBLIC_FPS_WS_URL` (le chemin `/rocket` est ajouté), à défaut `ws://localhost:8787` en local et `wss://pdj-fps.toam.tech` en production : rien à configurer en prod. `e2e_rocket_en_ligne.mjs` règle les deux variables sur son serveur.
+* **Essais** : `node scripts/rocket/protocole_rocket.mjs` (sans navigateur), `node scripts/rocket/e2e_rocket_en_ligne.mjs` (deux Chromium, `E2E_RENDU=1` pour la 3D, `E2E_DUREE_S`, `E2E_LATENCE_MS`) et `node scripts/rocket/determinisme_moteurs.mjs` (spec § 10) ; jamais sur le port 8787,
+  avec `PDJ_FPS_POLICE=off` et `PDJ_FPS_ZOMBIES_PATROUILLE=off` pour ne pas dépendre des événements de l'arène.
+
 ## Tests de bout en bout
 
 Depuis la racine, Node 22, Playwright (`npm i --no-save playwright`). Les scripts lancent ce serveur sur un port libre (jamais 8787 : un onglet de développement ouvert sur le site
@@ -271,7 +308,7 @@ s'y reconnecterait), un `next dev` pointé dessus (`NEXT_PUBLIC_FPS_WS_URL`) et 
 
 ## Déploiement (VPS, Docker + Traefik)
 
-Le contexte de build est la **racine du dépôt** (le serveur regroupe `lib/fps`, `lib/agroparc3d`,
+Le contexte de build est la **racine du dépôt** (le serveur regroupe `lib/fps`, `lib/agroparc3d`, `lib/rocket`,
 `public/agroparc/scene.json` et `public/agroparc/cachettes.json`) :
 
 ```bash

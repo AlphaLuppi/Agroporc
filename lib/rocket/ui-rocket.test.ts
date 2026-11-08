@@ -10,6 +10,12 @@ import LobbyRocket from "../../app/components/rocket/LobbyRocket";
 import MenuPauseRocket from "../../app/components/rocket/MenuPauseRocket";
 import PanneauReglagesRocket from "../../app/components/rocket/PanneauReglagesRocket";
 import TableauRocket from "../../app/components/rocket/TableauRocket";
+import HudReseauRocket from "../../app/components/rocket/HudReseauRocket";
+import LobbyRocketEnLigne from "../../app/components/rocket/LobbyRocketEnLigne";
+import PanneauRocket from "../../app/components/rocket/PanneauRocket";
+import type { ActionsSalonRocket } from "../../app/components/rocket/useSalonRocket";
+import { appliquerConnexion, appliquerMessage, etatLobbyInitial, type EtatLobbyEnLigne } from "./reseau/lobby-en-ligne";
+import { REGLAGES_SALON_DEFAUT, type EtatSalon, type HudReseau, type JoueurSalon, type ResumeSalle } from "./reseau/protocole";
 
 /** Rendu serveur de l'interface de Rocket Muche (comme `lib/resto-badge.test.ts`) : rôles, radios natives, jauge, dialogues. */
 
@@ -316,5 +322,364 @@ describe("chargement : rien de lourd dans le premier chargement du menu", () => 
     for (const f of ["app/components/arene/ChoixMode.tsx", "lib/fps/protocole.ts"]) {
       expect(readFileSync(join(racine, f), "utf8").toLowerCase(), f).not.toContain("rocket");
     }
+  });
+});
+
+// ============================================================================================================================
+// Mode en ligne
+// ============================================================================================================================
+
+const jSalon = (id: number, equipe: "bleue" | "orange", over: Partial<JoueurSalon> = {}): JoueurSalon => ({ id, nom: `J${id}`, equipe, hote: id === 0, connecte: true, charge: false, ...over });
+const unSalon = (over: Partial<EtatSalon> = {}): EtatSalon => ({
+  code: "BCDF", phase: "salon", reglages: REGLAGES_SALON_DEFAUT(), joueurs: [jSalon(0, "bleue")], placesParEquipe: 1, lancable: false, raisonNonLancable: "Il manque un joueur.", ...over,
+});
+const ouvert = (): EtatLobbyEnLigne => appliquerConnexion(etatLobbyInitial(), "ouverte");
+/** état d'un joueur `moi` dans le salon `s` */
+const dansSalon = (s: EtatSalon, moi = 0): EtatLobbyEnLigne => appliquerMessage(appliquerMessage(ouvert(), { t: "bienvenue", v: 1, joueur: moi, maintenantMs: 0 }), { t: "salon", salon: s });
+const actions: ActionsSalonRocket = { creer: rien, rejoindre: rien, quitter: rien, choisirEquipe: rien, regler: rien, lancer: rien, retourSalon: rien, actualiser: rien, reessayer: rien };
+const ligneEnLigne = (etat: EtatLobbyEnLigne, over: Partial<Parameters<typeof LobbyRocketEnLigne>[0]> = {}) =>
+  renderToStaticMarkup(createElement(LobbyRocketEnLigne, {
+    etat, actions, nom: "Léa", surNom: rien, reglages: REGLAGES_SALON_DEFAUT(), surReglages: rien, surFermer: rien, tactile: false, manette: false, ...over,
+  }));
+const hudRes = (over: Partial<HudReseau> = {}): HudReseau => ({ etat: "ouverte", rttMs: 42, gigueMs: 3, qualite: "bonne", commandes: "actives", absents: [], revanche: null, ...over });
+
+describe("LobbyRocketEnLigne : sans salon", () => {
+  const partie = (code: string, over: Partial<ResumeSalle> = {}): ResumeSalle => ({ code, hote: "Max", format: "1v1", dureeS: 300, niveauBots: "pro", humains: 1, places: 2, ...over });
+
+  it("contrat DOM : Créer une partie, champ « Code de la partie » étiqueté, bouton « Rejoindre » exact", () => {
+    const html = ligneEnLigne(ouvert());
+    expect(html).toContain('aria-label="Rocket Muche en ligne"');
+    expect(html).toMatch(/<button[^>]*>Créer une partie<\/button>/);
+    expect(html).toMatch(/<label for="([^"]+)">Code de la partie<\/label>/);
+    const id = /<label for="([^"]+)">Code de la partie<\/label>/.exec(html)![1];
+    expect(html).toMatch(new RegExp(`<input[^>]*id="${id.replace(/[:]/g, "\\:")}"[^>]*maxLength="4"|<input[^>]*maxLength="4"[^>]*id="${id.replace(/[:]/g, "\\:")}"`));
+    expect(html).toMatch(/<button[^>]*type="submit"[^>]*>Rejoindre<\/button>/);
+  });
+  it("le nom de joueur est un champ étiqueté borné à 16", () => {
+    const html = ligneEnLigne(ouvert());
+    expect(html).toMatch(/<label for="[^"]+">Nom de joueur<\/label>/);
+    expect(html).toMatch(/maxLength="16"/);
+    expect(html).toContain('value="Léa"');
+  });
+  it("« Rejoindre » du champ est grisé tant que le code est incomplet ; les boutons de liste s'appellent « Rejoindre la partie ABCD »", () => {
+    const etat = appliquerMessage(ouvert(), { t: "liste", parties: [partie("TVWX"), partie("BCDF")] });
+    const html = ligneEnLigne(etat);
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*type="submit"[^>]*>Rejoindre<\/button>|<button[^>]*type="submit"[^>]*disabled=""[^>]*>Rejoindre<\/button>/);
+    expect(html).toContain('aria-label="Rejoindre la partie BCDF"');
+    expect(html).toContain('aria-label="Rejoindre la partie TVWX"');
+    // aucun bouton de la liste n'a pour nom accessible exactement « Rejoindre »
+    for (const m of html.matchAll(/<button[^>]*aria-label="([^"]+)"/g)) expect(m[1]).not.toBe("Rejoindre");
+    expect(html.indexOf("BCDF")).toBeLessThan(html.indexOf("TVWX"));
+    expect(html).toContain("Parties ouvertes");
+  });
+  it("la liste n'est pas dans une région vivante et chaque ligne a une clé stable", () => {
+    const etat = appliquerMessage(ouvert(), { t: "liste", parties: [partie("BCDF")] });
+    const html = ligneEnLigne(etat);
+    const liste = html.slice(html.indexOf('aria-labelledby'), html.indexOf("</section>", html.indexOf('aria-labelledby')));
+    expect(liste).not.toContain("aria-live");
+    expect(liste).not.toContain('role="status"');
+    expect(html).toContain('data-rocket-partie="BCDF"');
+  });
+  it("liste vide ou pas encore reçue : message neutre", () => {
+    expect(ligneEnLigne(ouvert())).toContain("Recherche des parties…");
+    expect(ligneEnLigne(appliquerMessage(ouvert(), { t: "liste", parties: [] }))).toContain("Aucune partie ouverte");
+  });
+  it("une partie pleine ne peut pas être rejointe", () => {
+    const html = ligneEnLigne(appliquerMessage(ouvert(), { t: "liste", parties: [partie("BCDF", { humains: 2 })] }));
+    expect(html).toMatch(/<button[^>]*aria-label="Rejoindre la partie BCDF"[^>]*disabled=""|<button[^>]*disabled=""[^>]*aria-label="Rejoindre la partie BCDF"/);
+  });
+  it("tactile sans manette : création et entrée bloquées, raison écrite", () => {
+    const html = ligneEnLigne(ouvert(), { tactile: true });
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Créer une partie/);
+    expect(html).toContain("clavier ou à la manette");
+    expect(ligneEnLigne(ouvert(), { tactile: true, manette: true })).not.toMatch(/<button[^>]*disabled=""[^>]*>Créer une partie/);
+  });
+  it("une demande en cours grise Créer", () => {
+    expect(ligneEnLigne({ ...ouvert(), attente: "creer" })).toMatch(/<button[^>]*disabled=""[^>]*>Créer une partie/);
+  });
+});
+
+describe("LobbyRocketEnLigne : états d'erreur", () => {
+  it("serveur injoignable : texte, alerte vocale pour le statut, bouton Réessayer", () => {
+    const html = ligneEnLigne(appliquerConnexion(etatLobbyInitial(), "fermee", "injoignable"));
+    expect(html).toContain("Serveur injoignable");
+    expect(html).toMatch(/<button[^>]*>Réessayer<\/button>/);
+    expect(html).not.toContain("Créer une partie");
+    expect(html).toMatch(/role="status"/);
+  });
+  it("version refusée : demande de recharger la page", () => {
+    const html = ligneEnLigne(appliquerConnexion(etatLobbyInitial(), "refusee", "version"));
+    expect(html).toContain("rechargez la page");
+    expect(html).toMatch(/<button[^>]*>Réessayer<\/button>/);
+  });
+  it("connexion en cours ou reconnexion : pas de bouton, texte d'attente", () => {
+    expect(ligneEnLigne(appliquerConnexion(etatLobbyInitial(), "connexion"))).toContain("Connexion au serveur…");
+    const re = ligneEnLigne(appliquerConnexion(etatLobbyInitial(), "reconnexion"));
+    expect(re).toContain("reconnexion");
+    expect(re).not.toContain("Réessayer");
+  });
+  it("code inconnu, salle pleine : message d'alerte du refus", () => {
+    let e = appliquerMessage(ouvert(), { t: "refus", action: "rejoindre", raison: "inconnue" });
+    expect(ligneEnLigne(e)).toMatch(/<p[^>]*role="alert"[^>]*>Aucune partie ne porte ce code\.<\/p>/);
+    e = appliquerMessage(ouvert(), { t: "refus", action: "rejoindre", raison: "pleine" });
+    expect(ligneEnLigne(e)).toContain("La partie est complète.");
+  });
+  it("le message d'information d'un salon refermé n'est pas une alerte", () => {
+    const e = appliquerMessage(dansSalon(unSalon()), { t: "salon", salon: null, raison: "expire" });
+    const html = ligneEnLigne(e);
+    expect(html).toContain("Le salon a été fermé");
+    expect(html).not.toContain('role="alert"');
+  });
+  it("l'erreur de lancement du jeu (WebGL) reste annoncée", () => {
+    expect(ligneEnLigne(ouvert(), { erreur: "WebGL indisponible" })).toMatch(/role="alert"[^>]*>WebGL indisponible/);
+  });
+});
+
+describe("LobbyRocketEnLigne : dans un salon", () => {
+  it("contrat DOM : code en grand, lignes de joueurs, Lancer la partie (hôte), radios de format", () => {
+    const html = ligneEnLigne(dansSalon(unSalon()));
+    expect(html).toMatch(/<strong[^>]*data-rocket-code=""[^>]*>BCDF<\/strong>/);
+    expect(html).toMatch(/data-rocket-joueur=""/);
+    expect((html.match(/data-rocket-joueur=""/g) ?? []).length).toBe(1);
+    expect(html).toMatch(/<button[^>]*>Lancer la partie<\/button>/);
+    const formats = radios(html, "format");
+    expect(formats).toHaveLength(3);
+    for (const f of ["1v1", "2v2", "3v3"]) expect(html).toContain(f);
+    expect(formats.filter((r) => r.includes("checked")).map((r) => /value="([^"]+)"/.exec(r)![1])).toEqual(["1v1"]);
+    expect(html).toContain("Copier le code");
+  });
+  it("code épelé pour les lecteurs d'écran, hors de l'élément du contrat (son texte reste le code seul)", () => {
+    const html = ligneEnLigne(dansSalon(unSalon()));
+    expect(html).toContain("épelé : B C D F");
+    expect(html).not.toMatch(/data-rocket-code=""[^>]*>[^<]*[ ,][^<]*</);
+  });
+  it("hôte seul : Lancer grisé avec sa raison, deux équipes, une place libre tenue par un bot", () => {
+    const html = ligneEnLigne(dansSalon(unSalon()));
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Lancer la partie<\/button>/);
+    expect(html).toContain("Il manque un joueur.");
+    expect(html).toContain("Les Trèfles");
+    expect(html).toContain("Les Tigres");
+    expect(html).toContain("Place libre · bot");
+    expect(html).toContain("Passer dans cette équipe");
+    expect(html).toContain("Vous contre 1 bot");
+    expect(html).toMatch(/<button[^>]*>Quitter le salon<\/button>/);
+  });
+  it("à deux : Lancer devient possible, « Vous contre 1 joueur »", () => {
+    const html = ligneEnLigne(dansSalon(unSalon({ joueurs: [jSalon(0, "bleue"), jSalon(1, "orange")], lancable: true, raisonNonLancable: undefined })));
+    expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*>Lancer la partie/);
+    expect(html).toContain("Vous contre 1 joueur");
+    expect((html.match(/data-rocket-joueur=""/g) ?? []).length).toBe(2);
+    expect(html).toContain(">vous<");
+    expect(html).toContain(">hôte<");
+  });
+  it("l'invité ne voit ni Lancer ni les radios : réglages en lecture seule et attente de l'hôte", () => {
+    const e = dansSalon(unSalon({ joueurs: [jSalon(0, "bleue"), jSalon(1, "orange")], lancable: true }), 1);
+    const html = ligneEnLigne(e);
+    expect(html).not.toMatch(/<button[^>]*>Lancer la partie<\/button>/);
+    expect(html).toContain("En attente de l&#x27;hôte");
+    expect(radios(html, "format")).toHaveLength(0);
+    expect(html).toContain("Réglages choisis par l&#x27;hôte : 1v1 · Pro · 5 min");
+    expect(html).toMatch(/<button[^>]*>Quitter le salon<\/button>/);
+  });
+  it("2v2 : places libres des deux camps et note sur les bots", () => {
+    const s = unSalon({ reglages: { ...REGLAGES_SALON_DEFAUT(), format: "2v2" }, placesParEquipe: 2 });
+    const html = ligneEnLigne(dansSalon(s));
+    expect((html.match(/Place libre · bot/g) ?? []).length).toBe(3);
+    expect(html).toContain("3 places libres seront tenues par des bots");
+  });
+  it("radios natives dans des fieldset, durée et niveau des bots, case de visibilité", () => {
+    const html = ligneEnLigne(dansSalon(unSalon()));
+    for (const l of ["Format", "Niveau des bots", "Durée"]) expect(html).toMatch(new RegExp(`<legend>${l}</legend>`));
+    expect(radios(html, "niveau")).toHaveLength(3);
+    expect(radios(html, "duree")).toHaveLength(4);
+    expect(html).toMatch(/<input[^>]*type="checkbox"[^>]*checked=""|<input[^>]*checked=""[^>]*type="checkbox"/);
+    expect(html).toContain("Visible dans la liste des parties ouvertes");
+  });
+  it("chargement : progression des joueurs prêts, pas de bouton Lancer", () => {
+    const s = unSalon({ phase: "chargement", joueurs: [jSalon(0, "bleue", { charge: true }), jSalon(1, "orange")], lancable: true });
+    const html = ligneEnLigne(dansSalon(s));
+    expect(html).toMatch(/role="status"[^>]*>Chargement… 1\/2 prêt</);
+    expect(html).not.toContain("Lancer la partie");
+    expect(html).toContain("data-rocket-code");
+  });
+  it("joueur déconnecté signalé", () => {
+    const html = ligneEnLigne(dansSalon(unSalon({ joueurs: [jSalon(0, "bleue"), jSalon(1, "orange", { connecte: false })] })));
+    expect(html).toContain("déconnecté");
+  });
+});
+
+describe("PanneauRocket", () => {
+  const enLigne = { etat: ouvert(), actions, nom: "Léa", surNom: rien, reglages: REGLAGES_SALON_DEFAUT(), surReglages: rien, surFermer: rien, tactile: false, manette: false };
+  const panneau = (mode: "local" | "ligne") => renderToStaticMarkup(createElement(PanneauRocket, { mode, surMode: rien, enLigne }, createElement("aside", { "data-lobby-local": "oui" }, "Lobby local")));
+
+  it("deux radios natives « Hors ligne » et « En ligne » ; la valeur courante est cochée", () => {
+    const html = panneau("local");
+    const r = radios(html, "mode");
+    expect(r).toHaveLength(2);
+    expect(html).toContain("Hors ligne");
+    expect(html).toContain("En ligne");
+    expect(r.filter((x) => x.includes("checked")).map((x) => /value="([^"]+)"/.exec(x)![1])).toEqual(["local"]);
+    expect(radios(panneau("ligne"), "mode").filter((x) => x.includes("checked")).map((x) => /value="([^"]+)"/.exec(x)![1])).toEqual(["ligne"]);
+  });
+  it("hors ligne : le lobby historique est rendu tel quel, au-dessous du commutateur", () => {
+    const html = panneau("local");
+    expect(html).toContain('data-lobby-local="oui"');
+    expect(html.indexOf("Hors ligne")).toBeLessThan(html.indexOf("data-lobby-local"));
+  });
+  it("le lobby historique n'est pas modifié : mêmes radios et même bouton Lancer qu'avant", () => {
+    const html = renderToStaticMarkup(createElement(PanneauRocket, { mode: "local", surMode: rien, enLigne }, createElement(LobbyRocket, {
+      config: DEFAUT_CONFIG(), surConfig: rien, reglages: REGLAGES_DEFAUT(), surReglages: rien, surLancer: rien, surFermer: rien, tactile: false, manette: false,
+    })));
+    expect(radios(html, "format")).toHaveLength(3);
+    expect(html).toMatch(/<button[^>]*>Lancer<span> · 2v2 · Pro · 5 min<\/span><\/button>/);
+  });
+});
+
+describe("HudReseauRocket", () => {
+  it("contrat DOM : [data-rocket-reseau] avec ping, état et commandes", () => {
+    const html = renderToStaticMarkup(createElement(HudReseauRocket, { reseau: hudRes({ rttMs: 41.6, commandes: "menu" }) }));
+    expect(html).toContain('data-rocket-reseau=""');
+    expect(html).toContain('data-ping="42"');
+    expect(html).toContain('data-etat="ouverte"');
+    expect(html).toContain('data-commandes="menu"');
+    expect(html).toContain("42 ms · Bonne");
+  });
+  it("la qualité a une forme en plus de la couleur", () => {
+    const f = (q: HudReseau["qualite"]) => renderToStaticMarkup(createElement(HudReseauRocket, { reseau: hudRes({ qualite: q }) }));
+    expect(f("bonne")).toContain("●●●");
+    expect(f("moyenne")).toContain("●●○");
+    expect(f("mauvaise")).toContain("●○○");
+  });
+  it("commandes suspendues : dites en texte, dans une région vivante polie", () => {
+    const html = renderToStaticMarkup(createElement(HudReseauRocket, { reseau: hudRes({ commandes: "masque" }) }));
+    expect(html).toContain("Commandes suspendues : onglet masqué");
+    expect(html).toMatch(/role="status" aria-live="polite"/);
+    expect(renderToStaticMarkup(createElement(HudReseauRocket, { reseau: hudRes() }))).not.toContain("Commandes suspendues");
+  });
+  it("reconnexion et connexion perdue annoncées sans ping", () => {
+    expect(renderToStaticMarkup(createElement(HudReseauRocket, { reseau: hudRes({ etat: "reconnexion" }) }))).toContain("Reconnexion…");
+    expect(renderToStaticMarkup(createElement(HudReseauRocket, { reseau: hudRes({ etat: "fermee" }) }))).toContain("Connexion perdue");
+  });
+  it("joueur coupé : bandeau avec son nom, compte à rebours muet pour les lecteurs d'écran", () => {
+    const html = renderToStaticMarkup(createElement(HudReseauRocket, { reseau: hudRes({ absents: [{ joueur: 1, nom: "Max", restantMs: 13_200 }] }) }));
+    expect(html).toContain("Max : connexion perdue");
+    expect(html).toMatch(/aria-hidden="true">, reprise possible dans 14 s</);
+  });
+  it("avant la première mesure : la pastille existe quand même", () => {
+    const html = renderToStaticMarkup(createElement(HudReseauRocket, { reseau: null }));
+    expect(html).toContain("data-rocket-reseau");
+    expect(html).toContain('data-etat="connexion"');
+  });
+});
+
+describe("HudRocket et fin de match en ligne", () => {
+  const enLigneProps = (over: Record<string, unknown> = {}) => ({ reseau: hudRes(), humains: 2, hote: true, surRetourSalon: rien, ...over });
+  const lignes = [ligne(0, "bleue", 100, "Léa"), ligne(1, "orange", 80, "Max"), ligne(2, "orange", 10, "Bot")].map((l) => ({ ...l, humain: l.id < 2 }));
+
+  it("hors ligne (aucune prop en ligne) : aucune pastille réseau, HUD inchangé", () => {
+    expect(hudHtml(hud())).not.toContain("data-rocket-reseau");
+  });
+  it("en ligne : la pastille réseau est montée", () => {
+    const html = hudHtml(hud(), { enLigne: enLigneProps(), moi: 0 });
+    expect(html).toContain("data-rocket-reseau");
+    expect(html).toContain("42 ms · Bonne");
+  });
+  it("« (vous) » suit l'id de ma voiture : avec deux humains, seul moi est désigné", () => {
+    const c = hud({ classement: lignes });
+    const pour = (moi: number) => hudHtml(c, { enLigne: enLigneProps(), moi });
+    const moi1 = pour(1);
+    expect((moi1.match(/\(vous\)/g) ?? []).length).toBe(1);
+    expect(moi1).toMatch(/Max \(vous\)/);
+    expect(moi1).not.toMatch(/Léa \(vous\)/);
+    expect(hudHtml(c)).toMatch(/Léa \(vous\)/);
+  });
+  it("menu pause en ligne : le jeu continue, pas de « Recommencer », « Quitter la partie »", () => {
+    const html = hudHtml(hud({ enPause: true }), { enLigne: enLigneProps({ reseau: hudRes({ commandes: "menu" }) }), moi: 0 });
+    expect(html).toContain("Le jeu continue en ligne. Vos commandes sont suspendues.");
+    expect(html).not.toMatch(/<button[^>]*>Recommencer<\/button>/);
+    expect(html).toMatch(/<button[^>]*>Quitter la partie<\/button>/);
+    expect(html).toMatch(/<button[^>]*>Reprendre<\/button>/);
+    expect(html).toMatch(/<button[^>]*>Réglages<\/button>/);
+    expect(html).toContain("data-commandes=\"menu\"");
+  });
+  it("menu pause hors ligne : inchangé (Recommencer, Quitter)", () => {
+    const html = hudHtml(hud({ enPause: true }));
+    expect(html).toMatch(/<button[^>]*>Recommencer<\/button>/);
+    expect(html).toMatch(/<button[^>]*>Quitter<\/button>/);
+    expect(html).not.toContain("Le jeu continue en ligne");
+  });
+  it("fin de match en ligne : Revanche, Retour au salon pour l'hôte, Quitter", () => {
+    const html = hudHtml(hud({ phase: "fini", resultat: resultat({ classement: lignes }) }), { enLigne: enLigneProps(), moi: 0 });
+    expect(html).toMatch(/<button[^>]*aria-pressed="false"[^>]*>Revanche/);
+    expect(html).toMatch(/<button[^>]*>Retour au salon<\/button>/);
+    expect(html).toMatch(/<button[^>]*>Quitter<\/button>/);
+    expect(html).not.toMatch(/<button[^>]*>Rejouer<\/button>/);
+  });
+  it("l'invité n'a pas « Retour au salon »", () => {
+    const html = hudHtml(hud({ phase: "fini", resultat: resultat({ classement: lignes }) }), { enLigne: enLigneProps({ hote: false }), moi: 1 });
+    expect(html).not.toContain("Retour au salon");
+    expect(html).toMatch(/<button[^>]*>Revanche/);
+  });
+  it("revanche : compte des votes, mon vote reconnu", () => {
+    const reseau = hudRes({ revanche: { votes: { 0: true }, restantMs: 30_000 } });
+    const html = hudHtml(hud({ phase: "fini", resultat: resultat({ classement: lignes }) }), { enLigne: enLigneProps({ reseau }), moi: 0 });
+    expect(html).toMatch(/<button[^>]*aria-pressed="true"[^>]*>Revanche/);
+    expect(html).toContain(" 1/2");
+    expect(html).toContain("Revanche demandée : 1/2 joueurs, 30 s pour décider.");
+    const autre = hudHtml(hud({ phase: "fini", resultat: resultat({ classement: lignes }) }), { enLigne: enLigneProps({ reseau }), moi: 1 });
+    expect(autre).toMatch(/<button[^>]*aria-pressed="false"[^>]*>Revanche/);
+    expect(autre).toContain("1/2 joueurs veulent une revanche, 30 s pour décider.");
+  });
+  it("l'issue est relue pour MON équipe : le résultat brut du serveur donne la victoire à l'orange", () => {
+    const brut = resultat({ vainqueur: "orange", equipeJoueur: "bleue", classement: lignes });
+    expect(hudHtml(hud({ phase: "fini", resultat: brut, equipeJoueur: "orange" }), { enLigne: enLigneProps(), moi: 1 })).toContain(">Victoire !</h2>");
+    expect(hudHtml(hud({ phase: "fini", resultat: brut, equipeJoueur: "bleue" }), { enLigne: enLigneProps(), moi: 0 })).toContain(">Défaite</h2>");
+  });
+  it("fin de match hors ligne : Rejouer et Quitter comme avant", () => {
+    const html = hudHtml(hud({ phase: "fini", resultat: resultat() }));
+    expect(html).toMatch(/<button[^>]*>Rejouer<\/button>/);
+    expect(html).not.toContain("Revanche");
+  });
+});
+
+describe("chargement : le mode en ligne n'entre pas dans le premier chargement du menu", () => {
+  const racine = join(__dirname, "..", "..");
+  const importsStatiques = (src: string): string[] =>
+    Array.from(src.matchAll(/^import\s+(?!type\b)[^;]*?from\s+["']([^"']+)["']/gm)).map((m) => m[1]);
+  /** seuls modules de lib/rocket/reseau/ importables statiquement par l'interface (liste blanche) */
+  const AUTORISES = ["lobby-en-ligne", "protocole"];
+  const reseauDe = (imports: string[]) => imports.filter((i) => /rocket\/reseau\//.test(i)).map((i) => i.replace(/^.*rocket\/reseau\//, ""));
+
+  it("Agroparc3D.tsx : de lib/rocket/reseau/ seulement lobby-en-ligne et protocole", () => {
+    const imports = importsStatiques(readFileSync(join(racine, "app/components/Agroparc3D.tsx"), "utf8"));
+    const reseau = reseauDe(imports);
+    expect(reseau.length).toBeGreaterThan(0);
+    for (const m of reseau) expect(AUTORISES, m).toContain(m);
+  });
+  it("les composants de app/components/rocket : même liste blanche, jamais le client, le codec, la prédiction ni la salle", () => {
+    const dossier = join(racine, "app/components/rocket");
+    for (const f of readdirSync(dossier).filter((x) => /\.(tsx?|ts)$/.test(x))) {
+      const src = readFileSync(join(dossier, f), "utf8");
+      for (const m of reseauDe(importsStatiques(src))) expect(AUTORISES, `${f} importe ${m}`).toContain(m);
+      for (const m of ["client", "serialisation", "salle", "registre", "horloge", "prediction", "monde-ligne", "limiteur", "validation", "outils-reseau"]) {
+        expect(importsStatiques(src).some((i) => i.endsWith(`reseau/${m}`)), `${f} : import statique de ${m}`).toBe(false);
+      }
+    }
+  });
+  it("le client réseau n'est chargé que par import() dans le hook", () => {
+    const hook = readFileSync(join(racine, "app/components/rocket/useSalonRocket.ts"), "utf8");
+    expect(hook).toContain('import("@/lib/rocket/reseau/client")');
+    expect(importsStatiques(hook).some((i) => i.includes("reseau/client"))).toBe(false);
+  });
+  it("le lobby en ligne passe par next/dynamic depuis PanneauRocket", () => {
+    const panneau = readFileSync(join(racine, "app/components/rocket/PanneauRocket.tsx"), "utf8");
+    expect(panneau).toContain("next/dynamic");
+    expect(panneau).toContain('import("./LobbyRocketEnLigne")');
+    expect(importsStatiques(panneau).some((i) => i.includes("LobbyRocketEnLigne"))).toBe(false);
+  });
+  it("jeu.ts reste le seul module qui importe le client réseau, le codec et la prédiction", () => {
+    const jeu = importsStatiques(readFileSync(join(racine, "lib/rocket/jeu.ts"), "utf8"));
+    expect(jeu.some((i) => i.endsWith("reseau/prediction"))).toBe(true);
+    expect(jeu.some((i) => i.endsWith("reseau/client"))).toBe(false);
   });
 });
