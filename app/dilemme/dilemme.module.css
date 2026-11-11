@@ -37,10 +37,24 @@
 .lienDuel:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* ── Identité ── */
-.votantLigne { min-height: 40px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 0.85rem; color: var(--text-secondary); }
+.identiteZone { min-height: 76px; display: flex; flex-direction: column; }
+.identite {
+  display: flex; align-items: center; gap: 12px; padding: 12px 14px;
+  border: 2px solid var(--accent); border-radius: var(--radius); background: var(--accent-soft);
+}
+.identiteTexte { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; margin: 0; }
+.identiteLibelle { font-size: 0.78rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-secondary); }
+.identiteNom { font-family: var(--font-heading); font-size: 1.3rem; font-weight: 700; line-height: 1.15; color: var(--text); overflow-wrap: anywhere; }
+.changer {
+  flex: none; min-height: 40px; padding: 0 14px; border: 1px solid var(--border-control); border-radius: var(--radius-sm);
+  background: var(--surface); color: var(--text); font: inherit; font-size: 0.85rem; font-weight: 700; cursor: pointer;
+}
+.changer:hover { border-color: var(--accent); color: var(--accent); }
+.changer:focus-visible, .annuler:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.retirer { margin: 0; display: flex; justify-content: center; }
 .qui {
   display: flex; flex-direction: column; gap: 10px; padding: 14px;
-  border: 1px solid var(--border-accent); border-radius: var(--radius); background: var(--surface);
+  border: 2px solid var(--accent); border-radius: var(--radius); background: var(--surface);
 }
 .qui h2 { margin: 0; font-family: var(--font-heading); font-size: 1.1rem; color: var(--text); }
 .qui p { margin: 0; font-size: 0.88rem; color: var(--text-secondary); }

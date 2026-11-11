@@ -384,10 +384,13 @@ export function dateIsoValide(s: unknown): s is string {
 }
 
 export type ValidationVote =
-  | { ok: true; votant: string; choix: Cote; jour: string | null }
+  | { ok: true; votant: string; choix: Cote | null; jour: string | null }
   | { ok: false; erreur: string };
 
-/** Corps d'un POST de vote → votant canonique, côté et jour (null = aujourd'hui). */
+/**
+ * Corps d'un POST de vote → votant canonique, côté et jour (null = aujourd'hui).
+ * `annuler: true` retire le vote du votant : `choix` vaut alors null et n'est pas lu.
+ */
 export function validerVote(corps: unknown): ValidationVote {
   if (!corps || typeof corps !== "object" || Array.isArray(corps)) return { ok: false, erreur: "Requête invalide." };
   const c = corps as Record<string, unknown>;
@@ -398,8 +401,12 @@ export function validerVote(corps: unknown): ValidationVote {
   const votant = canoniserVotant(brut);
   if (!votant) return inconnu;
 
-  const choix = typeof c.choix === "string" ? c.choix.trim().toLowerCase() : "";
-  if (choix !== "a" && choix !== "b") return { ok: false, erreur: "Choix invalide." };
+  let choix: Cote | null = null;
+  if (c.annuler !== true) {
+    const brutChoix = typeof c.choix === "string" ? c.choix.trim().toLowerCase() : "";
+    if (brutChoix !== "a" && brutChoix !== "b") return { ok: false, erreur: "Choix invalide." };
+    choix = brutChoix;
+  }
 
   let jour: string | null = null;
   if (c.jour !== undefined && c.jour !== null) {

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type Ref } from "react";
 import RestoBadge from "../components/RestoBadge";
-import SelecteurVotant, { GrilleVotants } from "../components/SelecteurVotant";
+import { AvatarPersonnage, GrilleVotants } from "../components/SelecteurVotant";
 import { useVotant } from "../components/useVotant";
 import ResultatsCote from "./ResultatsCote";
 import VisuelPlat from "./VisuelPlat";
@@ -76,10 +76,11 @@ function CarteDuel({
           aria-pressed={aVote}
           // aria-disabled et non disabled : un bouton désactivé perd le focus clavier (voter() ignore les clics en cours d'envoi).
           aria-disabled={enCours !== null || undefined}
+          title={aVote ? "Cliquer pour retirer ton vote" : undefined}
           onClick={() => onVoter(cote)}
         >
-          {aVote ? "Ton vote" : "Voter pour ce plat"}
-          <span className="sr-only"> : {plat.nom}</span>
+          {aVote ? "Ton vote ✓" : "Voter pour ce plat"}
+          <span className="sr-only"> : {plat.nom}{aVote ? " (appuyer pour retirer ton vote)" : ""}</span>
         </button>
       )}
     </article>
@@ -114,6 +115,7 @@ export default function DilemmeDuel({
   const [grille, setGrille] = useState(false);
   const [attente, setAttente] = useState<Cote | null>(null);
   const zoneQui = useRef<HTMLElement>(null);
+  const boutonChanger = useRef<HTMLButtonElement>(null);
   const boutons = useRef<Record<Cote, HTMLButtonElement | null>>({ a: null, b: null });
   // Bouton de vote qui a ouvert la grille « Qui es-tu ? » : il récupère le focus à sa fermeture.
   const retour = useRef<Cote | null>(null);
@@ -132,15 +134,17 @@ export default function DilemmeDuel({
     courant.current = { votant, jour: etat.jour, enCours };
   });
 
+  /** Vote pour `cote`, ou retire le vote de `nom` quand `cote` est null. */
   const envoyer = useCallback(
-    async (nom: string, cote: Cote) => {
-      setEnCours(cote);
+    async (nom: string, cote: Cote | null) => {
+      // Pendant une annulation, le bouton du vote retiré porte l'attente.
+      setEnCours(cote ?? etat.votes.find((v) => v.votant === nom)?.choix ?? "a");
       setErreur(null);
       try {
         const res = await fetch("/api/dilemme/vote", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ votant: nom, choix: cote, jour: etat.jour }),
+          body: JSON.stringify(cote ? { votant: nom, choix: cote, jour: etat.jour } : { votant: nom, annuler: true, jour: etat.jour }),
         });
         let corps: unknown = null;
         try {
@@ -152,7 +156,9 @@ export default function DilemmeDuel({
           setEtat(corps as EtatDuel);
           setVoirResultats(true);
         } else {
-          setErreur(messageErreur(corps, "Le vote n'a pas pu être enregistré. Réessaie dans un instant."));
+          setErreur(messageErreur(corps, cote
+            ? "Le vote n'a pas pu être enregistré. Réessaie dans un instant."
+            : "Le vote n'a pas pu être retiré. Réessaie dans un instant."));
           // Duel clos pendant que la page restait ouverte : on charge le nouveau duel.
           if (res.status === 409) router.refresh();
         }
@@ -162,11 +168,16 @@ export default function DilemmeDuel({
         setEnCours(null);
       }
     },
-    [etat.jour, router],
+    [etat.jour, etat.votes, router],
   );
 
   function voter(cote: Cote) {
-    if (!etat.ouvert || enCours || cote === monVote) return;
+    if (!etat.ouvert || enCours) return;
+    // Rappuyer sur « Ton vote » retire le vote.
+    if (votant && cote === monVote) {
+      void envoyer(votant, null);
+      return;
+    }
     if (!votant) {
       setAttente(cote);
       retour.current = cote;
@@ -184,10 +195,17 @@ export default function DilemmeDuel({
     if (enAttente && etat.ouvert) void envoyer(nom, enAttente);
   }
 
-  // La grille fermée (choix, Annuler) rend le focus au bouton de vote qui l'avait ouverte.
+  // La grille fermée (choix, Annuler) rend le focus au bouton qui l'avait ouverte : vote ou « Changer ».
+  const grilleOuverte = useRef(false);
   useEffect(() => {
-    if (grille || !retour.current) return;
-    boutons.current[retour.current]?.focus();
+    if (grille) {
+      grilleOuverte.current = true;
+      return;
+    }
+    if (!grilleOuverte.current) return;
+    grilleOuverte.current = false;
+    if (retour.current) boutons.current[retour.current]?.focus();
+    else boutonChanger.current?.focus();
     retour.current = null;
   }, [grille]);
 
@@ -195,7 +213,7 @@ export default function DilemmeDuel({
   useEffect(() => {
     if (!grille) return;
     const zone = zoneQui.current;
-    zone?.scrollIntoView({ block: "nearest" });
+    zone?.scrollIntoView({ block: "nearest", behavior: "smooth" });
     zone?.querySelector<HTMLElement>("button")?.focus({ preventScroll: true });
   }, [grille]);
 
@@ -240,13 +258,44 @@ export default function DilemmeDuel({
       </div>
 
       {etat.ouvert && (
-        // Ligne toujours réservée (40 px) : l'apparition du votant après l'hydratation ne décale pas les cartes.
-        <div className={styles.votantLigne}>
-          {votant && (
-            <>
-              <span>Je vote en tant que</span>
-              <SelecteurVotant votant={votant} onChoisir={choisirVotant} />
-            </>
+        // Place réservée dès le rendu serveur : le votant (localStorage) n'est connu qu'après l'hydratation.
+        <div className={styles.identiteZone}>
+          {pret && votant && !grille && (
+            <div className={styles.identite}>
+              <AvatarPersonnage nom={votant} size="lg" />
+              <p className={styles.identiteTexte}>
+                <span className={styles.identiteLibelle}>Tu votes en tant que</span>
+                <span className={styles.identiteNom}>{votant}</span>
+              </p>
+              <button
+                ref={boutonChanger}
+                type="button"
+                className={styles.changer}
+                onClick={() => { retour.current = null; setGrille(true); }}
+              >
+                Ce n&apos;est pas moi
+              </button>
+            </div>
+          )}
+          {pret && (grille || !votant) && (
+            <section ref={zoneQui} className={styles.qui} aria-labelledby="qui-titre">
+              <h2 id="qui-titre">Qui es-tu ?</h2>
+              <p>
+                {nomEnAttente ? (
+                  <>Choisis qui tu es pour voter pour <strong>{nomEnAttente}</strong>.</>
+                ) : votant ? (
+                  "Choisis ton personnage : ton vote du jour reste celui de chaque personnage."
+                ) : (
+                  "Choisis ton personnage avant de voter. Il est retenu sur cet appareil."
+                )}
+              </p>
+              <GrilleVotants votant={votant} onChoisir={choisirVotant} />
+              {grille && (
+                <button type="button" className={styles.annuler} onClick={() => { setGrille(false); setAttente(null); }}>
+                  Annuler
+                </button>
+              )}
+            </section>
           )}
         </div>
       )}
@@ -271,24 +320,15 @@ export default function DilemmeDuel({
         </div>
       )}
 
-      {erreur && <p className={styles.erreur} role="alert">{erreur}</p>}
-
-      {grille && (
-        <section ref={zoneQui} className={styles.qui} aria-labelledby="qui-titre">
-          <h2 id="qui-titre">Qui es-tu ?</h2>
-          <p>
-            {nomEnAttente ? (
-              <>Choisis qui tu es pour voter pour <strong>{nomEnAttente}</strong>.</>
-            ) : (
-              "Choisis qui tu es pour voter."
-            )}
-          </p>
-          <GrilleVotants votant={votant} onChoisir={choisirVotant} />
-          <button type="button" className={styles.annuler} onClick={() => { setGrille(false); setAttente(null); }}>
-            Annuler
+      {etat.ouvert && monVote && votant && (
+        <p className={styles.retirer}>
+          <button type="button" className={styles.lienBouton} aria-disabled={enCours !== null || undefined} onClick={() => { if (!enCours) void envoyer(votant, null); }}>
+            Retirer mon vote
           </button>
-        </section>
+        </p>
       )}
+
+      {erreur && <p className={styles.erreur} role="alert">{erreur}</p>}
 
       {!etat.ouvert && <p className={styles.info}>Ce duel est terminé : les votes sont fermés.</p>}
       {credit && <p className={styles.credit}>Image : {credit}</p>}
