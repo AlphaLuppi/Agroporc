@@ -5,7 +5,7 @@
  */
 import {
   creerDilemmeSiAbsent, getDilemme, getDuelsPasses, getLignesHistorique, getVotesDilemme, platImagesExistantes,
-  voterDilemme, type DilemmeLigne, type VoteDilemme,
+  voterDilemme, annulerVoteDilemme, type DilemmeLigne, type VoteDilemme,
 } from "./db";
 import {
   candidatsDuJour, choisirDuel, construireCatalogue, dateIsoValide, resumerVotes, validerVote,
@@ -246,12 +246,13 @@ export async function traiterVote(
   try {
     const ligne = await assurerDilemme(aujourdhui);
     if (!ligne) return { ok: false, status: 404, erreur: MSG_VIVIER, code: "vivier" };
-    await voterDilemme(aujourdhui, v.votant, v.choix);
+    if (v.choix) await voterDilemme(aujourdhui, v.votant, v.choix);
+    else await annulerVoteDilemme(aujourdhui, v.votant);
     const r = await lireEtatDuel(aujourdhui, v.votant, maintenant);
     if (!r.ok) {
       return r.status === 503 ? { ok: false, status: 503, erreur: "Vote indisponible pour le moment." } : r;
     }
-    // Le vote qui vient d'être posé fait foi, même si la relecture venait d'un réplica en retard.
+    // Le vote qui vient d'être posé (ou retiré) fait foi, même si la relecture venait d'un réplica en retard.
     return { ok: true, etat: { ...r.etat, monVote: v.choix } };
   } catch (e) {
     console.error("[dilemme] Vote :", e);

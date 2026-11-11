@@ -1603,6 +1603,12 @@ export async function creerDilemmeSiAbsent(d: DilemmeLigne): Promise<void> {
   `;
 }
 
+/** Retire le vote de `votant` pour le duel de `jour` (sans effet s'il n'avait pas voté). */
+export async function annulerVoteDilemme(jour: string, votant: string): Promise<void> {
+  await assurerTablesDilemme();
+  await sql`DELETE FROM pdj_dilemme_votes WHERE jour = ${jour}::date AND votant = ${votant}`;
+}
+
 /** Duels antérieurs à `avant` (exclu), du plus récent au plus ancien : entrée du tirage. */
 export async function getDuelsPasses(avant: string): Promise<{ jour: string; a_cle: string; b_cle: string }[]> {
   await assurerTablesDilemme();
