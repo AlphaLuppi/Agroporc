@@ -408,17 +408,18 @@ Détail par module (tout ce qui n'est pas dit ici est laissé à l'agent, dans l
 | dimensions du stade, cages, positions des plots, valeurs et recharges, coups d'envoi | [RL] |
 | gravité, vitesses max, accélération du gaz (courbe), frein, roule libre, boost (accélération, conso, 33,33 initial) | [RL] |
 | supersonique 2200 / 2100 | [RL] |
-| saut (impulsion, maintien 0,2 s, fenêtre 1,25 s) | [RL] |
+| saut (impulsion, maintien 0,2 s dont 0,025 s garantis à 62 %, fenêtre 1,25 s comptée depuis la FIN du premier saut, sans limite si l'on n'a pas sauté) | [RL] (RocketSim) |
 | air control (couples, amortissements, plafond 5,5 rad/s) | [RL] (formule de RL ; valeurs reprises d'une analyse communautaire) |
 | courbure du virage selon la vitesse | [RL] (table) ; modèle de pneu en lui-même [~] |
 | dérapage, redressement, collage sur les murs, alignement | [~] |
-| flip : impulsion, échelles de vitesse (1,0 / 1,9 / 2,5 × 16/15), rotation plafonnée à 5,5 rad/s, amortissement vertical sur tout le flip, verrou de tangage 0,95 s, stall | [RL] (valeurs de RocketSim) |
+| flip : impulsion, échelles de vitesse (1,0 / 1,9 / 2,5 × 16/15), couple du dodge (roulis 260, tangage 224 rad/s²) plafonné à 5,5 rad/s, annulation qui ne coupe que le tangage (speed flip), contrôle aérien seulement pendant l'annulation, amortissement vertical sur tout le flip, verrou de tangage 0,95 s, stall sans couple | [RL] (valeurs et logique de RocketSim) |
 | balle : rayon, masse, restitution, frottement, vitesses max | [RL] |
 | impulsion voiture ↔ balle (courbe, échelles 0,35 / 0,65), restitution 0, frottement 2 | [RL] ; inertie [~] |
 | bump et démolition | démolition [RL] (supersonique, 3 s) ; bump [RL] (courbes de RocketSim, pare-chocs avant) |
 | minuteur, prolongation, attente de la balle au sol | [RL] |
 | bots | original |
-| caméra (paramètres par défaut, ball cam) | [RL] pour les paramètres, [~] pour le lissage |
+| caméra (paramètres par défaut, ball cam rigide à horizon droit) | [RL] pour les paramètres et le principe, [~] pour les bornes de visée |
+| raccord de sol biseauté à côté des poteaux, rejeu du but vu du buteur | [~] |
 
 ## 14. Documentation à tenir à jour
 
@@ -431,5 +432,6 @@ Détail par module (tout ce qui n'est pas dit ici est laissé à l'agent, dans l
 - **Voiture** : demi-gravité de collage au plafond (sinon elle flotte puis décroche), frottement de Coulomb μ = 0,35 du corps contre le décor, flip reset ajouté dans `contactVoitureBalle` (`rouesSurLaBalle` exporté, aucun événement), une seule démolition retenue quand deux supersoniques se percutent, délai de bump par voiture.
 - **Match** : positions de coup d'envoi tirées au hasard (même permutation pour les deux équipes) ; tir cadré compté jusqu'à 45 m de la ligne (12 m pour un arrêt).
 - **Bots** : pas de speed flip ni de demi-flip ; le flip précoce du coup d'envoi (All-Star) est désactivé (`BOTS.activeFlipEnvoi`) depuis que le flip suit RocketSim : il fait perdre plus de temps qu'il n'en gagne.
+- **Retours du joueur (2026-11-11)** : (1) ball cam refaite (`camera.ts`) : suivi rigide de la droite voiture → balle (cap et élévation suivis à part, cap borné à 10 rad/s quand la balle passe au-dessus du toit), horizon toujours droit (haut du monde, même sur un mur), visée qui monte jusqu'à 78° pour une balle haute (`elevationViseeBalle` : la balle passe avant la voiture), plus de bascule quand la balle touche la voiture, secousses réduites ; (2) cages lisses : le raccord arrondi sol / mur du fond formait un aileron de 2,56 m dans le terrain de chaque côté de la cage ; il s'efface maintenant en biseau sur `BUT.longueurBiseau` = 6 m (`arene.ts` § 3 bis, même plan dans `biseauterCoque` du rendu), le mur tombe droit au poteau ; (3) saut et flip alignés sur RocketSim (table du § 13) : le speed flip existe (flip diagonal, annulation au manche, roulis Q / E) ; (4) rejeu du but (`rejeu-but.ts`) : la célébration passe de 4,5 à 1,25 s de jeu (2,5 s réelles au ralenti), puis le but est rejoué de derrière le buteur en ball cam (4,5 s avant, 0,9 s après au ralenti, Espace ou A pour passer), physique figée, avant le coup d'envoi ; (5) sons : saut et double saut identiques (le double saut ne monte plus dans l'aigu), flip en whoosh de bruit, moteur grave (46 à 132 Hz, sous-octave en triangle) au lieu des dents de scie à 260 Hz.
 - **Rendu** : pas de flash plein écran (pulsation des murs et du fond des cages, supprimée en mouvement réduit) ; lignes de 15 cm ; tableau d'affichage sur pieds au-dessus du Truck Muche.
 - **Intégration** : e2e `scripts/rocket/e2e_rocket.mjs` vert (9 étapes), captures dans `docs/medias/rocket/`.

@@ -62,7 +62,7 @@ class FauxContexte {
 function voiture(id: number, p: Vec3, cap = 0, equipe: "bleue" | "orange" = "bleue"): EtatVoiture {
   return {
     id, equipe, slot: 0, humain: id === 0, nom: `V${id}`, p, v: [0, 0, 0], w: [0, 0, 0], base: baseDepuisCap(cap), boost: 33, rouesContact: 4, normaleSurface: [0, 1, 0],
-    auSol: true, saut: { aSaute: false, temps: 0, tenue: false, secondUtilise: false, tempsEnLAir: 0 }, flip: { actif: false, temps: 0, dir: [0, 0], stall: false, verrouTangage: 0 },
+    auSol: true, saut: { aSaute: false, temps: 0, tenue: false, secondUtilise: false, tempsEnLAir: 0, depuisFinSaut: 0 }, flip: { actif: false, temps: 0, dir: [0, 0], stall: false, verrouTangage: 0 },
     redressement: { actif: false, temps: 0 }, supersonique: false, boostActif: false, boostDepuis: 0, derapage: false, demolie: false, reapparitionDans: 0, figee: false,
     dernierContactBalleTick: -1000, dernierBumpTick: -1000, sautPrecedent: false, stats: { buts: 0, passes: 0, arrets: 0, tirs: 0, demolitions: 0, demolie: 0, touches: 0, points: 0 },
   };
@@ -80,10 +80,11 @@ function monde(positions: Vec3[]): MondeRocket {
 const SIX: Vec3[] = [[0, 0.2, 0], [5, 0.2, 0], [15, 0.2, 10], [-30, 0.2, 5], [40, 0.2, 30], [-20, 0.2, -50]];
 
 describe("sons : décisions pures", () => {
-  it("la hauteur du moteur monte de 60 à 260 Hz avec la vitesse, plus haute sous boost", () => {
-    expect(frequenceMoteur(0, false)).toBeCloseTo(60, 9);
-    expect(frequenceMoteur(VOITURE.vitesseMax, false)).toBeCloseTo(260, 9);
-    expect(frequenceMoteur(30, false)).toBeCloseTo(260, 9);
+  it("la hauteur du moteur monte de 46 à 132 Hz avec la vitesse (un grondement grave), plus haute sous boost", () => {
+    expect(frequenceMoteur(0, false)).toBeCloseTo(46, 9);
+    expect(frequenceMoteur(VOITURE.vitesseMax, false)).toBeCloseTo(132, 9);
+    expect(frequenceMoteur(30, false)).toBeCloseTo(132, 9);
+    expect(frequenceMoteur(VOITURE.vitesseMax, true)).toBeLessThan(150);
     expect(frequenceMoteur(10, false)).toBeGreaterThan(frequenceMoteur(5, false));
     expect(frequenceMoteur(10, true)).toBeGreaterThan(frequenceMoteur(10, false));
     expect(coupureMoteur(20)).toBeGreaterThan(coupureMoteur(2));
@@ -177,6 +178,27 @@ describe("sons : synthèse WebAudio", () => {
     expect(c.compte("osc")).toBeGreaterThan(20);
     s.dispose();
   });
+  it("le double saut sonne exactement comme le saut : même hauteur, même volume (il ne monte plus dans l'aigu)", () => {
+    const s = creerSonsRocket();
+    s.activer();
+    const c = ctx();
+    const empreinte = (t: "saut" | "doubleSaut") => {
+      const n0 = c.noeuds.length;
+      s.evenement({ t, idVoiture: 0 }, 0);
+      const nv = c.noeuds.slice(n0);
+      return JSON.stringify(nv.map((x) => [x.genre, x.n.type, x.n.frequency.value, x.n.gain.pic]));
+    };
+    const saut = empreinte("saut");
+    expect(empreinte("doubleSaut")).toBe(saut);
+    // et dix sauts de suite restent identiques
+    for (let i = 0; i < 10; i++) expect(empreinte(i % 2 ? "saut" : "doubleSaut")).toBe(saut);
+    // aucune note aiguë dans un saut ni dans un flip : oscillateurs sous 200 Hz
+    const n0 = c.noeuds.length;
+    s.evenement({ t: "doubleSaut", idVoiture: 0 }, 0);
+    s.evenement({ t: "flip", idVoiture: 0, dir: [1, 0], stall: false }, 0);
+    for (const x of c.noeuds.slice(n0)) if (x.genre === "osc") expect(x.n.frequency.value).toBeLessThan(200);
+    s.dispose();
+  });
   it("les événements d'une autre voiture sont plus discrets que les miens", () => {
     const s = creerSonsRocket();
     s.activer();
@@ -211,7 +233,7 @@ describe("sons : synthèse WebAudio", () => {
     expect(c.noeuds.filter((x) => x.genre === "source" && x.n.demarre && !x.n.arrete)).toHaveLength(3);
     // la voiture du joueur est lancée : fréquence cible plus haute que l'arrêt
     const premier = c.noeuds.find((x) => x.genre === "osc")!;
-    expect(premier.n.frequency.value).toBeGreaterThan(200);
+    expect(premier.n.frequency.value).toBeGreaterThan(110);
     // un second appel ne crée pas de voix de plus
     s.maj(m, 0, 0.016);
     expect(c.noeuds.filter((x) => x.genre === "osc" && x.n.demarre && !x.n.arrete)).toHaveLength(6);

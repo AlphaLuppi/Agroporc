@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { CAMERA_DEFAUT, STADE, ENTREES_NULLES, type Arene, type EtatBalle, type EtatVoiture } from "./contrat";
 import {
-  ORBITE_BUT, ajouterSecousse, creerEtatCamera, fovVerticalDepuisHorizontal, majCamera, majCameraBut,
+  ORBITE_BUT, ajouterSecousse, creerEtatCamera, elevationViseeBalle, fovVerticalDepuisHorizontal, majCamera, majCameraBut,
 } from "./camera";
 import { baseDepuisCap, distance, dot, norme, normaliser, soustraire, type Vec3 } from "./vec";
 
@@ -24,7 +24,7 @@ function voiture(p: Vec3, cap = 0, extra: Partial<EtatVoiture> = {}): EtatVoitur
   return {
     id: 0, equipe: "bleue", slot: 0, humain: true, nom: "Moi", p, v: [0, 0, 0], w: [0, 0, 0], base: baseDepuisCap(cap), boost: 33, rouesContact: 4,
     normaleSurface: [0, 1, 0], auSol: true,
-    saut: { aSaute: false, temps: 0, tenue: false, secondUtilise: false, tempsEnLAir: 0 },
+    saut: { aSaute: false, temps: 0, tenue: false, secondUtilise: false, tempsEnLAir: 0, depuisFinSaut: 0 },
     flip: { actif: false, temps: 0, dir: [0, 0], stall: false, verrouTangage: 0 }, redressement: { actif: false, temps: 0 },
     supersonique: false, boostActif: false, boostDepuis: 0, derapage: false, demolie: false, reapparitionDans: 0, figee: false,
     dernierContactBalleTick: -1e9, dernierBumpTick: -1e9, sautPrecedent: false,
@@ -298,5 +298,106 @@ describe("sur le vrai stade (champ de distance de arene.ts)", () => {
       pires = Math.min(pires, vrai.sd(pose.position) - Math.min(0.05, vrai.sd(moi.p)));
     }
     expect(pires).toBeGreaterThan(-1e-6);
+  });
+});
+
+describe("ball cam façon Rocket League", () => {
+  const D2R = Math.PI / 180;
+  const bc = entree({ balleCam: true });
+  /** angle (rad) entre l'axe de visée et la direction caméra → point */
+  const ecartVisee = (pose: { position: Vec3; cible: Vec3 }, point: Vec3): number =>
+    Math.acos(Math.min(1, dot(normaliser(soustraire(pose.cible, pose.position)), normaliser(soustraire(point, pose.position)))));
+  const demiV = (fovVerticalDepuisHorizontal(110, 16 / 9) * D2R) / 2;
+
+  it("suit la balle sans traîner : une balle qui traverse le terrain à 30 m/s reste à moins de 6° de sa place", () => {
+    const moi = voiture([0, 0.17, 0], 0);
+    const balle = balleA([-20, 0.9, 25]);
+    const e = creerEtatCamera(moi, balle, true);
+    let pire = 0;
+    for (let i = 0; i < 80; i++) {
+      balle.p[0] += 30 / 60;
+      const pose = majCamera(e, CAMERA_DEFAUT, bc, moi, balle, arene, 1 / 60, 16 / 9, false);
+      // la balle garde la même place dans l'image : à la verticale du centre, jamais décalée sur le côté
+      const d = normaliser(soustraire(pose.cible, pose.position)), b = normaliser(soustraire(balle.p, pose.position));
+      const lateral = Math.abs(Math.atan2(d[0], d[2]) - Math.atan2(b[0], b[2]));
+      pire = Math.max(pire, lateral);
+    }
+    expect(pire).toBeLessThan(6 * D2R);
+  });
+
+  it("l'horizon reste droit sur un mur : le haut de la caméra est celui du monde", () => {
+    const base = { avant: [0, 0, 1] as Vec3, droite: [0, -1, 0] as Vec3, haut: [-1, 0, 0] as Vec3 };
+    const moi = voiture([STADE.demiLargeur - 0.17, 8, 0], 0, { base, normaleSurface: [-1, 0, 0] });
+    const { pose } = simuler(moi, balleA([0, 2, 20]), undefined, bc, 120);
+    expect(pose.haut[1]).toBeGreaterThan(0.999);
+    // alors qu'en car cam la caméra suit le mur
+    const car = simuler(moi, balleA([0, 2, 20]), undefined, entree(), 120);
+    expect(car.pose.haut[0]).toBeLessThan(-0.9);
+  });
+
+  it("balle haute : la visée monte, la balle reste dans l'image (elle était plafonnée à 16°)", () => {
+    const moi = voiture([0, 0.17, 0], 0);
+    for (const h of [6, 12, 18]) {
+      const balle = balleA([0, h, 8]);
+      const { pose } = simuler(moi, balle, creerEtatCamera(moi, balle, true), bc, 60);
+      expect(ecartVisee(pose, balle.p)).toBeLessThan(demiV - 8 * D2R);
+      // la caméra reste au-dessus du sol, derrière la voiture
+      expect(pose.position[1]).toBeGreaterThan(0.45);
+      expect(pose.position[2]).toBeLessThan(-0.5);
+    }
+  });
+
+  it("balle basse et lointaine : la voiture et la balle sont toutes deux à l'écran", () => {
+    const moi = voiture([0, 0.17, 0], 0);
+    const balle = balleA([10, 0.9, 30]);
+    const { pose } = simuler(moi, balle, creerEtatCamera(moi, balle, true), bc, 60);
+    expect(ecartVisee(pose, balle.p)).toBeLessThan(8 * D2R);
+    expect(ecartVisee(pose, moi.p)).toBeLessThan(demiV - 5 * D2R);
+  });
+
+  it("une balle collée à la voiture ne fait pas basculer la vue (dribble, touche)", () => {
+    const moi = voiture([0, 0.17, 0], 0);
+    const loin = balleA([15, 0.9, 5]);
+    const e = creerEtatCamera(moi, loin, true);
+    const a = simuler(moi, loin, e, bc, 60).pose;
+    // la balle se rapproche le long de la même droite jusqu'au pare-chocs
+    const pres = balleA([1.8, 0.9, 0.6]);
+    const b = simuler(moi, pres, e, bc, 60).pose;
+    const cap = (p: { position: Vec3; cible: Vec3 }) => Math.atan2(p.cible[0] - p.position[0], p.cible[2] - p.position[2]);
+    expect(Math.abs(cap(a) - cap(b))).toBeLessThan(3 * D2R);
+  });
+
+  it("balle à la verticale de la voiture : le cap ne s'affole pas", () => {
+    const moi = voiture([0, 0.17, 0], 0);
+    const balle = balleA([0.05, 6, 4]);
+    const e = creerEtatCamera(moi, balle, true);
+    let prec = simuler(moi, balle, e, bc, 30).pose;
+    let pire = 0;
+    // la balle passe au-dessus du toit en 0,25 s
+    for (let i = 0; i < 30; i++) {
+      balle.p[2] -= 8 / 30;
+      const pose = majCamera(e, CAMERA_DEFAUT, bc, moi, balle, arene, 1 / 60, 16 / 9, false);
+      pire = Math.max(pire, distance(pose.position, prec.position));
+      prec = pose;
+    }
+    // la caméra fait le tour de la voiture à vitesse bornée (10 rad/s) : jamais de saut d'un côté à l'autre (5,4 m)
+    expect(pire).toBeLessThan(0.5);
+  });
+
+  it("elevationViseeBalle : regarde la balle, garde la voiture tant que c'est possible, la balle d'abord sinon", () => {
+    const demi = 38 * D2R, angle = -4 * D2R, elVoiture = -12 * D2R;
+    // balle basse : on la regarde, décalée de l'angle de caméra
+    expect(elevationViseeBalle(0, elVoiture, demi, angle)).toBeCloseTo(angle, 6);
+    // balle un peu haute : la voiture reste en bas de l'image
+    const moyen = elevationViseeBalle(35 * D2R, elVoiture, demi, angle);
+    expect(moyen - elVoiture).toBeLessThanOrEqual(demi);
+    expect(35 * D2R - moyen).toBeLessThan(demi);
+    // balle au zénith : elle reste à l'écran, à plus de 10° du bord
+    const haut = elevationViseeBalle(70 * D2R, elVoiture, demi, angle);
+    expect(70 * D2R - haut).toBeLessThanOrEqual(demi - 10 * D2R);
+    // continue
+    for (let el = -60; el < 78; el += 0.5) {
+      expect(Math.abs(elevationViseeBalle((el + 0.5) * D2R, elVoiture, demi, angle) - elevationViseeBalle(el * D2R, elVoiture, demi, angle))).toBeLessThan(1 * D2R);
+    }
   });
 });

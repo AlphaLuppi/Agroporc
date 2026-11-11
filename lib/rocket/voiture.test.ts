@@ -210,24 +210,45 @@ describe("voiture : saut, double saut, flip", () => {
     expect(apex).toBeLessThan(1.1);
   });
 
-  it("double saut : possible 1,2 s après le décollage, refusé à 1,3 s", () => {
-    const essai = (delai: number) => {
+  it("double saut : la fenêtre de 1,25 s court depuis la FIN du premier saut (RL), pas depuis le décollage", () => {
+    const essai = (delaiApresSaut: number, maintien: number) => {
       const b = banc();
       b.duree(0.3);
-      for (let i = 0; i < 24; i++) b.pas({ saut: true }); // saut maintenu 0,2 s
-      const vz = (n: number) => { for (let i = 0; i < n; i++) b.pas(); };
-      vz(Math.round(delai / PAS_S) - 24);
+      for (let i = 0; i < maintien; i++) b.pas({ saut: true });
+      b.pas(); // bouton relâché : fin du saut
+      b.v.p[1] += 10; // assez haut pour rester en l'air pendant tout l'essai
+      b.suite(Math.round(delaiApresSaut / PAS_S) - 1);
       expect(b.v.auSol).toBe(false);
       const vAvant = b.v.v[1];
       b.pas({ saut: true });
       return { gain: b.v.v[1] - vAvant, evs: b.evs };
     };
-    const ok = essai(1.2);
-    expect(ok.evs.some((e) => e.t === "doubleSaut")).toBe(true);
-    expect(ok.gain).toBeGreaterThan(2.5);
-    const non = essai(1.3);
-    expect(non.evs.some((e) => e.t === "doubleSaut" || e.t === "flip")).toBe(false);
-    expect(non.gain).toBeLessThan(0.5);
+    for (const maintien of [2, 24]) {
+      const ok = essai(1.2, maintien);
+      expect(ok.evs.some((e) => e.t === "doubleSaut")).toBe(true);
+      expect(ok.gain).toBeGreaterThan(2.5);
+      const non = essai(1.3, maintien);
+      expect(non.evs.some((e) => e.t === "doubleSaut" || e.t === "flip")).toBe(false);
+      expect(non.gain).toBeLessThan(0.5);
+    }
+  });
+
+  it("sans premier saut (chute d'un mur, bump), le saut reste disponible sans limite de temps (RL)", () => {
+    const b = banc(0, 0, 0, 30);
+    b.duree(2);
+    expect(b.v.auSol).toBe(false);
+    b.pas({ saut: true, tangage: -1 });
+    expect(b.evs.some((e) => e.t === "flip")).toBe(true);
+  });
+
+  it("appui bref : la poussée du saut dure quand même 0,025 s à 62 % (RocketSim JUMP_MIN_TIME)", () => {
+    const b = banc();
+    b.duree(0.3);
+    b.pas({ saut: true });
+    b.suite(5);
+    // 2,917 d'impulsion + 3 pas de poussée à 62 % (≈ 0,23) - 6 pas de gravité (≈ 0,33) et le collage du premier pas
+    expect(b.v.v[1]).toBeGreaterThan(2.7);
+    expect(b.v.v[1]).toBeLessThan(2.95);
   });
 
   it("un seul second saut par envol, et la fenêtre se rouvre au sol", () => {
@@ -341,17 +362,35 @@ describe("voiture : saut, double saut, flip", () => {
     expect(rotation(1)).toBeCloseTo(rotation(0), 6);
   });
 
-  it("annulation du flip : tirer le manche à l'opposé arrête la rotation", () => {
+  it("annulation du flip : tirer le manche à l'opposé coupe le couple de tangage, la rotation s'amortit", () => {
     const rotation = (annuler: boolean) => {
       const b = banc(0, -30);
       b.v.v[2] = 10;
       b.pas({ saut: true }); b.suite(18);
       b.pas({ saut: true, tangage: -1 });
-      b.duree(0.35, { tangage: annuler ? 1 : -1 });
+      b.suite(2, { tangage: annuler ? 1 : -1 });
+      b.duree(0.6, { tangage: annuler ? 1 : -1 });
       return Math.acos(Math.max(-1, Math.min(1, b.v.base.haut[1])));
     };
     expect(rotation(false)).toBeGreaterThan(1.8);
-    expect(rotation(true)).toBeLessThan(1.5); // 0,15 s de rotation à 5,5 rad/s restent acquises
+    expect(rotation(true)).toBeLessThan(1.2);
+  });
+
+  it("speed flip : un flip en diagonale annulé garde son tonneau et perd son tangage (RL : seul le tangage s'annule)", () => {
+    const b = banc(0, -30, 0, 14);
+    b.v.v[2] = 20;
+    b.suite(6);
+    b.pas({ saut: true, tangage: -1, lacet: 1 }); // dodge avant droit
+    const f = b.evs.find((e) => e.t === "flip");
+    expect(f && f.t === "flip" && f.dir[0]).toBeCloseTo(Math.SQRT1_2, 5);
+    // impulsion : avant + côté
+    expect(dot(b.v.v, b.v.base.droite)).toBeGreaterThan(4);
+    b.duree(0.45, { tangage: 1 }); // manche tiré : annulation
+    const roulis = Math.abs(dot(b.v.w, b.v.base.avant)), tangage = Math.abs(dot(b.v.w, b.v.base.droite));
+    expect(roulis).toBeGreaterThan(5);
+    expect(tangage).toBeLessThan(1.5);
+    // le nez n'a pas plongé : la voiture file à plat en tonneau
+    expect(Math.abs(b.v.base.avant[1])).toBeLessThan(0.6);
   });
 
   it("le flip écrase la vitesse verticale", () => {
@@ -365,7 +404,7 @@ describe("voiture : saut, double saut, flip", () => {
     expect(Math.abs(b.v.v[1])).toBeLessThan(Math.abs(vy) * 0.6 + 1.8);
   });
 
-  it("stall : roulis + tangage au flip = rotation de roulis sans impulsion horizontale", () => {
+  it("stall : lacet et roulis opposés au flip = ni impulsion ni couple, la voiture reste pilotable (RL)", () => {
     const b = banc(0, -30);
     b.v.v[2] = 14;
     b.pas({ saut: true }); b.suite(18);
@@ -374,8 +413,11 @@ describe("voiture : saut, double saut, flip", () => {
     const f = b.evs.find((e) => e.t === "flip");
     expect(f && f.t === "flip" && f.stall).toBe(true);
     expect(b.v.v[2]).toBeCloseTo(vz, 1);
+    expect(b.v.flip.verrouTangage).toBeGreaterThan(0.9);
     b.duree(0.2);
-    expect(Math.abs(dot(b.v.w, b.v.base.avant))).toBeGreaterThan(5);
+    expect(Math.hypot(b.v.w[0], b.v.w[1], b.v.w[2])).toBeLessThan(0.5);
+    b.duree(0.2, { roulis: 1 });
+    expect(Math.abs(dot(b.v.w, b.v.base.avant))).toBeGreaterThan(3);
   });
 });
 

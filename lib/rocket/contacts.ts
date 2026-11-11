@@ -117,7 +117,8 @@ export const contactVoitureBalle: ContactVoitureBalle = (v, b, tick, _dt) => {
   if (!v.auSol && v.rouesContact === 0 && rouesSurLaBalle(v, b.p)) {
     v.saut.secondUtilise = false;
     v.saut.tempsEnLAir = 0;
-    v.saut.tenue = false;
+    // comme un retour au sol dans RL : le saut rendu n'a plus de limite de temps
+    v.saut.aSaute = false; v.saut.tenue = false; v.saut.depuisFinSaut = 0;
   }
   // centre de la balle dans le repère de la hitbox, point le plus proche de la boîte
   const lx = dx * avant[0] + dy * avant[1] + dz * avant[2];

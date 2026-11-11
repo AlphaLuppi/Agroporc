@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { BALLE, BUT, PLOT, PLOTS, STADE, VOITURE, type EtatPlot } from "./contrat";
+import { creerArene } from "./arene";
 import {
   FLOATS_ROUE, GABARITS, GRADINS, LARGEUR_LIGNE, LUM, PALETTE, PROFIL, PROFIL_OCTANE, RAYON_COQUE, RAYON_ROND_CENTRAL, SEUIL_BLOOM,
   ajusterLuminance, avancerRoulement, braquageRoues, construireNappe, couleurBalle, couleurEquipe, couleurMur, couleurPlot, couleurSol,
@@ -88,10 +89,28 @@ describe("contour et coque du stade", () => {
       px = x; pz = z;
     }
   });
+  /** zone du biseau à côté des poteaux : le raccord de sol y est raboté (cf. `biseauterCoque`) */
+  const dansBiseau = (x: number, y: number, z: number): boolean =>
+    y < RAYON_COQUE && Math.abs(z) > STADE.demiLongueur - RAYON_COQUE - 1e-6 && Math.abs(x) > BUT.demiLargeur - 1e-6 && Math.abs(x) < BUT.demiLargeur + BUT.longueurBiseau + 1e-6;
+  it("à côté des poteaux, la coque dessinée suit le biseau de la collision (écart < 20 cm) et ne dépasse plus au poteau", () => {
+    const arene = creerArene();
+    let vus = 0;
+    for (let i = 0; i < 4000; i++) {
+      const u = c.longueur * ((i * 0.6180339) % 1), v = PROFIL.quart * ((i * 0.4142135) % 1);
+      const p = pointCoque(c, u, v);
+      if (!dansBiseau(p[0], p[1], p[2]) || Math.abs(p[0]) < BUT.demiLargeur + 0.05) continue;
+      vus++;
+      expect(Math.abs(arene.sd(p))).toBeLessThan(0.2);
+      // à 50 cm du poteau, il ne reste du raccord qu'une vingtaine de centimètres : tout le reste est à plat sur le mur du fond
+      if (Math.abs(p[0]) < BUT.demiLargeur + 0.5) expect(p[1] < 0.25 || STADE.demiLongueur - Math.abs(p[2]) < 0.02).toBe(true);
+    }
+    expect(vus).toBeGreaterThan(40);
+  });
   it("les points de la coque sont sur la surface de la SDF (distance au prisme = r)", () => {
     for (let i = 0; i < 400; i++) {
       const u = (c.longueur * ((i * 0.6180339) % 1)), v = PROFIL.longueur * ((i * 0.4142135) % 1);
       const p = pointCoque(c, u, v);
+      if (dansBiseau(p[0], p[1], p[2])) continue;
       expect(distancePrisme(p[0], p[1], p[2])).toBeCloseTo(RAYON_COQUE, 6);
     }
   });
@@ -152,7 +171,7 @@ describe("contour et coque du stade", () => {
     expect(seg.length / 6).toBeLessThan(40000);
     for (let i = 0; i < seg.length; i += 97 * 3) {
       const d = distancePrisme(seg[i], seg[i + 1], seg[i + 2]);
-      expect(d).toBeCloseTo(RAYON_COQUE, 4);
+      if (!dansBiseau(seg[i], seg[i + 1], seg[i + 2])) expect(d).toBeCloseTo(RAYON_COQUE, 4);
       expect(dansOuvertureBut(seg[i], seg[i + 1], seg[i + 2])).toBe(false);
     }
   });

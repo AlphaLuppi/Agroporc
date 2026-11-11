@@ -196,9 +196,10 @@ describe("but, passes décisives et remise en jeu", () => {
     placerBalleDansLeBut(m, 1);
     avancer(m, 1);
     const reste = m.tempsRestant;
-    avancer(m, 200);
+    avancer(m, Math.round(MATCH.celebrationS / PAS_S) - 20);
+    expect(m.phase).toBe("but");
     expect(m.tempsRestant).toBe(reste);
-    avancer(m, 400);
+    avancer(m, 40);
     expect(m.phase).toBe("decompte");
     expect(m.plots.every((p) => p.actif)).toBe(true);
     expect(m.voitures[0].boost).toBeCloseTo(VOITURE.boostInitial, 6);

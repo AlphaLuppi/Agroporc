@@ -182,7 +182,7 @@ export const creerVoiture: CreerVoiture = (params) => ({
   rouesContact: 0,
   normaleSurface: null,
   auSol: false,
-  saut: { aSaute: false, temps: 0, tenue: false, secondUtilise: false, tempsEnLAir: 0 },
+  saut: { aSaute: false, temps: 0, tenue: false, secondUtilise: false, tempsEnLAir: 0, depuisFinSaut: 0 },
   flip: { actif: false, temps: 0, dir: [0, 0], stall: false, verrouTangage: 0 },
   redressement: { actif: false, temps: 0 },
   supersonique: false,
@@ -210,7 +210,7 @@ export const replacerVoiture: ReplacerVoiture = (v, p, cap, boost = VOITURE.boos
   v.base.avant = b.avant; v.base.droite = b.droite; v.base.haut = b.haut;
   v.boost = boost;
   v.rouesContact = 0; v.normaleSurface = null; v.auSol = false;
-  v.saut.aSaute = false; v.saut.temps = 0; v.saut.tenue = false; v.saut.secondUtilise = false; v.saut.tempsEnLAir = 0;
+  v.saut.aSaute = false; v.saut.temps = 0; v.saut.tenue = false; v.saut.secondUtilise = false; v.saut.tempsEnLAir = 0; v.saut.depuisFinSaut = 0;
   v.flip.actif = false; v.flip.temps = 0; v.flip.dir[0] = 0; v.flip.dir[1] = 0; v.flip.stall = false; v.flip.verrouTangage = 0;
   v.redressement.actif = false; v.redressement.temps = 0;
   v.supersonique = false; v.boostActif = false; v.boostDepuis = 0; v.derapage = false;
@@ -315,7 +315,8 @@ function demarrerFlip(v: EtatVoiture, e: Readonly<EntreesVoiture>, evs: Evenemen
   let dirA = -e.tangage, dirD = lacet + roulis;
   const stall = Math.abs(dirA) < FLIP.zoneMorteStall && Math.abs(dirD) < FLIP.zoneMorteStall;
   if (stall) {
-    dirA = 0; dirD = signe(roulis) || -signe(lacet) || 1;
+    // stall (RocketSim) : direction nulle, donc ni impulsion ni couple ; il reste le verrou de tangage et le contrôle aérien
+    dirA = 0; dirD = 0;
   } else {
     const n = Math.hypot(dirA, dirD) || 1;
     dirA /= n; dirD /= n;
@@ -336,8 +337,10 @@ function demarrerFlip(v: EtatVoiture, e: Readonly<EntreesVoiture>, evs: Evenemen
     const r = Math.min(Math.abs(vAvant) / VOITURE.vitesseMax, 1);
     const arriere = flipEstArriere(dirA, vAvant);
     const sA = arriere ? FLIP.echelleArriere : FLIP.echelleAvant;
-    const kA = dirA * (1 + (sA - 1) * r) * FLIP.impulsionBase * (arriere ? FLIP.facteurArriere : 1);
-    const kD = dirD * (1 + (FLIP.echelleCote - 1) * r) * FLIP.impulsionBase;
+    // RocketSim : une composante normalisée sous 0,1 ne pousse pas (la rotation, elle, garde la direction exacte)
+    const iA = Math.abs(dirA) < FLIP.zoneMorteStall ? 0 : dirA, iD = Math.abs(dirD) < FLIP.zoneMorteStall ? 0 : dirD;
+    const kA = iA * (1 + (sA - 1) * r) * FLIP.impulsionBase * (arriere ? FLIP.facteurArriere : 1);
+    const kD = iD * (1 + (FLIP.echelleCote - 1) * r) * FLIP.impulsionBase;
     v.v[0] += ax * kA + dx * kD;
     v.v[2] += az * kA + dz * kD;
   }
@@ -368,12 +371,14 @@ function gererAppuiSaut(a: Arene, v: EtatVoiture, e: Readonly<EntreesVoiture>, e
     // premier saut (les pas qui suivent le décollage ou un posé sur deux roues après un saut ne comptent pas)
     if (s.aSaute) return;
     v.v[0] += haut[0] * SAUT.impulsion; v.v[1] += haut[1] * SAUT.impulsion; v.v[2] += haut[2] * SAUT.impulsion;
-    s.aSaute = true; s.temps = 0; s.tenue = true;
+    s.aSaute = true; s.temps = 0; s.tenue = true; s.depuisFinSaut = 0;
     evs.push({ t: "saut", idVoiture: v.id });
     return;
   }
-  // en l'air : second saut ou flip dans la fenêtre de 1,25 s
-  if (s.secondUtilise || s.tempsEnLAir > SAUT.fenetreDoubleSautS) return;
+  // en l'air : second saut ou flip. Règle de RL (RocketSim `airTimeSinceJump`) : la fenêtre de 1,25 s ne court qu'APRÈS la fin du
+  // premier saut (bouton relâché ou 0,2 s de maintien) ; une voiture qui a quitté le sol SANS sauter (bord d'un mur, bump, flip reset)
+  // garde son saut aussi longtemps qu'elle reste en l'air
+  if (s.secondUtilise || (s.aSaute && s.depuisFinSaut > SAUT.fenetreDoubleSautS)) return;
   s.secondUtilise = true; s.tenue = false;
   if (Math.abs(e.tangage) + Math.abs(lacetEffectif(e)) + Math.abs(roulisEffectif(e)) >= FLIP.zoneMorte) {
     demarrerFlip(v, e, evs);
@@ -448,20 +453,31 @@ function conduire(v: EtatVoiture, e: Readonly<EntreesVoiture>, dt: number, brule
  */
 function controleAerien(v: EtatVoiture, e: Readonly<EntreesVoiture>, dt: number, brule: boolean): boolean {
   const { avant, droite, haut } = v.base;
-  const lacet = lacetEffectif(e), roulis = roulisEffectif(e);
-  const tang = v.flip.verrouTangage > 0 ? 0 : e.tangage;
-  const wa = dot3(v.w, avant), wd = dot3(v.w, droite), wh = dot3(v.w, haut);
-  const aa = AIR.coupleRoulis * roulis - AIR.amortRoulis * wa * (1 - Math.abs(roulis));
-  const ad = AIR.coupleTangage * tang - AIR.amortTangage * wd * (1 - Math.abs(tang));
-  const ah = -AIR.coupleLacet * lacet - AIR.amortLacet * wh * (1 - Math.abs(lacet));
-  v.w[0] += (avant[0] * aa + droite[0] * ad + haut[0] * ah) * dt;
-  v.w[1] += (avant[1] * aa + droite[1] * ad + haut[1] * ah) * dt;
-  v.w[2] += (avant[2] * aa + droite[2] * ad + haut[2] * ah) * dt;
-
-  let finFlip = false;
   const f = v.flip;
+  let finFlip = false;
+  // --- couple du dodge (RocketSim `_UpdateAirTorque`) : accélération angulaire dans le repère de la voiture, roulis 260 rad/s² ×
+  // composante latérale, tangage 224 rad/s² × composante avant. Le « flip cancel » (manche à l'opposé du flip) n'éteint QUE la part de
+  // tangage : un flip en diagonale annulé garde son tonneau, c'est le speed flip. Tant qu'on n'annule pas, ni contrôle ni amortissement.
+  let controle = true;
+  if (f.actif && !v.redressement.actif) {
+    const dirA = f.dir[0], dirD = f.dir[1];
+    if (dirA !== 0 || dirD !== 0) {
+      controle = false;
+      let echelle = 1;
+      if (dirA !== 0 && e.tangage !== 0 && signe(e.tangage) === signe(dirA)) {
+        echelle = 1 - Math.min(Math.abs(e.tangage), 1);
+        controle = true;
+      }
+      const ar = dirD * FLIP.coupleRoulis * dt, at = -dirA * FLIP.coupleTangage * echelle * dt;
+      v.w[0] += avant[0] * ar + droite[0] * at; v.w[1] += avant[1] * ar + droite[1] * at; v.w[2] += avant[2] * ar + droite[2] * at;
+    }
+    f.temps += dt;
+    if (f.temps >= FLIP.dureeRotationS) { finFlip = true; f.actif = false; }
+  }
+
   if (v.redressement.actif) {
     // redressement : l'axe (roulis ou tangage) qui ramène `haut` vers +Y
+    const roulis = roulisEffectif(e);
     const gR = droite[1], gP = -avant[1]; // composante Y de (avant × haut) et (droite × haut)
     let ax: Vec3 = avant, sg: number;
     if (Math.abs(gR) >= Math.abs(gP)) {
@@ -473,22 +489,20 @@ function controleAerien(v: EtatVoiture, e: Readonly<EntreesVoiture>, dt: number,
     v.w[0] = ax[0] * w; v.w[1] = ax[1] * w; v.w[2] = ax[2] * w;
     v.redressement.temps += dt;
     if (v.redressement.temps >= CONDUITE.redressement.dureeS) v.redressement.actif = false;
-  } else if (f.actif) {
-    // flip : rotation de consigne autour de l'axe (invariant du repère de la voiture), annulable en tirant à l'opposé
-    const dirA = f.dir[0], dirD = f.dir[1];
-    T_A[0] = avant[0] * dirD - droite[0] * dirA; T_A[1] = avant[1] * dirD - droite[1] * dirA; T_A[2] = avant[2] * dirD - droite[2] * dirA;
-    let cible = FLIP.vitesseAng;
-    if (f.temps >= FLIP.annulationMinS && dirA !== 0) cible *= 1 - Math.max(0, e.tangage * signe(dirA));
-    // fin du couple de dodge : la vitesse résiduelle n'est ni remise à zéro ni forcée, l'amortissement de l'air la consomme ensuite
-    if (f.temps + dt >= FLIP.dureeRotationS) finFlip = true;
-    const wax = dot3(v.w, T_A);
-    T_B[0] = v.w[0] - T_A[0] * wax; T_B[1] = v.w[1] - T_A[1] * wax; T_B[2] = v.w[2] - T_A[2] * wax;
-    const np = norme3(T_B);
-    const k = np > VOITURE.vitesseAngMax ? VOITURE.vitesseAngMax / np : 1;
-    v.w[0] = T_B[0] * k + T_A[0] * cible; v.w[1] = T_B[1] * k + T_A[1] * cible; v.w[2] = T_B[2] * k + T_A[2] * cible;
-    f.temps += dt;
-    if (finFlip) f.actif = false;
   } else {
+    if (controle) {
+      // contrôle aérien : couples + amortissements de RL ; le tangage est verrouillé pendant le flip et 0,3 s après
+      const lacet = lacetEffectif(e), roulis = roulisEffectif(e);
+      const tang = v.flip.verrouTangage > 0 ? 0 : e.tangage;
+      const wa = dot3(v.w, avant), wd = dot3(v.w, droite), wh = dot3(v.w, haut);
+      const aa = AIR.coupleRoulis * roulis - AIR.amortRoulis * wa * (1 - Math.abs(roulis));
+      const ad = AIR.coupleTangage * tang - AIR.amortTangage * wd * (1 - Math.abs(tang));
+      const ah = -AIR.coupleLacet * lacet - AIR.amortLacet * wh * (1 - Math.abs(lacet));
+      v.w[0] += (avant[0] * aa + droite[0] * ad + haut[0] * ah) * dt;
+      v.w[1] += (avant[1] * aa + droite[1] * ad + haut[1] * ah) * dt;
+      v.w[2] += (avant[2] * aa + droite[2] * ad + haut[2] * ah) * dt;
+    }
+    // plafond de RL : 5,5 rad/s, quelle que soit l'origine de la rotation (le couple du dodge l'atteint en trois pas)
     const nw = norme3(v.w);
     if (nw > VOITURE.vitesseAngMax) { const k = VOITURE.vitesseAngMax / nw; v.w[0] *= k; v.w[1] *= k; v.w[2] *= k; }
   }
@@ -636,13 +650,16 @@ export const pasVoiture: PasVoiture = (a, v, e0, dt, _tick) => {
   mesurerRoues(a, v);
   const etaitEnLAir = s.tempsEnLAir > AIR_MIN_ATTERRISSAGE_S;
   if (v.auSol && !(s.aSaute && s.temps < GARDE_DECOLLAGE_S)) {
-    s.aSaute = false; s.temps = 0; s.tenue = false; s.secondUtilise = false; s.tempsEnLAir = 0;
+    s.aSaute = false; s.temps = 0; s.tenue = false; s.secondUtilise = false; s.tempsEnLAir = 0; s.depuisFinSaut = 0;
     v.flip.actif = false; v.flip.temps = 0; v.flip.verrouTangage = 0;
     v.redressement.actif = false; v.redressement.temps = 0;
   } else if (v.rouesContact === 0) {
     s.tempsEnLAir += dt;
   }
-  if (s.aSaute) s.temps += dt;
+  if (s.aSaute) {
+    s.temps += dt;
+    if (!s.tenue) s.depuisFinSaut += dt;
+  }
   if (v.flip.verrouTangage > 0) v.flip.verrouTangage = Math.max(0, v.flip.verrouTangage - dt);
 
   // --- 2. boost, saut
@@ -677,9 +694,10 @@ export const pasVoiture: PasVoiture = (a, v, e0, dt, _tick) => {
 
   // maintien du saut
   if (s.tenue) {
-    if (e.saut && s.temps < SAUT.maintienMaxS) {
+    // RocketSim : la poussée dure au moins 0,025 s (à 62 %), puis tant que le bouton reste tenu, 0,2 s au plus
+    if (s.temps < SAUT.maintienMinS || (e.saut && s.temps < SAUT.maintienMaxS)) {
       const { haut } = v.base;
-      const k = SAUT.maintien * dt;
+      const k = SAUT.maintien * dt * (s.temps < SAUT.maintienMinS ? SAUT.echelleAvantMin : 1);
       v.v[0] += haut[0] * k; v.v[1] += haut[1] * k; v.v[2] += haut[2] * k;
     } else s.tenue = false;
   }

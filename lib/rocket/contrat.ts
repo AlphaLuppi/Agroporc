@@ -75,6 +75,13 @@ export const BUT = {
   seuilMarque: uu(5124.25),
   /** raccords des angles intérieurs de la cage (RL : cage à angles vifs, on adoucit à 0,25 m pour éviter les points durs de la SDF) */
   rayonInterieur: uu(25),
+  /**
+   * de part et d'autre de la cage, le raccord arrondi sol / mur du fond s'efface en biseau sur cette longueur (m) : au poteau le mur
+   * tombe droit sur le sol, rien ne dépasse dans le terrain, et on entre ou sort de la cage en longeant le mur sans rien accrocher
+   */
+  longueurBiseau: 6,
+  /** rayon de l'adoucissement des arêtes de ce biseau (m) */
+  rayonBiseau: 0.5,
 } as const;
 
 /** Vrai pour la balle ET pour tout test « dans le but » : seuil du centre de balle selon son rayon. */
@@ -181,7 +188,10 @@ export const SAUT = {
   /** accélération tant que le bouton reste appuyé : 14,5833 m/s² (RL : 1458,333 uu/s²), au plus 0,2 s (RL : 0,2 s) */
   maintien: uu(1458.333),
   maintienMaxS: 0.2,
-  /** fenêtre pour le second saut / dodge après avoir quitté le sol : 1,25 s (RL : 1,25 s) */
+  /** la poussée dure au moins 0,025 s même sur un appui bref, à 62 % pendant ce temps (RocketSim JUMP_MIN_TIME, JUMP_PRE_MIN_ACCEL_SCALE) */
+  maintienMinS: 0.025,
+  echelleAvantMin: 0.62,
+  /** fenêtre pour le second saut / dodge, comptée depuis la FIN du premier saut (RL : 1,25 s, `DOUBLEJUMP_MAX_DELAY`) ; sans premier saut, pas de limite */
   fenetreDoubleSautS: 1.25,
   /** double saut sans direction : même impulsion verticale que le premier, sans maintien */
   impulsionDoubleSaut: uu(291.667),
@@ -209,8 +219,9 @@ export const FLIP = {
    */
   dureeRotationS: 0.65,
   vitesseAng: 5.5,
-  /** à partir de cette durée le flip peut être annulé en poussant le manche à l'opposé (RL : 0,41 s sans annulation possible puis fondu) */
-  annulationMinS: 0.15,
+  /** accélération angulaire du dodge (rad/s²) : roulis × composante latérale, tangage × composante avant (RocketSim FLIP_TORQUE_X / _Y) */
+  coupleRoulis: 260,
+  coupleTangage: 224,
   /** verrouillage du tangage : tant que le temps écoulé depuis le début du flip est inférieur à 0,65 s + 0,3 s (RL : FLIP_TORQUE_TIME + FLIP_PITCHLOCK_EXTRA_TIME) */
   verrouTangageS: 0.65,
   verrouTangageExtraS: 0.3,
@@ -304,8 +315,11 @@ export const MATCH = {
   dureesPermisesS: [180, 300, 420, 600] as readonly number[],
   /** compte à rebours du coup d'envoi (3, 2, 1, GO) : voitures bloquées, balle posée au centre */
   decompteS: 3,
-  /** célébration d'un but : balle libre au ralenti (×0,5) pendant ce temps avant la remise en place */
-  celebrationS: 4.5,
+  /**
+   * célébration d'un but : balle libre au ralenti (×0,5) pendant ce temps de jeu (2,5 s réelles) avant la remise en place ; le jeu
+   * (`jeu.ts`) rejoue ensuite le but de derrière le buteur avant le coup d'envoi (`rejeu-but.ts`)
+   */
+  celebrationS: 1.25,
   ralentiCelebration: 0.5,
   /** une voiture démolie réapparaît après ce délai */
   reapparitionS: CONTACT_VOITURES.demoReapparitionS,
@@ -517,8 +531,10 @@ export interface EtatSaut {
   tenue: boolean;
   /** le second saut ou le flip a été dépensé */
   secondUtilise: boolean;
-  /** temps passé sans contact depuis le décollage (s) : fenêtre de 1,25 s pour le second saut */
+  /** temps passé sans contact depuis le décollage (s) */
   tempsEnLAir: number;
+  /** temps écoulé depuis la fin du premier saut (bouton relâché ou 0,2 s de maintien) : fenêtre de 1,25 s du second saut (RL) */
+  depuisFinSaut: number;
 }
 
 export interface EtatFlip {
@@ -878,6 +894,8 @@ export interface HudRocket {
   reapparitionDans: number;
   equipeJoueur: Equipe;
   balleCam: boolean;
+  /** rejeu d'un but en cours (vu de derrière `buteur`) ; absent ou null hors rejeu */
+  rejeu?: { buteur: string; equipe: Equipe } | null;
   banniere: BanniereHud | null;
   fil: LigneFil[];
   enPause: boolean;

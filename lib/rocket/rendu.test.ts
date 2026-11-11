@@ -28,7 +28,7 @@ const arenePlate: Arene = {
 function voiture(id: number, equipe: Equipe, slot: number, p: Vec3, cap: number, humain = false): EtatVoiture {
   return {
     id, equipe, slot, humain, nom: humain ? "Agent" : `Bot ${id}`, p, v: [0, 0, 0], w: [0, 0, 0], base: baseDepuisCap(cap), boost: 33, rouesContact: 4,
-    normaleSurface: [0, 1, 0], auSol: true, saut: { aSaute: false, temps: 0, tenue: false, secondUtilise: false, tempsEnLAir: 0 },
+    normaleSurface: [0, 1, 0], auSol: true, saut: { aSaute: false, temps: 0, tenue: false, secondUtilise: false, tempsEnLAir: 0, depuisFinSaut: 0 },
     flip: { actif: false, temps: 0, dir: [0, 0], stall: false, verrouTangage: 0 }, redressement: { actif: false, temps: 0 }, supersonique: false,
     boostActif: false, boostDepuis: 0, derapage: false, demolie: false, reapparitionDans: 0, figee: false, dernierContactBalleTick: -1000,
     dernierBumpTick: -1000, sautPrecedent: false,
@@ -312,7 +312,7 @@ describe("la coque dessinée est celle de la SDF", () => {
       const u = contour.longueur * ((i * 0.6180339) % 1), v = PROFIL.longueur * ((i * 0.4142135) % 1);
       const p = pointCoque(contour, u, v);
       // loin des cages (la réunion douce et le recouvrement de 1,2 m y changent la surface)
-      if (Math.abs(p[2]) > 44 && Math.abs(p[0]) < 14 && p[1] < 9) continue;
+      if (Math.abs(p[2]) > 44 && Math.abs(p[0]) < 18 && p[1] < 9) continue;
       testes++;
       expect(Math.abs(arene.sd(p))).toBeLessThan(0.01);
       expect(distancePrisme(p[0], p[1], p[2])).toBeCloseTo(RAYON_COQUE, 6);

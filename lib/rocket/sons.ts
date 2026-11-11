@@ -3,14 +3,14 @@
  * « Lancer »). Sans `AudioContext` (Node, navigateur ancien, politique de lecture) tout est un no-op silencieux : un son raté ne doit
  * jamais casser une partie.
  *
- * Moteurs : deux dents de scie désaccordées, filtrées, hauteur selon la vitesse (60 → 260 Hz), souffle de bruit filtré sous boost ; seules
+ * Moteurs : une dent de scie filtrée bas et sa sous-octave en triangle, hauteur selon la vitesse (46 → 132 Hz), souffle de bruit filtré sous boost ; seules
  * les 3 voitures les plus proches (la sienne d'abord) ont une voix. Le reste est de la synthèse à la demande (`ton`, `bruit`) : clacs de
- * balle proportionnels à la force, thud d'atterrissage, zip du flip, tintement des plots, explosion de démolition, klaxon de stade + foule +
+ * balle proportionnels à la force, thud d'atterrissage, souffle des sauts (le même pour le saut et le double saut), whoosh du flip, tintement des plots, explosion de démolition, klaxon de stade + foule +
  * feu d'artifice au but, bips du décompte, sifflet de fin, klaxon à deux tons du Truck Muche. Décisions (gains, hauteurs) : `sons-modele.ts`.
  */
 import { creerRng, tirer, type EvenementMatch, type MondeRocket, type SonsRocket } from "./contrat";
 import {
-  MOTEUR, NOTES, choisirMoteurs, coupureMoteur, distanceVoitures, dureeGraveChoc, echelleEvenement, frequenceGraveChoc, frequenceMoteur, gainChoc, gainMoteur,
+  MOTEUR, NOTES, SON_FLIP, SON_SAUT, choisirMoteurs, coupureMoteur, distanceVoitures, dureeGraveChoc, echelleEvenement, frequenceGraveChoc, frequenceMoteur, gainChoc, gainMoteur,
   gainSouffleBoost, panoramique, tempsFeuArtifice,
 } from "./sons-modele";
 import { clamp } from "./vec";
@@ -27,6 +27,9 @@ interface VoixMoteur {
   gainSouffle: GainNode;
   pan: StereoPannerNode | null;
 }
+
+/** Seconde voix du moteur : l'octave grave, désaccordée de 0,4 % (battement lent, son plus plein). */
+const RAPPORT_SOUS_OCTAVE = 0.502;
 
 /** Plafond de sons ponctuels simultanés : au-delà, les nouveaux sont ignorés plutôt que de saturer le processeur. */
 const VOIX_PONCTUELLES_MAX = 28;
@@ -179,8 +182,10 @@ export function creerSonsRocket(): SonsRocket {
         case "toucheBalle": {
           const k = echelleEvenement(e.idVoiture, idMoi) * (e.idVoiture === idMoi ? 1 : 0.55);
           const g = gainChoc(e.force) * 0.8 * k;
-          bruit(0.06, "highpass", 2600, 2600, g * 0.9);
+          // claquement mat (bruit médium bref) + corps grave : plus de « tic » aigu à chaque touche
+          bruit(0.05, "bandpass", 1500, 700, g * 0.8, 0, 0, 0.7);
           ton("sine", frequenceGraveChoc(e.force), frequenceGraveChoc(e.force) * 0.45, dureeGraveChoc(e.force), g);
+          ton("triangle", frequenceGraveChoc(e.force) * 2, frequenceGraveChoc(e.force), dureeGraveChoc(e.force) * 0.5, g * 0.35);
           break;
         }
         case "balleDecor": {
@@ -212,20 +217,24 @@ export function creerSonsRocket(): SonsRocket {
           break;
         case "plot": {
           const k = echelleEvenement(e.idVoiture, idMoi);
-          if (e.gros) { ton("triangle", 440, 880, 0.28, 0.2 * k); ton("triangle", 660, 1320, 0.28, 0.12 * k, 0.06); }
-          else ton("triangle", 880, 1320, 0.12, 0.13 * k);
+          if (e.gros) { ton("sine", 392, 784, 0.3, 0.17 * k); ton("sine", 587, 1175, 0.3, 0.09 * k, 0.07); bruit(0.25, "bandpass", 700, 2200, 0.05 * k); }
+          else ton("sine", 660, 880, 0.1, 0.09 * k);
           break;
         }
         case "saut":
-          ton("sine", 110, 70, 0.08, 0.18 * echelleEvenement(e.idVoiture, idMoi));
+        case "doubleSaut": {
+          // même son pour les deux sauts (cf. `SON_SAUT`)
+          const k = echelleEvenement(e.idVoiture, idMoi);
+          ton("sine", SON_SAUT.graveDe, SON_SAUT.graveA, SON_SAUT.dureeS, SON_SAUT.gain * k);
+          bruit(SON_SAUT.dureeS, "bandpass", SON_SAUT.souffleDe, SON_SAUT.souffleA, SON_SAUT.gain * 0.55 * k, 0, 0, 0.9);
           break;
-        case "doubleSaut":
-          ton("sine", 170, 95, 0.08, 0.18 * echelleEvenement(e.idVoiture, idMoi));
-          break;
+        }
         case "flip": {
           const k = echelleEvenement(e.idVoiture, idMoi);
-          ton("sawtooth", 950, 170, 0.22, 0.1 * k, 0, { type: "lowpass", f: 2400 });
-          bruit(0.2, "bandpass", 1600, 500, 0.08 * k);
+          // whoosh : le bruit monte (première moitié) puis retombe, par-dessus un coup sourd
+          bruit(SON_FLIP.dureeS * 0.45, "bandpass", SON_FLIP.de, SON_FLIP.sommet, SON_FLIP.gain * k, 0, 0, 1.1);
+          bruit(SON_FLIP.dureeS * 0.6, "bandpass", SON_FLIP.sommet, SON_FLIP.a, SON_FLIP.gain * 0.8 * k, SON_FLIP.dureeS * 0.4, 0, 1.1);
+          ton("sine", 130, 70, 0.12, 0.1 * k);
           break;
         }
         case "atterrissage": {
@@ -241,10 +250,10 @@ export function creerSonsRocket(): SonsRocket {
           break;
         }
         case "boost":
-          if (e.actif && e.idVoiture === idMoi) bruit(0.28, "highpass", 1400, 3600, 0.1);
+          if (e.actif && e.idVoiture === idMoi) { bruit(0.3, "bandpass", 500, 1500, 0.1, 0, 0, 0.7); ton("sine", 70, 110, 0.25, 0.08); }
           break;
         case "supersonique":
-          if (e.actif && e.idVoiture === idMoi) ton("sine", 280, 950, 0.4, 0.07);
+          if (e.actif && e.idVoiture === idMoi) { ton("sine", 90, 45, 0.5, 0.16); bruit(0.45, "bandpass", 300, 1200, 0.07, 0, 0, 0.6); }
           break;
         case "arret":
           ton("sine", 540, 380, 0.12, 0.14 * echelleEvenement(e.idVoiture, idMoi));
@@ -294,10 +303,11 @@ export function creerSonsRocket(): SonsRocket {
   function creerVoixMoteur(): VoixMoteur | null {
     if (!ctx || !maitre || !bruitTampon) return null;
     const o1 = ctx.createOscillator(), o2 = ctx.createOscillator();
-    o1.type = "sawtooth"; o2.type = "sawtooth";
-    o1.frequency.value = MOTEUR.fMin; o2.frequency.value = MOTEUR.fMin * 1.505;
+    // une dent de scie filtrée bas et son octave grave en triangle, à peine désaccordée : un grondement rond, sans quinte criarde
+    o1.type = "sawtooth"; o2.type = "triangle";
+    o1.frequency.value = MOTEUR.fMin; o2.frequency.value = MOTEUR.fMin * RAPPORT_SOUS_OCTAVE;
     const filtre = ctx.createBiquadFilter();
-    filtre.type = "lowpass"; filtre.frequency.value = 300; filtre.Q.value = 1.2;
+    filtre.type = "lowpass"; filtre.frequency.value = 220; filtre.Q.value = 0.7;
     const gain = ctx.createGain();
     gain.gain.value = 0;
     o1.connect(filtre); o2.connect(filtre); filtre.connect(gain);
@@ -307,7 +317,7 @@ export function creerSonsRocket(): SonsRocket {
     const souffle = ctx.createBufferSource();
     souffle.buffer = bruitTampon; souffle.loop = true;
     const bp = ctx.createBiquadFilter();
-    bp.type = "bandpass"; bp.frequency.value = 1900; bp.Q.value = 0.7;
+    bp.type = "bandpass"; bp.frequency.value = 850; bp.Q.value = 0.5;
     const gainSouffle = ctx.createGain();
     gainSouffle.gain.value = 0;
     souffle.connect(bp); bp.connect(gainSouffle);
@@ -337,9 +347,9 @@ export function creerSonsRocket(): SonsRocket {
         const d = moi ? distanceVoitures(moi, car) : 0;
         const estMoi = id === idMoi;
         const f = frequenceMoteur(vit, brule);
-        voix.o1.frequency.setTargetAtTime(f, t, 0.04);
-        voix.o2.frequency.setTargetAtTime(f * 1.505, t, 0.04);
-        voix.filtre.frequency.setTargetAtTime(coupureMoteur(vit) * (brule ? 1.3 : 1), t, 0.06);
+        voix.o1.frequency.setTargetAtTime(f, t, 0.07);
+        voix.o2.frequency.setTargetAtTime(f * RAPPORT_SOUS_OCTAVE, t, 0.04);
+        voix.filtre.frequency.setTargetAtTime(coupureMoteur(vit) * (brule ? 1.2 : 1), t, 0.06);
         voix.gain.gain.setTargetAtTime(gainMoteur(d, estMoi, brule, vit), t, 0.06);
         voix.gainSouffle.gain.setTargetAtTime(brule ? gainSouffleBoost(d, estMoi) : 0, t, 0.03);
         if (voix.pan && moi && !estMoi) voix.pan.pan.setTargetAtTime(panoramique(moi, car), t, 0.08);
