@@ -18,6 +18,7 @@ export function ClientScripts() {
       themeBtns.forEach((b) => {
         const isActive = b.dataset.theme === theme;
         b.classList.toggle("active", isActive);
+        b.setAttribute("aria-pressed", String(isActive));
         b.style.background = isActive ? "var(--accent)" : "transparent";
         b.style.color = isActive ? "var(--accent-text)" : "var(--text-muted)";
         b.style.boxShadow = isActive ? "0 1px 4px rgba(0,0,0,0.2)" : "none";
@@ -50,7 +51,16 @@ export function ClientScripts() {
         a.classList.add("active");
         a.style.color = "var(--accent)";
         a.style.background = "var(--accent-glow)";
+        a.setAttribute("aria-current", "page");
+      } else {
+        a.removeAttribute("aria-current");
       }
+    });
+    // Un menu déroulant « Plus » est marqué actif quand la page courante est dans son panneau
+    document.querySelectorAll<HTMLElement>("[data-menu-groupe]").forEach((groupe) => {
+      groupe
+        .querySelector("[data-menu-btn]")
+        ?.toggleAttribute("data-actif", !!groupe.querySelector("a.active"));
     });
 
     // Pendant la tache d'encre, les clics arrivent sur <html> : on les
@@ -66,12 +76,16 @@ export function ClientScripts() {
     // Mobile burger menu
     const cleanupMobileMenu = initMobileMenu();
 
+    // Menus déroulants du bureau (« Plus », apparence)
+    const cleanupMenus = initMenusDeroulants();
+
     // ── Cart / Panier ────────────────────────────────────────────────────────
     const cleanupCart = initCart();
 
     return () => {
       document.removeEventListener("click", onClicPendantEncre);
       cleanupMobileMenu?.();
+      cleanupMenus();
       cleanupCart();
     };
   }, [pathname]);
@@ -116,6 +130,75 @@ function initMobileMenu(): (() => void) | undefined {
 
   return () => {
     document.removeEventListener("click", onDocClick);
+  };
+}
+
+// ── Menus déroulants du bureau (disclosures) ─────────────────────────────────
+
+function initMenusDeroulants(): () => void {
+  const groupes = Array.from(document.querySelectorAll<HTMLElement>("[data-menu-groupe]"));
+  const entrees = groupes.flatMap((groupe) => {
+    const btn = groupe.querySelector<HTMLButtonElement>("[data-menu-btn]");
+    const panneau = document.getElementById(btn?.getAttribute("aria-controls") ?? "");
+    return btn && panneau ? [{ groupe, btn, panneau }] : [];
+  });
+  if (entrees.length === 0) return () => {};
+
+  const setOpen = (cible: (typeof entrees)[number] | null, ouvert: boolean) => {
+    entrees.forEach((e) => {
+      const ouvre = ouvert && e === cible;
+      e.panneau.classList.toggle("hidden", !ouvre);
+      e.btn.setAttribute("aria-expanded", ouvre ? "true" : "false");
+    });
+  };
+  const toutFermer = () => setOpen(null, false);
+  const unOuvert = () => entrees.some((e) => !e.panneau.classList.contains("hidden"));
+
+  toutFermer();
+
+  const ecouteurs: Array<[EventTarget, string, EventListener]> = [];
+  const ecouter = (cible: EventTarget, type: string, fn: EventListener) => {
+    cible.addEventListener(type, fn);
+    ecouteurs.push([cible, type, fn]);
+  };
+
+  entrees.forEach((entree) => {
+    const { groupe, btn, panneau } = entree;
+    ecouter(btn, "click", () => setOpen(entree, panneau.classList.contains("hidden")));
+    ecouter(groupe, "focusout", (ev) => {
+      const vers = (ev as FocusEvent).relatedTarget as Node | null;
+      if (vers && !groupe.contains(vers)) setOpen(entree, false);
+    });
+    ecouter(panneau, "click", (ev) => {
+      const t = ev.target as Element;
+      if (t.closest("a")) {
+        toutFermer();
+      } else if (t.closest(".theme-btn")) {
+        // Après btn.onclick : l'encre a déjà lu le rectangle du bouton cliqué.
+        toutFermer();
+        btn.focus();
+      }
+    });
+  });
+
+  ecouter(document, "click", (ev) => {
+    const t = ev.target as Node;
+    if (!entrees.some((e) => e.groupe.contains(t))) toutFermer();
+  });
+  ecouter(document, "keydown", (ev) => {
+    const k = ev as KeyboardEvent;
+    if (k.key !== "Escape" || k.defaultPrevented || !unOuvert()) return;
+    const dedans = entrees.find((e) => e.groupe.contains(document.activeElement));
+    toutFermer();
+    dedans?.btn.focus();
+  });
+
+  // Passage sous / au-dessus de xl : on ne rouvre jamais un menu resté ouvert.
+  const mq = window.matchMedia("(min-width: 1280px)");
+  ecouter(mq, "change", toutFermer);
+
+  return () => {
+    ecouteurs.forEach(([cible, type, fn]) => cible.removeEventListener(type, fn));
   };
 }
 
