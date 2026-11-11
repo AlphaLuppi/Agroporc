@@ -53,6 +53,10 @@ vi.mock("./db", () => ({
     m.set(votant, { choix, n: ++base.etat.n });
     base.etat.votes.set(jour, m);
   }),
+  annulerVoteDilemme: vi.fn(async (jour: string, votant: string) => {
+    base.verifier();
+    base.etat.votes.get(jour)?.delete(votant);
+  }),
   platImagesExistantes: vi.fn(async (cles: string[]) => {
     base.verifier();
     return new Map(cles.filter((c) => base.etat.images.has(c)).map((c) => [c, base.etat.images.get(c)!]));
@@ -289,6 +293,17 @@ describe("traiterVote", () => {
     const r = await traiterVote({ votant: "THOMAS", choix: "B" }, "1.1.1.1", undefined, limiteurs());
     expect(r.ok && !("factice" in r) && r.etat.voix).toEqual({ a: 0, b: 1 });
     expect(base.etat.votes.get(AUJOURDHUI)!.size).toBe(1);
+  });
+  it("annule un vote : la ligne disparaît et monVote revient à null", async () => {
+    await traiterVote(corps, "1.1.1.1", undefined, limiteurs());
+    const r = await traiterVote({ votant: "thomas", annuler: true }, "1.1.1.1", undefined, limiteurs());
+    expect(r.ok && !("factice" in r) && r.etat.monVote).toBeNull();
+    expect(r.ok && !("factice" in r) && r.etat.voix).toEqual({ a: 0, b: 0 });
+    expect(base.etat.votes.get(AUJOURDHUI)!.size).toBe(0);
+    expect(db.annulerVoteDilemme).toHaveBeenCalledWith(AUJOURDHUI, "Thomas");
+  });
+  it("refuse d'annuler un vote d'un duel clos", async () => {
+    expect(await traiterVote({ votant: "Thomas", annuler: true, jour: "2026-11-01" }, "1.1.1.1", undefined, limiteurs())).toMatchObject({ status: 409, code: "clos" });
   });
   it("est idempotent", async () => {
     const l = limiteurs();

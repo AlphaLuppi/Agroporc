@@ -466,6 +466,12 @@ describe("validerVote", () => {
     expect(validerVote({ votant: "Gab", choix: 1 })).toEqual({ ok: false, erreur: "Choix invalide." });
     expect(validerVote({ votant: "Gab" })).toEqual({ ok: false, erreur: "Choix invalide." });
   });
+  it("annuler: true retire le vote sans lire choix, annuler non booléen n'annule pas", () => {
+    expect(validerVote({ votant: "thomas", annuler: true })).toEqual({ ok: true, votant: "Thomas", choix: null, jour: null });
+    expect(validerVote({ votant: "Gab", annuler: true, choix: "z" })).toMatchObject({ ok: true, choix: null });
+    expect(validerVote({ votant: "Gab", annuler: "oui" })).toEqual({ ok: false, erreur: "Choix invalide." });
+    expect(validerVote({ votant: "Zorglub", annuler: true })).toMatchObject({ ok: false });
+  });
   it("traite jour absent, null, invalide et valide", () => {
     expect(validerVote({ votant: "Gab", choix: "a", jour: null })).toMatchObject({ jour: null });
     expect(validerVote({ votant: "Gab", choix: "a", jour: "2026-11-10" })).toMatchObject({ jour: "2026-11-10" });

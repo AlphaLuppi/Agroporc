@@ -9,7 +9,10 @@ const TAILLE_MAX = 1024;
 
 const invalide = () => Response.json({ erreur: "Requête invalide." }, { status: 400, headers: ENTETES });
 
-/** Vote `{ votant, choix: "a" | "b", jour?, website? }` (1 Ko au plus) ; rend l'état du duel mis à jour. */
+/**
+ * Vote `{ votant, choix: "a" | "b", jour?, website? }`, ou annulation `{ votant, annuler: true, jour? }`
+ * (1 Ko au plus) ; rend l'état du duel mis à jour.
+ */
 export async function POST(request: Request) {
   const annonce = Number(request.headers.get("content-length"));
   if (Number.isFinite(annonce) && annonce > TAILLE_MAX) return invalide();
