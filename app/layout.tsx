@@ -58,6 +58,9 @@ export default function RootLayout({
                 <Link href="/recettes" className="whitespace-nowrap text-[var(--text-secondary)] no-underline text-sm font-medium px-1.5 lg:px-3 py-2 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
                   Recettes
                 </Link>
+                <Link href="/dilemme" className="whitespace-nowrap text-[var(--text-secondary)] no-underline text-sm font-medium px-1.5 lg:px-3 py-2 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
+                  Dilemme
+                </Link>
                 <Link href="/idees" className="whitespace-nowrap text-[var(--text-secondary)] no-underline text-sm font-medium px-1.5 lg:px-3 py-2 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
                   Idées
                 </Link>
@@ -192,6 +195,9 @@ export default function RootLayout({
               </Link>
               <Link href="/recettes" className="text-[var(--text-secondary)] no-underline text-sm font-medium px-3 py-2.5 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
                 Recettes
+              </Link>
+              <Link href="/dilemme" className="text-[var(--text-secondary)] no-underline text-sm font-medium px-3 py-2.5 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
+                Dilemme
               </Link>
               <Link href="/idees" className="text-[var(--text-secondary)] no-underline text-sm font-medium px-3 py-2.5 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
                 Idées

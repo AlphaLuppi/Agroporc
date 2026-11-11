@@ -1494,3 +1494,150 @@ export async function ajouterTigreScore(s: { pseudo: string; score: number; tigr
   `;
   return Number(rang.rows[0].devant) + 1;
 }
+
+// --- Dilemme du jour (/dilemme) ---
+// Un duel par jour calendaire, figé à la première demande (pdj_dilemmes), et un vote par
+// personne et par jour (pdj_dilemme_votes). Pas de clé étrangère (convention des tables pdj_*).
+// Mêmes définitions dans lib/migrate.mjs. Dates toujours lues en `jour::text` : `pg` renvoie sinon
+// un `Date` décalé par le fuseau.
+
+/** Une ligne de l'historique des plats servis (projection légère de `pdj_entries`). */
+export interface LigneHistorique {
+  date: string;
+  restaurant: string;
+  plat: string | string[];
+  prix: string | null;
+  note: number | null;
+  note_goulaf: number | null;
+  options: { plat?: string | null; note?: number | null; note_goulaf?: number | null }[] | null;
+}
+
+export interface DilemmeLigne {
+  jour: string;
+  a_cle: string;
+  a_restaurant: string;
+  a_plat: string;
+  b_cle: string;
+  b_restaurant: string;
+  b_plat: string;
+}
+
+export interface DuelAvecVoix extends DilemmeLigne {
+  voix_a: number;
+  voix_b: number;
+}
+
+export interface VoteDilemme {
+  votant: string;
+  choix: "a" | "b";
+}
+
+export async function ensureDilemmeTables(): Promise<void> {
+  await sql`
+    CREATE TABLE IF NOT EXISTS pdj_dilemmes (
+      jour          DATE         PRIMARY KEY,
+      a_cle         VARCHAR(64)  NOT NULL,
+      a_restaurant  VARCHAR(100) NOT NULL,
+      a_plat        VARCHAR(300) NOT NULL,
+      b_cle         VARCHAR(64)  NOT NULL,
+      b_restaurant  VARCHAR(100) NOT NULL,
+      b_plat        VARCHAR(300) NOT NULL,
+      created_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+      CONSTRAINT pdj_dilemmes_distincts CHECK (a_cle <> b_cle)
+    )
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS pdj_dilemme_votes (
+      jour        DATE        NOT NULL,
+      votant      VARCHAR(50) NOT NULL,
+      choix       CHAR(1)     NOT NULL CHECK (choix IN ('a', 'b')),
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (jour, votant)
+    )
+  `;
+}
+
+/** Les tables ne sont vérifiées qu'une fois par processus (un échec réessaie à l'appel suivant). */
+let dilemmeTablesPretes: Promise<void> | null = null;
+function assurerTablesDilemme(): Promise<void> {
+  if (!dilemmeTablesPretes) {
+    dilemmeTablesPretes = ensureDilemmeTables();
+    dilemmeTablesPretes.catch(() => { dilemmeTablesPretes = null; });
+  }
+  return dilemmeTablesPretes;
+}
+
+/** Tous les plats servis jusqu'à `jusquAu` (inclus), hors « coming soon », sans le détail nutritionnel. */
+export async function getLignesHistorique(jusquAu: string): Promise<LigneHistorique[]> {
+  await assurerTablesDilemme();
+  const r = await sql<LigneHistorique>`
+    SELECT e.date::text AS date, p->>'restaurant' AS restaurant, p->'plat' AS plat,
+           p->>'prix' AS prix, (p->>'note')::float AS note, (p->>'note_goulaf')::float AS note_goulaf,
+           (SELECT jsonb_agg(jsonb_build_object('plat', o->>'plat', 'note', o->'note', 'note_goulaf', o->'note_goulaf'))
+              FROM jsonb_array_elements(CASE WHEN jsonb_typeof(p->'options') = 'array' THEN p->'options' ELSE '[]'::jsonb END) o) AS options
+    FROM pdj_entries e,
+         jsonb_array_elements(CASE WHEN jsonb_typeof(e.data->'plats') = 'array' THEN e.data->'plats' ELSE '[]'::jsonb END) p
+    WHERE e.date <= ${jusquAu}::date AND COALESCE(p->>'coming_soon', 'false') <> 'true'
+    ORDER BY e.date
+  `;
+  return r.rows;
+}
+
+export async function getDilemme(jour: string): Promise<DilemmeLigne | null> {
+  await assurerTablesDilemme();
+  const r = await sql<DilemmeLigne>`
+    SELECT jour::text AS jour, a_cle, a_restaurant, a_plat, b_cle, b_restaurant, b_plat
+    FROM pdj_dilemmes WHERE jour = ${jour}::date
+  `;
+  return r.rows[0] ?? null;
+}
+
+/** Le premier qui écrit gagne : deux demandes simultanées ne produisent qu'un duel. */
+export async function creerDilemmeSiAbsent(d: DilemmeLigne): Promise<void> {
+  await assurerTablesDilemme();
+  await sql`
+    INSERT INTO pdj_dilemmes (jour, a_cle, a_restaurant, a_plat, b_cle, b_restaurant, b_plat)
+    VALUES (${d.jour}::date, ${d.a_cle}, ${d.a_restaurant}, ${d.a_plat}, ${d.b_cle}, ${d.b_restaurant}, ${d.b_plat})
+    ON CONFLICT (jour) DO NOTHING
+  `;
+}
+
+/** Duels antérieurs à `avant` (exclu), du plus récent au plus ancien : entrée du tirage. */
+export async function getDuelsPasses(avant: string): Promise<{ jour: string; a_cle: string; b_cle: string }[]> {
+  await assurerTablesDilemme();
+  const r = await sql<{ jour: string; a_cle: string; b_cle: string }>`
+    SELECT jour::text AS jour, a_cle, b_cle FROM pdj_dilemmes WHERE jour < ${avant}::date ORDER BY jour DESC
+  `;
+  return r.rows;
+}
+
+export async function getVotesDilemme(jour: string): Promise<VoteDilemme[]> {
+  await assurerTablesDilemme();
+  const r = await sql<{ votant: string; choix: string }>`
+    SELECT votant, choix FROM pdj_dilemme_votes WHERE jour = ${jour}::date ORDER BY updated_at, votant
+  `;
+  return r.rows.map((row) => ({ votant: row.votant, choix: row.choix === "b" ? "b" : "a" }));
+}
+
+/** Pose ou change le vote d'une personne. Le duel est garanti par `dilemme-serveur` juste avant. */
+export async function voterDilemme(jour: string, votant: string, choix: "a" | "b"): Promise<void> {
+  await assurerTablesDilemme();
+  await sql`
+    INSERT INTO pdj_dilemme_votes (jour, votant, choix) VALUES (${jour}::date, ${votant}, ${choix})
+    ON CONFLICT (jour, votant) DO UPDATE SET choix = EXCLUDED.choix, updated_at = NOW()
+  `;
+}
+
+/** Duels antérieurs à `avant` (exclu) avec leurs décomptes, du plus récent au plus ancien. */
+export async function getDuelsAvecVoix(avant: string): Promise<DuelAvecVoix[]> {
+  await assurerTablesDilemme();
+  const r = await sql<DuelAvecVoix>`
+    SELECT d.jour::text AS jour, d.a_cle, d.a_restaurant, d.a_plat, d.b_cle, d.b_restaurant, d.b_plat,
+           COUNT(v.votant) FILTER (WHERE v.choix = 'a')::int AS voix_a,
+           COUNT(v.votant) FILTER (WHERE v.choix = 'b')::int AS voix_b
+    FROM pdj_dilemmes d LEFT JOIN pdj_dilemme_votes v ON v.jour = d.jour
+    WHERE d.jour < ${avant}::date GROUP BY d.jour ORDER BY d.jour DESC
+  `;
+  return r.rows;
+}

@@ -567,6 +567,8 @@ html.pdj-encre::view-transition-new(root) {
 #mobile-menu [data-nav-links] a:nth-child(3) { --i: 2; }
 #mobile-menu [data-nav-links] a:nth-child(4) { --i: 3; }
 #mobile-menu [data-nav-links] a:nth-child(5) { --i: 4; }
+#mobile-menu [data-nav-links] a:nth-child(6) { --i: 5; }
+#mobile-menu [data-nav-links] a:nth-child(7) { --i: 6; }
 #mobile-menu:not(.hidden) .theme-selector { animation: pdj-rise var(--dur-base) var(--ease-out-expo) 175ms backwards; }
 /* Burger ↔ croix : seulement après le chargement (data-pdj-pret posé par le
    script du <head>), sinon l'icône tournerait à l'arrivée sur la page. */
