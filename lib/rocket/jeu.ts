@@ -29,10 +29,14 @@ import type { SceneData } from "../agroparc3d/types";
 import { C, construireDecor, qualiteParDefaut } from "../agroparc3d/decor";
 import { creerPostTraitement, type PostTraitement } from "../fps/rendu";
 import {
+  CHAT_NUL,
   MATCH,
   PAS_S,
   boitesExclusionSite,
   type BanniereHud,
+  type DirectionChat,
+  type HudChat,
+  type LigneChat,
   type Cerveau,
   type ConfigMatch,
   type CreerJeuRocket,
@@ -64,6 +68,12 @@ import { creerMonde, pasMonde, resultatMatch } from "./match";
 import { creerCerveau } from "./bots";
 import { replacerVoiture } from "./voiture";
 import { creerRenduRocket } from "./rendu";
+import { creerBullesReactions, type BullesReactions } from "./rendu-bulles";
+import {
+  ANTI_SPAM, CHAT_LIGNES_MAX, CHAT_LIGNE_DUREE_S, DIRECTIONS_CHAT, MENU_FERME, appuyerMenu, categorieParId, creerAntiSpam, expirerMenu, reactionParId, reactionVisible, secondesBlocage,
+  type EtatMenuReactions,
+} from "./reactions";
+import { creerReacteurBots, type ReacteurBots } from "./reactions-bots";
 import { creerSonsRocket } from "./sons";
 import {
   choisirSource, creerCanalDegrade, creerEmetteurHudReseau, creerSourceEnLigne, creerSuiviPresence, creerSuiviRevanche, construireHudReseau, entreesEffectives, etatCommandes,
@@ -166,7 +176,9 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
   let rendu: RenduRocket | null = null;
   let sons: SonsRocket | null = null;
   let source: SourceEntreesEtendue | null = null;
+  let bulles: BullesReactions | null = null;
   const liberer = () => {
+    bulles?.dispose();
     sons?.dispose();
     source?.dispose();
     rendu?.dispose();
@@ -244,6 +256,10 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
     // la caméra est un enfant de la racine : elle se place directement dans le repère LOCAL du stade
     r.racine.add(camera);
     r.synchroniser(monde, 1, 0);
+    // bulles des réactions rapides : un échec ici ne doit jamais empêcher la partie
+    bulles?.dispose();
+    bulles = null;
+    try { bulles = creerBullesReactions(r.racine, monde.voitures.length, reduit); } catch (err) { if (process.env.NODE_ENV !== "production") console.error("rocket : bulles", err); }
   }
   try {
     monterRendu();
@@ -275,6 +291,18 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
   let klaxonPrecedent = false;
   let startPrecedent = false;
   let retourPrecedent = false;
+  // ---------- réactions rapides ----------
+  let menuChat: EtatMenuReactions = MENU_FERME;
+  const antiSpamMoi = creerAntiSpam();
+  let chatPrecedent: Record<DirectionChat, boolean> = CHAT_NUL();
+  /** instant (horloge d'image, s) jusqu'auquel mes réactions sont bloquées (anti-spam local ou refus du serveur) */
+  let chatBloqueJusquaS = 0;
+  let idChat = 0;
+  let lignesChat: (LigneChat & { fin: number })[] = [];
+  /** réactions des bots du mode LOCAL (en ligne ce sont ceux du serveur) */
+  const creerReacteurLocal = (): ReacteurBots | null =>
+    (enLigne ? null : creerReacteurBots({ graine: config.graine, voitures: monde.voitures.map((v) => ({ id: v.id, equipe: v.equipe, bot: !v.humain })) }));
+  let reacteur: ReacteurBots | null = creerReacteurLocal();
   let etatCam: EtatCamera = creerEtatCamera(monde.voitures[monde.idHumain], monde.balle, false);
   let resultatCache: ResultatMatch | null = null;
   /** EN LIGNE : résultat envoyé par le serveur (message `fin`) ; le monde prédit ne décide jamais de la fin */
@@ -356,7 +384,17 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
       aide: !aideMasquee && !rejeu && (tDebut === null || tReel - tDebut < AIDE_S) && !enPause && monde.phase !== "fini",
       classement: classementOuvert || resultat ? lignesClassement() : [],
       resultat,
+      chat: construireChat(),
     };
+  }
+  function construireChat(): HudChat {
+    let menu: HudChat["menu"] = null;
+    if (menuChat.ouvert) {
+      const cat = categorieParId(menuChat.categorie);
+      menu = { categorie: cat.id, titre: cat.titre, choix: cat.reactions.map((r) => ({ direction: r.direction, id: r.id, texte: r.texte, equipeSeule: r.equipeSeule })) };
+    }
+    const lignes = lignesChat.filter((l) => l.fin > tReel).slice(-CHAT_LIGNES_MAX).map(({ id, nom, texte, equipe, equipeSeule, moi }) => ({ id, nom, texte, equipe, equipeSeule, moi }));
+    return { menu, lignes, bloqueS: secondesBlocage((chatBloqueJusquaS - tReel) * 1000) };
   }
   function envoyerHud(force: boolean): void {
     // envoi immédiat sur changement (événement, pause…), sinon au plus 20 Hz
@@ -371,6 +409,85 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
   function vibrer(intensite: number, dureeMs: number): void {
     if (reduit || !reglages.vibrations) return;
     sourceOk.vibrer(intensite, dureeMs);
+  }
+
+  // ---------- réactions rapides ----------
+  /** Un appui sur une direction de la croix : ouvre la catégorie, ou envoie le message choisi (sauf chat bloqué). */
+  function appuyerChat(d: DirectionChat): void {
+    const maintenantS = tReel;
+    const r = appuyerMenu(menuChat, d, maintenantS * 1000);
+    menuChat = r.etat;
+    hudSale = true;
+    if (!r.envoi) return;
+    if (maintenantS < chatBloqueJusquaS || !antiSpamMoi.essayer(maintenantS * 1000)) {
+      chatBloqueJusquaS = Math.max(chatBloqueJusquaS, maintenantS + antiSpamMoi.bloqueMs(maintenantS * 1000) / 1000);
+      return;
+    }
+    if (enLigne) {
+      // le serveur valide, limite et relaie à tous (ou à l'équipe), moi compris : la réaction s'affiche à son retour
+      const id = r.envoi;
+      canal.sortir(() => enLigne.client.envoyer({ t: "reaction", id }));
+    } else recevoirReaction(monde.idHumain, r.envoi);
+  }
+
+  /** Une réaction arrive (la mienne, un bot, un joueur) : fil, bulle au-dessus de sa voiture, petit son. Ignorée si le réglage masque les adversaires. */
+  function recevoirReaction(idVoiture: number, id: string): void {
+    const reaction = reactionParId(id);
+    const v = monde.voitures[idVoiture];
+    const mienne = monde.voitures[monde.idHumain];
+    if (!reaction || !v || !mienne) return;
+    const estMoi = idVoiture === monde.idHumain;
+    if (!reactionVisible(reaction, { equipe: v.equipe, moi: estMoi }, mienne.equipe, reglages.reactionsAdversaires)) return;
+    lignesChat.push({ id: ++idChat, nom: v.nom, texte: reaction.texte, equipe: v.equipe, equipeSeule: reaction.equipeSeule, moi: estMoi, fin: tReel + CHAT_LIGNE_DUREE_S });
+    if (lignesChat.length > CHAT_LIGNES_MAX * 2) lignesChat = lignesChat.slice(-CHAT_LIGNES_MAX * 2);
+    // pas de bulle sur ma propre voiture (elle masquerait la balle) : mon message est dans le fil
+    if (!estMoi) bulles?.afficher(idVoiture, reaction.texte, v.equipe, tReel);
+    sonsOk.reaction(estMoi);
+    hudSale = true;
+  }
+
+  /** Centre de la voiture `id` tel qu'il est dessiné (interpolé entre deux pas), pour accrocher sa bulle. */
+  const pBulle: Vec3 = [0, 0, 0];
+  const positionBulle = (id: number): Readonly<Vec3> | null => {
+    const v = monde.voitures[id];
+    if (!v) return null;
+    const pr = monde.precedent.voitures[id];
+    if (!pr || distance(pr.p, v.p) >= SEUIL_TELEPORT_M) return v.p;
+    const a = clamp01(alpha);
+    pBulle[0] = pr.p[0] + (v.p[0] - pr.p[0]) * a;
+    pBulle[1] = pr.p[1] + (v.p[1] - pr.p[1]) * a;
+    pBulle[2] = pr.p[2] + (v.p[2] - pr.p[2]) * a;
+    return pBulle;
+  };
+
+  /** Nouveau match : plus de menu ouvert, plus de message, anti-spam remis à zéro, bulles masquées. */
+  function reinitialiserChat(): void {
+    menuChat = MENU_FERME;
+    antiSpamMoi.reinitialiser();
+    chatBloqueJusquaS = 0;
+    lignesChat = [];
+    bulles?.vider();
+    hudSale = true;
+  }
+
+  /** Réactions de bots arrivées à échéance (mode local). */
+  function lireReactionsBots(): void {
+    if (!reacteur) return;
+    for (const r of reacteur.echeances(monde.temps)) recevoirReaction(r.idVoiture, r.id);
+  }
+
+  /** Le menu de la croix (avec ses fronts montants) ; refermé par la pause, l'expiration et la fin d'une capture. */
+  function majChat(entree: { chat: Record<DirectionChat, boolean>; chatAppuis?: Record<DirectionChat, boolean> }, actif: boolean): void {
+    const avant = menuChat;
+    menuChat = expirerMenu(menuChat, tReel * 1000);
+    if (menuChat !== avant) hudSale = true;
+    if (!actif) {
+      if (menuChat.ouvert) { menuChat = MENU_FERME; hudSale = true; }
+    } else {
+      // front : un appui (événement du clavier ou de la souris, même relâché depuis) ou un bouton de manette qui vient d'être pressé
+      for (const d of DIRECTIONS_CHAT) if (entree.chatAppuis?.[d] || (entree.chat[d] && !chatPrecedent[d])) appuyerChat(d);
+    }
+    chatPrecedent = { ...entree.chat };
   }
 
   function traiter(e: EvenementMatch): void {
@@ -452,6 +569,7 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
     const resteAvant = monde.tempsRestant;
     const evs = pasMonde(monde, entreesPas);
     for (const e of evs) { traiter(e); sortie?.push(e); }
+    if (reacteur) { if (evs.length > 0) reacteur.observer(evs, monde.temps); lireReactionsBots(); }
     if (monde.phase === "enJeu" || monde.phase === "but") enregistreur.enregistrer(monde);
     apresPas(phaseAvant, resteAvant);
   }
@@ -671,6 +789,11 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
         hudSale = true;
         break;
       case "debut": nouvelleDebut(m); break;
+      case "reaction": recevoirReaction(m.voiture, m.id); break;
+      case "refus":
+        // le serveur a une horloge à lui : s'il juge que j'en fais trop, je me tais comme lui
+        if (m.action === "reaction" && m.raison === "limite") chatBloqueJusquaS = Math.max(chatBloqueJusquaS, tReel + ANTI_SPAM.blocageMs / 1000);
+        break;
       default: break;
     }
   }
@@ -702,6 +825,7 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
     classementOuvert = false;
     journal.length = 0;
     balleCam = false;
+    reinitialiserChat();
     monterRendu();
     etatCam = creerEtatCamera(moi(), monde.balle, false);
     alpha = 1;
@@ -794,6 +918,8 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
       else traiter({ t: "klaxon", idVoiture: monde.idHumain });
     }
     klaxonPrecedent = entree.klaxon;
+    // réactions rapides : la croix agit au front montant, jamais pendant la pause ni la capture d'une touche des réglages
+    majChat(entree, !enPause && !captureEnCours());
     // la manette met en pause et reprend elle-même (Start et la seconde liaison « pause » du joueur) ; au clavier Échap n'entre que dans
     // `surKeyDown`. Pendant la capture d'un bouton dans les réglages, ces boutons sont ceux que le joueur est en train d'affecter : ni pause,
     // ni retour, ni rejouer (les états précédents suivent quand même, un bouton encore tenu ne fait pas de front en fin de capture).
@@ -834,6 +960,7 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
       // `imageRejeu` peut être la dernière : la vue reste dessinée une image de plus, le coup d'envoi reprend à la suivante
       const r = rejeu as NonNullable<typeof rejeu>;
       rendu?.synchroniser(r.vue, r.alpha, dtImage);
+      bulles?.vider();
       sonsOk.maj(r.vue, r.lecture.clip.idCamera, dtImage);
       if (r.lecture.fini) terminerRejeu();
       postOk.rendre();
@@ -843,6 +970,7 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
     etatAffiche();
     placerCamera(enPause && !enLigne ? 0 : dt, entree);
     if (!sansRendu) rendu?.synchroniser(monde, alpha, dtImage);
+    bulles?.maj(positionBulle, tReel);
     sonsOk.maj(monde, monde.idHumain, dtImage);
     if (!sansRendu) postOk.rendre();
     envoyerHud(false);
@@ -874,6 +1002,8 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
     banniere = null;
     classementOuvert = false;
     journal.length = 0;
+    reacteur = creerReacteurLocal();
+    reinitialiserChat();
     pause(false);
     redimensionner();
     hudSale = true;

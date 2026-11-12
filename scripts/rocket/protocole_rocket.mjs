@@ -396,6 +396,39 @@ const iEv = A.marque();
 B.envoyer({ t: "klaxon" });
 ok(!!(await A.attendre((m) => m.t === "ev" && m.evenements.some((x) => x.e.t === "klaxon" && x.e.idVoiture === debB.moi), 3000, iEv)), "klaxon de B diffusé à A dans un message ev");
 
+// réactions rapides (additif, VERSION_ROCKET inchangée) : relayées à tous, « équipe seulement » jamais à l'adversaire, id inconnu refusé, anti-spam
+{
+  const iA = A.marque(), iB = B.marque();
+  B.envoyer({ t: "reaction", id: "tie-un-tigre" });
+  const rA = await A.attendre((m) => m.t === "reaction" && m.voiture === debB.moi && m.id === "tie-un-tigre", 3000, iA);
+  const rB = await B.attendre((m) => m.t === "reaction" && m.voiture === debB.moi && m.id === "tie-un-tigre", 3000, iB);
+  ok(!!rA, "réaction libre de B relayée à A (avec l'id de la voiture de B)");
+  ok(!!rB, "B reçoit l'écho de sa propre réaction");
+  const iA2 = A.marque(), iB2 = B.marque();
+  A.envoyer({ t: "reaction", id: "balle" });
+  ok(!!(await A.attendre((m) => m.t === "reaction" && m.voiture === debA.moi && m.id === "balle", 3000, iA2)), "info d'équipe : A reçoit son écho");
+  await attendre(500);
+  ok(!B.apres(iB2, "reaction").some((m) => m.id === "balle"), "info d'équipe : l'adversaire B ne la reçoit jamais");
+  const iA3 = A.marque();
+  A.envoyer({ t: "reaction", id: "inconnue" });
+  ok(!!(await A.attendre((m) => m.t === "refus" && m.action === "reaction" && m.raison === "invalide", 2000, iA3)), "réaction inconnue : refus « invalide »");
+  A.envoyer({ t: "reaction", id: "Majuscule" });
+  A.envoyer({ t: "reaction", id: 3 });
+  await jusqua(() => A.apres(iA3, "refus").filter((m) => m.action === "reaction" && m.raison === "invalide").length >= 3, 3000);
+  ok(A.apres(iA3, "refus").filter((m) => m.action === "reaction" && m.raison === "invalide").length === 3, "formes absurdes (majuscule, nombre) : refus « invalide » chacune");
+  ok(A.fermeture === null && B.fermeture === null, "aucune connexion coupée par une réaction absurde");
+  // anti-spam : 4 messages par fenêtre de 5 s ; B en a déjà envoyé un, A trois (balle + 2 ratés qui ne comptent pas) : la rafale suivante finit en refus « limite »
+  const iB3 = B.marque();
+  for (let i = 0; i < 7; i++) B.envoyer({ t: "reaction", id: "rugissement" });
+  ok(!!(await B.attendre((m) => m.t === "refus" && m.action === "reaction" && m.raison === "limite", 3000, iB3)), "rafale de réactions : refus « limite »");
+  const passes = B.apres(iB3, "reaction").length;
+  ok(passes >= 2 && passes <= 4, `la rafale n'en laisse passer que quelques-unes (${passes} sur 7)`);
+  ok(!!(await A.attendre((m) => m.t === "reaction" && m.voiture === debB.moi && m.id === "rugissement", 2000, iA3)), "les réactions acceptées de la rafale arrivent à A");
+  const iA4 = A.marque();
+  A.envoyer({ t: "reaction", id: "trefle" });
+  ok(!!(await A.attendre((m) => m.t === "reaction" && m.voiture === debA.moi && m.id === "trefle", 2000, iA4)), "le blocage de B ne gêne pas A");
+}
+
 let numero2 = -1;
 titre("4. but forcé, événements, fin, revanche");
 {

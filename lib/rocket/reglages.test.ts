@@ -148,3 +148,34 @@ describe("liaisons de la manette", () => {
     expect(LIAISONS_MANETTE_DEFAUT.saut).toEqual(["B0"]);
   });
 });
+
+describe("réactions rapides : migration et réglage", () => {
+  it("un réglage d'avant les réactions (klaxon sur la croix) garde le klaxon du joueur : la réaction nouvelle n'a pas le bouton déjà pris", () => {
+    const r = normaliserReglages({ liaisonsManette: { klaxon: ["B12"], saut: ["B0"] }, touches: { klaxon: ["Digit1"] } });
+    expect(r.liaisonsManette.klaxon).toEqual(["B12"]);
+    expect(r.liaisonsManette.chatHaut).toEqual([]);
+    expect(r.liaisonsManette.chatBas).toEqual(["B13"]);
+    expect(r.touches.klaxon).toEqual(["Digit1"]);
+    expect(r.touches.chatHaut).toEqual([]);
+    expect(r.touches.chatGauche).toEqual(["Digit2"]);
+  });
+  it("un réglage d'avant sans conflit reçoit les défauts des réactions", () => {
+    const r = normaliserReglages({ liaisonsManette: { saut: ["B5"] }, touches: { saut: ["KeyJ"] } });
+    expect(r.touches.chatHaut).toEqual(["Digit1"]);
+    expect(r.liaisonsManette.chatDroite).toEqual(["B15"]);
+  });
+  it("les réactions déjà mémorisées sont gardées telles quelles, même vides", () => {
+    const r = normaliserReglages({ touches: { chatHaut: ["KeyU"], chatBas: [] }, liaisonsManette: { chatGauche: ["B0"] } });
+    expect(r.touches.chatHaut).toEqual(["KeyU"]);
+    expect(r.touches.chatBas).toEqual([]);
+    expect(r.liaisonsManette.chatGauche).toEqual(["B0"]);
+  });
+  it("réactions des adversaires : vrai par défaut, booléen seulement, mémorisé", () => {
+    expect(REGLAGES_DEFAUT().reactionsAdversaires).toBe(true);
+    expect(normaliserReglages({ reactionsAdversaires: false }).reactionsAdversaires).toBe(false);
+    expect(normaliserReglages({ reactionsAdversaires: "non" }).reactionsAdversaires).toBe(true);
+    const st = stockage();
+    ecrireReglages({ ...REGLAGES_DEFAUT(), reactionsAdversaires: false }, st);
+    expect(lireReglages(st).reactionsAdversaires).toBe(false);
+  });
+});

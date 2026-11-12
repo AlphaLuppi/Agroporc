@@ -5,6 +5,7 @@
  */
 import { EQUIPES, FORMATS, MATCH, NIVEAUX_BOT } from "../contrat";
 import type { Equipe } from "../contrat";
+import { FORME_ID_REACTION } from "../reactions";
 import { RESEAU, normaliserCode } from "./protocole";
 import type { LireMessageClient, MessageClient, NettoyerNom, ReglagesSalon } from "./protocole";
 
@@ -103,6 +104,8 @@ export const lireMessageClient: LireMessageClient = (brut) => {
       const reglages = reglagesPartiels(brut.reglages);
       return reglages ? { t, reglages } : null;
     }
+    case "reaction":
+      return typeof brut.id === "string" && FORME_ID_REACTION.test(brut.id) ? { t, id: brut.id } : null;
     case "ping":
       return fini(brut.c) && Math.abs(brut.c) <= 1e15 ? { t, c: brut.c + 0 } : null;
     case "revanche":
@@ -126,5 +129,5 @@ export const lireMessageClient: LireMessageClient = (brut) => {
 
 /** Types de message connus, pour répondre `refus{invalide}` à un message mal formé d'un type reconnaissable. */
 export const TYPES_CLIENT: ReadonlySet<MessageClient["t"]> = new Set<MessageClient["t"]>([
-  "bonjour", "lister", "creer", "rejoindre", "quitter", "equipe", "reglages", "lancer", "pret", "ping", "klaxon", "revanche", "retourSalon", "dev",
+  "bonjour", "lister", "creer", "rejoindre", "quitter", "equipe", "reglages", "lancer", "pret", "ping", "klaxon", "reaction", "revanche", "retourSalon", "dev",
 ]);

@@ -18,7 +18,7 @@ import {
   type ParamsCamera,
   type ReglagesRocket,
 } from "./contrat";
-import { BOUTON_PAUSE, BOUTON_REJOUER, TOUCHE_PAUSE, entreeManetteValide, estBoutonSouris } from "./liaisons";
+import { BOUTON_PAUSE, BOUTON_REJOUER, TOUCHE_PAUSE, conflitManette, conflitTouches, entreeManetteValide, estBoutonSouris, type ActionManette, type ActionTouche } from "./liaisons";
 
 /** Clé de `localStorage`. */
 export const CLE_REGLAGES = "pdj-rocket-reglages";
@@ -79,19 +79,39 @@ function avecPauseReservee<L extends { pause: readonly string[] }>(l: L, secours
   return res as unknown as L;
 }
 
+/**
+ * Une action ABSENTE du JSON mémorisé (réglages d'avant son ajout : les réactions rapides par exemple) reçoit son défaut, mais jamais une
+ * entrée que le joueur a donnée à une autre action : ce qu'il a choisi l'emporte sur le défaut d'une nouveauté. Les actions présentes ne sont pas touchées.
+ */
+function sansEntreesPrises<A extends string>(
+  res: Record<A, readonly string[]>,
+  brut: Record<string, unknown>,
+  actions: readonly A[],
+  enConflit: (a: A, b: A) => boolean,
+): void {
+  const presentes = actions.filter((a) => Array.isArray(brut[a]));
+  if (presentes.length === 0 || presentes.length === actions.length) return;
+  for (const a of actions) {
+    if (Array.isArray(brut[a])) continue;
+    res[a] = res[a].filter((c) => !presentes.some((b) => enConflit(a, b) && res[b].includes(c)));
+  }
+}
+
 function normaliserTouches(brut: unknown): LiaisonsTouches {
   const b = estObjet(brut) ? brut : {};
+  const actions = Object.keys(LIAISONS_DEFAUT) as ActionTouche[];
   const t = { ...LIAISONS_DEFAUT };
-  for (const action of Object.keys(LIAISONS_DEFAUT) as (keyof LiaisonsTouches)[]) t[action] = normaliserCodes(b[action], LIAISONS_DEFAUT[action], codeTouche);
+  for (const action of actions) t[action] = normaliserCodes(b[action], LIAISONS_DEFAUT[action], codeTouche);
+  sansEntreesPrises(t, b, actions, conflitTouches);
   return avecPauseReservee(t, TOUCHE_PAUSE, estBoutonSouris);
 }
 
 function normaliserManette(brut: unknown): LiaisonsManette {
   const b = estObjet(brut) ? brut : {};
+  const actions = Object.keys(LIAISONS_MANETTE_DEFAUT) as ActionManette[];
   const m = { ...LIAISONS_MANETTE_DEFAUT };
-  for (const action of Object.keys(LIAISONS_MANETTE_DEFAUT) as (keyof LiaisonsManette)[]) {
-    m[action] = normaliserCodes(b[action], LIAISONS_MANETTE_DEFAUT[action], entreeManetteValide);
-  }
+  for (const action of actions) m[action] = normaliserCodes(b[action], LIAISONS_MANETTE_DEFAUT[action], entreeManetteValide);
+  sansEntreesPrises(m, b, actions, conflitManette);
   return avecPauseReservee(m, BOUTON_PAUSE, (c) => c === BOUTON_REJOUER);
 }
 
@@ -108,6 +128,7 @@ export const normaliserReglages: NormaliserReglages = (brut: unknown): ReglagesR
     zoneMorteManette: nombre(brut.zoneMorteManette, [0, 0.4], d.zoneMorteManette),
     inverserTangageManette: typeof brut.inverserTangageManette === "boolean" ? brut.inverserTangageManette : d.inverserTangageManette,
     vibrations: typeof brut.vibrations === "boolean" ? brut.vibrations : d.vibrations,
+    reactionsAdversaires: typeof brut.reactionsAdversaires === "boolean" ? brut.reactionsAdversaires : d.reactionsAdversaires,
   };
 };
 

@@ -10,6 +10,8 @@
  *  3b. vrai clavier et vraie souris (focus sur la racine role=dialog de la vue), sans surcharge `entrees`
  *  4. la balle bouge (vitesse imposée, gravité, rebond)
  *  5. but forcé : la balle lancée dans la cage adverse incrémente le score, événement `but`, phase « but » (capture « 03-but »)
+ *  5b. réactions rapides : « 3 » ouvre la catégorie « Réactions » (menu en bas à gauche), « 1 » envoie « Tié un tigre ?! » dans le fil ; une info d'équipe
+ *      (« 1 » puis « 1 », la même touche deux fois) porte « (équipe) » ; le menu se referme tout seul sans second appui ; pas de réaction pendant la pause (capture « 04-reactions » : le fil)
  *  6. Échap : pause (menu modal), Reprendre (capture « 04-pause »)
  *  6b. liaisons : menu pause → Réglages, une touche du clavier réaffectée (B au boost), conflit signalé, Échap annule la capture SANS reprendre la partie,
  *      pas de manette → message, fausse manette (Gamepad API simulée) : bouton affecté au saut, Start refusé pour une autre action sans fermer la pause,
@@ -240,6 +242,42 @@ async function main() {
     const h = await hud(page);
     verifier(h && h.score[moi.equipe] === ptsAvant + 1, "le HUD doit afficher le nouveau score");
     await capture(page, "03-but");
+  });
+
+  await etape("5b. réactions rapides : une touche ouvre la catégorie, la suivante envoie le message dans le fil ; expiration ; muet en pause", async () => {
+    const menuOuvert = (titre) => page.evaluate((t) => !!document.querySelector(`[role=group][aria-label="Réactions rapides : ${t}"]`), titre);
+    const fil = () => page.evaluate(() => Array.from(document.querySelectorAll('ul[aria-label="Réactions rapides reçues"] li')).map((li) => li.textContent ?? ""));
+    /** deux appuis : attend le menu avant le second, dans le délai de 2 s du jeu */
+    async function parler(premiere, titre, seconde) {
+      await page.keyboard.press(premiere);
+      await jusqua(() => menuOuvert(titre), { ms: 20_000, pas: 40, quoi: `menu « ${titre} » ouvert par ${premiere}` });
+      await page.keyboard.press(seconde);
+    }
+    await page.evaluate(() => window.__rocket.geler(false)); // l'horloge d'image tourne de toute façon ; la boucle réelle lit les touches
+    await parler("Digit3", "Réactions", "Digit1");
+    await jusqua(() => fil().then((l) => l.some((t) => t.includes("Tié un tigre ?!"))), { ms: 20_000, pas: 40, quoi: "« Tié un tigre ?! » dans le fil" });
+    verifier(!(await menuOuvert("Réactions")), "le menu devrait se refermer après le choix");
+    const ligne = (await fil()).find((t) => t.includes("Tié un tigre ?!"));
+    verifier(ligne.includes("Alice"), `le fil devrait porter le nom du joueur : ${ligne}`);
+    // info d'équipe : « (équipe) » devant le nom
+    // 1 puis 1 : la MÊME touche deux fois d'affilée (le second appui suit de près le premier : il ne doit pas se perdre à 5-10 images/s)
+    await parler("Digit1", "Infos", "Digit1");
+    await jusqua(() => fil().then((l) => l.some((t) => t.includes("J'ai la balle !"))), { ms: 20_000, pas: 40, quoi: "« J'ai la balle ! » dans le fil" });
+    await capture(page, "04-reactions");
+    verifier((await fil()).find((t) => t.includes("J'ai la balle !")).includes("(équipe)"), "une info doit être marquée « (équipe) »");
+    // sans second appui le menu expire (2 s)
+    await page.keyboard.press("Digit2");
+    await jusqua(() => menuOuvert("Compliments"), { ms: 20_000, pas: 40, quoi: "menu « Compliments »" });
+    await jusqua(async () => !(await menuOuvert("Compliments")), { ms: 20_000, quoi: "expiration du menu" });
+    // pendant la pause (menu modal) les touches de réaction ne font rien
+    await page.keyboard.press("Escape");
+    await jusqua(() => page.evaluate(() => window.__rocket.hud()?.enPause === true), { quoi: "pause" });
+    await page.keyboard.press("Digit3");
+    await dormir(1200);
+    verifier(!(await menuOuvert("Réactions")), "pas de menu de réactions pendant la pause");
+    await page.locator("[role=dialog][aria-labelledby]").getByRole("button", { name: /^Reprendre/ }).click();
+    await jusqua(() => page.evaluate(() => window.__rocket.hud()?.enPause === false), { quoi: "reprise" });
+    await page.evaluate(() => window.__rocket.geler(true));
   });
 
   await etape("6. Échap : pause (menu modal), puis Reprendre", async () => {

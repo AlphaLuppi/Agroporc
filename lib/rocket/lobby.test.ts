@@ -132,7 +132,7 @@ describe("graine et lancement", () => {
 describe("commandesRocket", () => {
   it("écrit les touches du joueur et couvre toutes les actions", () => {
     const cmds = commandesRocket(LIAISONS_DEFAUT);
-    expect(cmds.map((c) => c.id)).toEqual(["conduire", "saut", "boost", "derapage", "roulis", "balleCam", "arriere", "klaxon", "pause", "classement"]);
+    expect(cmds.map((c) => c.id)).toEqual(["conduire", "saut", "boost", "derapage", "roulis", "balleCam", "arriere", "klaxon", "reactions", "pause", "classement"]);
     expect(cmds.find((c) => c.id === "conduire")!.touches).toBe("W A S D");
     expect(cmds.find((c) => c.id === "saut")!.touches).toBe("Espace");
     expect(cmds.find((c) => c.id === "boost")!.touches).toBe("Maj gauche ou Clic gauche");

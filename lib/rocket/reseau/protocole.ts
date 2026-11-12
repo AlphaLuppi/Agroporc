@@ -409,6 +409,8 @@ export type MessageClient =
   | { t: "pret" }
   | { t: "ping"; c: number }
   | { t: "klaxon" }
+  /** réaction rapide (`id` du catalogue de `reactions.ts`) : validée, limitée (anti-spam) et relayée par le serveur, additif (`VERSION_ROCKET` reste 2) */
+  | { t: "reaction"; id: string }
   | { t: "revanche"; oui: boolean }
   /** hôte, phase « fin » : retour au salon sans revanche */
   | { t: "retourSalon" }
@@ -443,6 +445,11 @@ export type MessageServeur =
   /** `tick` fractionnaire (`monde.tick` + fraction du pas en cours) ; −1 quand la salle n'est pas en phase « match » (aucun tick ne court) */
   | { t: "pong"; c: number; tick: number; ralenti: boolean }
   | { t: "fin"; tick: number; resultat: ResultatMatch }
+  /**
+   * réaction rapide d'une voiture (humain ou bot), relayée à tous, ou à l'équipe de l'émetteur seulement pour une réaction « équipe seulement »
+   * (l'émetteur humain la reçoit aussi : c'est son écho). `voiture` : id de la voiture de l'émetteur ; l'équipe et le nom viennent de `debut`.
+   */
+  | { t: "reaction"; voiture: number; id: string }
   /** présence d'un joueur : coupé (reprise possible jusqu'à `jusquaMs` de durée restante), revenu, remplacé par un bot, parti */
   | { t: "presence"; joueur: number; etat: "coupe" | "revenu" | "bot" | "parti"; restantMs?: number }
   | { t: "refus"; action: TypeMessageClient; raison: RaisonRefus }

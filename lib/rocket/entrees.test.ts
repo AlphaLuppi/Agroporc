@@ -118,8 +118,8 @@ describe("manette", () => {
     const inv = entreesDepuisManette(manette({ axes: [0, -1, 0, 0] }), { ...REGL, inverserTangageManette: true });
     expect(inv.voiture.tangage).toBeGreaterThan(0);
   });
-  it("boutons : A saut, B boost, X dérapage, Y ball cam, LB/RB roulis, R3 arrière, Start pause, croix haut klaxon", () => {
-    const e = entreesDepuisManette(manette({ boutons: { [BOUTON_MANETTE.a]: true, [BOUTON_MANETTE.b]: true, [BOUTON_MANETTE.x]: true, [BOUTON_MANETTE.y]: true, [BOUTON_MANETTE.rb]: true, [BOUTON_MANETTE.r3]: true, [BOUTON_MANETTE.start]: true, [BOUTON_MANETTE.haut]: true } }), REGL);
+  it("boutons : A saut, B boost, X dérapage, Y ball cam, LB/RB roulis, R3 arrière, Start pause, L3 klaxon", () => {
+    const e = entreesDepuisManette(manette({ boutons: { [BOUTON_MANETTE.a]: true, [BOUTON_MANETTE.b]: true, [BOUTON_MANETTE.x]: true, [BOUTON_MANETTE.y]: true, [BOUTON_MANETTE.rb]: true, [BOUTON_MANETTE.r3]: true, [BOUTON_MANETTE.start]: true, [BOUTON_MANETTE.l3]: true } }), REGL);
     expect(e.voiture).toMatchObject({ saut: true, boost: true, derapage: true, roulis: 1 });
     expect(e).toMatchObject({ basculerBalleCam: true, arriere: true, pause: true, klaxon: true });
     expect(entreesDepuisManette(manette({ boutons: { [BOUTON_MANETTE.lb]: true } }), REGL).voiture.roulis).toBe(-1);
@@ -304,6 +304,37 @@ describe("source branchée sur une cible d'événements", () => {
     expect(src.echantillonner().voiture.saut).toBe(false);
   });
 
+  it("réactions : chaque ENFONCEMENT est un appui (chatAppuis), même relâché entre deux images ; la touche tenue et sa répétition automatique n'en font pas de nouveaux", () => {
+    const { cible, src } = creer();
+    const appuis = () => src.echantillonner().chatAppuis;
+    expect(appuis()).toEqual({ haut: false, gauche: false, droite: false, bas: false });
+    cible.dispatchEvent(evt("keydown", { code: "Digit1" }));
+    cible.dispatchEvent(evt("keyup", { code: "Digit1" }));
+    expect(appuis()).toEqual({ haut: true, gauche: false, droite: false, bas: false });
+    // la même touche, appuyée dans l'image SUIVANT immédiatement celle où elle était déjà vue « tenue » : l'événement compte quand même
+    cible.dispatchEvent(evt("keydown", { code: "Digit1" }));
+    expect(src.echantillonner().chat.haut).toBe(true);
+    cible.dispatchEvent(evt("keyup", { code: "Digit1" }));
+    cible.dispatchEvent(evt("keydown", { code: "Digit1" }));
+    expect(appuis()?.haut).toBe(true);
+    // touche tenue : tenue (chat) mais plus d'appui nouveau, et la répétition automatique du système n'en crée pas
+    expect(src.echantillonner().chat.haut).toBe(true);
+    cible.dispatchEvent(evt("keydown", { code: "Digit1", repeat: true }));
+    const e = src.echantillonner();
+    expect(e.chat.haut).toBe(true);
+    expect(e.chatAppuis?.haut).toBe(false);
+    cible.dispatchEvent(evt("keyup", { code: "Digit1" }));
+    expect(src.echantillonner().chat.haut).toBe(false);
+  });
+  it("réactions : l'appui d'une touche d'une autre action n'ouvre rien, la perte de focus oublie les appuis", () => {
+    const { cible, src } = creer();
+    cible.dispatchEvent(evt("keydown", { code: "KeyW" }));
+    expect(src.echantillonner().chatAppuis).toEqual({ haut: false, gauche: false, droite: false, bas: false });
+    cible.dispatchEvent(evt("keydown", { code: "Digit4" }));
+    cible.dispatchEvent(evt("blur", {}));
+    expect(src.echantillonner().chatAppuis?.bas).toBe(false);
+  });
+
   it("souris : boutons ajoutés aux touches, contextmenu bloqué, levier de regard borné et remis à zéro", () => {
     const { cible, src } = creer();
     cible.dispatchEvent(evt("mousedown", { button: 0 }));
@@ -457,5 +488,38 @@ describe("manette du navigateur (Gamepad)", () => {
     expect(e.boost).toBe(true);
     expect(e.direction).toBeGreaterThan(0);
     expect(manetteDepuisGamepad(null)).toBeNull();
+  });
+});
+
+describe("réactions rapides (croix)", () => {
+  it("clavier : 1 2 3 4 = haut, gauche, droite, bas ; rien d'enfoncé = rien", () => {
+    expect(clavier([]).chat).toEqual({ haut: false, gauche: false, droite: false, bas: false });
+    expect(clavier(["Digit1"]).chat).toEqual({ haut: true, gauche: false, droite: false, bas: false });
+    expect(clavier(["Digit2"]).chat.gauche).toBe(true);
+    expect(clavier(["Digit3"]).chat.droite).toBe(true);
+    expect(clavier(["Digit4"]).chat.bas).toBe(true);
+  });
+  it("clavier : les chiffres ne touchent pas à la conduite", () => {
+    expect(clavier(["Digit1", "Digit2", "Digit3", "Digit4"]).voiture).toEqual(entreesJoueurNulles().voiture);
+  });
+  it("manette : la croix B12 haut, B14 gauche, B15 droite, B13 bas ; le klaxon est sur L3, plus sur la croix", () => {
+    const e = entreesDepuisManette(manette({ boutons: { [BOUTON_MANETTE.haut]: true, [BOUTON_MANETTE.droite]: true } }), REGL);
+    expect(e.chat).toEqual({ haut: true, gauche: false, droite: true, bas: false });
+    expect(e.klaxon).toBe(false);
+    expect(entreesDepuisManette(manette({ boutons: { [BOUTON_MANETTE.gauche]: true } }), REGL).chat.gauche).toBe(true);
+    expect(entreesDepuisManette(manette({ boutons: { [BOUTON_MANETTE.bas]: true } }), REGL).chat.bas).toBe(true);
+    expect(entreesDepuisManette(manette({ boutons: { [BOUTON_MANETTE.l3]: true } }), REGL)).toMatchObject({ klaxon: true, chat: { haut: false, gauche: false, droite: false, bas: false } });
+  });
+  it("liaisons personnalisées suivies (clavier et manette)", () => {
+    const l = { ...LIAISONS_DEFAUT, chatHaut: ["KeyU"] };
+    expect(entreesDepuisClavier({ touches: new Set(["KeyU"]), deplacementSouris: [0, 0] }, l).chat.haut).toBe(true);
+    expect(entreesDepuisClavier({ touches: new Set(["Digit1"]), deplacementSouris: [0, 0] }, l).chat.haut).toBe(false);
+    const m: LiaisonsManette = { ...LIAISONS_MANETTE_DEFAUT, chatBas: ["B0"] };
+    expect(entreesDepuisManette(manette({ boutons: { 0: true } }), REGL, m).chat.bas).toBe(true);
+  });
+  it("fusion : un OU par direction", () => {
+    const a = { ...entreesJoueurNulles(), chat: { haut: true, gauche: false, droite: false, bas: false } };
+    const b = { ...entreesJoueurNulles(), chat: { haut: false, gauche: false, droite: true, bas: false } };
+    expect(fusionnerEntrees(a, b).chat).toEqual({ haut: true, gauche: false, droite: true, bas: false });
   });
 });

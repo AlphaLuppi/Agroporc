@@ -232,3 +232,34 @@ describe("libelleToucheRocket", () => {
     expect(libelleToucheRocket(null)).toBe("—");
   });
 });
+
+describe("réactions rapides", () => {
+  it("quatre actions de chaque côté, groupées, libellées, aux défauts 1 2 3 4 et à la croix", () => {
+    for (const a of ["chatHaut", "chatGauche", "chatDroite", "chatBas"] as const) {
+      expect(ACTIONS_TOUCHES).toContain(a);
+      expect(ACTIONS_MANETTE).toContain(a);
+      expect(LIBELLES_ACTIONS_TOUCHES[a].length).toBeGreaterThan(2);
+    }
+    expect(GROUPES_TOUCHES.some((g) => g.titre === "Réactions rapides")).toBe(true);
+    expect(GROUPES_MANETTE.some((g) => g.titre === "Réactions rapides")).toBe(true);
+    expect([LIAISONS_DEFAUT.chatHaut, LIAISONS_DEFAUT.chatGauche, LIAISONS_DEFAUT.chatDroite, LIAISONS_DEFAUT.chatBas]).toEqual([["Digit1"], ["Digit2"], ["Digit3"], ["Digit4"]]);
+    expect([LIAISONS_MANETTE_DEFAUT.chatHaut, LIAISONS_MANETTE_DEFAUT.chatGauche, LIAISONS_MANETTE_DEFAUT.chatDroite, LIAISONS_MANETTE_DEFAUT.chatBas]).toEqual([["B12"], ["B14"], ["B15"], ["B13"]]);
+    // le klaxon a quitté la croix pour L3
+    expect(LIAISONS_MANETTE_DEFAUT.klaxon).toEqual(["B10"]);
+  });
+  it("une touche donnée à une réaction quitte l'action qui l'avait ; Échap et Tab restent refusées", () => {
+    const r = assignerTouche(LIAISONS_DEFAUT, "chatHaut", 0, "KeyH");
+    expect(r.liaisons.chatHaut).toEqual(["KeyH"]);
+    expect(r.liaisons.klaxon).toEqual([]);
+    expect(r.depossedees).toEqual(["klaxon"]);
+    expect(assignerTouche(LIAISONS_DEFAUT, "chatBas", 0, "Escape").refus).toBe("reservee");
+    expect(assignerTouche(LIAISONS_DEFAUT, "chatBas", 0, "Tab").refus).toBe("reservee");
+  });
+  it("à la manette : la croix donnée au klaxon la retire de la réaction ; Start refusé", () => {
+    const r = assignerManette(LIAISONS_MANETTE_DEFAUT, "klaxon", 1, "B12");
+    expect(r.liaisons.klaxon).toEqual(["B10", "B12"]);
+    expect(r.liaisons.chatHaut).toEqual([]);
+    expect(r.depossedees).toEqual(["chatHaut"]);
+    expect(assignerManette(LIAISONS_MANETTE_DEFAUT, "chatHaut", 0, "B9").refus).toBe("reservee");
+  });
+});

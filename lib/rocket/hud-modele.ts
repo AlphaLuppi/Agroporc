@@ -3,7 +3,9 @@
  * équipe, annonces vocales (`aria-live`) et titre du résultat. Sans React, three ni horloge : testé sous Node.
  * Spec : docs/superpowers/specs/2026-11-06-rocket-agroparc-design.md § 9.3.
  */
-import type { Equipe, HudRocket, LigneClassement, ResultatMatch } from "./contrat";
+import type { DirectionChat, Equipe, HudRocket, LiaisonsManette, LiaisonsTouches, LigneChat, LigneClassement, MenuChatHud, ResultatMatch } from "./contrat";
+import { libelleEntreeManette, libelleToucheRocket } from "./liaisons";
+import { libelleLigneChat } from "./reactions";
 import type { HudReseau, QualiteReseau } from "./reseau/protocole";
 
 /** Sous ce temps restant (s) le minuteur passe à l'ambre. */
@@ -139,3 +141,54 @@ export function libelleAbsent(a: Readonly<HudReseau["absents"][number]>): string
 export function libelleRevanche(oui: number, attendus: number): string {
   return oui > 0 ? `Revanche · ${oui}/${attendus}` : "Revanche";
 }
+
+// ============================================================================================================================
+// Réactions rapides (menu de la croix et fil des messages)
+// ============================================================================================================================
+
+/** Flèche de chaque direction de la croix. */
+export const FLECHES_CHAT: Readonly<Record<DirectionChat, string>> = { haut: "↑", gauche: "←", droite: "→", bas: "↓" };
+const ACTION_CHAT: Readonly<Record<DirectionChat, "chatHaut" | "chatGauche" | "chatDroite" | "chatBas">> = {
+  haut: "chatHaut", gauche: "chatGauche", droite: "chatDroite", bas: "chatBas",
+};
+
+/** Touche (et, si une manette est branchée, bouton) qui répond à une direction, tels que le joueur les a réglés : « 1 · Croix ↑ ». « — » si rien. */
+export function libelleEntreeChat(
+  d: DirectionChat,
+  touches: Readonly<LiaisonsTouches>,
+  manette: Readonly<LiaisonsManette> | null,
+  disposition?: ReadonlyMap<string, string> | null,
+): string {
+  const action = ACTION_CHAT[d];
+  const clavier = touches[action][0] ? libelleToucheRocket(touches[action][0], disposition) : "";
+  const pad = manette && manette[action][0] ? libelleEntreeManette(manette[action][0], true) : "";
+  const morceaux = [clavier, pad].filter((x) => x !== "");
+  return morceaux.length > 0 ? morceaux.join(" · ") : "—";
+}
+
+/** Une ligne du menu ouvert : flèche, touche, message (« équipe » si seul l'équipe le voit). */
+export interface LigneMenuChat {
+  direction: DirectionChat;
+  fleche: string;
+  entree: string;
+  texte: string;
+  equipeSeule: boolean;
+}
+export function lignesMenuChat(
+  menu: Readonly<MenuChatHud>,
+  touches: Readonly<LiaisonsTouches>,
+  manette: Readonly<LiaisonsManette> | null,
+  disposition?: ReadonlyMap<string, string> | null,
+): LigneMenuChat[] {
+  return menu.choix.map((c) => ({
+    direction: c.direction, fleche: FLECHES_CHAT[c.direction], entree: libelleEntreeChat(c.direction, touches, manette, disposition), texte: c.texte, equipeSeule: c.equipeSeule,
+  }));
+}
+
+/** Texte lu par les lecteurs d'écran pour une ligne du fil : « Alice, à l'équipe : J'ai la balle ! ». */
+export function annonceLigneChat(l: Readonly<LigneChat>): string {
+  return l.equipeSeule ? `${l.nom}, à l'équipe : ${l.texte}` : libelleLigneChat(l);
+}
+
+/** Phrase du chat bloqué (« Chat bloqué : 3 s »), ou null. */
+export const libelleChatBloque = (bloqueS: number): string | null => (bloqueS > 0 ? `Chat bloqué : ${bloqueS} s` : null);

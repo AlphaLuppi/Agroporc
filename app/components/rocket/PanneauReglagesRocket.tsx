@@ -115,6 +115,14 @@ export default function PanneauReglagesRocket({ reglages, surReglages }: PropsRe
       </fieldset>
 
       <fieldset className={styles.groupe}>
+        <legend>Réactions rapides</legend>
+        <label className={styles.caseAcocher}>
+          <input type="checkbox" checked={reglages.reactionsAdversaires} onChange={(e) => changer({ reactionsAdversaires: e.target.checked })} />
+          Afficher les réactions des adversaires (celles de ton équipe et les tiennes restent toujours visibles)
+        </label>
+      </fieldset>
+
+      <fieldset className={styles.groupe}>
         <legend>Manette</legend>
         <Curseur
           id={`${id}-zone`}

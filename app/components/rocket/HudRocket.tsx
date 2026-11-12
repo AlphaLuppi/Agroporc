@@ -12,6 +12,7 @@ import type { PropsHudRocket } from "./contrats";
 import FinRocket from "./FinRocket";
 import HudReseauRocket from "./HudReseauRocket";
 import ListeCommandesRocket from "./ListeCommandesRocket";
+import ReactionsRocket from "./ReactionsRocket";
 import MenuPauseRocket from "./MenuPauseRocket";
 import TableauRocket from "./TableauRocket";
 import styles from "./Rocket.module.css";
@@ -136,9 +137,12 @@ export default function HudRocketUi({ hud, reglages, surReglages, surReprendre, 
         <p className={styles.demolie}>Démolie · réapparition dans {Math.max(1, Math.ceil(hud.reapparitionDans))} s</p>
       )}
 
-      <ul className={styles.fil} aria-label="Évènements du match">
-        {hud.fil.slice(-6).map((l) => <li key={l.id} data-equipe={l.equipe ?? undefined}>{l.texte}</li>)}
-      </ul>
+      <div className={styles.zoneGauche}>
+        {hud.chat && !hud.resultat && <ReactionsRocket chat={hud.chat} reglages={reglages} manette={hud.manette} disposition={disposition} />}
+        <ul className={styles.fil} aria-label="Évènements du match">
+          {hud.fil.slice(-6).map((l) => <li key={l.id} data-equipe={l.equipe ?? undefined}>{l.texte}</li>)}
+        </ul>
+      </div>
 
       <div className={styles.indicateurs}>
         <span className={styles.indicateur} data-etat={hud.balleCam ? "balle" : "voiture"}>

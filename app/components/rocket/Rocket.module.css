@@ -7,6 +7,7 @@
 .banniere[data-equipe="bleue"],
 .rejeu[data-equipe="bleue"],
 .fil li[data-equipe="bleue"],
+.chat li[data-equipe="bleue"],
 .jauge[data-equipe="bleue"],
 .mvp[data-equipe="bleue"],
 .dialogueFin[data-equipe="bleue"],
@@ -17,6 +18,7 @@
 .banniere[data-equipe="orange"],
 .rejeu[data-equipe="orange"],
 .fil li[data-equipe="orange"],
+.chat li[data-equipe="orange"],
 .jauge[data-equipe="orange"],
 .mvp[data-equipe="orange"],
 .dialogueFin[data-equipe="orange"],
@@ -183,9 +185,27 @@
 
 .demolie { position: absolute; left: 50%; bottom: 22%; transform: translateX(-50%); margin: 0; padding: 8px 18px; font-size: 14px; letter-spacing: 0.12em; text-transform: uppercase; background: var(--ag-hud-fond-fort); border: 1px solid var(--ag-danger); color: var(--ag-danger); }
 
-.fil { position: absolute; left: 16px; bottom: 16px; margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 3px; max-width: min(46vw, 420px); }
+/* bas gauche : menu des réactions rapides, messages reçus, puis évènements du match (le menu est tout en haut : il apparaît sans bousculer le reste) */
+.zoneGauche { position: absolute; left: 16px; bottom: 16px; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; max-width: min(46vw, 420px); }
+.fil { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 3px; max-width: 100%; }
 .fil li { padding: 3px 10px; font-size: 12px; line-height: 1.4; background: var(--ag-hud-fond); border-left: 3px solid var(--equipe, var(--ag-line-strong)); color: var(--ag-ink); animation: filIn 0.2s ease-out both; }
 @keyframes filIn { from { opacity: 0; transform: translateX(-12px); } }
+
+.menuChat { padding: 8px 10px 6px; background: var(--ag-hud-fond-fort); border: 1px solid var(--ag-line-strong); border-left: 3px solid var(--ag-amber); color: var(--ag-ink); animation: filIn 0.15s ease-out both; }
+.titreMenuChat { margin: 0 0 4px; font-size: 10px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ag-amber); }
+.menuChat ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 2px; }
+.menuChat li { display: flex; align-items: baseline; gap: 8px; font-size: 13px; line-height: 1.5; }
+.flecheChat { width: 1.2em; text-align: center; font-weight: 700; color: var(--ag-amber); }
+.entreeChat { min-width: 2.2em; padding: 0 5px; text-align: center; font: inherit; font-size: 11px; font-weight: 700; color: var(--ag-white); background: var(--ag-hud-fond); border: 1px solid var(--ag-line-strong); }
+.etiquetteEquipe { margin-right: 4px; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ag-ink-dim); }
+.menuChat .etiquetteEquipe { margin: 0 0 0 auto; }
+.chat { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 3px; max-width: 100%; }
+/* région vivante toujours présente (une région qui apparaît avec son contenu n'est pas annoncée) mais sortie du flux tant qu'elle est vide */
+.chat:empty { position: absolute; width: 0; height: 0; overflow: hidden; }
+.chat li { padding: 3px 10px; font-size: 13px; line-height: 1.4; background: var(--ag-hud-fond); border-left: 3px solid var(--equipe, var(--ag-line-strong)); color: var(--ag-ink); animation: filIn 0.2s ease-out both; }
+.nomChat { font-weight: 700; color: var(--equipe, var(--ag-white)); }
+.chat li[data-moi="oui"] { background: var(--ag-hud-fond-fort); }
+.chatBloque { margin: 0; padding: 3px 10px; font-size: 12px; background: var(--ag-hud-fond); border-left: 3px solid var(--ag-danger); color: var(--ag-ink); }
 
 .indicateurs { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); display: flex; gap: 8px; }
 .indicateur { padding: 3px 10px; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; background: var(--ag-hud-fond); border: 1px solid var(--ag-line-strong); color: var(--ag-ink-dim); white-space: nowrap; }
@@ -316,7 +336,7 @@
 /* ---------- fenêtres étroites ---------- */
 @media (min-width: 641px) and (max-width: 900px) {
   .aideBreve { width: min(520px, calc(100vw - 300px)); }
-  .fil { max-width: min(40vw, 420px); }
+  .zoneGauche { max-width: min(40vw, 420px); }
 }
 
 /* ---------- petits écrans ---------- */
@@ -333,11 +353,11 @@
   .jauge { width: 104px; height: 104px; }
   .valeurJauge { font-size: 28px; }
   .indicateurs { bottom: 150px; }
-  .fil { max-width: 56vw; }
+  .zoneGauche { max-width: 56vw; }
   .commandes > div { grid-template-columns: 11ch 1fr; }
 }
 
 /* ---------- mouvement réduit : ni apparition animée, ni zoom de bannière ---------- */
 @media (prefers-reduced-motion: reduce) {
-  .lobby, .banniere, .fil li, .dialogue, .panneau > aside { animation: none; }
+  .lobby, .banniere, .fil li, .chat li, .menuChat, .dialogue, .panneau > aside { animation: none; }
 }

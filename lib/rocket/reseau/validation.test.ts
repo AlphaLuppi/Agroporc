@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { lireMessageClient, nettoyerNom } from "./validation";
+import { TYPES_CLIENT, lireMessageClient, nettoyerNom } from "./validation";
 import { REGLAGES_SALON_DEFAUT, RESEAU, VERSION_ROCKET } from "./protocole";
 import type { MessageClient } from "./protocole";
 
@@ -139,13 +139,29 @@ describe("lireMessageClient : refus", () => {
   for (const [nom, brut] of refus) it(`refuse : ${nom}`, () => expect(lireMessageClient(brut)).toBeNull());
 });
 
+describe("lireMessageClient : réaction rapide", () => {
+  it("accepte un identifiant bien formé (le fond est jugé par la salle) et reconstruit le message", () => {
+    expect(lireMessageClient({ t: "reaction", id: "tie-un-tigre", extra: 1 })).toEqual({ t: "reaction", id: "tie-un-tigre" });
+    expect(lireMessageClient({ t: "reaction", id: "inconnue" })).toEqual({ t: "reaction", id: "inconnue" });
+  });
+  it("refuse l'absent, le non-texte, le trop long, les majuscules, espaces, caractères de contrôle et injections", () => {
+    for (const id of [undefined, null, 3, true, {}, [], ["balle"], "", "a".repeat(25), "Balle", "ba lle", "balle\n", "<script>", "../x", "é", "\u202e", "__proto__ x"]) {
+      expect(lireMessageClient({ t: "reaction", id }), String(id)).toBeNull();
+    }
+    expect(lireMessageClient({ t: "reaction" })).toBeNull();
+  });
+  it("est un type client connu (un message mal formé reçoit `refus invalide`)", () => {
+    expect(TYPES_CLIENT.has("reaction")).toBe(true);
+  });
+});
+
 describe("lireMessageClient : fuzz", () => {
   /** générateur déterministe (mulberry32) : le test ne dépend d'aucun hasard global */
   function alea(graine: number): () => number {
     let a = graine >>> 0;
     return () => { a = (a + 0x6d2b79f5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
   }
-  const TYPES = ["bonjour", "lister", "creer", "rejoindre", "quitter", "equipe", "reglages", "lancer", "pret", "ping", "klaxon", "revanche", "retourSalon", "dev", "x", ""];
+  const TYPES = ["bonjour", "lister", "creer", "rejoindre", "quitter", "equipe", "reglages", "lancer", "pret", "ping", "klaxon", "reaction", "revanche", "retourSalon", "dev", "x", ""];
   const CLES = ["t", "v", "nom", "reprise", "reglages", "code", "equipe", "c", "oui", "action", "p", "tempsRestant", "format", "dureeS", "niveauBots", "visible", "code", "joueur", "jeton", "__proto__", "constructor"];
   const SOUS = ["bleue", "orange", "1v1", "2v2", "3v3", "pro", "debutant", "allstar", "BCDF", "bcdf", "\u202e", "a".repeat(5000)];
 

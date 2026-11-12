@@ -10,6 +10,8 @@
  *  2. Alice crée la partie : code à 4 lettres ; Bob la voit dans la liste (« Rejoindre la partie ABCD ») puis la rejoint PAR LE CODE ; deux joueurs dans le salon
  *  3. Alice lance un 1v1 : chargement, `window.__rocket` chez les deux, décompte puis phase « enJeu » (HUD réseau présent : ping, état, commandes)
  *  4. Alice accélère (entrées scriptées), Bob voit la voiture d'Alice bouger (position serveur) ; l'état prédit d'Alice reste proche de l'autoritaire
+ *  4b. réactions rapides : Alice envoie « Tié un tigre ?! » (3 puis 1) : Alice (écho du serveur) ET Bob la voient dans le fil, avec le nom d'Alice ; une info d'équipe
+ *      (1 puis 1) n'est vue QUE d'Alice (1v1 : Bob est l'adversaire) ; Bob répond « Quel tir de tigre ! » (2 puis 1) et Alice le voit
  *  5. but forcé par `dev` côté serveur : événement « but », score identique chez les deux (monde, HUD, état autoritaire)
  *  6. fin de match (`dev` chrono) : écran de fin chez les deux, même score, même titre pour l'équipe gagnante
  *  7. revanche unanime : un nouveau `debut` (numéro suivant), nouveau décompte chez les deux
@@ -295,6 +297,36 @@ async function main() {
     verifier(s.rollbacks > 0 || s.snapsExacts > 0, "aucun instantané exploité par le prédicteur d'Alice");
     await entrees(alice, null);
     trace("stats Alice", JSON.stringify(s));
+  });
+
+  await etape("4b. réactions rapides : relayées par le serveur à l'autre joueur ; une info d'équipe ne sort pas de l'équipe", async () => {
+    const menuOuvert = (p, titre) => p.evaluate((t) => !!document.querySelector(`[role=group][aria-label="Réactions rapides : ${t}"]`), titre);
+    const fil = (p) => p.evaluate(() => Array.from(document.querySelectorAll('ul[aria-label="Réactions rapides reçues"] li')).map((li) => li.textContent ?? ""));
+    /** deux appuis : attend le menu avant le second, dans le délai de 2 s du jeu */
+    async function parler(p, premiere, titre, seconde) {
+      await p.keyboard.press(premiere);
+      await jusqua(() => menuOuvert(p, titre), { ms: 20_000, pas: 40, quoi: `menu « ${titre} » ouvert par ${premiere}` });
+      await p.keyboard.press(seconde);
+    }
+    await entrees(alice, null);
+    await parler(alice, "Digit3", "Réactions", "Digit1");
+    for (const [nom, p] of [["Alice", alice], ["Bob", bob]]) {
+      await jusqua(() => fil(p).then((l) => l.some((t) => t.includes("Tié un tigre ?!"))), { ms: 20_000, quoi: `${nom} voit « Tié un tigre ?! »` });
+    }
+    const chezBob = (await fil(bob)).find((t) => t.includes("Tié un tigre ?!"));
+    verifier(chezBob.includes("Alice"), `le fil de Bob devrait nommer Alice : ${chezBob}`);
+    verifier(!(await menuOuvert(alice, "Réactions")), "le menu d'Alice devrait se refermer après le choix");
+    verifier(!(await menuOuvert(bob, "Réactions")), "Bob n'a jamais ouvert de menu");
+    await capture(bob, "03b-reaction-vue-par-bob");
+    // info d'équipe : seulement Alice (écho), jamais l'adversaire
+    await parler(alice, "Digit1", "Infos", "Digit1");
+    await jusqua(() => fil(alice).then((l) => l.some((t) => t.includes("J'ai la balle !"))), { ms: 20_000, pas: 40, quoi: "Alice voit son info d'équipe" });
+    await dormir(1500);
+    verifier(!(await fil(bob)).some((t) => t.includes("J'ai la balle !")), "Bob ne doit jamais voir l'info d'équipe de son adversaire");
+    // et dans l'autre sens
+    await parler(bob, "Digit2", "Compliments", "Digit1");
+    await jusqua(() => fil(alice).then((l) => l.some((t) => t.includes("Quel tir de tigre !"))), { ms: 20_000, quoi: "Alice voit la réaction de Bob" });
+    verifier((await fil(alice)).find((t) => t.includes("Quel tir de tigre !")).includes("Bob"), "le fil d'Alice devrait nommer Bob");
   });
 
   let sensBut;

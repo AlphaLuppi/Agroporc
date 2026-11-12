@@ -489,3 +489,13 @@ Deux revues adversariales (lentille netcode : 19 points ; lentille intégration 
 | 25 | **Retenu** | Entrées neutres menu ouvert / onglet masqué et pastille « Commandes suspendues » (`HudReseau.commandes`) (§ 9.1). |
 | 26 | **Partiel** | Reprise après rechargement tentée seule via `sessionStorage` (`CLE_REPRISE`) si l'onglet est rouvert dans les 20 s ; au-delà, la place est un bot (documenté, ce n'est pas le cas d'usage principal : les coupures de socket se reprennent sans recharger) (§ 9.1). |
 | 27 | **Rejeté** (noté) | Plafonds globaux de 8 salles / 6 matchs saturables par quelques IP : acceptable pour un site privé ; la limite est écrite en § 7 et visible dans `/sante.rocket`. |
+
+## 15. Addendum : réactions rapides (Quick Chat)
+
+Additif, `VERSION_ROCKET` reste 2 (un vieux serveur ignore le type de message inconnu : le client n'a alors aucun écho, rien d'autre ne change). Le détail du catalogue (16 réactions, 4 catégories de la croix), du menu, de l'anti-spam et du réacteur des bots est dans `lib/rocket/reactions.ts` et `lib/rocket/reactions-bots.ts` (purs, testés) ; le résumé est dans `CLAUDE.md`.
+
+- **Client → serveur** : `{ t: "reaction", id }` (`id` : identifiant du catalogue, `[a-z0-9-]{1,24}` vérifié par `lireMessageClient`). **Serveur → clients** : `{ t: "reaction", voiture, id }` (id de la voiture de l'émetteur ; nom et équipe viennent de `debut`).
+- **Fond jugé par la salle** : match en cours ou écran de fin (sinon `refus{reaction, phase}`), identifiant connu (`invalide`), anti-spam par joueur, la même logique que le client (4 messages en 5 s, le cinquième bloque 4 s : `refus{reaction, limite}`, remis à zéro à chaque match).
+- **Portée** : les réactions libres vont à tous les humains connectés, une Info (« équipe seulement ») aux seuls humains de l'équipe de l'émetteur ; l'émetteur reçoit toujours son écho (son affichage vient du serveur). Hors du flux `ev` : un message de chat n'est ni daté par tick ni rejoué par les retours en arrière.
+- **Bots** : le réacteur de la salle (`Match.reacteur`) observe les événements de chaque pas, avec son propre générateur (la physique et `empreinteMonde` ne changent pas) ; un humain remplacé par un bot (`remplacerParBot`) se met à parler.
+- **Réglage client** : `ReglagesRocket.reactionsAdversaires` (vrai par défaut) masque l'affichage (fil, bulle, son) des réactions des adversaires ; les siennes et celles de l'équipe restent toujours visibles.

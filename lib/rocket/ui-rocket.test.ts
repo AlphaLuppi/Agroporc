@@ -115,9 +115,9 @@ describe("PanneauReglagesRocket : liaisons", () => {
     expect(html).toMatch(/<p[^>]*role="status"[^>]*aria-live="polite"|<p[^>]*aria-live="polite"[^>]*role="status"/);
     expect(html).toContain("<legend>Clavier et souris</legend>");
     expect(html).toContain("<legend>Boutons de la manette</legend>");
-    // 13 actions de clavier hors pause (un seul emplacement libre pour la pause) ; 19 actions de manette
+    // 17 actions de clavier hors pause (un seul emplacement libre pour la pause) ; 23 actions de manette
     const emplacements = html.match(/aria-pressed="false"/g) ?? [];
-    expect(emplacements.length).toBe((13 * 2 + 1) + (18 * 2 + 1));
+    expect(emplacements.length).toBe((17 * 2 + 1) + (22 * 2 + 1));
     expect(html).toContain('aria-label="Sauter, double saut, flip, entrée 1 : Espace. Changer"');
     expect(html).toContain('aria-label="Boost (maintenu), entrée 1 : Maj gauche. Changer"');
     expect(html).toContain('aria-label="Sauter, double saut, flip, entrée 1 : A. Changer"');
@@ -172,6 +172,68 @@ describe("PanneauReglagesRocket", () => {
     const r = REGLAGES_DEFAUT();
     r.camera = { ...r.camera, fov: 90 };
     expect(renderToStaticMarkup(createElement(PanneauReglagesRocket, { reglages: r, surReglages: rien }))).not.toMatch(/<button[^>]*disabled=""[^>]*>Rétablir la caméra/);
+  });
+});
+
+describe("PanneauReglagesRocket : réactions rapides", () => {
+  it("une case à cocher native pour les réactions des adversaires, cochée par défaut", () => {
+    const html = renderToStaticMarkup(createElement(PanneauReglagesRocket, { reglages: REGLAGES_DEFAUT(), surReglages: rien }));
+    expect(html).toContain("<legend>Réactions rapides</legend>");
+    expect(html).toMatch(/<input[^>]*type="checkbox"[^>]*checked=""[^>]*\/>\s*Afficher les réactions des adversaires/);
+    const off = renderToStaticMarkup(createElement(PanneauReglagesRocket, { reglages: { ...REGLAGES_DEFAUT(), reactionsAdversaires: false }, surReglages: rien }));
+    expect(off).not.toMatch(/<input[^>]*type="checkbox"[^>]*checked=""[^>]*\/>\s*Afficher les réactions des adversaires/);
+  });
+  it("les quatre réactions sont des emplacements de liaison, clavier et manette", () => {
+    const html = renderToStaticMarkup(createElement(PanneauReglagesRocket, { reglages: REGLAGES_DEFAUT(), surReglages: rien }));
+    expect(html).toContain("Infos d&#x27;équipe (haut)");
+    expect(html).toContain("Excuses (bas)");
+    expect(html).toContain("Croix ↑");
+  });
+});
+
+describe("HudRocket : réactions rapides", () => {
+  const chat = (over: Partial<NonNullable<HudRocket["chat"]>> = {}): NonNullable<HudRocket["chat"]> => ({ menu: null, lignes: [], bloqueS: 0, ...over });
+  const menu = {
+    categorie: "reactions", titre: "Réactions",
+    choix: [
+      { direction: "haut" as const, id: "tie-un-tigre", texte: "Tié un tigre ?!", equipeSeule: false },
+      { direction: "gauche" as const, id: "trefle", texte: "Ça sent le trèfle à 4 feuilles", equipeSeule: false },
+      { direction: "droite" as const, id: "en-marche", texte: "En marche ! Mais vers où ?", equipeSeule: false },
+      { direction: "bas" as const, id: "rugissement", texte: "RRRROAAAR !", equipeSeule: false },
+    ],
+  };
+  it("une région vivante polie est toujours là, vide tant que personne n'a parlé ; pas de menu fermé", () => {
+    const html = hudHtml(hud({ chat: chat() }));
+    expect(html).toMatch(/<ul[^>]*role="log"[^>]*aria-live="polite"/);
+    expect(html).not.toContain('role="group" aria-label="Réactions rapides');
+  });
+  it("le menu ouvert montre les quatre messages avec les touches réelles du joueur", () => {
+    const html = hudHtml(hud({ chat: chat({ menu }) }));
+    expect(html).toContain('aria-label="Réactions rapides : Réactions"');
+    for (const t of ["Tié un tigre ?!", "Ça sent le trèfle à 4 feuilles", "RRRROAAAR !"]) expect(html).toContain(t);
+    for (const k of ["<kbd", ">1<", ">2<", ">3<", ">4<"]) expect(html).toContain(k);
+    expect(html).not.toContain("Croix");
+    expect(hudHtml(hud({ manette: true, chat: chat({ menu }) }))).toContain("1 · Croix ↑");
+  });
+  it("le fil colore le nom par équipe et marque les infos d'équipe ; le lecteur d'écran a une phrase complète", () => {
+    const html = hudHtml(hud({
+      chat: chat({ lignes: [
+        { id: 1, nom: "Alice", texte: "J'ai la balle !", equipe: "bleue", equipeSeule: true, moi: false },
+        { id: 2, nom: "Bot A", texte: "RRRROAAAR !", equipe: "orange", equipeSeule: false, moi: false },
+      ] }),
+    }));
+    expect(html).toMatch(/<li[^>]*data-equipe="bleue"/);
+    expect(html).toMatch(/<li[^>]*data-equipe="orange"/);
+    expect(html).toContain("Alice, à l&#x27;équipe : J&#x27;ai la balle !");
+    expect(html).toContain("(équipe)");
+  });
+  it("le chat bloqué est annoncé ; rien à l'écran de fin ; un HUD sans `chat` (ancien) reste valide", () => {
+    expect(hudHtml(hud({ chat: chat({ bloqueS: 3 }) }))).toContain("Chat bloqué : 3 s");
+    expect(hudHtml(hud({ chat: chat({ lignes: [{ id: 1, nom: "A", texte: "x", equipe: "bleue", equipeSeule: false, moi: false }] }), resultat: resultat() }))).not.toContain('role="log"');
+    expect(() => hudHtml(hud())).not.toThrow();
+  });
+  it("l'aide brève des 8 premières secondes cite les réactions", () => {
+    expect(hudHtml(hud({ aide: true }))).toContain("Réactions rapides");
   });
 });
 

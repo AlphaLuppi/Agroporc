@@ -54,12 +54,12 @@ export const REGLES_ROCKET: readonly string[] = [
 
 /** Une commande de l'aide : touches telles qu'écrites à l'écran + ce qu'elles font (même forme que `CommandeLobby` de l'arène). */
 export interface CommandeRocket {
-  id: "conduire" | "saut" | "boost" | "derapage" | "roulis" | "balleCam" | "arriere" | "klaxon" | "pause" | "classement";
+  id: "conduire" | "saut" | "boost" | "derapage" | "roulis" | "balleCam" | "arriere" | "klaxon" | "reactions" | "pause" | "classement";
   touches: string;
   libelle: string;
 }
 /** Commandes affichées dans l'aide courte du HUD (les 8 premières secondes). */
-export const COMMANDES_BREVES: readonly CommandeRocket["id"][] = ["conduire", "saut", "boost", "balleCam", "pause"];
+export const COMMANDES_BREVES: readonly CommandeRocket["id"][] = ["conduire", "saut", "boost", "balleCam", "reactions", "pause"];
 
 const touchesDe = (codes: readonly string[], disposition?: ReadonlyMap<string, string> | null): string =>
   codes.map((c) => libelleTouche(c, disposition)).join(" ou ");
@@ -97,6 +97,11 @@ export function commandesRocket(
     { id: "balleCam", touches: avecPad(touchesDe(l.balleCam, disposition), m ? padDe(m.balleCam) : ""), libelle: "Ball cam : la caméra suit la balle ou la voiture" },
     { id: "arriere", touches: avecPad(touchesDe(l.arriere, disposition), m ? padDe(m.arriere) : ""), libelle: "Regard arrière (maintenu)" },
     { id: "klaxon", touches: avecPad(touchesDe(l.klaxon, disposition), m ? padDe(m.klaxon) : ""), libelle: "Klaxon du Truck Muche" },
+    {
+      id: "reactions",
+      touches: avecPad([l.chatHaut, l.chatGauche, l.chatDroite, l.chatBas].map(premiere).join(" "), m ? [m.chatHaut, m.chatGauche, m.chatDroite, m.chatBas].map(padPremiere).join(" ") : ""),
+      libelle: "Réactions rapides : une touche ouvre Infos, Compliments, Réactions ou Excuses, la suivante choisit le message",
+    },
     { id: "pause", touches: avecPad(touchesDe(l.pause, disposition), m ? padDe(m.pause) : ""), libelle: "Pause, réglages, quitter" },
     { id: "classement", touches: "Tab", libelle: "Classement des joueurs (maintenu)" },
   ];

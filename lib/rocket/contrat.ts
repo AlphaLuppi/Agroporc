@@ -957,7 +957,19 @@ export interface EntreesJoueur {
   arriere: boolean;
   klaxon: boolean;
   pause: boolean;
+  /** réactions rapides : direction de la croix tenue à cet instant (le menu agit sur le front montant, dans `jeu.ts`) */
+  chat: ChatEntrees;
+  /**
+   * (clavier et souris seulement, rempli par la source d'entrées) directions dont une touche a été ENFONCÉE (événement, hors répétition automatique)
+   * depuis l'échantillon précédent, même relâchée depuis : un second appui sur la même touche dans l'intervalle de deux images (rendu lent) ne se perd
+   * pas dans l'état « tenu ». Absent = déduire le front de `chat` (manette, tests).
+   */
+  chatAppuis?: ChatEntrees;
 }
+/** Les quatre directions de la croix des réactions rapides (haut = Infos, gauche = Compliments, droite = Réactions, bas = Excuses). */
+export type DirectionChat = "haut" | "gauche" | "droite" | "bas";
+export type ChatEntrees = Record<DirectionChat, boolean>;
+export const CHAT_NUL = (): ChatEntrees => ({ haut: false, gauche: false, droite: false, bas: false });
 
 // ============================================================================================================================
 // 11. Événements du match (pas par pas)
@@ -1059,6 +1071,11 @@ export interface LiaisonsTouches {
   pause: readonly string[];
   /** bouton (ou touche) tenu qui fait de la souris un levier de regard libre ; `Souris1` (molette cliquée) par défaut */
   regardLibre: readonly string[];
+  /** réactions rapides, comme la croix de Rocket League : un appui ouvre la catégorie, un second choisit le message (1 2 3 4 par défaut) */
+  chatHaut: readonly string[];
+  chatGauche: readonly string[];
+  chatDroite: readonly string[];
+  chatBas: readonly string[];
 }
 export const LIAISONS_DEFAUT: LiaisonsTouches = {
   accelerer: ["KeyW", "ArrowUp"],
@@ -1075,6 +1092,10 @@ export const LIAISONS_DEFAUT: LiaisonsTouches = {
   klaxon: ["KeyH"],
   pause: ["Escape"],
   regardLibre: ["Souris1"],
+  chatHaut: ["Digit1"],
+  chatGauche: ["Digit2"],
+  chatDroite: ["Digit3"],
+  chatBas: ["Digit4"],
 };
 
 /**
@@ -1112,6 +1133,11 @@ export interface LiaisonsManette {
   regardDroite: readonly EntreeManette[];
   regardHaut: readonly EntreeManette[];
   regardBas: readonly EntreeManette[];
+  /** réactions rapides : la croix directionnelle (B12 à B15) par défaut ; le klaxon est passé sur L3 (B10) pour la libérer */
+  chatHaut: readonly EntreeManette[];
+  chatGauche: readonly EntreeManette[];
+  chatDroite: readonly EntreeManette[];
+  chatBas: readonly EntreeManette[];
 }
 export const LIAISONS_MANETTE_DEFAUT: LiaisonsManette = {
   accelerer: ["B7"],
@@ -1127,12 +1153,16 @@ export const LIAISONS_MANETTE_DEFAUT: LiaisonsManette = {
   rouleDroite: ["B5"],
   balleCam: ["B3"],
   arriere: ["B11"],
-  klaxon: ["B12"],
+  klaxon: ["B10"],
   pause: ["B9"],
   regardGauche: ["A2-"],
   regardDroite: ["A2+"],
   regardHaut: ["A3-"],
   regardBas: ["A3+"],
+  chatHaut: ["B12"],
+  chatGauche: ["B14"],
+  chatDroite: ["B15"],
+  chatBas: ["B13"],
 };
 
 export interface ReglagesRocket {
@@ -1149,6 +1179,8 @@ export interface ReglagesRocket {
   inverserTangageManette: boolean;
   /** vibrations de la manette */
   vibrations: boolean;
+  /** afficher les réactions rapides des ADVERSAIRES (bulle, fil, son) ; celles de l'équipe et les miennes restent toujours visibles */
+  reactionsAdversaires: boolean;
 }
 export const REGLAGES_DEFAUT = (): ReglagesRocket => ({
   camera: { ...CAMERA_DEFAUT },
@@ -1159,6 +1191,7 @@ export const REGLAGES_DEFAUT = (): ReglagesRocket => ({
   zoneMorteManette: 0.12,
   inverserTangageManette: false,
   vibrations: true,
+  reactionsAdversaires: true,
 });
 
 export const DEFAUT_CONFIG = (): ConfigMatch => ({
@@ -1230,6 +1263,31 @@ export interface HudRocket {
   /** pointage des joueurs maintenu (Tab) */
   classement: LigneClassement[];
   resultat: ResultatMatch | null;
+  /** réactions rapides (menu de la croix, messages reçus) ; absent = rien à afficher */
+  chat?: HudChat;
+}
+
+/** Message de réaction rapide reçu (fil du HUD). `nom` : l'émetteur ; `equipeSeule` : « (équipe) » devant le nom. */
+export interface LigneChat {
+  id: number;
+  nom: string;
+  texte: string;
+  equipe: Equipe;
+  equipeSeule: boolean;
+  /** c'est moi qui ai parlé */
+  moi: boolean;
+}
+/** Menu ouvert d'une catégorie : ses quatre messages, chacun sur sa direction. */
+export interface MenuChatHud {
+  categorie: string;
+  titre: string;
+  choix: { direction: DirectionChat; id: string; texte: string; equipeSeule: boolean }[];
+}
+export interface HudChat {
+  menu: MenuChatHud | null;
+  lignes: LigneChat[];
+  /** chat bloqué (trop de messages d'affilée) : secondes restantes, arrondies au-dessus ; 0 sinon */
+  bloqueS: number;
 }
 
 // ============================================================================================================================
@@ -1432,6 +1490,8 @@ export interface SonsRocket {
   maj(m: Readonly<MondeRocket>, idMoi: number, dtImage: number): void;
   volume(v: number): void;
   suspendre(actif: boolean): void;
+  /** petit « bloop » à la réception d'une réaction rapide (`moi` : c'est la mienne, plus discrète) */
+  reaction(moi: boolean): void;
   dispose(): void;
 }
 /** Implémenté par `sons.ts` (`creerSonsRocket`). WebAudio uniquement, aucun fichier audio. */

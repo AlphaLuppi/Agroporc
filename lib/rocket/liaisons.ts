@@ -62,11 +62,16 @@ export const LIBELLES_ACTIONS_TOUCHES: Readonly<Record<ActionTouche, string>> = 
   regardLibre: "Regard libre (maintenu, puis bouger la souris)",
   klaxon: "Klaxon",
   pause: "Pause",
+  chatHaut: "Infos d'équipe (haut)",
+  chatGauche: "Compliments (gauche)",
+  chatDroite: "Réactions (droite)",
+  chatBas: "Excuses (bas)",
 };
 export const GROUPES_TOUCHES: readonly GroupeActions<ActionTouche>[] = [
   { titre: "Conduite", actions: ["accelerer", "reculer", "gauche", "droite"] },
   { titre: "Acrobaties", actions: ["saut", "boost", "derapage", "rouleGauche", "rouleDroite"] },
   { titre: "Caméra", actions: ["balleCam", "arriere", "regardLibre"] },
+  { titre: "Réactions rapides", actions: ["chatHaut", "chatGauche", "chatDroite", "chatBas"] },
   { titre: "Divers", actions: ["klaxon", "pause"] },
 ];
 
@@ -90,11 +95,16 @@ export const LIBELLES_ACTIONS_MANETTE: Readonly<Record<ActionManette, string>> =
   regardDroite: "Regard libre : à droite",
   regardHaut: "Regard libre : en haut",
   regardBas: "Regard libre : en bas",
+  chatHaut: "Infos d'équipe (haut)",
+  chatGauche: "Compliments (gauche)",
+  chatDroite: "Réactions (droite)",
+  chatBas: "Excuses (bas)",
 };
 export const GROUPES_MANETTE: readonly GroupeActions<ActionManette>[] = [
   { titre: "Conduite", actions: ["accelerer", "reculer", "gauche", "droite"] },
   { titre: "En l'air", actions: ["tangageHaut", "tangageBas", "saut", "boost", "derapage", "rouleGauche", "rouleDroite"] },
   { titre: "Caméra", actions: ["balleCam", "arriere", "regardGauche", "regardDroite", "regardHaut", "regardBas"] },
+  { titre: "Réactions rapides", actions: ["chatHaut", "chatGauche", "chatDroite", "chatBas"] },
   { titre: "Divers", actions: ["klaxon", "pause"] },
 ];
 

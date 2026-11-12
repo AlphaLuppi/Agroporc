@@ -26,6 +26,8 @@ import {
 import type { Arene, Cerveau, ConfigMatch, EntreesVoiture, Equipe, EvenementMatch, MondeRocket, NiveauBot, Rng } from "../contrat";
 import { creerArene } from "../arene";
 import { creerCerveau } from "../bots";
+import { creerAntiSpam, reactionParId, type AntiSpam } from "../reactions";
+import { creerReacteurBots, type ReacteurBots, type VoitureReacteur } from "../reactions-bots";
 import { NOMS_BOTS, pasMonde, resultatMatch } from "../match";
 import { graineBot, creerMondeEnLigne } from "./monde-ligne";
 import { dequantifierEntreesDans, extraireEtat, quantifierEntreesDans, restaurerEtat } from "./serialisation";
@@ -80,6 +82,8 @@ interface Joueur {
   /** id de sa voiture dans le match courant (−1 hors match) */
   voiture: number;
   dernierKlaxonMs: number;
+  /** anti-spam des réactions rapides (la même logique que le client, `reactions.ts`) */
+  antiSpam: AntiSpam;
   // ---- entrées reçues : anneau indexé par tick mod `tamponEntrees`, marqué du tick exact ----
   axes: Int8Array;
   boutons: Uint8Array;
@@ -98,7 +102,7 @@ interface Joueur {
 function nouveauJoueur(id: number, nom: string, equipe: Equipe): Joueur {
   const n = RESEAU.tamponEntrees;
   return {
-    id, nom, equipe, connecte: true, charge: false, coupeDepuisMs: -1, vote: null, voiture: -1, dernierKlaxonMs: -Infinity,
+    id, nom, equipe, connecte: true, charge: false, coupeDepuisMs: -1, vote: null, voiture: -1, dernierKlaxonMs: -Infinity, antiSpam: creerAntiSpam(),
     axes: new Int8Array(n * 5), boutons: new Uint8Array(n), marque: new Int32Array(n).fill(-1),
     watermark: -1, derniere: neutre(), repetitions: 0, avanceMin: null, manquees: 0,
   };
@@ -119,6 +123,9 @@ interface MatchSalle {
   /** humain qui pilote la voiture i (null : bot, ou humain remplacé) */
   pilotes: (Joueur | null)[];
   cerveaux: (Cerveau | null)[];
+  /** réactions rapides des bots (hasard propre : la physique n'en est pas affectée) ; `bot` suit les remplacements d'humains */
+  reacteur: ReacteurBots;
+  voituresReacteur: VoitureReacteur[];
   /** dernière entrée APPLIQUÉE par chaque voiture (tampon réutilisé à chaque pas) et sa forme réelle pour `pasMonde` */
   appliquees: EntreesQuantifiees[];
   reelles: EntreesVoiture[];
@@ -364,6 +371,8 @@ class SalleImpl implements SalleRocket {
     if (m && j.voiture >= 0) {
       m.pilotes[j.voiture] = null;
       m.cerveaux[j.voiture] = this.fabriqueCerveau(this.reglages.niveauBots, graineBot(m.config.graine, j.voiture));
+      const vr = m.voituresReacteur[j.voiture];
+      if (vr) vr.bot = true;
     }
     this.supprimer(j);
     out.push({ a: "tous", msg: { t: "presence", joueur: j.id, etat: "bot" } });
@@ -397,6 +406,7 @@ class SalleImpl implements SalleRocket {
       case "lancer": return this.lancer(j, maintenantMs);
       case "pret": return this.pret(j, maintenantMs);
       case "klaxon": return this.klaxon(j, maintenantMs);
+      case "reaction": return this.reaction(j, msg.id, maintenantMs);
       case "revanche": return this.revanche(j, msg.oui, maintenantMs);
       case "retourSalon": return this.retourSalon(j, maintenantMs);
       case "dev": return this.dev(j, msg, maintenantMs);
@@ -469,6 +479,30 @@ class SalleImpl implements SalleRocket {
     j.dernierKlaxonMs = ms;
     m.tampon.push({ tick: m.monde.tick, e: { t: "klaxon", idVoiture: j.voiture } });
     return [];
+  }
+
+  /** Réaction rapide d'un humain : id connu, match en cours (ou écran de fin), anti-spam ; relayée à tous ou à son équipe, lui compris. */
+  private reaction(j: Joueur, id: string, ms: number): SortieSalle[] {
+    const m = this.match;
+    if (!m || (this.phaseCourante !== "match" && this.phaseCourante !== "fin") || j.voiture < 0) return this.refus(j.id, "reaction", "phase");
+    if (!reactionParId(id)) return this.refus(j.id, "reaction", "invalide");
+    if (!j.antiSpam.essayer(ms)) return this.refus(j.id, "reaction", "limite");
+    this.activite = ms;
+    return this.diffuserReaction(m, j.voiture, id);
+  }
+
+  /** Une réaction de la voiture `voiture` à ses destinataires : tous les humains connectés, ou ceux de son équipe pour une réaction « équipe seulement ». */
+  private diffuserReaction(m: MatchSalle, voiture: number, id: string): SortieSalle[] {
+    const r = reactionParId(id);
+    const equipe = m.statiques[voiture]?.equipe;
+    if (!r || !equipe) return [];
+    const out: SortieSalle[] = [];
+    for (const h of this.joueurs) {
+      if (!h.connecte || h.voiture < 0) continue;
+      if (r.equipeSeule && h.equipe !== equipe) continue;
+      out.push({ a: h.id, msg: { t: "reaction", voiture, id } });
+    }
+    return out;
   }
 
   private revanche(j: Joueur, oui: boolean, ms: number): SortieSalle[] {
@@ -595,7 +629,7 @@ class SalleImpl implements SalleRocket {
     const statiques: VoitureStatique[] = [];
     const pilotes: (Joueur | null)[] = [];
     let nBot = 0;
-    for (const j of this.joueurs) { j.voiture = -1; j.charge = false; j.vote = null; reinitialiserEntrees(j); }
+    for (const j of this.joueurs) { j.voiture = -1; j.charge = false; j.vote = null; reinitialiserEntrees(j); j.antiSpam.reinitialiser(); }
     for (const equipe of EQUIPES) {
       const humains = this.joueurs.filter((j) => j.equipe === equipe);
       for (let slot = 0; slot < cap; slot++) {
@@ -608,8 +642,10 @@ class SalleImpl implements SalleRocket {
     }
     const monde = creerMondeEnLigne(config, statiques, -1, arene());
     const cerveaux = statiques.map((s) => (s.joueur === null ? this.fabriqueCerveau(this.reglages.niveauBots, graineBot(graine, s.id)) : null));
+    const voituresReacteur: VoitureReacteur[] = statiques.map((s) => ({ id: s.id, equipe: s.equipe, bot: s.joueur === null }));
+    const reacteur = creerReacteurBots({ graine, voitures: voituresReacteur });
     this.match = {
-      numero: this.numeroMatch, config, statiques, monde, pilotes, cerveaux,
+      numero: this.numeroMatch, config, statiques, monde, pilotes, cerveaux, reacteur, voituresReacteur,
       appliquees: statiques.map(neutre), reelles: statiques.map(() => ENTREES_NULLES()), reste: 0, dernierMs: ms, tampon: [], tamponImportant: false,
       dernierFlushMs: ms, fin: null,
       histApp: new Array<EntreesQuantifiees>(HIST_TICKS * statiques.length).fill(null as never).map(neutre), histTick: new Int32Array(HIST_TICKS).fill(-1),
@@ -781,6 +817,9 @@ class SalleImpl implements SalleRocket {
       if (EVENEMENTS_IMPORTANTS.has(e.t)) important = true;
     }
     if (important) { m.tamponImportant = true; m.dernierImportant = tick; }
+    // réactions rapides des bots : le réacteur a son propre hasard, il ne touche ni au monde ni aux cerveaux
+    if (evs.length > 0) m.reacteur.observer(evs, monde.temps);
+    for (const r of m.reacteur.echeances(monde.temps)) for (const o of this.diffuserReaction(m, r.idVoiture, r.id)) out.push(o);
     // instantané : sur la grille de 6 ticks (en rattrapage, seulement ceux des 6 derniers pas) ou hors grille sur événement important
     const grille = monde.tick % RESEAU.cadenceSnapTicks === 0 && restants < RESEAU.cadenceSnapTicks;
     if (grille) this.noterPoint(m);

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { LigneClassement, ResultatMatch, StatsVoiture } from "./contrat";
+import { LIAISONS_DEFAUT, LIAISONS_MANETTE_DEFAUT, type LigneChat, type LigneClassement, type MenuChatHud, type ResultatMatch, type StatsVoiture } from "./contrat";
 import {
-  FORMES_QUALITE, GRADUATIONS_BOOST, annonceBut, annonceFin, chronoUrgent, classementParEquipe, equipeMiseEnAvant, estMoi, formaterChrono, graduationsAllumees, libelleAbsent,
+  FORMES_QUALITE, GRADUATIONS_BOOST, annonceBut, annonceLigneChat, libelleChatBloque, libelleEntreeChat, lignesMenuChat, annonceFin, chronoUrgent, classementParEquipe, equipeMiseEnAvant, estMoi, formaterChrono, graduationsAllumees, libelleAbsent,
   libelleChrono, libelleCommandes, libellePastilleReseau, libelleRevanche, ligneMvp, resultatPourEquipe, titreResultat, vitesseAffichee,
 } from "./hud-modele";
 
@@ -150,5 +150,36 @@ describe("mode en ligne : pastille réseau", () => {
   it("bouton de revanche : le compte n'apparaît qu'avec un premier vote", () => {
     expect(libelleRevanche(0, 2)).toBe("Revanche");
     expect(libelleRevanche(1, 2)).toBe("Revanche · 1/2");
+  });
+});
+
+describe("réactions rapides : menu et fil", () => {
+  const menu: MenuChatHud = {
+    categorie: "reactions", titre: "Réactions",
+    choix: [
+      { direction: "haut", id: "tie-un-tigre", texte: "Tié un tigre ?!", equipeSeule: false },
+      { direction: "gauche", id: "trefle", texte: "Ça sent le trèfle à 4 feuilles", equipeSeule: false },
+      { direction: "droite", id: "en-marche", texte: "En marche ! Mais vers où ?", equipeSeule: false },
+      { direction: "bas", id: "rugissement", texte: "RRRROAAAR !", equipeSeule: false },
+    ],
+  };
+  it("touche réelle du joueur, puis bouton de la manette quand elle est branchée", () => {
+    expect(libelleEntreeChat("haut", LIAISONS_DEFAUT, null)).toBe("1");
+    expect(libelleEntreeChat("bas", LIAISONS_DEFAUT, LIAISONS_MANETTE_DEFAUT)).toBe("4 · Croix ↓");
+    expect(libelleEntreeChat("gauche", { ...LIAISONS_DEFAUT, chatGauche: [] }, null)).toBe("—");
+    expect(libelleEntreeChat("droite", { ...LIAISONS_DEFAUT, chatDroite: ["KeyU"] }, null)).toBe("U");
+  });
+  it("lignes du menu : flèche, entrée, texte", () => {
+    const l = lignesMenuChat(menu, LIAISONS_DEFAUT, LIAISONS_MANETTE_DEFAUT);
+    expect(l.map((x) => x.fleche)).toEqual(["↑", "←", "→", "↓"]);
+    expect(l.map((x) => x.entree)).toEqual(["1 · Croix ↑", "2 · Croix ←", "3 · Croix →", "4 · Croix ↓"]);
+    expect(l[0].texte).toBe("Tié un tigre ?!");
+  });
+  it("annonce d'une ligne du fil et chat bloqué", () => {
+    const base: LigneChat = { id: 1, nom: "Alice", texte: "J'ai la balle !", equipe: "bleue", equipeSeule: true, moi: false };
+    expect(annonceLigneChat(base)).toBe("Alice, à l'équipe : J'ai la balle !");
+    expect(annonceLigneChat({ ...base, equipeSeule: false, texte: "RRRROAAAR !" })).toBe("Alice : RRRROAAAR !");
+    expect(libelleChatBloque(0)).toBeNull();
+    expect(libelleChatBloque(3)).toBe("Chat bloqué : 3 s");
   });
 });

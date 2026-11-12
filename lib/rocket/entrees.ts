@@ -15,11 +15,12 @@
  *  - Espace : saut (second appui = double saut, ou flip si une direction est tenue) ;
  *  - Maj gauche ou clic gauche : boost ; C ou Ctrl gauche : dérapage (frein à main) / air roll libre ;
  *  - Q / E : roulis gauche / droite ; Y ou clic droit : ball cam ; V : vue arrière (tenue) ; H : klaxon ; Échap : pause ;
+ *  - 1 / 2 / 3 / 4 : réactions rapides (haut = Infos, gauche = Compliments, droite = Réactions, bas = Excuses), cf. `reactions.ts` ;
  *  - bouton du milieu tenu + déplacement de la souris : regard libre (`deplacementSouris` porte alors le levier virtuel, voir plus bas).
  *
  * Manette (mapping « standard » de la Gamepad API), liaisons par défaut (`LIAISONS_MANETTE_DEFAUT`) : RT / LT gaz et frein (analogiques),
  * stick gauche (volant au sol, tangage et lacet en l'air), A saut, B boost, X dérapage / air roll libre, Y ball cam, LB / RB roulis,
- * stick droit regard libre, R3 vue arrière, Start pause, croix haut klaxon. Chaque action est reliée à un BOUTON (`B7`) ou à un DEMI-AXE
+ * stick droit regard libre, R3 vue arrière, Start pause, L3 klaxon, croix directionnelle réactions rapides. Chaque action est reliée à un BOUTON (`B7`) ou à un DEMI-AXE
  * (`A0-`) au choix du joueur (cf. `liaisons.ts`) :
  *  - les deux demi-axes d'un stick passent d'abord par la zone morte radiale et la courbe de `stickAvecZoneMorte`, quelle que soit
  *    l'action qui les lit ; une action analogique (gaz, volant, tangage, regard) lit alors la valeur 0..1 de l'entrée (un bouton vaut 0 ou 1,
@@ -27,6 +28,8 @@
  *  - une action à deux états (saut, boost, pause…) se déclenche sur un bouton pressé ou sur un demi-axe BRUT au-delà de 0,5.
  */
 import {
+  CHAT_NUL,
+  type DirectionChat,
   ENTREES_NULLES,
   LIAISONS_MANETTE_DEFAUT,
   SEUIL_ENTREE_MANETTE,
@@ -48,7 +51,7 @@ export { manetteDepuisGamepad, manetteStandard, type ManetteLue } from "./manett
 
 /** Entrées d'un joueur qui ne touche à rien. */
 export function entreesJoueurNulles(): EntreesJoueur {
-  return { voiture: ENTREES_NULLES(), basculerBalleCam: false, regard: [0, 0], arriere: false, klaxon: false, pause: false };
+  return { voiture: ENTREES_NULLES(), basculerBalleCam: false, regard: [0, 0], arriere: false, klaxon: false, pause: false, chat: CHAT_NUL() };
 }
 
 const borne = (x: number, min = -1, max = 1): number => (x < min ? min : x > max ? max : x);
@@ -101,6 +104,7 @@ export function entreesDepuisClavier(i: InstantaneClavier, l: Readonly<LiaisonsT
     arriere: tenue(t, l.arriere),
     klaxon: tenue(t, l.klaxon),
     pause: tenue(t, l.pause),
+    chat: { haut: tenue(t, l.chatHaut), gauche: tenue(t, l.chatGauche), droite: tenue(t, l.chatDroite), bas: tenue(t, l.chatBas) },
   };
 }
 
@@ -109,7 +113,7 @@ export function entreesDepuisClavier(i: InstantaneClavier, l: Readonly<LiaisonsT
 // ============================================================================================================================
 
 /** Indices du mapping « standard » de la Gamepad API. */
-export const BOUTON_MANETTE = { a: 0, b: 1, x: 2, y: 3, lb: 4, rb: 5, lt: 6, rt: 7, retour: 8, start: 9, r3: 11, haut: 12 } as const;
+export const BOUTON_MANETTE = { a: 0, b: 1, x: 2, y: 3, lb: 4, rb: 5, lt: 6, rt: 7, retour: 8, start: 9, l3: 10, r3: 11, haut: 12, bas: 13, gauche: 14, droite: 15 } as const;
 
 /**
  * Zone morte RADIALE puis courbe quadratique sur le stick `(x, y)` : sous `zoneMorte` rien ; au-delà, l'amplitude est ramenée à
@@ -204,6 +208,7 @@ export const entreesDepuisManette: EntreesDepuisManette = (m, r, liaisons = LIAI
     arriere: actionActive(m, l.arriere),
     klaxon: actionActive(m, l.klaxon),
     pause: actionActive(m, l.pause),
+    chat: { haut: actionActive(m, l.chatHaut), gauche: actionActive(m, l.chatGauche), droite: actionActive(m, l.chatDroite), bas: actionActive(m, l.chatBas) },
   };
 };
 
@@ -235,6 +240,7 @@ export function fusionnerEntrees(a: EntreesJoueur, b: EntreesJoueur): EntreesJou
     arriere: a.arriere || b.arriere,
     klaxon: a.klaxon || b.klaxon,
     pause: a.pause || b.pause,
+    chat: { haut: a.chat.haut || b.chat.haut, gauche: a.chat.gauche || b.chat.gauche, droite: a.chat.droite || b.chat.droite, bas: a.chat.bas || b.chat.bas },
   };
 }
 
@@ -283,7 +289,16 @@ export function creerSourceEntrees(
   /** levier virtuel du regard libre : déplacement cumulé de la souris (px) depuis l'appui du bouton du milieu */
   const levier: [number, number] = [0, 0];
 
-  const presser = (code: string) => { enfoncees.add(code); memoire.add(code); };
+  /** directions de réaction dont une touche a été enfoncée (événement) depuis le dernier échantillon */
+  const appuisChat = new Set<DirectionChat>();
+  const marquerChat = (code: string) => {
+    const l = liaisons();
+    if (l.chatHaut.includes(code)) appuisChat.add("haut");
+    if (l.chatGauche.includes(code)) appuisChat.add("gauche");
+    if (l.chatDroite.includes(code)) appuisChat.add("droite");
+    if (l.chatBas.includes(code)) appuisChat.add("bas");
+  };
+  const presser = (code: string) => { enfoncees.add(code); memoire.add(code); marquerChat(code); };
   const relacherCode = (code: string) => {
     const etait = regardActif();
     enfoncees.delete(code);
@@ -294,7 +309,8 @@ export function creerSourceEntrees(
   const surKeyDown = (e: Event) => {
     const k = e as KeyboardEvent;
     if (cibleInteractive(k.target)) return;
-    presser(k.code);
+    // la répétition automatique d'une touche tenue n'est pas un nouvel appui
+    if (k.repeat) { enfoncees.add(k.code); memoire.add(k.code); } else presser(k.code);
     if (!k.metaKey && (TOUCHES_BLOQUEES.has(k.code) || utilisee(k.code))) k.preventDefault();
   };
   const surKeyUp = (e: Event) => {
@@ -318,7 +334,7 @@ export function creerSourceEntrees(
     if (n > RAYON_REGARD_SOURIS_PX) { levier[0] *= RAYON_REGARD_SOURIS_PX / n; levier[1] *= RAYON_REGARD_SOURIS_PX / n; }
   };
   const surContexte = (e: Event) => { e.preventDefault(); };
-  const surPerteFocus = () => { enfoncees.clear(); memoire.clear(); levier[0] = 0; levier[1] = 0; };
+  const surPerteFocus = () => { enfoncees.clear(); memoire.clear(); appuisChat.clear(); levier[0] = 0; levier[1] = 0; };
   const surManette = () => { /* connectée() relit navigator à chaque appel */ };
 
   /** le regard libre est-il tenu ? (liaison `regardLibre`, le bouton du milieu par défaut) */
@@ -353,7 +369,10 @@ export function creerSourceEntrees(
       memoire.clear();
       const clavier = entreesDepuisClavier({ touches, deplacementSouris: [levier[0], levier[1]] }, liaisons());
       const pad = manette();
-      return pad ? fusionnerEntrees(clavier, entreesDepuisManette(pad, reglages(), reglages().liaisonsManette)) : clavier;
+      const res = pad ? fusionnerEntrees(clavier, entreesDepuisManette(pad, reglages(), reglages().liaisonsManette)) : clavier;
+      res.chatAppuis = { haut: appuisChat.has("haut"), gauche: appuisChat.has("gauche"), droite: appuisChat.has("droite"), bas: appuisChat.has("bas") };
+      appuisChat.clear();
+      return res;
     },
     manetteConnectee() { return manette() !== null; },
     boutonManette(index) { const p = manette(); return !!p && presse(p, index); },
