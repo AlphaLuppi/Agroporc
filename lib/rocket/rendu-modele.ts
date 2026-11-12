@@ -186,7 +186,28 @@ export function pointProfil(v: number): { dr: number; y: number } {
 export function pointCoque(c: Readonly<Contour>, u: number, v: number, tmp: PointContour = { x: 0, z: 0, nx: 0, nz: 0 }): Vec3 {
   pointContour(c, u, tmp);
   const { dr, y } = pointProfil(clamp(v, 0, PROFIL.longueur));
-  return [tmp.x + tmp.nx * dr, y, tmp.z + tmp.nz * dr];
+  return biseauterCoque([tmp.x + tmp.nx * dr, y, tmp.z + tmp.nz * dr]);
+}
+
+/**
+ * Biseau du raccord de sol à côté des poteaux (même plan que la collision, `arene.ts`) : un point du raccord arrondi situé du côté
+ * libre du plan (là où la matière a été rabotée) est reculé sur le plan, le long du rayon de l'arc. Au poteau le raccord disparaît : le mur tombe droit sur le sol.
+ */
+export function biseauterCoque(p: Vec3): Vec3 {
+  const r = RAYON_COQUE, t = BUT.longueurBiseau;
+  const ax = Math.abs(p[0]), zm = STADE.demiLongueur - Math.abs(p[2]);
+  if (p[1] >= r || zm < -1e-6 || zm > r + 1e-6 || ax < BUT.demiLargeur - 1e-6 || ax > BUT.demiLargeur + t) return p;
+  // plan : -r·(|x| - demiLargeur) + t·y + t·zm = 0 (positif = espace libre)
+  const pl = -r * (ax - BUT.demiLargeur) + t * p[1] + t * zm;
+  if (pl <= 0) return p;
+  // le point de l'arc flotte dans la partie rabotée : on le recule sur le plan, à l'opposé du centre de l'arc (zm = r, y = r)
+  const dy = r - p[1], dz = r - zm;
+  // sans traverser le sol ni le mur du fond (près des bouts de l'arc, le plan est au-delà : le point s'arrête sur le sol ou le mur)
+  let k = -pl / (t * dy + t * dz);
+  if (dy > 1e-9) k = Math.max(k, -p[1] / dy);
+  if (dz > 1e-9) k = Math.max(k, -zm / dz);
+  const sz = p[2] < 0 ? -1 : 1;
+  return [p[0], p[1] + dy * k, sz * (STADE.demiLongueur - (zm + dz * k))];
 }
 
 /** Ouverture du but dans la coque (le mur, le raccord de sol) : à ne pas dessiner. */

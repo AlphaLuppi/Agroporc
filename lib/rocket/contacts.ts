@@ -1,25 +1,44 @@
 /**
  * Rocket Muche : contacts voiture ↔ balle et voiture ↔ voiture (module C, seconde moitié).
  *
- * Voiture ↔ balle (spec § 5.9) : boîte orientée (la hitbox de l'Octane) contre sphère. La balle est repoussée hors de la boîte, puis
- * deux impulsions s'ajoutent comme dans Rocket League :
- *  1. un choc PHYSIQUE (masses 180 / 30, restitution 0 (RocketSim), inertie de la voiture pour le couple qu'elle reçoit, frottement tangentiel
- *     faible qui donne du spin à la balle) ;
- *  2. l'impulsion SUPPLÉMENTAIRE de Psyonix : direction = vecteur centre de hitbox → balle, composante verticale × 0,35 et composante
- *     le long de l'avant × 0,65 ; intensité = vitesse relative (plafonnée à 46 m/s) × courbe `CONTACT_BALLE.courbeImpulsion`. C'est elle
- *     qui rend les frappes plus longues qu'un choc physique et qui fait monter la balle prise par dessous. Elle n'est pas rejouée tant
- *     que le contact précédent date de moins de 0,1 s : une balle posée sur le toit (dribble) ne part pas en l'air.
+ * Voiture ↔ balle (spec § 5.9) : boîte orientée (la hitbox de l'Octane, arêtes arrondies de 2 cm comme la marge de Bullet) contre
+ * sphère. Le contact existe dès que la balle est à moins de `BALLE.margeContact` (1,905 cm, seuil de rupture d'un contact de Bullet) de
+ * la boîte. Si elle y pénètre, elle est repoussée dehors (l'équivalent du split impulse de Bullet : aucune vitesse ajoutée). Puis deux
+ * impulsions s'ajoutent comme dans Rocket League :
+ *  1. un choc PHYSIQUE si les deux se rapprochent (masses 180 / 30, restitution 0, inertie de la voiture pour le couple qu'elle reçoit,
+ *     frottement de Coulomb 2 qui donne du spin à la balle) ;
+ *  2. l'impulsion SUPPLÉMENTAIRE de Psyonix (RocketSim Ball::_OnHit), que les deux se rapprochent ou non : direction = vecteur ORIGINE
+ *     de la voiture (pas le centre de la hitbox) → centre de la balle AVANT la séparation, composante verticale × 0,35 et composante le
+ *     long de l'avant × 0,65 ; intensité = vitesse relative des centres (plafonnée à 46 m/s) × courbe `CONTACT_BALLE.courbeImpulsion`.
+ *     C'est elle qui rend les frappes plus longues qu'un choc physique et qui fait monter la balle prise par dessous. Après une
+ *     impulsion, la même voiture saute UN pas avant la suivante : en contact continu elle repart un pas sur deux (une balle posée sur
+ *     le toit n'a presque pas de vitesse relative, donc presque pas d'impulsion : le dribble tient).
+ *     Elle ne modifie pas la vitesse de la balle sur-le-champ : elle se cumule dans `balle.vitesseEnAttente` (RocketSim
+ *     Ball::_velocityImpulseCache), ajoutée UNE fois en fin de pas (`appliquerVitesseEnAttente`, RocketSim Ball::_FinishPhysicsTick),
+ *     et elle se calcule sur la position et la vitesse de la balle d'AVANT les contacts du pas (RocketSim lit `ballState` dans le
+ *     rappel de contact, avant le solveur) : quand deux voitures touchent la balle au même pas (50/50, coup d'envoi), l'impulsion
+ *     de chacune ne dépend ni de l'autre ni de l'ordre des voitures dans la liste.
+ * La vitesse de la balle n'est PAS plafonnée ici : `match.ts` appelle `bornerBalle` une fois après tous les contacts du pas.
  *
  * Voiture ↔ voiture (spec § 5.10) : SAT des deux boîtes orientées (15 axes), séparation, impulsion avec rotation (restitution 0,1,
- * frottement 0,3), BUMP (la plus lente des deux reçoit un surcroît de vitesse) et détection de la DÉMOLITION : l'attaquant est
- * supersonique, la victime est d'une autre équipe et le point de contact est dans l'angle avant de l'attaquant. Ce module ne marque
- * JAMAIS une voiture démolie : il rend `demolition` et `match.ts` applique.
+ * frottement 0,09), puis, pour chaque sens (RocketSim Arena::_BtCallback_OnCarCarCollision), BUMP ou DÉMOLITION : l'attaquant va vers
+ * l'autre plus vite qu'elle ne s'éloigne, la touche de son pare-chocs avant, et n'a pas déjà bumpé cette voiture dans les 0,25 s. S'il
+ * est supersonique et que la victime est d'une autre équipe, c'est une démolition, sinon un bump (surcroît de vitesse le long de la
+ * marche de l'attaquant). Ce module ne marque JAMAIS une voiture démolie : il rend `demolition` et `match.ts` applique.
+ * Comme pour la balle, la vitesse d'un bump va dans `victime.vitesseEnAttente` (RocketSim Car::_velocityImpulseCache), ajoutée après
+ * toutes les paires du pas, puis plafonnée une fois (Car::_FinishPhysicsTick) ; les conditions d'approche et la direction du bump
+ * se lisent sur les vitesses d'avant les contacts du pas : une voiture bumpée ou heurtée dans la paire (a, b) n'entre pas dans la
+ * paire (b, c) du même pas avec cette vitesse en plus.
  *
- * Flip reset : en l'air, quand les quatre roues touchent la balle (`rouesSurLaBalle`), le second saut est rendu et la fenêtre de 1,25 s
- * repart de zéro (aucun événement : le contrat n'en a pas ; le HUD peut appeler `rouesSurLaBalle`).
+ * Flip reset : `contactVoitureBalle` note les roues dont le rayon de suspension touche la balle (`EtatVoiture.rouesBalle`) et la
+ * normale de la balle sous chacune (`normalesRouesBalle`) ; au pas suivant `pasVoiture` les compte avec les roues au contact du décor
+ * partout où RocketSim lit `numWheelsInContact`. Trois roues = « au sol » : saut, second saut et flip sont rendus, le flip en cours
+ * s'arrête, un appui sur saut à ce moment est un saut au sol, le moteur n'est plus divisé par 4 ; une à trois roues : alignement sur
+ * la surface avec du gaz (RocketSim : le rayon d'une roue touche aussi la balle).
  *
- * Fidélité : courbe de l'impulsion et échelles 0,35 / 0,65 [RL] ; restitution du choc physique, frottement et inertie [~] ; démolition
- * [RL] (supersonique, 3 s) ; bump [~].
+ * Fidélité : tout est repris de RocketSim sauf le solveur lui-même [~] (un point de contact par paire, un passage d'impulsion avec
+ * frottement en cône, séparation par projection de la position, paires résolues l'une après l'autre : le choc PHYSIQUE d'une paire
+ * est donc vu par les suivantes du même pas) et les forces de pneu d'une roue posée sur la balle (non transposées).
  *
  * Pur et déterministe, sans allocation hors des objets de résultat.
  *
@@ -32,6 +51,7 @@ import {
   PAS_S,
   VOITURE,
   interpolerTable,
+  type AppliquerVitesseEnAttente,
   type ContactBalle,
   type ContactEntreVoitures,
   type ContactVoitureBalle,
@@ -49,13 +69,15 @@ const IB = BALLE.facteurInertie * MB * R * R;
 
 /** Frottement de Coulomb du choc voiture ↔ balle (RL : 2, le glissement est plafonné par `vt / raideur`, donc stable). */
 const FROTTEMENT_BALLE = CONTACT_BALLE.frottement;
-/** Délai entre deux impulsions de Psyonix pour une même voiture, en pas. */
-const DELAI_IMPULSION_PAS = Math.round(CONTACT_BALLE.delaiImpulsionS / PAS_S);
+/** Pas sautés entre deux impulsions de Psyonix d'une même voiture (RocketSim : 1). */
+const DELAI_IMPULSION_PAS = CONTACT_BALLE.delaiImpulsionPas;
+/** Délai du bump d'un attaquant contre la même victime, en pas (0,25 s : 30 pas, le bump suivant passe au pas t + 30). */
 const DELAI_BUMP_PAS = Math.round(CONTACT_VOITURES.bumpDelaiS / PAS_S);
-/** Un bump exige une vitesse de rapprochement d'au moins ceci (m/s). */
-const BUMP_RAPPROCHEMENT_MIN = 1;
-/** Une démolition exige que l'attaquant fonce vers sa victime d'au moins ceci (m/s). */
-const DEMO_RAPPROCHEMENT_MIN = 2;
+/** Le contact voiture ↔ balle existe tant que la balle est à moins de ceci de la boîte (seuil de rupture d'un contact de Bullet). */
+const MARGE_BALLE = BALLE.margeContact;
+/** Arrondi des arêtes de la hitbox face à la balle (marge de collision de Bullet) et demi-dimensions de la boîte rétrécie d'autant. */
+const ARRONDI = CONTACT_BALLE.arrondiHitbox;
+const HXR = HX - ARRONDI, HYR = HY - ARRONDI, HZR = HZ - ARRONDI;
 /** Les axes de produit vectoriel ne sont retenus que s'ils pénètrent nettement moins que le meilleur axe de face. */
 const BIAIS_ARETES = 1.05;
 
@@ -68,9 +90,23 @@ const RB: Vec3 = [0, 0, 0];
 const UREL: Vec3 = [0, 0, 0];
 const TAN: Vec3 = [0, 0, 0];
 const DIR: Vec3 = [0, 0, 0];
+/** position de la balle avant la séparation (direction de l'impulsion de Psyonix) */
+const BP0: Vec3 = [0, 0, 0];
 
 const dot3 = (a: Readonly<Vec3>, b: Readonly<Vec3>): number => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const clamp = (x: number, a: number, b: number): number => (x < a ? a : x > b ? b : x);
+
+/**
+ * Fin de pas d'une balle ou d'une voiture (RocketSim Ball::_FinishPhysicsTick et Car::_FinishPhysicsTick, « add velocity cache ») :
+ * la vitesse en attente (impulsions de Psyonix reçues par la balle, bumps reçus par la voiture) entre dans la vitesse, puis repart de
+ * zéro. À appeler une fois, après TOUS les contacts du pas ; les plafonds (`bornerBalle`, `plafonnerVitesse`) viennent après.
+ */
+export const appliquerVitesseEnAttente: AppliquerVitesseEnAttente = (c) => {
+  const v = c.v, a = c.vitesseEnAttente;
+  if (a[0] === 0 && a[1] === 0 && a[2] === 0) return;
+  v[0] += a[0]; v[1] += a[1]; v[2] += a[2];
+  a[0] = 0; a[1] = 0; a[2] = 0;
+};
 
 /** Centre de la hitbox, écrit dans `out`. */
 function centreDans(out: Vec3, v: Readonly<EtatVoiture>): Vec3 {
@@ -86,57 +122,90 @@ function centreDans(out: Vec3, v: Readonly<EtatVoiture>): Vec3 {
 // ============================================================================================================================
 
 /**
- * Vrai si les QUATRE roues touchent la balle (centre de chaque roue à moins de `rayon de balle + rayon de roue + marge` du centre de
- * la balle) : la voiture est « posée » sur la balle, c'est le FLIP RESET. Sert aussi au HUD.
+ * Roues dont le RAYON de suspension touche la balle (RocketSim btVehicleRL::rayCast : le rayon part du point d'attache de la roue, le
+ * long de -haut, sur repos + course + rayon de roue - 2,5 uu, soit 48,755 uu à l'avant et 49,555 uu à l'arrière, et touche tout corps
+ * sauf le châssis, la balle comprise). Écrit un drapeau par roue dans `out` s'il est fourni et rend le nombre de roues touchées. Un
+ * rayon qui part de l'INTÉRIEUR de la balle ne la touche pas (Bullet ne rend pas d'impact pour un lancer déjà en pénétration).
+ * `normales`, s'il est fourni, reçoit pour chaque roue touchée la normale de la balle au point d'impact du rayon (unitaire, du centre
+ * de la balle vers ce point : le `m_contactNormalWS` du rayon) ; celle d'une roue non touchée n'est pas modifiée.
  */
-export function rouesSurLaBalle(v: Readonly<EtatVoiture>, bp: Readonly<Vec3>): boolean {
+export function rouesTouchantLaBalle(v: Readonly<EtatVoiture>, bp: Readonly<Vec3>, out?: boolean[], normales?: Vec3[]): number {
   const { avant, droite, haut } = v.base;
+  let nb = 0;
   for (let i = 0; i < 4; i++) {
     const roue = VOITURE.roues[i];
-    const lx = roue.local[0], ly = roue.local[1], lz = roue.local[2];
-    const dx = v.p[0] + avant[0] * lx + droite[0] * ly + haut[0] * lz - bp[0];
-    const dy = v.p[1] + avant[1] * lx + droite[1] * ly + haut[1] * lz - bp[1];
-    const dz = v.p[2] + avant[2] * lx + droite[2] * ly + haut[2] * lz - bp[2];
-    const lim = R + roue.rayon + VOITURE.margeContactRoue;
-    if (dx * dx + dy * dy + dz * dz > lim * lim) return false;
+    const ax = roue.attache[0], ay = roue.attache[1], az = roue.attache[2];
+    // du point d'attache au centre de la balle
+    const dx = bp[0] - (v.p[0] + avant[0] * ax + droite[0] * ay + haut[0] * az);
+    const dy = bp[1] - (v.p[1] + avant[1] * ax + droite[1] * ay + haut[1] * az);
+    const dz = bp[2] - (v.p[2] + avant[2] * ax + droite[2] * ay + haut[2] * az);
+    // abscisse du centre le long du rayon (direction -haut) et carré de sa distance à la droite du rayon
+    const s = -(dx * haut[0] + dy * haut[1] + dz * haut[2]);
+    const h2 = dx * dx + dy * dy + dz * dz - s * s;
+    let touche = false;
+    if (h2 <= R * R) {
+      const entree = s - Math.sqrt(R * R - h2);
+      // longueur du rayon : de l'attache au centre de la roue à l'équilibre, plus le rayon de la roue, plus sa marge
+      touche = entree >= 0 && entree <= az - roue.local[2] + roue.rayon + roue.marge;
+      if (touche && normales) {
+        // point d'impact = attache - haut × entree ; (dx, dy, dz) va de l'attache au centre de la balle
+        const n = normales[i];
+        n[0] = (-dx - haut[0] * entree) / R; n[1] = (-dy - haut[1] * entree) / R; n[2] = (-dz - haut[2] * entree) / R;
+      }
+    }
+    if (out) out[i] = touche;
+    if (touche) nb++;
   }
-  return true;
+  return nb;
+}
+
+/**
+ * Vrai si trois roues au moins (`VOITURE.rouesPourSol`, RocketSim : isOnGround = numWheelsInContact >= 3) ont leur rayon de suspension
+ * sur la balle : la voiture est « posée » sur la balle, c'est le FLIP RESET. Sert aussi au HUD.
+ */
+export function rouesSurLaBalle(v: Readonly<EtatVoiture>, bp: Readonly<Vec3>): boolean {
+  return rouesTouchantLaBalle(v, bp) >= VOITURE.rouesPourSol;
 }
 
 /**
  * Contact de la hitbox orientée avec la balle. Rend null sans contact (ou si la voiture est démolie). `force` est la vitesse relative
- * balle / voiture AVANT le choc ; `point` est le point de la hitbox touché. Ne modifie ni `balle.dernierToucheur` ni les statistiques.
+ * balle / voiture AVANT le choc ; `point` est le point de la hitbox touché. Ne modifie ni `balle.dernierToucheur` ni les statistiques,
+ * ne plafonne pas la vitesse de la balle (`bornerBalle`). Note dans `v.rouesBalle` les roues posées sur la balle (flip reset) et dans
+ * `v.normalesRouesBalle` la normale de la balle sous chacune. L'impulsion de Psyonix va dans `b.vitesseEnAttente`, pas dans `b.v` ;
+ * elle lit la balle d'avant les contacts du pas, `balleAvant` (défaut : la balle telle qu'elle est à l'appel).
  */
-export const contactVoitureBalle: ContactVoitureBalle = (v, b, tick, _dt) => {
+export const contactVoitureBalle: ContactVoitureBalle = (v, b, tick, _dt, balleAvant) => {
+  const rb = v.rouesBalle;
+  rb[0] = false; rb[1] = false; rb[2] = false; rb[3] = false;
   if (v.demolie) return null;
   const { avant, droite, haut } = v.base;
   centreDans(C, v);
   const dx = b.p[0] - C[0], dy = b.p[1] - C[1], dz = b.p[2] - C[2];
-  if (dx * dx + dy * dy + dz * dz > (RAYON_ENGLOBANT + R) * (RAYON_ENGLOBANT + R)) return null;
-  // flip reset : en l'air, les quatre roues sur la balle rendent le second saut (et rouvrent la fenêtre de 1,25 s)
-  if (!v.auSol && v.rouesContact === 0 && rouesSurLaBalle(v, b.p)) {
-    v.saut.secondUtilise = false;
-    v.saut.tempsEnLAir = 0;
-    v.saut.tenue = false;
-  }
-  // centre de la balle dans le repère de la hitbox, point le plus proche de la boîte
+  const portee = RAYON_ENGLOBANT + R + MARGE_BALLE;
+  if (dx * dx + dy * dy + dz * dz > portee * portee) return null;
+  // flip reset : les rayons de suspension qui touchent la balle (ils finissent dans la sphère englobante de la hitbox)
+  rouesTouchantLaBalle(v, b.p, rb, v.normalesRouesBalle);
+  // centre de la balle dans le repère de la hitbox ; point le plus proche de la boîte RÉTRÉCIE de l'arrondi, puis regonflée d'autant
   const lx = dx * avant[0] + dy * avant[1] + dz * avant[2];
   const ly = dx * droite[0] + dy * droite[1] + dz * droite[2];
   const lz = dx * haut[0] + dy * haut[1] + dz * haut[2];
-  const cx = clamp(lx, -HX, HX), cy = clamp(ly, -HY, HY), cz = clamp(lz, -HZ, HZ);
+  const cx = clamp(lx, -HXR, HXR), cy = clamp(ly, -HYR, HYR), cz = clamp(lz, -HZR, HZR);
   let nx = lx - cx, ny = ly - cy, nz = lz - cz;
-  let dist = Math.hypot(nx, ny, nz);
-  let px = cx, py = cy, pz = cz;
-  if (dist >= R) return null;
-  if (dist < 1e-9) {
-    // centre de la balle DANS la boîte : on la sort par la face la plus proche
+  const ecart = Math.hypot(nx, ny, nz);
+  // distance du centre de la balle à la surface de la boîte arrondie, point de cette surface
+  let dist = ecart - ARRONDI;
+  let px: number, py: number, pz: number;
+  if (dist >= R + MARGE_BALLE) return null;
+  if (ecart < 1e-9) {
+    // centre de la balle DANS la boîte rétrécie : on la sort par la face la plus proche
     const ex = HX - Math.abs(lx), ey = HY - Math.abs(ly), ez = HZ - Math.abs(lz);
-    nx = 0; ny = 0; nz = 0;
+    nx = 0; ny = 0; nz = 0; px = cx; py = cy; pz = cz;
     if (ex <= ey && ex <= ez) { nx = lx >= 0 ? 1 : -1; px = nx * HX; dist = -ex; }
     else if (ey <= ez) { ny = ly >= 0 ? 1 : -1; py = ny * HY; dist = -ey; }
     else { nz = lz >= 0 ? 1 : -1; pz = nz * HZ; dist = -ez; }
   } else {
-    nx /= dist; ny /= dist; nz /= dist;
+    nx /= ecart; ny /= ecart; nz /= ecart;
+    px = cx + nx * ARRONDI; py = cy + ny * ARRONDI; pz = cz + nz * ARRONDI;
   }
   // normale monde (de la voiture vers la balle) et point de contact monde
   N[0] = avant[0] * nx + droite[0] * ny + haut[0] * nz;
@@ -154,20 +223,30 @@ export const contactVoitureBalle: ContactVoitureBalle = (v, b, tick, _dt) => {
   const rel = vitesseRelative(v, b);
   const force = Math.hypot(rel[0], rel[1], rel[2]);
   const vn = dot3(rel, N);
-  // vitesse relative des centres (pour l'impulsion de Psyonix)
-  const rvx = b.v[0] - v.v[0], rvy = b.v[1] - v.v[1], rvz = b.v[2] - v.v[2];
-  const vitesseCentres = Math.hypot(rvx, rvy, rvz);
+  // vitesse relative des centres (pour l'impulsion de Psyonix), lue avant le choc, sur la vitesse de la balle d'AVANT les contacts
+  // du pas (RocketSim Ball::_OnHit : `ballState.vel - carState.vel`, lus dans le rappel de contact, avant le solveur) : ni le choc
+  // ni l'impulsion d'une autre voiture passée plus tôt dans ce pas n'y entrent
+  const va = balleAvant ? balleAvant.v : b.v;
+  let vitesseCentres = Math.hypot(va[0] - v.v[0], va[1] - v.v[1], va[2] - v.v[2]);
+  // contact déjà là au pas précédent : RocketSim lit alors des vitesses que son solveur a DÉJÀ résolues (la balle posée sur le toit
+  // n'a aucune vitesse d'approche, sa gravité est annulée dans le solveur). Ici la gravité du pas n'est annulée que par le choc
+  // ci-dessous : pour un contact qui dure, la vitesse relative est donc relue APRÈS le choc
+  const persistant = v.dernierContactBalleTick === tick - 1;
+  // ce que les voitures passées plus tôt dans ce pas ont déjà donné à la balle (nul pour la première, ou sans `balleAvant`)
+  const ex = b.v[0] - va[0], ey = b.v[1] - va[1], ez = b.v[2] - va[2];
 
-  // séparation : la balle est repoussée hors de la boîte
-  b.p[0] += N[0] * profondeur; b.p[1] += N[1] * profondeur; b.p[2] += N[2] * profondeur;
+  // séparation : la balle qui pénètre est repoussée hors de la boîte (rien à moins de 1,905 cm sans pénétration). L'impulsion de
+  // Psyonix lit la position d'AVANT les contacts du pas (RocketSim : dans le rappel de contact, avant le solveur et l'intégration)
+  const pa = balleAvant ? balleAvant.p : b.p;
+  BP0[0] = pa[0]; BP0[1] = pa[1]; BP0[2] = pa[2];
+  if (profondeur > 0) { b.p[0] += N[0] * profondeur; b.p[1] += N[1] * profondeur; b.p[2] += N[2] * profondeur; }
 
-  const delaiOk = tick - v.dernierContactBalleTick > DELAI_IMPULSION_PAS;
   if (vn < 0) {
-    // choc physique
+    // choc physique (Bullet résout la contrainte de vitesse dès que le point de contact existe, pénétration ou non)
     const j = (-(1 + CONTACT_BALLE.restitution) * vn) / (inverseMasseEffective(v.base, RC, N) + 1 / MB);
     b.v[0] += (N[0] * j) / MB; b.v[1] += (N[1] * j) / MB; b.v[2] += (N[2] * j) / MB;
     appliquerImpulsion(v, RC, N, -j);
-    // frottement tangentiel faible : donne du spin à la balle
+    // frottement tangentiel : donne du spin à la balle
     const rel2 = vitesseRelative(v, b);
     const vn2 = dot3(rel2, N);
     TAN[0] = rel2[0] - N[0] * vn2; TAN[1] = rel2[1] - N[1] * vn2; TAN[2] = rel2[2] - N[2] * vn2;
@@ -183,8 +262,16 @@ export const contactVoitureBalle: ContactVoitureBalle = (v, b, tick, _dt) => {
       b.w[0] += (ry * fz - rz * fy) / IB; b.w[1] += (rz * fx - rx * fz) / IB; b.w[2] += (rx * fy - ry * fx) / IB;
       appliquerImpulsion(v, RC, TAN, jt);
     }
-    // impulsion supplémentaire de Psyonix
-    if (delaiOk) psyonix(v, b, vitesseCentres);
+  }
+  // contact qui dure : vitesse relative après le choc de CETTE voiture seulement (celui des voitures précédentes est retiré)
+  if (persistant) vitesseCentres = Math.hypot(b.v[0] - v.v[0] - ex, b.v[1] - v.v[1] - ey, b.v[2] - v.v[2] - ez);
+  // impulsion supplémentaire de Psyonix : à chaque contact, approche ou non, si la précédente de cette voiture date de plus d'un pas
+  // (RocketSim Ball.cpp:262 ; le second test couvre un compteur de pas revenu en arrière). Elle attend la fin du pas dans
+  // `b.vitesseEnAttente` (Ball.cpp:283 « Velocity won't be actually added until the end of this tick »)
+  const derniere = v.derniereImpulsionPsyonixTick;
+  if (tick > derniere + DELAI_IMPULSION_PAS || derniere > tick) {
+    v.derniereImpulsionPsyonixTick = tick;
+    psyonix(v, b, BP0, vitesseCentres);
   }
   v.dernierContactBalleTick = tick;
   const r: ContactBalle = { force, point };
@@ -203,20 +290,24 @@ function vitesseRelative(v: Readonly<EtatVoiture>, b: Readonly<{ v: Vec3; w: Vec
   return UREL;
 }
 
-/** L'impulsion supplémentaire de Psyonix (voir en-tête). `vitesseCentres` : |v_balle − v_voiture| avant le choc. */
-function psyonix(v: Readonly<EtatVoiture>, b: { p: Vec3; v: Vec3 }, vitesseCentres: number): void {
-  centreDans(C, v);
-  DIR[0] = b.p[0] - C[0]; DIR[1] = (b.p[1] - C[1]) * CONTACT_BALLE.echelleVerticale; DIR[2] = b.p[2] - C[2];
-  // composante le long de l'avant ramenée à 65 %
+/**
+ * L'impulsion supplémentaire de Psyonix (voir en-tête, RocketSim Ball::_OnHit). `bp` : centre de la balle avant les contacts du pas ;
+ * `vitesseCentres` : |v_balle − v_voiture| avant le choc. La direction part de l'ORIGINE de la voiture (`carState.pos`, le centre de
+ * masse), pas du centre de la hitbox. Elle s'ajoute à `b.vitesseEnAttente` (RocketSim `_velocityImpulseCache`), pas à la vitesse : la
+ * balle la reçoit en fin de pas, et le plafond de 60 m/s vient après (`bornerBalle`).
+ */
+function psyonix(v: Readonly<EtatVoiture>, b: { vitesseEnAttente: Vec3 }, bp: Readonly<Vec3>, vitesseCentres: number): void {
+  if (!(vitesseCentres > 0)) return;
+  DIR[0] = bp[0] - v.p[0]; DIR[1] = (bp[1] - v.p[1]) * CONTACT_BALLE.echelleVerticale; DIR[2] = bp[2] - v.p[2];
+  // composante le long de l'avant ramenée à 65 % (RocketSim normalise avant et après : même direction, l'ajustement est linéaire)
   const af = dot3(DIR, v.base.avant) * (1 - CONTACT_BALLE.echelleAvant);
   DIR[0] -= v.base.avant[0] * af; DIR[1] -= v.base.avant[1] * af; DIR[2] -= v.base.avant[2] * af;
   const n = Math.hypot(DIR[0], DIR[1], DIR[2]);
   if (n < 1e-9) return;
   const vr = Math.min(vitesseCentres, CONTACT_BALLE.vitesseRelativeMax);
   const intensite = vr * interpolerTable(CONTACT_BALLE.courbeImpulsion, vr);
-  b.v[0] += (DIR[0] / n) * intensite; b.v[1] += (DIR[1] / n) * intensite; b.v[2] += (DIR[2] / n) * intensite;
-  const vit = Math.hypot(b.v[0], b.v[1], b.v[2]);
-  if (vit > BALLE.vitesseMax) { const k = BALLE.vitesseMax / vit; b.v[0] *= k; b.v[1] *= k; b.v[2] *= k; }
+  const a = b.vitesseEnAttente;
+  a[0] += (DIR[0] / n) * intensite; a[1] += (DIR[1] / n) * intensite; a[2] += (DIR[2] / n) * intensite;
 }
 
 // ============================================================================================================================
@@ -286,11 +377,32 @@ function coinsDedans(a: Readonly<EtatVoiture>, ca: Readonly<Vec3>, b: Readonly<E
 }
 
 /**
- * Contact de deux voitures (SAT à 15 axes). Rend null sans contact (ou si l'une est démolie). `a` et `b` sont modifiés : séparation,
- * impulsion, bump. La démolition est seulement DÉTECTÉE (`demolition`) : `match.ts` marque la victime. Si les deux voitures sont
- * supersoniques et peuvent se démolir, celle qui fonce le plus vite sur l'autre est l'auteur.
+ * Condition d'approche de RocketSim (Arena::_BtCallback_OnCarCarCollision) : `att` va vers `vic` (vitesse · écart des origines > 0)
+ * et sa vitesse le long de la direction origine → origine dépasse la vitesse de `vic` le long de la direction de marche de `att`
+ * (il fonce vers l'autre plus vite que l'autre ne s'éloigne). Rend cette vitesse d'approche (m/s), ou -1 si la condition échoue.
+ * `vAtt` et `vVic` : les vitesses des deux voitures avant les contacts du pas.
  */
-export const contactVoitureVoiture: ContactEntreVoitures = (a, b, tick) => {
+function vitesseApproche(att: Readonly<EtatVoiture>, vic: Readonly<EtatVoiture>, vAtt: Readonly<Vec3>, vVic: Readonly<Vec3>): number {
+  const dx = vic.p[0] - att.p[0], dy = vic.p[1] - att.p[1], dz = vic.p[2] - att.p[2];
+  const vers = vAtt[0] * dx + vAtt[1] * dy + vAtt[2] * dz;
+  if (vers <= 0) return -1;
+  const nd = Math.hypot(dx, dy, dz), nv = Math.hypot(vAtt[0], vAtt[1], vAtt[2]);
+  if (nd < 1e-9 || nv < 1e-9) return -1;
+  const approche = vers / nd;
+  const fuite = (vVic[0] * vAtt[0] + vVic[1] * vAtt[1] + vVic[2] * vAtt[2]) / nv;
+  return approche > fuite ? approche : -1;
+}
+
+/**
+ * Contact de deux voitures (SAT à 15 axes). Rend null sans contact (ou si l'une est démolie). `a` et `b` sont modifiés : séparation,
+ * impulsion, délai de bump de l'attaquant ; la vitesse d'un bump va dans la `vitesseEnAttente` de la victime (ajoutée en fin de pas
+ * par l'appelant, `appliquerVitesseEnAttente`). La démolition est seulement DÉTECTÉE (`demolition`) : `match.ts` marque la victime.
+ * Les deux sens sont testés dans l'ordre de RocketSim (`a` attaque `b`, puis `b` attaque `a`) : si `a` démolit `b`, le second sens
+ * n'est pas testé ; si `a` ne fait que bumper `b`, `b` peut encore bumper ou démolir `a` au même pas.
+ * `vAvantA`, `vAvantB` : vitesses des deux voitures avant les contacts du pas (défaut : leurs vitesses à l'appel), lues par les
+ * conditions d'approche et la direction du bump.
+ */
+export const contactVoitureVoiture: ContactEntreVoitures = (a, b, tick, vAvantA, vAvantB) => {
   if (a.demolie || b.demolie) return null;
   centreDans(CA, a); centreDans(CB, b);
   T[0] = CB[0] - CA[0]; T[1] = CB[1] - CA[1]; T[2] = CB[2] - CA[2];
@@ -344,8 +456,6 @@ export const contactVoitureVoiture: ContactEntreVoitures = (a, b, tick) => {
 
   // --- vitesses avant le choc
   const vitRelCentres = Math.hypot(b.v[0] - a.v[0], b.v[1] - a.v[1], b.v[2] - a.v[2]);
-  // contributions au rapprochement : a fonce vers b (le long de n) de ca, b fonce vers a de cb
-  const ca = dot3(a.v, n), cb = -dot3(b.v, n);
 
   // le point d'attaque d'une voiture = ses PROPRES coins entrés dans l'autre (la moyenne commune dérive vers l'arrière quand le
   // chevauchement est grand, à 45 m/s de rapprochement on pénètre de 40 cm en un pas)
@@ -354,24 +464,18 @@ export const contactVoitureVoiture: ContactEntreVoitures = (a, b, tick) => {
     return (pt[0] - v.p[0]) * v.base.avant[0] + (pt[1] - v.p[1]) * v.base.avant[1] + (pt[2] - v.p[2]) * v.base.avant[2] > CONTACT_VOITURES.demoAvantMinM;
   };
   const pareChocsA = avantDe(a, MA, nA), pareChocsB = avantDe(b, MB_, nB);
-
-  // --- démolition : l'attaquant est supersonique, la victime d'une autre équipe, le contact est dans l'angle avant de l'attaquant
-  let demolition: { auteur: number; victime: number } | null = null;
-  const memeEquipe = a.equipe === b.equipe;
-  if (!memeEquipe || CONTACT_VOITURES.tirAmi) {
-    const avantA = a.supersonique && ca > DEMO_RAPPROCHEMENT_MIN && pareChocsA;
-    const avantB = b.supersonique && cb > DEMO_RAPPROCHEMENT_MIN && pareChocsB;
-    if (avantA && (!avantB || ca >= cb)) demolition = { auteur: a.id, victime: b.id };
-    else if (avantB) demolition = { auteur: b.id, victime: a.id };
-  }
+  // vitesses d'AVANT les contacts du pas, pour le bump (RocketSim lit l'état dans le rappel de contact, avant le solveur : ni le
+  // choc ni le bump d'une autre paire du même pas n'y entrent) ; à défaut, celles d'avant le choc de cette paire
+  const va0 = vAvantA ?? a.v, vb0 = vAvantB ?? b.v;
+  VAV[0] = va0[0]; VAV[1] = va0[1]; VAV[2] = va0[2]; VBV[0] = vb0[0]; VBV[1] = vb0[1]; VBV[2] = vb0[2];
+  // condition d'approche de chaque sens, sur ces vitesses et sur les positions d'avant la séparation : vitesse de l'attaquant vers
+  // la victime, ou -1
+  const approcheA = vitesseApproche(a, b, VAV, VBV), approcheB = vitesseApproche(b, a, VBV, VAV);
 
   // --- séparation (moitié chacune)
   const demi = minOverlap / 2;
   a.p[0] -= n[0] * demi; a.p[1] -= n[1] * demi; a.p[2] -= n[2] * demi;
   b.p[0] += n[0] * demi; b.p[1] += n[1] * demi; b.p[2] += n[2] * demi;
-
-  // vitesses AVANT le choc, pour le bump (RocketSim lit les vitesses avant la résolution du solveur)
-  VAV[0] = a.v[0]; VAV[1] = a.v[1]; VAV[2] = a.v[2]; VBV[0] = b.v[0]; VBV[1] = b.v[1]; VBV[2] = b.v[2];
 
   // --- impulsion avec rotation
   vitessePointDans(UA, a, RA);
@@ -398,32 +502,33 @@ export const contactVoitureVoiture: ContactEntreVoitures = (a, b, tick) => {
     }
   }
 
-  // --- bump (RocketSim) : l'attaquant qui fonce vers l'autre PAR SON PARE-CHOCS AVANT lui ajoute de la vitesse le long de sa propre
-  // direction de marche (+ une poussée verticale). Chaque voiture est testée à son tour (un choc frontal bumpe les deux).
+  // --- bump et démolition (RocketSim Arena::_BtCallback_OnCarCarCollision), un sens après l'autre. Gardes communes : l'attaquant
+  // n'a pas bumpé CETTE voiture depuis 0,25 s, il va vers elle plus vite qu'elle ne s'éloigne (`vitesseApproche`), il la touche de son
+  // pare-chocs avant. Supersonique contre une autre équipe : démolition ; sinon bump, vitesse donnée à la victime le long de la
+  // marche de l'attaquant (+ une poussée le long du haut de la victime au sol, verticale en l'air), mise EN ATTENTE jusqu'à la fin du
+  // pas (`car2->_velocityImpulseCache`). Le délai est armé dans les deux cas.
+  let demolition: { auteur: number; victime: number } | null = null;
   let bump: { vitesse: number } | null = null;
-  const rapprochement = ca + cb;
-  if (!demolition && rapprochement > BUMP_RAPPROCHEMENT_MIN && tick - a.dernierBumpTick > DELAI_BUMP_PAS && tick - b.dernierBumpTick > DELAI_BUMP_PAS) {
-    centreDans(CA, a); centreDans(CB, b);
-    for (let k = 0; k < 2; k++) {
-      const att = k === 0 ? a : b, vic = k === 0 ? b : a;
-      if (!(k === 0 ? pareChocsA : pareChocsB)) continue;
-      // direction attaquant → victime (centres) et vitesse de l'attaquant dans cette direction
-      const s0 = k === 0 ? 1 : -1;
-      DIR[0] = (CB[0] - CA[0]) * s0; DIR[1] = (CB[1] - CA[1]) * s0; DIR[2] = (CB[2] - CA[2]) * s0;
-      const nd = Math.hypot(DIR[0], DIR[1], DIR[2]) || 1;
-      const va = k === 0 ? VAV : VBV;
-      const vers = (va[0] * DIR[0] + va[1] * DIR[1] + va[2] * DIR[2]) / nd;
-      const vitAtt = Math.hypot(va[0], va[1], va[2]);
-      if (vers <= BUMP_RAPPROCHEMENT_MIN || vitAtt < 1e-6) continue;
-      const poussee = interpolerTable(vic.auSol ? CONTACT_VOITURES.bumpSol : CONTACT_VOITURES.bumpAir, vers);
-      const haut = interpolerTable(CONTACT_VOITURES.bumpHaut, vers);
-      const hx = vic.auSol ? vic.base.haut[0] : 0, hy = vic.auSol ? vic.base.haut[1] : 1, hz = vic.auSol ? vic.base.haut[2] : 0;
-      vic.v[0] += (va[0] / vitAtt) * poussee + hx * haut;
-      vic.v[1] += (va[1] / vitAtt) * poussee + hy * haut;
-      vic.v[2] += (va[2] / vitAtt) * poussee + hz * haut;
-      bump = { vitesse: Math.max(bump ? bump.vitesse : 0, vitRelCentres) };
+  for (let k = 0; k < 2; k++) {
+    const att = k === 0 ? a : b, vic = k === 0 ? b : a;
+    if (att.bumpAutreId === vic.id && tick - att.bumpDelaiTick < DELAI_BUMP_PAS) continue;
+    const vers = k === 0 ? approcheA : approcheB;
+    if (vers < 0 || !(k === 0 ? pareChocsA : pareChocsB)) continue;
+    att.bumpAutreId = vic.id; att.bumpDelaiTick = tick;
+    if (att.supersonique && (att.equipe !== vic.equipe || CONTACT_VOITURES.tirAmi)) {
+      demolition = { auteur: att.id, victime: vic.id };
+      break; // la victime est démolie : RocketSim ne teste pas l'autre sens
     }
-    if (bump) { a.dernierBumpTick = tick; b.dernierBumpTick = tick; }
+    const va = k === 0 ? VAV : VBV;
+    const vitAtt = Math.hypot(va[0], va[1], va[2]);
+    const poussee = interpolerTable(vic.auSol ? CONTACT_VOITURES.bumpSol : CONTACT_VOITURES.bumpAir, vers);
+    const haut = interpolerTable(CONTACT_VOITURES.bumpHaut, vers);
+    const hx = vic.auSol ? vic.base.haut[0] : 0, hy = vic.auSol ? vic.base.haut[1] : 1, hz = vic.auSol ? vic.base.haut[2] : 0;
+    const enAttente = vic.vitesseEnAttente;
+    enAttente[0] += (va[0] / vitAtt) * poussee + hx * haut;
+    enAttente[1] += (va[1] / vitAtt) * poussee + hy * haut;
+    enAttente[2] += (va[2] / vitAtt) * poussee + hz * haut;
+    bump = { vitesse: Math.max(bump ? bump.vitesse : 0, vitRelCentres) };
   }
   return { demolition, bump };
 };

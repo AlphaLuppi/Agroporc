@@ -118,7 +118,15 @@ export default function HudRocketUi({ hud, reglages, surReglages, surReprendre, 
         </div>
       )}
 
-      {hud.demolie && (
+      {hud.rejeu && (
+        <p className={styles.rejeu} data-equipe={hud.rejeu.equipe} role="status">
+          <b>Rejeu</b>
+          {hud.rejeu.buteur && <span>vu de {hud.rejeu.buteur}</span>}
+          <span className={styles.rejeuPasser}>{hud.manette ? "A" : "Espace"} : passer</span>
+        </p>
+      )}
+
+      {hud.demolie && !hud.rejeu && (
         <p className={styles.demolie}>Démolie · réapparition dans {Math.max(1, Math.ceil(hud.reapparitionDans))} s</p>
       )}
 

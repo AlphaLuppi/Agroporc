@@ -50,8 +50,11 @@ export const STADE = {
   demiLargeur: uu(4096),
   /** demi-longueur jusqu'au fond de terrain (plan des buts) : Z = ±51,20 m (RL : 5120 uu, terrain 10240 de long hors buts) */
   demiLongueur: uu(5120),
-  /** hauteur du plafond : 20,44 m (RL : 2044 uu) */
-  hauteur: uu(2044),
+  /**
+   * hauteur du plafond : 20,48 m (RocketSim ARENA_HEIGHT = 2048 uu : Arena.cpp pose le plan du plafond à z = 2048, comme il pose le sol
+   * à 0 et les murs latéraux à ±4096 ; le wiki RLBot arrondit à 2044)
+   */
+  hauteur: uu(2048),
   /** pan coupé des quatre coins : le coin est coupé de 11,52 m sur chaque mur (RL : 1152 uu), en plan (±40,96 ; ±39,68) → (±29,44 ; ±51,20) */
   panCoupe: uu(1152),
   /** rayon de raccord sol/murs (RL : ~256 uu) */
@@ -63,8 +66,8 @@ export const STADE = {
 } as const;
 
 export const BUT = {
-  /** largeur de l'ouverture : 17,86 m (RL : 1786 uu), soit Z demi-largeur 8,93 m */
-  demiLargeur: uu(893),
+  /** demi-largeur de l'ouverture : 8,92755 m (RocketSim Arena.cpp APPROX_GOAL_HALF_WIDTH = 892,755 uu), soit 17,8551 m de large */
+  demiLargeur: uu(892.755),
   /** hauteur de l'ouverture : 6,42775 m (RL : 642,775 uu) */
   hauteur: uu(642.775),
   /** profondeur : de Z = ±51,20 à ±60,00 m (RL : 880 uu) */
@@ -75,6 +78,13 @@ export const BUT = {
   seuilMarque: uu(5124.25),
   /** raccords des angles intérieurs de la cage (RL : cage à angles vifs, on adoucit à 0,25 m pour éviter les points durs de la SDF) */
   rayonInterieur: uu(25),
+  /**
+   * de part et d'autre de la cage, le raccord arrondi sol / mur du fond s'efface en biseau sur cette longueur (m) : au poteau le mur
+   * tombe droit sur le sol, rien ne dépasse dans le terrain, et on entre ou sort de la cage en longeant le mur sans rien accrocher
+   */
+  longueurBiseau: 6,
+  /** rayon de l'adoucissement des arêtes de ce biseau (m) */
+  rayonBiseau: 0.5,
 } as const;
 
 /** Vrai pour la balle ET pour tout test « dans le but » : seuil du centre de balle selon son rayon. */
@@ -85,29 +95,42 @@ export const seuilMarqueBalle = (): number => BUT.seuilMarque + BALLE.rayon;
 // ============================================================================================================================
 
 export const BALLE = {
-  /** rayon de collision : 0,9125 m (RL : 91,25 uu ; le modèle visuel fait 92,75) */
+  /** rayon de collision : 0,9125 m (RocketSim BALL_COLLISION_RADIUS_SOCCAR = 91,25 uu ; le modèle visuel fait 92,75) */
   rayon: uu(91.25),
   rayonVisuel: uu(92.75),
-  /** masse (RL : 30) ; la voiture pèse 180 */
+  /** masse (RocketSim BALL_MASS_BT = CAR_MASS_BT / 6 = 30) ; la voiture pèse 180 */
   masse: 30,
-  /** restitution contre le décor (RL : 0,6) ; seuil de vitesse normale sous lequel il n'y a plus de rebond (m/s) */
+  /** restitution contre le décor (RocketSim BALL_RESTITUTION = 0,6 ; Bullet garde le max de la balle et du décor, ARENA_COLLISION_BASE_RESTITUTION = 0,3) */
   restitution: 0.6,
-  seuilRebond: 0.2,
-  /** frottement de Coulomb contre le décor (RL : 0,35) */
+  /**
+   * sous cette vitesse normale d'approche (mesurée AVANT la gravité du pas), le contact ne rebondit plus : 0,1 m/s (Bullet
+   * btContactSolverInfo::m_restitutionVelocityThreshold = 0,2 unité Bullet par seconde = 10 uu/s, restitutionCurve)
+   */
+  seuilRebond: uu(10),
+  /** frottement de Coulomb contre le décor (RocketSim BALL_FRICTION = 0,35 ; Bullet garde le min de la balle et du décor, ARENA_COLLISION_BASE_FRICTION = 0,6) */
   frottement: 0.35,
-  /** amortissement de roulement (RL : 0,0285), appliqué à la vitesse angulaire de la balle quand elle roule sur une surface */
-  frottementRoulement: 0.0285,
-  /** amortissement linéaire (RL : 0,03) : `v ← v × (1 - 0,03)^dt` */
+  /**
+   * le contact balle / décor existe dès que la surface de la balle est à moins de 1,905 cm de la matière (Bullet : seuil de rupture
+   * d'un contact = gContactBreakingThreshold 0,02 × (rayon 1,825 + 0,08) unité Bullet = 1,905 uu, btCollisionShape::getBoundingSphere
+   * modifié par RocketSim). C'est ce qui fait reposer la balle au-dessus de son rayon (BALL_REST_Z = 93,15 uu) ; même seuil pour le
+   * contact voiture ↔ balle (le plus petit des deux corps, la voiture donnerait 2,03 uu)
+   */
+  margeContact: uu(1.905),
+  /** amortissement linéaire (RocketSim BALL_DRAG = 0,03) : `v ← v × (1 - 0,03)^dt`, avant la gravité du pas (Bullet applyDamping) */
   amortissementLineaire: 0.03,
-  /** amortissement angulaire (RL : ~0,03) : `w ← w × (1 - 0,03)^dt` */
-  amortissementAngulaire: 0.03,
-  /** vitesse maximale (RL : 6000 uu/s) et vitesse angulaire maximale (RL : 6 rad/s) */
+  /**
+   * amortissement angulaire : NUL (RocketSim Arena.cpp `ball->_rigidBody.setDamping(ballDrag, 0)`). Aucun frottement de roulement non
+   * plus (Arena.cpp `setRollingFriction(0)`, contact fusionné construit avec rollingFriction = 0) : le spin ne change que par le
+   * frottement de Coulomb des contacts et par le plafond de 6 rad/s
+   */
+  amortissementAngulaire: 0,
+  /** vitesse maximale (RocketSim BALL_MAX_SPEED = 6000 uu/s) et vitesse angulaire maximale (BALL_MAX_ANG_SPEED = 6 rad/s), appliquées une fois en fin de pas */
   vitesseMax: uu(6000),
   vitesseAngMax: 6,
   /** moment d'inertie d'une sphère pleine : `0,4 × m × r²` (calculé à l'usage) */
   facteurInertie: 0.4,
-  /** hauteur du centre à l'engagement (RL : 92,75 uu) */
-  hauteurEngagement: uu(92.75),
+  /** hauteur du centre à l'engagement : 0,9315 m (RocketSim BALL_REST_Z = 93,15 uu : le rayon plus la marge de contact du décor) */
+  hauteurEngagement: uu(93.15),
 } as const;
 
 // ============================================================================================================================
@@ -115,76 +138,149 @@ export const BALLE = {
 // ============================================================================================================================
 
 export const VOITURE = {
+  /** RocketSim CAR_MASS_BT = 180 */
   masse: 180,
-  /** boîte de collision : 1,1801 × 0,8420 × 0,3616 m (RL : 118,01 × 84,20 × 36,16 uu) */
-  hitbox: { longueur: uu(118.01), largeur: uu(84.2), hauteur: uu(36.16) },
-  /** centre de la boîte par rapport à l'origine de la voiture, repère local [avant, droite, haut] : (0,1388 ; 0 ; 0,2075) (RL : 13,88, 0, 20,75 uu) */
-  decalageHitbox: [uu(13.88), 0, uu(20.75)] as readonly [number, number, number],
-  /** hauteur de l'origine au-dessus du sol, voiture posée (RL : ~17 uu) */
+  /**
+   * boîte de collision de l'Octane : 1,20507 × 0,866994 × 0,386591 m (RocketSim CarConfig.cpp HITBOX_SIZES[OCTANE] = 120,507 × 86,6994 ×
+   * 38,6591 uu). Les valeurs « courantes » (118,01 × 84,20 × 36,16) sont celles que le jeu affiche, pas celles de la simulation : ce
+   * sont ces dimensions-ci qui redonnent la matrice d'inertie mesurée en jeu (roulis 13,517, tangage 24,025, lacet 33,058 kg·m²)
+   */
+  hitbox: { longueur: uu(120.507), largeur: uu(86.6994), hauteur: uu(38.6591) },
+  /** centre de la boîte par rapport à l'origine de la voiture, repère local [avant, droite, haut] (RocketSim HITBOX_OFFSETS[OCTANE] = 13,8757 ; 0 ; 20,755 uu) */
+  decalageHitbox: [uu(13.8757), 0, uu(20.755)] as readonly [number, number, number],
+  /** hauteur de l'origine au-dessus du sol, voiture posée (RocketSim CAR_SPAWN_REST_Z = 17 uu) */
   hauteurRepos: uu(17),
-  /** roues : centre (repère local [avant, droite, haut]) et rayon. Empattement 0,85 m (RL Octane : avant +51,25 uu, arrière -33,75 uu) */
+  /** hauteur de l'origine à la réapparition après une démolition : la voiture tombe de 19 cm (RocketSim CAR_RESPAWN_Z = 36 uu) */
+  hauteurReapparition: uu(36),
+  /**
+   * roues, repère local [avant, droite, haut] (RocketSim CarConfig.cpp, Octane) : `attache` = point d'attache de la suspension
+   * (FRONT_WHEELS_OFFSET = 51,25 ; 25,90 ; 20,755 uu, BACK_WHEELS_OFFSET = -33,75 ; 29,50 ; 20,755 uu), `local` = centre de la roue à
+   * l'équilibre (25,255 / 22,755 uu sous l'attache), `rayon` (FRONT / BACK_WHEEL_RADS = 12,5 / 15 uu). `marge` : la roue « touche »
+   * jusqu'à cette distance sous le bas du pneu, comme le rayon lancé par RocketSim (btVehicleRL::rayCast : repos + course + rayon -
+   * SUSPENSION_SUBTRACTION, soit 26,755 + 12 + 12,5 - 2,5 = 48,755 uu sous l'attache à l'avant et 25,055 + 12 + 15 - 2,5 = 49,555 uu à
+   * l'arrière : 11,0 et 11,8 uu sous le pneu). Ordre de RocketSim : avant droite, avant gauche, arrière droite, arrière gauche
+   */
   roues: [
-    { local: [uu(51.25), uu(25.9), uu(-4.5)] as readonly [number, number, number], rayon: uu(12.5), avant: true },
-    { local: [uu(51.25), uu(-25.9), uu(-4.5)] as readonly [number, number, number], rayon: uu(12.5), avant: true },
-    { local: [uu(-33.75), uu(29.5), uu(-2)] as readonly [number, number, number], rayon: uu(15), avant: false },
-    { local: [uu(-33.75), uu(-29.5), uu(-2)] as readonly [number, number, number], rayon: uu(15), avant: false },
+    { local: [uu(51.25), uu(25.9), uu(-4.5)] as readonly [number, number, number], attache: [uu(51.25), uu(25.9), uu(20.755)] as readonly [number, number, number], rayon: uu(12.5), marge: uu(11.0), avant: true },
+    { local: [uu(51.25), uu(-25.9), uu(-4.5)] as readonly [number, number, number], attache: [uu(51.25), uu(-25.9), uu(20.755)] as readonly [number, number, number], rayon: uu(12.5), marge: uu(11.0), avant: true },
+    { local: [uu(-33.75), uu(29.5), uu(-2)] as readonly [number, number, number], attache: [uu(-33.75), uu(29.5), uu(20.755)] as readonly [number, number, number], rayon: uu(15), marge: uu(11.8), avant: false },
+    { local: [uu(-33.75), uu(-29.5), uu(-2)] as readonly [number, number, number], attache: [uu(-33.75), uu(-29.5), uu(20.755)] as readonly [number, number, number], rayon: uu(15), marge: uu(11.8), avant: false },
   ],
-  /** une roue « touche » quand son centre est à moins de rayon + cette marge de la surface (course de suspension) */
-  margeContactRoue: uu(5),
-  /** nombre de roues en contact pour être « au sol » (RL : 3) */
+  /** nombre de roues en contact pour être « au sol » (RocketSim Car.cpp : isOnGround = numWheelsInContact >= 3) */
   rouesPourSol: 3,
-  /** vitesse maximale (RL : 2300 uu/s) ; vitesse angulaire maximale (RL : 5,5 rad/s) */
+  /** vitesse maximale (RocketSim CAR_MAX_SPEED = 2300 uu/s) ; vitesse angulaire maximale (CAR_MAX_ANG_SPEED = 5,5 rad/s) */
   vitesseMax: uu(2300),
   vitesseAngMax: 5.5,
-  /** supersonique : s'allume à 22,00 m/s, s'éteint sous 21,00 m/s (RL : 2200 / 2100 uu/s) */
+  /**
+   * supersonique : s'allume à 22,00 m/s (RocketSim SUPERSONIC_START_SPEED = 2200 uu/s). Pendant la première seconde passée supersonique
+   * (SUPERSONIC_MAINTAIN_MAX_TIME = 1 s) il se maintient jusqu'à 21,00 m/s (SUPERSONIC_MAINTAIN_MIN_SPEED = 2100 uu/s) ; au-delà d'une
+   * seconde il faut rester à 22 m/s
+   */
   supersoniqueOn: uu(2200),
   supersoniqueOff: uu(2100),
-  /** boost au spawn (RL : 33,33 %) */
+  supersoniqueMaintienS: 1,
+  /** boost au spawn (RocketSim BOOST_SPAWN_AMOUNT = 100 / 3) */
   boostInitial: 100 / 3,
 } as const;
 
-/** Conduite au sol (et sur les murs / le plafond : tout se passe dans le plan tangent de la surface). */
+/**
+ * Conduite : le modèle de pneu de RocketSim (btVehicleRL::calcFrictionImpulses + Car::_UpdateWheels), roue par roue. Chaque roue en
+ * contact pousse le long de sa direction de roulement (moteur ou frein) et freine le glissement le long de son essieu ; les roues
+ * avant sont braquées : le virage en découle, il n'est plus imposé.
+ */
 export const CONDUITE = {
-  /** accélération de la gaz en fonction de la vitesse avant (m/s → m/s²) : 16 à l'arrêt, 1,6 à 14 m/s, 0 à 14,1 m/s (RL : 1600 → 160 à 1400 → 0 à 1410) */
+  /**
+   * accélération du gaz selon la vitesse avant (m/s → m/s²), les QUATRE roues au sol : 16 à l'arrêt, 1,6 à 14 m/s, 0 à 14,1 m/s
+   * (RocketSim THROTTLE_TORQUE_AMOUNT = masse × 400 uu/s² PAR ROUE, DRIVE_SPEED_TORQUE_FACTOR_CURVE = 1 → 0,1 à 1400 → 0 à 1410 uu/s).
+   * Chaque roue en contact en donne le quart ; avec moins de trois roues, le quart de cela encore (Car.cpp : driveSpeedScale /= 4)
+   */
   courbeGaz: [[0, uu(1600)], [uu(1400), uu(160)], [uu(1410), 0]] as readonly (readonly [number, number])[],
-  /** vitesse maximale sans boost (RL : 1410 uu/s) */
+  /** vitesse maximale sans boost (RocketSim : la courbe ci-dessus s'annule à 1410 uu/s) */
   vitesseGazMax: uu(1410),
-  /** décélération au frein (gaz opposé à la vitesse) : RL 3500 uu/s² */
+  /** en dessous de cette valeur absolue, le gaz est ignoré (RocketSim THROTTLE_DEADZONE = 0,001) */
+  zoneMorteGaz: 0.001,
+  /** décélération du frein, les quatre roues au sol : 35 m/s² (RocketSim BRAKE_TORQUE_AMOUNT = masse × (14,25 + 1/3) : 875 uu/s² par roue) */
   frein: uu(3500),
-  /** décélération « roue libre » (aucun gaz) : RL 525 uu/s² */
+  /** décélération « roue libre » (aucun gaz) : 15 % du frein, 5,25 m/s² (RocketSim COASTING_BRAKE_FACTOR = 0,15) */
+  facteurRoueLibre: 0.15,
   rouleLibre: uu(525),
-  /** en dessous de cette vitesse, un gaz opposé inverse le sens sans freiner (m/s) */
+  /** sous cette vitesse avant, un gaz opposé inverse le sens sans freiner, et la roue libre devient un frein plein : arrêt franc (RocketSim STOPPING_FORWARD_VEL = 25 uu/s) */
   seuilArretFrein: uu(25),
-  /** courbure du virage (1/m) selon la vitesse avant (m/s) : vitesse angulaire = courbure × vitesse × volant. RL : 0,0069 / 0,00398 / 0,00235 / 0,001375 / 0,001145 / 0,0009 par uu à 0 / 500 / 1000 / 1500 / 1750 / 2300 uu/s */
-  courbeCourbure: [[0, 0.69], [5, 0.398], [10, 0.235], [15, 0.1375], [17.5, 0.1145], [23, 0.09]] as readonly (readonly [number, number])[],
-  /** multiplicateur de la vitesse de lacet en dérapage (frein à main) */
+  /** pente du frein d'une roue selon sa vitesse de roulement (1/s) : frein = clamp(v × 37,913, ± frein / 4) (RocketSim ROLLING_FRICTION_SCALE_MAGIC = 113,73963, divisé par 3 par l'échelle masse / 3) */
+  penteFrein: 113.73963 / 3,
+  /** angle de braquage des roues avant (rad) selon la vitesse avant (m/s) (RocketSim STEER_ANGLE_FROM_SPEED_CURVE : 0,53356 / 0,31930 / 0,18203 / 0,10570 / 0,08507 / 0,03454 à 0 / 500 / 1000 / 1500 / 1750 / 3000 uu/s) */
+  angleBraquage: [[0, 0.53356], [uu(500), 0.3193], [uu(1000), 0.18203], [uu(1500), 0.1057], [uu(1750), 0.08507], [uu(3000), 0.03454]] as readonly (readonly [number, number])[],
+  /** angle de braquage en plein frein à main (RocketSim POWERSLIDE_STEER_ANGLE_FROM_SPEED_CURVE : 0,39235 à 0, 0,12610 à 2500 uu/s) ; l'angle réel est mélangé selon `EtatVoiture.frein` */
+  angleBraquageDerapage: [[0, 0.39235], [uu(2500), 0.1261]] as readonly (readonly [number, number])[],
+  /** le frein à main est analogique : il monte à 5 /s tant que le bouton est tenu et retombe à 2 /s (RocketSim POWERSLIDE_RISE_RATE = 5, POWERSLIDE_FALL_RATE = 2) */
+  freinMainMontee: 5,
+  freinMainDescente: 2,
+  /**
+   * frottement latéral d'une roue : impulsion = -0,2 × vitesse le long de l'essieu × masse effective au contact (Bullet
+   * resolveSingleBilateral, contactDamping = 0,2), multipliée par l'adhérence de la roue, par masse / 3 (btVehicleRL frictionScale) et par
+   * le pas. À 120 Hz, une roue retire 10 % × adhérence de la vitesse latérale de son point de contact
+   */
+  amortissementLateral: 0.2,
+  /** adhérence latérale selon le glissement, 0 = la roue roule droit, 1 = elle glisse de côté (RocketSim LAT_FRICTION_CURVE : 1 → 0,2) */
+  adherenceGlissement: [[0, 1], [1, 0.2]] as readonly (readonly [number, number])[],
+  /** le glissement n'est compté qu'au-dessus de cette vitesse latérale au point d'attache (RocketSim Car.cpp : baseFriction > 5 uu/s) */
+  seuilGlissement: uu(5),
+  /** en plein frein à main : adhérence latérale × 0,1 (RocketSim HANDBRAKE_LAT_FRICTION_FACTOR_CURVE = 0,1) */
+  adherenceDerapage: 0.1,
+  /** en plein frein à main : adhérence longitudinale (moteur et frein) × 0,5 sans glissement, × 0,9 en plein glissement (RocketSim HANDBRAKE_LONG_FRICTION_FACTOR_CURVE) */
+  motriciteDerapage: [[0, 0.5], [1, 0.9]] as readonly (readonly [number, number])[],
+  /**
+   * sans gaz, les deux adhérences sont multipliées selon la composante verticale (signée) de la normale sous la roue : × 1 au sol, × 0,5
+   * sur une pente à 45°, × 0,1 sur un mur ou au plafond : la voiture lâchée sur un mur glisse (RocketSim NON_STICKY_FRICTION_FACTOR_CURVE :
+   * 0 → 0,1 ; 0,7075 → 0,5 ; 1 → 1)
+   */
+  adherenceSansGaz: [[0, 0.1], [0.7075, 0.5], [1, 1]] as readonly (readonly [number, number])[],
+  /**
+   * collage à la surface dès qu'une roue touche (RocketSim Car::_UpdateWheels, « sticky forces ») : accélération le long de -normale de
+   * gravité × (0,5 + (1 - |normale verticale|) si l'on donne du gaz ou roule à plus de 0,25 m/s). 3,25 m/s² au sol, 9,75 m/s² sur un mur ;
+   * au plafond 3,25 m/s² contre 6,5 de gravité : la voiture en TOMBE, comme dans Rocket League
+   */
+  collage: 0.5,
+  /**
+   * alignement sur la surface (RocketSim Car::_UpdateAutoRoll) : avec du gaz, quand 1 à 3 roues touchent ou que la caisse touche le
+   * décor, accélération de 1 m/s² vers la surface (CAR_AUTOROLL_FORCE = 100 uu/s²) et accélération angulaire de 80 rad/s² ×
+   * défaut d'alignement (CAR_AUTOROLL_TORQUE = 80)
+   */
+  autoRoll: { force: uu(100), couple: 80 },
+  /**
+   * redressement sur le toit (RocketSim Car::_UpdateAutoFlip) : appui sur saut quand la CAISSE touche une surface de type sol
+   * (normale verticale > √½, CAR_AUTOFLIP_NORMZ_THRESH) et que le roulis dépasse 2,8 rad (CAR_AUTOFLIP_ROLL_THRESH). Impulsion de
+   * 2 m/s le long de -haut (CAR_AUTOFLIP_IMPULSE = 200 uu/s), puis 50 rad/s² autour de l'avant (CAR_AUTOFLIP_TORQUE = 50) pendant
+   * 0,4 s × |roulis| / π (CAR_AUTOFLIP_TIME = 0,4 s)
+   */
+  redressement: { impulsion: uu(200), couple: 50, dureeMaxS: 0.4, seuilRoulis: 2.8, seuilNormale: Math.SQRT1_2 },
+  /**
+   * [~] REPÈRES POUR LES BOTS seulement (la physique ne les lit plus : le virage découle du braquage des roues). Courbure du virage
+   * (1/m) volant à fond selon la vitesse avant (m/s), mesurée en simulation sur le modèle de pneu ci-dessus en régime établi, et
+   * rapport approché de la vitesse de lacet en dérapage
+   */
+  courbeCourbure: [[0, 0.69], [5, 0.396], [10, 0.231], [15, 0.135], [17.5, 0.11], [23, 0.084]] as readonly (readonly [number, number])[],
   facteurLacetDerapage: 1.6,
-  /** raideur d'adhérence latérale (1/s) : la vitesse latérale décroît de `1 - exp(-k·dt)` par pas ; 0,1 × en dérapage */
-  adherenceLaterale: 20,
-  facteurAdherenceDerapage: 0.1,
-  /** perte de vitesse avant en dérapage (1/s), relative à la vitesse avant */
-  freinageDerapage: 0.25,
-  /** force de maintien contre la surface : accélération le long de -normale (RL : « sticky forces », gravité entière sur les murs) */
-  collageSol: GRAVITE * 0.5,
-  collageMur: GRAVITE,
-  /** un élan latéral plus fort que cela décolle quand même de la surface (m/s) */
-  decollageNormal: uu(300),
-  /** la voiture s'aligne sur la surface sous elle : vitesse angulaire max de cet alignement (rad/s) et raideur (1/s) quand 1 à 2 roues touchent */
-  autoAlignementRoulis: 4,
-  /** redressement automatique sur le toit (bouton de saut quand la voiture est sur le dos au sol) : impulsion, couple et durée (RL : ~200 uu/s, couple 50, 0,4 s) */
-  redressement: { impulsion: uu(200), vitesseAng: 4, dureeS: 0.4 },
 } as const;
 
 export const SAUT = {
-  /** impulsion initiale le long du haut de la voiture : 2,91667 m/s (RL : 291,667 uu/s) */
-  impulsion: uu(291.667),
-  /** accélération tant que le bouton reste appuyé : 14,5833 m/s² (RL : 1458,333 uu/s²), au plus 0,2 s (RL : 0,2 s) */
-  maintien: uu(1458.333),
+  /** impulsion initiale le long du haut de la voiture : 2,91667 m/s (RocketSim JUMP_IMMEDIATE_FORCE = 875 / 3 uu/s) */
+  impulsion: uu(875 / 3),
+  /** accélération tant que le bouton reste appuyé : 14,5833 m/s² (RocketSim JUMP_ACCEL = 4375 / 3 uu/s²), au plus 0,2 s (JUMP_MAX_TIME) : 24 pas à 120 Hz */
+  maintien: uu(4375 / 3),
   maintienMaxS: 0.2,
-  /** fenêtre pour le second saut / dodge après avoir quitté le sol : 1,25 s (RL : 1,25 s) */
+  /** la poussée dure au moins 0,025 s même sur un appui bref, à 62 % pendant ce temps (RocketSim JUMP_MIN_TIME, JUMP_PRE_MIN_ACCEL_SCALE) */
+  maintienMinS: 0.025,
+  echelleAvantMin: 0.62,
+  /**
+   * au sol, l'état de saut n'est remis à zéro qu'une fois le saut vieux de `maintienMinS + gardeRemiseS` = 0,05 s : les roues touchent
+   * encore pendant les premiers pas du décollage (RocketSim JUMP_RESET_TIME_PAD = 1 / 40 s)
+   */
+  gardeRemiseS: 1 / 40,
+  /** fenêtre pour le second saut / dodge, comptée depuis la FIN du premier saut (RL : 1,25 s, `DOUBLEJUMP_MAX_DELAY`) ; sans premier saut, pas de limite */
   fenetreDoubleSautS: 1.25,
-  /** double saut sans direction : même impulsion verticale que le premier, sans maintien */
-  impulsionDoubleSaut: uu(291.667),
+  /** double saut sans direction : même impulsion que le premier le long du haut de la voiture, sans maintien (RocketSim JUMP_IMMEDIATE_FORCE) */
+  impulsionDoubleSaut: uu(875 / 3),
 } as const;
 
 /** Dodge (flip) : impulsion horizontale, rotation, amortissement vertical. */
@@ -203,18 +299,24 @@ export const FLIP = {
   /** sous cette vitesse avant (m/s), « arrière » = manche tiré (RL : 100 uu/s) */
   seuilSensMarche: uu(100),
   /**
-   * durée du couple de dodge (RL : 0,65 s). La vitesse angulaire de consigne autour de l'axe du flip est plafonnée comme tout le
-   * reste à `VOITURE.vitesseAngMax` (5,5 rad/s) : le couple de RL (224 / 260 rad/s²) atteint le plafond en quelques ms. La voiture
-   * ne fait donc PAS un tour exact : ≈ 205° à 0,65 s, puis la vitesse résiduelle s'amortit (≈ 314° au total).
+   * durée du couple de dodge (RocketSim FLIP_TORQUE_TIME = 0,65 s : 78 pas, du pas qui suit l'appui au 78ᵉ). La vitesse angulaire est
+   * plafonnée à `VOITURE.vitesseAngMax` (5,5 rad/s) APRÈS l'intégration de l'orientation, comme dans RocketSim (Car::_FinishPhysicsTick
+   * passe après le pas de Bullet) : chaque pas tourne donc à 5,5 + 224 / 120 = 7,37 rad/s en tangage (5,5 + 260 / 120 = 7,67 en roulis)
+   * avant de revenir à 5,5. Un flip avant sans entrée fait ≈ 268° à 0,65 s, ≈ 329° à 0,95 s, ≈ 351° à 1,2 s.
    */
   dureeRotationS: 0.65,
   vitesseAng: 5.5,
-  /** à partir de cette durée le flip peut être annulé en poussant le manche à l'opposé (RL : 0,41 s sans annulation possible puis fondu) */
-  annulationMinS: 0.15,
+  /** accélération angulaire du dodge (rad/s²) : roulis × composante latérale, tangage × composante avant (RocketSim FLIP_TORQUE_X / _Y) */
+  coupleRoulis: 260,
+  coupleTangage: 224,
   /** verrouillage du tangage : tant que le temps écoulé depuis le début du flip est inférieur à 0,65 s + 0,3 s (RL : FLIP_TORQUE_TIME + FLIP_PITCHLOCK_EXTRA_TIME) */
   verrouTangageS: 0.65,
   verrouTangageExtraS: 0.3,
-  /** amortissement vertical : ×0,65 par 1/120 s (RL : FLIP_Z_DAMP_120 = 0,35) dès 0,15 s, tant que la voiture descend ou avant 0,21 s, jusqu'à la fin du flip (0,65 s) */
+  /**
+   * amortissement vertical : ×0,65 par 1/120 s (RocketSim FLIP_Z_DAMP_120 = 0,35) dès 0,15 s (FLIP_Z_DAMP_START), tant que la voiture
+   * descend ou avant 0,21 s (FLIP_Z_DAMP_END), jusqu'à la fin du flip (0,65 s). Il s'applique AVANT la gravité et les poussées du pas
+   * (la gravité du pas n'est pas amortie : la voiture descend à ≈ 0,155 m/s pendant le flip)
+   */
   amortissementVertical: 0.35,
   amortissementDebutS: 0.15,
   amortissementFinS: 0.21,
@@ -224,36 +326,59 @@ export const FLIP = {
   zoneMorteStall: 0.1,
 } as const;
 
-/** Contrôle en l'air : accélération angulaire (rad/s²) = COUPLE × entrée + AMORT × ω × (1 - |entrée|), dans le repère de la voiture. */
+/**
+ * Échelle des couples de Rocket League (RocketSim CAR_TORQUE_SCALE = 2π / 65536 × 1000 = 0,0958738) : un couple de RocketSim × cette
+ * échelle est une accélération angulaire en rad/s² (Car.cpp multiplie le couple par l'inertie, qui s'annule donc).
+ */
+const ECHELLE_COUPLE = ((2 * Math.PI) / 65536) * 1000;
+
+/**
+ * Contrôle en l'air (RocketSim Car::_UpdateAirTorque), dans le repère de la voiture : accélération angulaire (rad/s²) =
+ * COUPLE × entrée - AMORT × ω × (1 - |entrée|) pour le tangage et le lacet, COUPLE × entrée - AMORT × ω pour le ROULIS (son
+ * amortissement n'est jamais levé par l'entrée). Seulement quand AUCUNE roue ne touche.
+ */
 export const AIR = {
-  /** Convention de signe de ce projet : entrée +1 = nez vers le haut (tangage), tourner à droite (lacet), pencher à droite (roulis). */
-  coupleTangage: 12.146,
-  coupleLacet: 8.92,
-  coupleRoulis: 36.08,
-  /** amortissement (RL : -2,798 / -1,886 / -4,472) ; valeurs positives ici, le signe est dans la formule */
-  amortTangage: 2.798,
-  amortLacet: 1.886,
-  amortRoulis: 4.472,
-  /** poussée dans l'air avec gaz : accélération avant/arrière du gaz, boost ou non (RL : 66,667 uu/s²) */
-  gazAerien: uu(66.667),
+  /**
+   * Convention de signe de ce projet : entrée +1 = nez vers le haut (tangage), tourner à droite (lacet), pencher à droite (roulis).
+   * RocketSim CAR_AIR_CONTROL_TORQUE = (130, 95, 400) pour (tangage, lacet, roulis) : 12,4636 / 9,1080 / 38,3495 rad/s²
+   */
+  coupleTangage: 130 * ECHELLE_COUPLE,
+  coupleLacet: 95 * ECHELLE_COUPLE,
+  coupleRoulis: 400 * ECHELLE_COUPLE,
+  /** amortissement (1/s) : RocketSim CAR_AIR_CONTROL_DAMPING = (30, 20, 50), soit 2,8762 / 1,9175 / 4,7937 ; valeurs positives ici, le signe est dans la formule */
+  amortTangage: 30 * ECHELLE_COUPLE,
+  amortLacet: 20 * ECHELLE_COUPLE,
+  amortRoulis: 50 * ECHELLE_COUPLE,
+  /** poussée dans l'air avec gaz : accélération avant/arrière du gaz, boost ou non (RocketSim THROTTLE_AIR_ACCEL = 200 / 3 uu/s²) */
+  gazAerien: uu(200 / 3),
 } as const;
 
 export const BOOST = {
-  /** accélération du boost le long de l'avant : 9,91667 m/s² au sol (RL : 991,667 uu/s²) */
-  acceleration: uu(991.667),
+  /** accélération du boost le long de l'avant RÉEL de la voiture : 9,91667 m/s² au sol, trois roues au moins (RocketSim BOOST_ACCEL_GROUND = 2975 / 3 uu/s²) */
+  acceleration: uu(2975 / 3),
   /** en l'air : 10,5833 m/s² (RocketSim BOOST_ACCEL_AIR = 3175/3 uu/s²) */
   accelerationAir: uu(3175 / 3),
   /** consommation : 33,33 / s (RL : 100 en 3 s) */
   consommation: 100 / 3,
-  /** un appui consomme au moins ce temps (RL : 0,1 s) */
+  /** un appui consomme au moins ce temps (RocketSim BOOST_MIN_TIME = 0,1 s : 12 pas à 120 Hz, soit 3,33 de boost) */
   dureeMinS: 0.1,
   max: 100,
 } as const;
 
-/** Plots de boost. */
+/**
+ * Plots de boost (RocketSim BoostPad::_CheckCollide) : l'ORIGINE de la voiture doit être dans le cylindre de rayon 144 uu (petit,
+ * CYL_RAD_SMALL) ou 208 uu (gros, CYL_RAD_BIG) autour du plot, à moins de 95 uu en hauteur de son centre (CYL_HEIGHT), posé à 70 / 73 uu.
+ * `valeur` : BOOST_AMOUNT_SMALL = 12, BOOST_AMOUNT_BIG = 100 ; `rechargeS` : COOLDOWN_SMALL = 4 s, COOLDOWN_BIG = 10 s.
+ *
+ * Verrou : la voiture qui touchait déjà le plot au pas précédent (`EtatPlot.verrou`) n'est plus jugée sur le cylindre mais sur une
+ * boîte, contre la boîte englobante (alignée sur les axes) de sa hitbox : demi-côté 120 uu (petit, BOX_RAD_SMALL) ou 160 uu (gros,
+ * BOX_RAD_BIG), de la hauteur du plot à 64 uu au-dessus (BOX_HEIGHT), soit de 0,70 à 1,34 m (petit) et de 0,73 à 1,37 m (gros).
+ */
 export const PLOT = {
-  petit: { valeur: 12, rechargeS: 4, rayon: uu(144), hauteur: uu(165), hauteurCentre: uu(70) },
-  gros: { valeur: 100, rechargeS: 10, rayon: uu(208), hauteur: uu(168), hauteurCentre: uu(73) },
+  petit: { valeur: 12, rechargeS: 4, rayon: uu(144), demiHauteur: uu(95), hauteurCentre: uu(70), demiCoteBoite: uu(120), hauteurBoite: uu(64) },
+  gros: { valeur: 100, rechargeS: 10, rayon: uu(208), demiHauteur: uu(95), hauteurCentre: uu(73), demiCoteBoite: uu(160), hauteurBoite: uu(64) },
+  /** au-dessus de cette hauteur l'origine de la voiture ne teste aucun plot : 3,45 m (RocketSim BoostPadGrid EXTENT_Z = CYL_HEIGHT + 250 = 345 uu) */
+  hauteurMaxOrigine: uu(95 + 250),
 } as const;
 
 /** Contact voiture ↔ balle : choc physique + impulsion « Psyonix ». */
@@ -262,37 +387,65 @@ export const CONTACT_BALLE = {
   restitution: 0,
   /** frottement de Coulomb du choc voiture ↔ balle (RocketSim CARBALL_COLLISION_FRICTION = 2) : plafonné par l'adhérence totale, il donne le spin et le dribble */
   frottement: 2,
-  /** l'impulsion supplémentaire de Psyonix : direction = vecteur voiture → balle avec la composante verticale × 0,35 et la composante avant ramenée à × 0,65 ; intensité = vitesse relative (plafond 46 m/s) × courbe */
+  /**
+   * l'impulsion supplémentaire de Psyonix (RocketSim Ball::_OnHit) : direction = vecteur ORIGINE de la voiture → centre de la balle
+   * avec la composante verticale × 0,35 (BALL_CAR_EXTRA_IMPULSE_Z_SCALE) et la composante avant ramenée à × 0,65
+   * (BALL_CAR_EXTRA_IMPULSE_FORWARD_SCALE) ; intensité = vitesse relative (plafond 46 m/s, BALL_CAR_EXTRA_IMPULSE_MAXDELTAVEL_UU = 4600) × courbe
+   */
   echelleVerticale: 0.35,
   echelleAvant: 0.65,
   vitesseRelativeMax: uu(4600),
-  /** courbe de l'impulsion : (vitesse relative m/s → facteur) = (0 → 0,65), (5 → 0,65), (23 → 0,55), (46 → 0,30) (RL : 0 / 500 / 2300 / 4600 uu/s) */
+  /** courbe de l'impulsion (RocketSim BALL_CAR_EXTRA_IMPULSE_FACTOR_CURVE) : (vitesse relative → facteur) = (0 → 0,65), (500 → 0,65), (2300 → 0,55), (4600 → 0,30) uu/s */
   courbeImpulsion: [[0, 0.65], [uu(500), 0.65], [uu(2300), 0.55], [uu(4600), 0.3]] as readonly (readonly [number, number])[],
-  /** l'impulsion supplémentaire n'est pas réappliquée pendant ce délai après la précédente pour la même voiture (anti-dribble infini) */
-  delaiImpulsionS: 0.1,
+  /**
+   * après une impulsion supplémentaire, la même voiture saute ce nombre de pas avant la suivante (RocketSim Ball.cpp:262 :
+   * `tickCount > tickCountWhenExtraImpulseApplied + 1`) : en contact continu l'impulsion repart un pas sur deux
+   */
+  delaiImpulsionPas: 1,
+  /**
+   * arêtes et coins de la hitbox arrondis de 2 cm face à la balle (Bullet CONVEX_DISTANCE_MARGIN = 0,04 unité = 2 uu : la boîte est
+   * rétrécie de sa marge puis regonflée d'autant par le détecteur GJK, les faces ne bougent pas)
+   */
+  arrondiHitbox: uu(2),
 } as const;
 
 /** Voiture ↔ voiture : chocs, bump et démolition. */
 export const CONTACT_VOITURES = {
+  /** restitution et frottement du choc (RocketSim CARCAR_COLLISION_RESTITUTION = 0,1, CARCAR_COLLISION_FRICTION = 0,09 ; Arena.cpp les impose à chaque point de contact) */
   restitution: 0.1,
-  frottement: 0.3,
+  frottement: 0.09,
   /**
    * bump (RocketSim Arena::_BtCallback_OnCarCarCollision), en m/s selon la vitesse de l'attaquant vers la victime (RL : uu/s) :
-   * poussée le long de la direction de la vitesse de l'attaquant, au sol 0 → 0, 14 → 11, 22 → 15,3 (RL 1400 → 1100, 2200 → 1530),
-   * en l'air 0 → 0, 14 → 13,9, 22 → 19,45 (RL 1400 → 1390, 2200 → 1945), plus une poussée verticale (le long du haut de la victime
-   * au sol, +Y en l'air) 0 → 0, 14 → 2,78, 22 → 4,17 (RL 1400 → 278, 2200 → 417). Seul le pare-chocs avant bumpe (même condition
-   * que la démolition) ; délai entre deux bumps du même couple
+   * poussée le long de la direction de la vitesse de l'attaquant, au sol 0 → 5/6, 1400 → 1100, 2200 → 1530 uu/s
+   * (BUMP_VEL_AMOUNT_GROUND_CURVE), en l'air 0 → 5/6, 1400 → 1390, 2200 → 1945 (BUMP_VEL_AMOUNT_AIR_CURVE), plus une poussée
+   * verticale (le long du haut de la victime au sol, +Y en l'air) 0 → 2/6, 1400 → 278, 2200 → 417 (BUMP_UPWARD_VEL_AMOUNT_CURVE).
+   * Seul le pare-chocs avant bumpe (même condition que la démolition)
    */
-  bumpSol: [[0, 0], [uu(1400), uu(1100)], [uu(2200), uu(1530)]] as readonly (readonly [number, number])[],
-  bumpAir: [[0, 0], [uu(1400), uu(1390)], [uu(2200), uu(1945)]] as readonly (readonly [number, number])[],
-  bumpHaut: [[0, 0], [uu(1400), uu(278)], [uu(2200), uu(417)]] as readonly (readonly [number, number])[],
+  bumpSol: [[0, uu(5 / 6)], [uu(1400), uu(1100)], [uu(2200), uu(1530)]] as readonly (readonly [number, number])[],
+  bumpAir: [[0, uu(5 / 6)], [uu(1400), uu(1390)], [uu(2200), uu(1945)]] as readonly (readonly [number, number])[],
+  bumpHaut: [[0, uu(2 / 6)], [uu(1400), uu(278)], [uu(2200), uu(417)]] as readonly (readonly [number, number])[],
+  /**
+   * délai du bump (RocketSim BUMP_COOLDOWN_TIME = 0,25 s) : il appartient à l'ATTAQUANT et ne vaut que contre la MÊME victime
+   * (CarContact::otherCarID / cooldownTimer) ; armé aussi par une démolition. 30 pas à 120 Hz : le bump suivant passe au pas t + 30
+   */
   bumpDelaiS: 0.25,
-  /** démolition : l'attaquant est supersonique, la victime est d'une AUTRE équipe, le point de contact est dans l'angle avant de l'attaquant */
+  /** démolition : l'attaquant est supersonique, la victime est d'une AUTRE équipe, mêmes gardes que le bump (approche, pare-chocs avant, délai) */
   demoReapparitionS: 3,
-  /** l'avant de l'attaquant : le point de contact doit être au moins à cette distance DEVANT son centre (RL : 64,5 uu) */
+  /** l'avant de l'attaquant : le point de contact doit être au moins à cette distance DEVANT son origine (RocketSim BUMP_MIN_FORWARD_DIST = 64,5 uu) */
   demoAvantMinM: uu(64.5),
-  /** après une démolition d'un adversaire, l'auteur ne retouche pas les mêmes ; équipe amie : simple bump */
+  /** démolition entre coéquipiers (RocketSim MutatorConfig::enableTeamDemos = false) : équipe amie, simple bump */
   tirAmi: false,
+} as const;
+
+/**
+ * Contact de la caisse d'une voiture avec le décor (RocketSim Arena::_BtCallback_OnCarWorldCollision impose CARWORLD_COLLISION_FRICTION
+ * = 0,3 et CARWORLD_COLLISION_RESTITUTION = 0,3) ; pas de rebond sous 0,1 m/s de vitesse normale (Bullet
+ * m_restitutionVelocityThreshold = 0,2 unité Bullet par seconde = 10 uu/s). Les roues ne sont pas des corps de collision.
+ */
+export const CONTACT_MONDE = {
+  frottement: 0.3,
+  restitution: 0.3,
+  seuilRebond: uu(10),
 } as const;
 
 // ============================================================================================================================
@@ -304,8 +457,11 @@ export const MATCH = {
   dureesPermisesS: [180, 300, 420, 600] as readonly number[],
   /** compte à rebours du coup d'envoi (3, 2, 1, GO) : voitures bloquées, balle posée au centre */
   decompteS: 3,
-  /** célébration d'un but : balle libre au ralenti (×0,5) pendant ce temps avant la remise en place */
-  celebrationS: 4.5,
+  /**
+   * célébration d'un but : balle libre au ralenti (×0,5) pendant ce temps de jeu (2,5 s réelles) avant la remise en place ; le jeu
+   * (`jeu.ts`) rejoue ensuite le but de derrière le buteur avant le coup d'envoi (`rejeu-but.ts`)
+   */
+  celebrationS: 1.25,
   ralentiCelebration: 0.5,
   /** une voiture démolie réapparaît après ce délai */
   reapparitionS: CONTACT_VOITURES.demoReapparitionS,
@@ -315,10 +471,35 @@ export const MATCH = {
   prolongation: true,
   /** barème de points (RL) */
   points: { but: 100, passeDecisive: 50, arret: 50, tir: 20, demolition: 10, touche: 2 },
-  /** passe décisive : le dernier coéquipier du buteur à avoir touché la balle, moins de 5 s avant le but */
-  fenetrePasseS: 5,
-  /** arrêt : la voiture touche une balle qui se dirigeait vers son but (cadrée, à moins de 12 m de la ligne) */
-  distanceArretM: 12,
+  /**
+   * buteur : la voiture de l'équipe qui marque dont la dernière touche est la plus récente, à condition qu'elle date de 4 s au plus
+   * (RocketSim GameEventTrackerConfig.goalMaxTouchTime = 4 s), même si un adversaire a dévié la balle ensuite
+   */
+  fenetreButeurS: 4,
+  /**
+   * passe décisive : un AUTRE coéquipier dont la dernière touche est la plus récente, à 2 s au plus AVANT la touche du buteur ou du
+   * tireur (RocketSim GameEventTrackerConfig.passMaxTouchTime = 2 s)
+   */
+  fenetrePasseS: 2,
+  /**
+   * Tirs cadrés et arrêts (RocketSim GameEventTracker, valeurs par défaut de GameEventTrackerConfig ; son auteur précise que ce sont
+   * ses réglages et non ceux du jeu). La balle est « tirée » quand elle va au moins à `vitesseMin` et que sa trajectoire prolongée
+   * (gravité comprise) entre dans une cage en moins de `horizonS`, `delaiToucheS` après la dernière touche d'une voiture de l'équipe
+   * qui attaque cette cage ; un arrêt est compté quand une balle « tirée » n'entre plus et qu'une voiture de l'équipe qui défend
+   * vient de la toucher au même pas.
+   */
+  suivi: {
+    /** vitesse minimale de la balle : 17,5 m/s, soit 63 km/h (shotMinSpeed = 1750 uu/s) */
+    vitesseMin: uu(1750),
+    /** la touche du tireur doit dater d'au moins 0,3 s (shotTouchMinDelay = 0,3 s : 36 pas à 120 Hz) */
+    delaiToucheS: 0.3,
+    /** délai minimal entre deux tirs comptés (shotEventCooldown = 1 s) */
+    delaiTirS: 1,
+    /** la balle doit atteindre la ligne en 2 s au plus (shotMinScoreTime = 2 s) */
+    horizonS: 2,
+    /** marge du cadre, en rayons de balle (Arena::IsBallProbablyGoingIn : scoreMargin = ballRadius × 0,1 ; predScoreExtraMargin = 0) */
+    margeCadreRayons: 0.1,
+  },
 } as const;
 
 export type PhaseMatch = "decompte" | "enJeu" | "but" | "fini";
@@ -412,6 +593,25 @@ export const COUPS_D_ENVOI: readonly PosCoupDEnvoi[] = [
   { nom: "decaleD", x: uu(256), z: uu(-3840), cap: 0 },
 ];
 
+/** Un emplacement de réapparition après une démolition (équipe BLEUE ; orange : z → -z et cap + π, x inchangé, comme RocketSim Car::Respawn). */
+export interface PosReapparition {
+  x: number;
+  z: number;
+  /** cap (rad), même convention que `PosCoupDEnvoi` : 0 = vers le but adverse */
+  cap: number;
+}
+/**
+ * Les 4 emplacements de réapparition de Rocket League (RocketSim CAR_RESPAWN_LOCATIONS_SOCCAR : (-2304, -4608), (-2688, -4608),
+ * (2304, -4608), (2688, -4608) uu, lacet π/2 = face au but adverse), tirés au hasard (Car::Respawn), voiture lâchée de
+ * `VOITURE.hauteurReapparition`.
+ */
+export const REAPPARITIONS: readonly PosReapparition[] = [
+  { x: uu(-2304), z: uu(-4608), cap: 0 },
+  { x: uu(-2688), z: uu(-4608), cap: 0 },
+  { x: uu(2304), z: uu(-4608), cap: 0 },
+  { x: uu(2688), z: uu(-4608), cap: 0 },
+];
+
 // ============================================================================================================================
 // 7. Le stade posé sur Agroparc
 // ============================================================================================================================
@@ -502,10 +702,17 @@ export interface EtatBalle {
   v: Vec3;
   /** vitesse angulaire (monde, rad/s) */
   w: Vec3;
-  /** dernier toucheur (pour les passes décisives, les arrêts et les stats) */
+  /** dernier toucheur (couleur de la balle, bots ; buteur, passe, tirs et arrêts se lisent sur `EtatVoiture.dernierContactBalleTick`) */
   dernierToucheur: { idVoiture: number; equipe: Equipe; temps: number } | null;
-  /** toucheur précédent d'une AUTRE voiture (passes) */
+  /** toucheur précédent d'une AUTRE voiture */
   avantDernierToucheur: { idVoiture: number; equipe: Equipe; temps: number } | null;
+  /**
+   * vitesse en attente (RocketSim Ball::_velocityImpulseCache) : les impulsions supplémentaires de Psyonix des voitures qui touchent
+   * la balle à ce pas s'y CUMULENT au lieu de modifier `v` (aucune voiture ne lit l'impulsion d'une autre) ; `match.ts` l'ajoute à `v`
+   * une seule fois, après tous les contacts du pas et juste avant les plafonds (`appliquerVitesseEnAttente`, l'équivalent de
+   * Ball::_FinishPhysicsTick). Nulle entre deux pas
+   */
+  vitesseEnAttente: Vec3;
 }
 
 export interface EtatSaut {
@@ -517,19 +724,22 @@ export interface EtatSaut {
   tenue: boolean;
   /** le second saut ou le flip a été dépensé */
   secondUtilise: boolean;
-  /** temps passé sans contact depuis le décollage (s) : fenêtre de 1,25 s pour le second saut */
+  /** temps passé sans aucune roue à portée de la surface depuis le dernier appui d'une roue (s) */
   tempsEnLAir: number;
+  /** temps écoulé depuis la fin du premier saut (bouton relâché ou 0,2 s de maintien) : fenêtre de 1,25 s du second saut (RL) */
+  depuisFinSaut: number;
 }
 
 export interface EtatFlip {
+  /** le couple du dodge est en cours (0,65 s) ; remis à faux dès que trois roues touchent */
   actif: boolean;
-  /** s depuis le début du flip */
+  /** s depuis le début du flip (continue de courir après le couple, jusqu'à la fin du verrou de tangage) */
   temps: number;
   /** direction de dodge normalisée dans le repère de la voiture au moment du flip : [avant, droite] */
   dir: [number, number];
   /** vrai si le dodge est un « stall » (pas d'impulsion, rotation de roulis seule) */
   stall: boolean;
-  /** s restantes pendant lesquelles le manche de tangage est ignoré */
+  /** s restantes pendant lesquelles le manche de tangage est ignoré (0,95 s depuis le début du flip ; 0 hors flip et au sol) */
   verrouTangage: number;
 }
 
@@ -554,35 +764,96 @@ export interface EtatVoiture {
   nom: string;
   /** origine de la voiture (≠ centre de la hitbox, cf. `VOITURE.decalageHitbox`) */
   p: Vec3;
+  /** vitesse (m/s), plafonnée à 23 m/s en fin de pas */
   v: Vec3;
-  /** vitesse angulaire monde (rad/s) */
+  /**
+   * vitesse angulaire monde (rad/s), plafonnée à 5,5 rad/s après chaque intégration de l'orientation ; un contact du pas (roues qui
+   * suivent un raccord, choc de la caisse) peut la laisser au-dessus jusqu'à l'intégration suivante, comme le pas de Bullet dans RocketSim
+   */
   w: Vec3;
   base: Base;
   /** 0..100 */
   boost: number;
-  /** roues en contact avec une surface (0..4) et normale moyenne de ces contacts (null si aucune) */
+  /** roues en contact avec une surface du DÉCOR (0..4) et normale moyenne de ces contacts (null si aucune) */
   rouesContact: number;
   normaleSurface: Vec3 | null;
-  /** `rouesContact >= VOITURE.rouesPourSol` : peut conduire, sauter, recevoir le collage */
+  /**
+   * trois roues au moins (`VOITURE.rouesPourSol`) touchent le décor OU la balle (`rouesBalle`) : peut sauter, n'a pas de contrôle
+   * aérien ; les forces de pneu et le collage agissent dès UNE roue au contact du décor. Le même compte (décor ET balle, le
+   * numWheelsInContact de RocketSim) décide du moteur divisé par 4 (moins de trois roues) et de l'alignement sur la surface (1 à 3 roues)
+   */
   auSol: boolean;
   saut: EtatSaut;
   flip: EtatFlip;
-  /** redressement automatique en cours (sur le toit) */
-  redressement: { actif: boolean; temps: number };
+  /**
+   * redressement automatique en cours (sur le toit) : `temps` = s RESTANTES du couple (0,4 s × |roulis| / π au départ), `signe` = sens
+   * du couple autour de l'avant (+1 si le roulis était positif)
+   */
+  redressement: { actif: boolean; temps: number; signe: number };
+  /**
+   * la CAISSE (hitbox) a touché le décor au pas précédent, et normale de ce contact (RocketSim CarState::worldContact) : sert au
+   * redressement sur le toit et à l'alignement sur la surface ; remis à faux à chaque pas puis rempli par les contacts du pas
+   */
+  contactMonde: { actif: boolean; normale: Vec3 };
   supersonique: boolean;
+  /** s passées supersonique d'affilée (0 sinon) : le maintien entre 21 et 22 m/s ne vaut que pendant la première seconde */
+  supersoniqueDepuis: number;
   /** le boost brûle ce pas ; `boostDepuis` = durée de l'appui en cours (s), pour la durée minimale */
   boostActif: boolean;
   boostDepuis: number;
-  /** frein à main tenu et efficace au sol */
+  /** frein à main efficace : `frein > 0` et au moins une roue en contact (traces de pneus, sons) */
   derapage: boolean;
+  /** frein à main ANALOGIQUE, 0..1 : monte à 5 /s bouton tenu, retombe à 2 /s, au sol comme en l'air (RocketSim handbrakeVal) */
+  frein: number;
+  /**
+   * réglages des pneus calculés au pas PRÉCÉDENT et appliqués à ce pas (RocketSim calcule les impulsions de frottement avant de lire
+   * les commandes du pas) : `angle` de braquage des roues avant (rad, + = à droite), `moteur` = accélération d'une roue le long de son
+   * roulement (m/s², signée), `frein` = décélération maximale d'une roue (m/s²), adhérences latérale `lat` et longitudinale `long`
+   * de chacune des quatre roues
+   */
+  pneus: { angle: number; moteur: number; frein: number; lat: [number, number, number, number]; long: [number, number, number, number] };
   /** détruite : invisible, intangible, entrées ignorées ; revient dans `reapparitionDans` secondes */
   demolie: boolean;
   reapparitionDans: number;
   /** immobilisée (décompte du coup d'envoi) : les entrées sont ignorées */
   figee: boolean;
-  /** pas (tick) du dernier contact avec la balle / du dernier bump, pour les délais */
+  /**
+   * pas (tick) du dernier contact avec la balle (RocketSim BallHitInfo::tickCountWhenHit) : mis à jour à CHAQUE contact, il ne sert pas
+   * au délai de l'impulsion. `match.ts` y lit le buteur, le passeur, le tireur et l'auteur d'un arrêt (RocketSim GameEventTracker) et
+   * l'oublie à chaque coup d'envoi
+   */
   dernierContactBalleTick: number;
-  dernierBumpTick: number;
+  /**
+   * pas (tick) de la dernière impulsion supplémentaire de Psyonix donnée à la balle par cette voiture (RocketSim
+   * BallHitInfo::tickCountWhenExtraImpulseApplied) : écrit seulement quand l'impulsion part, la suivante attend `CONTACT_BALLE.delaiImpulsionPas`
+   */
+  derniereImpulsionPsyonixTick: number;
+  /**
+   * délai du bump, propre à l'ATTAQUANT (RocketSim CarContact) : id de la dernière voiture bumpée ou démolie par celle-ci (-1 : aucune)
+   * et pas (tick) de ce choc. Pendant 0,25 s elle ne peut pas bumper de nouveau CETTE voiture ; les autres, si, et sa victime peut
+   * la bumper aussitôt
+   */
+  bumpAutreId: number;
+  bumpDelaiTick: number;
+  /**
+   * roues dont le rayon de suspension touche la BALLE, mesurées par `contactVoitureBalle` en fin de pas (ordre de `VOITURE.roues`) :
+   * au pas suivant elles comptent avec les roues au contact du décor pour `auSol` (RocketSim : le rayon d'une roue touche tout corps
+   * sauf son châssis). Trois roues posées sur la balle = « au sol » : c'est le flip reset
+   */
+  rouesBalle: [boolean, boolean, boolean, boolean];
+  /**
+   * normale (unitaire, de la balle vers la roue) du point où le rayon de suspension de chaque roue de `rouesBalle` touche la balle ;
+   * sans objet pour une roue qui ne la touche pas. Elles entrent avec les normales des roues au contact du décor dans la direction
+   * « vers le haut » des contacts (RocketSim btVehicleRL::getUpwardsDirFromWheelContacts : collage, alignement sur la surface)
+   */
+  normalesRouesBalle: [Vec3, Vec3, Vec3, Vec3];
+  /**
+   * vitesse en attente (RocketSim Car::_velocityImpulseCache) : la vitesse d'un BUMP reçu à ce pas s'y cumule au lieu de modifier
+   * `v` (une voiture bumpée n'entre pas plus vite dans ses autres contacts du même pas) ; `match.ts` l'ajoute à `v` après toutes les
+   * paires de voitures, puis plafonne la vitesse UNE fois (`appliquerVitesseEnAttente`, l'équivalent de Car::_FinishPhysicsTick).
+   * Nulle entre deux pas
+   */
+  vitesseEnAttente: Vec3;
   /** état du bouton de saut au pas précédent (front montant) */
   sautPrecedent: boolean;
   stats: StatsVoiture;
@@ -593,6 +864,11 @@ export interface EtatPlot {
   actif: boolean;
   /** s avant réactivation si inactif */
   recharge: number;
+  /**
+   * id de la voiture qui touchait le plot au pas précédent, -1 sinon (RocketSim BoostPadState.prevLockedCarID) : cette voiture est
+   * jugée sur la boîte du plot (`PLOT.*.demiCoteBoite`, `hauteurBoite`) au lieu du cylindre
+   */
+  verrou: number;
 }
 
 export interface ConfigMatch {
@@ -878,6 +1154,8 @@ export interface HudRocket {
   reapparitionDans: number;
   equipeJoueur: Equipe;
   balleCam: boolean;
+  /** rejeu d'un but en cours (vu de derrière `buteur`) ; absent ou null hors rejeu */
+  rejeu?: { buteur: string; equipe: Equipe } | null;
   banniere: BanniereHud | null;
   fil: LigneFil[];
   enPause: boolean;
@@ -930,11 +1208,19 @@ export interface ImpactBalle {
 /** Implémenté par `balle.ts`. Balle au centre, au repos. */
 export type CreerBalle = (p?: Readonly<Vec3>) => EtatBalle;
 /**
- * Avance la balle de `dt` (≤ PAS_S) contre le décor : gravité, amortissements, collision SDF (position, restitution 0,6, frottement,
- * spin), plafonds de vitesse. Découpe en sous-pas si nécessaire (jamais de tunnel). Rend le plus fort impact du pas, ou null.
- * Implémenté par `balle.ts` (`pasBalle`).
+ * Avance la balle de `dt` (PAS_S en jeu) contre le décor, dans l'ordre de RocketSim : traînée, contact détecté sur la position du
+ * DÉBUT du pas (à 1,905 cm près), gravité, réponse en vitesse seulement (restitution 0,6, frottement, spin ; aucune correction de
+ * position), intégration, plafonds de vitesse. Une balle dont la vitesse et le spin sont exactement nuls ne bouge pas (elle « dort »
+ * comme à l'engagement, jusqu'à ce qu'une voiture la touche). Un `dt` plus long que PAS_S est découpé en pas de PAS_S au plus. Rend
+ * le plus fort impact du pas, ou null. Implémenté par `balle.ts` (`pasBalle`).
  */
 export type PasBalle = (a: Arene, b: EtatBalle, dt: number) => ImpactBalle | null;
+/**
+ * Plafonds de la balle : 60 m/s et 6 rad/s (RocketSim Ball::_FinishPhysicsTick). `pasBalle` l'applique à la fin de son pas ; `match.ts`
+ * le rappelle UNE fois après les contacts des voitures (choc, frottement) et l'ajout de la vitesse en attente (impulsions de Psyonix,
+ * `appliquerVitesseEnAttente`), comme RocketSim en fin de tick. Implémenté par `balle.ts` (`bornerBalle`).
+ */
+export type BornerBalle = (b: EtatBalle) => void;
 export interface EchantillonBalle {
   /** temps depuis maintenant (s) */
   t: number;
@@ -979,13 +1265,26 @@ export interface ContactBalle {
   force: number;
   point: Vec3;
 }
+/** Position et vitesse de la balle AVANT les contacts du pas (RocketSim : l'état lu dans les rappels de contact, avant le solveur). */
+export interface BalleAvantContacts {
+  p: Readonly<Vec3>;
+  v: Readonly<Vec3>;
+}
 /**
- * Contact voiture ↔ balle (hitbox orientée contre sphère) : séparation, impulsion physique (restitution 0,6, masses 180 / 30,
- * couple sur la voiture) PUIS impulsion supplémentaire de Psyonix (`CONTACT_BALLE`) si le délai est écoulé ; met à jour
- * `dernierContactBalleTick` ; ne touche pas `balle.dernierToucheur` (c'est `match.ts`). Rend null s'il n'y a pas de contact.
+ * Contact voiture ↔ balle (hitbox orientée contre sphère), dès que la balle est à moins de `BALLE.margeContact` de la boîte : séparation
+ * si elle y pénètre, impulsion physique (restitution 0, frottement 2, masses 180 / 30, couple sur la voiture) si elles se rapprochent,
+ * PUIS, dans tous les cas, impulsion supplémentaire de Psyonix (`CONTACT_BALLE`) si la précédente de cette voiture date de plus d'un
+ * pas. Cette impulsion ne modifie PAS `b.v` : elle se cumule dans `b.vitesseEnAttente`, que l'appelant ajoute en fin de pas
+ * (`appliquerVitesseEnAttente`). Elle est calculée sur l'état de la balle d'avant les contacts du pas, `balleAvant` (défaut : son état à
+ * l'appel, juste pour une seule voiture) : quand plusieurs voitures touchent la balle au même pas, `match.ts` fige cet état avant la
+ * première, et l'impulsion de chacune ne dépend ni des autres ni de l'ordre des voitures. Met à jour `dernierContactBalleTick`,
+ * `derniereImpulsionPsyonixTick`, `rouesBalle` et `normalesRouesBalle` ; ne plafonne PAS la vitesse de la balle (`bornerBalle`, par
+ * `match.ts`) et ne touche pas `balle.dernierToucheur`. Rend null s'il n'y a pas de contact.
  * Implémenté par `contacts.ts` (`contactVoitureBalle`).
  */
-export type ContactVoitureBalle = (v: EtatVoiture, b: EtatBalle, tick: number, dt: number) => ContactBalle | null;
+export type ContactVoitureBalle = (
+  v: EtatVoiture, b: EtatBalle, tick: number, dt: number, balleAvant?: Readonly<BalleAvantContacts>,
+) => ContactBalle | null;
 export interface ContactVoitures {
   /** l'attaquant démolit la victime (conditions de `CONTACT_VOITURES`) : le match marque la victime, ce module ne touche PAS `demolie` */
   demolition: { auteur: number; victime: number } | null;
@@ -993,10 +1292,22 @@ export interface ContactVoitures {
   bump: { vitesse: number } | null;
 }
 /**
- * Contact voiture ↔ voiture (SAT de deux boîtes orientées) : séparation, impulsion (restitution 0,1, frottement), bump, détection de
- * la démolition. Rend null sans contact. Implémenté par `contacts.ts` (`contactVoitureVoiture`).
+ * Contact voiture ↔ voiture (SAT de deux boîtes orientées) : séparation, impulsion (restitution 0,1, frottement 0,09), puis, pour
+ * chaque sens (`a` attaque `b`, puis `b` attaque `a`), bump ou détection de la démolition, avec le délai de l'attaquant contre cette
+ * victime. La vitesse d'un bump ne modifie PAS la vitesse de la victime : elle se cumule dans sa `vitesseEnAttente`, que l'appelant
+ * ajoute après toutes les paires du pas (`appliquerVitesseEnAttente`, puis `plafonnerVitesse`). Les conditions et la direction du
+ * bump se lisent sur les vitesses d'avant les contacts du pas, `vAvantA` et `vAvantB` (défaut : les vitesses à l'appel, justes pour
+ * une seule paire) : `match.ts` les fige avant le premier contact, une voiture déjà heurtée dans une autre paire du même pas n'y
+ * entre pas avec la vitesse de ce choc. Rend null sans contact. Implémenté par `contacts.ts` (`contactVoitureVoiture`).
  */
-export type ContactEntreVoitures = (a: EtatVoiture, b: EtatVoiture, tick: number) => ContactVoitures | null;
+export type ContactEntreVoitures = (
+  a: EtatVoiture, b: EtatVoiture, tick: number, vAvantA?: Readonly<Vec3>, vAvantB?: Readonly<Vec3>,
+) => ContactVoitures | null;
+/**
+ * Fin de pas d'une balle ou d'une voiture (RocketSim Ball / Car::_FinishPhysicsTick, première partie) : ajoute `vitesseEnAttente` à
+ * `v` et la remet à zéro. Les plafonds viennent ensuite (`bornerBalle`, `plafonnerVitesse`). Implémenté par `contacts.ts`.
+ */
+export type AppliquerVitesseEnAttente = (c: { v: Vec3; vitesseEnAttente: Vec3 }) => void;
 
 // ---- D. match.ts + bots.ts -----------------------------------------------------------------------------------------------
 

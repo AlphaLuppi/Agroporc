@@ -9,8 +9,8 @@
  * `PreparerCoupDEnvoi` de `contrat.ts`). Spec : docs/superpowers/specs/2026-11-06-rocket-agroparc-design.md (§ 6).
  */
 import {
-  BALLE, BUT, COUPS_D_ENVOI, ENTREES_NULLES, GRAVITE, MATCH, PAS_S, PLOT, PLOTS, STADE, VOITURE, adversaire, joueursParEquipe, signeButDefendu, tirer,
-  creerRng,
+  BALLE, BOOST, BUT, COUPS_D_ENVOI, ENTREES_NULLES, GRAVITE, MATCH, PAS_S, PLOT, PLOTS, REAPPARITIONS, VOITURE, adversaire, joueursParEquipe, tirer,
+  creerRng, uu,
 } from "./contrat";
 import type {
   Arene, ConfigMatch, CreerMonde, Equipe, EtatBalle, EtatPlot, EtatVoiture, EvenementMatch, LigneClassement, MondeRocket, PasMonde,
@@ -18,9 +18,9 @@ import type {
 } from "./contrat";
 import { affecter, affecterBase, baseDepuisCap, norme } from "./vec";
 import { creerArene, placeCoupDEnvoi } from "./arene";
-import { creerBalle, pasBalle } from "./balle";
-import { contactVoitureBalle, contactVoitureVoiture } from "./contacts";
-import { centreHitbox, creerVoiture, pasVoiture, replacerVoiture } from "./voiture";
+import { bornerBalle, creerBalle, pasBalle } from "./balle";
+import { appliquerVitesseEnAttente, contactVoitureBalle, contactVoitureVoiture } from "./contacts";
+import { DEMI_HITBOX, centreHitbox, creerVoiture, pasVoiture, plafonnerVitesse, replacerVoiture } from "./voiture";
 
 // ============================================================================================================================
 // Constantes propres au match (ni dans le contrat ni dans la spec)
@@ -31,17 +31,11 @@ export const NOMS_BOTS: readonly string[] = [
   "Bistrot", "Pause", "Muche", "Basilic", "Dubble", "Mijote", "Picadeli", "Vival", "Goulaf", "Sportif", "Edenred", "Ciqual",
 ];
 
-/** Réglages du comptage des statistiques (dérivés de la spec § 6.2, valeurs de ressenti pour les seuils). */
+/**
+ * Réglages du comptage des statistiques qui ne viennent pas de RocketSim (valeurs de ressenti). Buteur, passe décisive, tirs cadrés et
+ * arrêts suivent RocketSim GameEventTracker : leurs seuils sont dans `MATCH` (`fenetreButeurS`, `fenetrePasseS`, `suivi`).
+ */
 export const REGLES_STATS = {
-  /** vitesse minimale de la balle pour compter un arrêt ou un tir (m/s) */
-  vitesseCadreeMin: 8,
-  /** un arrêt est compté si la balle est à moins de `MATCH.distanceArretM` de la ligne ; un tir cadré de plus loin (m) */
-  distanceTirM: 45,
-  /** horizon de la prolongation linéaire de la trajectoire (s) */
-  horizonCadrageS: 4,
-  /** délai minimal entre deux arrêts / deux tirs comptés pour une même voiture (s) */
-  delaiArretS: 1,
-  delaiTirS: 1,
   /** délai minimal entre deux touches comptées (points) / émises (événement) pour une même voiture (s) : un dribble ne gonfle pas le score */
   delaiTouchePointsS: 0.4,
   delaiToucheEvenementS: 0.12,
@@ -51,8 +45,6 @@ export const REGLES_STATS = {
   vitesseImpactDecorMin: 2.5,
   /** la balle est « en l'air » si son centre est à plus de rayon + cette marge au-dessus du sol (m) (spec § 6.1) */
   margeSolBalle: 0.3,
-  /** distance minimale aux autres voitures d'une place de réapparition (m) */
-  degagementReapparition: 6,
 } as const;
 
 // ============================================================================================================================
@@ -68,8 +60,13 @@ export interface InterneMatch {
   /** dernier instant (temps de jeu) auquel chaque voiture a touché la balle (comptage) / émis un événement de touche */
   touchePoints: number[];
   toucheEvenement: number[];
-  dernierArret: number[];
-  dernierTir: number[];
+  /**
+   * suivi des tirs (RocketSim GameEventTracker) : la balle est « tirée » (`_ballShot`) vers la cage que défend `cageTiree`
+   * (`_ballShotGoalTeam`) ; temps restant avant de pouvoir compter un nouveau tir (`_shotCooldown`, s)
+   */
+  balleTiree: boolean;
+  cageTiree: Equipe;
+  delaiTirS: number;
   /** `chronoZero` déjà émis pour la période courante */
   chronoZeroEmis: boolean;
   /** temps déjà attendu que la balle touche le sol après le chrono à 0 (s) */
@@ -84,8 +81,7 @@ function interne(m: MondeRocket): InterneMatch {
   if (!i || i.touchePoints.length !== n) {
     i = mm.interne = {
       touchePoints: new Array<number>(n).fill(-Infinity), toucheEvenement: new Array<number>(n).fill(-Infinity),
-      dernierArret: new Array<number>(n).fill(-Infinity), dernierTir: new Array<number>(n).fill(-Infinity),
-      chronoZeroEmis: false, graceBalleS: 0,
+      balleTiree: false, cageTiree: "bleue", delaiTirS: 0, chronoZeroEmis: false, graceBalleS: 0,
     };
   }
   return i;
@@ -132,7 +128,7 @@ export const creerMonde: CreerMonde = (config: ConfigMatch, arene?: Arene): Mond
   }
   const idHumain = voitures.findIndex((v) => v.humain);
   const balle = creerBalle([0, BALLE.hauteurEngagement, 0]);
-  const plots: EtatPlot[] = PLOTS.map((p) => ({ id: p.id, actif: true, recharge: 0 }));
+  const plots: EtatPlot[] = PLOTS.map((p) => ({ id: p.id, actif: true, recharge: 0, verrou: -1 }));
   const m: MondeRocket = {
     config: { ...config, nomsEquipes: { ...config.nomsEquipes } }, arene: a, tick: 0, temps: 0, phase: "decompte", tempsPhase: 0,
     tempsRestant: config.dureeS, prolongation: false, attenteSolBalle: false, score: { bleue: 0, orange: 0 }, dernierBut: null,
@@ -154,8 +150,11 @@ function emplacement(equipe: Equipe, i: number): { x: number; z: number; cap: nu
 
 /**
  * Repose voitures, balle et plots pour un coup d'envoi puis lance le décompte. Tire avec le `Rng` du monde `n` positions parmi les 5
- * de Rocket League SANS remise (la même permutation sert aux deux équipes : coup d'envoi symétrique, donc équitable). Les voitures
- * démolies ressuscitent, le boost repasse à 33,33, les voitures sont figées jusqu'à « GO ».
+ * de Rocket League SANS remise (la même permutation sert aux deux équipes : coup d'envoi symétrique, donc équitable ; RocketSim
+ * Arena::ResetToRandomKickoff mélange de même les 5 places et donne la même aux deux équipes). Les voitures démolies ressuscitent,
+ * le boost repasse à 33,33, les voitures sont figées jusqu'à « GO ». Comme dans RocketSim, tout repart d'un état neuf : plots pleins et
+ * sans verrou (`BoostPadState()`), dernières touches de balle oubliées (`CarState()`), suivi des tirs remis à zéro
+ * (GameEventTracker::ResetPersistentInfo).
  */
 export const preparerCoupDEnvoi: PreparerCoupDEnvoi = (m) => {
   // Fisher-Yates partiel sur les 5 positions (consomme toujours 4 tirages : le flux de hasard ne dépend pas du format).
@@ -170,54 +169,77 @@ export const preparerCoupDEnvoi: PreparerCoupDEnvoi = (m) => {
     v.demolie = false;
     v.reapparitionDans = 0;
     v.figee = true;
+    v.dernierContactBalleTick = -1e9;
   }
   const b = m.balle;
   const neuve = creerBalle([0, BALLE.hauteurEngagement, 0]);
-  affecter(b.p, neuve.p); affecter(b.v, neuve.v); affecter(b.w, neuve.w);
+  affecter(b.p, neuve.p); affecter(b.v, neuve.v); affecter(b.w, neuve.w); affecter(b.vitesseEnAttente, neuve.vitesseEnAttente);
   b.dernierToucheur = null;
   b.avantDernierToucheur = null;
-  for (const p of m.plots) { p.actif = true; p.recharge = 0; }
+  for (const p of m.plots) { p.actif = true; p.recharge = 0; p.verrou = -1; }
   m.phase = "decompte";
   m.tempsPhase = 0;
   m.attenteSolBalle = false;
   m.dernierBut = null;
   const it = interne(m);
   it.graceBalleS = 0;
+  it.balleTiree = false;
+  it.delaiTirS = 0;
   synchroniserPrecedent(m);
 };
 
-/** Place de réapparition d'une voiture démolie : le premier emplacement de coup d'envoi de son équipe libre de voitures, en partant de son slot. */
+/**
+ * Place de réapparition d'une voiture démolie (RocketSim Car::Respawn) : l'un des quatre emplacements de `REAPPARITIONS`
+ * (CAR_RESPAWN_LOCATION_AMOUNT = 4), tiré au hasard avec le `Rng` du monde (déterministe). Pour l'orange, z est inversé et le cap
+ * tourné de π ; x ne l'est pas (`spawnPos.y * -1`, `yawAng + M_PI`), ce qui donne les mêmes quatre places. Aucun test d'emplacement
+ * libre, comme dans RocketSim.
+ */
 function placeReapparition(m: MondeRocket, v: EtatVoiture): { x: number; z: number; cap: number } {
-  let meilleur = emplacement(v.equipe, v.slot % COUPS_D_ENVOI.length), meilleureDist = -1;
-  for (let k = 0; k < COUPS_D_ENVOI.length; k++) {
-    const e = emplacement(v.equipe, (v.slot + k) % COUPS_D_ENVOI.length);
-    let dMin = Infinity;
-    for (const o of m.voitures) {
-      if (o === v || o.demolie) continue;
-      dMin = Math.min(dMin, Math.hypot(o.p[0] - e.x, o.p[2] - e.z));
-    }
-    if (dMin >= REGLES_STATS.degagementReapparition) return e;
-    if (dMin > meilleureDist) { meilleureDist = dMin; meilleur = e; }
-  }
-  return meilleur;
+  const pos = REAPPARITIONS[Math.min(REAPPARITIONS.length - 1, Math.floor(tirer(m.rng) * REAPPARITIONS.length))];
+  return v.equipe === "bleue" ? { x: pos.x, z: pos.z, cap: pos.cap } : { x: pos.x, z: -pos.z, cap: pos.cap + Math.PI };
 }
 
 // ============================================================================================================================
 // Aides de règles
 // ============================================================================================================================
 
-/** La trajectoire (prolongée avec la gravité) de la balle `p`, `v` franchit-elle la ligne de la cage de signe `sz` dans l'ouverture ? `distMax` : distance maximale à la ligne. */
-export function balleVersCage(p: Readonly<Vec3>, v: Readonly<Vec3>, sz: number, distMax: number): boolean {
-  if (Math.hypot(v[0], v[1], v[2]) < REGLES_STATS.vitesseCadreeMin) return false;
-  const vers = v[2] * sz;
-  if (vers < 1) return false;
-  const dist = (sz * STADE.demiLongueur - p[2]) * sz;
-  if (dist < -BALLE.rayon || dist > distMax) return false;
-  const t = Math.max(dist, 0) / vers;
-  if (t > REGLES_STATS.horizonCadrageS) return false;
-  // Une balle qui toucherait le sol avant la ligne rebondit : sa hauteur est ramenée à 0 (un tir rasant reste cadré).
-  const x = p[0] + v[0] * t, y = Math.max(0, p[1] + v[1] * t - 0.5 * GRAVITE * t * t);
-  return Math.abs(x) <= BUT.demiLargeur + BALLE.rayon * 0.5 && y <= BUT.hauteur + BALLE.rayon * 0.5;
+/**
+ * La balle va-t-elle « probablement » entrer dans une cage en moins de `maxS` secondes (RocketSim Arena::IsBallProbablyGoingIn) ? La
+ * cage visée est celle vers laquelle la balle avance en Z ; le temps est la distance à la ligne de but (`BUT.seuilMarque`,
+ * goalBaseThresholdY) divisée par la vitesse en Z ; la position est prolongée avec la gravité, sans rebond (une balle qui passerait
+ * sous le sol reste cadrée) ; le cadre est élargi de 0,1 rayon de balle (`MATCH.suivi.margeCadreRayons`) plus `marge`. Rend l'équipe
+ * qui DÉFEND cette cage (RS_TEAM_FROM_Y(scoreDirSgn)), null si la balle n'y va pas.
+ */
+export function balleVaEntrer(p: Readonly<Vec3>, v: Readonly<Vec3>, maxS: number, marge = 0): Equipe | null {
+  // RocketSim : `abs(ballVel.y) < FLT_EPSILON` (1,19e-7 uu/s)
+  const vz = Math.abs(v[2]);
+  if (vz < V_Z_MIN) return null;
+  const sg = v[2] < 0 ? -1 : 1;
+  const t = Math.abs(p[2] - BUT.seuilMarque * sg) / vz;
+  if (t > maxS) return null;
+  const m = BALLE.rayon * MATCH.suivi.margeCadreRayons + marge;
+  if (p[1] + v[1] * t - 0.5 * GRAVITE * t * t > BUT.hauteur + m) return null; // trop haut
+  if (Math.abs(p[0] + v[0] * t) > BUT.demiLargeur + m) return null; // trop sur le côté
+  return sg < 0 ? "bleue" : "orange";
+}
+const V_Z_MIN = uu(1.1920929e-7);
+
+/** Nombre de pas que dure `s` secondes (RocketSim : `temps × tickrate` tronqué en entier ; 0,3 s = 36 pas, 2 s = 240, 4 s = 480 à 120 Hz). */
+const pasPour = (s: number, dt: number): number => Math.floor(s / dt + 1e-6);
+
+/**
+ * RocketSim GetShooterPasser : la voiture de l'équipe `eq` (autre que `sauf`) dont la dernière touche de balle
+ * (`dernierContactBalleTick`, BallHitInfo::tickCountWhenHit) est la plus récente, à condition que `touche + pasMax >= tickRef`.
+ * Rend son id (son index dans `m.voitures`), -1 si aucune. Une voiture démolie compte.
+ */
+function derniereTouche(m: MondeRocket, eq: Equipe, pasMax: number, tickRef: number, sauf: number): number {
+  let id = -1, meilleure = -Infinity;
+  for (const v of m.voitures) {
+    if (v.equipe !== eq || v.id === sauf) continue;
+    const t = v.dernierContactBalleTick;
+    if (t + pasMax >= tickRef && t > meilleure) { id = v.id; meilleure = t; }
+  }
+  return id;
 }
 
 const balleEnLAir = (m: MondeRocket): boolean => m.balle.p[1] > BALLE.rayon + REGLES_STATS.margeSolBalle;
@@ -252,18 +274,18 @@ function conclureTempsReglementaire(m: MondeRocket, ev: EvenementMatch[]): void 
 // Un pas du match
 // ============================================================================================================================
 
-const vAvant: Vec3 = [0, 0, 0];
-
-/** Un but vient d'être marqué par l'équipe `eq` : score, attributions (buteur, passe), phase « but ». */
-function enregistrerBut(m: MondeRocket, eq: Equipe, ev: EvenementMatch[]): void {
+/**
+ * Un but vient d'être marqué par l'équipe `eq` : score, attributions, phase « but ». Buteur et passeur comme RocketSim
+ * GameEventTracker (GetShooterPasser) : le buteur est la voiture de `eq` qui a touché la balle le plus récemment, dans les 4 dernières
+ * secondes (`MATCH.fenetreButeurS`), même si un adversaire l'a déviée ensuite ; le passeur est une AUTRE voiture de `eq` dont la
+ * dernière touche précède de 2 s au plus celle du buteur (`MATCH.fenetrePasseS`). Les touches sont comptées en pas, l'instant du but
+ * étant le compteur de pas APRÈS ce pas (RocketSim lit `arena->tickCount` une fois le pas fini).
+ */
+function enregistrerBut(m: MondeRocket, eq: Equipe, dt: number, ev: EvenementMatch[]): void {
   const b = m.balle;
-  const dt = b.dernierToucheur;
-  const idMarqueur = dt && dt.equipe === eq ? dt.idVoiture : null;
-  let idPasse: number | null = null;
-  if (idMarqueur !== null) {
-    const av = b.avantDernierToucheur;
-    if (av && av.equipe === eq && av.idVoiture !== idMarqueur && m.temps - av.temps <= MATCH.fenetrePasseS) idPasse = av.idVoiture;
-  }
+  const marqueur = derniereTouche(m, eq, pasPour(MATCH.fenetreButeurS, dt), m.tick + 1, -1);
+  const passe = marqueur < 0 ? -1 : derniereTouche(m, eq, pasPour(MATCH.fenetrePasseS, dt), m.voitures[marqueur].dernierContactBalleTick, marqueur);
+  const idMarqueur = marqueur < 0 ? null : marqueur, idPasse = passe < 0 ? null : passe;
   m.score[eq]++;
   if (idMarqueur !== null) { m.voitures[idMarqueur].stats.buts++; majStatsPoints(m.voitures[idMarqueur], MATCH.points.but); }
   if (idPasse !== null) { m.voitures[idPasse].stats.passes++; majStatsPoints(m.voitures[idPasse], MATCH.points.passeDecisive); }
@@ -275,16 +297,86 @@ function enregistrerBut(m: MondeRocket, eq: Equipe, ev: EvenementMatch[]): void 
   ev.push({ t: "but", equipe: eq, idMarqueur, idPasse, vitesseKmh });
 }
 
-/** Contacts voiture ↔ balle : événements, dernier toucheur, touches, arrêts et tirs. */
+/**
+ * Tirs cadrés et arrêts, jugés une fois par pas après la physique (RocketSim GameEventTracker::Update, réglages `MATCH.suivi`).
+ *  - balle non « tirée » : après le délai entre deux tirs, si elle va à 17,5 m/s au moins et qu'elle entre dans une cage en moins de
+ *    2 s, le tireur est la voiture de l'équipe qui attaque cette cage dont la dernière touche date de 36 ou 37 pas (0,3 s : le tir
+ *    n'est compté que si la balle file toujours au but 0,3 s après la frappe). La balle devient « tirée » vers cette cage.
+ *  - balle « tirée » : dès qu'elle n'entre plus dans aucune cage, elle ne l'est plus ; si une voiture de l'équipe qui défendait l'a
+ *    touchée à ce pas même, c'est un arrêt (sinon le tir a simplement manqué le cadre).
+ */
+function suiviTirs(m: MondeRocket, dt: number, ev: EvenementMatch[]): void {
+  const it = interne(m), b = m.balle, S = MATCH.suivi;
+  const tickFin = m.tick + 1;
+  if (!it.balleTiree) {
+    if (it.delaiTirS > 0) {
+      // pas de tir possible pendant le délai (RocketSim ne teste rien au pas où le délai tombe à 0)
+      it.delaiTirS -= dt;
+      if (it.delaiTirS < 1e-9) it.delaiTirS = 0;
+      return;
+    }
+    if (b.v[0] * b.v[0] + b.v[1] * b.v[1] + b.v[2] * b.v[2] < S.vitesseMin * S.vitesseMin) return;
+    const cage = balleVaEntrer(b.p, b.v, S.horizonS);
+    if (!cage) return;
+    const delai = pasPour(S.delaiToucheS, dt);
+    const id = derniereTouche(m, adversaire(cage), 1 + delai, tickFin, -1);
+    if (id < 0) return;
+    const tireur = m.voitures[id];
+    if (tickFin - tireur.dernierContactBalleTick < delai) return;
+    it.balleTiree = true;
+    it.cageTiree = cage;
+    it.delaiTirS = S.delaiTirS;
+    tireur.stats.tirs++;
+    majStatsPoints(tireur, MATCH.points.tir);
+  } else {
+    if (balleVaEntrer(b.p, b.v, S.horizonS)) return;
+    const id = derniereTouche(m, it.cageTiree, 1, tickFin, -1);
+    if (id >= 0) {
+      const gardien = m.voitures[id];
+      gardien.stats.arrets++;
+      majStatsPoints(gardien, MATCH.points.arret);
+      ev.push({ t: "arret", idVoiture: id });
+    }
+    it.balleTiree = false;
+  }
+}
+
+// ---- état d'avant les contacts du pas (tampons de travail, remplis au début de chaque pas : aucune allocation dans la boucle) ----
+/** Position et vitesse de la balle avant les contacts du pas (RocketSim : `ballState` lu dans les rappels de contact, avant le solveur). */
+const BALLE_AVANT: { p: Vec3; v: Vec3 } = { p: [0, 0, 0], v: [0, 0, 0] };
+/** Vitesse de chaque voiture avant les contacts du pas (balle et autres voitures), par indice dans `monde.voitures`. */
+const VITESSES_AVANT: Vec3[] = [];
+/** Voitures entrées dans un contact voiture ↔ voiture à ce pas : leur vitesse est plafonnée une fois, après toutes les paires. */
+const HEURTEES: boolean[] = [];
+
+/**
+ * Fige l'état que lisent les règles de RocketSim dans ses rappels de contact (impulsion de Psyonix, bump, démolition) : la balle et
+ * les vitesses des voitures telles qu'elles sont AVANT le premier contact du pas. Les contacts sont ensuite résolus l'un après
+ * l'autre, mais ces règles ne voient ni le choc ni l'impulsion d'un contact passé plus tôt dans la boucle : leur issue ne dépend
+ * pas de l'ordre des voitures dans la liste.
+ */
+function figerAvantContacts(m: MondeRocket): void {
+  affecter(BALLE_AVANT.p, m.balle.p); affecter(BALLE_AVANT.v, m.balle.v);
+  const vs = m.voitures;
+  for (let i = 0; i < vs.length; i++) {
+    if (i >= VITESSES_AVANT.length) VITESSES_AVANT.push([0, 0, 0]);
+    affecter(VITESSES_AVANT[i], vs[i].v);
+    HEURTEES[i] = false;
+  }
+}
+
+/**
+ * Contacts voiture ↔ balle : événements, dernier toucheur, touches (tirs et arrêts : `suiviTirs`, buteur et passe : `enregistrerBut`).
+ * L'impulsion de Psyonix de chaque voiture se calcule sur la balle d'avant les contacts (`BALLE_AVANT`) et attend dans
+ * `balle.vitesseEnAttente` : `pasMonde` l'ajoute une fois, après tous les contacts.
+ */
 function contactsBalle(m: MondeRocket, dt: number, ev: EvenementMatch[]): void {
   const it = interne(m);
   const b = m.balle;
   const enJeu = m.phase === "enJeu";
   for (const v of m.voitures) {
     if (v.demolie || v.figee) continue;
-    affecter(vAvant, b.v);
-    const pAvant0 = b.p[0], pAvant1 = b.p[1], pAvant2 = b.p[2];
-    const c = contactVoitureBalle(v, b, m.tick, dt);
+    const c = contactVoitureBalle(v, b, m.tick, dt, BALLE_AVANT);
     if (!c) continue;
     const id = v.id;
     if (m.temps - it.toucheEvenement[id] >= REGLES_STATS.delaiToucheEvenementS || c.force >= REGLES_STATS.forceToucheToujours) {
@@ -292,19 +384,8 @@ function contactsBalle(m: MondeRocket, dt: number, ev: EvenementMatch[]): void {
       ev.push({ t: "toucheBalle", idVoiture: id, force: c.force });
     }
     if (!enJeu) continue;
-    // Arrêt : la balle (avant le choc) allait vers la cage de la voiture, tirée par un adversaire (ou par personne).
+    // Dernier toucheur et toucheur précédent d'une AUTRE voiture (couleur de la balle, bots).
     const dtch = b.dernierToucheur;
-    const cageDefendue = signeButDefendu(v.equipe);
-    if (
-      (!dtch || dtch.equipe !== v.equipe) && m.temps - it.dernierArret[id] >= REGLES_STATS.delaiArretS &&
-      balleVersCage([pAvant0, pAvant1, pAvant2], vAvant, cageDefendue, MATCH.distanceArretM)
-    ) {
-      it.dernierArret[id] = m.temps;
-      v.stats.arrets++;
-      majStatsPoints(v, MATCH.points.arret);
-      ev.push({ t: "arret", idVoiture: id });
-    }
-    // Dernier toucheur et toucheur précédent d'une AUTRE voiture (passes décisives).
     if (dtch && dtch.idVoiture !== id) b.avantDernierToucheur = dtch;
     b.dernierToucheur = { idVoiture: id, equipe: v.equipe, temps: m.temps };
     if (m.temps - it.touchePoints[id] >= REGLES_STATS.delaiTouchePointsS) {
@@ -312,16 +393,16 @@ function contactsBalle(m: MondeRocket, dt: number, ev: EvenementMatch[]): void {
       v.stats.touches++;
       majStatsPoints(v, MATCH.points.touche);
     }
-    // Tir cadré : après le contact, la balle part vers la cage adverse.
-    if (m.temps - it.dernierTir[id] >= REGLES_STATS.delaiTirS && balleVersCage(b.p, b.v, -cageDefendue, REGLES_STATS.distanceTirM)) {
-      it.dernierTir[id] = m.temps;
-      v.stats.tirs++;
-      majStatsPoints(v, MATCH.points.tir);
-    }
   }
 }
 
-/** Contacts voiture ↔ voiture : bumps et démolitions. */
+/**
+ * Contacts voiture ↔ voiture : bumps et démolitions. Les conditions et la direction d'un bump se lisent sur les vitesses d'avant les
+ * contacts du pas (`VITESSES_AVANT`) et sa vitesse attend dans `victime.vitesseEnAttente`. Une fois TOUTES les paires passées
+ * (RocketSim Car::_FinishPhysicsTick, après le pas de Bullet), chaque voiture reçoit sa vitesse en attente, puis celles qui ont été
+ * heurtées sont ramenées sous le plafond de 23 m/s, une seule fois : trois voitures qui se touchent au même pas ne se transmettent
+ * pas un bump d'une paire à l'autre.
+ */
 function contactsVoitures(m: MondeRocket, ev: EvenementMatch[]): void {
   const vs = m.voitures;
   for (let i = 0; i < vs.length; i++) {
@@ -330,8 +411,9 @@ function contactsVoitures(m: MondeRocket, ev: EvenementMatch[]): void {
     for (let j = i + 1; j < vs.length; j++) {
       const b = vs[j];
       if (b.demolie || b.figee) continue;
-      const r = contactVoitureVoiture(a, b, m.tick);
+      const r = contactVoitureVoiture(a, b, m.tick, VITESSES_AVANT[i], VITESSES_AVANT[j]);
       if (!r) continue;
+      HEURTEES[i] = true; HEURTEES[j] = true;
       if (r.bump) ev.push({ t: "bump", idVoiture: a.id, autre: b.id, vitesse: r.bump.vitesse });
       const d = r.demolition;
       if (d) {
@@ -349,41 +431,93 @@ function contactsVoitures(m: MondeRocket, ev: EvenementMatch[]): void {
       }
     }
   }
+  // fin de pas des voitures : vitesse des bumps reçus, puis plafond (une voiture démolie à ce pas perd le bump qu'elle attendait :
+  // RocketSim saute Car::_FinishPhysicsTick pour elle, et sa réapparition repart d'un état neuf)
+  for (let i = 0; i < vs.length; i++) {
+    const v = vs[i];
+    if (v.demolie) { v.vitesseEnAttente[0] = 0; v.vitesseEnAttente[1] = 0; v.vitesseEnAttente[2] = 0; continue; }
+    appliquerVitesseEnAttente(v);
+    if (HEURTEES[i]) plafonnerVitesse(v);
+  }
 }
 
-/** Plots de boost : recharge, ramassage par le centre de la hitbox (cylindre), voitures démolies exclues. */
+const f32 = Math.fround;
+const [DX, DY, DZ] = VOITURE.decalageHitbox;
+const [HX, HY, HZ] = DEMI_HITBOX;
+
+/**
+ * La voiture verrouillée sur un plot le touche-t-elle encore (RocketSim BoostPad::_CheckCollide, branche `prevLockedCarID`) ? Boîte du
+ * plot (demi-côté `demiCoteBoite`, de `hauteurCentre` à `hauteurCentre + hauteurBoite`) contre la boîte englobante alignée sur les axes
+ * de la hitbox orientée (Bullet `getAabb` : centre ± |base| × demi-tailles), comparaisons strictes composante par composante
+ * (`_boxMaxBT > carMinBT && _boxMinBT < carMaxBT`). Sans allocation.
+ */
+function boiteVoitureTouchePlot(v: EtatVoiture, x: number, z: number, cfg: typeof PLOT.petit | typeof PLOT.gros): boolean {
+  const { avant, droite, haut } = v.base;
+  const cx = v.p[0] + avant[0] * DX + droite[0] * DY + haut[0] * DZ, ex = Math.abs(avant[0]) * HX + Math.abs(droite[0]) * HY + Math.abs(haut[0]) * HZ;
+  if (!(x + cfg.demiCoteBoite > cx - ex && x - cfg.demiCoteBoite < cx + ex)) return false;
+  const cz = v.p[2] + avant[2] * DX + droite[2] * DY + haut[2] * DZ, ez = Math.abs(avant[2]) * HX + Math.abs(droite[2]) * HY + Math.abs(haut[2]) * HZ;
+  if (!(z + cfg.demiCoteBoite > cz - ez && z - cfg.demiCoteBoite < cz + ez)) return false;
+  const cy = v.p[1] + avant[1] * DX + droite[1] * DY + haut[1] * DZ, ey = Math.abs(avant[1]) * HX + Math.abs(droite[1]) * HY + Math.abs(haut[1]) * HZ;
+  return cfg.hauteurCentre + cfg.hauteurBoite > cy - ey && cfg.hauteurCentre < cy + ey;
+}
+
+/**
+ * Plots de boost, dans l'ordre d'un pas de RocketSim (Arena::Step, BoostPad.cpp, BoostPadGrid.cpp) :
+ *  1. recharge (`_PreTickUpdate`) : décomptée en simple précision comme RocketSim, le plot redevient actif quand elle vaut 0 (480 pas
+ *     pour un petit plot, 1201 pour un gros : 10 − 1200 × (1/120) ne tombe pas à 0 en simple précision) ; un plot qui revient peut
+ *     être pris à ce pas même ;
+ *  2. contact (`_CheckCollide`), plot actif ou non, pour chaque voiture ni démolie ni pleine dont l'origine est sous 3,45 m
+ *     (`PLOT.hauteurMaxOrigine`) : la voiture verrouillée au pas précédent est jugée sur la boîte du plot contre sa boîte englobante
+ *     (`boiteVoitureTouchePlot`), les autres sur le cylindre contre leur ORIGINE (rayon 1,44 ou 2,08 m, à moins de 0,95 m en
+ *     hauteur du centre du plot ; inégalités strictes). Si plusieurs voitures touchent, la dernière de la liste l'emporte ;
+ *  3. don du boost si le plot est actif, puis verrou = la voiture en contact ou -1 (`_PostTickUpdate`).
+ * Une voiture posée au sol (boîte englobante sous 0,70 m) ne touche jamais la boîte : restée sur un plot, elle est donc verrouillée un
+ * pas sur deux, comme dans RocketSim.
+ */
 function majPlots(m: MondeRocket, dt: number, ev: EvenementMatch[]): void {
+  const dt32 = f32(dt);
   for (let k = 0; k < m.plots.length; k++) {
     const pl = m.plots[k];
     const def = PLOTS[k];
     if (!pl.actif) {
-      pl.recharge -= dt;
-      if (pl.recharge <= 0) { pl.actif = true; pl.recharge = 0; ev.push({ t: "plotRecharge", idPlot: pl.id }); }
-      continue;
+      pl.recharge = Math.max(f32(pl.recharge - dt32), 0);
+      if (pl.recharge === 0) { pl.actif = true; ev.push({ t: "plotRecharge", idPlot: pl.id }); }
     }
     const cfg = def.gros ? PLOT.gros : PLOT.petit;
-    const yMin = cfg.hauteurCentre - cfg.hauteur / 2, yMax = cfg.hauteurCentre + cfg.hauteur / 2;
+    let preneur: EtatVoiture | null = null;
     for (const v of m.voitures) {
-      if (v.demolie || v.boost >= 100 - 1e-9) continue;
-      const c = centreHitbox(v);
-      if (c[1] < yMin || c[1] > yMax) continue;
-      if (Math.hypot(c[0] - def.x, c[2] - def.z) > cfg.rayon) continue;
-      const gain = Math.min(cfg.valeur, 100 - v.boost);
-      v.boost += gain;
+      if (v.demolie || v.boost >= BOOST.max || v.p[1] > PLOT.hauteurMaxOrigine) continue;
+      if (pl.verrou === v.id) {
+        if (!boiteVoitureTouchePlot(v, def.x, def.z, cfg)) continue;
+      } else {
+        const dx = v.p[0] - def.x, dz = v.p[2] - def.z;
+        if (dx * dx + dz * dz >= cfg.rayon * cfg.rayon) continue;
+        if (Math.abs(v.p[1] - cfg.hauteurCentre) >= cfg.demiHauteur) continue;
+      }
+      preneur = v;
+    }
+    if (preneur && pl.actif) {
+      // RocketSim : boost = min(boost + BOOST_AMOUNT, BOOST_MAX)
+      const avant = preneur.boost;
+      preneur.boost = Math.min(avant + cfg.valeur, BOOST.max);
+      const gain = preneur.boost - avant;
       pl.actif = false;
       pl.recharge = cfg.rechargeS;
-      ev.push({ t: "plot", idVoiture: v.id, idPlot: pl.id, gros: def.gros, gain });
-      break;
+      ev.push({ t: "plot", idVoiture: preneur.id, idPlot: pl.id, gros: def.gros, gain });
     }
+    pl.verrou = preneur ? preneur.id : -1;
   }
 }
 
-/** Voitures démolies dont le délai est écoulé : elles reviennent à un emplacement libre de leur équipe. */
+/**
+ * Voitures démolies dont le délai est écoulé (360 pas : le décompte de `pasVoiture` tombe exactement à 0) : elles reviennent à l'un des
+ * quatre emplacements de réapparition de leur équipe, lâchées de 36 cm (RocketSim CAR_RESPAWN_Z), boost à 33,33.
+ */
 function reapparitions(m: MondeRocket, ev: EvenementMatch[]): void {
   for (const v of m.voitures) {
     if (!v.demolie || v.reapparitionDans > 0) continue;
     const e = placeReapparition(m, v);
-    replacerVoiture(v, [e.x, VOITURE.hauteurRepos, e.z], e.cap, VOITURE.boostInitial);
+    replacerVoiture(v, [e.x, VOITURE.hauteurReapparition, e.z], e.cap, VOITURE.boostInitial);
     v.demolie = false;
     v.reapparitionDans = 0;
     v.figee = false;
@@ -392,7 +526,8 @@ function reapparitions(m: MondeRocket, ev: EvenementMatch[]): void {
 }
 
 /**
- * Un pas du match : entrées → voitures → balle → contacts → plots → règles (but, chrono, prolongation, fin) → phases. Remplit d'abord
+ * Un pas du match : entrées → voitures → balle → contacts → plots → règles (réapparitions, but, tirs et arrêts, chrono, prolongation,
+ * fin) → phases. Remplit d'abord
  * `monde.precedent`. Rend les événements dans l'ordre où ils sont apparus. En phase « fini » le monde est figé.
  */
 export const pasMonde: PasMonde = (m, entrees, dt = PAS_S) => {
@@ -414,12 +549,18 @@ export const pasMonde: PasMonde = (m, entrees, dt = PAS_S) => {
     for (const x of e) ev.push(x);
   }
 
-  // 2. Balle (immobile pendant le décompte), 3. contacts.
+  // 2. Balle (immobile pendant le décompte ; ensuite elle « dort » à sa hauteur d'engagement tant qu'aucune voiture ne l'a touchée,
+  //    comme dans RocketSim), 3. contacts.
   if (!decompte) {
     const impact = pasBalle(m.arene, m.balle, dt);
     if (impact && impact.vitesse >= REGLES_STATS.vitesseImpactDecorMin) ev.push({ t: "balleDecor", vitesse: impact.vitesse, point: impact.point });
+    figerAvantContacts(m);
     contactsBalle(m, dt, ev);
     contactsVoitures(m, ev);
+    // fin de pas de la balle (RocketSim Ball::_FinishPhysicsTick) : les impulsions de Psyonix en attente entrent dans sa vitesse, puis
+    // les plafonds (60 m/s, 6 rad/s) passent UNE fois, après toutes les impulsions du pas (chocs, frottement qui donne du spin, Psyonix)
+    appliquerVitesseEnAttente(m.balle);
+    bornerBalle(m.balle);
   }
 
   // 4. Plots.
@@ -431,17 +572,20 @@ export const pasMonde: PasMonde = (m, entrees, dt = PAS_S) => {
     reapparitions(m, ev);
     const eq = m.arene.butMarque(m.balle.p, BALLE.rayon);
     if (eq) {
-      enregistrerBut(m, eq, ev);
-    } else if (!m.prolongation) {
-      m.tempsRestant = Math.max(0, m.tempsRestant - dt);
-      if (m.tempsRestant <= 0) {
-        if (!it.chronoZeroEmis) { it.chronoZeroEmis = true; ev.push({ t: "chronoZero" }); }
-        if (balleEnLAir(m) && it.graceBalleS < MATCH.graceBalleEnAirS) {
-          m.attenteSolBalle = true;
-          it.graceBalleS += dt;
-        } else {
-          m.attenteSolBalle = false;
-          conclureTempsReglementaire(m, ev);
+      enregistrerBut(m, eq, dt, ev);
+    } else {
+      suiviTirs(m, dt, ev);
+      if (!m.prolongation) {
+        m.tempsRestant = Math.max(0, m.tempsRestant - dt);
+        if (m.tempsRestant <= 0) {
+          if (!it.chronoZeroEmis) { it.chronoZeroEmis = true; ev.push({ t: "chronoZero" }); }
+          if (balleEnLAir(m) && it.graceBalleS < MATCH.graceBalleEnAirS) {
+            m.attenteSolBalle = true;
+            it.graceBalleS += dt;
+          } else {
+            m.attenteSolBalle = false;
+            conclureTempsReglementaire(m, ev);
+          }
         }
       }
     }
@@ -501,7 +645,7 @@ export function empreinteMonde(m: Readonly<MondeRocket>): number {
     vec(v.p); vec(v.v); vec(v.w); vec(v.base.avant); vec(v.base.haut); mixer(v.boost); mixer(v.demolie ? 1 : 0);
     mixer(v.stats.points);
   }
-  for (const p of m.plots) { mixer(p.actif ? 1 : 0); mixer(p.recharge); }
+  for (const p of m.plots) { mixer(p.actif ? 1 : 0); mixer(p.recharge); mixer(p.verrou); }
   return h >>> 0;
 }
 

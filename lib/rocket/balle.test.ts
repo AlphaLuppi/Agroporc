@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { BALLE, GRAVITE, PAS_S, creerRng, tirer, type Arene, type EtatBalle, type Vec3 } from "./contrat";
-import { creerBalle, pasBalle, predireBalle } from "./balle";
+import { bornerBalle, creerBalle, pasBalle, predireBalle } from "./balle";
 
 const R = BALLE.rayon;
 
@@ -43,6 +43,13 @@ function balle(p: Vec3, v: Vec3 = [0, 0, 0], w: Vec3 = [0, 0, 0]): EtatBalle {
   return b;
 }
 const norme = (v: Vec3): number => Math.hypot(v[0], v[1], v[2]);
+/**
+ * Balle LÂCHÉE en `p` : une balle dont la vitesse et le spin sont exactement nuls dort (elle plane, comme à l'engagement) ; pour la
+ * voir tomber on lui donne une vitesse infime, comme RocketSim en Snowday (`vel.z = FLT_EPSILON`, « don't freeze »).
+ */
+const lachee = (p: Vec3): EtatBalle => balle(p, [0, -1.1920929e-7, 0]);
+/** Traînée d'un pas : `0,97^dt`. */
+const TRAINEE_PAS = Math.pow(1 - BALLE.amortissementLineaire, PAS_S);
 
 function simuler(a: Arene, b: EtatBalle, secondes: number, surPas?: (i: number) => void): void {
   const n = Math.round(secondes / PAS_S);
@@ -69,7 +76,7 @@ describe("creerBalle", () => {
 describe("gravité et vol libre", () => {
   it("chute libre : la vitesse verticale suit g·t à l'amortissement près", () => {
     const a = boite();
-    const b = balle([0, 15, 0]);
+    const b = lachee([0, 15, 0]);
     simuler(a, b, 1);
     // v(t) = -(g/k)(1 - e^{-k t}), k = -ln(0,97) ≈ 0,0305
     const k = -Math.log(1 - BALLE.amortissementLineaire);
@@ -84,11 +91,37 @@ describe("gravité et vol libre", () => {
     simuler(a, b, 1);
     expect(b.v[0]).toBeCloseTo(10 * (1 - BALLE.amortissementLineaire), 2);
   });
-  it("l'amortissement angulaire réduit le spin de 3 % par seconde en vol", () => {
+  it("aucun amortissement angulaire : le spin se conserve exactement en vol (RocketSim setDamping(ballDrag, 0))", () => {
+    expect(BALLE.amortissementAngulaire).toBe(0);
     const a = boite(1000, 1000, 1000);
-    const b = balle([0, 500, 0], [0, 0, 0], [0, 4, 0]);
-    simuler(a, b, 1);
-    expect(b.w[1]).toBeCloseTo(4 * (1 - BALLE.amortissementAngulaire), 3);
+    const b = balle([0, 500, 0], [0, 0, 0], [1, 4, -2]);
+    simuler(a, b, 5);
+    expect(b.w).toEqual([1, 4, -2]);
+  });
+  it("ordre de Bullet : la traînée passe AVANT la gravité du pas (v' = v·0,97^dt - g·dt)", () => {
+    const a = boite(1000, 1000, 1000);
+    const b = balle([0, 500, 0], [7, 3, -2]);
+    pasBalle(a, b, PAS_S);
+    expect(b.v[0]).toBeCloseTo(7 * TRAINEE_PAS, 12);
+    expect(b.v[1]).toBeCloseTo(3 * TRAINEE_PAS - GRAVITE * PAS_S, 12);
+    expect(b.v[2]).toBeCloseTo(-2 * TRAINEE_PAS, 12);
+    // la position est intégrée avec la nouvelle vitesse
+    expect(b.p[1]).toBeCloseTo(500 + b.v[1] * PAS_S, 12);
+  });
+  it("balle endormie : vitesse et spin exactement nuls, elle plane sans tomber (RocketSim : ISLAND_SLEEPING) ; la moindre vitesse la réveille", () => {
+    const a = boite();
+    const b = balle([0, 10, 0]);
+    for (let i = 0; i < 240; i++) expect(pasBalle(a, b, PAS_S)).toBeNull();
+    expect(b.p).toEqual([0, 10, 0]);
+    expect(b.v).toEqual([0, 0, 0]);
+    // un spin seul suffit à la réveiller : la gravité agit de nouveau
+    const s = balle([0, 10, 0], [0, 0, 0], [0, 0.5, 0]);
+    simuler(a, s, 0.5);
+    expect(s.p[1]).toBeLessThan(10 - 0.5);
+    // et une vitesse infime aussi
+    const c = lachee([0, 10, 0]);
+    simuler(a, c, 0.5);
+    expect(c.p[1]).toBeLessThan(10 - 0.5);
   });
   it("ne fait rien pour dt ≤ 0", () => {
     const a = boite();
@@ -103,7 +136,7 @@ describe("rebonds", () => {
   it("rebonds successifs strictement décroissants, ratio de hauteur ≈ 0,36 au premier", () => {
     const a = boite();
     const hauteurChute = 5; // centre de la balle de R+5 à R
-    const b = balle([0, R + hauteurChute, 0]);
+    const b = lachee([0, R + hauteurChute, 0]);
     const sommets: number[] = [];
     let vyPrec = 0, enMontee = false;
     simuler(a, b, 14, () => {
@@ -121,27 +154,101 @@ describe("rebonds", () => {
     expect(sommets[1] / sommets[0]).toBeLessThan(0.37);
   });
 
-  it("la vitesse normale ressortante vaut 0,6 × la vitesse d'impact et l'impact est rapporté", () => {
+  it("la vitesse normale ressortante vaut 0,6 × la vitesse d'approche lue AVANT la gravité du pas, et l'impact est rapporté", () => {
     const a = boite();
-    const b = balle([0, 6, 0]);
+    const b = lachee([0, 6, 0]);
     const impacts: number[] = [];
-    let vyAvant = 0, vyApres = 0;
+    let vyAvant = 0, vyApres = 0, yAvant = 0;
     for (let i = 0; i < 400; i++) {
-      vyAvant = b.v[1];
+      vyAvant = b.v[1]; yAvant = b.p[1];
       const imp = pasBalle(a, b, PAS_S);
       if (imp) {
         impacts.push(imp.vitesse);
         vyApres = b.v[1];
         expect(imp.normale[1]).toBeCloseTo(1, 5);
-        expect(imp.point[1]).toBeCloseTo(0, 1);
+        expect(imp.point[1]).toBeCloseTo(0, 6);
         break;
       }
     }
     expect(impacts).toHaveLength(1);
-    // la vitesse d'impact est celle du sous-pas de contact (≈ la vitesse avant le pas + g·dt)
-    expect(impacts[0]).toBeGreaterThan(-vyAvant - 0.05);
-    expect(impacts[0]).toBeLessThan(-vyAvant + GRAVITE * PAS_S + 0.05);
-    expect(vyApres / impacts[0]).toBeCloseTo(BALLE.restitution, 1);
+    // Bullet : rel_vel est lue après la traînée et avant la gravité ; la cible de vitesse normale est 0,6 × cela, sans le g·dt du pas
+    expect(impacts[0]).toBeCloseTo(-vyAvant * TRAINEE_PAS, 12);
+    expect(vyApres).toBeCloseTo(BALLE.restitution * impacts[0], 12);
+    // aucune correction de position : la balle ne bouge que de sa nouvelle vitesse × dt, depuis sa position du début du pas
+    expect(b.p[1]).toBeCloseTo(yAvant + vyApres * PAS_S, 12);
+  });
+
+  it("le contact est détecté sur la position du DÉBUT du pas : la balle s'enfonce de v·dt au plus, puis ressort par sa seule vitesse", () => {
+    const a = boite();
+    // 30 m/s droit vers le sol, lancée juste hors de portée du contact : le premier pas l'enfonce sans aucune réponse
+    const b = balle([0, R + 0.05, 0], [0, -30, 0]);
+    expect(pasBalle(a, b, PAS_S)).toBeNull();
+    const enfoncement = R - b.p[1];
+    expect(enfoncement).toBeGreaterThan(0.15);
+    expect(enfoncement).toBeLessThan(30 * PAS_S + GRAVITE * PAS_S * PAS_S);
+    expect(b.v[1]).toBeLessThan(-29.9);
+    // deuxième pas : rebond, sans téléportation à la surface
+    const y = b.p[1];
+    const imp = pasBalle(a, b, PAS_S);
+    expect(imp).not.toBeNull();
+    expect(b.v[1]).toBeCloseTo(BALLE.restitution * imp!.vitesse, 12);
+    expect(b.p[1]).toBeCloseTo(y + b.v[1] * PAS_S, 12);
+    expect(b.p[1]).toBeLessThan(R); // encore enfoncée
+    // troisième pas : elle sort, aucune impulsion (elle s'éloigne déjà)
+    const vy = b.v[1];
+    expect(pasBalle(a, b, PAS_S)).toBeNull();
+    expect(b.v[1]).toBeCloseTo(vy * TRAINEE_PAS - GRAVITE * PAS_S, 12);
+    expect(b.p[1]).toBeGreaterThan(R);
+  });
+
+  it("seuil de rebond de Bullet : 0,1 m/s (0,2 unité Bullet par seconde) de vitesse d'approche", () => {
+    expect(BALLE.seuilRebond).toBeCloseTo(0.1, 12);
+    const a = boite();
+    // au contact (à 1 cm du sol, dans la marge) : approche à 0,09 m/s → la vitesse normale est annulée, pas d'impact rapporté
+    const doux = balle([0, R + 0.01, 0], [0, -0.09, 0]);
+    expect(pasBalle(a, doux, PAS_S)).toBeNull();
+    expect(doux.v[1]).toBeCloseTo(0, 12);
+    // approche à 0,11 m/s : rebond à 0,6 × 0,11 × traînée
+    const vif = balle([0, R + 0.01, 0], [0, -0.11, 0]);
+    const imp = pasBalle(a, vif, PAS_S);
+    expect(imp).not.toBeNull();
+    expect(vif.v[1]).toBeCloseTo(0.6 * 0.11 * TRAINEE_PAS, 12);
+  });
+
+  it("marge de contact : la balle est retenue dès 1,905 cm du sol (BALL_REST_Z = 93,15 uu), pas au-delà", () => {
+    expect(BALLE.margeContact).toBeCloseTo(0.01905, 12);
+    expect(BALLE.hauteurEngagement).toBeCloseTo(BALLE.rayon + 0.019, 12);
+    const a = boite();
+    // 1,5 cm au-dessus du sol, descente lente : le contact existe déjà, la balle s'arrête où elle est
+    const dedans = balle([0, R + 0.015, 0], [0, -0.05, 0]);
+    simuler(a, dedans, 1);
+    expect(dedans.p[1]).toBeCloseTo(R + 0.015, 9);
+    expect(dedans.v[1]).toBeCloseTo(0, 12);
+    // 3 cm au-dessus : pas de contact, elle descend d'abord
+    const dehors = balle([0, R + 0.03, 0], [0, -0.05, 0]);
+    pasBalle(a, dehors, PAS_S);
+    expect(dehors.v[1]).toBeLessThan(-0.05);
+    simuler(a, dehors, 2);
+    expect(dehors.p[1]).toBeLessThan(R + BALLE.margeContact);
+    expect(dehors.p[1]).toBeGreaterThan(R - 0.002);
+  });
+
+  it("une seule réponse par pas : dans un angle, seule la surface la plus proche (la normale de la SDF) répond", () => {
+    const a = boite();
+    // enfoncée de 2 cm dans le sol et de 1 cm dans le mur x = +40, vitesse vers les deux
+    const b = balle([40 - R + 0.01, R - 0.02, 0], [10, -10, 0]);
+    const imp = pasBalle(a, b, PAS_S);
+    expect(imp).not.toBeNull();
+    expect(imp!.normale[1]).toBeCloseTo(1, 6);
+    expect(b.v[1]).toBeCloseTo(0.6 * 10 * TRAINEE_PAS, 9);
+    // le mur n'a pas répondu à ce pas : la balle va toujours vers lui (freinée par le seul frottement du sol, ≤ μ × impulsion normale)
+    expect(b.v[0]).toBeGreaterThan(10 - BALLE.frottement * 16.1);
+    expect(b.v[0]).toBeGreaterThan(0);
+    // il répond au pas suivant
+    const imp2 = pasBalle(a, b, PAS_S);
+    expect(imp2).not.toBeNull();
+    expect(imp2!.normale[0]).toBeCloseTo(-1, 6);
+    expect(b.v[0]).toBeLessThan(0);
   });
 
   it("en vol libre, aucun impact n'est rapporté", () => {
@@ -170,32 +277,36 @@ describe("rebonds", () => {
 
   it("finit par se poser : plus de rebond sous le seuil, la balle repose sur le sol", () => {
     const a = boite();
-    const b = balle([3, 8, 4]);
+    const b = lachee([3, 8, 4]);
     simuler(a, b, 30);
-    expect(b.p[1]).toBeCloseTo(R, 1);
-    expect(Math.abs(b.v[1])).toBeLessThan(0.1);
+    // elle se pose entre son rayon et son rayon + la marge de contact (RL : 91,25 à 93,15 uu), sans jamais être reprojetée
+    expect(b.p[1]).toBeGreaterThan(R - 0.002);
+    expect(b.p[1]).toBeLessThan(R + BALLE.margeContact);
+    expect(Math.abs(b.v[1])).toBeLessThan(1e-9);
   });
 });
 
 describe("repos et roulement", () => {
   it("au repos sur le sol, |v| < 0,05 après 3 s et la balle ne s'enfonce pas", () => {
     const a = boite();
-    const b = balle([0, R, 0]);
+    const b = lachee([0, R, 0]);
     simuler(a, b, 3);
     expect(norme(b.v)).toBeLessThan(0.05);
-    expect(b.p[1]).toBeGreaterThan(R - 0.01);
-    expect(b.p[1]).toBeLessThan(R + 0.01);
+    expect(b.p[1]).toBeGreaterThan(R - 0.001);
+    expect(b.p[1]).toBeLessThan(R + 0.001);
   });
 
-  it("une balle qui roule conserve l'essentiel de sa vitesse et reste collée au sol", () => {
+  it("une balle qui roule sans glisser ne ralentit QUE par la traînée (aucun frottement de roulement) et reste collée au sol", () => {
     const a = boite(1000, 100, 1000);
     const v = 5;
     const b = balle([0, R, 0], [v, 0, 0], [0, 0, -v / R]);
     let yMax = 0;
     simuler(a, b, 1, () => { yMax = Math.max(yMax, b.p[1] - R); });
-    expect(b.v[0]).toBeGreaterThan(v * 0.9);
-    expect(b.v[0]).toBeLessThan(v);
-    expect(yMax).toBeLessThan(0.02);
+    // la traînée (3 %/s) ne freine que la vitesse linéaire ; le frottement de Coulomb recouple v et w : l'élan v + 0,4·w·R est
+    // partagé, la vitesse suit donc 0,97^(t / 1,4). L'ancien amortissement de roulement (0,0285) la faisait tomber à ≈ 4,7 m/s
+    expect(b.v[0]).toBeCloseTo(v * Math.pow(1 - BALLE.amortissementLineaire, 1 / 1.4), 3);
+    expect(b.v[0]).toBeGreaterThan(v * (1 - BALLE.amortissementLineaire));
+    expect(yMax).toBeLessThan(1e-9);
     // roulement sans glissement : w ≈ v / R
     expect(Math.abs(b.w[2]) * R / b.v[0]).toBeGreaterThan(0.9);
     expect(Math.abs(b.w[2]) * R / b.v[0]).toBeLessThan(1.1);
@@ -284,6 +395,17 @@ describe("spin après un contact oblique", () => {
 });
 
 describe("bornes de vitesse", () => {
+  it("bornerBalle : 60 m/s et 6 rad/s, sans toucher une balle sous les plafonds", () => {
+    const b = balle([0, 5, 0], [0, 80, 60], [0, 8, 6]);
+    bornerBalle(b);
+    expect(norme(b.v)).toBeCloseTo(BALLE.vitesseMax, 9);
+    expect(norme(b.w)).toBeCloseTo(BALLE.vitesseAngMax, 9);
+    expect(b.v[1] / b.v[2]).toBeCloseTo(80 / 60, 9);
+    const c = balle([0, 5, 0], [1, 2, 3], [0.1, 0.2, 0.3]);
+    bornerBalle(c);
+    expect(c.v).toEqual([1, 2, 3]);
+    expect(c.w).toEqual([0.1, 0.2, 0.3]);
+  });
   it("plafonne la vitesse linéaire à 60 m/s", () => {
     const a = boite(1000, 1000, 1000);
     const b = balle([0, 500, 0], [0, 0, 100]);
@@ -314,7 +436,7 @@ describe("jamais à travers un mur", () => {
     for (const d of dirs) {
       const b = balle([0, 10, 0], [d[0] * 60, d[1] * 60, d[2] * 60]);
       simuler(a, b, 4, () => {
-        expect(a.sd(b.p)).toBeGreaterThan(R - 0.5 * R - 1e-6); // pénétration jamais plus d'un demi-rayon après le sous-pas
+        expect(a.sd(b.p)).toBeGreaterThan(R - BALLE.vitesseMax * PAS_S - 1e-6); // enfoncement d'un pas au plus : 60 m/s × dt = 0,5 m
         expect(b.p[0]).toBeGreaterThan(-40);
         expect(b.p[0]).toBeLessThan(40);
         expect(b.p[1]).toBeGreaterThan(0);
@@ -335,12 +457,22 @@ describe("jamais à travers un mur", () => {
       );
       for (let i = 0; i < 2000; i++) {
         pasBalle(a, b, PAS_S);
-        // une balle dans les coins peut toucher deux murs : on tolère la pénétration résiduelle d'un 1/2 rayon max
+        // une balle dans les coins s'enfonce dans deux ou trois murs à la fois (un seul répond par pas) : son centre reste dans la boîte
         expect(a.sd(b.p)).toBeGreaterThan(0);
         expect(norme(b.v)).toBeLessThanOrEqual(BALLE.vitesseMax + 1e-9);
         expect(Number.isFinite(b.p[0] + b.p[1] + b.p[2])).toBe(true);
       }
     }
+  });
+
+  it("garde-fou : une balle enfoncée sans la vitesse qui l'explique (poussée par une voiture) est ramenée à la surface", () => {
+    const a = boite();
+    // 30 cm dans le sol, presque immobile : RocketSim ne produit jamais cet état (son solveur traite voiture et décor ensemble)
+    const b = balle([0, R - 0.3, 0], [0.5, -0.01, 0]);
+    pasBalle(a, b, PAS_S);
+    expect(b.p[1]).toBeGreaterThan(R - 0.011);
+    expect(b.p[1]).toBeLessThan(R);
+    // un rebond normal, lui, n'est jamais corrigé (voir « détecté sur la position du début du pas »)
   });
 
   it("un grand dt (30 Hz) est découpé en sous-pas et ne traverse pas non plus", () => {
@@ -406,10 +538,15 @@ describe("predireBalle", () => {
   });
   it("prévoit le rebond au sol", () => {
     const a = boite();
-    const b = balle([0, 5, 0]);
+    const b = lachee([0, 5, 0]);
     const traj = predireBalle(a, b, 3);
     expect(Math.min(...traj.map((e) => e.p[1]))).toBeGreaterThanOrEqual(R - 0.5 * R);
     expect(traj.some((e) => e.v[1] > 0)).toBe(true);
+  });
+  it("une balle endormie (engagement) est prévue immobile", () => {
+    const a = boite();
+    const traj = predireBalle(a, creerBalle(), 2);
+    for (const e of traj) { expect(e.p).toEqual([0, BALLE.hauteurEngagement, 0]); expect(e.v).toEqual([0, 0, 0]); }
   });
 });
 
@@ -465,13 +602,14 @@ describe.skipIf(!areneDispo)("sur le vrai stade (arene.ts)", () => {
       zMax = Math.max(zMax, Math.abs(b.p[2]));
       expect(a.sd(b.p)).toBeGreaterThan(0);
     }
-    expect(zMax).toBeLessThan(60 - R + 0.1);
+    // elle s'enfonce dans le fond du filet d'un pas au plus (30 m/s × dt = 25 cm) avant de rebondir, comme dans RL
+    expect(zMax).toBeLessThan(60 - R + 30 * PAS_S + BALLE.margeContact);
     expect(zMax).toBeGreaterThan(51.2);
   });
 
   it("chute de 5 m sur le sol du stade : premier rebond ≈ 0,36 × la hauteur", async () => {
     const a = await charger();
-    const b = balle([0, R + 5, 0]);
+    const b = lachee([0, R + 5, 0]);
     let sommet = 0, vyPrec = 0, enMontee = false;
     for (let i = 0; i < 12 * 120 && sommet === 0; i++) {
       pasBalle(a, b, PAS_S);

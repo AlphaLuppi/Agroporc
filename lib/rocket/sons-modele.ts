@@ -5,15 +5,26 @@
 import { VOITURE, type EtatVoiture, type EvenementMatch, type MondeRocket } from "./contrat";
 import { clamp, lerp } from "./vec";
 
-/** Moteur : hauteur de 60 Hz à l'arrêt à 260 Hz à pleine vitesse (23 m/s), plus 12 % sous boost. */
-export const MOTEUR = { fMin: 60, fMax: 260, bonusBoost: 0.12, voixMax: 3, gainMoi: 0.1, gainAutre: 0.055, rayonAudible: 90 } as const;
+/**
+ * Moteur : un grondement grave, de 46 Hz à l'arrêt à 132 Hz à pleine vitesse (23 m/s), plus 8 % sous boost. (Il montait à 260 Hz en
+ * dents de scie avec une quinte désaccordée : un bourdon aigu qui fatiguait l'oreille.)
+ */
+export const MOTEUR = { fMin: 46, fMax: 132, bonusBoost: 0.08, voixMax: 3, gainMoi: 0.085, gainAutre: 0.05, rayonAudible: 90 } as const;
+
+/**
+ * Saut et double saut : le MÊME son (un souffle bref et un coup sourd). Le double saut ne monte pas en hauteur : deux sons de plus
+ * en plus aigus à chaque saut tapaient sur les nerfs.
+ */
+export const SON_SAUT = { graveDe: 118, graveA: 62, dureeS: 0.1, souffleDe: 1100, souffleA: 380, gain: 0.16 } as const;
+/** Flip : un « whoosh » de bruit filtré qui monte puis retombe, sans note. */
+export const SON_FLIP = { dureeS: 0.3, de: 420, sommet: 1500, a: 520, gain: 0.13 } as const;
 
 export function frequenceMoteur(vitesse: number, boost: boolean): number {
   const k = clamp(Math.abs(vitesse) / VOITURE.vitesseMax, 0, 1);
   return lerp(MOTEUR.fMin, MOTEUR.fMax, k) * (boost ? 1 + MOTEUR.bonusBoost : 1);
 }
 /** Fréquence de coupure du filtre du moteur (le son s'ouvre avec la vitesse). */
-export const coupureMoteur = (vitesse: number): number => 260 + 1900 * clamp(Math.abs(vitesse) / VOITURE.vitesseMax, 0, 1);
+export const coupureMoteur = (vitesse: number): number => 190 + 760 * clamp(Math.abs(vitesse) / VOITURE.vitesseMax, 0, 1);
 
 /** Volume du moteur d'une voiture à `distance` m de l'auditeur (1/distance, borné) ; la voiture du joueur est toujours audible. */
 export function gainMoteur(distance: number, estMoi: boolean, boost: boolean, vitesse: number): number {
@@ -23,7 +34,7 @@ export function gainMoteur(distance: number, estMoi: boolean, boost: boolean, vi
   return (MOTEUR.gainAutre * k * (boost ? 1.2 : 1) * 8) / (8 + distance);
 }
 /** Gain du souffle du boost (bruit filtré). */
-export const gainSouffleBoost = (distance: number, estMoi: boolean): number => (estMoi ? 0.1 : (0.06 * 8) / (8 + distance));
+export const gainSouffleBoost = (distance: number, estMoi: boolean): number => (estMoi ? 0.085 : (0.05 * 8) / (8 + distance));
 
 /** Panoramique ∈ [-1, 1] de `autre` vu depuis `moi` : projection de l'écart sur l'axe droite de `moi` (droite = positif). */
 export function panoramique(moi: Readonly<EtatVoiture>, autre: Readonly<EtatVoiture>): number {

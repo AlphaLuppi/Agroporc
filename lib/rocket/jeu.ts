@@ -6,6 +6,7 @@
  * le rendu filaire du stade (`rendu.ts`), les sons, les entrées, la caméra, les cerveaux des bots, et fait tourner :
  *
  *   image (rAF) → entrées → accumulateur de pas fixes (120 Hz, au plus 6 pas, ralenti ×0,5 pendant la célébration d'un but)
+ *               → après la célébration, REJEU du but vu de derrière le buteur (`rejeu-but.ts`, physique figée, Espace / A pour passer)
  *               → cerveaux des bots + `pasMonde` → événements (HUD, sons, rendu, vibrations, secousse)
  *               → caméra (état INTERPOLÉ de la voiture : sinon elle tremble par rapport à la voiture dessinée) → rendu → bloom.
  *
@@ -56,6 +57,9 @@ import { creerCerveau } from "./bots";
 import { replacerVoiture } from "./voiture";
 import { creerRenduRocket } from "./rendu";
 import { creerSonsRocket } from "./sons";
+import {
+  avancerLecture, balleInterpolee, creerEnregistreurRejeu, creerVueRejeu, lancerLecture, poserImage, voitureInterpolee, type LectureRejeu,
+} from "./rejeu-but";
 import { affecter, affecterBase, distance, melanger, norme, reorthonormaliser, type Base, type Vec3 } from "./vec";
 
 /** Poignée rendue par `creerJeuRocket` : le contrat (`JeuRocketHandle`) plus deux accès pour l'interface et les tests. */
@@ -255,6 +259,13 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
   /** état affiché de la voiture et de la balle (interpolé) */
   let moiAffichee: EtatVoiture = monde.voitures[monde.idHumain];
   let balleAffichee: EtatBalle = monde.balle;
+  // ---------- rejeu du but ----------
+  const enregistreur = creerEnregistreurRejeu();
+  /** but en attente de rejeu : instant du but (temps de jeu) et voiture que la caméra suivra */
+  let butARejouer: { t: number; idCamera: number; evenement: EvenementMatch } | null = null;
+  /** rejeu en cours : la physique est figée, le rendu dessine `vue` */
+  let rejeu: { lecture: LectureRejeu; vue: MondeRocket; cam: EtatCamera; alpha: number; evenement: EvenementMatch; nom: string; equipe: "bleue" | "orange" } | null = null;
+  let sautRejeuPrecedent = false;
   const matriceVue = new THREE.Matrix4();
   const oeil = new THREE.Vector3(), visee = new THREE.Vector3(), haut = new THREE.Vector3();
 
@@ -277,7 +288,8 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
     monde.voitures.map((v) => ({ id: v.id, nom: v.nom, equipe: v.equipe, humain: v.humain, stats: { ...v.stats } }));
 
   function construireHud(): HudRocket {
-    const m = moi();
+    // pendant le rejeu d'un but, le cadran (boost, vitesse) est celui de la voiture suivie, à l'instant rejoué
+    const m = rejeu ? rejeu.vue.voitures[rejeu.lecture.clip.idCamera] ?? moi() : moi();
     // le résultat n'apparaît qu'après la première célébration de la fin
     if (monde.phase === "fini" && tFini !== null && tReel - tFini >= DELAI_RESULTAT_S) resultatCache ??= resultatMatch(monde);
     const resultat = monde.phase === "fini" ? resultatCache : null;
@@ -287,19 +299,20 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
       nomsEquipes: { ...config.nomsEquipes },
       tempsRestant: Math.max(0, Math.ceil(monde.tempsRestant)),
       prolongation: monde.prolongation,
-      decompte: monde.phase === "decompte" ? Math.min(3, Math.max(1, Math.ceil(MATCH.decompteS - monde.tempsPhase))) : null,
+      decompte: monde.phase === "decompte" && !rejeu ? Math.min(3, Math.max(1, Math.ceil(MATCH.decompteS - monde.tempsPhase))) : null,
       boost: Math.round(m.boost),
       vitesseKmh: Math.round(norme(m.v) * 3.6),
       supersonique: m.supersonique,
       demolie: m.demolie,
       reapparitionDans: m.demolie ? Math.max(0, m.reapparitionDans) : 0,
       equipeJoueur: config.equipeJoueur,
-      balleCam: balleCam || m.demolie,
+      balleCam: balleCam || m.demolie || rejeu !== null,
+      rejeu: rejeu ? { buteur: rejeu.nom, equipe: rejeu.equipe } : null,
       banniere: banniere && banniere.fin > tReel ? { id: banniere.id, texte: banniere.texte, sousTexte: banniere.sousTexte, equipe: banniere.equipe, dureeS: banniere.dureeS } : null,
       fil: fil.filter((l) => l.fin > tReel).slice(-FIL_LIGNES).map(({ id, texte, equipe }) => ({ id, texte, equipe })),
       enPause,
       manette: sourceOk.manetteConnectee(),
-      aide: !aideMasquee && (tDebut === null || tReel - tDebut < AIDE_S) && !enPause && monde.phase !== "fini",
+      aide: !aideMasquee && !rejeu && (tDebut === null || tReel - tDebut < AIDE_S) && !enPause && monde.phase !== "fini",
       classement: classementOuvert || resultat ? lignesClassement() : [],
       resultat,
     };
@@ -336,7 +349,8 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
         break;
       case "toucheBalle":
         if (e.idVoiture === mien) {
-          ajouterSecousse(etatCam, Math.min(0.14, e.force * 0.006));
+          // seules les grosses frappes secouent, et peu : une secousse à chaque touche donne le mal de mer
+          if (e.force > 14) ajouterSecousse(etatCam, Math.min(0.05, (e.force - 14) * 0.003));
           if (e.force > 6) vibrer(Math.min(1, e.force / 30), 90);
         }
         break;
@@ -344,16 +358,18 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
         const buteur = nomVoiture(e.idMarqueur);
         const passe = nomVoiture(e.idPasse);
         const equipe = config.nomsEquipes[e.equipe];
-        annoncer("BUT !", MATCH.celebrationS - 0.5, buteur ? (passe ? `${buteur} · passe : ${passe}` : buteur) : equipe, e.equipe);
+        annoncer("BUT !", MATCH.celebrationS / MATCH.ralentiCelebration - 0.4, buteur ? (passe ? `${buteur} · passe : ${passe}` : buteur) : equipe, e.equipe);
+        // le rejeu suit le buteur ; sans buteur (balle entrée seule), le dernier toucheur, sinon le joueur
+        butARejouer = { t: monde.temps, idCamera: e.idMarqueur ?? monde.balle.dernierToucheur?.idVoiture ?? mien, evenement: e };
         ecrireFil(`BUT ! ${buteur || equipe}${passe ? ` (passe : ${passe})` : ""} · ${Math.round(e.vitesseKmh)} km/h`, e.equipe);
-        ajouterSecousse(etatCam, 0.2);
+        ajouterSecousse(etatCam, 0.08);
         vibrer(0.8, 250);
         break;
       }
       case "demolition": {
         ecrireFil(`${nomVoiture(e.auteur)} démolit ${nomVoiture(e.victime)}`, monde.voitures[e.auteur]?.equipe ?? null);
         if (e.auteur === mien) { annoncer("DÉMOLITION", 1.4, nomVoiture(e.victime), monde.voitures[mien].equipe); vibrer(0.7, 200); }
-        if (e.victime === mien) { ajouterSecousse(etatCam, 0.25); vibrer(1, 300); }
+        if (e.victime === mien) { ajouterSecousse(etatCam, 0.15); vibrer(1, 300); }
         break;
       }
       case "reapparition":
@@ -365,7 +381,7 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
         aligner(monde, e.idVoiture);
         break;
       case "bump":
-        if (e.idVoiture === mien || e.autre === mien) { ajouterSecousse(etatCam, 0.06); vibrer(0.4, 80); }
+        if (e.idVoiture === mien || e.autre === mien) { ajouterSecousse(etatCam, 0.04); vibrer(0.4, 80); }
         break;
       case "atterrissage":
         if (e.idVoiture === mien && e.vitesse > 4) vibrer(0.3, 80);
@@ -394,8 +410,13 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
     const resteAvant = monde.tempsRestant;
     const evs = pasMonde(monde, entreesPas);
     for (const e of evs) { traiter(e); sortie?.push(e); }
+    if (monde.phase === "enJeu" || monde.phase === "but") enregistreur.enregistrer(monde);
     if (monde.phase !== phaseAvant) {
       if (monde.phase === "decompte") {
+        // la célébration est finie, tout est replacé : avant le coup d'envoi, on revoit le but de derrière le buteur
+        if (phaseAvant === "but" && butARejouer) demarrerRejeu();
+        butARejouer = null;
+        enregistreur.vider();
         // nouveau coup d'envoi : tout a été replacé, plan fixe en car cam, plus aucune interpolation
         balleCam = false;
         aligner(monde);
@@ -407,6 +428,46 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
       } else hudSale = true;
     }
     if (monde.phase === "enJeu" && !monde.prolongation && resteAvant > 30 && monde.tempsRestant <= 30) annoncer("PLUS QUE 30 SECONDES", 2.5);
+  }
+
+  // ---------- rejeu du but ----------
+  function demarrerRejeu(): void {
+    if (!butARejouer) return;
+    const clip = enregistreur.extraire(butARejouer.t, butARejouer.idCamera);
+    if (!clip) return;
+    const vue = creerVueRejeu(monde);
+    const lecture = lancerLecture(clip);
+    const alphaRejeu = poserImage(vue, clip, lecture.t);
+    const suivie = monde.voitures[clip.idCamera];
+    rejeu = {
+      lecture, vue, alpha: alphaRejeu, evenement: butARejouer.evenement, nom: suivie?.nom ?? "", equipe: suivie?.equipe ?? "bleue",
+      cam: creerEtatCamera(voitureInterpolee(vue, clip.idCamera, alphaRejeu), balleInterpolee(vue, alphaRejeu), true),
+    };
+    banniere = null;
+    hudSale = true;
+  }
+  /** Fin (ou abandon) du rejeu : retour au vrai monde, déjà replacé pour le coup d'envoi. */
+  function terminerRejeu(): void {
+    if (!rejeu) return;
+    rejeu = null;
+    aligner(monde);
+    etatCam = creerEtatCamera(moi(), monde.balle, false);
+    acc.reste = 0;
+    alpha = 1;
+    hudSale = true;
+  }
+  /** Une image du rejeu : avance la lecture, pose le clip dans la vue, place la caméra en ball cam derrière le buteur. */
+  function imageRejeu(dt: number): void {
+    const r = rejeu;
+    if (!r) return;
+    const but = avancerLecture(r.lecture, dt);
+    r.alpha = poserImage(r.vue, r.lecture.clip, r.lecture.t);
+    // l'explosion du but est rejouée à l'image (sans le klaxon ni la foule)
+    if (but) rendu?.evenement(r.evenement, r.vue);
+    const aspect = camera.aspect > 0 ? camera.aspect : 1;
+    const id = r.lecture.clip.idCamera;
+    const pose = majCamera(r.cam, reglages.camera, { balleCam: true, regard: [0, 0], arriere: false }, voitureInterpolee(r.vue, id, r.alpha), balleInterpolee(r.vue, r.alpha), arene, dt, aspect, true);
+    appliquerPose(pose);
   }
 
   // ---------- caméra ----------
@@ -442,6 +503,10 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
       const ec: EntreesCamera = { balleCam: balleCam || moiAffichee.demolie, regard: entree.regard, arriere: entree.arriere };
       pose = majCamera(etatCam, reglages.camera, ec, moiAffichee, balleAffichee, arene, dt, aspect, reduit);
     }
+    appliquerPose(pose);
+    return pose;
+  }
+  function appliquerPose(pose: PoseCamera): void {
     // la caméra est un enfant de la racine du stade : position et orientation sont déjà dans le repère local
     oeil.set(pose.position[0], pose.position[1], pose.position[2]);
     visee.set(pose.cible[0], pose.cible[1], pose.cible[2]);
@@ -450,7 +515,6 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
     matriceVue.lookAt(oeil, visee, haut);
     camera.quaternion.setFromRotationMatrix(matriceVue);
     if (Math.abs(camera.fov - pose.fovVertical) > 1e-3) { camera.fov = pose.fovVertical; camera.updateProjectionMatrix(); }
-    return pose;
   }
 
   // ---------- taille ----------
@@ -567,19 +631,35 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
     if (boutonA && !boutonAPrecedent && monde.phase === "fini" && resultatCache !== null && !enPause) { boutonAPrecedent = true; recommencer(); return; }
     boutonAPrecedent = boutonA;
 
-    // physique
-    if (!enPause && !gele) {
+    // rejeu du but : Espace (saut) ou A le passe
+    const sautRejeu = entree.voiture.saut || boutonA;
+    if (rejeu && !enPause && sautRejeu && !sautRejeuPrecedent) terminerRejeu();
+    sautRejeuPrecedent = sautRejeu;
+
+    // physique (figée pendant le rejeu d'un but)
+    if (!enPause && !gele && !rejeu) {
       if (finie()) alpha = 1;
       else {
         const r = avancerAccumulateur(acc, dt, monde.phase === "but" ? MATCH.ralentiCelebration : 1);
-        for (let i = 0; i < r.pas && !finie(); i++) pasUnique(entreesHumain);
+        for (let i = 0; i < r.pas && !finie() && !rejeu; i++) pasUnique(entreesHumain);
         alpha = r.alpha;
       }
     }
 
     // affichage
-    etatAffiche();
     const dtImage = enPause || gele ? 0 : dt;
+    if (rejeu) {
+      imageRejeu(dtImage);
+      // `imageRejeu` peut être la dernière : la vue reste dessinée une image de plus, le coup d'envoi reprend à la suivante
+      const r = rejeu as NonNullable<typeof rejeu>;
+      rendu?.synchroniser(r.vue, r.alpha, dtImage);
+      sonsOk.maj(r.vue, r.lecture.clip.idCamera, dtImage);
+      if (r.lecture.fini) terminerRejeu();
+      postOk.rendre();
+      envoyerHud(false);
+      return;
+    }
+    etatAffiche();
     placerCamera(enPause ? 0 : dt, entree);
     rendu?.synchroniser(monde, alpha, dtImage);
     sonsOk.maj(monde, monde.idHumain, dtImage);
@@ -594,6 +674,7 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
     monde = creerMonde(config, arene);
     cerveaux = creerCerveaux();
     surcharges.length = 0;
+    rejeu = null; butARejouer = null; enregistreur.vider();
     monterRendu();
     balleCam = false;
     etatCam = creerEtatCamera(moi(), monde.balle, false);
@@ -628,6 +709,7 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
         })),
         plotsActifs: m.plots.filter((p) => p.actif).length,
         camera: { balleCam, melange: etatCam.melange, position: [...etatCam.position] },
+        rejeu: rejeu ? { t: rejeu.lecture.t, tBut: rejeu.lecture.clip.tBut, idCamera: rejeu.lecture.clip.idCamera, images: rejeu.lecture.clip.images.length } : null,
         enPause, gele, manette: sourceOk.manetteConnectee(), entrees: { ...entreesHumain },
       };
     },
@@ -635,6 +717,8 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
     avancer(n: number) {
       const evs: EvenementMatch[] = [];
       for (let i = 0; i < n && !finie(); i++) pasUnique(entreesHumain, evs);
+      // le crochet fait avancer le MONDE : un rejeu de but lancé en chemin est passé d'office
+      terminerRejeu();
       alpha = 1;
       etatAffiche();
       placerCamera(0, { regard: [0, 0], arriere: false });
