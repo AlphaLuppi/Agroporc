@@ -103,6 +103,13 @@ describe("réaction rapide d'un humain", () => {
     sc.avancer(ANTI_SPAM.blocageMs);
     expect(reactions(sc.envoyer(1, { t: "reaction", id: "rugissement" })).length).toBeGreaterThan(0);
   });
+  it("tolérance réseau : un client qui respecte sa fenêtre de 5 s n'est pas refusé quand la gigue rapproche ses messages de 0,4 s", () => {
+    const sc = duo(false);
+    // le premier message arrive à +0,1 s ; le cinquième, que le client juge permis (5 s après l'envoi du premier), arrive 0,4 s plus tôt que 5 s après l'arrivée du premier
+    const envoyerA = (ms: number) => { sc.t = Math.max(sc.t, ms); return reactions(sc.envoyer(1, { t: "reaction", id: "rugissement" })).length; };
+    for (const ms of [100, 1100, 2100, 3100]) expect(envoyerA(ms), `à ${ms} ms`).toBeGreaterThan(0);
+    expect(envoyerA(100 + ANTI_SPAM.fenetreMs - ANTI_SPAM.toleranceReseauMs)).toBeGreaterThan(0);
+  });
   it("le blocage d'un joueur ne gêne pas l'autre", () => {
     const sc = duo(false);
     for (let i = 0; i < 6; i++) sc.envoyer(1, { t: "reaction", id: "rugissement" });

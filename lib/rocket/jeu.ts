@@ -432,6 +432,8 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
 
   /** Une réaction arrive (la mienne, un bot, un joueur) : fil, bulle au-dessus de sa voiture, petit son. Ignorée si le réglage masque les adversaires. */
   function recevoirReaction(idVoiture: number, id: string): void {
+    // l'écran de fin masque le menu et le fil (le HUD ne les dessine pas) : rien n'y est ni envoyé, ni reçu, ni sonné
+    if (resultatCache !== null) return;
     const reaction = reactionParId(id);
     const v = monde.voitures[idVoiture];
     const mienne = monde.voitures[monde.idHumain];
@@ -477,7 +479,7 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
   }
 
   /** Le menu de la croix (avec ses fronts montants) ; refermé par la pause, l'expiration et la fin d'une capture. */
-  function majChat(entree: { chat: Record<DirectionChat, boolean>; chatAppuis?: Record<DirectionChat, boolean> }, actif: boolean): void {
+  function majChat(entree: { chat: Record<DirectionChat, boolean>; chatAppuis?: Record<DirectionChat, boolean>; chatSuite?: readonly DirectionChat[] }, actif: boolean): void {
     const avant = menuChat;
     menuChat = expirerMenu(menuChat, tReel * 1000);
     if (menuChat !== avant) hudSale = true;
@@ -485,7 +487,10 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
       if (menuChat.ouvert) { menuChat = MENU_FERME; hudSale = true; }
     } else {
       // front : un appui (événement du clavier ou de la souris, même relâché depuis) ou un bouton de manette qui vient d'être pressé
-      for (const d of DIRECTIONS_CHAT) if (entree.chatAppuis?.[d] || (entree.chat[d] && !chatPrecedent[d])) appuyerChat(d);
+      // les appuis du clavier et de la souris dans l'ordre où le joueur les a faits ; puis les fronts montants qu'ils ne couvrent pas (manette)
+      const suite = entree.chatSuite ?? DIRECTIONS_CHAT.filter((d) => entree.chatAppuis?.[d]);
+      for (const d of suite) appuyerChat(d);
+      for (const d of DIRECTIONS_CHAT) if (!suite.includes(d) && entree.chat[d] && !chatPrecedent[d]) appuyerChat(d);
     }
     chatPrecedent = { ...entree.chat };
   }
@@ -919,7 +924,7 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
     }
     klaxonPrecedent = entree.klaxon;
     // réactions rapides : la croix agit au front montant, jamais pendant la pause ni la capture d'une touche des réglages
-    majChat(entree, !enPause && !captureEnCours());
+    majChat(entree, !enPause && !captureEnCours() && resultatCache === null);
     // la manette met en pause et reprend elle-même (Start et la seconde liaison « pause » du joueur) ; au clavier Échap n'entre que dans
     // `surKeyDown`. Pendant la capture d'un bouton dans les réglages, ces boutons sont ceux que le joueur est en train d'affecter : ni pause,
     // ni retour, ni rejouer (les états précédents suivent quand même, un bouton encore tenu ne fait pas de front en fin de capture).

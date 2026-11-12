@@ -26,7 +26,7 @@ import {
 import type { Arene, Cerveau, ConfigMatch, EntreesVoiture, Equipe, EvenementMatch, MondeRocket, NiveauBot, Rng } from "../contrat";
 import { creerArene } from "../arene";
 import { creerCerveau } from "../bots";
-import { creerAntiSpam, reactionParId, type AntiSpam } from "../reactions";
+import { ANTI_SPAM_SERVEUR, creerAntiSpam, reactionParId, type AntiSpam } from "../reactions";
 import { creerReacteurBots, type ReacteurBots, type VoitureReacteur } from "../reactions-bots";
 import { NOMS_BOTS, pasMonde, resultatMatch } from "../match";
 import { graineBot, creerMondeEnLigne } from "./monde-ligne";
@@ -102,7 +102,7 @@ interface Joueur {
 function nouveauJoueur(id: number, nom: string, equipe: Equipe): Joueur {
   const n = RESEAU.tamponEntrees;
   return {
-    id, nom, equipe, connecte: true, charge: false, coupeDepuisMs: -1, vote: null, voiture: -1, dernierKlaxonMs: -Infinity, antiSpam: creerAntiSpam(),
+    id, nom, equipe, connecte: true, charge: false, coupeDepuisMs: -1, vote: null, voiture: -1, dernierKlaxonMs: -Infinity, antiSpam: creerAntiSpam(ANTI_SPAM_SERVEUR),
     axes: new Int8Array(n * 5), boutons: new Uint8Array(n), marque: new Int32Array(n).fill(-1),
     watermark: -1, derniere: neutre(), repetitions: 0, avanceMin: null, manquees: 0,
   };

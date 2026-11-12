@@ -135,7 +135,16 @@ export const ANTI_SPAM = {
   fenetreMs: 5000,
   /** durée du blocage (ms) */
   blocageMs: 4000,
+  /**
+   * Marge du SERVEUR (ms) : le client mesure la fenêtre à l'envoi, le serveur à la réception, et la gigue du réseau peut rapprocher deux
+   * messages d'une demi-seconde. Le serveur compte donc sur une fenêtre plus courte de cette marge : un joueur qui respecte la fenêtre du
+   * client n'est jamais refusé (et bloqué 4 s) à tort, un spammeur l'est toujours.
+   */
+  toleranceReseauMs: 500,
 } as const;
+
+/** Règles du limiteur du serveur : celles du client, fenêtre raccourcie de la tolérance réseau. */
+export const ANTI_SPAM_SERVEUR = { messages: ANTI_SPAM.messages, fenetreMs: ANTI_SPAM.fenetreMs - ANTI_SPAM.toleranceReseauMs, blocageMs: ANTI_SPAM.blocageMs } as const;
 
 export interface AntiSpam {
   /** tente un envoi à `maintenantMs` : `true` accepté (compté), `false` refusé (bloqué, ou ce message déclenche le blocage) */

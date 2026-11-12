@@ -965,6 +965,8 @@ export interface EntreesJoueur {
    * pas dans l'état « tenu ». Absent = déduire le front de `chat` (manette, tests).
    */
   chatAppuis?: ChatEntrees;
+  /** les mêmes appuis, dans l'ORDRE où ils ont eu lieu et autant de fois (un ensemble de directions perd l'ordre quand le rendu est lent) */
+  chatSuite?: readonly DirectionChat[];
 }
 /** Les quatre directions de la croix des réactions rapides (haut = Infos, gauche = Compliments, droite = Réactions, bas = Excuses). */
 export type DirectionChat = "haut" | "gauche" | "droite" | "bas";

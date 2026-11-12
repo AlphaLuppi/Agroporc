@@ -276,6 +276,8 @@ const TOUCHES_BLOQUEES = new Set(["Space", "ArrowUp", "ArrowDown", "ArrowLeft", 
  * les changer en pleine partie). Une touche pressée ENTRE deux échantillons est mémorisée jusqu'au prochain : un appui plus court
  * qu'une image (rendu logiciel à 5 images/s) n'est jamais perdu. `lireManettes` est injectable pour les tests.
  */
+const APPUIS_CHAT_MAX = 8;
+
 export function creerSourceEntrees(
   cible: Window,
   liaisons: () => Readonly<LiaisonsTouches>,
@@ -290,13 +292,15 @@ export function creerSourceEntrees(
   const levier: [number, number] = [0, 0];
 
   /** directions de réaction dont une touche a été enfoncée (événement) depuis le dernier échantillon */
-  const appuisChat = new Set<DirectionChat>();
+  const appuisChat: DirectionChat[] = [];
+  /** Dans l'ORDRE où le joueur a appuyé (et autant de fois), borné : à 3 images/s « 3 puis 1 » doit rester « 3 puis 1 ». */
   const marquerChat = (code: string) => {
     const l = liaisons();
-    if (l.chatHaut.includes(code)) appuisChat.add("haut");
-    if (l.chatGauche.includes(code)) appuisChat.add("gauche");
-    if (l.chatDroite.includes(code)) appuisChat.add("droite");
-    if (l.chatBas.includes(code)) appuisChat.add("bas");
+    const ajouter = (d: DirectionChat) => { if (appuisChat.length < APPUIS_CHAT_MAX) appuisChat.push(d); };
+    if (l.chatHaut.includes(code)) ajouter("haut");
+    if (l.chatGauche.includes(code)) ajouter("gauche");
+    if (l.chatDroite.includes(code)) ajouter("droite");
+    if (l.chatBas.includes(code)) ajouter("bas");
   };
   const presser = (code: string) => { enfoncees.add(code); memoire.add(code); marquerChat(code); };
   const relacherCode = (code: string) => {
@@ -334,7 +338,7 @@ export function creerSourceEntrees(
     if (n > RAYON_REGARD_SOURIS_PX) { levier[0] *= RAYON_REGARD_SOURIS_PX / n; levier[1] *= RAYON_REGARD_SOURIS_PX / n; }
   };
   const surContexte = (e: Event) => { e.preventDefault(); };
-  const surPerteFocus = () => { enfoncees.clear(); memoire.clear(); appuisChat.clear(); levier[0] = 0; levier[1] = 0; };
+  const surPerteFocus = () => { enfoncees.clear(); memoire.clear(); appuisChat.length = 0; levier[0] = 0; levier[1] = 0; };
   const surManette = () => { /* connectée() relit navigator à chaque appel */ };
 
   /** le regard libre est-il tenu ? (liaison `regardLibre`, le bouton du milieu par défaut) */
@@ -370,8 +374,9 @@ export function creerSourceEntrees(
       const clavier = entreesDepuisClavier({ touches, deplacementSouris: [levier[0], levier[1]] }, liaisons());
       const pad = manette();
       const res = pad ? fusionnerEntrees(clavier, entreesDepuisManette(pad, reglages(), reglages().liaisonsManette)) : clavier;
-      res.chatAppuis = { haut: appuisChat.has("haut"), gauche: appuisChat.has("gauche"), droite: appuisChat.has("droite"), bas: appuisChat.has("bas") };
-      appuisChat.clear();
+      res.chatSuite = [...appuisChat];
+      res.chatAppuis = { haut: appuisChat.includes("haut"), gauche: appuisChat.includes("gauche"), droite: appuisChat.includes("droite"), bas: appuisChat.includes("bas") };
+      appuisChat.length = 0;
       return res;
     },
     manetteConnectee() { return manette() !== null; },

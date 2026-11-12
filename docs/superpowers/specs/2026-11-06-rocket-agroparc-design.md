@@ -287,14 +287,15 @@ Critères : sur 20 graines, une partie 3v3 Pro contre Pro de 5 min se termine sa
 | ball cam | Y ou clic droit | bascule |
 | regard arrière | V (tenu) | |
 | klaxon | H | le klaxon à deux tons du Truck Muche |
-| pause | Échap | menu pause |
+| pause | Échap | menu pause (toujours en première liaison de la pause) |
 | classement | Tab (tenu) | |
+| réactions rapides | 1 (infos) / 2 (compliments) / 3 (réactions) / 4 (excuses) | croix de Rocket League : un appui ouvre la catégorie, un second envoie le message (spec en ligne § 15) |
 
 Les liaisons sont rebindables (`LiaisonsTouches`, deux codes par action au plus) et sauvegardées. Le regard libre (stick droit) se fait à la souris en tenant le bouton du milieu.
 
 ### 8.2 Manette (Gamepad API, mapping « standard »)
 
-RT (7) accélère, LT (6) freine / recule (analogiques), stick gauche : direction au sol, tangage et lacet en l'air ; A (0) saut ; B (1) boost ; X (2) dérapage / air roll libre ; Y (3) ball cam ; LB (4) / RB (5) roulis gauche / droite ; stick droit : regard libre ; R3 (11) vue arrière ; Start (9) pause ; croix haut : klaxon. Zone morte radiale réglable (défaut 0,12), courbe quadratique sur les sticks, vibrations (`vibrationActuator.playEffect("dual-rumble")`) aux touches de balle, atterrissages et démolitions, jamais si `vibrations` est faux ou en mouvement réduit. La première manette connectée est lue ; clavier et manette sont fusionnés (le plus fort gagne).
+RT (7) accélère, LT (6) freine / recule (analogiques), stick gauche : direction au sol, tangage et lacet en l'air ; A (0) saut ; B (1) boost ; X (2) dérapage / air roll libre ; Y (3) ball cam ; LB (4) / RB (5) roulis gauche / droite ; stick droit : regard libre ; R3 (11) vue arrière ; Start (9) pause ; L3 (10) klaxon ; croix directionnelle (12 à 15) : réactions rapides (§ 15 de la spec en ligne). Chaque action est reliable au choix du joueur (boutons et demi-axes, `liaisons.ts`), Start restant toujours sur la pause. Zone morte radiale réglable (défaut 0,12), courbe quadratique sur les sticks, vibrations (`vibrationActuator.playEffect("dual-rumble")`) aux touches de balle, atterrissages et démolitions, jamais si `vibrations` est faux ou en mouvement réduit. La première manette connectée est lue ; clavier et manette sont fusionnés (le plus fort gagne).
 
 ### 8.3 Caméra (`camera.ts`, pure)
 

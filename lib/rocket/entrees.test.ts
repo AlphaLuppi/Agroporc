@@ -326,6 +326,12 @@ describe("source branchée sur une cible d'événements", () => {
     cible.dispatchEvent(evt("keyup", { code: "Digit1" }));
     expect(src.echantillonner().chat.haut).toBe(false);
   });
+  it("réactions : chatSuite garde l'ORDRE et le nombre des appuis entre deux images (3 puis 1 reste 3 puis 1), vidée à l'échantillon suivant", () => {
+    const { cible, src } = creer();
+    for (const code of ["Digit3", "Digit1", "Digit1"]) { cible.dispatchEvent(evt("keydown", { code })); cible.dispatchEvent(evt("keyup", { code })); }
+    expect(src.echantillonner().chatSuite).toEqual(["droite", "haut", "haut"]);
+    expect(src.echantillonner().chatSuite).toEqual([]);
+  });
   it("réactions : l'appui d'une touche d'une autre action n'ouvre rien, la perte de focus oublie les appuis", () => {
     const { cible, src } = creer();
     cible.dispatchEvent(evt("keydown", { code: "KeyW" }));
