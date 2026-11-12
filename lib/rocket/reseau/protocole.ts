@@ -284,7 +284,7 @@ export interface EtatMondeReseau {
   voitures: EtatVoitureReseau[];
   balle: EtatBalle;
   /** même ordre que `PLOTS` (l'id d'un plot est son index) */
-  plots: Pick<EtatPlot, "actif" | "recharge">[];
+  plots: Pick<EtatPlot, "actif" | "recharge" | "verrou">[];
   interne: InterneMatch;
 }
 

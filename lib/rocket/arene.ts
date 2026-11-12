@@ -61,6 +61,21 @@ const BHY = (BUT.hauteur - CAGE_Y0) / 2 - RHO;
 const BCZ = (CAGE_Z0 + Z_FOND) / 2;
 const BHZ = (Z_FOND - CAGE_Z0) / 2 - RHO;
 
+/**
+ * Biseau des raccords à côté des poteaux : plan par A = (demiLargeur, 0, zMur), B = (demiLargeur + T, 0, zMur - R) et
+ * C = (demiLargeur + T, R, zMur). Normale unitaire vers l'espace libre, exprimée avec `zm = zMur - z` : (-R, T, T) / norme.
+ */
+const BISEAU_T = BUT.longueurBiseau;
+const KB = BUT.rayonBiseau;
+const NB = Math.hypot(R, BISEAU_T, BISEAU_T);
+const PNX = -R / NB, PNY = BISEAU_T / NB, PNZ = BISEAU_T / NB;
+/** le biseau ne concerne que la bande du raccord devant le mur du fond : fenêtre (z, x, y) et largeurs de son fondu */
+const ZB0 = STADE.demiLongueur - R - 2;
+const BISEAU_X1 = BUT.demiLargeur + BISEAU_T + 3;
+const BISEAU_Y1 = R + 1.5;
+const BISEAU_FONDU = 1;
+const BISEAU_FONDU_X = 2;
+
 /** Constantes géométriques dérivées, exportées pour le rendu (coque) et les tests. */
 export const GEOMETRIE_ARENE = {
   /** demi-dimensions du plan du prisme rétréci */
@@ -204,6 +219,33 @@ export function creerArene(): Arene {
       sgx = h * sgx - (1 - h) * bgx;
       sgy = h * sgy - (1 - h) * bgy;
       sgz = h * sgz - (1 - h) * bgz;
+    }
+
+    // 3 bis. biseau de part et d'autre de la cage : un demi-espace libre oblique qui passe par le pied du poteau, par le début du
+    // raccord au sol et par son sommet sur le mur, `BUT.longueurBiseau` plus loin. Il rabote le raccord arrondi, entièrement au poteau
+    // (le mur y tombe droit sur le sol : plus d'aileron qui dépasse dans le terrain) et plus du tout au bout. Il ne libère que de la
+    // matière du raccord : devant le mur du fond (borne `zMur - z`), jamais plus que le mur lui-même.
+    // Hors du voisinage du raccord, une fenêtre `w` ramène continûment à la valeur d'origine (qui reste une borne sûre de la distance).
+    if (z > ZB0 && x < BISEAU_X1 && py < BISEAU_Y1) {
+      // (derrière le plan du mur, `zm` < 0 : la borne rend la profondeur dans le mur, continue avec l'avant du mur)
+      const zm = STADE.demiLongueur - z;
+      {
+        const pl = PNX * (x - BUT.demiLargeur) + PNY * py + PNZ * zm;
+        // union douce du biseau avec le reste
+        const h0 = 0.5 + (0.5 * (s - pl)) / KB;
+        const h = h0 < 0 ? 0 : h0 > 1 ? 1 : h0;
+        let u = pl * (1 - h) + s * h + KB * h * (1 - h);
+        let ux = h * sgx + (1 - h) * PNX, uy = h * sgy + (1 - h) * PNY, uz = h * sgz - (1 - h) * PNZ;
+        if (u > zm) { u = zm; ux = 0; uy = 0; uz = -1; }
+        if (u > s) {
+          const wz = (z - ZB0) / BISEAU_FONDU, wx = (BISEAU_X1 - x) / BISEAU_FONDU_X, wy = (BISEAU_Y1 - py) / BISEAU_FONDU;
+          let w = wz < wx ? wz : wx;
+          if (wy < w) w = wy;
+          if (w > 1) w = 1;
+          s += (u - s) * w;
+          sgx += (ux - sgx) * w; sgy += (uy - sgy) * w; sgz += (uz - sgz) * w;
+        }
+      }
     }
 
     // 4. le sol est un plan exact, y compris dans la cage

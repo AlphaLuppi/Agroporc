@@ -65,7 +65,7 @@ const copieVec = (v: Readonly<Vec3>): Vec3 => [v[0], v[1], v[2]];
 /** Valeurs de `interne()` de `match.ts` pour un monde qui n'en a pas encore (même forme, jamais partagée). */
 function interneParDefaut(n: number): InterneMatch {
   const vide = (): number[] => new Array<number>(n).fill(-Infinity);
-  return { touchePoints: vide(), toucheEvenement: vide(), dernierArret: vide(), dernierTir: vide(), chronoZeroEmis: false, graceBalleS: 0 };
+  return { touchePoints: vide(), toucheEvenement: vide(), balleTiree: false, cageTiree: "bleue", delaiTirS: 0, chronoZeroEmis: false, graceBalleS: 0 };
 }
 
 export const extraireEtat: ExtraireEtat = (m: Readonly<MondeRocket>): EtatMondeReseau => {
@@ -73,8 +73,8 @@ export const extraireEtat: ExtraireEtat = (m: Readonly<MondeRocket>): EtatMondeR
   const it = (m as MondeMatch).interne;
   const interne: InterneMatch = it && it.touchePoints.length === n
     ? {
-      touchePoints: it.touchePoints.slice(), toucheEvenement: it.toucheEvenement.slice(), dernierArret: it.dernierArret.slice(),
-      dernierTir: it.dernierTir.slice(), chronoZeroEmis: it.chronoZeroEmis, graceBalleS: it.graceBalleS,
+      touchePoints: it.touchePoints.slice(), toucheEvenement: it.toucheEvenement.slice(), balleTiree: it.balleTiree, cageTiree: it.cageTiree,
+      delaiTirS: it.delaiTirS, chronoZeroEmis: it.chronoZeroEmis, graceBalleS: it.graceBalleS,
     }
     : interneParDefaut(n);
   const b = m.balle;
@@ -87,16 +87,22 @@ export const extraireEtat: ExtraireEtat = (m: Readonly<MondeRocket>): EtatMondeR
       base: { avant: copieVec(v.base.avant), droite: copieVec(v.base.droite), haut: copieVec(v.base.haut) },
       boost: v.boost, rouesContact: v.rouesContact, normaleSurface: v.normaleSurface ? copieVec(v.normaleSurface) : null, auSol: v.auSol,
       saut: { ...v.saut }, flip: { actif: v.flip.actif, temps: v.flip.temps, dir: [v.flip.dir[0], v.flip.dir[1]], stall: v.flip.stall, verrouTangage: v.flip.verrouTangage },
-      redressement: { ...v.redressement }, supersonique: v.supersonique, boostActif: v.boostActif, boostDepuis: v.boostDepuis, derapage: v.derapage,
+      redressement: { ...v.redressement }, contactMonde: { actif: v.contactMonde.actif, normale: v.contactMonde.actif ? copieVec(v.contactMonde.normale) : [0, 0, 0] },
+      supersonique: v.supersonique, supersoniqueDepuis: v.supersoniqueDepuis, boostActif: v.boostActif, boostDepuis: v.boostDepuis,
+      derapage: v.derapage, frein: v.frein,
+      pneus: { angle: v.pneus.angle, moteur: v.pneus.moteur, frein: v.pneus.frein, lat: [...v.pneus.lat], long: [...v.pneus.long] },
       demolie: v.demolie, reapparitionDans: v.reapparitionDans, figee: v.figee, dernierContactBalleTick: v.dernierContactBalleTick,
-      dernierBumpTick: v.dernierBumpTick, sautPrecedent: v.sautPrecedent, stats: { ...v.stats },
+      derniereImpulsionPsyonixTick: v.derniereImpulsionPsyonixTick, bumpAutreId: v.bumpAutreId, bumpDelaiTick: v.bumpDelaiTick,
+      rouesBalle: [...v.rouesBalle], normalesRouesBalle: v.normalesRouesBalle.map((n, k): Vec3 => (v.rouesBalle[k] ? copieVec(n) : [0, 0, 0])) as EtatVoitureReseau["normalesRouesBalle"],
+      vitesseEnAttente: copieVec(v.vitesseEnAttente), sautPrecedent: v.sautPrecedent, stats: { ...v.stats },
     })),
     balle: {
       p: copieVec(b.p), v: copieVec(b.v), w: copieVec(b.w),
       dernierToucheur: b.dernierToucheur ? { ...b.dernierToucheur } : null,
       avantDernierToucheur: b.avantDernierToucheur ? { ...b.avantDernierToucheur } : null,
+      vitesseEnAttente: copieVec(b.vitesseEnAttente),
     },
-    plots: m.plots.map((p) => ({ actif: p.actif, recharge: p.recharge })),
+    plots: m.plots.map((p) => ({ actif: p.actif, recharge: p.recharge, verrou: p.verrou })),
     interne,
   };
 };
@@ -109,13 +115,22 @@ function restaurerVoiture(e: Readonly<EtatVoitureReseau>, v: EtatVoiture): void 
   else if (v.normaleSurface) affecter(v.normaleSurface, e.normaleSurface);
   else v.normaleSurface = copieVec(e.normaleSurface);
   v.saut.aSaute = e.saut.aSaute; v.saut.temps = e.saut.temps; v.saut.tenue = e.saut.tenue; v.saut.secondUtilise = e.saut.secondUtilise;
-  v.saut.tempsEnLAir = e.saut.tempsEnLAir;
+  v.saut.tempsEnLAir = e.saut.tempsEnLAir; v.saut.depuisFinSaut = e.saut.depuisFinSaut;
   v.flip.actif = e.flip.actif; v.flip.temps = e.flip.temps; v.flip.dir[0] = e.flip.dir[0]; v.flip.dir[1] = e.flip.dir[1];
   v.flip.stall = e.flip.stall; v.flip.verrouTangage = e.flip.verrouTangage;
-  v.redressement.actif = e.redressement.actif; v.redressement.temps = e.redressement.temps;
+  v.redressement.actif = e.redressement.actif; v.redressement.temps = e.redressement.temps; v.redressement.signe = e.redressement.signe;
+  v.contactMonde.actif = e.contactMonde.actif; affecter(v.contactMonde.normale, e.contactMonde.normale);
+  v.supersoniqueDepuis = e.supersoniqueDepuis; v.frein = e.frein;
+  v.pneus.angle = e.pneus.angle; v.pneus.moteur = e.pneus.moteur; v.pneus.frein = e.pneus.frein;
+  for (let k = 0; k < 4; k++) {
+    v.pneus.lat[k] = e.pneus.lat[k]; v.pneus.long[k] = e.pneus.long[k];
+    v.rouesBalle[k] = e.rouesBalle[k]; affecter(v.normalesRouesBalle[k], e.normalesRouesBalle[k]);
+  }
+  affecter(v.vitesseEnAttente, e.vitesseEnAttente);
   v.supersonique = e.supersonique; v.boostActif = e.boostActif; v.boostDepuis = e.boostDepuis; v.derapage = e.derapage;
   v.demolie = e.demolie; v.reapparitionDans = e.reapparitionDans; v.figee = e.figee;
-  v.dernierContactBalleTick = e.dernierContactBalleTick; v.dernierBumpTick = e.dernierBumpTick; v.sautPrecedent = e.sautPrecedent;
+  v.dernierContactBalleTick = e.dernierContactBalleTick; v.derniereImpulsionPsyonixTick = e.derniereImpulsionPsyonixTick;
+  v.bumpAutreId = e.bumpAutreId; v.bumpDelaiTick = e.bumpDelaiTick; v.sautPrecedent = e.sautPrecedent;
   const s = v.stats, t = e.stats;
   s.buts = t.buts; s.passes = t.passes; s.arrets = t.arrets; s.tirs = t.tirs; s.demolitions = t.demolitions; s.demolie = t.demolie;
   s.touches = t.touches; s.points = t.points;
@@ -134,17 +149,17 @@ export const restaurerEtat: RestaurerEtat = (e: Readonly<EtatMondeReseau>, vers:
   vers.rng.s = e.rngS;
   for (let i = 0; i < n; i++) restaurerVoiture(e.voitures[i], vers.voitures[i]);
   const b = vers.balle, eb = e.balle;
-  affecter(b.p, eb.p); affecter(b.v, eb.v); affecter(b.w, eb.w);
+  affecter(b.p, eb.p); affecter(b.v, eb.v); affecter(b.w, eb.w); affecter(b.vitesseEnAttente, eb.vitesseEnAttente);
   b.dernierToucheur = eb.dernierToucheur ? { ...eb.dernierToucheur } : null;
   b.avantDernierToucheur = eb.avantDernierToucheur ? { ...eb.avantDernierToucheur } : null;
-  for (let k = 0; k < vers.plots.length; k++) { vers.plots[k].actif = e.plots[k].actif; vers.plots[k].recharge = e.plots[k].recharge; }
+  for (let k = 0; k < vers.plots.length; k++) { vers.plots[k].actif = e.plots[k].actif; vers.plots[k].recharge = e.plots[k].recharge; vers.plots[k].verrou = e.plots[k].verrou; }
   const mm = vers as MondeMatch;
   let it = mm.interne;
   if (!it || it.touchePoints.length !== n) it = mm.interne = interneParDefaut(n);
   for (let i = 0; i < n; i++) {
     it.touchePoints[i] = e.interne.touchePoints[i]; it.toucheEvenement[i] = e.interne.toucheEvenement[i];
-    it.dernierArret[i] = e.interne.dernierArret[i]; it.dernierTir[i] = e.interne.dernierTir[i];
   }
+  it.balleTiree = e.interne.balleTiree; it.cageTiree = e.interne.cageTiree; it.delaiTirS = e.interne.delaiTirS;
   it.chronoZeroEmis = e.interne.chronoZeroEmis; it.graceBalleS = e.interne.graceBalleS;
   // `precedent` repart de l'état restauré : aucune interpolation d'affichage parasite.
   const pr = vers.precedent;
@@ -202,48 +217,65 @@ const VOITURES_MAX = 6;
 
 // drapeaux (u16) d'une voiture
 const F_AU_SOL = 1, F_A_SAUTE = 2, F_TENUE = 4, F_SECOND = 8, F_FLIP = 16, F_STALL = 32, F_REDRESS = 64, F_SUPERSONIQUE = 128;
-const F_BOOST_ACTIF = 256, F_DERAPAGE = 512, F_DEMOLIE = 1024, F_FIGEE = 2048, F_SAUT_PREC = 4096, F_NORMALE = 8192;
+const F_BOOST_ACTIF = 256, F_DERAPAGE = 512, F_DEMOLIE = 1024, F_FIGEE = 2048, F_SAUT_PREC = 4096, F_NORMALE = 8192, F_CONTACT_MONDE = 16384;
 
 function ecrireVoiture(w: Ecrivain, v: Readonly<EtatVoitureReseau>, it: Readonly<InterneMatch>, i: number): void {
   const f = (v.auSol ? F_AU_SOL : 0) | (v.saut.aSaute ? F_A_SAUTE : 0) | (v.saut.tenue ? F_TENUE : 0) | (v.saut.secondUtilise ? F_SECOND : 0)
     | (v.flip.actif ? F_FLIP : 0) | (v.flip.stall ? F_STALL : 0) | (v.redressement.actif ? F_REDRESS : 0) | (v.supersonique ? F_SUPERSONIQUE : 0)
     | (v.boostActif ? F_BOOST_ACTIF : 0) | (v.derapage ? F_DERAPAGE : 0) | (v.demolie ? F_DEMOLIE : 0) | (v.figee ? F_FIGEE : 0)
-    | (v.sautPrecedent ? F_SAUT_PREC : 0) | (v.normaleSurface ? F_NORMALE : 0);
+    | (v.sautPrecedent ? F_SAUT_PREC : 0) | (v.normaleSurface ? F_NORMALE : 0) | (v.contactMonde.actif ? F_CONTACT_MONDE : 0);
   w.u16(f);
   w.u8(v.rouesContact);
+  // roues posées sur la balle (4 bits)
+  w.u8((v.rouesBalle[0] ? 1 : 0) | (v.rouesBalle[1] ? 2 : 0) | (v.rouesBalle[2] ? 4 : 0) | (v.rouesBalle[3] ? 8 : 0));
   w.vec(v.p); w.vec(v.v); w.vec(v.w);
   w.vec(v.base.avant); w.vec(v.base.droite); w.vec(v.base.haut);
   w.f64(v.boost); w.f64(v.boostDepuis); w.f64(v.reapparitionDans);
   w.vec(v.normaleSurface ?? [0, 0, 0]);
-  w.f64(v.saut.temps); w.f64(v.saut.tempsEnLAir);
+  w.f64(v.saut.temps); w.f64(v.saut.tempsEnLAir); w.f64(v.saut.depuisFinSaut);
   w.f64(v.flip.temps); w.f64(v.flip.dir[0]); w.f64(v.flip.dir[1]); w.f64(v.flip.verrouTangage);
-  w.f64(v.redressement.temps);
-  w.f64(v.dernierContactBalleTick); w.f64(v.dernierBumpTick);
+  w.f64(v.redressement.temps); w.f64(v.redressement.signe);
+  if (v.contactMonde.actif) w.vec(v.contactMonde.normale);
+  w.f64(v.supersoniqueDepuis); w.f64(v.frein);
+  w.f64(v.pneus.angle); w.f64(v.pneus.moteur); w.f64(v.pneus.frein);
+  // les normales des roues sur la balle ne comptent que pour les roues marquées dans `rouesBalle` (octet ci-dessus)
+  for (let k = 0; k < 4; k++) { w.f64(v.pneus.lat[k]); w.f64(v.pneus.long[k]); if (v.rouesBalle[k]) w.vec(v.normalesRouesBalle[k]); }
+  w.f64(v.dernierContactBalleTick); w.f64(v.derniereImpulsionPsyonixTick); w.i8(v.bumpAutreId); w.f64(v.bumpDelaiTick);
   const s = v.stats;
   w.u32(s.buts); w.u32(s.passes); w.u32(s.arrets); w.u32(s.tirs); w.u32(s.demolitions); w.u32(s.demolie); w.u32(s.touches); w.u32(s.points);
-  w.f64(it.touchePoints[i]); w.f64(it.toucheEvenement[i]); w.f64(it.dernierArret[i]); w.f64(it.dernierTir[i]);
+  w.f64(it.touchePoints[i]); w.f64(it.toucheEvenement[i]);
 }
 
 function lireVoiture(r: Lecteur, it: InterneMatch): EtatVoitureReseau {
   const f = r.u16();
   const rouesContact = r.u8();
+  const rb = r.u8() & 15;
   const p = r.vec(), v = r.vec(), w = r.vec();
   const base = { avant: r.vec(), droite: r.vec(), haut: r.vec() };
   const boost = r.f64(), boostDepuis = r.f64(), reapparitionDans = r.f64();
   const normale = r.vec();
-  const sautTemps = r.f64(), sautEnLAir = r.f64();
+  const sautTemps = r.f64(), sautEnLAir = r.f64(), depuisFinSaut = r.f64();
   const flipTemps = r.f64(), dir0 = r.f64(), dir1 = r.f64(), verrou = r.f64();
-  const redressTemps = r.f64();
-  const dernierContactBalleTick = r.f64(), dernierBumpTick = r.f64();
+  const redressTemps = r.f64(), redressSigne = r.f64();
+  const normaleContact: Vec3 = f & F_CONTACT_MONDE ? r.vec() : [0, 0, 0];
+  const supersoniqueDepuis = r.f64(), frein = r.f64();
+  const pAngle = r.f64(), pMoteur = r.f64(), pFrein = r.f64();
+  const lat: [number, number, number, number] = [0, 0, 0, 0], long: [number, number, number, number] = [0, 0, 0, 0];
+  const normalesRouesBalle: [Vec3, Vec3, Vec3, Vec3] = [[0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0]];
+  for (let k = 0; k < 4; k++) { lat[k] = r.f64(); long[k] = r.f64(); if (rb & (1 << k)) normalesRouesBalle[k] = r.vec(); }
+  const dernierContactBalleTick = r.f64(), derniereImpulsionPsyonixTick = r.f64(), bumpAutreId = r.i8(), bumpDelaiTick = r.f64();
   const stats = { buts: r.u32(), passes: r.u32(), arrets: r.u32(), tirs: r.u32(), demolitions: r.u32(), demolie: r.u32(), touches: r.u32(), points: r.u32() };
-  it.touchePoints.push(r.f64()); it.toucheEvenement.push(r.f64()); it.dernierArret.push(r.f64()); it.dernierTir.push(r.f64());
+  it.touchePoints.push(r.f64()); it.toucheEvenement.push(r.f64());
   return {
     p, v, w, base, boost, rouesContact, normaleSurface: f & F_NORMALE ? normale : null, auSol: !!(f & F_AU_SOL),
-    saut: { aSaute: !!(f & F_A_SAUTE), temps: sautTemps, tenue: !!(f & F_TENUE), secondUtilise: !!(f & F_SECOND), tempsEnLAir: sautEnLAir },
+    saut: { aSaute: !!(f & F_A_SAUTE), temps: sautTemps, tenue: !!(f & F_TENUE), secondUtilise: !!(f & F_SECOND), tempsEnLAir: sautEnLAir, depuisFinSaut },
     flip: { actif: !!(f & F_FLIP), temps: flipTemps, dir: [dir0, dir1], stall: !!(f & F_STALL), verrouTangage: verrou },
-    redressement: { actif: !!(f & F_REDRESS), temps: redressTemps },
-    supersonique: !!(f & F_SUPERSONIQUE), boostActif: !!(f & F_BOOST_ACTIF), boostDepuis, derapage: !!(f & F_DERAPAGE),
-    demolie: !!(f & F_DEMOLIE), reapparitionDans, figee: !!(f & F_FIGEE), dernierContactBalleTick, dernierBumpTick,
+    redressement: { actif: !!(f & F_REDRESS), temps: redressTemps, signe: redressSigne },
+    contactMonde: { actif: !!(f & F_CONTACT_MONDE), normale: normaleContact },
+    supersonique: !!(f & F_SUPERSONIQUE), supersoniqueDepuis, boostActif: !!(f & F_BOOST_ACTIF), boostDepuis, derapage: !!(f & F_DERAPAGE), frein,
+    pneus: { angle: pAngle, moteur: pMoteur, frein: pFrein, lat, long },
+    demolie: !!(f & F_DEMOLIE), reapparitionDans, figee: !!(f & F_FIGEE), dernierContactBalleTick, derniereImpulsionPsyonixTick, bumpAutreId, bumpDelaiTick,
+    rouesBalle: [!!(rb & 1), !!(rb & 2), !!(rb & 4), !!(rb & 8)], normalesRouesBalle, vitesseEnAttente: [0, 0, 0],
     sautPrecedent: !!(f & F_SAUT_PREC), stats,
   };
 }
@@ -259,6 +291,8 @@ function ecrireEtat(w: Ecrivain, e: Readonly<EtatMondeReseau>): void {
   w.u8((e.prolongation ? 1 : 0) | (e.attenteSolBalle ? 2 : 0) | (e.interne.chronoZeroEmis ? 4 : 0) | (e.dernierBut ? 8 : 0) | (vainqueur << 4));
   w.u32(e.tick); w.u32(e.rngS); w.u16(e.score.bleue); w.u16(e.score.orange);
   w.f64(e.temps); w.f64(e.tempsPhase); w.f64(e.tempsRestant); w.f64(e.interne.graceBalleS);
+  // suivi des tirs de `match.ts` : la balle est tirée (bit 0) vers la cage de l'équipe orange (bit 1), délai avant un nouveau tir
+  w.u8((e.interne.balleTiree ? 1 : 0) | (e.interne.cageTiree === "orange" ? 2 : 0)); w.f64(e.interne.delaiTirS);
   const bt = e.dernierBut;
   if (bt) {
     w.u8(idEquipe(bt.equipe) | (bt.idMarqueur !== null ? 2 : 0) | (bt.idPasse !== null ? 4 : 0));
@@ -286,6 +320,8 @@ function ecrireEtat(w: Ecrivain, e: Readonly<EtatMondeReseau>): void {
     w.u8(x);
   }
   for (let k = 0; k < np; k++) if (!Object.is(e.plots[k].recharge, 0)) w.f64(e.plots[k].recharge);
+  // voiture qui touchait le plot au pas précédent (−1 : aucune)
+  for (let k = 0; k < np; k++) w.i8(e.plots[k].verrou);
 }
 
 function lireEtat(r: Lecteur): EtatMondeReseau | null {
@@ -297,6 +333,8 @@ function lireEtat(r: Lecteur): EtatMondeReseau | null {
   if (!phase || vq > 2 || fl & 0x80) return null;
   const tick = r.u32(), rngS = r.u32(), bleue = r.u16(), orange = r.u16();
   const temps = r.f64(), tempsPhase = r.f64(), tempsRestant = r.f64(), graceBalleS = r.f64();
+  const fl2 = r.u8(), delaiTirS = r.f64();
+  if (fl2 > 3) return null;
   let dernierBut: EtatMondeReseau["dernierBut"] = null;
   if (fl & 8) {
     const bf = r.u8();
@@ -311,9 +349,10 @@ function lireEtat(r: Lecteur): EtatMondeReseau | null {
   let dernierToucheur: EtatMondeReseau["balle"]["dernierToucheur"] = null, avant: EtatMondeReseau["balle"]["avantDernierToucheur"] = null;
   if (tf & 1) { const id = r.u8(); dernierToucheur = { idVoiture: id, equipe: EQUIPES[(tf >> 1) & 1], temps: r.f64() }; if (id >= n) return null; }
   if (tf & 4) { const id = r.u8(); avant = { idVoiture: id, equipe: EQUIPES[(tf >> 3) & 1], temps: r.f64() }; if (id >= n) return null; }
-  const interne: InterneMatch = { touchePoints: [], toucheEvenement: [], dernierArret: [], dernierTir: [], chronoZeroEmis: !!(fl & 4), graceBalleS };
+  const interne: InterneMatch = { touchePoints: [], toucheEvenement: [], balleTiree: !!(fl2 & 1), cageTiree: fl2 & 2 ? "orange" : "bleue", delaiTirS, chronoZeroEmis: !!(fl & 4), graceBalleS };
   const voitures: EtatVoitureReseau[] = [];
   for (let i = 0; i < n && r.ok; i++) voitures.push(lireVoiture(r, interne));
+  if (r.ok && voitures.some((v) => v.bumpAutreId < -1 || v.bumpAutreId >= n)) return null;
   const octetsBitmap = (np + 7) >> 3;
   const actifs: number[] = [], marques: number[] = [];
   for (let o = 0; o < octetsBitmap; o++) actifs.push(r.u8());
@@ -321,13 +360,18 @@ function lireEtat(r: Lecteur): EtatMondeReseau | null {
   const plots: EtatMondeReseau["plots"] = [];
   for (let k = 0; k < np && r.ok; k++) {
     const actif = !!(actifs[k >> 3] & (1 << (k & 7)));
-    plots.push({ actif, recharge: marques[k >> 3] & (1 << (k & 7)) ? r.f64() : 0 });
+    plots.push({ actif, recharge: marques[k >> 3] & (1 << (k & 7)) ? r.f64() : 0, verrou: -1 });
+  }
+  for (let k = 0; k < plots.length; k++) {
+    const verrou = r.i8();
+    if (verrou < -1 || verrou >= n) return null;
+    plots[k].verrou = verrou;
   }
   if (!r.fini()) return null;
   return {
     tick, temps, phase, tempsPhase, tempsRestant, prolongation: !!(fl & 1), attenteSolBalle: !!(fl & 2), score: { bleue, orange }, dernierBut,
     vainqueur: vq === 0 ? null : vq === 1 ? "bleue" : "orange", rngS, voitures,
-    balle: { p, v, w, dernierToucheur, avantDernierToucheur: avant }, plots, interne,
+    balle: { p, v, w, dernierToucheur, avantDernierToucheur: avant, vitesseEnAttente: [0, 0, 0] }, plots, interne,
   };
 }
 

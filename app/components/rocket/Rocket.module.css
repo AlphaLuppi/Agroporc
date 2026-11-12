@@ -5,6 +5,7 @@
 .pastilleEquipe[data-equipe="bleue"],
 .scoreEquipe[data-equipe="bleue"],
 .banniere[data-equipe="bleue"],
+.rejeu[data-equipe="bleue"],
 .fil li[data-equipe="bleue"],
 .jauge[data-equipe="bleue"],
 .mvp[data-equipe="bleue"],
@@ -14,6 +15,7 @@
 .pastilleEquipe[data-equipe="orange"],
 .scoreEquipe[data-equipe="orange"],
 .banniere[data-equipe="orange"],
+.rejeu[data-equipe="orange"],
 .fil li[data-equipe="orange"],
 .jauge[data-equipe="orange"],
 .mvp[data-equipe="orange"],
@@ -145,6 +147,10 @@
 .banniere[data-decompte="oui"] .texteBanniere { font-size: clamp(64px, 14vw, 150px); }
 .sousBanniere { padding: 3px 12px; font-size: clamp(12px, 1.6vw, 16px); letter-spacing: 0.14em; text-transform: uppercase; color: var(--ag-white); background: var(--ag-hud-fond); }
 @keyframes banniereIn { from { opacity: 0; transform: translate(-50%, -50%) scale(1.35); } }
+
+.rejeu { position: absolute; left: 50%; top: 96px; transform: translateX(-50%); margin: 0; display: flex; align-items: center; gap: 12px; padding: 6px 14px; font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; white-space: nowrap; background: var(--ag-hud-fond-fort); border: 1px solid var(--ag-line-strong); border-left: 3px solid var(--equipe, var(--ag-line-strong)); color: var(--ag-ink); }
+.rejeu b { font-family: var(--ag-display), var(--ag-mono), monospace; font-size: 16px; font-weight: 700; color: var(--equipe, var(--ag-white)); }
+.rejeuPasser { color: var(--ag-ink-dim); }
 
 .demolie { position: absolute; left: 50%; bottom: 22%; transform: translateX(-50%); margin: 0; padding: 8px 18px; font-size: 14px; letter-spacing: 0.12em; text-transform: uppercase; background: var(--ag-hud-fond-fort); border: 1px solid var(--ag-danger); color: var(--ag-danger); }
 

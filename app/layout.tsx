@@ -58,18 +58,118 @@ export default function RootLayout({
                 <Link href="/recettes" className="whitespace-nowrap text-[var(--text-secondary)] no-underline text-sm font-medium px-1.5 lg:px-3 py-2 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
                   Recettes
                 </Link>
-                <Link href="/idees" className="whitespace-nowrap text-[var(--text-secondary)] no-underline text-sm font-medium px-1.5 lg:px-3 py-2 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
-                  Idées
+                <Link href="/dilemme" className="whitespace-nowrap text-[var(--text-secondary)] no-underline text-sm font-medium px-1.5 lg:px-3 py-2 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
+                  Dilemme
                 </Link>
-                <Link href="/ia" className="whitespace-nowrap text-[var(--text-secondary)] no-underline text-sm font-medium px-1.5 lg:px-3 py-2 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
-                  IA
-                </Link>
-                <Link href="/admin/photos" className="whitespace-nowrap text-[var(--text-secondary)] no-underline text-sm font-medium px-1.5 lg:px-3 py-2 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
-                  Photos
-                </Link>
+                <div className="nav-menu" data-menu-groupe>
+                  <button
+                    id="nav-plus-btn"
+                    type="button"
+                    className="nav-plus-btn inline-flex items-center gap-1 min-h-10 whitespace-nowrap text-[var(--text-secondary)] text-sm font-medium px-1.5 lg:px-3 py-2 rounded-lg border-none bg-transparent cursor-pointer transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]"
+                    aria-expanded="false"
+                    aria-controls="nav-plus-menu"
+                    data-menu-btn
+                  >
+                    Plus
+                    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5">
+                      <polyline points="6 9 12 15 18 9" />
+                    </svg>
+                  </button>
+                  <div id="nav-plus-menu" className="nav-menu-panel hidden" style={{ left: 0 }}>
+                    <Link href="/idees" className="flex items-center min-h-10 whitespace-nowrap text-[var(--text-secondary)] no-underline text-sm font-medium px-3 py-2 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
+                      Idées
+                    </Link>
+                    <Link href="/ia" className="flex items-center min-h-10 whitespace-nowrap text-[var(--text-secondary)] no-underline text-sm font-medium px-3 py-2 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
+                      IA
+                    </Link>
+                    <Link href="/admin/photos" className="flex items-center min-h-10 whitespace-nowrap text-[var(--text-secondary)] no-underline text-sm font-medium px-3 py-2 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
+                      Photos
+                    </Link>
+                  </div>
+                </div>
               </div>
             </div>
             <div className="flex items-center gap-2">
+            <div className="nav-menu hidden xl:block" data-menu-groupe>
+              <button
+                id="theme-menu-btn"
+                type="button"
+                className="nav-icone-btn"
+                aria-label="Apparence"
+                title="Apparence"
+                aria-expanded="false"
+                aria-controls="theme-menu"
+                data-menu-btn
+              >
+                  <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="nav-theme-ico nav-theme-ico-normal w-4 h-4">
+                    <circle cx="12" cy="12" r="5" />
+                    <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />
+                  </svg>
+                  <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="nav-theme-ico nav-theme-ico-tigre w-4 h-4">
+                    <path d="M3 7c3-3 7-4 9-2s1 6-2 9" />
+                    <path d="M21 7c-3-3-7-4-9-2s-1 6 2 9" />
+                    <circle cx="12" cy="16" r="5" />
+                    <path d="M12 11v2" />
+                    <circle cx="10" cy="15" r="0.5" fill="currentColor" />
+                    <circle cx="14" cy="15" r="0.5" fill="currentColor" />
+                  </svg>
+                  <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="nav-theme-ico nav-theme-ico-terrasse w-4 h-4">
+                    <path d="M17 8h1a4 4 0 1 1 0 8h-1" />
+                    <path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4Z" />
+                    <line x1="6" y1="2" x2="6" y2="4" />
+                    <line x1="10" y1="2" x2="10" y2="4" />
+                    <line x1="14" y1="2" x2="14" y2="4" />
+                  </svg>
+              </button>
+              <div id="theme-menu" className="nav-menu-panel hidden" role="group" aria-label="Apparence" style={{ right: 0 }}>
+                  <button
+                    type="button"
+                    className="theme-btn flex w-full items-center justify-start gap-2.5 px-3 py-2 border-none rounded-lg bg-transparent text-[var(--text-muted)] text-sm font-medium cursor-pointer transition-all min-h-10"
+                    data-theme="normal"
+                    aria-label="Thème normal"
+                    aria-pressed="false"
+                  >
+                    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 shrink-0">
+                      <circle cx="12" cy="12" r="5" />
+                      <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />
+                    </svg>
+                    <span>Normal</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="theme-btn flex w-full items-center justify-start gap-2.5 px-3 py-2 border-none rounded-lg bg-transparent text-[var(--text-muted)] text-sm font-medium cursor-pointer transition-all min-h-10"
+                    data-theme="tigre"
+                    aria-label="Thème tigre"
+                    aria-pressed="false"
+                  >
+                    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 shrink-0">
+                      <path d="M3 7c3-3 7-4 9-2s1 6-2 9" />
+                      <path d="M21 7c-3-3-7-4-9-2s-1 6 2 9" />
+                      <circle cx="12" cy="16" r="5" />
+                      <path d="M12 11v2" />
+                      <circle cx="10" cy="15" r="0.5" fill="currentColor" />
+                      <circle cx="14" cy="15" r="0.5" fill="currentColor" />
+                    </svg>
+                    <span>Tigre</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="theme-btn flex w-full items-center justify-start gap-2.5 px-3 py-2 border-none rounded-lg bg-transparent text-[var(--text-muted)] text-sm font-medium cursor-pointer transition-all min-h-10"
+                    data-theme="terrasse"
+                    aria-label="Thème terrasse"
+                    aria-pressed="false"
+                  >
+                    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 shrink-0">
+                      <path d="M17 8h1a4 4 0 1 1 0 8h-1" />
+                      <path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4Z" />
+                      <line x1="6" y1="2" x2="6" y2="4" />
+                      <line x1="10" y1="2" x2="10" y2="4" />
+                      <line x1="14" y1="2" x2="14" y2="4" />
+                    </svg>
+                    <span>Terrasse</span>
+                  </button>
+              </div>
+            </div>
               {/* Icône panier */}
               <button
                 id="cart-btn"
@@ -113,48 +213,6 @@ export default function RootLayout({
                   }}
                 >0</span>
               </button>
-            <div className="theme-selector hidden xl:flex items-center gap-1 bg-[var(--surface)] border border-[var(--border)] rounded-full p-[3px]">
-              <button
-                className="theme-btn flex items-center justify-center gap-1.5 px-3 py-1.5 border-none rounded-full bg-transparent text-[var(--text-muted)] text-xs font-semibold cursor-pointer transition-all min-h-10"
-                data-theme="normal"
-                aria-label="Thème normal"
-              >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3.5 h-3.5">
-                  <circle cx="12" cy="12" r="5" />
-                  <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />
-                </svg>
-                <span className="label-text hidden lg:inline">Normal</span>
-              </button>
-              <button
-                className="theme-btn flex items-center justify-center gap-1.5 px-3 py-1.5 border-none rounded-full bg-transparent text-[var(--text-muted)] text-xs font-semibold cursor-pointer transition-all min-h-10"
-                data-theme="tigre"
-                aria-label="Thème tigre"
-              >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="w-3.5 h-3.5">
-                  <path d="M3 7c3-3 7-4 9-2s1 6-2 9" />
-                  <path d="M21 7c-3-3-7-4-9-2s-1 6 2 9" />
-                  <circle cx="12" cy="16" r="5" />
-                  <path d="M12 11v2" />
-                  <circle cx="10" cy="15" r="0.5" fill="currentColor" />
-                  <circle cx="14" cy="15" r="0.5" fill="currentColor" />
-                </svg>
-                <span className="label-text hidden lg:inline">Tigre</span>
-              </button>
-              <button
-                className="theme-btn flex items-center justify-center gap-1.5 px-3 py-1.5 border-none rounded-full bg-transparent text-[var(--text-muted)] text-xs font-semibold cursor-pointer transition-all min-h-10"
-                data-theme="terrasse"
-                aria-label="Thème terrasse"
-              >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5">
-                  <path d="M17 8h1a4 4 0 1 1 0 8h-1" />
-                  <path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4Z" />
-                  <line x1="6" y1="2" x2="6" y2="4" />
-                  <line x1="10" y1="2" x2="10" y2="4" />
-                  <line x1="14" y1="2" x2="14" y2="4" />
-                </svg>
-                <span className="label-text hidden lg:inline">Terrasse</span>
-              </button>
-            </div>
             {/* Bouton burger — mobile uniquement */}
             <button
               id="mobile-menu-btn"
@@ -192,6 +250,9 @@ export default function RootLayout({
               </Link>
               <Link href="/recettes" className="text-[var(--text-secondary)] no-underline text-sm font-medium px-3 py-2.5 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
                 Recettes
+              </Link>
+              <Link href="/dilemme" className="text-[var(--text-secondary)] no-underline text-sm font-medium px-3 py-2.5 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
+                Dilemme
               </Link>
               <Link href="/idees" className="text-[var(--text-secondary)] no-underline text-sm font-medium px-3 py-2.5 rounded-lg transition-colors hover:text-[var(--text)] hover:bg-[var(--surface-hover)]">
                 Idées

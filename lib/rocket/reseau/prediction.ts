@@ -350,7 +350,7 @@ export function creerPredicteur(opts: OptionsPredicteurEtendu): PredicteurRocket
       if (predit && moiPredit && srv && !srv.demolie && !moiPredit.demolie && predit.phase === snap.etat.phase
         && predit.score.bleue === snap.etat.score.bleue && predit.score.orange === snap.etat.score.orange) {
         const interne = { ...snap.etat.interne };
-        for (const cle of ["touchePoints", "toucheEvenement", "dernierArret", "dernierTir"] as const) {
+        for (const cle of ["touchePoints", "toucheEvenement"] as const) {
           const tab = interne[cle].slice();
           tab[moi] = predit.interne[cle][moi];
           interne[cle] = tab;

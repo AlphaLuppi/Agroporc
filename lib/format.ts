@@ -21,6 +21,17 @@ export function formatDateShort(dateStr: string): string {
   return `${jour.charAt(0).toUpperCase() + jour.slice(1)} ${d.getDate()} ${MOIS[d.getMonth()]}`;
 }
 
+const MOIS_COURTS = [
+  "janv.", "févr.", "mars", "avr.", "mai", "juin",
+  "juil.", "août", "sept.", "oct.", "nov.", "déc.",
+];
+
+/** "2026-11-05" → "jeu. 5 nov." (jour abrégé, sans année) */
+export function formatDateCourte(dateStr: string): string {
+  const d = new Date(dateStr + "T12:00:00");
+  return `${JOURS[d.getDay()].slice(0, 3)}. ${d.getDate()} ${MOIS_COURTS[d.getMonth()]}`;
+}
+
 /** "2026-04-03" → "Jeu." */
 export function formatDayShort(dateStr: string): string {
   const d = new Date(dateStr + "T12:00:00");

@@ -495,8 +495,10 @@ html.pdj-fond-chat body::before { display: none; }
 .pdj-logo:active img { scale: .94; transition-duration: 90ms; }
 
 /* Liens : soulignement qui se dessine (ClientScripts pose `.active` + couleur/fond inline). */
-[data-nav-links] a { position: relative; }
-[data-nav-links] a::after {
+[data-nav-links] a,
+.nav-plus-btn { position: relative; }
+[data-nav-links] a::after,
+.nav-plus-btn::after {
   content: "";
   position: absolute;
   left: 12px;
@@ -511,8 +513,11 @@ html.pdj-fond-chat body::before { display: none; }
   transition: scale var(--dur-base) var(--ease-out-expo);
 }
 [data-nav-links] a:hover::after,
-[data-nav-links] a:focus-visible::after { scale: 1 1; }
-[data-nav-links] a.active::after {
+[data-nav-links] a:focus-visible::after,
+.nav-plus-btn:hover::after,
+.nav-plus-btn:focus-visible::after { scale: 1 1; }
+[data-nav-links] a.active::after,
+.nav-plus-btn[data-actif]::after {
   scale: 1 1;
   animation: pdj-souligne 320ms var(--ease-spring) backwards;
 }
@@ -544,6 +549,59 @@ html.pdj-fond-chat body::before { display: none; }
 .theme-btn svg { transition: rotate var(--dur-base) var(--ease-spring); }
 .theme-btn:active svg { rotate: -20deg; transition-duration: 90ms; }
 
+/* Barre desktop allégée : menu « Plus » et popover d'apparence (disclosures,
+   ClientScripts.initMenusDeroulants). Pas de `display` sur .nav-menu-panel :
+   cette feuille n'est pas dans un @layer et battrait `.hidden` de Tailwind. */
+.nav-menu { position: relative; }
+.nav-menu-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  z-index: 60;
+  min-width: 12rem;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+.nav-menu-panel:not(.hidden) { animation: pdj-rise var(--dur-base) var(--ease-out-expo) backwards; }
+[data-nav-links] .nav-menu-panel a::after { display: none; }
+.nav-plus-btn[data-actif] { color: var(--accent); background: var(--accent-glow); }
+.nav-plus-btn svg { transition: rotate var(--dur-base) var(--ease-spring); }
+.nav-plus-btn[aria-expanded="true"] svg { rotate: 180deg; }
+.nav-icone-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-control);
+  background: var(--surface);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: border-color .15s, color .15s;
+}
+.nav-icone-btn[aria-expanded="true"] { border-color: var(--accent); color: var(--text); }
+@media (hover: hover) and (pointer: fine) {
+  .nav-icone-btn:hover { translate: 0 -1px; border-color: var(--accent); color: var(--text); }
+}
+.nav-plus-btn:focus-visible,
+.nav-icone-btn:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+.nav-menu-panel :is(a, .theme-btn):focus-visible { outline: 2px solid var(--text); outline-offset: -2px; }
+/* Icône du thème courant : « normal » par défaut, sans JS ni flash. */
+.nav-theme-ico-tigre,
+.nav-theme-ico-terrasse { display: none; }
+html[data-theme="tigre"] .nav-theme-ico-normal,
+html[data-theme="terrasse"] .nav-theme-ico-normal { display: none; }
+html[data-theme="tigre"] .nav-theme-ico-tigre,
+html[data-theme="terrasse"] .nav-theme-ico-terrasse { display: block; }
+/* Boutons de thème du popover : des lignes, pas des pilules (!important : style inline de ClientScripts). */
+#theme-menu .theme-btn { box-shadow: none !important; }
+@media (hover: hover) and (pointer: fine) {
+  #theme-menu .theme-btn:not(.active):hover { background: var(--surface-hover) !important; }
+}
+
 /* Changement de thème en tache d'encre (lib/theme-encre.ts) : l'ancien thème
    reste figé dessous, le nouveau apparaît à travers un masque SVG qui grandit
    depuis le bouton. Les transitions de couleur sont coupées le temps de la
@@ -567,6 +625,8 @@ html.pdj-encre::view-transition-new(root) {
 #mobile-menu [data-nav-links] a:nth-child(3) { --i: 2; }
 #mobile-menu [data-nav-links] a:nth-child(4) { --i: 3; }
 #mobile-menu [data-nav-links] a:nth-child(5) { --i: 4; }
+#mobile-menu [data-nav-links] a:nth-child(6) { --i: 5; }
+#mobile-menu [data-nav-links] a:nth-child(7) { --i: 6; }
 #mobile-menu:not(.hidden) .theme-selector { animation: pdj-rise var(--dur-base) var(--ease-out-expo) 175ms backwards; }
 /* Burger ↔ croix : seulement après le chargement (data-pdj-pret posé par le
    script du <head>), sinon l'icône tournerait à l'arrivée sur la page. */

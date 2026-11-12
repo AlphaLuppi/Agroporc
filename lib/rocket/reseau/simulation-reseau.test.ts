@@ -279,7 +279,8 @@ describe("deux clients contre la salle : régime établi (40 ms de latence, 10 m
     const sim = creerSimulation({ latenceMs: 60, gigueMs: 10, graine: 4 });
     sim.jouer(8000);
     sim.router(sim.salle.recevoir(1, { t: "dev", action: "balle", p: [0, 2, 56], v: [0, 0, 0] }, sim.T.t), sim.T.t);
-    sim.jouer(1500);
+    // la célébration dure 1,25 s de jeu au ralenti ×0,5 depuis la fusion avec la physique de RocketSim (4,5 s avant) : on regarde avant son terme
+    sim.jouer(800);
     const vus = sim.joueurs.map((j) => j.client.mondeAffiche(sim.T.t));
     const serveur = sim.salle.monde() as { score: { bleue: number; orange: number } };
     expect(serveur.score.bleue + serveur.score.orange).toBe(1);
@@ -411,7 +412,8 @@ describe("deux clients contre la salle : pertes et corrections visibles (mesure,
     const avant = mesure(SANS_AMELIORATIONS);
     const apres = mesure({});
     process.stdout.write(`\n[simulation-reseau] avant / après (100 ms / 30 ms, 1 % de perte) : ${JSON.stringify({ avant, apres })}\n`);
-    expect(avant.moi).toBeGreaterThanOrEqual(3);
+    // 3 corrections de ma voiture sans les améliorations avec l'ancienne physique, 2 avec celle de RocketSim (mesure de la fusion avec #100, même graine)
+    expect(avant.moi).toBeGreaterThanOrEqual(2);
     expect(apres.moi).toBeLessThanOrEqual(1);
     expect(apres.autres).toBeLessThan(avant.autres * 0.8);
     expect(apres.glissementP99).toBeLessThan(avant.glissementP99 * 0.5);

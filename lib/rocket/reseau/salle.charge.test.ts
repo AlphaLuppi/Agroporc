@@ -3,7 +3,7 @@
  * le minuteur du serveur. À lancer SEUL (`npx vitest run lib/rocket/reseau/salle.charge.test.ts`) : les mesures de temps se faussent quand d'autres
  * fichiers de test tournent en parallèle.
  *
- * Critères : tic moyen < 1 ms, instantané ≤ 3 ko. Les maxima sont rapportés (JIT à froid, ramasse-miettes) mais ne sont pas bloquants.
+ * Critères : tic moyen < 1 ms, instantané ≤ 3,3 ko. Les maxima sont rapportés (JIT à froid, ramasse-miettes) mais ne sont pas bloquants.
  */
 import { describe, expect, it } from "vitest";
 import { creerSalleRocket } from "./salle";
@@ -44,7 +44,7 @@ function trame(tickDebut: number, graine: number): EntreesQuantifiees[] {
 }
 
 describe("charge : six salles 3v3 pendant 60 s", () => {
-  it("tic moyen < 1 ms, instantané ≤ 3 ko, aucun pas perdu", () => {
+  it("tic moyen < 1 ms, instantané ≤ 3,3 ko, aucun pas perdu", () => {
     const bancs = Array.from({ length: SALLES }, (_, i) => creerBanc(i));
     const duree: number[] = [];
     let maxOctets = 0, snapsTotal = 0, octetsTotal = 0, encodageMs = 0;
@@ -80,7 +80,8 @@ describe("charge : six salles 3v3 pendant 60 s", () => {
       `${snapsTotal} instantanés, ${(octetsTotal / snapsTotal).toFixed(0)} o en moyenne, max ${maxOctets} o ; encodage ${((encodageMs / snapsTotal) * 1000).toFixed(0)} µs par instantané`,
     );
     expect(moyenne).toBeLessThan(1);
-    expect(maxOctets).toBeLessThanOrEqual(3000);
+    // 3000 avant la physique de RocketSim (#100), dont l'état caché (pneus, contacts, bumps) pèse ≈ 110 o de plus par voiture : 3062 o mesurés au pire
+    expect(maxOctets).toBeLessThanOrEqual(3300);
     for (const b of bancs) {
       const m = b.salle.mesures();
       expect(m.tempsAbandonneMs).toBe(0);

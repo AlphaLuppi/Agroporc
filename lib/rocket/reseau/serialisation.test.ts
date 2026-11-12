@@ -127,12 +127,12 @@ describe("extraireEtat / encoderEtat / decoderEtat", () => {
     expect(JSON.stringify(e, (_k, v) => (v === -Infinity ? "-inf" : v))).toBe(avant);
   });
 
-  it("taille de la section : de l'ordre de 0,9 ko en 1v1 à 2,3 ko en 3v3", () => {
+  it("taille de la section : de l'ordre de 1,1 ko en 1v1 à 2,8 ko en 3v3 (état caché de la physique de RocketSim : pneus, contacts, bumps)", () => {
     const t1 = encoderEtat(extraireEtat(creerMonde(cfg({ format: "1v1" }), arene))).length;
     const t3 = encoderEtat(extraireEtat(creerMonde(cfg({ format: "3v3" }), arene))).length;
     expect(t1).toBeGreaterThan(500);
     expect(t1).toBeLessThan(1100);
-    expect(t3).toBeLessThan(2400);
+    expect(t3).toBeLessThan(2900);
     expect(t3).toBeGreaterThan(t1);
   });
 });

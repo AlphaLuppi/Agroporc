@@ -108,13 +108,13 @@ Binaire, premier octet = type :
 
 ### 3.4 Tailles estimées de l'instantané (codage binaire, doubles IEEE conservés)
 
-Par voiture (champs de `EtatVoitureReseau`) : 33 doubles (p, v, w, base 9, boost, boostDepuis, reapparitionDans, normaleSurface 3, saut 2, flip 4, redressement 1, deux ticks de délai) = 264 o + indicateurs (booléens, `rouesContact`) 3 o + 8 compteurs de stats en u32 = 32 o + `interne` (4 doubles) = 32 o ≈ **330 o**. Balle ≈ 95 o. Global ≈ 70 o. Plots : 34 bits d'état + un double par plot inactif ≈ 55 o. Entrées appliquées 6 o par voiture.
+Par voiture (champs de `EtatVoitureReseau`) : 33 doubles (p, v, w, base 9, boost, boostDepuis, reapparitionDans, normaleSurface 3, saut 2, flip 4, redressement 1, deux ticks de délai) = 264 o + indicateurs (booléens, `rouesContact`) 3 o + 8 compteurs de stats en u32 = 32 o + `interne` (4 doubles) = 32 o ≈ **330 o** avant la fusion avec la physique de RocketSim (#100), ≈ **440 o** depuis : pneus (11 doubles dont 8 adhérences), frein à main analogique, contact de la caisse avec le décor, `supersoniqueDepuis`, `depuisFinSaut`, signe du redressement, délais de bump et d'impulsion de Psyonix, roues posées sur la balle (leurs normales seulement quand la roue touche) ; `vitesseEnAttente` (voitures et balle) n'est pas envoyée, elle est nulle entre deux pas, et `interne` perd `dernierArret` / `dernierTir` au profit du suivi des tirs (`balleTiree`, `cageTiree`, `delaiTirS`). Balle ≈ 95 o. Global ≈ 70 o. Plots : 34 bits d'état + un double par plot inactif ≈ 55 o. Entrées appliquées 6 o par voiture.
 
 | Format | Instantané | Flux descendant par client à 20 Hz | Total serveur sortant (tous clients) |
 |---|---|---|---|
-| 1v1 (2 voitures) | ≈ 0,9 ko | 18 ko/s (0,15 Mbit/s) | 36 ko/s |
-| 2v2 | ≈ 1,6 ko | 32 ko/s | 128 ko/s |
-| 3v3 (6 voitures) | ≈ 2,3 ko | 46 ko/s (0,37 Mbit/s) | 276 ko/s (2,2 Mbit/s) |
+| 1v1 (2 voitures) | ≈ 1,2 ko | 24 ko/s (0,2 Mbit/s) | 48 ko/s |
+| 2v2 | ≈ 2,0 ko | 40 ko/s | 160 ko/s |
+| 3v3 (6 voitures) | ≈ 2,9 ko | 58 ko/s (0,46 Mbit/s) | 348 ko/s (2,8 Mbit/s) |
 
 Pourquoi des doubles complets (et pas des flottants 32 bits) : l'égalité octet à octet entre l'état prédit et l'état serveur (§ 5.3) évite le rollback quand la prédiction est exacte (voitures immobiles, entrées de tout le monde inchangées sur la fenêtre RTT) ; la quantification de l'état la rendrait toujours fausse. Elle reste une optimisation opportuniste, pas le cas nominal : un adversaire ou un bot qui change d'entrée dans la fenêtre rend l'état prédit différent (§ 5.3). Le prix (≈ 2 ko) est acceptable. Réduire en `float32` reste possible plus tard (le rollback tolère l'erreur).
 
@@ -341,7 +341,7 @@ Sans navigateur : `node scripts/rocket/protocole_rocket.mjs` (SERVEUR) lance le 
 
 Bout en bout : `node scripts/rocket/e2e_rocket_en_ligne.mjs` (SERVEUR) lance `serveur-fps` (`PDJ_ROCKET_DEV=1`, `PDJ_ROCKET_DUREE_S=20`, `PDJ_FPS_POLICE=off` et neutralisations de l'arène) et `next dev` sur des ports libres (jamais 8787), puis DEUX Chromium headless : « myrtille » → Rocket Muche → En ligne (`CLE_SANS_RENDU` posée par `addInitScript`) ; A crée, B rejoint par code puis par la liste ; équipes, lancement ; 3 s de décompte ; A accélère (entrées par `__rocketReseau.entrees`), B voit la voiture de A bouger ; but forcé par `dev` ; score identique chez les deux ; fin à 20 s ; revanche ; départ de B → bot ; reprise (`__rocketReseau.couper()`) ; captures. Rendu logiciel (SwiftShader) : fenêtres de 640×360, `sansRendu` pour les étapes de simulation, jamais d'attente de fluidité. Étapes de réseau dégradé : `__rocketReseau.latence(60, 60)`, `retenir(300)` (rafale, aucun gel de plus d'une image mesuré), `masquer(true/false)` (retour sans rafale, resync). Pièges de `next dev` repris de `e2e_rocket.mjs` : échauffement à froid, captures écrites hors du dépôt puis copiées, aucun fichier du projet modifié pendant l'essai.
 
-Charge : un test `salle.charge.test.ts` (SALLE, à lancer SEUL) : 6 salles 3v3 simulées 60 s, tic moyen < 1 ms, instantané ≤ 3 ko. Mesure CPU du rollback à 4× plus lent (`--cpu-throttling` de Chromium ou boucle à vide, consignée, non bloquante).
+Charge : un test `salle.charge.test.ts` (SALLE, à lancer SEUL) : 6 salles 3v3 simulées 60 s, tic moyen < 1 ms, instantané ≤ 3,3 ko (3 ko avant la fusion avec la physique de RocketSim). Mesure CPU du rollback à 4× plus lent (`--cpu-throttling` de Chromium ou boucle à vide, consignée, non bloquante).
 
 ### 10 bis. Mesures de jouabilité réseau (révision du 2026-11-08, avant / après)
 
