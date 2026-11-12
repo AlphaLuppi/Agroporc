@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
+import { captureEnCours } from "@/lib/rocket/capture";
 import { commandesRocket } from "@/lib/rocket/lobby";
 import { useDispositionRocket } from "./useDispositionRocket";
 import type { PropsMenuPauseRocket } from "./contrats";
@@ -32,9 +33,11 @@ export default function MenuPauseRocket({ reglages, surReglages, surReprendre, s
   dernier.current = { vue, surReprendre };
   useEffect(() => {
     let armee = false;
-    const bas = (e: KeyboardEvent) => { if (e.code === "Escape" && !e.repeat) armee = true; };
+    // pendant la capture d'une touche (réglages), Échap annule la capture : elle ne doit ni reprendre la partie ni revenir au menu
+    const bas = (e: KeyboardEvent) => { if (e.code === "Escape" && !e.repeat && !captureEnCours()) armee = true; };
     const haut = (e: KeyboardEvent) => {
       if (e.code !== "Escape" || !armee) return;
+      if (captureEnCours()) { armee = false; return; }
       armee = false;
       e.preventDefault();
       if (dernier.current.vue === "menu") dernier.current.surReprendre();
@@ -60,7 +63,7 @@ export default function MenuPauseRocket({ reglages, surReglages, surReprendre, s
               <button type="button" className={styles.boutonDiscret} onClick={surQuitterVue}>Quitter vers Agroparc</button>
             </div>
             <p className={styles.noteDialogue}>
-              Échap reprend la partie.{manette ? " Start sur la manette aussi." : ""} Recommencer relance un match avec les mêmes réglages.
+              Échap reprend la partie.{manette ? " Start sur la manette aussi." : ""} Les touches et les boutons se changent dans Réglages. Recommencer relance un match avec les mêmes réglages.
             </p>
           </>
         )}
@@ -75,7 +78,7 @@ export default function MenuPauseRocket({ reglages, surReglages, surReprendre, s
         {vue === "aide" && (
           <>
             <div className={styles.defilement}>
-              <ListeCommandesRocket commandes={commandesRocket(reglages.touches, disposition)} />
+              <ListeCommandesRocket commandes={commandesRocket(reglages.touches, disposition, manette ? reglages.liaisonsManette : null)} />
             </div>
             <div className={styles.boutons}><button type="button" className={styles.boutonSecondaire} onClick={() => setVue("menu")}>Retour</button></div>
           </>

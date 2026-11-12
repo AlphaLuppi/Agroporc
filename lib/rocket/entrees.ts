@@ -17,20 +17,34 @@
  *  - Q / E : roulis gauche / droite ; Y ou clic droit : ball cam ; V : vue arrière (tenue) ; H : klaxon ; Échap : pause ;
  *  - bouton du milieu tenu + déplacement de la souris : regard libre (`deplacementSouris` porte alors le levier virtuel, voir plus bas).
  *
- * Manette (mapping « standard » de la Gamepad API) : RT / LT gaz et frein (analogiques), stick gauche (volant au sol, tangage et lacet
- * en l'air), A saut, B boost, X dérapage / air roll libre, Y ball cam, LB / RB roulis, stick droit regard libre, R3 vue arrière,
- * Start pause, croix haut klaxon.
+ * Manette (mapping « standard » de la Gamepad API), liaisons par défaut (`LIAISONS_MANETTE_DEFAUT`) : RT / LT gaz et frein (analogiques),
+ * stick gauche (volant au sol, tangage et lacet en l'air), A saut, B boost, X dérapage / air roll libre, Y ball cam, LB / RB roulis,
+ * stick droit regard libre, R3 vue arrière, Start pause, croix haut klaxon. Chaque action est reliée à un BOUTON (`B7`) ou à un DEMI-AXE
+ * (`A0-`) au choix du joueur (cf. `liaisons.ts`) :
+ *  - les deux demi-axes d'un stick passent d'abord par la zone morte radiale et la courbe de `stickAvecZoneMorte`, quelle que soit
+ *    l'action qui les lit ; une action analogique (gaz, volant, tangage, regard) lit alors la valeur 0..1 de l'entrée (un bouton vaut 0 ou 1,
+ *    une gâchette sa course) ;
+ *  - une action à deux états (saut, boost, pause…) se déclenche sur un bouton pressé ou sur un demi-axe BRUT au-delà de 0,5.
  */
 import {
   ENTREES_NULLES,
+  LIAISONS_MANETTE_DEFAUT,
+  SEUIL_ENTREE_MANETTE,
+  type EntreeManette,
+  type EntreesDepuisManette,
   type EntreesJoueur,
   type EntreesVoiture,
   type InstantaneClavier,
   type InstantaneManette,
+  type LiaisonsManette,
   type LiaisonsTouches,
   type ReglagesRocket,
   type SourceEntrees,
 } from "./contrat";
+import { lireEntreeManette } from "./liaisons";
+import { manetteDepuisGamepad, manetteStandard, type ManetteLue } from "./manette";
+
+export { manetteDepuisGamepad, manetteStandard, type ManetteLue } from "./manette";
 
 /** Entrées d'un joueur qui ne touche à rien. */
 export function entreesJoueurNulles(): EntreesJoueur {
@@ -61,7 +75,7 @@ const axe = (touches: ReadonlySet<string>, positif: readonly string[], negatif: 
  * n'utilise que celui qui convient (sol : gaz ; air : tangage). Le volant sert aussi de lacet en l'air (`lacet` reste à 0 : la voiture
  * le prend dans `direction`).
  *
- * Regard libre : si le bouton du milieu (`Souris1`) est tenu, `deplacementSouris` est le levier virtuel déjà intégré par la source,
+ * Regard libre : si la liaison `regardLibre` (le bouton du milieu `Souris1` par défaut) est tenue, `deplacementSouris` est le levier virtuel déjà intégré par la source,
  * en pixels depuis l'appui, converti en [-1, 1] ; il vaut `[0, 0]` sinon (le retour au centre est lissé par la caméra).
  */
 export function entreesDepuisClavier(i: InstantaneClavier, l: Readonly<LiaisonsTouches>): EntreesJoueur {
@@ -77,7 +91,7 @@ export function entreesDepuisClavier(i: InstantaneClavier, l: Readonly<LiaisonsT
     boost: tenue(t, l.boost),
     derapage: tenue(t, l.derapage),
   };
-  const regardActif = t.has("Souris1");
+  const regardActif = tenue(t, l.regardLibre);
   return {
     voiture,
     basculerBalleCam: tenue(t, l.balleCam),
@@ -123,34 +137,78 @@ const boutonManette = (m: InstantaneManette, i: number): number => {
   return v < 0.05 ? 0 : v;
 };
 const presse = (m: InstantaneManette, i: number): boolean => !!m.boutons[i]?.pressed;
+/** Évite les -0 (`toEqual` les distingue de 0). */
+const net = (x: number): number => x || 0;
 
 /**
- * Manette → entrées (pure). RT - LT donne le gaz analogique ; le stick gauche donne le volant (X) et le tangage (Y : vers le haut =
- * nez en bas, comme Rocket League, sauf `inverserTangageManette`) ; le stick droit donne le regard libre (haut = regarder vers le haut).
+ * Axes de la manette après zone morte radiale et courbe, stick par stick : (0, 1) = stick gauche, (2, 3) = stick droit. Les éventuels axes
+ * suivants restent bruts.
  */
-export function entreesDepuisManette(m: InstantaneManette, r: Pick<ReglagesRocket, "zoneMorteManette" | "inverserTangageManette">): EntreesJoueur {
-  const [gx, gy] = stickAvecZoneMorte(axeManette(m, 0), axeManette(m, 1), r.zoneMorteManette);
-  const [dx, dy] = stickAvecZoneMorte(axeManette(m, 2), axeManette(m, 3), r.zoneMorteManette);
+function axesCorriges(m: InstantaneManette, zoneMorte: number): number[] {
+  const n = Math.max(m.axes.length, 4);
+  const res = Array.from({ length: n }, (_, i) => axeManette(m, i));
+  const [gx, gy] = stickAvecZoneMorte(res[0], res[1], zoneMorte);
+  const [dx, dy] = stickAvecZoneMorte(res[2], res[3], zoneMorte);
+  res[0] = gx; res[1] = gy; res[2] = dx; res[3] = dy;
+  return res;
+}
+
+/** Valeur 0..1 d'une entrée : course d'un bouton / d'une gâchette, ou demi-axe (corrigé) poussé dans le bon sens. */
+function valeurEntree(m: InstantaneManette, axes: readonly number[], code: EntreeManette): number {
+  const e = lireEntreeManette(code);
+  if (!e) return 0;
+  if (e.type === "bouton") return boutonManette(m, e.index);
+  const v = axes[e.index];
+  return net(Math.max(0, e.signe * (typeof v === "number" ? v : 0)));
+}
+/** Le plus fort des codes d'une action (0 sans liaison). */
+const valeurAction = (m: InstantaneManette, axes: readonly number[], codes: readonly EntreeManette[]): number => {
+  let v = 0;
+  for (const c of codes) v = Math.max(v, valeurEntree(m, axes, c));
+  return v;
+};
+/** Entrée à deux états : bouton pressé, ou demi-axe BRUT au-delà du seuil (indépendant de la zone morte). */
+function entreeActive(m: InstantaneManette, code: EntreeManette): boolean {
+  const e = lireEntreeManette(code);
+  if (!e) return false;
+  if (e.type === "bouton") return presse(m, e.index);
+  return e.signe * axeManette(m, e.index) >= SEUIL_ENTREE_MANETTE;
+}
+const actionActive = (m: InstantaneManette, codes: readonly EntreeManette[]): boolean => codes.some((c) => entreeActive(m, c));
+
+/**
+ * Manette → entrées (pure), selon `liaisons` (défaut : disposition de Rocket League). Avec les liaisons par défaut, RT - LT donne le gaz
+ * analogique ; le stick gauche donne le volant (X) et le tangage (Y : vers le haut = nez en bas, comme Rocket League, sauf
+ * `inverserTangageManette`) ; le stick droit donne le regard libre (haut = regarder vers le haut).
+ */
+export const entreesDepuisManette: EntreesDepuisManette = (m, r, liaisons = LIAISONS_MANETTE_DEFAUT) => {
+  const axes = axesCorriges(m, r.zoneMorteManette);
+  const l = liaisons;
   const signeTangage = r.inverserTangageManette ? -1 : 1;
+  const analogique = (positif: readonly EntreeManette[], negatif: readonly EntreeManette[]): number =>
+    net(borne(valeurAction(m, axes, positif) - valeurAction(m, axes, negatif)));
   const voiture: EntreesVoiture = {
-    accel: borne(boutonManette(m, BOUTON_MANETTE.rt) - boutonManette(m, BOUTON_MANETTE.lt)),
-    direction: gx,
-    tangage: borne(gy * signeTangage),
+    accel: analogique(l.accelerer, l.reculer),
+    direction: analogique(l.droite, l.gauche),
+    tangage: net(borne(analogique(l.tangageHaut, l.tangageBas) * signeTangage)),
     lacet: 0,
-    roulis: (presse(m, BOUTON_MANETTE.rb) ? 1 : 0) - (presse(m, BOUTON_MANETTE.lb) ? 1 : 0),
-    saut: presse(m, BOUTON_MANETTE.a),
-    boost: presse(m, BOUTON_MANETTE.b),
-    derapage: presse(m, BOUTON_MANETTE.x),
+    roulis: (actionActive(m, l.rouleDroite) ? 1 : 0) - (actionActive(m, l.rouleGauche) ? 1 : 0),
+    saut: actionActive(m, l.saut),
+    boost: actionActive(m, l.boost),
+    derapage: actionActive(m, l.derapage),
   };
   return {
     voiture,
-    basculerBalleCam: presse(m, BOUTON_MANETTE.y),
-    regard: [dx, 0 - dy],
-    arriere: presse(m, BOUTON_MANETTE.r3),
-    klaxon: presse(m, BOUTON_MANETTE.haut),
-    pause: presse(m, BOUTON_MANETTE.start),
+    basculerBalleCam: actionActive(m, l.balleCam),
+    regard: [analogique(l.regardDroite, l.regardGauche), analogique(l.regardHaut, l.regardBas)],
+    arriere: actionActive(m, l.arriere),
+    klaxon: actionActive(m, l.klaxon),
+    pause: actionActive(m, l.pause),
   };
-}
+};
+
+/** Un des codes de la liaison « pause » est-il actif sur cette manette ? (Start y est toujours.) */
+export const pauseDepuisManette = (m: InstantaneManette, liaisons: Readonly<LiaisonsManette>): boolean => actionActive(m, liaisons.pause);
 
 // ============================================================================================================================
 // Fusion
@@ -184,28 +242,12 @@ export function fusionnerEntrees(a: EntreesJoueur, b: EntreesJoueur): EntreesJou
 // Source (DOM)
 // ============================================================================================================================
 
-/** Ce que la source lit d'une manette (sous-ensemble de `Gamepad`, injectable en test). */
-export interface ManetteLue extends InstantaneManette {
-  connected?: boolean;
-  mapping?: string;
-  vibrationActuator?: {
-    playEffect(type: "dual-rumble", params: { startDelay?: number; duration: number; weakMagnitude: number; strongMagnitude: number }): Promise<unknown> | unknown;
-  } | null;
-}
-
-/**
- * `Gamepad` du navigateur → `ManetteLue` : le navigateur expose `buttons`, le contrat lit `boutons`. Sans cette adaptation, la première
- * image avec une vraie manette branchée lirait `undefined[7]` et lèverait une exception dans la boucle.
- */
-export function manetteDepuisGamepad(g: Gamepad | null): ManetteLue | null {
-  if (!g) return null;
-  return { axes: g.axes, boutons: g.buttons, connected: g.connected, mapping: g.mapping, vibrationActuator: (g as unknown as ManetteLue).vibrationActuator ?? null };
-}
-
 /** Source d'entrées + quelques accès supplémentaires pour `jeu.ts` (pause à la manette, boutons du menu). */
 export interface SourceEntreesEtendue extends SourceEntrees {
   /** vrai si le bouton `index` de la manette (mapping standard) est enfoncé à cet instant */
   boutonManette(index: number): boolean;
+  /** vrai si une entrée liée à la pause (Start et la seconde liaison du joueur) est active sur la manette */
+  pauseManette(): boolean;
 }
 
 /** Cible d'un événement qui ne doit PAS être volée au navigateur (champ de saisie, bouton, lien, boîte de dialogue du menu pause). */
@@ -242,7 +284,12 @@ export function creerSourceEntrees(
   const levier: [number, number] = [0, 0];
 
   const presser = (code: string) => { enfoncees.add(code); memoire.add(code); };
-  const relacherCode = (code: string) => { enfoncees.delete(code); if (code === "Souris1") { levier[0] = 0; levier[1] = 0; } };
+  const relacherCode = (code: string) => {
+    const etait = regardActif();
+    enfoncees.delete(code);
+    // le levier du regard libre revient au centre quand sa liaison n'est plus tenue
+    if (etait && !regardActif()) { levier[0] = 0; levier[1] = 0; }
+  };
 
   const surKeyDown = (e: Event) => {
     const k = e as KeyboardEvent;
@@ -263,7 +310,7 @@ export function creerSourceEntrees(
   };
   const surMouseUp = (e: Event) => { relacherCode(`Souris${(e as MouseEvent).button}`); };
   const surMouseMove = (e: Event) => {
-    if (!enfoncees.has("Souris1")) return;
+    if (!regardActif()) return;
     const m = e as MouseEvent;
     levier[0] += m.movementX || 0;
     levier[1] += m.movementY || 0;
@@ -274,6 +321,9 @@ export function creerSourceEntrees(
   const surPerteFocus = () => { enfoncees.clear(); memoire.clear(); levier[0] = 0; levier[1] = 0; };
   const surManette = () => { /* connectée() relit navigator à chaque appel */ };
 
+  /** le regard libre est-il tenu ? (liaison `regardLibre`, le bouton du milieu par défaut) */
+  const regardActif = (): boolean => tenue(enfoncees, liaisons().regardLibre);
+
   /** `code` est-il lié à une action ? (pour ne bloquer que les touches du jeu) */
   function utilisee(code: string): boolean {
     const l = liaisons();
@@ -282,9 +332,7 @@ export function creerSourceEntrees(
   }
 
   function manette(): ManetteLue | null {
-    const liste = lireManettes();
-    for (const g of liste) if (g && g.connected !== false && (g.mapping === undefined || g.mapping === "standard")) return g;
-    return null;
+    return manetteStandard(lireManettes());
   }
 
   cible.addEventListener("keydown", surKeyDown);
@@ -305,10 +353,11 @@ export function creerSourceEntrees(
       memoire.clear();
       const clavier = entreesDepuisClavier({ touches, deplacementSouris: [levier[0], levier[1]] }, liaisons());
       const pad = manette();
-      return pad ? fusionnerEntrees(clavier, entreesDepuisManette(pad, reglages())) : clavier;
+      return pad ? fusionnerEntrees(clavier, entreesDepuisManette(pad, reglages(), reglages().liaisonsManette)) : clavier;
     },
     manetteConnectee() { return manette() !== null; },
     boutonManette(index) { const p = manette(); return !!p && presse(p, index); },
+    pauseManette() { const p = manette(); return !!p && pauseDepuisManette(p, reglages().liaisonsManette); },
     relacher() { surPerteFocus(); },
     vibrer(intensite, dureeMs) {
       const pad = manette();

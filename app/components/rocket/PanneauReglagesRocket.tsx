@@ -3,6 +3,7 @@
 import { useId } from "react";
 import { CAMERA_DEFAUT, type ParamsCamera, type ReglagesRocket } from "@/lib/rocket/contrat";
 import type { PropsReglagesRocket } from "./contrats";
+import LiaisonsRocket from "./LiaisonsRocket";
 import styles from "./Rocket.module.css";
 
 /**
@@ -61,7 +62,7 @@ function Curseur({ id, libelle, aide, min, max, pas, valeur, affichage, surChang
 
 /**
  * Réglages de Rocket Muche : caméra (les sept paramètres de Rocket League), ball cam par défaut, volume, manette (zone morte, tangage inversé,
- * vibrations). Contrôlé : chaque changement part tout de suite à `surReglages` (le jeu l'applique en direct et le mémorise).
+ * vibrations), puis les liaisons de toutes les commandes (clavier, souris, boutons et sticks de la manette : `LiaisonsRocket`). Contrôlé : chaque changement part tout de suite à `surReglages` (le jeu l'applique en direct et le mémorise).
  */
 export default function PanneauReglagesRocket({ reglages, surReglages }: PropsReglagesRocket) {
   const id = useId();
@@ -135,6 +136,8 @@ export default function PanneauReglagesRocket({ reglages, surReglages }: PropsRe
           Vibrations (touches de balle, atterrissages, démolitions)
         </label>
       </fieldset>
+
+      <LiaisonsRocket reglages={reglages} surReglages={surReglages} />
     </div>
   );
 }
