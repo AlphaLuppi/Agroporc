@@ -108,6 +108,52 @@ describe("LobbyRocket", () => {
   });
 });
 
+describe("PanneauReglagesRocket : liaisons", () => {
+  const panneau = (r = REGLAGES_DEFAUT()) => renderToStaticMarkup(createElement(PanneauReglagesRocket, { reglages: r, surReglages: rien }));
+  it("liste les touches et les boutons de la manette, une zone d'état annoncée et des boutons natifs", () => {
+    const html = panneau();
+    expect(html).toMatch(/<p[^>]*role="status"[^>]*aria-live="polite"|<p[^>]*aria-live="polite"[^>]*role="status"/);
+    expect(html).toContain("<legend>Clavier et souris</legend>");
+    expect(html).toContain("<legend>Boutons de la manette</legend>");
+    // 13 actions de clavier hors pause (un seul emplacement libre pour la pause) ; 19 actions de manette
+    const emplacements = html.match(/aria-pressed="false"/g) ?? [];
+    expect(emplacements.length).toBe((13 * 2 + 1) + (18 * 2 + 1));
+    expect(html).toContain('aria-label="Sauter, double saut, flip, entrée 1 : Espace. Changer"');
+    expect(html).toContain('aria-label="Boost (maintenu), entrée 1 : Maj gauche. Changer"');
+    expect(html).toContain('aria-label="Sauter, double saut, flip, entrée 1 : A. Changer"');
+    expect(html).toContain('aria-label="Accélérer, entrée 1 : RT. Changer"');
+    expect(html).toContain('aria-label="Volant à gauche (en l&#x27;air : lacet), entrée 1 : Stick gauche ←. Changer"');
+    expect(html).toContain('aria-label="Regard libre (maintenu, puis bouger la souris), entrée 1 : Clic milieu. Changer"');
+    // un emplacement vide est dit vide
+    expect(html).toContain("entrée 2 : aucune. Changer");
+  });
+  it("Échap et Start sont affichés, fixes, sur la pause", () => {
+    const html = panneau();
+    expect(html).toMatch(/<span[^>]*title="Échap ouvre toujours la pause"[^>]*>Échap<\/span>/);
+    expect(html).toMatch(/<span[^>]*title="Start ouvre toujours la pause"[^>]*>Start<\/span>/);
+  });
+  it("les boutons de rétablissement sont grisés aux défauts, actifs sinon", () => {
+    const html = panneau();
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Rétablir les touches par défaut/);
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Rétablir la manette par défaut/);
+    const r = REGLAGES_DEFAUT();
+    r.touches = { ...r.touches, saut: ["KeyJ"] };
+    r.liaisonsManette = { ...r.liaisonsManette, saut: ["B5"], klaxon: [] };
+    const html2 = panneau(r);
+    expect(html2).not.toMatch(/<button[^>]*disabled=""[^>]*>Rétablir les touches par défaut/);
+    expect(html2).not.toMatch(/<button[^>]*disabled=""[^>]*>Rétablir la manette par défaut/);
+    expect(html2).toContain('aria-label="Sauter, double saut, flip, entrée 1 : J. Changer"');
+    expect(html2).toContain('aria-label="Sauter, double saut, flip, entrée 1 : RB. Changer"');
+    expect(html2).toContain("Sans entrée : Klaxon.");
+  });
+  it("une action sans touche est signalée", () => {
+    const r = REGLAGES_DEFAUT();
+    r.touches = { ...r.touches, klaxon: [] };
+    expect(panneau(r)).toContain("Sans touche : Klaxon.");
+    expect(panneau()).not.toContain("Sans touche");
+  });
+});
+
 describe("PanneauReglagesRocket", () => {
   it("expose les sept curseurs de la caméra de Rocket League, dans ses unités", () => {
     const html = renderToStaticMarkup(createElement(PanneauReglagesRocket, { reglages: REGLAGES_DEFAUT(), surReglages: rien }));

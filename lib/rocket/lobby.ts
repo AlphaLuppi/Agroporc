@@ -6,9 +6,9 @@
  */
 import {
   DEFAUT_CONFIG, EQUIPES, FORMATS, LIBELLES_NIVEAU, MATCH, NIVEAUX_BOT, NOMS_EQUIPES_DEFAUT, joueursParEquipe,
-  type ConfigMatch, type Equipe, type Format, type LiaisonsTouches, type NiveauBot, type NormaliserConfig, type LibelleConfig, type StockageMinimal,
+  type ConfigMatch, type Equipe, type Format, type LiaisonsManette, type LiaisonsTouches, type NiveauBot, type NormaliserConfig, type LibelleConfig, type StockageMinimal,
 } from "./contrat";
-import { libelleTouche } from "../fps/touches";
+import { libelleEntreeManette, libelleToucheRocket as libelleTouche } from "./liaisons";
 
 /** Clé `localStorage` de la configuration du match. */
 export const CLE_CONFIG_ROCKET = "pdj-rocket-config";
@@ -66,20 +66,38 @@ const touchesDe = (codes: readonly string[], disposition?: ReadonlyMap<string, s
 
 /**
  * Commandes du jeu, écrites avec les touches RÉELLES du joueur (liaisons mémorisées, `disposition` = clavier du joueur : « Z » et non « W »
- * en AZERTY). Pure.
+ * en AZERTY). Quand une manette est branchée (`manette` = ses liaisons), ses boutons suivent après un « · » : « Espace ou Clic gauche · A ».
+ * Pure.
  */
-export function commandesRocket(l: Readonly<LiaisonsTouches>, disposition?: ReadonlyMap<string, string> | null): CommandeRocket[] {
+export function commandesRocket(
+  l: Readonly<LiaisonsTouches>,
+  disposition?: ReadonlyMap<string, string> | null,
+  manette?: Readonly<LiaisonsManette> | null,
+): CommandeRocket[] {
   const premiere = (codes: readonly string[]) => libelleTouche(codes[0] ?? null, disposition);
+  const m = manette ?? null;
+  const padDe = (codes: readonly string[]) => codes.map((c) => libelleEntreeManette(c, true)).join(" ou ");
+  const padPremiere = (codes: readonly string[]) => libelleEntreeManette(codes[0] ?? null, true);
+  /** touches du clavier suivies, si une manette est branchée et que l'action y est liée, de ses boutons */
+  const avecPad = (clavier: string, pad: string): string => (m && pad && pad !== "—" ? `${clavier} · ${pad}` : clavier);
   return [
-    { id: "conduire", touches: [l.accelerer, l.gauche, l.reculer, l.droite].map(premiere).join(" "), libelle: "Accélérer, tourner, reculer. En l'air : tangage et lacet" },
-    { id: "saut", touches: touchesDe(l.saut, disposition), libelle: "Sauter ; second appui : double saut, ou flip dans la direction tenue" },
-    { id: "boost", touches: touchesDe(l.boost, disposition), libelle: "Boost (maintenu)" },
-    { id: "derapage", touches: touchesDe(l.derapage, disposition), libelle: "Dérapage au sol ; roulis libre en l'air" },
-    { id: "roulis", touches: `${premiere(l.rouleGauche)} ${premiere(l.rouleDroite)}`, libelle: "Roulis gauche et droite en l'air" },
-    { id: "balleCam", touches: touchesDe(l.balleCam, disposition), libelle: "Ball cam : la caméra suit la balle ou la voiture" },
-    { id: "arriere", touches: touchesDe(l.arriere, disposition), libelle: "Regard arrière (maintenu)" },
-    { id: "klaxon", touches: touchesDe(l.klaxon, disposition), libelle: "Klaxon du Truck Muche" },
-    { id: "pause", touches: touchesDe(l.pause, disposition), libelle: "Pause, réglages, quitter" },
+    {
+      id: "conduire",
+      touches: avecPad([l.accelerer, l.gauche, l.reculer, l.droite].map(premiere).join(" "), m ? [m.accelerer, m.gauche, m.reculer, m.droite].map(padPremiere).join(" ") : ""),
+      libelle: "Accélérer, tourner, reculer. En l'air : tangage et lacet",
+    },
+    { id: "saut", touches: avecPad(touchesDe(l.saut, disposition), m ? padDe(m.saut) : ""), libelle: "Sauter ; second appui : double saut, ou flip dans la direction tenue" },
+    { id: "boost", touches: avecPad(touchesDe(l.boost, disposition), m ? padDe(m.boost) : ""), libelle: "Boost (maintenu)" },
+    { id: "derapage", touches: avecPad(touchesDe(l.derapage, disposition), m ? padDe(m.derapage) : ""), libelle: "Dérapage au sol ; roulis libre en l'air" },
+    {
+      id: "roulis",
+      touches: avecPad(`${premiere(l.rouleGauche)} ${premiere(l.rouleDroite)}`, m ? `${padPremiere(m.rouleGauche)} ${padPremiere(m.rouleDroite)}` : ""),
+      libelle: "Roulis gauche et droite en l'air",
+    },
+    { id: "balleCam", touches: avecPad(touchesDe(l.balleCam, disposition), m ? padDe(m.balleCam) : ""), libelle: "Ball cam : la caméra suit la balle ou la voiture" },
+    { id: "arriere", touches: avecPad(touchesDe(l.arriere, disposition), m ? padDe(m.arriere) : ""), libelle: "Regard arrière (maintenu)" },
+    { id: "klaxon", touches: avecPad(touchesDe(l.klaxon, disposition), m ? padDe(m.klaxon) : ""), libelle: "Klaxon du Truck Muche" },
+    { id: "pause", touches: avecPad(touchesDe(l.pause, disposition), m ? padDe(m.pause) : ""), libelle: "Pause, réglages, quitter" },
     { id: "classement", touches: "Tab", libelle: "Classement des joueurs (maintenu)" },
   ];
 }

@@ -156,7 +156,7 @@ export default function HudRocketUi({ hud, reglages, surReglages, surReprendre, 
 
       {aide && (
         <aside className={styles.aideBreve} aria-label="Aide des touches">
-          <ListeCommandesRocket commandes={commandesRocket(reglages.touches, disposition).filter((c) => COMMANDES_BREVES.includes(c.id))} />
+          <ListeCommandesRocket commandes={commandesRocket(reglages.touches, disposition, hud.manette ? reglages.liaisonsManette : null).filter((c) => COMMANDES_BREVES.includes(c.id))} />
         </aside>
       )}
 

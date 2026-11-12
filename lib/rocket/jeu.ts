@@ -57,6 +57,8 @@ import {
 import { avancerAccumulateur, creerAccumulateur } from "./boucle";
 import { ajouterSecousse, creerEtatCamera, majCamera, majCameraBut } from "./camera";
 import { BOUTON_MANETTE, creerSourceEntrees, entreesJoueurNulles, type SourceEntreesEtendue } from "./entrees";
+import { captureEnCours } from "./capture";
+import { codeBouton, entreeManetteLiee } from "./liaisons";
 import { creerArene } from "./arene";
 import { creerMonde, pasMonde, resultatMatch } from "./match";
 import { creerCerveau } from "./bots";
@@ -792,17 +794,21 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
       else traiter({ t: "klaxon", idVoiture: monde.idHumain });
     }
     klaxonPrecedent = entree.klaxon;
-    // la manette met en pause et reprend elle-même ; au clavier Échap n'entre que dans `surKeyDown`
-    const start = sourceOk.boutonManette(BOUTON_MANETTE.start);
+    // la manette met en pause et reprend elle-même (Start et la seconde liaison « pause » du joueur) ; au clavier Échap n'entre que dans
+    // `surKeyDown`. Pendant la capture d'un bouton dans les réglages, ces boutons sont ceux que le joueur est en train d'affecter : ni pause,
+    // ni retour, ni rejouer (les états précédents suivent quand même, un bouton encore tenu ne fait pas de front en fin de capture).
+    const capture = captureEnCours();
+    const start = sourceOk.pauseManette();
     // en ligne Start ouvre aussi le menu (qui ne gèle rien : commandes neutres, la partie continue) : seul chemin à la manette pour quitter pendant le match
-    if (start && !startPrecedent) pause(!enPause);
+    if (start && !startPrecedent && !capture) pause(!enPause);
     startPrecedent = start;
-    const retour = sourceOk.boutonManette(BOUTON_MANETTE.retour);
-    if (retour && !retourPrecedent && (enPause || monde.phase === "fini")) opts.sortir();
+    // Retour quitte depuis la pause ou l'écran de fin, tant que le joueur n'a pas donné ce bouton à une action
+    const retour = sourceOk.boutonManette(BOUTON_MANETTE.retour) && !entreeManetteLiee(reglages.liaisonsManette, codeBouton(BOUTON_MANETTE.retour));
+    if (retour && !retourPrecedent && (enPause || monde.phase === "fini") && !capture) opts.sortir();
     retourPrecedent = retour;
-    // écran de fin à la manette : A (front montant, seulement une fois le résultat affiché) rejoue
+    // écran de fin à la manette : A (front montant, seulement une fois le résultat affiché) rejoue, quelle que soit sa liaison en jeu
     const boutonA = sourceOk.boutonManette(BOUTON_MANETTE.a);
-    if (boutonA && !boutonAPrecedent && monde.phase === "fini" && resultatCache !== null && !enPause) { boutonAPrecedent = true; recommencer(); return; }
+    if (boutonA && !boutonAPrecedent && monde.phase === "fini" && resultatCache !== null && !enPause && !capture) { boutonAPrecedent = true; recommencer(); return; }
     boutonAPrecedent = boutonA;
 
     // rejeu du but : Espace (saut) ou A le passe
