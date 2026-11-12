@@ -29,7 +29,7 @@ import type { InterneMatch } from "../match";
 // ============================================================================================================================
 
 /** Version du protocole Rocket en ligne (indépendante de `VERSION_PROTOCOLE` de l'arène). Un `bonjour` d'une autre version reçoit `erreur{version}`. */
-export const VERSION_ROCKET = 1;
+export const VERSION_ROCKET = 2;
 /** Chemin de la WebSocket Rocket sur le serveur HTTP de serveur-fps (`wss://pdj-fps.toam.tech/rocket`). */
 export const CHEMIN_ROCKET = "/rocket";
 /** Pas de la physique en ticks par seconde (120). Le « tick » est l'unité de temps de TOUT le protocole. */

@@ -247,7 +247,7 @@ Contrat complet et commenté : `lib/fps/protocole.ts` (ne change qu'avec le clie
 ## Rocket Muche en ligne (chemin `/rocket`)
 
 Rocket Muche (mode « Rocket League » de la vue Palantir, `lib/rocket/`) se joue aussi à deux en ligne. Spec : `docs/superpowers/specs/2026-11-08-rocket-en-ligne-design.md` ; contrat :
-`lib/rocket/reseau/protocole.ts` (`VERSION_ROCKET = 1`, indépendante de `VERSION_PROTOCOLE` de l'arène, qui n'est PAS touchée).
+`lib/rocket/reseau/protocole.ts` (`VERSION_ROCKET = 2`, indépendante de `VERSION_PROTOCOLE` de l'arène, qui n'est PAS touchée).
 
 * **Chemin** : un seul écouteur HTTP `upgrade` (`src/index.ts`) aiguille par chemin : `/rocket` va à `src/rocket.ts` (`creerServeurRocket`), tout le reste à l'arène exactement comme avant (le filtre `ORIGINES` est partagé).
   Traefik n'a rien de nouveau à savoir (la règle est `Host(...)` seulement).

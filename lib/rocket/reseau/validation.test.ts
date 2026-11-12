@@ -56,7 +56,7 @@ describe("nettoyerNom", () => {
 
 describe("lireMessageClient : messages valides", () => {
   it("bonjour sans et avec reprise", () => {
-    expect(lireMessageClient({ t: "bonjour", v: VERSION_ROCKET, nom: "Alice" })).toEqual({ t: "bonjour", v: 1, nom: "Alice" });
+    expect(lireMessageClient({ t: "bonjour", v: VERSION_ROCKET, nom: "Alice" })).toEqual({ t: "bonjour", v: VERSION_ROCKET, nom: "Alice" });
     expect(lireMessageClient({ t: "bonjour", v: 1, nom: "Alice", reprise: { code: "bcdf", joueur: 3, jeton: JETON } }))
       .toEqual({ t: "bonjour", v: 1, nom: "Alice", reprise: { code: "BCDF", joueur: 3, jeton: JETON } });
     expect(lireMessageClient({ t: "bonjour", v: 1, nom: "A", reprise: null })).toEqual({ t: "bonjour", v: 1, nom: "A" });
