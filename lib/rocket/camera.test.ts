@@ -25,14 +25,16 @@ function voiture(p: Vec3, cap = 0, extra: Partial<EtatVoiture> = {}): EtatVoitur
     id: 0, equipe: "bleue", slot: 0, humain: true, nom: "Moi", p, v: [0, 0, 0], w: [0, 0, 0], base: baseDepuisCap(cap), boost: 33, rouesContact: 4,
     normaleSurface: [0, 1, 0], auSol: true,
     saut: { aSaute: false, temps: 0, tenue: false, secondUtilise: false, tempsEnLAir: 0, depuisFinSaut: 0 },
-    flip: { actif: false, temps: 0, dir: [0, 0], stall: false, verrouTangage: 0 }, redressement: { actif: false, temps: 0 },
+    flip: { actif: false, temps: 0, dir: [0, 0], stall: false, verrouTangage: 0 }, redressement: { actif: false, temps: 0, signe: 1 }, contactMonde: { actif: false, normale: [0, 1, 0] }, supersoniqueDepuis: 0, frein: 0,
+    pneus: { angle: 0, moteur: 0, frein: 0, lat: [0, 0, 0, 0], long: [0, 0, 0, 0] },
     supersonique: false, boostActif: false, boostDepuis: 0, derapage: false, demolie: false, reapparitionDans: 0, figee: false,
-    dernierContactBalleTick: -1e9, dernierBumpTick: -1e9, sautPrecedent: false,
+    dernierContactBalleTick: -1e9, derniereImpulsionPsyonixTick: -1e9, bumpAutreId: -1, bumpDelaiTick: -1e9, rouesBalle: [false, false, false, false],
+    normalesRouesBalle: [[0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0]], vitesseEnAttente: [0, 0, 0], sautPrecedent: false,
     stats: { buts: 0, passes: 0, arrets: 0, tirs: 0, demolitions: 0, demolie: 0, touches: 0, points: 0 },
     ...extra,
   };
 }
-const balleA = (p: Vec3): EtatBalle => ({ p, v: [0, 0, 0], w: [0, 0, 0], dernierToucheur: null, avantDernierToucheur: null });
+const balleA = (p: Vec3): EtatBalle => ({ p, v: [0, 0, 0], w: [0, 0, 0], dernierToucheur: null, avantDernierToucheur: null, vitesseEnAttente: [0, 0, 0] });
 const entree = (o: Partial<{ balleCam: boolean; regard: [number, number]; arriere: boolean }> = {}) => ({ balleCam: false, regard: [0, 0] as [number, number], arriere: false, ...o });
 
 /** Fait vivre la caméra `n` images de 1/60 s. */

@@ -129,6 +129,42 @@ describe("cerveau : aériens", () => {
   });
 });
 
+describe("cerveau : flip de vitesse", () => {
+  /** Balle posée loin devant un bot sans boost, adversaire parqué : rend le nombre de flips de vitesse et la vitesse maximale atteinte. */
+  function ligneDroite(niveau: NiveauBot): { flips: number; vMax: number } {
+    reinitialiserStatsBots();
+    const m = creerMonde(cfg({ format: "1v1", graine: 3 }), arene);
+    m.voitures[1].p = [-30, 0.17, 30];
+    let garde = 0;
+    while (m.phase === "decompte" && garde++ < 1000) pasMonde(m, m.voitures.map(() => ENTREES_NULLES()));
+    m.voitures[0].p = [20, 0.17, -40];
+    m.voitures[0].boost = 0;
+    // aucun plot : la vitesse ne peut venir que du gaz et des flips
+    for (const pl of m.plots) { pl.actif = false; pl.recharge = 1e9; }
+    // (un toucheur : ce n'est plus un coup d'envoi ; une vitesse infime : une balle sans vitesse dort)
+    m.balle.dernierToucheur = { idVoiture: 1, equipe: "orange", temps: m.temps };
+    m.balle.p = [20, BALLE.rayon + 0.02, 38]; m.balle.v = [0, 0, 0.01]; m.balle.w = [0, 0, 0];
+    let vMax = 0;
+    simuler(m.config, { bleue: niveau, orange: niveau }, {
+      dureeS: 4, sansCerveau: [1],
+      surPas: (mm) => { const v = mm.voitures[0]; vMax = Math.max(vMax, Math.hypot(v.v[0], v.v[2])); },
+    }, m);
+    return { flips: statsBots.sequences["vitesse"] ?? 0, vMax };
+  }
+
+  it("un All-Star sans boost flippe pour dépasser les 14,1 m/s du gaz seul", () => {
+    const r = ligneDroite("allstar");
+    expect(r.flips).toBeGreaterThanOrEqual(1);
+    expect(r.vMax).toBeGreaterThan(17);
+  });
+
+  it("un Débutant ne flippe pas : il plafonne à la vitesse du gaz", () => {
+    const r = ligneDroite("debutant");
+    expect(r.flips).toBe(0);
+    expect(r.vMax).toBeLessThan(14.3);
+  });
+});
+
 describe("cerveau : rotation et plots", () => {
   /** Moyenne du nombre de voitures d'une équipe à moins de 14 m de la balle, et boost moyen, en 3v3. */
   function mesure(niveau: NiveauBot): { proches: number; boost: number } {

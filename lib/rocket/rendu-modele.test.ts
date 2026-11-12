@@ -231,7 +231,7 @@ describe("cages", () => {
 
 describe("plots", () => {
   it("visuel : plein quand actif, se remplit selon la recharge", () => {
-    const e = (actif: boolean, recharge: number): EtatPlot => ({ id: 0, actif, recharge });
+    const e = (actif: boolean, recharge: number): EtatPlot => ({ id: 0, actif, recharge, verrou: -1 });
     expect(visuelPlot(e(true, 0), false)).toEqual({ actif: true, remplissage: 1 });
     expect(visuelPlot(e(false, PLOT.petit.rechargeS), false).remplissage).toBe(0);
     expect(visuelPlot(e(false, PLOT.petit.rechargeS / 2), false).remplissage).toBeCloseTo(0.5, 9);

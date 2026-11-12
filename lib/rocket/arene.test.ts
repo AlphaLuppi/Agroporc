@@ -62,9 +62,9 @@ describe("arène : valeurs analytiques", () => {
   it("les dimensions dérivées valent les valeurs officielles", () => {
     expect(STADE.demiLargeur * 2).toBeCloseTo(81.92, 9);
     expect(STADE.demiLongueur * 2).toBeCloseTo(102.4, 9);
-    expect(STADE.hauteur).toBeCloseTo(20.44, 9);
+    expect(STADE.hauteur).toBeCloseTo(20.48, 9); // RocketSim ARENA_HEIGHT = 2048 uu
     expect(GEOMETRIE_ARENE.fondBut).toBeCloseTo(60, 9);
-    expect(BUT.demiLargeur * 2).toBeCloseTo(17.86, 9);
+    expect(BUT.demiLargeur * 2).toBeCloseTo(17.8551, 9); // RocketSim APPROX_GOAL_HALF_WIDTH = 892,755 uu
   });
 });
 
@@ -426,21 +426,32 @@ describe("arène : biseau des raccords à côté des poteaux", () => {
     expect(hauteur(22, z)).toBeCloseTo(plein, 2);
   });
 
-  it("une voiture qui longe le mur du fond traverse la cage et le biseau sans choc", async () => {
+  it("une voiture qui longe le mur du fond traverse la cage et le biseau sans choc dur, sans ralentir, sur ses roues", async () => {
     const { creerVoiture, pasVoiture } = await import("./voiture");
     const { ENTREES_NULLES, PAS_S, VOITURE } = await import("./contrat");
+    // Le biseau monte de 23° le long du mur et de 45° vers lui : à 1,2 m du mur, le coin avant bas de la caisse (hitbox de RocketSim :
+    // plus large que la voie des roues) l'effleure avant que la roue n'y monte. La vitesse normale de ce frôlement est la projection
+    // de la vitesse sur la normale du plan, v × R / √(R² + 2T²) = 0,29 v : c'est la géométrie du biseau, pas un mur. Avec l'ancienne
+    // hitbox (1,25 cm plus étroite et plus haute) il passait juste sous le seuil de l'événement « choc » (3 m/s), d'où l'ancien
+    // `choc = 0` ; on exige maintenant que le choc ne dépasse jamais ce frôlement (un obstacle frontal donnerait ≈ v), et l'on durcit
+    // le reste : la voiture ne ralentit pas (10 m/s au lieu de 6) et finit sur ses roues.
+    const frolement = STADE.rayonSol / Math.hypot(STADE.rayonSol, BUT.longueurBiseau, BUT.longueurBiseau);
     for (const sens of [-1, 1]) {
       // départ dans l'axe de la cage, à 1 m du mur, cap vers le côté
       const v = creerVoiture({ id: 0, equipe: "bleue", slot: 0, humain: true, nom: "essai", p: [0, VOITURE.hauteurRepos, zMur - 1.2], cap: (sens * Math.PI) / 2 });
-      let choc = 0, vMin = Infinity;
+      let choc = 0, vMin = Infinity, vMax = 0;
       for (let i = 0; i < 240; i++) {
         const evs = pasVoiture(a, v, { ...ENTREES_NULLES(), accel: 1 }, PAS_S, i);
         for (const e of evs) if (e.t === "choc") choc = Math.max(choc, e.vitesse);
-        if (i > 120) vMin = Math.min(vMin, Math.hypot(v.v[0], v.v[1], v.v[2]));
+        const vit = Math.hypot(v.v[0], v.v[1], v.v[2]);
+        vMax = Math.max(vMax, vit);
+        if (i > 120) vMin = Math.min(vMin, vit);
       }
-      expect(choc).toBe(0);
+      expect(choc).toBeLessThan(frolement * vMax * 1.1);
       expect(Math.abs(v.p[0])).toBeGreaterThan(hw + 3);
-      expect(vMin).toBeGreaterThan(6);
+      expect(vMin).toBeGreaterThan(10);
+      expect(v.rouesContact).toBeGreaterThanOrEqual(2);
+      expect(v.base.haut[1]).toBeGreaterThan(0.8);
     }
   });
 

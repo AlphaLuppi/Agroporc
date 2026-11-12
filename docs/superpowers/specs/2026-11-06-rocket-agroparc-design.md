@@ -22,6 +22,8 @@ Multijoueur en ligne, voitures autres que l'Octane, mutateurs, saisons / classem
 
 Les constantes de Rocket League sont reprises de la documentation communautaire (RLBot, RocketSim, « Rocket League mechanics » de Sam Mish), citées de mémoire. Chaque mécanique est classée dans la table du § 13 : **[RL]** valeur d'origine, **[~]** reproduction approchée (formule du projet calée par un test de ressenti). Aucune ne prétend être le code de Psyonix.
 
+**Depuis le 2026-11-12**, la physique est alignée sur la SOURCE de RocketSim (réimplémentation libre de la physique de Rocket League : `RLConst.h`, `Car.cpp`, `Ball.cpp`, `Arena.cpp`, `btVehicleRL.cpp`, `BoostPad.cpp`, `CarConfig.cpp`, `GameEventTracker.cpp`), lue fichier par fichier et non plus citée de mémoire : constantes, formules, ordre des opérations et nombres de pas. Ce qui dépend du moteur Bullet ou du maillage de collision ne se transpose pas (le stade reste une distance signée, la voiture roule sans suspension) : on en reprend les constantes et la logique, pas le solveur. La table du § 13 dit ce qui vient de RocketSim et ce qui reste approché ; le § 15 liste ce que cet alignement remplace dans les §§ 3 à 7, dont le détail (écrit avant) n'a pas été réécrit : en cas de divergence, les §§ 13 et 15 et les commentaires de `contrat.ts` priment.
+
 ## 1. Conventions
 
 - **Unités** : mètres, secondes, radians. Les constantes de RL (1 uu = 1 cm) sont converties par `uu()` dans `contrat.ts` et la valeur d'origine est citée en commentaire.
@@ -66,14 +68,14 @@ Le repère de la scène passe par `localVersScene` / `sceneVersLocal` (`contrat.
 |---|---|---|
 | demi-largeur (murs latéraux) | 40,96 | 4096 |
 | demi-longueur (plan des buts) | 51,20 | 5120 |
-| hauteur du plafond | 20,44 | 2044 |
+| hauteur du plafond | 20,48 | 2048 (RocketSim `ARENA_HEIGHT`) |
 | pan coupé des coins | 11,52 | 1152 |
 | rayon de raccord sol / murs, murs / plafond, arêtes verticales | 2,56 | ~256 |
-| ouverture du but : largeur × hauteur | 17,86 × 6,42775 | 1786 × 642,775 |
+| ouverture du but : largeur × hauteur | 17,8551 × 6,42775 | 1785,51 × 642,775 |
 | profondeur du but (jusqu'à Z = ±60) | 8,80 | 880 |
 | ligne de but pour marquer (centre de balle) | Z = ±(51,2425 + 0,9125) | 5124,25 + rayon |
 
-Plan : un rectangle de ±40,96 × ±51,20 dont les quatre coins sont coupés de 11,52 m sur chaque mur ; le plan de coupe est `|x| + |z| = 80,64`. Les buts sont des boîtes de ±8,93 (X) × 0 à 6,42775 (Y) × 51,20 à 60,00 (|Z|), ouvertes sur le terrain.
+Plan : un rectangle de ±40,96 × ±51,20 dont les quatre coins sont coupés de 11,52 m sur chaque mur ; le plan de coupe est `|x| + |z| = 80,64`. Les buts sont des boîtes de ±8,92755 (X) × 0 à 6,42775 (Y) × 51,20 à 60,00 (|Z|), ouvertes sur le terrain.
 
 ### 3.2 Le terrain est une SDF continue
 
@@ -263,8 +265,12 @@ Aucune triche : même physique, mêmes entrées que l'humain, aucune téléporta
 | rotation, plots | non, 25 % | oui, 70 % | oui, 100 % |
 | démolitions | non | non | oui |
 | prévision de la balle | 0,6 s | 1,5 s | 3 s |
+| placement (depuis le 2026-11-12) | aucun : fonce sur la balle, la frappe dans le sens où il arrive | derrière la balle sur la ligne de frappe, contourne, se replie, barre la route | idem |
+| vitesse sans boost | 14 m/s (pas de flip) | flip de vitesse (≈ 19 puis 22 m/s) | idem |
 
 Critères : sur 20 graines, une partie 3v3 Pro contre Pro de 5 min se termine sans NaN, sans voiture hors du stade (`sd(origine) > −0,3 m`), avec au moins un but dans 70 % des parties ; un All-Star bat un Débutant dans ≥ 80 % des parties 1v1 de 3 min ; aucune voiture ne reste immobile plus de 6 s hors décompte ; un bot ne se retourne pas définitivement (retombe sur ses roues après un saut).
+
+**Réglage sur la physique de RocketSim (2026-11-12)** : comportements ajoutés ou changés, mesures et résultats au § 15 (« Bots réglés sur cette physique ») ; la description ci-dessus reste vraie pour le reste (pipeline, rôles, aériens, profils).
 
 ## 8. Contrôles et caméra
 
@@ -403,23 +409,37 @@ Détail par module (tout ce qui n'est pas dit ici est laissé à l'agent, dans l
 
 ## 13. Table de fidélité
 
-| mécanique | statut |
-|---|---|
-| dimensions du stade, cages, positions des plots, valeurs et recharges, coups d'envoi | [RL] |
-| gravité, vitesses max, accélération du gaz (courbe), frein, roule libre, boost (accélération, conso, 33,33 initial) | [RL] |
-| supersonique 2200 / 2100 | [RL] |
-| saut (impulsion, maintien 0,2 s dont 0,025 s garantis à 62 %, fenêtre 1,25 s comptée depuis la FIN du premier saut, sans limite si l'on n'a pas sauté) | [RL] (RocketSim) |
-| air control (couples, amortissements, plafond 5,5 rad/s) | [RL] (formule de RL ; valeurs reprises d'une analyse communautaire) |
-| courbure du virage selon la vitesse | [RL] (table) ; modèle de pneu en lui-même [~] |
-| dérapage, redressement, collage sur les murs, alignement | [~] |
-| flip : impulsion, échelles de vitesse (1,0 / 1,9 / 2,5 × 16/15), couple du dodge (roulis 260, tangage 224 rad/s²) plafonné à 5,5 rad/s, annulation qui ne coupe que le tangage (speed flip), contrôle aérien seulement pendant l'annulation, amortissement vertical sur tout le flip, verrou de tangage 0,95 s, stall sans couple | [RL] (valeurs et logique de RocketSim) |
-| balle : rayon, masse, restitution, frottement, vitesses max | [RL] |
-| impulsion voiture ↔ balle (courbe, échelles 0,35 / 0,65), restitution 0, frottement 2 | [RL] ; inertie [~] |
-| bump et démolition | démolition [RL] (supersonique, 3 s) ; bump [RL] (courbes de RocketSim, pare-chocs avant) |
-| minuteur, prolongation, attente de la balle au sol | [RL] |
-| bots | original |
-| caméra (paramètres par défaut, ball cam rigide à horizon droit) | [RL] pour les paramètres et le principe, [~] pour les bornes de visée |
-| raccord de sol biseauté à côté des poteaux, rejeu du but vu du buteur | [~] |
+**[RS]** : constante, formule ET logique lues dans la source de RocketSim (fichier cité), vérifiées par un test qui porte la valeur attendue. **[~]** : approché, parce que la mécanique d'origine dépend du solveur de Bullet ou du maillage de collision, ou parce qu'elle est propre au projet. Unités : 1 m = 100 uu.
+
+| mécanique | statut | source / ce qui reste approché |
+|---|---|---|
+| dimensions du stade (±4096 × ±5120 × 2048 uu), ouverture de la cage (±892,755 × 642,775 uu), ligne de but (5124,25 uu + rayon de la balle), positions, valeurs et recharges des 34 plots, 5 coups d'envoi, 4 réapparitions | [RS] | `RLConst.h`, `Arena.cpp` (`IsBallScored`) |
+| forme des parois : raccords de 2,56 m, pans coupés, intérieur des cages | [~] | distance signée analytique (`arene.ts`), pas le maillage de collision de RL (absent de la source) ; profondeur de cage 8,80 m et raccords repris du wiki RLBot ; biseau des poteaux voulu par le joueur |
+| gravité 650, vitesses max (voiture 2300 uu/s et 5,5 rad/s, balle 6000 uu/s et 6 rad/s), plafonds posés APRÈS l'intégration | [RS] | `RLConst.h`, `Car::_FinishPhysicsTick`, `Ball::_FinishPhysicsTick` |
+| ordre d'un pas de voiture : forces cumulées puis intégrées, impulsions immédiates, pneus calculés avec les réglages du pas précédent, minuteurs en simple précision (24 pas de maintien du saut, 78 de couple de dodge, 12 de boost minimal, 360 de réapparition) | [RS] | `Car::_PreTickUpdate`, `_PostTickUpdate`, pas de Bullet |
+| moteur (courbe du gaz, ÷ 4 sous trois roues), frein plein face à la marche, roue libre 15 %, arrêt franc sous 25 uu/s, gaz réel forcé par le boost | [RS] | `Car::_UpdateWheels`, `RLConst.h` |
+| pneus roue par roue : impulsion latérale −0,2 × v × masse effective, adhérences selon le glissement et la pente, angles de braquage selon la vitesse, frein à main analogique (5 /s, 2 /s) | [RS] pour les formules | `btVehicleRL::calcFrictionImpulses`, courbes de `RLConst.h` ; [~] : une roue « touche » selon la distance de la SDF à son centre, pas selon un rayon lancé sous son point d'attache |
+| suspension (ressorts, amortisseurs, débattement) | [~] non repris | l'architecture est sans suspension : impulsion non élastique au point de chaque roue qui s'enfonce |
+| collage à la surface, alignement (auto-roll), redressement sur le toit (auto-flip) | [RS] | `Car::_UpdateWheels` (sticky), `_UpdateAutoRoll`, `_UpdateAutoFlip` ; le déclencheur du redressement lit le contact de la caisse, résolu par points [~] |
+| saut (875/3 uu/s, 4375/3 uu/s², 0,025 à 0,2 s, garde de 0,05 s), fenêtre de 1,25 s depuis la fin du saut, double saut | [RS] | `Car::_UpdateJump`, `_UpdateDoubleJumpOrFlip` |
+| flip : impulsion 500 uu/s et échelles 1 / 1,9 / 2,5 × 16/15, couple 260 / 224 rad/s² pendant 0,65 s, annulation qui ne coupe que le tangage (speed flip), stall, amortissement vertical 0,35 entre 0,15 et 0,65 s, verrou de tangage 0,95 s | [RS] | `Car::_UpdateAirTorque`, `_UpdateDoubleJumpOrFlip` |
+| contrôle aérien : couples 130 / 95 / 400 et amortissements 30 / 20 / 50 × `CAR_TORQUE_SCALE`, roulis toujours amorti, interdit dès qu'une roue touche, gaz en l'air 200/3 uu/s² | [RS] | `Car::_UpdateAirTorque` |
+| boost : 2975/3 uu/s² au sol, 3175/3 en l'air, 100/3 par seconde, 12 pas au moins, 33,33 au départ | [RS] | `Car::_UpdateBoost` |
+| supersonique : 2200 uu/s, maintien à 2100 pendant 1 s au plus | [RS] | `Car::_PostTickUpdate` |
+| hitbox de l'Octane (120,507 × 86,6994 × 38,6591 uu, décalage 13,8757 ; 0 ; 20,755), roues, portées 11,0 / 11,8 uu, inertie de boîte pleine | [RS] | `CarConfig.cpp` |
+| caisse ↔ décor : restitution 0,3, frottement 0,3, pas de rebond sous 10 uu/s | [RS] pour les constantes | `RLConst.h` ; [~] : contact par 14 points d'échantillonnage (coins et centres de face), correction de position |
+| balle : rayon 91,25, masse 30, traînée 3 %/s, aucun amortissement angulaire ni frottement de roulement, restitution 0,6, frottement 0,35, seuil de rebond 10 uu/s, marge de contact 1,905 uu (repos à 93,15), sommeil à vitesse nulle, plafonds après tous les contacts | [RS] | `Ball.cpp`, `Arena.cpp`, `RLConst.h` ; [~] : un seul contact par pas contre la SDF, garde-fou qui ressort une balle enfoncée par une voiture |
+| voiture ↔ balle : restitution 0, frottement 2, impulsion de Psyonix (depuis l'ORIGINE de la voiture, échelles 0,35 / 0,65, courbe, plafond 4600 uu/s, un pas sauté entre deux ; calculée sur la balle d'AVANT les contacts du pas et mise en attente jusqu'à la fin du pas, `EtatBalle.vitesseEnAttente` : à deux voitures sur la balle au même pas, elle ne dépend pas de l'ordre des voitures), contact dès 1,905 uu, arrondi de 2 uu | [RS] pour les constantes et la logique | `Ball::_OnHit`, `Ball::_velocityImpulseCache`, `Ball::_FinishPhysicsTick`, `RLConst.h` ; [~] : détection boîte / sphère et résolution séquentielle maison au lieu du solveur de Bullet (le choc PHYSIQUE, lui, reste résolu voiture après voiture) |
+| flip reset : trois roues dont le rayon de suspension touche la balle valent un retour au sol ; ces roues comptent aussi pour le moteur (÷ 4 sous trois roues) et l'auto-roll (1 à 3 roues), et la normale de la balle sous chacune entre dans la direction des contacts (collage, auto-roll) | [RS] pour la règle | `btVehicleRL` (rayons contre la balle, `getUpwardsDirFromWheelContacts`), `Car.cpp` (`numWheelsInContact`) ; [~] : ces roues ne donnent pas de force de pneu, et le collage attend une roue sur le décor (comme RocketSim : `m_isInContactWithWorld`) |
+| voiture ↔ voiture : restitution 0,1, frottement 0,09 | [RS] pour les constantes | `RLConst.h` ; [~] : SAT maison (15 axes) |
+| bump (courbes sol / air / vers le haut, pare-chocs à plus de 64,5 uu, délai de 0,25 s = 30 pas par attaquant et par victime) et démolition (supersonique, mêmes gardes, 3 s) ; conditions lues sur les vitesses d'AVANT les contacts du pas, vitesse du bump en attente jusqu'à la fin du pas (`EtatVoiture.vitesseEnAttente`), puis plafond de 23 m/s une fois : à trois voitures au même pas, un bump ne passe pas d'une paire à l'autre | [RS] | `Arena::_BtCallback_OnCarCarCollision`, `Car::_velocityImpulseCache`, `Car::_FinishPhysicsTick`, `RLConst.h` |
+| plots : origine de la voiture dans le cylindre (144 / 208 uu, ± 95 uu), verrou par boîte englobante, recharge en simple précision (480 / 1201 pas) | [RS] | `BoostPad.cpp` |
+| réapparition : 4 places tirées au hasard, lâchée de 36 uu, 33,33 de boost, 360 pas | [RS] | `Car::Respawn`, `RLConst.h` |
+| coup d'envoi : 5 places mélangées, la même pour les deux équipes, balle endormie à 93,15 uu | [RS] | `Arena::ResetToRandomKickoff` |
+| buteur (dernière touche de l'équipe, 4 s), passeur (2 s), tir cadré (1750 uu/s, jugé 0,3 s après la touche), arrêt | [RS] | `GameEventTracker.cpp`, `Arena::IsBallProbablyGoingIn` |
+| minuteur, prolongation en but en or, attente de la balle au sol, célébration, rejeu du but, barème de points | [~] | règles de Rocket League écrites pour le projet (RocketSim n'a pas de match) |
+| bots | original | réglés sur la physique ci-dessus, cf. § 7 et § 15 |
+| caméra (paramètres par défaut, ball cam rigide à horizon droit) | [RL] pour les paramètres et le principe, [~] pour les bornes de visée | |
 
 ## 14. Documentation à tenir à jour
 
@@ -428,10 +448,20 @@ Détail par module (tout ce qui n'est pas dit ici est laissé à l'agent, dans l
 ## 15. Écarts constatés à l'intégration
 
 - **Stade** : cage et plancher, cf. § 3.2. `Arene.normale` est un gradient analytique (pas de différences centrées) ; `surfaceProche().distance` est NON signée ; `|∇sd|` descend vers 0,7 à moins de 15 cm des poteaux et de la barre (union douce).
-- **Balle** : premier rebond depuis 5 m à 0,343 × la hauteur (la traînée de 3 %/s des constantes de RL donne −5 % sur 0,36) ; au-dessus de 5,5 m/s le plafond de spin de 6 rad/s empêche de rouler sans glisser (la balle ralentit d'environ 3 m/s² à 30 m/s).
-- **Voiture** : demi-gravité de collage au plafond (sinon elle flotte puis décroche), frottement de Coulomb μ = 0,35 du corps contre le décor, flip reset ajouté dans `contactVoitureBalle` (`rouesSurLaBalle` exporté, aucun événement), une seule démolition retenue quand deux supersoniques se percutent, délai de bump par voiture.
-- **Match** : positions de coup d'envoi tirées au hasard (même permutation pour les deux équipes) ; tir cadré compté jusqu'à 45 m de la ligne (12 m pour un arrêt).
-- **Bots** : pas de speed flip ni de demi-flip ; le flip précoce du coup d'envoi (All-Star) est désactivé (`BOTS.activeFlipEnvoi`) depuis que le flip suit RocketSim : il fait perdre plus de temps qu'il n'en gagne.
+- **Balle**, **Voiture**, **Match** : les écarts notés ici à la première intégration (demi-gravité de collage au plafond, frottement μ = 0,35 de la caisse, une seule démolition retenue, délai de bump par voiture, tir cadré jusqu'à 45 m, arrêt à 12 m) n'existent plus : ils sont remplacés par l'alignement sur RocketSim ci-dessous.
 - **Retours du joueur (2026-11-11)** : (1) ball cam refaite (`camera.ts`) : suivi rigide de la droite voiture → balle (cap et élévation suivis à part, cap borné à 10 rad/s quand la balle passe au-dessus du toit), horizon toujours droit (haut du monde, même sur un mur), visée qui monte jusqu'à 78° pour une balle haute (`elevationViseeBalle` : la balle passe avant la voiture), plus de bascule quand la balle touche la voiture, secousses réduites ; (2) cages lisses : le raccord arrondi sol / mur du fond formait un aileron de 2,56 m dans le terrain de chaque côté de la cage ; il s'efface maintenant en biseau sur `BUT.longueurBiseau` = 6 m (`arene.ts` § 3 bis, même plan dans `biseauterCoque` du rendu), le mur tombe droit au poteau ; (3) saut et flip alignés sur RocketSim (table du § 13) : le speed flip existe (flip diagonal, annulation au manche, roulis Q / E) ; (4) rejeu du but (`rejeu-but.ts`) : la célébration passe de 4,5 à 1,25 s de jeu (2,5 s réelles au ralenti), puis le but est rejoué de derrière le buteur en ball cam (4,5 s avant, 0,9 s après au ralenti, Espace ou A pour passer), physique figée, avant le coup d'envoi ; (5) sons : saut et double saut identiques (le double saut ne monte plus dans l'aigu), flip en whoosh de bruit, moteur grave (46 à 132 Hz, sous-octave en triangle) au lieu des dents de scie à 260 Hz.
+- **Alignement sur la source de RocketSim (2026-11-12)**, trois lots (voiture ; balle et contacts ; stade et match) puis intégration. Ce qui suit REMPLACE le détail des §§ 3 à 6 là où ils divergent (table du § 13 pour la liste complète, commentaires de `contrat.ts` pour chaque constante) :
+  - **§ 3 (stade)** : plafond à 20,48 m, cage de ±8,92755 m. Le reste de la géométrie est inchangé ; le rendu lit `STADE` et `BUT`, rien n'y est écrit en dur.
+  - **§ 4 (balle)** : un pas sans sous-pas dans l'ordre de Bullet (traînée, contact détecté sur la position du début du pas à moins de rayon + 1,905 cm, gravité, réponse en vitesse seulement, intégration, plafonds) ; plus d'amortissement angulaire ni de frottement de roulement (une balle qui roule ne ralentit que par la traînée) ; seuil de rebond 0,1 m/s ; une balle sans vitesse ni spin dort (elle ne tombe pas : poser une balle en l'air sans vitesse dans un test ou par `window.__rocket.balle` la laisse suspendue jusqu'à ce qu'on la touche) ; plafonds de 60 m/s et 6 rad/s posés une fois, après les contacts avec les voitures. [~] ajouté : la balle enfoncée par une voiture au-delà de ce que sa vitesse explique est ressortie (RocketSim résout les deux contacts ensemble).
+  - **§ 5 (voiture)** : hitbox et roues de `CarConfig.cpp` ; virage, dérapage et adhérence viennent du modèle de pneu roue par roue (plus de lacet cinématique : `CONDUITE.courbeCourbure`, remesurée, ne sert plus qu'aux bots) ; frein à main analogique ; collage dès une roue en contact, sans palier : arrêtée sur un mur la voiture glisse, **au plafond elle tombe** (comme dans RL) ; saut seulement avec trois roues, double saut ou dodge avec une ou deux ; contrôle aérien coupé dès qu'une roue touche ; redressement = 2 m/s vers la surface puis 50 rad/s² autour de l'avant pendant 0,4 s × |roulis| / π ; alignement = auto-roll de RocketSim ; plafond de 23 m/s sans condition en fin de pas ; supersonique tenu à 21 m/s une seconde au plus. Flip avant mesuré : 269° après les 78 pas de couple, 330° à 0,95 s (attendus d'après la logique de RocketSim : 268° / 329°).
+  - **§ 5.9, 5.10 (contacts)** : impulsion de Psyonix depuis l'origine de la voiture, un pas sur deux en contact continu (une balle posée en avant de l'origine dérive : le dribble demande d'équilibrer) ; contact voiture ↔ balle dès 1,905 cm ; voiture ↔ voiture à frottement 0,09 ; bump et démolition décidés ensemble, par attaquant (approche sur les origines, pare-chocs, délai de 30 pas par couple), un bump de l'un peut coexister avec une démolition par l'autre ; flip reset par les rayons de suspension, compté comme un retour au sol ; impulsion de Psyonix et vitesse des bumps mises en attente jusqu'à la fin du pas et calculées sur l'état d'avant les contacts (comme les rappels de contact de RocketSim, qui passent avant le solveur) : leur issue ne dépend plus de l'ordre des voitures dans la liste ; les roues posées sur la balle comptent dans le nombre de roues en contact partout où RocketSim lit `numWheelsInContact` (moteur, auto-roll).
+  - **§ 6 (match)** : plots pris par l'ORIGINE de la voiture avec verrou par boîte englobante ; réapparition sur 4 places propres (au hasard, lâchée de 36 cm) et non sur une place de coup d'envoi ; buteur = dernière touche de l'équipe dans les 4 s, passe dans les 2 s ; un tir n'est compté qu'au-dessus de 17,5 m/s (63 km/h) s'il file toujours au but 0,3 s après la touche, et il n'y a d'arrêt que sur un tir compté.
+  - **Ce qui ne se transpose pas** (reste [~]) : la suspension (ressorts, amortisseurs), le solveur de contacts de Bullet (caisse ↔ décor par points, boîte ↔ sphère et SAT maison, un contact balle ↔ décor par pas), le maillage du stade (distance signée analytique, cages et biseau du projet), la portée des roues (distance de la SDF au centre de la roue, pas un rayon sous le point d'attache).
+  - **Test du biseau recalé** (`arene.test.ts`) : avec la hitbox de RocketSim (1,25 cm plus large et plus basse), le coin avant bas de la caisse effleure le biseau (pente de 23° le long du mur, 45° vers lui) à 0,29 × la vitesse, soit 3,1 m/s à 11,6 m/s : juste au-dessus du seuil de l'événement « choc » (3 m/s), que l'ancienne hitbox frôlait par en dessous. L'ancien `choc = 0` devient « jamais plus que ce frôlement géométrique » (un obstacle frontal donnerait ≈ la vitesse entière) ; le reste est durci : la voiture ne descend pas sous 10 m/s (6 avant) et finit sur ses roues. Ni la physique ni la forme du biseau n'ont été touchées.
+- **Bots réglés sur cette physique (2026-11-12)**. Mesures : une frappe au sol sans flip lance une balle au repos à ≈ 1,35 × la vitesse de la voiture, 16° d'élévation (au-dessus de la barre à pleine vitesse au-delà de 30 m) ; un flip de frappe tire à plat, 25 à 32 m/s ; un flip avant sans boost fait passer de 14,1 à ≈ 19 m/s et la vitesse se garde. Changements (`bots.ts`, aucun changement de physique ni de `PROFILS_BOT`) :
+  - Débutant (sans `rotation`) : plus aucun sens du placement, il fonce sur la balle et la frappe dans le sens où il arrive ; son bruit de visée est corrélé dans le temps (0,7 s) au lieu d'un bruit blanc qui se moyennait ; il ne force plus le boost au coup d'envoi. Avant, il plaçait ses frappes aussi bien qu'un All-Star et gagnait une partie sur deux contre lui.
+  - Pro et All-Star : approche sur la LIGNE de frappe (point visé en avant de sa projection, à travers la balle une fois dans l'axe) ; plus de contact visé au-delà du moment où un adversaire peut toucher la balle ; près de leur cage, frappe de côté si elle est sûre, sinon repli devant la cage, et barrage de la trajectoire d'une balle qui entre ; jamais de flip dans une direction dangereuse ; frein quand la cible est à l'intérieur du cercle de virage (ils tournaient autour) ; plots pris sur la route ; **flip de vitesse** sans boost ; démolition (All-Star) tentée seulement lancé, sur un adversaire droit devant, balle hors de son camp.
+  - Résultats 1v1 de 3 min : All-Star contre Débutant 16 victoires, 1 nul, 3 défaites sur les graines 1 à 20 du test (seuil : 16), 100 victoires, 6 nuls, 14 défaites sur les graines 1 à 120 (83 %) ; avant ces réglages 6 sur 20 avec la nouvelle physique, 10 sur 20 avec l'ancienne (le critère du § 7 n'était déjà pas tenu). All-Star contre Pro 21 – 4 – 15, Pro contre Débutant 27 – 4 – 9 (40 graines). Le critère est tenu de peu : le seuil du test n'a pas été changé.
+  - Toujours pas de demi-flip ni de speed flip des bots ; le flip précoce du coup d'envoi reste désactivé (`BOTS.activeFlipEnvoi`, remesuré : il fait arriver plus tard) ; un coup d'envoi en diagonale part toujours vers le coin.
 - **Rendu** : pas de flash plein écran (pulsation des murs et du fond des cages, supprimée en mouvement réduit) ; lignes de 15 cm ; tableau d'affichage sur pieds au-dessus du Truck Muche.
-- **Intégration** : e2e `scripts/rocket/e2e_rocket.mjs` vert (9 étapes), captures dans `docs/medias/rocket/`.
+- **Intégration** : e2e `scripts/rocket/e2e_rocket.mjs` vert (9 étapes), captures dans `docs/medias/rocket/`. Après l'alignement sur RocketSim (2026-11-12) : `npx vitest run lib/rocket` 522 tests verts, campagne `ROCKET_LONG=1` 6 sur 6, e2e 10 étapes vertes sur un `next dev` déjà chaud (`E2E_URL`) ; à froid, l'étape 1 dépasse le délai du clic sur « Lancer » tant que le voile de chargement de la vue aérienne le recouvre (piège déjà connu).

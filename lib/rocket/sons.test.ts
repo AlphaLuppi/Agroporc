@@ -63,8 +63,10 @@ function voiture(id: number, p: Vec3, cap = 0, equipe: "bleue" | "orange" = "ble
   return {
     id, equipe, slot: 0, humain: id === 0, nom: `V${id}`, p, v: [0, 0, 0], w: [0, 0, 0], base: baseDepuisCap(cap), boost: 33, rouesContact: 4, normaleSurface: [0, 1, 0],
     auSol: true, saut: { aSaute: false, temps: 0, tenue: false, secondUtilise: false, tempsEnLAir: 0, depuisFinSaut: 0 }, flip: { actif: false, temps: 0, dir: [0, 0], stall: false, verrouTangage: 0 },
-    redressement: { actif: false, temps: 0 }, supersonique: false, boostActif: false, boostDepuis: 0, derapage: false, demolie: false, reapparitionDans: 0, figee: false,
-    dernierContactBalleTick: -1000, dernierBumpTick: -1000, sautPrecedent: false, stats: { buts: 0, passes: 0, arrets: 0, tirs: 0, demolitions: 0, demolie: 0, touches: 0, points: 0 },
+    redressement: { actif: false, temps: 0, signe: 1 }, contactMonde: { actif: false, normale: [0, 1, 0] }, supersoniqueDepuis: 0, frein: 0,
+    pneus: { angle: 0, moteur: 0, frein: 0, lat: [0, 0, 0, 0], long: [0, 0, 0, 0] }, supersonique: false, boostActif: false, boostDepuis: 0, derapage: false, demolie: false, reapparitionDans: 0, figee: false,
+    dernierContactBalleTick: -1000, derniereImpulsionPsyonixTick: -1000, bumpAutreId: -1, bumpDelaiTick: -1000, rouesBalle: [false, false, false, false],
+    normalesRouesBalle: [[0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0]], vitesseEnAttente: [0, 0, 0], sautPrecedent: false, stats: { buts: 0, passes: 0, arrets: 0, tirs: 0, demolitions: 0, demolie: 0, touches: 0, points: 0 },
   };
 }
 function monde(positions: Vec3[]): MondeRocket {
@@ -72,8 +74,8 @@ function monde(positions: Vec3[]): MondeRocket {
   return {
     config: DEFAUT_CONFIG(), arene: {} as MondeRocket["arene"], tick: 0, temps: 0, phase: "enJeu", tempsPhase: 0, tempsRestant: 300, prolongation: false, attenteSolBalle: false,
     score: { bleue: 0, orange: 0 }, dernierBut: null, voitures, idHumain: 0,
-    balle: { p: [0, BALLE.hauteurEngagement, 0], v: [0, 0, 0], w: [0, 0, 0], dernierToucheur: null, avantDernierToucheur: null },
-    plots: PLOTS.map((p) => ({ id: p.id, actif: true, recharge: 0 })), rng: creerRng(1),
+    balle: { p: [0, BALLE.hauteurEngagement, 0], v: [0, 0, 0], w: [0, 0, 0], dernierToucheur: null, avantDernierToucheur: null, vitesseEnAttente: [0, 0, 0] },
+    plots: PLOTS.map((p) => ({ id: p.id, actif: true, recharge: 0, verrou: -1 })), rng: creerRng(1),
     precedent: { voitures: voitures.map((v) => ({ p: [...v.p] as Vec3, base: copierBase(v.base) })), balle: { p: [0, 1, 0] } }, vainqueur: null,
   };
 }
