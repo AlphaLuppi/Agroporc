@@ -529,6 +529,27 @@ describe("car cam pendant un flip", () => {
     expect(images.length).toBeGreaterThan(0);
   });
 
+  it("raccrochage d'un half flip (avant retourné de 90 à 180 degrés) : la borne tient jusqu'au bout, aucune accélération quand le fondu finit", () => {
+    for (const degres of [90, 120, 143, 160, 180]) {
+      const { e, v } = volerFlip({ saut: true, tangage: -1 }, { images: IMAGES_AVANT_FLIP + 20 });
+      const dep = copie(e.dir);
+      // fin de flip avec l'avant tourné de `degres` autour de la verticale par rapport au cap gelé
+      const cap = Math.atan2(dep[0], dep[2]) + (degres * Math.PI) / 180;
+      const coupe = structuredClone(v);
+      coupe.flip.verrouTangage = 0; coupe.flip.actif = false;
+      coupe.base = { avant: [Math.sin(cap), 0, Math.cos(cap)], droite: [Math.cos(cap), 0, -Math.sin(cap)], haut: [0, 1, 0] };
+      let prec = copie(e.dir), pire = 0;
+      for (let i = 0; i < 120; i++) {
+        majCamera(e, CAMERA_DEFAUT, entree(), coupe, balleA([0, 1, 30]), arene, 1 / 60, 16 / 9, false);
+        expect(e.dir.every(Number.isFinite)).toBe(true);
+        pire = Math.max(pire, (ecartDeg(e.dir, prec) * Math.PI) / 180 * 60);
+        prec = copie(e.dir);
+      }
+      expect(pire).toBeLessThanOrEqual(VITESSE_RACCROCHAGE * 1.05);
+      expect(dot(e.dir, normaliser([coupe.base.avant[0], 0, coupe.base.avant[2]]))).toBeGreaterThan(0.99);
+    }
+  });
+
   it("flip cancel (manche tiré à l'opposé) : la caméra reste gelée puis se raccroche sans à-coup", () => {
     const { images } = volerFlip({ saut: true, tangage: -1 }, { apres: { tangage: 1 }, images: 130 });
     const dep = images[iDepart].dir;

@@ -118,11 +118,13 @@ interface Annexes {
   gelDir: Vec3 | null;
   /** poids du gel : 1 pendant le flip, retombe à 0 pendant le raccrochage */
   poidsGel: number;
+  /** raccrochage en cours : la rotation de la direction est bornée, y compris APRÈS la fin du fondu tant que la borne mord (half flip) */
+  raccrochage: boolean;
 }
 const annexes = new WeakMap<EtatCamera, Annexes>();
 function annexesDe(e: EtatCamera): Annexes {
   let a = annexes.get(e);
-  if (!a) { a = { reduction: 1, phase: 0, dernierePose: null, but: null, capBalle: null, elBalle: 0, gelDir: null, poidsGel: 0 }; annexes.set(e, a); }
+  if (!a) { a = { reduction: 1, phase: 0, dernierePose: null, but: null, capBalle: null, elBalle: 0, gelDir: null, poidsGel: 0, raccrochage: false }; annexes.set(e, a); }
   return a;
 }
 
@@ -294,13 +296,14 @@ export const majCamera: MajCamera = (e, p, entree: EntreesCamera, moi, balle, ar
   //    derrière la balle), ralentie seulement quand la balle passe à la verticale de la voiture, où le cap n'a plus de sens
   const dirAvant = dirVoiture(moi.base.avant, e.haut, moi.auSol ? 0 : SUIVI_TANGAGE_AIR, e.dir);
   // flip : la direction de la car cam reste celle du départ du flip, puis se raccroche à l'avant en douceur (cf. en-tête)
-  let raccroche = false;
   if (flipEnCours(moi)) {
     if (!a.gelDir || a.poidsGel < 1) a.gelDir = [e.dir[0], e.dir[1], e.dir[2]];
     a.poidsGel = 1;
+    a.raccrochage = false;
   } else if (a.gelDir) {
     a.poidsGel -= dt / RACCROCHAGE_FLIP_S;
-    if (a.poidsGel <= 0) { a.gelDir = null; a.poidsGel = 0; } else raccroche = true;
+    if (a.poidsGel <= 0) { a.gelDir = null; a.poidsGel = 0; }
+    a.raccrochage = true;
   }
   const dirCar = !a.gelDir ? dirAvant : a.poidsGel >= 1 ? a.gelDir : tournerVers(a.gelDir, dirAvant, 1 - lisse(a.poidsGel), e.haut);
   const versBalle = soustraire(balle.p, moi.p);
@@ -331,15 +334,19 @@ export const majCamera: MajCamera = (e, p, entree: EntreesCamera, moi, balle, ar
   const arrive = balleVoulue ? m : 1 - m;
   const k = SUIVI_BASCULE + ((balleVoulue ? SUIVI_BALLE : kCar) - SUIVI_BASCULE) * arrive;
   // ball cam établie : la direction EST celle de la balle (déjà lissée ci-dessus), pas de second lissage qui la ferait traîner
-  if (balleVoulue && arrive > 0.999) e.dir = dirBalle;
+  if (balleVoulue && arrive > 0.999) { e.dir = dirBalle; a.raccrochage = false; }
   else {
     // raccrochage d'un flip : la direction ne tourne jamais plus vite que `VITESSE_RACCROCHAGE`, quel que soit l'écart au départ
-    // (atterrissage nez en l'air ou sur le toit, correction du réseau qui coupe le flip)
+    // (atterrissage nez en l'air ou sur le toit, correction du réseau qui coupe le flip, half flip). La borne reste en place après la
+    // fin du fondu tant qu'elle mord : sinon un écart restant important partirait d'un coup au rythme du suivi normal. Elle se lève
+    // d'elle-même quand le suivi exponentiel devient plus lent qu'elle, donc sans à-coup (la vitesse ne dépasse jamais la borne).
     let fraction = 1 - Math.exp(-dt * k);
-    if (raccroche) {
+    if (a.raccrochage) {
       const cible = balleVoulue ? dirBalle : dirCar;
       const angle = Math.acos(clamp(dot(e.dir, cible), -1, 1));
-      if (angle > 1e-5) fraction = Math.min(fraction, (VITESSE_RACCROCHAGE * dt) / angle);
+      const borne = angle > 1e-5 ? (VITESSE_RACCROCHAGE * dt) / angle : 1;
+      if (borne < fraction) fraction = borne;
+      else if (!a.gelDir) a.raccrochage = false;
     }
     e.dir = tournerVers(e.dir, balleVoulue ? dirBalle : dirCar, fraction, e.haut);
   }
