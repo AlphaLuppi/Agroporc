@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { CAMERA_DEFAUT, STADE, ENTREES_NULLES, type Arene, type EtatBalle, type EtatVoiture } from "./contrat";
+import { CAMERA_DEFAUT, STADE, ENTREES_NULLES, PAS_S, type Arene, type EntreesVoiture, type EtatBalle, type EtatVoiture } from "./contrat";
 import {
-  ORBITE_BUT, ajouterSecousse, creerEtatCamera, elevationViseeBalle, fovVerticalDepuisHorizontal, majCamera, majCameraBut,
+  ORBITE_BUT, RACCROCHAGE_FLIP_S, VITESSE_RACCROCHAGE, ajouterSecousse, creerEtatCamera, elevationViseeBalle, flipEnCours, fovVerticalDepuisHorizontal, majCamera, majCameraBut,
 } from "./camera";
+import { creerArene } from "./arene";
+import { creerVoiture, pasVoiture } from "./voiture";
 import { baseDepuisCap, distance, dot, norme, normaliser, soustraire, type Vec3 } from "./vec";
 
 /** Stade jouet : boîte |x| < 40,96, |z| < 51,2, 0 < y < 20,44 (la caméra ne s'intéresse qu'à `sd`). */
@@ -400,6 +402,241 @@ describe("ball cam façon Rocket League", () => {
     // continue
     for (let el = -60; el < 78; el += 0.5) {
       expect(Math.abs(elevationViseeBalle((el + 0.5) * D2R, elVoiture, demi, angle) - elevationViseeBalle(el * D2R, elVoiture, demi, angle))).toBeLessThan(1 * D2R);
+    }
+  });
+});
+
+// ============================================================================================================================
+// Flip : la caméra ne suit pas le salto
+// ============================================================================================================================
+
+describe("car cam pendant un flip", () => {
+  const areneReelle = creerArene();
+  const ecartDeg = (u: Readonly<Vec3>, w: Readonly<Vec3>): number => (Math.acos(Math.min(1, Math.max(-1, dot(u, w)))) * 180) / Math.PI;
+  const copie = (v: Readonly<Vec3>): Vec3 => [v[0], v[1], v[2]];
+  const IMAGES_AVANT_FLIP = 30;
+  /** images du raccrochage (RACCROCHAGE_FLIP_S) : au-delà, la caméra suit l'avant comme d'habitude, à son rythme normal */
+  const FENETRE_RACCROCHAGE = Math.ceil(RACCROCHAGE_FLIP_S * 60) + 1;
+  const D2R = Math.PI / 180;
+
+  interface Image { dir: Vec3; position: Vec3; cible: Vec3; avant: Vec3; flip: boolean; verrou: number; auSol: boolean; moi: EtatVoiture }
+  /**
+   * Vraie physique de la voiture (deux pas de 1/120 s par image de 1/60 s) : 0,5 s de vol, puis `entrees` sur UN pas (l'appui du flip),
+   * puis `apres(i)` (entrées de chaque image suivante). La caméra est mise à jour à chaque image.
+   */
+  function volerFlip(entrees: Partial<EntreesVoiture>, opts: { apres?: Partial<EntreesVoiture>; images?: number; reduit?: boolean; balleCam?: boolean; hauteur?: number } = {}) {
+    const v = creerVoiture({ id: 0, equipe: "bleue", slot: 0, humain: true, nom: "essai", p: [0, opts.hauteur ?? 15, -20], cap: 0 });
+    v.v[2] = 10;
+    const balle = balleA([0, 1, 30]);
+    const e = creerEtatCamera(v, balle, !!opts.balleCam);
+    const ent = entree({ balleCam: !!opts.balleCam });
+    const images: Image[] = [];
+    let tick = 0;
+    const pas = (en: Partial<EntreesVoiture>) => pasVoiture(areneReelle, v, { ...ENTREES_NULLES(), ...en }, PAS_S, tick++);
+    const total = (opts.images ?? 110);
+    for (let i = 0; i < total; i++) {
+      const declenche = i === IMAGES_AVANT_FLIP;
+      pas(declenche ? entrees : i > IMAGES_AVANT_FLIP ? opts.apres ?? {} : {});
+      pas(i > IMAGES_AVANT_FLIP ? opts.apres ?? {} : {});
+      const pose = majCamera(e, CAMERA_DEFAUT, ent, v, balle, arene, 1 / 60, 16 / 9, !!opts.reduit);
+      images.push({
+        dir: copie(e.dir), position: copie(pose.position), cible: copie(pose.cible), avant: copie(v.base.avant),
+        flip: flipEnCours(v), verrou: v.flip.verrouTangage, auSol: v.auSol, moi: structuredClone(v),
+      });
+    }
+    return { images, e, v, balle };
+  }
+  const iDepart = IMAGES_AVANT_FLIP - 1;
+  const distAuDepart = (im: Image[]) => distance(im[iDepart].position, im[iDepart].moi.p);
+
+  const CAS: [string, Partial<EntreesVoiture>][] = [
+    ["flip avant (front flip)", { saut: true, tangage: -1 }],
+    ["flip arrière (backflip)", { saut: true, tangage: 1 }],
+    ["flip latéral (side flip)", { saut: true, lacet: 1 }],
+    ["flip latéral à gauche", { saut: true, lacet: -1 }],
+    ["flip en diagonale", { saut: true, tangage: -1, lacet: 1 }],
+    ["flip en diagonale arrière", { saut: true, tangage: 1, lacet: -1 }],
+  ];
+
+  it.each(CAS)("%s : la voiture bascule mais la direction de la caméra reste celle du départ du flip", (_nom, ent) => {
+    const { images } = volerFlip(ent);
+    const dep = images[iDepart].dir;
+    const enFlip = images.filter((im) => im.flip);
+    expect(enFlip.length).toBeGreaterThan(50); // 0,95 s de verrou ≈ 57 images
+    // la voiture a vraiment fait un salto ou un tonneau (nez ou haut retourné)
+    const rotation = Math.max(...enFlip.map((im) => ecartDeg(im.avant, images[iDepart].avant)), ...enFlip.map((im) => ecartDeg(im.moi.base.haut, [0, 1, 0])));
+    expect(rotation).toBeGreaterThan(90);
+    // la caméra, non : elle regarde toujours là où elle regardait
+    for (const im of enFlip) expect(ecartDeg(im.dir, dep)).toBeLessThan(0.5);
+    // … et la pose reste derrière la voiture, à la distance et à la hauteur habituelles
+    for (const im of enFlip) {
+      expect(Math.abs(distance(im.position, im.moi.p) - distAuDepart(images))).toBeLessThan(0.6);
+      const derriere = normaliser(soustraire(im.moi.p, im.position));
+      expect(ecartDeg(normaliser([derriere[0], 0, derriere[2]]), normaliser([dep[0], 0, dep[2]]))).toBeLessThan(3);
+    }
+  });
+
+  it("l'ancien comportement (suivi de 70 % du tangage du nez) aurait fait basculer la vue : le test est discriminant", () => {
+    // même vol, mais le flip est caché à la caméra (verrou à 0) : la direction suit le nez
+    const { images } = volerFlip({ saut: true, tangage: -1 });
+    const sansGel = images.map((im) => ({ ...im.moi, flip: { ...im.moi.flip, verrouTangage: 0 } }));
+    const e = creerEtatCamera(images[0].moi, balleA([0, 1, 30]), false);
+    let pire = 0;
+    for (let i = 0; i < sansGel.length; i++) {
+      majCamera(e, CAMERA_DEFAUT, entree(), sansGel[i], balleA([0, 1, 30]), arene, 1 / 60, 16 / 9, false);
+      if (images[i].flip) pire = Math.max(pire, ecartDeg(e.dir, images[iDepart].dir));
+    }
+    expect(pire).toBeGreaterThan(30);
+  });
+
+  it("pas d'à-coup au départ du flip : la direction ne bouge pas à l'image où le flip commence", () => {
+    for (const [, ent] of CAS) {
+      const { images } = volerFlip(ent);
+      for (let i = IMAGES_AVANT_FLIP - 2; i <= IMAGES_AVANT_FLIP + 3; i++) expect(ecartDeg(images[i].dir, images[i - 1].dir)).toBeLessThan(1.5);
+    }
+  });
+
+  it("raccrochage : une fois le flip fini la caméra revient à l'avant sans à-coup (vitesse de rotation bornée) et converge", () => {
+    for (const [, ent] of CAS) {
+      const { images, e, v } = volerFlip(ent, { images: 130 });
+      const finFlip = images.findIndex((im, i) => i > IMAGES_AVANT_FLIP && !im.flip);
+      expect(finFlip).toBeGreaterThan(IMAGES_AVANT_FLIP + 50);
+      let pire = 0;
+      for (let i = finFlip; i < Math.min(images.length, finFlip + FENETRE_RACCROCHAGE); i++) pire = Math.max(pire, (ecartDeg(images[i].dir, images[i - 1].dir) * Math.PI) / 180 * 60);
+      expect(pire).toBeLessThanOrEqual(VITESSE_RACCROCHAGE * 1.05);
+      // voiture figée (état de fin de vol), la caméra se pose derrière son avant comme avant le flip : 70 % du tangage du nez
+      const fin = structuredClone(v);
+      fin.auSol = false;
+      for (let i = 0; i < 90; i++) majCamera(e, CAMERA_DEFAUT, entree(), fin, balleA([0, 1, 30]), arene, 1 / 60, 16 / 9, false);
+      const a = fin.base.avant;
+      expect(dot(e.dir, normaliser([a[0], a[1] * 0.7, a[2]]))).toBeGreaterThan(0.995);
+    }
+  });
+
+  it("raccrochage d'un nez très écarté (voiture retournée à la fin du flip) : jamais plus vite que la borne, aucun NaN", () => {
+    const { e, v, images } = volerFlip({ saut: true, tangage: -1 }, { images: IMAGES_AVANT_FLIP + 20 });
+    // fin brutale du flip avec le nez à la verticale (flip coupé par une correction du réseau, atterrissage…)
+    const coupe = structuredClone(v);
+    coupe.flip.verrouTangage = 0; coupe.flip.actif = false;
+    coupe.base = { avant: [0, 1, 0], droite: [1, 0, 0], haut: [0, 0, -1] };
+    let prec = copie(e.dir);
+    for (let i = 0; i < 60; i++) {
+      const pose = majCamera(e, CAMERA_DEFAUT, entree(), coupe, balleA([0, 1, 30]), arene, 1 / 60, 16 / 9, false);
+      expect([...pose.position, ...pose.cible, ...e.dir].every(Number.isFinite)).toBe(true);
+      expect((ecartDeg(e.dir, prec) * Math.PI) / 180 * 60).toBeLessThanOrEqual(VITESSE_RACCROCHAGE * 1.05);
+      prec = copie(e.dir);
+    }
+    expect(images.length).toBeGreaterThan(0);
+  });
+
+  it("raccrochage d'un half flip (avant retourné de 90 à 180 degrés) : la borne tient jusqu'au bout, aucune accélération quand le fondu finit", () => {
+    for (const degres of [90, 120, 143, 160, 180]) {
+      const { e, v } = volerFlip({ saut: true, tangage: -1 }, { images: IMAGES_AVANT_FLIP + 20 });
+      const dep = copie(e.dir);
+      // fin de flip avec l'avant tourné de `degres` autour de la verticale par rapport au cap gelé
+      const cap = Math.atan2(dep[0], dep[2]) + (degres * Math.PI) / 180;
+      const coupe = structuredClone(v);
+      coupe.flip.verrouTangage = 0; coupe.flip.actif = false;
+      coupe.base = { avant: [Math.sin(cap), 0, Math.cos(cap)], droite: [Math.cos(cap), 0, -Math.sin(cap)], haut: [0, 1, 0] };
+      let prec = copie(e.dir), pire = 0;
+      for (let i = 0; i < 120; i++) {
+        majCamera(e, CAMERA_DEFAUT, entree(), coupe, balleA([0, 1, 30]), arene, 1 / 60, 16 / 9, false);
+        expect(e.dir.every(Number.isFinite)).toBe(true);
+        pire = Math.max(pire, (ecartDeg(e.dir, prec) * Math.PI) / 180 * 60);
+        prec = copie(e.dir);
+      }
+      expect(pire).toBeLessThanOrEqual(VITESSE_RACCROCHAGE * 1.05);
+      expect(dot(e.dir, normaliser([coupe.base.avant[0], 0, coupe.base.avant[2]]))).toBeGreaterThan(0.99);
+    }
+  });
+
+  it("flip cancel (manche tiré à l'opposé) : la caméra reste gelée puis se raccroche sans à-coup", () => {
+    const { images } = volerFlip({ saut: true, tangage: -1 }, { apres: { tangage: 1 }, images: 130 });
+    const dep = images[iDepart].dir;
+    for (const im of images.filter((i) => i.flip)) expect(ecartDeg(im.dir, dep)).toBeLessThan(0.5);
+    const finFlip = images.findIndex((im, i) => i > IMAGES_AVANT_FLIP && !im.flip);
+    let pire = 0;
+    for (let i = finFlip; i < Math.min(images.length, finFlip + FENETRE_RACCROCHAGE); i++) pire = Math.max(pire, (ecartDeg(images[i].dir, images[i - 1].dir) * Math.PI) / 180 * 60);
+    expect(pire).toBeLessThanOrEqual(VITESSE_RACCROCHAGE * 1.05);
+  });
+
+  it("atterrissage pendant le flip : le gel tombe (trois roues), la caméra se raccroche", () => {
+    const { images } = volerFlip({ saut: true, tangage: -1 }, { hauteur: 2.2, images: 120 });
+    const sol = images.findIndex((im, i) => i > IMAGES_AVANT_FLIP && im.auSol);
+    expect(sol).toBeGreaterThan(0);
+    expect(images[sol].flip).toBe(false);
+    let pire = 0;
+    for (let i = sol; i < Math.min(images.length, sol + FENETRE_RACCROCHAGE); i++) pire = Math.max(pire, (ecartDeg(images[i].dir, images[i - 1].dir) * Math.PI) / 180 * 60);
+    expect(pire).toBeLessThanOrEqual(VITESSE_RACCROCHAGE * 1.05);
+  });
+
+  it("mouvement réduit : même gel, même raccrochage", () => {
+    const normal = volerFlip({ saut: true, tangage: -1 }, { images: 130 });
+    const reduit = volerFlip({ saut: true, tangage: -1 }, { images: 130, reduit: true });
+    for (const im of reduit.images.filter((i) => i.flip)) expect(ecartDeg(im.dir, reduit.images[iDepart].dir)).toBeLessThan(0.5);
+    // la secousse mise à part, la direction est identique
+    for (let i = 0; i < normal.images.length; i++) expect(ecartDeg(normal.images[i].dir, reduit.images[i].dir)).toBeLessThan(0.01);
+  });
+
+  it("le stall (roulis seul, pas de salto) ne gèle rien : la caméra continue de suivre l'avant", () => {
+    const moi = voiture([0, 10, 0], 0, { auSol: false, normaleSurface: null, flip: { actif: true, temps: 0.1, dir: [0, 0], stall: true, verrouTangage: 0.85 } });
+    expect(flipEnCours(moi)).toBe(false);
+    const tourne = voiture([0, 10, 0], Math.PI / 2, { auSol: false, normaleSurface: null, flip: moi.flip });
+    const { e } = simuler(tourne, balleA([0, 1, 30]), creerEtatCamera(moi, balleA([0, 1, 30]), false), entree(), 120);
+    expect(e.dir[0]).toBeGreaterThan(0.99);
+  });
+
+  it("aérien normal (nez qui monte, pas de flip) : comportement inchangé, 70 % du tangage du nez suivi", () => {
+    const base = { avant: normaliser([0, Math.sin(40 * D2R), Math.cos(40 * D2R)]) as Vec3, droite: [-1, 0, 0] as Vec3, haut: normaliser([0, Math.cos(40 * D2R), -Math.sin(40 * D2R)]) as Vec3 };
+    const moi = voiture([0, 8, 0], 0, { auSol: false, normaleSurface: null, base });
+    expect(flipEnCours(moi)).toBe(false);
+    const { e } = simuler(moi, balleA([0, 1, 30]), undefined, entree(), 150);
+    expect(dot(e.dir, normaliser([0, base.avant[1] * 0.7, base.avant[2]]))).toBeGreaterThan(0.999);
+  });
+
+  it("correction du réseau en plein flip (rollback qui coupe puis rétablit le flip) : la direction ne saute pas", () => {
+    const { e, v } = volerFlip({ saut: true, tangage: -1 }, { images: IMAGES_AVANT_FLIP + 25 });
+    const dep = copie(e.dir);
+    const balle = balleA([0, 1, 30]);
+    let prec = copie(e.dir);
+    const pas = (moi: EtatVoiture) => {
+      majCamera(e, CAMERA_DEFAUT, entree(), moi, balle, arene, 1 / 60, 16 / 9, false);
+      const vit = (ecartDeg(e.dir, prec) * Math.PI) / 180 * 60;
+      prec = copie(e.dir);
+      return vit;
+    };
+    const coupe = structuredClone(v); coupe.flip.verrouTangage = 0; coupe.flip.actif = false;
+    // 8 images sans flip (état serveur « avant le flip »), puis le flip revient : jamais plus vite que la borne
+    for (let i = 0; i < 8; i++) expect(pas(coupe)).toBeLessThanOrEqual(VITESSE_RACCROCHAGE * 1.05);
+    for (let i = 0; i < 20; i++) expect(pas(v)).toBeLessThanOrEqual(VITESSE_RACCROCHAGE * 1.05);
+    // la direction reste tout près de celle du départ (le retour du flip ne la reprend qu'à l'endroit où elle en était)
+    expect(ecartDeg(e.dir, dep)).toBeLessThan(25);
+    expect(RACCROCHAGE_FLIP_S).toBeGreaterThan(0.2);
+  });
+
+  it("caméra créée en plein flip (réapparition, rejeu) : cap à plat, direction gelée dès la première image", () => {
+    const { v } = volerFlip({ saut: true, tangage: -1 }, { images: IMAGES_AVANT_FLIP + 15 });
+    expect(flipEnCours(v)).toBe(true);
+    const balle = balleA([0, 1, 30]);
+    const e = creerEtatCamera(v, balle, false);
+    const dep = copie(e.dir);
+    expect(Math.abs(dep[1])).toBeLessThan(0.05);
+    for (let i = 0; i < 20; i++) majCamera(e, CAMERA_DEFAUT, entree(), v, balle, arene, 1 / 60, 16 / 9, false);
+    expect(ecartDeg(e.dir, dep)).toBeLessThan(0.5);
+  });
+
+  it("ball cam : le salto ne change pas la vue (elle ne dépend pas de l'orientation de la voiture)", () => {
+    const vrai = volerFlip({ saut: true, tangage: -1 }, { balleCam: true });
+    // même trajectoire, mais la voiture garde son orientation de départ
+    const e2 = creerEtatCamera(vrai.images[0].moi, vrai.balle, true);
+    for (let i = 0; i < vrai.images.length; i++) {
+      const m = structuredClone(vrai.images[i].moi);
+      m.base = structuredClone(vrai.images[0].moi.base);
+      const pose = majCamera(e2, CAMERA_DEFAUT, entree({ balleCam: true }), m, vrai.balle, arene, 1 / 60, 16 / 9, false);
+      if (i > 5) {
+        expect(distance(pose.position, vrai.images[i].position)).toBeLessThan(1e-6);
+        expect(distance(pose.cible, vrai.images[i].cible)).toBeLessThan(1e-6);
+      }
     }
   });
 });

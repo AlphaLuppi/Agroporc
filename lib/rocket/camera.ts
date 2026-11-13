@@ -3,6 +3,10 @@
  *
  * - **Car cam** : la caméra se tient derrière la voiture, la direction de visée suit l'avant (sur un mur ou au plafond le « haut » de la
  *   caméra suit la normale de la surface, lissé ; en l'air, le haut est celui du monde et 70 % du tangage du nez est suivi).
+ *   **Pendant un flip** (dodge, pas le stall) la direction est GELÉE à celle qu'elle avait au départ du flip : la caméra suit toujours la
+ *   POSITION de la voiture (distance et hauteur habituelles) mais ne bascule pas avec le salto ; elle se raccroche à l'avant une fois le
+ *   flip fini (verrou de tangage écoulé, atterrissage) par une rotation lissée à vitesse bornée (`VITESSE_RACCROCHAGE`). Le gel se déduit
+ *   de `moi.flip` et `moi.auSol`, déjà sérialisés : aucun champ ni message de plus, en local comme en ligne.
  * - **Ball cam** (comme Rocket League) : la caméra se place sur la ligne balle → voiture, derrière la voiture, et REGARDE LA BALLE.
  *   Le suivi est rigide (elle ne traîne pas derrière la balle), l'horizon reste toujours droit (haut du monde, même sur un mur), la
  *   visée monte autant qu'il faut pour une balle haute (la balle passe avant la voiture, cf. `elevationViseeBalle`), la caméra descend
@@ -78,6 +82,9 @@ const ELEVATION_POSITION_MIN = -60 * D2R;
 const ELEVATION_POSITION_MAX = 20 * D2R;
 /** Part du tangage du nez suivie par la car cam en l'air. */
 const SUIVI_TANGAGE_AIR = 0.7;
+/** Raccrochage après un flip : durée du fondu du gel vers l'avant de la voiture (s) et vitesse de rotation maximale de la direction (rad/s). */
+export const RACCROCHAGE_FLIP_S = 0.45;
+export const VITESSE_RACCROCHAGE = 4;
 /** Hauteur de la cible devant la voiture (m) et point d'ancrage de l'anticollision au-dessus de l'origine (m). */
 const HAUTEUR_CIBLE_M = 0.3;
 const HAUTEUR_ANCRE_M = 0.3;
@@ -107,17 +114,32 @@ interface Annexes {
   /** cap horizontal [x, z] (unitaire) et élévation (rad) de la droite voiture → balle suivis par la ball cam (null avant la première image) */
   capBalle: [number, number] | null;
   elBalle: number;
+  /** direction de la car cam gelée au départ d'un flip (null hors flip et une fois le raccrochage fini) */
+  gelDir: Vec3 | null;
+  /** poids du gel : 1 pendant le flip, retombe à 0 pendant le raccrochage */
+  poidsGel: number;
+  /** raccrochage en cours : la rotation de la direction est bornée, y compris APRÈS la fin du fondu tant que la borne mord (half flip) */
+  raccrochage: boolean;
 }
 const annexes = new WeakMap<EtatCamera, Annexes>();
 function annexesDe(e: EtatCamera): Annexes {
   let a = annexes.get(e);
-  if (!a) { a = { reduction: 1, phase: 0, dernierePose: null, but: null, capBalle: null, elBalle: 0 }; annexes.set(e, a); }
+  if (!a) { a = { reduction: 1, phase: 0, dernierePose: null, but: null, capBalle: null, elBalle: 0, gelDir: null, poidsGel: 0, raccrochage: false }; annexes.set(e, a); }
   return a;
 }
 
 // ============================================================================================================================
 // Maths de visée
 // ============================================================================================================================
+
+/**
+ * La voiture est en plein flip (dodge) : en l'air, flip qui tourne (pas un stall, qui ne fait que rouler sur l'axe de l'avant) et verrou de
+ * tangage non écoulé (0,95 s depuis le début : couple de 0,65 s puis rotation résiduelle). Remis à faux par `majSecondSaut` dès que
+ * trois roues touchent (`verrouTangage` = 0 au sol) : atterrissage, flip cancel sur le sol, balle sous les roues.
+ */
+export function flipEnCours(moi: Readonly<EtatVoiture>): boolean {
+  return !moi.auSol && !moi.flip.stall && moi.flip.verrouTangage > 0;
+}
 
 /** Haut de la caméra voulu : normale de la surface sous la voiture si elle roule, haut du monde en l'air. */
 function hautVoulu(moi: Readonly<EtatVoiture>): Vec3 {
@@ -196,14 +218,17 @@ function positionIdeale(moi: Readonly<EtatVoiture>, dirPos: Readonly<Vec3>, haut
 /** État initial : caméra déjà à sa place (pas de balayage au premier affichage). Aucune anticollision ici : `majCamera` s'en charge. */
 export const creerEtatCamera: CreerEtatCamera = (moi, balle, balleCam) => {
   const haut = hautVoulu(moi);
-  const dirCar = dirVoiture(moi.base.avant, haut, moi.auSol ? 0 : SUIVI_TANGAGE_AIR, moi.base.avant);
+  // en plein flip l'avant ne dit plus où la voiture « va » : on ne garde que son cap, à plat, et on gèle cette direction
+  const enFlip = flipEnCours(moi);
+  const dirCar = dirVoiture(moi.base.avant, haut, moi.auSol || enFlip ? 0 : SUIVI_TANGAGE_AIR, moi.base.avant);
   const dir = balleCam ? normaliser(soustraire(balle.p, moi.p), dirCar) : dirCar;
   const dirPos = borneElevation(dir, haut, ELEVATION_POSITION_MIN, ELEVATION_POSITION_MAX);
   const e: EtatCamera = {
     dir, haut, melange: balleCam ? 1 : 0, regard: [0, 0], secousse: 0,
     position: positionIdeale(moi, dirPos, haut, CAMERA_DEFAUT),
   };
-  annexesDe(e);
+  const a = annexesDe(e);
+  if (enFlip) { a.gelDir = [dirCar[0], dirCar[1], dirCar[2]]; a.poidsGel = 1; }
   return e;
 };
 
@@ -269,7 +294,18 @@ export const majCamera: MajCamera = (e, p, entree: EntreesCamera, moi, balle, ar
   // 3. direction de visée : chaque mode a sa direction, la caméra TOURNE de l'une vers l'autre
   //    car cam : l'avant de la voiture, lissé ; ball cam : la droite voiture → balle, suivie de façon rigide (elle ne traîne pas
   //    derrière la balle), ralentie seulement quand la balle passe à la verticale de la voiture, où le cap n'a plus de sens
-  const dirCar = dirVoiture(moi.base.avant, e.haut, moi.auSol ? 0 : SUIVI_TANGAGE_AIR, e.dir);
+  const dirAvant = dirVoiture(moi.base.avant, e.haut, moi.auSol ? 0 : SUIVI_TANGAGE_AIR, e.dir);
+  // flip : la direction de la car cam reste celle du départ du flip, puis se raccroche à l'avant en douceur (cf. en-tête)
+  if (flipEnCours(moi)) {
+    if (!a.gelDir || a.poidsGel < 1) a.gelDir = [e.dir[0], e.dir[1], e.dir[2]];
+    a.poidsGel = 1;
+    a.raccrochage = false;
+  } else if (a.gelDir) {
+    a.poidsGel -= dt / RACCROCHAGE_FLIP_S;
+    if (a.poidsGel <= 0) { a.gelDir = null; a.poidsGel = 0; }
+    a.raccrochage = true;
+  }
+  const dirCar = !a.gelDir ? dirAvant : a.poidsGel >= 1 ? a.gelDir : tournerVers(a.gelDir, dirAvant, 1 - lisse(a.poidsGel), e.haut);
   const versBalle = soustraire(balle.p, moi.p);
   const dBalle = Math.hypot(versBalle[0], versBalle[1], versBalle[2]);
   const dHorizontale = Math.hypot(versBalle[0], versBalle[2]);
@@ -298,7 +334,22 @@ export const majCamera: MajCamera = (e, p, entree: EntreesCamera, moi, balle, ar
   const arrive = balleVoulue ? m : 1 - m;
   const k = SUIVI_BASCULE + ((balleVoulue ? SUIVI_BALLE : kCar) - SUIVI_BASCULE) * arrive;
   // ball cam établie : la direction EST celle de la balle (déjà lissée ci-dessus), pas de second lissage qui la ferait traîner
-  e.dir = balleVoulue && arrive > 0.999 ? dirBalle : tournerVers(e.dir, balleVoulue ? dirBalle : dirCar, 1 - Math.exp(-dt * k), e.haut);
+  if (balleVoulue && arrive > 0.999) { e.dir = dirBalle; a.raccrochage = false; }
+  else {
+    // raccrochage d'un flip : la direction ne tourne jamais plus vite que `VITESSE_RACCROCHAGE`, quel que soit l'écart au départ
+    // (atterrissage nez en l'air ou sur le toit, correction du réseau qui coupe le flip, half flip). La borne reste en place après la
+    // fin du fondu tant qu'elle mord : sinon un écart restant important partirait d'un coup au rythme du suivi normal. Elle se lève
+    // d'elle-même quand le suivi exponentiel devient plus lent qu'elle, donc sans à-coup (la vitesse ne dépasse jamais la borne).
+    let fraction = 1 - Math.exp(-dt * k);
+    if (a.raccrochage) {
+      const cible = balleVoulue ? dirBalle : dirCar;
+      const angle = Math.acos(clamp(dot(e.dir, cible), -1, 1));
+      const borne = angle > 1e-5 ? (VITESSE_RACCROCHAGE * dt) / angle : 1;
+      if (borne < fraction) fraction = borne;
+      else if (!a.gelDir) a.raccrochage = false;
+    }
+    e.dir = tournerVers(e.dir, balleVoulue ? dirBalle : dirCar, fraction, e.haut);
+  }
 
   // 4. regard libre (angles lissés) ; la vue arrière est un demi-tour
   const lacetVoulu = entree.arriere ? Math.PI : clamp(entree.regard[0], -1, 1) * (Math.PI / 2);
