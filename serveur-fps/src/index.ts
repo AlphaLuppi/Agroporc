@@ -39,7 +39,9 @@ import { capDeCachette } from "../../lib/fps/tigre-arene";
 import { DEPARTS, construireMondeZombies, donneesZombies } from "../../lib/fps/zombies-carte";
 import { GENRES_BONUS, ZOMBIES, type GenreBonus } from "../../lib/fps/zombies-vagues";
 import { EMPLACEMENTS_VOITURES, ROND_POINT, ZONE_APPARITION, positionElsa, trouverRondPoint } from "../../lib/fps/zones";
+import { CHEMIN_ROCKET } from "../../lib/rocket/reseau/protocole";
 import { creerPersistanceBr } from "./stats-br";
+import { creerServeurRocket } from "./rocket";
 
 const PORT = Number(process.env.PORT) || 8787;
 const TIC_MS = 1000 / 60;
@@ -858,6 +860,8 @@ const http = createServer((req, res) => {
       })),
       // (lot 3b) recherches de chemin des bots depuis le démarrage, le plus gros A* (nœuds ; borné à 3 000) et les bots qui attendent leur tour
       navigationBots: { recherches: budgetNavigationBr.recherches, noeudsMax: budgetNavigationBr.noeudsMax, enAttente: budgetNavigationBr.enAttente },
+      // Rocket Muche en ligne (chemin /rocket) : ses propres compteurs et sa propre boucle
+      rocket: rocketServeur.sante(),
       sallesTiquees: mesuresTic.salles,
       ticMaxMs: Math.round(Math.max(mesuresTic.maxFenetre, mesuresTic.maxPrecedente) * 100) / 100,
       ticsLents: mesuresTic.lents,
@@ -883,13 +887,22 @@ const http = createServer((req, res) => {
   res.end("Introuvable");
 });
 
+const origineAutorisee = (origin: string | undefined): boolean => ORIGINES.length === 0 || ORIGINES.some((o) => o.test(origin as string));
+// `noServer` : un seul écouteur `upgrade` aiguille par chemin. `/rocket` va à Rocket Muche en ligne, tout le reste à l'arène (tout chemin, comme avant)
 const wss = new WebSocketServer({
-  server: http,
+  noServer: true,
   maxPayload: TAILLE_MAX_OCTETS,
-  verifyClient: ({ origin }: { origin: string }) => ORIGINES.length === 0 || ORIGINES.some((o) => o.test(origin)),
+  verifyClient: ({ origin }: { origin: string }) => origineAutorisee(origin),
+});
+const rocketServeur = creerServeurRocket({ origineAutorisee });
+http.on("upgrade", (req, socket, head) => {
+  if (req.url?.split("?")[0] === CHEMIN_ROCKET) { rocketServeur.upgrade(req, socket, head); return; }
+  wss.handleUpgrade(req, socket, head, (ws) => wss.emit("connection", ws, req));
 });
 
 wss.on("connection", (ws, req) => {
+  // avant tout `return` : une trame trop grande sur une connexion refusée émettrait 'error' sans écouteur et ferait tomber le processus
+  ws.on("error", () => ws.terminate());
   const ip = ipClient(req.headers["x-forwarded-for"], req.socket.remoteAddress);
   if (clients.size >= CONNEXIONS_TOTAL_MAX || (parIp.get(ip) ?? 0) >= CONNEXIONS_PAR_IP_MAX) {
     ws.close(1013, "trop de connexions");
@@ -926,7 +939,6 @@ wss.on("connection", (ws, req) => {
     else parIp.set(c.ip, n);
     fermer(c, code);
   });
-  ws.on("error", () => ws.terminate());
 });
 
 /** Membre d'un lobby (zombies ou Battle Royale) qui attend l'hôte avec au moins un autre joueur : jamais recyclé pour inactivité. */
@@ -984,6 +996,7 @@ function arreter(): void {
   // les fermetures qui suivent font abandonner les joueurs un à un : une partie interrompue par l'arrêt ne doit rien enregistrer
   persistanceBr.figer();
   for (const c of clients.values()) c.ws.close(1001, "arrêt du serveur");
+  rocketServeur.arreter();
   wss.close();
   // seul endroit où les stats s'écrivent en synchrone : l'écriture asynchrone en cours n'aurait pas le temps de finir ; ce qu'un départ en
   // cours de partie enregistre encore ensuite est écrit sur-le-champ

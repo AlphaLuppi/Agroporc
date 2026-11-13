@@ -12,7 +12,7 @@ import styles from "./Rocket.module.css";
  * complet, « Rejouer » (même configuration, graine neuve) et « Quitter » (retour au lobby). Le résultat est aussi annoncé par la région
  * `aria-live` du HUD.
  */
-export default function FinRocket({ resultat, nomsEquipes, surRejouer, surQuitter }: PropsFinRocket) {
+export default function FinRocket({ resultat, nomsEquipes, surRejouer, surQuitter, moi, enLigne }: PropsFinRocket) {
   const idTitre = useId();
   const racine = useRef<HTMLDivElement>(null);
   const rejouer = useRef<HTMLButtonElement>(null);
@@ -40,10 +40,26 @@ export default function FinRocket({ resultat, nomsEquipes, surRejouer, surQuitte
           </p>
         )}
         <div className={styles.defilement}>
-          <TableauRocket lignes={resultat.classement} nomsEquipes={nomsEquipes} equipeJoueur={resultat.equipeJoueur} legende="Statistiques de fin de match" />
+          <TableauRocket lignes={resultat.classement} nomsEquipes={nomsEquipes} equipeJoueur={resultat.equipeJoueur} legende="Statistiques de fin de match" moi={moi} />
         </div>
+        {enLigne && (
+          <p className={styles.statutRevanche} role="status">
+            {enLigne.aVote
+              ? `Revanche demandée : ${enLigne.oui}/${enLigne.attendus} joueurs${enLigne.restantS > 0 ? `, ${enLigne.restantS} s pour décider` : ""}.`
+              : enLigne.oui > 0
+                ? `${enLigne.oui}/${enLigne.attendus} joueurs veulent une revanche${enLigne.restantS > 0 ? `, ${enLigne.restantS} s pour décider` : ""}.`
+                : ""}
+          </p>
+        )}
         <div className={styles.boutons}>
-          <button ref={rejouer} type="button" className={styles.boutonPrincipal} onClick={surRejouer}>Rejouer</button>
+          {enLigne ? (
+            <button ref={rejouer} type="button" className={styles.boutonPrincipal} aria-pressed={enLigne.aVote} onClick={surRejouer}>
+              Revanche<span className={styles.compteRevanche}>{enLigne.oui > 0 ? ` ${enLigne.oui}/${enLigne.attendus}` : ""}</span>
+            </button>
+          ) : (
+            <button ref={rejouer} type="button" className={styles.boutonPrincipal} onClick={surRejouer}>Rejouer</button>
+          )}
+          {enLigne?.hote && <button type="button" className={styles.boutonSecondaire} onClick={enLigne.surRetourSalon}>Retour au salon</button>}
           <button type="button" className={styles.boutonSecondaire} onClick={surQuitter}>Quitter</button>
         </div>
       </div>

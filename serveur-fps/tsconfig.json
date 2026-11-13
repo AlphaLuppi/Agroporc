@@ -9,7 +9,9 @@
     "noEmit": true,
     "skipLibCheck": true,
     "esModuleInterop": true,
-    "isolatedModules": true
+    "isolatedModules": true,
+    "baseUrl": ".",
+    "paths": { "three": ["./src/stubs/three.d.ts"] }
   },
   "include": ["src/**/*.ts"]
 }

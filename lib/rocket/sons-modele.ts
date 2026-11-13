@@ -89,3 +89,7 @@ export function tempsFeuArtifice(n: number): number[] {
 
 /** Notes des sons de jeu (Hz). */
 export const NOTES = { decompte: 440, depart: 880, klaxonA: 311, klaxonB: 392, buteA: 233, buteB: 311, sifflet: 2700, prolongationA: 523, prolongationB: 659 } as const;
+
+/** « Bloop » d'une réaction rapide : deux notes montantes brèves (Hz), plus discrètes pour la sienne (gain relatif à `gainReaction`). */
+export const SON_REACTION = { noteA: 523, noteB: 784, dureeS: 0.09, ecartS: 0.07 } as const;
+export const gainReaction = (moi: boolean): number => (moi ? 0.06 : 0.11);

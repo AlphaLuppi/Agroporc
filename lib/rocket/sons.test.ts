@@ -156,7 +156,7 @@ describe("sons : synthèse WebAudio", () => {
     g.AudioContext = undefined;
     const s = creerSonsRocket();
     const m = monde(SIX);
-    expect(() => { s.activer(); for (const e of tous()) s.evenement(e, 0); s.maj(m, 0, 0.016); s.volume(0.5); s.suspendre(true); s.suspendre(false); s.dispose(); }).not.toThrow();
+    expect(() => { s.activer(); for (const e of tous()) s.evenement(e, 0); s.maj(m, 0, 0.016); s.volume(0.5); s.reaction(true); s.reaction(false); s.suspendre(true); s.suspendre(false); s.dispose(); }).not.toThrow();
     expect(FauxContexte.instances).toHaveLength(0);
   });
   it("rien n'est joué avant activer() (pas de geste utilisateur)", () => {
@@ -244,6 +244,26 @@ describe("sons : synthèse WebAudio", () => {
     s.maj(m, 0, 0.016);
     const actifs = c.noeuds.filter((x) => x.genre === "osc" && x.n.demarre && !x.n.arrete).length;
     expect(actifs).toBe(6);
+    s.dispose();
+  });
+  it("une réaction rapide : deux notes montantes, plus discrètes pour la sienne, rien avant activer() ni pendant la pause", () => {
+    const s = creerSonsRocket();
+    s.reaction(false);
+    expect(FauxContexte.instances).toHaveLength(0);
+    s.activer();
+    const c = ctx();
+    const notes = (moi: boolean) => {
+      const n0 = c.noeuds.length;
+      s.reaction(moi);
+      const nv = c.noeuds.slice(n0);
+      return { oscs: nv.filter((x) => x.genre === "osc").length, pic: Math.max(...nv.filter((x) => x.genre === "gain").map((x) => x.n.gain.pic ?? 0)) };
+    };
+    const autre = notes(false), mienne = notes(true);
+    expect(autre.oscs).toBe(2);
+    expect(mienne.oscs).toBe(2);
+    expect(mienne.pic).toBeLessThan(autre.pic);
+    s.suspendre(true);
+    expect(notes(false).oscs).toBe(0);
     s.dispose();
   });
   it("suspendre coupe les moteurs et suspend le contexte ; reprendre le relance", () => {

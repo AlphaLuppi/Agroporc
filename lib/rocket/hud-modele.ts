@@ -3,7 +3,10 @@
  * équipe, annonces vocales (`aria-live`) et titre du résultat. Sans React, three ni horloge : testé sous Node.
  * Spec : docs/superpowers/specs/2026-11-06-rocket-agroparc-design.md § 9.3.
  */
-import type { Equipe, HudRocket, LigneClassement, ResultatMatch } from "./contrat";
+import type { DirectionChat, Equipe, HudRocket, LiaisonsManette, LiaisonsTouches, LigneChat, LigneClassement, MenuChatHud, ResultatMatch } from "./contrat";
+import { libelleEntreeManette, libelleToucheRocket } from "./liaisons";
+import { libelleLigneChat } from "./reactions";
+import type { HudReseau, QualiteReseau } from "./reseau/protocole";
 
 /** Sous ce temps restant (s) le minuteur passe à l'ambre. */
 export const SEUIL_ALERTE_CHRONO_S = 30;
@@ -89,3 +92,103 @@ export const COLONNES_STATS = [
   { cle: "tirs", court: "Tirs", long: "Tirs cadrés" },
   { cle: "demolitions", court: "Démo", long: "Démolitions" },
 ] as const;
+
+// ============================================================================================================================
+// Mode en ligne (ajouts additifs : le mode local n'appelle rien de ce qui suit)
+// ============================================================================================================================
+
+/**
+ * Le joueur observé est-il « moi » ? En ligne `moi` est l'id de MA voiture (message `debut`) : plusieurs humains jouent, `LigneClassement.humain`
+ * ne dit plus qui je suis. Hors ligne (`moi` absent) c'est `humain`, comme avant.
+ */
+export const estMoi = (l: Pick<LigneClassement, "id" | "humain">, moi?: number): boolean => (moi === undefined ? l.humain : l.id === moi);
+
+/**
+ * Le serveur envoie son `resultat` brut (`equipeJoueur` = équipe de l'observateur côté serveur, sans signification pour un client) : chaque client
+ * recalcule l'issue (victoire, défaite) pour SA propre équipe.
+ */
+export const resultatPourEquipe = (r: Readonly<ResultatMatch>, equipe: Equipe): ResultatMatch => ({ ...r, equipeJoueur: equipe });
+
+const LIBELLES_QUALITE: Readonly<Record<QualiteReseau, string>> = { bonne: "Bonne", moyenne: "Moyenne", mauvaise: "Mauvaise" };
+/** Forme de la pastille de qualité (la couleur ne porte jamais seule) : plein, moitié, vide. */
+export const FORMES_QUALITE: Readonly<Record<QualiteReseau, string>> = { bonne: "●●●", moyenne: "●●○", mauvaise: "●○○" };
+
+/** Texte de la pastille réseau : « 42 ms · Bonne », « Reconnexion… », « Connexion perdue ». */
+export function libellePastilleReseau(h: Pick<HudReseau, "etat" | "rttMs" | "qualite">): string {
+  switch (h.etat) {
+    case "reconnexion": return "Reconnexion…";
+    case "connexion": return "Connexion…";
+    case "fermee": return "Connexion perdue";
+    case "refusee": return "Connexion refusée";
+    case "ouverte": return h.rttMs > 0 ? `${Math.round(h.rttMs)} ms · ${LIBELLES_QUALITE[h.qualite]}` : "Mesure du ping…";
+  }
+}
+
+/** Pastille « Commandes suspendues » : null quand les commandes sont actives. */
+export function libelleCommandes(c: HudReseau["commandes"]): string | null {
+  if (c === "menu") return "Commandes suspendues : menu ouvert";
+  if (c === "masque") return "Commandes suspendues : onglet masqué";
+  return null;
+}
+
+/** Bandeau d'un joueur coupé : « Léa : connexion perdue, reprise possible dans 14 s ». */
+export function libelleAbsent(a: Readonly<HudReseau["absents"][number]>): string {
+  const s = Math.max(0, Math.ceil(a.restantMs / 1000));
+  return `${a.nom} : connexion perdue, reprise possible dans ${s} s`;
+}
+
+/** Libellé du bouton de revanche : « Revanche », puis « Revanche · 1/2 » une fois qu'un vote est enregistré. */
+export function libelleRevanche(oui: number, attendus: number): string {
+  return oui > 0 ? `Revanche · ${oui}/${attendus}` : "Revanche";
+}
+
+// ============================================================================================================================
+// Réactions rapides (menu de la croix et fil des messages)
+// ============================================================================================================================
+
+/** Flèche de chaque direction de la croix. */
+export const FLECHES_CHAT: Readonly<Record<DirectionChat, string>> = { haut: "↑", gauche: "←", droite: "→", bas: "↓" };
+const ACTION_CHAT: Readonly<Record<DirectionChat, "chatHaut" | "chatGauche" | "chatDroite" | "chatBas">> = {
+  haut: "chatHaut", gauche: "chatGauche", droite: "chatDroite", bas: "chatBas",
+};
+
+/** Touche (et, si une manette est branchée, bouton) qui répond à une direction, tels que le joueur les a réglés : « 1 · Croix ↑ ». « — » si rien. */
+export function libelleEntreeChat(
+  d: DirectionChat,
+  touches: Readonly<LiaisonsTouches>,
+  manette: Readonly<LiaisonsManette> | null,
+  disposition?: ReadonlyMap<string, string> | null,
+): string {
+  const action = ACTION_CHAT[d];
+  const clavier = touches[action][0] ? libelleToucheRocket(touches[action][0], disposition) : "";
+  const pad = manette && manette[action][0] ? libelleEntreeManette(manette[action][0], true) : "";
+  const morceaux = [clavier, pad].filter((x) => x !== "");
+  return morceaux.length > 0 ? morceaux.join(" · ") : "—";
+}
+
+/** Une ligne du menu ouvert : flèche, touche, message (« équipe » si seul l'équipe le voit). */
+export interface LigneMenuChat {
+  direction: DirectionChat;
+  fleche: string;
+  entree: string;
+  texte: string;
+  equipeSeule: boolean;
+}
+export function lignesMenuChat(
+  menu: Readonly<MenuChatHud>,
+  touches: Readonly<LiaisonsTouches>,
+  manette: Readonly<LiaisonsManette> | null,
+  disposition?: ReadonlyMap<string, string> | null,
+): LigneMenuChat[] {
+  return menu.choix.map((c) => ({
+    direction: c.direction, fleche: FLECHES_CHAT[c.direction], entree: libelleEntreeChat(c.direction, touches, manette, disposition), texte: c.texte, equipeSeule: c.equipeSeule,
+  }));
+}
+
+/** Texte lu par les lecteurs d'écran pour une ligne du fil : « Alice, à l'équipe : J'ai la balle ! ». */
+export function annonceLigneChat(l: Readonly<LigneChat>): string {
+  return l.equipeSeule ? `${l.nom}, à l'équipe : ${l.texte}` : libelleLigneChat(l);
+}
+
+/** Phrase du chat bloqué (« Chat bloqué : 3 s »), ou null. */
+export const libelleChatBloque = (bloqueS: number): string | null => (bloqueS > 0 ? `Chat bloqué : ${bloqueS} s` : null);

@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { LIAISONS_DEFAUT, REGLAGES_DEFAUT, type LiaisonsTouches } from "./contrat";
+import { LIAISONS_DEFAUT, LIAISONS_MANETTE_DEFAUT, REGLAGES_DEFAUT, type LiaisonsManette, type LiaisonsTouches } from "./contrat";
 import {
   manetteDepuisGamepad,
+  manetteStandard,
+  pauseDepuisManette,
   BOUTON_MANETTE,
   RAYON_REGARD_SOURIS_PX,
   creerSourceEntrees,
@@ -116,8 +118,8 @@ describe("manette", () => {
     const inv = entreesDepuisManette(manette({ axes: [0, -1, 0, 0] }), { ...REGL, inverserTangageManette: true });
     expect(inv.voiture.tangage).toBeGreaterThan(0);
   });
-  it("boutons : A saut, B boost, X dérapage, Y ball cam, LB/RB roulis, R3 arrière, Start pause, croix haut klaxon", () => {
-    const e = entreesDepuisManette(manette({ boutons: { [BOUTON_MANETTE.a]: true, [BOUTON_MANETTE.b]: true, [BOUTON_MANETTE.x]: true, [BOUTON_MANETTE.y]: true, [BOUTON_MANETTE.rb]: true, [BOUTON_MANETTE.r3]: true, [BOUTON_MANETTE.start]: true, [BOUTON_MANETTE.haut]: true } }), REGL);
+  it("boutons : A saut, B boost, X dérapage, Y ball cam, LB/RB roulis, R3 arrière, Start pause, L3 klaxon", () => {
+    const e = entreesDepuisManette(manette({ boutons: { [BOUTON_MANETTE.a]: true, [BOUTON_MANETTE.b]: true, [BOUTON_MANETTE.x]: true, [BOUTON_MANETTE.y]: true, [BOUTON_MANETTE.rb]: true, [BOUTON_MANETTE.r3]: true, [BOUTON_MANETTE.start]: true, [BOUTON_MANETTE.l3]: true } }), REGL);
     expect(e.voiture).toMatchObject({ saut: true, boost: true, derapage: true, roulis: 1 });
     expect(e).toMatchObject({ basculerBalleCam: true, arriere: true, pause: true, klaxon: true });
     expect(entreesDepuisManette(manette({ boutons: { [BOUTON_MANETTE.lb]: true } }), REGL).voiture.roulis).toBe(-1);
@@ -132,6 +134,133 @@ describe("manette", () => {
     const e = entreesDepuisManette({ axes: [NaN], boutons: [] }, REGL);
     expect(Object.values(e.voiture).every((v) => typeof v === "boolean" || Number.isFinite(v))).toBe(true);
     expect(e.regard.every(Number.isFinite)).toBe(true);
+  });
+});
+
+/** Manette avec liaisons du joueur (les autres champs gardent les défauts). */
+const avec = (m: ReturnType<typeof manette>, liaisons: Partial<LiaisonsManette>, r = REGL) => entreesDepuisManette(m, r, { ...LIAISONS_MANETTE_DEFAUT, ...liaisons });
+
+describe("manette : liaisons du joueur", () => {
+  it("sans liaisons passées, la disposition par défaut de Rocket League est celle d'avant", () => {
+    const m = manette({ axes: [0.8, -0.6, 0.5, -0.5], boutons: { 7: 0.6, [BOUTON_MANETTE.a]: true } });
+    expect(entreesDepuisManette(m, REGL)).toEqual(entreesDepuisManette(m, REGL, LIAISONS_MANETTE_DEFAUT));
+    expect(entreesDepuisManette(m, REGL).voiture.saut).toBe(true);
+  });
+  it("gaz sur A, saut sur RB, boost sur une gâchette", () => {
+    const l: Partial<LiaisonsManette> = { accelerer: ["B0"], saut: ["B5"], boost: ["B7"], reculer: ["B1"] };
+    expect(avec(manette({ boutons: { 0: true } }), l).voiture.accel).toBe(1);
+    expect(avec(manette({ boutons: { 1: true } }), l).voiture.accel).toBe(-1);
+    // l'ancien RT ne fait plus le gaz, il fait le boost
+    const rt = avec(manette({ boutons: { 7: 0.9 } }), l).voiture;
+    expect(rt.accel).toBe(0);
+    expect(rt.boost).toBe(true);
+    expect(avec(manette({ boutons: { 5: true } }), l).voiture.saut).toBe(true);
+    expect(avec(manette({ boutons: { 0: true } }), l).voiture.saut).toBe(false);
+  });
+  it("une gâchette garde sa course analogique sur le gaz, un bouton binaire vaut 0 ou 1", () => {
+    expect(avec(manette({ boutons: { 6: 0.4 } }), { accelerer: ["B6"], reculer: [] }).voiture.accel).toBeCloseTo(0.4, 6);
+    expect(avec(manette({ boutons: { 2: true } }), { accelerer: ["B2"], reculer: [] }).voiture.accel).toBe(1);
+  });
+  it("volant sur le stick droit : zone morte et courbe conservées, l'autre stick n'a plus d'effet sur le volant", () => {
+    const l: Partial<LiaisonsManette> = { gauche: ["A2-"], droite: ["A2+"] };
+    expect(avec(manette({ axes: [0, 0, 0.1, 0] }), l).voiture.direction).toBe(0);
+    const d = avec(manette({ axes: [0, 0, 0.6, 0] }), l).voiture.direction;
+    expect(d).toBeGreaterThan(0);
+    expect(d).toBeLessThan(0.6);
+    expect(avec(manette({ axes: [0, 0, -1, 0] }), l).voiture.direction).toBeCloseTo(-1, 6);
+    expect(avec(manette({ axes: [1, 0, 0, 0] }), l).voiture.direction).toBe(0);
+  });
+  it("une direction poussée à la diagonale reste à la même amplitude que par défaut (zone morte radiale)", () => {
+    const m = manette({ axes: [0.7071, -0.7071, 0, 0] });
+    const defaut = entreesDepuisManette(m, REGL).voiture;
+    expect(Math.hypot(defaut.direction, defaut.tangage)).toBeLessThanOrEqual(1 + 1e-9);
+  });
+  it("un demi-axe sur une action à deux états se déclenche à mi-course (axe brut, hors zone morte)", () => {
+    const l: Partial<LiaisonsManette> = { boost: ["A1-"], saut: ["A3+"] };
+    expect(avec(manette({ axes: [0, -0.4, 0, 0] }), l).voiture.boost).toBe(false);
+    expect(avec(manette({ axes: [0, -0.5, 0, 0] }), l).voiture.boost).toBe(true);
+    expect(avec(manette({ axes: [0, 0.9, 0, 0] }), l).voiture.boost).toBe(false);
+    expect(avec(manette({ axes: [0, 0, 0, 0.8] }), l).voiture.saut).toBe(true);
+    // zone morte large : le seuil ne dépend pas d'elle
+    expect(avec(manette({ axes: [0, -0.55, 0, 0] }), l, { ...REGL, zoneMorteManette: 0.4 }).voiture.boost).toBe(true);
+  });
+  it("un bouton sur un axe analogique : 0 ou 1 (volant sur la croix)", () => {
+    const l: Partial<LiaisonsManette> = { gauche: ["B14"], droite: ["B15"] };
+    expect(avec(manette({ boutons: { 15: true } }), l).voiture.direction).toBe(1);
+    expect(avec(manette({ boutons: { 14: true } }), l).voiture.direction).toBe(-1);
+    expect(avec(manette({ boutons: { 14: true, 15: true } }), l).voiture.direction).toBe(0);
+  });
+  it("tangage : nez en haut / en bas sur ce qu'on veut, et l'inversion marche toujours", () => {
+    const l: Partial<LiaisonsManette> = { tangageHaut: ["B12"], tangageBas: ["B13"] };
+    expect(avec(manette({ boutons: { 12: true } }), l).voiture.tangage).toBe(1);
+    expect(avec(manette({ boutons: { 13: true } }), l).voiture.tangage).toBe(-1);
+    expect(avec(manette({ boutons: { 12: true } }), l, { ...REGL, inverserTangageManette: true }).voiture.tangage).toBe(-1);
+    // le stick n'agit plus sur le tangage
+    expect(avec(manette({ axes: [0, 1, 0, 0] }), l).voiture.tangage).toBe(0);
+  });
+  it("roulis, dérapage, ball cam, vue arrière, klaxon : reliés où l'on veut", () => {
+    const l: Partial<LiaisonsManette> = { rouleGauche: ["B14"], rouleDroite: ["B15"], derapage: ["B6"], balleCam: ["B10"], arriere: ["B8"], klaxon: ["B0"] };
+    expect(avec(manette({ boutons: { 15: true } }), l).voiture.roulis).toBe(1);
+    expect(avec(manette({ boutons: { 14: true } }), l).voiture.roulis).toBe(-1);
+    expect(avec(manette({ boutons: { 4: true, 5: true } }), l).voiture.roulis).toBe(0);
+    expect(avec(manette({ boutons: { 6: 1 } }), l).voiture.derapage).toBe(true);
+    expect(avec(manette({ boutons: { 10: true } }), l).basculerBalleCam).toBe(true);
+    expect(avec(manette({ boutons: { 8: true } }), l).arriere).toBe(true);
+    expect(avec(manette({ boutons: { 0: true } }), l).klaxon).toBe(true);
+    expect(avec(manette({ boutons: { 0: true } }), l).voiture.saut).toBe(true);
+  });
+  it("regard libre sur le stick gauche, ou sur un bouton", () => {
+    const l: Partial<LiaisonsManette> = { regardGauche: ["A0-"], regardDroite: ["A0+"], regardHaut: ["A1-"], regardBas: ["A1+"] };
+    expect(avec(manette({ axes: [1, 0, 0, 0] }), l).regard[0]).toBeCloseTo(1, 6);
+    expect(avec(manette({ axes: [0, -1, 0, 0] }), l).regard[1]).toBeCloseTo(1, 6);
+    expect(avec(manette({ axes: [0, 0, 1, 0] }), l).regard).toEqual([0, 0]);
+    expect(avec(manette({ boutons: { 13: true } }), { regardBas: ["B13"] }).regard[1]).toBe(-1);
+  });
+  it("une action sans liaison ne fait rien", () => {
+    const m = manette({ axes: [1, 1, 1, 1], boutons: { 0: true, 1: true, 7: 1, 6: 1, 9: true } });
+    const vide = Object.fromEntries(Object.keys(LIAISONS_MANETTE_DEFAUT).map((k) => [k, []])) as unknown as LiaisonsManette;
+    expect(entreesDepuisManette(m, REGL, vide)).toEqual(entreesJoueurNulles());
+  });
+  it("deux liaisons pour une action : la plus forte l'emporte (analogique) ou l'une des deux suffit (deux états)", () => {
+    expect(avec(manette({ boutons: { 0: true, 5: true } }), { saut: ["B0", "B5"] }).voiture.saut).toBe(true);
+    expect(avec(manette({ boutons: { 5: true } }), { saut: ["B0", "B5"] }).voiture.saut).toBe(true);
+    expect(avec(manette({ boutons: { 2: 0.3, 3: 0.8 } }), { accelerer: ["B2", "B3"] }).voiture.accel).toBeCloseTo(0.8, 6);
+  });
+  it("entrées illisibles ignorées, axe de gâchette au repos à -1 sans effet, jamais de NaN ni de -0", () => {
+    const e = avec(manette({ axes: [0, 0, 0, 0, -1, -1] }), { boost: ["A4+"], accelerer: ["A5+", "KeyW"] });
+    expect(e.voiture.boost).toBe(false);
+    expect(e.voiture.accel).toBe(0);
+    expect(Object.is(e.voiture.accel, -0)).toBe(false);
+    expect(avec(manette({ axes: [0, 0, 0, 0, 1, 1] }), { boost: ["A4+"], accelerer: ["A5+"] }).voiture).toMatchObject({ boost: true, accel: 1 });
+    for (const v of Object.values(entreesDepuisManette(manette(), REGL).regard)) expect(Object.is(v, -0)).toBe(false);
+  });
+  it("pauseDepuisManette suit la liaison pause (Start et la seconde)", () => {
+    expect(pauseDepuisManette(manette({ boutons: { 9: true } }), LIAISONS_MANETTE_DEFAUT)).toBe(true);
+    expect(pauseDepuisManette(manette({ boutons: { 8: true } }), LIAISONS_MANETTE_DEFAUT)).toBe(false);
+    const l = { ...LIAISONS_MANETTE_DEFAUT, pause: ["B9", "B8"] };
+    expect(pauseDepuisManette(manette({ boutons: { 8: true } }), l)).toBe(true);
+    expect(pauseDepuisManette(manette({ boutons: { 9: true } }), l)).toBe(true);
+    expect(entreesDepuisManette(manette({ boutons: { 8: true } }), REGL, l).pause).toBe(true);
+    expect(pauseDepuisManette(manette({ axes: [0, 0, 0, 0.9] }), { ...l, pause: ["B9", "A3+"] })).toBe(true);
+  });
+  it("manetteStandard choisit la première manette connectée au mapping standard", () => {
+    const a = { connected: true, mapping: "" };
+    const b = { connected: false, mapping: "standard" };
+    const c = { connected: true, mapping: "standard" };
+    expect(manetteStandard([null, a, b, c])).toBe(c);
+    expect(manetteStandard([null, a, b])).toBeNull();
+    expect(manetteStandard([])).toBeNull();
+    expect(manetteStandard([{}])).not.toBeNull();
+  });
+});
+
+describe("clavier : regard libre reliable", () => {
+  it("le regard libre suit sa liaison, plus seulement le bouton du milieu", () => {
+    const l: LiaisonsTouches = { ...LIAISONS_DEFAUT, regardLibre: ["KeyF"] };
+    const lire = (codes: string[], d: [number, number]) => entreesDepuisClavier({ touches: new Set(codes), deplacementSouris: d }, l);
+    expect(lire(["Souris1"], [RAYON_REGARD_SOURIS_PX, 0]).regard).toEqual([0, 0]);
+    expect(lire(["KeyF"], [RAYON_REGARD_SOURIS_PX / 2, 0]).regard[0]).toBeCloseTo(0.5, 6);
+    expect(entreesDepuisClavier({ touches: new Set(["KeyF"]), deplacementSouris: [0, 0] }, { ...l, regardLibre: [] }).regard).toEqual([0, 0]);
   });
 });
 
@@ -173,6 +302,43 @@ describe("source branchée sur une cible d'événements", () => {
     cible.dispatchEvent(evt("keyup", { code: "Space" }));
     expect(src.echantillonner().voiture.saut).toBe(true);
     expect(src.echantillonner().voiture.saut).toBe(false);
+  });
+
+  it("réactions : chaque ENFONCEMENT est un appui (chatAppuis), même relâché entre deux images ; la touche tenue et sa répétition automatique n'en font pas de nouveaux", () => {
+    const { cible, src } = creer();
+    const appuis = () => src.echantillonner().chatAppuis;
+    expect(appuis()).toEqual({ haut: false, gauche: false, droite: false, bas: false });
+    cible.dispatchEvent(evt("keydown", { code: "Digit1" }));
+    cible.dispatchEvent(evt("keyup", { code: "Digit1" }));
+    expect(appuis()).toEqual({ haut: true, gauche: false, droite: false, bas: false });
+    // la même touche, appuyée dans l'image SUIVANT immédiatement celle où elle était déjà vue « tenue » : l'événement compte quand même
+    cible.dispatchEvent(evt("keydown", { code: "Digit1" }));
+    expect(src.echantillonner().chat.haut).toBe(true);
+    cible.dispatchEvent(evt("keyup", { code: "Digit1" }));
+    cible.dispatchEvent(evt("keydown", { code: "Digit1" }));
+    expect(appuis()?.haut).toBe(true);
+    // touche tenue : tenue (chat) mais plus d'appui nouveau, et la répétition automatique du système n'en crée pas
+    expect(src.echantillonner().chat.haut).toBe(true);
+    cible.dispatchEvent(evt("keydown", { code: "Digit1", repeat: true }));
+    const e = src.echantillonner();
+    expect(e.chat.haut).toBe(true);
+    expect(e.chatAppuis?.haut).toBe(false);
+    cible.dispatchEvent(evt("keyup", { code: "Digit1" }));
+    expect(src.echantillonner().chat.haut).toBe(false);
+  });
+  it("réactions : chatSuite garde l'ORDRE et le nombre des appuis entre deux images (3 puis 1 reste 3 puis 1), vidée à l'échantillon suivant", () => {
+    const { cible, src } = creer();
+    for (const code of ["Digit3", "Digit1", "Digit1"]) { cible.dispatchEvent(evt("keydown", { code })); cible.dispatchEvent(evt("keyup", { code })); }
+    expect(src.echantillonner().chatSuite).toEqual(["droite", "haut", "haut"]);
+    expect(src.echantillonner().chatSuite).toEqual([]);
+  });
+  it("réactions : l'appui d'une touche d'une autre action n'ouvre rien, la perte de focus oublie les appuis", () => {
+    const { cible, src } = creer();
+    cible.dispatchEvent(evt("keydown", { code: "KeyW" }));
+    expect(src.echantillonner().chatAppuis).toEqual({ haut: false, gauche: false, droite: false, bas: false });
+    cible.dispatchEvent(evt("keydown", { code: "Digit4" }));
+    cible.dispatchEvent(evt("blur", {}));
+    expect(src.echantillonner().chatAppuis?.bas).toBe(false);
   });
 
   it("souris : boutons ajoutés aux touches, contextmenu bloqué, levier de regard borné et remis à zéro", () => {
@@ -264,6 +430,41 @@ describe("source branchée sur une cible d'événements", () => {
     expect(() => sans.src.vibrer(1, 100)).not.toThrow();
   });
 
+  it("la source lit les liaisons de manette du joueur et expose la pause (Start et seconde liaison)", () => {
+    const reglages = REGLAGES_DEFAUT();
+    reglages.liaisonsManette = { ...LIAISONS_MANETTE_DEFAUT, accelerer: ["B0"], pause: ["B9", "B8"] };
+    const base = manette({ boutons: { 0: true } });
+    const pad: ManetteLue = { ...base, connected: true, mapping: "standard" };
+    const cible = new EventTarget() as unknown as Window;
+    const src = creerSourceEntrees(cible, () => LIAISONS_DEFAUT, () => reglages, () => [pad]);
+    expect(src.echantillonner().voiture.accel).toBe(1);
+    expect(src.pauseManette()).toBe(false);
+    base.boutons[8] = { pressed: true, value: 1 };
+    expect(src.pauseManette()).toBe(true);
+    base.boutons[8] = { pressed: false, value: 0 };
+    base.boutons[9] = { pressed: true, value: 1 };
+    expect(src.pauseManette()).toBe(true);
+    src.dispose();
+    expect(creerSourceEntrees(cible, () => LIAISONS_DEFAUT, () => reglages, () => []).pauseManette()).toBe(false);
+  });
+
+  it("regard libre relié à une touche : le levier suit la souris tant que la touche est tenue, puis revient au centre", () => {
+    const cible = new EventTarget() as unknown as Window;
+    const l: LiaisonsTouches = { ...LIAISONS_DEFAUT, regardLibre: ["KeyF"] };
+    const src = creerSourceEntrees(cible, () => l, () => REGLAGES_DEFAUT(), () => []);
+    cible.dispatchEvent(evt("mousemove", { movementX: 500, movementY: 0 }));
+    cible.dispatchEvent(evt("keydown", { code: "KeyF" }));
+    cible.dispatchEvent(evt("mousemove", { movementX: RAYON_REGARD_SOURIS_PX / 2, movementY: 0 }));
+    expect(src.echantillonner().regard[0]).toBeCloseTo(0.5, 6);
+    cible.dispatchEvent(evt("keyup", { code: "KeyF" }));
+    expect(src.echantillonner().regard).toEqual([0, 0]);
+    // le bouton du milieu ne fait plus rien
+    cible.dispatchEvent(evt("mousedown", { button: 1 }));
+    cible.dispatchEvent(evt("mousemove", { movementX: 1000, movementY: 0 }));
+    expect(src.echantillonner().regard).toEqual([0, 0]);
+    src.dispose();
+  });
+
   it("une manette au mapping non standard est ignorée", () => {
     const pad: ManetteLue = { ...manette({ boutons: { 7: 1 } }), connected: true, mapping: "" };
     const { src } = creer(() => [pad]);
@@ -293,5 +494,38 @@ describe("manette du navigateur (Gamepad)", () => {
     expect(e.boost).toBe(true);
     expect(e.direction).toBeGreaterThan(0);
     expect(manetteDepuisGamepad(null)).toBeNull();
+  });
+});
+
+describe("réactions rapides (croix)", () => {
+  it("clavier : 1 2 3 4 = haut, gauche, droite, bas ; rien d'enfoncé = rien", () => {
+    expect(clavier([]).chat).toEqual({ haut: false, gauche: false, droite: false, bas: false });
+    expect(clavier(["Digit1"]).chat).toEqual({ haut: true, gauche: false, droite: false, bas: false });
+    expect(clavier(["Digit2"]).chat.gauche).toBe(true);
+    expect(clavier(["Digit3"]).chat.droite).toBe(true);
+    expect(clavier(["Digit4"]).chat.bas).toBe(true);
+  });
+  it("clavier : les chiffres ne touchent pas à la conduite", () => {
+    expect(clavier(["Digit1", "Digit2", "Digit3", "Digit4"]).voiture).toEqual(entreesJoueurNulles().voiture);
+  });
+  it("manette : la croix B12 haut, B14 gauche, B15 droite, B13 bas ; le klaxon est sur L3, plus sur la croix", () => {
+    const e = entreesDepuisManette(manette({ boutons: { [BOUTON_MANETTE.haut]: true, [BOUTON_MANETTE.droite]: true } }), REGL);
+    expect(e.chat).toEqual({ haut: true, gauche: false, droite: true, bas: false });
+    expect(e.klaxon).toBe(false);
+    expect(entreesDepuisManette(manette({ boutons: { [BOUTON_MANETTE.gauche]: true } }), REGL).chat.gauche).toBe(true);
+    expect(entreesDepuisManette(manette({ boutons: { [BOUTON_MANETTE.bas]: true } }), REGL).chat.bas).toBe(true);
+    expect(entreesDepuisManette(manette({ boutons: { [BOUTON_MANETTE.l3]: true } }), REGL)).toMatchObject({ klaxon: true, chat: { haut: false, gauche: false, droite: false, bas: false } });
+  });
+  it("liaisons personnalisées suivies (clavier et manette)", () => {
+    const l = { ...LIAISONS_DEFAUT, chatHaut: ["KeyU"] };
+    expect(entreesDepuisClavier({ touches: new Set(["KeyU"]), deplacementSouris: [0, 0] }, l).chat.haut).toBe(true);
+    expect(entreesDepuisClavier({ touches: new Set(["Digit1"]), deplacementSouris: [0, 0] }, l).chat.haut).toBe(false);
+    const m: LiaisonsManette = { ...LIAISONS_MANETTE_DEFAUT, chatBas: ["B0"] };
+    expect(entreesDepuisManette(manette({ boutons: { 0: true } }), REGL, m).chat.bas).toBe(true);
+  });
+  it("fusion : un OU par direction", () => {
+    const a = { ...entreesJoueurNulles(), chat: { haut: true, gauche: false, droite: false, bas: false } };
+    const b = { ...entreesJoueurNulles(), chat: { haut: false, gauche: false, droite: true, bas: false } };
+    expect(fusionnerEntrees(a, b).chat).toEqual({ haut: true, gauche: false, droite: true, bas: false });
   });
 });

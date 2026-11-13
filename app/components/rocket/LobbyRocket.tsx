@@ -133,7 +133,7 @@ export default function LobbyRocket({ config, surConfig, reglages, surReglages, 
       <AideLobby>
         <p>{TEXTE_ROCKET}</p>
         <ListeRegles titre={TITRE_REGLES_ROCKET} regles={REGLES_ROCKET} />
-        <ListeCommandes commandes={commandesRocket(reglages.touches, disposition)} />
+        <ListeCommandes commandes={commandesRocket(reglages.touches, disposition, manette ? reglages.liaisonsManette : null)} />
       </AideLobby>
 
       <div className={styles.pied}>

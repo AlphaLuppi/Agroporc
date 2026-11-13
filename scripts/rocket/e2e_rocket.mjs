@@ -10,7 +10,12 @@
  *  3b. vrai clavier et vraie souris (focus sur la racine role=dialog de la vue), sans surcharge `entrees`
  *  4. la balle bouge (vitesse imposée, gravité, rebond)
  *  5. but forcé : la balle lancée dans la cage adverse incrémente le score, événement `but`, phase « but » (capture « 03-but »)
+ *  5b. réactions rapides : « 3 » ouvre la catégorie « Réactions » (menu en bas à gauche), « 1 » envoie « Tié un tigre ?! » dans le fil ; une info d'équipe
+ *      (« 1 » puis « 1 », la même touche deux fois) porte « (équipe) » ; le menu se referme tout seul sans second appui ; pas de réaction pendant la pause (capture « 04-reactions » : le fil)
  *  6. Échap : pause (menu modal), Reprendre (capture « 04-pause »)
+ *  6b. liaisons : menu pause → Réglages, une touche du clavier réaffectée (B au boost), conflit signalé, Échap annule la capture SANS reprendre la partie,
+ *      pas de manette → message, fausse manette (Gamepad API simulée) : bouton affecté au saut, Start refusé pour une autre action sans fermer la pause,
+ *      réglages mémorisés, « Rétablir… », Reprendre
  *  7. fin de match : chrono à 0, écran de fin avec victoire (capture « 05-fin »), « Quitter » : retour à la vue aérienne, panneau rouvert (capture « 06-aerien »)
  *  8. seconde partie : Échap puis « Quitter vers Agroparc » ; `window.__rocket` retiré
  *  9. aucune erreur JavaScript
@@ -123,6 +128,14 @@ async function main() {
   const ctx = await navigateur.newContext({ viewport: { width: 1280, height: 720 } });
   await ctx.addInitScript(() => {
     try { localStorage.setItem("pdj-fps-aide-vue", "1"); } catch { /* stockage indisponible */ }
+    // fausse manette pilotable (étape 6b) : désactivée par défaut, `navigator.getGamepads()` rend alors la liste du navigateur
+    window.__fauxPad = { actif: false, axes: [0, 0, 0, 0], boutons: new Array(17).fill(0) };
+    const vraies = typeof navigator.getGamepads === "function" ? navigator.getGamepads.bind(navigator) : () => [];
+    navigator.getGamepads = () => {
+      const f = window.__fauxPad;
+      if (!f.actif) return vraies();
+      return [{ id: "faux", index: 0, connected: true, mapping: "standard", timestamp: performance.now(), axes: f.axes.slice(), buttons: f.boutons.map((v) => ({ pressed: v > 0.5, touched: v > 0, value: v })) }];
+    };
     let verrou = null;
     Object.defineProperty(Document.prototype, "pointerLockElement", { get: () => verrou, configurable: true });
     Element.prototype.requestPointerLock = function () { verrou = this; queueMicrotask(() => document.dispatchEvent(new Event("pointerlockchange"))); return Promise.resolve(); };
@@ -231,6 +244,42 @@ async function main() {
     await capture(page, "03-but");
   });
 
+  await etape("5b. réactions rapides : une touche ouvre la catégorie, la suivante envoie le message dans le fil ; expiration ; muet en pause", async () => {
+    const menuOuvert = (titre) => page.evaluate((t) => !!document.querySelector(`[role=group][aria-label="Réactions rapides : ${t}"]`), titre);
+    const fil = () => page.evaluate(() => Array.from(document.querySelectorAll('ul[aria-label="Réactions rapides reçues"] li')).map((li) => li.textContent ?? ""));
+    /** deux appuis : attend le menu avant le second, dans le délai de 2 s du jeu */
+    async function parler(premiere, titre, seconde) {
+      await page.keyboard.press(premiere);
+      await jusqua(() => menuOuvert(titre), { ms: 20_000, pas: 40, quoi: `menu « ${titre} » ouvert par ${premiere}` });
+      await page.keyboard.press(seconde);
+    }
+    await page.evaluate(() => window.__rocket.geler(false)); // l'horloge d'image tourne de toute façon ; la boucle réelle lit les touches
+    await parler("Digit3", "Réactions", "Digit1");
+    await jusqua(() => fil().then((l) => l.some((t) => t.includes("Tié un tigre ?!"))), { ms: 20_000, pas: 40, quoi: "« Tié un tigre ?! » dans le fil" });
+    verifier(!(await menuOuvert("Réactions")), "le menu devrait se refermer après le choix");
+    const ligne = (await fil()).find((t) => t.includes("Tié un tigre ?!"));
+    verifier(ligne.includes("Alice"), `le fil devrait porter le nom du joueur : ${ligne}`);
+    // info d'équipe : « (équipe) » devant le nom
+    // 1 puis 1 : la MÊME touche deux fois d'affilée (le second appui suit de près le premier : il ne doit pas se perdre à 5-10 images/s)
+    await parler("Digit1", "Infos", "Digit1");
+    await jusqua(() => fil().then((l) => l.some((t) => t.includes("J'ai la balle !"))), { ms: 20_000, pas: 40, quoi: "« J'ai la balle ! » dans le fil" });
+    await capture(page, "04-reactions");
+    verifier((await fil()).find((t) => t.includes("J'ai la balle !")).includes("(équipe)"), "une info doit être marquée « (équipe) »");
+    // sans second appui le menu expire (2 s)
+    await page.keyboard.press("Digit2");
+    await jusqua(() => menuOuvert("Compliments"), { ms: 20_000, pas: 40, quoi: "menu « Compliments »" });
+    await jusqua(async () => !(await menuOuvert("Compliments")), { ms: 20_000, quoi: "expiration du menu" });
+    // pendant la pause (menu modal) les touches de réaction ne font rien
+    await page.keyboard.press("Escape");
+    await jusqua(() => page.evaluate(() => window.__rocket.hud()?.enPause === true), { quoi: "pause" });
+    await page.keyboard.press("Digit3");
+    await dormir(1200);
+    verifier(!(await menuOuvert("Réactions")), "pas de menu de réactions pendant la pause");
+    await page.locator("[role=dialog][aria-labelledby]").getByRole("button", { name: /^Reprendre/ }).click();
+    await jusqua(() => page.evaluate(() => window.__rocket.hud()?.enPause === false), { quoi: "reprise" });
+    await page.evaluate(() => window.__rocket.geler(true));
+  });
+
   await etape("6. Échap : pause (menu modal), puis Reprendre", async () => {
     await page.evaluate(() => window.__rocket.geler(false)); // la pause se pose avec la boucle réelle
     await page.keyboard.press("Escape");
@@ -238,6 +287,80 @@ async function main() {
     const dlg = page.locator("[role=dialog][aria-labelledby]");
     await dlg.waitFor({ state: "visible", timeout: 10_000 });
     await capture(page, "04-pause");
+    await dlg.getByRole("button", { name: /^Reprendre/ }).click();
+    await jusqua(() => page.evaluate(() => window.__rocket.hud()?.enPause === false), { quoi: "reprise" });
+    await page.evaluate(() => window.__rocket.geler(true));
+  });
+
+  await etape("6b. liaisons : touche réaffectée, conflit, Échap annule sans reprendre, manette (simulée), Start protégé, réglages mémorisés", async () => {
+    const hudPause = () => page.evaluate(() => window.__rocket.hud()?.enPause === true);
+    await page.evaluate(() => window.__rocket.geler(false)); // la pause se pose avec la boucle réelle
+    await page.keyboard.press("Escape");
+    await jusqua(hudPause, { quoi: "pause avant les liaisons" });
+    const dlg = page.locator("[role=dialog][aria-labelledby]");
+    await dlg.getByRole("button", { name: "Réglages", exact: true }).click();
+    const statut = dlg.locator("p[role=status]");
+    const clavier = dlg.getByRole("group", { name: "Acrobaties" });
+    const divers = dlg.getByRole("group", { name: "Divers", exact: true });
+    const pad = dlg.getByRole("group", { name: "Manette : En l'air" });
+    // 1. B au boost (emplacement 1)
+    await clavier.getByRole("button", { name: /^Boost \(maintenu\), entrée 1/ }).click();
+    await jusqua(() => clavier.getByRole("button", { name: /^Boost \(maintenu\), entrée 1/ }).getAttribute("aria-pressed").then((v) => v === "true"), { quoi: "capture ouverte" });
+    verifier(/Appuie sur une touche/.test(await statut.innerText()), `zone d'état : ${await statut.innerText()}`);
+    await dormir(300); // les écouteurs de la capture sont posés après le rendu
+    await page.keyboard.press("KeyB");
+    await jusqua(() => clavier.getByRole("button", { name: /^Boost \(maintenu\), entrée 1 : B\./ }).isVisible(), { quoi: "B affecté au boost" })
+      .catch(async (e) => { await capture(page, "04b-echec"); throw new Error(`${e.message}\nétat : ${await statut.innerText()}\nboost : ${await clavier.getByRole("button", { name: /^Boost/ }).evaluateAll((l) => l.map((b) => b.getAttribute("aria-label")).join(" | "))}`); });
+    verifier(await hudPause(), "la partie doit rester en pause pendant la capture");
+    // 2. conflit : Q (roulis à gauche) donné au boost
+    await clavier.getByRole("button", { name: /^Boost \(maintenu\), entrée 2/ }).click();
+    await dormir(300);
+    await page.keyboard.press("KeyQ");
+    await jusqua(async () => /retirée de « Roulis à gauche »/.test(await statut.innerText()), { quoi: "conflit signalé" });
+    // 3. Échap annule la capture, ne reprend pas la partie, ne ferme pas les réglages
+    await divers.getByRole("button", { name: /^Klaxon, entrée 1/ }).click();
+    await jusqua(() => divers.getByRole("button", { name: /^Klaxon, entrée 1/ }).getAttribute("aria-pressed").then((v) => v === "true"), { quoi: "capture du klaxon" });
+    await dormir(300);
+    await page.keyboard.press("Escape");
+    await dormir(600);
+    verifier(await hudPause(), "Échap pendant la capture ne doit pas reprendre la partie");
+    verifier(await dlg.getByRole("heading", { name: "Réglages" }).isVisible(), "Échap pendant la capture ne doit pas quitter les réglages");
+    verifier((await divers.getByRole("button", { name: /^Klaxon, entrée 1/ }).getAttribute("aria-pressed")) === "false", "la capture doit être fermée");
+    // 4. pas de manette : message clair
+    await pad.getByRole("button", { name: /^Sauter, double saut, flip, entrée 1/ }).click();
+    await jusqua(async () => /Aucune manette détectée/.test(await statut.innerText()), { quoi: "message sans manette" });
+    // 5. fausse manette : RB affecté au saut ; le bouton qui ouvre la capture (A tenu) est ignoré
+    await page.evaluate(() => { window.__fauxPad.actif = true; window.__fauxPad.boutons[0] = 1; });
+    await pad.getByRole("button", { name: /^Sauter, double saut, flip, entrée 1/ }).click();
+    await jusqua(() => pad.getByRole("button", { name: /^Sauter, double saut, flip, entrée 1/ }).getAttribute("aria-pressed").then((v) => v === "true"), { quoi: "capture manette" });
+    await dormir(400);
+    verifier(/Appuie sur un bouton ou pousse un stick/.test(await statut.innerText()), "invite de capture de la manette");
+    verifier((await pad.getByRole("button", { name: /^Sauter, double saut, flip, entrée 1/ }).getAttribute("aria-pressed")) === "true", "A tenu à l'ouverture ne doit pas être pris");
+    await page.evaluate(() => { window.__fauxPad.boutons[5] = 1; });
+    await jusqua(() => pad.getByRole("button", { name: /^Sauter, double saut, flip, entrée 1 : RB\./ }).isVisible(), { quoi: "RB affecté au saut" });
+    await page.evaluate(() => { window.__fauxPad.boutons[5] = 0; window.__fauxPad.boutons[0] = 0; });
+    // 6. Start pour une autre action : refusé, la pause reste ouverte
+    await pad.getByRole("button", { name: /^Nez en haut \(en l'air\), entrée 1/ }).click();
+    await dormir(300);
+    await page.evaluate(() => { window.__fauxPad.boutons[9] = 1; });
+    await jusqua(async () => /Start est réservé à la pause/.test(await statut.innerText()), { quoi: "Start refusé" });
+    await dormir(500);
+    verifier(await hudPause(), "Start pressé pendant la capture ne doit pas fermer la pause");
+    await page.evaluate(() => { window.__fauxPad.boutons[9] = 0; });
+    await dormir(600);
+    verifier(await hudPause(), "Start relâché après la capture ne doit pas fermer la pause");
+    // 7. mémorisation
+    const stocke = await page.evaluate(() => JSON.parse(localStorage.getItem("pdj-rocket-reglages") ?? "null"));
+    verifier(stocke?.touches?.boost?.[0] === "KeyB" && !stocke.touches.rouleGauche.includes("KeyQ"), `touches mémorisées : ${JSON.stringify(stocke?.touches)}`);
+    verifier(JSON.stringify(stocke?.liaisonsManette?.saut) === '["B5"]' && stocke.liaisonsManette.pause[0] === "B9", `manette mémorisée : ${JSON.stringify(stocke?.liaisonsManette)}`);
+    await capture(page, "04b-liaisons");
+    // 8. rétablir
+    await dlg.getByRole("button", { name: "Rétablir les touches par défaut" }).click();
+    await dlg.getByRole("button", { name: "Rétablir la manette par défaut" }).click();
+    await jusqua(() => clavier.getByRole("button", { name: /^Boost \(maintenu\), entrée 1 : Maj gauche\./ }).isVisible(), { quoi: "touches par défaut" });
+    await jusqua(() => pad.getByRole("button", { name: /^Sauter, double saut, flip, entrée 1 : A\./ }).isVisible(), { quoi: "manette par défaut" });
+    await page.evaluate(() => { window.__fauxPad.actif = false; });
+    await dlg.getByRole("button", { name: "Retour", exact: true }).click();
     await dlg.getByRole("button", { name: /^Reprendre/ }).click();
     await jusqua(() => page.evaluate(() => window.__rocket.hud()?.enPause === false), { quoi: "reprise" });
     await page.evaluate(() => window.__rocket.geler(true));

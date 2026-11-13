@@ -1,5 +1,5 @@
 /**
- * Rocket Muche : réglages du joueur (caméra, touches, volume, manette), mémorisés dans `localStorage` sous `pdj-rocket-reglages`.
+ * Rocket Muche : réglages du joueur (caméra, touches du clavier et de la souris, boutons de la manette, volume, manette), mémorisés dans `localStorage` sous `pdj-rocket-reglages`.
  *
  * Pur sauf le stockage, injecté (`StockageMinimal`) : aucune lecture ni écriture ne lève jamais d'exception (navigation privée, quota,
  * JSON corrompu, valeurs hors bornes → on retombe sur le défaut champ par champ, jamais sur « tout ou rien »).
@@ -8,14 +8,17 @@
 import {
   CAMERA_DEFAUT,
   LIAISONS_DEFAUT,
+  LIAISONS_MANETTE_DEFAUT,
   REGLAGES_DEFAUT,
   type EcrireReglages,
+  type LiaisonsManette,
   type LiaisonsTouches,
   type LireReglages,
   type NormaliserReglages,
   type ParamsCamera,
   type ReglagesRocket,
 } from "./contrat";
+import { BOUTON_PAUSE, BOUTON_REJOUER, TOUCHE_PAUSE, conflitManette, conflitTouches, entreeManetteValide, estBoutonSouris, type ActionManette, type ActionTouche } from "./liaisons";
 
 /** Clé de `localStorage`. */
 export const CLE_REGLAGES = "pdj-rocket-reglages";
@@ -51,21 +54,65 @@ function normaliserCamera(brut: unknown): ParamsCamera {
   return c;
 }
 
-/** Liste de codes valides, sans doublon, deux au plus ; vide ou invalide → défaut de l'action. */
-function normaliserCodes(brut: unknown, defaut: readonly string[]): readonly string[] {
+/**
+ * Liste de codes valides, sans doublon, deux au plus. Une liste ABSENTE ou dont rien n'est valide retombe sur le défaut de l'action ; une liste
+ * VIDE est un choix du joueur (il a effacé les liaisons de l'action) et reste vide.
+ */
+function normaliserCodes(brut: unknown, defaut: readonly string[], valide: (c: unknown) => c is string): readonly string[] {
   if (!Array.isArray(brut)) return [...defaut];
+  if (brut.length === 0) return [];
   const codes: string[] = [];
-  for (const c of brut) if (typeof c === "string" && CODE_VALIDE.test(c) && !codes.includes(c)) codes.push(c);
+  for (const c of brut) if (valide(c) && !codes.includes(c)) codes.push(c);
   return codes.length > 0 ? codes.slice(0, TOUCHES_PAR_ACTION) : [...defaut];
+}
+const codeTouche = (c: unknown): c is string => typeof c === "string" && CODE_VALIDE.test(c);
+
+/**
+ * La pause garde son entrée de secours en PREMIER emplacement (Échap au clavier, Start à la manette) ; aucune autre action ne la garde :
+ * elle est réservée, sinon un joueur qui la déliait ne pourrait plus ouvrir le menu. `inerte` écarte ce que la pause ne peut pas lire (un
+ * bouton de souris) ou ne doit pas prendre (A, qui relance le match).
+ */
+function avecPauseReservee<L extends { pause: readonly string[] }>(l: L, secours: string, inerte: (c: string) => boolean): L {
+  const res: Record<string, readonly string[]> = { ...l };
+  for (const k of Object.keys(res)) if (k !== "pause") res[k] = res[k].filter((c) => c !== secours);
+  res.pause = [secours, ...l.pause.filter((c) => c !== secours && !inerte(c))].slice(0, TOUCHES_PAR_ACTION);
+  return res as unknown as L;
+}
+
+/**
+ * Une action ABSENTE du JSON mémorisé (réglages d'avant son ajout : les réactions rapides par exemple) reçoit son défaut, mais jamais une
+ * entrée que le joueur a donnée à une autre action : ce qu'il a choisi l'emporte sur le défaut d'une nouveauté. Les actions présentes ne sont pas touchées.
+ */
+function sansEntreesPrises<A extends string>(
+  res: Record<A, readonly string[]>,
+  brut: Record<string, unknown>,
+  actions: readonly A[],
+  enConflit: (a: A, b: A) => boolean,
+): void {
+  const presentes = actions.filter((a) => Array.isArray(brut[a]));
+  if (presentes.length === 0 || presentes.length === actions.length) return;
+  for (const a of actions) {
+    if (Array.isArray(brut[a])) continue;
+    res[a] = res[a].filter((c) => !presentes.some((b) => enConflit(a, b) && res[b].includes(c)));
+  }
 }
 
 function normaliserTouches(brut: unknown): LiaisonsTouches {
   const b = estObjet(brut) ? brut : {};
+  const actions = Object.keys(LIAISONS_DEFAUT) as ActionTouche[];
   const t = { ...LIAISONS_DEFAUT };
-  for (const action of Object.keys(LIAISONS_DEFAUT) as (keyof LiaisonsTouches)[]) t[action] = normaliserCodes(b[action], LIAISONS_DEFAUT[action]);
-  // Échap reste toujours une façon de mettre en pause : un joueur qui la déliait ne pourrait plus ouvrir le menu
-  if (!t.pause.includes("Escape")) t.pause = ["Escape", ...t.pause].slice(0, TOUCHES_PAR_ACTION);
-  return t;
+  for (const action of actions) t[action] = normaliserCodes(b[action], LIAISONS_DEFAUT[action], codeTouche);
+  sansEntreesPrises(t, b, actions, conflitTouches);
+  return avecPauseReservee(t, TOUCHE_PAUSE, estBoutonSouris);
+}
+
+function normaliserManette(brut: unknown): LiaisonsManette {
+  const b = estObjet(brut) ? brut : {};
+  const actions = Object.keys(LIAISONS_MANETTE_DEFAUT) as ActionManette[];
+  const m = { ...LIAISONS_MANETTE_DEFAUT };
+  for (const action of actions) m[action] = normaliserCodes(b[action], LIAISONS_MANETTE_DEFAUT[action], entreeManetteValide);
+  sansEntreesPrises(m, b, actions, conflitManette);
+  return avecPauseReservee(m, BOUTON_PAUSE, (c) => c === BOUTON_REJOUER);
 }
 
 /** Réglages valides à partir de n'importe quelle valeur lue (JSON de `localStorage`, formulaire) : champ par champ, jamais d'exception. */
@@ -75,11 +122,13 @@ export const normaliserReglages: NormaliserReglages = (brut: unknown): ReglagesR
   return {
     camera: normaliserCamera(brut.camera),
     touches: normaliserTouches(brut.touches),
+    liaisonsManette: normaliserManette(brut.liaisonsManette),
     balleCamParDefaut: typeof brut.balleCamParDefaut === "boolean" ? brut.balleCamParDefaut : d.balleCamParDefaut,
     volume: nombre(brut.volume, [0, 1], d.volume),
     zoneMorteManette: nombre(brut.zoneMorteManette, [0, 0.4], d.zoneMorteManette),
     inverserTangageManette: typeof brut.inverserTangageManette === "boolean" ? brut.inverserTangageManette : d.inverserTangageManette,
     vibrations: typeof brut.vibrations === "boolean" ? brut.vibrations : d.vibrations,
+    reactionsAdversaires: typeof brut.reactionsAdversaires === "boolean" ? brut.reactionsAdversaires : d.reactionsAdversaires,
   };
 };
 

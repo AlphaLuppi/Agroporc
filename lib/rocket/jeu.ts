@@ -16,6 +16,12 @@
  * point de vue fixe pendant la célébration, rendu sans public ni flash.
  *
  * Crochet de développement (hors production) : `window.__rocket` (type `CrochetRocket` du contrat) pour les captures et l'e2e.
+ *
+ * EN LIGNE (`opts.enLigne`, spec 2026-11-08-rocket-en-ligne-design.md § 9.4) : la même boucle, mais le monde vient du prédicteur (`reseau/prediction.ts`) au
+ * lieu de l'accumulateur local. Aucun cerveau local, aucune pause (le menu ouvert ou l'onglet masqué rendent les commandes neutres, la partie continue),
+ * l'affichage lit le monde AFFICHÉ (corrections visuelles et garde de phase), le HUD réseau remonte par `hudReseau`, `recommencer()` vote la revanche.
+ * Le jeu écoute lui-même le client : une seconde `debut` (revanche, reprise) recrée le prédicteur, renderer conservé, et il envoie TOUJOURS `pret`.
+ * Toute la logique qui ne touche ni three ni le DOM est dans `jeu-en-ligne.ts` (testée). Crochet de développement : `window.__rocketReseau`.
  * Spec : docs/superpowers/specs/2026-11-06-rocket-agroparc-design.md (§ 8, § 10, § 11 F)
  */
 import * as THREE from "three";
@@ -23,10 +29,14 @@ import type { SceneData } from "../agroparc3d/types";
 import { C, construireDecor, qualiteParDefaut } from "../agroparc3d/decor";
 import { creerPostTraitement, type PostTraitement } from "../fps/rendu";
 import {
+  CHAT_NUL,
   MATCH,
   PAS_S,
   boitesExclusionSite,
   type BanniereHud,
+  type DirectionChat,
+  type HudChat,
+  type LigneChat,
   type Cerveau,
   type ConfigMatch,
   type CreerJeuRocket,
@@ -51,12 +61,28 @@ import {
 import { avancerAccumulateur, creerAccumulateur } from "./boucle";
 import { ajouterSecousse, creerEtatCamera, majCamera, majCameraBut } from "./camera";
 import { BOUTON_MANETTE, creerSourceEntrees, entreesJoueurNulles, type SourceEntreesEtendue } from "./entrees";
+import { captureEnCours } from "./capture";
+import { codeBouton, entreeManetteLiee } from "./liaisons";
 import { creerArene } from "./arene";
 import { creerMonde, pasMonde, resultatMatch } from "./match";
 import { creerCerveau } from "./bots";
 import { replacerVoiture } from "./voiture";
 import { creerRenduRocket } from "./rendu";
+import { creerBullesReactions, type BullesReactions } from "./rendu-bulles";
+import {
+  ANTI_SPAM, CHAT_LIGNES_MAX, CHAT_LIGNE_DUREE_S, DIRECTIONS_CHAT, MENU_FERME, appuyerMenu, categorieParId, creerAntiSpam, expirerMenu, reactionParId, reactionVisible, secondesBlocage,
+  type EtatMenuReactions,
+} from "./reactions";
+import { creerReacteurBots, type ReacteurBots } from "./reactions-bots";
 import { creerSonsRocket } from "./sons";
+import {
+  choisirSource, creerCanalDegrade, creerEmetteurHudReseau, creerSourceEnLigne, creerSuiviPresence, creerSuiviRevanche, construireHudReseau, entreesEffectives, etatCommandes,
+  type SourceMonde,
+} from "./jeu-en-ligne";
+import { creerHorloge } from "./reseau/horloge";
+import { creerPredicteur } from "./reseau/prediction";
+import { RESEAU, type CrochetRocketReseau, type HudReseau, type MessageServeur, type OptionsJeuRocketAvecLigne, type PredicteurRocket } from "./reseau/protocole";
+import type { ClientRocketEtendu } from "./reseau/client";
 import {
   avancerLecture, balleInterpolee, creerEnregistreurRejeu, creerVueRejeu, lancerLecture, poserImage, voitureInterpolee, type LectureRejeu,
 } from "./rejeu-but";
@@ -121,9 +147,11 @@ function jeuInerte(): JeuRocketHandleEtendu {
  * Crée la partie sur `canvas` (déjà monté par la vue, sans autre contexte). `data` est la scène d'Agroparc (le décor autour du stade).
  * Aucune exception ne sort : un échec (WebGL absent, contexte perdu) appelle `opts.erreur` et rend un jeu inerte.
  */
-export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts: OptionsJeuRocket): JeuRocketHandleEtendu {
+export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts: OptionsJeuRocketAvecLigne): JeuRocketHandleEtendu {
   let reglages: ReglagesRocket = opts.reglages;
   let config: ConfigMatch = copierConfig(opts.config);
+  /** partie en ligne (null : jeu local contre des bots, comportement historique) */
+  const enLigne = choisirSource(opts) === "ligne" ? opts.enLigne ?? null : null;
   const reduit = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   // ---------- rendu three ----------
@@ -148,7 +176,9 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
   let rendu: RenduRocket | null = null;
   let sons: SonsRocket | null = null;
   let source: SourceEntreesEtendue | null = null;
+  let bulles: BullesReactions | null = null;
   const liberer = () => {
+    bulles?.dispose();
     sons?.dispose();
     source?.dispose();
     rendu?.dispose();
@@ -166,12 +196,27 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
   };
 
   const arene = creerArene();
-  let monde: MondeRocket = creerMonde(config, arene);
+  const horloge = enLigne ? creerHorloge() : null;
+  const sansRendu = !!enLigne?.sansRendu;
+  let predicteur: PredicteurRocket | null = null;
+  if (enLigne && horloge) {
+    try {
+      predicteur = creerPredicteur({ horloge, debut: enLigne.debut, arene });
+    } catch (err) {
+      liberer();
+      opts.erreur("La partie en ligne n'a pas pu démarrer.");
+      if (process.env.NODE_ENV !== "production") console.error("rocket : prédicteur", err);
+      return jeuInerte();
+    }
+  }
+  let monde: MondeRocket = predicteur ? predicteur.monde : creerMonde(config, arene);
   let cerveaux: (Cerveau | null)[] = [];
   /** surcharge des entrées d'une voiture par le crochet de développement (null = entrées normales) */
   const surcharges: (EntreesVoiture | null)[] = [];
 
   function creerCerveaux(): (Cerveau | null)[] {
+    // en ligne, les bots tournent sur le serveur : le client ne simule jamais un cerveau
+    if (enLigne) return [];
     return monde.voitures.map((v) => (v.humain
       ? null
       : creerCerveau(v.equipe === config.equipeJoueur ? config.niveauAllies : config.niveauAdversaires, (Math.imul(config.graine, 2654435761) + v.id * 40503 + 1) >>> 0)));
@@ -211,6 +256,10 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
     // la caméra est un enfant de la racine : elle se place directement dans le repère LOCAL du stade
     r.racine.add(camera);
     r.synchroniser(monde, 1, 0);
+    // bulles des réactions rapides : un échec ici ne doit jamais empêcher la partie
+    bulles?.dispose();
+    bulles = null;
+    try { bulles = creerBullesReactions(r.racine, monde.voitures.length, reduit); } catch (err) { if (process.env.NODE_ENV !== "production") console.error("rocket : bulles", err); }
   }
   try {
     monterRendu();
@@ -242,8 +291,22 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
   let klaxonPrecedent = false;
   let startPrecedent = false;
   let retourPrecedent = false;
+  // ---------- réactions rapides ----------
+  let menuChat: EtatMenuReactions = MENU_FERME;
+  const antiSpamMoi = creerAntiSpam();
+  let chatPrecedent: Record<DirectionChat, boolean> = CHAT_NUL();
+  /** instant (horloge d'image, s) jusqu'auquel mes réactions sont bloquées (anti-spam local ou refus du serveur) */
+  let chatBloqueJusquaS = 0;
+  let idChat = 0;
+  let lignesChat: (LigneChat & { fin: number })[] = [];
+  /** réactions des bots du mode LOCAL (en ligne ce sont ceux du serveur) */
+  const creerReacteurLocal = (): ReacteurBots | null =>
+    (enLigne ? null : creerReacteurBots({ graine: config.graine, voitures: monde.voitures.map((v) => ({ id: v.id, equipe: v.equipe, bot: !v.humain })) }));
+  let reacteur: ReacteurBots | null = creerReacteurLocal();
   let etatCam: EtatCamera = creerEtatCamera(monde.voitures[monde.idHumain], monde.balle, false);
   let resultatCache: ResultatMatch | null = null;
+  /** EN LIGNE : résultat envoyé par le serveur (message `fin`) ; le monde prédit ne décide jamais de la fin */
+  let resultatServeur: ResultatMatch | null = null;
   let dernierHud: HudRocket | null = null;
   let tHud = -1;
   let hudSale = true;
@@ -291,8 +354,14 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
     // pendant le rejeu d'un but, le cadran (boost, vitesse) est celui de la voiture suivie, à l'instant rejoué
     const m = rejeu ? rejeu.vue.voitures[rejeu.lecture.clip.idCamera] ?? moi() : moi();
     // le résultat n'apparaît qu'après la première célébration de la fin
-    if (monde.phase === "fini" && tFini !== null && tReel - tFini >= DELAI_RESULTAT_S) resultatCache ??= resultatMatch(monde);
-    const resultat = monde.phase === "fini" ? resultatCache : null;
+    let resultat: ResultatMatch | null;
+    if (enLigne) {
+      if (resultatServeur && tFini !== null && tReel - tFini >= DELAI_RESULTAT_S) resultatCache ??= resultatServeur;
+      resultat = resultatCache;
+    } else {
+      if (monde.phase === "fini" && tFini !== null && tReel - tFini >= DELAI_RESULTAT_S) resultatCache ??= resultatMatch(monde);
+      resultat = monde.phase === "fini" ? resultatCache : null;
+    }
     return {
       phase: monde.phase,
       score: { ...monde.score },
@@ -305,7 +374,7 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
       supersonique: m.supersonique,
       demolie: m.demolie,
       reapparitionDans: m.demolie ? Math.max(0, m.reapparitionDans) : 0,
-      equipeJoueur: config.equipeJoueur,
+      equipeJoueur: enLigne ? m.equipe : config.equipeJoueur,
       balleCam: balleCam || m.demolie || rejeu !== null,
       rejeu: rejeu ? { buteur: rejeu.nom, equipe: rejeu.equipe } : null,
       banniere: banniere && banniere.fin > tReel ? { id: banniere.id, texte: banniere.texte, sousTexte: banniere.sousTexte, equipe: banniere.equipe, dureeS: banniere.dureeS } : null,
@@ -315,7 +384,17 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
       aide: !aideMasquee && !rejeu && (tDebut === null || tReel - tDebut < AIDE_S) && !enPause && monde.phase !== "fini",
       classement: classementOuvert || resultat ? lignesClassement() : [],
       resultat,
+      chat: construireChat(),
     };
+  }
+  function construireChat(): HudChat {
+    let menu: HudChat["menu"] = null;
+    if (menuChat.ouvert) {
+      const cat = categorieParId(menuChat.categorie);
+      menu = { categorie: cat.id, titre: cat.titre, choix: cat.reactions.map((r) => ({ direction: r.direction, id: r.id, texte: r.texte, equipeSeule: r.equipeSeule })) };
+    }
+    const lignes = lignesChat.filter((l) => l.fin > tReel).slice(-CHAT_LIGNES_MAX).map(({ id, nom, texte, equipe, equipeSeule, moi }) => ({ id, nom, texte, equipe, equipeSeule, moi }));
+    return { menu, lignes, bloqueS: secondesBlocage((chatBloqueJusquaS - tReel) * 1000) };
   }
   function envoyerHud(force: boolean): void {
     // envoi immédiat sur changement (événement, pause…), sinon au plus 20 Hz
@@ -330,6 +409,90 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
   function vibrer(intensite: number, dureeMs: number): void {
     if (reduit || !reglages.vibrations) return;
     sourceOk.vibrer(intensite, dureeMs);
+  }
+
+  // ---------- réactions rapides ----------
+  /** Un appui sur une direction de la croix : ouvre la catégorie, ou envoie le message choisi (sauf chat bloqué). */
+  function appuyerChat(d: DirectionChat): void {
+    const maintenantS = tReel;
+    const r = appuyerMenu(menuChat, d, maintenantS * 1000);
+    menuChat = r.etat;
+    hudSale = true;
+    if (!r.envoi) return;
+    if (maintenantS < chatBloqueJusquaS || !antiSpamMoi.essayer(maintenantS * 1000)) {
+      chatBloqueJusquaS = Math.max(chatBloqueJusquaS, maintenantS + antiSpamMoi.bloqueMs(maintenantS * 1000) / 1000);
+      return;
+    }
+    if (enLigne) {
+      // le serveur valide, limite et relaie à tous (ou à l'équipe), moi compris : la réaction s'affiche à son retour
+      const id = r.envoi;
+      canal.sortir(() => enLigne.client.envoyer({ t: "reaction", id }));
+    } else recevoirReaction(monde.idHumain, r.envoi);
+  }
+
+  /** Une réaction arrive (la mienne, un bot, un joueur) : fil, bulle au-dessus de sa voiture, petit son. Ignorée si le réglage masque les adversaires. */
+  function recevoirReaction(idVoiture: number, id: string): void {
+    // l'écran de fin masque le menu et le fil (le HUD ne les dessine pas) : rien n'y est ni envoyé, ni reçu, ni sonné
+    if (resultatCache !== null) return;
+    const reaction = reactionParId(id);
+    const v = monde.voitures[idVoiture];
+    const mienne = monde.voitures[monde.idHumain];
+    if (!reaction || !v || !mienne) return;
+    const estMoi = idVoiture === monde.idHumain;
+    if (!reactionVisible(reaction, { equipe: v.equipe, moi: estMoi }, mienne.equipe, reglages.reactionsAdversaires)) return;
+    lignesChat.push({ id: ++idChat, nom: v.nom, texte: reaction.texte, equipe: v.equipe, equipeSeule: reaction.equipeSeule, moi: estMoi, fin: tReel + CHAT_LIGNE_DUREE_S });
+    if (lignesChat.length > CHAT_LIGNES_MAX * 2) lignesChat = lignesChat.slice(-CHAT_LIGNES_MAX * 2);
+    // pas de bulle sur ma propre voiture (elle masquerait la balle) : mon message est dans le fil
+    if (!estMoi) bulles?.afficher(idVoiture, reaction.texte, v.equipe, tReel);
+    sonsOk.reaction(estMoi);
+    hudSale = true;
+  }
+
+  /** Centre de la voiture `id` tel qu'il est dessiné (interpolé entre deux pas), pour accrocher sa bulle. */
+  const pBulle: Vec3 = [0, 0, 0];
+  const positionBulle = (id: number): Readonly<Vec3> | null => {
+    const v = monde.voitures[id];
+    if (!v) return null;
+    const pr = monde.precedent.voitures[id];
+    if (!pr || distance(pr.p, v.p) >= SEUIL_TELEPORT_M) return v.p;
+    const a = clamp01(alpha);
+    pBulle[0] = pr.p[0] + (v.p[0] - pr.p[0]) * a;
+    pBulle[1] = pr.p[1] + (v.p[1] - pr.p[1]) * a;
+    pBulle[2] = pr.p[2] + (v.p[2] - pr.p[2]) * a;
+    return pBulle;
+  };
+
+  /** Nouveau match : plus de menu ouvert, plus de message, anti-spam remis à zéro, bulles masquées. */
+  function reinitialiserChat(): void {
+    menuChat = MENU_FERME;
+    antiSpamMoi.reinitialiser();
+    chatBloqueJusquaS = 0;
+    lignesChat = [];
+    bulles?.vider();
+    hudSale = true;
+  }
+
+  /** Réactions de bots arrivées à échéance (mode local). */
+  function lireReactionsBots(): void {
+    if (!reacteur) return;
+    for (const r of reacteur.echeances(monde.temps)) recevoirReaction(r.idVoiture, r.id);
+  }
+
+  /** Le menu de la croix (avec ses fronts montants) ; refermé par la pause, l'expiration et la fin d'une capture. */
+  function majChat(entree: { chat: Record<DirectionChat, boolean>; chatAppuis?: Record<DirectionChat, boolean>; chatSuite?: readonly DirectionChat[] }, actif: boolean): void {
+    const avant = menuChat;
+    menuChat = expirerMenu(menuChat, tReel * 1000);
+    if (menuChat !== avant) hudSale = true;
+    if (!actif) {
+      if (menuChat.ouvert) { menuChat = MENU_FERME; hudSale = true; }
+    } else {
+      // front : un appui (événement du clavier ou de la souris, même relâché depuis) ou un bouton de manette qui vient d'être pressé
+      // les appuis du clavier et de la souris dans l'ordre où le joueur les a faits ; puis les fronts montants qu'ils ne couvrent pas (manette)
+      const suite = entree.chatSuite ?? DIRECTIONS_CHAT.filter((d) => entree.chatAppuis?.[d]);
+      for (const d of suite) appuyerChat(d);
+      for (const d of DIRECTIONS_CHAT) if (!suite.includes(d) && entree.chat[d] && !chatPrecedent[d]) appuyerChat(d);
+    }
+    chatPrecedent = { ...entree.chat };
   }
 
   function traiter(e: EvenementMatch): void {
@@ -378,7 +541,8 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
           balleCam = reglages.balleCamParDefaut;
           etatCam = creerEtatCamera(moi(), monde.balle, balleCam);
         }
-        aligner(monde, e.idVoiture);
+        // en ligne le prédicteur a déjà placé `precedent` (il lisse lui-même les corrections)
+        if (!enLigne) aligner(monde, e.idVoiture);
         break;
       case "bump":
         if (e.idVoiture === mien || e.autre === mien) { ajouterSecousse(etatCam, 0.04); vibrer(0.4, 80); }
@@ -410,7 +574,13 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
     const resteAvant = monde.tempsRestant;
     const evs = pasMonde(monde, entreesPas);
     for (const e of evs) { traiter(e); sortie?.push(e); }
+    if (reacteur) { if (evs.length > 0) reacteur.observer(evs, monde.temps); lireReactionsBots(); }
     if (monde.phase === "enJeu" || monde.phase === "but") enregistreur.enregistrer(monde);
+    apresPas(phaseAvant, resteAvant);
+  }
+
+  /** Suites d'un pas (ou, en ligne, d'une image) : changement de phase, annonce des 30 dernières secondes. */
+  function apresPas(phaseAvant: MondeRocket["phase"], resteAvant: number): void {
     if (monde.phase !== phaseAvant) {
       if (monde.phase === "decompte") {
         // la célébration est finie, tout est replacé : avant le coup d'envoi, on revoit le but de derrière le buteur
@@ -419,11 +589,12 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
         enregistreur.vider();
         // nouveau coup d'envoi : tout a été replacé, plan fixe en car cam, plus aucune interpolation
         balleCam = false;
-        aligner(monde);
+        if (!enLigne) aligner(monde);
         etatCam = creerEtatCamera(moi(), monde.balle, false);
         hudSale = true;
       } else if (monde.phase === "fini") {
-        tFini = tReel;
+        // en ligne la fin vient du serveur (`fin`) : `tFini` y est posé à sa réception
+        if (!enLigne) tFini = tReel;
         hudSale = true;
       } else hudSale = true;
     }
@@ -432,7 +603,8 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
 
   // ---------- rejeu du but ----------
   function demarrerRejeu(): void {
-    if (!butARejouer) return;
+    // en ligne la partie continue pour tout le monde (décompte puis coup d'envoi du serveur) : pas de rejeu, il ferait rater la remise en jeu
+    if (!butARejouer || enLigne) return;
     const clip = enregistreur.extraire(butARejouer.t, butARejouer.idCamera);
     if (!clip) return;
     const vue = creerVueRejeu(monde);
@@ -534,12 +706,15 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
   function pause(actif: boolean): void {
     if (disposed || actif === enPause) return;
     enPause = actif;
-    sonsOk.suspendre(actif);
     sourceOk.relacher();
     classementOuvert = false;
-    // à la reprise : aucun rattrapage du temps passé en pause
-    reprise = true;
-    acc.reste = 0;
+    // en ligne le « menu pause » ne gèle rien (la partie continue pour les autres) : ni son coupé, ni temps à ne pas rattraper
+    if (!enLigne) {
+      sonsOk.suspendre(actif);
+      // à la reprise : aucun rattrapage du temps passé en pause
+      reprise = true;
+      acc.reste = 0;
+    }
     canvas.style.cursor = actif ? "" : "none";
     hudSale = true;
     envoyerHud(true);
@@ -556,8 +731,9 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
   const surKeyUp = (e: KeyboardEvent) => {
     if (e.code === "Tab" && classementOuvert) { e.preventDefault(); classementOuvert = false; hudSale = true; }
   };
-  const surBlur = () => { if (!enPause && monde.phase !== "fini") pause(true); };
-  const surVisibilite = () => { if (document.visibilityState === "hidden" && !enPause) pause(true); };
+  // en ligne, perdre le focus ou masquer l'onglet ne met rien en pause : les commandes deviennent neutres (voir `etatCommandes`) et la partie continue
+  const surBlur = () => { if (!enLigne && !enPause && monde.phase !== "fini") pause(true); };
+  const surVisibilite = () => { if (!enLigne && document.visibilityState === "hidden" && !enPause) pause(true); };
   /** le contexte audio ne démarre qu'après un geste : on le relance au premier appui (clavier ou souris) */
   const surGeste = () => {
     sonsOk.activer();
@@ -577,6 +753,128 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
   document.addEventListener("visibilitychange", surVisibilite);
   canvas.addEventListener("webglcontextlost", surContexteWebGLPerdu);
   canvas.style.cursor = "none";
+
+  // ---------- en ligne : source de monde, messages du serveur, HUD réseau, crochet d'essai ----------
+  /** commandes neutres parce que l'onglet est masqué simulé par le crochet d'essai (le vrai masquage se lit dans `document.visibilityState`) */
+  let masqueSimule = false;
+  const ongletMasque = (): boolean => masqueSimule || (typeof document !== "undefined" && document.visibilityState === "hidden");
+  let surchargeMoi: EntreesVoiture | null = null;
+  let snapsRecus = 0;
+  let trames = 0;
+  let derniereAvance = 0;
+  let debutCourant = enLigne ? enLigne.debut : null;
+  let hudReseauCourant: HudReseau | null = null;
+  let phasePrecedente: MondeRocket["phase"] = monde.phase;
+  let restePrecedent = monde.tempsRestant;
+  const maintenantMs = (): number => (typeof performance !== "undefined" ? performance.now() : Date.now());
+  const canal = creerCanalDegrade({ maintenant: maintenantMs, setTimeout: (f, ms) => setTimeout(f, ms), clearTimeout: (id) => clearTimeout(id as ReturnType<typeof setTimeout>) });
+  const nomDeJoueur = (j: number): string => debutCourant?.voitures.find((v) => v.joueur === j)?.nom ?? "Joueur";
+  const suiviPresence = creerSuiviPresence(nomDeJoueur);
+  const suiviRevanche = creerSuiviRevanche();
+  const emetteurReseau = creerEmetteurHudReseau((h) => {
+    hudReseauCourant = h;
+    try { enLigne?.hudReseau(h); } catch (err) { if (process.env.NODE_ENV !== "production") console.error("rocket : hud réseau", err); }
+  });
+  let sourceMonde: (SourceMonde & ReturnType<typeof creerSourceEnLigne>) | null = null;
+  const fabriquerSource = (p: PredicteurRocket) => creerSourceEnLigne({ predicteur: p, envoyerTrame: (t) => { trames++; canal.sortir(() => enLigne?.client.envoyerTrame(t)); } });
+  if (enLigne && predicteur) sourceMonde = fabriquerSource(predicteur);
+
+  /** Messages du serveur qui concernent la partie (le lobby, lui, est servi par le hook de l'interface). */
+  function surMessage(m: MessageServeur): void {
+    if (disposed || !enLigne || !sourceMonde) return;
+    const t = maintenantMs();
+    switch (m.t) {
+      case "pong": horloge?.echantillonPong(m.c, t, m.tick, m.ralenti); break;
+      case "ev": sourceMonde.recevoirEvenements(m.evenements); break;
+      case "presence": suiviPresence.appliquer(m, t); break;
+      case "salon": suiviRevanche.appliquer(m.salon, t); break;
+      case "fin":
+        resultatServeur = m.resultat;
+        if (tFini === null) tFini = tReel;
+        hudSale = true;
+        break;
+      case "debut": nouvelleDebut(m); break;
+      case "reaction": recevoirReaction(m.voiture, m.id); break;
+      case "refus":
+        // le serveur a une horloge à lui : s'il juge que j'en fais trop, je me tais comme lui
+        if (m.action === "reaction" && m.raison === "limite") chatBloqueJusquaS = Math.max(chatBloqueJusquaS, tReel + ANTI_SPAM.blocageMs / 1000);
+        break;
+      default: break;
+    }
+  }
+
+  /**
+   * Seconde `debut` (revanche, reprise après une coupure) : nouveau monde et nouveau prédicteur, mémoire d'événements et d'horloge remises à zéro, renderer
+   * conservé. Le serveur attend `pret` pour démarrer le décompte.
+   */
+  function nouvelleDebut(m: Extract<MessageServeur, { t: "debut" }>): void {
+    if (!enLigne || !horloge) return;
+    debutCourant = m;
+    config = copierConfig(m.config);
+    horloge.reinitialiser();
+    predicteur = creerPredicteur({ horloge, debut: m, arene });
+    sourceMonde = fabriquerSource(predicteur);
+    monde = predicteur.monde;
+    // ni les absents ni le vote de revanche ne sont remis à zéro : une reprise pendant l'écran de fin reçoit `salon` (vote) AVANT ce `debut`, et le
+    // message `presence` d'un joueur coupé n'est envoyé qu'une fois ; `suiviRevanche` se recale à chaque `salon` de toute façon
+    emetteurReseau.reinitialiser();
+    // un menu pause resté ouvert (Échap à l'écran de fin, chrono tombé à zéro) ne doit pas s'ouvrir seul sur le match suivant
+    pause(false);
+    resultatServeur = null;
+    resultatCache = null;
+    tFini = null;
+    tDebut = tReel;
+    aideMasquee = false;
+    fil = [];
+    banniere = null;
+    classementOuvert = false;
+    journal.length = 0;
+    balleCam = false;
+    reinitialiserChat();
+    monterRendu();
+    etatCam = creerEtatCamera(moi(), monde.balle, false);
+    alpha = 1;
+    phasePrecedente = monde.phase;
+    restePrecedent = monde.tempsRestant;
+    redimensionner();
+    hudSale = true;
+    envoyerHud(true);
+    enLigne.client.envoyer({ t: "pret" });
+  }
+
+  let desabonner: () => void = () => {};
+  if (enLigne && sourceMonde) {
+    const src = sourceMonde;
+    desabonner = enLigne.client.ecouter({
+      message: (m) => canal.entrer(() => surMessage(m)),
+      snap: (s) => canal.entrer(() => { snapsRecus++; derniereAvance = s.avance; sourceMonde?.recevoirSnap(s, maintenantMs()); }),
+    });
+    // la scène chargeait pendant que le serveur attendait `pret` : l'instantané reçu entre-temps est confié au prédicteur, puis la partie peut démarrer
+    if (enLigne.snapEnAttente) src.recevoirSnap(enLigne.snapEnAttente, maintenantMs());
+    enLigne.client.envoyer({ t: "pret" });
+  }
+
+  /** Une image en ligne : commandes (neutres si menu ouvert ou onglet masqué), prédiction, trame d'entrées, événements, monde affiché, HUD réseau. */
+  function imageEnLigne(dt: number, brutes: Readonly<EntreesVoiture>): void {
+    const src = sourceMonde;
+    if (!enLigne || !src) return;
+    const t = maintenantMs();
+    const commandes = etatCommandes(enPause, ongletMasque());
+    entreesHumain = surchargeMoi ? { ...surchargeMoi } : entreesEffectives(brutes, commandes);
+    if (!gele) {
+      const r = src.avancer(dt, entreesHumain, t);
+      alpha = r.alpha;
+      monde = src.mondeAffiche(t);
+      for (const e of r.evenements) traiter(e);
+      apresPas(phasePrecedente, restePrecedent);
+    } else monde = src.mondeAffiche(t);
+    phasePrecedente = monde.phase;
+    restePrecedent = monde.tempsRestant;
+    if (!horloge) return;
+    emetteurReseau.pousser(construireHudReseau({
+      etat: enLigne.client.etat(), horloge, commandes, absents: suiviPresence.absents(t), revanche: suiviRevanche.revanche(t),
+    }), t);
+  }
 
   // ---------- boucle ----------
   function arreterBoucle(): void {
@@ -601,9 +899,11 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
   }
 
   function boucle(t: number): void {
+    // onglet masqué simulé (essais) : aucune image, comme quand le navigateur suspend `requestAnimationFrame`
+    if (enLigne && masqueSimule) return;
     tReel = t;
     if (tDebut === null) tDebut = t;
-    let dt = derniereT === null ? 0 : Math.max(0, Math.min(t - derniereT, 0.1));
+    let dt = derniereT === null ? 0 : Math.max(0, Math.min(t - derniereT, enLigne ? RESEAU.imageMaxEnLigneS : 0.1));
     derniereT = t;
     if (reprise) { dt = 0; reprise = false; }
 
@@ -617,18 +917,29 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
     }
     if (entree.basculerBalleCam && !balleCamPrecedent && !enPause) { balleCam = !balleCam; hudSale = true; }
     balleCamPrecedent = entree.basculerBalleCam;
-    if (entree.klaxon && !klaxonPrecedent && !enPause && !moi().demolie) traiter({ t: "klaxon", idVoiture: monde.idHumain });
+    if (entree.klaxon && !klaxonPrecedent && !enPause && !moi().demolie) {
+      // en ligne le klaxon passe par le serveur (limité à un toutes les 2 s) qui le rediffuse à tous, nous compris
+      if (enLigne) canal.sortir(() => enLigne.client.envoyer({ t: "klaxon" }));
+      else traiter({ t: "klaxon", idVoiture: monde.idHumain });
+    }
     klaxonPrecedent = entree.klaxon;
-    // la manette met en pause et reprend elle-même ; au clavier Échap n'entre que dans `surKeyDown`
-    const start = sourceOk.boutonManette(BOUTON_MANETTE.start);
-    if (start && !startPrecedent) pause(!enPause);
+    // réactions rapides : la croix agit au front montant, jamais pendant la pause ni la capture d'une touche des réglages
+    majChat(entree, !enPause && !captureEnCours() && resultatCache === null);
+    // la manette met en pause et reprend elle-même (Start et la seconde liaison « pause » du joueur) ; au clavier Échap n'entre que dans
+    // `surKeyDown`. Pendant la capture d'un bouton dans les réglages, ces boutons sont ceux que le joueur est en train d'affecter : ni pause,
+    // ni retour, ni rejouer (les états précédents suivent quand même, un bouton encore tenu ne fait pas de front en fin de capture).
+    const capture = captureEnCours();
+    const start = sourceOk.pauseManette();
+    // en ligne Start ouvre aussi le menu (qui ne gèle rien : commandes neutres, la partie continue) : seul chemin à la manette pour quitter pendant le match
+    if (start && !startPrecedent && !capture) pause(!enPause);
     startPrecedent = start;
-    const retour = sourceOk.boutonManette(BOUTON_MANETTE.retour);
-    if (retour && !retourPrecedent && (enPause || monde.phase === "fini")) opts.sortir();
+    // Retour quitte depuis la pause ou l'écran de fin, tant que le joueur n'a pas donné ce bouton à une action
+    const retour = sourceOk.boutonManette(BOUTON_MANETTE.retour) && !entreeManetteLiee(reglages.liaisonsManette, codeBouton(BOUTON_MANETTE.retour));
+    if (retour && !retourPrecedent && (enPause || monde.phase === "fini") && !capture) opts.sortir();
     retourPrecedent = retour;
-    // écran de fin à la manette : A (front montant, seulement une fois le résultat affiché) rejoue
+    // écran de fin à la manette : A (front montant, seulement une fois le résultat affiché) rejoue, quelle que soit sa liaison en jeu
     const boutonA = sourceOk.boutonManette(BOUTON_MANETTE.a);
-    if (boutonA && !boutonAPrecedent && monde.phase === "fini" && resultatCache !== null && !enPause) { boutonAPrecedent = true; recommencer(); return; }
+    if (boutonA && !boutonAPrecedent && monde.phase === "fini" && resultatCache !== null && !enPause && !capture) { boutonAPrecedent = true; recommencer(); return; }
     boutonAPrecedent = boutonA;
 
     // rejeu du but : Espace (saut) ou A le passe
@@ -636,8 +947,9 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
     if (rejeu && !enPause && sautRejeu && !sautRejeuPrecedent) terminerRejeu();
     sautRejeuPrecedent = sautRejeu;
 
-    // physique (figée pendant le rejeu d'un but)
-    if (!enPause && !gele && !rejeu) {
+    // physique (figée pendant le rejeu d'un but ; en ligne le serveur et le prédicteur la mènent)
+    if (enLigne) imageEnLigne(dt, entree.voiture);
+    else if (!enPause && !gele && !rejeu) {
       if (finie()) alpha = 1;
       else {
         const r = avancerAccumulateur(acc, dt, monde.phase === "but" ? MATCH.ralentiCelebration : 1);
@@ -647,12 +959,13 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
     }
 
     // affichage
-    const dtImage = enPause || gele ? 0 : dt;
+    const dtImage = (enPause && !enLigne) || gele ? 0 : dt;
     if (rejeu) {
       imageRejeu(dtImage);
       // `imageRejeu` peut être la dernière : la vue reste dessinée une image de plus, le coup d'envoi reprend à la suivante
       const r = rejeu as NonNullable<typeof rejeu>;
       rendu?.synchroniser(r.vue, r.alpha, dtImage);
+      bulles?.vider();
       sonsOk.maj(r.vue, r.lecture.clip.idCamera, dtImage);
       if (r.lecture.fini) terminerRejeu();
       postOk.rendre();
@@ -660,16 +973,22 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
       return;
     }
     etatAffiche();
-    placerCamera(enPause ? 0 : dt, entree);
-    rendu?.synchroniser(monde, alpha, dtImage);
+    placerCamera(enPause && !enLigne ? 0 : dt, entree);
+    if (!sansRendu) rendu?.synchroniser(monde, alpha, dtImage);
+    bulles?.maj(positionBulle, tReel);
     sonsOk.maj(monde, monde.idHumain, dtImage);
-    postOk.rendre();
+    if (!sansRendu) postOk.rendre();
     envoyerHud(false);
   }
 
   // ---------- redémarrage ----------
   function recommencer(): void {
     if (disposed) return;
+    if (enLigne) {
+      // en ligne « Rejouer » est un vote de revanche : le serveur relance tout le monde d'un coup (nouvelle `debut`)
+      enLigne.client.envoyer({ t: "revanche", oui: true });
+      return;
+    }
     config = { ...copierConfig(config), graine: (Math.imul(config.graine, 1664525) + 1013904223) >>> 0 };
     monde = creerMonde(config, arene);
     cerveaux = creerCerveaux();
@@ -688,6 +1007,8 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
     banniere = null;
     classementOuvert = false;
     journal.length = 0;
+    reacteur = creerReacteurLocal();
+    reinitialiserChat();
     pause(false);
     redimensionner();
     hudSale = true;
@@ -713,9 +1034,12 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
         enPause, gele, manette: sourceOk.manetteConnectee(), entrees: { ...entreesHumain },
       };
     },
-    monde: () => monde,
+    // en ligne, le monde du crochet est le monde PRÉDIT (physique), pas le monde affiché
+    monde: () => (predicteur ? predicteur.monde : monde),
     avancer(n: number) {
       const evs: EvenementMatch[] = [];
+      // la physique en ligne appartient au serveur et au prédicteur : on ne fait pas avancer le monde à la main
+      if (enLigne) return evs;
       for (let i = 0; i < n && !finie(); i++) pasUnique(entreesHumain, evs);
       // le crochet fait avancer le MONDE : un rejeu de but lancé en chemin est passé d'office
       terminerRejeu();
@@ -731,11 +1055,12 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
     entrees(i: number, e: EntreesVoiture | null) { surcharges[i] = e; },
     teleporter(i: number, p: Vec3, cap = 0) {
       const v = monde.voitures[i];
-      if (!v) return;
+      if (!v || enLigne) return;
       replacerVoiture(v, p, cap, v.boost);
       aligner(monde, i);
     },
     balle(p: Vec3, v: Vec3 = [0, 0, 0]) {
+      if (enLigne) return;
       affecter(monde.balle.p, p);
       affecter(monde.balle.v, v);
       affecter(monde.balle.w, [0, 0, 0]);
@@ -746,6 +1071,25 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
     pause,
   };
   if (process.env.NODE_ENV !== "production") window.__rocket = crochet;
+
+  // crochet des essais en ligne (`window.__rocketReseau`) : mesures, entrées scriptées, réseau dégradé, onglet masqué, coupure de socket
+  const crochetReseau: CrochetRocketReseau | null = enLigne && horloge ? {
+    stats: () => ({
+      ...(predicteur ? predicteur.stats() : { tickLocal: 0, tickSnap: -1, rollbacks: 0, snapsExacts: 0, profondeurMoyenne: 0, profondeurMax: 0, ecartMaxM: 0, resyncs: 0, dernierRollbackMs: 0, maxRollbackMs: 0 }),
+      rttMs: horloge.rttMs(), gigueMs: horloge.gigueMs(), margeTicks: horloge.margeTicks(), avance: derniereAvance, snapsRecus, trames,
+    }),
+    hud: () => hudReseauCourant ?? construireHudReseau({ etat: enLigne.client.etat(), horloge, commandes: etatCommandes(enPause, ongletMasque()), absents: [], revanche: null }),
+    moi: () => (debutCourant ? debutCourant.moi : monde.idHumain),
+    entrees: (e) => { surchargeMoi = e ? { ...e } : null; },
+    autoritaire: () => (predicteur ? predicteur.etatAutoritaire() : null),
+    latence: (sortantMs, entrantMs) => canal.latence(sortantMs, entrantMs),
+    retenir: (ms) => canal.retenir(ms),
+    masquer: (actif) => { masqueSimule = actif; hudSale = true; },
+    // coupure du réseau SANS quitter : la socket meurt (code non volontaire), le client tente la reprise
+    couper: () => { (enLigne.client as Partial<ClientRocketEtendu>).couperSocket?.(); },
+    dev: (a) => { enLigne.client.envoyer({ t: "dev", ...a }); },
+  } : null;
+  if (process.env.NODE_ENV !== "production" && crochetReseau) window.__rocketReseau = crochetReseau;
 
   envoyerHud(true);
   raf = requestAnimationFrame(image);
@@ -765,6 +1109,9 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
       canvas.removeEventListener("webglcontextlost", surContexteWebGLPerdu);
       canvas.style.cursor = "";
       if (window.__rocket === crochet) delete window.__rocket;
+      if (crochetReseau && window.__rocketReseau === crochetReseau) delete window.__rocketReseau;
+      desabonner();
+      canal.vider();
       abonnes.clear();
       camera.removeFromParent();
       liberer();

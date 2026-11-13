@@ -957,7 +957,21 @@ export interface EntreesJoueur {
   arriere: boolean;
   klaxon: boolean;
   pause: boolean;
+  /** réactions rapides : direction de la croix tenue à cet instant (le menu agit sur le front montant, dans `jeu.ts`) */
+  chat: ChatEntrees;
+  /**
+   * (clavier et souris seulement, rempli par la source d'entrées) directions dont une touche a été ENFONCÉE (événement, hors répétition automatique)
+   * depuis l'échantillon précédent, même relâchée depuis : un second appui sur la même touche dans l'intervalle de deux images (rendu lent) ne se perd
+   * pas dans l'état « tenu ». Absent = déduire le front de `chat` (manette, tests).
+   */
+  chatAppuis?: ChatEntrees;
+  /** les mêmes appuis, dans l'ORDRE où ils ont eu lieu et autant de fois (un ensemble de directions perd l'ordre quand le rendu est lent) */
+  chatSuite?: readonly DirectionChat[];
 }
+/** Les quatre directions de la croix des réactions rapides (haut = Infos, gauche = Compliments, droite = Réactions, bas = Excuses). */
+export type DirectionChat = "haut" | "gauche" | "droite" | "bas";
+export type ChatEntrees = Record<DirectionChat, boolean>;
+export const CHAT_NUL = (): ChatEntrees => ({ haut: false, gauche: false, droite: false, bas: false });
 
 // ============================================================================================================================
 // 11. Événements du match (pas par pas)
@@ -1055,7 +1069,15 @@ export interface LiaisonsTouches {
   balleCam: readonly string[];
   arriere: readonly string[];
   klaxon: readonly string[];
+  /** Échap reste toujours liée à la pause (cf. `normaliserReglages`) : seul le second emplacement est libre. */
   pause: readonly string[];
+  /** bouton (ou touche) tenu qui fait de la souris un levier de regard libre ; `Souris1` (molette cliquée) par défaut */
+  regardLibre: readonly string[];
+  /** réactions rapides, comme la croix de Rocket League : un appui ouvre la catégorie, un second choisit le message (1 2 3 4 par défaut) */
+  chatHaut: readonly string[];
+  chatGauche: readonly string[];
+  chatDroite: readonly string[];
+  chatBas: readonly string[];
 }
 export const LIAISONS_DEFAUT: LiaisonsTouches = {
   accelerer: ["KeyW", "ArrowUp"],
@@ -1071,11 +1093,85 @@ export const LIAISONS_DEFAUT: LiaisonsTouches = {
   arriere: ["KeyV"],
   klaxon: ["KeyH"],
   pause: ["Escape"],
+  regardLibre: ["Souris1"],
+  chatHaut: ["Digit1"],
+  chatGauche: ["Digit2"],
+  chatDroite: ["Digit3"],
+  chatBas: ["Digit4"],
+};
+
+/**
+ * Une entrée de manette, au mapping « standard » de la Gamepad API : `B<n>` = bouton n (analogique pour les gâchettes : `B7` = RT),
+ * `A<n>+` / `A<n>-` = DEMI-axe n poussé vers le sens positif / négatif (`A0-` = stick gauche vers la gauche, `A1-` = stick gauche vers le haut).
+ * Un bouton sur un axe vaut 0/1 ; une action à deux états sur un demi-axe se déclenche au-delà de `SEUIL_ENTREE_MANETTE`.
+ */
+export type EntreeManette = string;
+/** Seuil (sur l'axe brut) au-delà duquel un demi-axe compte comme « pressé » pour une action à deux états, et pour la capture. */
+export const SEUIL_ENTREE_MANETTE = 0.5;
+
+/**
+ * Les actions rebindables de la manette : deux entrées au plus par action. Défauts = disposition de Rocket League. Les deux demi-axes d'un
+ * même stick gardent la zone morte radiale et la courbe (`stickAvecZoneMorte`) quelle que soit leur affectation. `tangageHaut` / `tangageBas`
+ * ne servent qu'en l'air (nez en haut / en bas) ; `regard*` pilotent le regard libre de la caméra.
+ */
+export interface LiaisonsManette {
+  accelerer: readonly EntreeManette[];
+  reculer: readonly EntreeManette[];
+  gauche: readonly EntreeManette[];
+  droite: readonly EntreeManette[];
+  tangageHaut: readonly EntreeManette[];
+  tangageBas: readonly EntreeManette[];
+  saut: readonly EntreeManette[];
+  boost: readonly EntreeManette[];
+  derapage: readonly EntreeManette[];
+  rouleGauche: readonly EntreeManette[];
+  rouleDroite: readonly EntreeManette[];
+  balleCam: readonly EntreeManette[];
+  arriere: readonly EntreeManette[];
+  klaxon: readonly EntreeManette[];
+  /** Start (`B9`) reste toujours liée à la pause, comme Échap au clavier : seul le second emplacement est libre. */
+  pause: readonly EntreeManette[];
+  regardGauche: readonly EntreeManette[];
+  regardDroite: readonly EntreeManette[];
+  regardHaut: readonly EntreeManette[];
+  regardBas: readonly EntreeManette[];
+  /** réactions rapides : la croix directionnelle (B12 à B15) par défaut ; le klaxon est passé sur L3 (B10) pour la libérer */
+  chatHaut: readonly EntreeManette[];
+  chatGauche: readonly EntreeManette[];
+  chatDroite: readonly EntreeManette[];
+  chatBas: readonly EntreeManette[];
+}
+export const LIAISONS_MANETTE_DEFAUT: LiaisonsManette = {
+  accelerer: ["B7"],
+  reculer: ["B6"],
+  gauche: ["A0-"],
+  droite: ["A0+"],
+  tangageHaut: ["A1+"],
+  tangageBas: ["A1-"],
+  saut: ["B0"],
+  boost: ["B1"],
+  derapage: ["B2"],
+  rouleGauche: ["B4"],
+  rouleDroite: ["B5"],
+  balleCam: ["B3"],
+  arriere: ["B11"],
+  klaxon: ["B10"],
+  pause: ["B9"],
+  regardGauche: ["A2-"],
+  regardDroite: ["A2+"],
+  regardHaut: ["A3-"],
+  regardBas: ["A3+"],
+  chatHaut: ["B12"],
+  chatGauche: ["B14"],
+  chatDroite: ["B15"],
+  chatBas: ["B13"],
 };
 
 export interface ReglagesRocket {
   camera: ParamsCamera;
   touches: LiaisonsTouches;
+  /** boutons et sticks de la manette */
+  liaisonsManette: LiaisonsManette;
   /** ball cam active au lancement et après chaque but */
   balleCamParDefaut: boolean;
   /** volume général 0..1 */
@@ -1085,15 +1181,19 @@ export interface ReglagesRocket {
   inverserTangageManette: boolean;
   /** vibrations de la manette */
   vibrations: boolean;
+  /** afficher les réactions rapides des ADVERSAIRES (bulle, fil, son) ; celles de l'équipe et les miennes restent toujours visibles */
+  reactionsAdversaires: boolean;
 }
 export const REGLAGES_DEFAUT = (): ReglagesRocket => ({
   camera: { ...CAMERA_DEFAUT },
   touches: { ...LIAISONS_DEFAUT },
+  liaisonsManette: { ...LIAISONS_MANETTE_DEFAUT },
   balleCamParDefaut: true,
   volume: 0.7,
   zoneMorteManette: 0.12,
   inverserTangageManette: false,
   vibrations: true,
+  reactionsAdversaires: true,
 });
 
 export const DEFAUT_CONFIG = (): ConfigMatch => ({
@@ -1165,6 +1265,31 @@ export interface HudRocket {
   /** pointage des joueurs maintenu (Tab) */
   classement: LigneClassement[];
   resultat: ResultatMatch | null;
+  /** réactions rapides (menu de la croix, messages reçus) ; absent = rien à afficher */
+  chat?: HudChat;
+}
+
+/** Message de réaction rapide reçu (fil du HUD). `nom` : l'émetteur ; `equipeSeule` : « (équipe) » devant le nom. */
+export interface LigneChat {
+  id: number;
+  nom: string;
+  texte: string;
+  equipe: Equipe;
+  equipeSeule: boolean;
+  /** c'est moi qui ai parlé */
+  moi: boolean;
+}
+/** Menu ouvert d'une catégorie : ses quatre messages, chacun sur sa direction. */
+export interface MenuChatHud {
+  categorie: string;
+  titre: string;
+  choix: { direction: DirectionChat; id: string; texte: string; equipeSeule: boolean }[];
+}
+export interface HudChat {
+  menu: MenuChatHud | null;
+  lignes: LigneChat[];
+  /** chat bloqué (trop de messages d'affilée) : secondes restantes, arrondies au-dessus ; 0 sinon */
+  bloqueS: number;
 }
 
 // ============================================================================================================================
@@ -1367,6 +1492,8 @@ export interface SonsRocket {
   maj(m: Readonly<MondeRocket>, idMoi: number, dtImage: number): void;
   volume(v: number): void;
   suspendre(actif: boolean): void;
+  /** petit « bloop » à la réception d'une réaction rapide (`moi` : c'est la mienne, plus discrète) */
+  reaction(moi: boolean): void;
   dispose(): void;
 }
 /** Implémenté par `sons.ts` (`creerSonsRocket`). WebAudio uniquement, aucun fichier audio. */
@@ -1390,13 +1517,20 @@ export interface InstantaneClavier {
 export interface InstantaneManette {
   /** `Gamepad.axes` (mapping « standard » : 0/1 stick gauche, 2/3 stick droit) */
   axes: readonly number[];
-  /** `Gamepad.buttons` (RT = 7, LT = 6, A = 0, B = 1, X = 2, Y = 3, LB = 4, RB = 5, Start = 9, R3 = 11) */
+  /** `Gamepad.buttons` (RT = 7, LT = 6, A = 0, B = 1, X = 2, Y = 3, LB = 4, RB = 5, Start = 9, R3 = 11) ; les entrées `B<n>` des liaisons y renvoient */
   boutons: readonly { pressed: boolean; value: number }[];
 }
 /** Clavier/souris → entrées (pure). Implémenté par `entrees.ts` (`entreesDepuisClavier`). */
 export type EntreesDepuisClavier = (i: InstantaneClavier, l: Readonly<LiaisonsTouches>) => EntreesJoueur;
-/** Manette → entrées (pure, zone morte radiale, courbe quadratique sur les sticks). Implémenté par `entrees.ts` (`entreesDepuisManette`). */
-export type EntreesDepuisManette = (m: InstantaneManette, r: Pick<ReglagesRocket, "zoneMorteManette" | "inverserTangageManette">) => EntreesJoueur;
+/**
+ * Manette → entrées (pure, zone morte radiale, courbe quadratique sur les sticks). `liaisons` : celles du joueur (défaut : disposition de
+ * Rocket League). Implémenté par `entrees.ts` (`entreesDepuisManette`).
+ */
+export type EntreesDepuisManette = (
+  m: InstantaneManette,
+  r: Pick<ReglagesRocket, "zoneMorteManette" | "inverserTangageManette">,
+  liaisons?: Readonly<LiaisonsManette>,
+) => EntreesJoueur;
 /** Combine deux sources (la plus forte l'emporte pour chaque axe, OU logique pour les boutons). Implémenté par `entrees.ts` (`fusionnerEntrees`). */
 export type FusionnerEntrees = (a: EntreesJoueur, b: EntreesJoueur) => EntreesJoueur;
 export interface SourceEntrees {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAUT_CONFIG, LIAISONS_DEFAUT, MATCH, type ConfigMatch, type StockageMinimal } from "./contrat";
+import { DEFAUT_CONFIG, LIAISONS_DEFAUT, LIAISONS_MANETTE_DEFAUT, MATCH, type ConfigMatch, type StockageMinimal } from "./contrat";
 import {
   CLE_CONFIG_ROCKET, COMMANDES_BREVES, NOM_JOUEUR_MAX, commandesRocket, configInitiale, configPourLancer, ecrireConfig, libelleConfig, libelleDuree,
   lireConfig, nettoyerNomJoueur, nouvelleGraine, normaliserConfig, resumeEffectifs,
@@ -132,7 +132,7 @@ describe("graine et lancement", () => {
 describe("commandesRocket", () => {
   it("écrit les touches du joueur et couvre toutes les actions", () => {
     const cmds = commandesRocket(LIAISONS_DEFAUT);
-    expect(cmds.map((c) => c.id)).toEqual(["conduire", "saut", "boost", "derapage", "roulis", "balleCam", "arriere", "klaxon", "pause", "classement"]);
+    expect(cmds.map((c) => c.id)).toEqual(["conduire", "saut", "boost", "derapage", "roulis", "balleCam", "arriere", "klaxon", "reactions", "pause", "classement"]);
     expect(cmds.find((c) => c.id === "conduire")!.touches).toBe("W A S D");
     expect(cmds.find((c) => c.id === "saut")!.touches).toBe("Espace");
     expect(cmds.find((c) => c.id === "boost")!.touches).toBe("Maj gauche ou Clic gauche");
@@ -144,5 +144,22 @@ describe("commandesRocket", () => {
     expect(commandesRocket(LIAISONS_DEFAUT, azerty).find((c) => c.id === "conduire")!.touches).toBe("Z Q S D");
     const l = { ...LIAISONS_DEFAUT, saut: ["KeyJ"] };
     expect(commandesRocket(l).find((c) => c.id === "saut")!.touches).toBe("J");
+  });
+  it("sans manette ou avec `null`, aucun libellé de manette", () => {
+    expect(commandesRocket(LIAISONS_DEFAUT, null, null)).toEqual(commandesRocket(LIAISONS_DEFAUT));
+    expect(commandesRocket(LIAISONS_DEFAUT).every((c) => !c.touches.includes("·"))).toBe(true);
+  });
+  it("avec une manette branchée, ses boutons réels suivent ceux du clavier", () => {
+    const m = { ...LIAISONS_MANETTE_DEFAUT, saut: ["B5"], boost: ["B7", "A2+"], klaxon: [] };
+    const cmds = commandesRocket(LIAISONS_DEFAUT, null, m);
+    const touches = (id: string) => cmds.find((c) => c.id === id)!.touches;
+    expect(touches("saut")).toBe("Espace · RB");
+    expect(touches("boost")).toBe("Maj gauche ou Clic gauche · RT ou Stick D →");
+    expect(touches("conduire")).toBe("W A S D · RT Stick G ← LT Stick G →");
+    expect(touches("roulis")).toBe("Q E · LB RB");
+    expect(touches("pause")).toBe("Échap · Start");
+    // action sans liaison de manette : le clavier seul
+    expect(touches("klaxon")).toBe("H");
+    expect(touches("classement")).toBe("Tab");
   });
 });

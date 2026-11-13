@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
+import { captureEnCours } from "@/lib/rocket/capture";
 import { commandesRocket } from "@/lib/rocket/lobby";
 import { useDispositionRocket } from "./useDispositionRocket";
 import type { PropsMenuPauseRocket } from "./contrats";
@@ -15,12 +16,15 @@ const TITRES: Record<Vue, string> = { menu: "Pause", reglages: "Réglages", aide
 /**
  * Menu pause de Rocket Muche (dialogue modal : `role="dialog"`, `aria-modal`, focus piégé et rendu à la fermeture). Reprendre, Recommencer,
  * Réglages, Aide des touches, Quitter (retour au lobby) et « Quitter vers Agroparc » (ferme aussi le panneau).
+ * En ligne (`enLigne`) le jeu NE s'arrête PAS pendant le menu : pas de « Recommencer », un bandeau le dit, « Quitter la partie » laisse un bot
+ * à la place du joueur.
  *
  * Échap : le jeu ENTRE en pause sur la touche enfoncée mais ne la quitte pas (une seule touche ne doit pas faire l'aller-retour) ; ici
  * Échap relâchée reprend la partie, ou revient au menu depuis Réglages / Aide. On n'agit qu'au relâchement d'un Échap dont on a vu
  * l'appui : l'Échap qui vient d'ouvrir ce menu et que l'on relâche peu après ne le referme donc pas.
  */
-export default function MenuPauseRocket({ reglages, surReglages, surReprendre, surRecommencer, surQuitter, surQuitterVue, manette }: PropsMenuPauseRocket) {
+export default function MenuPauseRocket({ reglages, surReglages, surReprendre, surRecommencer, surQuitter, surQuitterVue, manette, enLigne = false, etatConnexion }: PropsMenuPauseRocket) {
+  const connexionPerdue = enLigne && etatConnexion !== undefined && etatConnexion !== "ouverte";
   const idTitre = useId();
   const [vue, setVue] = useState<Vue>("menu");
   const racine = useRef<HTMLDivElement>(null);
@@ -32,9 +36,11 @@ export default function MenuPauseRocket({ reglages, surReglages, surReprendre, s
   dernier.current = { vue, surReprendre };
   useEffect(() => {
     let armee = false;
-    const bas = (e: KeyboardEvent) => { if (e.code === "Escape" && !e.repeat) armee = true; };
+    // pendant la capture d'une touche (réglages), Échap annule la capture : elle ne doit ni reprendre la partie ni revenir au menu
+    const bas = (e: KeyboardEvent) => { if (e.code === "Escape" && !e.repeat && !captureEnCours()) armee = true; };
     const haut = (e: KeyboardEvent) => {
       if (e.code !== "Escape" || !armee) return;
+      if (captureEnCours()) { armee = false; return; }
       armee = false;
       e.preventDefault();
       if (dernier.current.vue === "menu") dernier.current.surReprendre();
@@ -53,15 +59,27 @@ export default function MenuPauseRocket({ reglages, surReglages, surReprendre, s
           <>
             <div className={styles.menu}>
               <button type="button" className={styles.boutonPrincipal} onClick={surReprendre}>Reprendre</button>
-              <button type="button" className={styles.boutonSecondaire} onClick={surRecommencer}>Recommencer</button>
+              {!enLigne && <button type="button" className={styles.boutonSecondaire} onClick={surRecommencer}>Recommencer</button>}
               <button type="button" className={styles.boutonSecondaire} onClick={() => setVue("reglages")}>Réglages</button>
               <button type="button" className={styles.boutonSecondaire} onClick={() => setVue("aide")}>Aide des touches</button>
-              <button type="button" className={styles.boutonDanger} onClick={surQuitter}>Quitter</button>
+              <button type="button" className={styles.boutonDanger} onClick={surQuitter}>{enLigne ? "Quitter la partie" : "Quitter"}</button>
               <button type="button" className={styles.boutonDiscret} onClick={surQuitterVue}>Quitter vers Agroparc</button>
             </div>
-            <p className={styles.noteDialogue}>
-              Échap reprend la partie.{manette ? " Start sur la manette aussi." : ""} Recommencer relance un match avec les mêmes réglages.
-            </p>
+            {connexionPerdue ? (
+              <>
+                <p className={styles.bandeauEnLigne} role="status">Connexion perdue, reconnexion en cours… Vos commandes sont suspendues.</p>
+                <p className={styles.noteDialogue}>La partie reprend si la connexion revient dans les 20 secondes. Échap reprend les commandes. Les touches et les boutons se changent dans Réglages.</p>
+              </>
+            ) : enLigne ? (
+              <>
+                <p className={styles.bandeauEnLigne} role="status">Le jeu continue en ligne. Vos commandes sont suspendues.</p>
+                <p className={styles.noteDialogue}>Échap reprend la partie. Les touches et les boutons se changent dans Réglages. Quitter la partie confie votre voiture à un bot.</p>
+              </>
+            ) : (
+              <p className={styles.noteDialogue}>
+                Échap reprend la partie.{manette ? " Start sur la manette aussi." : ""} Les touches et les boutons se changent dans Réglages. Recommencer relance un match avec les mêmes réglages.
+              </p>
+            )}
           </>
         )}
         {vue === "reglages" && (
@@ -75,7 +93,7 @@ export default function MenuPauseRocket({ reglages, surReglages, surReprendre, s
         {vue === "aide" && (
           <>
             <div className={styles.defilement}>
-              <ListeCommandesRocket commandes={commandesRocket(reglages.touches, disposition)} />
+              <ListeCommandesRocket commandes={commandesRocket(reglages.touches, disposition, manette ? reglages.liaisonsManette : null)} />
             </div>
             <div className={styles.boutons}><button type="button" className={styles.boutonSecondaire} onClick={() => setVue("menu")}>Retour</button></div>
           </>

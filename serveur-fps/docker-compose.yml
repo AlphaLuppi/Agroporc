@@ -17,6 +17,13 @@ services:
       PDJ_FPS_BR_STATS: /donnees/stats-br.json
       # cinquante amis derrière l'IP d'un même bureau (le défaut du serveur reste 24)
       PDJ_FPS_CONNEXIONS_IP: "60"
+      # Rocket Muche en ligne (chemin /rocket) : tout a une valeur par défaut, rien à renseigner. Exemples, cf. README « Rocket Muche en ligne » :
+      # PDJ_ROCKET: "off"                      # coupe le chemin /rocket (l'arène n'est pas touchée)
+      # PDJ_ROCKET_CONNEXIONS_IP: "12"         # connexions Rocket par adresse (défaut 12)
+      # PDJ_ROCKET_CONNEXIONS_TOTAL: "40"      # connexions Rocket au total (défaut 40)
+      # PDJ_ROCKET_SALLES_MAX: "8"             # salons ouverts en même temps (défaut 8)
+      # PDJ_ROCKET_MATCHS_MAX: "6"             # matchs simultanés (défaut 6)
+      # PDJ_ROCKET_SALLES_IP: "4"              # salons créés par adresse (défaut 4)
     volumes:
       - pdj-fps-donnees:/donnees
     # un cœur entier : sous 0,3 vCPU (quota CFS de 30 ms par 100 ms), le moindre pic de calcul (création d'une salle, partie de zombies

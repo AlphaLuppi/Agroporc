@@ -11,7 +11,7 @@
 import { creerRng, tirer, type EvenementMatch, type MondeRocket, type SonsRocket } from "./contrat";
 import {
   MOTEUR, NOTES, SON_FLIP, SON_SAUT, choisirMoteurs, coupureMoteur, distanceVoitures, dureeGraveChoc, echelleEvenement, frequenceGraveChoc, frequenceMoteur, gainChoc, gainMoteur,
-  gainSouffleBoost, panoramique, tempsFeuArtifice,
+  gainReaction, gainSouffleBoost, panoramique, SON_REACTION, tempsFeuArtifice,
 } from "./sons-modele";
 import { clamp } from "./vec";
 
@@ -364,6 +364,14 @@ export function creerSonsRocket(): SonsRocket {
     volume(v) {
       volumeMaitre = clamp(v, 0, 1);
       if (ctx && maitre) maitre.gain.setTargetAtTime(volumeMaitre * 0.9, ctx.currentTime, 0.03);
+    },
+    reaction(moi) {
+      if (!ctx || !maitre || suspendu) return;
+      try {
+        const g = gainReaction(moi);
+        ton("triangle", SON_REACTION.noteA, SON_REACTION.noteA * 1.04, SON_REACTION.dureeS, g);
+        ton("triangle", SON_REACTION.noteB, SON_REACTION.noteB * 1.04, SON_REACTION.dureeS * 1.4, g, SON_REACTION.ecartS);
+      } catch { /* silencieux */ }
     },
     suspendre(actif) {
       suspendu = actif;
