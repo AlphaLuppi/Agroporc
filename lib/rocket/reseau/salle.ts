@@ -23,7 +23,9 @@
 import {
   ENTREES_NULLES, FORMATS, MATCH, NIVEAUX_BOT, NOMS_EQUIPES_DEFAUT, PAS_S, creerRng, joueursParEquipe, tirer,
 } from "../contrat";
-import type { Arene, Cerveau, ConfigMatch, EntreesVoiture, Equipe, EvenementMatch, MondeRocket, NiveauBot, Rng } from "../contrat";
+import type { Arene, Cerveau, ConfigMatch, EntreesVoiture, Equipe, EvenementMatch, MondeRocket, NiveauBot, Rng, SkinVoiture } from "../contrat";
+import { estSkin } from "../contrat";
+import { skinBot } from "../skins";
 import { creerArene } from "../arene";
 import { creerCerveau } from "../bots";
 import { ANTI_SPAM_SERVEUR, creerAntiSpam, reactionParId, type AntiSpam } from "../reactions";
@@ -73,6 +75,8 @@ interface Joueur {
   id: number;
   nom: string;
   equipe: Equipe;
+  /** carrosserie choisie (visuel seul), prise au prochain match */
+  skin: SkinVoiture;
   connecte: boolean;
   charge: boolean;
   /** instant de la coupure (ms) quand `connecte` est faux */
@@ -102,7 +106,7 @@ interface Joueur {
 function nouveauJoueur(id: number, nom: string, equipe: Equipe): Joueur {
   const n = RESEAU.tamponEntrees;
   return {
-    id, nom, equipe, connecte: true, charge: false, coupeDepuisMs: -1, vote: null, voiture: -1, dernierKlaxonMs: -Infinity, antiSpam: creerAntiSpam(ANTI_SPAM_SERVEUR),
+    id, nom, equipe, skin: "octane", connecte: true, charge: false, coupeDepuisMs: -1, vote: null, voiture: -1, dernierKlaxonMs: -Infinity, antiSpam: creerAntiSpam(ANTI_SPAM_SERVEUR),
     axes: new Int8Array(n * 5), boutons: new Uint8Array(n), marque: new Int32Array(n).fill(-1),
     watermark: -1, derniere: neutre(), repetitions: 0, avanceMin: null, manquees: 0,
   };
@@ -246,7 +250,7 @@ class SalleImpl implements SalleRocket {
 
   etat(): EtatSalon {
     const lancable = this.phaseCourante === "salon" && this.joueurs.length >= this.humainsMin;
-    const joueurs: JoueurSalon[] = this.joueurs.map((j) => ({ id: j.id, nom: j.nom, equipe: j.equipe, hote: j.id === this.hoteId, connecte: j.connecte, charge: j.charge }));
+    const joueurs: JoueurSalon[] = this.joueurs.map((j) => ({ id: j.id, nom: j.nom, equipe: j.equipe, hote: j.id === this.hoteId, connecte: j.connecte, charge: j.charge, skin: j.skin }));
     const e: EtatSalon = {
       code: this.code, phase: this.phaseCourante, reglages: { ...this.reglages }, joueurs, placesParEquipe: this.places(), lancable,
     };
@@ -402,6 +406,7 @@ class SalleImpl implements SalleRocket {
         return out;
       }
       case "equipe": return this.changerEquipe(j, msg.equipe, maintenantMs);
+      case "skin": return this.changerSkin(j, msg.skin, maintenantMs);
       case "reglages": return this.changerReglages(j, msg.reglages, maintenantMs);
       case "lancer": return this.lancer(j, maintenantMs);
       case "pret": return this.pret(j, maintenantMs);
@@ -421,6 +426,16 @@ class SalleImpl implements SalleRocket {
     if (this.compteEquipe(equipe) >= this.places()) return this.refus(j.id, "equipe", "equipe-pleine");
     this.activite = ms;
     j.equipe = equipe;
+    return [this.salon()];
+  }
+
+  /** Carrosserie (visuel seul) : au salon ou à l'écran de fin, appliquée au prochain match ; jamais pendant un match (le `debut` est déjà parti). */
+  private changerSkin(j: Joueur, skin: SkinVoiture, ms: number): SortieSalle[] {
+    if (this.phaseCourante !== "salon" && this.phaseCourante !== "fin") return this.refus(j.id, "skin", "phase");
+    if (!estSkin(skin)) return this.refus(j.id, "skin", "invalide");
+    if (j.skin === skin) return [];
+    this.activite = ms;
+    j.skin = skin;
     return [this.salon()];
   }
 
@@ -636,7 +651,7 @@ class SalleImpl implements SalleRocket {
         const h = humains[slot] ?? null;
         const id = statiques.length;
         if (h) h.voiture = id;
-        statiques.push({ id, equipe, slot, humain: !!h, nom: h ? h.nom : NOMS_BOTS[nBot++ % NOMS_BOTS.length], joueur: h ? h.id : null });
+        statiques.push({ id, equipe, slot, humain: !!h, nom: h ? h.nom : NOMS_BOTS[nBot++ % NOMS_BOTS.length], joueur: h ? h.id : null, skin: h ? h.skin : skinBot(graine, id) });
         pilotes.push(h);
       }
     }

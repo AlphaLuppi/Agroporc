@@ -9,6 +9,7 @@ import {
 import AideLobby, { ListeCommandes, ListeRegles } from "../arene/AideLobby";
 import { useDispositionRocket } from "./useDispositionRocket";
 import type { PropsLobbyRocket } from "./contrats";
+import ChoixSkinRocket from "./ChoixSkinRocket";
 import PanneauReglagesRocket from "./PanneauReglagesRocket";
 import styles from "./Rocket.module.css";
 
@@ -40,7 +41,8 @@ function GroupeRadios<T extends string | number>({ legende, nom, options, valeur
 }
 
 /**
- * Lobby de « Rocket Muche » (aside), affiché dans l'emplacement du panneau « Arène » : format (1v1 / 2v2 / 3v3), équipe, niveau des alliés
+ * Lobby de « Rocket Muche » (aside), affiché dans l'emplacement du panneau « Arène » : format (1v1 / 2v2 / 3v3), équipe, voiture (skin, mémorisé dans
+ * les réglages, visuel seul), niveau des alliés
  * (hors 1v1) et des adversaires, durée, nom de joueur, réglages repliés, Aide repliée (règles et commandes du joueur) et « Lancer ». Tout est
  * en radios natives ; les phrases de présentation sont en infobulle, comme les lobbies de l'arène. Jeu local : aucun serveur.
  * Spec : docs/superpowers/specs/2026-11-06-rocket-agroparc-design.md § 10.
@@ -99,6 +101,7 @@ export default function LobbyRocket({ config, surConfig, reglages, surReglages, 
         valeur={config.equipeJoueur}
         surChoix={(equipeJoueur) => change({ equipeJoueur })}
       />
+      <ChoixSkinRocket nom={`${id}-skin`} valeur={reglages.skin} surChoix={(skin) => surReglages({ ...reglages, skin })} />
       {config.format !== "1v1" && (
         <GroupeRadios
           legende="Niveau de vos coéquipiers"

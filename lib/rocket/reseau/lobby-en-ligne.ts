@@ -408,6 +408,8 @@ export function appliquerMessage(e: Readonly<EtatLobbyEnLigne>, m: Readonly<Mess
     case "debut":
       return { ...e, debut: m, message: null };
     case "refus":
+      // la carrosserie est envoyée d'office par l'interface (salon ou écran de fin) : son refus éventuel ne concerne aucune action du joueur
+      if (m.action === "skin") return e;
       return { ...e, attente: null, message: { genre: "erreur", texte: libelleRefus(m.action, m.raison) } };
     case "erreur":
       return { ...e, attente: null, message: { genre: "erreur", texte: libelleErreur(m.code) } };

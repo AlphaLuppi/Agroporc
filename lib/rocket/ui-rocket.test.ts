@@ -102,6 +102,20 @@ describe("LobbyRocket", () => {
     expect(html).toContain("<kbd>W A S D</kbd>");
   });
 
+  it("choix de la voiture : quatre radios natives avec leur silhouette, la valeur des réglages cochée, l'Octane par défaut", () => {
+    const html = lobby();
+    expect(html).toMatch(/<legend>Voiture<\/legend>/);
+    const r = radios(html, "skin");
+    expect(r).toHaveLength(4);
+    expect(r.map((x) => /value="([^"]+)"/.exec(x)![1])).toEqual(["octane", "308", "2008", "rio"]);
+    expect(r.filter((x) => x.includes("checked")).map((x) => /value="([^"]+)"/.exec(x)![1])).toEqual(["octane"]);
+    for (const t of ["Octane", "Peugeot 308", "Peugeot 2008", "Kia Rio"]) expect(html).toContain(t);
+    // silhouettes décoratives : le nom est écrit à côté
+    expect((html.match(/<svg[^>]*aria-hidden="true"/g) ?? []).length).toBeGreaterThanOrEqual(4);
+    const coche = radios(lobby({ reglages: { ...REGLAGES_DEFAUT(), skin: "2008" } }), "skin").filter((x) => x.includes("checked"));
+    expect(coche.map((x) => /value="([^"]+)"/.exec(x)![1])).toEqual(["2008"]);
+  });
+
   it("le message d'erreur du dernier lancement est annoncé", () => {
     expect(lobby({ erreur: "WebGL indisponible" })).toMatch(/<p[^>]*role="alert"[^>]*>WebGL indisponible<\/p>/);
     expect(lobby()).not.toContain('role="alert"');
@@ -540,6 +554,26 @@ describe("LobbyRocketEnLigne : états d'erreur", () => {
   });
   it("l'erreur de lancement du jeu (WebGL) reste annoncée", () => {
     expect(ligneEnLigne(ouvert(), { erreur: "WebGL indisponible" })).toMatch(/role="alert"[^>]*>WebGL indisponible/);
+  });
+});
+
+describe("LobbyRocketEnLigne : carrosserie", () => {
+  it("sans skin fourni, pas de choix ; avec, des radios à l'accueil et au salon", () => {
+    expect(radios(ligneEnLigne(ouvert()), "skin")).toHaveLength(0);
+    const accueil = ligneEnLigne(ouvert(), { skin: "rio", surSkin: rien });
+    expect(radios(accueil, "skin").filter((x) => x.includes("checked")).map((x) => /value="([^"]+)"/.exec(x)![1])).toEqual(["rio"]);
+    expect(radios(ligneEnLigne(dansSalon(unSalon()), { skin: "308", surSkin: rien }), "skin")).toHaveLength(4);
+  });
+  it("le salon affiche la voiture de chaque joueur (sauf l'Octane), et ignore une valeur inconnue", () => {
+    const html = ligneEnLigne(dansSalon(unSalon({ joueurs: [jSalon(0, "bleue", { skin: "2008" }), jSalon(1, "orange", { skin: "octane" })], placesParEquipe: 1 })));
+    expect(html).toContain("Peugeot 2008");
+    expect(html).not.toMatch(/etiquette[^>]*>Octane</);
+    const vieux = ligneEnLigne(dansSalon(unSalon({ joueurs: [jSalon(0, "bleue", { skin: "306" as "308" })] })));
+    expect(vieux).not.toContain("306");
+  });
+  it("un refus du skin n'affiche aucun message et ne coupe aucune attente", () => {
+    const e = { ...dansSalon(unSalon()), attente: "rejoindre" as const };
+    expect(appliquerMessage(e, { t: "refus", action: "skin", raison: "phase" })).toBe(e);
   });
 });
 

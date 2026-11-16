@@ -189,6 +189,38 @@ describe("salon : création, équipes, réglages", () => {
     expect(messages(sc.envoyer(2, { t: "equipe", equipe: autre }), "refus")[0].raison).toBe("phase");
   });
 
+  it("carrosserie (skin) : Octane par défaut, annoncée au salon et dans `debut` (bots compris), refusée pendant le match, rien sur la physique", () => {
+    const sc = new Scene(creer());
+    sc.salle.rejoindre({ id: 2, nom: "Bob" }, 0);
+    expect(sc.salle.etat().joueurs.map((j) => j.skin)).toEqual(["octane", "octane"]);
+    const s = sc.envoyer(2, { t: "skin", skin: "2008" });
+    expect(dernierSalon(s)!.joueurs.find((j) => j.id === 2)!.skin).toBe("2008");
+    expect(sc.envoyer(2, { t: "skin", skin: "2008" })).toEqual([]);
+    expect(messages(sc.envoyer(2, { t: "skin", skin: "306" as "308" }), "refus")[0]).toMatchObject({ action: "skin", raison: "invalide" });
+    sc.envoyer(1, { t: "reglages", reglages: { format: "2v2" } });
+    sc.envoyer(1, { t: "skin", skin: "rio" });
+    const lancement = sc.envoyer(1, { t: "lancer" });
+    const debut = messages(lancement, "debut")[0];
+    expect(debut.voitures.find((v) => v.joueur === 1)!.skin).toBe("rio");
+    expect(debut.voitures.find((v) => v.joueur === 2)!.skin).toBe("2008");
+    // les bots ont un skin du catalogue, tiré de la graine (identique pour tous les destinataires)
+    for (const v of debut.voitures.filter((x) => x.joueur === null)) expect(["octane", "308", "2008", "rio"]).toContain(v.skin);
+    expect(messages(lancement, "debut").every((d) => JSON.stringify(d.voitures) === JSON.stringify(debut.voitures))).toBe(true);
+    expect(messages(sc.envoyer(2, { t: "skin", skin: "308" }), "refus")[0]).toMatchObject({ action: "skin", raison: "phase" });
+  });
+
+  it("le skin ne change pas le monde du match : même état exact qu'en Octane", () => {
+    const etat = (skin: "octane" | "308") => {
+      const sc = new Scene(creer({ humainsMin: 1 }));
+      sc.envoyer(1, { t: "skin", skin });
+      sc.envoyer(1, { t: "lancer" });
+      sc.envoyer(1, { t: "pret" });
+      sc.avancer(500);
+      return encoderEtat(extraireEtat(sc.salle.monde()!));
+    };
+    expect(etat("308")).toEqual(etat("octane"));
+  });
+
   it("réglages : hôte seulement, bornes, format refusé s'il ne tient plus, rien d'émis si rien ne change", () => {
     const sc = new Scene(creer());
     sc.salle.rejoindre({ id: 2, nom: "Bob" }, 0);

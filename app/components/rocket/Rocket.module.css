@@ -75,6 +75,17 @@
 .segment:has(input:checked) { border-color: var(--ag-amber); color: var(--ag-amber); box-shadow: inset 0 0 0 1px var(--ag-amber); font-weight: 600; }
 /* l'état choisi ne tient pas qu'à la couleur : coche décorative (l'état coché de la radio est annoncé par le navigateur) */
 .segment:has(input:checked)::before { content: "✓"; content: "✓" / ""; }
+/* choix de la carrosserie : quatre cartes avec la silhouette de profil (deux par ligne sur un lobby étroit) */
+.skins { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.skins legend { grid-column: 1 / -1; }
+.skin { flex-direction: column; gap: 2px; padding: 6px 8px 8px; min-height: 76px; }
+.skin:has(input:checked)::before { position: absolute; top: 4px; right: 6px; }
+.apercuSkin { display: block; width: 100%; max-width: 132px; height: auto; aspect-ratio: 1.5 / 0.72; pointer-events: none; }
+.apercuSol { stroke: var(--ag-line-strong); stroke-width: 0.006; }
+.apercuCaisse { fill: var(--ag-hud-fond); stroke: currentColor; stroke-width: 0.012; stroke-linejoin: round; }
+.apercuTrait { stroke: currentColor; stroke-width: 0.006; opacity: 0.7; }
+.apercuRoue { fill: none; stroke: var(--ag-ink-dim); stroke-width: 0.012; }
+.skin:has(input:checked) .apercuRoue { stroke: currentColor; }
 .pastilleEquipe { display: inline-block; width: 10px; height: 10px; flex-shrink: 0; background: var(--equipe); box-shadow: 0 0 8px var(--equipe); }
 
 .repli { margin-top: 14px; border: 1px solid var(--ag-line-strong); background: var(--ag-hud-fond); }

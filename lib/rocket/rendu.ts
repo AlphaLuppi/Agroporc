@@ -4,7 +4,8 @@
  * sont en repère LOCAL du stade. Chargé uniquement par `jeu.ts` (import dynamique) : three n'entre pas dans le premier chargement du menu.
  *
  * Style filaire de la vue Palantir : faces sombres qui masquent les arêtes cachées + arêtes lumineuses (`rendu-filaire.ts`), couleur d'équipe
- * au-dessus du seuil du bloom (0,24), décors dessous. Voitures : une silhouette d'Octane (profil extrudé + aileron), quatre roues qui tournent
+ * au-dessus du seuil du bloom (0,24), décors dessous. Voitures : une carrosserie par skin (`skins.ts` : Octane, 308, 2008, Rio ; profils
+ * extrudés + pièces + détails dans les arêtes, une géométrie partagée par skin, visuel seul), quatre roues qui tournent
  * et se braquent (un seul `LineSegments` dynamique par voiture), flamme de boost (un `InstancedMesh` pour toutes), traînée supersonique.
  * Balle : motif de Goldberg (hexagones + pentagones) dont l'orientation est intégrée ICI depuis `balle.w` (la physique ne la garde pas),
  * noyau lumineux, traînée de la dernière équipe qui l'a touchée, ombre-repère au sol.
@@ -18,16 +19,17 @@ import { ORDRE_BASE, creerMateriaux, enPiece, libererMateriaux, libererPiece, ty
 import { creerTracesPneus, type TracesPneus } from "../fps/rendu-traces";
 import {
   BALLE, PLOTS, SITE, VOITURE,
-  type EtatVoiture, type EvenementMatch, type MondeRocket, type OptionsRendu, type RenduRocket,
+  type EtatVoiture, type SkinVoiture, type EvenementMatch, type MondeRocket, type OptionsRendu, type RenduRocket,
 } from "./contrat";
 import { creerEffets, creerTrainees, type Effets, type Trainees } from "./rendu-effets";
 import {
-  ECHAPPEMENT_OCTANE, FLOATS_ROUE, GABARITS, LARGEUR_OCTANE, PALETTE, PIECES_OCTANE, PROFIL_OCTANE,
+  FLOATS_ROUE, GABARITS, PALETTE,
   ajusterLuminance, avancerRoulement, braquageRoues, couleurBalle, couleurEquipe, directionsFibonacci, integrerQuat, interpolerPosition, intensiteChoc,
   intensiteTrainee, nombreParticules, ombreBalle, rgbLineaire, segmentsMotifBalle, segmentsRoue, versThree, melangeRgb, mulRgb,
   type Quat, type RGB, type TypeEffet,
 } from "./rendu-modele";
 import { creerStade, type StadeRendu } from "./rendu-stade";
+import { modeleSkin, type ModeleSkin } from "./skins";
 import type { Base, Vec3 } from "./vec";
 
 /** Appels de dessin visibles sous `o` (mailles, lignes, points, sprites) : le budget des tests (≤ 60). */
@@ -47,6 +49,8 @@ const PORTEE_PLAQUE_M = 60;
 
 interface VoitureRendu {
   groupe: THREE.Group;
+  /** carrosserie dessinée (visuel seul) : sortie de la flamme et coins de la traînée en dépendent */
+  modele: ModeleSkin;
   roues: THREE.LineSegments;
   tamponRoues: Float32Array;
   roulement: number[];
@@ -85,25 +89,45 @@ function centreVoiture(v: Readonly<EtatVoiture>): Vec3 {
   return pointVoiture(v, VOITURE.decalageHitbox[0], VOITURE.decalageHitbox[1], VOITURE.decalageHitbox[2]);
 }
 
-/** Géométrie de la carrosserie : profil latéral extrudé sur la largeur + aileron et supports, en repère three du modèle. */
-function geometrieCarrosserie(): THREE.BufferGeometry {
-  const forme = new THREE.Shape(PROFIL_OCTANE.map(([a, h]) => new THREE.Vector2(a, h)));
-  const corps = new THREE.ExtrudeGeometry(forme, { depth: LARGEUR_OCTANE, bevelEnabled: false, curveSegments: 1 });
-  // (a, h, ez) → (x = largeur/2 − ez, y = h, z = a) : rotation propre (déterminant +1)
-  corps.applyMatrix4(new THREE.Matrix4().set(0, 0, -1, LARGEUR_OCTANE / 2, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1));
-  const morceaux: THREE.BufferGeometry[] = [corps.index ? corps.toNonIndexed() : corps];
-  for (const p of PIECES_OCTANE) {
+/**
+ * Géométrie d'une carrosserie (`skins.ts`) : chaque volume (profil latéral) extrudé sur sa largeur + pièces annexes (aileron, rétroviseurs,
+ * barres de toit), en repère three du modèle ; arêtes = arêtes vives des faces + détails du skin (feux, calandre, montants) dans le MÊME
+ * `LineSegments` (aucun appel de dessin de plus). L'Octane donne exactement la géométrie historique.
+ */
+function pieceCarrosserie(modele: Readonly<ModeleSkin>): GeoPiece {
+  const morceaux: THREE.BufferGeometry[] = [];
+  for (const vol of modele.volumes) {
+    const forme = new THREE.Shape(vol.profil.map(([a, h]) => new THREE.Vector2(a, h)));
+    const corps = new THREE.ExtrudeGeometry(forme, { depth: vol.largeur, bevelEnabled: false, curveSegments: 1 });
+    // (a, h, ez) → (x = largeur/2 − ez, y = h, z = a) : rotation propre (déterminant +1)
+    corps.applyMatrix4(new THREE.Matrix4().set(0, 0, -1, vol.largeur / 2, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1));
+    const plat = corps.index ? corps.toNonIndexed() : corps;
+    if (plat !== corps) corps.dispose();
+    morceaux.push(plat);
+  }
+  for (const p of modele.pieces) {
     const g = new THREE.BoxGeometry(p.t[1], p.t[2], p.t[0]).toNonIndexed();
     const c = versThree(p.c[0], p.c[1], p.c[2]);
     g.translate(c[0], c[1], c[2]);
     morceaux.push(g);
   }
-  for (const g of morceaux) { g.deleteAttribute("normal"); g.deleteAttribute("uv"); for (const nom of Object.keys(g.attributes)) if (nom !== "position") g.deleteAttribute(nom); }
+  for (const g of morceaux) for (const nom of Object.keys(g.attributes)) if (nom !== "position") g.deleteAttribute(nom);
   const fusion = mergeGeometries(morceaux, false);
   for (const g of morceaux) g.dispose();
-  if (corps !== morceaux[0]) corps.dispose();
   if (!fusion) throw new Error("rendu : fusion de la carrosserie impossible");
-  return fusion;
+  const piece = enPiece(fusion);
+  if (modele.segments.length === 0) return piece;
+  const vives = piece.aretes.getAttribute("position").array as ArrayLike<number>;
+  const tout = new Float32Array(vives.length + modele.segments.length);
+  tout.set(vives as Float32Array, 0);
+  for (let i = 0; i < modele.segments.length; i += 3) {
+    const t = versThree(modele.segments[i], modele.segments[i + 1], modele.segments[i + 2]);
+    tout[vives.length + i] = t[0]; tout[vives.length + i + 1] = t[1]; tout[vives.length + i + 2] = t[2];
+  }
+  piece.aretes.dispose();
+  const aretes = new THREE.BufferGeometry();
+  aretes.setAttribute("position", new THREE.BufferAttribute(tout, 3));
+  return { geo: fusion, aretes };
 }
 
 /** Plaque de nom (texture canvas) : null hors navigateur. */
@@ -142,7 +166,13 @@ export function creerRenduRocket(m: Readonly<MondeRocket>, opts: OptionsRendu): 
   const traces: TracesPneus = creerTracesPneus(racine as unknown as THREE.Scene);
 
   // ---------- voitures ----------
-  const piece: GeoPiece = enPiece(geometrieCarrosserie());
+  // une géométrie par carrosserie utilisée, partagée par toutes les voitures qui la portent
+  const pieces = new Map<SkinVoiture, GeoPiece>();
+  const pieceDe = (skin: SkinVoiture): GeoPiece => {
+    let p = pieces.get(skin);
+    if (!p) { p = pieceCarrosserie(modeleSkin(skin)); pieces.set(skin, p); }
+    return p;
+  };
   const mats: Record<"bleue" | "orange", Materiaux> = {
     bleue: creerMateriaux(new THREE.Color().setRGB(...couleurEquipe("bleue"))),
     orange: creerMateriaux(new THREE.Color().setRGB(...couleurEquipe("orange"))),
@@ -156,6 +186,8 @@ export function creerRenduRocket(m: Readonly<MondeRocket>, opts: OptionsRendu): 
   const humaine = m.idHumain;
   for (const v of m.voitures) {
     const groupe = new THREE.Group();
+    const modele = modeleSkin(opts.skins?.[v.id] ?? "octane");
+    const piece = pieceDe(modele.id);
     const faces = new THREE.Mesh(piece.geo, mats[v.equipe].fond);
     const aretes = new THREE.LineSegments(piece.aretes, mats[v.equipe].ligne);
     faces.renderOrder = ORDRE_BASE;
@@ -183,7 +215,7 @@ export function creerRenduRocket(m: Readonly<MondeRocket>, opts: OptionsRendu): 
       racine.add(plaque);
     }
     voitures.push({
-      groupe, roues, tamponRoues, roulement: [0, 0, 0, 0], braquage: 0, apparition: 1, flamme: 0, superson: 0,
+      groupe, modele, roues, tamponRoues, roulement: [0, 0, 0, 0], braquage: 0, apparition: 1, flamme: 0, superson: 0,
       plaque, plaqueTex, plaqueMat, quatPrec: new THREE.Quaternion(), quatCour: new THREE.Quaternion(), derniere: [v.p[0], v.p[1], v.p[2]],
     });
   }
@@ -283,7 +315,7 @@ export function creerRenduRocket(m: Readonly<MondeRocket>, opts: OptionsRendu): 
       if (r.flamme > 0.03) {
         const long = (1.1 + 0.5 * Math.sin(tempsFlamme * 70 + i * 3) + 0.25 * Math.sin(tempsFlamme * 113 + i)) * r.flamme * (v.supersonique ? 1.3 : 1);
         const large = 0.6 + 0.5 * r.flamme;
-        const e0 = versThree(ECHAPPEMENT_OCTANE[0], ECHAPPEMENT_OCTANE[1], ECHAPPEMENT_OCTANE[2]);
+        const e0 = versThree(r.modele.echappement[0], r.modele.echappement[1], r.modele.echappement[2]);
         pos3.set(e0[0], e0[1], e0[2]);
         ech3.set(large, large, long);
         mLoc.compose(pos3, quatId, ech3);
@@ -294,7 +326,8 @@ export function creerRenduRocket(m: Readonly<MondeRocket>, opts: OptionsRendu): 
       const cibleSup = v.supersonique ? 1 : 0;
       r.superson += (cibleSup - r.superson) * Math.min(1, dtImage * (cibleSup > r.superson ? 10 : 2.5));
       // coins arrière : la matrice de la pose interpolée donne leurs positions dans le repère du stade
-      const cg = versThree(-0.4, -0.38, 0.2), cd = versThree(-0.4, 0.38, 0.2);
+      const ca = r.modele.coinArriere;
+      const cg = versThree(ca[0], -ca[1], ca[2]), cd = versThree(ca[0], ca[1], ca[2]);
       v3a.set(cg[0], cg[1], cg[2]).applyMatrix4(r.groupe.matrix);
       v3b.set(cd[0], cd[1], cd[2]).applyMatrix4(r.groupe.matrix);
       coinG[0] = v3a.x; coinG[1] = v3a.y; coinG[2] = v3a.z;
@@ -499,7 +532,7 @@ export function creerRenduRocket(m: Readonly<MondeRocket>, opts: OptionsRendu): 
         r.plaque?.removeFromParent();
         r.groupe.removeFromParent();
       }
-      libererPiece(piece);
+      for (const p of pieces.values()) libererPiece(p);
       libererMateriaux(mats.bleue);
       libererMateriaux(mats.orange);
       flammes.dispose();
