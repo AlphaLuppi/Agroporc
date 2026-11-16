@@ -1167,6 +1167,16 @@ export const LIAISONS_MANETTE_DEFAUT: LiaisonsManette = {
   chatBas: ["B13"],
 };
 
+/**
+ * Carrosseries des voitures (skins). VISUEL SEUL, comme les voitures de Rocket League posées sur une même hitbox : la boîte de collision, les
+ * roues physiques et toute la simulation restent ceux de l'Octane (`VOITURE`), quel que soit le skin. Modèles dans `skins.ts` (pur).
+ */
+export type SkinVoiture = "octane" | "308" | "2008" | "rio";
+/** Ordre d'affichage dans le lobby ; le premier est le défaut. */
+export const SKINS: readonly SkinVoiture[] = ["octane", "308", "2008", "rio"];
+export const LIBELLES_SKIN: Readonly<Record<SkinVoiture, string>> = { octane: "Octane", "308": "Peugeot 308", "2008": "Peugeot 2008", rio: "Kia Rio" };
+export const estSkin = (x: unknown): x is SkinVoiture => typeof x === "string" && (SKINS as readonly string[]).includes(x);
+
 export interface ReglagesRocket {
   camera: ParamsCamera;
   touches: LiaisonsTouches;
@@ -1183,6 +1193,8 @@ export interface ReglagesRocket {
   vibrations: boolean;
   /** afficher les réactions rapides des ADVERSAIRES (bulle, fil, son) ; celles de l'équipe et les miennes restent toujours visibles */
   reactionsAdversaires: boolean;
+  /** carrosserie de MA voiture (visuel seul : la hitbox reste celle de l'Octane, cf. `SkinVoiture`) */
+  skin: SkinVoiture;
 }
 export const REGLAGES_DEFAUT = (): ReglagesRocket => ({
   camera: { ...CAMERA_DEFAUT },
@@ -1194,6 +1206,7 @@ export const REGLAGES_DEFAUT = (): ReglagesRocket => ({
   inverserTangageManette: false,
   vibrations: true,
   reactionsAdversaires: true,
+  skin: "octane",
 });
 
 export const DEFAUT_CONFIG = (): ConfigMatch => ({
@@ -1466,6 +1479,8 @@ export interface OptionsRendu {
   qualite: "haute" | "basse";
   mouvementReduit: boolean;
   nomsEquipes: Record<Equipe, string>;
+  /** carrosserie de chaque voiture (index = id de voiture) ; absente ou plus courte : Octane */
+  skins?: readonly SkinVoiture[];
 }
 export interface RenduRocket {
   /**

@@ -19,7 +19,7 @@
  * reprise émis par le serveur HTTP après `salon` (message `session`), `numero` dans les trames, signatures du registre avec IP et horloge.
  */
 import type {
-  Arene, ConfigMatch, Equipe, EntreesVoiture, EtatBalle, EtatPlot, EtatVoiture, EvenementMatch, Format, MondeRocket, NiveauBot, ResultatMatch, Vec3,
+  Arene, ConfigMatch, Equipe, EntreesVoiture, EtatBalle, EtatPlot, EtatVoiture, EvenementMatch, Format, MondeRocket, NiveauBot, ResultatMatch, SkinVoiture, Vec3,
 } from "../contrat";
 import { MATCH, PAS_S } from "../contrat";
 import type { InterneMatch } from "../match";
@@ -347,6 +347,8 @@ export interface JoueurSalon {
   connecte: boolean;
   /** a fini de charger la scène (phase « chargement ») */
   charge: boolean;
+  /** carrosserie choisie (visuel seul, additif : absente d'un serveur d'avant les skins, lue comme l'Octane) */
+  skin?: SkinVoiture;
 }
 
 export interface EtatSalon {
@@ -381,6 +383,8 @@ export interface VoitureStatique {
   humain: boolean;
   nom: string;
   joueur: number | null;
+  /** carrosserie (visuel seul, additif : un client d'avant les skins l'ignore, un serveur d'avant ne l'envoie pas → Octane) ; bots compris */
+  skin?: SkinVoiture;
 }
 
 export type RaisonRefus =
@@ -403,6 +407,8 @@ export type MessageClient =
   | { t: "rejoindre"; code: string; equipe?: Equipe }
   | { t: "quitter" }
   | { t: "equipe"; equipe: Equipe }
+  /** carrosserie de MA voiture (salon ou écran de fin : prise en compte au prochain match), additif ; un serveur d'avant l'ignore sans répondre */
+  | { t: "skin"; skin: SkinVoiture }
   | { t: "reglages"; reglages: Partial<ReglagesSalon> }
   | { t: "lancer" }
   /** la scène est chargée et l'horloge synchronisée : la partie peut démarrer pour ce joueur (phase « chargement ») */

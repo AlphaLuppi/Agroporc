@@ -7,7 +7,7 @@ import {
   appliquerConnexion, appliquerMessage, attendre, effacerReprise, ecrireReprise, etatLobbyInitial, lireReprise, quitterSalonLocalement,
   type EtatLobbyEnLigne,
 } from "@/lib/rocket/reseau/lobby-en-ligne";
-import type { Equipe } from "@/lib/rocket/contrat";
+import type { Equipe, SkinVoiture } from "@/lib/rocket/contrat";
 import type { ReglagesSalon, SnapRocket } from "@/lib/rocket/reseau/protocole";
 
 /** Rafraîchissement de la liste « Parties ouvertes » tant que le panneau est visible (ms). */
@@ -22,6 +22,8 @@ export interface OptionsSalonRocket {
   nom: string;
   /** la liste des parties est à l'écran : elle est rafraîchie toutes les `PERIODE_LISTE_MS` */
   listeVisible: boolean;
+  /** carrosserie de mes réglages : envoyée au salon (message additif `skin`, ignoré par un serveur d'avant) ; absente : Octane */
+  skin?: SkinVoiture;
 }
 
 export interface ActionsSalonRocket {
@@ -57,7 +59,7 @@ const stockageSession = (): Storage | null => {
  * (`appliquerMessage`, pur et testé), mémorise la session pour la reprise, rafraîchit la liste des parties. Le client (`client.ts`, avec le codec)
  * n'est chargé que par `import()` dans l'effet : rien du réseau n'entre dans le premier chargement de la page du menu.
  */
-export function useSalonRocket({ actif, nom, listeVisible }: OptionsSalonRocket): SalonRocket {
+export function useSalonRocket({ actif, nom, listeVisible, skin = "octane" }: OptionsSalonRocket): SalonRocket {
   const [etat, setEtat] = useState<EtatLobbyEnLigne>(etatLobbyInitial);
   const etatRef = useRef(etat);
   etatRef.current = etat;
@@ -194,6 +196,21 @@ export function useSalonRocket({ actif, nom, listeVisible }: OptionsSalonRocket)
       }
     },
   }), [envoyer, modifier, fermer, ouvrir]);
+
+  // carrosserie : envoyée dès qu'on est dans un salon (ou à l'écran de fin) et qu'elle diffère de celle que le serveur connaît ; une seule fois
+  // par salon et par valeur (un serveur d'avant les skins ne la renvoie jamais : on ne la répète pas à chaque message `salon`)
+  const skinEnvoye = useRef<string | null>(null);
+  const salonCode = etat.salon?.code ?? null;
+  const salonPhase = etat.salon?.phase ?? null;
+  const skinConnu = etat.salon?.joueurs.find((j) => j.id === etat.joueur)?.skin ?? "octane";
+  useEffect(() => {
+    if (!salonCode) { skinEnvoye.current = null; return; }
+    if (salonPhase !== "salon" && salonPhase !== "fin") return;
+    const cle = `${salonCode}:${skin}`;
+    if (skinConnu === skin || skinEnvoye.current === cle) return;
+    skinEnvoye.current = cle;
+    envoyer({ t: "skin", skin });
+  }, [salonCode, salonPhase, skinConnu, skin, envoyer]);
 
   const prendreSnap = useCallback((): SnapRocket | null => {
     const s = snapRef.current;

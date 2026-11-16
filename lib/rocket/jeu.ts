@@ -56,6 +56,7 @@ import {
   type ReglagesRocket,
   type RenduRocket,
   type ResultatMatch,
+  type SkinVoiture,
   type SonsRocket,
 } from "./contrat";
 import { avancerAccumulateur, creerAccumulateur } from "./boucle";
@@ -68,6 +69,7 @@ import { creerMonde, pasMonde, resultatMatch } from "./match";
 import { creerCerveau } from "./bots";
 import { replacerVoiture } from "./voiture";
 import { creerRenduRocket } from "./rendu";
+import { skinsDesVoitures, skinsEnLigne } from "./skins";
 import { creerBullesReactions, type BullesReactions } from "./rendu-bulles";
 import {
   ANTI_SPAM, CHAT_LIGNES_MAX, CHAT_LIGNE_DUREE_S, DIRECTIONS_CHAT, MENU_FERME, appuyerMenu, categorieParId, creerAntiSpam, expirerMenu, reactionParId, reactionVisible, secondesBlocage,
@@ -244,13 +246,19 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
   const sonsOk: SonsRocket = sons;
   const sourceOk: SourceEntreesEtendue = source;
 
+  /** `debut` du match en ligne courant (null hors ligne) : les carrosseries des autres joueurs en viennent */
+  let debutSkins = enLigne ? enLigne.debut : null;
+  /** carrosserie de chaque voiture (visuel seul) : la mienne vient de mes réglages, celles des bots de la graine, en ligne celles du serveur */
+  const skinsMatch = (): SkinVoiture[] =>
+    debutSkins ? skinsEnLigne(debutSkins.voitures, debutSkins.moi, reglages.skin) : skinsDesVoitures(monde.voitures, reglages.skin, config.graine);
+
   function monterRendu(): void {
     if (rendu) {
       camera.removeFromParent();
       sceneThree.remove(rendu.racine);
       rendu.dispose();
     }
-    const r: RenduRocket = creerRenduRocket(monde, { qualite: qualiteParDefaut(), mouvementReduit: reduit, nomsEquipes: config.nomsEquipes });
+    const r: RenduRocket = creerRenduRocket(monde, { qualite: qualiteParDefaut(), mouvementReduit: reduit, nomsEquipes: config.nomsEquipes, skins: skinsMatch() });
     rendu = r;
     sceneThree.add(r.racine);
     // la caméra est un enfant de la racine : elle se place directement dans le repère LOCAL du stade
@@ -810,6 +818,7 @@ export function creerJeuRocket(canvas: HTMLCanvasElement, data: SceneData, opts:
   function nouvelleDebut(m: Extract<MessageServeur, { t: "debut" }>): void {
     if (!enLigne || !horloge) return;
     debutCourant = m;
+    debutSkins = m;
     config = copierConfig(m.config);
     horloge.reinitialiser();
     predicteur = creerPredicteur({ horloge, debut: m, arene });

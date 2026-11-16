@@ -326,3 +326,72 @@ describe("la coque dessinée est celle de la SDF", () => {
     expect(arene.sd([5, STADE.hauteur, 5])).toBeCloseTo(0, 6);
   });
 });
+
+describe("carrosseries (skins)", () => {
+  const SKINS_3V3 = ["308", "2008", "rio", "octane", "308", "rio"] as const;
+  /** groupes des voitures : faces, arêtes, roues (LineSegments dynamique non coupé par le frustum) */
+  const groupesVoitures = (racine: THREE.Object3D): THREE.Group[] =>
+    racine.children.filter((g): g is THREE.Group => g instanceof THREE.Group && g.children.length === 3
+      && g.children[0] instanceof THREE.Mesh && g.children[2] instanceof THREE.LineSegments && g.children[2].frustumCulled === false);
+  const facesVoitures = (racine: THREE.Object3D) => groupesVoitures(racine).map((g) => (g.children[0] as THREE.Mesh).geometry);
+
+  it("chaque voiture porte la carrosserie demandée ; même skin = même géométrie partagée ; sans skins, toutes en Octane", () => {
+    const m = monde(3);
+    const r = creerRenduRocket(m, { ...OPTS, skins: SKINS_3V3 });
+    const geos = facesVoitures(r.racine);
+    expect(geos).toHaveLength(6);
+    expect(geos[0]).toBe(geos[4]);
+    expect(geos[2]).toBe(geos[5]);
+    expect(new Set(geos).size).toBe(4);
+    const o = creerRenduRocket(m, OPTS);
+    expect(new Set(facesVoitures(o.racine)).size).toBe(1);
+    r.dispose(); o.dispose();
+  });
+
+  it("le budget de dessin ne dépend pas des skins (≤ 60 en 3v3, autant qu'en Octane)", () => {
+    const m = monde(3);
+    const r = creerRenduRocket(m, { ...OPTS, skins: SKINS_3V3 }), o = creerRenduRocket(m, OPTS);
+    r.synchroniser(m, 1, 1 / 60); o.synchroniser(m, 1, 1 / 60);
+    expect(compterAppels(r.racine)).toBe(compterAppels(o.racine));
+    expect(compterAppels(r.racine)).toBeLessThanOrEqual(60);
+    r.dispose(); o.dispose();
+  });
+
+  it("les carrosseries de série ont leurs détails dans les arêtes et restent au-dessus du sol", () => {
+    const m = monde(1);
+    const r = creerRenduRocket(m, { ...OPTS, skins: ["2008", "octane"] });
+    r.synchroniser(m, 1, 1 / 60);
+    const [g2008, gOctane] = facesVoitures(r.racine);
+    g2008.computeBoundingBox(); gOctane.computeBoundingBox();
+    const b = g2008.boundingBox!, bo = gOctane.boundingBox!;
+    // repère three du modèle : z = avant, y = haut ; le bas de caisse est au-dessus du sol (y = −hauteurRepos)
+    expect(b.min.y).toBeGreaterThan(-VOITURE.hauteurRepos);
+    expect(b.max.z - b.min.z).toBeGreaterThan(bo.max.z - bo.min.z);
+    const groupes = groupesVoitures(r.racine);
+    const aretes = (g: THREE.Group) => (g.children[1] as THREE.LineSegments).geometry.getAttribute("position");
+    expect(aretes(groupes[0]).count).toBeGreaterThan(aretes(groupes[1]).count);
+    for (const g of groupes) for (const x of aretes(g).array) expect(Number.isFinite(x)).toBe(true);
+    r.dispose();
+  });
+
+  it("le skin ne touche pas au monde : la synchronisation ne modifie ni position ni vitesse", () => {
+    const m = monde(3);
+    m.voitures[0].boostActif = true; m.voitures[0].supersonique = true;
+    const avant = JSON.stringify(m.voitures);
+    const r = creerRenduRocket(m, { ...OPTS, skins: SKINS_3V3 });
+    for (let i = 0; i < 5; i++) r.synchroniser(m, 0.5, 1 / 60);
+    expect(JSON.stringify(m.voitures)).toBe(avant);
+    r.dispose();
+  });
+
+  it("dispose libère les géométries de tous les skins", () => {
+    const m = monde(3);
+    const r = creerRenduRocket(m, { ...OPTS, skins: SKINS_3V3 });
+    r.synchroniser(m, 1, 1 / 60);
+    const { geos } = toutesLesRessources(r.racine);
+    const liberes = new Set<unknown>();
+    for (const g of geos) g.addEventListener("dispose", () => liberes.add(g));
+    r.dispose();
+    expect([...geos].filter((g) => !liberes.has(g))).toHaveLength(0);
+  });
+});

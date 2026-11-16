@@ -643,19 +643,8 @@ export const sautPublic = (phase: number, t: number, k: number): number => k * M
 // 7. La voiture (Octane stylisée)
 // ============================================================================================================================
 
-/** Profil latéral (avant, haut) en mètres, dans le repère de la voiture, dans le sens trigonométrique. */
-export const PROFIL_OCTANE: readonly (readonly [number, number])[] = [
-  [-0.45, 0.05], [0.72, 0.05], [0.73, 0.15], [0.62, 0.22], [0.3, 0.27], [0.1, 0.385], [-0.12, 0.388], [-0.3, 0.28], [-0.45, 0.25],
-];
-export const LARGEUR_OCTANE = VOITURE.hitbox.largeur;
-/** Pièces annexes : aileron et supports (centre [avant, droite, haut] et taille [avant, droite, haut]). */
-export const PIECES_OCTANE: readonly { c: readonly [number, number, number]; t: readonly [number, number, number] }[] = [
-  { c: [-0.43, 0, 0.31], t: [0.16, 0.84, 0.025] },
-  { c: [-0.39, 0.25, 0.27], t: [0.05, 0.035, 0.08] },
-  { c: [-0.39, -0.25, 0.27], t: [0.05, 0.035, 0.08] },
-];
-/** Position de l'échappement (flamme du boost), repère [avant, droite, haut]. */
-export const ECHAPPEMENT_OCTANE: readonly [number, number, number] = [-0.46, 0, 0.14];
+/** Silhouette de l'Octane : définie avec les autres carrosseries dans `skins.ts` (pur), réexportée ici pour les appelants historiques. */
+export { ECHAPPEMENT_OCTANE, LARGEUR_OCTANE, PIECES_OCTANE, PROFIL_OCTANE } from "./skins";
 /** Avant / droite / haut → coordonnées three du modèle (x = -droite). */
 export const versThree = (avant: number, droite: number, haut: number): Vec3 => [-droite, haut, avant];
 
