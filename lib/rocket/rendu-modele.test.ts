@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { BALLE, BUT, PLOT, PLOTS, STADE, VOITURE, type EtatPlot } from "./contrat";
+import { BALLE, BUT, PLOT, PLOTS, STADE, VOITURE, type EtatPlot, type Vec3 } from "./contrat";
 import { creerArene } from "./arene";
 import {
   FLOATS_ROUE, GABARITS, GRADINS, LARGEUR_LIGNE, LUM, PALETTE, PROFIL, PROFIL_OCTANE, RAYON_COQUE, RAYON_ROND_CENTRAL, SEUIL_BLOOM,
   ajusterLuminance, avancerRoulement, braquageRoues, construireNappe, couleurBalle, couleurEquipe, couleurMur, couleurPlot, couleurSol,
   creerContour, dansOuvertureBut, dansPolygoneConvexe, directionsFibonacci, disposerGradins, distancePrisme, eventail, grilleContour, grilleProfil,
-  geometrieCage, integrerQuat, interpolerPosition, intensiteChoc, intensiteTrainee, lignesTerrain, luminance, nombreParticules, ombreBalle,
+  geometrieCage, integrerQuat, pointProfil, profilCage, RAYON_MONTANT, interpolerPosition, intensiteChoc, intensiteTrainee, lignesTerrain, luminance, nombreParticules, ombreBalle,
   placesPublic, pointCoque, pointContour, polygonePlat, pulsationBut, rgbLineaire, segmentsHexCoque, segmentsHexPlafond, segmentsMotifBalle,
   segmentsRoue, solCage, sommetsRetrecis, texteTableau, visuelPlot, type PointContour,
 } from "./rendu-modele";
@@ -89,29 +89,48 @@ describe("contour et coque du stade", () => {
       px = x; pz = z;
     }
   });
-  /** zone du biseau à côté des poteaux : le raccord de sol y est raboté (cf. `biseauterCoque`) */
-  const dansBiseau = (x: number, y: number, z: number): boolean =>
-    y < RAYON_COQUE && Math.abs(z) > STADE.demiLongueur - RAYON_COQUE - 1e-6 && Math.abs(x) > BUT.demiLargeur - 1e-6 && Math.abs(x) < BUT.demiLargeur + BUT.longueurBiseau + 1e-6;
-  it("à côté des poteaux, la coque dessinée suit le biseau de la collision (écart < 20 cm) et ne dépasse plus au poteau", () => {
+  /** raccord du mur du fond resserré près des cages (cf. `rayonRaccordFond`) : la coque n'y est plus à la distance r du prisme */
+  const pres = (x: number, y: number, z: number): boolean =>
+    y < RAYON_COQUE + 1e-6 && Math.abs(z) > STADE.demiLongueur - RAYON_COQUE - 1e-6 && Math.abs(x) < BUT.raccordFondDes + 1e-6;
+  it("le long du mur du fond près des cages, la coque dessinée est sur la surface de la collision (|sd| < 2 cm)", () => {
     const arene = creerArene();
     let vus = 0;
-    for (let i = 0; i < 4000; i++) {
+    for (let i = 0; i < 6000; i++) {
       const u = c.longueur * ((i * 0.6180339) % 1), v = PROFIL.quart * ((i * 0.4142135) % 1);
       const p = pointCoque(c, u, v);
-      if (!dansBiseau(p[0], p[1], p[2]) || Math.abs(p[0]) < BUT.demiLargeur + 0.05) continue;
+      // (à moins de 30 cm du poteau, l'union douce de la collision adoucit son arête)
+      if (!pres(p[0], p[1], p[2]) || Math.abs(p[0]) < BUT.demiLargeurParoi + 0.3) continue;
       vus++;
-      expect(Math.abs(arene.sd(p))).toBeLessThan(0.2);
-      // à 50 cm du poteau, il ne reste du raccord qu'une vingtaine de centimètres : tout le reste est à plat sur le mur du fond
-      if (Math.abs(p[0]) < BUT.demiLargeur + 0.5) expect(p[1] < 0.25 || STADE.demiLongueur - Math.abs(p[2]) < 0.02).toBe(true);
+      expect(Math.abs(arene.sd(p))).toBeLessThan(0.02);
     }
-    expect(vus).toBeGreaterThan(40);
+    expect(vus).toBeGreaterThan(100);
+    // au poteau, le raccord a le rayon de l'intérieur de la cage ; à 18 m, celui du stade
+    const t: PointContour = { x: 0, z: 0, nx: 0, nz: 0 };
+    const fond = c.pieces.find((p) => p.type === "arete" && p.fond === 1)!;
+    const uPoteau = fond.u0 + ((BUT.demiLargeurParoi - fond.a[0]) / (fond.b[0] - fond.a[0])) * (fond.u1 - fond.u0);
+    pointContour(c, uPoteau, t);
+    expect(Math.abs(t.x)).toBeCloseTo(BUT.demiLargeurParoi, 9);
+    expect(pointCoque(c, uPoteau, PROFIL.quart)[1]).toBeCloseTo(RAYON_COQUE, 9);
+    expect(pointProfil(PROFIL.quart / 2, BUT.rayonInterieur).y).toBeLessThan(BUT.rayonInterieur);
   });
   it("les points de la coque sont sur la surface de la SDF (distance au prisme = r)", () => {
     for (let i = 0; i < 400; i++) {
       const u = (c.longueur * ((i * 0.6180339) % 1)), v = PROFIL.longueur * ((i * 0.4142135) % 1);
       const p = pointCoque(c, u, v);
-      if (dansBiseau(p[0], p[1], p[2])) continue;
+      if (pres(p[0], p[1], p[2])) continue;
       expect(distancePrisme(p[0], p[1], p[2])).toBeCloseTo(RAYON_COQUE, 6);
+    }
+  });
+  it("le profil à raccord resserré est continu et revient au profil du stade quand le rayon vaut r", () => {
+    for (let v = 0; v <= PROFIL.longueur; v += 0.05) {
+      const a = pointProfil(v), b = pointProfil(v, RAYON_COQUE);
+      expect(b.dr).toBeCloseTo(a.dr, 12); expect(b.y).toBeCloseTo(a.y, 12);
+    }
+    let prec = pointProfil(0, 1.12);
+    for (let v = 0.01; v <= PROFIL.quart + 1; v += 0.01) {
+      const p = pointProfil(v, 1.12);
+      expect(Math.hypot(p.dr - prec.dr, p.y - prec.y)).toBeLessThan(0.02);
+      prec = p;
     }
   });
   it("le profil va du sol au plafond", () => {
@@ -127,10 +146,10 @@ describe("contour et coque du stade", () => {
     expect(us[0]).toBe(0);
     expect(us[us.length - 1]).toBe(c.longueur);
     for (let i = 1; i < us.length; i++) expect(us[i]).toBeGreaterThan(us[i - 1]);
-    for (const xm of [-BUT.demiLargeur, BUT.demiLargeur]) {
+    for (const xm of [-BUT.demiLargeurParoi, BUT.demiLargeurParoi]) {
       expect(us.some((u) => { const p = pointCoque(c, u, PROFIL.quart + 1); return Math.abs(p[0] - xm) < 1e-6 && Math.abs(Math.abs(p[2]) - STADE.demiLongueur) < 1e-6; })).toBe(true);
     }
-    expect(vs.some((v) => Math.abs(pointCoque(c, 3, v)[1] - BUT.hauteur) < 1e-6)).toBe(true);
+    expect(vs.some((v) => Math.abs(pointCoque(c, 3, v)[1] - BUT.hauteurPlafond) < 1e-6)).toBe(true);
     for (let j = 1; j < vs.length; j++) expect(vs[j]).toBeGreaterThan(vs[j - 1]);
   });
   it("la nappe de murs omet exactement l'ouverture des deux buts", () => {
@@ -158,11 +177,12 @@ describe("contour et coque du stade", () => {
     const n = eventail(moins, 0, couleurSol);
     expect(n.indices).toHaveLength(moins.length * 3);
     const cage = solCage(-1, couleurSol);
-    expect(cage.positions.length / 3).toBe(5);
-    // les cages commencent au bord du sol plat : pas de recouvrement
+    for (const i of cage.indices) expect(i).toBeLessThan(cage.positions.length / 3);
+    // le sol de la cage commence au bord du sol plat (pas de recouvrement) et s'arrête au pied du demi-cylindre du fond
     const zs = []; for (let i = 0; i < cage.positions.length; i += 3) zs.push(cage.positions[i + 2]);
     expect(Math.max(...zs)).toBeCloseTo(-(STADE.demiLongueur - RAYON_COQUE), 6);
-    expect(Math.min(...zs)).toBeCloseTo(-(STADE.demiLongueur + BUT.profondeur), 6);
+    expect(Math.min(...zs)).toBeLessThan(-(STADE.demiLongueur + 6));
+    expect(Math.min(...zs)).toBeGreaterThan(-(STADE.demiLongueur + BUT.profondeur));
   });
   it("le motif hexagonal reste sur la coque, hors des buts, et son budget est raisonnable", () => {
     const seg = segmentsHexCoque(c, 1.7, 0.5);
@@ -171,8 +191,11 @@ describe("contour et coque du stade", () => {
     expect(seg.length / 6).toBeLessThan(40000);
     for (let i = 0; i < seg.length; i += 97 * 3) {
       const d = distancePrisme(seg[i], seg[i + 1], seg[i + 2]);
-      if (!dansBiseau(seg[i], seg[i + 1], seg[i + 2])) expect(d).toBeCloseTo(RAYON_COQUE, 4);
-      expect(dansOuvertureBut(seg[i], seg[i + 1], seg[i + 2])).toBe(false);
+      if (!pres(seg[i], seg[i + 1], seg[i + 2])) expect(d).toBeCloseTo(RAYON_COQUE, 4);
+    }
+    // aucun segment gardé n'a son milieu dans l'ouverture d'un but (ses extrémités peuvent en toucher le bord)
+    for (let i = 0; i < seg.length; i += 6 * 37) {
+      expect(dansOuvertureBut((seg[i] + seg[i + 3]) / 2, (seg[i + 1] + seg[i + 4]) / 2, (seg[i + 2] + seg[i + 5]) / 2)).toBe(false);
     }
   });
   it("le motif du plafond reste dans le polygone, à la hauteur du plafond", () => {
@@ -213,16 +236,59 @@ describe("lignes du terrain", () => {
 });
 
 describe("cages", () => {
+  const W = BUT.demiLargeurParoi, HP = BUT.hauteurPlafond;
   it("la cage bleue est à Z = -60, l'orange à +60, de l'ouverture exacte", () => {
     const b = geometrieCage("bleue"), o = geometrieCage("orange");
     const zs = (g: typeof b) => g.filet.filter((_, i) => i % 3 === 2);
     expect(Math.min(...zs(b))).toBeCloseTo(-STADE.demiLongueur - BUT.profondeur, 9);
     expect(Math.max(...zs(o))).toBeCloseTo(STADE.demiLongueur + BUT.profondeur, 9);
-    // montants et barre
-    const montants = b.tubes.filter((t) => Math.abs(Math.abs(t.a[0]) - BUT.demiLargeur) < 1e-9 && t.b[1] === BUT.hauteur && t.a[1] === 0 && Math.abs(t.a[2] + STADE.demiLongueur) < 1e-9);
+    // montants (du haut du raccord du pied du poteau à la barre) et barre, fins comme dans Rocket League
+    const montants = b.tubes.filter((t) => Math.abs(Math.abs(t.a[0]) - W) < 1e-9 && t.b[1] === HP && t.a[1] === BUT.rayonInterieur && Math.abs(t.a[2] + STADE.demiLongueur) < 1e-9);
     expect(montants).toHaveLength(2);
-    expect(b.tubes.some((t) => t.a[1] === BUT.hauteur && t.b[1] === BUT.hauteur && t.a[0] === -BUT.demiLargeur && t.b[0] === BUT.demiLargeur && Math.abs(t.a[2] + STADE.demiLongueur) < 1e-9)).toBe(true);
-    expect(b.quads.length).toBeGreaterThanOrEqual(5);
+    expect(b.tubes.some((t) => t.a[1] === HP && t.b[1] === HP && t.a[0] === -W && t.b[0] === W && Math.abs(t.a[2] + STADE.demiLongueur) < 1e-9)).toBe(true);
+    for (const t of montants) expect(t.rayon).toBe(RAYON_MONTANT);
+    expect(b.quads.length).toBeGreaterThan(100);
+  });
+  it("le profil de la cage va du sol (ligne de but) au plafond (ligne de but) par le demi-cylindre du fond, sans trou", () => {
+    const p = profilCage(0.25);
+    expect(p[0].qd).toBe(0);
+    expect(p[p.length - 1].qd).toBe(0);
+    expect(p[0].piece).toBe("sol");
+    expect(p[p.length - 1].piece).toBe("plafond");
+    for (let i = 1; i < p.length; i++) {
+      const a = p[i - 1], e = p[i], ri = BUT.rayonInterieur;
+      // deux points voisins de la surface (q + RI·n) sont à moins de 25 cm
+      expect(Math.hypot(e.qd + ri * e.nd - a.qd - ri * a.nd, e.qy + ri * e.ny - a.qy - ri * a.ny)).toBeLessThan(0.2501);
+      expect(Math.hypot(e.nd, e.ny)).toBeCloseTo(1, 12);
+    }
+  });
+  it("chaque sommet dessiné de la cage (sol, filet, lueurs, contour) est sur la surface de la collision (|sd| < 2 cm)", () => {
+    const arene = creerArene();
+    const W = BUT.demiLargeurParoi, zM = STADE.demiLongueur;
+    /**
+     * le bord de l'ouverture (poteaux, barre, et les raccords de RI qui en arrondissent les coins dans le plan du but) est adouci par
+     * l'union douce de la collision (k = 15 cm) : on s'en écarte un peu ; le sol du pied des poteaux, lui, reste vérifié
+     */
+    const presArete = (p: Vec3) => {
+      const zm = zM - Math.abs(p[2]);
+      return (Math.abs(zm) < 0.25 && p[1] > 0.05) || (Math.hypot(Math.abs(p[0]) - W, Math.max(zm, 0)) < 0.3 && p[1] > 0.05);
+    };
+    for (const eq of ["bleue", "orange"] as const) {
+      const g = geometrieCage(eq, 0.6);
+      const sommets: Vec3[] = [];
+      for (let i = 0; i < g.filet.length; i += 3) sommets.push([g.filet[i], g.filet[i + 1], g.filet[i + 2]]);
+      for (const q of g.quads) if (q.intensite <= 1) for (const c of q.coins) sommets.push(c);
+      for (const t of g.tubes) if (t.rayon < RAYON_MONTANT) sommets.push(t.a, t.b);
+      const sol = solCage(eq === "bleue" ? -1 : 1, couleurSol);
+      for (let i = 0; i < sol.positions.length; i += 3) sommets.push([sol.positions[i], sol.positions[i + 1], sol.positions[i + 2]]);
+      let vus = 0;
+      for (const p of sommets) {
+        if (presArete(p)) continue;
+        vus++;
+        expect(Math.abs(arene.sd(p)), `${p.map((v) => v.toFixed(3))}`).toBeLessThan(0.02);
+      }
+      expect(vus).toBeGreaterThan(1000);
+    }
   });
   it("le filet est moins dense en basse qualité", () => {
     expect(geometrieCage("bleue", 1.5).filet.length).toBeLessThan(geometrieCage("bleue", 0.6).filet.length / 2);

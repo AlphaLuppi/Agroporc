@@ -10,7 +10,7 @@
  *   correspondante ; un second appui (sur la direction du message voulu) l'envoie ; sans second appui le menu se referme après `MENU_REACTIONS.expirationMs`.
  * - Anti-spam : `creerAntiSpam`, la MÊME logique côté client et côté serveur (`ANTI_SPAM`) : quatre messages dans la fenêtre, le cinquième bloque le chat quelques secondes.
  * - Affichage : durée de vie des bulles et fondu (`opaciteBulle`), visibilité d'une réaction selon l'équipe (`reactionVisible`).
- * Spec : docs/superpowers/specs/2026-11-08-rocket-en-ligne-design.md (réactions rapides, additif : `VERSION_ROCKET` reste 2).
+ * Spec : docs/superpowers/specs/2026-11-08-rocket-en-ligne-design.md (réactions rapides, additif : `VERSION_ROCKET` restait 2, passée à 3 par les cages arrondies).
  */
 import type { DirectionChat, Equipe } from "./contrat";
 

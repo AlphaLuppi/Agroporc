@@ -76,15 +76,45 @@ export const BUT = {
   rayonArete: uu(15),
   /** la balle marque quand son CENTRE dépasse Z = ±(51,2425 + rayon de balle) (RL : 5124,25 uu + rayon, `SOCCAR_GOAL_SCORE_BASE_THRESHOLD_Y`) */
   seuilMarque: uu(5124.25),
-  /** raccords des angles intérieurs de la cage (RL : cage à angles vifs, on adoucit à 0,25 m pour éviter les points durs de la SDF) */
-  rayonInterieur: uu(25),
   /**
-   * de part et d'autre de la cage, le raccord arrondi sol / mur du fond s'efface en biseau sur cette longueur (m) : au poteau le mur
-   * tombe droit sur le sol, rien ne dépasse dans le terrain, et on entre ou sort de la cage en longeant le mur sans rien accrocher
+   * Cage « comme dans Rocket League » (maillage de collision du but standard, `standard_goal_*.bin` du dépôt VirxEC/rl_ball_sym,
+   * extrait du jeu comme ceux de RocketSim, coupé en plans) : la cage a des raccords CONCAVES d'environ 1 m partout à l'intérieur (sol,
+   * plafond et fond contre les parois latérales), le fond est un demi-cylindre d'axe X, le plafond plonge vers lui en pente : on monte
+   * sur les parois et jusqu'au plafond de la cage depuis l'intérieur, sans aucune marche. Poteaux et barre restent quasi vifs (RL : on
+   * ne passe pas du mur du fond au plafond de la cage par-dessus la barre). d = |Z| − 51,20 est la profondeur dans la cage.
+   *
+   * paroi latérale de la collision : |X| = 8,96 m (maillage RL : x = ±896 uu). `demiLargeur` (892,755) reste le seuil de marque.
    */
-  longueurBiseau: 6,
-  /** rayon de l'adoucissement des arêtes de ce biseau (m) */
-  rayonBiseau: 0.5,
+  demiLargeurParoi: uu(896),
+  /** plafond de la cage de la collision : 6,40 m (maillage RL : z = 640 uu). `hauteur` (642,775) reste le seuil de marque. */
+  hauteurPlafond: uu(640),
+  /**
+   * rayon des raccords concaves intérieurs de la cage : 1,12 m [~] (maillage RL : ≈ 96 à 100 uu, arcs sol/paroi, plafond/paroi,
+   * paroi/fond). Notre voiture n'a pas de suspension : avec 0,96 m, le nez de la hitbox de l'Octane heurtait encore le raccord au-delà
+   * de 18 m/s (choc de 6 à 10 m/s mesuré en fonçant dans la paroi ou en la longeant) ; à 1,12 m, plus aucun choc jusqu'à 23 m/s.
+   */
+  rayonInterieur: uu(112),
+  /** fond de la cage : demi-cylindre d'axe X de rayon 2,40 m (maillage RL : 240 uu)… */
+  rayonFond: uu(240),
+  /** …centré à la profondeur d = 6,40 m (maillage RL : 640 uu, point le plus profond à 880 uu = `profondeur`)… */
+  profondeurCentreFond: uu(640),
+  /** …et à la hauteur 2,56 m (maillage RL : 256 uu) */
+  hauteurCentreFond: uu(256),
+  /** plafond plat jusqu'à d = 2,24 m, puis pente vers le fond tangente au demi-cylindre (maillage RL : 224 uu, pente ≈ 17,5°) */
+  plafondPlatJusqua: uu(224),
+  /** sol plat jusqu'à d = 2,347 m (maillage RL : 234,7 uu)… */
+  penteSolDebut: uu(234.7),
+  /** …puis en pente douce (2,26°) jusqu'à 0,16 m au pied du demi-cylindre (maillage RL : 16 uu à d = 640 uu) */
+  hauteurPenteSol: uu(16),
+  /**
+   * raccord sol / mur du fond de part et d'autre de la cage : celui de l'intérieur de la cage au poteau (maillage RL : 0,96 m, il fait
+   * le tour du pied du poteau et se raccorde au raccord sol / paroi de la cage, de même rayon ; les deux DOIVENT rester égaux), jusqu'à
+   * |X| = `raccordPoteauJusqua`…
+   */
+  rayonRaccordPoteau: uu(112),
+  raccordPoteauJusqua: 10,
+  /** …puis il s'élargit (smoothstep) jusqu'au rayon des raccords du stade (`STADE.rayonSol`) à |X| = 18 m [~ : RL ≈ 1,16 m à 11 m, 1,60 m au loin] */
+  raccordFondDes: 18,
 } as const;
 
 /** Vrai pour la balle ET pour tout test « dans le but » : seuil du centre de balle selon son rayon. */

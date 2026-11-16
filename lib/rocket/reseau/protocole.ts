@@ -28,8 +28,12 @@ import type { InterneMatch } from "../match";
 // 1. Constantes réseau
 // ============================================================================================================================
 
-/** Version du protocole Rocket en ligne (indépendante de `VERSION_PROTOCOLE` de l'arène). Un `bonjour` d'une autre version reçoit `erreur{version}`. */
-export const VERSION_ROCKET = 2;
+/**
+ * Version du protocole Rocket en ligne (indépendante de `VERSION_PROTOCOLE` de l'arène). Un `bonjour` d'une autre version reçoit `erreur{version}`.
+ * 3 : cages arrondies comme dans Rocket League (`arene.ts`) ; le codec ne change pas mais la physique si : un client et un serveur de géométries
+ * différentes divergeraient à chaque contact près d'une cage (rollbacks en rafale), ils se refusent donc proprement. Serveur d'abord.
+ */
+export const VERSION_ROCKET = 3;
 /** Chemin de la WebSocket Rocket sur le serveur HTTP de serveur-fps (`wss://pdj-fps.toam.tech/rocket`). */
 export const CHEMIN_ROCKET = "/rocket";
 /** Pas de la physique en ticks par seconde (120). Le « tick » est l'unité de temps de TOUT le protocole. */
@@ -409,7 +413,7 @@ export type MessageClient =
   | { t: "pret" }
   | { t: "ping"; c: number }
   | { t: "klaxon" }
-  /** réaction rapide (`id` du catalogue de `reactions.ts`) : validée, limitée (anti-spam) et relayée par le serveur, additif (`VERSION_ROCKET` reste 2) */
+  /** réaction rapide (`id` du catalogue de `reactions.ts`) : validée, limitée (anti-spam) et relayée par le serveur, additif (`VERSION_ROCKET` restait 2) */
   | { t: "reaction"; id: string }
   | { t: "revanche"; oui: boolean }
   /** hôte, phase « fin » : retour au salon sans revanche */
