@@ -1,33 +1,41 @@
 /**
  * Rocket Muche : caméra de Rocket League (PURE : aucun three, aucune horloge, le temps vient des arguments).
  *
- * - **Car cam** : la caméra se tient derrière la voiture, la direction de visée suit l'avant (sur un mur ou au plafond le « haut » de la
- *   caméra suit la normale de la surface, lissé ; en l'air, le haut est celui du monde et 70 % du tangage du nez est suivi).
- *   **Pendant un flip** (dodge, pas le stall) la direction est GELÉE à celle qu'elle avait au départ du flip : la caméra suit toujours la
- *   POSITION de la voiture (distance et hauteur habituelles) mais ne bascule pas avec le salto ; elle se raccroche à l'avant une fois le
- *   flip fini (verrou de tangage écoulé, atterrissage) par une rotation lissée à vitesse bornée (`VITESSE_RACCROCHAGE`). Le gel se déduit
- *   de `moi.flip` et `moi.auSol`, déjà sérialisés : aucun champ ni message de plus, en local comme en ligne.
- * - **Ball cam** (comme Rocket League) : la caméra se place sur la ligne balle → voiture, derrière la voiture, et REGARDE LA BALLE.
- *   Le suivi est rigide (elle ne traîne pas derrière la balle), l'horizon reste toujours droit (haut du monde, même sur un mur), la
- *   visée monte autant qu'il faut pour une balle haute (la balle passe avant la voiture, cf. `elevationViseeBalle`), la caméra descend
- *   derrière la voiture jusqu'au ras du sol, et une balle collée à la voiture ne fait pas basculer la vue.
- * - Passage de l'une à l'autre : `melange` 0 → 1 lissé à `vitesseTransition`, la direction PIVOTE de l'une vers l'autre.
- * - **Regard libre** (stick droit / souris bouton du milieu) : la caméra tourne autour de la voiture, ±90° de lacet, ±45° de tangage,
- *   revient au centre au relâchement ; **vue arrière** : demi-tour complet autour de la voiture (la ball cam est suspendue).
- * - **Anticollision** : la caméra ne sort jamais de l'arène ni ne reste à moins de 0,4 m d'une surface : on la rapproche de la voiture
- *   le long du rayon (si le chemin est coupé, elle se rapproche aussitôt, puis ne se réécarte que doucement). Plafond : ≥ 0,5 m dessous.
- * - **Secousse** décroissante (touches de balle fortes, démolitions, buts), ignorée en mouvement réduit.
- * - **Célébration** d'un but : orbite lente autour de la balle puis du marqueur (`majCameraBut`).
+ * Refonte 2026-11 (façon RL, cf. CLAUDE.md « Rocket Muche ») : la caméra est un REPÈRE (avant `dir`, haut `haut`) lissé comme UNE seule
+ * rotation (quaternion), et sa position est la formule de RL : `pivot = voiture + haut·hauteur`, `caméra = pivot − avant·distance`,
+ * la visée penchée de `angle` (c'est le tangage de la caméra, comme le `Pitch` de RL) : au sol la voiture est à ≈ 16° sous le centre de
+ * l'image, dans le tiers bas, avec le terrain devant.
  *
- * Le repère est celui du stade (local). Le champ est HORIZONTAL (110° par défaut, comme RL) et converti en vertical selon l'aspect.
- * Les états de lissage supplémentaires (anticollision, phase de la secousse, entrée en célébration) sont gardés à part de `EtatCamera`
- * (contrat figé) dans une `WeakMap` : l'état se copie ou s'abandonne sans fuite.
+ * - **Car cam au sol** (sol, murs, plafond) : le repère cible est celui de la voiture (avant, haut), quasi rigide (lissé à 20/s
+ *   seulement pour filtrer les chocs) : sur un mur la caméra se tient derrière la voiture LE LONG du mur, son haut est la normale.
+ * - **Car cam en l'air** : le haut revient à celui du monde, l'avant suit le CAP du nez (son projeté horizontal), jamais son tangage ;
+ *   nez à la verticale (décollage d'un mur, aérien), la vitesse horizontale puis le dernier cap valable prennent le relais.
+ *   **Pendant un flip** (dodge, pas le stall) le repère est GELÉ à celui du départ du flip : la caméra suit la POSITION de la voiture
+ *   mais pas le salto, puis se raccroche (fondu de `RACCROCHAGE_FLIP_S`, rotation bornée à `VITESSE_RACCROCHAGE` tant que la borne mord,
+ *   half flip compris). Le gel se déduit de `moi.flip` et `moi.auSol`, déjà sérialisés : rien de plus en ligne.
+ * - **Ball cam** : la caméra se place sur la ligne balle → voiture, derrière la voiture, et regarde la balle ; horizon toujours droit
+ *   (haut du monde, même sur un mur : comme RL), suivi rigide du cap à vitesse bornée quand la balle passe au-dessus du toit, visée qui
+ *   monte pour une balle haute (`elevationViseeBalle`).
+ * - **Rigidité** (stiffness de RL) : elle règle l'ÉTIREMENT de la distance avec la vitesse, pas la rotation : à 0 la caméra recule de
+ *   `ETIREMENT_MAX_M` à pleine vitesse, à 1 elle reste à `distance`.
+ * - **Murs et anticollision** : RL ne fait aucune collision de caméra, elle passe en partie derrière les murs (devenus transparents,
+ *   « Transparent Goalposts »). Ici les murs et le plafond sont additifs, translucides : la caméra peut passer jusqu'à
+ *   `DEPASSEMENT_MUR_MAX_M` derrière eux (sous le retrait des gradins). Le sol et son raccord (jusqu'à `HAUT_RACCORD_OPAQUE`) sont
+ *   OPAQUES : la caméra reste à `MARGE_CAMERA_M` devant, et ne les regarde jamais par-derrière. Une position interdite est PROJETÉE le
+ *   long du gradient du champ de distance (la caméra glisse sur la paroi), jamais rapprochée de la voiture ; si la projection la ramène
+ *   à moins de `DISTANCE_MIN_M` du centre de la caisse, le bras se relève. La caméra n'entre donc jamais dans la voiture.
+ * - **Regard libre** : ±90° de lacet, ±45° de tangage autour de la voiture ; **vue arrière** : demi-tour (ball cam suspendue).
+ * - **Secousse** décroissante, ignorée en mouvement réduit ; **célébration** d'un but : orbite lente (`majCameraBut`).
+ *
+ * Le repère est celui du stade (local). Le champ est HORIZONTAL (110° par défaut) et converti en vertical selon l'aspect.
+ * Les états de lissage supplémentaires sont gardés à part de `EtatCamera` (contrat figé) dans une `WeakMap`.
  *
  * Spec : docs/superpowers/specs/2026-11-06-rocket-agroparc-design.md § 8.3
  */
 import {
   CAMERA_DEFAUT,
   STADE,
+  VOITURE,
   type Arene,
   type EntreesCamera,
   type EtatBalle,
@@ -55,39 +63,57 @@ import {
 
 const D2R = Math.PI / 180;
 
-/** Distance minimale entre la caméra et une surface du stade (m). */
+/** Distance minimale entre la caméra et une surface OPAQUE du stade (sol et raccord de sol) (m). */
 export const MARGE_CAMERA_M = 0.4;
-/** Marge sous le plafond (m). */
+/** Marge sous le plafond (m) : la caméra ne monte jamais au-delà de `STADE.hauteur − MARGE_PLAFOND_M`. */
 export const MARGE_PLAFOND_M = 0.5;
-/** Car cam : élévation maximale de la visée. */
-const ELEVATION_VISEE_MAX = 16 * D2R;
+/** Jamais plus bas que cela (m) : le sol est opaque. */
+export const HAUTEUR_MIN_M = 0.35;
+/** Profondeur autorisée derrière une paroi translucide (murs, plafond, filets) : sous le retrait des gradins (1,2 m). */
+export const DEPASSEMENT_MUR_MAX_M = 1.0;
+/** Hauteur au-dessus de laquelle les parois sont translucides : le sol et son raccord (rayon 2,56 m) sont dessinés opaques. */
+export const HAUT_RACCORD_OPAQUE = STADE.rayonSol + 0.15;
+/** Fondu (m) entre parois opaques et translucides : la marge exigée varie continûment, la caméra ne saute pas. */
+const FONDU_TRANSLUCIDE_M = 0.6;
+/** Distance minimale (m) entre la caméra et le CENTRE de la caisse : la caméra n'est jamais dans la voiture (demi-diagonale ≈ 0,76 m). */
+export const DISTANCE_MIN_M = 1.3;
+/** Pivot de l'anticollision au-dessus de l'origine, le long du haut de la voiture (m) : au-dessus du toit (0,40 m), hors de la caisse. */
+export const PIVOT_TOIT_M = 0.55;
+/** Étirement de la distance (m) à rigidité 0 et à pleine vitesse (RL : plus de 100 uu à stiffness 0), vitesse de référence (m/s). */
+export const ETIREMENT_MAX_M = 1.0;
+const VITESSE_ETIREMENT_MAX = 23;
+const SUIVI_ETIREMENT = 3;
+/** Vitesses de suivi (1/s) du repère : car cam au sol (quasi rigide), en l'air, ball cam établie, bascule d'un mode à l'autre. */
+export const SUIVI_ROT_SOL = 20;
+export const SUIVI_ROT_AIR = 6;
+const SUIVI_BALLE = 32;
+const SUIVI_BASCULE = 9;
+/** Retour de l'anticollision (1/s) : la caméra se réécarte doucement une fois la paroi passée. */
+const SUIVI_DEGAGEMENT = 4;
 /** Ball cam : la visée monte (ou descend) jusque-là pour garder la balle à l'écran. */
 const ELEVATION_BALLE_MAX = 78 * D2R;
 /** Ball cam : marges angulaires gardées entre la voiture et le bas de l'image, entre la balle et le haut de l'image. */
 const MARGE_VOITURE = 7 * D2R;
 const MARGE_BALLE = 11 * D2R;
+/** Car cam : la voiture reste dans l'image, à au moins cet angle du bord, même quand la paroi a déplacé la caméra. */
+const MARGE_VOITURE_CAR = 4 * D2R;
 /** Ball cam : la caméra ne descend pas plus bas que cela derrière la voiture (m au-dessus du sol). */
 const GARDE_SOL_M = 0.5;
-/** Vitesses de suivi (1/s) de la direction : ball cam établie (quasi rigide), bascule d'un mode à l'autre. */
-const SUIVI_BALLE = 32;
-const SUIVI_BASCULE = 9;
-/** Vitesse de rotation maximale (rad/s) du cap de la ball cam quand la balle est à la verticale de la voiture. */
+/** Vitesse de rotation maximale (rad/s) du cap de la ball cam quand la balle est à la verticale de la voiture, et dans tous les cas. */
 const VITESSE_CAP_PROCHE = 4;
-/** … et dans tous les cas : un demi-tour autour de la voiture prend au moins un tiers de seconde. */
 const VITESSE_CAP_MAX = 10;
-const normaliser2 = (x: number, z: number): [number, number] => { const n = Math.hypot(x, z); return n > 1e-9 ? [x / n, z / n] : [0, 1]; };
-const ELEVATION_VISEE_MIN = -60 * D2R;
-/** Élévation (par rapport au haut de la caméra) de la ligne qui place la caméra derrière la voiture : pas sous le sol, pas au zénith. */
+/** Élévation de la ligne qui place la caméra derrière la voiture : pas sous le sol, pas au zénith. */
 const ELEVATION_POSITION_MIN = -60 * D2R;
 const ELEVATION_POSITION_MAX = 20 * D2R;
-/** Part du tangage du nez suivie par la car cam en l'air. */
-const SUIVI_TANGAGE_AIR = 0.7;
-/** Raccrochage après un flip : durée du fondu du gel vers l'avant de la voiture (s) et vitesse de rotation maximale de la direction (rad/s). */
+/** Élévation maximale de la visée par rapport au haut de la caméra (jamais à la verticale : `lookAt` dégénérerait). */
+const ELEVATION_VISEE_MAX = 80 * D2R;
+/** Car cam : le point visé est à cette distance devant la voiture (m), le long de la visée idéale. */
+const AVANCE_VISEE_M = 3;
+/** Raccrochage après un flip : durée du fondu du gel vers le repère de la voiture (s) et vitesse de rotation maximale (rad/s). */
 export const RACCROCHAGE_FLIP_S = 0.45;
 export const VITESSE_RACCROCHAGE = 4;
-/** Hauteur de la cible devant la voiture (m) et point d'ancrage de l'anticollision au-dessus de l'origine (m). */
-const HAUTEUR_CIBLE_M = 0.3;
-const HAUTEUR_ANCRE_M = 0.3;
+
+const normaliser2 = (x: number, z: number): [number, number] => { const n = Math.hypot(x, z); return n > 1e-9 ? [x / n, z / n] : [0, 1]; };
 
 /** `fovVertical = 2·atan(tan(fov_h / 2) / aspect)` (degrés → degrés). */
 export function fovVerticalDepuisHorizontal(fovHorizontal: number, aspect: number): number {
@@ -99,12 +125,70 @@ const lisse = (x: number): number => { const t = clamp(x, 0, 1); return t * t * 
 const lisseEntre = (a: number, b: number, x: number): number => lisse((x - a) / (b - a));
 
 // ============================================================================================================================
+// Quaternions (repère de la caméra : avant = +Z local, haut = +Y local)
+// ============================================================================================================================
+
+type Quat = [number, number, number, number];
+
+/** Quaternion du repère (avant `f`, haut `u`) : `u` est réorthonormalisé contre `f` (repli si parallèles). */
+function quatDepuisRepere(fBrut: Readonly<Vec3>, uBrut: Readonly<Vec3>, repliHaut: Readonly<Vec3> = HAUT_MONDE): Quat {
+  const f = normaliser(fBrut, [0, 0, 1]);
+  let u: Vec3 = soustraire(uBrut, mult(f, dot(f, uBrut)));
+  if (Math.hypot(u[0], u[1], u[2]) < 1e-4) u = soustraire(repliHaut, mult(f, dot(f, repliHaut)));
+  if (Math.hypot(u[0], u[1], u[2]) < 1e-4) u = Math.abs(f[1]) < 0.9 ? soustraire(HAUT_MONDE, mult(f, f[1])) : [1, 0, 0];
+  u = normaliser(u);
+  const r = croix(u, f);
+  // matrice de colonnes (r, u, f)
+  const m00 = r[0], m01 = u[0], m02 = f[0], m10 = r[1], m11 = u[1], m12 = f[1], m20 = r[2], m21 = u[2], m22 = f[2];
+  const tr = m00 + m11 + m22;
+  let q: Quat;
+  if (tr > 0) { const s = Math.sqrt(tr + 1) * 2; q = [(m21 - m12) / s, (m02 - m20) / s, (m10 - m01) / s, 0.25 * s]; }
+  else if (m00 > m11 && m00 > m22) { const s = Math.sqrt(1 + m00 - m11 - m22) * 2; q = [0.25 * s, (m01 + m10) / s, (m02 + m20) / s, (m21 - m12) / s]; }
+  else if (m11 > m22) { const s = Math.sqrt(1 + m11 - m00 - m22) * 2; q = [(m01 + m10) / s, 0.25 * s, (m12 + m21) / s, (m02 - m20) / s]; }
+  else { const s = Math.sqrt(1 + m22 - m00 - m11) * 2; q = [(m02 + m20) / s, (m12 + m21) / s, 0.25 * s, (m10 - m01) / s]; }
+  return normaliserQ(q);
+}
+function normaliserQ(q: Quat): Quat {
+  const n = Math.hypot(q[0], q[1], q[2], q[3]) || 1;
+  return [q[0] / n, q[1] / n, q[2] / n, q[3] / n];
+}
+/** Rotation du vecteur `v` par `q`. */
+function tournerQ(q: Readonly<Quat>, v: Readonly<Vec3>): Vec3 {
+  const [x, y, z, w] = q;
+  const tx = 2 * (y * v[2] - z * v[1]), ty = 2 * (z * v[0] - x * v[2]), tz = 2 * (x * v[1] - y * v[0]);
+  return [v[0] + w * tx + (y * tz - z * ty), v[1] + w * ty + (z * tx - x * tz), v[2] + w * tz + (x * ty - y * tx)];
+}
+const avantQ = (q: Readonly<Quat>): Vec3 => normaliser(tournerQ(q, [0, 0, 1]), [0, 0, 1]);
+const hautQ = (q: Readonly<Quat>): Vec3 => normaliser(tournerQ(q, [0, 1, 0]), HAUT_MONDE);
+/** Angle (rad) de la rotation qui mène de `a` à `b`. */
+function angleQ(a: Readonly<Quat>, b: Readonly<Quat>): number {
+  const d = Math.abs(a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3]);
+  return 2 * Math.acos(Math.min(1, d));
+}
+/** Interpolation sphérique, par le plus court chemin. */
+function slerp(a: Readonly<Quat>, bBrut: Readonly<Quat>, t: number): Quat {
+  if (t <= 0) return [a[0], a[1], a[2], a[3]];
+  let d = a[0] * bBrut[0] + a[1] * bBrut[1] + a[2] * bBrut[2] + a[3] * bBrut[3];
+  const b: Quat = d < 0 ? [-bBrut[0], -bBrut[1], -bBrut[2], -bBrut[3]] : [bBrut[0], bBrut[1], bBrut[2], bBrut[3]];
+  if (t >= 1) return b;
+  d = Math.abs(d);
+  if (d > 0.9995) return normaliserQ([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t, a[3] + (b[3] - a[3]) * t]);
+  const th = Math.acos(d), s = Math.sin(th);
+  const ka = Math.sin((1 - t) * th) / s, kb = Math.sin(t * th) / s;
+  return normaliserQ([a[0] * ka + b[0] * kb, a[1] * ka + b[1] * kb, a[2] * ka + b[2] * kb, a[3] * ka + b[3] * kb]);
+}
+
+// ============================================================================================================================
 // États annexes (hors contrat)
 // ============================================================================================================================
 
 interface Annexes {
-  /** part de l'écart caméra-ancre conservée par l'anticollision, lissée (1 = distance complète) */
-  reduction: number;
+  /** repère lissé de la caméra (avant = `e.dir`, haut = `e.haut`) */
+  q: Quat | null;
+  /** décalage lissé imposé par les parois (position rendue − position idéale) ; null = première image */
+  decalage: Vec3 | null;
+  /** étirement de la distance (rigidité), lissé (m) */
+  etirement: number;
   /** phase de la secousse (rad), avancée par le temps */
   phase: number;
   /** dernière pose rendue par `majCamera` : point de départ du fondu vers la célébration */
@@ -114,22 +198,27 @@ interface Annexes {
   /** cap horizontal [x, z] (unitaire) et élévation (rad) de la droite voiture → balle suivis par la ball cam (null avant la première image) */
   capBalle: [number, number] | null;
   elBalle: number;
-  /** direction de la car cam gelée au départ d'un flip (null hors flip et une fois le raccrochage fini) */
-  gelDir: Vec3 | null;
+  /** dernier cap horizontal valable de la voiture (repli de la car cam en l'air, nez à la verticale) */
+  capAir: [number, number] | null;
+  /** repère de la car cam gelé au départ d'un flip (null hors flip et une fois le raccrochage fini) */
+  gel: Quat | null;
   /** poids du gel : 1 pendant le flip, retombe à 0 pendant le raccrochage */
   poidsGel: number;
-  /** raccrochage en cours : la rotation de la direction est bornée, y compris APRÈS la fin du fondu tant que la borne mord (half flip) */
+  /** raccrochage en cours : la rotation est bornée, y compris APRÈS la fin du fondu tant que la borne mord (half flip) */
   raccrochage: boolean;
 }
 const annexes = new WeakMap<EtatCamera, Annexes>();
 function annexesDe(e: EtatCamera): Annexes {
   let a = annexes.get(e);
-  if (!a) { a = { reduction: 1, phase: 0, dernierePose: null, but: null, capBalle: null, elBalle: 0, gelDir: null, poidsGel: 0, raccrochage: false }; annexes.set(e, a); }
+  if (!a) {
+    a = { q: null, decalage: null, etirement: 0, phase: 0, dernierePose: null, but: null, capBalle: null, elBalle: 0, capAir: null, gel: null, poidsGel: 0, raccrochage: false };
+    annexes.set(e, a);
+  }
   return a;
 }
 
 // ============================================================================================================================
-// Maths de visée
+// Repères voulus
 // ============================================================================================================================
 
 /**
@@ -141,71 +230,157 @@ export function flipEnCours(moi: Readonly<EtatVoiture>): boolean {
   return !moi.auSol && !moi.flip.stall && moi.flip.verrouTangage > 0;
 }
 
-/** Haut de la caméra voulu : normale de la surface sous la voiture si elle roule, haut du monde en l'air. */
-function hautVoulu(moi: Readonly<EtatVoiture>): Vec3 {
-  return moi.auSol && moi.normaleSurface ? normaliser(moi.normaleSurface, HAUT_MONDE) : [0, 1, 0];
+/**
+ * Cap horizontal de la car cam en l'air : celui du nez tant qu'il n'est pas à la verticale, sinon la vitesse horizontale (décollage
+ * d'un mur), sinon le dernier cap valable. Passage continu de l'un à l'autre.
+ */
+function capEnLAir(moi: Readonly<EtatVoiture>, a: Annexes, repli: Readonly<Vec3>): Vec3 {
+  const ax = moi.base.avant[0], az = moi.base.avant[2];
+  const n = Math.hypot(ax, az);
+  const w = lisseEntre(0.15, 0.45, n);
+  const vh = Math.hypot(moi.v[0], moi.v[2]);
+  let fx: number, fz: number;
+  if (vh > 2) { fx = moi.v[0] / vh; fz = moi.v[2] / vh; }
+  else if (a.capAir) { [fx, fz] = a.capAir; }
+  else { [fx, fz] = normaliser2(repli[0], repli[2]); }
+  const nx = n > 1e-9 ? ax / n : 0, nz = n > 1e-9 ? az / n : 0;
+  const [cx, cz] = normaliser2(nx * w + fx * (1 - w), nz * w + fz * (1 - w));
+  if (w > 0.5) a.capAir = [cx, cz];
+  return [cx, 0, cz];
 }
 
-/** Avant de la voiture projeté sur le plan perpendiculaire à `haut`, en gardant `k` de sa composante verticale. */
-function dirVoiture(avant: Readonly<Vec3>, haut: Readonly<Vec3>, k: number, repli: Readonly<Vec3>): Vec3 {
-  const s = dot(avant, haut);
-  const v: Vec3 = [avant[0] - haut[0] * s * (1 - k), avant[1] - haut[1] * s * (1 - k), avant[2] - haut[2] * s * (1 - k)];
-  return normaliser(v, repli);
+/** Repère voulu de la car cam : celui de la voiture si elle roule (sol, mur, plafond), cap du nez et haut du monde en l'air. */
+function repereCar(moi: Readonly<EtatVoiture>, a: Annexes, repli: Readonly<Vec3>): Quat {
+  if (moi.auSol) {
+    a.capAir = moi.base.avant[1] * moi.base.avant[1] < 0.9 ? normaliser2(moi.base.avant[0], moi.base.avant[2]) : a.capAir;
+    return quatDepuisRepere(moi.base.avant, moi.base.haut);
+  }
+  return quatDepuisRepere(capEnLAir(moi, a, repli), HAUT_MONDE);
 }
 
-/** Ramène l'élévation de `d` (angle avec le plan perpendiculaire à `h`) dans [min, max]. */
-function borneElevation(d: Readonly<Vec3>, h: Readonly<Vec3>, min: number, max: number): Vec3 {
-  const s = clamp(dot(d, h), -1, 1);
-  const el = Math.asin(s);
-  if (el >= min && el <= max) return [d[0], d[1], d[2]];
-  const hor = normaliser([d[0] - h[0] * s, d[1] - h[1] * s, d[2] - h[2] * s], croix(h, [1, 0, 0]));
-  const c = clamp(el, min, max);
-  const cc = Math.cos(c), sc = Math.sin(c);
-  return [hor[0] * cc + h[0] * sc, hor[1] * cc + h[1] * sc, hor[2] * cc + h[2] * sc];
-}
+/** Élévation (rad) de `d` au-dessus du plan perpendiculaire à `h`. */
+const elevation = (d: Readonly<Vec3>, h: Readonly<Vec3>): number => Math.asin(clamp(dot(d, h), -1, 1));
 
-/** Rotation d'un angle de lacet `lacet` (rad, positif = vers la droite) puis de tangage `tangage` (positif = vers le haut) autour de la voiture. */
-function tournerRegard(d: Readonly<Vec3>, haut: Readonly<Vec3>, lacet: number, tangage: number): Vec3 {
-  // tourner à droite = rotation NÉGATIVE autour du haut (convention du contrat : positif autour de `haut` = vers la gauche)
-  const yaw = Math.abs(lacet) > 1e-6 ? tournerVec(d, haut, -lacet) : [d[0], d[1], d[2]] as Vec3;
-  if (Math.abs(tangage) < 1e-6) return yaw;
-  const droite = normaliser(croix(yaw, haut), croix(haut, [1, 0, 0]));
-  return tournerVec(yaw, droite, tangage);
+/** Direction d'élévation `el` (rad) au-dessus du plan ⟂ `u`, de cap `f` (⟂ `u`). */
+const dirElevee = (f: Readonly<Vec3>, u: Readonly<Vec3>, el: number): Vec3 => {
+  const c = Math.cos(el), s = Math.sin(el);
+  return [f[0] * c + u[0] * s, f[1] * c + u[1] * s, f[2] * c + u[2] * s];
+};
+
+/** Tourne `d` vers `cible` d'une fraction de l'angle qui les sépare (jamais de passage par zéro, même s'ils sont opposés). */
+function tournerVers(d: Readonly<Vec3>, cible: Readonly<Vec3>, fraction: number, axeRepli: Readonly<Vec3>): Vec3 {
+  const c = clamp(dot(d, cible), -1, 1);
+  const angle = Math.acos(c);
+  if (angle < 1e-5 || fraction >= 1) return [cible[0], cible[1], cible[2]];
+  const axe = normaliser(croix(d, cible), axeRepli);
+  return normaliser(tournerVec(d, axe, angle * fraction), cible);
 }
 
 /**
- * Plus grande fraction t ∈ [0, 1] du segment `ancre → ideal` dont tous les points sont à plus de `seuil` du décor
- * (échantillonnage grossier puis dichotomie). 1 si tout le segment est dégagé, 0 si la caméra ne peut même pas quitter l'ancre.
+ * Élévation de la visée en ball cam (PURE, testée) : on regarde la balle (`elBalle`, plus l'angle de caméra qui s'efface quand la
+ * balle monte) tant que la voiture reste à l'écran ; sinon on baisse la visée juste assez pour garder la voiture en bas de l'image,
+ * sans jamais laisser la balle sortir par le haut : la balle passe avant la voiture.
  */
-function fractionDegagee(arene: Arene, ancre: Readonly<Vec3>, ideal: Readonly<Vec3>, seuil: number): number {
-  const N = 14;
+export function elevationViseeBalle(elBalle: number, elVoiture: number, demiChampV: number, angle: number): number {
+  const e0 = elBalle + angle * (1 - lisseEntre(10 * D2R, 40 * D2R, Math.abs(elBalle)));
+  const limiteVoiture = elVoiture + demiChampV - MARGE_VOITURE;
+  const e = e0 <= limiteVoiture ? e0 : Math.max(limiteVoiture, elBalle - (demiChampV - MARGE_BALLE));
+  return clamp(e, -ELEVATION_BALLE_MAX, ELEVATION_BALLE_MAX);
+}
+
+// ============================================================================================================================
+// Parois : opaques (sol, raccord) ou translucides (murs, plafond, filets)
+// ============================================================================================================================
+
+/** Centre de la caisse (hitbox) en monde. */
+function centreCaisse(moi: Readonly<EtatVoiture>): Vec3 {
+  const [da, , dh] = VOITURE.decalageHitbox;
+  return [moi.p[0] + moi.base.avant[0] * da + moi.base.haut[0] * dh, moi.p[1] + moi.base.avant[1] * da + moi.base.haut[1] * dh, moi.p[2] + moi.base.avant[2] * da + moi.base.haut[2] * dh];
+}
+
+/** Translucidité (0 opaque → 1 translucide) d'une paroi selon la hauteur de son point : continue, pour que la caméra ne saute pas. */
+const translucidite = (y: number): number => lisseEntre(HAUT_RACCORD_OPAQUE, HAUT_RACCORD_OPAQUE + FONDU_TRANSLUCIDE_M, y);
+/** Distance signée exigée (m) pour une translucidité `w` : 0,4 m devant une paroi opaque, jusqu'à 1 m derrière une paroi translucide. */
+const seuilDe = (w: number): number => MARGE_CAMERA_M - (MARGE_CAMERA_M + DEPASSEMENT_MUR_MAX_M) * w;
+
+/** Translucidité de la paroi la plus proche de `c`. */
+function translucidePres(arene: Arene, c: Readonly<Vec3>, n: Vec3): number {
+  const d = arene.sdNormale(c, n);
+  return translucidite(c[1] - n[1] * d);
+}
+
+/**
+ * Translucidité de la paroi que traverse le segment `de → a` (1 s'il n'en traverse aucune) : une caméra derrière un mur doit voir la
+ * voiture À TRAVERS une paroi translucide, jamais à travers le sol ou son raccord.
+ */
+function translucideTraversee(arene: Arene, de: Readonly<Vec3>, a: Readonly<Vec3>): number {
+  const N = 16;
   const p: Vec3 = [0, 0, 0];
-  const ok = (t: number): boolean => {
-    p[0] = ancre[0] + (ideal[0] - ancre[0]) * t; p[1] = ancre[1] + (ideal[1] - ancre[1]) * t; p[2] = ancre[2] + (ideal[2] - ancre[2]) * t;
-    return arene.sd(p) >= seuil;
-  };
-  let bon = 0;
+  const sdEn = (t: number): number => { p[0] = de[0] + (a[0] - de[0]) * t; p[1] = de[1] + (a[1] - de[1]) * t; p[2] = de[2] + (a[2] - de[2]) * t; return arene.sd(p); };
+  let prec = 0;
   for (let i = 1; i <= N; i++) {
     const t = i / N;
-    if (ok(t)) { bon = t; continue; }
-    let lo = bon, hi = t;
-    for (let k = 0; k < 6; k++) { const mid = (lo + hi) / 2; if (ok(mid)) lo = mid; else hi = mid; }
-    return lo;
+    if (sdEn(t) >= 0) { prec = t; continue; }
+    let lo = prec, hi = t;
+    for (let k = 0; k < 7; k++) { const mid = (lo + hi) / 2; if (sdEn(mid) >= 0) lo = mid; else hi = mid; }
+    sdEn((lo + hi) / 2);
+    return translucidite(p[1]);
   }
   return 1;
 }
 
-/** Seuil d'anticollision effectivement exigé : 0,4 m, moins si l'ancre elle-même est déjà plus près d'un mur (voiture collée au mur). */
-function seuilDe(arene: Arene, ancre: Readonly<Vec3>): number {
-  return Math.min(MARGE_CAMERA_M, Math.max(arene.sd(ancre) - 0.02, 0.05));
+/** Projette `c` le long du gradient du champ de distance jusqu'à `sd ≥ seuil` (la caméra GLISSE sur la paroi), puis borne la hauteur. */
+function projeter(arene: Arene, c: Vec3, seuil: number, n: Vec3): Vec3 {
+  for (let i = 0; i < 8; i++) {
+    const d = arene.sdNormale(c, n);
+    if (d >= seuil - 1e-4) break;
+    const k = seuil - d;
+    c[0] += n[0] * k; c[1] += n[1] * k; c[2] += n[2] * k;
+  }
+  c[1] = clamp(c[1], HAUTEUR_MIN_M, STADE.hauteur - MARGE_PLAFOND_M);
+  return c;
 }
 
-/** Position de la caméra derrière `moi` pour la direction `dir` : distance, hauteur, plafond. */
-function positionIdeale(moi: Readonly<EtatVoiture>, dirPos: Readonly<Vec3>, haut: Readonly<Vec3>, p: Readonly<ParamsCamera>): Vec3 {
+/** Position permise (même règle que `placerDansStade`, tolérance `tol`). */
+function permise(arene: Arene, c: Readonly<Vec3>, seuil: number, centre: Readonly<Vec3>, tol: number): boolean {
+  return arene.sd(c) >= seuil - tol && distance(c, centre) >= DISTANCE_MIN_M - tol && c[1] >= HAUTEUR_MIN_M - tol && c[1] <= STADE.hauteur - MARGE_PLAFOND_M + tol;
+}
+
+/**
+ * Place la caméra idéale `ideal` dans le stade (PURE) : rien à faire si elle est déjà permise ; sinon projection sur la paroi (derrière
+ * une paroi translucide jusqu'à 1 m si la voiture reste visible à travers elle), puis, si la caméra est revenue trop près de la caisse,
+ * le bras (pivot → caméra) se relève vers `hautBras` jusqu'à retrouver sa distance. Rend la position et la marge exigée.
+ */
+function placerDansStade(arene: Arene, ideal: Readonly<Vec3>, pivot: Readonly<Vec3>, centre: Readonly<Vec3>, hautBras: Readonly<Vec3>): { c: Vec3; seuil: number } {
+  const n: Vec3 = [0, 0, 0];
+  let w = Math.min(translucidePres(arene, ideal, n), translucideTraversee(arene, pivot, ideal));
+  let seuil = seuilDe(w);
+  let c = projeter(arene, [ideal[0], ideal[1], ideal[2]], seuil, n);
+  if (arene.sd(c) < 0) {
+    // derrière une paroi : la paroi traversée par la ligne de vue doit être translucide elle aussi
+    const w2 = Math.min(w, translucidePres(arene, c, n), translucideTraversee(arene, pivot, c));
+    if (w2 < w - 1e-3) { w = w2; seuil = seuilDe(w); c = projeter(arene, [ideal[0], ideal[1], ideal[2]], seuil, n); }
+  }
+  if (distance(c, centre) >= DISTANCE_MIN_M) return { c, seuil };
+  // trop près de la caisse : le bras se relève
+  const bras = soustraire(ideal, pivot);
+  const longueur = Math.max(Math.hypot(bras[0], bras[1], bras[2]), DISTANCE_MIN_M);
+  const dir0 = normaliser(bras, hautBras);
+  for (const s of [0.2, 0.4, 0.6, 0.8, 1]) {
+    const d = normaliser(melanger(dir0, hautBras, s), hautBras);
+    const essai = projeter(arene, ajouter(pivot, mult(d, longueur)), MARGE_CAMERA_M, n);
+    if (distance(essai, centre) >= DISTANCE_MIN_M) return { c: essai, seuil: MARGE_CAMERA_M };
+    c = essai;
+  }
+  return { c: projeter(arene, ajouter(pivot, mult(hautBras, DISTANCE_MIN_M)), MARGE_CAMERA_M, n), seuil: MARGE_CAMERA_M };
+}
+
+/** Position de la caméra derrière `moi` : `p − dirPos·distance + haut·hauteur`, sous le plafond. */
+function positionIdeale(moi: Readonly<EtatVoiture>, dirPos: Readonly<Vec3>, haut: Readonly<Vec3>, distanceM: number, hauteurM: number): Vec3 {
   const pos: Vec3 = [
-    moi.p[0] - dirPos[0] * p.distance + haut[0] * p.hauteur,
-    moi.p[1] - dirPos[1] * p.distance + haut[1] * p.hauteur,
-    moi.p[2] - dirPos[2] * p.distance + haut[2] * p.hauteur,
+    moi.p[0] - dirPos[0] * distanceM + haut[0] * hauteurM,
+    moi.p[1] - dirPos[1] * distanceM + haut[1] * hauteurM,
+    moi.p[2] - dirPos[2] * distanceM + haut[2] * hauteurM,
   ];
   pos[1] = Math.min(pos[1], STADE.hauteur - MARGE_PLAFOND_M);
   return pos;
@@ -215,20 +390,26 @@ function positionIdeale(moi: Readonly<EtatVoiture>, dirPos: Readonly<Vec3>, haut
 // API
 // ============================================================================================================================
 
+/** Repère de la ball cam : cap horizontal vers la balle, haut du monde. */
+const repereBalle = (cap: readonly [number, number]): Quat => quatDepuisRepere([cap[0], 0, cap[1]], HAUT_MONDE);
+
 /** État initial : caméra déjà à sa place (pas de balayage au premier affichage). Aucune anticollision ici : `majCamera` s'en charge. */
 export const creerEtatCamera: CreerEtatCamera = (moi, balle, balleCam) => {
-  const haut = hautVoulu(moi);
-  // en plein flip l'avant ne dit plus où la voiture « va » : on ne garde que son cap, à plat, et on gèle cette direction
-  const enFlip = flipEnCours(moi);
-  const dirCar = dirVoiture(moi.base.avant, haut, moi.auSol || enFlip ? 0 : SUIVI_TANGAGE_AIR, moi.base.avant);
-  const dir = balleCam ? normaliser(soustraire(balle.p, moi.p), dirCar) : dirCar;
-  const dirPos = borneElevation(dir, haut, ELEVATION_POSITION_MIN, ELEVATION_POSITION_MAX);
-  const e: EtatCamera = {
-    dir, haut, melange: balleCam ? 1 : 0, regard: [0, 0], secousse: 0,
-    position: positionIdeale(moi, dirPos, haut, CAMERA_DEFAUT),
-  };
+  const e: EtatCamera = { dir: [0, 0, 1], haut: [0, 1, 0], melange: balleCam ? 1 : 0, regard: [0, 0], secousse: 0, position: [0, 0, 0] };
   const a = annexesDe(e);
-  if (enFlip) { a.gelDir = [dirCar[0], dirCar[1], dirCar[2]]; a.poidsGel = 1; }
+  const enFlip = flipEnCours(moi);
+  // en plein flip l'avant ne dit plus où la voiture « va » : on ne garde que son cap, à plat (comme en l'air), et on gèle ce repère
+  const qCar = repereCar(moi, a, moi.base.avant);
+  const versBalle = soustraire(balle.p, moi.p);
+  const dh = Math.hypot(versBalle[0], versBalle[2]);
+  const fCar = avantQ(qCar);
+  a.capBalle = dh > 1e-3 ? [versBalle[0] / dh, versBalle[2] / dh] : normaliser2(fCar[0], fCar[2]);
+  a.elBalle = Math.atan2(versBalle[1], Math.max(dh, 1e-6));
+  a.q = balleCam ? repereBalle(a.capBalle) : qCar;
+  if (enFlip) { a.gel = qCar; a.poidsGel = 1; }
+  e.dir = avantQ(a.q);
+  e.haut = hautQ(a.q);
+  e.position = positionIdeale(moi, e.dir, e.haut, CAMERA_DEFAUT.distance, CAMERA_DEFAUT.hauteur);
   return e;
 };
 
@@ -244,30 +425,6 @@ function decalageSecousse(a: Annexes, amplitude: number): Vec3 {
   return [Math.sin(f * 1.73) * amplitude, Math.sin(f * 2.31 + 1.1) * amplitude, Math.sin(f * 1.17 + 2.3) * amplitude];
 }
 
-/** Tourne `d` vers `cible` d'une fraction de l'angle qui les sépare (jamais de passage par zéro, même s'ils sont opposés). */
-function tournerVers(d: Readonly<Vec3>, cible: Readonly<Vec3>, fraction: number, axeRepli: Readonly<Vec3>): Vec3 {
-  const c = clamp(dot(d, cible), -1, 1);
-  const angle = Math.acos(c);
-  if (angle < 1e-5 || fraction >= 1) return [cible[0], cible[1], cible[2]];
-  const axe = normaliser(croix(d, cible), axeRepli);
-  return normaliser(tournerVec(d, axe, angle * fraction), cible);
-}
-
-/** Élévation (rad) de `d` au-dessus du plan perpendiculaire à `h`. */
-const elevation = (d: Readonly<Vec3>, h: Readonly<Vec3>): number => Math.asin(clamp(dot(d, h), -1, 1));
-
-/**
- * Élévation de la visée en ball cam (PURE, testée) : on regarde la balle (`elBalle`, plus l'angle de caméra qui s'efface quand la
- * balle monte) tant que la voiture reste à l'écran ; sinon on baisse la visée juste assez pour garder la voiture en bas de l'image,
- * sans jamais laisser la balle sortir par le haut : la balle passe avant la voiture.
- */
-export function elevationViseeBalle(elBalle: number, elVoiture: number, demiChampV: number, angle: number): number {
-  const e0 = elBalle + angle * (1 - lisseEntre(10 * D2R, 40 * D2R, Math.abs(elBalle)));
-  const limiteVoiture = elVoiture + demiChampV - MARGE_VOITURE;
-  const e = e0 <= limiteVoiture ? e0 : Math.max(limiteVoiture, elBalle - (demiChampV - MARGE_BALLE));
-  return clamp(e, -ELEVATION_BALLE_MAX, ELEVATION_BALLE_MAX);
-}
-
 /**
  * Une image de caméra. `dt` est le temps réel de l'image (s) ; `moi` et `balle` sont les états à afficher (le jeu passe l'état
  * INTERPOLÉ entre deux pas physiques, sinon la caméra tremble par rapport à la voiture dessinée).
@@ -278,6 +435,8 @@ export const majCamera: MajCamera = (e, p, entree: EntreesCamera, moi, balle, ar
   const dt = clamp(Number.isFinite(dtBrut) ? dtBrut : 0, 0, 0.1);
   const rig = clamp(p.rigidite, 0, 1);
   const fovV = fovVerticalDepuisHorizontal(p.fov, aspect);
+  const demiV = (fovV * D2R) / 2;
+  if (!a.q) a.q = quatDepuisRepere(e.dir, e.haut);
 
   // 1. car cam ↔ ball cam
   const balleVoulue = entree.balleCam && !entree.arriere;
@@ -285,40 +444,32 @@ export const majCamera: MajCamera = (e, p, entree: EntreesCamera, moi, balle, ar
   e.melange = clamp(e.melange + clamp((balleVoulue ? 1 : 0) - e.melange, -vitesse * dt, vitesse * dt), 0, 1);
   const m = lisse(e.melange);
 
-  // 2. haut lissé : en car cam la normale de la surface sous les roues (murs, plafond) ; en ball cam TOUJOURS le haut du monde,
-  //    l'horizon ne penche jamais (comme dans Rocket League)
-  const hSol = hautVoulu(moi);
-  const hv = normaliser(melanger(hSol, HAUT_MONDE, m), HAUT_MONDE);
-  e.haut = normaliser(melanger(e.haut, hv, 1 - Math.exp(-dt * 6)), hv);
-
-  // 3. direction de visée : chaque mode a sa direction, la caméra TOURNE de l'une vers l'autre
-  //    car cam : l'avant de la voiture, lissé ; ball cam : la droite voiture → balle, suivie de façon rigide (elle ne traîne pas
-  //    derrière la balle), ralentie seulement quand la balle passe à la verticale de la voiture, où le cap n'a plus de sens
-  const dirAvant = dirVoiture(moi.base.avant, e.haut, moi.auSol ? 0 : SUIVI_TANGAGE_AIR, e.dir);
-  // flip : la direction de la car cam reste celle du départ du flip, puis se raccroche à l'avant en douceur (cf. en-tête)
+  // 2. repère voulu de la car cam (voiture au sol, cap du nez en l'air), gelé pendant un flip puis raccroché en douceur
+  const qVoiture = repereCar(moi, a, avantQ(a.q));
   if (flipEnCours(moi)) {
-    if (!a.gelDir || a.poidsGel < 1) a.gelDir = [e.dir[0], e.dir[1], e.dir[2]];
+    if (!a.gel || a.poidsGel < 1) a.gel = [a.q[0], a.q[1], a.q[2], a.q[3]];
     a.poidsGel = 1;
     a.raccrochage = false;
-  } else if (a.gelDir) {
+  } else if (a.gel) {
     a.poidsGel -= dt / RACCROCHAGE_FLIP_S;
-    if (a.poidsGel <= 0) { a.gelDir = null; a.poidsGel = 0; }
+    if (a.poidsGel <= 0) { a.gel = null; a.poidsGel = 0; }
     a.raccrochage = true;
   }
-  const dirCar = !a.gelDir ? dirAvant : a.poidsGel >= 1 ? a.gelDir : tournerVers(a.gelDir, dirAvant, 1 - lisse(a.poidsGel), e.haut);
+  const qCar = !a.gel ? qVoiture : a.poidsGel >= 1 ? a.gel : slerp(a.gel, qVoiture, 1 - lisse(a.poidsGel));
+
+  // 3. ball cam : cap (horizontal) et élévation de la droite voiture → balle, suivis séparément ; quand la balle passe au-dessus du
+  //    toit, le cap se retourne d'un coup, la caméra fait le tour de la voiture à vitesse bornée au lieu de sauter de l'autre côté
   const versBalle = soustraire(balle.p, moi.p);
   const dBalle = Math.hypot(versBalle[0], versBalle[1], versBalle[2]);
   const dHorizontale = Math.hypot(versBalle[0], versBalle[2]);
-  // cap (horizontal) et élévation suivis séparément : quand la balle passe au-dessus du toit, le cap de la droite voiture → balle
-  // se retourne d'un coup ; la caméra, elle, fait le tour de la voiture à vitesse bornée au lieu de sauter de l'autre côté
   const elBalleBrute = Math.atan2(versBalle[1], Math.max(dHorizontale, 1e-6));
   if (!a.capBalle) {
-    a.capBalle = dHorizontale > 1e-3 ? [versBalle[0] / dHorizontale, versBalle[2] / dHorizontale] : normaliser2(dirCar[0], dirCar[2]);
+    const f = avantQ(qCar);
+    a.capBalle = dHorizontale > 1e-3 ? [versBalle[0] / dHorizontale, versBalle[2] / dHorizontale] : normaliser2(f[0], f[2]);
     a.elBalle = elBalleBrute;
   } else {
     if (dHorizontale > 1e-3) {
       const cx = versBalle[0] / dHorizontale, cz = versBalle[2] / dHorizontale;
-      // angle signé du cap courant vers le cap voulu
       const ecart = Math.atan2(a.capBalle[1] * cx - a.capBalle[0] * cz, a.capBalle[0] * cx + a.capBalle[1] * cz);
       const proche = lisseEntre(0.5, 4, dHorizontale);
       const pas = Math.min(Math.abs(ecart) * (1 - Math.exp(-dt * SUIVI_BALLE)), (VITESSE_CAP_PROCHE + (VITESSE_CAP_MAX - VITESSE_CAP_PROCHE) * proche) * dt);
@@ -327,67 +478,110 @@ export const majCamera: MajCamera = (e, p, entree: EntreesCamera, moi, balle, ar
     }
     a.elBalle += (elBalleBrute - a.elBalle) * (1 - Math.exp(-dt * SUIVI_BALLE));
   }
-  const ceB = Math.cos(a.elBalle);
-  const dirBalle: Vec3 = [a.capBalle[0] * ceB, Math.sin(a.elBalle), a.capBalle[1] * ceB];
-  const kCar = 4 + 18 * rig;
-  // pendant la bascule d'un mode à l'autre, la caméra pivote à vitesse modérée ; une fois arrivée, elle suit au rythme du mode
+  const qBalle = repereBalle(a.capBalle);
+
+  // 4. UNE rotation lissée vers le repère voulu (mélange des deux modes) ; ball cam établie : rigide
   const arrive = balleVoulue ? m : 1 - m;
-  const k = SUIVI_BASCULE + ((balleVoulue ? SUIVI_BALLE : kCar) - SUIVI_BASCULE) * arrive;
-  // ball cam établie : la direction EST celle de la balle (déjà lissée ci-dessus), pas de second lissage qui la ferait traîner
-  if (balleVoulue && arrive > 0.999) { e.dir = dirBalle; a.raccrochage = false; }
+  if (balleVoulue && arrive > 0.999) { a.q = qBalle; a.raccrochage = false; }
   else {
-    // raccrochage d'un flip : la direction ne tourne jamais plus vite que `VITESSE_RACCROCHAGE`, quel que soit l'écart au départ
-    // (atterrissage nez en l'air ou sur le toit, correction du réseau qui coupe le flip, half flip). La borne reste en place après la
-    // fin du fondu tant qu'elle mord : sinon un écart restant important partirait d'un coup au rythme du suivi normal. Elle se lève
-    // d'elle-même quand le suivi exponentiel devient plus lent qu'elle, donc sans à-coup (la vitesse ne dépasse jamais la borne).
+    const qCible = slerp(qCar, qBalle, m);
+    const kMode = balleVoulue ? SUIVI_BALLE : moi.auSol && !a.gel ? SUIVI_ROT_SOL : SUIVI_ROT_AIR;
+    const k = SUIVI_BASCULE + (kMode - SUIVI_BASCULE) * arrive;
     let fraction = 1 - Math.exp(-dt * k);
+    // raccrochage d'un flip : jamais plus vite que `VITESSE_RACCROCHAGE`, quel que soit l'écart (atterrissage nez en l'air, correction
+    // du réseau, half flip) ; la borne reste après le fondu tant qu'elle mord, et se lève d'elle-même quand le suivi devient plus lent
     if (a.raccrochage) {
-      const cible = balleVoulue ? dirBalle : dirCar;
-      const angle = Math.acos(clamp(dot(e.dir, cible), -1, 1));
+      const angle = angleQ(a.q, qCible);
       const borne = angle > 1e-5 ? (VITESSE_RACCROCHAGE * dt) / angle : 1;
       if (borne < fraction) fraction = borne;
-      else if (!a.gelDir) a.raccrochage = false;
+      else if (!a.gel) a.raccrochage = false;
     }
-    e.dir = tournerVers(e.dir, balleVoulue ? dirBalle : dirCar, fraction, e.haut);
+    a.q = slerp(a.q, qCible, fraction);
   }
+  const f = avantQ(a.q);
+  const u = hautQ(a.q);
+  e.dir = f;
+  e.haut = u;
 
-  // 4. regard libre (angles lissés) ; la vue arrière est un demi-tour
+  // 5. regard libre (angles lissés) ; la vue arrière est un demi-tour
   const lacetVoulu = entree.arriere ? Math.PI : clamp(entree.regard[0], -1, 1) * (Math.PI / 2);
   const tangageVoulu = clamp(entree.regard[1], -1, 1) * (Math.PI / 4);
   const ar = 1 - Math.exp(-dt * clamp(p.vitesseRegard, 1, 10) * 1.6);
   e.regard[0] += (lacetVoulu - e.regard[0]) * ar;
   e.regard[1] += (tangageVoulu - e.regard[1]) * ar;
-  const dirF = tournerRegard(e.dir, e.haut, e.regard[0], e.regard[1]);
+  // tourner à droite = rotation NÉGATIVE autour du haut (convention du contrat)
+  const fR = Math.abs(e.regard[0]) > 1e-6 ? tournerVec(f, u, -e.regard[0]) : f;
 
-  // 5. position : derrière la voiture sur la ligne de visée, à `distance`, `hauteur` au-dessus. L'élévation de cette ligne est
-  //    bornée : en car cam à 20° ; en ball cam par le sol (balle haute : la caméra descend derrière la voiture jusqu'à 0,5 m du sol)
-  const elSol = Math.asin(clamp((moi.p[1] + p.hauteur - GARDE_SOL_M) / Math.max(p.distance, 0.5), Math.sin(5 * D2R), Math.sin(ELEVATION_BALLE_MAX)));
+  // 6. rigidité = étirement de la distance avec la vitesse (stiffness de RL)
+  const vAvant = Math.max(0, dot(moi.v, f));
+  const etirCible = (1 - rig) * ETIREMENT_MAX_M * clamp(vAvant / VITESSE_ETIREMENT_MAX, 0, 1);
+  a.etirement += (etirCible - a.etirement) * (1 - Math.exp(-dt * SUIVI_ETIREMENT));
+  const dEff = p.distance + a.etirement;
+
+  // 7. position idéale : RL, `p − avant·distance + haut·hauteur` ; en ball cam la ligne de placement suit l'élévation de la balle
+  //    (balle haute : la caméra descend derrière la voiture jusqu'à 0,5 m du sol ; balle basse : elle monte)
+  const elSol = Math.asin(clamp((moi.p[1] + p.hauteur - GARDE_SOL_M) / Math.max(dEff, 0.5), Math.sin(5 * D2R), Math.sin(ELEVATION_BALLE_MAX)));
   const elPosMax = ELEVATION_POSITION_MAX + (elSol - ELEVATION_POSITION_MAX) * m;
-  const dirPos = borneElevation(dirF, e.haut, ELEVATION_POSITION_MIN, elPosMax);
-  const ideal = positionIdeale(moi, dirPos, e.haut, p);
+  const elPos = clamp(m * clamp(a.elBalle, ELEVATION_POSITION_MIN, elSol) + e.regard[1], ELEVATION_POSITION_MIN, elPosMax);
+  const ideal = positionIdeale(moi, dirElevee(fR, u, elPos), u, dEff, p.hauteur);
 
-  // 6. anticollision : on rapproche la caméra de la voiture le long du rayon, tout de suite si le chemin se ferme, doucement sinon
-  const ancre = ajouter(moi.p, mult(e.haut, HAUTEUR_ANCRE_M));
-  const f = fractionDegagee(arene, ancre, ideal, seuilDe(arene, ancre));
-  a.reduction = f < a.reduction ? f : Math.min(f, a.reduction + (f - a.reduction) * (1 - Math.exp(-dt * 4)));
-  const pos = ajouter(ancre, mult(soustraire(ideal, ancre), a.reduction));
+  // 8. parois : la caméra glisse sur le sol, passe derrière un mur translucide, ne rentre jamais dans la voiture
+  const hautVoiture = moi.auSol ? moi.base.haut : HAUT_MONDE;
+  const pivot = ajouter(moi.p, mult(hautVoiture, PIVOT_TOIT_M));
+  pivot[1] = Math.min(pivot[1], STADE.hauteur - 0.05);
+  const centre = centreCaisse(moi);
+  const place = placerDansStade(arene, ideal, pivot, centre, hautVoiture);
+  const voulu = soustraire(place.c, ideal);
+  if (!a.decalage) a.decalage = voulu;
+  else {
+    // entrée aussitôt (si le décalage lissé laisserait la caméra dans une paroi ou dans la voiture), sortie en douceur
+    const lisseDec = melanger(a.decalage, voulu, 1 - Math.exp(-dt * SUIVI_DEGAGEMENT));
+    a.decalage = permise(arene, ajouter(ideal, lisseDec), place.seuil, centre, 0.02) ? lisseDec : voulu;
+  }
+  const pos = ajouter(ideal, a.decalage);
+  pos[1] = clamp(pos[1], HAUTEUR_MIN_M, STADE.hauteur - MARGE_PLAFOND_M);
 
-  // 7. point visé : devant la voiture (car cam) ou la balle (ball cam ; avec le regard libre, le point tourne autour de la voiture)
-  const cibleCar = ajouter(ajouter(moi.p, mult(dirF, p.distance / 2)), mult(e.haut, HAUTEUR_CIBLE_M));
-  const cibleBalle = ajouter(moi.p, mult(dirF, Math.max(dBalle, 3)));
+  // 9. visée. Car cam : tangage = `angle` (+ regard), vers un point devant la voiture le long de la visée idéale (si la paroi a déplacé
+  //    la caméra, elle continue de viser ce point) ; ball cam : la balle, la voiture gardée à l'écran tant que possible
+  const vueCar = dirElevee(fR, u, p.angle * D2R + e.regard[1]);
+  const cibleCar = ajouter(ideal, mult(vueCar, Math.max(dot(soustraire(moi.p, ideal), vueCar), 0) + AVANCE_VISEE_M));
+  const cibleBalle = ajouter(moi.p, mult(dirElevee(fR, u, a.elBalle + e.regard[1]), Math.max(dBalle, 3)));
   const cible = melanger(cibleCar, cibleBalle, m);
-  const brut = normaliser(soustraire(cible, pos), dirF);
-  const sH = dot(brut, e.haut);
-  const hor = normaliser([brut[0] - e.haut[0] * sH, brut[1] - e.haut[1] * sH, brut[2] - e.haut[2] * sH], normaliser(croix(e.haut, croix(dirF, e.haut)), dirF));
-  const elBrut = Math.asin(clamp(sH, -1, 1));
-  const elCar = clamp(elBrut + p.angle * D2R, ELEVATION_VISEE_MIN, ELEVATION_VISEE_MAX);
-  const elVoiture = elevation(normaliser(soustraire(moi.p, pos), dirF), e.haut);
-  const elBalle = elevationViseeBalle(elBrut, elVoiture, (fovV * D2R) / 2, p.angle * D2R);
-  const el = elCar + (elBalle - elCar) * m;
-  const ce = Math.cos(el), se = Math.sin(el);
-  const regard: Vec3 = [hor[0] * ce + e.haut[0] * se, hor[1] * ce + e.haut[1] * se, hor[2] * ce + e.haut[2] * se];
+  const brut = normaliser(soustraire(cible, pos), fR);
+  const sH = dot(brut, u);
+  const hor = normaliser([brut[0] - u[0] * sH, brut[1] - u[1] * sH, brut[2] - u[2] * sH], fR);
+  const elCar = elevation(normaliser(soustraire(cibleCar, pos), fR), u);
+  const elVoiture = elevation(normaliser(soustraire(moi.p, pos), fR), u);
+  const elB = elevationViseeBalle(elevation(normaliser(soustraire(cibleBalle, pos), fR), u), elVoiture, demiV, p.angle * D2R);
+  const el = clamp(elCar + (elB - elCar) * m, -ELEVATION_VISEE_MAX, ELEVATION_VISEE_MAX);
+  let regard = dirElevee(hor, u, el);
+  // la voiture ne sort pas de l'image (caméra poussée par une paroi, champ étroit, ball cam au pied d'un mur) : la visée tourne vers
+  // elle juste assez ; en ball cam, jamais au point de faire sortir la balle (la balle passe avant la voiture)
+  {
+    const versVoiture = normaliser(soustraire(centre, pos), regard);
+    const alpha = Math.acos(clamp(dot(regard, versVoiture), -1, 1));
+    const limite = demiV - MARGE_VOITURE_CAR;
+    if (alpha > limite && alpha > 1e-6) {
+      const axe = croix(u, regard);
+      const versBalleCam = normaliser(soustraire(balle.p, pos), regard);
+      const ecartBalle = (r: Readonly<Vec3>): number => Math.acos(clamp(dot(r, versBalleCam), -1, 1));
+      const limiteBalle = Math.max(ecartBalle(regard), Math.PI + (demiV - MARGE_BALLE - Math.PI) * m);
+      let t = (alpha - limite) / alpha;
+      if (ecartBalle(tournerVers(regard, versVoiture, t, axe)) > limiteBalle) {
+        let lo = 0, hi = t;
+        for (let k = 0; k < 10; k++) { const mid = (lo + hi) / 2; if (ecartBalle(tournerVers(regard, versVoiture, mid, axe)) > limiteBalle) hi = mid; else lo = mid; }
+        t = lo;
+      }
+      regard = tournerVers(regard, versVoiture, t, axe);
+      const elR = elevation(regard, u);
+      if (Math.abs(elR) > ELEVATION_VISEE_MAX) {
+        const h2 = normaliser(soustraire(regard, mult(u, dot(regard, u))), hor);
+        regard = dirElevee(h2, u, clamp(elR, -ELEVATION_VISEE_MAX, ELEVATION_VISEE_MAX));
+      }
+    }
+  }
 
-  // 8. secousse (jamais en mouvement réduit) : elle déplace la caméra ET son point visé, l'image tremble sans tourner
+  // 10. secousse (jamais en mouvement réduit) : elle déplace la caméra ET son point visé, l'image tremble sans tourner
   if (mouvementReduit) e.secousse = 0;
   else {
     a.phase += dt * 55;
@@ -401,7 +595,7 @@ export const majCamera: MajCamera = (e, p, entree: EntreesCamera, moi, balle, ar
   const pose: PoseCamera = {
     position: pos,
     cible: ajouter(pos, mult(regard, Math.max(p.distance * 3, 6))),
-    haut: [e.haut[0], e.haut[1], e.haut[2]],
+    haut: [u[0], u[1], u[2]],
     fovVertical: fovV,
   };
   a.dernierePose = pose;
@@ -418,7 +612,7 @@ export const ORBITE_BUT = { rayon: 13, hauteur: 3.4, vitesse: 0.45, fonduS: 0.5,
 /**
  * Caméra de la phase « but » (et de la fin de partie) : fondu depuis la dernière pose de jeu vers une orbite lente autour de la balle,
  * qui glisse vers le marqueur au bout de ~2 s. `tempsPhase` est le temps écoulé dans la phase (s). En mouvement réduit, point de vue
- * fixe (pas de rotation, pas de secousse).
+ * fixe (pas de rotation, pas de secousse). L'orbite est projetée dans le stade le long du gradient (elle glisse sur les murs).
  */
 export function majCameraBut(
   e: EtatCamera, p: Readonly<ParamsCamera>, balle: Readonly<EtatBalle>, marqueur: Readonly<EtatVoiture> | null,
@@ -435,11 +629,7 @@ export function majCameraBut(
   const centre = marqueur ? melanger(centreBalle, marqueur.p, lisseEntre(ORBITE_BUT.versMarqueurDebutS, ORBITE_BUT.versMarqueurFinS, tempsPhase)) : centreBalle;
   const az = a.but.azimut + (mouvementReduit ? 0 : ORBITE_BUT.vitesse * tempsPhase);
   const ideal: Vec3 = [centre[0] + Math.sin(az) * ORBITE_BUT.rayon, centre[1] + ORBITE_BUT.hauteur, centre[2] + Math.cos(az) * ORBITE_BUT.rayon];
-  ideal[1] = Math.min(ideal[1], STADE.hauteur - MARGE_PLAFOND_M);
-  const ancre: Vec3 = [centre[0], centre[1] + 0.3, centre[2]];
-  const f = fractionDegagee(arene, ancre, ideal, seuilDe(arene, ancre));
-  a.reduction = f < a.reduction ? f : Math.min(f, a.reduction + (f - a.reduction) * (1 - Math.exp(-dt * 4)));
-  const orbite = ajouter(ancre, mult(soustraire(ideal, ancre), a.reduction));
+  const orbite = projeter(arene, ideal, MARGE_CAMERA_M, [0, 0, 0]);
   const fondu = lisse(a.but.t / ORBITE_BUT.fonduS);
   const pos = melanger(a.but.depart.position, orbite, fondu);
   const cible = melanger(a.but.depart.cible, [centre[0], centre[1] + 0.6, centre[2]], fondu);
@@ -447,9 +637,13 @@ export function majCameraBut(
   e.position = pos;
   e.haut = haut;
   e.dir = normaliser(soustraire(cible, pos), e.dir);
+  a.q = null;
+  a.decalage = null;
   e.secousse = 0;
   return { position: pos, cible, haut, fovVertical: fovVerticalDepuisHorizontal(p.fov, aspect) };
 }
 
 /** Distance caméra → voiture (m), pour les tests et le réglage. */
 export const distanceCameraVoiture = (pose: Readonly<PoseCamera>, moi: Readonly<EtatVoiture>): number => distance(pose.position, moi.p);
+/** Distance caméra → centre de la caisse (m) : jamais sous `DISTANCE_MIN_M` (hors coupure franche). */
+export const distanceCameraCaisse = (pose: Readonly<PoseCamera>, moi: Readonly<EtatVoiture>): number => distance(pose.position, centreCaisse(moi));

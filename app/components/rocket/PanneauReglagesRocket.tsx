@@ -27,7 +27,7 @@ export const CURSEURS_CAMERA: readonly DefCurseur[] = [
   { cle: "distance", libelle: "Distance", min: 100, max: 400, pas: 10, facteur: 100, unite: "", decimales: 0, aide: "Distance derrière la voiture, en unités de Rocket League (270 par défaut)." },
   { cle: "hauteur", libelle: "Hauteur", min: 40, max: 200, pas: 10, facteur: 100, unite: "", decimales: 0, aide: "Hauteur de la caméra, en unités de Rocket League (100 par défaut)." },
   { cle: "angle", libelle: "Angle", min: -15, max: 0, pas: 1, facteur: 1, unite: "°", decimales: 0, aide: "Inclinaison de la caméra vers le bas (-4° par défaut)." },
-  { cle: "rigidite", libelle: "Rigidité", min: 0, max: 1, pas: 0.05, facteur: 1, unite: "", decimales: 2, aide: "0 : caméra souple, 1 : collée à la voiture (0,45 par défaut)." },
+  { cle: "rigidite", libelle: "Rigidité", min: 0, max: 1, pas: 0.05, facteur: 1, unite: "", decimales: 2, aide: "Comme la stiffness de Rocket League : à 0 la caméra recule avec la vitesse (jusqu'à 1 m), à 1 elle reste à sa distance (0,45 par défaut)." },
   { cle: "vitesseRegard", libelle: "Vitesse du regard", min: 1, max: 10, pas: 0.1, facteur: 1, unite: "", decimales: 1, aide: "Vitesse du regard libre (souris bouton du milieu, stick droit)." },
   { cle: "vitesseTransition", libelle: "Vitesse de transition", min: 1, max: 2, pas: 0.1, facteur: 1, unite: "", decimales: 1, aide: "Vitesse du passage entre ball cam et caméra voiture." },
 ];
