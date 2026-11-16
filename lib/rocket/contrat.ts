@@ -1018,7 +1018,7 @@ export interface ParamsCamera {
   hauteur: number;
   /** inclinaison (degrés) : -15..0 */
   angle: number;
-  /** rigidité : 0 (très souple) .. 1 (collée) */
+  /** rigidité (stiffness de RL) : étirement de la distance avec la vitesse, 0 (recule de 1 m à pleine vitesse) .. 1 (aucun) */
   rigidite: number;
   /** vitesse du regard libre (1..10) et de la transition ball cam ↔ car cam (1..2) */
   vitesseRegard: number;
@@ -1502,8 +1502,8 @@ export type CreerSonsRocket = () => SonsRocket;
 // ---- F. jeu.ts + camera.ts + entrees.ts + reglages.ts -------------------------------------------------------------------
 
 /**
- * Caméra de Rocket League : car cam / ball cam, rigidité, regard libre, vue arrière, secousse, anticollision avec le stade (la caméra ne
- * sort jamais de l'arène : on la rapproche de la voiture le long du rayon jusqu'à `sd > 0,4 m`). Pure. Implémenté par `camera.ts` (`creerEtatCamera`, `majCamera`).
+ * Caméra de Rocket League : car cam / ball cam, rigidité, regard libre, vue arrière, secousse, parois du stade (la caméra glisse
+ * sur le sol opaque, passe au plus 1 m derrière un mur translucide, n'entre jamais dans la voiture). Pure. Implémenté par `camera.ts` (`creerEtatCamera`, `majCamera`).
  */
 export type CreerEtatCamera = (moi: Readonly<EtatVoiture>, balle: Readonly<EtatBalle>, balleCam: boolean) => EtatCamera;
 export type MajCamera = (e: EtatCamera, p: Readonly<ParamsCamera>, entree: EntreesCamera, moi: Readonly<EtatVoiture>, balle: Readonly<EtatBalle>, arene: Arene, dt: number, aspect: number, mouvementReduit: boolean) => PoseCamera;
