@@ -372,12 +372,17 @@ export function skinsDesVoitures(voitures: readonly { id: number; humain: boolea
 }
 
 /**
- * Skins d'un match en ligne d'après les voitures du `debut` : le skin annoncé par le serveur, sinon (serveur d'avant les skins) l'Octane ;
- * MA voiture a toujours le skin de mes réglages (même face à un vieux serveur, je me vois avec ma voiture).
+ * Skins d'un match en ligne d'après les voitures du `debut` : celui que le serveur annonce, POUR MA VOITURE AUSSI (si mon changement de
+ * carrosserie a été refusé, parti pendant le lancement, je me vois comme les autres me voient) ; `monSkin` ne sert que si le `debut` n'en
+ * dit rien pour moi, l'Octane pour une autre voiture sans skin valable. (Un serveur d'avant les skins, `VERSION_ROCKET` 2, refuse de
+ * toute façon un client v3 par `erreur{version}`.)
  */
 export function skinsEnLigne(voitures: readonly { id: number; skin?: SkinVoiture }[], moi: number, monSkin: SkinVoiture): SkinVoiture[] {
   const res: SkinVoiture[] = [];
-  for (const v of voitures) res[v.id] = v.id === moi ? monSkin : v.skin && (SKINS as readonly string[]).includes(v.skin) ? v.skin : "octane";
+  for (const v of voitures) {
+    const annonce = v.skin && (SKINS as readonly string[]).includes(v.skin) ? v.skin : null;
+    res[v.id] = annonce ?? (v.id === moi ? monSkin : "octane");
+  }
   for (let i = 0; i < res.length; i++) if (!res[i]) res[i] = "octane";
   return res;
 }

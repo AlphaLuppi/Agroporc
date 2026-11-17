@@ -33,6 +33,7 @@
  * Spec : docs/superpowers/specs/2026-11-06-rocket-agroparc-design.md § 8.3
  */
 import {
+  BUT,
   CAMERA_DEFAUT,
   STADE,
   VOITURE,
@@ -90,6 +91,12 @@ const SUIVI_BALLE = 32;
 const SUIVI_BASCULE = 9;
 /** Retour de l'anticollision (1/s) : la caméra se réécarte doucement une fois la paroi passée. */
 const SUIVI_DEGAGEMENT = 4;
+/** suivi du haut du pivot (1/s) */
+const SUIVI_PIVOT = 12;
+/** entrée dans le décalage imposé par une paroi (1/s) : rapide, mais sans saut */
+const SUIVI_ENTREE = 14;
+/** règle dure devant une paroi opaque (m) : la marge de 0,4 m peut être entamée pendant l'entrée lissée, la paroi jamais traversée */
+const SEUIL_DUR_OPAQUE_M = 0.08;
 /** Ball cam : la visée monte (ou descend) jusque-là pour garder la balle à l'écran. */
 const ELEVATION_BALLE_MAX = 78 * D2R;
 /** Ball cam : marges angulaires gardées entre la voiture et le bas de l'image, entre la balle et le haut de l'image. */
@@ -194,7 +201,7 @@ interface Annexes {
   /** dernière pose rendue par `majCamera` : point de départ du fondu vers la célébration */
   dernierePose: PoseCamera | null;
   /** entrée en célébration : pose de départ du fondu, azimut de départ de l'orbite, temps écoulé depuis l'entrée */
-  but: { depart: PoseCamera; azimut: number; t: number } | null;
+  but: { depart: PoseCamera; azimut: number; t: number; orbite: Vec3 | null } | null;
   /** cap horizontal [x, z] (unitaire) et élévation (rad) de la droite voiture → balle suivis par la ball cam (null avant la première image) */
   capBalle: [number, number] | null;
   elBalle: number;
@@ -206,12 +213,14 @@ interface Annexes {
   poidsGel: number;
   /** raccrochage en cours : la rotation est bornée, y compris APRÈS la fin du fondu tant que la borne mord (half flip) */
   raccrochage: boolean;
+  /** haut du pivot de la caméra (au-dessus du toit), lissé ; null = première image */
+  hautPivot: Vec3 | null;
 }
 const annexes = new WeakMap<EtatCamera, Annexes>();
 function annexesDe(e: EtatCamera): Annexes {
   let a = annexes.get(e);
   if (!a) {
-    a = { q: null, decalage: null, etirement: 0, phase: 0, dernierePose: null, but: null, capBalle: null, elBalle: 0, capAir: null, gel: null, poidsGel: 0, raccrochage: false };
+    a = { q: null, decalage: null, etirement: 0, phase: 0, dernierePose: null, but: null, capBalle: null, elBalle: 0, capAir: null, gel: null, poidsGel: 0, raccrochage: false, hautPivot: null };
     annexes.set(e, a);
   }
   return a;
@@ -360,6 +369,23 @@ function placerDansStade(arene: Arene, ideal: Readonly<Vec3>, pivot: Readonly<Ve
     // derrière une paroi : la paroi traversée par la ligne de vue doit être translucide elle aussi
     const w2 = Math.min(w, translucidePres(arene, c, n), translucideTraversee(arene, pivot, c));
     if (w2 < w - 1e-3) { w = w2; seuil = seuilDe(w); c = projeter(arene, [ideal[0], ideal[1], ideal[2]], seuil, n); }
+  }
+  if (arene.sd(ideal) < 0 && arene.sd(c) >= 0) {
+    // projetée depuis l'intérieur d'un obstacle mince (poteau, paroi de cage, pan coupé), la caméra peut ressortir de L'AUTRE côté,
+    // que la voiture ne voit pas, et changer de côté d'une image à l'autre : on la ramène alors le long du bras, devant le premier
+    // obstacle, comme un bras de caméra qui bute
+    const versC = soustraire(c, pivot);
+    const lc = Math.hypot(versC[0], versC[1], versC[2]);
+    if (lc > 1e-6) {
+      const impactC = arene.lancerRayon(pivot, mult(versC, 1 / lc), lc);
+      if (impactC !== null && impactC < lc - 0.05) {
+        const versI = soustraire(ideal, pivot);
+        const li = Math.max(Math.hypot(versI[0], versI[1], versI[2]), 1e-6);
+        const dirI = mult(versI, 1 / li);
+        const impactI = arene.lancerRayon(pivot, dirI, li) ?? li;
+        c = projeter(arene, ajouter(pivot, mult(dirI, Math.max(impactI - MARGE_CAMERA_M, 0))), seuil, n);
+      }
+    }
   }
   if (distance(c, centre) >= DISTANCE_MIN_M) return { c, seuil };
   // trop près de la caisse : le bras se relève
@@ -526,7 +552,11 @@ export const majCamera: MajCamera = (e, p, entree: EntreesCamera, moi, balle, ar
   const ideal = positionIdeale(moi, dirElevee(fR, u, elPos), u, dEff, p.hauteur);
 
   // 8. parois : la caméra glisse sur le sol, passe derrière un mur translucide, ne rentre jamais dans la voiture
-  const hautVoiture = moi.auSol ? moi.base.haut : HAUT_MONDE;
+  // haut du pivot lissé : le contact des roues avec un mur clignote (auSol vrai / faux d'une image à l'autre en montant un poteau ou la
+  // paroi de la cage), le pivot sautait de 0,5 m et la caméra changeait de côté de l'obstacle
+  const hautVoulu = moi.auSol ? moi.base.haut : HAUT_MONDE;
+  a.hautPivot = a.hautPivot ? tournerVers(a.hautPivot, hautVoulu, 1 - Math.exp(-dt * SUIVI_PIVOT), croix(hautVoulu, f)) : [hautVoulu[0], hautVoulu[1], hautVoulu[2]];
+  const hautVoiture = a.hautPivot;
   const pivot = ajouter(moi.p, mult(hautVoiture, PIVOT_TOIT_M));
   pivot[1] = Math.min(pivot[1], STADE.hauteur - 0.05);
   const centre = centreCaisse(moi);
@@ -534,9 +564,29 @@ export const majCamera: MajCamera = (e, p, entree: EntreesCamera, moi, balle, ar
   const voulu = soustraire(place.c, ideal);
   if (!a.decalage) a.decalage = voulu;
   else {
-    // entrée aussitôt (si le décalage lissé laisserait la caméra dans une paroi ou dans la voiture), sortie en douceur
+    // sortie en douceur ; entrée rapide mais lissée elle aussi (un poteau, un pan coupé ou la cage déplaçaient la caméra de plusieurs
+    // mètres en une image) : le décalage n'est pris d'un coup que dans la mesure où il le faut pour tenir les règles DURES (jamais
+    // dans la voiture, jamais dans une paroi opaque, jamais plus d'1 m derrière une paroi translucide) ; la marge de 0,4 m devant une
+    // paroi, elle, peut être entamée le temps de quelques images
     const lisseDec = melanger(a.decalage, voulu, 1 - Math.exp(-dt * SUIVI_DEGAGEMENT));
-    a.decalage = permise(arene, ajouter(ideal, lisseDec), place.seuil, centre, 0.02) ? lisseDec : voulu;
+    if (permise(arene, ajouter(ideal, lisseDec), place.seuil, centre, 0.02)) a.decalage = lisseDec;
+    else {
+      // entrée rapide, puis les règles dures tenues en POUSSANT la caméra depuis là où elle est (projection peu profonde, éloignement
+      // radial de la caisse) : jamais un mélange en ligne droite vers la place voulue, qui traverse le poteau ou la paroi d'en face
+      const c = ajouter(ideal, melanger(a.decalage, voulu, 1 - Math.exp(-dt * SUIVI_ENTREE)));
+      const seuilDur = Math.min(place.seuil, SEUIL_DUR_OPAQUE_M);
+      const nTmp: Vec3 = [0, 0, 0];
+      for (let k = 0; k < 3 && !permise(arene, c, seuilDur, centre, 0.02); k++) {
+        if (arene.sd(c) < seuilDur) projeter(arene, c, seuilDur, nTmp);
+        const dc = distance(c, centre);
+        if (dc < DISTANCE_MIN_M) {
+          const dir = dc > 1e-6 ? mult(soustraire(c, centre), 1 / dc) : hautVoiture;
+          c[0] = centre[0] + dir[0] * DISTANCE_MIN_M; c[1] = centre[1] + dir[1] * DISTANCE_MIN_M; c[2] = centre[2] + dir[2] * DISTANCE_MIN_M;
+        }
+        c[1] = clamp(c[1], HAUTEUR_MIN_M, STADE.hauteur - MARGE_PLAFOND_M);
+      }
+      a.decalage = permise(arene, c, seuilDur, centre, 0.03) ? soustraire(c, ideal) : voulu;
+    }
   }
   const pos = ajouter(ideal, a.decalage);
   pos[1] = clamp(pos[1], HAUTEUR_MIN_M, STADE.hauteur - MARGE_PLAFOND_M);
@@ -581,6 +631,15 @@ export const majCamera: MajCamera = (e, p, entree: EntreesCamera, moi, balle, ar
     }
   }
 
+  // la balle passe avant la voiture, même quand une paroi a poussé la caméra : en ball cam, si elle est sortie du cadre (vertical, le
+  // plus étroit), la visée tourne vers elle juste assez pour la ramener, au prix de la voiture s'il le faut
+  if (m > 1e-3) {
+    const versBalleCam = normaliser(soustraire(balle.p, pos), regard);
+    const ecart = Math.acos(clamp(dot(regard, versBalleCam), -1, 1));
+    const limite = Math.PI + (demiV - MARGE_BALLE - Math.PI) * m;
+    if (ecart > limite && ecart > 1e-6) regard = tournerVers(regard, versBalleCam, (ecart - limite) / ecart, croix(u, regard));
+  }
+
   // 10. secousse (jamais en mouvement réduit) : elle déplace la caméra ET son point visé, l'image tremble sans tourner
   if (mouvementReduit) e.secousse = 0;
   else {
@@ -607,7 +666,46 @@ export const majCamera: MajCamera = (e, p, entree: EntreesCamera, moi, balle, ar
 // ============================================================================================================================
 
 /** Rayon, hauteur et vitesse (rad/s) de l'orbite de la célébration. */
-export const ORBITE_BUT = { rayon: 13, hauteur: 3.4, vitesse: 0.45, fonduS: 0.5, versMarqueurDebutS: 0.9, versMarqueurFinS: 1.9 } as const;
+/** Recul de l'orbite devant la première paroi (m) et lissage de son point (1/s). */
+const DEGAGEMENT_ORBITE_M = 0.6;
+const SUIVI_ORBITE_BUT = 5;
+/** vitesse maximale du point de l'orbite (m/s) : jamais de saut, même quand le point dégagé change d'un coup */
+const VITESSE_ORBITE_BUT_MAX = 15;
+/**
+ * Point du segment `de → a` le plus loin de `de` encore dégagé (arrêté `DEGAGEMENT_ORBITE_M` avant la première paroi), `de` étant dans
+ * le stade. Sert à l'orbite de la célébration : la caméra (et le centre qu'elle suit, de la balle vers le marqueur) ne passe jamais
+ * derrière une paroi.
+ */
+function pointLibre(arene: Arene, de: Readonly<Vec3>, a: Readonly<Vec3>): Vec3 {
+  const d = soustraire(a, de);
+  const longueur = Math.hypot(d[0], d[1], d[2]);
+  if (longueur < 1e-6) return [a[0], a[1], a[2]];
+  const dir = mult(d, 1 / longueur);
+  const impact = arene.lancerRayon(de, dir, longueur);
+  return impact === null ? [a[0], a[1], a[2]] : ajouter(de, mult(dir, Math.max(impact - DEGAGEMENT_ORBITE_M, 0)));
+}
+
+/**
+ * Centre suivi par l'orbite, de la balle (`k` = 0) au marqueur (`k` = 1). Balle au fond d'une cage : le centre sort d'abord par la bouche
+ * du but (point juste devant la ligne, dans l'ouverture), puis rejoint le marqueur ; en ligne droite, il traversait la paroi de la cage.
+ */
+function versMarqueur(balle: Readonly<Vec3>, marqueur: Readonly<Vec3>, k: number): Vec3 {
+  if (Math.abs(balle[2]) <= STADE.demiLongueur) return melanger(balle, marqueur, k);
+  const bouche: Vec3 = [
+    clamp(balle[0], -(BUT.demiLargeur - 1.5), BUT.demiLargeur - 1.5),
+    clamp(balle[1], 1, BUT.hauteur - 1.5),
+    Math.sign(balle[2]) * (STADE.demiLongueur - 0.5),
+  ];
+  return k < 0.5 ? melanger(balle, bouche, k * 2) : melanger(bouche, marqueur, k * 2 - 1);
+}
+
+export const ORBITE_BUT = {
+  rayon: 13, hauteur: 3.4, vitesse: 0.45, fonduS: 0.5, versMarqueurDebutS: 0.9, versMarqueurFinS: 1.9,
+  /** balle à moins de `approcheCageM` de la ligne de but (ou dedans) : l'orbite devient un balancement de ±`balancementRad` devant la cage */
+  approcheCageM: 4, balancementRad: 0.75,
+  /** centre du balancement ramené à ±`centreCageXM` en X : le rayon balle → caméra passe par la bouche du but, loin des poteaux */
+  centreCageXM: 3,
+} as const;
 
 /**
  * Caméra de la phase « but » (et de la fin de partie) : fondu depuis la dernière pose de jeu vers une orbite lente autour de la balle,
@@ -623,22 +721,59 @@ export function majCameraBut(
   const centreBalle = balle.p;
   if (!a.but) {
     const depart: PoseCamera = a.dernierePose ?? { position: e.position, cible: centreBalle, haut: e.haut, fovVertical: fovVerticalDepuisHorizontal(p.fov, aspect) };
-    a.but = { depart, azimut: Math.atan2(depart.position[0] - centreBalle[0], depart.position[2] - centreBalle[2]), t: 0 };
+    a.but = { depart, azimut: Math.atan2(depart.position[0] - centreBalle[0], depart.position[2] - centreBalle[2]), t: 0, orbite: null };
   }
   a.but.t += dt;
-  const centre = marqueur ? melanger(centreBalle, marqueur.p, lisseEntre(ORBITE_BUT.versMarqueurDebutS, ORBITE_BUT.versMarqueurFinS, tempsPhase)) : centreBalle;
-  const az = a.but.azimut + (mouvementReduit ? 0 : ORBITE_BUT.vitesse * tempsPhase);
-  const ideal: Vec3 = [centre[0] + Math.sin(az) * ORBITE_BUT.rayon, centre[1] + ORBITE_BUT.hauteur, centre[2] + Math.cos(az) * ORBITE_BUT.rayon];
-  const orbite = projeter(arene, ideal, MARGE_CAMERA_M, [0, 0, 0]);
+  const centre = marqueur ? versMarqueur(centreBalle, marqueur.p, lisseEntre(ORBITE_BUT.versMarqueurDebutS, ORBITE_BUT.versMarqueurFinS, tempsPhase)) : centreBalle;
+  // orbite autour de la balle ; balle au fond d'une cage (ou à son entrée) : la caméra ne fait plus le tour (la moitié de l'orbite
+  // tomberait derrière la cage), elle BALANCE devant la bouche du but, du côté du terrain, à la même vitesse angulaire
+  const tOrbite = mouvementReduit ? 0 : ORBITE_BUT.vitesse * tempsPhase;
+  const azTour = a.but.azimut + tOrbite;
+  const wCage = lisseEntre(STADE.demiLongueur - ORBITE_BUT.approcheCageM, STADE.demiLongueur, Math.abs(centre[2]));
+  const ideal: Vec3 = [centre[0] + Math.sin(azTour) * ORBITE_BUT.rayon, centre[1] + ORBITE_BUT.hauteur, centre[2] + Math.cos(azTour) * ORBITE_BUT.rayon];
+  if (wCage > 0) {
+    // mélange des POSITIONS (continu), pas des angles : l'écart d'angle repasse par ±π à chaque tour et ferait sauter la caméra
+    const azFace = centre[2] >= 0 ? Math.PI : 0;
+    const amp = ORBITE_BUT.balancementRad;
+    const ecartDepart = Math.atan2(Math.sin(a.but.azimut - azFace), Math.cos(a.but.azimut - azFace));
+    const azBalance = azFace + amp * Math.sin(Math.asin(clamp(ecartDepart / amp, -1, 1)) + tOrbite / amp);
+    const xMax = ORBITE_BUT.centreCageXM;
+    const xBalance = clamp(centre[0], -xMax, xMax) + Math.sin(azBalance) * ORBITE_BUT.rayon;
+    const zBalance = centre[2] + Math.cos(azBalance) * ORBITE_BUT.rayon;
+    ideal[0] += (xBalance - ideal[0]) * wCage;
+    ideal[2] += (zBalance - ideal[2]) * wCage;
+  }
+  ideal[1] = Math.min(ideal[1], STADE.hauteur - MARGE_PLAFOND_M);
+  // le point de l'orbite s'arrête avant la première paroi, le long du rayon balle → orbite (jamais projeté depuis l'intérieur de la
+  // matière : derrière une cage, le gradient bascule d'une image à l'autre entre la cage et le stade et la caméra se téléportait)
+  // ancre de l'orbite : le centre suivi s'il est dans le stade, sinon (le centre glisse de la balle au fond de la cage vers le marqueur
+  // et traverse une paroi) le dernier point dégagé entre la balle et lui
+  const centreHaut: Vec3 = [centre[0], centre[1] + 0.3, centre[2]];
+  const ancre = arene.sd(centreHaut) >= MARGE_CAMERA_M ? centreHaut : pointLibre(arene, [centreBalle[0], centreBalle[1] + 0.3, centreBalle[2]], centreHaut);
+  const visee = pointLibre(arene, ancre, ideal);
+  // puis lissé : si le rayon passe d'un côté d'un obstacle à l'autre, la longueur libre change d'un coup ; la caméra la rejoint en
+  // douceur au lieu de sauter
+  if (!a.but.orbite) a.but.orbite = visee;
+  else {
+    const pas = mult(soustraire(visee, a.but.orbite), 1 - Math.exp(-dt * SUIVI_ORBITE_BUT));
+    const n = Math.hypot(pas[0], pas[1], pas[2]), nMax = VITESSE_ORBITE_BUT_MAX * dt;
+    a.but.orbite = ajouter(a.but.orbite, n > nMax ? mult(pas, nMax / n) : pas);
+  }
+  const orbite: Vec3 = [a.but.orbite[0], a.but.orbite[1], a.but.orbite[2]];
+  orbite[1] = clamp(orbite[1], HAUTEUR_MIN_M, STADE.hauteur - MARGE_PLAFOND_M);
   const fondu = lisse(a.but.t / ORBITE_BUT.fonduS);
   const pos = melanger(a.but.depart.position, orbite, fondu);
   const cible = melanger(a.but.depart.cible, [centre[0], centre[1] + 0.6, centre[2]], fondu);
-  const haut = normaliser(melanger(a.but.depart.haut, [0, 1, 0], fondu));
+  // le haut TOURNE vers celui du monde (autour de l'axe de visée s'il est opposé : car cam au plafond), jamais un mélange linéaire qui
+  // passerait par le vecteur nul et retournerait l'horizon d'un coup à mi-fondu
+  const axeVisee = normaliser(soustraire(a.but.depart.cible, a.but.depart.position), [0, 0, 1]);
+  const haut = tournerVers(normaliser(a.but.depart.haut, HAUT_MONDE), HAUT_MONDE, fondu, axeVisee);
   e.position = pos;
   e.haut = haut;
   e.dir = normaliser(soustraire(cible, pos), e.dir);
   a.q = null;
   a.decalage = null;
+  a.hautPivot = null;
   e.secousse = 0;
   return { position: pos, cible, haut, fovVertical: fovVerticalDepuisHorizontal(p.fov, aspect) };
 }

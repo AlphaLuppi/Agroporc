@@ -6,8 +6,10 @@ import { describe, expect, it } from "vitest";
 import { CAMERA_DEFAUT, ENTREES_NULLES, PAS_S, STADE, type EntreesVoiture, type EtatBalle, type EtatVoiture, type PoseCamera } from "./contrat";
 import {
   DEPASSEMENT_MUR_MAX_M, DISTANCE_MIN_M, ETIREMENT_MAX_M, HAUT_RACCORD_OPAQUE, HAUTEUR_MIN_M, MARGE_CAMERA_M, MARGE_PLAFOND_M,
-  VITESSE_RACCROCHAGE, creerEtatCamera, distanceCameraCaisse, fovVerticalDepuisHorizontal, majCamera,
+  VITESSE_RACCROCHAGE, creerEtatCamera, distanceCameraCaisse, fovVerticalDepuisHorizontal, majCamera, majCameraBut,
 } from "./camera";
+import { DEFAUT_CONFIG } from "./contrat";
+import { simuler } from "./outils-simulation";
 import { creerArene } from "./arene";
 import { centreHitbox, creerVoiture, pasVoiture } from "./voiture";
 import { baseDepuisCap, croix, distance, dot, mondeVersLocal, normaliser, soustraire, type Base, type Vec3 } from "./vec";
@@ -329,5 +331,65 @@ describe("invariants", () => {
       expect(distance(pose.position, prec.position)).toBeLessThan(0.2);
       prec = pose;
     }
+  });
+});
+
+describe("célébration sur le vrai stade : balle au fond d'une cage", () => {
+  // balles au fond des cages, près des poteaux, dans un coin ; voiture (point de départ du fondu) tout autour
+  const balles: Vec3[] = [[0, 1, 53.5], [0, 1, -53.5], [6, 1, 53.5], [-6, 1, -53.5], [1, 1.5, -52.5], [0, 1, -58], [8, 5, 55], [-8, 1, 59], [7, 1, 50.5]];
+  it("la caméra ne saute jamais d'une image à l'autre, ne passe pas derrière une paroi, avec ou sans marqueur", () => {
+    for (const b of balles) for (let k = 0; k < 8; k++) {
+      const ang = (k / 8) * 2 * Math.PI;
+      const pv: Vec3 = [Math.max(-38, Math.min(38, b[0] + Math.sin(ang) * 15)), 0.17, Math.max(-48, Math.min(48, b[2] + Math.cos(ang) * 15))];
+      const moi = creerVoiture({ id: 0, equipe: "bleue", slot: 0, humain: true, nom: "essai", p: pv, cap: ang });
+      const balle = balleA(b);
+      const e = creerEtatCamera(moi, balle, false);
+      for (let i = 0; i < 30; i++) majCamera(e, CAMERA_DEFAUT, ent(false), moi, balle, arene, 1 / 60, ASPECT, false);
+      let prec: Vec3 | null = null;
+      for (let i = 0; i < 480; i++) {
+        const pose = majCameraBut(e, CAMERA_DEFAUT, balle, k % 2 ? moi : null, arene, i / 60, 1 / 60, ASPECT, false);
+        const quoi = `balle ${b}, départ ${k}, image ${i}`;
+        if (prec && i > 35) expect(distance(prec, pose.position), quoi).toBeLessThan(0.3);
+        if (i > 35) expect(arene.sd(pose.position), quoi).toBeGreaterThan(-DEPASSEMENT_MUR_MAX_M);
+        prec = pose.position;
+      }
+    }
+  });
+  it("car cam au plafond : l'horizon se redresse en tournant, sans se retourner d'un coup", () => {
+    const moi = poser([0, STADE.hauteur, 0], [0, -1, 0], [0, 0, 1]);
+    const balle = balleA([0, 1, 53.5]);
+    const e = creerEtatCamera(moi, balle, false);
+    let pose = stabiliser(moi, balle, false);
+    for (let i = 0; i < 180; i++) pose = majCamera(e, CAMERA_DEFAUT, ent(false), moi, balle, arene, 1 / 60, ASPECT, false);
+    expect(pose.haut[1]).toBeLessThan(-0.9);
+    let haut = pose.haut;
+    for (let i = 0; i < 60; i++) {
+      const p = majCameraBut(e, CAMERA_DEFAUT, balle, null, arene, i / 60, 1 / 60, ASPECT, false);
+      expect(Math.acos(Math.min(1, dot(normaliser(haut), normaliser(p.haut)))), `image ${i}`).toBeLessThan(0.25);
+      haut = p.haut;
+    }
+    expect(haut[1]).toBeGreaterThan(0.99);
+  });
+});
+
+describe("caméra de jeu sur le vrai stade : bots All-Star, poteaux, pans coupés, cage", () => {
+  // graine 5 : à t = 75 s la voiture monte la paroi intérieure de la cage contre le poteau (la caméra changeait de côté du poteau)
+  it.each([true, false])("ball cam %s : pas de saut de position, la balle toujours dans le cadre", (balleCam) => {
+    const demi = demiV;
+    let e: ReturnType<typeof creerEtatCamera> | null = null;
+    let prec: { pos: Vec3; car: Vec3 } | null = null;
+    let n = 0;
+    simuler({ ...DEFAUT_CONFIG(), format: "1v1", graine: 5, dureeS: 180 }, { bleue: "allstar", orange: "allstar" }, { dureeS: 80, surPas(m) {
+      if (++n % 2) return;
+      const moi = m.voitures[0];
+      if (m.phase !== "enJeu" || moi.demolie) { prec = null; e = null; return; }
+      if (!e) e = creerEtatCamera(moi, m.balle, balleCam);
+      const pose = majCamera(e, CAMERA_DEFAUT, ent(balleCam), moi, m.balle, m.arene, 1 / 60, ASPECT, false);
+      const quoi = `t = ${m.temps.toFixed(2)} s, voiture ${moi.p.map((x) => x.toFixed(1))}`;
+      verifierPose(pose, moi, quoi);
+      if (prec && distance(prec.car, moi.p) < 1) expect(distance(prec.pos, pose.position) - distance(prec.car, moi.p), quoi).toBeLessThan(0.8);
+      if (balleCam) expect(ecartVisee(pose, m.balle.p), `${quoi} : balle dans le cadre`).toBeLessThan(demi);
+      prec = { pos: pose.position, car: [...moi.p] as Vec3 };
+    } });
   });
 });

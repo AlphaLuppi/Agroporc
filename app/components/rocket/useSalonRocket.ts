@@ -22,7 +22,7 @@ export interface OptionsSalonRocket {
   nom: string;
   /** la liste des parties est à l'écran : elle est rafraîchie toutes les `PERIODE_LISTE_MS` */
   listeVisible: boolean;
-  /** carrosserie de mes réglages : envoyée au salon (message additif `skin`, ignoré par un serveur d'avant) ; absente : Octane */
+  /** carrosserie de mes réglages : envoyée au salon (message `skin`, `VERSION_ROCKET` 3) ; absente : Octane */
   skin?: SkinVoiture;
 }
 
@@ -197,20 +197,23 @@ export function useSalonRocket({ actif, nom, listeVisible, skin = "octane" }: Op
     },
   }), [envoyer, modifier, fermer, ouvrir]);
 
-  // carrosserie : envoyée dès qu'on est dans un salon (ou à l'écran de fin) et qu'elle diffère de celle que le serveur connaît ; une seule fois
-  // par salon et par valeur (un serveur d'avant les skins ne la renvoie jamais : on ne la répète pas à chaque message `salon`)
+  // carrosserie : envoyée dès qu'on est dans un salon (ou à l'écran de fin), socket ouverte, et qu'elle diffère de celle que le serveur
+  // connaît ; une fois par salon, par PHASE et par connexion. Le serveur ne l'accepte qu'au salon et à l'écran de fin : un envoi parti
+  // pendant que l'hôte lançait (le client voyait encore « salon ») revient en `refus{skin, phase}`, ignoré par le modèle ; il est
+  // renvoyé au prochain salon ou à l'écran de fin, et après une reconnexion (le message parti sur une socket coupée est perdu)
   const skinEnvoye = useRef<string | null>(null);
   const salonCode = etat.salon?.code ?? null;
   const salonPhase = etat.salon?.phase ?? null;
+  const connexionOuverte = etat.connexion === "ouverte";
   const skinConnu = etat.salon?.joueurs.find((j) => j.id === etat.joueur)?.skin ?? "octane";
   useEffect(() => {
-    if (!salonCode) { skinEnvoye.current = null; return; }
-    if (salonPhase !== "salon" && salonPhase !== "fin") return;
-    const cle = `${salonCode}:${skin}`;
+    if (!salonCode || !connexionOuverte) { skinEnvoye.current = null; return; }
+    if (salonPhase !== "salon" && salonPhase !== "fin") { skinEnvoye.current = null; return; }
+    const cle = `${salonCode}:${salonPhase}:${skin}`;
     if (skinConnu === skin || skinEnvoye.current === cle) return;
     skinEnvoye.current = cle;
     envoyer({ t: "skin", skin });
-  }, [salonCode, salonPhase, skinConnu, skin, envoyer]);
+  }, [salonCode, salonPhase, connexionOuverte, skinConnu, skin, envoyer]);
 
   const prendreSnap = useCallback((): SnapRocket | null => {
     const s = snapRef.current;

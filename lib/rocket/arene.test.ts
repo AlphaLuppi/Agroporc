@@ -205,6 +205,17 @@ describe("arène : symétries et continuité", () => {
       expect(Math.abs(a.sd(p) - a.sd(q))).toBeLessThanOrEqual(dist * 1.0001 + 1e-9);
     }
   });
+  it("sd reste continue au bord de la fenêtre du pied des poteaux, 1 m derrière le mur du fond (zm = -1, dans la matière)", () => {
+    // le bord de la fenêtre faisait sauter sd de 0,2 m (pente locale de 150 à 260) : (10,895 ; 1,326 ; 52,199) → -0,999 / -1,208 ;
+    // il est désormais raccordé sur ~2 cm (pente ≤ 31, dans la matière seulement)
+    const r2 = creerRng(23);
+    const zBord = STADE.demiLongueur + 1;
+    for (let i = 0; i < 4000; i++) {
+      const x = (tirer(r2) * 2 - 1) * 19, y = tirer(r2) * 4, sz = tirer(r2) < 0.5 ? -1 : 1;
+      const p: Vec3 = [x, y, sz * (zBord - 0.001)], q: Vec3 = [x, y, sz * (zBord + 0.001)];
+      expect(Math.abs(a.sd(p) - a.sd(q)), `(${x.toFixed(3)} ; ${y.toFixed(3)})`).toBeLessThanOrEqual(0.002 * 31 + 1e-9);
+    }
+  });
 
   it("la salle est entièrement libre à l'intérieur et la matière commence au-delà des murs", () => {
     expect(a.sd([30, 10, 30])).toBeGreaterThan(0);

@@ -66,12 +66,16 @@ describe.runIf(LONG)("campagne complète (ROCKET_LONG=1)", () => {
     expect(avecBut).toBeGreaterThanOrEqual(14);
   }, 3_000_000);
 
-  it("All-Star bat Débutant dans au moins 80 % des parties 1v1 de 3 min (20 graines)", () => {
+  // Taux de victoire mesuré ≈ 80 % (main : 64 parties sur 80, graines 1-20, 101-120, 201-220, 301-320 ; cages arrondies : 65 sur 80).
+  // L'ancien seuil « 16 sur 20 » était exactement la moyenne : n'importe quel changement de physique (la géométrie des cages, par
+  // exemple) le faisait basculer d'une graine (14 à 18 selon le paquet de 20, pour les deux versions). 40 graines, seuil à 70 % (≈ 2
+  // écarts-types sous la moyenne d'une binomiale à 80 %) : un vrai affaiblissement des All-Star se voit, le bruit des graines non.
+  it("All-Star bat Débutant dans au moins 70 % des parties 1v1 de 3 min (40 graines)", () => {
     let victoires = 0;
-    for (let g = 1; g <= 20; g++) {
+    for (let g = 1; g <= 40; g++) {
       const r = simuler(cfg({ format: "1v1", graine: g, dureeS: 180 }), { bleue: "allstar", orange: "debutant" }, { dureeS: 240, jusquALaFin: true });
       if (r.monde.score.bleue > r.monde.score.orange) victoires++;
     }
-    expect(victoires).toBeGreaterThanOrEqual(16);
+    expect(victoires).toBeGreaterThanOrEqual(28);
   }, 3_000_000);
 });

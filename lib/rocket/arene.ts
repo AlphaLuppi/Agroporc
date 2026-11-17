@@ -128,11 +128,14 @@ const RE2 = RE * RE;
 // où Q = { |x| ≥ W, zm ≤ 0 } est le mur du fond à côté de la cage, avec un raccord de rayon r(|x|) : RI au poteau (le même que le
 // raccord sol / paroi de la cage, auquel il se raccorde en faisant le tour du pied du poteau), puis jusqu'à `STADE.rayonSol` à |x| = 18 m,
 // où il redevient celui de la salle. Un rayon plus petit libère plus d'espace : l'union est correcte. La fenêtre (min avec la distance à
-// ses bords) ramène continûment à la valeur de la salle et de la cage, qui y sont au moins aussi libres.
+// ses bords) ramène continûment à la valeur de la salle et de la cage, qui y sont au moins aussi libres ; le bord zm = -1, dans la matière,
+// est borné par la salle elle-même (sd continu des deux côtés, cf. « 3 bis »).
 
 const R_POTEAU = BUT.rayonRaccordPoteau;
 const X_R0 = BUT.raccordPoteauJusqua, X_R1 = BUT.raccordFondDes;
 const X_FEN = X_R1 + 0.5, Y_FEN = 3, ZM_FEN = 3.5;
+/** raccord de sd au bord zm = -1 de la fenêtre (dans la matière) : pente de la borne s + PENTE_BORD·(zm + 1) */
+const PENTE_BORD = 30;
 
 /** Rayon du raccord sol / mur du fond à l'abscisse |x| (RI = 1,12 m au poteau, `STADE.rayonSol` au-delà de 18 m). */
 export function rayonRaccordFond(x: number): number {
@@ -413,6 +416,12 @@ export function creerArene(): Arene {
       // bords de la fenêtre
       if (Y_FEN - py < f) { f = Y_FEN - py; fgx = 0; fgy = -1; fgz = 0; }
       if (zm + 1 < f) { f = zm + 1; fgx = 0; fgy = 0; fgz = -1; }
+      // le bord zm = -1 est DANS la matière (1 m derrière le mur du fond) : là, `zm + 1` ne ramène f qu'à 0, au-dessus de la salle
+      // (≈ -1,2 m), et sd sautait de 0,2 m en franchissant le bord. Borne s + PENTE_BORD·(zm + 1) : égale à la salle sur le bord, donc sd
+      // continue ; inactive dans l'espace libre (s ≥ 0 ⇒ elle dépasse zm + 1) et au-delà de ~2 cm du bord (f - s ≤ 0,6 m). Dans cette
+      // bande de 2 cm, à 1 m sous la surface, la pente de sd monte à ~30 (aucun contact ni lancer de rayon n'y va)
+      const borneBord = s + PENTE_BORD * (zm + 1);
+      if (borneBord < f) { f = borneBord; fgx = sgx; fgy = sgy; fgz = sgz - PENTE_BORD; }
       if (X_FEN - x < f) { f = X_FEN - x; fgx = -1; fgy = 0; fgz = 0; }
       if (f > s) { s = f; sgx = fgx; sgy = fgy; sgz = fgz; }
     }

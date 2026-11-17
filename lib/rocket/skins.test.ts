@@ -158,9 +158,11 @@ describe("attribution", () => {
     expect(s[0]).toBe(skinBot(7, 0));
     expect(s[2]).toBe(skinBot(7, 2));
   });
-  it("en ligne : skin annoncé par le serveur, Octane à défaut, mon skin pour ma voiture", () => {
+  it("en ligne : skin annoncé par le serveur (le mien compris), Octane à défaut, mes réglages si le serveur ne dit rien de moi", () => {
     const s = skinsEnLigne([{ id: 0, skin: "2008" }, { id: 1 }, { id: 2, skin: "306" as SkinVoiture }, { id: 3, skin: "octane" }], 3, "308");
-    expect(s).toEqual(["2008", "octane", "octane", "308"]);
+    // mon changement vers la 308 a été refusé (parti pendant le lancement) : je me vois en Octane, comme les autres me voient
+    expect(s).toEqual(["2008", "octane", "octane", "octane"]);
+    expect(skinsEnLigne([{ id: 0, skin: "2008" }, { id: 1 }], 1, "rio")).toEqual(["2008", "rio"]);
   });
 });
 

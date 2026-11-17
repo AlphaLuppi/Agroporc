@@ -351,7 +351,7 @@ export interface JoueurSalon {
   connecte: boolean;
   /** a fini de charger la scène (phase « chargement ») */
   charge: boolean;
-  /** carrosserie choisie (visuel seul, additif : absente d'un serveur d'avant les skins, lue comme l'Octane) */
+  /** carrosserie choisie (visuel seul ; optionnelle dans le type, toujours remplie par le serveur v3 ; absente, lue comme l'Octane) */
   skin?: SkinVoiture;
 }
 
@@ -387,7 +387,7 @@ export interface VoitureStatique {
   humain: boolean;
   nom: string;
   joueur: number | null;
-  /** carrosserie (visuel seul, additif : un client d'avant les skins l'ignore, un serveur d'avant ne l'envoie pas → Octane) ; bots compris */
+  /** carrosserie (visuel seul ; un serveur v2 ne l'envoyait pas, mais il refuse un client v3 : absente, lue comme l'Octane) ; bots compris */
   skin?: SkinVoiture;
 }
 

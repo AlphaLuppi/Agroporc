@@ -159,7 +159,7 @@ export default function LobbyRocketEnLigne({
   const occupe = etat.attente !== null;
   const code = codePret(codeSaisi);
   const nomPropre = nettoyerNomJoueur(nom);
-  // carrosserie : envoyée au salon par le hook (`useSalonRocket`) ; un serveur d'avant les skins l'ignore et les autres me voient en Octane
+  // carrosserie : envoyée au salon (et à l'écran de fin) par le hook (`useSalonRocket`), renvoyée si le serveur l'a refusée en plein lancement
   const choixSkin = skin && surSkin ? <ChoixSkinRocket nom={`${id}-skin`} valeur={skin} surChoix={surSkin} /> : null;
 
   const rejoindreParCode = () => { if (code && !bloqueTactile && !occupe) actions.rejoindre(code); };
