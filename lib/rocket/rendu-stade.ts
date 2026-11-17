@@ -12,7 +12,7 @@ import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js
 import { creerModeleTruckMuche, type ModeleTruckMuche } from "../fps/rendu-monde";
 import { PLOTS, STADE, type Equipe, type MondeRocket } from "./contrat";
 import {
-  LUM, PALETTE, PROFIL, RAYON_ANNEAU, SPHERE_GROS, ajusterLuminance, construireNappe, couleurEquipe, couleurMur, couleurPlot, couleurSol,
+  LUM, PALETTE, PROFIL, RAYON_ANNEAU, RAYON_MONTANT, SPHERE_GROS, ajusterLuminance, construireNappe, couleurEquipe, couleurMur, couleurPlot, couleurSol,
   creerContour, disposerGradins, echelleSpherePlot, eventail, fusionnerNappes, geometrieCage, grilleContour, grilleProfil, lignesTerrain,
   melangeRgb, mulRgb, placesPublic, polygonePlat, pulsationBut, rgbLineaire, sautPublic, segmentsHexCoque, segmentsHexPlafond, solCage, texteTableau,
   visuelPlot, type Nappe, type RGB, type TierGradin,
@@ -188,7 +188,7 @@ export function creerStade(m: Readonly<MondeRocket>, opts: OptionsStade): StadeR
     const cage = geometrieCage(eq, pasFilet);
     const cEq = couleurEquipe(eq);
     const cTube = ajusterLuminance(cEq, 1.1);
-    for (const t of cage.tubes) tubes.push(tube(t.a, t.b, t.rayon, t.rayon > 0.1 ? cTube : mulRgb(cTube, 0.5)));
+    for (const t of cage.tubes) tubes.push(tube(t.a, t.b, t.rayon, t.rayon >= RAYON_MONTANT ? cTube : mulRgb(cTube, 0.5)));
     const cFilet = ajusterLuminance(cEq, 0.28);
     for (let i = 0; i < cage.filet.length; i += 3) { filetPos.push(cage.filet[i], cage.filet[i + 1], cage.filet[i + 2]); filetCol.push(cFilet[0], cFilet[1], cFilet[2]); }
     for (const q of cage.quads) {

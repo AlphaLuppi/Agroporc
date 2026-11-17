@@ -19,7 +19,7 @@
  * reprise émis par le serveur HTTP après `salon` (message `session`), `numero` dans les trames, signatures du registre avec IP et horloge.
  */
 import type {
-  Arene, ConfigMatch, Equipe, EntreesVoiture, EtatBalle, EtatPlot, EtatVoiture, EvenementMatch, Format, MondeRocket, NiveauBot, ResultatMatch, Vec3,
+  Arene, ConfigMatch, Equipe, EntreesVoiture, EtatBalle, EtatPlot, EtatVoiture, EvenementMatch, Format, MondeRocket, NiveauBot, ResultatMatch, SkinVoiture, Vec3,
 } from "../contrat";
 import { MATCH, PAS_S } from "../contrat";
 import type { InterneMatch } from "../match";
@@ -28,8 +28,12 @@ import type { InterneMatch } from "../match";
 // 1. Constantes réseau
 // ============================================================================================================================
 
-/** Version du protocole Rocket en ligne (indépendante de `VERSION_PROTOCOLE` de l'arène). Un `bonjour` d'une autre version reçoit `erreur{version}`. */
-export const VERSION_ROCKET = 2;
+/**
+ * Version du protocole Rocket en ligne (indépendante de `VERSION_PROTOCOLE` de l'arène). Un `bonjour` d'une autre version reçoit `erreur{version}`.
+ * 3 : cages arrondies comme dans Rocket League (`arene.ts`) ; le codec ne change pas mais la physique si : un client et un serveur de géométries
+ * différentes divergeraient à chaque contact près d'une cage (rollbacks en rafale), ils se refusent donc proprement. Serveur d'abord.
+ */
+export const VERSION_ROCKET = 3;
 /** Chemin de la WebSocket Rocket sur le serveur HTTP de serveur-fps (`wss://pdj-fps.toam.tech/rocket`). */
 export const CHEMIN_ROCKET = "/rocket";
 /** Pas de la physique en ticks par seconde (120). Le « tick » est l'unité de temps de TOUT le protocole. */
@@ -347,6 +351,8 @@ export interface JoueurSalon {
   connecte: boolean;
   /** a fini de charger la scène (phase « chargement ») */
   charge: boolean;
+  /** carrosserie choisie (visuel seul ; optionnelle dans le type, toujours remplie par le serveur v3 ; absente, lue comme l'Octane) */
+  skin?: SkinVoiture;
 }
 
 export interface EtatSalon {
@@ -381,6 +387,8 @@ export interface VoitureStatique {
   humain: boolean;
   nom: string;
   joueur: number | null;
+  /** carrosserie (visuel seul ; un serveur v2 ne l'envoyait pas, mais il refuse un client v3 : absente, lue comme l'Octane) ; bots compris */
+  skin?: SkinVoiture;
 }
 
 export type RaisonRefus =
@@ -403,13 +411,15 @@ export type MessageClient =
   | { t: "rejoindre"; code: string; equipe?: Equipe }
   | { t: "quitter" }
   | { t: "equipe"; equipe: Equipe }
+  /** carrosserie de MA voiture (salon ou écran de fin : prise en compte au prochain match), additif ; un serveur d'avant l'ignore sans répondre */
+  | { t: "skin"; skin: SkinVoiture }
   | { t: "reglages"; reglages: Partial<ReglagesSalon> }
   | { t: "lancer" }
   /** la scène est chargée et l'horloge synchronisée : la partie peut démarrer pour ce joueur (phase « chargement ») */
   | { t: "pret" }
   | { t: "ping"; c: number }
   | { t: "klaxon" }
-  /** réaction rapide (`id` du catalogue de `reactions.ts`) : validée, limitée (anti-spam) et relayée par le serveur, additif (`VERSION_ROCKET` reste 2) */
+  /** réaction rapide (`id` du catalogue de `reactions.ts`) : validée, limitée (anti-spam) et relayée par le serveur, additif (`VERSION_ROCKET` restait 2) */
   | { t: "reaction"; id: string }
   | { t: "revanche"; oui: boolean }
   /** hôte, phase « fin » : retour au salon sans revanche */

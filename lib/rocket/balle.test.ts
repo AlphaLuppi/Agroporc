@@ -620,4 +620,54 @@ describe.skipIf(!areneDispo)("sur le vrai stade (arene.ts)", () => {
     expect(sommet / 5).toBeGreaterThan(0.3);
     expect(sommet / 5).toBeLessThan(0.38);
   });
+
+  it("sur le demi-cylindre du fond de la cage, la balle rebondit selon la normale du cylindre, restitution 0,6", async () => {
+    const a = await charger();
+    // centre du demi-cylindre (d = 6,40 ; y = 2,56) : Z = 57,6
+    const cz = 57.6, cy = 2.56;
+    for (const [y0, vz] of [[2.56, 15], [1.8, 15], [3.4, 15]] as const) {
+      const b = balle([2, y0, 55], [0, 0, vz]);
+      let avant: Vec3 | null = null, apres: Vec3 | null = null, n: Vec3 = [0, 0, 0];
+      for (let i = 0; i < 240 && !apres; i++) {
+        const v0: Vec3 = [b.v[0], b.v[1], b.v[2]], p0: Vec3 = [b.p[0], b.p[1], b.p[2]];
+        pasBalle(a, b, PAS_S);
+        if (b.v[2] < 0 && v0[2] > 0) {
+          avant = v0; apres = [b.v[0], b.v[1], b.v[2]];
+          // normale du cylindre au point de contact : du point de contact vers l'axe
+          const dz = p0[2] - cz, dy = p0[1] - cy, l = Math.hypot(dz, dy);
+          n = [0, -dy / l, -dz / l];
+          const na = a.normale([p0[0], cy + (dy / l) * 2.4 * 0.999, cz + (dz / l) * 2.4 * 0.999]);
+          expect(na[1]).toBeCloseTo(n[1], 6);
+          expect(na[2]).toBeCloseTo(n[2], 6);
+        }
+      }
+      expect(apres).not.toBeNull();
+      const vn0 = avant![1] * n[1] + avant![2] * n[2], vn1 = apres![1] * n[1] + apres![2] * n[2];
+      expect(vn0).toBeLessThan(0);
+      // à la gravité et à la traînée d'un pas près
+      expect(vn1 / -vn0, `y0 = ${y0}`).toBeGreaterThan(0.57);
+      expect(vn1 / -vn0, `y0 = ${y0}`).toBeLessThan(0.63);
+    }
+  });
+
+  it("une balle qui roule vers le fond de la cage monte sur le demi-cylindre et redescend, sans à-coup", async () => {
+    const a = await charger();
+    // 6 m/s : elle monte sans décoller du cylindre (plus vite, elle quitte la surface en haut et retombe en rebondissant, comme dans RL)
+    const b = balle([0, R + 0.01, 52], [0, 0, 6]);
+    let yMax = 0, sautMax = 0, prec = norme(b.v), revenue = false;
+    for (let i = 0; i < 4 * 120; i++) {
+      pasBalle(a, b, PAS_S);
+      const v = norme(b.v);
+      sautMax = Math.max(sautMax, Math.abs(v - prec));
+      prec = v;
+      yMax = Math.max(yMax, b.p[1]);
+      if (yMax > R + 1.5 && b.v[2] < 0 && b.p[2] < 57) revenue = true;
+      expect(a.sd(b.p)).toBeGreaterThan(0);
+    }
+    // elle est montée sur le fond (bien au-dessus de son rayon) puis revenue vers la ligne de but
+    expect(yMax).toBeGreaterThan(R + 1.5);
+    expect(revenue, `yMax ${yMax.toFixed(2)} z ${b.p[2].toFixed(2)} vz ${b.v[2].toFixed(2)}`).toBe(true);
+    // la vitesse varie continûment (gravité et frottement), sans saut d'impulsion : moins de 0,15 m/s par pas
+    expect(sautMax).toBeLessThan(0.15);
+  });
 });

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { CAMERA_DEFAUT, STADE, ENTREES_NULLES, PAS_S, type Arene, type EntreesVoiture, type EtatBalle, type EtatVoiture } from "./contrat";
 import {
-  ORBITE_BUT, RACCROCHAGE_FLIP_S, VITESSE_RACCROCHAGE, ajouterSecousse, creerEtatCamera, elevationViseeBalle, flipEnCours, fovVerticalDepuisHorizontal, majCamera, majCameraBut,
+  DEPASSEMENT_MUR_MAX_M, DISTANCE_MIN_M, HAUTEUR_MIN_M, HAUT_RACCORD_OPAQUE, ORBITE_BUT, RACCROCHAGE_FLIP_S, VITESSE_RACCROCHAGE, ajouterSecousse, creerEtatCamera, elevationViseeBalle, flipEnCours, fovVerticalDepuisHorizontal, majCamera, majCameraBut,
 } from "./camera";
 import { creerArene } from "./arene";
 import { creerVoiture, pasVoiture } from "./voiture";
@@ -10,10 +10,15 @@ import { baseDepuisCap, distance, dot, norme, normaliser, soustraire, type Vec3 
 /** Stade jouet : boîte |x| < 40,96, |z| < 51,2, 0 < y < 20,44 (la caméra ne s'intéresse qu'à `sd`). */
 function areneJouet(): Arene {
   const sd = (p: Readonly<Vec3>) => Math.min(STADE.demiLargeur - Math.abs(p[0]), STADE.demiLongueur - Math.abs(p[2]), p[1], STADE.hauteur - p[1]);
+  const gradient = (p: Readonly<Vec3>): Vec3 => {
+    const h = 0.01, g: Vec3 = [0, 0, 0];
+    for (let i = 0; i < 3; i++) { const a = [...p] as Vec3, b = [...p] as Vec3; a[i] += h; b[i] -= h; g[i] = (sd(a) - sd(b)) / (2 * h); }
+    return normaliser(g);
+  };
   return {
     sd,
-    normale: () => [0, 1, 0],
-    sdNormale: (p, n) => { n[0] = 0; n[1] = 1; n[2] = 0; return sd(p); },
+    normale: (p) => gradient(p),
+    sdNormale: (p, n) => { const g = gradient(p); n[0] = g[0]; n[1] = g[1]; n[2] = g[2]; return sd(p); },
     butMarque: () => null,
     dansCage: () => null,
     lancerRayon: () => null,
@@ -85,11 +90,15 @@ describe("car cam", () => {
     for (let i = 0; i < 90; i++) pose2 = majCamera(e, CAMERA_DEFAUT, entree(), tourne, balle, arene, 1 / 60, 16 / 9, false);
     expect(Math.atan2(pose2.cible[0] - pose2.position[0], pose2.cible[2] - pose2.position[2])).toBeCloseTo(Math.PI / 2, 1);
   });
-  it("plus de rigidité = plus vite derrière la voiture", () => {
-    const e1 = creerEtatCamera(moi, balle, false), e2 = creerEtatCamera(moi, balle, false);
+  it("rigidité (stiffness de RL) : elle règle l'étirement de la distance à vitesse, plus la rotation", () => {
+    const rapide = voiture([0, 0.17, 0], 0, { v: [0, 0, 23] });
+    const recul = (r: number) => moi.p[2] - simuler(rapide, balle, undefined, entree(), 240, { ...CAMERA_DEFAUT, rigidite: r }).pose.position[2];
+    expect(recul(0)).toBeGreaterThan(recul(1) + 0.9);
+    expect(recul(1)).toBeCloseTo(CAMERA_DEFAUT.distance, 2);
+    // la rotation, elle, ne dépend pas de la rigidité
     const tourne = voiture([0, 0.17, 0], 1.2);
-    const cap = (e: typeof e1, r: number) => { const p = majCamera(e, { ...CAMERA_DEFAUT, rigidite: r }, entree(), tourne, balle, arene, 1 / 30, 16 / 9, false); return Math.atan2(p.cible[0] - p.position[0], p.cible[2] - p.position[2]); };
-    expect(cap(e2, 1)).toBeGreaterThan(cap(e1, 0));
+    const cap = (r: number) => { const e = creerEtatCamera(moi, balle, false); const p = majCamera(e, { ...CAMERA_DEFAUT, rigidite: r }, entree(), tourne, balle, arene, 1 / 30, 16 / 9, false); return Math.atan2(p.cible[0] - p.position[0], p.cible[2] - p.position[2]); };
+    expect(cap(1)).toBeCloseTo(cap(0), 6);
   });
 });
 
@@ -181,13 +190,15 @@ describe("surfaces : murs et air", () => {
     for (let i = 0; i < 90; i++) majCamera(e, CAMERA_DEFAUT, entree(), enAir, balle, arene, 1 / 60, 16 / 9, false);
     expect(e.haut[1]).toBeGreaterThan(0.98);
   });
-  it("en l'air, le nez levé relève la visée (suivi partiel du tangage)", () => {
+  it("en l'air, le nez levé ne relève pas la visée : horizon droit, la caméra garde le cap du nez (Rocket League)", () => {
     const nez = Math.PI / 4;
     const base = { avant: [0, Math.sin(nez), Math.cos(nez)] as Vec3, haut: [0, Math.cos(nez), -Math.sin(nez)] as Vec3, droite: [-1, 0, 0] as Vec3 };
     const moi = voiture([0, 10, 0], 0, { base, normaleSurface: null, auSol: false, rouesContact: 0 });
     const { pose } = simuler(moi, balleA([0, 10, 40]), undefined, entree(), 120);
     const d = normaliser(soustraire(pose.cible, pose.position));
-    expect(d[1]).toBeGreaterThan(0.1);
+    expect(Math.asin(d[1]) * 180 / Math.PI).toBeCloseTo(CAMERA_DEFAUT.angle, 0);
+    expect(d[2]).toBeGreaterThan(0.99);
+    expect(pose.haut[1]).toBeGreaterThan(0.999);
   });
 });
 
@@ -213,8 +224,11 @@ describe("anticollision", () => {
       const pose = majCamera(e, CAMERA_DEFAUT, entree({ balleCam: alea() > 0.5 }), moi, balle, arene, 1 / 60, 16 / 9, false);
       expect(pose.position.every(Number.isFinite)).toBe(true);
       expect(pose.position[1]).toBeLessThanOrEqual(STADE.hauteur - 0.4);
-      // la caméra n'est jamais dans la matière (sauf si la voiture elle-même est déjà collée à la surface)
-      expect(arene.sd(pose.position)).toBeGreaterThan(Math.min(0.05, arene.sd(moi.p) - 0.1) - 1e-6);
+      // jamais plus d'1 m derrière une paroi (translucide : les murs du stade jouet le sont tous au-dessus du raccord), jamais sous
+      // le sol (opaque), jamais dans la voiture
+      expect(arene.sd(pose.position)).toBeGreaterThan(-DEPASSEMENT_MUR_MAX_M - 0.03);
+      expect(pose.position[1]).toBeGreaterThanOrEqual(HAUTEUR_MIN_M - 1e-6);
+      expect(distance(pose.position, moi.p)).toBeGreaterThan(DISTANCE_MIN_M - 0.3);
     }
   });
   it("sous le plafond d'au moins 0,5 m", () => {
@@ -282,7 +296,7 @@ describe("célébration d'un but", () => {
 });
 
 describe("sur le vrai stade (champ de distance de arene.ts)", () => {
-  it("la caméra ne traverse jamais le décor, en car cam comme en ball cam, partout dans l'arène", async () => {
+  it("la caméra ne passe jamais plus d'1 m derrière une paroi translucide, jamais derrière le sol, en car cam comme en ball cam", async () => {
     const { creerArene } = await import("./arene");
     const vrai = creerArene();
     let s = 987654321;
@@ -299,9 +313,13 @@ describe("sur le vrai stade (champ de distance de arene.ts)", () => {
       balle.p = [(alea() * 2 - 1) * 38, 1 + alea() * 15, (alea() * 2 - 1) * 48];
       const pose = majCamera(e, CAMERA_DEFAUT, entree({ balleCam: alea() > 0.5, regard: [alea() * 2 - 1, alea() * 2 - 1] }), moi, balle, vrai, 1 / 60, 16 / 9, false);
       expect(pose.position.every(Number.isFinite)).toBe(true);
-      pires = Math.min(pires, vrai.sd(pose.position) - Math.min(0.05, vrai.sd(moi.p)));
+      const sd = vrai.sd(pose.position);
+      pires = Math.min(pires, sd + DEPASSEMENT_MUR_MAX_M);
+      // derrière une paroi : elle est translucide (au-dessus du raccord de sol, opaque)
+      if (sd < 0) expect(vrai.surfaceProche(pose.position).point[1]).toBeGreaterThan(HAUT_RACCORD_OPAQUE - 0.05);
+      expect(pose.position[1]).toBeGreaterThanOrEqual(HAUTEUR_MIN_M - 1e-6);
     }
-    expect(pires).toBeGreaterThan(-1e-6);
+    expect(pires).toBeGreaterThan(-0.03);
   });
 });
 
@@ -476,8 +494,8 @@ describe("car cam pendant un flip", () => {
     }
   });
 
-  it("l'ancien comportement (suivi de 70 % du tangage du nez) aurait fait basculer la vue : le test est discriminant", () => {
-    // même vol, mais le flip est caché à la caméra (verrou à 0) : la direction suit le nez
+  it("sans le gel, la vue suivrait le nez retourné par le salto : le test est discriminant", () => {
+    // même vol, mais le flip est caché à la caméra (verrou à 0) : la direction suit le cap du nez
     const { images } = volerFlip({ saut: true, tangage: -1 });
     const sansGel = images.map((im) => ({ ...im.moi, flip: { ...im.moi.flip, verrouTangage: 0 } }));
     const e = creerEtatCamera(images[0].moi, balleA([0, 1, 30]), false);
@@ -504,12 +522,12 @@ describe("car cam pendant un flip", () => {
       let pire = 0;
       for (let i = finFlip; i < Math.min(images.length, finFlip + FENETRE_RACCROCHAGE); i++) pire = Math.max(pire, (ecartDeg(images[i].dir, images[i - 1].dir) * Math.PI) / 180 * 60);
       expect(pire).toBeLessThanOrEqual(VITESSE_RACCROCHAGE * 1.05);
-      // voiture figée (état de fin de vol), la caméra se pose derrière son avant comme avant le flip : 70 % du tangage du nez
+      // voiture figée (état de fin de vol), la caméra se pose derrière le CAP de son avant, à l'horizontale, comme avant le flip
       const fin = structuredClone(v);
       fin.auSol = false;
       for (let i = 0; i < 90; i++) majCamera(e, CAMERA_DEFAUT, entree(), fin, balleA([0, 1, 30]), arene, 1 / 60, 16 / 9, false);
       const a = fin.base.avant;
-      expect(dot(e.dir, normaliser([a[0], a[1] * 0.7, a[2]]))).toBeGreaterThan(0.995);
+      expect(dot(e.dir, normaliser([a[0], 0, a[2]]))).toBeGreaterThan(0.995);
     }
   });
 
@@ -586,12 +604,13 @@ describe("car cam pendant un flip", () => {
     expect(e.dir[0]).toBeGreaterThan(0.99);
   });
 
-  it("aérien normal (nez qui monte, pas de flip) : comportement inchangé, 70 % du tangage du nez suivi", () => {
+  it("aérien normal (nez qui monte, pas de flip) : la caméra garde le cap du nez, à l'horizontale (pas de suivi du tangage)", () => {
     const base = { avant: normaliser([0, Math.sin(40 * D2R), Math.cos(40 * D2R)]) as Vec3, droite: [-1, 0, 0] as Vec3, haut: normaliser([0, Math.cos(40 * D2R), -Math.sin(40 * D2R)]) as Vec3 };
     const moi = voiture([0, 8, 0], 0, { auSol: false, normaleSurface: null, base });
     expect(flipEnCours(moi)).toBe(false);
     const { e } = simuler(moi, balleA([0, 1, 30]), undefined, entree(), 150);
-    expect(dot(e.dir, normaliser([0, base.avant[1] * 0.7, base.avant[2]]))).toBeGreaterThan(0.999);
+    expect(dot(e.dir, normaliser([0, 0, base.avant[2]]))).toBeGreaterThan(0.999);
+    expect(e.haut[1]).toBeGreaterThan(0.999);
   });
 
   it("correction du réseau en plein flip (rollback qui coupe puis rétablit le flip) : la direction ne saute pas", () => {
@@ -633,9 +652,10 @@ describe("car cam pendant un flip", () => {
       const m = structuredClone(vrai.images[i].moi);
       m.base = structuredClone(vrai.images[0].moi.base);
       const pose = majCamera(e2, CAMERA_DEFAUT, entree({ balleCam: true }), m, vrai.balle, arene, 1 / 60, 16 / 9, false);
-      if (i > 5) {
-        expect(distance(pose.position, vrai.images[i].position)).toBeLessThan(1e-6);
-        expect(distance(pose.cible, vrai.images[i].cible)).toBeLessThan(1e-6);
+      // (les premières images : transitoire des lissages, les deux caméras ne sont pas créées sur le même état)
+      if (i > 12) {
+        expect(distance(pose.position, vrai.images[i].position)).toBeLessThan(1e-4);
+        expect(distance(pose.cible, vrai.images[i].cible)).toBeLessThan(1e-4);
       }
     }
   });

@@ -261,7 +261,7 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
   const rocketOuvertRef = useRef(rocketOuvert);
   rocketOuvertRef.current = rocketOuvert;
   const ligneActif = modeRocket === "ligne" && (rocketOuvert || enRocket || dansSalonRocket);
-  const salonRocket = useSalonRocket({ actif: ligneActif, nom: configRocket.nomJoueur, listeVisible: rocketOuvert && !enRocket });
+  const salonRocket = useSalonRocket({ actif: ligneActif, nom: configRocket.nomJoueur, listeVisible: rocketOuvert && !enRocket, skin: reglagesRocket.skin });
   const salonRocketRef = useRef(salonRocket);
   salonRocketRef.current = salonRocket;
   const auSalonRocket = salonRocket.etat.salon !== null;
@@ -1294,6 +1294,8 @@ export default function Agroparc3D({ onClose, partie = { score: 0, tigres: 0 }, 
             erreur: erreurRocket,
             pseudoParDefaut: !configRocket.nomJoueur.trim() || configRocket.nomJoueur.trim() === "Agent",
             surPrechargement: precharger,
+            skin: reglagesRocket.skin,
+            surSkin: (skin) => reglerRocket({ ...reglagesRocket, skin }),
           }}
         >
           <LobbyRocket

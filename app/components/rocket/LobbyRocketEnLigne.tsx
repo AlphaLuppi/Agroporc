@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
-import { FORMATS, LIBELLES_NIVEAU, MATCH, NIVEAUX_BOT, type Format, type NiveauBot } from "@/lib/rocket/contrat";
+import { FORMATS, LIBELLES_NIVEAU, LIBELLES_SKIN, MATCH, NIVEAUX_BOT, estSkin, type Format, type NiveauBot } from "@/lib/rocket/contrat";
 import {
   DESCRIPTIONS_EQUIPE, DESCRIPTIONS_FORMAT, DESCRIPTIONS_NIVEAU, LIBELLES_FORMAT, NOM_JOUEUR_MAX, libelleDuree, nettoyerNomJoueur,
 } from "@/lib/rocket/lobby";
@@ -9,6 +9,7 @@ import {
   codePret, ecranLobby, libelleChargement, libelleConnexion, libelleLancer, lignesParties, reessayable, saisirCode, vueSalon,
   type EquipeVue, type VueSalon,
 } from "@/lib/rocket/reseau/lobby-en-ligne";
+import ChoixSkinRocket from "./ChoixSkinRocket";
 import type { PropsLobbyRocketEnLigne } from "./contrats";
 import styles from "./Rocket.module.css";
 
@@ -69,6 +70,7 @@ function ColonneEquipe({ e, moi, surChoisir }: { e: EquipeVue; moi: number | nul
         {e.joueurs.map((j) => (
           <li key={j.id} data-rocket-joueur="" data-joueur={j.id} data-connecte={j.connecte ? "oui" : "non"}>
             <span className={styles.nomJoueur}>{j.nom}</span>
+            {j.skin && estSkin(j.skin) && j.skin !== "octane" && <span className={styles.etiquette}>{LIBELLES_SKIN[j.skin]}</span>}
             {j.id === moi && <span className={styles.etiquette}>vous</span>}
             {j.hote && <span className={styles.etiquette}>hôte</span>}
             {!j.connecte && <span className={styles.etiquette} data-etat="alerte">déconnecté</span>}
@@ -131,7 +133,7 @@ function ReglagesHote({ vue, idBase, surRegler }: { vue: VueSalon; idBase: strin
  * Tout le modèle est dans `lib/rocket/reseau/lobby-en-ligne.ts` ; ici seulement du rendu. Contrat DOM des essais : spec § 9.3.
  */
 export default function LobbyRocketEnLigne({
-  etat, actions, nom, surNom, reglages, surReglages, surFermer, tactile, manette, erreur = null, pseudoParDefaut = false, surPrechargement,
+  etat, actions, nom, surNom, reglages, surReglages, surFermer, tactile, manette, erreur = null, pseudoParDefaut = false, surPrechargement, skin, surSkin,
 }: PropsLobbyRocketEnLigne) {
   const id = useId();
   const [codeSaisi, setCodeSaisi] = useState("");
@@ -157,6 +159,8 @@ export default function LobbyRocketEnLigne({
   const occupe = etat.attente !== null;
   const code = codePret(codeSaisi);
   const nomPropre = nettoyerNomJoueur(nom);
+  // carrosserie : envoyée au salon (et à l'écran de fin) par le hook (`useSalonRocket`), renvoyée si le serveur l'a refusée en plein lancement
+  const choixSkin = skin && surSkin ? <ChoixSkinRocket nom={`${id}-skin`} valeur={skin} surChoix={surSkin} /> : null;
 
   const rejoindreParCode = () => { if (code && !bloqueTactile && !occupe) actions.rejoindre(code); };
   const copierCode = async () => {
@@ -194,6 +198,7 @@ export default function LobbyRocketEnLigne({
               onBlur={() => { if (nom !== nomPropre) surNom(nomPropre); }}
             />
           </div>
+          {choixSkin}
 
           <button
             type="button"
@@ -301,6 +306,8 @@ export default function LobbyRocketEnLigne({
             <ColonneEquipe key={e.equipe} e={e} moi={etat.joueur} surChoisir={() => actions.choisirEquipe(e.equipe)} />
           ))}
         </div>
+
+        {enSalon && choixSkin}
 
         {enSalon && (
           vue.estHote ? (

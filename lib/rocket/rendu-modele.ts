@@ -14,6 +14,7 @@
  * lue avant l'OutputPass) : les décors ordinaires restent dessous, seules les équipes, les plots actifs, la balle et les lignes l'atteignent.
  */
 import { BALLE, BUT, PLOT, STADE, VOITURE, type Equipe, type EtatPlot } from "./contrat";
+import { PROFIL_CAGE, hauteurPiedPoteau, rayonRaccordFond } from "./arene";
 import { angleNormalise, clamp, lerp, type Vec3 } from "./vec";
 
 // ============================================================================================================================
@@ -170,49 +171,42 @@ export const PROFIL = (() => {
   const r = RAYON_COQUE;
   const quart = (r * Math.PI) / 2;
   const mur = STADE.hauteur - 2 * r;
-  return { rayon: r, quart, mur, longueur: 2 * quart + mur, vSommetCage: quart + (BUT.hauteur - r) };
+  return { rayon: r, quart, mur, longueur: 2 * quart + mur, vSommetCage: quart + (BUT.hauteurPlafond - r) };
 })();
 
-/** Décalage vers l'extérieur du contour `dr` et hauteur `y` du profil à l'abscisse `v` ∈ [0, PROFIL.longueur]. */
-export function pointProfil(v: number): { dr: number; y: number } {
+/**
+ * Décalage vers l'extérieur du contour `dr` et hauteur `y` du profil à l'abscisse `v` ∈ [0, PROFIL.longueur]. `rSol` : rayon du raccord de
+ * sol (celui du stade par défaut ; plus petit sur le mur du fond près des cages, cf. `rayonRaccordFond`) : sol plat sur `R - rSol`, arc
+ * de `rSol`, puis mur droit jusqu'à `R` ; la portion v ∈ [0, quart] couvre toujours ce raccord, la suite du profil ne change pas.
+ */
+export function pointProfil(v: number, rSol: number = RAYON_COQUE): { dr: number; y: number } {
   const { rayon: r, quart, mur } = PROFIL;
-  if (v <= quart) { const phi = Math.PI / 2 - v / r; return { dr: r * Math.cos(phi), y: r * (1 - Math.sin(phi)) }; }
+  if (v <= quart) {
+    const plat = r - rSol, arc = (rSol * Math.PI) / 2;
+    const s = (v / quart) * (2 * plat + arc);
+    if (s <= plat) return { dr: s, y: 0 };
+    if (s <= plat + arc) { const phi = (s - plat) / rSol; return { dr: plat + rSol * Math.sin(phi), y: rSol * (1 - Math.cos(phi)) }; }
+    return { dr: r, y: rSol + (s - plat - arc) };
+  }
   if (v <= quart + mur) return { dr: r, y: r + (v - quart) };
   const th = (v - quart - mur) / r;
   return { dr: r * Math.cos(th), y: STADE.hauteur - r + r * Math.sin(th) };
 }
 
-/** Point de la coque en repère local du stade, à l'abscisse (u, v). */
+/**
+ * Point de la coque en repère local du stade, à l'abscisse (u, v). Sur le mur du fond, le raccord de sol a le rayon de la collision
+ * (`rayonRaccordFond` : celui de l'intérieur de la cage au poteau, puis celui du stade à 18 m).
+ */
 export function pointCoque(c: Readonly<Contour>, u: number, v: number, tmp: PointContour = { x: 0, z: 0, nx: 0, nz: 0 }): Vec3 {
   pointContour(c, u, tmp);
-  const { dr, y } = pointProfil(clamp(v, 0, PROFIL.longueur));
-  return biseauterCoque([tmp.x + tmp.nx * dr, y, tmp.z + tmp.nz * dr]);
+  const rSol = Math.abs(tmp.nz) > 0.999 ? rayonRaccordFond(tmp.x) : RAYON_COQUE;
+  const { dr, y } = pointProfil(clamp(v, 0, PROFIL.longueur), rSol);
+  return [tmp.x + tmp.nx * dr, y, tmp.z + tmp.nz * dr];
 }
 
-/**
- * Biseau du raccord de sol à côté des poteaux (même plan que la collision, `arene.ts`) : un point du raccord arrondi situé du côté
- * libre du plan (là où la matière a été rabotée) est reculé sur le plan, le long du rayon de l'arc. Au poteau le raccord disparaît : le mur tombe droit sur le sol.
- */
-export function biseauterCoque(p: Vec3): Vec3 {
-  const r = RAYON_COQUE, t = BUT.longueurBiseau;
-  const ax = Math.abs(p[0]), zm = STADE.demiLongueur - Math.abs(p[2]);
-  if (p[1] >= r || zm < -1e-6 || zm > r + 1e-6 || ax < BUT.demiLargeur - 1e-6 || ax > BUT.demiLargeur + t) return p;
-  // plan : -r·(|x| - demiLargeur) + t·y + t·zm = 0 (positif = espace libre)
-  const pl = -r * (ax - BUT.demiLargeur) + t * p[1] + t * zm;
-  if (pl <= 0) return p;
-  // le point de l'arc flotte dans la partie rabotée : on le recule sur le plan, à l'opposé du centre de l'arc (zm = r, y = r)
-  const dy = r - p[1], dz = r - zm;
-  // sans traverser le sol ni le mur du fond (près des bouts de l'arc, le plan est au-delà : le point s'arrête sur le sol ou le mur)
-  let k = -pl / (t * dy + t * dz);
-  if (dy > 1e-9) k = Math.max(k, -p[1] / dy);
-  if (dz > 1e-9) k = Math.max(k, -zm / dz);
-  const sz = p[2] < 0 ? -1 : 1;
-  return [p[0], p[1] + dy * k, sz * (STADE.demiLongueur - (zm + dz * k))];
-}
-
-/** Ouverture du but dans la coque (le mur, le raccord de sol) : à ne pas dessiner. */
+/** Ouverture du but dans la coque (le mur, le raccord de sol) : à ne pas dessiner (paroi et plafond de la cage de la collision). */
 export function dansOuvertureBut(x: number, y: number, z: number): boolean {
-  return Math.abs(x) < BUT.demiLargeur + 1e-6 && y < BUT.hauteur + 1e-6 && Math.abs(z) > STADE.demiLongueur - RAYON_COQUE - 1e-3;
+  return Math.abs(x) < BUT.demiLargeurParoi + 1e-6 && y < BUT.hauteurPlafond + 1e-6 && Math.abs(z) > STADE.demiLongueur - RAYON_COQUE - 1e-3;
 }
 
 /** Distance signée EXACTE (positive dedans) d'un point au prisme octogonal rétréci — la formule de la spec § 3.2, pour les tests. */
@@ -251,7 +245,7 @@ export function grilleContour(c: Readonly<Contour>, pas: number): number[] {
     const L = p.u1 - p.u0;
     const ts = [0, 1];
     if (p.fond !== 0) {
-      for (const xm of [BUT.demiLargeur, -BUT.demiLargeur]) {
+      for (const xm of [BUT.demiLargeurParoi, -BUT.demiLargeurParoi]) {
         const t = (xm - p.a[0]) / (p.b[0] - p.a[0]);
         if (t > 1e-6 && t < 1 - 1e-6) ts.push(t);
       }
@@ -344,11 +338,6 @@ export function eventail(poly: readonly (readonly [number, number])[], y: number
   for (const p of poly) push(p[0], p[1]);
   for (let i = 0; i < poly.length; i++) n.indices.push(0, 1 + i, 1 + ((i + 1) % poly.length));
   return n;
-}
-/** Fond d'une cage à hauteur 0 (rectangle du plan des buts à `Z = ±60`). */
-export function solCage(signeZ: -1 | 1, couleur: (x: number, z: number) => RGB): Nappe {
-  const z0 = signeZ * (STADE.demiLongueur - RAYON_COQUE), z1 = signeZ * (STADE.demiLongueur + BUT.profondeur);
-  return eventail([[-BUT.demiLargeur, z0], [BUT.demiLargeur, z0], [BUT.demiLargeur, z1], [-BUT.demiLargeur, z1]], 0, couleur);
 }
 /** Concatène plusieurs nappes (décale les indices). */
 export function fusionnerNappes(nappes: readonly Nappe[]): Nappe {
@@ -497,20 +486,122 @@ export function lignesTerrain(): Maillage {
     // surface de réparation (16,5 m × ±22) et surface de but (5,5 m × ±12,5), façon football
     ruban(rect(-22, s * zFond, 22, s * (zFond - 16.5)), l, true, y, m);
     ruban(rect(-12.5, s * zFond, 12.5, s * (zFond - 5.5)), l, true, y, m);
-    // ligne de but dans la cage
-    ruban([[-BUT.demiLargeur, s * STADE.demiLongueur], [BUT.demiLargeur, s * STADE.demiLongueur]], l, false, y, m);
+    // ligne de but dans la cage, sur la partie plate du sol (au-delà, le raccord du pied des poteaux monte)
+    const xb = PROFIL_CAGE.demiLargeurErodee;
+    ruban([[-xb, s * STADE.demiLongueur], [xb, s * STADE.demiLongueur]], l, false, y, m);
   }
   return m;
 }
 
 // ============================================================================================================================
-// 4. Buts : montants, barre, filet, fond lumineux
+// 4. Buts : profil arrondi, montants, barre, filet, fond lumineux
 // ============================================================================================================================
+//
+// La cage est dessinée sur la surface EXACTE de la collision (`arene.ts`) : E = [-W', W'] × P' (profil érodé de la cage) regonflé de RI.
+// Chaque point du bord de P' (q, de normale sortante n) donne, à travers la cage, la courbe (x, q + f·n) : f = RI sur |x| ≤ W' (sol,
+// demi-cylindre du fond, plafond), et autour des parois x = ±(W' + RI cos φ), f = RI sin φ (raccords de RI) ; les parois x = ±W sont le
+// polygone P' lui-même. Au pied des poteaux, le sol suit `hauteurPiedPoteau` (raccord qui fait le tour du poteau).
+
+/** Un point du profil de la cage dessinée : point `q` du bord du profil érodé P', normale sortante `n`, et nature de la pièce. */
+export interface EchantillonProfilCage { qd: number; qy: number; nd: number; ny: number; piece: "sol" | "fond" | "plafond" }
+
+/**
+ * Bord du profil de la cage derrière la ligne de but (d ≥ 0), du sol (d = 0) au plafond (d = 0) en passant par le fond : segments et arcs
+ * de P', arcs de RI aux sommets ; un point exact au plus profond (d = 8,80 m) et aux sommets. `pas` : écart maximal (m) sur la surface.
+ */
+export function profilCage(pas = 0.25): EchantillonProfilCage[] {
+  const { sommets: S, rayon: RI, centreFond: C, rayonFondErode: RE, angleDebutArc: a2, angleFinArc: a3 } = PROFIL_CAGE;
+  const A1 = S[1], A2 = S[2], A3 = S[3], A4 = S[4];
+  const out: EchantillonProfilCage[] = [];
+  const pousser = (qd: number, qy: number, ang: number, piece: EchantillonProfilCage["piece"]) => {
+    const nd = Math.cos(ang), ny = Math.sin(ang);
+    const der = out[out.length - 1];
+    if (der && Math.abs(der.qd - qd) < 1e-9 && Math.abs(der.qy - qy) < 1e-9 && Math.abs(der.nd - nd) < 1e-9 && Math.abs(der.ny - ny) < 1e-9) return;
+    out.push({ qd, qy, nd, ny, piece });
+  };
+  const angSeg = (a: readonly number[], b: readonly number[]) => Math.atan2(-(b[0] - a[0]), b[1] - a[1]);
+  const segment = (a: readonly number[], b: readonly number[], piece: EchantillonProfilCage["piece"]) => {
+    const n = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / pas)), ang = angSeg(a, b);
+    for (let i = 0; i <= n; i++) pousser(lerp(a[0], b[0], i / n), lerp(a[1], b[1], i / n), ang, piece);
+  };
+  const sommet = (q: readonly number[], ang0: number, ang1: number, piece: EchantillonProfilCage["piece"]) => {
+    const da = angleNormalise(ang1 - ang0);
+    const n = Math.max(1, Math.ceil((RI * Math.abs(da)) / pas));
+    for (let i = 0; i <= n; i++) pousser(q[0], q[1], ang0 + (da * i) / n, piece);
+  };
+  const arc = (b0: number, b1: number) => {
+    const n = Math.max(1, Math.ceil(((RE + RI) * (b1 - b0)) / pas));
+    for (let i = 0; i <= n; i++) { const b = lerp(b0, b1, i / n); pousser(C[0] + RE * Math.cos(b), C[1] + RE * Math.sin(b), b, "fond"); }
+  };
+  const debut = [0, A1[1]], fin = [0, A4[1]];
+  segment(debut, A1, "sol");
+  sommet(A1, angSeg(debut, A1), angSeg(A1, A2), "sol");
+  segment(A1, A2, "sol");
+  sommet(A2, angSeg(A1, A2), a2, "fond");
+  arc(a2, 0);
+  arc(0, a3);
+  segment(A3, A4, "plafond");
+  sommet(A4, angSeg(A3, A4), angSeg(A4, fin), "plafond");
+  segment(A4, fin, "plafond");
+  return out;
+}
+
+/** Points d'une coupe de la cage (de la paroi x = -W à la paroi x = +W) : abscisse x et décalage f le long de la normale du profil. */
+function coupeCage(nRaccord: number, nPlat: number): { x: number; f: number; raccord: boolean }[] {
+  const { demiLargeurErodee: Wp, rayon: RI } = PROFIL_CAGE;
+  const c: { x: number; f: number; raccord: boolean }[] = [];
+  for (let k = 0; k < nRaccord; k++) { const phi = ((Math.PI / 2) * k) / nRaccord; c.push({ x: -(Wp + RI * Math.cos(phi)), f: RI * Math.sin(phi), raccord: true }); }
+  for (let k = 0; k <= nPlat; k++) c.push({ x: lerp(-Wp, Wp, k / nPlat), f: RI, raccord: false });
+  for (let k = nRaccord - 1; k >= 0; k--) { const phi = ((Math.PI / 2) * k) / nRaccord; c.push({ x: Wp + RI * Math.cos(phi), f: RI * Math.sin(phi), raccord: true }); }
+  return c;
+}
+
+/** Point 3D de la cage du côté `s` (±1) : coupe (x, f) au point `e` du profil. */
+const pointCage = (s: number, e: EchantillonProfilCage, x: number, f: number): Vec3 =>
+  [x, e.qy + f * e.ny, s * (STADE.demiLongueur + e.qd + f * e.nd)];
+
+/**
+ * Sol de la cage `signeZ` : devant la ligne de but (de Z = ±48,64 à ±51,20, sol plat et raccords qui font le tour du pied des poteaux),
+ * puis le sol plat et la pente du sol jusqu'au pied du demi-cylindre du fond, entre les raccords des parois.
+ */
+export function solCage(signeZ: -1 | 1, couleur: (x: number, z: number) => RGB): Nappe {
+  const n: Nappe = { positions: [], couleurs: [], indices: [] };
+  const { demiLargeur: W, demiLargeurErodee: Wp, rayon: RI } = PROFIL_CAGE;
+  const zm0 = RAYON_COQUE;
+  const push = (p: Vec3) => { n.positions.push(p[0], p[1], p[2]); const c = couleur(p[0], p[2]); n.couleurs.push(c[0], c[1], c[2]); };
+  /** grille ni × nj de sommets donnés par `f(i, j)`, triangulée */
+  const grille = (ni: number, nj: number, f: (i: number, j: number) => Vec3) => {
+    const base = n.positions.length / 3;
+    for (let i = 0; i < ni; i++) for (let j = 0; j < nj; j++) push(f(i, j));
+    for (let i = 0; i < ni - 1; i++) for (let j = 0; j < nj - 1; j++) {
+      const a = base + i * nj + j, b = a + nj;
+      n.indices.push(a, b, a + 1, b, b + 1, a + 1);
+    }
+  };
+  // devant la ligne de but, entre les raccords : plat
+  const zf = signeZ * STADE.demiLongueur, z0 = signeZ * (STADE.demiLongueur - zm0);
+  grille(2, 2, (i, j) => [i ? Wp : -Wp, 0, j ? zf : z0]);
+  // pied de chaque poteau : rayons depuis l'arête du poteau (x = ±W, zm = 0), de la ligne de but (β = 0) au mur du fond (β = π/2)
+  const NB = 8, NR = 8;
+  for (const sx of [-1, 1]) {
+    grille(NB + 1, NR + 2, (i, j) => {
+      const b = ((Math.PI / 2) * i) / NB, cb = Math.cos(b), sb = Math.sin(b);
+      const dMax = Math.min(cb > 1e-9 ? RI / cb : Infinity, sb > 1e-9 ? zm0 / sb : Infinity);
+      const D = j <= NR ? RI * (1 - Math.cos(((Math.PI / 2) * j) / NR)) : dMax;
+      const x = W - D * cb, zm = D * sb;
+      return [sx * x, hauteurPiedPoteau(x, zm), signeZ * (STADE.demiLongueur - zm)];
+    });
+  }
+  // dans la cage : sol plat puis pente, sur toute la largeur entre les raccords des parois
+  const prof = profilCage().filter((e) => e.piece === "sol");
+  grille(prof.length, 2, (i, j) => pointCage(signeZ, prof[i], j ? Wp : -Wp, RI));
+  return n;
+}
 
 export interface Tube { a: Vec3; b: Vec3; rayon: number }
 export interface GeometrieCage {
   equipe: Equipe;
-  /** montants et barre transversale */
+  /** montants et barre transversale (quasi vifs, comme dans Rocket League), puis le contour du profil sur les parois */
   tubes: Tube[];
   /** filet : segments (xyz à plat par paires) */
   filet: number[];
@@ -518,39 +609,123 @@ export interface GeometrieCage {
   quads: { coins: [Vec3, Vec3, Vec3, Vec3]; intensite: number }[];
 }
 
+/** Rayon des montants et de la barre transversale (m) ; celui du contour du profil sur les parois. */
+export const RAYON_MONTANT = 0.08;
+export const RAYON_CONTOUR_CAGE = 0.04;
+
+/** Abscisses d (min, max) où la droite y = `y` coupe le polygone convexe `poly` (points [d, y]) ; null si elle le manque. */
+function bornesPolygone(poly: readonly (readonly [number, number])[], axe: 0 | 1, valeur: number): [number, number] | null {
+  let lo = Infinity, hi = -Infinity;
+  const autre = axe === 0 ? 1 : 0;
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i], b = poly[(i + 1) % poly.length];
+    if ((a[axe] - valeur) * (b[axe] - valeur) > 0 || a[axe] === b[axe]) continue;
+    const t = (valeur - a[axe]) / (b[axe] - a[axe]);
+    const w = a[autre] + (b[autre] - a[autre]) * t;
+    lo = Math.min(lo, w); hi = Math.max(hi, w);
+  }
+  return lo < hi ? [lo, hi] : null;
+}
+
 /** Cage du but défendu par l'équipe `equipe` (bleue : Z = -60). `pasFilet` : maille du filet (m). */
 export function geometrieCage(equipe: Equipe, pasFilet = 0.6): GeometrieCage {
   const s = equipe === "bleue" ? -1 : 1;
-  const zf = s * STADE.demiLongueur, zb = s * (STADE.demiLongueur + BUT.profondeur);
-  const hw = BUT.demiLargeur, h = BUT.hauteur;
+  const { demiLargeur: W, demiLargeurErodee: Wp, rayon: RI } = PROFIL_CAGE;
+  const zf = s * STADE.demiLongueur, HP = BUT.hauteurPlafond;
+  const prof = profilCage(Math.min(0.5, pasFilet / 2.4));
+  const coupe = coupeCage(4, 1);
+  const P = (e: EchantillonProfilCage, x: number, f: number) => pointCage(s, e, x, f);
+
+  // ---------- tubes : montants (du haut du raccord du pied du poteau à la barre), barre, contour du profil sur chaque paroi ----------
   const tubes: Tube[] = [
-    { a: [-hw, 0, zf], b: [-hw, h, zf], rayon: 0.13 },
-    { a: [hw, 0, zf], b: [hw, h, zf], rayon: 0.13 },
-    { a: [-hw, h, zf], b: [hw, h, zf], rayon: 0.13 },
-    // cadre du fond et arêtes de la cage
-    { a: [-hw, h, zb], b: [hw, h, zb], rayon: 0.06 },
-    { a: [-hw, 0, zb], b: [-hw, h, zb], rayon: 0.06 },
-    { a: [hw, 0, zb], b: [hw, h, zb], rayon: 0.06 },
-    { a: [-hw, h, zf], b: [-hw, h, zb], rayon: 0.06 },
-    { a: [hw, h, zf], b: [hw, h, zb], rayon: 0.06 },
+    { a: [-W, RI, zf], b: [-W, HP, zf], rayon: RAYON_MONTANT },
+    { a: [W, RI, zf], b: [W, HP, zf], rayon: RAYON_MONTANT },
+    { a: [-W, HP, zf], b: [W, HP, zf], rayon: RAYON_MONTANT },
   ];
+  // contour : la ligne où la paroi plane rejoint son raccord (x = ±W, point q du profil), par tronçons d'environ 0,6 m
+  for (const sx of [-1, 1]) {
+    let prec: Vec3 | null = null, longueur = 0;
+    for (let i = 0; i < prof.length; i++) {
+      const q: Vec3 = [sx * W, prof[i].qy, s * (STADE.demiLongueur + prof[i].qd)];
+      if (!prec) { prec = q; continue; }
+      longueur += Math.hypot(q[1] - prec[1], q[2] - prec[2]);
+      if (longueur >= 0.6 || i === prof.length - 1) {
+        if (Math.hypot(q[1] - prec[1], q[2] - prec[2]) > 1e-6) tubes.push({ a: prec, b: q, rayon: RAYON_CONTOUR_CAGE });
+        prec = q; longueur = 0;
+      }
+    }
+  }
+
+  // ---------- filet ----------
   const filet: number[] = [];
   const seg = (a: Vec3, b: Vec3) => filet.push(a[0], a[1], a[2], b[0], b[1], b[2]);
-  const nx = Math.round((2 * hw) / pasFilet), ny = Math.max(2, Math.round(h / pasFilet)), nz = Math.round(BUT.profondeur / pasFilet);
-  for (let i = 0; i <= nx; i++) { const x = -hw + (2 * hw * i) / nx; seg([x, 0, zb], [x, h, zb]); seg([x, h, zf], [x, h, zb]); }
-  for (let j = 0; j <= ny; j++) { const y = (h * j) / ny; seg([-hw, y, zb], [hw, y, zb]); seg([-hw, y, zf], [-hw, y, zb]); seg([hw, y, zf], [hw, y, zb]); }
-  for (let k = 0; k <= nz; k++) {
-    const z = lerp(zf, zb, k / nz);
-    seg([-hw, h, z], [hw, h, z]); seg([-hw, 0, z], [-hw, h, z]); seg([hw, 0, z], [hw, h, z]);
+  // profils choisis à intervalles d'environ `pasFilet` le long de la surface
+  const choisis: number[] = [0];
+  let cumul = 0;
+  for (let i = 1; i < prof.length; i++) {
+    const a = P(prof[i - 1], 0, RI), b = P(prof[i], 0, RI);
+    cumul += Math.hypot(b[1] - a[1], b[2] - a[2]);
+    if (cumul >= pasFilet - 1e-9 || i === prof.length - 1) { choisis.push(i); cumul = 0; }
   }
-  const quads: GeometrieCage["quads"] = [
-    { coins: [[-hw, 0, zb], [hw, 0, zb], [hw, h, zb], [-hw, h, zb]], intensite: 1 },
-    { coins: [[-hw, 0, zf], [-hw, 0, zb], [-hw, h, zb], [-hw, h, zf]], intensite: 0.35 },
-    { coins: [[hw, 0, zf], [hw, 0, zb], [hw, h, zb], [hw, h, zf]], intensite: 0.35 },
-    { coins: [[-hw, h, zf], [hw, h, zf], [hw, h, zb], [-hw, h, zb]], intensite: 0.25 },
-    // bandeau LED au-dessus de la barre, dans le plan du mur
-    { coins: [[-hw, h + 0.12, zf], [hw, h + 0.12, zf], [hw, h + 0.42, zf], [-hw, h + 0.42, zf]], intensite: 1.2 },
-  ];
+  // lignes en travers (raccords et parties planes ; le sol plat n'a que ses raccords)
+  const coupeFilet = coupeCage(3, Math.max(1, Math.round((2 * Wp) / pasFilet)));
+  for (const i of choisis) {
+    const e = prof[i];
+    for (let k = 0; k < coupeFilet.length - 1; k++) {
+      const c0 = coupeFilet[k], c1 = coupeFilet[k + 1];
+      if (e.piece === "sol" && !c0.raccord && !c1.raccord) continue;
+      seg(P(e, c0.x, c0.f), P(e, c1.x, c1.f));
+    }
+  }
+  // lignes le long du profil (à chaque abscisse de la coupe du filet ; sur le sol plat, seulement dans les raccords)
+  for (const c of coupeFilet) {
+    for (let k = 0; k < choisis.length - 1; k++) {
+      const e0 = prof[choisis[k]], e1 = prof[choisis[k + 1]];
+      if (!c.raccord && e0.piece === "sol" && e1.piece === "sol") continue;
+      // le long d'un tronçon, on suit les échantillons intermédiaires pour coller à la courbure
+      for (let i = choisis[k]; i < choisis[k + 1]; i++) seg(P(prof[i], c.x, c.f), P(prof[i + 1], c.x, c.f));
+    }
+  }
+  // parois planes x = ±W : le profil érodé P' lui-même (d ≥ 0), quadrillé en d et en y
+  const poly: [number, number][] = [];
+  for (const e of prof) { const der = poly[poly.length - 1]; if (!der || Math.hypot(der[0] - e.qd, der[1] - e.qy) > 1e-9) poly.push([e.qd, e.qy]); }
+  const dMax = Math.max(...poly.map((p) => p[0])), yMin = Math.min(...poly.map((p) => p[1])), yMax = Math.max(...poly.map((p) => p[1]));
+  for (const sx of [-1, 1]) {
+    const pt = (d: number, y: number): Vec3 => [sx * W, y, s * (STADE.demiLongueur + d)];
+    for (let d = pasFilet; d < dMax; d += pasFilet) {
+      const b = bornesPolygone(poly, 0, d);
+      if (b) seg(pt(d, b[0]), pt(d, b[1]));
+    }
+    for (let y = yMin + pasFilet / 2; y < yMax; y += pasFilet) {
+      const b = bornesPolygone(poly, 1, y);
+      if (b) seg(pt(Math.max(0, b[0]), y), pt(b[1], y));
+    }
+  }
+
+  // ---------- quads lumineux : surface de la cage (hors sol plat), parois planes, bandeau au-dessus de la barre ----------
+  const quads: GeometrieCage["quads"] = [];
+  for (let i = 0; i < prof.length - 1; i++) {
+    const e0 = prof[i], e1 = prof[i + 1];
+    for (let k = 0; k < coupe.length - 1; k++) {
+      const c0 = coupe[k], c1 = coupe[k + 1];
+      const raccord = c0.raccord || c1.raccord;
+      if (!raccord && e0.piece === "sol") continue;
+      const intensite = raccord ? 0.35 : e0.piece === "fond" ? 1 : 0.25;
+      quads.push({ coins: [P(e0, c0.x, c0.f), P(e0, c1.x, c1.f), P(e1, c1.x, c1.f), P(e1, c0.x, c0.f)], intensite });
+    }
+  }
+  for (const sx of [-1, 1]) {
+    let cd = 0, cy = 0;
+    for (const p of poly) { cd += p[0]; cy += p[1]; }
+    const centre: Vec3 = [sx * W, cy / poly.length, s * (STADE.demiLongueur + cd / poly.length)];
+    for (let i = 0; i < poly.length; i++) {
+      const a = poly[i], b = poly[(i + 1) % poly.length];
+      const pa: Vec3 = [sx * W, a[1], s * (STADE.demiLongueur + a[0])], pb: Vec3 = [sx * W, b[1], s * (STADE.demiLongueur + b[0])];
+      quads.push({ coins: [centre, pa, pb, pb], intensite: 0.35 });
+    }
+  }
+  // bandeau LED au-dessus de la barre, dans le plan du mur
+  quads.push({ coins: [[-W, HP + 0.12, zf], [W, HP + 0.12, zf], [W, HP + 0.42, zf], [-W, HP + 0.42, zf]], intensite: 1.2 });
   return { equipe, tubes, filet, quads };
 }
 
@@ -643,19 +818,8 @@ export const sautPublic = (phase: number, t: number, k: number): number => k * M
 // 7. La voiture (Octane stylisée)
 // ============================================================================================================================
 
-/** Profil latéral (avant, haut) en mètres, dans le repère de la voiture, dans le sens trigonométrique. */
-export const PROFIL_OCTANE: readonly (readonly [number, number])[] = [
-  [-0.45, 0.05], [0.72, 0.05], [0.73, 0.15], [0.62, 0.22], [0.3, 0.27], [0.1, 0.385], [-0.12, 0.388], [-0.3, 0.28], [-0.45, 0.25],
-];
-export const LARGEUR_OCTANE = VOITURE.hitbox.largeur;
-/** Pièces annexes : aileron et supports (centre [avant, droite, haut] et taille [avant, droite, haut]). */
-export const PIECES_OCTANE: readonly { c: readonly [number, number, number]; t: readonly [number, number, number] }[] = [
-  { c: [-0.43, 0, 0.31], t: [0.16, 0.84, 0.025] },
-  { c: [-0.39, 0.25, 0.27], t: [0.05, 0.035, 0.08] },
-  { c: [-0.39, -0.25, 0.27], t: [0.05, 0.035, 0.08] },
-];
-/** Position de l'échappement (flamme du boost), repère [avant, droite, haut]. */
-export const ECHAPPEMENT_OCTANE: readonly [number, number, number] = [-0.46, 0, 0.14];
+/** Silhouette de l'Octane : définie avec les autres carrosseries dans `skins.ts` (pur), réexportée ici pour les appelants historiques. */
+export { ECHAPPEMENT_OCTANE, LARGEUR_OCTANE, PIECES_OCTANE, PROFIL_OCTANE } from "./skins";
 /** Avant / droite / haut → coordonnées three du modèle (x = -droite). */
 export const versThree = (avant: number, droite: number, haut: number): Vec3 => [-droite, haut, avant];
 

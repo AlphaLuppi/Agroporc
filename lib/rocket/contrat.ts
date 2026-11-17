@@ -76,15 +76,45 @@ export const BUT = {
   rayonArete: uu(15),
   /** la balle marque quand son CENTRE dépasse Z = ±(51,2425 + rayon de balle) (RL : 5124,25 uu + rayon, `SOCCAR_GOAL_SCORE_BASE_THRESHOLD_Y`) */
   seuilMarque: uu(5124.25),
-  /** raccords des angles intérieurs de la cage (RL : cage à angles vifs, on adoucit à 0,25 m pour éviter les points durs de la SDF) */
-  rayonInterieur: uu(25),
   /**
-   * de part et d'autre de la cage, le raccord arrondi sol / mur du fond s'efface en biseau sur cette longueur (m) : au poteau le mur
-   * tombe droit sur le sol, rien ne dépasse dans le terrain, et on entre ou sort de la cage en longeant le mur sans rien accrocher
+   * Cage « comme dans Rocket League » (maillage de collision du but standard, `standard_goal_*.bin` du dépôt VirxEC/rl_ball_sym,
+   * extrait du jeu comme ceux de RocketSim, coupé en plans) : la cage a des raccords CONCAVES d'environ 1 m partout à l'intérieur (sol,
+   * plafond et fond contre les parois latérales), le fond est un demi-cylindre d'axe X, le plafond plonge vers lui en pente : on monte
+   * sur les parois et jusqu'au plafond de la cage depuis l'intérieur, sans aucune marche. Poteaux et barre restent quasi vifs (RL : on
+   * ne passe pas du mur du fond au plafond de la cage par-dessus la barre). d = |Z| − 51,20 est la profondeur dans la cage.
+   *
+   * paroi latérale de la collision : |X| = 8,96 m (maillage RL : x = ±896 uu). `demiLargeur` (892,755) reste le seuil de marque.
    */
-  longueurBiseau: 6,
-  /** rayon de l'adoucissement des arêtes de ce biseau (m) */
-  rayonBiseau: 0.5,
+  demiLargeurParoi: uu(896),
+  /** plafond de la cage de la collision : 6,40 m (maillage RL : z = 640 uu). `hauteur` (642,775) reste le seuil de marque. */
+  hauteurPlafond: uu(640),
+  /**
+   * rayon des raccords concaves intérieurs de la cage : 1,12 m [~] (maillage RL : ≈ 96 à 100 uu, arcs sol/paroi, plafond/paroi,
+   * paroi/fond). Notre voiture n'a pas de suspension : avec 0,96 m, le nez de la hitbox de l'Octane heurtait encore le raccord au-delà
+   * de 18 m/s (choc de 6 à 10 m/s mesuré en fonçant dans la paroi ou en la longeant) ; à 1,12 m, plus aucun choc jusqu'à 23 m/s.
+   */
+  rayonInterieur: uu(112),
+  /** fond de la cage : demi-cylindre d'axe X de rayon 2,40 m (maillage RL : 240 uu)… */
+  rayonFond: uu(240),
+  /** …centré à la profondeur d = 6,40 m (maillage RL : 640 uu, point le plus profond à 880 uu = `profondeur`)… */
+  profondeurCentreFond: uu(640),
+  /** …et à la hauteur 2,56 m (maillage RL : 256 uu) */
+  hauteurCentreFond: uu(256),
+  /** plafond plat jusqu'à d = 2,24 m, puis pente vers le fond tangente au demi-cylindre (maillage RL : 224 uu, pente ≈ 17,5°) */
+  plafondPlatJusqua: uu(224),
+  /** sol plat jusqu'à d = 2,347 m (maillage RL : 234,7 uu)… */
+  penteSolDebut: uu(234.7),
+  /** …puis en pente douce (2,26°) jusqu'à 0,16 m au pied du demi-cylindre (maillage RL : 16 uu à d = 640 uu) */
+  hauteurPenteSol: uu(16),
+  /**
+   * raccord sol / mur du fond de part et d'autre de la cage : celui de l'intérieur de la cage au poteau (maillage RL : 0,96 m, il fait
+   * le tour du pied du poteau et se raccorde au raccord sol / paroi de la cage, de même rayon ; les deux DOIVENT rester égaux), jusqu'à
+   * |X| = `raccordPoteauJusqua`…
+   */
+  rayonRaccordPoteau: uu(112),
+  raccordPoteauJusqua: 10,
+  /** …puis il s'élargit (smoothstep) jusqu'au rayon des raccords du stade (`STADE.rayonSol`) à |X| = 18 m [~ : RL ≈ 1,16 m à 11 m, 1,60 m au loin] */
+  raccordFondDes: 18,
 } as const;
 
 /** Vrai pour la balle ET pour tout test « dans le but » : seuil du centre de balle selon son rayon. */
@@ -1018,7 +1048,7 @@ export interface ParamsCamera {
   hauteur: number;
   /** inclinaison (degrés) : -15..0 */
   angle: number;
-  /** rigidité : 0 (très souple) .. 1 (collée) */
+  /** rigidité (stiffness de RL) : étirement de la distance avec la vitesse, 0 (recule de 1 m à pleine vitesse) .. 1 (aucun) */
   rigidite: number;
   /** vitesse du regard libre (1..10) et de la transition ball cam ↔ car cam (1..2) */
   vitesseRegard: number;
@@ -1167,6 +1197,16 @@ export const LIAISONS_MANETTE_DEFAUT: LiaisonsManette = {
   chatBas: ["B13"],
 };
 
+/**
+ * Carrosseries des voitures (skins). VISUEL SEUL, comme les voitures de Rocket League posées sur une même hitbox : la boîte de collision, les
+ * roues physiques et toute la simulation restent ceux de l'Octane (`VOITURE`), quel que soit le skin. Modèles dans `skins.ts` (pur).
+ */
+export type SkinVoiture = "octane" | "308" | "2008" | "rio";
+/** Ordre d'affichage dans le lobby ; le premier est le défaut. */
+export const SKINS: readonly SkinVoiture[] = ["octane", "308", "2008", "rio"];
+export const LIBELLES_SKIN: Readonly<Record<SkinVoiture, string>> = { octane: "Octane", "308": "Peugeot 308", "2008": "Peugeot 2008", rio: "Kia Rio" };
+export const estSkin = (x: unknown): x is SkinVoiture => typeof x === "string" && (SKINS as readonly string[]).includes(x);
+
 export interface ReglagesRocket {
   camera: ParamsCamera;
   touches: LiaisonsTouches;
@@ -1183,6 +1223,8 @@ export interface ReglagesRocket {
   vibrations: boolean;
   /** afficher les réactions rapides des ADVERSAIRES (bulle, fil, son) ; celles de l'équipe et les miennes restent toujours visibles */
   reactionsAdversaires: boolean;
+  /** carrosserie de MA voiture (visuel seul : la hitbox reste celle de l'Octane, cf. `SkinVoiture`) */
+  skin: SkinVoiture;
 }
 export const REGLAGES_DEFAUT = (): ReglagesRocket => ({
   camera: { ...CAMERA_DEFAUT },
@@ -1194,6 +1236,7 @@ export const REGLAGES_DEFAUT = (): ReglagesRocket => ({
   inverserTangageManette: false,
   vibrations: true,
   reactionsAdversaires: true,
+  skin: "octane",
 });
 
 export const DEFAUT_CONFIG = (): ConfigMatch => ({
@@ -1466,6 +1509,8 @@ export interface OptionsRendu {
   qualite: "haute" | "basse";
   mouvementReduit: boolean;
   nomsEquipes: Record<Equipe, string>;
+  /** carrosserie de chaque voiture (index = id de voiture) ; absente ou plus courte : Octane */
+  skins?: readonly SkinVoiture[];
 }
 export interface RenduRocket {
   /**
@@ -1502,8 +1547,8 @@ export type CreerSonsRocket = () => SonsRocket;
 // ---- F. jeu.ts + camera.ts + entrees.ts + reglages.ts -------------------------------------------------------------------
 
 /**
- * Caméra de Rocket League : car cam / ball cam, rigidité, regard libre, vue arrière, secousse, anticollision avec le stade (la caméra ne
- * sort jamais de l'arène : on la rapproche de la voiture le long du rayon jusqu'à `sd > 0,4 m`). Pure. Implémenté par `camera.ts` (`creerEtatCamera`, `majCamera`).
+ * Caméra de Rocket League : car cam / ball cam, rigidité, regard libre, vue arrière, secousse, parois du stade (la caméra glisse
+ * sur le sol opaque, passe au plus 1 m derrière un mur translucide, n'entre jamais dans la voiture). Pure. Implémenté par `camera.ts` (`creerEtatCamera`, `majCamera`).
  */
 export type CreerEtatCamera = (moi: Readonly<EtatVoiture>, balle: Readonly<EtatBalle>, balleCam: boolean) => EtatCamera;
 export type MajCamera = (e: EtatCamera, p: Readonly<ParamsCamera>, entree: EntreesCamera, moi: Readonly<EtatVoiture>, balle: Readonly<EtatBalle>, arene: Arene, dt: number, aspect: number, mouvementReduit: boolean) => PoseCamera;

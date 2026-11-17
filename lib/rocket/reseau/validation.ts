@@ -3,7 +3,7 @@
  * vient du réseau : un message est reconstruit champ par champ (jamais recopié tel quel) et le moindre écart donne `null`, sans jamais lever.
  * La salle valide ensuite le FOND (hôte, phase, bornes). Spec § 7.
  */
-import { EQUIPES, FORMATS, MATCH, NIVEAUX_BOT } from "../contrat";
+import { EQUIPES, FORMATS, MATCH, NIVEAUX_BOT, estSkin } from "../contrat";
 import type { Equipe } from "../contrat";
 import { FORME_ID_REACTION } from "../reactions";
 import { RESEAU, normaliserCode } from "./protocole";
@@ -100,6 +100,8 @@ export const lireMessageClient: LireMessageClient = (brut) => {
     }
     case "equipe":
       return equipeValide(brut.equipe) ? { t, equipe: brut.equipe } : null;
+    case "skin":
+      return estSkin(brut.skin) ? { t, skin: brut.skin } : null;
     case "reglages": {
       const reglages = reglagesPartiels(brut.reglages);
       return reglages ? { t, reglages } : null;
@@ -129,5 +131,5 @@ export const lireMessageClient: LireMessageClient = (brut) => {
 
 /** Types de message connus, pour répondre `refus{invalide}` à un message mal formé d'un type reconnaissable. */
 export const TYPES_CLIENT: ReadonlySet<MessageClient["t"]> = new Set<MessageClient["t"]>([
-  "bonjour", "lister", "creer", "rejoindre", "quitter", "equipe", "reglages", "lancer", "pret", "ping", "klaxon", "reaction", "revanche", "retourSalon", "dev",
+  "bonjour", "lister", "creer", "rejoindre", "quitter", "equipe", "skin", "reglages", "lancer", "pret", "ping", "klaxon", "reaction", "revanche", "retourSalon", "dev",
 ]);

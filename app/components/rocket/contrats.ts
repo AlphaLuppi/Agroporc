@@ -4,7 +4,7 @@
  * Spec : docs/superpowers/specs/2026-11-06-rocket-agroparc-design.md § 10.
  */
 import type { ReactNode } from "react";
-import type { ConfigMatch, Equipe, HudRocket as EtatHud, ReglagesRocket, ResultatMatch } from "@/lib/rocket/contrat";
+import type { ConfigMatch, Equipe, HudRocket as EtatHud, ReglagesRocket, ResultatMatch, SkinVoiture } from "@/lib/rocket/contrat";
 import type { EtatLobbyEnLigne, ModeRocket } from "@/lib/rocket/reseau/lobby-en-ligne";
 import type { HudReseau, ReglagesSalon } from "@/lib/rocket/reseau/protocole";
 import type { ActionsSalonRocket } from "./useSalonRocket";
@@ -136,6 +136,9 @@ export interface PropsLobbyRocketEnLigne {
   pseudoParDefaut?: boolean;
   /** survol / focus de « Créer » et « Rejoindre » : précharge three et le jeu */
   surPrechargement?(): void;
+  /** carrosserie de ma voiture (mémorisée dans les réglages) et son changement ; absents : pas de choix affiché */
+  skin?: SkinVoiture;
+  surSkin?(s: SkinVoiture): void;
 }
 
 /** Panneau « Rocket Muche » : commutateur Hors ligne / En ligne au-dessus du lobby choisi. */

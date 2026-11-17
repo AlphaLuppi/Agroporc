@@ -79,6 +79,8 @@ describe("lireMessageClient : messages valides", () => {
   });
   it("equipe, reglages partiels, ping, revanche", () => {
     expect(lireMessageClient({ t: "equipe", equipe: "bleue" })).toEqual({ t: "equipe", equipe: "bleue" });
+    expect(lireMessageClient({ t: "skin", skin: "2008" })).toEqual({ t: "skin", skin: "2008" });
+    expect(lireMessageClient({ t: "skin", skin: "octane", x: 1 })).toEqual({ t: "skin", skin: "octane" });
     expect(lireMessageClient({ t: "reglages", reglages: { format: "2v2" } })).toEqual({ t: "reglages", reglages: { format: "2v2" } });
     expect(lireMessageClient({ t: "reglages", reglages: { visible: false, dureeS: 180 } })).toEqual({ t: "reglages", reglages: { visible: false, dureeS: 180 } });
     expect(lireMessageClient({ t: "reglages", reglages: {} })).toEqual({ t: "reglages", reglages: {} });
@@ -123,6 +125,7 @@ describe("lireMessageClient : refus", () => {
     ["rejoindre code long", { t: "rejoindre", code: "BCDFG" }], ["rejoindre code nombre", { t: "rejoindre", code: 1234 }],
     ["rejoindre équipe inconnue", { t: "rejoindre", code: "BCDF", equipe: "verte" }],
     ["equipe absente", { t: "equipe" }], ["equipe inconnue", { t: "equipe", equipe: "rouge" }], ["equipe nombre", { t: "equipe", equipe: 1 }],
+    ["skin absent", { t: "skin" }], ["skin inconnu", { t: "skin", skin: "306" }], ["skin nombre", { t: "skin", skin: 308 }], ["skin casse", { t: "skin", skin: "Rio" }],
     ["reglages absent", { t: "reglages" }], ["reglages non objet", { t: "reglages", reglages: "x" }], ["reglages tableau", { t: "reglages", reglages: [] }],
     ["reglages format inconnu", { t: "reglages", reglages: { format: "9v9" } }], ["reglages format null", { t: "reglages", reglages: { format: null } }],
     ["reglages visible chaîne", { t: "reglages", reglages: { visible: "true" } }], ["reglages dureeS NaN", { t: "reglages", reglages: { dureeS: NaN } }],
@@ -161,8 +164,8 @@ describe("lireMessageClient : fuzz", () => {
     let a = graine >>> 0;
     return () => { a = (a + 0x6d2b79f5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
   }
-  const TYPES = ["bonjour", "lister", "creer", "rejoindre", "quitter", "equipe", "reglages", "lancer", "pret", "ping", "klaxon", "reaction", "revanche", "retourSalon", "dev", "x", ""];
-  const CLES = ["t", "v", "nom", "reprise", "reglages", "code", "equipe", "c", "oui", "action", "p", "tempsRestant", "format", "dureeS", "niveauBots", "visible", "code", "joueur", "jeton", "__proto__", "constructor"];
+  const TYPES = ["bonjour", "lister", "creer", "rejoindre", "quitter", "equipe", "skin", "reglages", "lancer", "pret", "ping", "klaxon", "reaction", "revanche", "retourSalon", "dev", "x", ""];
+  const CLES = ["t", "v", "nom", "reprise", "reglages", "code", "equipe", "c", "oui", "action", "p", "tempsRestant", "skin", "format", "dureeS", "niveauBots", "visible", "code", "joueur", "jeton", "__proto__", "constructor"];
   const SOUS = ["bleue", "orange", "1v1", "2v2", "3v3", "pro", "debutant", "allstar", "BCDF", "bcdf", "\u202e", "a".repeat(5000)];
 
   function valeur(r: () => number, profondeur: number): unknown {

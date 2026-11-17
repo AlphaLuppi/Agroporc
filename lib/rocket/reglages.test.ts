@@ -178,4 +178,14 @@ describe("réactions rapides : migration et réglage", () => {
     ecrireReglages({ ...REGLAGES_DEFAUT(), reactionsAdversaires: false }, st);
     expect(lireReglages(st).reactionsAdversaires).toBe(false);
   });
+  it("carrosserie : Octane par défaut, liste fermée, mémorisée, sans toucher aux autres champs", () => {
+    expect(REGLAGES_DEFAUT().skin).toBe("octane");
+    for (const s of ["308", "2008", "rio", "octane"] as const) expect(normaliserReglages({ skin: s }).skin).toBe(s);
+    for (const x of ["306", "Rio", 308, null, {}, ""]) expect(normaliserReglages({ skin: x }).skin).toBe("octane");
+    // réglages d'avant les skins : le champ absent retombe sur l'Octane, le reste est gardé
+    expect(normaliserReglages({ volume: 0.3 })).toMatchObject({ skin: "octane", volume: 0.3 });
+    const st = stockage();
+    ecrireReglages({ ...REGLAGES_DEFAUT(), skin: "2008" }, st);
+    expect(lireReglages(st).skin).toBe("2008");
+  });
 });

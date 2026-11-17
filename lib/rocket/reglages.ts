@@ -1,5 +1,5 @@
 /**
- * Rocket Muche : réglages du joueur (caméra, touches du clavier et de la souris, boutons de la manette, volume, manette), mémorisés dans `localStorage` sous `pdj-rocket-reglages`.
+ * Rocket Muche : réglages du joueur (caméra, touches du clavier et de la souris, boutons de la manette, volume, manette, carrosserie), mémorisés dans `localStorage` sous `pdj-rocket-reglages`.
  *
  * Pur sauf le stockage, injecté (`StockageMinimal`) : aucune lecture ni écriture ne lève jamais d'exception (navigation privée, quota,
  * JSON corrompu, valeurs hors bornes → on retombe sur le défaut champ par champ, jamais sur « tout ou rien »).
@@ -10,6 +10,7 @@ import {
   LIAISONS_DEFAUT,
   LIAISONS_MANETTE_DEFAUT,
   REGLAGES_DEFAUT,
+  estSkin,
   type EcrireReglages,
   type LiaisonsManette,
   type LiaisonsTouches,
@@ -129,6 +130,7 @@ export const normaliserReglages: NormaliserReglages = (brut: unknown): ReglagesR
     inverserTangageManette: typeof brut.inverserTangageManette === "boolean" ? brut.inverserTangageManette : d.inverserTangageManette,
     vibrations: typeof brut.vibrations === "boolean" ? brut.vibrations : d.vibrations,
     reactionsAdversaires: typeof brut.reactionsAdversaires === "boolean" ? brut.reactionsAdversaires : d.reactionsAdversaires,
+    skin: estSkin(brut.skin) ? brut.skin : d.skin,
   };
 };
 

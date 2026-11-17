@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { BALLE, BUT, COUPS_D_ENVOI, PLOT, PLOTS, STADE, VOITURE, creerRng, tirer } from "./contrat";
 import type { Vec3 } from "./contrat";
-import { GEOMETRIE_ARENE, coupsDEnvoiDuStade, creerArene, placeCoupDEnvoi, plotsDuStade } from "./arene";
+import { GEOMETRIE_ARENE, PROFIL_CAGE, coupsDEnvoiDuStade, creerArene, hauteurPiedPoteau, placeCoupDEnvoi, plotsDuStade, rayonRaccordFond } from "./arene";
 
 const a = creerArene();
 const R = STADE.rayonSol;
@@ -69,22 +69,77 @@ describe("arène : valeurs analytiques", () => {
 });
 
 describe("arène : cages", () => {
-  it("l'intérieur d'une cage est libre, le plancher plat et sans marche jusqu'au fond", () => {
+  const W = BUT.demiLargeurParoi, RI = BUT.rayonInterieur, HP = BUT.hauteurPlafond, ZM = STADE.demiLongueur;
+  /** sol de la cage à la profondeur d : plat, puis en pente douce jusqu'au pied du demi-cylindre */
+  const solCage = (d: number): number => (d <= BUT.penteSolDebut ? 0 : (BUT.hauteurPenteSol * (d - BUT.penteSolDebut)) / (BUT.profondeurCentreFond - BUT.penteSolDebut));
+
+  it("l'intérieur d'une cage est libre, le plancher plat jusqu'à 2,35 m puis en pente douce (2,26°), sans marche", () => {
+    const pente = Math.atan(BUT.hauteurPenteSol / (BUT.profondeurCentreFond - BUT.penteSolDebut));
+    expect((pente * 180) / Math.PI).toBeCloseTo(2.26, 2);
     for (const s of [1, -1]) {
-      for (let z = 44; z <= 59.6; z += 0.4) {
+      for (let z = 44; z <= ZM + BUT.penteSolDebut - 0.05; z += 0.4) {
         expect(a.sd([0, 0.2, s * z])).toBeCloseTo(0.2, 9);
         expect(a.sd([5, 0.01, s * z])).toBeCloseTo(0.01, 9);
       }
-      expect(a.sd([0, 3, s * 56])).toBeCloseTo(3, 9);
+      // sur la pente : distance au plan incliné (loin des raccords)
+      for (let d = 3; d <= 6; d += 0.5) {
+        expect(a.sd([0, 0.6, s * (ZM + d)])).toBeCloseTo((0.6 - solCage(d)) * Math.cos(pente), 6);
+      }
+      expect(a.sd([0, 3, s * 53])).toBeCloseTo(3, 9);
     }
   });
 
-  it("parois de la cage : côtés, plafond, fond", () => {
-    expect(a.sd([BUT.demiLargeur - 0.5, 3, 55])).toBeCloseTo(0.5, 6);
-    expect(a.sd([-BUT.demiLargeur + 0.5, 3, -55])).toBeCloseTo(0.5, 6);
-    expect(a.sd([0, BUT.hauteur - 0.5, 55])).toBeCloseTo(0.5, 6);
-    expect(a.sd([0, 3, GEOMETRIE_ARENE.fondBut - 0.5])).toBeCloseTo(0.5, 6);
-    expect(a.sd([0, 3, -GEOMETRIE_ARENE.fondBut + 0.5])).toBeCloseTo(0.5, 6);
+  it("parois de la cage : côtés (8,96 m), plafond plat (6,40 m), pente du plafond, demi-cylindre du fond", () => {
+    expect(W).toBeCloseTo(8.96, 9);
+    expect(HP).toBeCloseTo(6.4, 9);
+    expect(a.sd([W - 0.5, 3, 55])).toBeCloseTo(0.5, 6);
+    expect(a.sd([-W + 0.5, 3, -55])).toBeCloseTo(0.5, 6);
+    expect(a.sd([0, HP - 0.5, ZM + 1.5])).toBeCloseTo(0.5, 6);
+    // le point le plus profond (d = 8,80 m) est à la hauteur du centre du demi-cylindre
+    expect(a.sd([0, BUT.hauteurCentreFond, GEOMETRIE_ARENE.fondBut - 0.5])).toBeCloseTo(0.5, 6);
+    expect(a.sd([0, BUT.hauteurCentreFond, -GEOMETRIE_ARENE.fondBut + 0.5])).toBeCloseTo(0.5, 6);
+    // ailleurs sur le demi-cylindre : rayon 2,40 m autour de (d = 6,40 ; y = 2,56)
+    for (const ang of [-1.2, -0.6, 0, 0.6, 1.1]) {
+      const p: Vec3 = [3, BUT.hauteurCentreFond + 1.9 * Math.sin(ang), ZM + BUT.profondeurCentreFond + 1.9 * Math.cos(ang)];
+      expect(a.sd(p)).toBeCloseTo(BUT.rayonFond - 1.9, 6);
+      const n = a.normale(p);
+      expect(n[1]).toBeCloseTo(-Math.sin(ang), 9);
+      expect(n[2]).toBeCloseTo(-Math.cos(ang), 9);
+    }
+    // pente du plafond : tangente au demi-cylindre, ≈ 17,6° (maillage RL : 17,5°)
+    const th = PROFIL_CAGE.pentePlafond;
+    expect((th * 180) / Math.PI).toBeGreaterThan(17.4);
+    expect((th * 180) / Math.PI).toBeLessThan(17.8);
+    const pied: [number, number] = [4, HP - Math.tan(th) * (4 - BUT.plafondPlatJusqua)];
+    const p: Vec3 = [2, pied[1] - 0.4 * Math.cos(th), ZM + pied[0] - 0.4 * Math.sin(th)];
+    expect(a.sd(p)).toBeCloseTo(0.4, 6);
+    const n = a.normale(p);
+    expect(n[1]).toBeCloseTo(-Math.cos(th), 9);
+    expect(n[2]).toBeCloseTo(-Math.sin(th), 9);
+  });
+
+  it("raccords concaves de RI partout dans la cage : sol / paroi, plafond / paroi, fond / paroi (plus d'angle vif)", () => {
+    expect(RI).toBeGreaterThan(0.9);
+    // sur la bissectrice du coin sol / paroi, la surface est l'arc de rayon RI (un angle vif donnerait exactement t)
+    for (const t of [0.05, 0.2, 0.4, 0.6]) {
+      expect(a.sd([W - t, t, 53])).toBeCloseTo(RI - Math.SQRT2 * (RI - t), 9);
+      expect(a.sd([-(W - t), HP - t, -ZM - 1])).toBeCloseTo(RI - Math.SQRT2 * (RI - t), 9);
+    }
+    // la surface du raccord sol / paroi passe au point de l'arc à 45°
+    const k = RI * (1 - Math.SQRT1_2);
+    expect(a.sd([W - k, k, 53])).toBeCloseTo(0, 9);
+    // paroi / fond : arc de RI en plan, à la hauteur du centre du cylindre
+    const kf = RI * (1 - Math.SQRT1_2);
+    expect(a.sd([W - kf, BUT.hauteurCentreFond, GEOMETRIE_ARENE.fondBut - kf])).toBeCloseTo(0, 9);
+    // la normale tourne continûment en faisant le tour du coin sol / paroi (une arête vive sauterait de 90°)
+    let prev: Vec3 | null = null;
+    for (let deg = 0; deg <= 90; deg += 3) {
+      const ang = (deg * Math.PI) / 180;
+      const p: Vec3 = [W - RI + (RI - 0.3) * Math.sin(ang), RI - (RI - 0.3) * Math.cos(ang), 53];
+      const n = a.normale(p);
+      if (prev) expect(Math.acos(Math.min(1, n[0] * prev[0] + n[1] * prev[1] + n[2] * prev[2]))).toBeLessThan(0.06);
+      prev = n;
+    }
   });
 
   it("la matière entoure la cage : poteaux, barre transversale, derrière le fond", () => {
@@ -97,13 +152,18 @@ describe("arène : cages", () => {
     expect(a.sd([0, BUT.hauteur + 0.3, STADE.demiLongueur + 0.5])).toBeLessThan(0);
   });
 
-  it("l'ouverture de la cage mesure 17,86 × 6,42775 m (poteau et barre à la distance prévue)", () => {
+  it("l'ouverture de la collision mesure 17,92 × 6,40 m (maillage RL), un peu plus que les seuils de marque (17,86 × 6,43 m)", () => {
     const k = BUT.rayonArete;
     // juste dans l'ouverture, au ras du poteau : positif ; juste hors de l'ouverture : négatif (à k près pour l'arrondi)
-    expect(a.sd([BUT.demiLargeur - 0.05, 3, STADE.demiLongueur + 0.05])).toBeGreaterThan(-k);
-    expect(a.sd([BUT.demiLargeur + 0.3, 3, STADE.demiLongueur + 0.05])).toBeLessThan(0);
-    expect(a.sd([0, BUT.hauteur + 0.3, STADE.demiLongueur + 0.05])).toBeLessThan(0);
-    expect(a.sd([0, BUT.hauteur - 0.3, STADE.demiLongueur + 0.05])).toBeGreaterThan(0);
+    expect(a.sd([W - 0.05, 3, STADE.demiLongueur + 0.05])).toBeGreaterThan(-k);
+    expect(a.sd([BUT.demiLargeur - 0.05, 3, STADE.demiLongueur + 0.05])).toBeGreaterThan(0);
+    expect(a.sd([W + 0.3, 3, STADE.demiLongueur + 0.05])).toBeLessThan(0);
+    expect(a.sd([0, HP + 0.3, STADE.demiLongueur + 0.05])).toBeLessThan(0);
+    expect(a.sd([0, HP - 0.3, STADE.demiLongueur + 0.05])).toBeGreaterThan(0);
+    // la cage tient dans les seuils de `butMarque` / `dansCage`
+    expect(W).toBeGreaterThan(BUT.demiLargeur);
+    expect(W - BUT.demiLargeur).toBeLessThan(0.05);
+    expect(HP).toBeLessThan(BUT.hauteur);
   });
 
   it("les poteaux et la barre sont arrondis : la normale y varie continûment", () => {
@@ -143,6 +203,17 @@ describe("arène : symétries et continuité", () => {
       const q: Vec3 = [p[0] + d[0], p[1] + d[1], p[2] + d[2]];
       const dist = Math.hypot(d[0], d[1], d[2]);
       expect(Math.abs(a.sd(p) - a.sd(q))).toBeLessThanOrEqual(dist * 1.0001 + 1e-9);
+    }
+  });
+  it("sd reste continue au bord de la fenêtre du pied des poteaux, 1 m derrière le mur du fond (zm = -1, dans la matière)", () => {
+    // le bord de la fenêtre faisait sauter sd de 0,2 m (pente locale de 150 à 260) : (10,895 ; 1,326 ; 52,199) → -0,999 / -1,208 ;
+    // il est désormais raccordé sur ~2 cm (pente ≤ 31, dans la matière seulement)
+    const r2 = creerRng(23);
+    const zBord = STADE.demiLongueur + 1;
+    for (let i = 0; i < 4000; i++) {
+      const x = (tirer(r2) * 2 - 1) * 19, y = tirer(r2) * 4, sz = tirer(r2) < 0.5 ? -1 : 1;
+      const p: Vec3 = [x, y, sz * (zBord - 0.001)], q: Vec3 = [x, y, sz * (zBord + 0.001)];
+      expect(Math.abs(a.sd(p) - a.sd(q)), `(${x.toFixed(3)} ; ${y.toFixed(3)})`).toBeLessThanOrEqual(0.002 * 31 + 1e-9);
     }
   });
 
@@ -272,9 +343,14 @@ describe("arène : but marqué et cage", () => {
     expect(a.dansCage([0, 1, 61])).toBeNull();
   });
 
-  it("une balle posée au sol au milieu de la cage est libre (sd = son rayon à la hauteur du centre)", () => {
-    expect(a.sd([0, r, 56])).toBeCloseTo(r, 6);
-    expect(a.sd([0, r, 56])).toBeGreaterThanOrEqual(r - 1e-9);
+  it("une balle posée au sol de la cage est libre (sd = son rayon), sur le sol plat comme sur la pente", () => {
+    expect(a.sd([0, r, 53])).toBeCloseTo(r, 6);
+    expect(a.sd([0, r, 53])).toBeGreaterThanOrEqual(r - 1e-9);
+    // à 4,8 m de profondeur, le sol est monté de 9,7 cm : la balle posée y a son centre plus haut d'autant
+    const pente = Math.atan(BUT.hauteurPenteSol / (BUT.profondeurCentreFond - BUT.penteSolDebut));
+    const sol = Math.tan(pente) * (4.8 - BUT.penteSolDebut);
+    expect(sol).toBeCloseTo(0.097, 3);
+    expect(a.sd([0, sol + r / Math.cos(pente), 56])).toBeCloseTo(r, 6);
   });
 });
 
@@ -339,8 +415,10 @@ describe("arène : lancer de rayon et surface proche", () => {
     expect(a.lancerRayon([0, 5, 0], [-1, 0, 0], 100)).toBeCloseTo(STADE.demiLargeur, 2);
     expect(a.lancerRayon([3, 5, 2], [0, -1, 0], 100)).toBeCloseTo(5, 2);
     expect(a.lancerRayon([0, 5, 0], [0, 1, 0], 100)).toBeCloseTo(H - 5, 2);
-    expect(a.lancerRayon([0, 3, 0], [0, 0, 1], 100)).toBeCloseTo(GEOMETRIE_ARENE.fondBut, 2);
-    expect(a.lancerRayon([0, 3, 0], [0, 0, -1], 100)).toBeCloseTo(GEOMETRIE_ARENE.fondBut, 2);
+    expect(a.lancerRayon([0, BUT.hauteurCentreFond, 0], [0, 0, 1], 100)).toBeCloseTo(GEOMETRIE_ARENE.fondBut, 2);
+    expect(a.lancerRayon([0, BUT.hauteurCentreFond, 0], [0, 0, -1], 100)).toBeCloseTo(GEOMETRIE_ARENE.fondBut, 2);
+    // plus haut, le rayon touche le demi-cylindre du fond plus près (plus de mur plat à 60 m)
+    expect(a.lancerRayon([0, 4, 0], [0, 0, 1], 100)).toBeCloseTo(STADE.demiLongueur + BUT.profondeurCentreFond + Math.sqrt(BUT.rayonFond ** 2 - (4 - BUT.hauteurCentreFond) ** 2), 2);
   });
 
   it("lancerRayon bute sur le mur de fond à côté de la cage et sur le pan coupé", () => {
@@ -396,72 +474,145 @@ describe("arène : coût", () => {
   });
 });
 
-describe("arène : biseau des raccords à côté des poteaux", () => {
+describe("arène : pied des poteaux et cage sans marche", () => {
   const a = creerArene();
-  const hw = BUT.demiLargeur, zMur = STADE.demiLongueur;
-  /** hauteur de la surface sous un point (rayon vertical) */
-  const hauteur = (x: number, z: number): number => 6 - (a.lancerRayon([x, 6, z], [0, -1, 0], 10) ?? 0);
+  const W = BUT.demiLargeurParoi, RI = BUT.rayonInterieur, zMur = STADE.demiLongueur;
+  /** hauteur de la surface sous un point (rayon vertical depuis 2,9 m) */
+  const hauteur = (x: number, z: number): number => 2.9 - (a.lancerRayon([x, 2.9, z], [0, -1, 0], 10) ?? 0);
 
-  it("au poteau le mur tombe droit sur le sol : rien ne dépasse dans le terrain", () => {
+  it("le raccord du mur du fond vaut RI au poteau, puis s'élargit jusqu'à celui du stade à 18 m", () => {
+    expect(rayonRaccordFond(W)).toBeCloseTo(RI, 12);
+    expect(rayonRaccordFond(-BUT.raccordPoteauJusqua)).toBeCloseTo(RI, 12);
+    expect(rayonRaccordFond(BUT.raccordFondDes)).toBeCloseTo(STADE.rayonSol, 12);
+    expect(rayonRaccordFond(30)).toBeCloseTo(STADE.rayonSol, 12);
+    for (let x = 10; x < 18; x += 0.25) expect(rayonRaccordFond(x + 0.25)).toBeGreaterThanOrEqual(rayonRaccordFond(x));
+  });
+
+  it("le sol au pied des poteaux suit exactement le raccord qui fait le tour du poteau (devant la cage comme le long du mur)", () => {
+    let vus = 0;
     for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
-      // juste à côté du poteau, à 30 cm du mur : le sol est plat (il était à 1,36 m avec le raccord arrondi)
-      expect(hauteur(sx * (hw + 0.4), sz * (zMur - 0.3))).toBeLessThan(0.25);
-      // un point bas devant le mur, à côté du poteau, est libre
-      expect(a.sd([sx * (hw + 0.5), 0.4, sz * (zMur - 0.8)])).toBeGreaterThan(0.1);
-    }
-  });
-
-  it("le raccord remonte en pente douce depuis le poteau et retrouve sa forme au bout du biseau", () => {
-    const z = zMur - 0.3;
-    let prec = hauteur(hw + 0.2, z);
-    for (let x = hw + 0.6; x <= hw + BUT.longueurBiseau + 2; x += 0.4) {
-      const h = hauteur(x, z);
-      expect(h).toBeGreaterThanOrEqual(prec - 1e-3);
-      // jamais de marche : au plus 25 cm de dénivelé pour 40 cm parcourus
-      expect(h - prec).toBeLessThan(0.25);
-      prec = h;
-    }
-    const plein = STADE.rayonSol - Math.sqrt(STADE.rayonSol ** 2 - (STADE.rayonSol - 0.3) ** 2);
-    expect(hauteur(hw + BUT.longueurBiseau + 2, z)).toBeCloseTo(plein, 1);
-    expect(hauteur(22, z)).toBeCloseTo(plein, 2);
-  });
-
-  it("une voiture qui longe le mur du fond traverse la cage et le biseau sans choc dur, sans ralentir, sur ses roues", async () => {
-    const { creerVoiture, pasVoiture } = await import("./voiture");
-    const { ENTREES_NULLES, PAS_S, VOITURE } = await import("./contrat");
-    // Le biseau monte de 23° le long du mur et de 45° vers lui : à 1,2 m du mur, le coin avant bas de la caisse (hitbox de RocketSim :
-    // plus large que la voie des roues) l'effleure avant que la roue n'y monte. La vitesse normale de ce frôlement est la projection
-    // de la vitesse sur la normale du plan, v × R / √(R² + 2T²) = 0,29 v : c'est la géométrie du biseau, pas un mur. Avec l'ancienne
-    // hitbox (1,25 cm plus étroite et plus haute) il passait juste sous le seuil de l'événement « choc » (3 m/s), d'où l'ancien
-    // `choc = 0` ; on exige maintenant que le choc ne dépasse jamais ce frôlement (un obstacle frontal donnerait ≈ v), et l'on durcit
-    // le reste : la voiture ne ralentit pas (10 m/s au lieu de 6) et finit sur ses roues.
-    const frolement = STADE.rayonSol / Math.hypot(STADE.rayonSol, BUT.longueurBiseau, BUT.longueurBiseau);
-    for (const sens of [-1, 1]) {
-      // départ dans l'axe de la cage, à 1 m du mur, cap vers le côté
-      const v = creerVoiture({ id: 0, equipe: "bleue", slot: 0, humain: true, nom: "essai", p: [0, VOITURE.hauteurRepos, zMur - 1.2], cap: (sens * Math.PI) / 2 });
-      let choc = 0, vMin = Infinity, vMax = 0;
-      for (let i = 0; i < 240; i++) {
-        const evs = pasVoiture(a, v, { ...ENTREES_NULLES(), accel: 1 }, PAS_S, i);
-        for (const e of evs) if (e.t === "choc") choc = Math.max(choc, e.vitesse);
-        const vit = Math.hypot(v.v[0], v.v[1], v.v[2]);
-        vMax = Math.max(vMax, vit);
-        if (i > 120) vMin = Math.min(vMin, vit);
+      for (let x = W - 1.6; x <= W + 3; x += 0.13) for (let zm = 0.02; zm <= 1.6; zm += 0.11) {
+        // l'arête du poteau elle-même est adoucie par l'union douce : on s'en écarte de 30 cm
+        if (Math.hypot(x - W, zm) < 0.3) continue;
+        vus++;
+        // (le rayon s'arrête à 1 mm de la surface : quelques millimètres d'écart sur les pentes raides du raccord)
+        expect(Math.abs(hauteur(sx * x, sz * (zMur - zm)) - hauteurPiedPoteau(x, zm))).toBeLessThan(0.01);
       }
-      expect(choc).toBeLessThan(frolement * vMax * 1.1);
-      expect(Math.abs(v.p[0])).toBeGreaterThan(hw + 3);
-      expect(vMin).toBeGreaterThan(10);
-      expect(v.rouesContact).toBeGreaterThanOrEqual(2);
-      expect(v.base.haut[1]).toBeGreaterThan(0.8);
+    }
+    expect(vus).toBeGreaterThan(400);
+    // devant le poteau, plus d'angle vif : à 30 cm du mur, juste à côté du poteau, le raccord ne monte qu'à la hauteur de l'arc de RI
+    expect(hauteur(W + 0.4, zMur - 0.3)).toBeCloseTo(RI - Math.sqrt(RI * RI - (RI - 0.3) ** 2), 2);
+  });
+
+  it("le long du mur du fond, de la cage jusqu'à 22 m : le raccord monte continûment, sans marche", () => {
+    for (const zm of [0.2, 0.4, 0.8]) {
+      const z = zMur - zm;
+      let prec = hauteur(0, z);
+      expect(prec).toBeLessThan(0.002);
+      for (let x = 0.01; x <= 22; x += 0.01) {
+        const h = hauteur(x, z);
+        expect(h).toBeGreaterThanOrEqual(prec - 3e-3);
+        // pas plus de 2 cm de dénivelé par centimètre parcouru (pente du raccord), même en passant devant le poteau : aucune marche
+        expect(h - prec).toBeLessThan(0.02);
+        prec = h;
+      }
+      const plein = STADE.rayonSol - Math.sqrt(STADE.rayonSol ** 2 - (STADE.rayonSol - zm) ** 2);
+      expect(hauteur(22, z)).toBeCloseTo(plein, 2);
     }
   });
 
-  it("le gradient reste unitaire et la distance continue dans le biseau", () => {
+  it("de l'entrée au fond de la cage, le sol monte continûment (sol plat, pente, demi-cylindre), sans marche", () => {
+    for (const x of [0, 3, 6, W - RI - 0.1, W - 0.6, W - 0.3]) {
+      let prec = hauteur(x, zMur - 10);
+      expect(prec).toBeLessThan(0.002);
+      for (let d = -10; d <= 7; d += 0.02) {
+        const h = hauteur(x, zMur + d);
+        expect(h).toBeGreaterThanOrEqual(prec - 1e-3);
+        expect(h - prec).toBeLessThan(0.02);
+        prec = h;
+      }
+    }
+  });
+
+  it("le gradient reste unitaire et la distance continue autour des poteaux et dans la cage", () => {
     const n: [number, number, number] = [0, 0, 0];
-    for (let x = hw - 1; x <= hw + 9; x += 0.37) for (let z = zMur - 4; z < zMur; z += 0.31) for (let y = 0.05; y < 4; y += 0.33) {
+    for (let x = W - 3; x <= W + 9; x += 0.37) for (let z = zMur - 4; z < zMur + 8.8; z += 0.31) for (let y = 0.05; y < 6.3; y += 0.33) {
       const s = a.sdNormale([x, y, z], n);
       expect(Math.hypot(n[0], n[1], n[2])).toBeCloseTo(1, 6);
       const s2 = a.sd([x + 0.01, y, z]);
-      expect(Math.abs(s2 - s)).toBeLessThan(0.011);
+      expect(Math.abs(s2 - s)).toBeLessThan(0.0105);
+      const s3 = a.sd([x, y, z + 0.01]);
+      expect(Math.abs(s3 - s)).toBeLessThan(0.0105);
+    }
+  });
+});
+
+describe("arène : la voiture monte sur les parois de la cage", () => {
+  const a = creerArene();
+  const W = BUT.demiLargeurParoi, zMur = STADE.demiLongueur;
+
+  /** Fait rouler une voiture accélérateur à fond depuis `p`, cap `cap`, vitesse initiale `v0` ; rend le bilan et l'état final. */
+  async function rouler(p: Vec3, cap: number, v0: number, pas: number, suivi?: (v: import("./contrat").EtatVoiture) => void) {
+    const { creerVoiture, pasVoiture } = await import("./voiture");
+    const { ENTREES_NULLES, PAS_S } = await import("./contrat");
+    const v = creerVoiture({ id: 0, equipe: "bleue", slot: 0, humain: true, nom: "essai", p, cap });
+    v.v = [Math.sin(cap) * v0, 0, Math.cos(cap) * v0];
+    let choc = 0, vMin = Infinity, pasTroisRoues = 0;
+    for (let i = 0; i < pas; i++) {
+      const evs = pasVoiture(a, v, { ...ENTREES_NULLES(), accel: 1 }, PAS_S, i);
+      for (const e of evs) if (e.t === "choc") choc = Math.max(choc, e.vitesse);
+      vMin = Math.min(vMin, Math.hypot(v.v[0], v.v[1], v.v[2]));
+      if (v.rouesContact >= 3) pasTroisRoues++;
+      suivi?.(v);
+    }
+    return { v, choc, vMin, partTroisRoues: pasTroisRoues / pas };
+  }
+
+  it("en fonçant dans la paroi latérale à 20 m/s, la voiture monte dessus par le raccord, sans choc, sur ses roues", async () => {
+    for (const s of [-1, 1]) for (const sz of [-1, 1]) {
+      let surParoi = false;
+      const r = await rouler([0, VOITURE.hauteurRepos, sz * 54], (s * Math.PI) / 2, 20, 90, (v) => { if (v.base.haut[0] * s < -0.7 && v.rouesContact >= 3) surParoi = true; });
+      expect(surParoi).toBe(true);
+      expect(r.choc).toBeLessThan(3);
+      expect(r.partTroisRoues).toBeGreaterThan(0.8);
+    }
+  });
+
+  it("vers le fond, la voiture remonte le demi-cylindre et se colle au plafond de la cage", async () => {
+    for (const sz of [-1, 1]) {
+      let auPlafond = false, rouesSurArc = 4;
+      const r = await rouler([0, VOITURE.hauteurRepos, sz * 52], sz > 0 ? 0 : Math.PI, 18, 150, (v) => {
+        if (v.base.haut[1] < -0.5 && v.rouesContact >= 3) auPlafond = true;
+        if (Math.abs(v.p[2]) > zMur + 6 && Math.abs(v.p[2]) < zMur + 8.8) rouesSurArc = Math.min(rouesSurArc, v.rouesContact);
+      });
+      expect(auPlafond).toBe(true);
+      expect(rouesSurArc).toBeGreaterThanOrEqual(3);
+      expect(r.choc).toBeLessThan(3);
+    }
+  });
+
+  it("depuis la paroi latérale, la voiture monte jusqu'au plafond de la cage", async () => {
+    // cap vers la paroi, légèrement vers le fond : la voiture monte la paroi puis passe le raccord paroi / plafond
+    let auPlafond = false;
+    await rouler([2, VOITURE.hauteurRepos, 53.5], Math.PI / 2 - 0.12, 20, 180, (v) => { if (v.base.haut[1] < -0.8 && v.p[1] > 5.5) auPlafond = true; });
+    expect(auPlafond).toBe(true);
+  });
+
+  it("en fonçant dans le pied d'un poteau (dedans, dessus ou dehors), la voiture monte sur un arrondi, sans choc", async () => {
+    for (const x of [W - 0.6, W, W + 0.6]) for (const v0 of [10, 20]) {
+      // de 5 m devant la ligne de but jusqu'à 3 m derrière (le fond de la cage, plus loin, est un autre sujet)
+      const r = await rouler([x, VOITURE.hauteurRepos, zMur - 5], 0, v0, Math.round(8 / v0 / (1 / 120)));
+      expect(r.choc, `x = ${x}, ${v0} m/s`).toBeLessThan(3);
+    }
+  });
+
+  it("une voiture qui longe le mur du fond traverse la cage et passe devant les poteaux sans choc, sans ralentir, sur ses roues", async () => {
+    for (const sens of [-1, 1]) for (const zm of [0.6, 1.2]) {
+      const r = await rouler([0, VOITURE.hauteurRepos, zMur - zm], (sens * Math.PI) / 2, 0, 240);
+      expect(r.choc).toBeLessThan(1);
+      expect(Math.abs(r.v.p[0])).toBeGreaterThan(W + 3);
+      expect(Math.hypot(r.v.v[0], r.v.v[1], r.v.v[2])).toBeGreaterThan(9);
+      expect(r.v.rouesContact).toBeGreaterThanOrEqual(2);
     }
   });
 });
